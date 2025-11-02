@@ -4,8 +4,9 @@
 
 
 ## Implementation Details
-Circuits: Gnark
-Verifier: Solidity
+* **Client**: Golang
+* **Circuits**: Gnark
+* **Verifier**: Solidity
 
 
 ## Peer-Reviewed Publications
