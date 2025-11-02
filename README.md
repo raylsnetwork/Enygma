@@ -4,4 +4,14 @@ At Rayls, we have created a new suite of privacy protocols, which we call Enygma
 
 ## [Enygma Payments](./enygma_payments)
 
+
+```mermaid
+  graph TD;
+      A-->B;
+      A-->C;
+      B-->D;
+      C-->D;
+```
+
+
 ## [Enygma DvP](./enygma_dvp)
