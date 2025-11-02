@@ -2,6 +2,6 @@
 Enygma Privacy Protocol
 
 
-* Enygma Payments
+* [Enygma Payments](https://github.com/raylsnetwork/Enygma/tree/main/enygma_payments)
 
 * Enygma DvP
