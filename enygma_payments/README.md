@@ -9,7 +9,7 @@ config:
   layout: elk
   look: handDrawn
 ---
-flowchart TD
+flowchart LR
     PLA(["Privacy Ledger A"])
     B(["Blockchain"])
     PLB(["Privacy Ledger B"])
