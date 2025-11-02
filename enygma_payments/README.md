@@ -14,7 +14,7 @@ flowchart TD
     B(["Blockchain"])
     PLB(["Privacy Ledger B"])
 
-    PLA <-> B <-> PLB
+    PLA <--> B <--> PLB
 ```
 
 ## Sub-Protocols
