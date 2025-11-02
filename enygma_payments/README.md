@@ -38,5 +38,5 @@ flowchart TD
 
 
 ## Peer-Reviewed Publications
-- [IACR ePrint 2025/1639](https://eprint.iacr.org/2025/1639)
-- [IACR ePrint 2025/1638](https://eprint.iacr.org/2025/1638)
+- [Rayls: A Novel Design for CBDCs](https://eprint.iacr.org/2025/1639)
+- [Rayls II: Fast, Private, and Compliant CBDCs](https://eprint.iacr.org/2025/1638)
