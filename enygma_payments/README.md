@@ -1,5 +1,21 @@
 # Enygma Payments
 
+## System Architecture
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart TD
+    PLA(["Privacy Ledger A"])
+    B(["Blockchain"])
+    PLB(["Privacy Ledger B"])
+
+```
+
 ## Sub-Protocols
 
 ## Cryptographic Primitives
