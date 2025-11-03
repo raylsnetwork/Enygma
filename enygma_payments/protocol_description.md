@@ -13,7 +13,7 @@
 
 * TBD
 
-### System Setup
+## System Setup
 All participants start with a balance with $$v=0$$ and $$r=0$$. Therefore, the initial balance for all the participants is:
 
 $$Comm(0, 0) = 0G + 0H$$
