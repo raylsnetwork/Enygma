@@ -10,6 +10,15 @@ config:
   look: handDrawn
 ---
 flowchart LR
+    UA(["User(s)"])
+    UB(["User(s)"])
+    UC(["User(s)"])
+    UD(["User(s)"])
+    UE(["User(s)"])
+    UF(["User(s)"])
+    UG(["User(s)"])
+    UH(["User(s)"])
+
     PLA(["Privacy Ledger"])
     PLB(["Privacy Ledger"])
     PLC(["Privacy Ledger"])
@@ -22,6 +31,15 @@ flowchart LR
     PLH(["Privacy Ledger"])
 
     PLA & PLB & PLC & PLD <-.-> B <-.-> PLE & PLF & PLG & PLH
+
+    UA <--> PLA
+    UB <--> PLB
+    UC <--> PLC
+    UD <--> PLD
+    UE <--> PLE
+    UF <--> PLF
+    UG <--> PLG
+    UH <--> PLH
 ```
 
 ## Sub-Protocols
