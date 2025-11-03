@@ -29,8 +29,8 @@ flowchart TD
 ```
 
 ### Implementation Details
-Circuits: Gnark
-Verifier: Solidity
+* **Circuits**: Gnark
+* **Verifier**: Solidity
 
 ### Peer-Reviewed Publications
 - TBC.
