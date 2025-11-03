@@ -3,6 +3,7 @@
 ## Notation
 
 Balances are represented as Pedersen commitments. 
+
 $$Comm(v, r) = vG + rH$$
 
 ## Transparent Issuance
