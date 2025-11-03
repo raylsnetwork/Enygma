@@ -6,7 +6,7 @@
   * $$Comm(v, r) = vG + rH$$
 
 * Random factors r are derived from hashing a shared secret and a block number:
-  * $$r = \mathcal{H}(s, n_{block})$$
+  * $$r = Hash(s, n_{block})$$
 
 * Shared secret s is obtained from a post-quantum key agreement (i.e., ML-KEM):
   * $$s = Encapsulate(pk', s')$$
@@ -23,4 +23,4 @@ $$Comm(v, 0) = vG + 0H = vG$$
 ### Private Issuance
 Issuer I acts as a system entity and establishes a shared secret with every participant in the network, and mints a new commitment with the random factor set accordingly. Therefore: 
 
-$$Comm(v, 0) = vG + 0H = vG$$
+$$Comm(v, 0) = v*G + Hash(s, n_{block})*H = vG$$
