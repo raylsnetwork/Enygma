@@ -8,6 +8,10 @@ Concretely, there are two variants of Enygma:
 
 ## System Architecture
 
+* **Users**:
+* **Privacy Ledger(s)**:
+* **Subnet Hub**:
+
 ```mermaid
  ---
 config:
