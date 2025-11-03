@@ -14,16 +14,14 @@ flowchart LR
     PLB(["Privacy Ledger"])
     PLC(["Privacy Ledger"])
     PLD(["Privacy Ledger"])
-    PLX(["Privacy Ledger"])
 
     B(["Blockchain"])
     PLE(["Privacy Ledger"])
     PLF(["Privacy Ledger"])
     PLG(["Privacy Ledger"])
     PLH(["Privacy Ledger"])
-    PLZ(["Privacy Ledger"])
 
-    PLA & PLB & PLC & PLD & PLX <-.-> B <-.-> PLE & PLF & PLG & PLH & PLZ
+    PLA & PLB & PLC & PLD <-.-> B <-.-> PLE & PLF & PLG & PLH
 ```
 
 ## Sub-Protocols
