@@ -26,7 +26,10 @@ sh("Subnet Hub")
 pl_b["Privacy<br>Ledger B "]
 b["User B"]
 
+auditor["Auditor"]
+
 a <-->pl_a <--> sh <--> pl_b <--> b
+auditor <--> sh
 
 ```
 
