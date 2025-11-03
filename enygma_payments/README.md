@@ -10,16 +10,16 @@ config:
   look: handDrawn
 ---
 flowchart LR
-    PLA(["Privacy Ledger A"])
-    PLB(["Privacy Ledger B"])
-    PLC(["Privacy Ledger C"])
-    PLD(["Privacy Ledger D"])
+    PLA(["Privacy Ledger"])
+    PLB(["Privacy Ledger"])
+    PLC(["Privacy Ledger"])
+    PLD(["Privacy Ledger"])
 
     B(["Blockchain"])
-    PLE(["Privacy Ledger E"])
-    PLF(["Privacy Ledger F"])
-    PLG(["Privacy Ledger G"])
-    PLH(["Privacy Ledger H"])
+    PLE(["Privacy Ledger"])
+    PLF(["Privacy Ledger"])
+    PLG(["Privacy Ledger"])
+    PLH(["Privacy Ledger"])
 
     PLA & PLB & PLC & PLD <--> B <--> PLE & PLF & PLG & PLH
 ```
