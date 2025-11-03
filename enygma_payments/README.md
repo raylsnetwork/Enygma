@@ -36,10 +36,11 @@ flowchart LR
     UB <--> PLB
     UC <--> PLC
     UD <--> PLD
-    UE <--> PLE
-    UF <--> PLF
-    UG <--> PLG
-    UH <--> PLH
+
+    PLE <--> UE
+    PLF <--> UF
+    PLG <--> UG
+    PLH <--> UH
 ```
 
 ## Sub-Protocols
