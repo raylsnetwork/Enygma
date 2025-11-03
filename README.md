@@ -6,7 +6,6 @@ Concretely, there are two variants of Enygma:
 * [Enygma Payments](./enygma_payments)
 * [Enygma Delivery-vs-Payment (DvP)](./enygma_dvp)
 
-$$ x^2 + x3 = \mathcal(H)$$
 ## System Architecture
 
 ```mermaid
