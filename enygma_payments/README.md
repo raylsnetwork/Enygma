@@ -25,6 +25,12 @@ flowchart LR
 ```
 
 ## Sub-Protocols
+To simplify the protocol, we compose it into different parts. Concretely: 
+
+* Registration
+* Key Agreement
+* Sending a Transaction
+* Receiving a Transaction
 
 ## Cryptographic Primitives
 
