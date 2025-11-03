@@ -10,9 +10,9 @@ Concretely, there are two variants of Enygma:
 
 * **Users**: Traditional users of the system who want to transact with other users. 
 
-* **Privacy Ledger(s)**:
+* **Privacy Ledger(s)**: High-performance single node EVM blockchain(s) designed to support the needs of financial institutions and high-throughput. 
 
-* **Subnet Hub**:
+* **Subnet Hub**: Underlying blockchain that acts as a global ledger, (ZK) verifier, and bulletin board for privacy ledgers to transact and communicate. 
 
 * **Auditor** (optional): The auditor is an entity that oversees the transactions that take place in the system. This exists solely in case the system is deployed in a permissioned setting with the involvement of financial institutions. We note that the auditor only has a complete view of transactions that happen in the network iff the participants share the 'view' key with the auditor. We note that the auditor has no ability to spend funds on behalf of any system entity. 
 
