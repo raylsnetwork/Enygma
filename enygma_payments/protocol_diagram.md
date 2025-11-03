@@ -2,6 +2,12 @@
 
 ## Key Registration
 ```mermaid
+ ---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
   sequenceDiagram
       participant pla as Privacy Ledger A
       participant b as Blockchain
@@ -13,6 +19,12 @@
 
 ## Key Agreement
 ```mermaid
+ ---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
   sequenceDiagram
       participant pla as Privacy Ledger A
       participant b as Blockchain
