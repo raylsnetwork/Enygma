@@ -8,7 +8,7 @@ Concretely, there are two variants of Enygma:
 
 ## System Architecture
 
-* **Users**:
+* **Users**: Traditional users of the system who want to transact with other users. 
 
 * **Privacy Ledger(s)**:
 
