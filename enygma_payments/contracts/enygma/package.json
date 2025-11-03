@@ -1,0 +1,7 @@
+{
+  "name": "hardhat-project",
+  "dependencies": {
+    "hardhat": "^2.22.14",
+    "solc-js": "^1.0.1"
+  }
+}

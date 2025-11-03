@@ -1,0 +1,7 @@
+language: node_js
+node_js:
+  - "7.6"
+  - "8"
+script:
+  - npm run coverage
+  - npm run report-coverage
