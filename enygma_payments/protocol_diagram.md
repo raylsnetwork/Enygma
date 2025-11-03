@@ -1,6 +1,8 @@
 # Enygma Protocol Diagrams
 
 * [Key Generation](#key-generation)
+* [Key Registration](#)
+* [Key Agreement](#key-generation)
 
 ## Key Generation
 ```mermaid
@@ -27,6 +29,8 @@ note over AA: has 'master' (ML_KEM) keypair<br>(msk, mpk)
 
 
 ```
+
+## Key Registration
 
 
 ## Key Agreement
