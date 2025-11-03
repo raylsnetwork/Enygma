@@ -21,7 +21,7 @@ flowchart LR
     PLG(["Privacy Ledger"])
     PLH(["Privacy Ledger"])
 
-    PLA & PLB & PLC & PLD <--> B <--> PLE & PLF & PLG & PLH
+    PLA & PLB & PLC & PLD <-.-> B <-.-> PLE & PLF & PLG & PLH
 ```
 
 ## Sub-Protocols
