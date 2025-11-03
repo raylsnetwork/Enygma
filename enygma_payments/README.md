@@ -32,6 +32,9 @@ To simplify the protocol, we compose it into different parts. Concretely:
 * Sending a Transaction
 * Receiving a Transaction
 
+First, each privacy ledger registers two keypairs (view and spend) on the underlying blockchain. This blockchain effectively acts as a Public-Key Infrastructure (PKI) containing a registry of all public-keys of the registered privacy ledgers. Second, each privacy ledger perform a post-quantum key agreement (i.e., ML-KEM) and establish individual shared secrets with all the other privacy ledgers. At this point, privacy ledgers can now start transacting privately with each other. The transaction protocol includes a hash-based private messaging tag component that allow recipients to detect privately whether or not a transaction is for them. Therefore, we also introduce a protocol to fetch (and decrypt) transactions.
+
+
 ## Cryptographic Primitives
 
 ```mermaid
