@@ -2,9 +2,8 @@
 
 ## Notation
 
-Balances are represented as Pedersen commitments. 
-
-$$Comm(v, r) = vG + rH$$
+* Balances are represented as Pedersen commitments: $$Comm(v, r) = vG + rH$$
+* Random factors r are derived from hashing a shared secret and a block number: $$r = \mathcal{H}(s, block_{\#}$$
 
 ## Transparent Issuance
 - Issuer I mints a new Commitment with the random factor set to 0. Therefore
