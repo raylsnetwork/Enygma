@@ -28,7 +28,7 @@ flowchart LR
 To simplify the protocol, we compose it into different parts. Concretely: 
 
 * Registration
-* Key Agreement
+* [Key Agreement](./protocol_diagram.md#key-agreement)
 * Sending a Transaction
 * Receiving a Transaction
 
