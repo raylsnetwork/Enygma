@@ -1,6 +1,6 @@
 # Enygma Protocol Diagrams
 
-## Key Registration
+## Key Generation
 ```mermaid
 ---
 config:
@@ -18,17 +18,12 @@ sequenceDiagram
 note over AA: has 'master' (ML_KEM) keypair<br>(msk, mpk)
 
   %%% KEY GENERATION PROTOCOL
-  rect rgb(224, 255, 255)
 
-    note over PLA: generates ML_KEM (view) keypair<br> skA, pkA
+    note over PLA: generates ML_KEM (view) keypair<br> $$skA, pk_A$$
     note over PLA: generates Hash-based (spend) keypair<br>a, H(a)
     
     note over PLB: generates ML_KEM (view) keypair<br> skB, pkB
     note over PLB: generates Hash-based (spend) keypair<br>b, H(b)
-    
-    note over A, AA: End of key generation
-
-  end
 
 
 ```
