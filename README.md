@@ -3,7 +3,7 @@ At Rayls, we have created a new suite of privacy protocols, which we call Enygma
 
 Concretely, there are two variants of Enygma: 
 
-* [Enygma Payments](./enygma_payments) (account-based)
+* [Enygma Payments](./enygma_payments) (Account-based)
 * [Enygma Delivery-vs-Payment (DvP)](./enygma_dvp) (UTXO-based)
 
 ## System Architecture
