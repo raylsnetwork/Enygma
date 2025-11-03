@@ -26,10 +26,10 @@ sh("Subnet Hub")
 pl_b["Privacy<br>Ledger B "]
 b["User B"]
 
-auditor["Auditor"]
+auditor["Auditor<br>(Optional)"]
 
 a <-->pl_a <--> sh <--> pl_b <--> b
-auditor <--> sh
+auditor <-.-> sh
 
 ```
 
