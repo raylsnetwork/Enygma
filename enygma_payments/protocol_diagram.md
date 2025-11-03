@@ -3,16 +3,22 @@
 ## Key Registration
 ```mermaid
   sequenceDiagram
-      participant a as Alice
-      participant b as Bob
+      sequenceDiagram
+      participant pla as Privacy Ledger A
+      participant b as Blockchain
+      participant plb as Privacy Ledger B
 
-      a -->> b: hi
+      pla -->> b: hi
 ```
 
 
 ## Key Agreement
 ```mermaid
   sequenceDiagram
-      participant a as Alice
-      
+      participant pla as Privacy Ledger A
+      participant b as Blockchain
+      participant plb as Privacy Ledger B
+
+      pla -->> plb: $$x_i$$
+
 ```
