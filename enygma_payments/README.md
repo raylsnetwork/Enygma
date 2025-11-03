@@ -10,11 +10,16 @@ config:
   look: handDrawn
 ---
 flowchart LR
-    PLA(["Privacy Ledger A"])
-    B(["Blockchain"])
-    PLB(["Privacy Ledger B"])
+    PL1(["Privacy Ledger A"])
+    PL2(["..."])
+    PL3(["Privacy Ledger B"])
 
-    PLA <--> B <--> PLB
+    B(["Blockchain"])
+    PL4(["Privacy Ledger C"])
+    PL5(["..."])
+    PL6(["Privacy Ledger D"])
+
+    PL1 & PL2 & PL3 <--> B <--> PL4 & PL5 & PL6
 ```
 
 ## Sub-Protocols
