@@ -14,6 +14,7 @@ flowchart LR
     UB(["User(s)"])
     UC(["User(s)"])
     UD(["User(s)"])
+
     UE(["User(s)"])
     UF(["User(s)"])
     UG(["User(s)"])
@@ -32,15 +33,15 @@ flowchart LR
 
     PLA & PLB & PLC & PLD <-.-> B <-.-> PLE & PLF & PLG & PLH
 
-    UA <--> PLA
-    UB <--> PLB
-    UC <--> PLC
-    UD <--> PLD
+    UA <-.-> PLA
+    UB <-.-> PLB
+    UC <-.-> PLC
+    UD <-.-> PLD
 
-    PLE <--> UE
-    PLF <--> UF
-    PLG <--> UG
-    PLH <--> UH
+    PLE <-.-> UE
+    PLF <-.-> UF
+    PLG <-.-> UG
+    PLH <-.-> UH
 ```
 
 ## Sub-Protocols
