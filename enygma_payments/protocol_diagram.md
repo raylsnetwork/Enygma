@@ -3,7 +3,6 @@
 ## Key Registration
 ```mermaid
   sequenceDiagram
-      sequenceDiagram
       participant pla as Privacy Ledger A
       participant b as Blockchain
       participant plb as Privacy Ledger B
