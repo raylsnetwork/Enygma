@@ -4,7 +4,8 @@
 
 * Balances are represented as Pedersen commitments: $$Comm(v, r) = vG + rH$$
 * Random factors r are derived from hashing a shared secret and a block number: $$r = \mathcal{H}(s, n_{block})$$
-* Shared secret s is obtained from a post-quantum key agreement (i.e., ML-KEM): $$s = Encapsulate(pk', s')$$
+* Shared secret s is obtained from a post-quantum key agreement (i.e., ML-KEM):
+  * $$s = Encapsulate(pk', s')$$
 
 ## Transparent Issuance
 - Issuer I mints a new Commitment with the random factor set to 0. Therefore
