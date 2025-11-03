@@ -13,9 +13,14 @@
 
 * TBD
 
-## Transparent Issuance
-- Issuer I mints a new Commitment with the random factor set to 0. Therefore
+### Transparent Issuance
+Issuer I mints a new Commitment with the random factor set to 0. Therefore: 
 
 $$Comm(v, 0) = vG + 0H = vG$$
 
   This allows anyone to be able to see how much money was minted in the system. 
+
+### Private Issuance
+Issuer I acts as a system entity and establishes a shared secret with every participant in the network, and mints a new commitment with the random factor set accordingly. Therefore: 
+
+$$Comm(v, 0) = vG + 0H = vG$$
