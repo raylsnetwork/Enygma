@@ -1,5 +1,7 @@
 # Enygma Protocol Diagrams
 
+* [Key Generation](#key-generation)
+
 ## Key Generation
 ```mermaid
 ---
