@@ -33,7 +33,7 @@ auditor <-.-> sh
 
 ```
 
-## Enygma Payments
+## Helpful Mental Model
+If the reader is familiar with the Ethereum ecosystem, the easiest way to think about our approach is probably the following:
 
-
-## Enygma DvP
+The subnet hub is an underlying L1. The privacy ledgers are (somewhat) equivalent to high-performance custom (validium) L2s. The balance (aka TVL) of each L2 is in the underlying L1 in a shielded manner to ensure the privacy of each institution. All the different shielded balances are recorded in a single L1 contract to ensure the liquidity is unified, as opposed to fragmented across different contracts. This approach ensures that entities can quickly transact with each other without very expensive operations on the underlying L1. 
