@@ -18,6 +18,6 @@
       participant b as Blockchain
       participant plb as Privacy Ledger B
 
-      pla -->> plb: $$x_i$$
+      pla -->> plb: $$x + 3$$
 
 ```
