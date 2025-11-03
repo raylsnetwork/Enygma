@@ -13,6 +13,11 @@
 
 * TBD
 
+### System Setup
+All participants start with a balance with $$v=0$$ and $$r=0$$. Therefore, the initial balance for all the participants is:
+
+$$Comm(0, 0) = 0G + 0H$$
+
 ### Transparent Issuance
 Issuer I mints a new Commitment with the random factor set to 0. Therefore: 
 
@@ -21,6 +26,6 @@ $$Comm(v, 0) = vG + 0H = vG$$
   This allows anyone to be able to see how much money was minted in the system. 
 
 ### Private Issuance
-Issuer I acts as a system entity and establishes a shared secret with every participant in the network, and mints a new commitment with the random factor set accordingly. Therefore: 
+Issuer I acts as a system entity and establishes a shared secret with every participant in the network, and mints a new commitment with the random factor set accordingly. Concretely, $$r = Hash(s, n_{block})$$. Therefore: 
 
-$$Comm(v, 0) = v*G + Hash(s, n_{block})*H = vG$$
+$$Comm(v, 0) = vG + rH = vG$$
