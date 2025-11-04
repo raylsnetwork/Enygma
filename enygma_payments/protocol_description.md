@@ -56,7 +56,7 @@ There are multiple types of auditing supported by the protocol. Concretely, the 
 ### Universal View
 If there is an auditor that needs the complete view of the transactions in the network, then each privacy ledger shares their view key pair with the auditor upon the key registration step. To do so, each privacy ledger encrypts their view secret key (i.e., $$sk_{A}^{view}$$) and publishes it on the blockchain for the auditor to fetch. 
 
-Each privacy ledger publishes:
+For example, privacy ledger A publishes:
 
-$$ ctxt = Encapsulate(pk_{audit}^{ML-KEM}, sk^{view})$$
+$$ ctxt = Encapsulate(pk_{audit}^{view}, sk_{A}^{view})$$
 
