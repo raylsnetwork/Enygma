@@ -8,7 +8,7 @@ config:
   look: handDrawn
 ---
 flowchart LR
-    pl_setup(["Privacy Ledger<br>(Setup)"])
+    pl_setup["Privacy Ledger<br>(Setup)"]
     keygen(["Key<br>Generation"])
     register(["Key<br>Registration"])
     kem(["Key<br>Agreement"])
