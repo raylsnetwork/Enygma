@@ -78,12 +78,15 @@ flowchart LR
     getblock_receive(["Get Latest<br>Block"])
 
     derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
-    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
 
     calcR_send(["Calculate<br>Random Factor"])
-    calcR_receive(["Calculate<br>Random Factor"])
+    tx_commits(["Generate<br>Pedersen Commitments"])
+    nullifier(["Calculate<br>Nullifier"])
+    zk_proof(["Create<br>ZK Proof"])
 
     pl_receive["Privacy Ledger<br>(Receive Tx)"]
+    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
+    calcR_receive(["Calculate<br>Random Factor"])
 
 
     issuer -.-> i_setup & i_mint
@@ -93,7 +96,7 @@ flowchart LR
     pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send
+    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof
     pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
 ```
 
