@@ -73,7 +73,7 @@ flowchart LR
     publish(["Publish<br>Key Fingerprints"])
 
     pl_send["Privacy Ledger<br>(Send Tx)"]
-    getblock(["Get Latest<br>Block (Number)"])
+    getblock(["Get Latest<br>Block"])
     derivekey(["Derive Ephemeral<br>(Symmetric) Key"])
     calcR(["Calculate<br>Random Factor"])
 
