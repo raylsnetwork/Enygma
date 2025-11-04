@@ -8,8 +8,8 @@
 * Random factors r are derived from hashing a shared secret and a block number:
   * $$r = Hash(s, n_{block})$$
 
-* Shared secret s is obtained from a post-quantum key agreement (i.e., ML-KEM):
-  * $$s = Encapsulate(pk', s')$$
+* Shared secret s is randomly generated and shared using a post-quantum key agreement (i.e., ML-KEM):
+  * $$Encapsulate(pk', s')$$
 
 * TBD
 
@@ -19,7 +19,7 @@ All participants start with a balance with $$v=0$$ and $$r=0$$. Therefore, the I
 $$Comm(0, 0) = 0G + 0H$$
 
 ### Key Agreement
-
+One of the parties downloads the counterparty's ML-KEM public-key $$pk'$$, generates a pre-secret $$s'$$ and encapsulates it, thus obtaining $$Encapsulate(pk', s')$$. Sender also obtains $$id = Hash(s')$$ and publishes both $$< id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
 
 ### View Key Sharing
 
