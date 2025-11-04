@@ -73,7 +73,8 @@ flowchart LR
     publish(["Publish<br>Key Fingerprints"])
 
     pl_send["Privacy Ledger<br>(Send Tx)"]
-    getblock(["Get Latest<br>Block"])
+    getblock_send(["Get Latest<br>Block"])
+    getblock_receive(["Get Latest<br>Block"])
     derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
     derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
     calcR_send(["Calculate<br>Random Factor"])
@@ -89,8 +90,8 @@ flowchart LR
     pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send -.-> getblock -.-> derivesendkey & calcR_send
-    pl_receive -.-> getblock -.-> derivereceivekey & calcR_receive
+    pl_send -.-> getblock_send -.-> derivesendkey & calcR_send
+    pl_receive -.-> getblock_receive -.-> derivereceivekey & calcR_receive
 ```
 
 ## Cryptographic Primitives
