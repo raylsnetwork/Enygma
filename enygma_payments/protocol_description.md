@@ -20,6 +20,13 @@ All participants start with a balance with $$v=0$$ and $$r=0$$. Therefore, the I
 
 $$Comm(0, 0) = 0G + 0H$$
 
+### Key Generation
+* Privacy Ledger A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
+
+* Privacy Ledger A generates a simple hash-based keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$.
+  *  $$(sk_{A}^{view} \longleftarrow $$
+  *  $$pk_{A}^{view} = Hash((sk_{A}^{view}$$
+
 ### Key Agreement
 One of the parties downloads the counterparty's ML-KEM public-key $$pk'$$, generates a pre-secret $$s'$$ and encapsulates it, thus obtaining $$Encapsulate(pk', s')$$. Sender also obtains $$id = Hash(s')$$ and publishes both $$< id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
 
