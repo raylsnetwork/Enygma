@@ -25,7 +25,7 @@ $$Comm(0, 0) = 0G + 0H$$
 
 * Privacy Ledger A generates a simple hash-based keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$.
   *  $$sk_{A}^{view} \longleftarrow \\\{{0, 1\\\}}^{256}$$
-  *  $$pk_{A}^{view} = Hash((sk_{A}^{view}$$
+  *  $$pk_{A}^{view} = Hash(sk_{A}^{view})$$
 
 ### Key Agreement
 One of the parties downloads the counterparty's ML-KEM public-key $$pk'$$, generates a pre-secret $$s'$$ and encapsulates it, thus obtaining $$Encapsulate(pk', s')$$. Sender also obtains $$id = Hash(s')$$ and publishes both $$< id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
