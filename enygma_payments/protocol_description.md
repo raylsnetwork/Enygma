@@ -21,15 +21,20 @@ flowchart LR
     publish(["Publish<br>Key Fingerprints"])
 
     pl_send["Privacy Ledger<br>(Send Tx)"]
-    getblock(["Get Latest<br>Block Number"])
+    getblock(["Get Latest<br>Block (Number)"])
     derivekey(["Derive Ephemeral<br>(Symmetric) Key"])
+
+    pl_receive["Privacy Ledger<br>(Receive Tx)"]
+
+
 
     i_setup -.-> deploy -.-> mint
 
     pl -.-> pl_setup & pl_send
-    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
 
+    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
     pl_send -.-> getblock -.-> derivekey
+    pl_receive -.-> getblock -.-> derivekey
 ```
 
 ## Notation
