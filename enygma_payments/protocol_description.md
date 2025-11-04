@@ -8,12 +8,17 @@ config:
   look: handDrawn
 ---
 flowchart LR
+    i_setup["Issuer<br>(Setup)"]
+    deploy(["Deploy Enygma<br>Contract"])
+    mint(["Mint<br>Funds"])
+
     pl_setup["Privacy Ledger<br>(Setup)"]
     keygen(["Key<br>Generation"])
     register(["Key<br>Registration"])
     kem(["Key<br>Agreement"])
     publish(["Publish<br>Key Fingerprints"])
 
+    i_setup -.-> deploy -.-> mint
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
 ```
 
