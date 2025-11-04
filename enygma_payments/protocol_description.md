@@ -47,16 +47,23 @@ Issuer acts as a system entity and establishes a shared secret with every partic
 
 $$Comm(v, r) = vG + rH$$
 
-
 This ensures only the issuer and the recipient know how much money was minted. We note, however, that it's still possible to have verifiability on the minting side, in the sense that every time there is a mint that the system knows a mint occcurred. 
 
 ## Auditing
 There are multiple types of auditing supported by the protocol. Concretely, the auditor can have a 'universal view' and have the ability of seeing all the transactions that take place in the network. 
 
-### Universal View
+### Universal View - View Key Sharing
 If there is an auditor that needs the complete view of the transactions in the network, then each privacy ledger shares their view key pair with the auditor upon the key registration step. To do so, each privacy ledger encrypts their view secret key (i.e., $$sk_{A}^{view}$$) and publishes it on the blockchain for the auditor to fetch. 
 
 For example, privacy ledger A publishes:
 
 $$ ctxt = Encapsulate(pk_{audit}^{view}, sk_{A}^{view})$$
+
+### Individual Transaction Opening - Ephemeral Symmetric (View) Key Sharing
+Our system also supports the opening of individual transctions without compromising the secrecy of previous/future transactions. Since the system uses symmetric key encryption with ephemeral (per block) keys, we have a mode of operation where the sender or recipient can simply disclose individual symmetric keys and open individual transctions. 
+
+The symmetric key for block $$n$$ is obtained the following way: 
+
+$$k_{n} = HKDF(s, n_{block})$$
+
 
