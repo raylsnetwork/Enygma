@@ -62,7 +62,7 @@ $$ ctxt = Encapsulate(pk_{audit}^{view}, sk_{A}^{view})$$
 ### Individual Transaction Opening - Ephemeral Symmetric (View) Key Sharing
 Our system also supports the opening of individual transctions without compromising the secrecy of previous/future transactions. Since the system uses symmetric key encryption with ephemeral (per block) keys, we have a mode of operation where the sender or recipient can simply disclose individual symmetric keys and open individual transctions. 
 
-The symmetric key for block $$n$$ is obtained the following way: 
+The symmetric key $$k$$ for block $$n$$ (i.e, $$k_{n}$$) is obtained the following way: 
 
 $$k_{n} = HKDF(s, n_{block})$$
 
