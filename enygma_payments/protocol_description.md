@@ -1,46 +1,5 @@
 # Protocol Description
 
-## Protocol Flows
-```mermaid
----
-config:
-  theme: redux
-  layout: elk
-  look: handDrawn
----
-flowchart LR
-    issuer["Issuer"]
-    i_setup["Issuer<br>(Setup)"]
-    deploy(["Deploy Enygma<br>Contract"])
-
-    i_mint(["Issuer<br>(Mint)"])
-    mint_shield(["Mint<br>(Shielded)Funds"])
-    mint_transparent(["Mint<br>(Transparent) Funds"])
-
-    pl["Privacy Ledger"]
-    pl_setup["Privacy Ledger<br>(Setup)"]
-    keygen(["Key<br>Generation"])
-    register(["Key<br>Registration"])
-    kem(["Key<br>Agreement"])
-    publish(["Publish<br>Key Fingerprints"])
-
-    pl_send["Privacy Ledger<br>(Send Tx)"]
-    getblock(["Get Latest<br>Block (Number)"])
-    derivekey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR(["Calculate<br>Random Factor"])
-
-    pl_receive["Privacy Ledger<br>(Receive Tx)"]
-
-
-    issuer -.-> i_setup & i_mint
-    i_setup -.-> deploy
-    i_mint -.-> mint_shield & mint_transparent
-
-    pl -.-> pl_setup & pl_send & pl_receive
-
-    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send & pl_receive -.-> getblock -.-> derivekey & calcR
-```
 
 ## Notation
 
