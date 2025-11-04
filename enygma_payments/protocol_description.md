@@ -12,6 +12,7 @@ flowchart LR
     deploy(["Deploy Enygma<br>Contract"])
     mint(["Mint<br>Funds"])
 
+    pl["Privacy Ledger"]
     pl_setup["Privacy Ledger<br>(Setup)"]
     keygen(["Key<br>Generation"])
     register(["Key<br>Registration"])
@@ -23,6 +24,8 @@ flowchart LR
     derivekey(["Derive Ephemeral<br>(Symmetric) Key"])
 
     i_setup -.-> deploy -.-> mint
+
+    pl -.-> pl_setup & pl_send
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
 
     pl_send -.-> getblock -.-> derivekey
