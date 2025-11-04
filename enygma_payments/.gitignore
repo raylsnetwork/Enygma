@@ -48,7 +48,15 @@ share/
 vyper_git_commithash.txt
 circom/compilation.ZkDvp/*
 
+#Gnark Server
+gnark-server/main_test.go
+gnark-server/poseidon.go
+gnark-server/proving.key
+gnark-server/verifierEnygma.sol
+gnark-server/verifying.key
 
+#Go Client
+go_client/main.go
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

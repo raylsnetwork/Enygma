@@ -1,0 +1,57 @@
+---
+id: "zktoken"
+desc: "under development"
+scenario: "00_default_scenario"
+
+network:
+  host: "127.0.0.1"
+  port: "8545"
+  chain-id: "1337"
+  brownie-network: "development"
+  seed: "localGanache"
+  mnemonic: "federal unhappy avoid mistake life barrel beauty raccoon recycle unknown review link"
+  accounts:
+    [
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      },
+      {
+        address: "0x38BaAdC49601f651662aFB689Fb8BAeA2e5675C3",
+        private: "0xb756678f506419ead1bcef2ef5bca58659deba724b064ec7aebc489fc84e46c5"
+      }
+    ]
+
