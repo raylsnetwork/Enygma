@@ -57,7 +57,9 @@ flowchart LR
   * $$r = Hash(s, n_{block})$$ 
 
 ## System Setup
-All participants start with a balance with $$v=0$$ and $$r=0$$. Therefore, the Issuer creates a contract where the initial balance for all the participants is:
+All participants start with a balance with $$v=0$$ and $$r=0$$. 
+
+Therefore, the Issuer creates a contract where the initial balance for all the participants is:
 
 $$Comm(0, 0) = 0G + 0H$$
 
