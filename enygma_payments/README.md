@@ -74,8 +74,10 @@ flowchart LR
 
     pl_send["Privacy Ledger<br>(Send Tx)"]
     getblock(["Get Latest<br>Block"])
-    derivekey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR(["Calculate<br>Random Factor"])
+    derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
+    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
+    calcR_send(["Calculate<br>Random Factor"])
+    calcR_receive(["Calculate<br>Random Factor"])
 
     pl_receive["Privacy Ledger<br>(Receive Tx)"]
 
@@ -87,8 +89,8 @@ flowchart LR
     pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send -.-> getblock -.-> derivekey & calcR
-    pl_receive -.-> getblock -.-> derivekey & calcR
+    pl_send -.-> getblock -.-> derivesendkey & calcR_send
+    pl_receive -.-> getblock -.-> derivereceivekey & calcR_receive
 ```
 
 ## Cryptographic Primitives
