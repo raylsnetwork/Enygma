@@ -27,14 +27,14 @@ flowchart LR
     pl_receive["Privacy Ledger<br>(Receive Tx)"]
 
 
-
     i_setup -.-> deploy -.-> mint
 
     pl -.-> pl_setup & pl_send
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send -.-> getblock -.-> derivekey
-    pl_receive -.-> getblock -.-> derivekey
+    pl_send & pl_receive -.-> getblock -.-> derivekey
+
+    
 ```
 
 ## Notation
