@@ -5,9 +5,9 @@
 * Balances are represented as Pedersen commitments:
   * $$Comm(v, r) = vG + rH$$
 
-* Each privacy ledger has two keypairs
-  * $$(sk_{A}^{view}, pk_{A}^{view})$$, this is the keypair for viewing the transactions on-chain. 
-  * $$(sk_{A}^{spend}, pk_{A}^{spend})$$, this is the keypair used for the spending of funds
+* Each privacy ledger has two keypairs. One for viewing transactions, other for spending. Both are quantum-secure: 
+  * $$(sk_{A}^{view}, pk_{A}^{view})$$
+  * $$(sk_{A}^{spend}, pk_{A}^{spend})$$
 
 * Shared secret s is randomly generated and shared using a post-quantum key agreement (i.e., ML-KEM):
   * $$Encapsulate(pk', s')$$
