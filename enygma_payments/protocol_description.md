@@ -9,9 +9,13 @@ config:
   look: handDrawn
 ---
 flowchart LR
+    issuer["Issuer"]
     i_setup["Issuer<br>(Setup)"]
     deploy(["Deploy Enygma<br>Contract"])
-    mint(["Mint<br>Funds"])
+
+    i_mint(["Mint<br>Funds"])
+    mint_shield(["Mint<br>(Shielded)Funds"])
+    mint_transparent(["Mint<br>(Transparent) Funds"])
 
     pl["Privacy Ledger"]
     pl_setup["Privacy Ledger<br>(Setup)"]
@@ -27,14 +31,14 @@ flowchart LR
     pl_receive["Privacy Ledger<br>(Receive Tx)"]
 
 
-    i_setup -.-> deploy -.-> mint
+    issuer -.-> i_setup & i_mint
+    i_setup -.-> deploy
+    i_mint -.-> mint_shield & mint_transparent
 
     pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
     pl_send & pl_receive -.-> getblock -.-> derivekey
-
-    
 ```
 
 ## Notation
