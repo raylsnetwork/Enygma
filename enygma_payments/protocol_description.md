@@ -22,6 +22,7 @@ $$Comm(0, 0) = 0G + 0H$$
 One of the parties downloads the counterparty's ML-KEM public-key $$pk'$$, generates a pre-secret $$s'$$ and encapsulates it, thus obtaining $$Encapsulate(pk', s')$$. Sender also obtains $$id = Hash(s')$$ and publishes both $$< id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
 
 ### View Key Sharing
+In the event there is an auditor, each party encrypts their view secret key (i.e., $$sk_{A}^{view}$$)
 
 ## Issuing Tokens
 There are two ways of issuing tokens. The issuer can mint tokens in a transparent manner and everyone in the system can see the underlying amounts. Alternatively, the issuer can mint tokens that are shielded from the start. We describe both approaches below. 
