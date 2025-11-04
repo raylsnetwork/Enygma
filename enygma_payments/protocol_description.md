@@ -5,13 +5,15 @@
 * Balances are represented as Pedersen commitments:
   * $$Comm(v, r) = vG + rH$$
 
-* Random factors r are derived from hashing a shared secret and a block number:
-  * $$r = Hash(s, n_{block})$$
+* Each privacy ledger has two keypairs
+  * View keypair:  $$(sk_{A}^{view}, pk_{A}^{view})$$
+  * Spend keypair: $$(sk_{A}^{spend}, pk_{A}^{spend})$$
 
 * Shared secret s is randomly generated and shared using a post-quantum key agreement (i.e., ML-KEM):
   * $$Encapsulate(pk', s')$$
 
-* TBD
+* Random factors r are derived from hashing a shared secret and a block number:
+  * $$r = Hash(s, n_{block})$$ 
 
 ## System Setup
 All participants start with a balance with $$v=0$$ and $$r=0$$. Therefore, the Issuer creates a contract where the initial balance for all the participants is:
