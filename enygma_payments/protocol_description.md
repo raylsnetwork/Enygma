@@ -6,8 +6,8 @@
   * $$Comm(v, r) = vG + rH$$
 
 * Each privacy ledger has two keypairs
-  * View keypair:  $$(sk_{A}^{view}, pk_{A}^{view})$$
-  * Spend keypair: $$(sk_{A}^{spend}, pk_{A}^{spend})$$
+  * $$(sk_{A}^{view}, pk_{A}^{view})$$, this is the keypair for viewing the transactions on-chain. 
+  * $$(sk_{A}^{spend}, pk_{A}^{spend})$$, this is the keypair used for the spending of funds
 
 * Shared secret s is randomly generated and shared using a post-quantum key agreement (i.e., ML-KEM):
   * $$Encapsulate(pk', s')$$
