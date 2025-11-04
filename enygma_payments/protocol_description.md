@@ -1,5 +1,6 @@
 # Protocol Description
 
+## Protocol Flows
 ```mermaid
 ---
 config:
