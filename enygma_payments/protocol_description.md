@@ -29,7 +29,7 @@ flowchart LR
 
     i_setup -.-> deploy -.-> mint
 
-    pl -.-> pl_setup & pl_send
+    pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
     pl_send & pl_receive -.-> getblock -.-> derivekey
