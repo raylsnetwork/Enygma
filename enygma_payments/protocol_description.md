@@ -24,7 +24,7 @@ $$Comm(0, 0) = 0G + 0H$$
 * Privacy Ledger A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
 
 * Privacy Ledger A generates a simple hash-based keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$.
-  *  $$(sk_{A}^{view} \longleftarrow $$
+  *  $$sk_{A}^{view} \longleftarrow \{0, 1\}^256$$
   *  $$pk_{A}^{view} = Hash((sk_{A}^{view}$$
 
 ### Key Agreement
