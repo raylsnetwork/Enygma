@@ -8,9 +8,10 @@ config:
   look: handDrawn
 ---
 flowchart LR
-    keygen(["Key Generation"])
-    register(["Key Registration"])
-    kem(["Key Agreement"])
+    keygen(["Key<br>Generation"])
+    register(["Key<br>Registration"])
+    kem(["Key<br>Agreement"])
+    publish(["Publish<br>Key Fingerprints"])
 
     keygen -.-> register -.-> kem
 ```
