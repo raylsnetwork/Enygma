@@ -13,7 +13,7 @@ flowchart LR
     i_setup["Issuer<br>(Setup)"]
     deploy(["Deploy Enygma<br>Contract"])
 
-    i_mint(["Mint<br>Funds"])
+    i_mint(["Issuer<br>(Mint)"])
     mint_shield(["Mint<br>(Shielded)Funds"])
     mint_transparent(["Mint<br>(Transparent) Funds"])
 
