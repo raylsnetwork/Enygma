@@ -87,7 +87,8 @@ flowchart LR
     pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send & pl_receive -.-> getblock -.-> derivekey & calcR
+    pl_send -.-> getblock -.-> derivekey & calcR
+    pl_receive -.-> getblock -.-> derivekey & calcR
 ```
 
 ## Cryptographic Primitives
