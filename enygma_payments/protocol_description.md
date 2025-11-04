@@ -58,5 +58,5 @@ If there is an auditor that needs the complete view of the transactions in the n
 
 Each privacy ledger publishes:
 
-$$ ctxt = Encapsulate(pk_{auditor}, sk^{view})$$
+$$ ctxt = Encapsulate(pk^{auditor}, sk^{view})$$
 
