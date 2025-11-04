@@ -1,5 +1,20 @@
 # Protocol Description
 
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+    keygen(["Key Generation"])
+    register(["Key Registration"])
+    kem(["Key Agreement"])
+
+    keygen -.-> register -.-> kem
+```
+
 ## Notation
 
 * Balances are represented as Pedersen commitments:
