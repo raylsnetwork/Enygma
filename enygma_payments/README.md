@@ -61,7 +61,7 @@ flowchart LR
     mint_ttx(["Mint Comm = vG"])
     mint_shield(["Mint<br>(Shielded)Funds"])
     calculate_r(["Calculate<br>Random Factor"])
-    mint_stx(["Mint C = vG+rH"])
+    mint_stx(["Mint Comm = vG+rH"])
 
 
     %% Flow Connections
