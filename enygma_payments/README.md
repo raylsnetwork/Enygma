@@ -43,6 +43,40 @@ flowchart LR
 First, each privacy ledger registers two keypairs (view and spend) on the underlying blockchain. This blockchain effectively acts as a Public-Key Infrastructure (PKI) containing a registry of all public-keys of the registered privacy ledgers. Second, each privacy ledger perform a post-quantum key agreement (i.e., ML-KEM) and establish individual shared secrets with all the other privacy ledgers. At this point, privacy ledgers can now start transacting privately with each other. The transaction protocol includes a hash-based private messaging tag component that allow recipients to detect privately whether or not a transaction is for them. Therefore, we also introduce a protocol to fetch (and decrypt) transactions.
 
 ## Protocol Flows
+
+### Issuer
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    %% Entities
+    issuer["Issuer"]
+
+    %% I (Setup)
+    i_setup["Issuer<br>(Setup)"]
+    deploy(["Deploy Enygma<br>Contract"])
+
+    %% I (Mint)
+    i_mint(["Issuer<br>(Mint)"])
+    mint_shield(["Mint<br>(Shielded)Funds"])
+    mint_transparent(["Mint<br>(Transparent) Funds"])
+
+    %% Flow Connections
+    issuer -.-> i_setup & i_mint
+    i_setup -.-> deploy
+    i_mint -.-> mint_shield & mint_transparent
+
+```
+
+### Privacy Ledger
+
+### Blockchain
 ```mermaid
 ---
 config:
