@@ -13,28 +13,21 @@ flowchart LR
     UA(["User(s)"])
     UB(["User(s)"])
     UC(["User(s)"])
-    UD(["User(s)"])
-    UE(["User(s)"])
-    
 
     PLA(["Privacy Ledger"])
     PLB(["Privacy Ledger"])
     PLC(["Privacy Ledger"])
-    PLD(["Privacy Ledger"])
-    PLE(["Privacy Ledger"])
 
     B(["Blockchain"])
     I(["Issuer"])
     A(["Auditor"])
     
 
-    PLA & PLB & PLC & PLD & PLE <-.-> B <-.-> I & A
+    PLA & PLB & PLC <-.-> B <-.-> I & A
 
     UA <-.-> PLA
     UB <-.-> PLB
     UC <-.-> PLC
-    UD <-.-> PLD
-    UE <-.-> PLE
 
 ```
 
@@ -64,13 +57,18 @@ flowchart LR
 
     %% I (Mint)
     i_mint(["Issuer<br>(Mint)"])
-    mint_shield(["Mint<br>(Shielded)Funds"])
     mint_transparent(["Mint<br>(Transparent) Funds"])
+    mint_ttx(["Mint Comm = vG"])
+    mint_shield(["Mint<br>(Shielded)Funds"])
+    calculate_r(["Calculate<br>Random Factor"])
+    mint_stx(["Mint C = vG+rH"])
+
 
     %% Flow Connections
     issuer -.-> i_setup & i_mint
     i_setup -.-> deploy
-    i_mint -.-> mint_shield & mint_transparent
+    i_mint -.-> mint_transparent -.-> mint_ttx
+    i_mint -.-> mint_shield -.-> calculate_r -.-> mint_stx
 
 ```
 
