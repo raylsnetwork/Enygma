@@ -1,4 +1,4 @@
-# ZkToken run script
+# Enygma run script
 
 ### How to run
 
