@@ -127,59 +127,17 @@ config:
 flowchart LR
 
     %% Entities
-    issuer["Issuer"]
-    pl["Privacy Ledger"]
     b["Blockchain"]
-
-    %% I (Setup)
-    i_setup["Issuer<br>(Setup)"]
-    deploy(["Deploy Enygma<br>Contract"])
-
-    %% I (Mint)
-    i_mint(["Issuer<br>(Mint)"])
-    mint_shield(["Mint<br>(Shielded)Funds"])
-    mint_transparent(["Mint<br>(Transparent) Funds"])
-
-
-    %% PL (Setup)
-    pl_setup["Privacy Ledger<br>(Setup)"]
-    keygen(["Key<br>Generation"])
-    register(["Key<br>Registration"])
-    kem(["Key<br>Agreement"])
-    publish(["Publish<br>Key Fingerprints"])
-
-    %% PL (Send)
-    pl_send["Privacy Ledger<br>(Send Tx)"]
-    getblock_send(["Get Latest<br>Block Number"])
-    derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR_send(["Calculate<br>Random Factor"])
-    tx_commits(["Generate<br>Pedersen Commitments"])
-    nullifier(["Calculate<br>Nullifier"])
-    zk_proof(["Create<br>ZK Proof"])
-
-    %% PL (Receive)
-    pl_receive["Privacy Ledger<br>(Receive Tx)"]
-    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR_receive(["Calculate<br>Random Factor"])
-    getblock_receive(["Get Latest<br>Block"])
 
     %% Blockchain (Verifier)
     verify_tx(["Blockchain<br>(Verify Tx)"])
-    check_zk(["Check if nullifier<br>exists"])
+    check_nullifier(["Check if nullifier<br>exists"])
+    check_commit(["Check if commitments add up to 0"])
+    check_zk(["Check ZK Proof"])
+    tally(["Approve Tx"])
 
 
-    %% Flow Connections
-    issuer -.-> i_setup & i_mint
-    i_setup -.-> deploy
-    i_mint -.-> mint_shield & mint_transparent
-
-    pl -.-> pl_setup & pl_send & pl_receive
-
-    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof
-    pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
-
-    b -.-> verify_tx -.-> check_zk
+    b -.-> verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally
 ```
 
 ## Cryptographic Primitives
