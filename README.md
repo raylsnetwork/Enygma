@@ -31,10 +31,12 @@ pl_b["Privacy<br>Ledger B "]
 b["User B"]
 
 auditor["Auditor<br>(Optional)"]
+issuer["Issuer"]
 
-a <-->pl_a <--> sh <--> pl_b <--> b
+a <-->pl_a <--> sh
 auditor <-.-> sh
-
+sh <--> pl_b <--> b
+sh <-.-> issuer
 ```
 
 ### Adversarial Model
