@@ -20,6 +20,8 @@ flowchart LR
     PLA(["Privacy Ledger"])
     PLB(["Privacy Ledger"])
     PLC(["Privacy Ledger"])
+    PLD(["Privacy Ledger"])
+    PLE(["Privacy Ledger"])
 
     B(["Blockchain"])
     I(["Issuer"])
