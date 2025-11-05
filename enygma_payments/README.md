@@ -23,19 +23,16 @@ flowchart LR
     PLC(["Privacy Ledger"])
 
     B(["Blockchain"])
-    PLE(["Privacy Ledger"])
-    PLF(["Privacy Ledger"])
-    PLG(["Privacy Ledger"])
+    I(["Issuer"])
+    A(["Auditor"])
+    
 
-    PLA & PLB & PLC <-.-> B <-.-> PLE & PLF & PLG
+    PLA & PLB & PLC <-.-> B <-.-> I & A
 
     UA <-.-> PLA
     UB <-.-> PLB
     UC <-.-> PLC
 
-    PLE <-.-> UE
-    PLF <-.-> UF
-    PLG <-.-> UG
 ```
 
 ## Sub-Protocols
