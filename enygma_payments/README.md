@@ -13,10 +13,9 @@ flowchart LR
     UA(["User(s)"])
     UB(["User(s)"])
     UC(["User(s)"])
-
+    UD(["User(s)"])
     UE(["User(s)"])
-    UF(["User(s)"])
-    UG(["User(s)"])
+    
 
     PLA(["Privacy Ledger"])
     PLB(["Privacy Ledger"])
@@ -27,11 +26,13 @@ flowchart LR
     A(["Auditor"])
     
 
-    PLA & PLB & PLC <-.-> B <-.-> I & A
+    PLA & PLB & PLC & PLD & PLE <-.-> B <-.-> I & A
 
     UA <-.-> PLA
     UB <-.-> PLB
     UC <-.-> PLC
+    UD <-.-> PLD
+    UE <-.-> PLE
 
 ```
 
