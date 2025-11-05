@@ -13,35 +13,29 @@ flowchart LR
     UA(["User(s)"])
     UB(["User(s)"])
     UC(["User(s)"])
-    UD(["User(s)"])
 
     UE(["User(s)"])
     UF(["User(s)"])
     UG(["User(s)"])
-    UH(["User(s)"])
 
     PLA(["Privacy Ledger"])
     PLB(["Privacy Ledger"])
     PLC(["Privacy Ledger"])
-    PLD(["Privacy Ledger"])
 
     B(["Blockchain"])
     PLE(["Privacy Ledger"])
     PLF(["Privacy Ledger"])
     PLG(["Privacy Ledger"])
-    PLH(["Privacy Ledger"])
 
-    PLA & PLB & PLC & PLD <-.-> B <-.-> PLE & PLF & PLG & PLH
+    PLA & PLB & PLC <-.-> B <-.-> PLE & PLF & PLG
 
     UA <-.-> PLA
     UB <-.-> PLB
     UC <-.-> PLC
-    UD <-.-> PLD
 
     PLE <-.-> UE
     PLF <-.-> UF
     PLG <-.-> UG
-    PLH <-.-> UH
 ```
 
 ## Sub-Protocols
