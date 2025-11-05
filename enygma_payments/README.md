@@ -100,6 +100,7 @@ flowchart LR
     tx_commits(["Generate<br>Pedersen Commitments"])
     nullifier(["Calculate<br>Nullifier"])
     zk_proof(["Create<br>ZK Proof"])
+    send_tx(["Send commits, nullifier, and zk proof"])
 
     %% PL (Receive)
     pl_receive["Privacy Ledger<br>(Receive Tx)"]
