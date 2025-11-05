@@ -97,10 +97,11 @@ flowchart LR
     getblock_send(["Get Latest<br>Block Number"])
     derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
     calcR_send(["Calculate<br>Random Factor"])
-    tx_commits(["Generate<br>Pedersen Commitments"])
+    tx_commits(["Generate 'k'<br>Pedersen Commitments"])
     nullifier(["Calculate<br>Nullifier"])
     zk_proof(["Create<br>ZK Proof"])
-    send_tx(["Send commits, nullifier, and zk proof"])
+    encrypt_ad(["Encrypt Additional Data<br>(w/ ephemeral key)"])
+    send_tx(["Send commits, nullifier, zk proof, and ciphertext"])
 
     %% PL (Receive)
     pl_receive["Privacy Ledger<br>(Receive Tx)"]
@@ -111,7 +112,7 @@ flowchart LR
     pl -.-> pl_setup & pl_send & pl_receive
 
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
-    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof
+    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof -.-> encrypt_ad -.-> send_tx
     pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
 
 ```
