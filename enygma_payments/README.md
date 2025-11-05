@@ -171,6 +171,8 @@ flowchart TD
     pedersen --> Babyjubjub("Elliptic Curve Crypto<br>(Baby Jubjub)")
 ```
 
+Note: In the future we want to update the ZK module to use a quantum-secure ZK scheme. This update will make the entire system quantum-secure.
+
 ## Implementation Details
 * **Client**: Golang
 * **Circuits**: Gnark
