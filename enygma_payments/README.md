@@ -96,6 +96,7 @@ flowchart LR
     getblock_receive(["Get Latest<br>Block"])
 
     %% Blockchain (Verifier)
+    verify_tx(["Blockchain<br>(Verify Tx)"])
     check_zk(["Check if nullifier<br>exists"])
 
 
@@ -110,7 +111,7 @@ flowchart LR
     pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof
     pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
 
-    b -.-> check_zk
+    b -.-> verify_tx -.-> check_zk
 ```
 
 ## Cryptographic Primitives
