@@ -96,7 +96,7 @@ flowchart LR
     getblock_receive(["Get Latest<br>Block"])
 
     %% Blockchain (Verifier)
-    check_zk(["Check if nullifier<br>exists])
+    check_zk(["Check if nullifier<br>exists"])
 
 
     %% Flow Connections
