@@ -75,6 +75,48 @@ flowchart LR
 ```
 
 ### Privacy Ledger
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    %% Entities
+    pl["Privacy Ledger"]
+
+    %% PL (Setup)
+    pl_setup["Privacy Ledger<br>(Setup)"]
+    keygen(["Key<br>Generation"])
+    register(["Key<br>Registration"])
+    kem(["Key<br>Agreement"])
+    publish(["Publish<br>Key Fingerprints"])
+
+    %% PL (Send)
+    pl_send["Privacy Ledger<br>(Send Tx)"]
+    getblock_send(["Get Latest<br>Block Number"])
+    derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
+    calcR_send(["Calculate<br>Random Factor"])
+    tx_commits(["Generate<br>Pedersen Commitments"])
+    nullifier(["Calculate<br>Nullifier"])
+    zk_proof(["Create<br>ZK Proof"])
+
+    %% PL (Receive)
+    pl_receive["Privacy Ledger<br>(Receive Tx)"]
+    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
+    calcR_receive(["Calculate<br>Random Factor"])
+    getblock_receive(["Get Latest<br>Block"])
+
+    pl -.-> pl_setup & pl_send & pl_receive
+
+    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
+    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof
+    pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
+
+```
+
 
 ### Blockchain
 ```mermaid
