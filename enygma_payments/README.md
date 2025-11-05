@@ -70,8 +70,8 @@ flowchart LR
 
 ### Privacy Ledger
 
+#### Privacy Ledger - Setup
 First, each privacy ledger generates and registers two keypairs (view and spend) on the underlying blockchain. This blockchain effectively acts as a Public-Key Infrastructure (PKI) containing a registry of all public-keys of the registered privacy ledgers. Subsequently, each privacy ledger performs a post-quantum key agreement (i.e., ML-KEM) and establishes individual shared secrets with all the other privacy ledgers. At this point, privacy ledgers can start transacting privately with each other. The transaction protocol includes a hash-based private messaging tag component that allow recipients to detect privately whether or not a transaction is for them. Therefore, we also introduce a protocol to fetch (and decrypt) transactions.
-
 
 ```mermaid
 ---
@@ -82,15 +82,26 @@ config:
 ---
 flowchart LR
 
-    %% Entities
-    pl["Privacy Ledger"]
-
     %% PL (Setup)
     pl_setup["Privacy Ledger<br>(Setup)"]
     keygen(["Key<br>Generation"])
     register(["Key<br>Registration"])
     kem(["Key<br>Agreement"])
     publish(["Publish<br>Key Fingerprints"])
+
+    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
+```
+
+#### Privacy Ledger - Sending a TX
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
 
     %% PL (Send)
     pl_send["Privacy Ledger<br>(Send Tx)"]
@@ -103,22 +114,11 @@ flowchart LR
     encrypt_ad(["Encrypt Additional Data<br>(w/ ephemeral key)"])
     send_tx(["Send commits, nullifier, zk proof, and ciphertext"])
 
-    %% PL (Receive)
-    pl_receive["Privacy Ledger<br>(Receive Tx)"]
-    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR_receive(["Calculate<br>Random Factor"])
-    getblock_receive(["Get Latest<br>Block"])
-
-    pl -.-> pl_setup & pl_send & pl_receive
-
-    pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
     pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof -.-> encrypt_ad -.-> send_tx
-    pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
 
 ```
 
-
-### Blockchain
+#### Privacy Ledger - Receiving a TX
 ```mermaid
 ---
 config:
@@ -128,18 +128,40 @@ config:
 ---
 flowchart LR
 
-    %% Entities
-    b["Blockchain"]
+    %% PL (Receive)
+    pl_receive["Privacy Ledger<br>(Receive Tx)"]
+    derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
+    calcR_receive(["Calculate<br>Random Factor"])
+    getblock_receive(["Get Latest<br>Block"])
+
+    pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
+
+```
+
+### Blockchain
+We now describe the flows associated with the underlying blockchain. In this case, we have just one: the verification of enygma transactions. 
+
+#### Blockchain - Verify TX
+The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. The encrypted 
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
 
     %% Blockchain (Verifier)
-    verify_tx(["Blockchain<br>(Verify Tx)"])
+    verify_tx["Blockchain<br>(Verify Tx)"]
     check_nullifier(["Check if nullifier<br>exists"])
     check_commit(["Check if commitments add up to 0"])
     check_zk(["Check ZK Proof"])
     tally(["Approve Tx"])
+    store(["Store encrypted payload"])
 
-
-    b -.-> verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally
+    verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally -.-> store
 ```
 
 ## Cryptographic Primitives
