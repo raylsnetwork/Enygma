@@ -11,5 +11,4 @@ go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
 
 ```javascript
 go run . 5 100 0 35 1000 0 4129789127591820896172587
-
 ```
