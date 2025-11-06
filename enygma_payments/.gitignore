@@ -43,7 +43,6 @@ circom/Enygma_js/
 contracts/enygma/node_modules/
 lib64
 pyvenv.cfg
-run_scripts/zktoken/
 share/
 vyper_git_commithash.txt
 circom/compilation.ZkDvp/*

@@ -11,7 +11,7 @@ import (
 	"log"
 	"math/big"
 
-	zktoken "zk_circom/contracts"
+	enygma "enygma/contracts"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -81,7 +81,7 @@ func registerBank() {
 	auth.GasLimit = uint64(1000000000)
 	auth.GasPrice = gasPrice
 
-	instance, err := zktoken.NewZktoken(contractAddr, client)
+	instance, err := enygma.NewEnygma(contractAddr, client)
 	if err != nil {
 		log.Fatal(err)
 	}
