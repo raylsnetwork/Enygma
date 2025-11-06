@@ -27,6 +27,8 @@ go run cmd/server/main.go
 3. Transaction
 
 ```javascript
-    go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
+cd go_client
+
+go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
 
 ```
