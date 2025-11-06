@@ -40,8 +40,8 @@ func Load() *Config {
         WithdrawPk6:    "./keys/zkdvp/WithdrawPk6.key",
         WithdrawVk6:    "./keys/zkdvp/WithdrawVk6.key",
 
-        DepositPk:     "./keys/DepositPk.key",
-        DepositVk:     "./keys/DepositKVk.key",
+        DepositPk:     "./keys/zkdvp/DepositPk.key",
+        DepositVk:     "./keys/zkdvp/DepositKVk.key",
     }
 }
 
