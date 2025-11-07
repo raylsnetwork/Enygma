@@ -6,7 +6,7 @@
 * Balances are represented as Pedersen commitments:
   * $$Comm(v, r) = vG + rH$$
 
-* Each privacy ledger has two keypairs. One for viewing transactions (ML-KEM), other for spending (hash-based). Both are quantum-secure: 
+* Each privacy ledger has two keypairs. One for viewing transactions (i.e., ML-KEM), other for spending (i.e., hash-based). Both are quantum-secure: 
   * $$(sk_{A}^{view}, pk_{A}^{view})$$
   * $$(sk_{A}^{spend}, pk_{A}^{spend})$$
 
