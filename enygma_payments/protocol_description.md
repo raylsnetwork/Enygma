@@ -69,4 +69,12 @@ The symmetric key $$k$$ for block $$n$$ (i.e, $$k_{n}$$) is obtained the followi
 
 $$k_{n} = HKDF(s, n_{block})$$
 
+#### Universal Auditing
+Besides the auditor, we highlight that any entity in the system can always monitor the following parameters just from looking at the underlying blockchain: 
+
+* Entity can check the ZK proof and attest that the set of commitments are well-formed and add up to 0.
+* Entity can check how many mints/burns exist in the network.
+
+Additionally, depending on the choice of random factors and the issuance process, it may be possible for any entity to check the total supply of the asset at all times. 
+
 
