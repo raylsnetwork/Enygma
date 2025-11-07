@@ -13,6 +13,9 @@
 * Shared secret s is randomly generated and shared using a post-quantum key agreement (i.e., ML-KEM):
   * $$Encapsulate(pk', s')$$
 
+* Block number:
+  * $$n_{block}$$
+
 * Random factors r are derived from hashing a shared secret and a block number:
   * $$r = Hash(s, n_{block})$$ 
 
