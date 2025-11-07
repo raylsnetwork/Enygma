@@ -16,7 +16,7 @@
 * Block number:
   * $$n_{block}$$
 
-* Random factors r are derived from hashing a shared secret and a block number:
+* Random factor $$r$$ is derived from hashing a shared secret and a block number:
   * $$r = Hash(s, n_{block})$$ 
 
 ## System Setup
