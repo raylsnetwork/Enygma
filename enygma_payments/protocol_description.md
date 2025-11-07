@@ -33,7 +33,7 @@ $$Comm(0, 0) = 0G + 0H$$
   *  $$sk_{A}^{view} \longleftarrow \\\{{0, 1\\\}}^{256}$$
   *  $$pk_{A}^{view} = Hash(sk_{A}^{view})$$
  
-The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used 
+The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
 ## Key Agreement
 Party downloads the counterparty's ML-KEM public-key $$pk_{i}'$$, generates a pre-secret $$s'$$ and encapsulates it using the downloaded public-key, thus obtaining $$Encapsulate(pk_{i}', s')$$. Sender calculates $$id = Hash(s')$$ and publishes both $$< i, id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
