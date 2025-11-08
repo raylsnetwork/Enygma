@@ -6,7 +6,7 @@
 * Balances are represented as Pedersen commitments:
   * $$Comm(v, r) = vG + rH$$
 
-* Each privacy ledger has two keypairs. One for viewing transactions (i.e., ML-KEM), other for spending (i.e., hash-based). Both are quantum-secure: 
+* Each privacy node has two keypairs. One for viewing transactions (i.e., ML-KEM), other for spending (i.e., hash-based). Both are quantum-secure: 
   * $$(sk_{A}^{view}, pk_{A}^{view})$$
   * $$(sk_{A}^{spend}, pk_{A}^{spend})$$
 
@@ -27,9 +27,9 @@ Therefore, the Issuer creates a contract where the initial balance for all the p
 $$Comm(0, 0) = 0G + 0H$$
 
 ## Key Generation
-* Privacy Ledger A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
+* privacy node A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
 
-* Privacy Ledger A generates a simple hash-based keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$.
+* privacy node A generates a simple hash-based keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$.
   *  $$sk_{A}^{view} \longleftarrow \\\{{0, 1\\\}}^{256}$$
   *  $$pk_{A}^{view} = Hash(sk_{A}^{view})$$
  
@@ -61,9 +61,9 @@ This ensures only the issuer and the recipient know how much money was minted. W
 There are multiple types of auditing supported by the protocol. Concretely, the auditor can have a 'universal view' and have the ability of seeing all the transactions that take place in the network. 
 
 #### View Key Sharing
-If there is an auditor that needs the complete view of the transactions in the network, then each privacy ledger shares their view key pair with the auditor upon the key registration step. To do so, each privacy ledger encrypts their view secret key (i.e., $$sk_{A}^{view}$$) and publishes it on the blockchain for the auditor to fetch. 
+If there is an auditor that needs the complete view of the transactions in the network, then each privacy node shares their view key pair with the auditor upon the key registration step. To do so, each privacy node encrypts their view secret key (i.e., $$sk_{A}^{view}$$) and publishes it on the blockchain for the auditor to fetch. 
 
-For example, privacy ledger A publishes:
+For example, privacy node A publishes:
 
 $$ ctxt = Encapsulate(pk_{audit}^{view}, sk_{A}^{view})$$
 
