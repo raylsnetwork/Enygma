@@ -47,15 +47,11 @@ config:
 ---
 flowchart LR
 
-    %% Entities
-    issuer["Issuer"]
-
     %% I (Setup)
     i_setup["Issuer<br>(Setup)"]
     deploy(["Deploy Enygma<br>Contract"])
 
     %% Flow Connections
-    issuer -.-> i_setup
     i_setup -.-> deploy
 
 ```
@@ -71,9 +67,6 @@ config:
 ---
 flowchart LR
 
-    %% Entities
-    issuer["Issuer"]
-
     %% I (Mint)
     i_mint(["Issuer<br>(Mint)"])
     mint_transparent(["Mint<br>(Transparent) Funds"])
@@ -84,7 +77,6 @@ flowchart LR
 
 
     %% Flow Connections
-    issuer -.->  i_mint
     i_mint -.-> mint_transparent -.-> mint_ttx
     i_mint -.-> mint_shield -.-> calculate_r -.-> mint_stx
 
