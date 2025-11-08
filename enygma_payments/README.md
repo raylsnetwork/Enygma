@@ -1,6 +1,7 @@
 # Enygma Payments
 
 ## System Architecture
+Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which will effectively act as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. 
 
 ```mermaid
 ---
