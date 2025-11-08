@@ -14,9 +14,9 @@ flowchart LR
     UB(["User(s)"])
     UC(["User(s)"])
 
-    PLA(["Privacy Ledger"])
-    PLB(["Privacy Ledger"])
-    PLC(["Privacy Ledger"])
+    PLA(["Privacy Node"])
+    PLB(["Privacy Node"])
+    PLC(["Privacy Node"])
 
     B(["Blockchain"])
     I(["Issuer"])
@@ -68,10 +68,10 @@ flowchart LR
 
 ```
 
-### Privacy Ledger
+### Privacy Node
 
-#### Privacy Ledger - Setup
-First, each privacy ledger generates and registers two keypairs (view and spend) on the underlying blockchain. This blockchain effectively acts as a Public-Key Infrastructure (PKI) containing a registry of all public-keys of the registered privacy ledgers. Subsequently, each privacy ledger performs a post-quantum key agreement (i.e., ML-KEM) and establishes individual shared secrets with all the other privacy ledgers. At this point, privacy ledgers can start transacting privately with each other. The transaction protocol includes a hash-based private messaging tag component that allow recipients to detect privately whether or not a transaction is for them. Therefore, we also introduce a protocol to fetch (and decrypt) transactions.
+#### Privacy Node - Setup
+First, each Privacy Node generates and registers two keypairs (view and spend) on the underlying blockchain. This blockchain effectively acts as a Public-Key Infrastructure (PKI) containing a registry of all public-keys of the registered Privacy Nodes. Subsequently, each Privacy Node performs a post-quantum key agreement (i.e., ML-KEM) and establishes individual shared secrets with all the other Privacy Nodes. At this point, Privacy Nodes can start transacting privately with each other. The transaction protocol includes a hash-based private messaging tag component that allow recipients to detect privately whether or not a transaction is for them. Therefore, we also introduce a protocol to fetch (and decrypt) transactions.
 
 ```mermaid
 ---
@@ -83,7 +83,7 @@ config:
 flowchart LR
 
     %% PL (Setup)
-    pl_setup["Privacy Ledger<br>(Setup)"]
+    pl_setup["Privacy Node<br>(Setup)"]
     keygen(["Key<br>Generation"])
     register(["Key<br>Registration"])
     kem(["Key<br>Agreement"])
@@ -92,7 +92,7 @@ flowchart LR
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
 ```
 
-#### Privacy Ledger - Sending a TX
+#### Privacy Node - Sending a TX
 
 ```mermaid
 ---
@@ -104,7 +104,7 @@ config:
 flowchart LR
 
     %% PL (Send)
-    pl_send["Privacy Ledger<br>(Send Tx)"]
+    pl_send["Privacy Node<br>(Send Tx)"]
     getblock_send(["Get Latest<br>Block Number"])
     derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
     calcR_send(["Calculate<br>Random Factor"])
@@ -118,7 +118,7 @@ flowchart LR
 
 ```
 
-#### Privacy Ledger - Receiving a TX
+#### Privacy Node - Receiving a TX
 ```mermaid
 ---
 config:
@@ -129,7 +129,7 @@ config:
 flowchart LR
 
     %% PL (Receive)
-    pl_receive["Privacy Ledger<br>(Receive Tx)"]
+    pl_receive["Privacy Node<br>(Receive Tx)"]
     derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
     calcR_receive(["Calculate<br>Random Factor"])
     getblock_receive(["Get Latest<br>Block"])
