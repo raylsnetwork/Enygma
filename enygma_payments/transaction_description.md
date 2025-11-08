@@ -2,7 +2,7 @@
 
 #### Setup Stage
 
-1. Deploy Enygma.sol and Verifieries Smart Contract on chain
+1. Deploy Enygma.sol and Verifier(s) Smart Contract on chain
 2. Deploy Gnark Server
 3. Run Go Client Transaction command.
 
