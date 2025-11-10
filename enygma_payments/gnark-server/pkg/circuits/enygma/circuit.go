@@ -44,7 +44,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 	api.AssertIsEqual(sumIsInK,1)
 
-	PDiff:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
+	r:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
 
 	selected_v :=frontend.Variable(0)
 	//Check if  getNegative(V) == TxValue[Sender_ID]
@@ -56,7 +56,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	}
 	selectedVBits := api.ToBinary(selected_v, bitWidth)
 	vBits := api.ToBinary(circuit.V, bitWidth)
-	pDiffBits := api.ToBinary(PDiff, bitWidth)
+	pDiffBits := api.ToBinary(r, bitWidth)
 
 	selectedVConstrained := api.FromBinary(selectedVBits...)
 	vConstrained := api.FromBinary(vBits...)
@@ -127,8 +127,8 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 	for i := 0; i < nCommitments; i++ {
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))
-		r := api.Sub(PDiff,circuit.TxRandom[i])
-		random :=  api.Add( api.Mul(api.Sub(1,isEqual),r), api.Mul(isEqual, circuit.TxRandom[i]))
+		rNegate := api.Sub(r,circuit.TxRandom[i])
+		random :=  api.Add( api.Mul(api.Sub(1,isEqual),rNegate), api.Mul(isEqual, circuit.TxRandom[i]))
 
 		sumX =  api.Add(sumX, circuit.TxValue[i])
 		sumY =  api.Add(sumY, random)
@@ -181,8 +181,8 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))// If sender Id isEqual =1
 		
-		r := api.Sub(PDiff,circuit.TxRandom[i])
-		random :=  api.Add( api.Mul(api.Sub(1,isEqual),r), api.Mul(isEqual, circuit.TxRandom[i]))
+		rNegate := api.Sub(r,circuit.TxRandom[i])
+		random :=  api.Add( api.Mul(api.Sub(1,isEqual),rNegate), api.Mul(isEqual, circuit.TxRandom[i]))
 		
 		computedPedersenCommitment := utils.PedersenCommitment(api, circuit.TxValue[i], random)     
 	
@@ -200,17 +200,17 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 		RandomFactor := pos.Poseidon(api, []frontend.Variable{circuit.Secrets[i], circuit.BlockNumber})
 		
 		randomInter,_ := api.NewHint(utils.ModHint, 2,RandomFactor)
-		r := randomInter[0] // remaninder
+		remainder := randomInter[0] // remaninder
 		q := randomInter[1] // quotient
 
-		api.AssertIsEqual(api.Add(api.Mul(q, PDiff),r,),RandomFactor)
+		api.AssertIsEqual(api.Add(api.Mul(q, r),remainder,),RandomFactor)
 
-		isValid := cmp.IsLess(api, r, PDiff)
+		isValid := cmp.IsLess(api, remainder, r)
 		api.AssertIsEqual(isValid, 1)
 		
-		calculatedRandomFactor[i] = r
+		calculatedRandomFactor[i] = remainder
 		
-		sumFactor = api.Add(api.Mul(api.Sub(1,isEqual), r),sumFactor)
+		sumFactor = api.Add(api.Mul(api.Sub(1,isEqual), remainder),sumFactor)
 		sumInter,_ := api.NewHint(utils.ModHint, 2,sumFactor)
 
 		
@@ -218,8 +218,8 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 		sumR := sumInter[0] //remainder
 
 		//Enforce api New Hint
-		api.AssertIsEqual(api.Add(api.Mul(sumQ, PDiff),sumR,),sumFactor)
-		isSumValid := cmp.IsLess(api, sumR, PDiff)
+		api.AssertIsEqual(api.Add(api.Mul(sumQ, r),sumR,),sumFactor)
+		isSumValid := cmp.IsLess(api, sumR, r)
 		api.AssertIsEqual(isSumValid, 1)
 		sumFactor = sumR
 	}
