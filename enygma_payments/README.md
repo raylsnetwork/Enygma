@@ -45,7 +45,7 @@ config:
 ---
 flowchart LR
 
-    zero["0000"]
+    zero["00...00"]
     hash(["Hash-To-Curve(x)"])
     generator(["H"])
 
