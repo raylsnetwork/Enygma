@@ -93,7 +93,7 @@ flowchart LR
     i_mint(["Issuer<br>(Mint)"])
     mint_transparent(["Mint<br>(Transparent) Funds"])
     mint_ttx(["Mint Comm = vG"])
-    mint_shield(["Mint<br>(Shielded)Funds"])
+    mint_shield(["Mint<br>(Shielded) Funds"])
     calculate_r(["Calculate<br>Random Factor"])
     mint_stx(["Mint Comm = vG+rH"])
 
