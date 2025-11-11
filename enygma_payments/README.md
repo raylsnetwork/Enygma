@@ -233,7 +233,7 @@ Note: In the future we want to update the ZK module to use a quantum-secure ZK s
 
 ## Implementation Details
 * **Client**: Golang
-* **Circuits**: Gnark
+* **ZK Circuit(s)**: Gnark
 * **Verifier**: Solidity
 
 
