@@ -84,4 +84,27 @@ Besides the auditor, we highlight that any entity in the system can always monit
 
 Additionally, depending on the choice of random factors and the issuance process, it may be possible for any entity to check the total supply of the asset at all times. 
 
+## Complexity Analysis
+
+### Key Agreement
+Each privacy node establishes a key with all the other privacy node. Therefore, the individual (per privacy node) complexity of this step is:
+
+$$O(n_{banks} - 1)$$.
+
+The total complexity of this step is: 
+
+$$O(n_{banks} \times (n_{banks} - 1)$$. 
+
+### Transaction decryption
+
+### Transaction size
+A transaction has $$k$$ Pedersen commitments, $$k$$ private messaging tags, a nullifier, and potentially $$k$$ encrypted payloads for the recipients. 
+
+Therefore, each transaction uses the following bandwidth: 
+
+$$O((k \times |C|) + (k \times |t|) + |nf| + (k \times |ctxt|))$$
+
+
+### Transaction decryption
+$$O(n_{banks} \times n_{tx} )$$
 
