@@ -34,6 +34,26 @@ flowchart LR
 
 ## Protocol Flows
 
+### Transparent Setup for Generator H
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    zero["0000"]
+    hash(["Hash-To-Curve(x)"])
+    generator(["H"])
+
+    %% Flow Connections
+    zero -.-> hash -.-> generator
+
+```
+
 ### Issuer
 
 #### Issuer - Setup
