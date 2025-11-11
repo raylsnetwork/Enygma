@@ -25,12 +25,57 @@
 		two  = big.NewInt(2)
 	)
 
-
+	type Point struct{ X, Y *big.Int }
 
 	type HSetupCircuit struct {
 		// X and Y can be marked as secret (or public) depending on your use case
 		X  frontend.Variable 
 		Y  frontend.Variable 
+	}
+	func add(P, Q Point) Point {
+	// t = d*x1*x2*y1*y2
+		x1x2 := new(big.Int).Mul(P.X, Q.X)
+		x1x2.Mod(x1x2, p)
+		y1y2 := new(big.Int).Mul(P.Y, Q.Y)
+		y1y2.Mod(y1y2, p)
+		t := new(big.Int).Mul(d, new(big.Int).Mul(x1x2, y1y2))
+		t.Mod(t, p)
+
+		// x numerator: x1*y2 + y1*x2
+		xnum := new(big.Int).Add(new(big.Int).Mul(P.X, Q.Y), new(big.Int).Mul(P.Y, Q.X))
+		xnum.Mod(xnum, p)
+
+		// x denom: 1 + t
+		xden := new(big.Int).Add(one, t)
+		xden.Mod(xden, p)
+
+		// y numerator: y1*y2 - a*x1*x2
+		ayx := new(big.Int).Mul(a, x1x2)
+		ayx.Mod(ayx, p)
+		ynum := new(big.Int).Sub(y1y2, ayx)
+		mod(ynum)
+
+		// y denom: 1 - t
+		yden := new(big.Int).Sub(one, t)
+		mod(yden)
+
+		// x3 = xnum * inv(xden)
+		ixd := modInverse(xden)
+		iyd := modInverse(yden)
+		x3 := new(big.Int).Mul(xnum, ixd)
+		x3.Mod(x3, p)
+		y3 := new(big.Int).Mul(ynum, iyd)
+		y3.Mod(y3, p)
+
+		return Point{X: x3, Y: y3}
+	}
+
+	func dbl(P Point) Point { return add(P, P) }
+	func ClearCofactor(P Point) Point {
+		Q := dbl(P) // [2]P
+		Q = dbl(Q)  // [4]P
+		Q = dbl(Q)  // [8]P
+		return Q
 	}
 
 
@@ -206,7 +251,7 @@
 	func main(){
 
 		found:= false
-		seed,_:= new(big.Int).SetString("123", 10)
+		seed,_:= new(big.Int).SetString("1", 10)
 		var HashNumber *big.Int
 		for !found{
 			Hash:= hash256(seed)
@@ -219,7 +264,10 @@
 			seed =Hash
 		}
 		y,_:=BabyJubYFromX(HashNumber)
+
+		P := Point{X: HashNumber, Y: y}
 		
+		Q := ClearCofactor(P)
 		var circuit HSetupCircuit
 	
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
@@ -237,8 +285,8 @@
 
 		witness := HSetupCircuit{
 
-			X:  frontend.Variable(HashNumber.String()),
-			Y: frontend.Variable(y.String()),
+			X:  frontend.Variable(Q.X.String()),
+			Y: frontend.Variable(Q.Y.String()),
 		}
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		proof, err := groth16.Prove(ccs, pk, witnessFull)
@@ -251,7 +299,7 @@
 			panic(err)
 		}
 
-		fmt.Println("X", HashNumber, "Y", y)
+		fmt.Println("Q.X", Q.X, "Q.Y", Q.Y)
 
 		println("Proof verified successfully!")
 
