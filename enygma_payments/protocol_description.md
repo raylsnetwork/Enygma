@@ -5,7 +5,7 @@
 
 * Balances are represented as Pedersen commitments:
   * $$Comm(v, r) = vG + rH$$
-  * Note: We use a nothing-up-my-sleeve approach to obtaining the value of the generator $$H$$. To do so, we hash-to-curve the number $$0$$. 
+  * Note: We use a nothing-up-my-sleeve approach to obtaining the generator $$H$$. To do so, we hash-to-curve the number $$0$$. 
 
 * Each privacy node has two keypairs. One for viewing transactions (i.e., ML-KEM), other for spending (i.e., hash-based). Both are quantum-secure: 
   * $$(sk_{A}^{view}, pk_{A}^{view})$$
