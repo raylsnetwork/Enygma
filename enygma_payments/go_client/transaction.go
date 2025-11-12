@@ -87,10 +87,8 @@ func addPks(pk1 *babyjub.Point, pk2 *babyjub.Point) *babyjub.Point {
 }
 
 func getNegative(x *big.Int) *big.Int {
-	p := new(big.Int)
-	p.SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
 
-	inverse := big.NewInt(0).Sub(p, x)
+	inverse := big.NewInt(0).Sub(P, x)
 
 	return inverse
 }

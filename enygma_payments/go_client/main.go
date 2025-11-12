@@ -55,7 +55,8 @@ var (
 	address          = readJsonFile()
 	commitChainURL   = "http://127.0.0.1:8545"
 	httpposturl      = "http://127.0.0.1:8080/proof/enygma"
-	privateKeyString = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
+	
+	privateKeyString = "please insert private key in safe manner"
 )
 
 func main() {
