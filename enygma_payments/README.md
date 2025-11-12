@@ -88,6 +88,8 @@ flowchart LR
 
 #### Issuer - Mint
 
+There are two minting flows for the issuer is able to mint funds on the underlying smart contract. The issuer can either mint a commitment with the random factor set to zero which publicly discloses the minted amount or, alternatively, act as a participant in the network and mint a shielded balance in the form of Pedersen commitment where the random factor is derived from the shared secret between the issuer and the receiver of funds. 
+
 ```mermaid
 ---
 config:
@@ -137,6 +139,9 @@ flowchart LR
 ```
 
 #### Privacy Node - Sending a TX
+To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors for that specific block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend it. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node can derive the ephemeral symmetric key used to encrypt additional/associated data in this block, can calculate the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node calculates a set of '$$k$$' (i.e., anonymity set) Pedersen commitments using the corresponding random factors and the amount to be sent to each party. 
+
+
 
 ```mermaid
 ---
@@ -149,7 +154,7 @@ flowchart LR
 
     %% PL (Send)
     pl_send["Privacy Node<br>(Send Tx)"]
-    getblock_send(["Get Latest<br>Block Number"])
+    getblock_send(["Get Latest<br>Block"])
     derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
     calcR_send(["Calculate<br>Random Factor"])
     tx_commits(["Generate 'k'<br>Pedersen Commitments"])
@@ -186,7 +191,9 @@ flowchart LR
 We now describe the flows associated with the underlying blockchain. In this case, we have just one: the verification of enygma transactions. 
 
 #### Blockchain - Verify TX
-The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. The encrypted 
+The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. 
+
+We note that the encrypted payload is not checked by the smart contract and can be maliciously formed as its correctness is not included in the ZK proof. We note that this attack forces the sender to send funds, which the recipient is able to open since the Pedersen commitment is well-formed. The same recipient is then able to prove that the sender maliciously formed the ciphertext and eventually  have the sender face repercussions for a purposeful malicious action. The ciphertext is not included in the ZK proof because proving the correctness of an AES-GCM encryption is too expensive to perform for the execution of real-time transactions. 
 
 ```mermaid
 ---
@@ -222,7 +229,6 @@ flowchart TD
     
     Symmetric("Symmetric Crypto")
     Asymmetric("Asymmetric Crypto")
-
 
     A --> Symmetric & Asymmetric & ZK("Zero-Knowledge Proofs") & Commits("Commitments")
     
