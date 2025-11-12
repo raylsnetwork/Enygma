@@ -41,6 +41,7 @@ var (
 	
 	kIndex        = []*big.Int{k0, k1, k2,k3,k4,k5}
 
+	// This number were randomly generated!
 	s0 = big.NewInt(0) 
 	s1 = big.NewInt(54142)
 	s2 = big.NewInt(814712)

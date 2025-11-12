@@ -23,12 +23,16 @@ import (
 )
 
 var (
+	// Generator point of Baby Jub jub curve
 	gx, _ = new(big.Int).SetString("16540640123574156134436876038791482806971768689494387082833631921987005038935", 10)
 	gy, _ = new(big.Int).SetString("20819045374670962167435360035096875258406992893633759881276124905556507972311", 10)
 	G     = &babyjub.Point{X: gx, Y: gy}
+	//Another Baby Jubjub point (randomnly generated)
 	hx, _ = new(big.Int).SetString("10100005861917718053548237064487763771145251762383025193119768015180892676690", 10)
 	hy, _ = new(big.Int).SetString("7512830269827713629724023825249861327768672768516116945507944076335453576011", 10)
 	H     = &babyjub.Point{X: hx, Y: hy}
+
+	//subgroup order of BabyJubJub Eliptic curve
 	P, _  = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
 	
 )
@@ -145,14 +149,9 @@ func makeCommitment(qtyBanks int,v *big.Int,senderId int,txValues []*big.Int, bl
 	for i := 0; i < len(kIndex); i++ {
 		if i == senderId {
 			txCommit = append(txCommit, pedersenCommitment(getNegative(v), txRandom[i]))
-			
 		} else {
 			txCommit = append(txCommit, pedersenCommitment(txValues[i], getNegative(txRandom[i])))
-	
 		}
-
-		
-		
 	}
 
 	commitments := make([]enygma.IEnygmaPoint, len(kIndex))
