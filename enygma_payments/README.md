@@ -67,6 +67,7 @@ We envision this step to take place involving different Privacy Nodes in the sys
 ### Issuer
 
 #### Issuer - Setup
+The setup for the issuer is straightforward as it consists simply of deploying the corresponding Enygma smart contract. Optionally, to support certain private functionalities, the issuer may need to register some key material. 
 
 ```mermaid
 ---
@@ -79,11 +80,11 @@ flowchart LR
 
     %% I (Setup)
     i_setup["Issuer<br>(Setup)"]
+    register(["(optional)<br>Register Key Material"])
     deploy(["Deploy Enygma<br>Contract"])
 
     %% Flow Connections
-    i_setup -.-> deploy
-
+    i_setup -.-> register -.-> deploy
 ```
 
 #### Issuer - Mint
@@ -139,8 +140,7 @@ flowchart LR
 ```
 
 #### Privacy Node - Sending a TX
-To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors for that specific block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend it. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node can derive the ephemeral symmetric key used to encrypt additional/associated data in this block, can calculate the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node calculates a set of '$$k$$' (i.e., anonymity set) Pedersen commitments using the corresponding random factors and the amount to be sent to each party. 
-
+To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors for that specific block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend it. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node can derive the ephemeral symmetric key used to encrypt additional/associated data in this block, can calculate the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the corresponding random factors and the amount to be sent to each party. 
 
 
 ```mermaid
