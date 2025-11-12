@@ -30,10 +30,7 @@ func readJsonFile()string{
 }
 var (
 	// These hardcoded values must be stored somewhere and retrieved to generate details of the transaction
-	// previousV, _ = new(big.Int).SetString("0", 10)
-	// previousR, _ = new(big.Int).SetString("1868501308730589599347486446800155493731984071794351926997077137692500338410", 10)
-	// blockHash, _ = new(big.Int).SetString("4129789127591820896172587", 10)
-	
+
 	k0 = big.NewInt(0) 
 	k1 = big.NewInt(1)
 	k2 = big.NewInt(2)
@@ -51,13 +48,6 @@ var (
 	s4 = big.NewInt(12312512)
 	s5 = big.NewInt(12312512)
 
-
-
-	// s0 = big.NewInt(58912784912894) 
-	// s1 = big.NewInt(0) 
-	// s2 = big.NewInt(741274128)
-	// s3 = big.NewInt(4817481284)
-	// s4 = big.NewInt(74128491240)
 	secrets = []*big.Int{
 		s0,s1,s2,s3,s4,s5,
 	}
@@ -70,12 +60,12 @@ var (
 
 func main() {
 	readJsonFile()
-	// Example code (The bank IDs represent its position in the array), there are 5 banks transacting here
-	// Bank A has ID 1, Bank B is 2, Bank C is 3 and Bank D is 4
+	// Example code (The bank IDs represent its position in the array), there are 6 banks transacting here
+	// Bank A has ID 1, Bank B is 2, Bank C is 3 , Bank D is 4 and Bank E is 5
 
 	// ** Reserve the position 0 to always be empty
 
-	// We will transfer 60 to Bank B and 40 to Bank D, the sender of 100 is Bank A.
+	// We will transfer 60 to Bank B and 40 to Bank C, the sender of 100 is Bank A.
 
 	// 1. Retrieve the from account stored values
 	if len(os.Args) < 7 {
@@ -107,15 +97,14 @@ func main() {
 	amountToSend := v
 
 	// Create the Transaction values. Notice the positions of the values
-	// 60 is Bank A in position 0 of the array
-	// 40 is Bank B in position 1 of the array
-	// -100 is Bank C in position 2 of the array
+	// -100 is Bank A in position 0 of the array
+	// 60 is Bank B in position 1 of the array
+	// 40 is Bank C in position 2 of the array
 	// The remaining positions we add 0, as no balance change will happen
 
-	v0 , _ := new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447372941", 10)
-	txValues := []*big.Int{v0,big.NewInt(60), big.NewInt(40), big.NewInt(0), big.NewInt(0), big.NewInt(0) }
-	//txValues := []*big.Int{big.NewInt(20),new(big.Int).Neg(amountToSend), big.NewInt(20),  big.NewInt(0),big.NewInt(0) }
-
+	vNegate := getNegative(v)
+	txValues := []*big.Int{vNegate,big.NewInt(60), big.NewInt(40), big.NewInt(0), big.NewInt(0), big.NewInt(0) }
+   
 	// The commitments are generated to send from one account to multiple accounts
 	commit, txValue, txRandom, secrets := makeCommitment(qtyBanks,amountToSend,senderId, txValues,blockHash,kIndex)
 	
@@ -124,7 +113,6 @@ func main() {
 
 	// Generate the proofs from the commitments
 	proof := generateProof(qtyBanks, value,senderId,nullifier, blockHash, sk, publicKey, referenceBalance, commit, txValue, txRandom, secrets, previousV, previousR,kIndex)
-
 
 	
 	// Send the transaction to the ZkToken.sol Transfer function
