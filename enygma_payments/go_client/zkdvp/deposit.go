@@ -21,6 +21,15 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
 )
+
+/*
+
+Script for integration Engyma and ZkDVP integration
+
+Withdraw from ZkDvp and Enygma to ZkDvp
+
+*/
+
 func GenerateProofAtZkDvP(pk *big.Int, amount *big.Int, withdrawKey interfacezkdvp.Key, enygmaAddress *big.Int, merkleTree interfacezkdvp.MerkleTree) (interfacezkdvp.ZkDvpProofToWithdrawResponse, error) {
 	
 	jsonInfo := interfacezkdvp.ZkDvpProofToWithdrawRequest{

@@ -20,7 +20,13 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 )
+/*
 
+Script for integration Engyma and ZkDVP integration
+
+Withdraw from Enygma --> Deposit to ZkDvp
+
+*/
 
 
 func withdraw(senderId int, amount *big.Int, vSplit []*big.Int, kIndex []int, depositKey []*big.Int, secrets []*big.Int, block_number string) error {
