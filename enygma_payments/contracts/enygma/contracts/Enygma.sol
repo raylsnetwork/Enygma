@@ -25,9 +25,6 @@ contract Enygma is IEnygma {
     address owner;
     uint256 public lastblockNum;
 
-    //uint256 public zdkDvpLock = 0;
-    //uint256 public commitmentZkDvp = 0;
-
     mapping(uint256 => mapping(uint256 => Point)) public referenceBalance;
     mapping(uint256 => Point) public pubKeys;
     mapping(address => uint256) public accounts;
@@ -35,7 +32,6 @@ contract Enygma is IEnygma {
     mapping(uint256 => address) public withdrawVerifiers;
     mapping(uint256 => address) public depositVerifiers;
     mapping(uint256 => address) public zkdvps;
-    // mapping(uint256 => string[]) public pendingTransactions;
     event Commitment(uint256 indexed commitment);
     // Initializes the Enygma contract with the designated Verifier contract address
     // for proof checking
@@ -152,6 +148,7 @@ contract Enygma is IEnygma {
         return true;
     }
 
+    // Add address of ZK Verifier in the contract
     function addVerifier(address verifier) public returns (bool) {
         verifiers[k] = verifier;
         _verifierAddress = verifier;
@@ -369,6 +366,8 @@ contract Enygma is IEnygma {
 
         return true;
     }
+
+    // Update balance which is in pedersen commitment format
     function updateBalances(
         Point[] memory commitments,
         uint256[] memory kIndex
@@ -400,6 +399,7 @@ contract Enygma is IEnygma {
         return false; // i is not in the k array
     }
 
+    // burn tokens
     function burn(
         uint256 bankIndex,
         uint256 burnValue
@@ -471,7 +471,11 @@ contract Enygma is IEnygma {
         return (pedComX, pedComY);
     }
 
-    // Prints a pederson commitment
+    /**
+     * @dev Helper Function
+     */
+
+    // Pedersen Commitment function by inserting v and r its output a Pedersen Commitment
     function pedCom(
         uint256 v,
         uint256 r
