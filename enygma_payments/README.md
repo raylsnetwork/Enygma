@@ -156,14 +156,15 @@ flowchart LR
     pl_send["Privacy Node<br>(Send Tx)"]
     getblock_send(["Get Latest<br>Block"])
     derivesendkey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR_send(["Calculate<br>Random Factor"])
+    calc_r(["Calculate<br>Random Factor"])
+    calc_tags(["Calculate Private<br>Messaging Tags"])
     tx_commits(["Generate 'k'<br>Pedersen Commitments"])
     nullifier(["Calculate<br>Nullifier"])
     zk_proof(["Create<br>ZK Proof"])
     encrypt_ad(["Encrypt Additional Data<br>(w/ ephemeral key)"])
     send_tx(["Send commits, nullifier, zk proof, and ciphertext"])
 
-    pl_send -.-> getblock_send -.-> derivesendkey -.-> calcR_send -.-> tx_commits -.-> nullifier -.-> zk_proof -.-> encrypt_ad -.-> send_tx
+    pl_send -.-> getblock_send -.-> derivesendkey -.-> calc_r -.-> calc_tags -.-> tx_commits -.-> nullifier -.-> zk_proof -.-> encrypt_ad -.-> send_tx
 
 ```
 
@@ -179,11 +180,14 @@ flowchart LR
 
     %% PL (Receive)
     pl_receive["Privacy Node<br>(Receive Tx)"]
+    getblock_receive(["Download Latest<br>Block"])
+    get_anon_set(["Get Subset of<br>Enygma Transactions"])
+    calc_tags(["Calculate Private<br>Messaging Tags"])
     derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
-    calcR_receive(["Calculate<br>Random Factor"])
-    getblock_receive(["Get Latest<br>Block"])
+    calc_r(["Calculate<br>Random Factor(s)"])
 
-    pl_receive -.-> getblock_receive -.-> derivereceivekey -.-> calcR_receive
+
+    pl_receive -.-> getblock_receive -.-> get_anon_set -.->  calc_tags -.-> derivereceivekey -.-> calc_r
 
 ```
 
