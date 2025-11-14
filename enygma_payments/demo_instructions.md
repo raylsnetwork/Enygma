@@ -32,3 +32,5 @@ cd go_client
 go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
 
 ```
+
+PS: Transaction was configured to transfer 100 tokens, to modify please go to `go_client/main.go`
