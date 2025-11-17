@@ -197,15 +197,15 @@ config:
 ---
 flowchart LR
 
-    %% PL (Setup)
-    pl_setup["Privacy Node<br>(View Key Sharing)"]
+    auditor1["Auditor<br>(Registration)"]
+
+    pn["Privacy Node<br>(View Key Sharing)"]
     keygen(["View Key<br>Generation"])
     key_registration(["View Key<br>Registration"])
     get_auditor_key(["Get pk of<br>Auditor"])
     encrypt(["Encapsulate sk<br>using pk of Auditor"])
     publish_ciphertext(["Publish<br>Ciphertext"])
 
-    auditor1["Auditor<br>(Registration)"]
     auditor2["Auditor<br>(View Key Sharing)"]
 
     register_key(["Register Auditor pk"])
@@ -214,6 +214,6 @@ flowchart LR
     check(["Check Key Correctness"])
 
     auditor1 -.-> register_key
-    pl_setup -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> encrypt -.-> publish_ciphertext
+    pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> encrypt -.-> publish_ciphertext
     auditor2 -.-> get_ciphertext -.-> decrypt -.-> check
 ```
