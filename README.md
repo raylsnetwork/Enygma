@@ -25,9 +25,9 @@ config:
 ---
 flowchart LR
 a["User A"]
-pl_a["Privacy<br>Ledger A "]
+pl_a["Privacy<br>Node A "]
 sh("Private Network Hub")
-pl_b["Privacy<br>Ledger B "]
+pl_b["Privacy<br>Node B "]
 b["User B"]
 
 auditor["Auditor<br>(Optional)"]
