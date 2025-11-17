@@ -91,27 +91,17 @@ Additionally, depending on the choice of random factors and the issuance process
 | Protocol      | Complexity                                             | Additional Remarks                                                     |
 |---------------|--------------------------------------------------------|------------------------------------------------------------------------|
 | Key Agreement | $$O(n_{\text{banks}} - 1 )$$                           | Each privacy node establishes a key with all the other privacy nodes.  |
-| Tx Size       | $$O(k \cdot (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$| $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.     |
+| Tx Size       | $$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$| $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.     |
 
 
 </div>
 
-### Key Agreement
-Each privacy node establishes a key with all the other privacy node. Therefore, the individual (per privacy node) complexity of this step is:
-
-$$O(n_{banks} - 1)$$
 
 The total complexity of this step is: 
 
 $$O(n_{banks} \times (n_{banks} - 1)$$
 
 ### Transaction decryption
-
-### Transaction Size
-A transaction has $$k$$ Pedersen commitments, $$k$$ private messaging tags, a nullifier, and potentially $$k$$ encrypted payloads for the recipients. 
-
-Therefore, each transaction uses the following bandwidth: 
-
 
 
 
