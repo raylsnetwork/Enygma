@@ -105,28 +105,6 @@ flowchart LR
     pl_setup -.-> keygen -.-> register -.-> kem -.-> publish
 ```
 
-#### Privacy Node - View Key Sharing
-TBD
-
-```mermaid
----
-config:
-  theme: redux
-  layout: elk
-  look: handDrawn
----
-flowchart LR
-
-    %% PL (Setup)
-    pl_setup["Privacy Node<br>(Key Sharing)"]
-    keygen(["Key<br>Generation"])
-    get_key(["Get pk of<br>Auditor"])
-    encrypt(["Encapsulate sk<br>using pk of Auditor"])
-    publish(["Publish<br>Ciphertext"])
-
-    pl_setup -.-> keygen -.-> get_key -.-> encrypt -.-> publish
-```
-
 #### Privacy Node - Sending a TX
 To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors for that specific block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend it. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node can derive the ephemeral symmetric key used to encrypt additional/associated data in this block, can calculate the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the corresponding random factors and the amount to be sent to each party. 
 
@@ -205,4 +183,37 @@ flowchart LR
     store(["Store encrypted payload"])
 
     verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally -.-> store
+```
+
+#### Auditing - View Key Sharing
+TBD
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    %% PL (Setup)
+    pl_setup["Privacy Node<br>(View Key Sharing)"]
+    keygen(["View Key<br>Generation"])
+    key_registration(["View Key<br>Registration"])
+    get_auditor_key(["Get pk of<br>Auditor"])
+    encrypt(["Encapsulate sk<br>using pk of Auditor"])
+    publish_ciphertext(["Publish<br>Ciphertext"])
+
+    auditor1["Auditor<br>(Registration)"]
+    auditor2["Auditor<br>(View Key Sharing)"]
+
+    register_key(["Register Auditor pk"])
+    get_ciphertext(["Get pk of<br>Auditor"])
+    decrypt(["Decapsulate sk of<br>Privacy Node"])
+    check(["Check Key Correctness"])
+
+    auditor1 -.-> register_key
+    pl_setup -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> encrypt -.-> publish_ciphertext
+    auditor2 -.-> get_ciphertext -.-> decrypt -.-> check
 ```
