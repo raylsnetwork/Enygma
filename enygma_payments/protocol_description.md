@@ -109,5 +109,5 @@ $$O((k \times |C|) + (k \times |t|) + |nf| + (k \times |ctxt|))$$
 $$O(n_{banks} \times n_{tx} )$$
 
 | Protocol      | Complexity             | Additional Remarks |
-| :---:         | :---:                  | :---: |
+| ------------- | ---------------------- | ---------------------------------------------------------------------- |
 | Key Agreement | $$O(n_{banks} - 1)$$   | Each privacy node establishes a key with all the other privacy node.   |
