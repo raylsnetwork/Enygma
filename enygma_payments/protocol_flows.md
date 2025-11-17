@@ -214,8 +214,8 @@ flowchart LR
 
 
     auditor2["Auditor<br>(View Key Sharing)"]
-    get_ciphertext(["Get pk of<br>Auditor"])
-    decrypt(["Decapsulate sk of<br>Privacy Node"])
+    get_ciphertext(["Get Ciphertext"])
+    decrypt(["Decapsulate and Obtain<br>sk of Privacy Node"])
     check(["Check Key Correctness"])
 
     auditor2 -.-> get_ciphertext -.-> decrypt -.-> check
