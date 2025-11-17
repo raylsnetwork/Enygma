@@ -90,8 +90,8 @@ Additionally, depending on the choice of random factors and the issuance process
 
 | Protocol      | Complexity                                                         | Additional Remarks                               |
 |---------------|---------------------------------------------- |-------------------------------------------------------------------|
-| Key Agreement | $$O(n_{\text{banks}} - 1)$$                   | Each privacy node establishes a key with all the other privacy nodes. |
-| Tx Size       | $$O(k \times (\|C\| + \|t\| + \|ctxt\|) + \|nf\|)$$   | Each privacy node establishes a key with all the other privacy nodes. |
+| Key Agreement | $$O( n_{\text{banks}} - 1 )$$                   | Each privacy node establishes a key with all the other privacy nodes. |
+| Tx Size       | $$O( k \times (\|C\| + \|t\| + \|ctxt\|) + \|nf\| )$$   | Each privacy node establishes a key with all the other privacy nodes. |
 
 
 </div>
