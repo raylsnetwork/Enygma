@@ -88,25 +88,13 @@ Additionally, depending on the choice of random factors and the issuance process
 
 <div align="center">
 
-| Protocol      | Complexity                                             | Additional Remarks                                                     |
+| Component     | Complexity                                             | Additional Remarks                                                     |
 |---------------|--------------------------------------------------------|------------------------------------------------------------------------|
 | Key Agreement | $$O(n_{\text{banks}} - 1 )$$                           | Each privacy node establishes a key with all the other privacy nodes.  |
 | Tx Size       | $$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$| $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.     |
+| Block Size    | $$O(n_{\text{banks}} \times \|tx\|)$$                  | Each bank can submit **at most** one tx per block.                     |
 
 
 </div>
-
-
-The total complexity of this step is: 
-
-$$O(n_{banks} \times (n_{banks} - 1)$$
-
-### Transaction decryption
-
-
-
-### Transaction Decryption
-$$O(n_{banks} \times n_{tx} )$$
-
 
 
