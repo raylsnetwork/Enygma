@@ -185,8 +185,7 @@ flowchart LR
     verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally -.-> store
 ```
 
-#### Auditing - View Key Sharing
-TBD
+### Auditing
 
 ```mermaid
 ---
@@ -201,13 +200,25 @@ flowchart LR
     register_key(["Register Auditor pk"])
     
     auditor1 -.-> register_key
+```
 
+#### Auditing - View Key Sharing
+TBD
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
 
     pn["Privacy Node<br>(View Key Sharing)"]
-    keygen(["View Key<br>Generation"])
-    key_registration(["View Key<br>Registration"])
+    keygen(["(View) Key<br>Generation"])
+    key_registration(["(View) Key<br>Registration"])
     get_auditor_key(["Get pk of<br>Auditor"])
-    encrypt(["Encapsulate sk<br>using pk of Auditor"])
+    encrypt(["Encapsulate sk<br>(using pk of Auditor)"])
     publish_ciphertext(["Publish<br>Ciphertext"])
 
     pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> encrypt -.-> publish_ciphertext
