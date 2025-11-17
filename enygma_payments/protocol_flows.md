@@ -198,6 +198,10 @@ config:
 flowchart LR
 
     auditor1["Auditor<br>(Registration)"]
+    register_key(["Register Auditor pk"])
+    
+    auditor1 -.-> register_key
+
 
     pn["Privacy Node<br>(View Key Sharing)"]
     keygen(["View Key<br>Generation"])
@@ -206,14 +210,13 @@ flowchart LR
     encrypt(["Encapsulate sk<br>using pk of Auditor"])
     publish_ciphertext(["Publish<br>Ciphertext"])
 
-    auditor2["Auditor<br>(View Key Sharing)"]
+    pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> encrypt -.-> publish_ciphertext
 
-    register_key(["Register Auditor pk"])
+
+    auditor2["Auditor<br>(View Key Sharing)"]
     get_ciphertext(["Get pk of<br>Auditor"])
     decrypt(["Decapsulate sk of<br>Privacy Node"])
     check(["Check Key Correctness"])
 
-    auditor1 -.-> register_key
-    pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> encrypt -.-> publish_ciphertext
     auditor2 -.-> get_ciphertext -.-> decrypt -.-> check
 ```
