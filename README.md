@@ -44,9 +44,9 @@ We assume that the Private Network Hub runs a Byzantine Fault Tolerant consensus
 
 We assume an active network adversary with complete view of the network. Therefore, the adversary actively tries to infer which parties are transacting given the inboud/outbound messages in the system. 
 
-We assume every Privacy Node runs a full node of the underlying blockchain (i.e., the Private Network Hub). As a result, Privacy Nodes can always perform a simple Private Information Retrieval (PIR) protocol that downloads the latest block and performs the lookups locally. 
+We assume every Privacy Node runs a full node of the underlying blockchain (i.e., the Private Network Hub). As a result, Privacy Nodes can always have access to the latest block(s) of the Private Network Hub. As a result, Privacy Nodes can also perform a trivial Private Information Retrieval (PIR) protocol that downloads the latest block and executes lookups locally on their own database. This ensures that, when trying to obtain information for a specific transaction, the Privacy Nodes do not reveal which item is being queried, thus ensuring that any sensitive information involving which data is being queried is never leaked to external parties. 
 
-Additionally, if present, we assume that the auditor is honest/trusted. In other words, the auditor will ensure the privacy of all the key material and sensitive data. 
+Additionally, if present, we assume that the auditor is honest/trusted. In other words, the auditor will ensure the privacy of all the key material and sensitive data that falls under their responsibility. 
 
 ## Helpful Mental Model
 If the reader is familiar with the Ethereum ecosystem, the easiest way to think about our approach is probably the following:
