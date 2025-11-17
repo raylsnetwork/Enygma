@@ -202,8 +202,9 @@ flowchart LR
     auditor1 -.-> register_key
 ```
 
-#### Auditing - View Key Sharing
-TBD
+#### Auditing - Long-term View Key Sharing
+The privacy nodes register their view (public) keys on the underlying blockchain, which acts as a public-key infrastructure (PKI). Upon successful registration of the key, if a view key is to be shared with the auditor, then the privacy node encapsulates its secret key using the public key of the auditor and publishes this ciphertext on-chain. The auditor is then able to download this ciphertext and obtain the corresponding secret (view) key of the privacy node. This gives the auditor the ability to see all the transactions that the privacy node performs in the network. 
+
 
 ```mermaid
 ---
