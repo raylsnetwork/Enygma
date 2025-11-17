@@ -61,7 +61,7 @@ flowchart TD
     pedersen --> Babyjubjub("Elliptic Curve Crypto<br>(Baby Jubjub)")
 ```
 
-Note: We want to update the ZK module to use a quantum-secure ZK scheme. This update will make the entire system quantum-secure.
+Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which will make the entire system quantum-secure (as opposed to quantum-private).
 
 ## Implementation Details
 * **Client**: Golang
