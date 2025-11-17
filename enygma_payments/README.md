@@ -1,7 +1,7 @@
 # Enygma Payments
 
 ## System Architecture
-Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which effectively acts as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. **Issuer(s)** are owners of specific assets on the private network hub. Optionally, there is an **auditor** that oversees (some of) the transactions that take place in the network. The protocol flows involving each of these entities are further described [here](./protocol_flows.md). Alternatively, a more formal cryptographic definition is exposed [here](./protocol_description.md)
+Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which effectively acts as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. **Issuer(s)** are owners of specific assets on the private network hub. Optionally, there is an **auditor** that oversees (some of) the transactions that take place in the network. The protocol flows involving each of these entities are further described [here](./protocol_flows.md). Alternatively, a more formal protocol description is documentes [here](./protocol_description.md).
 
 
 ```mermaid
