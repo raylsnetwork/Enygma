@@ -106,8 +106,12 @@ flowchart LR
 ```
 
 #### Privacy Node - Sending a TX
-To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors for that specific block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend it. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node can derive the ephemeral symmetric key used to encrypt additional/associated data in this block, can calculate the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the corresponding random factors and the amount to be sent to each party. 
+To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors that depend on that specific last block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend funds. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node derives the ephemeral symmetric key used to encrypt additional/associated data of the transaction. The privacy node then calculates the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node also calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the previously obtained random factors and the amount to be sent to each party along with a nullifier that proves that the sender is submitting its only allowed transaction in this block, without revealing details about who they are. Once these values are calculated, the privacy nodes creates a ZK proof that proves the following: 
 
+* I know the secret key of one of the items in this anonymity set of $$k$$ public keys;
+* I know the amount and random factor of the commitment that contains my balance in this set of $$k$$ commitments;
+* The nullifier is well-formed and uses my secret key and the latest block number;
+* The private messaging tag is well-formed using the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number.
 
 ```mermaid
 ---
