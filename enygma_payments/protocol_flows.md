@@ -240,3 +240,38 @@ flowchart LR
 
     auditor2 -.-> get_ciphertext -.-> decrypt -.-> check
 ```
+
+#### Auditing - Ephemeral View Key Sharing
+The privacy nodes have previously register their view (public) keys on the underlying blockchain, which acts as a public-key infrastructure (PKI). Upon successful registration of the key, the privacy nodes register a fingerprint (i.e., a hash) of the shared secret with all the other participants in the network. This protocol allows a privacy node to open individual transactions for specific blocks without compromising the confidentiality of past nor future transactions. 
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    pn["Privacy Node<br>(Ephemeral View Key Sharing)"]
+    keygen(["(View) Key<br>Generation"])
+    key_registration(["(View) Key<br>Registration"])
+    get_auditor_key(["Get pk of<br>Auditor"])
+    receive_request(["Receive Auditor Request"])
+    encrypt(["Encapsulate symmetric encryption key <br>(using pk of Auditor)"])
+    zk_prove(["Create ZK proof that k<br> is derived from shared secret"])
+    publish(["Publish<br>Ciphertext and ZK Proof"])
+
+    pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> receive_request -.-> encrypt -.-> publish
+
+
+    auditor2["Auditor<br>(View Key Sharing)"]
+    get_ciphertext(["Get Ciphertext"])
+    decrypt(["Decapsulate and Obtain<br>k of Privacy Node"])
+    check_zk(["Check ZK Proof Correctness"])
+    check_enc(["Check k correctly decrypts payload"])
+    audit_tx(["Audit Transaction"])
+
+    auditor2 -.-> get_ciphertext -.-> decrypt -.-> check_zk -.-> check_enc -.-> audit_tx
+
+```
