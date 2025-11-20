@@ -37,6 +37,11 @@ $$Comm(0, 0) = 0G + 0H$$
  
 The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
+## Key Registration
+Privacy node registers both the view and spend public keys on the underlying blockchain. For example, if privacy node A registers, the tuple below should be the output of the registration step: 
+
+$$(id_{A}, pk_{A}^{view}, pk_{A}^{spend})$$
+
 ## Key Agreement
 Party downloads the counterparty's ML-KEM public-key $$pk_{i}'$$, generates a pre-secret $$s'$$ and encapsulates it using the downloaded public-key, thus obtaining $$Encapsulate(pk_{i}', s')$$. Sender calculates $$id = Hash(s')$$ and publishes both $$< i, id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
 
