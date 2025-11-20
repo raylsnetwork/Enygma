@@ -194,6 +194,7 @@ flowchart LR
 ```
 
 ### Auditing
+We now describe the auditing flow of the system noting that the first step is the registration of the public key of the auditor. 
 
 ```mermaid
 ---
