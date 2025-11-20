@@ -255,7 +255,7 @@ flowchart LR
     zk_prove(["Create ZK proof that k<br> is derived from shared secret"])
     publish(["Publish<br>Ciphertext and ZK Proof"])
 
-    pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> receive_request -.-> encrypt -.-> publish
+    pn -.-> keygen -.-> key_registration -.-> get_auditor_key -.-> receive_request -.-> encrypt -.-> zk_prove -.-> publish
 
 
     auditor2["Auditor<br>(View Key Sharing)"]
