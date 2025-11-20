@@ -66,7 +66,9 @@ $$Comm(0, 0) = 0G + 0H$$
 The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
 ## Key Registration
-Privacy node registers both the view and spend public keys on the underlying blockchain. For example, if privacy node A registers, the tuple below should be the output of the registration step: 
+Privacy node registers both the view and spend public keys on the underlying blockchain. 
+
+For example, if privacy node A registers, the tuple below should be the output of the registration step: 
 
 $$(id_{A}, pk_{A}^{view}, pk_{A}^{spend})$$
 
@@ -105,7 +107,7 @@ flowchart LR
 ```
 
 ### Transparent Issuance
-Issuer creates a new Commitment with the random factor set to 0. Therefore: 
+Issuer creates a new commitment with the random factor set to 0. Therefore: 
 
 $$Comm(v, 0) = vG + 0H = vG$$
 
@@ -139,7 +141,6 @@ $$
 Commit_i = v_{i}G + r_{i}H
 $$
 
-
 **The amount** to be received by each entity $$v_{i}$$ is simply the number of monetary units to be transferred to that entity. 
 
 **The random factor** of each recipient is obtained by hashing the shared secret between the sender $$j$$ and the recipient $$i$$: 
@@ -148,12 +149,9 @@ $$
 \forall i \in \lbrace1,\dots,k\rbrace,\ i \neq j:\quad r_{i} = H(s_{i, j}, n_{block})
 $$
 
-
-
 The commitment of the sender contains the amount $$v_{j}$$ and random factor $$r_{j}$$. We have the following constraints
 
 **The amount** in the commitment of the sender is the negative (since it's a debit) of all the amount that is being sent. This ensures that no new money enters the system. 
-
 
 $$
 v_j = - \sum_{i=1}^{k} v_i \text{ , } \text{where } i \neq j
