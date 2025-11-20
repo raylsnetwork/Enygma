@@ -1,24 +1,29 @@
 # Protocol Description
 
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
 
-## Notation
+    setup["System<br>Setup"]
+    keygen["Key<br>Generation"]
+    registration["Key<br>Registration"]
+    agreement["Key<br>Agreement"]
+    issuance["Issuance<br>of Funds"]
+    send_txs["Private Transfers<br>(Send)"]
+    process_txs["Private Transfers<br>(Process)"]
+    receive_txs["Private Transfers<br>(Receive)"]
+    auditing["Auditing<br>(Optional)"]
 
-* Balances are represented as Pedersen commitments:
-  * $$Comm(v, r) = vG + rH$$
-  * Note: We use a nothing-up-my-sleeve approach to obtaining the generator $$H$$. To do so, we hash-to-curve the number $$0$$. 
+    %% Flow Connections
+    setup -.-> keygen -.-> registration -.-> agreement -.-> issuance -.-> send_txs -.-> process_txs -.-> receive_txs -.-> auditing
 
-* Each privacy node has two keypairs. One for viewing transactions (i.e., ML-KEM), other for spending (i.e., hash-based). Both are quantum-secure: 
-  * $$(sk_{A}^{view}, pk_{A}^{view})$$
-  * $$(sk_{A}^{spend}, pk_{A}^{spend})$$
+```
 
-* Shared secret s is randomly generated and shared using a post-quantum key agreement (i.e., ML-KEM):
-  * $$Encapsulate(pk', s')$$
-
-* Block number:
-  * $$n_{block}$$
-
-* Random factor $$r$$ is derived from hashing a shared secret and a block number:
-  * $$r = Hash(s, n_{block})$$ 
 
 ## System Setup
 
