@@ -75,7 +75,7 @@ $$(id_{A}, pk_{A}^{view}, pk_{A}^{spend})$$
 ## Key Agreement
 Party downloads the counterparty's ML-KEM public-key $$pk_{i}'$$, generates a pre-secret $$s'$$ and encapsulates it using the downloaded public-key, thus obtaining $$Encapsulate(pk_{i}', s')$$. Sender calculates $$id = Hash(s')$$ and publishes both $$< i, id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
 
-Counterparty knows their index $i$ and detects that a new publishing took place. Party $i$ downlods the bundle $$< i, id, Encapsulate(pk', s')>$$. Upon download, the entity decapsulates the published payload, obtains $s'$, calculates $id' = Hash(s')$ and checks if the obtained $id'$ matches the published $id$. If so, the party $i$ publishes a sign-off message and attests that the $id$ posted initially is correct and is ready to receive private transactions. 
+Counterparty knows their index $i$ and detects that a new publishing took place. Party $i$ downloads the bundle $$< i, id, Encapsulate(pk', s')>$$. Upon download, the entity decapsulates the published payload, obtains $s'$, calculates $id' = Hash(s')$ and checks if the obtained $id'$ matches the published $id$. If so, the party $i$ publishes a sign-off message and attests that the $id$ posted initially is correct and is ready to receive private transactions. 
 
 ## Issuing Tokens
 There are two ways of issuing tokens. The issuer can mint tokens in a transparent manner and everyone in the system can see the underlying amounts. Alternatively, the issuer can mint tokens that are shielded from the start. We describe both approaches below. 
@@ -191,8 +191,8 @@ $$
 \forall i \in \lbrace 1,\ldots,k \rbrace:\quad
 t_i =
 \begin{cases}
-H(r_i,\mathrm{block}_n) & \text{if } i = j,\\
-H(s_{i, j},\mathrm{block}_n) & \text{if } i \neq j.
+H(r_j^{prev},n_{block}) & \text{if } i = j,\\
+H(s_{i, j},n_{block}) & \text{if } i \neq j.
 \end{cases}
 $$
 
@@ -234,6 +234,32 @@ flowchart LR
 
 ```
 
+#### Verifying a TX (Blockchain)
+The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. 
+
+We note that the encrypted payload is not checked by the smart contract and can be maliciously formed as its correctness is not included in the ZK proof. We note that this attack forces the sender to send funds, which the recipient is able to open since the Pedersen commitment is well-formed. The same recipient is then able to prove that the sender maliciously formed the ciphertext and eventually  have the sender face repercussions for a purposeful malicious action. The ciphertext is not included in the ZK proof because proving the correctness of an AES-GCM encryption is too expensive to perform for the execution of real-time transactions. 
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    %% Blockchain (Verifier)
+    verify_tx["Blockchain<br>(Verify Tx)"]
+    check_nullifier(["Check if nullifier<br>exists"])
+    check_commit(["Check if commitments add up to 0"])
+    check_zk(["Check ZK Proof"])
+    tally(["Approve Tx"])
+    store(["Store encrypted payload"])
+
+    verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally -.-> store
+```
+
+#### Querying For New Transactions
 
 ### Receiving a Transaction
 (We assume, at this point, that the blockchain has already processed incoming transactions and finalized the latest block
