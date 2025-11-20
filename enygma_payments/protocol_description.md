@@ -59,9 +59,9 @@ $$Comm(0, 0) = 0G + 0H$$
 ## Key Generation
 * privacy node A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
 
-* privacy node A generates a simple hash-based keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$.
-  *  $$sk_{A}^{view} \longleftarrow \\\{{0, 1\\\}}^{256}$$
-  *  $$pk_{A}^{view} = Hash(sk_{A}^{view})$$
+* privacy node A generates a simple hash-based keypair and obtains $$(sk_{A}^{spend}, pk_{A}^{spend})$$.
+  *  $$sk_{A}^{spend} \longleftarrow \\\{{0, 1\\\}}^{256}$$
+  *  $$pk_{A}^{spend} = Hash(sk_{A}^{spend})$$
  
 The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
@@ -120,13 +120,96 @@ This ensures only the issuer and the recipient know how much money was minted. W
 
 ## Private Transfers
 
-### Sending a Transaction
-To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors that depend on that specific last block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend funds. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node derives the ephemeral symmetric key used to encrypt additional/associated data of the transaction. The privacy node then calculates the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node also calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the previously obtained random factors and the amount to be sent to each party along with a nullifier that proves that the sender is submitting its only allowed transaction in this block, without revealing details about who they are. Once these values are calculated, the privacy node creates a ZK proof that proves the following: 
+### Transaction Structure
+We assume an anonymity set of size $$k$$, from which the sender is in index $$j$$. The exact transaction payload consists of a set of $$k$$ (Pedersen) commitments, a nullifier, a zero-knowledge proof $$\pi$$, a set of $$k$$ private messaging tags, and a set of $$k$$ ciphertexts
+
+<div align="center">
+
+
+| $$Commit_1$$ | $$\ldots$$ | $$Commit_k$$ | $$\text{nullifier}$$ | $$\pi$$ | $$t_1$$ | $$\ldots$$ | $$t_k$$ | $$ctxt_1$$ | $$\ldots$$ | $$ctxt_k$$ |
+|--------------|------------|--------------|----------------------|---------|---------|------------|---------|------------|------------|------------|
+
+</div>
+
+#### Commitments
+We use Pedersen commitments as shielded balances. Represented as follows: 
+
+$$
+\forall i \in \lbrace1,\ldots,k\rbrace:\quad
+Commit_i = v_{i}G + r_{i}H
+$$
+
+
+**The amount** to be received by each entity $$v_{i}$$ is simply the number of monetary units to be transferred to that entity. 
+
+**The random factor** of each recipient is obtained by hashing the shared secret between the sender $$j$$ and the recipient $$i$$: 
+
+$$
+\forall i \in \lbrace1,\dots,k\rbrace,\ i \neq j:\quad r_{i} = H(s_{i, j}, n_{block})
+$$
+
+
+
+The commitment of the sender contains the amount $$v_{j}$$ and random factor $$r_{j}$$. We have the following constraints
+
+**The amount** in the commitment of the sender is the negative (since it's a debit) of all the amount that is being sent. This ensures that no new money enters the system. 
+
+
+$$
+v_j = - \sum_{i=1}^{k} v_i \text{ , } \text{where } i \neq j
+$$
+
+**The random factor** of the commitment of the sender is the negative of the sum of all the other random factors of the recipients. This ensures that the addition of all the $$k$$ commitments ensures that the amounts and random factors cancel out and it's possible to verify at a contract level that all the commitments in the transaction add up to $$0$$. 
+
+$$
+r_j = - \sum_{i=1}^{k} r_i \text{ , } \text{where } i \neq j
+$$
+
+**Our system ensures the following balance conservation invariant:**
+
+Amounts sent in a transaction must add up to zero. 
+
+$$
+\sum_{i=1}^{k} v_i = 0
+$$
+
+Random factors for a set of commitments must add up to zero. 
+
+$$
+\sum_{i=1}^{k} r_i = 0
+$$
+
+#### Nullifier
+
+The nullifier is calculated by simple hashing the secret key of the sender and the latest block number. 
+
+$$\text{nullifier} = Hash(sk, n_{block})$$
+
+
+#### Private Messaging Tags
+The private messaging tags are obtained by hashing the shared secret $$s$$ between both parties. For the slot of the sender, we instead hash the random value $$r$$ of the previous balance commitment. We choose this random value because it is a secret value, known only to the sender, and it is already an input to the ZK circuit we use in our system. 
+
+$$
+\forall i \in \lbrace 1,\ldots,k \rbrace:\quad
+t_i =
+\begin{cases}
+H(r_i,\mathrm{block}_n) & \text{if } i = j,\\
+H(s_{i, j},\mathrm{block}_n) & \text{if } i \neq j.
+\end{cases}
+$$
+
+#### Zero-Knowledge Proof
+The privacy node creates a ZK proof $$\pi$$ that proves the following: 
 
 * I know the secret key of one of the items in this anonymity set of $$k$$ public keys;
 * I know the amount and random factor of the commitment that contains my balance in this set of $$k$$ commitments;
 * The nullifier is well-formed and uses my secret key and the latest block number;
 * The private messaging tags are well-formed using the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number.
+
+
+### Sending a Transaction
+To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors that depend on that specific last block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend funds. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node derives the ephemeral symmetric key used to encrypt additional/associated data of the transaction. The privacy node then calculates the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node also calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the previously obtained random factors and the amount to be sent to each party along with a nullifier that proves that the sender is submitting its only allowed transaction in this block, without revealing details about who they are. Once these values are calculated, 
+
 
 ```mermaid
 ---
@@ -283,15 +366,25 @@ Additionally, depending on the choice of random factors and the issuance process
 
 ## Complexity Analysis
 
+### Memory Complexity
+<div align="center">
+
+| Component        | Complexity                                             | Additional Remarks                                                     |
+|------------------|--------------------------------------------------------|------------------------------------------------------------------------|
+| Key Registration |$$O(N \times \|pk^{view}\| )$$            | Each privacy registers a key on the underlying blockchain.            |
+| Key Agreement    |$$O(N + (N \times \|ok\|) )$$ | Each privacy node establishes a key with all other privacy nodes.    |
+| Tx Size          |$$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$| $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.      |
+| Block Size       |$$O(N \times \|tx\|)$$                  | Each bank can submit **at most** one tx per block.                      |
+
+</div>
+
+### Computational Complexity
 <div align="center">
 
 | Component     | Complexity                                             | Additional Remarks                                                     |
 |---------------|--------------------------------------------------------|------------------------------------------------------------------------|
-| Key Agreement | $$O(n_{\text{banks}} - 1 )$$                           | Each privacy node establishes a key with all the other privacy nodes.  |
-| Tx Size       | $$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$| $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.     |
-| Block Size    | $$O(n_{\text{banks}} \times \|tx\|)$$                  | Each bank can submit **at most** one tx per block.                     |
+| Key Agreement | $$O(N - 1)$$                                           | Each privacy node establishes a key with all the other privacy nodes.  |
 
 
 </div>
-
 
