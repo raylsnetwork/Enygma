@@ -148,9 +148,7 @@ $$
 Commit_i = v_{i}G + r_{i}H
 $$
 
-**The amount** to be received by each entity $$v_{i}$$ is simply the number of monetary units to be transferred to that entity. 
-
-**The random factor** of each recipient is obtained by hashing the shared secret between the sender $$j$$ and the recipient $$i$$: 
+The **amount** to be received by each entity $$v_{i}$$ is simply the number of monetary units to be transferred to that entity. The **random factor** of each recipient is obtained by hashing the shared secret between the sender $$j$$ and the recipient $$i$$: 
 
 $$
 \forall i \in \lbrace1,\dots,k\rbrace,\ i \neq j:\quad r_{i} = H(s_{i, j}, n_{block})
