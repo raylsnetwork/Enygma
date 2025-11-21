@@ -265,10 +265,11 @@ flowchart LR
 ```
 
 #### Querying For New Transactions
+We assume each privacy node runs a full node of the underlying blockchain. Therefore, each node has the ability (and responsibility) to download the latest block and performs a lookup (locally) for transactions that include the privacy node in the anonymity set (i.e., transactions that may be for them). This is effectively the trivial [Private Information Retrieval](https://en.wikipedia.org/wiki/Private_information_retrieval) protocol, where a client downloads the entire dataset and performs the lookup locally. We leverage the full node role and leverage it to provide a private querying functionality to ensure privacy nodes do not reveal which transactions they are querying. 
+
 
 ### Receiving a Transaction
-(We assume, at this point, that the blockchain has already processed incoming transactions and finalized the latest block
-The privacy node downloads the latest block and performs a lookup (locally) for transactions that include the privacy node in the anonymity set (i.e., transactions that may be for them). Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. 
+Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. 
 
 Once this value is obtained, the privacy node can either:
 
