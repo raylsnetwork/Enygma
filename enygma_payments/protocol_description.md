@@ -267,6 +267,22 @@ flowchart LR
 #### Querying For New Transactions
 We assume each privacy node runs a full node of the underlying blockchain. Therefore, each node has the ability (and responsibility) to download the latest block and performs a lookup (locally) for transactions that include the privacy node in the anonymity set (i.e., transactions that may be for them). This is effectively the trivial [Private Information Retrieval](https://en.wikipedia.org/wiki/Private_information_retrieval) protocol, where a client downloads the entire dataset and performs the lookup locally. We leverage the full node role and leverage it to provide a private querying functionality to ensure privacy nodes do not reveal which transactions they are querying. 
 
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    %% PL (Receive)
+    pl_receive["Privacy Node<br>(Querying)"]
+    getblock_receive(["Download Latest<br>Block"])
+    get_anon_set(["Get Subset of<br>Enygma Transactions"])
+
+    pl_receive -.-> getblock_receive -.-> get_anon_set
+```
 
 ### Receiving a Transaction
 Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. 
@@ -288,10 +304,8 @@ flowchart LR
 
     %% PL (Receive)
     pl_receive["Privacy Node<br>(Receive Tx)"]
-    getblock_receive(["Download Latest<br>Block"])
-    get_anon_set(["Get Subset of<br>Enygma Transactions"])
     calc_tags(["Calculate Private<br>Messaging Tags"])
-    detect_sender(["Detect<br>Sender"])
+    detect_sender(["Detect Sender"])
     derivereceivekey(["Derive Ephemeral<br>(Symmetric) Key"])
     calc_r(["Calculate<br>Random Factor(s)"])
     obtain_vG(["Obtain vG"])
@@ -299,7 +313,7 @@ flowchart LR
     calc_c(["Calculate Latest<br>(Shielded) Balance"])
 
 
-    pl_receive -.-> getblock_receive -.-> get_anon_set -.->  calc_tags -.-> detect_sender -.-> derivereceivekey -.-> calc_r -.-> obtain_vG -.-> obtain_v -.-> calc_c
+    pl_receive -.-> calc_tags -.-> detect_sender -.-> derivereceivekey -.-> calc_r -.-> obtain_vG -.-> obtain_v -.-> calc_c
 
 ```
 
