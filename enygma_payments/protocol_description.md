@@ -173,20 +173,20 @@ $$
 Amounts sent in a transaction must add up to zero. 
 
 $$
-\sum_{i=1}^{k} v_i = 0
+\sum_{i=1}^{i=k} v_i = 0
 $$
 
 Random factors for a set of commitments must add up to zero. 
 
 $$
-\sum_{i=1}^{k} r_i = 0
+\sum_{i=1}^{i=k} r_i = 0
 $$
 
 #### Nullifier
 
 The nullifier is calculated by simple hashing the secret key of the sender and the latest block number. 
 
-$$\text{nullifier} = Hash(sk, n_{block})$$
+$$\text{nullifier} = Hash(sk_{j}, n_{block})$$
 
 
 #### Private Messaging Tags
