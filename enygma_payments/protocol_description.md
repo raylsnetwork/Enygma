@@ -195,7 +195,7 @@ $$
 The **amount** to be received by each entity $$v_{i}$$ is simply the number of monetary units to be transferred to that entity. The **random factor** of each recipient is obtained by hashing the shared secret between the sender $$j$$ and the recipient $$i$$: 
 
 $$
-\forall i \in \lbrace1,\dots,k\rbrace,\ i \neq j:\quad r_{i} = H(s_{i, j}, n_{block})
+\forall i \in \lbrace1,\dots,k\rbrace,\ i \neq j:\quad r_{i} = Hash(s_{i, j}, n_{block})
 $$
 
 The commitment of the sender contains the amount $$v_{j}$$ and random factor $$r_{j}$$. We have the following constraints
@@ -230,7 +230,7 @@ $$
 
 The nullifier is calculated by simple hashing the (spend) secret key of the sender $$j$$ and the latest block number $$n_{block}$$. 
 
-$$\text{nullifier} = Hash(sk_{j}^{view}, n_{block})$$
+$$\text{nullifier} = Hash(sk_{j}^{spend}, n_{block})$$
 
 
 #### Private Messaging Tags
@@ -240,8 +240,8 @@ $$
 \forall i \in \lbrace 1,\ldots,k \rbrace:\quad
 t_i =
 \begin{cases}
-H(r_j^{prev},n_{block}) & \text{if } i = j,\\
-H(s_{i, j},n_{block}) & \text{if } i \neq j.
+Hash(r_j^{prev},n_{block}) & \text{if } i = j,\\
+Hash(s_{i, j},n_{block}) & \text{if } i \neq j.
 \end{cases}
 $$
 
