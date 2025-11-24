@@ -116,7 +116,7 @@ Each privacy node generates two keypairs: one to spend funds, and one to 'view' 
   *  $$sk_{A}^{spend} \longleftarrow \\\{{0, 1\\\}}^{256}$$
   *  $$pk_{A}^{spend} = Hash(sk_{A}^{spend})$$
  
-The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in an anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate shared secrets with other participants, which are then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
+The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know an $$sk^{spend}$$ corresponding to an anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate shared secrets with other participants, which are then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
 ## 3 - Key Registration
 Privacy node registers both the view and spend public keys on the underlying blockchain. 
