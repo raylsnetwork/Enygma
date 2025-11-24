@@ -33,6 +33,22 @@ flowchart LR
 
 ```
 
+## Notation
+
+* G and H are generators of the used group.
+* Hash(x) represents a cryptographically-secure (and ZK-friendly) hash of preimage 'x'.
+* Hash-To-Curve(x) represents an algorithm for hashing an arbitrary string 'x' to a point on the elliptic curve.
+* $$Comm(v, r)$$ is a (Pedersen) commitment to value $$v$$ with a random factor $$r$$.
+* $$sk_{i}^{spend}$$ is the spend secret key for entity $$i$$.
+* $$pk_{i}^{spend}$$ is the spend public key for entity $$i$$.
+* $$sk_{i}^{view}$$ is the view secret key for entity $$i$$.
+* $$pk_{i}^{view}$$ is the view public key for entity $$i$$.
+* $$n_{block}$$ is the latest block number.
+* $$t_{i}$$ is the private messaging tag of index $$i$$, s.t.,  $$i \in \lbrace 1,\ldots,k$$
+* $$k$$ is the anonymity set of the system.
+* $$s_{i, j}$$ is the shared secret established between party $$i$$ and party $$j$$.
+* $$\text{nullifier}$$ is the nullifier that is sent in each transaction to ensure entities are not able to double-spend.
+* $$\pi$$ is the zero-knowledge proof that is appended to an Enygma transaction.
 
 ## 1 - System Setup
 
@@ -214,7 +230,7 @@ $$
 
 The nullifier is calculated by simple hashing the (spend) secret key of the sender $$j$$ and the latest block number $$n_{block}$$. 
 
-$$\text{nullifier} = Hash(sk_{j}, n_{block})$$
+$$\text{nullifier} = Hash(sk_{j}^{view}, n_{block})$$
 
 
 #### Private Messaging Tags
