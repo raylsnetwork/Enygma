@@ -85,13 +85,15 @@ $$Comm(0, 0) = 0G + 0H$$
 
 
 ## 2 - Key Generation
-* privacy node A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
+Each privacy node generates two keypairs: one to spend funds, and one to 'view' transactions. Concretely: 
 
-* privacy node A generates a simple hash-based keypair and obtains $$(sk_{A}^{spend}, pk_{A}^{spend})$$.
+* Privacy node A generates an [ML-KEM](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf) (view) keypair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
+
+* Privacy node A generates a simple hash-based (spend) keypair and obtains $$(sk_{A}^{spend}, pk_{A}^{spend})$$.
   *  $$sk_{A}^{spend} \longleftarrow \\\{{0, 1\\\}}^{256}$$
   *  $$pk_{A}^{spend} = Hash(sk_{A}^{spend})$$
  
-The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
+The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in an anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate shared secrets with other participants, which are then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
 ## 3 - Key Registration
 Privacy node registers both the view and spend public keys on the underlying blockchain. 
