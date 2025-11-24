@@ -174,13 +174,17 @@ This ensures only the issuer and the recipient know how much money was minted. W
 ## 6 - Private Transfers
 
 ### Transaction Structure
-We assume an anonymity set of size $$k$$, from which the sender is in index $$j$$. The exact transaction payload consists of a set of $$k$$ (Pedersen) commitments, a nullifier, a zero-knowledge proof $$\pi$$, a set of $$k$$ private messaging tags, and a set of $$k$$ ciphertexts
+We assume an anonymity set of size $$k$$, from which the sender is in index $$j$$. The exact transaction payload consists of a set of $$k$$ (Pedersen) commitments, a nullifier, a zero-knowledge proof $$\pi$$, a set of $$k$$ private messaging tags, and a set of $$k$$ ciphertexts. 
+
+Since we publish $$k$$ commitments per transaction, we effectively support the sender to pay up to $$k-1$$ banks (all $$k$$ members in the anonymity set except themselves). This allows for batching of payments. Additionally, we append a ciphertext to each of these commitments, which can contain additional information about each of the payments. Therefore, we can encode additional information that allows for double batching. 
+
+**For example, a single transaction from a financial institution can pay multiple clients in each of the other banks. This is a payment with double aggregation.**
 
 <div align="center">
 
 
-| $$Commit_1$$ | $$\ldots$$ | $$Commit_k$$ | $$\text{nullifier}$$ | $$\pi$$ | $$t_1$$ | $$\ldots$$ | $$t_k$$ | $$ctxt_1$$ | $$\ldots$$ | $$ctxt_k$$ |
-|--------------|------------|--------------|----------------------|---------|---------|------------|---------|------------|------------|------------|
+| $$Commit_1$$ | $$\ldots$$ | $$Commit_k$$ | $$\text{nullifier}$$ | $$t_1$$ | $$\ldots$$ | $$t_k$$ | $$\pi$$| $$ctxt_1$$ | $$\ldots$$ | $$ctxt_k$$ |
+|--------------|------------|--------------|----------------------|---------|------------|---------|---------|------------|------------|-----------|
 
 </div>
 
@@ -253,6 +257,10 @@ The privacy node creates a ZK proof $$\pi$$ that proves the following:
 * The nullifier is well-formed and uses my secret key and the latest block number;
 * The private messaging tags are well-formed using the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number.
 
+#### Ciphertexts 
+A transaction payload includes a set of $$k$$ ciphertexts (encrypted using AES-GCM-256). These ciphertexts should contain additional information for the recipient to be able to quickly open the transaction details (i.e., the Pedersen commitments) and potentially get more information about the specific recipient (e.g., user Bob, who is a client of that specific receiving bank). 
+
+We note that the correctness of these ciphertext is not part of the ZK proof and these values can indeed be maliciously formed. This is by design to keep the circuit cheap. The commitment, however, will always be of a valid amount and will correspond to a debit. Therefore, performing this attack will always cost funds and will allow the recipient to prove that the sender is indeed malicious, by simply showing that the received ciphertext does not open under the corresponding symmetric key for that block. In other words, the malicious attacker is incriminating themselves while also sending money to the recipient (who is able to open the commitment). We believe this trade-off is ideal for multiple reasons. Concretely, the trust model with financial institutions is different as these are regulated institutions. In this setting, it is very easy to prove malfeasance. Finally, this approach allows the design to have a very cheap overall prover cost, which allows institutions to make very fast (aggregated) payments. 
 
 ### Sending a Transaction
 To send a transaction, the privacy node needs to be in sync with the latest block on the blockchain. The purpose for this is twofold: first, the privacy node needs to create a nullifier and random factors that depend on that specific last block; and second, the privacy node needs to know what is the latest shielded balance it has in order to be able to spend funds. Therefore, the first step to send a transaction is to obtain the latest block. From the latest block number, the privacy node derives the ephemeral symmetric key used to encrypt additional/associated data of the transaction. The privacy node then calculates the corresponding random factors to be used in the transaction, and the nullifier for this block. The privacy node also calculates a set of $$k$$ (i.e., anonymity set) Pedersen commitments using the previously obtained random factors and the amount to be sent to each party along with a nullifier that proves that the sender is submitting its only allowed transaction in this block, without revealing details about who they are. Once these values are calculated, 
