@@ -238,7 +238,7 @@ $$\text{nullifier} = Hash(sk_{j}^{spend}, n_{block})$$
 
 
 #### Private Messaging Tags
-The private messaging tags are obtained by hashing the shared secret $$s$$ between both parties. For the slot of the sender, we instead hash the random value $$r$$ of the previous balance commitment. We choose this random value because it is a secret value, known only to the sender, and it is already an input to the ZK circuit we use in our system. 
+The private messaging tags are obtained by hashing the shared secret $$s$$ between both parties. For the slot of the sender, one must use a different value as a sender does not have a shared secret established with themselves. A poor choice of this value can also break the privacy of the sender as it could potentially allow a network observer to infer additional information about that specific tag. Instead, we hash the random value $$r$$ of the previous balance commitment. We note that a sender has a shielded balance on-chain, which they're always able to open (as they know the amount they have and are always able to obtain the corresponding random factor). We choose this random value because it is a secret value, known only to the sender, and it is already an input to the ZK circuit we use in our system. 
 
 $$
 \forall i \in \lbrace 1,\ldots,k \rbrace:\quad
