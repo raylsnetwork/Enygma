@@ -27,7 +27,7 @@ flowchart LR
 ```
 
 
-## System Setup
+## 1 - System Setup
 
 ### Transparent Setup for Generator H
 
@@ -63,7 +63,7 @@ Therefore, the Issuer creates a contract where the initial balance for all the p
 $$Comm(0, 0) = 0G + 0H$$
 
 
-## Key Generation
+## 2 - Key Generation
 * privacy node A generates an ML-KEM pair and obtains $$(sk_{A}^{view}, pk_{A}^{view})$$
 
 * privacy node A generates a simple hash-based keypair and obtains $$(sk_{A}^{spend}, pk_{A}^{spend})$$.
@@ -72,19 +72,19 @@ $$Comm(0, 0) = 0G + 0H$$
  
 The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know $$sk^{spend}$$ corresponding to a $$pk^{spend}$$ in the anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate a shared secret, which is then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
-## Key Registration
+## 3 - Key Registration
 Privacy node registers both the view and spend public keys on the underlying blockchain. 
 
 For example, if privacy node A registers, the tuple below should be the output of the registration step: 
 
 $$(id_{A}, pk_{A}^{view}, pk_{A}^{spend})$$
 
-## Key Agreement
+## 4 - Key Agreement
 Party downloads the counterparty's ML-KEM public-key $$pk_{i}'$$, generates a pre-secret $$s'$$ and encapsulates it using the downloaded public-key, thus obtaining $$Encapsulate(pk_{i}', s')$$. Sender calculates $$id = Hash(s')$$ and publishes both $$< i, id, Encapsulate(pk', s')>$$ on the underlying blockchain. 
 
 Counterparty knows their index $i$ and detects that a new publishing took place. Party $i$ downloads the bundle $$< i, id, Encapsulate(pk', s')>$$. Upon download, the entity decapsulates the published payload, obtains $s'$, calculates $id' = Hash(s')$ and checks if the obtained $id'$ matches the published $id$. If so, the party $i$ publishes a sign-off message and attests that the $id$ posted initially is correct and is ready to receive private transactions. 
 
-## Issuing Tokens
+## 5 - Issuing Tokens
 There are two ways of issuing tokens. The issuer can mint tokens in a transparent manner and everyone in the system can see the underlying amounts. Alternatively, the issuer can mint tokens that are shielded from the start. We describe both approaches below. 
 
 There are two minting flows for the issuer is able to mint funds on the underlying smart contract. The issuer can either mint a commitment with the random factor set to zero which publicly discloses the minted amount or, alternatively, act as a participant in the network and mint a shielded balance in the form of Pedersen commitment where the random factor is derived from the shared secret between the issuer and the receiver of funds. 
@@ -127,7 +127,7 @@ $$Comm(v, r) = vG + rH$$
 
 This ensures only the issuer and the recipient know how much money was minted. We note, however, that it's still possible to have verifiability on the minting side, in the sense that every time there is a mint that the system knows a mint occcurred. 
 
-## Private Transfers
+## 6 - Private Transfers
 
 ### Transaction Structure
 We assume an anonymity set of size $$k$$, from which the sender is in index $$j$$. The exact transaction payload consists of a set of $$k$$ (Pedersen) commitments, a nullifier, a zero-knowledge proof $$\pi$$, a set of $$k$$ private messaging tags, and a set of $$k$$ ciphertexts
@@ -324,7 +324,7 @@ Let us assume Bob is the sender of the first transaction and Charlie of the seco
 
 If $$v = 0$$, then Alice was part of the anonymity set and has not received any funds. We note that it may be the case that no entity in the anonymity set has received funds and it is a dummy transaction (i.e., sending $$0$$ to all participants to add additional noise to the system). 
 
-## Auditing
+## 7 - Auditing
 There are multiple types of auditing supported by the protocol. Concretely, the auditor can have a 'universal view' and have the ability of seeing all the transactions that take place in the network. 
 
 #### View Key Sharing
@@ -408,7 +408,7 @@ Besides the auditor, we highlight that any entity in the system can always monit
 
 Additionally, depending on the choice of random factors and the issuance process, it may be possible for any entity to check the total supply of the asset at all times. 
 
-## Complexity Analysis
+## Additional Remarks
 
 ### Memory Complexity
 <div align="center">
