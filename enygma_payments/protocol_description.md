@@ -355,7 +355,7 @@ If $$v = 0$$, then Alice was part of the anonymity set and has not received any 
 ## 7 - Auditing
 There are multiple types of auditing supported by the protocol. Concretely, the auditor can have a 'universal view' and have the ability of seeing all the transactions that take place in the network. 
 
-#### View Key Sharing
+#### Long-term (View) Key Sharing
 If there is an auditor that needs the complete view of the transactions in the network, then each privacy node shares their view key pair with the auditor upon the key registration step. To do so, each privacy node encrypts their view secret key (i.e., $$sk_{A}^{view}$$) and publishes it on the blockchain for the auditor to fetch. 
 
 ```mermaid
