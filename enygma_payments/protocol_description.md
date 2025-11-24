@@ -205,7 +205,7 @@ $$
 
 #### Nullifier
 
-The nullifier is calculated by simple hashing the secret key of the sender and the latest block number. 
+The nullifier is calculated by simple hashing the (spend) secret key of the sender $$j$$ and the latest block number $$n_{block}$$. 
 
 $$\text{nullifier} = Hash(sk_{j}, n_{block})$$
 
