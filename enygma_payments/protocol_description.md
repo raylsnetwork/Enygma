@@ -337,9 +337,9 @@ flowchart LR
 ```
 
 ### Retrieving a Transaction
-Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. 
+Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. The privacy node is then going to brute-force try the symmetric decryption of each transaction. This work is paralellizable and extremely fast as it is simply performing $$k-1$$ hash operations for each received transaction. Once the sender is detected, the recipient can perform an AES-GCM decryption and obtain more information about the transfer details in the corresponding plaintext. In the event that the sender was malicious, the recipient now knows the sender associated with this transaction was malicious and is able to prove that the symmetric key for that specific block does not result in a successful AES-GCM decryption. 
 
-Once this value is obtained, the privacy node can either:
+In order to open the balance from the transaction. We know that the Pedersen commitments are well-formed as that is part of the ZK proof. So the sender is always able to remove the randomness component of the commitment. To obtain the received amount, we provide the following three options:
 
 * brute-force the value of $$v$$ (time-consuming but feasible since this is a monetary amount and should not be a very high amount)
 * have a precomputed table containing all the possible reasonable values for $$vG$$
@@ -467,10 +467,10 @@ Additionally, depending on the choice of random factors and the issuance process
 
 | Component        | Complexity                                             | Additional Remarks                                                     |
 |------------------|--------------------------------------------------------|------------------------------------------------------------------------|
-| Key Registration |$$O(N \times \|pk^{view}\| )$$            | Each privacy registers a key on the underlying blockchain.            |
-| Key Agreement    |$$O(N + (N \times \|ok\|) )$$ | Each privacy node establishes a key with all other privacy nodes.    |
-| Tx Size          |$$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$| $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.      |
-| Block Size       |$$O(N \times \|tx\|)$$                  | Each bank can submit **at most** one tx per block.                      |
+| Key Registration |O(N ( \|pk^{view}\| + \|pk^{spend}\| ))                 | Each privacy registers a key on the underlying blockchain.             |
+| Key Agreement    |$$O(N + (N \times \|ok\|) )$$                           | Each privacy node establishes a key with all other privacy nodes.      |
+| Tx Size          |$$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$ | $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.     |
+| Block Size       |$$O(N \times \|tx\|)$$                                  | Each bank can submit **at most** one tx per block.                     |
 
 </div>
 
