@@ -312,7 +312,7 @@ flowchart LR
     pl_receive -.-> getblock_receive -.-> get_anon_set
 ```
 
-### Receiving a Transaction
+### Retrieving a Transaction
 Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. 
 
 Once this value is obtained, the privacy node can either:
