@@ -116,7 +116,9 @@ Each privacy node generates two keypairs: one to spend funds, and one to 'view' 
   *  $$sk_{A}^{spend} \longleftarrow \\\{{0, 1\\\}}^{256}$$
   *  $$pk_{A}^{spend} = Hash(sk_{A}^{spend})$$
  
-The goal here is to have segregation of functionalities with each keypair. To spend, the user proves in zero-knowledge that they know an $$sk^{spend}$$ corresponding to an anonymity set. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate shared secrets with other participants, which are then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
+The goal here is to have segregation of functionalities with each keypair. 
+
+To spend, the user proves in zero-knowledge that they know a secret key $$sk^{spend}$$ corresponding to one public key $$pk^{spend}$$ in an anonymity set of size $$k$$. We note that the hashing used in this step is ZK-friendly (i.e., Poseidon). On the other hand, the view key pair is used to generate shared secrets with other participants, which are then subsequently used to derive random factors for every block and ephemeral symmetric encryption keys for symmetric encryption. 
 
 ## 3 - Key Registration
 Privacy node registers both the view and spend public keys on the underlying blockchain. 
@@ -126,9 +128,13 @@ For example, if privacy node A registers, the tuple below should be the output o
 $$(id_{A}, pk_{A}^{view}, pk_{A}^{spend})$$
 
 ## 4 - Key Agreement
-Party downloads the counterparty's ML-KEM public-key $$pk_{i}^{view}$$, generates a pre-secret $$s'$$ and encapsulates it using the downloaded public-key, thus obtaining $$Encapsulate(pk_{i}^{view}, s')$$. Sender calculates $$id = Hash(s')$$ and publishes both $$< i, id, Encapsulate(pk_{i}^{view}, s')>$$ on the underlying blockchain. 
+We run the following ML-KEM protocol adapted to use the underlying blockchain as a global PKI for the network and a bulletin board for universal ciphertext publishing. 
 
-Counterparty knows their index $i$ and detects that a new publishing took place. Party $i$ downloads the bundle $$< i, id, Encapsulate(pk_{i}^{view}, s')>$$. Upon download, the entity decapsulates the published payload, obtains $s'$, calculates $id' = Hash(s')$ and checks if the obtained $id'$ matches the published $id$. If so, the party $i$ publishes a sign-off message and attests that the $id$ posted initially is correct and is ready to receive private transactions. 
+* The sender $$j$$ downloads the counterparty's $$i$$ ML-KEM public key $$pk_{i}^{view}$$ and runs ML-KEM.Encapsulate$$(pk_{i}^{view})$$ and obtains a ciphertext $$ctxt_{i,j}$$ and a shared secret $$s_{i,j}$$. 
+
+* The sender computes $$id = Hash(s_{i,j})$$ and publishes $$⟨i, j, id, ctxt_{i, j}⟩$$ on the underlying blockchain. This allows the recipient to know that they have a new message for them and who is publishing it.
+
+* The counterparty $$i$$ watches the chain, downloads $$⟨i, j, id, ctxt_{i, j}⟩$$, runs MLKEM.Decaps$$(sk_{i}^{view}, ctxt_{i, j})$$, obtains a shared secret $$s'_{i,j}$$, and computes $$id' = Hash(s')$$. If $$id' = id$$, party $$i$$ publishes a sign-off message and is ready to receive private transactions from the sender.
 
 ## 5 - Issuing Tokens
 There are two ways of issuing tokens. The issuer can either mint a commitment with the random factor set to zero which publicly discloses the minted amount or, alternatively, act as a participant in the network and mint a shielded balance in the form of Pedersen commitment where the random factor is derived from the shared secret between the issuer and the receiver of funds. This specific mechanism to generate the random factor ensures that the issuer can mint a specific amount and the recipient can detect the minted amount. 
@@ -339,7 +345,7 @@ flowchart LR
 ### Retrieving a Transaction
 Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. The privacy node is then going to brute-force try the symmetric decryption of each transaction. This work is paralellizable and extremely fast as it is simply performing $$k-1$$ hash operations for each received transaction. Once the sender is detected, the recipient can perform an AES-GCM decryption and obtain more information about the transfer details in the corresponding plaintext. In the event that the sender was malicious, the recipient now knows the sender associated with this transaction was malicious and is able to prove that the symmetric key for that specific block does not result in a successful AES-GCM decryption. 
 
-In order to open the balance from the transaction. We know that the Pedersen commitments are well-formed as that is part of the ZK proof. So the sender is always able to remove the randomness component of the commitment and obtain $$vG$$. 
+In order to open the balance from the transaction. Since the Pedersen commitments are well-formed (enforced by the ZK proof), the recipient, who knows the corresponding random factor $$r$$, can remove the randomness component and obtain $$vG$$.
 
 Concrete deployments will impose limits on transfer amounts (i.e., the value of $$v$$), which ensures that the discrete-log-based recovery of $$v$$ from $$vG$$ is practical enough to be feasible to conduct in a catastrophic scenario. To obtain the received amount $$v$$ from $$vG$$, we provide three options:
 
