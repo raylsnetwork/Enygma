@@ -35,7 +35,7 @@ flowchart LR
 
 ## Notation
 
-* G and H are generators of the used group.
+* G and H are generators of the used group (i.e., BN254).
 * Hash(x) represents a cryptographically-secure (and ZK-friendly) hash of preimage 'x'.
 * Hash-To-Curve(x) represents an algorithm for hashing an arbitrary string 'x' to a point on the elliptic curve.
 * $$Comm(v, r)$$ is a (Pedersen) commitment to value $$v$$ with a random factor $$r$$.
