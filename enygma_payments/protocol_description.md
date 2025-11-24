@@ -467,7 +467,7 @@ Additionally, depending on the choice of random factors and the issuance process
 
 | Component        | Complexity                                             | Additional Remarks                                                     |
 |------------------|--------------------------------------------------------|------------------------------------------------------------------------|
-| Key Registration |O(N ( \|pk^{view}\| + \|pk^{spend}\| ))                 | Each privacy registers a key on the underlying blockchain.             |
+| Key Registration |$$O(N ( \|pk^{view}\| + \|pk^{spend}\| ))$$             | Each privacy registers a key on the underlying blockchain.             |
 | Key Agreement    |$$O(N + (N \times \|ok\|) )$$                           | Each privacy node establishes a key with all other privacy nodes.      |
 | Tx Size          |$$O(k (\|C\| + \|t\| + \|ctxt\|) + \|\pi \| + \|nf\|)$$ | $$k$$ commitments, tags, ciphertexts, a zk proof, and a nullifier.     |
 | Block Size       |$$O(N \times \|tx\|)$$                                  | Each bank can submit **at most** one tx per block.                     |
