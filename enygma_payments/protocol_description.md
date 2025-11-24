@@ -1,6 +1,6 @@
 # Protocol Description
 
-In this document, we describe the Enygma payments protocol, which is comprised of different sub-protocols. Concretely, we have an initial **System Setup** where the system parameters are defined. Subsequently, we have a **Key Generation**, a **Key Registration**, and a **Key Agreement** step where parties generate keypairs, register the public keys on the underlying blockchain, and run a key agreement protocol to establish pairwise shared secrets. Once completed, parties are able to **Send Private Transfers**. These transactions go through a **Process** step, where the blockchain checks the correctness of the transfers. Upon completion of this step, the recipients can **Retrieve Private Transfers**. Finally, if required, the system supports an **Auditing** step. 
+In this document, we describe the Enygma payments protocol, which is comprised of different sub-protocols. Concretely, we have an initial **System Setup** where the system parameters are defined. Subsequently, we have a **Key Generation** step where parties generate keypairs. A **Key Registration** step where parties register the public keys on the underlying blockchain, and a **Key Agreement** step where parties run a key agreement protocol to establish pairwise shared secrets. Once completed, parties can start transacting privately. This transfer stage has a **Send**, **Process**, and **Retrieve** step. Finally, if required, the system supports an **Auditing** step. 
 
 ```mermaid
 ---
