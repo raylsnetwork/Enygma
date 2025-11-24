@@ -16,13 +16,20 @@ flowchart LR
     registration["Key<br>Registration"]
     agreement["Key<br>Agreement"]
     issuance["Issuance<br>of Funds"]
+
     send_txs["Private Transfers<br>(Send)"]
     process_txs["Private Transfers<br>(Process)"]
     receive_txs["Private Transfers<br>(Retrieve)"]
     auditing["Auditing<br>(Optional)"]
 
     %% Flow Connections
-    setup -.-> keygen -.-> registration -.-> agreement -.-> issuance -.-> send_txs -.-> process_txs -.-> receive_txs -.-> auditing
+    setup -.-> keygen -.-> registration -.-> agreement -.-> issuance -.-> send_txs
+
+    subgraph Enygma Transfers
+      send_txs -.-> process_txs -.-> receive_txs
+    end
+
+    receive_txs -.-> auditing
 
 ```
 
