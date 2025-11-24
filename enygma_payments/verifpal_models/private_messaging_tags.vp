@@ -1,0 +1,104 @@
+attacker[active]
+
+
+principal Blockchain[
+	generates block
+	generates block_number
+]
+
+// 
+principal Alice[
+	generates a
+	pkA = G^a
+]
+
+Alice -> Blockchain: [pkA]
+
+
+principal Bob[
+	generates b
+	pkB = G^b
+]
+
+Bob -> Blockchain: [pkB]
+
+// 
+principal Charlie[
+	generates c
+	pkC = G^c
+]
+
+Charlie -> Blockchain: [pkC]
+
+// Download keys from participants
+Blockchain -> Alice  : [pkB], [pkC], [block_number]
+Blockchain -> Bob 	 : [pkA], [pkC], [block_number]
+Blockchain -> Charlie: [pkA], [pkB], [block_number]
+
+// Key Agreement
+
+principal Alice[
+	// random factor
+	generates r_a
+	
+	// calculate shared secrets
+	s_ab = pkB^a
+	s_ac = pkC^a
+
+	// calculate private messaging tags
+	t_ab = Hash(s_ab, block_number)
+	t_ac = Hash(s_ac, block_number)
+	t_a  = Hash(r_a , block_number)
+]
+
+// 
+principal Bob[
+	generates r_b
+	
+	// calculate shared secrets
+	s_ba = pkA^b
+	s_bc = pkC^b
+
+	// calculate private messaging tags
+	t_ba = Hash(s_ba, block_number)
+	t_bc = Hash(s_bc, block_number)
+	t_b  = Hash(r_b , block_number)
+
+]
+
+principal Charlie[
+	generates r_c
+	
+	// calculate shared secrets
+	s_ca = pkA^c
+	s_cb = pkB^c
+
+	// calculate private messaging tags
+	t_ca = Hash(s_ca, block_number)
+	t_cb = Hash(s_cb, block_number)
+	t_c  = Hash(r_c , block_number)
+]
+
+queries[
+	
+	// check if adversary has access to shared secrets
+	confidentiality? s_ab
+	confidentiality? s_ba 
+	confidentiality? s_ac 
+	confidentiality? s_ca 
+	confidentiality? s_bc 
+	confidentiality? s_cb
+
+	// check if adversary has access to random factors
+	confidentiality? r_a
+	confidentiality? r_b
+	confidentiality? r_c
+
+	// check if adversary can link the different private messagin tags
+	unlinkability? t_a, t_b, t_c, t_ab, t_ba, t_ac, t_ca, t_bc, t_cb
+	
+	// check if private messaging tags are equivalent on both sides of the execution
+	equivalence? t_ab, t_ba
+	equivalence? t_ac, t_ca
+	equivalence? t_bc, t_cb
+]
