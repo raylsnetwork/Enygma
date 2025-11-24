@@ -73,8 +73,8 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which
 To show that our protocol runs on commodity hardware and does not come with extreme hardware requirements, we measured the performance of our design using a Mac mini M1 from 2020 with 16GB of memory. We obtained the following numbers: 
 
 * **Constraints:** 82086
-* **Prover time:** 334.28 ms
-* **Verifier cost:** TBD
+* **(Groth16) Prover time:** 334.28 ms
+* **(Groth16) Verifier cost:** 389578 gas
 
 ## Peer-Reviewed Publications
 - [Rayls: A Novel Design for CBDCs](https://eprint.iacr.org/2025/1639), published at [The 6th Workshop on Coordination of Decentralized Finance (CoDecFin) 2025](https://fc25.ifca.ai/codecfin/)
