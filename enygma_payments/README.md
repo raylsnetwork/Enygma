@@ -65,10 +65,15 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which
 ](https://eprint.iacr.org/2025/2113) to allow clients to submit ZK proofs to the Private Network Hub component of the system without incurring in unnecessary hardware costs. 
 
 ## Implementation Details
-* **Client**: Golang
-* **ZK Circuit(s)**: Gnark
-* **Verifier**: Solidity
+* **Client**: [Golang](https://go.dev/)
+* **ZK Circuit(s)**: [Gnark](https://docs.gnark.consensys.net/)
+* **Verifier**: [Solidity](https://www.soliditylang.org/)
 
+## Performance
+We measured the performance of our design using a Mac mini from 2001. 
+
+Prover time: TBD
+Verifier cost: TBD
 
 ## Peer-Reviewed Publications
 - [Rayls: A Novel Design for CBDCs](https://eprint.iacr.org/2025/1639), published at [The 6th Workshop on Coordination of Decentralized Finance (CoDecFin) 2025](https://fc25.ifca.ai/codecfin/)
