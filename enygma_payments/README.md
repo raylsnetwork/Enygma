@@ -70,9 +70,10 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which
 * **Verifier**: [Solidity](https://www.soliditylang.org/)
 
 ## Performance
-We measured the performance of our design using a Mac mini from 2001. 
+We measured the performance of our design using a Mac mini M1 from 2020 with 16GB of memory. This is purposefully done to demonstrate that our protocol runs on commodity hardware and does not come with extreme hardware requirements. 
 
-Prover time: TBD
+**Constraints:** 82086
+**Prover time:** 334.28 ms
 Verifier cost: TBD
 
 ## Peer-Reviewed Publications
