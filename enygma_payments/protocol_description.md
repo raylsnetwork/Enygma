@@ -55,6 +55,27 @@ Enygma relies on the Groth16 ZK scheme, which requires an initial trusted setup.
 
 We envision this step to take place involving different Privacy Nodes in the system. We note that each Privacy Node represents a regulated financial institution. Therefore, it is reasonable to assume that at least one of the institutions will abide by the protocol and preserve the security of the trusted setup stage. 
 
+### Issuer Setup
+The setup for the issuer is straightforward as it consists simply of deploying the corresponding Enygma smart contract. Optionally, to support certain private functionalities, the issuer may need to register some key material. 
+
+```mermaid
+---
+config:
+  theme: redux
+  layout: elk
+  look: handDrawn
+---
+flowchart LR
+
+    %% I (Setup)
+    i_setup["Issuer<br>(Setup)"]
+    register(["(optional)<br>Register Key Material"])
+    deploy(["Deploy Enygma<br>Contract"])
+
+    %% Flow Connections
+    i_setup -.-> register -.-> deploy
+```
+
 ### Balance Setup
 All participants start with a balance with $$v=0$$ and $$r=0$$. 
 
