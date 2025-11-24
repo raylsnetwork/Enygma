@@ -44,8 +44,8 @@ flowchart LR
 * $$sk_{i}^{view}$$ is the view secret key for entity $$i$$.
 * $$pk_{i}^{view}$$ is the view public key for entity $$i$$.
 * $$n_{block}$$ is the latest block number.
-* $$t_{i}$$ is the private messaging tag of index $$i$$, s.t.,  $$i \in \lbrace 1,\ldots,k \rbrace$$
 * $$k$$ is the anonymity set of the system.
+* $$t_{i}$$ is the private messaging tag of index $$i$$, s.t.,  $$i \in \lbrace 1,\ldots,k \rbrace$$
 * $$s_{i, j}$$ is the shared secret established between party $$i$$ and party $$j$$.
 * $$\text{nullifier}$$ is the nullifier that is sent in each transaction to ensure entities are not able to double-spend.
 * $$\pi$$ is the zero-knowledge proof that is appended to an Enygma transaction.
