@@ -339,10 +339,12 @@ flowchart LR
 ### Retrieving a Transaction
 Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. The privacy node is then going to brute-force try the symmetric decryption of each transaction. This work is paralellizable and extremely fast as it is simply performing $$k-1$$ hash operations for each received transaction. Once the sender is detected, the recipient can perform an AES-GCM decryption and obtain more information about the transfer details in the corresponding plaintext. In the event that the sender was malicious, the recipient now knows the sender associated with this transaction was malicious and is able to prove that the symmetric key for that specific block does not result in a successful AES-GCM decryption. 
 
-In order to open the balance from the transaction. We know that the Pedersen commitments are well-formed as that is part of the ZK proof. So the sender is always able to remove the randomness component of the commitment. To obtain the received amount, we provide the following three options:
+In order to open the balance from the transaction. We know that the Pedersen commitments are well-formed as that is part of the ZK proof. So the sender is always able to remove the randomness component of the commitment and obtain $$vG$$. 
+
+Concrete deployments will impose limits on transfer amounts (i.e., the value of $$v$$), which ensures that the discrete-log-based recovery of $$v$$ from $$vG$$ is practical enough to be feasible to conduct in a catastrophic scenario. To obtain the received amount $$v$$ from $$vG$$, we provide three options:
 
 * brute-force the value of $$v$$ (time-consuming but feasible since this is a monetary amount and should not be a very high amount)
-* have a precomputed table containing all the possible reasonable values for $$vG$$
+* have a precomputed table containing all the possible reasonable values for $$vG$$ for all nodes in the network
 * use an efficient algorithm to compute the discrete log of this element (e.g., [baby-step giant-step](https://en.wikipedia.org/wiki/Baby-step_giant-step))
 
 ```mermaid
