@@ -7,9 +7,16 @@ This guide will walk you through running a complete Enygma payment demo, includi
 The Enygma payment demo demonstrates a complete private transaction workflow:
 
 1. Smart Contract Deployment: Deploy the Enygma payment contract and ZK verifier to an EVM-compatible blockchain
+
 2. ZK Proof Server: Start the gnark-based server that generates and verifies zero-knowledge proofs
 
 3. Private Transaction: Execute a confidential payment using the Go client
+
+What happens during a demo transaction:
+
+- The client generates a zero-knowledge proof for a payment of 100 tokens
+- The proof ensures transaction privacy while maintaining verifiability
+- The smart contract verifies the proof on-chain and processes the payment
 
 ### Environment Setup
 
