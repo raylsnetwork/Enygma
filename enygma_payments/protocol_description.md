@@ -49,6 +49,7 @@ flowchart LR
 * $$s_{i, j}$$ is the shared secret established between party $$i$$ and party $$j$$.
 * $$\text{nullifier}$$ is the nullifier that is sent in each transaction to ensure entities are not able to double-spend.
 * $$\pi$$ is the zero-knowledge proof that is appended to an Enygma transaction.
+* $$K_{n}$$ is the symmetric encryption key used for encrypting payloads on block $$n$$.
 
 ## 1 - System Setup
 
@@ -456,9 +457,9 @@ flowchart LR
 
 ```
 
-The symmetric key $$k$$ for block $$n$$ (i.e, $$k_{n}$$) is obtained the following way: 
+The symmetric key $$K$$ for block $$n$$ (i.e, $$K_{n}$$) is obtained the following way: 
 
-$$k_{n} = HKDF(s, n_{block})$$
+$$K_{n} = HKDF(s, n_{block})$$
 
 #### Universal Auditing
 Besides the auditor, we highlight that any entity in the system can always monitor the following parameters just from looking at the underlying blockchain: 
