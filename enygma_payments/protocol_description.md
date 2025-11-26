@@ -176,7 +176,10 @@ Issuer acts as a system entity and establishes a shared secret with every partic
 
 $$Comm(v, r) = vG + rH$$
 
-This ensures only the issuer and the recipient know how much money was minted. We note, however, that it's still possible to have verifiability on the minting side, in the sense that every time there is a mint that the system knows a mint occcurred. 
+This ensures only the issuer and the recipient know how much money was minted. We highlight that the issuer knows both $$v$$ and $$r$$ for every private mint. This does not degrade confidentiality beyond the fact that the issuer is the one minting and thus intentionally knows the amount and beneficiary. We note that it's also possible to have verifiability on the minting side, in the sense that every time there is a mint that the system knows a mint occcurred. 
+
+On a final note, the issuer can transparently publish the total circulating supply along with a ZK proof that shows that the addition of all Pedersen commitment balances on-chain results in that published balance. This is an alternative to provide further transparency in a system where the issuer does not want to disclose individual mint amounts. 
+
 
 ## 6 - Private Transfers
 
