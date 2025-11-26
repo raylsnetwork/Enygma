@@ -271,9 +271,9 @@ The symmetric key $$K$$ for block $$n$$ between participants $$i$$ and $$j$$ is 
 
 $$K_{i, j}^{n} = HKDF(s_{i,j}, n_{block})$$
 
-The corresponding ciphertext is then calculated by encrypting (using AES-GCM-256) a message (containing additional transaction data) $$\text{msg}$$. 
+The corresponding ciphertext is then calculated by encrypting (using AES-GCM-256) a message $$m$$ that contains additional transaction data. 
 
-$$ctxt_{i} = Enc(K_{i, j}^{n}, \text{msg})$$
+$$ctxt_{i} = Enc(K_{i, j}^{n}, m)$$
 
 We note that the correctness of these ciphertext is not part of the ZK proof and these values can indeed be maliciously formed. This is by design to keep the circuit cheap. The commitment, however, will always be of a valid amount and will correspond to a debit. Therefore, performing this attack will always cost funds and will allow the recipient to prove that the sender is indeed malicious, by simply showing that the received ciphertext does not open under the corresponding symmetric key for that block. In other words, the malicious attacker is incriminating themselves while also sending money to the recipient (who is able to open the commitment). We believe this trade-off is ideal for multiple reasons. Concretely, the trust model with financial institutions is different as these are regulated institutions. In this setting, it is very easy to prove malfeasance. Finally, this approach allows the design to have a very cheap overall prover cost, which allows institutions to make very fast (aggregated) payments. 
 
