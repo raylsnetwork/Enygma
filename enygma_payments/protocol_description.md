@@ -433,11 +433,13 @@ flowchart LR
 
 For example, privacy node B does the following: 
 
-* Downloads the ML-KEM public key of the auditor $$pk_{audit}^{view}$$ and runs $$\text{ML-KEM.Encapsulate}(pk_{audit}^{view})$$ and obtains a ciphertext $$ctxt_{audit,B}$$ and a pre-secret $$s_{audit,B}$$. 
+* Downloads the ML-KEM public key of the auditor $$pk_{audit}^{view}$$ and runs $$\text{ML-KEM.Encapsulate}(pk_{audit}^{view})$$ and obtains a ciphertext $$ctxt_{audit,B}$$ and a pre-secret $$s_{audit,B}$$.
+  
+* Using the pre-secret $$s_{audit,B}, the privacy node encrypts their (view) secret key $$sk_{B}^{view}$$ and obtains $$ctxt_{B} = \text{Enc(s_{audit,B},sk_{B}^{view})$$. This is the long-term view key that the auditor can use to audit all future transactions involving privacy node B. **Having this view key does not allow the auditor to spend any funds**.
 
-* Publishes $$⟨"audit", B, ctxt_{audit, B}⟩$$ on the underlying blockchain. This allows the auditor to know that they have a new ciphertext for them and who is publishing it.
+* Publishes $$⟨"audit", B, ctxt_{audit, B}, ctxt_{B}⟩$$ on the underlying blockchain. This allows the auditor to know that they have a new ciphertext for them and who is publishing it.
 
-* The auditor watches the chain, downloads the payload, runs MLKEM.Decaps$$(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
+* The auditor watches the chain, downloads the payload, runs $$\text{MLKEM.Decaps}(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$. Uses the pre-secret to decrypt $$ctxt_{B}$$ and obtains $$sk_{B}^{view}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
 
 
 #### Ephemeral Symmetric (View) Key Sharing
