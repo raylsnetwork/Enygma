@@ -437,11 +437,11 @@ For example, privacy node B does the following:
   
 * Using the pre-secret $$s_{audit,B}$$, the privacy node encrypts their (view) secret key $$sk_{B}^{view}$$ and obtains $$ctxt_{B} = \text{Enc}(s_{audit,B},sk_{B}^{view})$$. This is the long-term view key that the auditor can use to audit all future transactions involving privacy node B. **Having this view key does not allow the auditor to spend any funds**.
 
-* Publishes $$⟨"audit", B, ctxt_{audit, B}, ctxt_{B}⟩$$ on the underlying blockchain. This allows the auditor to know that they have a new ciphertext for them and who is publishing it.
+* Publishes $$("audit", B, ctxt_{audit, B}, ctxt_{B})$$ on the underlying blockchain. This allows the auditor to know that they have a new ciphertext for them and who is publishing it.
 
-  * The auditor watches the chain, downloads the payload, runs $$\text{MLKEM.Decaps}(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$.
+* The auditor watches the chain, downloads the payload, runs $$\text{MLKEM.Decaps}(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$.
   
-  * Decrypts $$ctxt_{B}$$ and obtains $$sk_{B}^{view}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
+* Decrypts $$ctxt_{B}$$ and obtains $$sk_{B}^{view}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
 
 
 #### Ephemeral Symmetric (View) Key Sharing
