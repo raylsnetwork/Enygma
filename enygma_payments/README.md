@@ -69,16 +69,6 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which
 * **ZK Circuit(s)**: [Gnark](https://docs.gnark.consensys.net/)
 * **Verifier**: [Solidity](https://www.soliditylang.org/)
 
-<div align="center">
-
-| Component                                        |  Programming Language  |
-|--------------------------------------------------|------------------------|
-| Client                                           | Golang  |
-| ZK Circuit(s)                                    | Gnark  |
-| Verifier                                         | Solidity  |
-
-
-</div>
 
 ## Performance
 To show that our protocol runs on commodity hardware and does not come with extreme hardware requirements, we measured the performance of our design using a Mac mini M1 from 2020 with 16GB of memory. We obtained the following numbers: 
