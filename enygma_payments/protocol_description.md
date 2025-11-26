@@ -131,11 +131,11 @@ $$(id_{A}, pk_{A}^{view}, pk_{A}^{spend})$$
 ## 4 - Key Agreement
 We run the following ML-KEM protocol adapted to use the underlying blockchain as a global PKI for the network and a bulletin board for universal ciphertext publishing. 
 
-* The sender $$j$$ downloads the counterparty's $$i$$ ML-KEM public key $$pk_{i}^{view}$$ and runs ML-KEM.Encapsulate$$(pk_{i}^{view})$$ and obtains a ciphertext $$ctxt_{i,j}$$ and a shared secret $$s_{i,j}$$. 
+* The sender $$j$$ downloads the counterparty's $$i$$ ML-KEM public key $$pk_{i}^{view}$$ and runs $$\text{ML-KEM.Encapsulate}(pk_{i}^{view})$$ and obtains a ciphertext $$ctxt_{i,j}$$ and a shared secret $$s_{i,j}$$. 
 
 * The sender computes $$id = Hash(s_{i,j})$$ and publishes $$⟨i, j, id, ctxt_{i, j}⟩$$ on the underlying blockchain. This allows the recipient to know that they have a new message for them and who is publishing it.
 
-* The counterparty $$i$$ watches the chain, downloads $$⟨i, j, id, ctxt_{i, j}⟩$$, runs MLKEM.Decaps$$(sk_{i}^{view}, ctxt_{i, j})$$, obtains a shared secret $$s'_{i,j}$$, and computes $$id' = Hash(s')$$. If $$id' = id$$, party $$i$$ publishes a sign-off message and is ready to receive private transactions from the sender.
+* The counterparty $$i$$ watches the chain, downloads $$⟨i, j, id, ctxt_{i, j}⟩$$, runs $$\text{MLKEM.Decaps}(sk_{i}^{view}, ctxt_{i, j})$$, obtains a shared secret $$s'_{i,j}$$, and computes $$id' = Hash(s')$$. If $$id' = id$$, party $$i$$ publishes a sign-off message and is ready to receive private transactions from the sender.
 
 ## 5 - Issuing Tokens
 There are two ways of issuing tokens. The issuer can either mint a commitment with the random factor set to zero which publicly discloses the minted amount or, alternatively, act as a participant in the network and mint a shielded balance in the form of Pedersen commitment where the random factor is derived from the shared secret between the issuer and the receiver of funds. This specific mechanism to generate the random factor ensures that the issuer can mint a specific amount and the recipient can detect the minted amount. 
@@ -431,15 +431,13 @@ flowchart LR
     auditor2 -.-> get_ciphertext -.-> decrypt -.-> check
 ```
 
-For example, privacy node A publishes:
+For example, privacy node B does the following: 
 
-$$ ctxt = Encapsulate(pk_{audit}^{view}, sk_{A}^{view})$$
+* Downloads the ML-KEM public key of the auditor $$pk_{audit}^{view}$$ and runs $$\text{ML-KEM.Encapsulate}(pk_{audit}^{view})$$ and obtains a ciphertext $$ctxt_{audit,B}$$ and a pre-secret $$s_{audit,B}$$. 
 
-* Participant $$j$$ downloads the ML-KEM public key of the auditor $$pk_{audit}^{view}$$ and runs $$\text{ML-KEM.Encapsulate}(pk_{audit}^{view})$$ and obtains a ciphertext $$ctxt_{audit,j}$$ and a shared secret $$s_{audit,j}$$. 
+* Publishes $$⟨"audit", B, ctxt_{audit, B}⟩$$ on the underlying blockchain. This allows the auditor to know that they have a new ciphertext for them and who is publishing it.
 
-* The sender publishes $$⟨"audit", j, ctxt_{audit, j}⟩$$ on the underlying blockchain. This allows the recipient to know that they have a new message for them and who is publishing it.
-
-* The counterparty $$i$$ watches the chain, downloads $$⟨i, j, id, ctxt_{i, j}⟩$$, runs MLKEM.Decaps$$(sk_{i}^{view}, ctxt_{i, j})$$, obtains a shared secret $$s'_{i,j}$$, and computes $$id' = Hash(s')$$. If $$id' = id$$, party $$i$$ publishes a sign-off message and is ready to receive private transactions from the sender.
+* The auditor watches the chain, downloads the payload, runs MLKEM.Decaps$$(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
 
 
 #### Ephemeral Symmetric (View) Key Sharing
