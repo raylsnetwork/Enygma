@@ -1,48 +1,97 @@
 ### Gnark Server
 
-The Gnark Server provides a zero-knowledge proof (ZK-SNARK) verification layer for Enygma’s payment and DVP (Delivery vs. Payment) systems.
-It is designed around three independent circuits, each validating a different transaction type while ensuring data integrity and privacy through cryptographic constraints.
+The Gnark Server is a zero-knowledge proof (ZK-SNARK) service that provides cryptographic verification for Enygma's privacy-preserving payment and DVP (Delivery vs. Payment) systems. It generates and verifies proofs using the Groth16 proof system on the BabyJubJub curve.
 
-#### 1. Enygma Circuit
+#### Installation
 
-Validates whether an Enygma Payment transaction conforms to the defined ZK constraints.
+1. Navigate to Server Directory
 
-File: pkg/circuits/enygma/circuit.go
+```bash
+cd gnark_server
+```
 
-Purpose: Ensures that all payment transactions follow Enygma’s protocol rules.
+2. Install Dependencies
 
-#### 2. Withdraw Circuit
+```bash
+go mod download
+```
 
-Validates withdrawal transactions from the Enygma Payment system to the Enygma DVP layer.
+#### ⚠️ Proving keys and Verification Keys are only for demo purpose ‼️
 
-File: pkg/circuits/withdraw/circuit.go
+3. Verify Keys are Present
 
-Purpose: Checks the integrity and structure of multi-part withdrawal operations.
+```bash
+#Check if keys directory exists
+ls -la keys/
 
-#### 3. Deposit Circuit
+# Expected output:
+# keys/EnygmaPk.key
+# keys/EnygmaVk.key
+# keys/zkdvp/WithdrawPk1.key to WithdrawPk6.key
+# keys/zkdvp/WithdrawVk1.key to WithdrawVk6.key
+# keys/zkdvp/DepositPk.key
+# keys/zkdvp/DepositVk.key
+```
 
-Validates deposit transactions from Enygma DVP back into the Enygma Payment system.
+#### Circuit Overview
 
-File: pkg/circuits/deposit/circuit.go
+##### 1. Enygma Circuit
 
-Purpose: Ensures that deposited assets meet ZK constraints and correctly update payment balances.
+File: `pkg/circuits/enygma/circuit.go`
+
+Purpose: Validates standard private payment transactions in the Enygma system.
+
+##### 2. Withdraw Circuit
+
+File: `pkg/circuits/withdraw/circuit.go`
+
+Purpose: Validates withdrawals from Enygma Payment layer to Enygma DVP (Delivery vs Payment) layer.
+
+##### 3. Deposit Circuit
+
+File: `pkg/circuits/deposit/circuit.go`
+
+Purpose: Validates deposits from Enygma DVP back into the Enygma Payment system.
 
 ### Keys
 
 Keys are required for proof generation and verification.
 Each circuit has its own proving key (Pk) and verification key (Vk):
 
-1. Enygma keys: `keys/EnygmaPk.key ` and `keys/EnygmaVk.key `
-2. ZkDvp Withdraw keys : `keys/zkdvp/WithdrawPkN.key` and `keys/zkdvp/WithdrawVkN.key`
-3. ZkDvp Deposit keys : `keys/DepositPk.key` and `keys/zkdvp/DepositVk.key`
+Keys Files Location
 
-ps: Withdraw keys has 1 to 6 keys because withdraw transaction can be split up to 6 part.
+```
+keys/
+│
+│
+├── EnygmaPk.key
+├── EnygmaVk.key
+│
+└── 📁 zkdvp/
+    │
+    ├── WithdrawPk1.key
+    ├── WithdrawVk1.key
+    ├── WithdrawPk2.key
+    ├── WithdrawVk2.key
+    ├── WithdrawPk3.key
+    ├── WithdrawVk3.key
+    ├── WithdrawPk4.key
+    ├── WithdrawVk4.key
+    ├── WithdrawPk5.key
+    ├── WithdrawVk5.key
+    ├── WithdrawPk6.key
+    ├── WithdrawVk6.key
+    ├── DepositPk.key
+    └── DepositVk.key
+```
+
+---
 
 ### Run Gnark Server
 
 To start the Gnark API server:
 
-```javascript
+```bash
 go run cmd/server/main.go
 ```
 
