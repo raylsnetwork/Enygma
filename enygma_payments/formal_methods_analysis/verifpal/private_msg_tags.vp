@@ -1,0 +1,105 @@
+attacker[active]
+
+
+principal Blockchain[
+	generates block
+	generates block_number
+]
+
+// ***** ***** KEY REGISTRATION ***** *****
+
+// 
+principal Alice[
+	generates a
+	pkA = G^a
+]
+
+Alice -> Blockchain: [pkA]
+
+
+principal Bob[
+	generates b
+	pkB = G^b
+]
+
+Bob -> Blockchain: [pkB]
+
+// 
+principal Charlie[
+	generates c
+	pkC = G^c
+]
+
+Charlie -> Blockchain: [pkC]
+
+// ***** ***** KEY DOWNLOAD ***** *****
+
+Blockchain -> Alice  : [pkB], [pkC], [block_number]
+Blockchain -> Bob 	 : [pkA], [pkC], [block_number]
+Blockchain -> Charlie: [pkA], [pkB], [block_number]
+
+// ***** ***** KEY AGREEMENT ***** *****
+
+// 
+principal Alice[
+
+	generates r_a // model the random factor in the Pedersen commitment
+	
+	// calculate shared secrets
+	s_ab = pkB^a
+	s_ac = pkC^a
+
+	// calculate private messaging tags
+	t_ab = Hash(s_ab, block_number)
+	t_ac = Hash(s_ac, block_number)
+	t_a  = Hash(r_a , block_number)
+]
+
+Alice -> Blockchain: [t_a], [t_ab], [t_ac]
+
+
+// 
+principal Bob[
+	generates r_b
+	
+	// calculate shared secrets
+	s_ba = pkA^b
+	s_bc = pkC^b
+
+	// calculate private messaging tags
+	t_ba = Hash(s_ba, block_number)
+	t_bc = Hash(s_bc, block_number)
+	t_b  = Hash(r_b , block_number)
+
+]
+
+principal Charlie[
+	generates r_c
+	
+	// calculate shared secrets
+	s_ca = pkA^c
+	s_cb = pkB^c
+
+	// calculate private messaging tags
+	t_ca = Hash(s_ca, block_number)
+	t_cb = Hash(s_cb, block_number)
+	t_c  = Hash(r_c , block_number)
+]
+
+
+queries[
+	
+	// check if adversary has access to secret values
+	confidentiality? r_a
+	confidentiality? s_ab
+	confidentiality? s_ac 
+
+
+	// check if adversary can link the different private messagin tags
+	unlinkability? t_a, t_ab, t_ac
+	
+	// check if private messaging tags are equivalent on both sides of the execution
+	equivalence? t_ab, t_ba
+	equivalence? t_ac, t_ca
+	equivalence? t_bc, t_cb
+]
