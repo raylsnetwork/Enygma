@@ -85,6 +85,14 @@ keys/
     └── DepositVk.key
 ```
 
+Generating Keys
+
+If Keys are not present, you can generate them in
+
+```bash
+go run key_gen/generate_keys.go
+```
+
 ---
 
 ### Run Gnark Server

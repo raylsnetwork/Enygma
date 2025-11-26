@@ -1,7 +1,9 @@
 package utils
 
 import (
+	
 	"os"
+	"log"
 	"math/big"	
 	"github.com/iden3/go-iden3-crypto/babyjub"
 	"github.com/iden3/go-iden3-crypto/poseidon"
@@ -102,4 +104,28 @@ func ModHint(mod *big.Int, inputs []*big.Int, res []*big.Int) error {
 func ParseBigInt(s string) *big.Int {
     n, _ := new(big.Int).SetString(s, 10)
     return n
+}
+
+func SavingFiles(pkFile string, vkFile string, pk groth16.ProvingKey , vk groth16.VerifyingKey)error{
+
+	fpk, err := os.Create(pkFile)
+    if err != nil {
+        log.Fatalf("could not create proving.key: %v", err)
+    }
+    defer fpk.Close()
+    if _, err := pk.WriteTo(fpk); err != nil {
+        log.Fatalf("failed to write proving key: %v", err)
+    }
+
+    // 4) save the verifying key
+    fvk, err := os.Create(vkFile)
+    if err != nil {
+        log.Fatalf("could not create verifying.key: %v", err)
+    }
+	 defer fvk.Close()
+    if _, err := vk.WriteTo(fvk); err != nil {
+        log.Fatalf("failed to write verifying key: %v", err)
+    }
+
+	return nil
 }
