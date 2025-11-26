@@ -439,7 +439,9 @@ For example, privacy node B does the following:
 
 * Publishes $$⟨"audit", B, ctxt_{audit, B}, ctxt_{B}⟩$$ on the underlying blockchain. This allows the auditor to know that they have a new ciphertext for them and who is publishing it.
 
-* The auditor watches the chain, downloads the payload, runs $$\text{MLKEM.Decaps}(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$. Uses the pre-secret to decrypt $$ctxt_{B}$$ and obtains $$sk_{B}^{view}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
+  * The auditor watches the chain, downloads the payload, runs $$\text{MLKEM.Decaps}(sk_{audit}^{view}, ctxt_{audit, B})$$, obtains the pre-secret $$s'_{audit,B}$$.
+  
+  * Decrypts $$ctxt_{B}$$ and obtains $$sk_{B}^{view}$$. Auditor is now ready to start auditing upcoming transactions involving B. 
 
 
 #### Ephemeral Symmetric (View) Key Sharing
