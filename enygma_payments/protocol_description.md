@@ -265,7 +265,7 @@ The privacy node creates a ZK proof $$\pi$$ that proves the following:
 * I know the secret key of one of the items in this anonymity set of $$k$$ public keys;
 * I know the amount and random factor of the commitment that contains my balance in this set of $$k$$ commitments;
 * The nullifier is well-formed and uses my secret key and the latest block number;
-* The private messaging tags are well-formed using the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number.
+* The private messaging tags are well-formed. Therefore, they use the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number or the random factor that opens a commitment from the anonymity set for the index of the sender.
 
 #### Ciphertexts 
 A transaction payload includes a set of $$k$$ ciphertexts (encrypted using AES-GCM-256). These ciphertexts should contain additional information for the recipient to be able to quickly open the transaction details (i.e., the Pedersen commitments) and potentially get more information about the specific recipient (e.g., user Bob, who is a client of that specific receiving bank). **These ciphertexts are encrypted with an ephemeral symmetric key that is rotated in every new block**. This key rotation is useful and by design to allow specific auditors to potentially request for individual transactions without compromising the confidentiality of past/future ciphertexts. 
