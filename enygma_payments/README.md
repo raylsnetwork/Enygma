@@ -77,5 +77,6 @@ To show that our protocol runs on commodity hardware and does not come with extr
 * **(Groth16) Verifier cost:** 389578 gas
 
 ## Peer-Reviewed Publications
+- [Rayls: A Novel Design for CBDCs](https://sp2024.ieee-security.org/downloads/SP24-posters/sp24posters-final12.pdf), published at [45th IEEE Symposium on Security and Privacy 2024 (Poster Track)](https://sp2024.ieee-security.org/)
 - [Rayls: A Novel Design for CBDCs](https://eprint.iacr.org/2025/1639), published at [The 6th Workshop on Coordination of Decentralized Finance (CoDecFin) 2025](https://fc25.ifca.ai/codecfin/)
 - [Rayls II: Fast, Private, and Compliant CBDCs](https://eprint.iacr.org/2025/1638), published at [Financial Cryptography in Rome (FCiR) 2025](https://www.decifris.it/fcir25/)
