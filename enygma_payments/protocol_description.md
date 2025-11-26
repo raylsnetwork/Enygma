@@ -435,6 +435,13 @@ For example, privacy node A publishes:
 
 $$ ctxt = Encapsulate(pk_{audit}^{view}, sk_{A}^{view})$$
 
+* Participant $$j$$ downloads the ML-KEM public key of the auditor $$pk_{audit}^{view}$$ and runs $$\text{ML-KEM.Encapsulate}(pk_{audit}^{view})$$ and obtains a ciphertext $$ctxt_{audit,j}$$ and a shared secret $$s_{audit,j}$$. 
+
+* The sender publishes $$⟨"audit", j, ctxt_{audit, j}⟩$$ on the underlying blockchain. This allows the recipient to know that they have a new message for them and who is publishing it.
+
+* The counterparty $$i$$ watches the chain, downloads $$⟨i, j, id, ctxt_{i, j}⟩$$, runs MLKEM.Decaps$$(sk_{i}^{view}, ctxt_{i, j})$$, obtains a shared secret $$s'_{i,j}$$, and computes $$id' = Hash(s')$$. If $$id' = id$$, party $$i$$ publishes a sign-off message and is ready to receive private transactions from the sender.
+
+
 #### Ephemeral Symmetric (View) Key Sharing
 Our system also supports the opening of individual transctions without compromising the secrecy of previous/future transactions. Since the system uses symmetric key encryption with ephemeral (per block) keys, we have a mode of operation where the sender or recipient can simply disclose individual symmetric keys and open individual transctions. 
 
