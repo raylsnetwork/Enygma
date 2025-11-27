@@ -14,27 +14,37 @@ import (
 
 const nCommitments = 6;
 const bitWidth = 256
+
 type EnygmaCircuit struct {
-	SenderId      	frontend.Variable 
-	Secrets       	[nCommitments]frontend.Variable 
-	PublicKey   	[nCommitments][2]frontend.Variable  `gnark:",public"` 
-	Sk 				frontend.Variable
-	PreviousV  		frontend.Variable 
-	PreviousR   	frontend.Variable 
-	PreviousCommit  [nCommitments][2]frontend.Variable `gnark:",public"` 
-	TxCommit 		[nCommitments][2]frontend.Variable 
-	TxValue 		[nCommitments]frontend.Variable
-	TxRandom 		[nCommitments]frontend.Variable 
-	V				frontend.Variable 
-	Nullifier       frontend.Variable `gnark:",public"` 
-	BlockNumber     frontend.Variable `gnark:",public"` 
-	KIndex 		    [nCommitments]frontend.Variable  `gnark:",public"` 
+
+	ArrayHashSecret [nCommitments][nCommitments]frontend.Variable   `gnark:",public"`  // Array of hash of shared secrets 
+	PublicKey   	[nCommitments]frontend.Variable  				`gnark:",public"`  // Public keys from all other PLs (public)
+	PreviousCommit  [nCommitments][2]frontend.Variable  			`gnark:",public"`  // Array of previous balances (Pedersen commitments)  
+	BlockNumber     frontend.Variable 								`gnark:",public"`  // Previous block_number to ensure that random factors are well-generated
+	KIndex 		    [nCommitments]frontend.Variable  				`gnark:",public"`  // Array with indices of the banks that are in the tx ("k"-anonymity)
+
+	SenderId      	frontend.Variable                               // Identifier of the sender of the tx
+	Secrets       	[nCommitments][nCommitments]frontend.Variable 	// Array of shared secrets with all the other PLs
+	TagMessage      [nCommitments] frontend.Variable 				// Array of tag messages to ensure unique transactions when parties transact in the same block
+	Sk 				frontend.Variable								// Secret key of the sender of the tx 
+	PreviousV  		frontend.Variable 								// Previous balance in the last Pedersen commitment    
+	PreviousR   	frontend.Variable 								// Previous random factor in the last Pedersen commitment
+	TxCommit 		[nCommitments][2]frontend.Variable 				// Array containing the commitments for this new tx
+	TxValue 		[nCommitments]frontend.Variable					// Array of balances debited/credited in this transaction
+	TxRandom 		[nCommitments]frontend.Variable 				// Array of random factors for the pedersen commitments in this tx
+	V				frontend.Variable 								// Balance to be spent in this tx
+	Nullifier       frontend.Variable 								// Nullifier to ensure transaction is not a double spend
+	
 
 }
 
 
 func (circuit *EnygmaCircuit) Define(api frontend.API) error {	
 
+	//Subgroup order
+	r:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
+
+	//////////////////////////////////**///////////////////////////////////
 	//Check if SenderId is in K
 	sumIsInK :=frontend.Variable(0)
 	for i:=0; i< nCommitments;i++{
@@ -44,7 +54,6 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 	api.AssertIsEqual(sumIsInK,1)
 
-	r:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
 
 	selected_v :=frontend.Variable(0)
 	//Check if  getNegative(V) == TxValue[Sender_ID]
