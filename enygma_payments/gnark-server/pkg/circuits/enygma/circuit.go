@@ -54,9 +54,10 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 	api.AssertIsEqual(sumIsInK,1)
 
-
+	///////////////////////////////////**///////////////////////////////////
+	// Check if V is in TxValue
 	selected_v :=frontend.Variable(0)
-	//Check if  getNegative(V) == TxValue[Sender_ID]
+	
 	for i:=0; i< nCommitments;i++{
 		diff := api.Sub(circuit.SenderId, i)
 		eq := api.IsZero(diff)
@@ -72,58 +73,54 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	pDiffConstrained := api.FromBinary(pDiffBits...)
 
 	api.AssertIsEqual(selectedVConstrained, api.Sub(pDiffConstrained,vConstrained))
-
-	//Check if Secret of SenderId is zero
-	for i := 0; i < nCommitments; i++ {
-		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))
-		api.AssertIsEqual(api.Mul(isEqual, circuit.Secrets[i]), 0)
-	}
 	
 	///////////////////////////////////**///////////////////////////////////
-	//Check if PublicKey is on Curve
-	for i := 0; i < nCommitments; i++ {
-		X := circuit.PublicKey[i][0]
-		Y := circuit.PublicKey[i][1]
+	//Check knowledge of secret 
 
-		utils.AssertPointsIsOnCurve(api,X,Y)
-	}
+
+	///TODO
+   
 
 	///////////////////////////////////**///////////////////////////////////
-	// Knowledge of Sk
-	selectedPK0 := frontend.Variable(0)
-	selectedPK1 := frontend.Variable(0)
+	// Check if Hash Array of Secret is well formed
 
-	for i:=0; i< nCommitments; i++{
+	for i := 0; i < nCommitments; i++ { // for each secret perform hash calculation and sees if is equal to correspondent Array of hash secret
+		for j:=0; j< nCommitments; j++{
+			calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.Secrets[i][j],circuit.Secrets[i][j]})
+			api.AssertIsEqual(calculatedHash, circuit.ArrayHashSecret[i][j])
+		}
+	}
+
+
+	///////////////////////////////////**///////////////////////////////////
+	// Knowledge of Sk - Perform public key generation and check if Sk generate senderId's PublicKey
+	selectedPK := frontend.Variable(0)
+
+	for i:=0; i< nCommitments; i++{ // loop through array and selected senderId's PublicKey in selectedPK variable
+		
 		diff := api.Sub(circuit.SenderId, i)
 		eq := api.IsZero(diff)
+		selectedPK = api.Add(selectedPK, api.Mul(eq, circuit.PublicKey[i]))
+		
+	}	
+	pk := pos.Poseidon(api, []frontend.Variable{circuit.Sk, circuit.Sk}) // Pk = PoseidonHash (sk , sk)
 
-		selectedPK0 = api.Add(selectedPK0, api.Mul(eq, circuit.PublicKey[i][0]))
-		selectedPK1 = api.Add(selectedPK1, api.Mul(eq, circuit.PublicKey[i][1]))
-	}
-	
-	// Perform scalar multiplication using custom logic
-	pk := utils.ScalarMul(api, utils.G , circuit.Sk)             // v * G
-
-	// Assert equality with the provided commitment
-
-	api.AssertIsEqual(selectedPK0, pk.X)
-	api.AssertIsEqual(selectedPK1, pk.Y)
-
+	api.AssertIsEqual(selectedPK, pk) // check if calculated Publickey is equal to  selectedPK
 
 	///////////////////////////////////**///////////////////////////////////
 	//Knowledge of Previous Commitment
 	selectedPreviousCommitmentX := frontend.Variable(0)
 	selectedPreviousCommitmentY := frontend.Variable(0)
 
-	for i:=0; i< nCommitments; i++{
+	for i:=0; i< nCommitments; i++{ //Store in selectedPreviousCommitmentX and selectedPreviousCommitmentX if 
 		diff := api.Sub(circuit.SenderId, i)
 		eq := api.IsZero(diff)
 
 		selectedPreviousCommitmentX = api.Add(selectedPreviousCommitmentX, api.Mul(eq, circuit.PreviousCommit[i][0]))
 		selectedPreviousCommitmentY = api.Add(selectedPreviousCommitmentY, api.Mul(eq, circuit.PreviousCommit[i][1]))
 	}
-	 
-	computedPreviousCommitment := utils.PedersenCommitment(api, circuit.PreviousV, circuit.PreviousR)
+
+	computedPreviousCommitment := utils.PedersenCommitment(api, circuit.PreviousV, circuit.PreviousR)      
 
 	api.AssertIsEqual(selectedPreviousCommitmentX, computedPreviousCommitment.X)
 	api.AssertIsEqual(selectedPreviousCommitmentY, computedPreviousCommitment.Y)
