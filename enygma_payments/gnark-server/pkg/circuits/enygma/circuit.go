@@ -26,20 +26,20 @@ type EnygmaCircuit struct {
 	ArrayHashSecret [][]frontend.Variable   			`gnark:",public"`  // Array of hash of shared secrets 
 	PublicKey   	[]frontend.Variable  				`gnark:",public"`  // Public keys from all other PLs (public)
 	PreviousCommit  [][2]frontend.Variable  			`gnark:",public"`  // Array of previous balances (Pedersen commitments)  
-	BlockNumber     frontend.Variable 								`gnark:",public"`  // Previous block_number to ensure that random factors are well-generated
+	BlockNumber     frontend.Variable 					`gnark:",public"`  // Previous block_number to ensure that random factors are well-generated
 	KIndex 		    []frontend.Variable  				`gnark:",public"`  // Array with indices of the banks that are in the tx ("k"-anonymity)
 
-	SenderId      	frontend.Variable                               // Identifier of the sender of the tx
-	Secrets       	[][]frontend.Variable 	// Array of shared secrets with all the other PLs
-	TagMessage      [] frontend.Variable 				// Array of tag messages to ensure unique transactions when parties transact in the same block
-	Sk 				frontend.Variable								// Secret key of the sender of the tx 
-	PreviousV  		frontend.Variable 								// Previous balance in the last Pedersen commitment    
-	PreviousR   	frontend.Variable 								// Previous random factor in the last Pedersen commitment
-	TxCommit 		[][2]frontend.Variable 				// Array containing the commitments for this new tx
-	TxValue 		[]frontend.Variable					// Array of balances debited/credited in this transaction
-	TxRandom 		[]frontend.Variable 				// Array of random factors for the pedersen commitments in this tx
-	V				frontend.Variable 								// Balance to be spent in this tx
-	Nullifier       frontend.Variable 								// Nullifier to ensure transaction is not a double spend
+	SenderId      	frontend.Variable                               		// Identifier of the sender of the tx
+	Secrets       	[][]frontend.Variable 									// Array of shared secrets with all the other PLs
+	TagMessage      [] frontend.Variable 									// Array of tag messages to ensure unique transactions when parties transact in the same block
+	Sk 				frontend.Variable										// Secret key of the sender of the tx 
+	PreviousV  		frontend.Variable 										// Previous balance in the last Pedersen commitment    
+	PreviousR   	frontend.Variable 										// Previous random factor in the last Pedersen commitment
+	TxCommit 		[][2]frontend.Variable 									// Array containing the commitments for this new tx
+	TxValue 		[]frontend.Variable										// Array of balances debited/credited in this transaction
+	TxRandom 		[]frontend.Variable 									// Array of random factors for the pedersen commitments in this tx
+	V				frontend.Variable 										// Balance to be spent in this tx
+	Nullifier       frontend.Variable 										// Nullifier to ensure transaction is not a double spend
 	
 
 }
@@ -81,11 +81,19 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(selectedVConstrained, api.Sub(pDiffConstrained,vConstrained))
 	
 	///////////////////////////////////**///////////////////////////////////
-	//Check knowledge of secret 
+	//Check knowledge of secret of sender
+	// for now Poseidon(PreviousV,Sk)
+	selected_secret:= frontend.Variable(0)
+	for i:=0; i< Config.NCommitment;i++{
+		diff := api.Sub(circuit.SenderId, i)
+		eq := api.IsZero(diff)
 
+		selected_secret = api.Add(selected_secret, api.Mul(eq, circuit.Secret[i][i]))
+	}
 
-	///TODO
-   
+	secretSenderCalculated:= pos.poseidon(api,[]frontend.Variable{circuit.PreviousV, circuit.Sk})
+	api.AssertIsEqual(secretSenderCalculated, selected_secret)
+
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check if Hash Array of Secret is well formed
