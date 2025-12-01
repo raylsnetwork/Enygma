@@ -40,7 +40,31 @@ func generateKeys(circuit frontend.Circuit, pkPath, vkPath string) error {
 }
 
 func generateKeysEnygma() error {
-	var enygmaCircuit enygma.EnygmaCircuit
+	config:= enygma.EnygmaCircuitConfig{
+		BitWith:256,
+		NCommitment:6,
+	}
+	enygmaCircuit:= enygma.EnygmaCircuit{
+		Config:config,
+		ArrayHashSecret:make([][]frontend.Variable, config.NCommitment),
+		PublicKey:      make([]frontend.Variable,config.NCommitment),
+		PreviousCommit: make([][2]frontend.Variable, config.NCommitment),
+		KIndex:  		make([]frontend.Variable,config.NCommitment),
+		Secrets:		make([][]frontend.Variable, config.NCommitment),
+		TagMessage: 	make([]frontend.Variable,config.NCommitment),
+		TxCommit: 		make([][2]frontend.Variable, config.NCommitment),
+		TxValue: 		make([]frontend.Variable,config.NCommitment),
+		TxRandom: 		make([]frontend.Variable,config.NCommitment),
+
+	}
+
+	for i := range config.NCommitment {
+
+        enygmaCircuit.ArrayHashSecret[] = make([]frontend.Variable, config.NCommitment)
+		enygmaCircuit.Secrets[] = make([]frontend.Variable, config.NCommitment)
+    }
+
+	
 	return generateKeys(
 		&enygmaCircuit,
 		"keys/EnygmaPk.key",
