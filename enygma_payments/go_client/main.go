@@ -42,15 +42,51 @@ var (
 	kIndex        = []*big.Int{k0, k1, k2,k3,k4,k5}
 
 	// This number were randomly generated!
-	s0 = big.NewInt(0) 
-	s1 = big.NewInt(54142)
-	s2 = big.NewInt(814712)
-	s3 = big.NewInt(250912012)
-	s4 = big.NewInt(12312512)
-	s5 = big.NewInt(12312512)
+	s00 = big.NewInt(0) 
+	s01 = big.NewInt(54142)
+	s02 = big.NewInt(814712)
+	s03 = big.NewInt(250912012)
+	s04 = big.NewInt(12312512)
+	s05 = big.NewInt(12312512)
 
-	secrets = []*big.Int{
-		s0,s1,s2,s3,s4,s5,
+	s10 = big.NewInt(0) 
+	s11 = big.NewInt(54142)
+	s12 = big.NewInt(814712)
+	s13 = big.NewInt(250912012)
+	s14 = big.NewInt(12312512)
+	s15 = big.NewInt(12312512)
+
+	s20 = big.NewInt(0) 
+	s21 = big.NewInt(54142)
+	s22 = big.NewInt(814712)
+	s23 = big.NewInt(250912012)
+	s24 = big.NewInt(12312512)
+	s25 = big.NewInt(12312512)
+
+	s30 = big.NewInt(0) 
+	s31 = big.NewInt(54142)
+	s32 = big.NewInt(814712)
+	s33 = big.NewInt(250912012)
+	s34 = big.NewInt(12312512)
+	s35 = big.NewInt(12312512)
+
+	s40 = big.NewInt(0) 
+	s41 = big.NewInt(54142)
+	s42 = big.NewInt(814712)
+	s43 = big.NewInt(250912012)
+	s44 = big.NewInt(12312512)
+	s45 = big.NewInt(12312512)
+
+
+
+	secrets = [][]*big.Int{
+		s00,s01,s02,s03,s04,s05,
+		s10,s11,s12,s13,s14,s15,
+		s20,s21,s22,s23,s24,s25,
+		s30,s31,s32,s33,s34,s35,
+		s40,s41,s42,s43,s44,s45,
+		s50,s51,s52,s53,s54,s55,
+
 	}
 
 	address          = readJsonFile()

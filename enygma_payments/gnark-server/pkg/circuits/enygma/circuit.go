@@ -45,6 +45,9 @@ type EnygmaCircuit struct {
 }
 
 
+// Changes of Random Factor Hash("random_factors", s, block_number)
+// Changes of Tag Message Hash("tags", s, block_number)
+
 func (circuit *EnygmaCircuit) Define(api frontend.API) error {	
 
 	//Subgroup order

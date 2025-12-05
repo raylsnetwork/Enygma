@@ -101,11 +101,12 @@ func getRValues(s []*big.Int, block_hash *big.Int, k_index []*big.Int) []*big.In
 	var rValues []*big.Int
 	for i := 0; i < len(s); i++ {
 		if containsBigInt(k_index, i){
-		inputs := []*big.Int{ s[i],block_hash}
-		block_hash.Mod(block_hash, P)
-		PoseidonHash, _ := poseidon.Hash(inputs)
-		PoseidonHash.Mod(PoseidonHash, P)
-		rValues = append(rValues, PoseidonHash)}
+
+			inputs := []*big.Int{ s[i],block_hash}
+			block_hash.Mod(block_hash, P)
+			PoseidonHash, _ := poseidon.Hash(inputs)
+			PoseidonHash.Mod(PoseidonHash, P)
+			rValues = append(rValues, PoseidonHash)}
 
 	}
 	return rValues
@@ -167,7 +168,7 @@ func makeCommitment(qtyBanks int,v *big.Int,senderId int,txValues []*big.Int, bl
 func generateProof( qtyBanks int, value string,senderId int,nullifier *big.Int, 
 				blockHash *big.Int, sk string, publicKey []enygma.IEnygmaPoint, 
 				previousCommit []enygma.IEnygmaPoint, txCommit []enygma.IEnygmaPoint, 
-				txValue []*big.Int, txRandom []*big.Int, secrets []*big.Int, previousV *big.Int,
+				txValue []*big.Int, txRandom []*big.Int, secrets [][]*big.Int, previousV *big.Int,
 				previousR *big.Int, k_index []*big.Int) Response {
 	
 
