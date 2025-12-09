@@ -60,8 +60,8 @@ func generateKeysEnygma() error {
 
 	for i := range config.NCommitment {
 
-        enygmaCircuit.ArrayHashSecret[] = make([]frontend.Variable, config.NCommitment)
-		enygmaCircuit.Secrets[] = make([]frontend.Variable, config.NCommitment)
+        enygmaCircuit.ArrayHashSecret[i] = make([]frontend.Variable, config.NCommitment)
+		enygmaCircuit.Secrets[i] = make([]frontend.Variable, config.NCommitment)
     }
 
 	

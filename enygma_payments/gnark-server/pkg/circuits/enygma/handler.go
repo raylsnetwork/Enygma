@@ -4,6 +4,7 @@ import (
 	"log"
 	"math/big"
     "net/http"
+	"strconv"
 
 	utils "enygma-server/utils"
 
@@ -17,7 +18,7 @@ import (
  
 )
 
-
+const nCommitments = 6
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 	curve := ecc.BN254 
@@ -33,17 +34,19 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		var witness EnygmaCircuit
 		var publicSignal []*big.Int
 		solver.RegisterHint(utils.ModHint)
-
-		witness.SenderId = frontend.Variable(request.SenderID)
+			 
+		witness.SenderId,_ = strconv.Atoi(request.SenderId)
 		witness.V = frontend.Variable(request.V)
 		witness.Sk = frontend.Variable(request.Sk)
 
-
+		
 		for i := 0; i < nCommitments; i++ { 
-			witness.Secrets[i] = utils.ParseBigInt(request.Secrets[i])
+			for j:=0;j< nCommitments; j++{
+				witness.Secrets[i][j] = utils.ParseBigInt(request.Secrets[i][j])
+			}
 
-			witness.PublicKey[i][0] =  utils.ParseBigInt(request.PublicKey[i][0])
-			witness.PublicKey[i][1] =  utils.ParseBigInt(request.PublicKey[i][1])
+			witness.PublicKey[i] =  utils.ParseBigInt(request.PublicKey[i])
+			
 
 			witness.PreviousCommit[i][0] = utils.ParseBigInt(request.PreviousCommit[i][0])
 			witness.PreviousCommit[i][1] = utils.ParseBigInt(request.PreviousCommit[i][1])
@@ -54,8 +57,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			witness.TxRandom[i] = utils.ParseBigInt(request.TxRandom[i])
 			witness.KIndex[i] = utils.ParseBigInt(request.KIndex[i])
 
-			publicSignal =  append(publicSignal, utils.ParseBigInt(request.PublicKey[i][0]))
-			publicSignal =  append(publicSignal, utils.ParseBigInt(request.PublicKey[i][1]))
+			publicSignal =  append(publicSignal, utils.ParseBigInt(request.PublicKey[i]))
+			
 			
 		}
 

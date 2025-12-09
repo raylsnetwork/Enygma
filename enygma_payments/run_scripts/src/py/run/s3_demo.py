@@ -24,11 +24,11 @@ def s3_demo_initialization(w3, root_path, project_name, network, banks, receipts
 
     for i in range(len(banks)):
         rValue = banks[i]["r"]
-        pubX = banks[i]["pubx"]
-        pubY = banks[i]["puby"]
+        pub = banks[i]["pub"]
+        
 
         nonce = w3.W3.eth.get_transaction_count(owner_address)
-        contract_transaction = w3.token_contract().functions.registerAccount(owner_address, i, pubX, pubY, rValue).build_transaction(
+        contract_transaction = w3.token_contract().functions.registerAccount(owner_address, i, pub, rValue).build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
         contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
         contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)

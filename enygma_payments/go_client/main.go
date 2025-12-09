@@ -10,6 +10,15 @@ import (
 	"io/ioutil"
 )
 
+// ToDo
+// 1   - Change Random Factor to Hash("random_factor", secret, blockNumber)
+// 2   - Implement Tag Message ("tags", secret, blockNumber)
+// 3   - Adapt circuit to Secret[n][n]
+// 3.1 - Hash Array Implement
+// 4   - Public Key generation
+// 5   - Refactor Transaction code!
+
+
 type Address struct {
     Address string `json:"address"`
 }

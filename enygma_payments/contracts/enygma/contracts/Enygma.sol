@@ -6,6 +6,11 @@ import "../interfaces/IERC20.sol";
 import "../interfaces/IZkDvp.sol";
 
 contract Enygma is IEnygma {
+    // ============================================
+    // STATE VARIABLES
+    // ============================================
+
+    // Contract status constants
     uint256 private constant STATUS_NOT_INITIALIZED = 0;
     uint256 private constant STATUS_INITIALIZED = 1;
 
@@ -26,7 +31,7 @@ contract Enygma is IEnygma {
     uint256 public lastblockNum;
 
     mapping(uint256 => mapping(uint256 => Point)) public referenceBalance;
-    mapping(uint256 => Point) public pubKeys;
+    mapping(uint256 => uint256) public pubKeys;
     mapping(address => uint256) public accounts;
     mapping(uint256 => address) public verifiers;
     mapping(uint256 => address) public withdrawVerifiers;
@@ -69,12 +74,11 @@ contract Enygma is IEnygma {
     function registerAccount(
         address addr,
         uint256 accountNum,
-        uint256 k1,
-        uint256 k2,
+        uint256 k,
         uint256 r
     ) public checkOwner returns (bool) {
-        pubKeys[accountNum].c1 = k1;
-        pubKeys[accountNum].c2 = k2;
+        pubKeys[accountNum] = k;
+
         accounts[addr] = accountNum;
 
         (uint256 x, uint256 y) = pedCom(0, r);
@@ -204,14 +208,14 @@ contract Enygma is IEnygma {
     // Returns the balance of an account
     function getPublicValues(
         uint256 size
-    ) public view returns (Point[] memory, Point[] memory) {
+    ) public view returns (Point[] memory, uint256[] memory) {
         Point[] memory refBalances = new Point[](size);
         for (uint256 i = 0; i < size; i++) {
             (uint256 xBalance, uint256 yBalance) = getBalance(i);
-
             refBalances[i] = Point(xBalance, yBalance);
         }
-        Point[] memory publicKeys = new Point[](size);
+
+        uint256[] memory publicKeys = new uint256[](size);
         for (uint256 i = 0; i < size; i++) {
             publicKeys[i] = pubKeys[i];
         }
@@ -225,25 +229,28 @@ contract Enygma is IEnygma {
         Proof memory proof,
         uint256[] memory kIndex
     ) public checkAccount returns (bool) {
-        string memory funcSig = "verifyProof(uint256[8],uint256[32])";
+        //ArrayHashSecret 36
+        //PublicKey 6
+        //PreviousCommit 12
+        //KIndex 6
+        string memory funcSig = "verifyProof(uint256[8],uint256[60])";
 
         address verifAddr = verifiers[commitments.length];
         (bool success, ) = verifAddr.delegatecall(
             abi.encodeWithSignature(funcSig, proof)
         );
         require(success, "Invalid Proof/Input");
-        (Point[] memory balance, Point[] memory pk) = getPublicValues(
+        (Point[] memory balance, uint256[] memory pk) = getPublicValues(
             totalRegisteredParties
         );
 
         bool checkPkAndBalance = true;
         for (uint256 j = 0; j < kIndex.length; j++) {
             if (
-                uint256(proof.public_signal[j * 2]) != pk[kIndex[j]].c1 ||
-                uint256(proof.public_signal[j * 2 + 1]) != pk[kIndex[j]].c2 ||
-                uint256(proof.public_signal[j * 2 + 2 * k]) !=
+                uint256(proof.public_signal[36 + j]) != pk[kIndex[j]] ||
+                uint256(proof.public_signal[42 + j * 2]) !=
                 balance[kIndex[j]].c1 ||
-                uint256(proof.public_signal[j * 2 + 2 * k + 1]) !=
+                uint256(proof.public_signal[42 + j * 2 + 1]) !=
                 balance[kIndex[j]].c2
             ) {
                 checkPkAndBalance = false;

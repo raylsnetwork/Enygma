@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -50,20 +51,26 @@ type ProofZk struct {
 }
 
 type Proof struct {
-	SenderID        string     `json:"senderId"`
-	Secrets         []string   `json:"secrets"`
-	PublicKeys      [][]string `json:"publicKey"`
+	
+	ArrayHashSecret [][]string `json:"arrayHashSecret`
+	PublicKeys      []string   `json:"publicKey"`
+	PreviousCommit [][]string `json:"previousCommit"`
+	BlockNumber     string     `json:"blockNumber"`
+	K               []string   `json:"kIndex"`
+
+	SenderId        string     `json:"senderId"`
+	Secrets         [][]string `json:"secrets"`
+	TagMessage		[]string   `json:"tagMessage"`
 	Sk              string     `json:"sk"`
 	PreviousV       string     `json:"previousV"`
 	PreviousR       string     `json:"previousR"`
-	PreviousCommits [][]string `json:"previousCommit"`
-	TxCommits       [][]string `json:"txCommit"`
-	TxValues        []string   `json:"txValue"`
-	TxRandoms       []string   `json:"txRandom"`
+	TxCommit        [][]string `json:"txCommit"`
+	TxValue         []string   `json:"txValue"`
+	TxRandom        []string   `json:"txRandom"`
 	V               string     `json:"v"`
 	Nullifier       string     `json:"nullifier"`
-	BlockHash       string     `json:"blockNumber"`
-	K               []string   `json:"kIndex"`
+	
+	
 }
 
 
@@ -97,12 +104,16 @@ func getNegative(x *big.Int) *big.Int {
 	return inverse
 }
 
-func getRValues(s []*big.Int, block_hash *big.Int, k_index []*big.Int) []*big.Int {
+func getRValues( senderId *big.Int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int) []*big.Int {
 	var rValues []*big.Int
-	for i := 0; i < len(s); i++ {
+	randomString:= "random_factor"
+	hash := sha256.Sum256([]byte(str))
+	randomBigInt := new(big.Int).SetBytes(hash[:])
+
+	for i := 0; i < len(s[senderId]); i++ {
 		if containsBigInt(k_index, i){
 
-			inputs := []*big.Int{ s[i],block_hash}
+			inputs := []*big.Int{ randomBigInt,s[senderId][i],block_hash}
 			block_hash.Mod(block_hash, P)
 			PoseidonHash, _ := poseidon.Hash(inputs)
 			PoseidonHash.Mod(PoseidonHash, P)
@@ -112,9 +123,42 @@ func getRValues(s []*big.Int, block_hash *big.Int, k_index []*big.Int) []*big.In
 	return rValues
 }
 
-func getRSum(s []*big.Int, sender_id int, block_hash *big.Int,k_index []*big.Int) *big.Int {
+
+func hashArrayGen(senderId int,s [][]*big.Int, block_hash *big.Int,k_index []*big.Int ){
+	var hashArray [][]*big.Int
+
+	for i:=0; i< len(k_index); i++ {
+		for j:=0; j<len(k_index);j++{
+			inputs := []*big.Int{ s[i][j],s[i][j]}
+			block_hash.Mod(block_hash, P)
+			PoseidonHash, _ := poseidon.Hash(inputs)
+			PoseidonHash.Mod(PoseidonHash, P)
+			hashArray = append(rValues, PoseidonHash)}
+		}
+}
+
+func tagMessageGen(senderId int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int)[]*big.Int {
+	var tagMesssage []*big.Int
+	tagString:= "tag"
+	hash := sha256.Sum256([]byte(str))
+	tagBigInt := new(big.Int).SetBytes(hash[:])
+
+	for i := 0; i < len(s[senderId]); i++ {
+		if containsBigInt(k_index, i){
+
+			inputs := []*big.Int{ tagBigInt,s[senderId][i],block_hash}
+			block_hash.Mod(block_hash, P)
+			PoseidonHash, _ := poseidon.Hash(inputs)
+			PoseidonHash.Mod(PoseidonHash, P)
+			rValues = append(rValues, PoseidonHash)}
+
+	}
+	return rValues
+}
+
+func getRSum(senderId int,s [][]*big.Int,  block_hash *big.Int,k_index []*big.Int) *big.Int {
 	sum := big.NewInt(0)
-	for i := 0; i < len(s); i++ {
+	for i := 0; i < len(s[senderId]); i++ {
 		if sender_id != i {
 			if containsBigInt(k_index, i){
 			inputs := []*big.Int{s[i],block_hash }
@@ -128,9 +172,9 @@ func getRSum(s []*big.Int, sender_id int, block_hash *big.Int,k_index []*big.Int
 	return sum
 }
 
-func containsBigInt(s []*big.Int, val int) bool {
+func containsBigInt(senderId int, s [][]*big.Int, val int) bool {
 	valBig := big.NewInt(int64(val))
-	for _, v := range s {
+	for _, v := range s[senderId] {
 		if v.Cmp(valBig) == 0 {
 			return true
 		}
