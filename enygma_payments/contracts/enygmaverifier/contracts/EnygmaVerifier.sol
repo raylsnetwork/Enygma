@@ -59,173 +59,263 @@ contract Verifier {
 
     // Groth16 alpha point in G1
     uint256 constant ALPHA_X =
-        13452987024514493238302764768532550799791872341681751784379252289339684448809;
+        11639825608159765421960806843288397063885236158785820168805866931777961512383;
     uint256 constant ALPHA_Y =
-        20263012823168336674104885928861930077174947866040292904761898787783883417153;
+        7448898954565731276511488429262959766459610532654542528863053842076186113135;
 
     // Groth16 beta point in G2 in powers of i
     uint256 constant BETA_NEG_X_0 =
-        1267026722123227386108156732184031155355570530013929850080124423649559314552;
+        12921850345638125582130197593804364244248991760191805150093111520872755020030;
     uint256 constant BETA_NEG_X_1 =
-        4429056995768446995830003573068992552131195104127412821554664185688676349924;
+        4314679446598370097346259561960736190006023880123264059340155106662013108688;
     uint256 constant BETA_NEG_Y_0 =
-        9909380094306090274100352359346856816165371889930780974047502402349063989742;
+        14796698160032673893741226269322646276231907801292393434692114680699257421912;
     uint256 constant BETA_NEG_Y_1 =
-        6431319429850906259078669659902777050865733892327096512746442292391324911196;
+        12437951023741906436885381095063642623177466354903207013103604847861892053776;
 
     // Groth16 gamma point in G2 in powers of i
     uint256 constant GAMMA_NEG_X_0 =
-        14207884102035270156859660306291681274703017514825089356082810221417425369011;
+        6082418083777415603809877598707417272063240470594035622878258184323659042036;
     uint256 constant GAMMA_NEG_X_1 =
-        19286711229289635030253898027016866702112843342737010581506074640956921393358;
+        4555407162855533806863588772208765803909559689458261245610338758953853229787;
     uint256 constant GAMMA_NEG_Y_0 =
-        11055739339848595550367659316733713448092577123170863250795665813894611786276;
+        3722465112483771877799517768619628212098734956732103931619143916964851304299;
     uint256 constant GAMMA_NEG_Y_1 =
-        2405726906966028382957393377249070701259180086710803062607714843163695374977;
+        15729441442484113887557257847704817985252936224908727635809599315370019384461;
 
     // Groth16 delta point in G2 in powers of i
     uint256 constant DELTA_NEG_X_0 =
-        6416078293415645204682396566040524103051693700835713612681951787844413383789;
+        13248103016359576765143832060566069534638253844580405526910104636067398067028;
     uint256 constant DELTA_NEG_X_1 =
-        19959244090637711140201438865639699761522043230577827486422712439332865263568;
+        534383415459097023800324646124686186813808110976245053315468970663214240386;
     uint256 constant DELTA_NEG_Y_0 =
-        20672530920303307786280187458767286478268570574180140136226120598455128939490;
+        10881471278713909249012655362217745861691314663941883738954298790141522470645;
     uint256 constant DELTA_NEG_Y_1 =
-        1735157527891095268459604815163358254044883856979210504548026651565511412714;
+        20069037558595161024345102331363490686391378024384824152327862929123454471042;
 
     // Constant and public input points
     uint256 constant CONSTANT_X =
-        11074832153051311114895465655951371724632842781121105550480083370822722571667;
+        15904575692038419999439941491976394019044676683515342557855617361933048733206;
     uint256 constant CONSTANT_Y =
-        16721076930585491904206793864305064556210341654433282176983308711160602226566;
+        16275885886798321094452109273224333015138599334772830869571780004105346148825;
     uint256 constant PUB_0_X =
-        20118234485830399446826208896649515171974074409855418519499905423695310413819;
+        4159357367652083487751066096476447205919169070462529057785867963026965770898;
     uint256 constant PUB_0_Y =
-        18381065296940116660578278039459018580067193372753251689244236768748071871373;
+        20884689607035738596688498641117289770203998465973642101942337754562693460815;
     uint256 constant PUB_1_X =
-        18030810249144724834628181337197853372127919190767211867019154700782625551597;
+        16835731437411814811161062918499434510621791636385803700341868007163208081007;
     uint256 constant PUB_1_Y =
-        20064987642291529612753410309527551043223489905246692801768092219360520247334;
+        9322286095460050559486290390914554697056348617065560560042678522907200511161;
     uint256 constant PUB_2_X =
-        21116607414852214421000757766896110922060128907602525846743513359425856147348;
+        15304656872286514774847735287863192805142964346817990878899771775190040345237;
     uint256 constant PUB_2_Y =
-        13223003910828704318281037688085329461485749853867901908911868044759169155577;
+        13088245318845357926328560799824390189767073944380054957064242653916272628462;
     uint256 constant PUB_3_X =
-        12444574843388820611914934486728518491513860020987483071406612242459124299187;
+        1415766574066184464914128179442937814942380536739870399202799465144620684982;
     uint256 constant PUB_3_Y =
-        16423828144982175385890392687387000691262022648086986598146429091687662027517;
+        18718439118269382202981600212654592676436424855715374638897677415224463613201;
     uint256 constant PUB_4_X =
-        9382755179751530794330851293284093418230121622336435233709569647717529232584;
+        20077976931094882730426470095386816144148511102266099780551813104810516828350;
     uint256 constant PUB_4_Y =
-        15166548251926423189349842647398110240468829939798914568386759730524936322593;
+        21431252336938872605165849372845814980426740301490735934778482877161647290723;
     uint256 constant PUB_5_X =
-        17980572895132089742085714819206781819423351503934858015688034641660493345674;
+        20645361066060123270742754056194763149194601135839239774657136677935946864582;
     uint256 constant PUB_5_Y =
-        6728954611480908583422025979016702966714637967597407673652921322979634189106;
+        947643383963163540442363052823883657852005641441829493352065297997757536126;
     uint256 constant PUB_6_X =
-        17034094604998367661258103667215271746684467603897729249114537269273281130675;
+        1235184842060059844922112144031057859686822302640190693518514606080373830140;
     uint256 constant PUB_6_Y =
-        18903582563509679567809968315214292319975338274184208603392992368114563207518;
+        13805121496423734535937998776705364717085428742834933127965110027878965912091;
     uint256 constant PUB_7_X =
-        14168684351423301462914811241693804422739728419496051745919525508877383154179;
+        5872657547462546515271206877794575418764952238782374310989319933254065533328;
     uint256 constant PUB_7_Y =
-        15783757112186645161191027685217099872261396879783250106479541352561629299276;
+        13082126974862047780603294410185903494223848349729713493363998973727904679899;
     uint256 constant PUB_8_X =
-        19071136166960056117119388088250542029933534438080492617085995591082140831421;
+        16643906725923432392985983302001004729210045089339015290909012164390519109287;
     uint256 constant PUB_8_Y =
-        8460138985330875131191880792435970159894209150109695711942354146849534004681;
+        13546298230492910561646263777960436335985073978885581529106484656250063300700;
     uint256 constant PUB_9_X =
-        20737552311016346446704337420575209375267615939221427037338648993387090453652;
+        6646813966990496861881477433213405180574955337497807387546101184482219010327;
     uint256 constant PUB_9_Y =
-        3734354982061471753445617408506628431903852888117195480532161242972496738177;
+        7769654953992250998880493503264784614051240097490369678182324724986907250686;
     uint256 constant PUB_10_X =
-        20939157357218585193074501494681137123977573577550038402401879731718786403455;
+        12644324675533703279873906046313488956069887321068254236920741628472929289901;
     uint256 constant PUB_10_Y =
-        1778426105627641565423509831991356311642118368008037130852455594140065102909;
+        6457444680592289978618437197664666012549778317406036610200436796370810677481;
     uint256 constant PUB_11_X =
-        8660132219523875813974835036162383279420352811843960003364565182276140483845;
+        4863725392745163943794816050116508480636127575693168822932735065844981576742;
     uint256 constant PUB_11_Y =
-        1170178862642039107953639075881091101214723572399036190770655617964139767824;
+        11266355307130430634832555586376092538128860193950125986894816996451008602001;
     uint256 constant PUB_12_X =
-        9778566409544057163849078824384414005630843072031916902704921406470201987062;
+        19987562124287671857413184071303773659559293396427779536663703713086775958360;
     uint256 constant PUB_12_Y =
-        21496077542580913141204580565849765560448883835763323506328100686293245515109;
+        20269399081655289908737791074690508684576463747401239252884625279351534319261;
     uint256 constant PUB_13_X =
-        9179739780177927915332297864594470273015175342679526662999481417472387022994;
+        11510558203688920195790557287532462038965590205075584935785708554160527530478;
     uint256 constant PUB_13_Y =
-        11599366503994574086404873419749234023553470084562718564486291293167259940553;
+        2014478077648939857286418391118416769472272317500415835952960889153260293901;
     uint256 constant PUB_14_X =
-        9409698199248450771331727017479640295179889883696021966673956152974143354862;
+        18682094874548900465552282591407345074688129386623594895604325775754406445324;
     uint256 constant PUB_14_Y =
-        1603291371247844330998515917336107318001434318413931769649769425659496311675;
+        12012642097513453825368135758396661275617207569908760227707577437198194836117;
     uint256 constant PUB_15_X =
-        11484526004491022641099429616456016268935934185909399960699580484769096366922;
+        1740211747131814998200759373848717795320182904975106464430377056155271527132;
     uint256 constant PUB_15_Y =
-        20068730089649582144523916839800358939884694253164053998875783779451918073267;
+        20807458554827438298011751578263390809573472787522679351104866298991748904834;
     uint256 constant PUB_16_X =
-        13250041983059681087404443482608005941524025154011524164356839762354158969673;
+        9232825822921538083528935982035522481451156372279186225584606368554868844370;
     uint256 constant PUB_16_Y =
-        18045165829044943763322876736488192567610297667776748111361380004721560000607;
+        17065662677480691144898967355566084939596635067994996181057098961080339440343;
     uint256 constant PUB_17_X =
-        1388975181279779103086310510532693159367597377288832827881685307331226901603;
+        15240638499300126253894585766591437629905246523897409050164570139737114675132;
     uint256 constant PUB_17_Y =
-        13149149354225664204312313779424519753783970194378987458825759741129946663096;
+        2120962746770496966550644890368231742360149828477302723081061271759807390423;
     uint256 constant PUB_18_X =
-        5055988601347720143841842293896615826274494484575140687130452176249073179318;
+        20824630960116278690058962008340906951984349428486864778579278950731120386119;
     uint256 constant PUB_18_Y =
-        18513484802157416757616588990021888034392011831783975008219840168934426428649;
+        10468118462154435079039695261804085800477731619083553480735036278060080832490;
     uint256 constant PUB_19_X =
-        18879168426319287288802368344122988436467734183432040218169241327732500745645;
+        14067484893581940888310125857027376521524303332513239512363676461097201975653;
     uint256 constant PUB_19_Y =
-        13022384693882801364929790517725273440758712124792532421214724509377221176789;
+        12771820624560720986461598779227870650511631519018181676285574760106790796655;
     uint256 constant PUB_20_X =
-        19976081894616051164889824344427054050824984517353607588607362973604484577394;
+        21867563190027793560160594635248377169083816984808467489403637092456178272802;
     uint256 constant PUB_20_Y =
-        5983787584897990677942970266646512680194136841637991701809280731889605381484;
+        21157307739342597612112404704465086847844420299576934749046605778456039604124;
     uint256 constant PUB_21_X =
-        15051042569451724588768177310220200179083451644741451466268202014589614301663;
+        1078386909957202791410046006622593418758854041840396212111691958815087259131;
     uint256 constant PUB_21_Y =
-        3669308272169221097959209202376920100083996422798785685790578109493337504347;
+        18419856350415753348343005789185521016687241088248678723339755734207764579631;
     uint256 constant PUB_22_X =
-        13504019156578644634603496037262889811979172466483990080752235268565249781405;
+        1416142204042156072564304416674129839841077135155348293026726116272112749879;
     uint256 constant PUB_22_Y =
-        10266523443544558305293433583542990920751685138645033515438341800798576445900;
+        2029656148084368892940858232310465342150216469578750919545997461665823372072;
     uint256 constant PUB_23_X =
-        12699939667444846171976994241399388884783744682413056928931848695773731152082;
+        723446273675370199192425795623878348575181866531177148227567667241788324364;
     uint256 constant PUB_23_Y =
-        12862261849153164306759729209190906548035905050341909608233308673158428356880;
+        16652454303548904422597429668675381026943998138199138919962916916853599483823;
     uint256 constant PUB_24_X =
-        11713936564542097861120589250897395526842424607017063670576515690655429070292;
+        13103618631702682968552409545598888175007787123471097989768927192607091824559;
     uint256 constant PUB_24_Y =
-        1956279734266096290989285855114041360925050371989429734670494442641908710052;
+        21475286342572432645661871014234441272698618636319988128238076594920238704810;
     uint256 constant PUB_25_X =
-        11174267995327129867579743680643561831063532920566798672797617398818986270465;
+        6072603012654808231793900679801038339679601705478791344563612087349654798708;
     uint256 constant PUB_25_Y =
-        11018579800178614660231613148375443239947889664082733086050165786824226761445;
+        7675428066337568862314713155491983619083044280791424605079987559984018966664;
     uint256 constant PUB_26_X =
-        18966261487753626211581650736865874058933589329119717431377495789534835679025;
+        18555736122871362055313510334890458758572979932816484177104768986675105813707;
     uint256 constant PUB_26_Y =
-        7077233556852161269421476356748402802632245910071665111462761495003377874182;
+        10704699648570227474372074982748784756830367101103914598390494070608421674615;
     uint256 constant PUB_27_X =
-        114756142288480372895097702852963884955140497887857126897485889821423670774;
+        6415604790649299062386802011108246422740746346432493646729522174956658270110;
     uint256 constant PUB_27_Y =
-        14630892251454528304938547765315644334503662477524779233192705008395363897493;
+        21376908580365539665948042263580155325503264558702636635664584079850097932294;
     uint256 constant PUB_28_X =
-        10684037174327821412632170482380557944809893506296400455672144568773777137242;
+        903503639542816044381451199236020318368346414498855397696816276468361318477;
     uint256 constant PUB_28_Y =
-        4496025534686482261348951191607764678951343168049354544150192693263003329219;
+        21268196797332732671309648849817205037151570226748012758248717386659759097409;
     uint256 constant PUB_29_X =
-        13569213775112355933691305157925296148986833064437067492437497191032917484165;
+        18956148879542967250024414511379489701186983446174375681332653367867086292828;
     uint256 constant PUB_29_Y =
-        15557037326761279812596272852473282114412211239500098913972448942377865824474;
+        21184472355184589114939631895426854825345977926933843778085688147152467836705;
     uint256 constant PUB_30_X =
-        6751039068806064525200573784502756881913455899438575061516216038896093073087;
+        21027144139308096111786834347086590297873269288410120939235048735757590994353;
     uint256 constant PUB_30_Y =
-        10286873822828534514012202147046581070521876933815859928262673296068838402354;
+        11319642652310846215547414016084635294702547200205695451214926821832043991740;
     uint256 constant PUB_31_X =
-        6638782333779646747087844237911929820267084805634512564169277703278670105160;
+        14123108507435786436926587842393024066523231785594255877977605494781324261010;
     uint256 constant PUB_31_Y =
-        20255941900358409996188994433979939667827985602888535071588454582401626998803;
+        786067044750135351804334756869610122040976114816365297659613601918395308634;
+    uint256 constant PUB_32_X =
+        18101336864786220758659151746178511379800954045364040244034166271617796993557;
+    uint256 constant PUB_32_Y =
+        20285026133029460243322877814190112884582965551156496683056743552559012538831;
+    uint256 constant PUB_33_X =
+        8972391855300722029620877482241521098376943842520136987557068139566009858747;
+    uint256 constant PUB_33_Y =
+        7761417783951704471707713916966618561001204939654388347652874022225626634437;
+    uint256 constant PUB_34_X =
+        4700869814932196803732578648835299298110232895718244368558169393391336731734;
+    uint256 constant PUB_34_Y =
+        3977521732949664195645659652653657828362163706608216018183760124666074778726;
+    uint256 constant PUB_35_X =
+        6989354522036174342476585294918253025115582131005646695522222806468266103727;
+    uint256 constant PUB_35_Y =
+        14819261165183534820898503701027927836946132358985033624875451060578073885767;
+    uint256 constant PUB_36_X =
+        5364779407922063725323279313106906227657784609694593577488861472776296536740;
+    uint256 constant PUB_36_Y =
+        10508003747671628029767923756982823388354269646497893999285463735645883277853;
+    uint256 constant PUB_37_X = 0;
+    uint256 constant PUB_37_Y = 0;
+    uint256 constant PUB_38_X = 0;
+    uint256 constant PUB_38_Y = 0;
+    uint256 constant PUB_39_X = 0;
+    uint256 constant PUB_39_Y = 0;
+    uint256 constant PUB_40_X = 0;
+    uint256 constant PUB_40_Y = 0;
+    uint256 constant PUB_41_X = 0;
+    uint256 constant PUB_41_Y = 0;
+    uint256 constant PUB_42_X =
+        7159448370977299167819691476504190113850794437627165283065666214673234263228;
+    uint256 constant PUB_42_Y =
+        9663520681066926243731285531365953002881935572783540353088143777935965757858;
+    uint256 constant PUB_43_X =
+        3771947271551770157995297725996858993316452048488123963015785661401500909999;
+    uint256 constant PUB_43_Y =
+        16481838896478369467626649881771225590932954154021735949941751186759663791188;
+    uint256 constant PUB_44_X = 0;
+    uint256 constant PUB_44_Y = 0;
+    uint256 constant PUB_45_X = 0;
+    uint256 constant PUB_45_Y = 0;
+    uint256 constant PUB_46_X = 0;
+    uint256 constant PUB_46_Y = 0;
+    uint256 constant PUB_47_X = 0;
+    uint256 constant PUB_47_Y = 0;
+    uint256 constant PUB_48_X = 0;
+    uint256 constant PUB_48_Y = 0;
+    uint256 constant PUB_49_X = 0;
+    uint256 constant PUB_49_Y = 0;
+    uint256 constant PUB_50_X = 0;
+    uint256 constant PUB_50_Y = 0;
+    uint256 constant PUB_51_X = 0;
+    uint256 constant PUB_51_Y = 0;
+    uint256 constant PUB_52_X = 0;
+    uint256 constant PUB_52_Y = 0;
+    uint256 constant PUB_53_X = 0;
+    uint256 constant PUB_53_Y = 0;
+    uint256 constant PUB_54_X =
+        16830009046901691658409934683412942364509653286615681346319421445945909747920;
+    uint256 constant PUB_54_Y =
+        5116930987493672721015725517294771759075133397132373334162399058665327171563;
+    uint256 constant PUB_55_X =
+        5235560880902599205468213794101505004085840216035638461122262965544387860562;
+    uint256 constant PUB_55_Y =
+        21118531084343383202381438489023845019877735690320504542354668591463717130208;
+    uint256 constant PUB_56_X =
+        5052937238413587238904124023421015460091520314317075215171697896086965176445;
+    uint256 constant PUB_56_Y =
+        17434496145750181696396008971335586752238948585700902743524153413289183960294;
+    uint256 constant PUB_57_X =
+        11671007299091795483741984119199936810695186177705668771309544992767808968688;
+    uint256 constant PUB_57_Y =
+        1255125669279042419598152385122789025771296878392774051832437817200389019494;
+    uint256 constant PUB_58_X =
+        10844626169934912034516686200990408921194045967444166731220286594347574651040;
+    uint256 constant PUB_58_Y =
+        10780014339575926283643773284364071443070870792218713108169243333456328153201;
+    uint256 constant PUB_59_X =
+        7710249813639601294390658399763871008031513922657261234749223507364991504527;
+    uint256 constant PUB_59_Y =
+        10238697385526395564636064479040024230499686244991635680130802055647981286849;
+    uint256 constant PUB_60_X =
+        18826742498518452760694005849933638114604555248436992185145788649347619865603;
+    uint256 constant PUB_60_Y =
+        4554914561556071908585791035724199514762609184318194581898093862205283472106;
+    uint256 constant PUB_61_X =
+        20642853404553262954438666837263969227212601272054844791874289894571321022122;
+    uint256 constant PUB_61_Y =
+        11403292653935780049915764062975077897135607576534491264703132248022353550766;
 
     /// Negation in Fp.
     /// @notice Returns a number x such that a + x = 0 in Fp.
@@ -532,7 +622,7 @@ contract Verifier {
     /// @return x The X coordinate of the resulting G1 point.
     /// @return y The Y coordinate of the resulting G1 point.
     function publicInputMSM(
-        uint256[32] calldata input
+        uint256[62] calldata input
     ) internal view returns (uint256 x, uint256 y) {
         // Note: The ECMUL precompile does not reject unreduced values, so we check this.
         // Note: Unrolling this loop does not cost much extra in code-size, the bulk of the
@@ -965,6 +1055,396 @@ contract Verifier {
                 success,
                 staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
             )
+            mstore(g, PUB_32_X)
+            mstore(add(g, 0x20), PUB_32_Y)
+            s := calldataload(add(input, 1024))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_33_X)
+            mstore(add(g, 0x20), PUB_33_Y)
+            s := calldataload(add(input, 1056))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_34_X)
+            mstore(add(g, 0x20), PUB_34_Y)
+            s := calldataload(add(input, 1088))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_35_X)
+            mstore(add(g, 0x20), PUB_35_Y)
+            s := calldataload(add(input, 1120))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_36_X)
+            mstore(add(g, 0x20), PUB_36_Y)
+            s := calldataload(add(input, 1152))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_37_X)
+            mstore(add(g, 0x20), PUB_37_Y)
+            s := calldataload(add(input, 1184))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_38_X)
+            mstore(add(g, 0x20), PUB_38_Y)
+            s := calldataload(add(input, 1216))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_39_X)
+            mstore(add(g, 0x20), PUB_39_Y)
+            s := calldataload(add(input, 1248))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_40_X)
+            mstore(add(g, 0x20), PUB_40_Y)
+            s := calldataload(add(input, 1280))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_41_X)
+            mstore(add(g, 0x20), PUB_41_Y)
+            s := calldataload(add(input, 1312))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_42_X)
+            mstore(add(g, 0x20), PUB_42_Y)
+            s := calldataload(add(input, 1344))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_43_X)
+            mstore(add(g, 0x20), PUB_43_Y)
+            s := calldataload(add(input, 1376))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_44_X)
+            mstore(add(g, 0x20), PUB_44_Y)
+            s := calldataload(add(input, 1408))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_45_X)
+            mstore(add(g, 0x20), PUB_45_Y)
+            s := calldataload(add(input, 1440))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_46_X)
+            mstore(add(g, 0x20), PUB_46_Y)
+            s := calldataload(add(input, 1472))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_47_X)
+            mstore(add(g, 0x20), PUB_47_Y)
+            s := calldataload(add(input, 1504))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_48_X)
+            mstore(add(g, 0x20), PUB_48_Y)
+            s := calldataload(add(input, 1536))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_49_X)
+            mstore(add(g, 0x20), PUB_49_Y)
+            s := calldataload(add(input, 1568))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_50_X)
+            mstore(add(g, 0x20), PUB_50_Y)
+            s := calldataload(add(input, 1600))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_51_X)
+            mstore(add(g, 0x20), PUB_51_Y)
+            s := calldataload(add(input, 1632))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_52_X)
+            mstore(add(g, 0x20), PUB_52_Y)
+            s := calldataload(add(input, 1664))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_53_X)
+            mstore(add(g, 0x20), PUB_53_Y)
+            s := calldataload(add(input, 1696))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_54_X)
+            mstore(add(g, 0x20), PUB_54_Y)
+            s := calldataload(add(input, 1728))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_55_X)
+            mstore(add(g, 0x20), PUB_55_Y)
+            s := calldataload(add(input, 1760))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_56_X)
+            mstore(add(g, 0x20), PUB_56_Y)
+            s := calldataload(add(input, 1792))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_57_X)
+            mstore(add(g, 0x20), PUB_57_Y)
+            s := calldataload(add(input, 1824))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_58_X)
+            mstore(add(g, 0x20), PUB_58_Y)
+            s := calldataload(add(input, 1856))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_59_X)
+            mstore(add(g, 0x20), PUB_59_Y)
+            s := calldataload(add(input, 1888))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_60_X)
+            mstore(add(g, 0x20), PUB_60_Y)
+            s := calldataload(add(input, 1920))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
+            mstore(g, PUB_61_X)
+            mstore(add(g, 0x20), PUB_61_Y)
+            s := calldataload(add(input, 1952))
+            mstore(add(g, 0x40), s)
+            success := and(success, lt(s, R))
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_MUL, g, 0x60, g, 0x40)
+            )
+            success := and(
+                success,
+                staticcall(gas(), PRECOMPILE_ADD, f, 0x80, f, 0x40)
+            )
 
             x := mload(f)
             y := mload(add(f, 0x20))
@@ -1007,7 +1487,7 @@ contract Verifier {
     /// Elements must be reduced.
     function verifyCompressedProof(
         uint256[4] calldata compressedProof,
-        uint256[32] calldata input
+        uint256[62] calldata input
     ) public view {
         uint256[24] memory pairings;
 
@@ -1086,7 +1566,7 @@ contract Verifier {
     /// Elements must be reduced.
     function verifyProof(
         uint256[8] calldata proof,
-        uint256[32] calldata input
+        uint256[62] calldata input
     ) public view {
         (uint256 x, uint256 y) = publicInputMSM(input);
 

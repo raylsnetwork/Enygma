@@ -26,7 +26,7 @@ type EnygmaCircuit struct {
 	BlockNumber     frontend.Variable 					`gnark:",public"`  // Previous block_number to ensure that random factors are well-generated
 	KIndex 		    []frontend.Variable  				`gnark:",public"`  // Array with indices of the banks that are in the tx ("k"-anonymity)
 
-	SenderId      	int                                		// Identifier of the sender of the tx
+	SenderId      	int                                						// Identifier of the sender of the tx
 	Secrets       	[][]frontend.Variable 									// Array of shared secrets with all the other PLs
 	TagMessage      [] frontend.Variable 									// Array of tag messages to ensure unique transactions when parties transact in the same block
 	Sk 				frontend.Variable										// Secret key of the sender of the tx 
@@ -36,7 +36,7 @@ type EnygmaCircuit struct {
 	TxValue 		[]frontend.Variable										// Array of balances debited/credited in this transaction
 	TxRandom 		[]frontend.Variable 									// Array of random factors for the pedersen commitments in this tx
 	V				frontend.Variable 										// Balance to be spent in this tx
-	Nullifier       frontend.Variable 										// Nullifier to ensure transaction is not a double spend
+	Nullifier       frontend.Variable 				`gnark:",public"`		// Nullifier to ensure transaction is not a double spend
 	
 
 }
@@ -47,7 +47,7 @@ type EnygmaCircuit struct {
 
 func (circuit *EnygmaCircuit) Define(api frontend.API) error {	
 
-	//Subgroup order
+	//Subgroup order	   
 	r:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
 
 	//////////////////////////////////**///////////////////////////////////
@@ -92,7 +92,11 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	}
 
 	secretSenderCalculated:= pos.Poseidon(api,[]frontend.Variable{circuit.PreviousV, circuit.Sk})
-	api.AssertIsEqual(secretSenderCalculated, selected_secret)
+	secretInter,_ := api.NewHint(utils.ModHint, 2,secretSenderCalculated)
+	secretRemain := secretInter[0] // remaninder
+
+	
+	api.AssertIsEqual(secretRemain, selected_secret)
 
 
 	///////////////////////////////////**///////////////////////////////////
@@ -101,7 +105,11 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	for i := 0; i < circuit.Config.NCommitment; i++ { // for each secret perform hash calculation and sees if is equal to correspondent Array of hash secret
 		for j:=0; j< circuit.Config.NCommitment; j++{
 			calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.Secrets[i][j],circuit.Secrets[i][j]})
-			api.AssertIsEqual(calculatedHash, circuit.ArrayHashSecret[i][j])
+			hashInter,_ := api.NewHint(utils.ModHint, 2,calculatedHash)
+			hashMod := hashInter[0] // remaninder
+			
+				
+			api.AssertIsEqual(hashMod, circuit.ArrayHashSecret[i][j])
 		}
 	}
 
@@ -118,8 +126,10 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 		
 	}	
 	pk := pos.Poseidon(api, []frontend.Variable{circuit.Sk, circuit.Sk}) // Pk = PoseidonHash (sk , sk)
-
-	api.AssertIsEqual(selectedPK, pk) // check if calculated Publickey is equal to  selectedPK
+	pkInter,_ := api.NewHint(utils.ModHint, 2,pk)
+	pkMod := pkInter[0] // remaninder
+	
+	api.AssertIsEqual(selectedPK, pkMod) // check if calculated Publickey is equal to  selectedPK
 
 	///////////////////////////////////**///////////////////////////////////
 	//Knowledge of Previous Commitment
@@ -141,25 +151,31 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 	///////////////////////////////////**///////////////////////////////////
 	//Knowledge of Tag Message - Perform verification is tag message is well formed
-    // TagMessageSeed := 21
+    // TagMessageSeed := 12
 
-	HashTag:= pos.Poseidon(api,[]frontend.Variable{21})
+	HashTag:= pos.Poseidon(api,[]frontend.Variable{12})
 	for i:=0; i< circuit.Config.NCommitment ; i++{
 
 		// It's the same as the random factor but either random factor or tag will changed how it is calculated
 		// Assuming that Sij = Sji
 		
 		calculatedTagMessage := pos.Poseidon(api,[]frontend.Variable{HashTag,circuit.Secrets[circuit.SenderId][i], circuit.BlockNumber})
+		calculatedTagMessageInter,_ := api.NewHint(utils.ModHint, 2,calculatedTagMessage)
+		calculatedTagMessageMod := calculatedTagMessageInter[0] // remaninder
 		
-		calculatedTagMessageSender:= pos.Poseidon(api,[]frontend.Variable{circuit.PreviousV, circuit.BlockNumber})
-		
+		calculatedTagMessageSender:= pos.Poseidon(api,[]frontend.Variable{HashTag,circuit.PreviousV, circuit.BlockNumber})
+		calculatedTagMessageSenderInter ,_ := api.NewHint(utils.ModHint, 2,calculatedTagMessageSender)
+		calculatedTagMessageSenderMod := calculatedTagMessageSenderInter[0] // remaninder
+
+
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId)) //KIndex[i] ==SenderId? 1:0
 										// Not Equal SenderId                  //  Equal to SenderId
 		selectedTagMessage := api.Select(
 								isEqual,
-								calculatedTagMessageSender, // if isEqual == 1
-								calculatedTagMessage,       // if isEqual == 0
+								calculatedTagMessageSenderMod, // if isEqual == 1
+								calculatedTagMessageMod,       // if isEqual == 0
 							)
+							
 		api.AssertIsEqual(circuit.TagMessage[i],selectedTagMessage)
 		
 	}
@@ -252,11 +268,9 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	calculatedRandomFactor:= make([]frontend.Variable, circuit.Config.NCommitment)
 	
 
-	// TagMessageSeed := 12
+	// TagMessageSeed := 21
 
-	HashRandom:= pos.Poseidon(api,[]frontend.Variable{12})
-
-	
+	HashRandom:= pos.Poseidon(api,[]frontend.Variable{21})
 
 	sumFactor:= frontend.Variable(0)
 	for i := 0; i < circuit.Config.NCommitment; i++ {

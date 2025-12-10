@@ -29,7 +29,7 @@ var (
 	ZkdvpGetProof      = "http://127.0.0.1:3001/generateJoinEnygmaProof"
 	WithdrawProofURL   = "http://127.0.0.1:8080/proof/withdraw"
 	DepositProofURL   = "http://127.0.0.1:8080/proof/deposit"
-	PrivateKeyString   = "" // Please insert private key of your walllet
+	PrivateKeyString   = "..." 
 	Address            = readJSONFile()
 	P, _               = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
 	G                  = initPoint("16540640123574156134436876038791482806971768689494387082833631921987005038935", "20819045374670962167435360035096875258406992893633759881276124905556507972311")

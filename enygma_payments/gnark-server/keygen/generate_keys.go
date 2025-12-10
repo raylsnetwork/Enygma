@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-
-	
+	"log"
+	"os"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark-crypto/ecc"
@@ -113,15 +113,15 @@ func main() {
 		return
 	}
 	
-	if err := generateKeysZkDvpDeposit(); err != nil {
-		fmt.Printf("Error generating Deposit keys: %v\n", err)
-		return
-	}
+	// if err := generateKeysZkDvpDeposit(); err != nil {
+	// 	fmt.Printf("Error generating Deposit keys: %v\n", err)
+	// 	return
+	// }
 	
-	if err := generateKeysZkDvpWithdraw(); err != nil {
-		fmt.Printf("Error generating Withdraw keys: %v\n", err)
-		return
-	}
+	// if err := generateKeysZkDvpWithdraw(); err != nil {
+	// 	fmt.Printf("Error generating Withdraw keys: %v\n", err)
+	// 	return
+	// }
 	
 	fmt.Println("✓ All keys generated successfully!")
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -70,7 +69,6 @@ type Proof struct {
 	V               string     `json:"v"`
 	Nullifier       string     `json:"nullifier"`
 	
-	
 }
 
 
@@ -104,16 +102,15 @@ func getNegative(x *big.Int) *big.Int {
 	return inverse
 }
 
-func getRValues( senderId *big.Int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int) []*big.Int {
+func getRValues( senderId int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int) []*big.Int {
 	var rValues []*big.Int
-	randomString:= "random_factor"
-	hash := sha256.Sum256([]byte(str))
-	randomBigInt := new(big.Int).SetBytes(hash[:])
+	randomInt:= big.NewInt(21)
+	HashRandom,_:= poseidon.Hash([]*big.Int{randomInt})
 
 	for i := 0; i < len(s[senderId]); i++ {
 		if containsBigInt(k_index, i){
 
-			inputs := []*big.Int{ randomBigInt,s[senderId][i],block_hash}
+			inputs := []*big.Int{ HashRandom,s[senderId][i],block_hash}
 			block_hash.Mod(block_hash, P)
 			PoseidonHash, _ := poseidon.Hash(inputs)
 			PoseidonHash.Mod(PoseidonHash, P)
@@ -124,44 +121,63 @@ func getRValues( senderId *big.Int, s [][]*big.Int, block_hash *big.Int, k_index
 }
 
 
-func hashArrayGen(senderId int,s [][]*big.Int, block_hash *big.Int,k_index []*big.Int ){
-	var hashArray [][]*big.Int
+func hashArrayGen(senderId int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int) [][]*big.Int {
+    // Initialize 2D slice with proper dimensions
+    hashArray := make([][]*big.Int, len(k_index))
+    
+    for i := 0; i < len(k_index); i++ {
+        // Initialize inner slice
+        hashArray[i] = make([]*big.Int, len(k_index))
+        
+        for j := 0; j < len(k_index); j++ {
 
-	for i:=0; i< len(k_index); i++ {
-		for j:=0; j<len(k_index);j++{
-			inputs := []*big.Int{ s[i][j],s[i][j]}
-			block_hash.Mod(block_hash, P)
-			PoseidonHash, _ := poseidon.Hash(inputs)
-			PoseidonHash.Mod(PoseidonHash, P)
-			hashArray = append(rValues, PoseidonHash)}
-		}
+            inputs := []*big.Int{s[i][j], s[i][j]}
+            poseidonHash, err := poseidon.Hash(inputs)
+            if err != nil {
+                panic(err) // or return error
+            }
+            
+            // Reduce modulo P
+            poseidonHash.Mod(poseidonHash, P)
+            hashArray[i][j] = poseidonHash
+        }
+    }
+    
+    return hashArray
 }
 
-func tagMessageGen(senderId int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int)[]*big.Int {
+func tagMessageGen(senderId int, s [][]*big.Int, block_hash *big.Int, k_index []*big.Int, previousV *big.Int)[]*big.Int {
 	var tagMesssage []*big.Int
-	tagString:= "tag"
-	hash := sha256.Sum256([]byte(str))
-	tagBigInt := new(big.Int).SetBytes(hash[:])
-
+	tag:= big.NewInt(12)
+	HashTag,_:= poseidon.Hash([]*big.Int{tag})
+	block_hash.Mod(block_hash, P)
 	for i := 0; i < len(s[senderId]); i++ {
 		if containsBigInt(k_index, i){
 
-			inputs := []*big.Int{ tagBigInt,s[senderId][i],block_hash}
-			block_hash.Mod(block_hash, P)
+			
+			inputs := []*big.Int{ HashTag,s[senderId][i],block_hash}
 			PoseidonHash, _ := poseidon.Hash(inputs)
 			PoseidonHash.Mod(PoseidonHash, P)
-			rValues = append(rValues, PoseidonHash)}
+			tagMesssage = append(tagMesssage, PoseidonHash)}
 
 	}
-	return rValues
+	inputSender:=[]*big.Int{ HashTag,previousV,block_hash}
+	PoseidonHashSender, _ := poseidon.Hash(inputSender)
+	PoseidonHashSender.Mod(PoseidonHashSender, P)
+	tagMesssage[senderId] = PoseidonHashSender
+
+	return tagMesssage
 }
 
 func getRSum(senderId int,s [][]*big.Int,  block_hash *big.Int,k_index []*big.Int) *big.Int {
 	sum := big.NewInt(0)
+	randomInt:= big.NewInt(21)
+	HashRandom,_:= poseidon.Hash([]*big.Int{randomInt})
+
 	for i := 0; i < len(s[senderId]); i++ {
-		if sender_id != i {
+		if senderId != i {
 			if containsBigInt(k_index, i){
-			inputs := []*big.Int{s[i],block_hash }
+			inputs := []*big.Int{HashRandom,s[senderId][i],block_hash }
 			PoseidonHash, _ := poseidon.Hash(inputs)
 			PoseidonHash.Mod(PoseidonHash, P)
 			sum.Add(sum, PoseidonHash)
@@ -172,9 +188,9 @@ func getRSum(senderId int,s [][]*big.Int,  block_hash *big.Int,k_index []*big.In
 	return sum
 }
 
-func containsBigInt(senderId int, s [][]*big.Int, val int) bool {
+func containsBigInt( s []*big.Int, val int) bool {
 	valBig := big.NewInt(int64(val))
-	for _, v := range s[senderId] {
+	for _, v := range s {
 		if v.Cmp(valBig) == 0 {
 			return true
 		}
@@ -183,11 +199,11 @@ func containsBigInt(senderId int, s [][]*big.Int, val int) bool {
 }
 
 
-func makeCommitment(qtyBanks int,v *big.Int,senderId int,txValues []*big.Int, blockHash *big.Int, kIndex []*big.Int) ( []enygma.IEnygmaPoint, []*big.Int, []*big.Int, []*big.Int) {
+func makeCommitment(qtyBanks int,v *big.Int,senderId int,txValues []*big.Int, blockHash *big.Int, kIndex []*big.Int) ( []enygma.IEnygmaPoint, []*big.Int, []*big.Int, [][]*big.Int) {
 	
 	
-	txRandom := getRValues(secrets, blockHash, kIndex)
-	rSum := getRSum(secrets, senderId, blockHash,kIndex)
+	txRandom := getRValues(senderId,secrets, blockHash, kIndex)
+	rSum := getRSum(senderId,secrets, blockHash,kIndex)
 	txRandom[senderId] = rSum
 	var txCommit []*babyjub.Point
 
@@ -210,23 +226,19 @@ func makeCommitment(qtyBanks int,v *big.Int,senderId int,txValues []*big.Int, bl
 }
 
 func generateProof( qtyBanks int, value string,senderId int,nullifier *big.Int, 
-				blockHash *big.Int, sk string, publicKey []enygma.IEnygmaPoint, 
+				blockHash *big.Int, sk string, publicKey []*big.Int, 
 				previousCommit []enygma.IEnygmaPoint, txCommit []enygma.IEnygmaPoint, 
 				txValue []*big.Int, txRandom []*big.Int, secrets [][]*big.Int, previousV *big.Int,
-				previousR *big.Int, k_index []*big.Int) Response {
+				previousR *big.Int, k_index []*big.Int, hashArray [][]*big.Int, tagMessage []*big.Int) Response {
 	
 
-	var pkFinal [][]string
+	var pkFinal []string
 	var refBalFinal [][]string
 	var commFinal [][]string
 
 	for _, pkVal := range publicKey {
-		var pkObj []string
-
-		pkObj = append(pkObj, pkVal.C1.String())
-		pkObj = append(pkObj, pkVal.C2.String())
-
-		pkFinal = append(pkFinal, pkObj)
+		
+		pkFinal = append(pkFinal, pkVal.String())
 	}
 
 	for _, value := range previousCommit {
@@ -249,25 +261,35 @@ func generateProof( qtyBanks int, value string,senderId int,nullifier *big.Int,
 
 	txValueString := convertBigIntsToStrings(txValue)
 	txRandomString := convertBigIntsToStrings(txRandom)
-	secretsString := convertBigIntsToStrings(secrets)
+	secretsString := convertBigIntsToStrings2D(secrets)
 	kIndexString := convertBigIntsToStrings(kIndex)
+	tagMessageString:=convertBigIntsToStrings(tagMessage)
+	hashArrayString:= convertBigIntsToStrings2D(hashArray)
 
-	jsonInfo := Proof{strconv.FormatInt(int64(senderId), 10),
-		secretsString,
-		pkFinal,    
+
+
+	jsonInfo := Proof{
+		hashArrayString,//ArrayHashSecret		
+		pkFinal, // publicKey - change
+		refBalFinal, // previous Commit
+		blockHash.String(), //block number
+		kIndexString, //KIndex
+		strconv.FormatInt(int64(senderId), 10), //senderId
+		secretsString, //secret
+		tagMessageString, 
 		sk,
 		previousV.String(),
 		previousR.String(),
-		refBalFinal, // previous Commit
 		commFinal, //tx Commit
 		txValueString,
 		txRandomString,
 		value,
 		nullifier.String(),
-		blockHash.String(),
-		kIndexString,
-		}
+		
+	}
 
+	fmt.Println("txRandomString",txRandomString)
+	
 
 	jsonMar, _ := json.Marshal(jsonInfo)
 	var jsonData = []byte(jsonMar)
@@ -308,7 +330,21 @@ func convertBigIntsToStrings(bigInts []*big.Int) []string {
 	return strings
 }
 
-func getDataFromSmartContract(qtyBanks int) ([]enygma.IEnygmaPoint, []enygma.IEnygmaPoint) {
+func convertBigIntsToStrings2D(bigInts [][]*big.Int) [][]string {
+    // Create outer slice
+    strings := make([][]string, len(bigInts))
+    
+    for i, row := range bigInts {
+        strings[i] = make([]string, len(row))
+        for j, bigInt := range row {
+            strings[i][j] = bigInt.String()
+        }
+    }
+    
+    return strings
+}
+
+func getDataFromSmartContract(qtyBanks int) ([]enygma.IEnygmaPoint, []*big.Int) {
 	contractAddr := common.HexToAddress(address)
 
 	client, err := ethclient.Dial(commitChainURL)
@@ -329,7 +365,7 @@ func getDataFromSmartContract(qtyBanks int) ([]enygma.IEnygmaPoint, []enygma.IEn
 	return referenceBalance, publicKeys
 }
 
-func sendTransaction(resp Response, commitments []enygma.IEnygmaPoint, kIndex []*big.Int,publicKey []enygma.IEnygmaPoint,previousCommit []enygma.IEnygmaPoint,blockHash *big.Int) {
+func sendTransaction(resp Response, commitments []enygma.IEnygmaPoint, kIndex []*big.Int,publicKey []*big.Int,previousCommit []enygma.IEnygmaPoint,blockHash *big.Int) {
 	
 	contractAddr := common.HexToAddress(address)
 	client, err := ethclient.Dial(commitChainURL)
@@ -376,7 +412,7 @@ func sendTransaction(resp Response, commitments []enygma.IEnygmaPoint, kIndex []
 		ProofToSend[i] =  resp.Proof[i]
 	}
 	//Public signal parsing	
-	var PublicSignalToSend  [32]*big.Int
+	var PublicSignalToSend  [62]*big.Int
 	for i := 0; i < len(resp.PublicSignal); i++ {
 		PublicSignalToSend[i] =  resp.PublicSignal[i]
 

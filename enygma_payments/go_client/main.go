@@ -51,50 +51,57 @@ var (
 	kIndex        = []*big.Int{k0, k1, k2,k3,k4,k5}
 
 	// This number were randomly generated!
-	s00 = big.NewInt(0) 
+	s00,_ = new(big.Int).SetString("1057552177615391071371517357831905644488869902410624499760761745282922661721",10) 
 	s01 = big.NewInt(54142)
 	s02 = big.NewInt(814712)
 	s03 = big.NewInt(250912012)
 	s04 = big.NewInt(12312512)
 	s05 = big.NewInt(12312512)
 
-	s10 = big.NewInt(0) 
-	s11 = big.NewInt(54142)
-	s12 = big.NewInt(814712)
-	s13 = big.NewInt(250912012)
-	s14 = big.NewInt(12312512)
-	s15 = big.NewInt(12312512)
+	s10 = big.NewInt(412321) 
+	s11 = big.NewInt(634609235)
+	s12 = big.NewInt(8352331231)
+	s13 = big.NewInt(289412412)
+	s14 = big.NewInt(8932589237)
+	s15 = big.NewInt(423423523)
 
-	s20 = big.NewInt(0) 
-	s21 = big.NewInt(54142)
-	s22 = big.NewInt(814712)
-	s23 = big.NewInt(250912012)
-	s24 = big.NewInt(12312512)
-	s25 = big.NewInt(12312512)
+	s20 = big.NewInt(3634) 
+	s21 = big.NewInt(967865)
+	s22 = big.NewInt(364352)
+	s23 = big.NewInt(25324754)
+	s24 = big.NewInt(636434)
+	s25 = big.NewInt(5674564)
 
-	s30 = big.NewInt(0) 
-	s31 = big.NewInt(54142)
-	s32 = big.NewInt(814712)
-	s33 = big.NewInt(250912012)
-	s34 = big.NewInt(12312512)
-	s35 = big.NewInt(12312512)
+	s30 = big.NewInt(41241226) 
+	s31 = big.NewInt(4365343563)
+	s32 = big.NewInt(235234135)
+	s33 = big.NewInt(2321634634)
+	s34 = big.NewInt(3451212)
+	s35 = big.NewInt(34634634)
 
-	s40 = big.NewInt(0) 
-	s41 = big.NewInt(54142)
-	s42 = big.NewInt(814712)
-	s43 = big.NewInt(250912012)
-	s44 = big.NewInt(12312512)
-	s45 = big.NewInt(12312512)
+	s40 = big.NewInt(5151341231) 
+	s41 = big.NewInt(64363452)
+	s42 = big.NewInt(2141623423)
+	s43 = big.NewInt(52355347345)
+	s44 = big.NewInt(352112412)
+	s45 = big.NewInt(514125123125)
 
+
+	s50 = big.NewInt(5141264353) 
+	s51 = big.NewInt(46345346346)
+	s52 = big.NewInt(63463442331)
+	s53 = big.NewInt(2412624534)
+	s54 = big.NewInt(346423423)
+	s55 = big.NewInt(2412634634534)
 
 
 	secrets = [][]*big.Int{
-		s00,s01,s02,s03,s04,s05,
-		s10,s11,s12,s13,s14,s15,
-		s20,s21,s22,s23,s24,s25,
-		s30,s31,s32,s33,s34,s35,
-		s40,s41,s42,s43,s44,s45,
-		s50,s51,s52,s53,s54,s55,
+		{s00,s01,s02,s03,s04,s05,},
+		{s10,s11,s12,s13,s14,s15,},
+		{s20,s21,s22,s23,s24,s25,},
+		{s30,s31,s32,s33,s34,s35,},
+		{s40,s41,s42,s43,s44,s45,},
+		{s50,s51,s52,s53,s54,s55,},
 
 	}
 
@@ -102,7 +109,7 @@ var (
 	commitChainURL   = "http://127.0.0.1:8545"
 	httpposturl      = "http://127.0.0.1:8080/proof/enygma"
 	
-	privateKeyString = "please insert private key in safe manner"
+	privateKeyString = "please insert private key"
 )
 
 func main() {
@@ -133,12 +140,11 @@ func main() {
 	previousV, _ := new(big.Int).SetString(previousVTemp, 10)
 	previousR, _ := new(big.Int).SetString(previousRTemp, 10)
 	blockHash, _ := new(big.Int).SetString(blockHashTemp, 10)
-	skBigInt, _ := new(big.Int).SetString(sk, 10)
+	// skBigInt, _ := new(big.Int).SetString(sk, 10)
 
-	inputs := []*big.Int{skBigInt, blockHash}
-	nullifier, _ := poseidon.Hash(inputs)
 	
-
+	
+	
 	// How much will be subtracted from the sending account
 	v, _         := new(big.Int).SetString(value, 10)
 	amountToSend := v
@@ -154,15 +160,25 @@ func main() {
    
 	// The commitments are generated to send from one account to multiple accounts
 	commit, txValue, txRandom, secrets := makeCommitment(qtyBanks,amountToSend,senderId, txValues,blockHash,kIndex)
-	
+
+
+	// Tag Message
+
+	tagMessage:=tagMessageGen(senderId, secrets,blockHash, kIndex, previousV)
+
+	// HashArray
+
+	hashArray:=hashArrayGen(senderId, secrets,blockHash, kIndex)
+	inputs := []*big.Int{hashArray[senderId][senderId], blockHash}
+	nullifier, _ := poseidon.Hash(inputs)
 	// The referenceBalance and Public Keys stored on the smart contract are queried and the proofs are generated based on them
 	referenceBalance, publicKey := getDataFromSmartContract(qtyBanks)
 
-	// Generate the proofs from the commitments
-	proof := generateProof(qtyBanks, value,senderId,nullifier, blockHash, sk, publicKey, referenceBalance, commit, txValue, txRandom, secrets, previousV, previousR,kIndex)
+	// // Generate the proofs from the commitments
+	proof := generateProof(qtyBanks, value,senderId,nullifier, blockHash, sk, publicKey, referenceBalance, commit, txValue, txRandom, secrets, previousV, previousR,kIndex,hashArray,tagMessage)
 
 	
-	// Send the transaction to the ZkToken.sol Transfer function
+	// // Send the transaction to the ZkToken.sol Transfer function
 
 	sendTransaction(proof, commit,kIndex, publicKey,referenceBalance,blockHash)
 

@@ -74,10 +74,10 @@ contract Enygma is IEnygma {
     function registerAccount(
         address addr,
         uint256 accountNum,
-        uint256 k,
+        uint256 kValue,
         uint256 r
     ) public checkOwner returns (bool) {
-        pubKeys[accountNum] = k;
+        pubKeys[accountNum] = kValue;
 
         accounts[addr] = accountNum;
 
@@ -233,7 +233,7 @@ contract Enygma is IEnygma {
         //PublicKey 6
         //PreviousCommit 12
         //KIndex 6
-        string memory funcSig = "verifyProof(uint256[8],uint256[60])";
+        string memory funcSig = "verifyProof(uint256[8],uint256[62])";
 
         address verifAddr = verifiers[commitments.length];
         (bool success, ) = verifAddr.delegatecall(
