@@ -103,7 +103,7 @@ flowchart LR
 ### Balance Setup
 All participants start with a balance with $$v=0$$ and $$r=0$$. 
 
-Therefore, the Issuer creates a contract where the initial balance for all the participants is:
+Therefore, the Issuer creates a contract where the default initial balance for all the participants is:
 
 $$Comm(0, 0) = 0G + 0H$$
 
