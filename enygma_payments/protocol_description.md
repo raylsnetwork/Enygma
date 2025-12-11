@@ -173,7 +173,7 @@ $$Comm(v, 0) = vG + 0H = vG$$
 This allows anyone to be able to see how much money was minted in the system. 
 
 ### Private Issuance
-Issuer acts as a system entity and establishes a shared secret with every participant in the network, and creates a new commitment with the random factor set accordingly. Concretely, $$r = Hash(s, n_{block})$$. This commitment gets added to the previous balance (of zero). Therefore, the initial balance after a private issuance is:
+Issuer acts as a system entity and establishes a shared secret $$s$$ with each participant in the network, and creates a new commitment with the random factor set accordingly. Concretely, $$r = Hash(s, n_{block})$$. This commitment gets added to the previous balance (of zero). Therefore, the initial balance after a private issuance is:
 
 $$Comm(v, r) = vG + rH$$
 
