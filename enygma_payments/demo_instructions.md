@@ -87,7 +87,7 @@ go run cmd/server/main.go
 # 3. Execute transaction (in another terminal)
 
 cd ../go_client
-go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
+go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
 ```
 
 ### Step-by-Step Instructions
@@ -177,7 +177,7 @@ Open another new terminal window and run:
 
 ```bash
 cd go_client
-go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
+go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
 
 ```
 

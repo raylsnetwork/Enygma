@@ -69,7 +69,7 @@ secrets = [][]*big.Int{
 Basic Command
 
 ```bash
-go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
+go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
 
 ```
 
