@@ -11,7 +11,7 @@ interface IEnygma {
 
     struct Proof {
         uint256[8] proof;
-        uint256[32] public_signal;
+        uint256[62] public_signal;
     }
 
     struct WithdrawProof {
@@ -68,8 +68,7 @@ interface IEnygma {
     function registerAccount(
         address addr,
         uint256 accountNum,
-        uint256 k1,
-        uint256 k2,
+        uint256 k,
         uint256 r
     ) external returns (bool);
 
@@ -85,7 +84,7 @@ interface IEnygma {
 
     function getPublicValues(
         uint256 size
-    ) external view returns (Point[] memory, Point[] memory);
+    ) external view returns (Point[] memory, uint256[] memory);
 
     function transfer(
         Point[] memory commitments,

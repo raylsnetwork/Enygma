@@ -21,7 +21,7 @@ from objsize import get_deep_size
 def main(**args):
 
     root_path = RootPath()
-    print(f"{root_path=}")
+    print(f"root_path {root_path=}")
 
     configuration_path = os.path.join(root_path, args["conf_path"][1:-1])
     print(f"{configuration_path=}")
@@ -49,6 +49,7 @@ def main(**args):
     should_reset = False
     try:
         receipts = read_json_file(receipts_path)
+        
         info(f"found the Receipt file at {receipts_path}.")
     except:
         info(f"Can not find the Receipt file at {receipts_path}. Redeploying")
@@ -61,7 +62,7 @@ def main(**args):
             print("Cleaning up everything")
             should_reset = True
             RecreatePath(log_path)
-
+    
     w3 = W3b3(root_path, conf, scenario, receipts)
 
     if "'pack'" in args['commands'] or should_reset:
@@ -74,6 +75,7 @@ def main(**args):
         s1_compile(root_path, project_name, banks_conf)
 
     if "'deploy'" in args['commands'] or should_reset:
+
         receipts = s2_deploy(w3, root_path, conf, scenario, receipts)
         save_receipts_to_json(receipts_path, receipts)
 

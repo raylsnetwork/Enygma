@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-
-	
+	"log"
+	"os"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark-crypto/ecc"
@@ -40,7 +40,31 @@ func generateKeys(circuit frontend.Circuit, pkPath, vkPath string) error {
 }
 
 func generateKeysEnygma() error {
-	var enygmaCircuit enygma.EnygmaCircuit
+	config:= enygma.EnygmaCircuitConfig{
+		BitWith:256,
+		NCommitment:6,
+	}
+	enygmaCircuit:= enygma.EnygmaCircuit{
+		Config:config,
+		ArrayHashSecret:make([][]frontend.Variable, config.NCommitment),
+		PublicKey:      make([]frontend.Variable,config.NCommitment),
+		PreviousCommit: make([][2]frontend.Variable, config.NCommitment),
+		KIndex:  		make([]frontend.Variable,config.NCommitment),
+		Secrets:		make([][]frontend.Variable, config.NCommitment),
+		TagMessage: 	make([]frontend.Variable,config.NCommitment),
+		TxCommit: 		make([][2]frontend.Variable, config.NCommitment),
+		TxValue: 		make([]frontend.Variable,config.NCommitment),
+		TxRandom: 		make([]frontend.Variable,config.NCommitment),
+
+	}
+
+	for i := range config.NCommitment {
+
+        enygmaCircuit.ArrayHashSecret[i] = make([]frontend.Variable, config.NCommitment)
+		enygmaCircuit.Secrets[i] = make([]frontend.Variable, config.NCommitment)
+    }
+
+	
 	return generateKeys(
 		&enygmaCircuit,
 		"keys/EnygmaPk.key",
@@ -89,15 +113,15 @@ func main() {
 		return
 	}
 	
-	if err := generateKeysZkDvpDeposit(); err != nil {
-		fmt.Printf("Error generating Deposit keys: %v\n", err)
-		return
-	}
+	// if err := generateKeysZkDvpDeposit(); err != nil {
+	// 	fmt.Printf("Error generating Deposit keys: %v\n", err)
+	// 	return
+	// }
 	
-	if err := generateKeysZkDvpWithdraw(); err != nil {
-		fmt.Printf("Error generating Withdraw keys: %v\n", err)
-		return
-	}
+	// if err := generateKeysZkDvpWithdraw(); err != nil {
+	// 	fmt.Printf("Error generating Withdraw keys: %v\n", err)
+	// 	return
+	// }
 	
 	fmt.Println("✓ All keys generated successfully!")
 }

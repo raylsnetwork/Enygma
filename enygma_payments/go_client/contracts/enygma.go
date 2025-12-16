@@ -51,7 +51,7 @@ type IEnygmaPoint struct {
 // IEnygmaProof is an auto generated low-level Go binding around an user-defined struct.
 type IEnygmaProof struct {
         Proof        [8]*big.Int
-        PublicSignal [32]*big.Int
+        PublicSignal [62]*big.Int
 }
 
 // IEnygmaWithdrawParams is an auto generated low-level Go binding around an user-defined struct.
@@ -94,7 +94,7 @@ type IZkDvpSnarkProof struct {
 
 // EnygmaMetaData contains all meta data concerning the Enygma contract.
 var EnygmaMetaData = &bind.MetaData{
-        ABI: "[{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"addedBank\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"totalRegisteredParties\",\"type\":\"uint256\"}],\"name\":\"AccountRegistered\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"bankIndex\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"burnValue\",\"type\":\"uint256\"}],\"name\":\"BurnSuccessful\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"commitment\",\"type\":\"uint256\"}],\"name\":\"Commitment\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"lastblockNum\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"to\",\"type\":\"uint256\"}],\"name\":\"SupplyMinted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxBankCount\",\"type\":\"uint256\"}],\"name\":\"TokenInitialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"senderAddress\",\"type\":\"address\"}],\"name\":\"TransactionSuccessful\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"verifierAddress\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"totalRegisteredVerifiers\",\"type\":\"uint256\"}],\"name\":\"VerifierRegistered\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"DepositVerifierAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Name\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Symbol\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"TotalRegisteredBanks\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"TotalSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"VerifierAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"WithdrawVerifierAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"ZkdvpAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"_totalSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"accounts\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"depositVerifier\",\"type\":\"address\"}],\"name\":\"addDepositVerifier\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"p1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"p2\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"x2\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y2\",\"type\":\"uint256\"}],\"name\":\"addPedComm\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"verifier\",\"type\":\"address\"}],\"name\":\"addVerifier\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"withdrawVerifier\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"splitNumber\",\"type\":\"uint256\"}],\"name\":\"addWithdrawVerifier\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"zkdvpAddress\",\"type\":\"address\"}],\"name\":\"addZkDvp\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"bankIndex\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"burnValue\",\"type\":\"uint256\"}],\"name\":\"burn\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"check\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"commitments\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256[8]\",\"name\":\"proof\",\"type\":\"uint256[8]\"},{\"internalType\":\"uint256[2]\",\"name\":\"public_signal\",\"type\":\"uint256[2]\"}],\"internalType\":\"structIEnygma.DepositProof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"components\":[{\"components\":[{\"components\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"internalType\":\"structIZkDvp.G1Point\",\"name\":\"a\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"uint256[2]\",\"name\":\"x\",\"type\":\"uint256[2]\"},{\"internalType\":\"uint256[2]\",\"name\":\"y\",\"type\":\"uint256[2]\"}],\"internalType\":\"structIZkDvp.G2Point\",\"name\":\"b\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"internalType\":\"structIZkDvp.G1Point\",\"name\":\"c\",\"type\":\"tuple\"}],\"internalType\":\"structIZkDvp.SnarkProof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"internalType\":\"uint256[]\",\"name\":\"statement\",\"type\":\"uint256[]\"},{\"internalType\":\"uint256\",\"name\":\"numberOfInputs\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"numberOfOutputs\",\"type\":\"uint256\"}],\"internalType\":\"structIZkDvp.JoinSplitTransaction\",\"name\":\"transaction\",\"type\":\"tuple\"}],\"internalType\":\"structIEnygma.WithdrawParams\",\"name\":\"withdrawParam\",\"type\":\"tuple\"},{\"internalType\":\"uint256[]\",\"name\":\"kIndex\",\"type\":\"uint256[]\"}],\"name\":\"deposit\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"depositVerifiers\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"v\",\"type\":\"uint256\"}],\"name\":\"derivePk\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"x2\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y2\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"r\",\"type\":\"uint256\"}],\"name\":\"derivePkH\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"x2\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y2\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"account\",\"type\":\"uint256\"}],\"name\":\"getBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"size\",\"type\":\"uint256\"}],\"name\":\"getPublicValues\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"initialize\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"lastblockNum\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"to\",\"type\":\"uint256\"}],\"name\":\"mintSupply\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"v\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"r\",\"type\":\"uint256\"}],\"name\":\"pedCom\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"pubKeys\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"referenceBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"addr\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"accountNum\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"k1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"k2\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"r\",\"type\":\"uint256\"}],\"name\":\"registerAccount\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"totalSupplyX\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"totalSupplyY\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"commitments\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256[8]\",\"name\":\"proof\",\"type\":\"uint256[8]\"},{\"internalType\":\"uint256[32]\",\"name\":\"public_signal\",\"type\":\"uint256[32]\"}],\"internalType\":\"structIEnygma.Proof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"internalType\":\"uint256[]\",\"name\":\"kIndex\",\"type\":\"uint256[]\"}],\"name\":\"transfer\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"verifiers\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"commitments\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256[8]\",\"name\":\"proof\",\"type\":\"uint256[8]\"},{\"internalType\":\"uint256[1]\",\"name\":\"public_signal\",\"type\":\"uint256[1]\"}],\"internalType\":\"structIEnygma.WithdrawProof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"erc20Adress\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"publicKey\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.DepositParams[]\",\"name\":\"deposistParam\",\"type\":\"tuple[]\"},{\"internalType\":\"uint256[]\",\"name\":\"kIndex\",\"type\":\"uint256[]\"}],\"name\":\"withdraw\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"},{\"internalType\":\"uint256[]\",\"name\":\"\",\"type\":\"uint256[]\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"withdrawVerifiers\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"zkdvps\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]",
+        ABI: "[{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"AlreadyInitialized\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"BalanceMismatch\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"BurnExceedsModulus\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"InvalidBlockNumber\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"InvalidProof\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"InvalidPublicInputs\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"NotInitialized\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"NotOwner\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"NotRegistered\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"VerifierNotFound\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"ZeroAddress\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"ZkDvpOperationFailed\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"addedBank\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"totalRegisteredParties\",\"type\":\"uint256\"}],\"name\":\"AccountRegistered\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"bankIndex\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"burnValue\",\"type\":\"uint256\"}],\"name\":\"BurnSuccessful\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"commitment\",\"type\":\"uint256\"}],\"name\":\"Commitment\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"lastblockNum\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"to\",\"type\":\"uint256\"}],\"name\":\"SupplyMinted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxBankCount\",\"type\":\"uint256\"}],\"name\":\"TokenInitialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"senderAddress\",\"type\":\"address\"}],\"name\":\"TransactionSuccessful\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"verifierAddress\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"totalRegisteredVerifiers\",\"type\":\"uint256\"}],\"name\":\"VerifierRegistered\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"DepositVerifierAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"GetBlckHash\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Name\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Symbol\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"TotalRegisteredBanks\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"TotalSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"VerifierAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"WithdrawVerifierAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"ZkdvpAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"verifier\",\"type\":\"address\"}],\"name\":\"addDepositVerifier\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"p1x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"p1y\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"p2x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"p2y\",\"type\":\"uint256\"}],\"name\":\"addPedComm\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"verifier\",\"type\":\"address\"}],\"name\":\"addVerifier\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"verifier\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"splitCount\",\"type\":\"uint256\"}],\"name\":\"addWithdrawVerifier\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"zkDvp\",\"type\":\"address\"}],\"name\":\"addZkDvp\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"addressToAccountId\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"balanceCommitments\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"accountId\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"burn\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"check\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"commitmentDeltas\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256[8]\",\"name\":\"proof\",\"type\":\"uint256[8]\"},{\"internalType\":\"uint256[2]\",\"name\":\"public_signal\",\"type\":\"uint256[2]\"}],\"internalType\":\"structIEnygma.DepositProof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"components\":[{\"components\":[{\"components\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"internalType\":\"structIZkDvp.G1Point\",\"name\":\"a\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"uint256[2]\",\"name\":\"x\",\"type\":\"uint256[2]\"},{\"internalType\":\"uint256[2]\",\"name\":\"y\",\"type\":\"uint256[2]\"}],\"internalType\":\"structIZkDvp.G2Point\",\"name\":\"b\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"internalType\":\"structIZkDvp.G1Point\",\"name\":\"c\",\"type\":\"tuple\"}],\"internalType\":\"structIZkDvp.SnarkProof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"internalType\":\"uint256[]\",\"name\":\"statement\",\"type\":\"uint256[]\"},{\"internalType\":\"uint256\",\"name\":\"numberOfInputs\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"numberOfOutputs\",\"type\":\"uint256\"}],\"internalType\":\"structIZkDvp.JoinSplitTransaction\",\"name\":\"transaction\",\"type\":\"tuple\"}],\"internalType\":\"structIEnygma.WithdrawParams\",\"name\":\"withdrawParam\",\"type\":\"tuple\"},{\"internalType\":\"uint256[]\",\"name\":\"participantIds\",\"type\":\"uint256[]\"}],\"name\":\"deposit\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"derivePk\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"randomness\",\"type\":\"uint256\"}],\"name\":\"derivePkH\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"accountId\",\"type\":\"uint256\"}],\"name\":\"getBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"x\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"y\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"count\",\"type\":\"uint256\"}],\"name\":\"getPublicValues\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"balances\",\"type\":\"tuple[]\"},{\"internalType\":\"uint256[]\",\"name\":\"keys\",\"type\":\"uint256[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"initialize\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"lastBlockNum\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"recipientId\",\"type\":\"uint256\"}],\"name\":\"mintSupply\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"randomness\",\"type\":\"uint256\"}],\"name\":\"pedCom\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"publicKeys\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"addr\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"accountId\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"publicKey\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"randomness\",\"type\":\"uint256\"}],\"name\":\"registerAccount\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"totalSupplyAmount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"totalSupplyX\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"totalSupplyY\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"commitmentDeltas\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256[8]\",\"name\":\"proof\",\"type\":\"uint256[8]\"},{\"internalType\":\"uint256[62]\",\"name\":\"public_signal\",\"type\":\"uint256[62]\"}],\"internalType\":\"structIEnygma.Proof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"internalType\":\"uint256[]\",\"name\":\"participantIds\",\"type\":\"uint256[]\"}],\"name\":\"transfer\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"c1\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c2\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.Point[]\",\"name\":\"commitmentDeltas\",\"type\":\"tuple[]\"},{\"components\":[{\"internalType\":\"uint256[8]\",\"name\":\"proof\",\"type\":\"uint256[8]\"},{\"internalType\":\"uint256[1]\",\"name\":\"public_signal\",\"type\":\"uint256[1]\"}],\"internalType\":\"structIEnygma.WithdrawProof\",\"name\":\"proof\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"erc20Adress\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"publicKey\",\"type\":\"uint256\"}],\"internalType\":\"structIEnygma.DepositParams[]\",\"name\":\"depositParams\",\"type\":\"tuple[]\"},{\"internalType\":\"uint256[]\",\"name\":\"participantIds\",\"type\":\"uint256[]\"}],\"name\":\"withdraw\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"},{\"internalType\":\"uint256[]\",\"name\":\"\",\"type\":\"uint256[]\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
 }
 
 // EnygmaABI is the input ABI used to generate the binding from.
@@ -274,9 +274,40 @@ func (_Enygma *EnygmaCallerSession) DepositVerifierAddress() (common.Address, er
         return _Enygma.Contract.DepositVerifierAddress(&_Enygma.CallOpts)
 }
 
+// GetBlckHash is a free data retrieval call binding the contract method 0x743873b4.
+//
+// Solidity: function GetBlckHash() view returns(uint256)
+func (_Enygma *EnygmaCaller) GetBlckHash(opts *bind.CallOpts) (*big.Int, error) {
+        var out []interface{}
+        err := _Enygma.contract.Call(opts, &out, "GetBlckHash")
+
+        if err != nil {
+                return *new(*big.Int), err
+        }
+
+        out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+        return out0, err
+
+}
+
+// GetBlckHash is a free data retrieval call binding the contract method 0x743873b4.
+//
+// Solidity: function GetBlckHash() view returns(uint256)
+func (_Enygma *EnygmaSession) GetBlckHash() (*big.Int, error) {
+        return _Enygma.Contract.GetBlckHash(&_Enygma.CallOpts)
+}
+
+// GetBlckHash is a free data retrieval call binding the contract method 0x743873b4.
+//
+// Solidity: function GetBlckHash() view returns(uint256)
+func (_Enygma *EnygmaCallerSession) GetBlckHash() (*big.Int, error) {
+        return _Enygma.Contract.GetBlckHash(&_Enygma.CallOpts)
+}
+
 // Name is a free data retrieval call binding the contract method 0x8052474d.
 //
-// Solidity: function Name() view returns(string)
+// Solidity: function Name() pure returns(string)
 func (_Enygma *EnygmaCaller) Name(opts *bind.CallOpts) (string, error) {
         var out []interface{}
         err := _Enygma.contract.Call(opts, &out, "Name")
@@ -293,21 +324,21 @@ func (_Enygma *EnygmaCaller) Name(opts *bind.CallOpts) (string, error) {
 
 // Name is a free data retrieval call binding the contract method 0x8052474d.
 //
-// Solidity: function Name() view returns(string)
+// Solidity: function Name() pure returns(string)
 func (_Enygma *EnygmaSession) Name() (string, error) {
         return _Enygma.Contract.Name(&_Enygma.CallOpts)
 }
 
 // Name is a free data retrieval call binding the contract method 0x8052474d.
 //
-// Solidity: function Name() view returns(string)
+// Solidity: function Name() pure returns(string)
 func (_Enygma *EnygmaCallerSession) Name() (string, error) {
         return _Enygma.Contract.Name(&_Enygma.CallOpts)
 }
 
 // Symbol is a free data retrieval call binding the contract method 0x3045aaf3.
 //
-// Solidity: function Symbol() view returns(string)
+// Solidity: function Symbol() pure returns(string)
 func (_Enygma *EnygmaCaller) Symbol(opts *bind.CallOpts) (string, error) {
         var out []interface{}
         err := _Enygma.contract.Call(opts, &out, "Symbol")
@@ -324,14 +355,14 @@ func (_Enygma *EnygmaCaller) Symbol(opts *bind.CallOpts) (string, error) {
 
 // Symbol is a free data retrieval call binding the contract method 0x3045aaf3.
 //
-// Solidity: function Symbol() view returns(string)
+// Solidity: function Symbol() pure returns(string)
 func (_Enygma *EnygmaSession) Symbol() (string, error) {
         return _Enygma.Contract.Symbol(&_Enygma.CallOpts)
 }
 
 // Symbol is a free data retrieval call binding the contract method 0x3045aaf3.
 //
-// Solidity: function Symbol() view returns(string)
+// Solidity: function Symbol() pure returns(string)
 func (_Enygma *EnygmaCallerSession) Symbol() (string, error) {
         return _Enygma.Contract.Symbol(&_Enygma.CallOpts)
 }
@@ -491,74 +522,12 @@ func (_Enygma *EnygmaCallerSession) ZkdvpAddress() (common.Address, error) {
         return _Enygma.Contract.ZkdvpAddress(&_Enygma.CallOpts)
 }
 
-// TotalSupply2 is a free data retrieval call binding the contract method 0x3eaaf86b.
-//
-// Solidity: function _totalSupply() view returns(uint256)
-func (_Enygma *EnygmaCaller) TotalSupply2(opts *bind.CallOpts) (*big.Int, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "_totalSupply")
-
-        if err != nil {
-                return *new(*big.Int), err
-        }
-
-        out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-
-        return out0, err
-
-}
-
-// TotalSupply2 is a free data retrieval call binding the contract method 0x3eaaf86b.
-//
-// Solidity: function _totalSupply() view returns(uint256)
-func (_Enygma *EnygmaSession) TotalSupply2() (*big.Int, error) {
-        return _Enygma.Contract.TotalSupply2(&_Enygma.CallOpts)
-}
-
-// TotalSupply2 is a free data retrieval call binding the contract method 0x3eaaf86b.
-//
-// Solidity: function _totalSupply() view returns(uint256)
-func (_Enygma *EnygmaCallerSession) TotalSupply2() (*big.Int, error) {
-        return _Enygma.Contract.TotalSupply2(&_Enygma.CallOpts)
-}
-
-// Accounts is a free data retrieval call binding the contract method 0x5e5c06e2.
-//
-// Solidity: function accounts(address ) view returns(uint256)
-func (_Enygma *EnygmaCaller) Accounts(opts *bind.CallOpts, arg0 common.Address) (*big.Int, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "accounts", arg0)
-
-        if err != nil {
-                return *new(*big.Int), err
-        }
-
-        out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-
-        return out0, err
-
-}
-
-// Accounts is a free data retrieval call binding the contract method 0x5e5c06e2.
-//
-// Solidity: function accounts(address ) view returns(uint256)
-func (_Enygma *EnygmaSession) Accounts(arg0 common.Address) (*big.Int, error) {
-        return _Enygma.Contract.Accounts(&_Enygma.CallOpts, arg0)
-}
-
-// Accounts is a free data retrieval call binding the contract method 0x5e5c06e2.
-//
-// Solidity: function accounts(address ) view returns(uint256)
-func (_Enygma *EnygmaCallerSession) Accounts(arg0 common.Address) (*big.Int, error) {
-        return _Enygma.Contract.Accounts(&_Enygma.CallOpts, arg0)
-}
-
 // AddPedComm is a free data retrieval call binding the contract method 0x132ce4d4.
 //
-// Solidity: function addPedComm(uint256 p1, uint256 p2, uint256 x2, uint256 y2) view returns(uint256, uint256)
-func (_Enygma *EnygmaCaller) AddPedComm(opts *bind.CallOpts, p1 *big.Int, p2 *big.Int, x2 *big.Int, y2 *big.Int) (*big.Int, *big.Int, error) {
+// Solidity: function addPedComm(uint256 p1x, uint256 p1y, uint256 p2x, uint256 p2y) view returns(uint256, uint256)
+func (_Enygma *EnygmaCaller) AddPedComm(opts *bind.CallOpts, p1x *big.Int, p1y *big.Int, p2x *big.Int, p2y *big.Int) (*big.Int, *big.Int, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "addPedComm", p1, p2, x2, y2)
+        err := _Enygma.contract.Call(opts, &out, "addPedComm", p1x, p1y, p2x, p2y)
 
         if err != nil {
                 return *new(*big.Int), *new(*big.Int), err
@@ -573,16 +542,92 @@ func (_Enygma *EnygmaCaller) AddPedComm(opts *bind.CallOpts, p1 *big.Int, p2 *bi
 
 // AddPedComm is a free data retrieval call binding the contract method 0x132ce4d4.
 //
-// Solidity: function addPedComm(uint256 p1, uint256 p2, uint256 x2, uint256 y2) view returns(uint256, uint256)
-func (_Enygma *EnygmaSession) AddPedComm(p1 *big.Int, p2 *big.Int, x2 *big.Int, y2 *big.Int) (*big.Int, *big.Int, error) {
-        return _Enygma.Contract.AddPedComm(&_Enygma.CallOpts, p1, p2, x2, y2)
+// Solidity: function addPedComm(uint256 p1x, uint256 p1y, uint256 p2x, uint256 p2y) view returns(uint256, uint256)
+func (_Enygma *EnygmaSession) AddPedComm(p1x *big.Int, p1y *big.Int, p2x *big.Int, p2y *big.Int) (*big.Int, *big.Int, error) {
+        return _Enygma.Contract.AddPedComm(&_Enygma.CallOpts, p1x, p1y, p2x, p2y)
 }
 
 // AddPedComm is a free data retrieval call binding the contract method 0x132ce4d4.
 //
-// Solidity: function addPedComm(uint256 p1, uint256 p2, uint256 x2, uint256 y2) view returns(uint256, uint256)
-func (_Enygma *EnygmaCallerSession) AddPedComm(p1 *big.Int, p2 *big.Int, x2 *big.Int, y2 *big.Int) (*big.Int, *big.Int, error) {
-        return _Enygma.Contract.AddPedComm(&_Enygma.CallOpts, p1, p2, x2, y2)
+// Solidity: function addPedComm(uint256 p1x, uint256 p1y, uint256 p2x, uint256 p2y) view returns(uint256, uint256)
+func (_Enygma *EnygmaCallerSession) AddPedComm(p1x *big.Int, p1y *big.Int, p2x *big.Int, p2y *big.Int) (*big.Int, *big.Int, error) {
+        return _Enygma.Contract.AddPedComm(&_Enygma.CallOpts, p1x, p1y, p2x, p2y)
+}
+
+// AddressToAccountId is a free data retrieval call binding the contract method 0xc1ab48fc.
+//
+// Solidity: function addressToAccountId(address ) view returns(uint256)
+func (_Enygma *EnygmaCaller) AddressToAccountId(opts *bind.CallOpts, arg0 common.Address) (*big.Int, error) {
+        var out []interface{}
+        err := _Enygma.contract.Call(opts, &out, "addressToAccountId", arg0)
+
+        if err != nil {
+                return *new(*big.Int), err
+        }
+
+        out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+        return out0, err
+
+}
+
+// AddressToAccountId is a free data retrieval call binding the contract method 0xc1ab48fc.
+//
+// Solidity: function addressToAccountId(address ) view returns(uint256)
+func (_Enygma *EnygmaSession) AddressToAccountId(arg0 common.Address) (*big.Int, error) {
+        return _Enygma.Contract.AddressToAccountId(&_Enygma.CallOpts, arg0)
+}
+
+// AddressToAccountId is a free data retrieval call binding the contract method 0xc1ab48fc.
+//
+// Solidity: function addressToAccountId(address ) view returns(uint256)
+func (_Enygma *EnygmaCallerSession) AddressToAccountId(arg0 common.Address) (*big.Int, error) {
+        return _Enygma.Contract.AddressToAccountId(&_Enygma.CallOpts, arg0)
+}
+
+// BalanceCommitments is a free data retrieval call binding the contract method 0xea0d4573.
+//
+// Solidity: function balanceCommitments(uint256 , uint256 ) view returns(uint256 c1, uint256 c2)
+func (_Enygma *EnygmaCaller) BalanceCommitments(opts *bind.CallOpts, arg0 *big.Int, arg1 *big.Int) (struct {
+        C1 *big.Int
+        C2 *big.Int
+}, error) {
+        var out []interface{}
+        err := _Enygma.contract.Call(opts, &out, "balanceCommitments", arg0, arg1)
+
+        outstruct := new(struct {
+                C1 *big.Int
+                C2 *big.Int
+        })
+        if err != nil {
+                return *outstruct, err
+        }
+
+        outstruct.C1 = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+        outstruct.C2 = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
+
+        return *outstruct, err
+
+}
+
+// BalanceCommitments is a free data retrieval call binding the contract method 0xea0d4573.
+//
+// Solidity: function balanceCommitments(uint256 , uint256 ) view returns(uint256 c1, uint256 c2)
+func (_Enygma *EnygmaSession) BalanceCommitments(arg0 *big.Int, arg1 *big.Int) (struct {
+        C1 *big.Int
+        C2 *big.Int
+}, error) {
+        return _Enygma.Contract.BalanceCommitments(&_Enygma.CallOpts, arg0, arg1)
+}
+
+// BalanceCommitments is a free data retrieval call binding the contract method 0xea0d4573.
+//
+// Solidity: function balanceCommitments(uint256 , uint256 ) view returns(uint256 c1, uint256 c2)
+func (_Enygma *EnygmaCallerSession) BalanceCommitments(arg0 *big.Int, arg1 *big.Int) (struct {
+        C1 *big.Int
+        C2 *big.Int
+}, error) {
+        return _Enygma.Contract.BalanceCommitments(&_Enygma.CallOpts, arg0, arg1)
 }
 
 // Check is a free data retrieval call binding the contract method 0x919840ad.
@@ -616,136 +661,105 @@ func (_Enygma *EnygmaCallerSession) Check() (bool, error) {
         return _Enygma.Contract.Check(&_Enygma.CallOpts)
 }
 
-// DepositVerifiers is a free data retrieval call binding the contract method 0x02e9b07b.
-//
-// Solidity: function depositVerifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaCaller) DepositVerifiers(opts *bind.CallOpts, arg0 *big.Int) (common.Address, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "depositVerifiers", arg0)
-
-        if err != nil {
-                return *new(common.Address), err
-        }
-
-        out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
-
-        return out0, err
-
-}
-
-// DepositVerifiers is a free data retrieval call binding the contract method 0x02e9b07b.
-//
-// Solidity: function depositVerifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaSession) DepositVerifiers(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.DepositVerifiers(&_Enygma.CallOpts, arg0)
-}
-
-// DepositVerifiers is a free data retrieval call binding the contract method 0x02e9b07b.
-//
-// Solidity: function depositVerifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaCallerSession) DepositVerifiers(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.DepositVerifiers(&_Enygma.CallOpts, arg0)
-}
-
 // DerivePk is a free data retrieval call binding the contract method 0x723dbbc4.
 //
-// Solidity: function derivePk(uint256 v) view returns(uint256 x2, uint256 y2)
-func (_Enygma *EnygmaCaller) DerivePk(opts *bind.CallOpts, v *big.Int) (struct {
-        X2 *big.Int
-        Y2 *big.Int
-}, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "derivePk", v)
-
-        outstruct := new(struct {
-                X2 *big.Int
-                Y2 *big.Int
-        })
-        if err != nil {
-                return *outstruct, err
-        }
-
-        outstruct.X2 = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-        outstruct.Y2 = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
-
-        return *outstruct, err
-
-}
-
-// DerivePk is a free data retrieval call binding the contract method 0x723dbbc4.
-//
-// Solidity: function derivePk(uint256 v) view returns(uint256 x2, uint256 y2)
-func (_Enygma *EnygmaSession) DerivePk(v *big.Int) (struct {
-        X2 *big.Int
-        Y2 *big.Int
-}, error) {
-        return _Enygma.Contract.DerivePk(&_Enygma.CallOpts, v)
-}
-
-// DerivePk is a free data retrieval call binding the contract method 0x723dbbc4.
-//
-// Solidity: function derivePk(uint256 v) view returns(uint256 x2, uint256 y2)
-func (_Enygma *EnygmaCallerSession) DerivePk(v *big.Int) (struct {
-        X2 *big.Int
-        Y2 *big.Int
-}, error) {
-        return _Enygma.Contract.DerivePk(&_Enygma.CallOpts, v)
-}
-
-// DerivePkH is a free data retrieval call binding the contract method 0xce630c18.
-//
-// Solidity: function derivePkH(uint256 r) view returns(uint256 x2, uint256 y2)
-func (_Enygma *EnygmaCaller) DerivePkH(opts *bind.CallOpts, r *big.Int) (struct {
-        X2 *big.Int
-        Y2 *big.Int
-}, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "derivePkH", r)
-
-        outstruct := new(struct {
-                X2 *big.Int
-                Y2 *big.Int
-        })
-        if err != nil {
-                return *outstruct, err
-        }
-
-        outstruct.X2 = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-        outstruct.Y2 = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
-
-        return *outstruct, err
-
-}
-
-// DerivePkH is a free data retrieval call binding the contract method 0xce630c18.
-//
-// Solidity: function derivePkH(uint256 r) view returns(uint256 x2, uint256 y2)
-func (_Enygma *EnygmaSession) DerivePkH(r *big.Int) (struct {
-        X2 *big.Int
-        Y2 *big.Int
-}, error) {
-        return _Enygma.Contract.DerivePkH(&_Enygma.CallOpts, r)
-}
-
-// DerivePkH is a free data retrieval call binding the contract method 0xce630c18.
-//
-// Solidity: function derivePkH(uint256 r) view returns(uint256 x2, uint256 y2)
-func (_Enygma *EnygmaCallerSession) DerivePkH(r *big.Int) (struct {
-        X2 *big.Int
-        Y2 *big.Int
-}, error) {
-        return _Enygma.Contract.DerivePkH(&_Enygma.CallOpts, r)
-}
-
-// GetBalance is a free data retrieval call binding the contract method 0x1e010439.
-//
-// Solidity: function getBalance(uint256 account) view returns(uint256 x, uint256 y)
-func (_Enygma *EnygmaCaller) GetBalance(opts *bind.CallOpts, account *big.Int) (struct {
+// Solidity: function derivePk(uint256 value) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaCaller) DerivePk(opts *bind.CallOpts, value *big.Int) (struct {
         X *big.Int
         Y *big.Int
 }, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "getBalance", account)
+        err := _Enygma.contract.Call(opts, &out, "derivePk", value)
+
+        outstruct := new(struct {
+                X *big.Int
+                Y *big.Int
+        })
+        if err != nil {
+                return *outstruct, err
+        }
+
+        outstruct.X = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+        outstruct.Y = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
+
+        return *outstruct, err
+
+}
+
+// DerivePk is a free data retrieval call binding the contract method 0x723dbbc4.
+//
+// Solidity: function derivePk(uint256 value) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaSession) DerivePk(value *big.Int) (struct {
+        X *big.Int
+        Y *big.Int
+}, error) {
+        return _Enygma.Contract.DerivePk(&_Enygma.CallOpts, value)
+}
+
+// DerivePk is a free data retrieval call binding the contract method 0x723dbbc4.
+//
+// Solidity: function derivePk(uint256 value) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaCallerSession) DerivePk(value *big.Int) (struct {
+        X *big.Int
+        Y *big.Int
+}, error) {
+        return _Enygma.Contract.DerivePk(&_Enygma.CallOpts, value)
+}
+
+// DerivePkH is a free data retrieval call binding the contract method 0xce630c18.
+//
+// Solidity: function derivePkH(uint256 randomness) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaCaller) DerivePkH(opts *bind.CallOpts, randomness *big.Int) (struct {
+        X *big.Int
+        Y *big.Int
+}, error) {
+        var out []interface{}
+        err := _Enygma.contract.Call(opts, &out, "derivePkH", randomness)
+
+        outstruct := new(struct {
+                X *big.Int
+                Y *big.Int
+        })
+        if err != nil {
+                return *outstruct, err
+        }
+
+        outstruct.X = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+        outstruct.Y = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
+
+        return *outstruct, err
+
+}
+
+// DerivePkH is a free data retrieval call binding the contract method 0xce630c18.
+//
+// Solidity: function derivePkH(uint256 randomness) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaSession) DerivePkH(randomness *big.Int) (struct {
+        X *big.Int
+        Y *big.Int
+}, error) {
+        return _Enygma.Contract.DerivePkH(&_Enygma.CallOpts, randomness)
+}
+
+// DerivePkH is a free data retrieval call binding the contract method 0xce630c18.
+//
+// Solidity: function derivePkH(uint256 randomness) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaCallerSession) DerivePkH(randomness *big.Int) (struct {
+        X *big.Int
+        Y *big.Int
+}, error) {
+        return _Enygma.Contract.DerivePkH(&_Enygma.CallOpts, randomness)
+}
+
+// GetBalance is a free data retrieval call binding the contract method 0x1e010439.
+//
+// Solidity: function getBalance(uint256 accountId) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaCaller) GetBalance(opts *bind.CallOpts, accountId *big.Int) (struct {
+        X *big.Int
+        Y *big.Int
+}, error) {
+        var out []interface{}
+        err := _Enygma.contract.Call(opts, &out, "getBalance", accountId)
 
         outstruct := new(struct {
                 X *big.Int
@@ -764,62 +778,75 @@ func (_Enygma *EnygmaCaller) GetBalance(opts *bind.CallOpts, account *big.Int) (
 
 // GetBalance is a free data retrieval call binding the contract method 0x1e010439.
 //
-// Solidity: function getBalance(uint256 account) view returns(uint256 x, uint256 y)
-func (_Enygma *EnygmaSession) GetBalance(account *big.Int) (struct {
+// Solidity: function getBalance(uint256 accountId) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaSession) GetBalance(accountId *big.Int) (struct {
         X *big.Int
         Y *big.Int
 }, error) {
-        return _Enygma.Contract.GetBalance(&_Enygma.CallOpts, account)
+        return _Enygma.Contract.GetBalance(&_Enygma.CallOpts, accountId)
 }
 
 // GetBalance is a free data retrieval call binding the contract method 0x1e010439.
 //
-// Solidity: function getBalance(uint256 account) view returns(uint256 x, uint256 y)
-func (_Enygma *EnygmaCallerSession) GetBalance(account *big.Int) (struct {
+// Solidity: function getBalance(uint256 accountId) view returns(uint256 x, uint256 y)
+func (_Enygma *EnygmaCallerSession) GetBalance(accountId *big.Int) (struct {
         X *big.Int
         Y *big.Int
 }, error) {
-        return _Enygma.Contract.GetBalance(&_Enygma.CallOpts, account)
+        return _Enygma.Contract.GetBalance(&_Enygma.CallOpts, accountId)
 }
 
 // GetPublicValues is a free data retrieval call binding the contract method 0xa9c58a7e.
 //
-// Solidity: function getPublicValues(uint256 size) view returns((uint256,uint256)[], (uint256,uint256)[])
-func (_Enygma *EnygmaCaller) GetPublicValues(opts *bind.CallOpts, size *big.Int) ([]IEnygmaPoint, []IEnygmaPoint, error) {
+// Solidity: function getPublicValues(uint256 count) view returns((uint256,uint256)[] balances, uint256[] keys)
+func (_Enygma *EnygmaCaller) GetPublicValues(opts *bind.CallOpts, count *big.Int) (struct {
+        Balances []IEnygmaPoint
+        Keys     []*big.Int
+}, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "getPublicValues", size)
+        err := _Enygma.contract.Call(opts, &out, "getPublicValues", count)
 
+        outstruct := new(struct {
+                Balances []IEnygmaPoint
+                Keys     []*big.Int
+        })
         if err != nil {
-                return *new([]IEnygmaPoint), *new([]IEnygmaPoint), err
+                return *outstruct, err
         }
 
-        out0 := *abi.ConvertType(out[0], new([]IEnygmaPoint)).(*[]IEnygmaPoint)
-        out1 := *abi.ConvertType(out[1], new([]IEnygmaPoint)).(*[]IEnygmaPoint)
+        outstruct.Balances = *abi.ConvertType(out[0], new([]IEnygmaPoint)).(*[]IEnygmaPoint)
+        outstruct.Keys = *abi.ConvertType(out[1], new([]*big.Int)).(*[]*big.Int)
 
-        return out0, out1, err
+        return *outstruct, err
 
 }
 
 // GetPublicValues is a free data retrieval call binding the contract method 0xa9c58a7e.
 //
-// Solidity: function getPublicValues(uint256 size) view returns((uint256,uint256)[], (uint256,uint256)[])
-func (_Enygma *EnygmaSession) GetPublicValues(size *big.Int) ([]IEnygmaPoint, []IEnygmaPoint, error) {
-        return _Enygma.Contract.GetPublicValues(&_Enygma.CallOpts, size)
+// Solidity: function getPublicValues(uint256 count) view returns((uint256,uint256)[] balances, uint256[] keys)
+func (_Enygma *EnygmaSession) GetPublicValues(count *big.Int) (struct {
+        Balances []IEnygmaPoint
+        Keys     []*big.Int
+}, error) {
+        return _Enygma.Contract.GetPublicValues(&_Enygma.CallOpts, count)
 }
 
 // GetPublicValues is a free data retrieval call binding the contract method 0xa9c58a7e.
 //
-// Solidity: function getPublicValues(uint256 size) view returns((uint256,uint256)[], (uint256,uint256)[])
-func (_Enygma *EnygmaCallerSession) GetPublicValues(size *big.Int) ([]IEnygmaPoint, []IEnygmaPoint, error) {
-        return _Enygma.Contract.GetPublicValues(&_Enygma.CallOpts, size)
+// Solidity: function getPublicValues(uint256 count) view returns((uint256,uint256)[] balances, uint256[] keys)
+func (_Enygma *EnygmaCallerSession) GetPublicValues(count *big.Int) (struct {
+        Balances []IEnygmaPoint
+        Keys     []*big.Int
+}, error) {
+        return _Enygma.Contract.GetPublicValues(&_Enygma.CallOpts, count)
 }
 
-// LastblockNum is a free data retrieval call binding the contract method 0xa79d55e6.
+// LastBlockNum is a free data retrieval call binding the contract method 0x36899042.
 //
-// Solidity: function lastblockNum() view returns(uint256)
-func (_Enygma *EnygmaCaller) LastblockNum(opts *bind.CallOpts) (*big.Int, error) {
+// Solidity: function lastBlockNum() view returns(uint256)
+func (_Enygma *EnygmaCaller) LastBlockNum(opts *bind.CallOpts) (*big.Int, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "lastblockNum")
+        err := _Enygma.contract.Call(opts, &out, "lastBlockNum")
 
         if err != nil {
                 return *new(*big.Int), err
@@ -831,26 +858,26 @@ func (_Enygma *EnygmaCaller) LastblockNum(opts *bind.CallOpts) (*big.Int, error)
 
 }
 
-// LastblockNum is a free data retrieval call binding the contract method 0xa79d55e6.
+// LastBlockNum is a free data retrieval call binding the contract method 0x36899042.
 //
-// Solidity: function lastblockNum() view returns(uint256)
-func (_Enygma *EnygmaSession) LastblockNum() (*big.Int, error) {
-        return _Enygma.Contract.LastblockNum(&_Enygma.CallOpts)
+// Solidity: function lastBlockNum() view returns(uint256)
+func (_Enygma *EnygmaSession) LastBlockNum() (*big.Int, error) {
+        return _Enygma.Contract.LastBlockNum(&_Enygma.CallOpts)
 }
 
-// LastblockNum is a free data retrieval call binding the contract method 0xa79d55e6.
+// LastBlockNum is a free data retrieval call binding the contract method 0x36899042.
 //
-// Solidity: function lastblockNum() view returns(uint256)
-func (_Enygma *EnygmaCallerSession) LastblockNum() (*big.Int, error) {
-        return _Enygma.Contract.LastblockNum(&_Enygma.CallOpts)
+// Solidity: function lastBlockNum() view returns(uint256)
+func (_Enygma *EnygmaCallerSession) LastBlockNum() (*big.Int, error) {
+        return _Enygma.Contract.LastBlockNum(&_Enygma.CallOpts)
 }
 
 // PedCom is a free data retrieval call binding the contract method 0x7d894a16.
 //
-// Solidity: function pedCom(uint256 v, uint256 r) view returns(uint256, uint256)
-func (_Enygma *EnygmaCaller) PedCom(opts *bind.CallOpts, v *big.Int, r *big.Int) (*big.Int, *big.Int, error) {
+// Solidity: function pedCom(uint256 value, uint256 randomness) view returns(uint256, uint256)
+func (_Enygma *EnygmaCaller) PedCom(opts *bind.CallOpts, value *big.Int, randomness *big.Int) (*big.Int, *big.Int, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "pedCom", v, r)
+        err := _Enygma.contract.Call(opts, &out, "pedCom", value, randomness)
 
         if err != nil {
                 return *new(*big.Int), *new(*big.Int), err
@@ -865,106 +892,78 @@ func (_Enygma *EnygmaCaller) PedCom(opts *bind.CallOpts, v *big.Int, r *big.Int)
 
 // PedCom is a free data retrieval call binding the contract method 0x7d894a16.
 //
-// Solidity: function pedCom(uint256 v, uint256 r) view returns(uint256, uint256)
-func (_Enygma *EnygmaSession) PedCom(v *big.Int, r *big.Int) (*big.Int, *big.Int, error) {
-        return _Enygma.Contract.PedCom(&_Enygma.CallOpts, v, r)
+// Solidity: function pedCom(uint256 value, uint256 randomness) view returns(uint256, uint256)
+func (_Enygma *EnygmaSession) PedCom(value *big.Int, randomness *big.Int) (*big.Int, *big.Int, error) {
+        return _Enygma.Contract.PedCom(&_Enygma.CallOpts, value, randomness)
 }
 
 // PedCom is a free data retrieval call binding the contract method 0x7d894a16.
 //
-// Solidity: function pedCom(uint256 v, uint256 r) view returns(uint256, uint256)
-func (_Enygma *EnygmaCallerSession) PedCom(v *big.Int, r *big.Int) (*big.Int, *big.Int, error) {
-        return _Enygma.Contract.PedCom(&_Enygma.CallOpts, v, r)
+// Solidity: function pedCom(uint256 value, uint256 randomness) view returns(uint256, uint256)
+func (_Enygma *EnygmaCallerSession) PedCom(value *big.Int, randomness *big.Int) (*big.Int, *big.Int, error) {
+        return _Enygma.Contract.PedCom(&_Enygma.CallOpts, value, randomness)
 }
 
-// PubKeys is a free data retrieval call binding the contract method 0xde6232d0.
+// PublicKeys is a free data retrieval call binding the contract method 0xc680f410.
 //
-// Solidity: function pubKeys(uint256 ) view returns(uint256 c1, uint256 c2)
-func (_Enygma *EnygmaCaller) PubKeys(opts *bind.CallOpts, arg0 *big.Int) (struct {
-        C1 *big.Int
-        C2 *big.Int
-}, error) {
+// Solidity: function publicKeys(uint256 ) view returns(uint256)
+func (_Enygma *EnygmaCaller) PublicKeys(opts *bind.CallOpts, arg0 *big.Int) (*big.Int, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "pubKeys", arg0)
+        err := _Enygma.contract.Call(opts, &out, "publicKeys", arg0)
 
-        outstruct := new(struct {
-                C1 *big.Int
-                C2 *big.Int
-        })
         if err != nil {
-                return *outstruct, err
+                return *new(*big.Int), err
         }
 
-        outstruct.C1 = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-        outstruct.C2 = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
+        out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
 
-        return *outstruct, err
+        return out0, err
 
 }
 
-// PubKeys is a free data retrieval call binding the contract method 0xde6232d0.
+// PublicKeys is a free data retrieval call binding the contract method 0xc680f410.
 //
-// Solidity: function pubKeys(uint256 ) view returns(uint256 c1, uint256 c2)
-func (_Enygma *EnygmaSession) PubKeys(arg0 *big.Int) (struct {
-        C1 *big.Int
-        C2 *big.Int
-}, error) {
-        return _Enygma.Contract.PubKeys(&_Enygma.CallOpts, arg0)
+// Solidity: function publicKeys(uint256 ) view returns(uint256)
+func (_Enygma *EnygmaSession) PublicKeys(arg0 *big.Int) (*big.Int, error) {
+        return _Enygma.Contract.PublicKeys(&_Enygma.CallOpts, arg0)
 }
 
-// PubKeys is a free data retrieval call binding the contract method 0xde6232d0.
+// PublicKeys is a free data retrieval call binding the contract method 0xc680f410.
 //
-// Solidity: function pubKeys(uint256 ) view returns(uint256 c1, uint256 c2)
-func (_Enygma *EnygmaCallerSession) PubKeys(arg0 *big.Int) (struct {
-        C1 *big.Int
-        C2 *big.Int
-}, error) {
-        return _Enygma.Contract.PubKeys(&_Enygma.CallOpts, arg0)
+// Solidity: function publicKeys(uint256 ) view returns(uint256)
+func (_Enygma *EnygmaCallerSession) PublicKeys(arg0 *big.Int) (*big.Int, error) {
+        return _Enygma.Contract.PublicKeys(&_Enygma.CallOpts, arg0)
 }
 
-// ReferenceBalance is a free data retrieval call binding the contract method 0xa9bace48.
+// TotalSupplyAmount is a free data retrieval call binding the contract method 0xf828f50b.
 //
-// Solidity: function referenceBalance(uint256 , uint256 ) view returns(uint256 c1, uint256 c2)
-func (_Enygma *EnygmaCaller) ReferenceBalance(opts *bind.CallOpts, arg0 *big.Int, arg1 *big.Int) (struct {
-        C1 *big.Int
-        C2 *big.Int
-}, error) {
+// Solidity: function totalSupplyAmount() view returns(uint256)
+func (_Enygma *EnygmaCaller) TotalSupplyAmount(opts *bind.CallOpts) (*big.Int, error) {
         var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "referenceBalance", arg0, arg1)
+        err := _Enygma.contract.Call(opts, &out, "totalSupplyAmount")
 
-        outstruct := new(struct {
-                C1 *big.Int
-                C2 *big.Int
-        })
         if err != nil {
-                return *outstruct, err
+                return *new(*big.Int), err
         }
 
-        outstruct.C1 = *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-        outstruct.C2 = *abi.ConvertType(out[1], new(*big.Int)).(**big.Int)
+        out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
 
-        return *outstruct, err
+        return out0, err
 
 }
 
-// ReferenceBalance is a free data retrieval call binding the contract method 0xa9bace48.
+// TotalSupplyAmount is a free data retrieval call binding the contract method 0xf828f50b.
 //
-// Solidity: function referenceBalance(uint256 , uint256 ) view returns(uint256 c1, uint256 c2)
-func (_Enygma *EnygmaSession) ReferenceBalance(arg0 *big.Int, arg1 *big.Int) (struct {
-        C1 *big.Int
-        C2 *big.Int
-}, error) {
-        return _Enygma.Contract.ReferenceBalance(&_Enygma.CallOpts, arg0, arg1)
+// Solidity: function totalSupplyAmount() view returns(uint256)
+func (_Enygma *EnygmaSession) TotalSupplyAmount() (*big.Int, error) {
+        return _Enygma.Contract.TotalSupplyAmount(&_Enygma.CallOpts)
 }
 
-// ReferenceBalance is a free data retrieval call binding the contract method 0xa9bace48.
+// TotalSupplyAmount is a free data retrieval call binding the contract method 0xf828f50b.
 //
-// Solidity: function referenceBalance(uint256 , uint256 ) view returns(uint256 c1, uint256 c2)
-func (_Enygma *EnygmaCallerSession) ReferenceBalance(arg0 *big.Int, arg1 *big.Int) (struct {
-        C1 *big.Int
-        C2 *big.Int
-}, error) {
-        return _Enygma.Contract.ReferenceBalance(&_Enygma.CallOpts, arg0, arg1)
+// Solidity: function totalSupplyAmount() view returns(uint256)
+func (_Enygma *EnygmaCallerSession) TotalSupplyAmount() (*big.Int, error) {
+        return _Enygma.Contract.TotalSupplyAmount(&_Enygma.CallOpts)
 }
 
 // TotalSupplyX is a free data retrieval call binding the contract method 0x71929e2a.
@@ -1029,118 +1028,25 @@ func (_Enygma *EnygmaCallerSession) TotalSupplyY() (*big.Int, error) {
         return _Enygma.Contract.TotalSupplyY(&_Enygma.CallOpts)
 }
 
-// Verifiers is a free data retrieval call binding the contract method 0xac1eff68.
+// AddDepositVerifier is a paid mutator transaction binding the contract method 0x0197d942.
 //
-// Solidity: function verifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaCaller) Verifiers(opts *bind.CallOpts, arg0 *big.Int) (common.Address, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "verifiers", arg0)
-
-        if err != nil {
-                return *new(common.Address), err
-        }
-
-        out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
-
-        return out0, err
-
-}
-
-// Verifiers is a free data retrieval call binding the contract method 0xac1eff68.
-//
-// Solidity: function verifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaSession) Verifiers(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.Verifiers(&_Enygma.CallOpts, arg0)
-}
-
-// Verifiers is a free data retrieval call binding the contract method 0xac1eff68.
-//
-// Solidity: function verifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaCallerSession) Verifiers(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.Verifiers(&_Enygma.CallOpts, arg0)
-}
-
-// WithdrawVerifiers is a free data retrieval call binding the contract method 0x15fd8d86.
-//
-// Solidity: function withdrawVerifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaCaller) WithdrawVerifiers(opts *bind.CallOpts, arg0 *big.Int) (common.Address, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "withdrawVerifiers", arg0)
-
-        if err != nil {
-                return *new(common.Address), err
-        }
-
-        out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
-
-        return out0, err
-
-}
-
-// WithdrawVerifiers is a free data retrieval call binding the contract method 0x15fd8d86.
-//
-// Solidity: function withdrawVerifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaSession) WithdrawVerifiers(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.WithdrawVerifiers(&_Enygma.CallOpts, arg0)
-}
-
-// WithdrawVerifiers is a free data retrieval call binding the contract method 0x15fd8d86.
-//
-// Solidity: function withdrawVerifiers(uint256 ) view returns(address)
-func (_Enygma *EnygmaCallerSession) WithdrawVerifiers(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.WithdrawVerifiers(&_Enygma.CallOpts, arg0)
-}
-
-// Zkdvps is a free data retrieval call binding the contract method 0x46b6e952.
-//
-// Solidity: function zkdvps(uint256 ) view returns(address)
-func (_Enygma *EnygmaCaller) Zkdvps(opts *bind.CallOpts, arg0 *big.Int) (common.Address, error) {
-        var out []interface{}
-        err := _Enygma.contract.Call(opts, &out, "zkdvps", arg0)
-
-        if err != nil {
-                return *new(common.Address), err
-        }
-
-        out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
-
-        return out0, err
-
-}
-
-// Zkdvps is a free data retrieval call binding the contract method 0x46b6e952.
-//
-// Solidity: function zkdvps(uint256 ) view returns(address)
-func (_Enygma *EnygmaSession) Zkdvps(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.Zkdvps(&_Enygma.CallOpts, arg0)
-}
-
-// Zkdvps is a free data retrieval call binding the contract method 0x46b6e952.
-//
-// Solidity: function zkdvps(uint256 ) view returns(address)
-func (_Enygma *EnygmaCallerSession) Zkdvps(arg0 *big.Int) (common.Address, error) {
-        return _Enygma.Contract.Zkdvps(&_Enygma.CallOpts, arg0)
+// Solidity: function addDepositVerifier(address verifier) returns(bool)
+func (_Enygma *EnygmaTransactor) AddDepositVerifier(opts *bind.TransactOpts, verifier common.Address) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "addDepositVerifier", verifier)
 }
 
 // AddDepositVerifier is a paid mutator transaction binding the contract method 0x0197d942.
 //
-// Solidity: function addDepositVerifier(address depositVerifier) returns(bool)
-func (_Enygma *EnygmaTransactor) AddDepositVerifier(opts *bind.TransactOpts, depositVerifier common.Address) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "addDepositVerifier", depositVerifier)
+// Solidity: function addDepositVerifier(address verifier) returns(bool)
+func (_Enygma *EnygmaSession) AddDepositVerifier(verifier common.Address) (*types.Transaction, error) {
+        return _Enygma.Contract.AddDepositVerifier(&_Enygma.TransactOpts, verifier)
 }
 
 // AddDepositVerifier is a paid mutator transaction binding the contract method 0x0197d942.
 //
-// Solidity: function addDepositVerifier(address depositVerifier) returns(bool)
-func (_Enygma *EnygmaSession) AddDepositVerifier(depositVerifier common.Address) (*types.Transaction, error) {
-        return _Enygma.Contract.AddDepositVerifier(&_Enygma.TransactOpts, depositVerifier)
-}
-
-// AddDepositVerifier is a paid mutator transaction binding the contract method 0x0197d942.
-//
-// Solidity: function addDepositVerifier(address depositVerifier) returns(bool)
-func (_Enygma *EnygmaTransactorSession) AddDepositVerifier(depositVerifier common.Address) (*types.Transaction, error) {
-        return _Enygma.Contract.AddDepositVerifier(&_Enygma.TransactOpts, depositVerifier)
+// Solidity: function addDepositVerifier(address verifier) returns(bool)
+func (_Enygma *EnygmaTransactorSession) AddDepositVerifier(verifier common.Address) (*types.Transaction, error) {
+        return _Enygma.Contract.AddDepositVerifier(&_Enygma.TransactOpts, verifier)
 }
 
 // AddVerifier is a paid mutator transaction binding the contract method 0x9000b3d6.
@@ -1166,86 +1072,86 @@ func (_Enygma *EnygmaTransactorSession) AddVerifier(verifier common.Address) (*t
 
 // AddWithdrawVerifier is a paid mutator transaction binding the contract method 0xfe877fc9.
 //
-// Solidity: function addWithdrawVerifier(address withdrawVerifier, uint256 splitNumber) returns(bool)
-func (_Enygma *EnygmaTransactor) AddWithdrawVerifier(opts *bind.TransactOpts, withdrawVerifier common.Address, splitNumber *big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "addWithdrawVerifier", withdrawVerifier, splitNumber)
+// Solidity: function addWithdrawVerifier(address verifier, uint256 splitCount) returns(bool)
+func (_Enygma *EnygmaTransactor) AddWithdrawVerifier(opts *bind.TransactOpts, verifier common.Address, splitCount *big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "addWithdrawVerifier", verifier, splitCount)
 }
 
 // AddWithdrawVerifier is a paid mutator transaction binding the contract method 0xfe877fc9.
 //
-// Solidity: function addWithdrawVerifier(address withdrawVerifier, uint256 splitNumber) returns(bool)
-func (_Enygma *EnygmaSession) AddWithdrawVerifier(withdrawVerifier common.Address, splitNumber *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.AddWithdrawVerifier(&_Enygma.TransactOpts, withdrawVerifier, splitNumber)
+// Solidity: function addWithdrawVerifier(address verifier, uint256 splitCount) returns(bool)
+func (_Enygma *EnygmaSession) AddWithdrawVerifier(verifier common.Address, splitCount *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.AddWithdrawVerifier(&_Enygma.TransactOpts, verifier, splitCount)
 }
 
 // AddWithdrawVerifier is a paid mutator transaction binding the contract method 0xfe877fc9.
 //
-// Solidity: function addWithdrawVerifier(address withdrawVerifier, uint256 splitNumber) returns(bool)
-func (_Enygma *EnygmaTransactorSession) AddWithdrawVerifier(withdrawVerifier common.Address, splitNumber *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.AddWithdrawVerifier(&_Enygma.TransactOpts, withdrawVerifier, splitNumber)
+// Solidity: function addWithdrawVerifier(address verifier, uint256 splitCount) returns(bool)
+func (_Enygma *EnygmaTransactorSession) AddWithdrawVerifier(verifier common.Address, splitCount *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.AddWithdrawVerifier(&_Enygma.TransactOpts, verifier, splitCount)
 }
 
 // AddZkDvp is a paid mutator transaction binding the contract method 0xf8344434.
 //
-// Solidity: function addZkDvp(address zkdvpAddress) returns(bool)
-func (_Enygma *EnygmaTransactor) AddZkDvp(opts *bind.TransactOpts, zkdvpAddress common.Address) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "addZkDvp", zkdvpAddress)
+// Solidity: function addZkDvp(address zkDvp) returns(bool)
+func (_Enygma *EnygmaTransactor) AddZkDvp(opts *bind.TransactOpts, zkDvp common.Address) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "addZkDvp", zkDvp)
 }
 
 // AddZkDvp is a paid mutator transaction binding the contract method 0xf8344434.
 //
-// Solidity: function addZkDvp(address zkdvpAddress) returns(bool)
-func (_Enygma *EnygmaSession) AddZkDvp(zkdvpAddress common.Address) (*types.Transaction, error) {
-        return _Enygma.Contract.AddZkDvp(&_Enygma.TransactOpts, zkdvpAddress)
+// Solidity: function addZkDvp(address zkDvp) returns(bool)
+func (_Enygma *EnygmaSession) AddZkDvp(zkDvp common.Address) (*types.Transaction, error) {
+        return _Enygma.Contract.AddZkDvp(&_Enygma.TransactOpts, zkDvp)
 }
 
 // AddZkDvp is a paid mutator transaction binding the contract method 0xf8344434.
 //
-// Solidity: function addZkDvp(address zkdvpAddress) returns(bool)
-func (_Enygma *EnygmaTransactorSession) AddZkDvp(zkdvpAddress common.Address) (*types.Transaction, error) {
-        return _Enygma.Contract.AddZkDvp(&_Enygma.TransactOpts, zkdvpAddress)
+// Solidity: function addZkDvp(address zkDvp) returns(bool)
+func (_Enygma *EnygmaTransactorSession) AddZkDvp(zkDvp common.Address) (*types.Transaction, error) {
+        return _Enygma.Contract.AddZkDvp(&_Enygma.TransactOpts, zkDvp)
 }
 
 // Burn is a paid mutator transaction binding the contract method 0xb390c0ab.
 //
-// Solidity: function burn(uint256 bankIndex, uint256 burnValue) returns(bool)
-func (_Enygma *EnygmaTransactor) Burn(opts *bind.TransactOpts, bankIndex *big.Int, burnValue *big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "burn", bankIndex, burnValue)
+// Solidity: function burn(uint256 accountId, uint256 amount) returns(bool)
+func (_Enygma *EnygmaTransactor) Burn(opts *bind.TransactOpts, accountId *big.Int, amount *big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "burn", accountId, amount)
 }
 
 // Burn is a paid mutator transaction binding the contract method 0xb390c0ab.
 //
-// Solidity: function burn(uint256 bankIndex, uint256 burnValue) returns(bool)
-func (_Enygma *EnygmaSession) Burn(bankIndex *big.Int, burnValue *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Burn(&_Enygma.TransactOpts, bankIndex, burnValue)
+// Solidity: function burn(uint256 accountId, uint256 amount) returns(bool)
+func (_Enygma *EnygmaSession) Burn(accountId *big.Int, amount *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Burn(&_Enygma.TransactOpts, accountId, amount)
 }
 
 // Burn is a paid mutator transaction binding the contract method 0xb390c0ab.
 //
-// Solidity: function burn(uint256 bankIndex, uint256 burnValue) returns(bool)
-func (_Enygma *EnygmaTransactorSession) Burn(bankIndex *big.Int, burnValue *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Burn(&_Enygma.TransactOpts, bankIndex, burnValue)
+// Solidity: function burn(uint256 accountId, uint256 amount) returns(bool)
+func (_Enygma *EnygmaTransactorSession) Burn(accountId *big.Int, amount *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Burn(&_Enygma.TransactOpts, accountId, amount)
 }
 
 // Deposit is a paid mutator transaction binding the contract method 0x907f7d55.
 //
-// Solidity: function deposit((uint256,uint256)[] commitments, (uint256[8],uint256[2]) proof, ((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),uint256[],uint256,uint256)) withdrawParam, uint256[] kIndex) returns(bool)
-func (_Enygma *EnygmaTransactor) Deposit(opts *bind.TransactOpts, commitments []IEnygmaPoint, proof IEnygmaDepositProof, withdrawParam IEnygmaWithdrawParams, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "deposit", commitments, proof, withdrawParam, kIndex)
+// Solidity: function deposit((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[2]) proof, ((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),uint256[],uint256,uint256)) withdrawParam, uint256[] participantIds) returns(bool)
+func (_Enygma *EnygmaTransactor) Deposit(opts *bind.TransactOpts, commitmentDeltas []IEnygmaPoint, proof IEnygmaDepositProof, withdrawParam IEnygmaWithdrawParams, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "deposit", commitmentDeltas, proof, withdrawParam, participantIds)
 }
 
 // Deposit is a paid mutator transaction binding the contract method 0x907f7d55.
 //
-// Solidity: function deposit((uint256,uint256)[] commitments, (uint256[8],uint256[2]) proof, ((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),uint256[],uint256,uint256)) withdrawParam, uint256[] kIndex) returns(bool)
-func (_Enygma *EnygmaSession) Deposit(commitments []IEnygmaPoint, proof IEnygmaDepositProof, withdrawParam IEnygmaWithdrawParams, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Deposit(&_Enygma.TransactOpts, commitments, proof, withdrawParam, kIndex)
+// Solidity: function deposit((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[2]) proof, ((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),uint256[],uint256,uint256)) withdrawParam, uint256[] participantIds) returns(bool)
+func (_Enygma *EnygmaSession) Deposit(commitmentDeltas []IEnygmaPoint, proof IEnygmaDepositProof, withdrawParam IEnygmaWithdrawParams, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Deposit(&_Enygma.TransactOpts, commitmentDeltas, proof, withdrawParam, participantIds)
 }
 
 // Deposit is a paid mutator transaction binding the contract method 0x907f7d55.
 //
-// Solidity: function deposit((uint256,uint256)[] commitments, (uint256[8],uint256[2]) proof, ((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),uint256[],uint256,uint256)) withdrawParam, uint256[] kIndex) returns(bool)
-func (_Enygma *EnygmaTransactorSession) Deposit(commitments []IEnygmaPoint, proof IEnygmaDepositProof, withdrawParam IEnygmaWithdrawParams, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Deposit(&_Enygma.TransactOpts, commitments, proof, withdrawParam, kIndex)
+// Solidity: function deposit((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[2]) proof, ((((uint256,uint256),(uint256[2],uint256[2]),(uint256,uint256)),uint256[],uint256,uint256)) withdrawParam, uint256[] participantIds) returns(bool)
+func (_Enygma *EnygmaTransactorSession) Deposit(commitmentDeltas []IEnygmaPoint, proof IEnygmaDepositProof, withdrawParam IEnygmaWithdrawParams, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Deposit(&_Enygma.TransactOpts, commitmentDeltas, proof, withdrawParam, participantIds)
 }
 
 // Initialize is a paid mutator transaction binding the contract method 0x8129fc1c.
@@ -1271,86 +1177,86 @@ func (_Enygma *EnygmaTransactorSession) Initialize() (*types.Transaction, error)
 
 // MintSupply is a paid mutator transaction binding the contract method 0xff98feae.
 //
-// Solidity: function mintSupply(uint256 amount, uint256 to) returns(bool)
-func (_Enygma *EnygmaTransactor) MintSupply(opts *bind.TransactOpts, amount *big.Int, to *big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "mintSupply", amount, to)
+// Solidity: function mintSupply(uint256 amount, uint256 recipientId) returns(bool)
+func (_Enygma *EnygmaTransactor) MintSupply(opts *bind.TransactOpts, amount *big.Int, recipientId *big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "mintSupply", amount, recipientId)
 }
 
 // MintSupply is a paid mutator transaction binding the contract method 0xff98feae.
 //
-// Solidity: function mintSupply(uint256 amount, uint256 to) returns(bool)
-func (_Enygma *EnygmaSession) MintSupply(amount *big.Int, to *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.MintSupply(&_Enygma.TransactOpts, amount, to)
+// Solidity: function mintSupply(uint256 amount, uint256 recipientId) returns(bool)
+func (_Enygma *EnygmaSession) MintSupply(amount *big.Int, recipientId *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.MintSupply(&_Enygma.TransactOpts, amount, recipientId)
 }
 
 // MintSupply is a paid mutator transaction binding the contract method 0xff98feae.
 //
-// Solidity: function mintSupply(uint256 amount, uint256 to) returns(bool)
-func (_Enygma *EnygmaTransactorSession) MintSupply(amount *big.Int, to *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.MintSupply(&_Enygma.TransactOpts, amount, to)
+// Solidity: function mintSupply(uint256 amount, uint256 recipientId) returns(bool)
+func (_Enygma *EnygmaTransactorSession) MintSupply(amount *big.Int, recipientId *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.MintSupply(&_Enygma.TransactOpts, amount, recipientId)
 }
 
-// RegisterAccount is a paid mutator transaction binding the contract method 0x8b3b3168.
+// RegisterAccount is a paid mutator transaction binding the contract method 0x94e5f1c6.
 //
-// Solidity: function registerAccount(address addr, uint256 accountNum, uint256 k1, uint256 k2, uint256 r) returns(bool)
-func (_Enygma *EnygmaTransactor) RegisterAccount(opts *bind.TransactOpts, addr common.Address, accountNum *big.Int, k1 *big.Int, k2 *big.Int, r *big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "registerAccount", addr, accountNum, k1, k2, r)
+// Solidity: function registerAccount(address addr, uint256 accountId, uint256 publicKey, uint256 randomness) returns(bool)
+func (_Enygma *EnygmaTransactor) RegisterAccount(opts *bind.TransactOpts, addr common.Address, accountId *big.Int, publicKey *big.Int, randomness *big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "registerAccount", addr, accountId, publicKey, randomness)
 }
 
-// RegisterAccount is a paid mutator transaction binding the contract method 0x8b3b3168.
+// RegisterAccount is a paid mutator transaction binding the contract method 0x94e5f1c6.
 //
-// Solidity: function registerAccount(address addr, uint256 accountNum, uint256 k1, uint256 k2, uint256 r) returns(bool)
-func (_Enygma *EnygmaSession) RegisterAccount(addr common.Address, accountNum *big.Int, k1 *big.Int, k2 *big.Int, r *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.RegisterAccount(&_Enygma.TransactOpts, addr, accountNum, k1, k2, r)
+// Solidity: function registerAccount(address addr, uint256 accountId, uint256 publicKey, uint256 randomness) returns(bool)
+func (_Enygma *EnygmaSession) RegisterAccount(addr common.Address, accountId *big.Int, publicKey *big.Int, randomness *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.RegisterAccount(&_Enygma.TransactOpts, addr, accountId, publicKey, randomness)
 }
 
-// RegisterAccount is a paid mutator transaction binding the contract method 0x8b3b3168.
+// RegisterAccount is a paid mutator transaction binding the contract method 0x94e5f1c6.
 //
-// Solidity: function registerAccount(address addr, uint256 accountNum, uint256 k1, uint256 k2, uint256 r) returns(bool)
-func (_Enygma *EnygmaTransactorSession) RegisterAccount(addr common.Address, accountNum *big.Int, k1 *big.Int, k2 *big.Int, r *big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.RegisterAccount(&_Enygma.TransactOpts, addr, accountNum, k1, k2, r)
+// Solidity: function registerAccount(address addr, uint256 accountId, uint256 publicKey, uint256 randomness) returns(bool)
+func (_Enygma *EnygmaTransactorSession) RegisterAccount(addr common.Address, accountId *big.Int, publicKey *big.Int, randomness *big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.RegisterAccount(&_Enygma.TransactOpts, addr, accountId, publicKey, randomness)
 }
 
-// Transfer is a paid mutator transaction binding the contract method 0xe062ace2.
+// Transfer is a paid mutator transaction binding the contract method 0x9a7d5fc0.
 //
-// Solidity: function transfer((uint256,uint256)[] commitments, (uint256[8],uint256[32]) proof, uint256[] kIndex) returns(bool)
-func (_Enygma *EnygmaTransactor) Transfer(opts *bind.TransactOpts, commitments []IEnygmaPoint, proof IEnygmaProof, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "transfer", commitments, proof, kIndex)
+// Solidity: function transfer((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[62]) proof, uint256[] participantIds) returns(bool)
+func (_Enygma *EnygmaTransactor) Transfer(opts *bind.TransactOpts, commitmentDeltas []IEnygmaPoint, proof IEnygmaProof, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "transfer", commitmentDeltas, proof, participantIds)
 }
 
-// Transfer is a paid mutator transaction binding the contract method 0xe062ace2.
+// Transfer is a paid mutator transaction binding the contract method 0x9a7d5fc0.
 //
-// Solidity: function transfer((uint256,uint256)[] commitments, (uint256[8],uint256[32]) proof, uint256[] kIndex) returns(bool)
-func (_Enygma *EnygmaSession) Transfer(commitments []IEnygmaPoint, proof IEnygmaProof, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Transfer(&_Enygma.TransactOpts, commitments, proof, kIndex)
+// Solidity: function transfer((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[62]) proof, uint256[] participantIds) returns(bool)
+func (_Enygma *EnygmaSession) Transfer(commitmentDeltas []IEnygmaPoint, proof IEnygmaProof, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Transfer(&_Enygma.TransactOpts, commitmentDeltas, proof, participantIds)
 }
 
-// Transfer is a paid mutator transaction binding the contract method 0xe062ace2.
+// Transfer is a paid mutator transaction binding the contract method 0x9a7d5fc0.
 //
-// Solidity: function transfer((uint256,uint256)[] commitments, (uint256[8],uint256[32]) proof, uint256[] kIndex) returns(bool)
-func (_Enygma *EnygmaTransactorSession) Transfer(commitments []IEnygmaPoint, proof IEnygmaProof, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Transfer(&_Enygma.TransactOpts, commitments, proof, kIndex)
-}
-
-// Withdraw is a paid mutator transaction binding the contract method 0x57e41327.
-//
-// Solidity: function withdraw((uint256,uint256)[] commitments, (uint256[8],uint256[1]) proof, (uint256,address,uint256)[] deposistParam, uint256[] kIndex) returns(bool, uint256[])
-func (_Enygma *EnygmaTransactor) Withdraw(opts *bind.TransactOpts, commitments []IEnygmaPoint, proof IEnygmaWithdrawProof, deposistParam []IEnygmaDepositParams, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.contract.Transact(opts, "withdraw", commitments, proof, deposistParam, kIndex)
+// Solidity: function transfer((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[62]) proof, uint256[] participantIds) returns(bool)
+func (_Enygma *EnygmaTransactorSession) Transfer(commitmentDeltas []IEnygmaPoint, proof IEnygmaProof, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Transfer(&_Enygma.TransactOpts, commitmentDeltas, proof, participantIds)
 }
 
 // Withdraw is a paid mutator transaction binding the contract method 0x57e41327.
 //
-// Solidity: function withdraw((uint256,uint256)[] commitments, (uint256[8],uint256[1]) proof, (uint256,address,uint256)[] deposistParam, uint256[] kIndex) returns(bool, uint256[])
-func (_Enygma *EnygmaSession) Withdraw(commitments []IEnygmaPoint, proof IEnygmaWithdrawProof, deposistParam []IEnygmaDepositParams, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Withdraw(&_Enygma.TransactOpts, commitments, proof, deposistParam, kIndex)
+// Solidity: function withdraw((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[1]) proof, (uint256,address,uint256)[] depositParams, uint256[] participantIds) returns(bool, uint256[])
+func (_Enygma *EnygmaTransactor) Withdraw(opts *bind.TransactOpts, commitmentDeltas []IEnygmaPoint, proof IEnygmaWithdrawProof, depositParams []IEnygmaDepositParams, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.contract.Transact(opts, "withdraw", commitmentDeltas, proof, depositParams, participantIds)
 }
 
 // Withdraw is a paid mutator transaction binding the contract method 0x57e41327.
 //
-// Solidity: function withdraw((uint256,uint256)[] commitments, (uint256[8],uint256[1]) proof, (uint256,address,uint256)[] deposistParam, uint256[] kIndex) returns(bool, uint256[])
-func (_Enygma *EnygmaTransactorSession) Withdraw(commitments []IEnygmaPoint, proof IEnygmaWithdrawProof, deposistParam []IEnygmaDepositParams, kIndex []*big.Int) (*types.Transaction, error) {
-        return _Enygma.Contract.Withdraw(&_Enygma.TransactOpts, commitments, proof, deposistParam, kIndex)
+// Solidity: function withdraw((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[1]) proof, (uint256,address,uint256)[] depositParams, uint256[] participantIds) returns(bool, uint256[])
+func (_Enygma *EnygmaSession) Withdraw(commitmentDeltas []IEnygmaPoint, proof IEnygmaWithdrawProof, depositParams []IEnygmaDepositParams, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Withdraw(&_Enygma.TransactOpts, commitmentDeltas, proof, depositParams, participantIds)
+}
+
+// Withdraw is a paid mutator transaction binding the contract method 0x57e41327.
+//
+// Solidity: function withdraw((uint256,uint256)[] commitmentDeltas, (uint256[8],uint256[1]) proof, (uint256,address,uint256)[] depositParams, uint256[] participantIds) returns(bool, uint256[])
+func (_Enygma *EnygmaTransactorSession) Withdraw(commitmentDeltas []IEnygmaPoint, proof IEnygmaWithdrawProof, depositParams []IEnygmaDepositParams, participantIds []*big.Int) (*types.Transaction, error) {
+        return _Enygma.Contract.Withdraw(&_Enygma.TransactOpts, commitmentDeltas, proof, depositParams, participantIds)
 }
 
 // EnygmaAccountRegisteredIterator is returned from FilterAccountRegistered and is used to iterate over the raw logs and unpacked data for AccountRegistered events raised by the Enygma contract.

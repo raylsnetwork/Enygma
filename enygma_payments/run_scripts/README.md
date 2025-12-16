@@ -3,7 +3,7 @@
 ### How to run
 
 1. Create a `Python 3.10.12` virtual environment and activate it.
-2. install the following packages using :
+2. install the following packages using or use `requirements.txt`
 
 - `pip install web3`
 - `pip install eth-brownie`
@@ -37,3 +37,13 @@ python deploy_enygma.py
 ```
 
 You can find the compiled contracts as well as the deploy receipts in `build/` directory.
+
+#### reset python path
+
+```bash
+unalias python
+```
+
+```bash
+hash -r
+```

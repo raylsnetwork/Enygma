@@ -88,8 +88,12 @@ class W3b3:
         return self.Contracts[token_address]
     #*******************************************************************************
     def sign_and_send(self, txn, send_key):
+        # contract_signed_txn = self.W3.eth.account.sign_transaction(txn, private_key=send_key)
+        # contract_tx_hash = self.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+        # return self.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
         contract_signed_txn = self.W3.eth.account.sign_transaction(txn, private_key=send_key)
-        contract_tx_hash = self.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+        raw = getattr(contract_signed_txn, "rawTransaction", None) or getattr(contract_signed_txn, "raw_transaction")
+        contract_tx_hash = self.W3.eth.send_raw_transaction(raw)
         return self.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
     #******************************************************************************* 
     def print_token_data(self):
@@ -99,12 +103,11 @@ class W3b3:
 
         
         data ={ "address" : f"{token_address}"}
-        path = self.root_path.replace("run_scripts", "go_client")
-        
+        path = self.root_path.replace("run_scripts", "go_client/config")
+       
         with open(f"{path}/address.json", 'w') as file:
             json.dump(data, file, indent=4)
             
-        
         
         debug("[Token information]")
         token_name = self.token_contract().functions.Name().call()
@@ -142,8 +145,11 @@ class W3b3:
             contract_transaction = contract.constructor(**constructor_args).build_transaction(  
                 {"chainId": self.chain_id, "from": deployer_address, "nonce": nonce, 'gasPrice': 875000000}
             )
+            # contract_signed_txn = self.W3.eth.account.sign_transaction(contract_transaction, private_key=deployer_key)
+            # contract_tx_hash = self.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
             contract_signed_txn = self.W3.eth.account.sign_transaction(contract_transaction, private_key=deployer_key)
-            contract_tx_hash = self.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+            raw = getattr(contract_signed_txn, "rawTransaction", None) or getattr(contract_signed_txn, "raw_transaction")
+            contract_tx_hash = self.W3.eth.send_raw_transaction(raw)
             time.sleep(1)
             contract_receipt = self.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
 

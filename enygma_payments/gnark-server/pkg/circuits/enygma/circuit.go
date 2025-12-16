@@ -12,112 +12,173 @@ import (
 )
 
 
-const nCommitments = 6;
-const bitWidth = 256
+type EnygmaCircuitConfig struct{
+	BitWith int
+	NCommitment int
+	
+}
+
 type EnygmaCircuit struct {
-	SenderId      	frontend.Variable 
-	Secrets       	[nCommitments]frontend.Variable 
-	PublicKey   	[nCommitments][2]frontend.Variable  `gnark:",public"` 
-	Sk 				frontend.Variable
-	PreviousV  		frontend.Variable 
-	PreviousR   	frontend.Variable 
-	PreviousCommit  [nCommitments][2]frontend.Variable `gnark:",public"` 
-	TxCommit 		[nCommitments][2]frontend.Variable 
-	TxValue 		[nCommitments]frontend.Variable
-	TxRandom 		[nCommitments]frontend.Variable 
-	V				frontend.Variable 
-	Nullifier       frontend.Variable `gnark:",public"` 
-	BlockNumber     frontend.Variable `gnark:",public"` 
-	KIndex 		    [nCommitments]frontend.Variable  `gnark:",public"` 
+	Config  		EnygmaCircuitConfig
+	ArrayHashSecret [][]frontend.Variable   			`gnark:",public"`  // Array of hash of shared secrets 
+	PublicKey   	[]frontend.Variable  				`gnark:",public"`  // Public keys from all other PLs (public)
+	PreviousCommit  [][2]frontend.Variable  			`gnark:",public"`  // Array of previous balances (Pedersen commitments)  
+	BlockNumber     frontend.Variable 					`gnark:",public"`  // Previous block_number to ensure that random factors are well-generated
+	KIndex 		    []frontend.Variable  				`gnark:",public"`  // Array with indices of the banks that are in the tx ("k"-anonymity)
+
+	SenderId      	int                                						// Identifier of the sender of the tx
+	Secrets       	[][]frontend.Variable 									// Array of shared secrets with all the other PLs
+	TagMessage      [] frontend.Variable 									// Array of tag messages to ensure unique transactions when parties transact in the same block
+	Sk 				frontend.Variable										// Secret key of the sender of the tx 
+	PreviousV  		frontend.Variable 										// Previous balance in the last Pedersen commitment    
+	PreviousR   	frontend.Variable 										// Previous random factor in the last Pedersen commitment
+	TxCommit 		[][2]frontend.Variable 									// Array containing the commitments for this new tx
+	TxValue 		[]frontend.Variable										// Array of balances debited/credited in this transaction
+	TxRandom 		[]frontend.Variable 									// Array of random factors for the pedersen commitments in this tx
+	V				frontend.Variable 										// Balance to be spent in this tx
+	Nullifier       frontend.Variable 				`gnark:",public"`		// Nullifier to ensure transaction is not a double spend
+	
 
 }
 
 
+// Changes of Random Factor Hash("random_factors", s, block_number)
+// Changes of Tag Message Hash("tags", s, block_number)
+
 func (circuit *EnygmaCircuit) Define(api frontend.API) error {	
 
+	//Subgroup order	   
+	r:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
+
+	//////////////////////////////////**///////////////////////////////////
 	//Check if SenderId is in K
 	sumIsInK :=frontend.Variable(0)
-	for i:=0; i< nCommitments;i++{
+	for i:=0; i< circuit.Config.NCommitment;i++{
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))  // KIndex  = Senderid? IsEQqual =1 /0
 		sumIsInK = api.Add(isEqual,sumIsInK )
-	}
+	}	
 
 	api.AssertIsEqual(sumIsInK,1)
 
-	r:= frontend.Variable("2736030358979909402780800718157159386076813972158567259200215660948447373041")
-
+	///////////////////////////////////**///////////////////////////////////
+	// Check if V is in TxValue
 	selected_v :=frontend.Variable(0)
-	//Check if  getNegative(V) == TxValue[Sender_ID]
-	for i:=0; i< nCommitments;i++{
+	
+	for i:=0; i< circuit.Config.NCommitment;i++{
 		diff := api.Sub(circuit.SenderId, i)
 		eq := api.IsZero(diff)
 
 		selected_v = api.Add(selected_v, api.Mul(eq, circuit.TxValue[i]))
 	}
-	selectedVBits := api.ToBinary(selected_v, bitWidth)
-	vBits := api.ToBinary(circuit.V, bitWidth)
-	pDiffBits := api.ToBinary(r, bitWidth)
+	selectedVBits := api.ToBinary(selected_v, circuit.Config.BitWith)
+	vBits := api.ToBinary(circuit.V, circuit.Config.BitWith)
+	pDiffBits := api.ToBinary(r, circuit.Config.BitWith)
 
 	selectedVConstrained := api.FromBinary(selectedVBits...)
 	vConstrained := api.FromBinary(vBits...)
 	pDiffConstrained := api.FromBinary(pDiffBits...)
 
 	api.AssertIsEqual(selectedVConstrained, api.Sub(pDiffConstrained,vConstrained))
-
-	//Check if Secret of SenderId is zero
-	for i := 0; i < nCommitments; i++ {
-		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))
-		api.AssertIsEqual(api.Mul(isEqual, circuit.Secrets[i]), 0)
-	}
 	
 	///////////////////////////////////**///////////////////////////////////
-	//Check if PublicKey is on Curve
-	for i := 0; i < nCommitments; i++ {
-		X := circuit.PublicKey[i][0]
-		Y := circuit.PublicKey[i][1]
-
-		utils.AssertPointsIsOnCurve(api,X,Y)
-	}
-
-	///////////////////////////////////**///////////////////////////////////
-	// Knowledge of Sk
-	selectedPK0 := frontend.Variable(0)
-	selectedPK1 := frontend.Variable(0)
-
-	for i:=0; i< nCommitments; i++{
+	//Check knowledge of secret of sender
+	// for now Poseidon(PreviousV,Sk)
+	selected_secret:= frontend.Variable(0)
+	for i:=0; i< circuit.Config.NCommitment;i++{
 		diff := api.Sub(circuit.SenderId, i)
 		eq := api.IsZero(diff)
 
-		selectedPK0 = api.Add(selectedPK0, api.Mul(eq, circuit.PublicKey[i][0]))
-		selectedPK1 = api.Add(selectedPK1, api.Mul(eq, circuit.PublicKey[i][1]))
+		selected_secret = api.Add(selected_secret, api.Mul(eq, circuit.Secrets[i][i]))
 	}
+
+	secretSenderCalculated:= pos.Poseidon(api,[]frontend.Variable{circuit.PreviousV, circuit.Sk})
+	secretInter,_ := api.NewHint(utils.ModHint, 2,secretSenderCalculated)
+	secretRemain := secretInter[0] // remaninder
+
 	
-	// Perform scalar multiplication using custom logic
-	pk := utils.ScalarMul(api, utils.G , circuit.Sk)             // v * G
+	api.AssertIsEqual(secretRemain, selected_secret)
 
-	// Assert equality with the provided commitment
 
-	api.AssertIsEqual(selectedPK0, pk.X)
-	api.AssertIsEqual(selectedPK1, pk.Y)
+	///////////////////////////////////**///////////////////////////////////
+	// Check if Hash Array of Secret is well formed
 
+	for i := 0; i < circuit.Config.NCommitment; i++ { // for each secret perform hash calculation and sees if is equal to correspondent Array of hash secret
+		for j:=0; j< circuit.Config.NCommitment; j++{
+			calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.Secrets[i][j],circuit.Secrets[i][j]})
+			hashInter,_ := api.NewHint(utils.ModHint, 2,calculatedHash)
+			hashMod := hashInter[0] // remaninder
+			
+				
+			api.AssertIsEqual(hashMod, circuit.ArrayHashSecret[i][j])
+		}
+	}
+
+
+	///////////////////////////////////**///////////////////////////////////
+	// Knowledge of Sk - Perform public key generation and check if Sk generate senderId's PublicKey
+	selectedPK := frontend.Variable(0)
+
+	for i:=0; i< circuit.Config.NCommitment; i++{ // loop through array and selected senderId's PublicKey in selectedPK variable
+		
+		diff := api.Sub(circuit.SenderId, i)
+		eq := api.IsZero(diff)
+		selectedPK = api.Add(selectedPK, api.Mul(eq, circuit.PublicKey[i]))
+		
+	}	
+	pk := pos.Poseidon(api, []frontend.Variable{circuit.Sk, circuit.Sk}) // Pk = PoseidonHash (sk , sk)
+	pkInter,_ := api.NewHint(utils.ModHint, 2,pk)
+	pkMod := pkInter[0] // remaninder
+	
+	api.AssertIsEqual(selectedPK, pkMod) // check if calculated Publickey is equal to  selectedPK
 
 	///////////////////////////////////**///////////////////////////////////
 	//Knowledge of Previous Commitment
 	selectedPreviousCommitmentX := frontend.Variable(0)
 	selectedPreviousCommitmentY := frontend.Variable(0)
 
-	for i:=0; i< nCommitments; i++{
+	for i:=0; i< circuit.Config.NCommitment; i++{ //Store in selectedPreviousCommitmentX and selectedPreviousCommitmentX if 
 		diff := api.Sub(circuit.SenderId, i)
 		eq := api.IsZero(diff)
 
 		selectedPreviousCommitmentX = api.Add(selectedPreviousCommitmentX, api.Mul(eq, circuit.PreviousCommit[i][0]))
 		selectedPreviousCommitmentY = api.Add(selectedPreviousCommitmentY, api.Mul(eq, circuit.PreviousCommit[i][1]))
 	}
-	 
-	computedPreviousCommitment := utils.PedersenCommitment(api, circuit.PreviousV, circuit.PreviousR)
+
+	computedPreviousCommitment := utils.PedersenCommitment(api, circuit.PreviousV, circuit.PreviousR)      
 
 	api.AssertIsEqual(selectedPreviousCommitmentX, computedPreviousCommitment.X)
 	api.AssertIsEqual(selectedPreviousCommitmentY, computedPreviousCommitment.Y)
+
+	///////////////////////////////////**///////////////////////////////////
+	//Knowledge of Tag Message - Perform verification is tag message is well formed
+    // TagMessageSeed := 12
+
+	HashTag:= pos.Poseidon(api,[]frontend.Variable{12})
+	for i:=0; i< circuit.Config.NCommitment ; i++{
+
+		// It's the same as the random factor but either random factor or tag will changed how it is calculated
+		// Assuming that Sij = Sji
+		
+		calculatedTagMessage := pos.Poseidon(api,[]frontend.Variable{HashTag,circuit.Secrets[circuit.SenderId][i], circuit.BlockNumber})
+		calculatedTagMessageInter,_ := api.NewHint(utils.ModHint, 2,calculatedTagMessage)
+		calculatedTagMessageMod := calculatedTagMessageInter[0] // remaninder
+		
+		calculatedTagMessageSender:= pos.Poseidon(api,[]frontend.Variable{HashTag,circuit.PreviousV, circuit.BlockNumber})
+		calculatedTagMessageSenderInter ,_ := api.NewHint(utils.ModHint, 2,calculatedTagMessageSender)
+		calculatedTagMessageSenderMod := calculatedTagMessageSenderInter[0] // remaninder
+
+
+		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId)) //KIndex[i] ==SenderId? 1:0
+										// Not Equal SenderId                  //  Equal to SenderId
+		selectedTagMessage := api.Select(
+								isEqual,
+								calculatedTagMessageSenderMod, // if isEqual == 1
+								calculatedTagMessageMod,       // if isEqual == 0
+							)
+							
+		api.AssertIsEqual(circuit.TagMessage[i],selectedTagMessage)
+		
+	}
 
 	// ///////////////////////////////////**///////////////////////////////////
 	// SumCommitment  = [0,1]
@@ -125,7 +186,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	sumX :=frontend.Variable(0)
 	sumY :=frontend.Variable(0)
 
-	for i := 0; i < nCommitments; i++ {
+	for i := 0; i < circuit.Config.NCommitment; i++ {
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))
 		rNegate := api.Sub(r,circuit.TxRandom[i])
 		random :=  api.Add( api.Mul(api.Sub(1,isEqual),rNegate), api.Mul(isEqual, circuit.TxRandom[i]))
@@ -146,7 +207,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
         Y: circuit.TxCommit[0][1],
     }
 
-	for i := 1; i < nCommitments; i++ {
+	for i := 1; i < circuit.Config.NCommitment; i++ {
 		point := twistededwards.Point{
 			X: circuit.TxCommit[i][0],
 			Y: circuit.TxCommit[i][1],
@@ -161,7 +222,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	///////////////////////////////////**///////////////////////////////////
 	// Range Proof  Previous V > V & V>0
 
-	previousVBits := api.ToBinary(circuit.PreviousV, bitWidth)
+	previousVBits := api.ToBinary(circuit.PreviousV, circuit.Config.BitWith)
 	previousVConstrained := api.FromBinary(previousVBits...)
 	
 
@@ -172,12 +233,24 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	///////////////////////////////////**//////////////////////////////////////
 	// Knoweldge of Nullifier
 
-	computedNullifier := pos.Poseidon(api, []frontend.Variable{circuit.Sk, circuit.BlockNumber})
+	selectedPreImage := frontend.Variable(0)
+
+	for i:=0; i< circuit.Config.NCommitment; i++{
+		diff := api.Sub(circuit.SenderId, i)
+		eq := api.IsZero(diff)
+
+		selectedPreImage = api.Add(selectedPreImage, api.Mul(eq, circuit.ArrayHashSecret[i][i]))
+		
+	}
+
+	computedNullifier := pos.Poseidon(api, []frontend.Variable{selectedPreImage, circuit.BlockNumber})
 	api.AssertIsEqual(computedNullifier, circuit.Nullifier)
+
 
 	///////////////////////////////////**//////////////////////////////////////
 	//Check if Pedersen Commitment is well formed
-	for i := 0; i < nCommitments; i++ {
+	
+	for i := 0; i < circuit.Config.NCommitment; i++ {
 
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))// If sender Id isEqual =1
 		
@@ -192,16 +265,21 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 	// ///////////////////////////////////**//////////////////////////////////////
 	// CHeck if random factor are well formed
-	var calculatedRandomFactor [nCommitments]frontend.Variable
+	calculatedRandomFactor:= make([]frontend.Variable, circuit.Config.NCommitment)
 	
+
+	// HashSee := 21
+
+	HashRandom:= pos.Poseidon(api,[]frontend.Variable{21})
+
 	sumFactor:= frontend.Variable(0)
-	for i := 0; i < nCommitments; i++ {
+	for i := 0; i < circuit.Config.NCommitment; i++ {
 		isEqual := api.IsZero(api.Sub(circuit.KIndex[i], circuit.SenderId))
-		RandomFactor := pos.Poseidon(api, []frontend.Variable{circuit.Secrets[i], circuit.BlockNumber})
+		RandomFactor := pos.Poseidon(api, []frontend.Variable{HashRandom,circuit.Secrets[circuit.SenderId][i], circuit.BlockNumber})
 		
 		randomInter,_ := api.NewHint(utils.ModHint, 2,RandomFactor)
 		remainder := randomInter[0] // remaninder
-		q := randomInter[1] // quotient
+		q := randomInter[1] // quotient``
 
 		api.AssertIsEqual(api.Add(api.Mul(q, r),remainder,),RandomFactor)
 
@@ -224,7 +302,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 		sumFactor = sumR
 	}
 
-	for i := 0; i < nCommitments; i++ {
+	for i := 0; i < circuit.Config.NCommitment; i++ {
 		// Check if the current index is equal to circuit.SenderId
 		isSender := api.IsZero(api.Sub(circuit.SenderId, frontend.Variable(i)))
 		// If isSender is true, select sumFactor; otherwise, keep the existing value
@@ -232,9 +310,10 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	}
 	
 	
-	for i := 0; i < nCommitments; i++ {
+	for i := 0; i < circuit.Config.NCommitment; i++ {
 		
 		diff:=api.Sub(calculatedRandomFactor[i], circuit.TxRandom[i])
+		
 		api.AssertIsEqual(diff,frontend.Variable(0))
 
 	}
@@ -244,20 +323,25 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 }
 
 type EnygmaRequest struct {
-	SenderID       string                  `json:"senderId" binding:"required"`
-	Secrets        [nCommitments]string    `json:"secrets" binding:"required,len=6"`
-	PublicKey      [nCommitments][2]string `json:"publicKey" binding:"required,len=6,dive,len=2"`
-	Sk             string     			   `json:"sk" binding:"required"`
-	PreviousV      string     			   `json:"previousV" binding:"required"`
-	PreviousR      string     			   `json:"previousR" binding:"required"`
-	PreviousCommit [nCommitments][2]string `json:"previousCommit" binding:"required,len=6,dive,len=2"`
-	TxCommit       [nCommitments][2]string `json:"txCommit" binding:"required,len=6,dive,len=2"`
-	TxValue        [nCommitments]string    `json:"txValue" binding:"required,len=6"`
-	TxRandom       [nCommitments]string    `json:"txRandom" binding:"required,len=6"`
-	V              string     			   `json:"v" binding:"required"`
-	Nullifier      string     			   `json:"nullifier" binding:"required"`
-	BlockNumber    string     			   `json:"blockNumber" binding:"required"`
-	KIndex         [nCommitments]string    `json:"kIndex" binding:"required,len=6"`
+	
+	ArrayHashSecret [][]string               `json:"arrayHashSecret" binding:"required,min=1,max=6,dive,min=1,max=6"`
+	PublicKey       []string 			    `json:"publicKey" binding:"required,min=1,max=6`
+	PreviousCommit  [][2]string 			`json:"previousCommit" binding:"required,min=1,max=6,dive,len=2"`
+	BlockNumber      string     			`json:"blockNumber" binding:"required"`
+	KIndex          []string   			    `json:"kIndex" binding:"required,min=1,max=6"`
+
+	SenderId        string                  `json:"senderId" binding:"required"`
+	Secrets         [][]string    		    `json:"secrets" binding:"required,min=1,max=6,dive,min=1,max=6"`
+	TagMessage 		[]string		        `json:"tagMessage" binding:"required,min=1,max=6"`
+	Sk              string     			   	`json:"sk" binding:"required"`
+	PreviousV       string     			   	`json:"previousV" binding:"required"`
+	PreviousR       string     			   	`json:"previousR" binding:"required"`
+	TxCommit        [][2]string 			`json:"txCommit" binding:"required,min=1,max=6,dive,len=2"`
+	TxValue         []string    			`json:"txValue" binding:"required,min=1,max=6"`
+	TxRandom        []string    			`json:"txRandom" binding:"required,min=1,max=6"`
+	V               string     			    `json:"v" binding:"required"`
+	Nullifier       string     			    `json:"nullifier" binding:"required"`
+	
 }
 
 type EnygmaOutput struct{

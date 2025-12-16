@@ -6,7 +6,7 @@ scenario: "00_default_scenario"
 network:
   host: "127.0.0.1"
   port: "8545"
-  chain-id: "1337"
+  chain-id: "31337"
   brownie-network: "development"
   seed: "localGanache"
   mnemonic: "federal unhappy avoid mistake life barrel beauty raccoon recycle unknown review link"

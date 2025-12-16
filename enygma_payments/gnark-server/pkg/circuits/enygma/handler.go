@@ -4,7 +4,8 @@ import (
 	"log"
 	"math/big"
     "net/http"
-
+	"strconv"
+	"fmt"
 	utils "enygma-server/utils"
 
     "github.com/gin-gonic/gin"
@@ -17,6 +18,29 @@ import (
  
 )
 
+func createCircuitTemplate(config EnygmaCircuitConfig) EnygmaCircuit {
+    circuit :=EnygmaCircuit{
+        Config:          config,
+        ArrayHashSecret: make([][]frontend.Variable, config.NCommitment),
+        PublicKey:       make([]frontend.Variable, config.NCommitment),
+        PreviousCommit:  make([][2]frontend.Variable, config.NCommitment),
+        KIndex:          make([]frontend.Variable, config.NCommitment),
+        Secrets:         make([][]frontend.Variable, config.NCommitment),
+        TagMessage:      make([]frontend.Variable, config.NCommitment),
+        TxCommit:        make([][2]frontend.Variable, config.NCommitment),
+        TxValue:         make([]frontend.Variable, config.NCommitment),
+        TxRandom:        make([]frontend.Variable, config.NCommitment),
+    }
+    
+    for i := 0; i < config.NCommitment; i++ {
+        circuit.ArrayHashSecret[i] = make([]frontend.Variable, config.NCommitment)
+        circuit.Secrets[i] = make([]frontend.Variable, config.NCommitment)
+    }
+    
+    return circuit
+}
+
+
 
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
@@ -26,24 +50,33 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	return func(c *gin.Context) {
         var request EnygmaRequest
         if err := c.ShouldBindJSON(&request); err != nil {
+			fmt.Println(request)
             c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
             return
         } 
-
-		var witness EnygmaCircuit
+		config:= EnygmaCircuitConfig{
+			BitWith:256,
+			NCommitment:6,
+		}
+		witness := createCircuitTemplate(config)
+        circuit := createCircuitTemplate(config)
+	
 		var publicSignal []*big.Int
 		solver.RegisterHint(utils.ModHint)
-
-		witness.SenderId = frontend.Variable(request.SenderID)
+			 
+		witness.SenderId,_ = strconv.Atoi(request.SenderId)
 		witness.V = frontend.Variable(request.V)
 		witness.Sk = frontend.Variable(request.Sk)
 
+		
+		for i := 0; i < config.NCommitment; i++ { 
+			for j:=0;j< config.NCommitment; j++{
+				witness.Secrets[i][j] = utils.ParseBigInt(request.Secrets[i][j])
+				witness.ArrayHashSecret[i][j] = utils.ParseBigInt(request.ArrayHashSecret[i][j])
+			}
 
-		for i := 0; i < nCommitments; i++ { 
-			witness.Secrets[i] = utils.ParseBigInt(request.Secrets[i])
-
-			witness.PublicKey[i][0] =  utils.ParseBigInt(request.PublicKey[i][0])
-			witness.PublicKey[i][1] =  utils.ParseBigInt(request.PublicKey[i][1])
+			witness.PublicKey[i] =  utils.ParseBigInt(request.PublicKey[i])
+			
 
 			witness.PreviousCommit[i][0] = utils.ParseBigInt(request.PreviousCommit[i][0])
 			witness.PreviousCommit[i][1] = utils.ParseBigInt(request.PreviousCommit[i][1])
@@ -53,9 +86,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			witness.TxValue[i] = utils.ParseBigInt(request.TxValue[i])
 			witness.TxRandom[i] = utils.ParseBigInt(request.TxRandom[i])
 			witness.KIndex[i] = utils.ParseBigInt(request.KIndex[i])
-
-			publicSignal =  append(publicSignal, utils.ParseBigInt(request.PublicKey[i][0]))
-			publicSignal =  append(publicSignal, utils.ParseBigInt(request.PublicKey[i][1]))
+			witness.TagMessage[i] = utils.ParseBigInt(request.TagMessage[i])
+			
 			
 		}
 
@@ -64,7 +96,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.Nullifier =  utils.ParseBigInt(request.Nullifier)
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
 
-		var circuit EnygmaCircuit
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
@@ -108,17 +139,27 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 
 		//Generate public signal
-		for i := 0; i < nCommitments; i++ { 
+		for i := 0; i < config.NCommitment; i++ { 
+			for j := 0; j < config.NCommitment; j++ {
+				publicSignal =  append(publicSignal,  utils.ParseBigInt(request.ArrayHashSecret[i][j]))
+			}
+		}
+		for i := 0; i < config.NCommitment; i++ { 
+			publicSignal =  append(publicSignal,  utils.ParseBigInt(request.PublicKey[i]))
+		}
+		for i := 0; i < config.NCommitment; i++ { 
 			publicSignal =  append(publicSignal,  utils.ParseBigInt(request.PreviousCommit[i][0]))
 			publicSignal =  append(publicSignal,  utils.ParseBigInt(request.PreviousCommit[i][1]))
 		}
-		publicSignal =  append(publicSignal,  utils.ParseBigInt(request.Nullifier))
+
+	
 		publicSignal =  append(publicSignal,  utils.ParseBigInt(request.BlockNumber))
-		for i := 0; i < nCommitments; i++ { 
+		for i := 0; i < config.NCommitment; i++ { 
 			publicSignal =  append(publicSignal, utils.ParseBigInt(request.KIndex[i]))
 			
 		}
-		
+		publicSignal =  append(publicSignal,  utils.ParseBigInt(request.Nullifier))
+		fmt.Println(len(publicSignal))
 		c.JSON(http.StatusOK, EnygmaOutput{
             Proof:  proofRemix,
             PublicSignal:publicSignal,
