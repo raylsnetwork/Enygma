@@ -13,7 +13,7 @@ import (
 
 
 type EnygmaCircuitConfig struct{
-	BitWith int
+	BitWith int 
 	NCommitment int
 	
 }
@@ -268,7 +268,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	calculatedRandomFactor:= make([]frontend.Variable, circuit.Config.NCommitment)
 	
 
-	// HashSee := 21
+	// HashSeed := 21
 
 	HashRandom:= pos.Poseidon(api,[]frontend.Variable{21})
 
