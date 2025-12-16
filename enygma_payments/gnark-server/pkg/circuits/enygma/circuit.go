@@ -268,7 +268,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	calculatedRandomFactor:= make([]frontend.Variable, circuit.Config.NCommitment)
 	
 
-	// TagMessageSeed := 21
+	// HashSee := 21
 
 	HashRandom:= pos.Poseidon(api,[]frontend.Variable{21})
 
@@ -313,6 +313,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	for i := 0; i < circuit.Config.NCommitment; i++ {
 		
 		diff:=api.Sub(calculatedRandomFactor[i], circuit.TxRandom[i])
+		
 		api.AssertIsEqual(diff,frontend.Variable(0))
 
 	}

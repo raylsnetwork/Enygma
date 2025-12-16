@@ -24,7 +24,7 @@ The client requires several configuration values that are currently hardcoded in
 
 1. Contract Address Configuration
 
-The contract address is read from `address.json`:
+The contract address is read from `.config/address.json`:
 
 ```json
 {
@@ -32,32 +32,35 @@ The contract address is read from `address.json`:
 }
 ```
 
-2. Network Configuration (in `main.go`)
+1. Network Configuration (in `./config/config.go`)
 
 ```go
 // RPC endpoint for the blockchain
-commitChainURL = "http://127.0.0.1:8545"  // Change for different networks
+CommitChainURL = "http://127.0.0.1:8545"  // Change for different networks
 
 // Gnark proof server URL
-httpposturl = "http://127.0.0.1:8080/proof/enygma"
+ProofServerURL = "http://127.0.0.1:8080/proof/enygma"
 
 // Private key for signing transactions (DO NOT commit this!)
-privateKeyString = "YOUR_PRIVATE_KEY_HERE"
+PrivateKey = "YOUR_PRIVATE_KEY_HERE"
 ```
 
-3. Bank Secrets Configuration (in `main.go`)
+3. Bank Secrets Configuration (in `./transaction/main.go`)
 
 This is only for demo purpose. It was randomly created. Please refer to protocol description to read how to proper manage secret
 
 ```go
 // Secret values for each bank (used for commitment randomness)
-secrets = []*big.Int{
-    big.NewInt(0),          // Bank 0 (reserved, empty)
-    big.NewInt(54142),      // Bank 1
-    big.NewInt(814712),     // Bank 2
-    big.NewInt(250912012),  // Bank 3
-    big.NewInt(12312512),   // Bank 4
-    big.NewInt(12312512),   // Bank 5
+secrets = [][]*big.Int{
+  {
+			big.NewInt(412321),
+			big.NewInt(634609235),
+			big.NewInt(8352331231),
+			big.NewInt(289412412),
+			big.NewInt(8932589237),
+			big.NewInt(423423523),
+		},
+    ....
 }
 ```
 
@@ -66,13 +69,13 @@ secrets = []*big.Int{
 Basic Command
 
 ```bash
-go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
+go run . <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
 
 ```
 
 Transaction Values Configuration
 
-The transaction distribution is configured in `main.go`:
+The transaction distribution is configured in `./transaction/main.go`:
 
 ```go
 // Current configuration (modify as needed)
@@ -88,10 +91,28 @@ txValues := []*big.Int{
 
 **Note**: The sum of all values (excluding sender) must equal the value being sent. The sender's value is automatically negated.
 
+KIndex Participation configuration
+
+KIndex array is configured in `./transaction/main.go`:
+
+```go
+
+  k0:= big.NewInt(0)
+  k1:= big.NewInt(1)
+  k2:= big.NewInt(2)
+  k3:= big.NewInt(3)
+  k4:= big.NewInt(4)
+  k5:= big.NewInt(5)
+
+
+	kIndex := []*big.Int{k0, k1, k2,k3,k4,k5}
+
+```
+
 Examples
 
 ```bash
-go run . 6 100 0 35 1000 0 4129789127591820896172587
+go run . 6 100 0 35 1000 0
 ```
 
 Breakdown:
@@ -102,4 +123,3 @@ Breakdown:
 - 35 is the sender's secret key
 - 1000 was the previous transaction value for this account
 - 0 was the previous randomness
-- 4129789127591820896172587 is a recent block hash

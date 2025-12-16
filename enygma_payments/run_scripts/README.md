@@ -37,3 +37,13 @@ python deploy_enygma.py
 ```
 
 You can find the compiled contracts as well as the deploy receipts in `build/` directory.
+
+#### reset python path
+
+```bash
+unalias python
+```
+
+```bash
+hash -r
+```

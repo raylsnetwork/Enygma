@@ -13,6 +13,7 @@ import subprocess
 def s2_deploy_enygma(w3, project_name):
     debug(f"Deploying Enygma ...")
     args = {}
+    print(TokenJsonPath(w3.root_path, project_name))
     token_receipt = w3.deploy_enygma(TokenJsonPath(w3.root_path, project_name), **args)
     print(token_receipt)
     debug(f"enygma has been deployed to {token_receipt.contractAddress}")

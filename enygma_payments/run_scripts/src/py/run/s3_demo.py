@@ -31,7 +31,8 @@ def s3_demo_initialization(w3, root_path, project_name, network, banks, receipts
         contract_transaction = w3.token_contract().functions.registerAccount(owner_address, i, pub, rValue).build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
         contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-        contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+        # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+        contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
         time.sleep(1)
         contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
         
@@ -44,7 +45,8 @@ def s3_demo_initialization(w3, root_path, project_name, network, banks, receipts
     contract_transaction = w3.token_contract().functions.addVerifier(w3.Verifier["address"]).build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
     contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
     time.sleep(1)
     contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
 
@@ -57,7 +59,8 @@ def s3_demo_initialization(w3, root_path, project_name, network, banks, receipts
             contract_transaction = w3.token_contract().functions.addWithdrawVerifier(w3.WithdrawVerifier[f"address_{i}"],i).build_transaction(
                         {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
             contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-            contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+            # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+            contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
             time.sleep(1)
             contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
 
@@ -66,7 +69,8 @@ def s3_demo_initialization(w3, root_path, project_name, network, banks, receipts
     contract_transaction = w3.token_contract().functions.addDepositVerifier(w3.DepositVerifier["address"]).build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
     contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
     time.sleep(1)
     contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
 
@@ -76,7 +80,8 @@ def s3_demo_initialization(w3, root_path, project_name, network, banks, receipts
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000 })
     print(f"owner {owner_key}")
     contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
     time.sleep(1)
     contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
 
@@ -98,7 +103,8 @@ def s3_demo_transactions(w3, root_path, project_name, network, banks, receipts):
     contract_transaction = w3.token_contract().functions.check().build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
     contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
     time.sleep(1)
     contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
     info("Done enygma.check")
@@ -113,7 +119,8 @@ def s3_demo_transactions(w3, root_path, project_name, network, banks, receipts):
     contract_transaction = w3.token_contract().functions.mintSupply(mint_amount, receiver_id).build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
     contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
     time.sleep(1)
     contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
     info("Done minting.")
@@ -124,7 +131,8 @@ def s3_demo_transactions(w3, root_path, project_name, network, banks, receipts):
     contract_transaction = w3.token_contract().functions.check().build_transaction(
                 {"chainId": w3.chain_id, "from": owner_address, "nonce": nonce, 'gasPrice': 875000000})
     contract_signed_txn = w3.W3.eth.account.sign_transaction(contract_transaction, private_key=owner_key)
-    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    # contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.rawTransaction)
+    contract_tx_hash = w3.W3.eth.send_raw_transaction(contract_signed_txn.raw_transaction)
     time.sleep(1)
     contract_receipt = w3.W3.eth.wait_for_transaction_receipt(contract_tx_hash)
     info("Done Enygma.check")
