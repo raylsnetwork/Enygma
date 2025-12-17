@@ -265,7 +265,9 @@ The privacy node creates a ZK proof $$\pi$$ that proves the following:
 
 * I know the secret key of one of the items in this anonymity set of $$k$$ public keys;
 * I know the amount and random factor of the commitment that contains my balance in this set of $$k$$ commitments;
-* The nullifier is well-formed and uses my secret key and the latest block number;
+* I am not spending more funds than the funds I have;
+* The total amount of funds I am spending is being credited to the other participants in this anonymity set;
+* The nullifier is well-formed. Therefore, it is derived from my secret key and the latest block number;
 * The private messaging tags are well-formed. Therefore, they use the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number or the random factor that opens a commitment from the anonymity set for the index of the sender.
 
 #### Ciphertexts 
