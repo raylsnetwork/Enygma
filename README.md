@@ -12,7 +12,9 @@ At Rayls, we have created a new suite of privacy protocols, which we call Enygma
 
 * **Private Network Hub**: Underlying blockchain that acts as a global ledger, (ZK) verifier, and bulletin board for Privacy Nodes to use for transactions and (encrypted) communications. 
 
-* **Auditor** (optional): The auditor is an entity that oversees the transactions that take place in the system. This exists solely in case the system is deployed in a permissioned setting with the involvement of financial institutions. We note that the auditor only has a complete view of transactions that happen in the network iff the participants share the 'view' key with the auditor. We note that the auditor has no ability to spend funds on behalf of any system entity. 
+* **Auditor** (optional): The auditor is an entity that oversees the transactions that take place in the system. This exists solely in case the system is deployed in a permissioned setting with the involvement of financial institutions. We note that the auditor only has a complete view of transactions that happen in the network iff the participants share the 'view' key with the auditor. We note that the auditor has no ability to spend funds on behalf of any system entity.
+
+* **Issuer**: Entity that issues and is the admin of a specific token. In specific settings, the issuer may also be the auditor (e.g., a government entity issues a token that must follow strict compliance rules). 
 
 ```mermaid
  ---
