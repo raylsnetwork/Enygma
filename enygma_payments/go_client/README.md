@@ -17,6 +17,8 @@ Key Features:
 - Nullifier-based double-spend protection
 - Pedersen commitment scheme for value hiding
 
+---
+
 #### Configuration
 
 Environment Setup
@@ -123,3 +125,15 @@ Breakdown:
 - 35 is the sender's secret key
 - 1000 was the previous transaction value for this account
 - 0 was the previous randomness
+
+---
+
+**Observation**
+
+The following folder and files are for `enygma_dvp` integration
+
+- `go_client/zkdvp/`
+- `go_client/interfacezkdvp/`
+- `go_client/utils/`
+
+---
