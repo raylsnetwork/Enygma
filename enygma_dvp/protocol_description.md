@@ -4,4 +4,5 @@ User Alice has:
 
 Issuer:
 
-* generates a random salt: $$salt \longleftarrow \{0, 1\}^{\lambda}$$
+* generates a random salt:
+   * $$salt \longleftarrow \{0, 1\}^{\lambda}$$
