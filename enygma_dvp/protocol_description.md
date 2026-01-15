@@ -9,11 +9,12 @@ In Enygma DvP, the commitments have the following form:
 
 $$C = Hash(pk^{spend} | salt | token_{ID} | amount)$$
 
+To spend the commitment, the user proves in zero-knowledge that they know the secret spend key associated with this commitment, and publish a nullifier that spends the corresponding commitment. 
 
 ## Private Issuance
 
 
-
+### Flawed Trivial Example
 
 It is trivial to have a non-interactive protocol that allows the recipient to open this corresp
 
