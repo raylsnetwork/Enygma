@@ -7,7 +7,7 @@ User Alice has:
 
 In Enygma DvP, the commitments have the following form:
 
-$$C = Hash(pk^{spend}, salt, id_{token}, amount)$$
+$$C = Hash(pk^{spend} | salt | token_{ID} | amount)$$
 
 
 ## Private Issuance
