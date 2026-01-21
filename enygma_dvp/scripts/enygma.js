@@ -1,0 +1,9 @@
+let address = { enygmaAddress: "0x32B025d7f97fC9A9BDB4B57BB233Daf1D8bd6b82" };
+
+function EnygmaAddress() {
+  return address;
+}
+
+module.exports = {
+  EnygmaAddress,
+};
