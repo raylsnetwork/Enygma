@@ -1,0 +1,7 @@
+
+# Gnark Circuit
+#  Verification key and proving key from gnark circuit
+/gnark_circuits/scripts/keys
+
+# Verifier.sols
+/gnark_circuits/scripts/verifier
