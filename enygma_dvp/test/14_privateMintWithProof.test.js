@@ -46,8 +46,9 @@ describe("PrivateMint with ZK Proof Verification", () => {
     }
     // Deploy ZkDvp infrastructure
     let userCount = 2;
-    [owner, users, contracts, merkleTrees] =
-      await testHelpers.deployForTest(userCount);
+    [owner, users, contracts, merkleTrees] = await testHelpers.deployForTest(
+      userCount,
+    );
 
     // Deploy and register PrivateMintVerifier
     console.log("Deploying PrivateMintVerifier...");

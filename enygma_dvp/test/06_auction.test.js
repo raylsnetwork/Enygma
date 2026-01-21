@@ -12,7 +12,7 @@ const crypto = require("crypto")
 const dvpConf = require("../zkdvp.config.json");
 const TREE_DEPTH = dvpConf["tree-depth"];
 const testHelpers = require("./testHelpers.js");
-const { babyJub } = require("@iden3/js-crypto");
+const { babyjub: babyJub } = require("circomlibjs");
 
 let users;
 let contracts;

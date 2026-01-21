@@ -5,7 +5,7 @@ These functions are directly calling proof generation functions
 */
 const snarkjs = require("snarkjs");
 const utils = require("./utils");
-const { babyJub } = require("@iden3/js-crypto");
+const { babyjub: babyJub } = require("circomlibjs");
 const { GnarkProver } = require("./prover_gnark");
 
 function getWasmPath(circuitName) {

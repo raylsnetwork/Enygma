@@ -3,7 +3,6 @@ const { poseidon } = require("circomlibjs");
 const ethers = require("ethers");
 const { randomBytes } = require("node:crypto");
 
-const { PublicKey, PrivateKey, Signature, utils, ffUtils, Hex } = require("@iden3/js-crypto");
 
 const {
   formatPrivKeyForBabyJub,
@@ -74,7 +73,7 @@ function blindedPublicKey(publicKey){
 // Helper to encode an integer as a point (toy example)
 function encodeMessage(babyjub, m) {
     // Encode small integer as m*Base8
-    return babyjub.mulPointEScalar(babyjub.Base8, BigInt(m));
+    return babyjub.mulPointEscalar(babyjub.Base8, BigInt(m));
 }
 
 // Helper to decode point back to integer
@@ -92,9 +91,9 @@ function decodeMessage(babyjub, point, maxM) {
 
 function babyEncrypt(babyjub, m, r, pubKey){
     // c1 = r * G
-    const c1 = babyjub.mulPointEScalar(babyjub.Base8, r);
+    const c1 = babyjub.mulPointEscalar(babyjub.Base8, r);
     // rPub = r * publicKey
-    const rPub = babyjub.mulPointEScalar(pubKey, r);
+    const rPub = babyjub.mulPointEscalar(pubKey, r);
     // mG = m * G
     const mG = encodeMessage(babyjub, m);
     // console.log("mG: ", mG);
@@ -106,7 +105,7 @@ function babyEncrypt(babyjub, m, r, pubKey){
 }
 
 function babyDecrypt(babyjub, c1, c2, privateKey, allowed_range=1000n){
-    const rPub = babyjub.mulPointEScalar(c1, privateKey);
+    const rPub = babyjub.mulPointEscalar(c1, privateKey);
 
     const M_dec = babyjub.addPoint(c2, [babyjub.p - rPub[0], rPub[1]]);
     // console.log("mG2: ", M_dec);
@@ -132,8 +131,8 @@ function poseidonEncryptWrapper(babyjub, inputs,publicKey) {
   const nonce = randomNonce();
   
   const randomValue = randomInField() / 10n;
-  const authKey = babyjub.mulPointEScalar(babyjub.Base8, randomValue);
-  const sharedKey = babyjub.mulPointEScalar(publicKey, randomValue);
+  const authKey = babyjub.mulPointEscalar(babyjub.Base8, randomValue);
+  const sharedKey = babyjub.mulPointEscalar(publicKey, randomValue);
 
   const encrypted = poseidonEncrypt(inputs, sharedKey, nonce);
 
@@ -141,7 +140,7 @@ function poseidonEncryptWrapper(babyjub, inputs,publicKey) {
 }
 
 function poseidonDecryptWrapper(babyjub, encrypted, authKey, nonce, privateKey, length){
-  const sharedKey = babyjub.mulPointEScalar(authKey, privateKey);
+  const sharedKey = babyjub.mulPointEscalar(authKey, privateKey);
 
   const decrypted = poseidonDecrypt(encrypted, sharedKey, nonce, length);
 
@@ -153,7 +152,7 @@ function babyKeyPair(babyjub){
     const privateKey = randomInField() % babyjub.subOrder;
 
     // Public key
-    const pubKey = babyjub.mulPointEScalar(babyjub.Base8, privateKey);
+    const pubKey = babyjub.mulPointEscalar(babyjub.Base8, privateKey);
 
     return {"privateKey": privateKey, "publicKey": pubKey};
 }

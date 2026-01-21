@@ -5,7 +5,7 @@ const prover = require("../src/core/prover");
 const utils = require("../src/core/utils");
 const MerkleTree = require("../src/core/merkle");
 const { getVerificationKeys } = require("../src/core/dvpSnarks");
-const { babyJub } = require("@iden3/js-crypto");
+const { babyjub: babyJub } = require("circomlibjs");
 
 const SNARK_SCALAR_FIELD = BigInt(
     "21888242871839275222246405745257275088548364400416034343698204186575808495617",
