@@ -1,7 +1,7 @@
 const hre = require("hardhat");
 const jsUtils = require("../src/core/utils.js");
 const MerkleTree = require("../src/core/merkle");
-const dvpConf = require("../zkdvp.config.json");
+const dvpConf = require("../enygmadvp.config.json");
 const TREE_DEPTH = dvpConf["tree-depth"];
 
 // action scripts
@@ -14,7 +14,7 @@ const VAULT_ID_ERC1155 = 2;
 async function getTokenAddedEvent(tx) {
   const rc = await tx.wait();
   const event = rc.events.find((ev) => ev.event === "TokenAddedToGroup");
-  
+
   const eventData = {};
   eventData.groupId = event.args.groupId.toBigInt();
   eventData.vaultId = event.args.vaultId.toBigInt();
@@ -23,14 +23,14 @@ async function getTokenAddedEvent(tx) {
   return eventData;
 }
 
-
-
 async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
-  
   var merkleTree = new MerkleTree(TREE_DEPTH, "erc1155");
 
   var fungibleMerkleTree = new MerkleTree(TREE_DEPTH, "fungibleAssetGroup");
-  var nonFungibleMerkleTree = new MerkleTree(TREE_DEPTH, "nonFungibleAssetGroup");
+  var nonFungibleMerkleTree = new MerkleTree(
+    TREE_DEPTH,
+    "nonFungibleAssetGroup",
+  );
 
   let aliceCoins = [];
   let bobCoins = [];
@@ -44,43 +44,51 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   const nonFungId = tokenIds[0];
   const fungAmount = depositAmounts[1];
   const nonFungAmount = depositAmounts[0];
-  
+
   const erc1155data = 0;
 
   const receipts = require("../build/receipts.json");
   const erc1155Address = receipts["ERC1155"]["contractAddress"];
   const erc1155VaultAddress = receipts["Erc1155CoinVault"]["contractAddress"];
-  const zkDvpAddress = receipts["ZkDvp"]["contractAddress"];
+  const enygmaDvpAddress = receipts["EnygmaDvp"]["contractAddress"];
 
-  const zkDvpContract = await hre.ethers.getContractAt("ZkDvp", zkDvpAddress);
+  const enygmaDvpContract = await hre.ethers.getContractAt(
+    "EnygmaDvp",
+    enygmaDvpAddress,
+  );
 
-  const erc1155Contract = await hre.ethers.getContractAt("RaylsERC1155", erc1155Address);
-  const erc1155VaultContract = await hre.ethers.getContractAt("Erc1155CoinVault", erc1155VaultAddress);
-
+  const erc1155Contract = await hre.ethers.getContractAt(
+    "RaylsERC1155",
+    erc1155Address,
+  );
+  const erc1155VaultContract = await hre.ethers.getContractAt(
+    "Erc1155CoinVault",
+    erc1155VaultAddress,
+  );
 
   console.log("Registering Fungible ERC-1155 tokenId to RaylsERC1155");
-    const tx1 = await erc1155Contract.registerNewToken(
-        0n, // type 
-        0n, // fungiblity
-        "Test Fungible", // name
-        "TFT", // symbol
-        fungId, // offchainId
-        1000000000000000n, // maxSupply
-        18n, // decimals
-        [], // subTokenIds
-        [],  // subTokenValues
-        0, // data
-        [] // additionalAttrs
-    );
+  const tx1 = await erc1155Contract.registerNewToken(
+    0n, // type
+    0n, // fungiblity
+    "Test Fungible", // name
+    "TFT", // symbol
+    fungId, // offchainId
+    1000000000000000n, // maxSupply
+    18n, // decimals
+    [], // subTokenIds
+    [], // subTokenValues
+    0, // data
+    [], // additionalAttrs
+  );
 
   console.log("Registering Fungible ERC-1155 tokenId to fungible AssetGroup");
-  const tx2 = await zkDvpContract.addTokenToGroup(
-      VAULT_ID_ERC1155,
-      [0, fungId],
-      0
-    );
+  const tx2 = await enygmaDvpContract.addTokenToGroup(
+    VAULT_ID_ERC1155,
+    [0, fungId],
+    0,
+  );
 
-  // reading the added uniqueId, altenatively you can 
+  // reading the added uniqueId, altenatively you can
   // compute it off-chain by
   // const uidFung = jsUtils.erc1155UniqueId(BigInt(erc1155Address), fungId, 0n);
 
@@ -90,29 +98,31 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   fungibleMerkleTree.insertLeaves([uidFung]);
 
   console.log("Registering non-Fungible ERC-1155 tokenId to RaylsERC1155");
-    const tx3 = await erc1155Contract.registerNewToken(
-        0n, // type 
-        1n, // fungiblity
-        "Test Non-fungible", // name
-        "TNFT", // symbol
-        nonFungId, // offchainId
-        0n, // maxSupply
-        0n, // decimals
-        [], // subTokenIds
-        [],  // subTokenValues
-        0, // data
-        [] // additionalAttrs
-    );
+  const tx3 = await erc1155Contract.registerNewToken(
+    0n, // type
+    1n, // fungiblity
+    "Test Non-fungible", // name
+    "TNFT", // symbol
+    nonFungId, // offchainId
+    0n, // maxSupply
+    0n, // decimals
+    [], // subTokenIds
+    [], // subTokenValues
+    0, // data
+    [], // additionalAttrs
+  );
 
-  console.log("Registering non-Fungible ERC-1155 tokenId to Non-fungible AssetGroup");
+  console.log(
+    "Registering non-Fungible ERC-1155 tokenId to Non-fungible AssetGroup",
+  );
 
-  const tx4 = await zkDvpContract.addTokenToGroup(
-      VAULT_ID_ERC1155,
-      [0, nonFungId],
-      1
-    );
+  const tx4 = await enygmaDvpContract.addTokenToGroup(
+    VAULT_ID_ERC1155,
+    [0, nonFungId],
+    1,
+  );
 
-  // reading the added uniqueId, altenatively you can 
+  // reading the added uniqueId, altenatively you can
   // compute it off-chain by
   // const uidNonFung = jsUtils.erc1155UniqueId(BigInt(erc1155Address), nonFungId, 1n);
   const nonFungAddEvent = await getTokenAddedEvent(tx4);
@@ -120,10 +130,16 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   // updating local non-fungibleGroup merkleTree
   nonFungibleMerkleTree.insertLeaves([uidNonFung]);
 
-
   console.log("Minting non-Fungible ERC-1155");
   // Mint NFT for Alice
-  await adminActions.mintErc1155(owner, alice, nonFungId, nonFungAmount, 0, erc1155Contract);
+  await adminActions.mintErc1155(
+    owner,
+    alice,
+    nonFungId,
+    nonFungAmount,
+    0,
+    erc1155Contract,
+  );
 
   const nftKeyDeposit = await jsUtils.newKeyPair();
   console.log("Depositing non-fungible ERC-1155");
@@ -138,19 +154,27 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   );
 
   merkleTree.insertLeaves([cmt]);
-  aliceCoins.push({ "commitment":cmt,
-                    "proof": merkleTree.generateProof(cmt),
-                    "root": merkleTree.root,
-                    "treeNumber": merkleTree.lastTreeNumber,
-                    "group_treeNumber": nonFungibleMerkleTree.lastTreeNumber,
-                    "group_proof": nonFungibleMerkleTree.generateProof(uidNonFung),
-                    });
-  // Bob deposit 2 * 1000 ERC20 token into ZkDvp
+  aliceCoins.push({
+    commitment: cmt,
+    proof: merkleTree.generateProof(cmt),
+    root: merkleTree.root,
+    treeNumber: merkleTree.lastTreeNumber,
+    group_treeNumber: nonFungibleMerkleTree.lastTreeNumber,
+    group_proof: nonFungibleMerkleTree.generateProof(uidNonFung),
+  });
+  // Bob deposit 2 * 1000 ERC20 token into Dvp
   const fundKeys = [jsUtils.newKeyPair(), jsUtils.newKeyPair()];
 
   console.log("Minting fungible ERC-1155");
 
-  await adminActions.mintErc1155(owner, bob, fungId, fungAmount * 2n, 0, erc1155Contract);
+  await adminActions.mintErc1155(
+    owner,
+    bob,
+    fungId,
+    fungAmount * 2n,
+    0,
+    erc1155Contract,
+  );
 
   console.log("Depositing fungible ERC-1155");
   var cmt1 = await userActions.depositErc1155(
@@ -165,14 +189,14 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   );
 
   merkleTree.insertLeaves([cmt1]);
-  bobCoins.push({ "commitment":cmt1,
-                    "proof": merkleTree.generateProof(cmt1),
-                    "root": merkleTree.root,
-                    "treeNumber": merkleTree.lastTreeNumber,
-                    "group_treeNumber": fungibleMerkleTree.lastTreeNumber,
-                    "group_proof": fungibleMerkleTree.generateProof(uidFung)
-                    });
-
+  bobCoins.push({
+    commitment: cmt1,
+    proof: merkleTree.generateProof(cmt1),
+    root: merkleTree.root,
+    treeNumber: merkleTree.lastTreeNumber,
+    group_treeNumber: fungibleMerkleTree.lastTreeNumber,
+    group_proof: fungibleMerkleTree.generateProof(uidFung),
+  });
 
   console.log("Depositing second amount for fungible ERC-1155");
   var cmt2 = await userActions.depositErc1155(
@@ -187,17 +211,22 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   );
 
   merkleTree.insertLeaves([cmt2]);
-  bobCoins.push({ "commitment":cmt2,
-                    "proof": merkleTree.generateProof(cmt2),
-                    "root": merkleTree.root,
-                    "treeNumber": merkleTree.lastTreeNumber,
-                    "group_treeNumber": fungibleMerkleTree.lastTreeNumber,
-                    "group_proof": fungibleMerkleTree.generateProof(uidFung)
-                    });
+  bobCoins.push({
+    commitment: cmt2,
+    proof: merkleTree.generateProof(cmt2),
+    root: merkleTree.root,
+    treeNumber: merkleTree.lastTreeNumber,
+    group_treeNumber: fungibleMerkleTree.lastTreeNumber,
+    group_proof: fungibleMerkleTree.generateProof(uidFung),
+  });
 
   // Alice generates NFT commitment for Bob
   console.log("Alice generates commitment of non-fungible token for Bob");
-  const uid2 = jsUtils.erc1155UniqueId(BigInt(erc1155Address), nonFungId, nonFungAmount);
+  const uid2 = jsUtils.erc1155UniqueId(
+    BigInt(erc1155Address),
+    nonFungId,
+    nonFungAmount,
+  );
 
   // Bob generates a public key to receive the NFT
   const bobNFTKey = jsUtils.newKeyPair();
@@ -217,7 +246,11 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   // paymentCommitment will be used as a massage by Alice
   console.log("Generating Payment commitment for Alice.");
 
-  const uid4 = jsUtils.erc1155UniqueId(BigInt(erc1155Address), fungId, paymentAmount);
+  const uid4 = jsUtils.erc1155UniqueId(
+    BigInt(erc1155Address),
+    fungId,
+    paymentAmount,
+  );
 
   const paymentCommitment = jsUtils.getCommitment(
     uid4,
@@ -238,7 +271,7 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
     nonFungId,
     aliceCoins[0]["group_treeNumber"],
     aliceCoins[0]["group_proof"],
-    false
+    false,
   );
 
   // Alice generates a tx to send her NFT to Bob
@@ -261,49 +294,50 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
   );
 
   console.log("Swapping");
-  // A relayer forwards both transactions to ZkDvp
+  // A relayer forwards both transactions to EnygmaDvp
   const cmt5 = await relayerActions.swap(
     owner,
     params2,
     params1,
     VAULT_ID_ERC1155,
     VAULT_ID_ERC1155,
-    zkDvpContract,
+    enygmaDvpContract,
   );
   merkleTree.insertLeaves(cmt5);
 
+  aliceCoins.push({
+    commitment: cmt5[0],
+    treeNumber: merkleTree.lastTreeNumber,
+    proof: merkleTree.generateProof(cmt5[0]),
+    root: merkleTree.root,
+    group_treeNumber: fungibleMerkleTree.lastTreeNumber,
+    group_proof: fungibleMerkleTree.generateProof(uidFung),
+  });
 
-  aliceCoins.push({"commitment":cmt5[0],
-                   "treeNumber":merkleTree.lastTreeNumber,
-                   "proof":merkleTree.generateProof(cmt5[0]),
-                   "root": merkleTree.root,
-                    "group_treeNumber": fungibleMerkleTree.lastTreeNumber,
-                    "group_proof": fungibleMerkleTree.generateProof(uidFung) 
-                 });
+  bobCoins.push({
+    commitment: cmt5[1],
+    treeNumber: merkleTree.lastTreeNumber,
+    proof: merkleTree.generateProof(cmt5[1]),
+    root: merkleTree.root,
+    group_treeNumber: fungibleMerkleTree.lastTreeNumber,
+    group_proof: fungibleMerkleTree.generateProof(uidFung),
+  });
 
-  bobCoins.push({"commitment":cmt5[1],
-                   "treeNumber":merkleTree.lastTreeNumber,
-                   "proof":merkleTree.generateProof(cmt5[1]),
-                   "root": merkleTree.root,
-                    "group_treeNumber": fungibleMerkleTree.lastTreeNumber,
-                    "group_proof": fungibleMerkleTree.generateProof(uidFung) 
-
-                 });
-
-   bobCoins.push({"commitment":cmt5[2],
-                   "treeNumber":merkleTree.lastTreeNumber,
-                   "proof":merkleTree.generateProof(cmt5[2]),
-                   "root": merkleTree.root,
-                    "group_treeNumber": nonFungibleMerkleTree.lastTreeNumber,
-                    "group_proof": nonFungibleMerkleTree.generateProof(uidNonFung) 
-
-                 });
-
+  bobCoins.push({
+    commitment: cmt5[2],
+    treeNumber: merkleTree.lastTreeNumber,
+    proof: merkleTree.generateProof(cmt5[2]),
+    root: merkleTree.root,
+    group_treeNumber: nonFungibleMerkleTree.lastTreeNumber,
+    group_proof: nonFungibleMerkleTree.generateProof(uidNonFung),
+  });
 
   console.log("Alice withdraws fund");
 
   // TX sent by a relayer
-  const oldBalance = (await erc1155Contract.balanceOf(alice.address, fungId)).toBigInt();
+  const oldBalance = (
+    await erc1155Contract.balanceOf(alice.address, fungId)
+  ).toBigInt();
 
   const cmt4 = await userActions.withdrawERC1155(
     alice,
@@ -318,18 +352,19 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
     aliceCoins[1]["treeNumber"],
     aliceCoins[1]["group_treeNumber"],
     aliceCoins[1]["group_proof"],
-    true
+    true,
   );
 
-  console.log("Alice withdrew!")
-  const newBalance = (await erc1155Contract.balanceOf(alice.address, fungId)).toBigInt();
+  console.log("Alice withdrew!");
+  const newBalance = (
+    await erc1155Contract.balanceOf(alice.address, fungId)
+  ).toBigInt();
 
   console.log(
     `Alice's oldBalance ${oldBalance} + payment ${paymentAmount} = newBalance ${newBalance}`,
   );
 
   console.log("Bob withdraws bought Non-fungible ERC1155 token....");
-
 
   const cmt3 = await userActions.withdrawERC1155(
     bob,
@@ -344,15 +379,15 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
     bobCoins[3]["treeNumber"],
     bobCoins[3]["group_treeNumber"],
     bobCoins[3]["group_proof"],
-    false
+    false,
   );
   console.log("Bob withdrew bought Non-fungible Erc1155");
 
-
   const res = await erc1155Contract.balanceOf(bob.address, nonFungId);
 
-
-  console.log(`Checking whether Bob is the owner of Non-fungible Erc1155 token ${nonFungId} = ${res}`);
+  console.log(
+    `Checking whether Bob is the owner of Non-fungible Erc1155 token ${nonFungId} = ${res}`,
+  );
 
   console.log(`---------------------------------`);
   console.log(`---------------------------------`);
@@ -361,11 +396,7 @@ async function erc1155Demo(tokenIds, depositAmounts, paymentAmount) {
 
   merkleTree.saveToFile("erc1155");
 
-  console.log("Erc1155 Swap demo: DONE.")
+  console.log("Erc1155 Swap demo: DONE.");
 }
 
-
-erc1155Demo([777n, 111n], [1n,1000n], 100n);
-
-
- 
+erc1155Demo([777n, 111n], [1n, 1000n], 100n);

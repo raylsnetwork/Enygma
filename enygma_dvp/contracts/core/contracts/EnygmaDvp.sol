@@ -9,8 +9,8 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IZkDvp} from "../interfaces/IZkDvp.sol";
-import {IZkAuction} from "../interfaces/IZkAuction.sol";
+import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
+import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
 import {IAssetGroup} from "../interfaces/vaults/IAssetGroup.sol";
@@ -18,7 +18,7 @@ import {IPoseidonWrapper} from "../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../interfaces/IVerifier.sol";
 import {IPrivateMintVerifier} from "../interfaces/IPrivateMintVerifier.sol";
 
-contract ZkDvp is IZkDvp, AccessControl {
+contract EnygmaDvp is IEnygmaDvp, AccessControl {
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
@@ -176,7 +176,7 @@ contract ZkDvp is IZkDvp, AccessControl {
 
         // initializing the verifier by registering Snark circuits' verification keys.
         // and the genericGroth16 verifier
-        IZkAuction(_zkAuctionContractAddress).initializeZkAuction(
+        IEnygmaAuction(_zkAuctionContractAddress).initializeZkAuction(
             _hashContractAddress,
             _verifierContractAddress
         );

@@ -9,15 +9,15 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IZkAuction} from "../interfaces/IZkAuction.sol";
-import {IZkDvp} from "../interfaces/IZkDvp.sol";
+import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
+import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
 import {IAssetGroup} from "../interfaces/vaults/IAssetGroup.sol";
 import {IPoseidonWrapper} from "../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../interfaces/IVerifier.sol";
 
-contract ZkAuction is IZkAuction, AccessControl {
+contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
@@ -206,7 +206,7 @@ contract ZkAuction is IZkAuction, AccessControl {
         uint256 itemGroupId,
         uint256 bidGroupId,
         uint256 sellerFundCoinPublicKey,
-        IZkDvp.ProofReceipt memory auctionInitReceipt
+        IEnygmaDvp.ProofReceipt memory auctionInitReceipt
     ) public returns (bool) {
         // TODO:: check proof conditions
         // if itemVaultId == ERC1155 then the last statement can not be zero
@@ -224,7 +224,7 @@ contract ZkAuction is IZkAuction, AccessControl {
         uint256 nullifier = auctionInitReceipt.statement[5];
         uint256 treeNumber = auctionInitReceipt.statement[3];
         IAbstractCoinVault itemVault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(itemVaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(itemVaultId)
         );
 
         address assetAddress = itemVault.getAssetContractAddress();
@@ -271,13 +271,13 @@ contract ZkAuction is IZkAuction, AccessControl {
     ) internal returns (bool) {
         // checking assetGroups
         if (
-            !IZkDvp(_zkDvpContractAddress).isVaultMemberOf(
+            !IEnygmaDvp(_zkDvpContractAddress).isVaultMemberOf(
                 itemVaultId,
                 itemGroupId
             )
         ) {
             if (
-                !IZkDvp(_zkDvpContractAddress).isTokenMemberOf(
+                !IEnygmaDvp(_zkDvpContractAddress).isTokenMemberOf(
                     itemVaultId,
                     uniqueIdParams,
                     itemGroupId
@@ -292,7 +292,7 @@ contract ZkAuction is IZkAuction, AccessControl {
 
     // Called by bidder through RELAYER
     function submitBid(
-        IZkDvp.ProofReceipt memory bidReceipt,
+        IEnygmaDvp.ProofReceipt memory bidReceipt,
         uint256 receivingPublicKey
     ) public returns (bool) {
         // order of receipt.statement
@@ -336,7 +336,7 @@ contract ZkAuction is IZkAuction, AccessControl {
         );
 
         IAbstractCoinVault bidVault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(bidVaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(bidVaultId)
         );
         for (uint i = 0; i < 2; i++) {
             if (bidReceipt.statement[6 + i] != 0) {
@@ -358,13 +358,13 @@ contract ZkAuction is IZkAuction, AccessControl {
 
         // checking assetGroups
         if (
-            !IZkDvp(_zkDvpContractAddress).isVaultMemberOf(
+            !IEnygmaDvp(_zkDvpContractAddress).isVaultMemberOf(
                 bidVaultIdFromStatement,
                 _auctions[auctionId].bidGroupId
             )
         ) {
             if (
-                !IZkDvp(_zkDvpContractAddress).isMemberOfFromProofReceipt(
+                !IEnygmaDvp(_zkDvpContractAddress).isMemberOfFromProofReceipt(
                     bidVaultIdFromStatement,
                     bidReceipt,
                     _auctions[auctionId].bidGroupId
@@ -450,7 +450,7 @@ contract ZkAuction is IZkAuction, AccessControl {
     // only callable by zkDvp owner / auctioneer
     // TODO:: needs accessControl
     function privateOpeningReceipt(
-        IZkDvp.ProofReceipt memory openingReceipt
+        IEnygmaDvp.ProofReceipt memory openingReceipt
     ) public returns (bool) {
         //     uint256 auctionId 0;
         //     uint256 blindedBid 1;
@@ -493,7 +493,7 @@ contract ZkAuction is IZkAuction, AccessControl {
         uint256 auctionId,
         uint256 winningBid,
         uint256 winningRandom,
-        IZkDvp.ProofReceipt[] memory notWinningBidProofs
+        IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
     ) public returns (bool) {
         // VERIFICATION
 
@@ -566,7 +566,7 @@ contract ZkAuction is IZkAuction, AccessControl {
     ) internal returns (bool) {
         uint256 vaultId = _auctions[auctionId].bidVaultId;
         IAbstractCoinVault vault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(vaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(vaultId)
         );
 
         uint256 treeNumber1 = _auctions[auctionId]
@@ -593,7 +593,7 @@ contract ZkAuction is IZkAuction, AccessControl {
     ) internal returns (uint256) {
         uint256 itemVaultId = _auctions[auctionId].vaultId;
         IAbstractCoinVault itemVault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(itemVaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(itemVaultId)
         );
 
         // Generating uniqueId for item coin
@@ -614,7 +614,7 @@ contract ZkAuction is IZkAuction, AccessControl {
     function _unlockLosersBids(
         uint256 auctionId,
         uint256 winningBlindedBid,
-        IZkDvp.ProofReceipt[] memory notWinningBidProofs
+        IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
     ) internal returns (bool) {
         for (uint i = 0; i < notWinningBidProofs.length; i++) {
             // compute computedBlindedBid[i] = winningBlindedBid - blindedDifferenceBid;
@@ -634,7 +634,7 @@ contract ZkAuction is IZkAuction, AccessControl {
         uint256 bidVaultId = _auctions[auctionId].bidVaultId;
 
         IAbstractCoinVault bidVault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(bidVaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(bidVaultId)
         );
 
         for (uint i = 0; i < 2; i++) {
@@ -655,7 +655,7 @@ contract ZkAuction is IZkAuction, AccessControl {
     ) internal returns (uint256[] memory) {
         uint256 bidVaultId = _auctions[auctionId].bidVaultId;
         IAbstractCoinVault bidVault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(bidVaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(bidVaultId)
         );
 
         // registering new bid coins
@@ -671,7 +671,7 @@ contract ZkAuction is IZkAuction, AccessControl {
         uint256 auctionId,
         uint256 winningBid,
         uint256 winningRandom,
-        IZkDvp.ProofReceipt[] memory notWinningBidProofs
+        IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
     ) internal returns (bool) {
         uint256 winningBlindedBid = IPoseidonWrapper(_hashContractAddress)
             .poseidon([winningBid, winningRandom]);
@@ -734,7 +734,7 @@ contract ZkAuction is IZkAuction, AccessControl {
     ) internal returns (bool) {
         uint256 itemVaultId = _auctions[auctionId].vaultId;
         IAbstractCoinVault itemVault = IAbstractCoinVault(
-            IZkDvp(_zkDvpContractAddress).vaultById(itemVaultId)
+            IEnygmaDvp(_zkDvpContractAddress).vaultById(itemVaultId)
         );
 
         itemVault.unlockCoin(

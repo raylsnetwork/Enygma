@@ -7,11 +7,13 @@ pragma solidity ^0.8.0;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IZkDvp} from "../../interfaces/IZkDvp.sol";
+import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
-import {IEnygmaErc20CoinVault} from "../../interfaces/vaults/IEnygmaErc20CoinVault.sol";
+import {
+    IEnygmaErc20CoinVault
+} from "../../interfaces/vaults/IEnygmaErc20CoinVault.sol";
 
 contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     ///////////////////////////////////////////////
@@ -78,7 +80,7 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     }
 
     function withdrawThroughEnygma(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) public override onlyRole(DEFAULT_ENYGMA_ROLE) returns (bool) {
         uint256 treeNumbersIndex = 1;
         uint256 merkleRootsIndex = 1 + receipt.numberOfInputs;
@@ -113,7 +115,7 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     }
 
     function transfer(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) public override returns (bool) {
         revert NotImplemented();
     }
@@ -121,7 +123,7 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     function withdraw(
         uint256[] memory withdrawParams,
         address recipient,
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) public override returns (bool) {
         revert NotImplemented();
 
@@ -130,7 +132,7 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
 
     function verifyOwnership(
         uint256[] memory params,
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) public override returns (bool) {
         revert NotImplemented();
     }
@@ -149,7 +151,7 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     }
 
     function checkReceiptConditions(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) public view override returns (bool) {
         // jsReceipt.inputs;
         // message;

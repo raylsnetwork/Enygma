@@ -7,19 +7,17 @@ pragma solidity ^0.8.0;
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IZkDvp} from "../../interfaces/IZkDvp.sol";
+import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
 
-
 contract Erc721CoinVault is AbstractCoinVault {
-
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
 
-    uint256 constant public VK_ID_ERC721_1 = 1;
+    uint256 public constant VK_ID_ERC721_1 = 1;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -35,15 +33,15 @@ contract Erc721CoinVault is AbstractCoinVault {
     }
 
     // Standards that are currently supported: ERC20, ERC721, ERC1155
-    function deposit(
-        uint256[] memory params
-    ) public override returns(bool) {
-
-
+    function deposit(uint256[] memory params) public override returns (bool) {
         // Transferring the ERC20 tokens from User to ZkDvp
         uint256 tokenId = params[0];
         uint256 publicKey = params[1];
-        IERC721(_assetContractAddress).transferFrom(msg.sender, address(this), tokenId);
+        IERC721(_assetContractAddress).transferFrom(
+            msg.sender,
+            address(this),
+            tokenId
+        );
 
         uint256[] memory assetParams = new uint256[](2);
         assetParams[0] = tokenId;
@@ -67,10 +65,8 @@ contract Erc721CoinVault is AbstractCoinVault {
     }
 
     function transfer(
-        IZkDvp.ProofReceipt memory receipt
-    ) public override returns (bool){
-
-        
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public override returns (bool) {
         // receipt.inputs;
         // message;
         // treeNumbers[numberOfInputs];
@@ -90,26 +86,23 @@ contract Erc721CoinVault is AbstractCoinVault {
         _insertCommitmentsFromReceipt(receipt);
 
         // Nullifying the old coins
-        _nullifyFromReceipt(receipt);        
+        _nullifyFromReceipt(receipt);
 
         return true;
-
     }
-
-
 
     function withdraw(
         uint256[] memory withdrawParams,
         address recipient,
-        IZkDvp.ProofReceipt memory receipt
-    ) public override returns(bool) {
-//     receipt.statement;
-//     message;
-//     treeNumbers[numberOfInputs];
-//     merkleRoots[numberOfInputs];
-//     nullifiers[numberOfInputs];
-//     commitments[numberOfOutputs];
-        
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public override returns (bool) {
+        //     receipt.statement;
+        //     message;
+        //     treeNumbers[numberOfInputs];
+        //     merkleRoots[numberOfInputs];
+        //     nullifiers[numberOfInputs];
+        //     commitments[numberOfOutputs];
+
         uint256 amount = withdrawParams[0];
 
         uint256 treeNumbersIndex = 1;
@@ -131,29 +124,34 @@ contract Erc721CoinVault is AbstractCoinVault {
         // checking if the computed commitment
         // matches the first commitment in the proof.
 
-        if(receipt.statement[commitmentsIndex] != commitment){
+        if (receipt.statement[commitmentsIndex] != commitment) {
             revert InvalidOpening();
         }
 
         // checking generic JoinSplit proof conditions
 
         checkReceiptConditions(receipt);
-        
+
         // Transfering the tokens from ZkDvp to User
-        IERC721(_assetContractAddress).transferFrom(address(this), recipient, amount);
+        IERC721(_assetContractAddress).transferFrom(
+            address(this),
+            recipient,
+            amount
+        );
 
         // Nullifying the input coins
-        for(uint256 i = 0;i< receipt.numberOfInputs; i++){
+        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
             if (receipt.statement[nullifiersIndex + i] != 0) {
                 setNullifier(
-                    receipt.statement[treeNumbersIndex + i], 
+                    receipt.statement[treeNumbersIndex + i],
                     receipt.statement[nullifiersIndex + i]
                 );
-                 emit Nullifier(_vaultId, 
-                            receipt.statement[treeNumbersIndex + i], 
-                            receipt.statement[nullifiersIndex + i]);
+                emit Nullifier(
+                    _vaultId,
+                    receipt.statement[treeNumbersIndex + i],
+                    receipt.statement[nullifiersIndex + i]
+                );
             }
-
         }
 
         return true;
@@ -161,9 +159,8 @@ contract Erc721CoinVault is AbstractCoinVault {
 
     function verifyOwnership(
         uint256[] memory params_,
-        IZkDvp.ProofReceipt memory receipt_
+        IEnygmaDvp.ProofReceipt memory receipt_
     ) public returns (bool) {
-
         // params:
         // 0: nftId
         // 1: challenge
@@ -177,8 +174,7 @@ contract Erc721CoinVault is AbstractCoinVault {
         // 4 commitment;
         uint256 challenge = receipt_.statement[0];
 
-        IZkDvp(_zkDvpContractAddress).checkAndRegisterChallenge(challenge);
-        
+        IEnygmaDvp(_zkDvpContractAddress).checkAndRegisterChallenge(challenge);
 
         uint256[] memory uparams = new uint256[](1);
         uparams[0] = nftId;
@@ -191,10 +187,10 @@ contract Erc721CoinVault is AbstractCoinVault {
         );
 
         // verifying the corectness of the commitment
-        if(receipt_.statement[4] != commitment){
+        if (receipt_.statement[4] != commitment) {
             revert InvalidOpening();
         }
-        
+
         // checking generic conditions of Ownership receipt.
 
         checkReceiptConditions(receipt_);
@@ -211,7 +207,7 @@ contract Erc721CoinVault is AbstractCoinVault {
     //////////////////////////////////////////////
     function generateUniqueId(
         uint256[] memory params
-    ) public override view returns(uint256) {
+    ) public view override returns (uint256) {
         uint256 nftId = params[0];
         return
             IPoseidonWrapper(_hashContractAddress).poseidon(
@@ -220,9 +216,8 @@ contract Erc721CoinVault is AbstractCoinVault {
     }
 
     function checkReceiptConditions(
-        IZkDvp.ProofReceipt memory receipt
-    ) public override view returns(bool) {
-
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public view override returns (bool) {
         // ownReceipt.inputs:
         // 0 message;
         // 1 treeNumber;
@@ -230,25 +225,19 @@ contract Erc721CoinVault is AbstractCoinVault {
         // 3 nullifier;
         // 4 commitment;
 
-        if(!isValidRoot(
-                        receipt.statement[1],
-                        receipt.statement[2]
-                    )){
+        if (!isValidRoot(receipt.statement[1], receipt.statement[2])) {
             revert InvalidMerkleRoot();
         }
 
-        if(isValidNullifier(
-                receipt.statement[1],
-                receipt.statement[3]
-            )){
+        if (isValidNullifier(receipt.statement[1], receipt.statement[3])) {
             revert InvalidNullifier();
         }
 
         IVerifier(_verifierContractAddress).verifyProof(
-            VK_ID_ERC721_1, receipt.proof, receipt.statement
+            VK_ID_ERC721_1,
+            receipt.proof,
+            receipt.statement
         );
         return true;
     }
-
-
 }

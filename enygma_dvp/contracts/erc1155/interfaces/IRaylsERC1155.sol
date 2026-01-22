@@ -5,7 +5,6 @@ pragma solidity ^0.8.0;
 // pragma abicoder v2;
 
 interface IRaylsERC1155 {
-
     /////////////////////////////////////////
     //               Errors
     /////////////////////////////////////////
@@ -25,30 +24,30 @@ interface IRaylsERC1155 {
     /////////////////////////////////////////
     //               Enums
     /////////////////////////////////////////
-    enum TokenFungibility{
+    enum TokenFungibility {
         FUNGIBLE,
         NON_FUNGIBLE
     }
 
-    enum TokenType{
+    enum TokenType {
         NORMAL,
         SUB_TOKEN, // has been used in a metadata-structure
         META_TOKEN_BOND,
         META_TOKEN_DLC
-        // TODO:: add new instrument here
     }
+    // TODO:: add new instrument here
 
-    enum TokenState{
+    enum TokenState {
         NOT_EXIST,
         REGISTERED,
         FROZEN
-        // TODO:: add new state if needed
     }
+    // TODO:: add new state if needed
 
     /////////////////////////////////////////
     //     Token metadata structure
     /////////////////////////////////////////
-    struct Metadata{
+    struct Metadata {
         TokenType tType;
         TokenState tState;
         TokenFungibility tFungibility;
@@ -78,16 +77,16 @@ interface IRaylsERC1155 {
     /////////////////////////////////////////
 
     function mint(
-        address _to, 
-        uint256 _id, 
-        uint256 _value, 
+        address _to,
+        uint256 _id,
+        uint256 _value,
         bytes memory _data
     ) external;
 
     function mintBatch(
-        address _to, 
-        uint256[] memory _ids, 
-        uint256[] memory _values, 
+        address _to,
+        uint256[] memory _ids,
+        uint256[] memory _values,
         bytes memory _data
     ) external;
 
@@ -102,42 +101,29 @@ interface IRaylsERC1155 {
         uint256 offchainId,
         uint256 maxTotalSupply,
         uint256 decimals,
-        uint256[] memory subTokenIds, 
+        uint256[] memory subTokenIds,
         uint256[] memory subTokenValues,
         bytes memory data, // reserved
         uint256[] memory additionalAttrs // reserved for more complex type of MetaTokens
     ) external returns (bool);
 
     // generates tokenId based on token's metadata
-    function tokenId(
-        Metadata memory
-    ) external pure returns (uint256);
+    function tokenId(Metadata memory) external pure returns (uint256);
 
+    // returns token's type
+    function tokenType(uint256 tokenId) external view returns (TokenType);
 
-    // returns token's type 
-    function tokenType(
-        uint256 tokenId
-    ) external view returns (TokenType);
-
-    // returns token's state 
-    function tokenState(
-        uint256 tokenId
-    ) external view returns (TokenState);
+    // returns token's state
+    function tokenState(uint256 tokenId) external view returns (TokenState);
 
     // simpler interface to check the fungibility of the token
-    function isFungible(
-        uint256 _tokenId
-    ) external view returns (bool);
+    function isFungible(uint256 _tokenId) external view returns (bool);
 
-
-    // returns token's fungibility 
+    // returns token's fungibility
     function tokenFungibility(
         uint256 tokenId
     ) external view returns (TokenFungibility);
 
-
-    // returns token's metadata 
-    function metadata(
-        uint256 tokenId
-    ) external view returns (Metadata memory);
+    // returns token's metadata
+    function metadata(uint256 tokenId) external view returns (Metadata memory);
 }

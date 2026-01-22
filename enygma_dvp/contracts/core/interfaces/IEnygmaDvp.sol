@@ -3,7 +3,7 @@
 
 pragma solidity ^0.8.0;
 
-interface IZkDvp {
+interface IEnygmaDvp {
     ///////////////////////////////////////////////
     //                  Structs
     //////////////////////////////////////////////
@@ -79,7 +79,7 @@ interface IZkDvp {
         uint256 auctioneerItemPublicKey;
         uint256 sellerFundPublicKey;
         uint256 auctionEndsAtblock;
-        IZkDvp.ProofReceipt itemProof;
+        IEnygmaDvp.ProofReceipt itemProof;
         uint256 numberOfSubmittedBids;
         uint256 numberOfOpenedBids;
         mapping(uint256 => AuctionBidData) bids;
@@ -229,7 +229,7 @@ interface IZkDvp {
         uint256 indexed vaultId,
         uint256 indexed groupId,
         uint256 indexed targetReceiptId,
-        IZkDvp.ProofReceipt pendingProof
+        IEnygmaDvp.ProofReceipt pendingProof
     );
 
     event Settled(uint256 indexed receiptId1, uint256 indexed receiptId2);

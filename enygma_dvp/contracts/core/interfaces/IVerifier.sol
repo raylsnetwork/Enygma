@@ -3,24 +3,22 @@
 
 pragma solidity ^0.8.0;
 
-import {IZkDvp} from "../interfaces/IZkDvp.sol";
+import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
 
 interface IVerifier {
-
     error MaxNumberOfCircuitsExceeded();
 
     function initializeVerifier(
-        address groth16Verifier_ 
+        address groth16Verifier_
     ) external returns (bool);
 
     function addVerificationKey(
-        IZkDvp.VerifyingKey memory vKey_
-    ) external returns(bool);
+        IEnygmaDvp.VerifyingKey memory vKey_
+    ) external returns (bool);
 
     function verifyProof(
-        uint256 verificationKeyIndex, 
-        IZkDvp.SnarkProof memory proof, 
+        uint256 verificationKeyIndex,
+        IEnygmaDvp.SnarkProof memory proof,
         uint256[] memory inputs
-    )external view returns(bool);
-
+    ) external view returns (bool);
 }

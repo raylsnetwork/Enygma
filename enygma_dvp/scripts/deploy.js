@@ -1,5 +1,5 @@
 const hre = require("hardhat");
-const dvpConf = require("../zkdvp.config.json");
+const dvpConf = require("../enygmadvp.config.json");
 var path = require("path");
 const jsWeb3 = require("../src/web3.js");
 const jsUtils = require("../src/core/utils.js");
@@ -19,7 +19,7 @@ async function deploy() {
 
   const PoseidonT3Fatory = await hre.ethers.getContractFactory(
     "PoseidonT3",
-    owner
+    owner,
   );
   const poseidonT3Contract = await PoseidonT3Fatory.deploy();
   const posTxn = await poseidonT3Contract.deployTransaction.wait();
@@ -32,13 +32,14 @@ async function deploy() {
 
   const g16VerifierFactory = await hre.ethers.getContractFactory(
     "GenericGroth16Verifier",
-    owner
+    owner,
   );
   const g16VerifierContract = await g16VerifierFactory.deploy();
   const g16VerifierTxn = await g16VerifierContract.deployTransaction.wait();
 
   console.log(
-    "GenericGroth16Verifier has been deployed to " + g16VerifierContract.address
+    "GenericGroth16Verifier has been deployed to " +
+      g16VerifierContract.address,
   );
 
   /////////////////////////////////////////////////
@@ -46,7 +47,7 @@ async function deploy() {
 
   const verifierFactory = await hre.ethers.getContractFactory(
     "Verifier",
-    owner
+    owner,
   );
   const verifierContract = await verifierFactory.deploy();
   const verifierTxn = await verifierContract.deployTransaction.wait();
@@ -59,12 +60,16 @@ async function deploy() {
 
   const privateMintVerifierFactory = await hre.ethers.getContractFactory(
     "PrivateMintVerifier",
-    owner
+    owner,
   );
   const privateMintVerifierContract = await privateMintVerifierFactory.deploy();
-  const privateMintVerifierTxn = await privateMintVerifierContract.deployTransaction.wait();
+  const privateMintVerifierTxn =
+    await privateMintVerifierContract.deployTransaction.wait();
 
-  console.log("PrivateMintVerifier has been deployed to " + privateMintVerifierContract.address);
+  console.log(
+    "PrivateMintVerifier has been deployed to " +
+      privateMintVerifierContract.address,
+  );
   receiptsData["PrivateMintVerifier"] = privateMintVerifierTxn;
 
   /////////////////////////////////////////////////
@@ -77,28 +82,28 @@ async function deploy() {
         PoseidonT3: poseidonT3Contract.address,
       },
     },
-    owner
+    owner,
   );
   const poseidonWrapperContract = await poseidonWrapperFactory.deploy();
   const posWrptxn = await poseidonWrapperContract.deployTransaction.wait();
 
   console.log(
-    "poseidonWrapper has been deployed to " + poseidonWrapperContract.address
+    "poseidonWrapper has been deployed to " + poseidonWrapperContract.address,
   );
   receiptsData["PoseidonWrapper"] = posWrptxn;
 
   /////////////////////////////////////////////////
-  console.log("Deploying ZkDvp smart contract...");
+  console.log("Deploying EnygmaDvp smart contract...");
 
-  const zkDvpFactory = await hre.ethers.getContractFactory("ZkDvp");
-  const zkDvpContract = await zkDvpFactory.deploy(
+  const enygmaDvpFactory = await hre.ethers.getContractFactory("EnygmaDvp");
+  const enygmaDvpContract = await enygmaDvpFactory.deploy(
     poseidonWrapperContract.address,
-    g16VerifierContract.address
+    g16VerifierContract.address,
   );
 
-  const dvpTxn = await zkDvpContract.deployTransaction.wait();
-  console.log("zkDvp has been deployed to " + zkDvpContract.address);
-  receiptsData["ZkDvp"] = dvpTxn;
+  const dvpTxn = await enygmaDvpContract.deployTransaction.wait();
+  console.log("enygmaDvp has been deployed to " + enygmaDvpContract.address);
+  receiptsData["EnygmaDvp"] = dvpTxn;
   receiptsData["G16Verifier"] = g16VerifierTxn;
 
   /////////////////////////////////////////////////
@@ -124,61 +129,86 @@ async function deploy() {
   receiptsData["ERC1155"] = erc1155Txn;
 
   /////////////////////////////////////////////////
-  const erc20CoinVaultFactory = await hre.ethers.getContractFactory("Erc20CoinVault");
+  const erc20CoinVaultFactory = await hre.ethers.getContractFactory(
+    "Erc20CoinVault",
+  );
   const erc20CoinVaultContract = await erc20CoinVaultFactory.deploy(
-    zkDvpContract.address
+    enygmaDvpContract.address,
   );
-  const erc20CoinVaultTxn = await erc20CoinVaultContract.deployTransaction.wait();
+  const erc20CoinVaultTxn =
+    await erc20CoinVaultContract.deployTransaction.wait();
   receiptsData["Erc20CoinVault"] = erc20CoinVaultTxn;
-  console.log(`Erc20CoinVault has been deployed to ` + erc20CoinVaultContract.address);
+  console.log(
+    `Erc20CoinVault has been deployed to ` + erc20CoinVaultContract.address,
+  );
   /////////////////////////////////////////////////
-  const erc721CoinVaultFactory = await hre.ethers.getContractFactory("Erc721CoinVault");
+  const erc721CoinVaultFactory = await hre.ethers.getContractFactory(
+    "Erc721CoinVault",
+  );
   const erc721CoinVaultContract = await erc721CoinVaultFactory.deploy(
-    zkDvpContract.address
+    enygmaDvpContract.address,
   );
-  const erc721CoinVaultTxn = await erc721CoinVaultContract.deployTransaction.wait();
+  const erc721CoinVaultTxn =
+    await erc721CoinVaultContract.deployTransaction.wait();
   receiptsData["Erc721CoinVault"] = erc721CoinVaultTxn;
-  console.log(`Erc721CoinVault has been deployed to ` + erc721CoinVaultContract.address);
+  console.log(
+    `Erc721CoinVault has been deployed to ` + erc721CoinVaultContract.address,
+  );
   /////////////////////////////////////////////////
-  const erc1155CoinVaultFactory = await hre.ethers.getContractFactory("Erc1155CoinVault");
+  const erc1155CoinVaultFactory = await hre.ethers.getContractFactory(
+    "Erc1155CoinVault",
+  );
   const erc1155CoinVaultContract = await erc1155CoinVaultFactory.deploy(
-    zkDvpContract.address
+    enygmaDvpContract.address,
   );
-  const erc1155CoinVaultTxn = await erc1155CoinVaultContract.deployTransaction.wait();
+  const erc1155CoinVaultTxn =
+    await erc1155CoinVaultContract.deployTransaction.wait();
   receiptsData["Erc1155CoinVault"] = erc1155CoinVaultTxn;
-  console.log(`Erc1155CoinVault has been deployed to ` + erc1155CoinVaultContract.address);
-  /////////////////////////////////////////////////
-  const enygmaCoinVaultFactory = await hre.ethers.getContractFactory("EnygmaErc20CoinVault");
-  const enygmaCoinVaultContract = await enygmaCoinVaultFactory.deploy(
-    zkDvpContract.address
+  console.log(
+    `Erc1155CoinVault has been deployed to ` + erc1155CoinVaultContract.address,
   );
-  const enygmaCoinVaultTxn = await enygmaCoinVaultContract.deployTransaction.wait();
+  /////////////////////////////////////////////////
+  const enygmaCoinVaultFactory = await hre.ethers.getContractFactory(
+    "EnygmaErc20CoinVault",
+  );
+  const enygmaCoinVaultContract = await enygmaCoinVaultFactory.deploy(
+    enygmaDvpContract.address,
+  );
+  const enygmaCoinVaultTxn =
+    await enygmaCoinVaultContract.deployTransaction.wait();
   receiptsData["EnygmaErc20CoinVault"] = enygmaCoinVaultTxn;
-  console.log(`EnygmaErc20CoinVault has been deployed to ` + enygmaCoinVaultContract.address);
+  console.log(
+    `EnygmaErc20CoinVault has been deployed to ` +
+      enygmaCoinVaultContract.address,
+  );
   /////////////////////////////////////////////////
 
+  const assetGroupFactory = await hre.ethers.getContractFactory("AssetGroup");
 
-    const assetGroupFactory = await hre.ethers.getContractFactory("AssetGroup");
-    
-    // deploying two default assetGroups for fungibility and non-fungibility
+  // deploying two default assetGroups for fungibility and non-fungibility
 
-    // Deploying FungiibleAssetGroup
-    const fungibleGroupContract = await assetGroupFactory.deploy(
-      zkDvpContract.address
-    );
-    const fungibleGroupTxn = await fungibleGroupContract.deployTransaction.wait();
-    console.log(`FungibleAssetGroup has been deployed to ` + fungibleGroupContract.address);
-    receiptsData["FungibleAssetGroup"] = fungibleGroupTxn;
-    // Deploying NonFungibleAssetGroup
-    
-    const nonFungibleGroupContract = await assetGroupFactory.deploy(
-      zkDvpContract.address
-    );
-    const nonfungibleGroupTxn = await nonFungibleGroupContract.deployTransaction.wait();
-    console.log(`NonFungibleAssetGroup has been deployed to ` + nonFungibleGroupContract.address);
-    receiptsData["NonFungibleAssetGroup"] = nonfungibleGroupTxn;
-    /////////////////////////////////////////////////
+  // Deploying FungiibleAssetGroup
+  const fungibleGroupContract = await assetGroupFactory.deploy(
+    enygmaDvpContract.address,
+  );
+  const fungibleGroupTxn = await fungibleGroupContract.deployTransaction.wait();
+  console.log(
+    `FungibleAssetGroup has been deployed to ` + fungibleGroupContract.address,
+  );
+  receiptsData["FungibleAssetGroup"] = fungibleGroupTxn;
+  // Deploying NonFungibleAssetGroup
 
+  const nonFungibleGroupContract = await assetGroupFactory.deploy(
+    enygmaDvpContract.address,
+  );
+  const nonfungibleGroupTxn =
+    await nonFungibleGroupContract.deployTransaction.wait();
+  console.log(
+    `NonFungibleAssetGroup has been deployed to ` +
+      nonFungibleGroupContract.address,
+  );
+  receiptsData["NonFungibleAssetGroup"] = nonfungibleGroupTxn;
+  /////////////////////////////////////////////////
 
   jsUtils.writeToJson("./build/receipts.json", receiptsData);
 

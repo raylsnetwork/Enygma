@@ -4,18 +4,21 @@
 pragma solidity ^0.8.0;
 // pragma abicoder v2;
 
-import {IZkDvp} from "../interfaces/IZkDvp.sol";
+import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
 
 contract GenericGroth16Verifier {
-  uint256 constant SNARK_SCALAR_FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+    uint256 constant SNARK_SCALAR_FIELD =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     uint256 private constant PRIME_Q =
         21888242871839275222246405745257275088696311157297823662689037894645226208583;
     uint256 private constant PAIRING_INPUT_SIZE = 24;
     uint256 private constant PAIRING_INPUT_WIDTH = 768; // PAIRING_INPUT_SIZE * 32
 
-    function negate(IZkDvp.G1Point memory p) public pure returns (IZkDvp.G1Point memory) {
-        if (p.x == 0 && p.y == 0) return IZkDvp.G1Point(0, 0);
+    function negate(
+        IEnygmaDvp.G1Point memory p
+    ) public pure returns (IEnygmaDvp.G1Point memory) {
+        if (p.x == 0 && p.y == 0) return IEnygmaDvp.G1Point(0, 0);
 
         uint256 rh = mulmod(p.x, p.x, PRIME_Q);
         rh = mulmod(rh, p.x, PRIME_Q);
@@ -23,14 +26,13 @@ contract GenericGroth16Verifier {
         uint256 lh = mulmod(p.y, p.y, PRIME_Q);
         require(lh == rh, "Snark: ");
 
-        return IZkDvp.G1Point(p.x, PRIME_Q - (p.y % PRIME_Q));
+        return IEnygmaDvp.G1Point(p.x, PRIME_Q - (p.y % PRIME_Q));
     }
 
-    function add(IZkDvp.G1Point memory p1, IZkDvp.G1Point memory p2)
-        public
-        view
-        returns (IZkDvp.G1Point memory)
-    {
+    function add(
+        IEnygmaDvp.G1Point memory p1,
+        IEnygmaDvp.G1Point memory p2
+    ) public view returns (IEnygmaDvp.G1Point memory) {
         uint256[4] memory input;
         input[0] = p1.x;
         input[1] = p1.y;
@@ -38,7 +40,7 @@ contract GenericGroth16Verifier {
         input[3] = p2.y;
 
         bool success;
-        IZkDvp.G1Point memory result;
+        IEnygmaDvp.G1Point memory result;
 
         // solhint-disable-next-line no-inline-assembly
         assembly {
@@ -56,11 +58,10 @@ contract GenericGroth16Verifier {
         return result;
     }
 
-    function scalarMul(IZkDvp.G1Point memory p, uint256 s)
-        public
-        view
-        returns (IZkDvp.G1Point memory r)
-    {
+    function scalarMul(
+        IEnygmaDvp.G1Point memory p,
+        uint256 s
+    ) public view returns (IEnygmaDvp.G1Point memory r) {
         uint256[3] memory input;
         input[0] = p.x;
         input[1] = p.y;
@@ -75,14 +76,14 @@ contract GenericGroth16Verifier {
     }
 
     function pairing(
-        IZkDvp.G1Point memory _a1,
-        IZkDvp.G2Point memory _a2,
-        IZkDvp.G1Point memory _b1,
-        IZkDvp.G2Point memory _b2,
-        IZkDvp.G1Point memory _c1,
-        IZkDvp.G2Point memory _c2,
-        IZkDvp.G1Point memory _d1,
-        IZkDvp.G2Point memory _d2
+        IEnygmaDvp.G1Point memory _a1,
+        IEnygmaDvp.G2Point memory _a2,
+        IEnygmaDvp.G1Point memory _b1,
+        IEnygmaDvp.G2Point memory _b2,
+        IEnygmaDvp.G1Point memory _c1,
+        IEnygmaDvp.G2Point memory _c2,
+        IEnygmaDvp.G1Point memory _d1,
+        IEnygmaDvp.G2Point memory _d2
     ) public view returns (bool) {
         uint256[PAIRING_INPUT_SIZE] memory input = [
             _a1.x,
@@ -131,12 +132,15 @@ contract GenericGroth16Verifier {
     }
 
     function verify(
-        IZkDvp.VerifyingKey memory _vk,
-        IZkDvp.SnarkProof memory _proof,
+        IEnygmaDvp.VerifyingKey memory _vk,
+        IEnygmaDvp.SnarkProof memory _proof,
         uint256[] memory _input
     ) public view returns (bool) {
-        require(_input.length + 1 == _vk.ic.length, "verifier-bad-statement-length");
-        IZkDvp.G1Point memory vkX = IZkDvp.G1Point(0, 0);
+        require(
+            _input.length + 1 == _vk.ic.length,
+            "verifier-bad-statement-length"
+        );
+        IEnygmaDvp.G1Point memory vkX = IEnygmaDvp.G1Point(0, 0);
         for (uint256 i = 0; i < _input.length; i++) {
             require(
                 _input[i] < SNARK_SCALAR_FIELD,

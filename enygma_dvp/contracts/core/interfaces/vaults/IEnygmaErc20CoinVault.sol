@@ -3,13 +3,13 @@
 
 pragma solidity ^0.8.0;
 
-import {IZkDvp} from "../IZkDvp.sol";
+import {IEnygmaDvp} from "../IEnygmaDvp.sol";
 interface IEnygmaErc20CoinVault {
     function depositThroughEnygma(
         uint256[] memory depositParams
     ) external virtual returns (bool, uint256);
 
     function withdrawThroughEnygma(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) external virtual returns (bool);
 }

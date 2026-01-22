@@ -3,8 +3,8 @@
 
 pragma solidity ^0.8.0;
 
-import {IZkDvp} from "./IZkDvp.sol";
-interface IZkAuction {
+import {IEnygmaDvp} from "./IEnygmaDvp.sol";
+interface IEnygmaAuction {
     enum AuctionStateEnum {
         AUCTION_INACTIVE,
         AUCTION_BIDDING,
@@ -33,7 +33,7 @@ interface IZkAuction {
         uint256 auctioneerItemPublicKey;
         uint256 sellerFundPublicKey;
         uint256 auctionEndsAtblock;
-        IZkDvp.ProofReceipt itemProof;
+        IEnygmaDvp.ProofReceipt itemProof;
         uint256 numberOfSubmittedBids;
         uint256 numberOfOpenedBids;
         mapping(uint256 => AuctionBidData) bids;
@@ -173,12 +173,12 @@ interface IZkAuction {
         uint256 itemGroupId,
         uint256 bidGroupId,
         uint256 sellerFundCoinPublicKey,
-        IZkDvp.ProofReceipt memory auctionInitReceipt
+        IEnygmaDvp.ProofReceipt memory auctionInitReceipt
     ) external returns (bool);
 
     // Called by bidder through RELAYER
     function submitBid(
-        IZkDvp.ProofReceipt memory bidProof,
+        IEnygmaDvp.ProofReceipt memory bidProof,
         uint256 receivingPublicKey
     ) external returns (bool);
 
@@ -190,7 +190,7 @@ interface IZkAuction {
     ) external returns (bool);
 
     function privateOpeningReceipt(
-        IZkDvp.ProofReceipt memory openingProof
+        IEnygmaDvp.ProofReceipt memory openingProof
     ) external returns (bool);
 
     // Called by auctioneer (ZkDvp owner)
@@ -198,7 +198,7 @@ interface IZkAuction {
         uint256 auctionId,
         uint256 winningBid,
         uint256 winningRandom,
-        IZkDvp.ProofReceipt[] memory notWinningBidProofs
+        IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
     ) external returns (bool);
 
     function getBid(

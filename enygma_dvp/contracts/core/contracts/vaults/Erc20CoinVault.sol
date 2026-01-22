@@ -7,20 +7,18 @@ pragma solidity ^0.8.0;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IZkDvp} from "../../interfaces/IZkDvp.sol";
+import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
-
 
 contract Erc20CoinVault is AbstractCoinVault {
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
 
-    uint256 constant public VK_ID_ERC20_JOINSPLIT = 0;
-    uint256 constant public VK_ID_ERC20_10INPUT = 6;
-
+    uint256 public constant VK_ID_ERC20_JOINSPLIT = 0;
+    uint256 public constant VK_ID_ERC20_10INPUT = 6;
 
     ///////////////////////////////////////////////
     //              Constructor
@@ -36,13 +34,15 @@ contract Erc20CoinVault is AbstractCoinVault {
     }
 
     // Standards that are currently supported: ERC20, ERC721, ERC1155
-    function deposit(
-        uint256[] memory params
-    ) public override returns(bool) {
+    function deposit(uint256[] memory params) public override returns (bool) {
         // Transferring the ERC20 tokens from User to ZkDvp
         uint256 amount = params[0];
         uint256 publicKey = params[1];
-        IERC20(_assetContractAddress).transferFrom(msg.sender, address(this), amount);
+        IERC20(_assetContractAddress).transferFrom(
+            msg.sender,
+            address(this),
+            amount
+        );
 
         uint256[] memory assetParams = new uint256[](2);
         assetParams[0] = amount;
@@ -65,12 +65,9 @@ contract Erc20CoinVault is AbstractCoinVault {
         return true;
     }
 
-
     function transfer(
-        IZkDvp.ProofReceipt memory receipt
-    ) public override returns (bool){
-
-
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public override returns (bool) {
         // jsReceipt.inputs;
         // message;
         // treeNumbers[numberOfInputs];
@@ -90,7 +87,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         _insertCommitmentsFromReceipt(receipt);
 
         // Nullifying the old coins
-        _nullifyFromReceipt(receipt);        
+        _nullifyFromReceipt(receipt);
 
         return true;
     }
@@ -98,15 +95,15 @@ contract Erc20CoinVault is AbstractCoinVault {
     function withdraw(
         uint256[] memory withdrawParams,
         address recipient,
-        IZkDvp.ProofReceipt memory receipt
-    ) public override returns(bool) {
-//     receipt.statement;
-//     message;
-//     treeNumbers[numberOfInputs];
-//     merkleRoots[numberOfInputs];
-//     nullifiers[numberOfInputs];
-//     commitments[numberOfOutputs];
-        
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public override returns (bool) {
+        //     receipt.statement;
+        //     message;
+        //     treeNumbers[numberOfInputs];
+        //     merkleRoots[numberOfInputs];
+        //     nullifiers[numberOfInputs];
+        //     commitments[numberOfOutputs];
+
         uint256 amount = withdrawParams[0];
 
         uint256 treeNumbersIndex = 1;
@@ -128,28 +125,29 @@ contract Erc20CoinVault is AbstractCoinVault {
         // checking if the computed commitment
         // matches the first commitment in the proof.
 
-        if(receipt.statement[commitmentsIndex] != commitment){
+        if (receipt.statement[commitmentsIndex] != commitment) {
             revert InvalidOpening();
         }
 
         // checking generic JoinSplit proof conditions
 
         checkReceiptConditions(receipt);
-        
+
         // Transfering the tokens from ZkDvp to User
         IERC20(_assetContractAddress).transfer(recipient, amount);
 
         // Nullifying the input coins
-        for(uint256 i = 0;i< receipt.numberOfInputs; i++){
+        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
             if (receipt.statement[nullifiersIndex + i] != 0) {
                 setNullifier(
-                    receipt.statement[treeNumbersIndex + i], 
+                    receipt.statement[treeNumbersIndex + i],
                     receipt.statement[nullifiersIndex + i]
                 );
-                 emit Nullifier(_vaultId, 
-                            receipt.statement[treeNumbersIndex + i], 
-                            receipt.statement[nullifiersIndex + i]);
-
+                emit Nullifier(
+                    _vaultId,
+                    receipt.statement[treeNumbersIndex + i],
+                    receipt.statement[nullifiersIndex + i]
+                );
             }
         }
 
@@ -161,7 +159,7 @@ contract Erc20CoinVault is AbstractCoinVault {
     //////////////////////////////////////////////
     function generateUniqueId(
         uint256[] memory params
-    ) public override view returns(uint256) {
+    ) public view override returns (uint256) {
         uint256 amount = params[0];
         return
             IPoseidonWrapper(_hashContractAddress).poseidon(
@@ -170,9 +168,8 @@ contract Erc20CoinVault is AbstractCoinVault {
     }
 
     function checkReceiptConditions(
-        IZkDvp.ProofReceipt memory receipt
-    ) public override view returns(bool) {
-
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public view override returns (bool) {
         // jsReceipt.inputs;
         // message;
         // treeNumbers[numberOfInputs];
@@ -191,44 +188,49 @@ contract Erc20CoinVault is AbstractCoinVault {
         // to avoid entering the same coins' commitments in the
         // two input slots.
 
-        if(receipt.statement[jCommitmentsIndex] == receipt.statement[jCommitmentsIndex + 1]){
+        if (
+            receipt.statement[jCommitmentsIndex] ==
+            receipt.statement[jCommitmentsIndex + 1]
+        ) {
             revert JoinSplitWithSameCommitments();
         }
 
-        for(uint i = 0; i < jInputSize; i++){
-            if(receipt.statement[jRootsIndex + i ] != 0){
-                if(!isValidRoot(
+        for (uint i = 0; i < jInputSize; i++) {
+            if (receipt.statement[jRootsIndex + i] != 0) {
+                if (
+                    !isValidRoot(
                         receipt.statement[jTreeNumbersIndex + i],
                         receipt.statement[jRootsIndex + i]
-                    ))
-                {
+                    )
+                ) {
                     revert InvalidMerkleRoot();
                 }
 
-                if(isValidNullifier(
+                if (
+                    isValidNullifier(
                         receipt.statement[jTreeNumbersIndex + i],
                         receipt.statement[jNullifiersIndex + i]
-                    ))
-                {
+                    )
+                ) {
                     revert InvalidNullifier();
                 }
-
             }
-
         }
 
-
-        if(receipt.numberOfInputs != 2 && receipt.numberOfInputs != 10){
+        if (receipt.numberOfInputs != 2 && receipt.numberOfInputs != 10) {
             revert InvalidNumberOfInputs();
         }
-        if(receipt.numberOfInputs == 2){
+        if (receipt.numberOfInputs == 2) {
             IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_JOINSPLIT, receipt.proof, receipt.statement
+                VK_ID_ERC20_JOINSPLIT,
+                receipt.proof,
+                receipt.statement
             );
-        }
-        else{
+        } else {
             IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_10INPUT, receipt.proof, receipt.statement
+                VK_ID_ERC20_10INPUT,
+                receipt.proof,
+                receipt.statement
             );
         }
 
@@ -237,9 +239,8 @@ contract Erc20CoinVault is AbstractCoinVault {
 
     function verifyOwnership(
         uint256[] memory params_,
-        IZkDvp.ProofReceipt memory receipt_
-    ) public override returns (bool){
-
+        IEnygmaDvp.ProofReceipt memory receipt_
+    ) public override returns (bool) {
         // params:
         // 0: amount
         uint256 amount = params_[0];
@@ -252,7 +253,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         // 4 commitment;
         uint256 challenge = receipt_.statement[0];
 
-        IZkDvp(_zkDvpContractAddress).checkAndRegisterChallenge(challenge);
+        IEnygmaDvp(_zkDvpContractAddress).checkAndRegisterChallenge(challenge);
 
         uint256[] memory uparams = new uint256[](2);
         uparams[0] = amount;
@@ -263,7 +264,7 @@ contract Erc20CoinVault is AbstractCoinVault {
             [uid, uint256(uint160(0))]
         );
 
-        if(receipt_.statement[4] != commitment){
+        if (receipt_.statement[4] != commitment) {
             revert InvalidOpening();
         }
 

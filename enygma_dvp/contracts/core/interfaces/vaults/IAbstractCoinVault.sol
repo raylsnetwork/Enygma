@@ -3,15 +3,13 @@
 
 pragma solidity ^0.8.0;
 
-import {IZkDvp} from "../IZkDvp.sol";
+import {IEnygmaDvp} from "../IEnygmaDvp.sol";
 
 interface IAbstractCoinVault {
-
-
     // Getting fired whenever a new nullifier is set
     // treeId: the ID of the asset and degisnated merkleTree
     // treeNumber: the sub-tree number.
-    // nullifier: the nullifier value that has been registered. 
+    // nullifier: the nullifier value that has been registered.
     event Nullifier(
         uint256 indexed vaultId,
         uint256 indexed treeNumber,
@@ -20,10 +18,7 @@ interface IAbstractCoinVault {
 
     // Getting fired Whenever a new commitment
     // is generated and added to on-chain merkleTree
-    event Commitment(
-        uint256 indexed vaultId, 
-        uint256 indexed commitment
-    );
+    event Commitment(uint256 indexed vaultId, uint256 indexed commitment);
 
     event CoinLocked(
         uint256 indexed vaultId,
@@ -44,9 +39,7 @@ interface IAbstractCoinVault {
         uint256 amount
     );
 
-    event PendingProofAdded(
-        IZkDvp.ProofReceipt pendingProof
-    );
+    event PendingProofAdded(IEnygmaDvp.ProofReceipt pendingProof);
 
     error RottenChallenge();
     error InvalidOpening();
@@ -76,14 +69,17 @@ interface IAbstractCoinVault {
     function getVerifierContractAddress() external view returns (address);
     function getNumberOfAssetIdentifiers() external view returns (uint256);
     function getRoot() external view returns (uint256 root);
-    function verifyRoot(uint256 treeNumber, uint256 root) external view returns(bool);
+    function verifyRoot(
+        uint256 treeNumber,
+        uint256 root
+    ) external view returns (bool);
 
     function initializeVault(
         // string memory assetSymbol,
         // string memory assetStandard,
-        uint256 vaultId, 
-        uint256 numberOfAssetIdentifiers, 
-        address assetContractAddress, 
+        uint256 vaultId,
+        uint256 numberOfAssetIdentifiers,
+        address assetContractAddress,
         uint256 treeDepth,
         address hashContractAddress,
         address verifierContractAddress,
@@ -91,8 +87,8 @@ interface IAbstractCoinVault {
     ) external returns (bool);
 
     function nullifyFromReceipt(
-        IZkDvp.ProofReceipt memory receipt
-    ) external returns (bool); 
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external returns (bool);
 
     function registerCoins(
         uint256[] memory commitments
@@ -111,58 +107,53 @@ interface IAbstractCoinVault {
     function nullifyCoin(
         uint256 treeNumber,
         uint256 nullifier
-    )external returns (bool); 
+    ) external returns (bool);
 
     function insertCommitmentsFromReceipt(
-        IZkDvp.ProofReceipt memory receipt
-    ) external returns (bool); 
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external returns (bool);
 
     function unlockFromReceipt(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
     /////////////////////////////////
     // Virtual functions
     /////////////////////////////////
 
-    function deposit(
-        uint256[] memory depositParams
-    ) external returns (bool); 
+    function deposit(uint256[] memory depositParams) external returns (bool);
 
     function transfer(
-        IZkDvp.ProofReceipt memory receipt
-    ) external returns (bool); 
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external returns (bool);
 
     function withdraw(
         uint256[] memory withdrawParams,
         address recipient,
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
 
     function generateUniqueId(
         uint256[] memory assetIdentifiers
-    ) external view returns(uint256);
-   
+    ) external view returns (uint256);
+
     function checkReceiptConditions(
-        IZkDvp.ProofReceipt memory receipt
-    ) external view returns (bool); 
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external view returns (bool);
 
     function verifyOwnership(
         uint256[] memory params,
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
 
     function addPendingProofReceipt(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
-
 
     function getPendingProofReceipt(
         uint256 receiptUniqueId
-    ) external returns (IZkDvp.ProofReceipt memory receipt);
-
+    ) external returns (IEnygmaDvp.ProofReceipt memory receipt);
 
     function checkRegisterBrokerProofConditions(
-        IZkDvp.ProofReceipt memory receipt
+        IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
-
 }
