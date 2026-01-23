@@ -38,7 +38,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     uint256 constant MAX_NUMBER_OF_GROUPS = 1000;
 
     // Index of verification keys that has been
-    // used directly in ZkdDvp
+    // used directly in EnygmadDvp
     uint256 public constant VK_ID_AUCTION_INIT = 6;
     uint256 public constant VK_ID_AUCTION_BID = 7;
     uint256 public constant VK_ID_AUCTION_NOT_WINNING_BID = 9;
@@ -57,7 +57,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     //           Private attributes
     //////////////////////////////////////////////
 
-    // name identifier for ZkDvp smart contract
+    // name identifier forEnygmaDvp smart contract
     string private _name;
 
     // the address of PoseidonWrapper smart contract
@@ -66,7 +66,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     // and utilizes the generic Gorth16 verifier smart contract
     address private _verifierContractAddress;
 
-    address private _zkDvpContractAddress;
+    address private _enygmaDvpContractAddress;
 
     mapping(uint256 => AuctionData) private _auctions;
     mapping(uint256 => bool) private _rottenChallenges;
@@ -80,11 +80,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     // hashContractAddress: poseidon Wrapper contract address
     // genericVerifierContractAddress: Groth16 generic verifier address.
     // TODO:: some form of verification is needed
-    constructor(address zkDvpContractAddress) AccessControl() {
-        _name = "ZkAuction smart contract";
-        _zkDvpContractAddress = zkDvpContractAddress;
+    constructor(address enygmaDvpContractAddress) AccessControl() {
+        _name = "EnygmaAuction smart contract";
+        _enygmaDvpContractAddress = enygmaDvpContractAddress;
         _setupRole(DEFAULT_OWNER_ROLE, msg.sender);
-        _setupRole(DEFAULT_DVP_ROLE, zkDvpContractAddress);
+        _setupRole(DEFAULT_DVP_ROLE, enygmaDvpContractAddress);
     }
 
     ///////////////////////////////////////////////
@@ -94,8 +94,8 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         return _name;
     }
 
-    function zkDvpContractAddress() public view returns (address) {
-        return _zkDvpContractAddress;
+    function enygmaDvpContractAddress() public view returns (address) {
+        return _enygmaDvpContractAddress;
     }
 
     function hashContractAddress() public view returns (address) {
@@ -109,14 +109,14 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ///////////////////////////////////////////////
     //       initialization functions
     //////////////////////////////////////////////
-    function initializeZkAuction(
+    function initializeEnygmaAuction(
         address hashContractAddress,
         address verifierContractAddress
     ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
         // registering the verifier smart contract address
         _hashContractAddress = hashContractAddress;
         _verifierContractAddress = verifierContractAddress;
-        _zkDvpContractAddress = msg.sender;
+        _enygmaDvpContractAddress = msg.sender;
 
         return true;
     }
@@ -224,7 +224,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         uint256 nullifier = auctionInitReceipt.statement[5];
         uint256 treeNumber = auctionInitReceipt.statement[3];
         IAbstractCoinVault itemVault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(itemVaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(itemVaultId)
         );
 
         address assetAddress = itemVault.getAssetContractAddress();
@@ -271,13 +271,13 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ) internal returns (bool) {
         // checking assetGroups
         if (
-            !IEnygmaDvp(_zkDvpContractAddress).isVaultMemberOf(
+            !IEnygmaDvp(_enygmaDvpContractAddress).isVaultMemberOf(
                 itemVaultId,
                 itemGroupId
             )
         ) {
             if (
-                !IEnygmaDvp(_zkDvpContractAddress).isTokenMemberOf(
+                !IEnygmaDvp(_enygmaDvpContractAddress).isTokenMemberOf(
                     itemVaultId,
                     uniqueIdParams,
                     itemGroupId
@@ -336,7 +336,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         );
 
         IAbstractCoinVault bidVault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(bidVaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(bidVaultId)
         );
         for (uint i = 0; i < 2; i++) {
             if (bidReceipt.statement[6 + i] != 0) {
@@ -358,17 +358,18 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
 
         // checking assetGroups
         if (
-            !IEnygmaDvp(_zkDvpContractAddress).isVaultMemberOf(
+            !IEnygmaDvp(_enygmaDvpContractAddress).isVaultMemberOf(
                 bidVaultIdFromStatement,
                 _auctions[auctionId].bidGroupId
             )
         ) {
             if (
-                !IEnygmaDvp(_zkDvpContractAddress).isMemberOfFromProofReceipt(
-                    bidVaultIdFromStatement,
-                    bidReceipt,
-                    _auctions[auctionId].bidGroupId
-                )
+                !IEnygmaDvp(_enygmaDvpContractAddress)
+                    .isMemberOfFromProofReceipt(
+                        bidVaultIdFromStatement,
+                        bidReceipt,
+                        _auctions[auctionId].bidGroupId
+                    )
             ) {
                 revert GroupMembershipMismatch();
             }
@@ -447,7 +448,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         return true;
     }
 
-    // only callable by zkDvp owner / auctioneer
+    // only callable by EnygmaDvp owner / auctioneer
     // TODO:: needs accessControl
     function privateOpeningReceipt(
         IEnygmaDvp.ProofReceipt memory openingReceipt
@@ -488,7 +489,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         return true;
     }
 
-    // Called by auctioneer (ZkDvp owner)
+    // Called by auctioneer (EnygmaDvp owner)
     function declareWinner(
         uint256 auctionId,
         uint256 winningBid,
@@ -499,7 +500,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
 
         // TODO:: check auctions[auctionId].state
         // TODO:: add time constraints
-        // require(_auctions[auctionId].auctionState == IZkDvp.AuctionStateEnum.AUCTION_DECLARE_WINNER, "ZkDvp: Invalid auction state");
+        // require(_auctions[auctionId].auctionState == IEnygmaDvp.AuctionStateEnum.AUCTION_DECLARE_WINNER, "EnygmaDvp: Invalid auction state");
 
         // compute winningBlindedBid
         uint256 winningBlindedBid = IPoseidonWrapper(_hashContractAddress)
@@ -566,7 +567,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ) internal returns (bool) {
         uint256 vaultId = _auctions[auctionId].bidVaultId;
         IAbstractCoinVault vault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(vaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(vaultId)
         );
 
         uint256 treeNumber1 = _auctions[auctionId]
@@ -593,7 +594,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ) internal returns (uint256) {
         uint256 itemVaultId = _auctions[auctionId].vaultId;
         IAbstractCoinVault itemVault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(itemVaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(itemVaultId)
         );
 
         // Generating uniqueId for item coin
@@ -634,7 +635,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         uint256 bidVaultId = _auctions[auctionId].bidVaultId;
 
         IAbstractCoinVault bidVault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(bidVaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(bidVaultId)
         );
 
         for (uint i = 0; i < 2; i++) {
@@ -655,7 +656,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ) internal returns (uint256[] memory) {
         uint256 bidVaultId = _auctions[auctionId].bidVaultId;
         IAbstractCoinVault bidVault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(bidVaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(bidVaultId)
         );
 
         // registering new bid coins
@@ -734,7 +735,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     ) internal returns (bool) {
         uint256 itemVaultId = _auctions[auctionId].vaultId;
         IAbstractCoinVault itemVault = IAbstractCoinVault(
-            IEnygmaDvp(_zkDvpContractAddress).vaultById(itemVaultId)
+            IEnygmaDvp(_enygmaDvpContractAddress).vaultById(itemVaultId)
         );
 
         itemVault.unlockCoin(

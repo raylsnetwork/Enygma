@@ -6,7 +6,7 @@ const utils = require("../src/core/utils");
 const MerkleTree = require("../src/core/merkle");
 const { getVerificationKeys } = require("../src/core/dvpSnarks");
 
-const dvpConf = require("../zkdvp.config.json");
+const dvpConf = require("../enygmadvp.config.json");
 const TREE_DEPTH = dvpConf["tree-depth"];
 
 let aliceCoins = [];
@@ -31,7 +31,7 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
   it(`ZkDvp should initialize properly `, async () => {
     let userCount = 2;
     [owner, users, contracts, merkleTrees] = await testHelpers.deployForTest(
-      userCount
+      userCount,
     );
 
     console.log("SwapTest: ZkDvp initialization");
@@ -80,7 +80,7 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
 
     const erc721Contract = contracts["erc721"];
     const erc721Alice = erc721Contract.connect(alice);
-    const zkDvpContract = contracts["zkdvp"];
+    const zkDvpContract = contracts["enygmadvp"];
     const zkDvpAlice = zkDvpContract.connect(alice);
     const vaultContract = contracts["erc721CoinVault"];
     const vaultAlice = vaultContract.connect(alice);
@@ -90,12 +90,12 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
     const challenge = utils.randomInField();
     console.log("Challenge = ", challenge);
     console.log(
-      "[TODO] you can make it non-interactive using a random oracle."
+      "[TODO] you can make it non-interactive using a random oracle.",
     );
 
     // Alice constructs a proof of ownership    and put message = challenge
     console.log(
-      "Alice constructs a proof with output address = 0 and message = challenge"
+      "Alice constructs a proof with output address = 0 and message = challenge",
     );
     const nftUniqueId = utils.erc721UniqueId(erc721Contract.address, NFT_ID);
 
@@ -110,7 +110,7 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
     });
 
     console.log(
-      "Alice calls vaultErc721.verifyOwnership() with the constructed proof and coin's asttributes."
+      "Alice calls vaultErc721.verifyOwnership() with the constructed proof and coin's asttributes.",
     );
 
     // TODO:: should be relayed.
@@ -119,7 +119,7 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
     // Bob listens to VerifyOwnershipReceipt events
     const verifyRc = await tx.wait();
     const verifyEvent = verifyRc.events.find(
-      (ev) => ev.event === "OwnershipVerificationReceipt"
+      (ev) => ev.event === "OwnershipVerificationReceipt",
     );
 
     const verifyTokenId = verifyEvent.args.tokenId;
@@ -144,7 +144,7 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
     const erc20VaultContract = contracts["erc20CoinVault"];
     const bobVault20 = erc20VaultContract.connect(bob);
     const aliceVault721 = erc721VaultContract.connect(alice);
-    const zkDvpContract = contracts["zkdvp"];
+    const zkDvpContract = contracts["enygmadvp"];
     const zkDvpAlice = zkDvpContract.connect(alice);
     const zkDvpBob = zkDvpContract.connect(bob);
     const erc20Contract = contracts["erc20"];
@@ -205,7 +205,7 @@ describe("ZkDvp Erc20-Erc721 Swap testing", () => {
     // paymentCommitment will be used as a massage by Alice
     const paymentCommitment = utils.getCommitment(
       erc20Uid,
-      alicePaymentKey.publicKey
+      alicePaymentKey.publicKey,
     );
 
     // Alice generates a tx to send her NFT to Bob

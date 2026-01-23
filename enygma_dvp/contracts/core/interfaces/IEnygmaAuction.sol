@@ -138,13 +138,13 @@ interface IEnygmaAuction {
 
     function verifierContractAddress() external view returns (address);
 
-    function zkDvpContractAddress() external view returns (address);
+    function enygmaDvpContractAddress() external view returns (address);
 
     ///////////////////////////////////////////////
     //         Initialization  Functions
     //////////////////////////////////////////////
 
-    function initializeZkAuction(
+    function initializeEnygmaAuction(
         address verifierAddress,
         address hashContractAddress
     ) external returns (bool);
@@ -193,7 +193,7 @@ interface IEnygmaAuction {
         IEnygmaDvp.ProofReceipt memory openingProof
     ) external returns (bool);
 
-    // Called by auctioneer (ZkDvp owner)
+    // Called by auctioneer (EnygmaDvp owner)
     function declareWinner(
         uint256 auctionId,
         uint256 winningBid,

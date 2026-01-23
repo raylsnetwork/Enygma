@@ -39,7 +39,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     uint256 constant MAX_NUMBER_OF_GROUPS = 1000;
 
     // Index of verification keys that has been
-    // used directly in ZkdDvp
+    // used directly in EnygmadDvp
     uint256 public constant VK_ID_AUCTION_INIT = 6;
     uint256 public constant VK_ID_AUCTION_BID = 7;
     uint256 public constant VK_ID_AUCTION_PRIVATE_OPENING = 8;
@@ -56,7 +56,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     //           Private attributes
     //////////////////////////////////////////////
 
-    // name identifier for ZkDvp smart contract
+    // name identifier for Enyg,aDvp smart contract
     string private _name;
 
     // the address of PoseidonWrapper smart contract
@@ -67,7 +67,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     // and utilizes the generic Gorth16 verifier smart contract
     address private _verifierContractAddress;
 
-    address private _zkAuctionContractAddress;
+    address private _enygmaAuctionContractAddress;
 
     // address of private mint verifier smart contract
     address private _privateMintVerifierAddress;
@@ -108,7 +108,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
         address hashContractAddress,
         address genericVerifierContractAddress
     ) AccessControl() {
-        _name = "ZkDVP smart contract";
+        _name = "EnygmaDVP smart contract";
         _hashContractAddress = hashContractAddress;
         _genericVerifierContractAddress = genericVerifierContractAddress;
         _coinVaults = new address[](MAX_NUMBER_OF_VAULTS);
@@ -169,14 +169,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
         return true;
     }
 
-    function registerZkAuction(
-        address zkAuctionContractAddress
+    function registerEnygmaAuction(
+        address enygmaAuctionContractAddress
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
-        _zkAuctionContractAddress = zkAuctionContractAddress;
+        _enygmaAuctionContractAddress = enygmaAuctionContractAddress;
 
         // initializing the verifier by registering Snark circuits' verification keys.
         // and the genericGroth16 verifier
-        IEnygmaAuction(_zkAuctionContractAddress).initializeZkAuction(
+        IEnygmaAuction(_enygmaAuctionContractAddress).initializeEnygmaAuction(
             _hashContractAddress,
             _verifierContractAddress
         );
@@ -236,7 +236,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
             treeDepth,
             _hashContractAddress,
             _verifierContractAddress,
-            _zkAuctionContractAddress
+            _enygmaAuctionContractAddress
         );
 
         _coinVaultsCount++;
@@ -914,7 +914,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     function privateMint(
         uint256 vaultId,
         uint256 commitment,
-        ZkPrivateMintProof calldata proof
+        EnygmaPrivateMintProof calldata proof
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         // Validate vault exists
         if (_coinVaults[vaultId] == address(0)) {

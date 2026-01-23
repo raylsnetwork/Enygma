@@ -13,3 +13,7 @@
 /artifacts/
 /build/
 /cache/
+
+
+#go client
+/scripts_go/deploy

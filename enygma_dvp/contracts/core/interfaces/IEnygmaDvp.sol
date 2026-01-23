@@ -30,7 +30,7 @@ interface IEnygmaDvp {
         G1Point c;
     }
 
-    struct ZkPrivateMintProof {
+    struct EnygmaPrivateMintProof {
         uint256[8] proof;
         uint256[4] public_signal;
     }
@@ -285,8 +285,8 @@ interface IEnygmaDvp {
         VerifyingKey memory vk
     ) external returns (bool);
 
-    function registerZkAuction(
-        address zkAuctionContractAddress
+    function registerEnygmaAuction(
+        address enygmaAuctionContractAddress
     ) external returns (bool);
 
     function registerPrivateMintVerifier(
@@ -414,6 +414,6 @@ interface IEnygmaDvp {
     function privateMint(
         uint256 vaultId,
         uint256 commitment,
-        ZkPrivateMintProof calldata proof
+        EnygmaPrivateMintProof calldata proof
     ) external returns (bool);
 }
