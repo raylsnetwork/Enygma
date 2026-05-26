@@ -13,7 +13,7 @@ Our system is simple: **users** (e.g., a bank customers) are directly connected 
 ```mermaid
 ---
 config:
-  theme: redux
+  theme: normal
   layout: elk
   look: handDrawn
 ---
@@ -48,7 +48,7 @@ TBD
 ```mermaid
 ---
 config:
-  theme: redux
+  theme: normal
   layout: elk
   look: handDrawn
 ---
