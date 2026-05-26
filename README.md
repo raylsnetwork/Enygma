@@ -20,7 +20,7 @@ At Rayls, we have created a new suite of privacy protocols, which we call Enygma
 ```mermaid
  ---
 config:
-  theme: redux
+  theme: normal
   layout: elk
   look: handDrawn
 ---
