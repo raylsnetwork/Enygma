@@ -6,3 +6,5 @@
 # Compiled gnark binaries
 /gnark_circuits/export_vk
 /gnark_circuits/poseidon/test
+
+artifacts/
