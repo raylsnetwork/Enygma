@@ -256,12 +256,18 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 	stTreeNumber *big.Int,
 ) (*ZkDvpSwapInitResult, error) {
 	// Step 1: Alice encapsulates Bob's view key → raw shared secret ss + cipherText.
-	// ZkDvP uses ss directly (not HKDF-derived) for commitment and swap-payload encryption.
+	// HIGH-8 fix: use HKDF-derived values instead of raw ss for both the commitment
+	// salt and the AEAD encryption key. Using raw ss for both violates key separation —
+	// recovering the salt from the commitment would immediately expose the AEAD key.
 	ss, cipherText, err := Encapsulate(bobViewEncapKey)
 	if err != nil {
 		return nil, fmt.Errorf("encapsulate failed: %w", err)
 	}
-	saltBField := SaltBToField(ss)
+	saltBBytes, err := DerivePaymentSalt(ss)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentSalt failed: %w", err)
+	}
+	saltBField := SaltBToField(saltBBytes)
 
 	// Step 2: CommitmentB — Bob receives Alice's asset.
 	commitmentB, err := Erc20CommitmentV2(bobSpendPk, saltBField, amountIn, tokenIdIn)
@@ -282,8 +288,12 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 	}
 
 	// Step 4: Encrypt (tokenIdOut || amountOut || saltStar) for Bob.
-	// ZkDvP swap payload uses ss directly (ChaCha20-Poly1305).
-	encTxData, err := EncryptSwapPayload(ss, tokenIdOut, amountOut, saltStar)
+	// HIGH-8 fix: use HKDF-derived encryption key, not raw ss.
+	encKey, err := DerivePaymentKey(ss)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentKey failed: %w", err)
+	}
+	encTxData, err := EncryptSwapPayload(encKey, tokenIdOut, amountOut, saltStar)
 	if err != nil {
 		return nil, fmt.Errorf("EncryptSwapPayload failed: %w", err)
 	}
@@ -309,53 +319,58 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		return nil, fmt.Errorf("GetNullifier failed: %w", err)
 	}
 
-	// Step 6: Generate JoinSplit ZK proof using the pre-computed saltBField.
-	// The circuit verifies: CommitmentB == Poseidon(bobSpendPk, saltBField, amountIn, tokenIdIn).
-	// Since saltBField is provided as WtSaltsOut, the proof binds CommitmentB to saltB.
-	//
-	// The joinSplitERC20 circuit is fixed at 2 inputs / 2 outputs, so we pad with a
-	// dummy second slot (value = 0). The circuit's enable-logic skips constraints for
-	// zero-value inputs/outputs, keeping the balance equation: amountIn + 0 = amountIn + 0.
-	dummyKey, err := NewSpendKeyPair()
+	// Step 6: Generate DvP Initiator ZK proof via the dedicated /proof/dvpInitiator endpoint.
+	// HIGH-9 fix: was incorrectly calling /proof/joinSplitERC20 (JoinSplit circuit) with a
+	// payload shaped for the DvP Initiator circuit. The two circuits have different VKs
+	// and statement layouts — using the wrong endpoint either always reverts on-chain or
+	// silently accepts a semantically incorrect proof.
+	revertSalt, err := RandomInField()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate dummy key pair: %w", err)
+		return nil, fmt.Errorf("RandomInField revertSalt failed: %w", err)
 	}
-	dummyNullifier, err := GetNullifier(dummyKey.PrivateKey, big.NewInt(0))
+	revertCommit, err := Erc20CommitmentV2(aliceKey.PublicKey, revertSalt, amountIn, tokenIdIn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute dummy nullifier: %w", err)
-	}
-	dummyCmt, err := Erc20CommitmentV2(bobSpendPk, big.NewInt(0), big.NewInt(0), tokenIdIn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute dummy commitment: %w", err)
-	}
-	dummyPath := make([]*big.Int, merkleDepth)
-	for j := range dummyPath {
-		dummyPath[j] = big.NewInt(0)
+		return nil, fmt.Errorf("revertCommitA computation failed: %w", err)
 	}
 
-	allPathElements := append(pathElements, dummyPath...)
-	pathElementChunks := chunkBigIntSlice(allPathElements, merkleDepth)
+	// saltA: HKDF-derived from ss using "Init Salt" (same derivation Bob uses after decapsulation).
+	saltABytes, err := DeriveDvpSaltInit(ss)
+	if err != nil {
+		return nil, fmt.Errorf("DeriveDvpSaltInit failed: %w", err)
+	}
+	saltAField := SaltBToField(saltABytes)
+
+	// Convert path elements to [8]string for the dvpInit circuit (single-input, depth 8).
+	var pathElemsFixed [8]string
+	for j := 0; j < merkleDepth && j < 8; j++ {
+		pathElemsFixed[j] = pathElements[j].String()
+	}
 
 	payload := map[string]interface{}{
-		"StMessage":            commitmentA.String(),
-		"StTreeNumber":         []string{stTreeNumber.String(), "0"},
-		"StMerkleRoots":        []string{merkleRoot.String(), "0"},
-		"StNullifiers":         []string{nullifier.String(), dummyNullifier.String()},
-		"StCommitmentOut":      []string{commitmentB.String(), dummyCmt.String()},
-		"WtPrivateKeysIn":      []string{aliceKey.PrivateKey.String(), dummyKey.PrivateKey.String()},
-		"WtValuesIn":           []string{amountIn.String(), "0"},
-		"WtSaltsIn":            []string{aliceSaltIn.String(), "0"},
-		"WtPathElements":       bigIntChunksToStringChunks(pathElementChunks),
-		"WtPathIndices":        []string{pathIndices.String(), "0"},
-		"WtTokenId":            tokenIdIn.String(),
-		"WtSpendPublicKeysOut": []string{bobSpendPk.String(), bobSpendPk.String()},
-		"WtValuesOut":          []string{amountIn.String(), "0"},
-		"WtSaltsOut":           []string{saltBField.String(), "0"},
+		"stMessage":       commitmentB.String(), // HIGH-5: StMessage must equal StCommitB
+		"stTreeNumber":    stTreeNumber.String(),
+		"stMerkleRoot":    merkleRoot.String(),
+		"stNullifier":     nullifier.String(),
+		"stCommitB":       commitmentB.String(),
+		"stCommitA":       commitmentA.String(),
+		"stRevertCommitA": revertCommit.String(),
+		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
+		"wtValueIn":       amountIn.String(),
+		"wtSaltIn":        aliceSaltIn.String(),
+		"wtTokenIdIn":     tokenIdIn.String(),
+		"wtPathElements":  pathElemsFixed,
+		"wtPathIndex":     pathIndices.String(),
+		"wtSpendPkBob":    bobSpendPk.String(),
+		"wtSaltB":         saltBField.String(),
+		"wtValueBob":      amountOut.String(),
+		"wtTokenIdBob":    tokenIdOut.String(),
+		"wtSaltA":         saltAField.String(),
+		"wtRevertSalt":    revertSalt.String(),
 	}
 
-	body, err := c.PostProof("/proof/joinSplitERC20", payload)
+	body, err := c.PostProof("/proof/dvpInitiator", payload)
 	if err != nil {
-		return nil, fmt.Errorf("ZkDvp JoinSplit proof request failed: %w", err)
+		return nil, fmt.Errorf("ZkDvp Initiator proof request failed: %w", err)
 	}
 
 	var gnarkResp struct {
@@ -1486,7 +1501,7 @@ func (c *GnarkClient) Erc20PrivateMintProof(
 		return nil, fmt.Errorf("failed to compute V2 commitment: %w", err)
 	}
 
-	cipherText, err := poseidon.Hash([]*big.Int{pkSpend, salt})
+	cipherText, err := poseidon.Hash([]*big.Int{pkSpend, salt, contractAddress})
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute cipherText: %w", err)
 	}
@@ -1523,21 +1538,32 @@ func (c *GnarkClient) Erc20PrivateMintProof(
 // the transaction on-chain and that each recipient needs to scan their note.
 type PaymentResult struct {
 	Proof           []string    // 8-element Groth16 proof
-	Statement       []*big.Int  // interleaved: [msg, tree0, root0, null0, ..., cmt0, cmt1]
+	Statement       []*big.Int  // interleaved: [msg, tree0, root0, null0, ..., cmt0, cmt1, contractAddr?]
 	NumberOfInputs  int
 	NumberOfOutputs int
 	// Bob's note discovery data (output 0 only — published on-chain).
 	CipherText []byte // ML-KEM capsule for Bob (1088 bytes)
 	EncTxData  []byte // AES-256-GCM ciphertext of (tokenId || amount) for Bob
+	// Bob's salt — needed by the tag-based notification path (private tag layer).
+	SaltB *big.Int // saltB field element used in Bob's output commitment
 	// Alice's change note data (private — not published on-chain).
 	SaltA *big.Int // random change salt; Alice must store this locally to open Commitment_A
+	// ContractAddress is non-nil when the proof was generated via BoundPaymentProof (VULN-5 fix).
+	// ContractStatement() appends it as the last statement element for on-chain verification.
+	ContractAddress *big.Int
 }
 
 // ContractStatement de-interleaves the statement for on-chain submission.
+// When ContractAddress is set (BoundPaymentProof), it is appended as the last element so
+// the vault can verify statement[last] == address(this) (VULN-5 fix).
 func (r *PaymentResult) ContractStatement() []*big.Int {
 	nIn := r.NumberOfInputs
 	nOut := r.NumberOfOutputs
-	out := make([]*big.Int, 1+3*nIn+nOut)
+	size := 1 + 3*nIn + nOut
+	if r.ContractAddress != nil {
+		size++
+	}
+	out := make([]*big.Int, size)
 	out[0] = r.Statement[0]
 	for i := 0; i < nIn; i++ {
 		base := 1 + i*3
@@ -1547,6 +1573,9 @@ func (r *PaymentResult) ContractStatement() []*big.Int {
 	}
 	for i := 0; i < nOut; i++ {
 		out[1+3*nIn+i] = r.Statement[1+3*nIn+i]
+	}
+	if r.ContractAddress != nil {
+		out[1+3*nIn+nOut] = r.ContractAddress
 	}
 	return out
 }
@@ -1721,7 +1750,174 @@ func (c *GnarkClient) PaymentProof(
 		NumberOfOutputs: nOut,
 		CipherText:      cipherText,
 		EncTxData:       encTxData,
+		SaltB:           wtSaltsOut[0],
 		SaltA:           saltA,
+	}, nil
+}
+
+// BoundPaymentProof is identical to PaymentProof but binds the proof to a specific vault
+// contract address (VULN-5 fix).
+//
+// contractAddress must be the uint160 representation of the Erc20CoinVault address
+// (i.e., new(big.Int).SetBytes(vaultAddr.Bytes())).
+//
+// Differences from PaymentProof:
+//   - Nullifier: Poseidon3(sk, leafIndex, contractAddress) instead of Poseidon2(sk, leafIndex).
+//   - Payload: includes "stContractAddress" in the gnark server request.
+//   - Result:  ContractAddress field is set; ContractStatement() appends it to the statement.
+func (c *GnarkClient) BoundPaymentProof(
+	contractAddress *big.Int,
+	stMessage *big.Int,
+	wtValuesIn []*big.Int,
+	keysIn []KeyPair,
+	wtSaltsIn []*big.Int,
+	wtValuesOut []*big.Int,
+	recipientSpendPks []*big.Int,
+	recipientViewEncapKeys [][]byte,
+	merkleDepth int,
+	merkleProofs []*MerkleProof,
+	stTreeNumbers []*big.Int,
+	wtTokenId *big.Int,
+) (*PaymentResult, error) {
+	nIn := len(wtValuesIn)
+	nOut := len(wtValuesOut)
+
+	stNullifiers := make([]*big.Int, nIn)
+	wtPathIndices := make([]*big.Int, nIn)
+	wtPathElements := make([]*big.Int, 0, nIn*merkleDepth)
+
+	for i := 0; i < nIn; i++ {
+		if wtValuesIn[i].Sign() == 0 {
+			stNullifiers[i] = big.NewInt(0)
+			wtPathIndices[i] = big.NewInt(0)
+			zeros := make([]*big.Int, merkleDepth)
+			for j := range zeros {
+				zeros[j] = big.NewInt(0)
+			}
+			wtPathElements = append(wtPathElements, zeros...)
+		} else {
+			wtPathIndices[i] = merkleProofs[i].Indices
+			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
+			// Bound nullifier: Poseidon3(sk, leafIndex, contractAddress)
+			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+			if err != nil {
+				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+			}
+			stNullifiers[i] = nf
+		}
+	}
+
+	wtSaltsOut := make([]*big.Int, nOut)
+	stCommitmentsOut := make([]*big.Int, nOut)
+	var cipherText, encTxData []byte
+	var saltA *big.Int
+
+	ss0, ctxt0, err := Encapsulate(recipientViewEncapKeys[0])
+	if err != nil {
+		return nil, fmt.Errorf("Encapsulate Bob output: %w", err)
+	}
+	saltB0, err := DerivePaymentSalt(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentSalt Bob output: %w", err)
+	}
+	encKey0, err := DerivePaymentKey(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentKey Bob output: %w", err)
+	}
+	ctxtII0, err := EncryptPayload(encKey0, wtTokenId, wtValuesOut[0])
+	if err != nil {
+		return nil, fmt.Errorf("EncryptPayload Bob output: %w", err)
+	}
+	cipherText = ctxt0
+	encTxData = ctxtII0
+	wtSaltsOut[0] = SaltBToField(saltB0)
+	cmt0, err := Erc20CommitmentV2(recipientSpendPks[0], wtSaltsOut[0], wtValuesOut[0], wtTokenId)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 Bob output: %w", err)
+	}
+	stCommitmentsOut[0] = cmt0
+
+	for i := 1; i < nOut; i++ {
+		randSalt, err := RandomInField()
+		if err != nil {
+			return nil, fmt.Errorf("RandomInField change output %d: %w", i, err)
+		}
+		if i == 1 {
+			saltA = randSalt
+		}
+		wtSaltsOut[i] = randSalt
+		cmt, err := Erc20CommitmentV2(recipientSpendPks[i], randSalt, wtValuesOut[i], wtTokenId)
+		if err != nil {
+			return nil, fmt.Errorf("Erc20CommitmentV2 change output %d: %w", i, err)
+		}
+		stCommitmentsOut[i] = cmt
+	}
+
+	stMerkleRoots := make([]*big.Int, nIn)
+	for i := range wtValuesIn {
+		if wtValuesIn[i].Sign() == 0 {
+			stMerkleRoots[i] = big.NewInt(0)
+		} else {
+			stMerkleRoots[i] = merkleProofs[i].Root
+		}
+	}
+
+	pathElementChunks := chunkBigIntSlice(wtPathElements, merkleDepth)
+
+	payload := map[string]interface{}{
+		"stMessage":            stMessage.String(),
+		"stTreeNumbers":        bigIntSliceToStrings(stTreeNumbers),
+		"stMerkleRoots":        bigIntSliceToStrings(stMerkleRoots),
+		"stNullifiers":         bigIntSliceToStrings(stNullifiers),
+		"stCommitmentsOut":     bigIntSliceToStrings(stCommitmentsOut),
+		"stContractAddress":    contractAddress.String(),
+		"wtPrivateKeysIn":      bigIntSliceToStrings(extractPrivateKeys(keysIn)),
+		"wtValuesIn":           bigIntSliceToStrings(wtValuesIn),
+		"wtSaltsIn":            bigIntSliceToStrings(wtSaltsIn),
+		"wtPathElements":       bigIntChunksToStringChunks(pathElementChunks),
+		"wtPathIndices":        bigIntSliceToStrings(wtPathIndices),
+		"wtTokenId":            wtTokenId.String(),
+		"wtSpendPublicKeysOut": bigIntSliceToStrings(recipientSpendPks),
+		"wtValuesOut":          bigIntSliceToStrings(wtValuesOut),
+		"wtSaltsOut":           bigIntSliceToStrings(wtSaltsOut),
+	}
+
+	body, err := c.PostProof("/proof/payment", payload)
+	if err != nil {
+		return nil, fmt.Errorf("bound payment proof request failed: %w", err)
+	}
+
+	var gnarkResp struct {
+		Proof        []json.Number `json:"proof"`
+		PublicSignal []json.Number `json:"publicSignal"`
+	}
+	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+		return nil, fmt.Errorf("parse bound payment proof response: %w", err)
+	}
+	proofStrs := make([]string, len(gnarkResp.Proof))
+	for i, n := range gnarkResp.Proof {
+		proofStrs[i] = n.String()
+	}
+
+	// Statement: interleaved [msg, tree0, root0, nf0, ..., cmt0, cmt1, contractAddr]
+	statement := make([]*big.Int, 0, 1+3*nIn+nOut+1)
+	statement = append(statement, stMessage)
+	for i := 0; i < nIn; i++ {
+		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
+	}
+	statement = append(statement, stCommitmentsOut...)
+	statement = append(statement, contractAddress)
+
+	return &PaymentResult{
+		Proof:           proofStrs,
+		Statement:       statement,
+		NumberOfInputs:  nIn,
+		NumberOfOutputs: nOut,
+		CipherText:      cipherText,
+		EncTxData:       encTxData,
+		SaltB:           wtSaltsOut[0],
+		SaltA:           saltA,
+		ContractAddress: contractAddress,
 	}, nil
 }
 
@@ -1877,6 +2073,111 @@ func (c *GnarkClient) DvPInitiatorProof(
 		CommitA:         commitA,
 		RevertCommitA:   revertCommitA,
 		SaltA:           saltA,
+	}, nil
+}
+
+// DvPInitiatorProofFromSalts is like DvPInitiatorProof but accepts pre-computed
+// saltB and saltA instead of deriving them from a KEM shared secret.  This
+// allows both parties of an ERC-20 ↔ ERC-20 exchange to independently produce
+// DvP Initiator proofs that cross-reference each other: each party picks the
+// same "commitForSelf" and "commitForCounterparty" by sharing salt values
+// out-of-band before generating their proofs.
+//
+// No KEM encapsulation is performed; CipherText and EncTxData in the returned
+// result are nil.
+func (c *GnarkClient) DvPInitiatorProofFromSalts(
+	aliceKey KeyPair,
+	aliceSaltIn *big.Int,
+	valueIn *big.Int,
+	tokenIdIn *big.Int,
+	bobSpendPk *big.Int,
+	saltB *big.Int,
+	valueBob *big.Int,
+	tokenIdBob *big.Int,
+	saltA *big.Int,
+	stTreeNumber *big.Int,
+	merkleProof *MerkleProof,
+	merkleDepth int,
+) (*DvPInitiatorResult, error) {
+	pathIndex := merkleProof.Indices
+	nf, err := GetNullifier(aliceKey.PrivateKey, pathIndex)
+	if err != nil {
+		return nil, fmt.Errorf("GetNullifier: %w", err)
+	}
+
+	commitB, err := Erc20CommitmentV2(bobSpendPk, saltB, valueIn, tokenIdIn)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 (commitB): %w", err)
+	}
+	commitA, err := Erc20CommitmentV2(aliceKey.PublicKey, saltA, valueBob, tokenIdBob)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 (commitA): %w", err)
+	}
+
+	revertSaltBytes, err := GenerateRandomValue(32)
+	if err != nil {
+		return nil, fmt.Errorf("RandomBytes (revert salt): %w", err)
+	}
+	revertSalt := SaltBToField(revertSaltBytes)
+	revertCommitA, err := Erc20CommitmentV2(aliceKey.PublicKey, revertSalt, valueIn, tokenIdIn)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 (revertCommitA): %w", err)
+	}
+
+	stMessage := commitA
+
+	pathElems := make([]*big.Int, merkleDepth)
+	copy(pathElems, merkleProof.Elements[:merkleDepth])
+
+	payload := map[string]interface{}{
+		"stMessage":       stMessage.String(),
+		"stTreeNumber":    stTreeNumber.String(),
+		"stMerkleRoot":    merkleProof.Root.String(),
+		"stNullifier":     nf.String(),
+		"stCommitB":       commitB.String(),
+		"stCommitA":       commitA.String(),
+		"stRevertCommitA": revertCommitA.String(),
+		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
+		"wtValueIn":       valueIn.String(),
+		"wtSaltIn":        aliceSaltIn.String(),
+		"wtTokenIdIn":     tokenIdIn.String(),
+		"wtPathElements":  bigIntSliceToStrings(pathElems),
+		"wtPathIndex":     pathIndex.String(),
+		"wtSpendPkBob":    bobSpendPk.String(),
+		"wtSaltB":         saltB.String(),
+		"wtValueBob":      valueBob.String(),
+		"wtTokenIdBob":    tokenIdBob.String(),
+		"wtSaltA":         saltA.String(),
+		"wtRevertSalt":    revertSalt.String(),
+	}
+
+	body, err := c.PostProof("/proof/dvpInitiator", payload)
+	if err != nil {
+		return nil, fmt.Errorf("dvpInitiatorFromSalts proof request failed: %w", err)
+	}
+
+	var gnarkResp struct {
+		Proof        []json.Number `json:"proof"`
+		PublicSignal []json.Number `json:"publicSignal"`
+	}
+	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+		return nil, fmt.Errorf("failed to parse dvpInitiatorFromSalts proof response: %w", err)
+	}
+	proofStrs := make([]string, len(gnarkResp.Proof))
+	for i, n := range gnarkResp.Proof {
+		proofStrs[i] = n.String()
+	}
+
+	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA}
+	return &DvPInitiatorResult{
+		Proof:           proofStrs,
+		Statement:       statement,
+		NumberOfInputs:  1,
+		NumberOfOutputs: 1,
+		SaltA:           saltA,
+		CommitB:         commitB,
+		CommitA:         commitA,
+		RevertCommitA:   revertCommitA,
 	}, nil
 }
 

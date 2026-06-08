@@ -40,7 +40,7 @@ contract Merkle is IMerkle {
         uint256 _treeDepth,
         uint256 _treeId,
         address _poseidonWrapperAddress
-    ) public {
+    ) internal {
         poseidonWrapperAddress = _poseidonWrapperAddress;
 
         treeDepth = _treeDepth;
@@ -76,7 +76,7 @@ contract Merkle is IMerkle {
     function lock(
         uint256 _treeNumber,
         uint256 _nullifierId
-    ) public returns (bool) {
+    ) internal returns (bool) {
         // TODO:: relaxed this requirement, needs audit
         // require(lockedNullifiers[_treeNumber][_nullifierId] == false, "Merkle: Nullifier already locked.");
         require(_nullifierId != 0, "Merkle: Nullifier can not be zero.");
@@ -96,7 +96,7 @@ contract Merkle is IMerkle {
     function unlock(
         uint256 _treeNumber,
         uint256 _nullifierId
-    ) public returns (bool) {
+    ) internal returns (bool) {
         require(_nullifierId != 0, "Merkle: Nullifier can not be zero.");
         require(
             nullifiers[_treeNumber][_nullifierId] == false,
@@ -112,7 +112,7 @@ contract Merkle is IMerkle {
         return true;
     }
 
-    function setNullifier(uint256 _treeNumber, uint256 _nullifierId) public {
+    function setNullifier(uint256 _treeNumber, uint256 _nullifierId) internal {
         // Adding this require to original ones from the Aegis repo
         // to avoid entering the same coins' nullifiers in the
         // two input slots.
@@ -146,7 +146,7 @@ contract Merkle is IMerkle {
         return treeId;
     }
 
-    function insertLeaves(uint256[] memory _leafHashes) public {
+    function insertLeaves(uint256[] memory _leafHashes) internal {
         uint256 count = _leafHashes.length;
         if ((nextLeafIndex + count) >= (2 ** treeDepth)) {
             newTree();
@@ -211,7 +211,7 @@ contract Merkle is IMerkle {
         rootHistory[treeNumber][merkleRoot] = true;
     }
 
-    function newTree() public {
+    function newTree() internal {
         merkleRoot = newTreeRoot;
         nextLeafIndex = 0;
         treeNumber++;

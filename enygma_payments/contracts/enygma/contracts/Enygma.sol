@@ -350,10 +350,10 @@ contract Enygma is IEnygma {
         _verifyTransferProof(proof, commitmentDeltas.length);
 
         // Verify public inputs match current state
-        _verifyPublicInputs(proof, participantIds);
+        _verifyPublicInputs(proof.public_signal, participantIds);
 
         //  Verify block number freshness
-        _verifyBlockNumber(proof);
+        _verifyBlockNumber(proof.public_signal);
 
         // Update balances
         _updateBalancesForTransfer(commitmentDeltas, participantIds);
@@ -374,15 +374,21 @@ contract Enygma is IEnygma {
         WithdrawProof calldata proof,
         DepositParams[] calldata depositParams,
         uint256[] calldata participantIds
-    ) external onlyRegistered returns (bool, uint256[] memory) {
+    ) external onlyRegistered whenInitialized returns (bool, uint256[] memory) {
         // Verify withdrawal proof
         address verifier = _withdrawVerifiers[depositParams.length];
         if (verifier == address(0)) revert VerifierNotFound();
 
         (bool success, ) = verifier.delegatecall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[1])", proof)
+            abi.encodeWithSignature("verifyProof(uint256[8],uint256[50])", proof)
         );
         if (!success) revert InvalidProof();
+
+        // Verify public inputs are bound to current on-chain state
+        _verifyPublicInputs(proof.public_signal, participantIds);
+
+        // Verify proof was generated against the current block
+        _verifyBlockNumber(proof.public_signal);
 
         // Execute ZkDvp deposits
         uint256[] memory zkDvpCommitments = _executeZkDvpDeposits(
@@ -407,15 +413,21 @@ contract Enygma is IEnygma {
         DepositProof calldata proof,
         WithdrawParams calldata withdrawParam,
         uint256[] calldata participantIds
-    ) external onlyRegistered returns (bool) {
+    ) external onlyRegistered whenInitialized returns (bool) {
         // Verify deposit proof
         address verifier = _depositVerifiers[commitmentDeltas.length];
         if (verifier == address(0)) revert VerifierNotFound();
 
         (bool success, ) = verifier.delegatecall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[2])", proof)
+            abi.encodeWithSignature("verifyProof(uint256[8],uint256[50])", proof)
         );
         if (!success) revert InvalidProof();
+
+        // Verify public inputs are bound to current on-chain state
+        _verifyPublicInputs(proof.public_signal, participantIds);
+
+        // Verify proof was generated against the current block
+        _verifyBlockNumber(proof.public_signal);
 
         // Execute ZkDvp withdrawal
         IZkDvp zkDvp = IZkDvp(_zkDvpAddress);
@@ -563,7 +575,7 @@ contract Enygma is IEnygma {
      * @notice Verify public inputs match contract state
      */
     function _verifyPublicInputs(
-        Proof calldata proof,
+        uint256[50] calldata public_signal,
         uint256[] calldata participantIds
     ) private view {
         (Point[] memory balances, uint256[] memory keys) = getPublicValues(
@@ -576,7 +588,7 @@ contract Enygma is IEnygma {
 
             // Verify public key
             if (
-                uint256(proof.public_signal[PUBLIC_KEY_OFFSET + i]) !=
+                uint256(public_signal[PUBLIC_KEY_OFFSET + i]) !=
                 keys[accountId]
             ) {
                 revert InvalidPublicInputs();
@@ -585,9 +597,9 @@ contract Enygma is IEnygma {
             // Verify balance commitment
             uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1); // i * 2
             if (
-                uint256(proof.public_signal[commitOffset]) !=
+                uint256(public_signal[commitOffset]) !=
                 balances[accountId].c1 ||
-                uint256(proof.public_signal[commitOffset + 1]) !=
+                uint256(public_signal[commitOffset + 1]) !=
                 balances[accountId].c2
             ) {
                 revert InvalidPublicInputs();
@@ -759,9 +771,9 @@ contract Enygma is IEnygma {
     /**
      * @notice Check if sent blocknumber is the same as in the smart contract
      */
-    function _verifyBlockNumber(Proof calldata proof) private view {
+    function _verifyBlockNumber(uint256[50] calldata public_signal) private view {
         uint256 proofBlockNumber = uint256(
-            proof.public_signal[BLOCK_NUMBER_OFFSET]
+            public_signal[BLOCK_NUMBER_OFFSET]
         );
 
         // Option 1: Exact match (strict)

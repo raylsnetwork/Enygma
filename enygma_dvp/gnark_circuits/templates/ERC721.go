@@ -61,8 +61,10 @@ func (circuit *Erc721Circuit) Define(api frontend.API) error{
 		}
 		root := primitives.MerkleProof(api, commitment,circuit.WtPathIndices[i],pathElement)
 
-		isZero := api.IsZero(circuit.WtValues[i]) // ValueIn[i] ?0 =  1:0
-		Enable := api.Mul(1,isZero)  
+		isZero := api.IsZero(circuit.WtValues[i]) // 1 when zero, 0 when non-zero
+		// CRIT-4 fix: was api.Mul(1, isZero) — that enforced Merkle check only for
+		// zero-value (dummy) inputs and SKIPPED it for real inputs. Inverted logic.
+		Enable := api.Sub(1, isZero)  // 1 when non-zero (real input), 0 when zero (padding)
 
 		Diff   := api.Sub(circuit.StMerkleRoots[i], root)
 

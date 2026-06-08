@@ -17,7 +17,12 @@ contract Erc20CoinVault is AbstractCoinVault {
     //              Constants
     //////////////////////////////////////////////
 
+    // 1-input / 2-output retail payment circuit (VK slot 0).
     uint256 public constant VK_ID_ERC20_JOINSPLIT = 0;
+    // 2-input / 2-output consolidation/payment circuit (VK slot 1).
+    // VULN-2 fix: 1-in and 2-in circuits have different R1CS constraint counts and
+    // therefore different Groth16 VKs.  They MUST NOT share the same VK slot.
+    uint256 public constant VK_ID_ERC20_JOINSPLIT_2INPUT = 1;
     uint256 public constant VK_ID_ERC20_10INPUT = 6;
     // DvP Initiator circuit: circuit id=24 in enygmadvp.config.json → VK slot 23 (0-indexed)
     uint256 public constant VK_ID_DVP_INITIATOR = 23;
@@ -149,7 +154,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256[] memory withdrawParams,
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         uint256 amount  = withdrawParams[0];
         uint256 tokenId = withdrawParams[1];
 
@@ -165,8 +170,7 @@ contract Erc20CoinVault is AbstractCoinVault {
 
         checkReceiptConditions(receipt);
 
-        IERC20(_assetContractAddress).transfer(recipient, amount);
-
+        // Effects: nullify input coins before external transfer (checks-effects-interactions)
         uint256 treeNumbersIndex = 1;
         uint256 nullifiersIndex  = 1 + 2 * receipt.numberOfInputs;
         for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
@@ -182,6 +186,10 @@ contract Erc20CoinVault is AbstractCoinVault {
                 );
             }
         }
+
+        // Interaction: transfer tokens after all state changes
+        IERC20(_assetContractAddress).transfer(recipient, amount);
+
         return true;
     }
 
@@ -189,7 +197,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256[] memory withdrawParams,
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public override returns (bool) {
+    ) public override nonReentrant returns (bool) {
         //     receipt.statement;
         //     message;
         //     treeNumbers[numberOfInputs];
@@ -207,29 +215,19 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256[] memory assetParams = new uint256[](2);
         assetParams[0] = amount;
         assetParams[1] = uint256(uint160(_assetContractAddress));
-        // generating uniqueId for ERC20 token
         uint256 uid = generateUniqueId(assetParams);
 
-        // generating commitment based on uniqueId and publicKey
         uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon(
             [uid, uint256(uint160(recipient))]
         );
-
-        // checking if the computed commitment
-        // matches the first commitment in the proof.
 
         if (receipt.statement[commitmentsIndex] != commitment) {
             revert InvalidOpening();
         }
 
-        // checking generic JoinSplit proof conditions
-
         checkReceiptConditions(receipt);
 
-        // Transfering the tokens from ZkDvp to User
-        IERC20(_assetContractAddress).transfer(recipient, amount);
-
-        // Nullifying the input coins
+        // Effects: nullify input coins before external transfer (checks-effects-interactions)
         for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
             if (receipt.statement[nullifiersIndex + i] != 0) {
                 setNullifier(
@@ -243,6 +241,9 @@ contract Erc20CoinVault is AbstractCoinVault {
                 );
             }
         }
+
+        // Interaction: transfer tokens after all state changes
+        IERC20(_assetContractAddress).transfer(recipient, amount);
 
         return true;
     }
@@ -276,10 +277,17 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint jNullifiersIndex = jRootsIndex + jInputSize;
         uint jCommitmentsIndex = jNullifiersIndex + jInputSize;
 
-        // TODO:: check all pairs of commitment to be different
-        // Adding this require to original ones from the Aegis repo
-        // to avoid entering the same coins' commitments in the
-        // two input slots.
+        // VULN-5 fix: verify the proof is bound to THIS vault contract.
+        // statement layout: [...commitments, contractAddress] — contractAddress is last.
+        // Only retail payment proofs (1-in/2-out and 2-in/2-out) carry StContractAddress.
+        // DvP Initiator proofs (numberOfOutputs == 1) do not include it.
+        if (receipt.numberOfOutputs == 2) {
+            uint contractAddrIdx = jCommitmentsIndex + receipt.numberOfOutputs;
+            require(
+                receipt.statement[contractAddrIdx] == uint256(uint160(address(this))),
+                "proof not bound to this vault"
+            );
+        }
 
         if (
             receipt.statement[jCommitmentsIndex] ==
@@ -330,8 +338,9 @@ contract Erc20CoinVault is AbstractCoinVault {
                 receipt.statement
             );
         } else if (receipt.numberOfInputs == 2) {
+            // 2-input/2-output circuit uses its own VK slot — VULN-2 fix.
             IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_JOINSPLIT,
+                VK_ID_ERC20_JOINSPLIT_2INPUT,
                 receipt.proof,
                 receipt.statement
             );

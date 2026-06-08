@@ -47,11 +47,13 @@ interface IEnygmaDvp {
     struct TransactionMetadata {
         uint256 vaultId;
         uint256 groupId;
-        uint256 targetReceiptId; // the uniqueId of the proofReceipt of the other leg's transaction
-        uint256 proofHash; // reserved to mitigate potential replay attacks
-        uint256 deadline;      // unix timestamp (seconds) after which the swap can be reclaimed
-        uint256 swapId;        // Poseidon(Poseidon4(commitA, revertCommitA, nfA, commitB), deadline)
-        uint256 revertCommitA; // Alice's revert commitment, inserted into tree on timeout
+        uint256 targetReceiptId; // commitA — what Bob's receiptUniqueId must equal (HIGH-2 fix)
+        uint256 proofHash;       // reserved to mitigate potential replay attacks
+        uint256 deadline;        // unix timestamp (seconds) after which the swap can be reclaimed
+        uint256 swapId;          // Poseidon(Poseidon4(commitA, revertCommitA, nfA, commitB), deadline)
+        uint256 revertCommitA;   // Alice's revert commitment, inserted into tree on timeout (CRIT-2 fix)
+        uint256 commitB;         // Alice's receiptUniqueId — used to fetch vault receipt by Bob (HIGH-2 fix)
+        address initiator;       // Alice's Ethereum address — restricts timeout claims (HIGH-10 fix)
     }
 
     enum AuctionStateEnum {
@@ -140,6 +142,7 @@ interface IEnygmaDvp {
     error SwapDeadlineMustBeInFuture();
     error SwapNotFound();
     error SwapNotExpiredYet();
+    error Unauthorized();      // HIGH-10: caller is not the swap initiator
 
     error BrokerAlreadyRegistered();
     error InvalidStatementSize();
@@ -416,6 +419,14 @@ interface IEnygmaDvp {
         uint256 paymentGroupId,
         uint256 deliveryGroupId
     ) external returns (bool);
+
+    // HIGH-11 fix: SwapRelayer calls this to verify the vault pair is registered
+    // before settling, preventing the second submitter from routing through an
+    // arbitrary delivery vault.
+    function isRegisteredSwapGroupPair(
+        uint256 paymentVaultId,
+        uint256 deliveryVaultId
+    ) external view returns (bool);
 
     function swap(
         ProofReceipt memory paymentProof,

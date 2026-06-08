@@ -5,10 +5,6 @@ import(
 	 pos "gnark_server/poseidon"
 )
 
-func Nullifier(api frontend.API, privateKey frontend.Variable,pathIndex frontend.Variable)frontend.Variable{
-
-	hasher:= pos.Poseidon(api, []frontend.Variable{privateKey,pathIndex})
-	nullifier,_ := api.NewHint(ModHint, 2,hasher)
-	return nullifier[0]
-
+func Nullifier(api frontend.API, privateKey frontend.Variable, pathIndex frontend.Variable) frontend.Variable {
+	return pos.Poseidon(api, []frontend.Variable{privateKey, pathIndex})
 }

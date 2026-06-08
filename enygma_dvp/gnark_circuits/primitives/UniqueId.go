@@ -6,12 +6,6 @@ import(
 )
 
 
-func UniqueId(api frontend.API, contractAddress frontend.Variable,amount frontend.Variable)frontend.Variable{
-
-	hasher:= pos.Poseidon(api, []frontend.Variable{contractAddress,amount})
-
-	hasherOut,_ := api.NewHint(ModHint, 2,hasher)
-	
-	return hasherOut[0]
-
+func UniqueId(api frontend.API, contractAddress frontend.Variable, amount frontend.Variable) frontend.Variable {
+	return pos.Poseidon(api, []frontend.Variable{contractAddress, amount})
 }

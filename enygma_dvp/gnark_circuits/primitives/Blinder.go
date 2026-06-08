@@ -6,13 +6,7 @@ import(
 )
 
 
-func Blinder(api frontend.API, in frontend.Variable)frontend.Variable{
-
-	hasherInter:= pos.Poseidon(api, []frontend.Variable{in})
-
-	hash,_ := api.NewHint(ModHint, 2,hasherInter)
-
-	return hash[0]
-
+func Blinder(api frontend.API, in frontend.Variable) frontend.Variable {
+	return pos.Poseidon(api, []frontend.Variable{in})
 }
 
