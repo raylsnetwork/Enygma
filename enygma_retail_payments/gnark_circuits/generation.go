@@ -17,14 +17,24 @@ func GenerationVkPk() {
 	solver.RegisterHint(primitives.PoseidonNative)
 	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
-	payment_config := templates.PaymentCircuitConfig{
+	payment1inConfig := templates.PaymentCircuitConfig{
 		TmNInputs:         1,
 		TmMOutputs:        2,
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
+	script.SetupPayment(payment1inConfig, "Payment")
 
-	script.SetupPayment(payment_config, "Payment")
+	// 2-input/2-output circuit: separate VK slot (VK_ID_ERC20_JOINSPLIT_2INPUT = 1).
+	// Fixes VULN-2: 1-in and 2-in circuits have different R1CS and must use distinct VKs.
+	payment2inConfig := templates.PaymentCircuitConfig{
+		TmNInputs:         2,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPayment(payment2inConfig, "Payment2in")
+
 	// PrivateMint keys are NOT regenerated here — the PrivateMintVerifier contract
 	// bytecode has dvp's VK baked in. Copy PrivateMintPK/VK.key from enygma_dvp.
 }

@@ -1,4 +1,4 @@
-package payment
+package payment2in
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ import (
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
-// Payment circuit (1-in / 2-out, Merkle depth 8).
+// Payment circuit (2-in / 2-out, Merkle depth 8).
 //
 // Keys are loaded once at startup from pkPath / vkPath and reused for every request.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
@@ -29,14 +29,14 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
 
 	return func(c *gin.Context) {
-		var request PaymentRequest
+		var request PaymentRequest2in
 		if err := c.ShouldBindJSON(&request); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
 		cfg := templates.PaymentCircuitConfig{
-			TmNInputs:         1,
+			TmNInputs:         2,
 			TmMOutputs:        2,
 			TmMerkleTreeDepth: 8,
 			TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
@@ -97,9 +97,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
-		// Compile the circuit into an R1CS on every request. gnark requires a fresh
-		// constraint system to bind the witness variables for this specific proof;
-		// the expensive pk/vk are loaded once at startup and reused across requests.
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})
@@ -127,7 +124,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("verify: %v", err)})
 			return
 		}
-		fmt.Println("Payment proof verified successfully!")
+		fmt.Println("Payment2in proof verified successfully!")
 
 		p := proof.(*groth16_bn254.Proof)
 		ax, ay := new(big.Int), new(big.Int)
@@ -145,7 +142,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [msg, treeNum[0], root[0], nf[0], cmt[0], cmt[1], contractAddr]
+		// public signal: [msg, treeNum[0], treeNum[1], root[0], root[1], nf[0], nf[1], cmt[0], cmt[1], contractAddr]
 		var publicSignal []*big.Int
 		publicSignal = append(publicSignal, utils.ParseBigInt(request.StMessage))
 		for i := 0; i < cfg.TmNInputs; i++ {
@@ -158,7 +155,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 		publicSignal = append(publicSignal, utils.ParseBigInt(request.StContractAddress))
 
-		c.JSON(http.StatusOK, PaymentOutput{
+		c.JSON(http.StatusOK, PaymentOutput2in{
 			Proof:        proofRemix,
 			PublicSignal: publicSignal,
 		})

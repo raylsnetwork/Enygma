@@ -14,6 +14,8 @@ type PaymentRequest struct {
 	StMerkleRoots    [1]string    `json:"stMerkleRoots"    binding:"required"`
 	StNullifiers     [1]string    `json:"stNullifiers"     binding:"required"`
 	StCommitmentsOut [2]string    `json:"stCommitmentsOut" binding:"required"`
+	// VULN-5: vault contract address bound into the proof to prevent cross-deployment replay.
+	StContractAddress string      `json:"stContractAddress" binding:"required"`
 
 	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`
 	WtValuesIn           [1]string    `json:"wtValuesIn"           binding:"required"`

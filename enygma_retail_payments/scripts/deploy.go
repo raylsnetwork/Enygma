@@ -198,7 +198,10 @@ func deploy() error {
 	receipts["Erc20CoinVault"] = receiptToData(receipt, erc20CoinVaultAddress)
 
 	fmt.Println("Deploying UserRegistry...")
-	userRegistryAddress, receipt, err := deployContract(client, owner, "UserRegistry")
+	userRegistryAddress, receipt, err := deployContractFromPath(
+		client, owner,
+		filepath.Join(projectRoot, "contracts", "user_registry", "UserRegistry.json"),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to deploy UserRegistry: %w", err)
 	}
@@ -247,6 +250,31 @@ func deployContract(client *ethclient.Client, auth *bind.TransactOpts, contractN
 	artifact, err := loadArtifact(contractName)
 	if err != nil {
 		return common.Address{}, nil, fmt.Errorf("load artifact %s: %w", contractName, err)
+	}
+	parsedABI, err := abi.JSON(strings.NewReader(string(artifact.ABI)))
+	if err != nil {
+		return common.Address{}, nil, fmt.Errorf("parse ABI: %w", err)
+	}
+	address, tx, _, err := bind.DeployContract(auth, parsedABI, common.FromHex(artifact.Bytecode), client)
+	if err != nil {
+		return common.Address{}, nil, fmt.Errorf("deploy: %w", err)
+	}
+	receipt, err := bind.WaitMined(context.Background(), client, tx)
+	if err != nil {
+		return common.Address{}, nil, fmt.Errorf("wait mined: %w", err)
+	}
+	return address, receipt, nil
+}
+
+// deployContractFromPath deploys a contract from an explicit artifact file path.
+func deployContractFromPath(client *ethclient.Client, auth *bind.TransactOpts, artifactPath string) (common.Address, *types.Receipt, error) {
+	data, err := os.ReadFile(artifactPath)
+	if err != nil {
+		return common.Address{}, nil, fmt.Errorf("read artifact %s: %w", artifactPath, err)
+	}
+	var artifact ContractArtifact
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		return common.Address{}, nil, fmt.Errorf("parse artifact %s: %w", artifactPath, err)
 	}
 	parsedABI, err := abi.JSON(strings.NewReader(string(artifact.ABI)))
 	if err != nil {

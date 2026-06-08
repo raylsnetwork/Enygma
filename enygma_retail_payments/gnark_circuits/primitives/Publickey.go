@@ -6,15 +6,8 @@ import(
 )
 
 
-func PublicKey(api frontend.API, privateKey frontend.Variable)frontend.Variable{
-
-	publicKey:= pos.Poseidon(api, []frontend.Variable{privateKey})
-
-	publicKeyOut,_ := api.NewHint(ModHint, 2,publicKey)
-
-	pK :=publicKeyOut[0]
-	return pK
-
+func PublicKey(api frontend.API, privateKey frontend.Variable) frontend.Variable {
+	return pos.Poseidon(api, []frontend.Variable{privateKey})
 }
 
 
