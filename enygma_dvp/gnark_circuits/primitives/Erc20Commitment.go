@@ -8,9 +8,7 @@ import (
 // Erc20Commitment computes the legacy ERC20 commitment (interactive flow).
 // Deprecated: use Erc20CommitmentV2 for the non-interactive flow.
 func Erc20Commitment(api frontend.API, contractAddress, amount, publicKey, salt frontend.Variable) frontend.Variable {
-	commit := pos.Poseidon(api, []frontend.Variable{contractAddress, amount, publicKey, salt})
-	out, _ := api.NewHint(ModHint, 2, commit)
-	return out[0]
+	return pos.Poseidon(api, []frontend.Variable{contractAddress, amount, publicKey, salt})
 }
 
 // Erc20CommitmentV2 computes the ERC20 commitment for the non-interactive flow.
@@ -22,7 +20,5 @@ func Erc20Commitment(api frontend.API, contractAddress, amount, publicKey, salt 
 // amount     — token amount
 // tokenId    — token identifier
 func Erc20CommitmentV2(api frontend.API, pkSpend, saltBField, amount, tokenId frontend.Variable) frontend.Variable {
-	commit := pos.Poseidon(api, []frontend.Variable{pkSpend, saltBField, amount, tokenId})
-	out, _ := api.NewHint(ModHint, 2, commit)
-	return out[0]
+	return pos.Poseidon(api, []frontend.Variable{pkSpend, saltBField, amount, tokenId})
 }

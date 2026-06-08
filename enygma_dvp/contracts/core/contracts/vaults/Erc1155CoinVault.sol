@@ -153,7 +153,7 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
         uint256[] memory withdrawParams,
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public override returns (bool) {
+    ) public override nonReentrant returns (bool) {
         //     receipt.statement;
         //     message;
         //     treeNumbers[numberOfInputs];
@@ -173,6 +173,8 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
         uint256 nullifiersIndex = merkleRootsIndex + receipt.numberOfInputs;
         uint256 commitmentsIndex = nullifiersIndex + receipt.numberOfInputs;
 
+        // Checks + Effects: verify commitments and record all nullifiers before
+        // any external transfer (checks-effects-interactions pattern).
         for (uint256 i = 0; i < receipt.numberOfOutputs; i++) {
             uint256 amountOrOne = withdrawParams[i * 2];
             uint256 tokenId = withdrawParams[i * 2 + 1];
@@ -181,29 +183,13 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
                 uint256[] memory assetParams = new uint256[](2);
                 assetParams[0] = amountOrOne;
                 assetParams[1] = tokenId;
-                // generating uniqueId for ERC20 token
                 uint256 uid = generateUniqueId(assetParams);
-
-                uint addrUint = uint256(uint160(recipient));
-
-                // generating commitment based on uniqueId and publicKey
                 uint256 commitment = IPoseidonWrapper(_hashContractAddress)
-                    .poseidon([uid, addrUint]);
-
-                // checking if the computed commitment
-                // matches the first commitment in the proof.
+                    .poseidon([uid, uint256(uint160(recipient))]);
 
                 if (receipt.statement[commitmentsIndex + i] != commitment) {
                     revert InvalidOpening();
                 }
-                // Transfering the tokens from ZkDvp to recipient
-                IERC1155(_assetContractAddress).safeTransferFrom(
-                    address(this),
-                    recipient,
-                    tokenId,
-                    amountOrOne,
-                    ""
-                );
             }
 
             if (receipt.statement[nullifiersIndex + i] != 0) {
@@ -215,6 +201,22 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
                     _vaultId,
                     receipt.statement[1 + i],
                     receipt.statement[nullifiersIndex + i]
+                );
+            }
+        }
+
+        // Interactions: external transfers after all state updates.
+        for (uint256 i = 0; i < receipt.numberOfOutputs; i++) {
+            uint256 amountOrOne = withdrawParams[i * 2];
+            uint256 tokenId = withdrawParams[i * 2 + 1];
+
+            if (amountOrOne != 0 || tokenId != 0) {
+                IERC1155(_assetContractAddress).safeTransferFrom(
+                    address(this),
+                    recipient,
+                    tokenId,
+                    amountOrOne,
+                    ""
                 );
             }
         }

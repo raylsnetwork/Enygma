@@ -3,6 +3,7 @@ package templates
 import(
 	"github.com/consensys/gnark/frontend"
 	"gnark_server/primitives"
+	pos "gnark_server/poseidon"
 )
 // const maxCommissionPercentage = 4
 // const commissionPercentageDecimals = 4
@@ -17,7 +18,7 @@ type PrivateMintCircuit struct {
 	Commitment      frontend.Variable `gnark:",public"` // Poseidon(pk_spend, salt, amount, tokenId) — inserted into the Merkle tree on-chain
 	ContractAddress frontend.Variable `gnark:",public"` // address of the EnygmaDvp contract — binds the proof to a specific deployment
 	TokenId         frontend.Variable `gnark:",public"` // ERC20 token being minted
-	CipherText      frontend.Variable `gnark:",public"` // Poseidon(pk_spend, salt) — note tag so Alice can find her mint when scanning
+	CipherText      frontend.Variable `gnark:",public"` // Poseidon(pk_spend, salt, contractAddress) — note tag bound to this deployment
 
 	// --- private witnesses ---
 	Salt      frontend.Variable // saltB — random blinding factor for the commitment and note tag
@@ -28,13 +29,12 @@ type PrivateMintCircuit struct {
 
 func (circuit *PrivateMintCircuit) Define(api frontend.API) error{
 
-	// V2 commitment: Poseidon(pk_spend, salt, amount, tokenId)
-	// Matches the format expected by the JoinSplit circuit's input-side check.
+	
 	calculatedCommitment := primitives.Erc20CommitmentV2(api, circuit.PublicKey, circuit.Salt, circuit.Amount, circuit.TokenId)
 	api.AssertIsEqual(calculatedCommitment, circuit.Commitment)
 
-	// Note tag: lets Alice find her own mint on chain when scanning.
-	calculatedCipherText := primitives.Commitment(api, circuit.PublicKey, circuit.Salt)
+	
+	calculatedCipherText := pos.Poseidon(api, []frontend.Variable{circuit.PublicKey, circuit.Salt, circuit.ContractAddress})
 	api.AssertIsEqual(calculatedCipherText, circuit.CipherText)
 
 	return nil

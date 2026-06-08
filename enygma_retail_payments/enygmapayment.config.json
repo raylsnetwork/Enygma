@@ -29,14 +29,12 @@
       {
         "id": 1,
         "filename": "Payment",
-        "tags": [
-          "payment",
-          "erc20",
-          "merkle",
-          "2-input",
-          "2-output",
-          "fungible"
-        ]
+        "tags": ["payment", "erc20", "merkle", "1-input", "2-output", "fungible"]
+      },
+      {
+        "id": 2,
+        "filename": "Payment2in",
+        "tags": ["payment", "erc20", "merkle", "2-input", "2-output", "fungible"]
       }
     ]
   }

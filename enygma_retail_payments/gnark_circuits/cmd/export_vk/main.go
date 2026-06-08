@@ -137,11 +137,15 @@ func main() {
 		log.Fatalf("create build dir: %v", err)
 	}
 
-	vkPath := "scripts/keys/PaymentVK.key"
-	outPath := filepath.Join(buildDir, "Payment.json")
-
-	if err := exportVK(vkPath, outPath); err != nil {
-		log.Fatalf("export Payment VK: %v", err)
+	exports := []struct{ keyFile, outName string }{
+		{"scripts/keys/PaymentVK.key", "Payment.json"},
+		{"scripts/keys/Payment2inVK.key", "Payment2in.json"},
 	}
-	fmt.Printf("exported Payment → %s\n", outPath)
+	for _, e := range exports {
+		outPath := filepath.Join(buildDir, e.outName)
+		if err := exportVK(e.keyFile, outPath); err != nil {
+			log.Fatalf("export %s: %v", e.keyFile, err)
+		}
+		fmt.Printf("exported %s → %s\n", e.keyFile, outPath)
+	}
 }

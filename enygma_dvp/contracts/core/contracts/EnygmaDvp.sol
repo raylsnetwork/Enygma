@@ -8,6 +8,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
@@ -18,7 +19,7 @@ import {IPoseidonWrapper} from "../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../interfaces/IVerifier.sol";
 import {IPrivateMintVerifier} from "../interfaces/IPrivateMintVerifier.sol";
 
-contract EnygmaDvp is IEnygmaDvp, AccessControl {
+contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
@@ -81,6 +82,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
 
     mapping(uint256 => bool) private _swapGroupPairs;
     mapping(uint256 => bool) private _exchangeGroupPairs;
+    // HIGH-11 fix: direct vault-pair registry populated alongside group-pair registration.
+    mapping(uint256 => bool) private _registeredVaultPairs;
 
     mapping(uint256 => AuctionData) private _auctions;
 
@@ -325,10 +328,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     //       Asset Group functions
     //////////////////////////////////////////////
 
+    // HIGH-1 fix: restricted to owner — any caller could register arbitrary swap pairs.
     function registerSwapGroupPair(
         uint256 groupId1,
         uint256 groupId2
-    ) public returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         if (groupId1 >= _assetGroupsCount || groupId2 >= _assetGroupsCount) {
             revert GroupIdOutOfRange();
         }
@@ -364,7 +368,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     function registerExchangeGroupPair(
         uint256 groupId1,
         uint256 groupId2
-    ) public returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         if (groupId1 >= _assetGroupsCount || groupId2 >= _assetGroupsCount) {
             revert GroupIdOutOfRange();
         }
@@ -397,6 +401,26 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     ) public view returns (bool) {
         uint256 groupPairId = groupPairId(groupId1, groupId2);
         return _swapGroupPairs[groupPairId];
+    }
+
+    // HIGH-11 fix: vault-level pair check used by SwapRelayer to validate the
+    // (paymentVaultId, deliveryVaultId) combination before settling.
+    function isRegisteredSwapGroupPair(
+        uint256 paymentVaultId,
+        uint256 deliveryVaultId
+    ) external view returns (bool) {
+        uint256 pairKey = uint256(keccak256(abi.encodePacked(paymentVaultId, deliveryVaultId)));
+        return _registeredVaultPairs[pairKey];
+    }
+
+    // registerVaultSwapPair is called by the owner after deploying a new vault pair
+    // to authorise it as a valid payment→delivery combination in SwapRelayer.
+    function registerVaultSwapPair(
+        uint256 paymentVaultId,
+        uint256 deliveryVaultId
+    ) public onlyRole(DEFAULT_OWNER_ROLE) {
+        uint256 pairKey = uint256(keccak256(abi.encodePacked(paymentVaultId, deliveryVaultId)));
+        _registeredVaultPairs[pairKey] = true;
     }
 
     function isValidExchangeGroupPair(
@@ -683,107 +707,75 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
             revert GroupMembershipMismatch();
         }
 
-        // checking if the other leg exists
+        // HIGH-2 fix: Bob's StMessage = swap_id (from DvPDestinationCircuit).
+        // _pendingTransactions is now keyed by swapId so Bob's lookup finds Alice's record.
+        // HIGH-10 fix: targetReceiptId = commitA (what Bob's receiptUniqueId will be).
         if (
             _pendingTransactions[receiptMessage].targetReceiptId ==
             receiptUniqueId
         ) {
-            // if yes => check deadline has not passed, then settle
-
+            // Second leg found — check deadline and settle.
             if (block.timestamp > _pendingTransactions[receiptMessage].deadline) {
                 revert SwapDeadlineExpired();
             }
 
-            // TODO:: for now that both with-broker and without-broker
-            // settlements are active, there should be a check here
-            // if the proof has three outputs,
-            // then it is with broker and the broker blinded_publickey should match.
-
             uint256 vaultId2 = _pendingTransactions[receiptMessage].vaultId;
             uint256 groupId2 = _pendingTransactions[receiptMessage].groupId;
+            // HIGH-2 fix: look up vault receipt by commitB (Alice's receiptUniqueId),
+            // not by receiptMessage (swap_id) which is a different value.
+            uint256 commitB2 = _pendingTransactions[receiptMessage].commitB;
             ProofReceipt memory receipt2 = IAbstractCoinVault(
                 _coinVaults[vaultId2]
-            ).getPendingProofReceipt(receiptMessage);
+            ).getPendingProofReceipt(commitB2);
 
-            IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(
-                receipt2
-            );
-
+            IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(receipt2);
             delete _pendingTransactions[receiptMessage];
 
             if (!IAssetGroup(_assetGroups[groupId2]).isFungible()) {
-                // Dvp with delivery submitted first
-                swapOnGroupPair(
-                    receipt,
-                    receipt2,
-                    vaultId,
-                    vaultId2,
-                    groupId,
-                    groupId2
-                );
+                swapOnGroupPair(receipt, receipt2, vaultId, vaultId2, groupId, groupId2);
             } else if (!IAssetGroup(_assetGroups[groupId]).isFungible()) {
-                // Dvp with payment submitted first
-                // checkIfBrokerEnabled(receipt2, vaultId2, groupId2);
-                swapOnGroupPair(
-                    receipt2,
-                    receipt,
-                    vaultId2,
-                    vaultId,
-                    groupId2,
-                    groupId
-                );
+                swapOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
             } else {
-                // TODO:: resolve broker situation for PvP
-                // pvp
-                exchangeOnGroupPair(
-                    receipt2,
-                    receipt,
-                    vaultId2,
-                    vaultId,
-                    groupId2,
-                    groupId
-                );
+                exchangeOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
             }
         } else {
-            // if no => validate deadline, compute swap_id, and save receipt for later settlement
-
             if (deadline <= block.timestamp) {
                 revert SwapDeadlineMustBeInFuture();
             }
 
-            // commitA = receiptUniqueId (Alice's output commitment)
-            // commitB = receiptMessage  (Bob's expected commitment, cross-referenced by Bob)
-            // nfA     = first nullifier in the statement
-            uint256 commitA = receiptUniqueId;
-            uint256 commitB = receiptMessage;
-            uint256 nfA     = receipt.statement[nullifiersIndex];
+            // commitB = receiptUniqueId (Alice's statement[commitmentsIndex] = StCommitB)
+            // commitA = statement[commitmentsIndex+1] (Alice's StCommitA — what Alice expects)
+            // commitB is used by Bob as his receiptUniqueId (DvP Destination statement[4] = commitA)
+            // Wait — in DvPInitiator: statement = [msg, tree, root, nf, commitB, commitA, revertCommitA]
+            // commitmentsIndex = 4 → receiptUniqueId = commitB
+            // commitmentsIndex+1 = 5 → commitA
+            uint256 commitB    = receiptUniqueId;
+            uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
+            uint256 nfA        = receipt.statement[nullifiersIndex];
 
-            // swap_id = Poseidon( Poseidon4(commitA, revertCommitA, nfA, commitB), deadline )
             uint256 innerHash = IPoseidonWrapper(_hashContractAddress).poseidon4(
-                [commitA, revertCommitA, nfA, commitB]
+                [commitB, revertCommitA, nfA, receiptMessage]
             );
             uint256 swapId = IPoseidonWrapper(_hashContractAddress).poseidon(
                 [innerHash, deadline]
             );
 
-            _pendingTransactions[receiptUniqueId].vaultId        = vaultId;
-            _pendingTransactions[receiptUniqueId].groupId         = groupId;
-            _pendingTransactions[receiptUniqueId].targetReceiptId = receiptMessage;
-            _pendingTransactions[receiptUniqueId].deadline        = deadline;
-            _pendingTransactions[receiptUniqueId].swapId          = swapId;
-            _pendingTransactions[receiptUniqueId].revertCommitA   = revertCommitA;
+            // HIGH-2 fix: key by swapId (Bob's StMessage = swap_id in DvP Destination circuit).
+            // targetReceiptId = commitA_expected (Bob's receiptUniqueId = DvP Destination statement[4]).
+            // HIGH-10 fix: store initiator to restrict claimSwapTimeout.
+            _pendingTransactions[swapId].vaultId        = vaultId;
+            _pendingTransactions[swapId].groupId         = groupId;
+            _pendingTransactions[swapId].targetReceiptId = commitA_expected;
+            _pendingTransactions[swapId].deadline        = deadline;
+            _pendingTransactions[swapId].swapId          = swapId;
+            _pendingTransactions[swapId].revertCommitA   = revertCommitA;
+            _pendingTransactions[swapId].commitB         = commitB;
+            _pendingTransactions[swapId].initiator        = msg.sender;
 
-            IAbstractCoinVault(_coinVaults[vaultId]).addPendingProofReceipt(
-                receipt
-            );
+            IAbstractCoinVault(_coinVaults[vaultId]).addPendingProofReceipt(receipt);
 
-            emit SwapInitiated(swapId, commitA, commitB, deadline);
-            emit PendingProofAddedToVault(
-                vaultId,
-                groupId,
-                receiptMessage,
-                receipt
-            );
+            emit SwapInitiated(swapId, commitA_expected, commitB, deadline);
+            emit PendingProofAddedToVault(vaultId, groupId, receiptMessage, receipt);
         }
     }
 
@@ -791,22 +783,37 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
     // Once the deadline stored in the pending transaction has passed,
     // anyone can call this to unlock the initiator's nullifiers so
     // the original note can be re-spent (e.g. via REVERT_COMMIT_A).
+    // CRIT-2 fix: properly handle swap timeout by:
+    //   1. Spending (nullifying) Alice's input nullifiers — not just unlocking.
+    //   2. Inserting revertCommitA into the vault — Alice can spend this note.
+    // HIGH-10 fix: restrict to the swap initiator — prevents griefing by third parties.
     function claimSwapTimeout(uint256 pendingReceiptId) public returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 
         if (meta.deadline == 0) {
             revert SwapNotFound();
         }
-
         if (block.timestamp <= meta.deadline) {
             revert SwapNotExpiredYet();
         }
+        // HIGH-10: only the original initiator can claim the timeout.
+        if (msg.sender != meta.initiator) {
+            revert Unauthorized();
+        }
 
-        uint256 vaultId = meta.vaultId;
+        uint256 vaultId       = meta.vaultId;
+        uint256 revertCommitA = meta.revertCommitA;
+
+        // Look up the vault receipt using commitB (Alice's receiptUniqueId).
         ProofReceipt memory receipt = IAbstractCoinVault(_coinVaults[vaultId])
-            .getPendingProofReceipt(pendingReceiptId);
+            .getPendingProofReceipt(meta.commitB);
 
-        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
+        // CRIT-2 fix: nullify Alice's input (mark as permanently spent)
+        // then insert revertCommitA so Alice can reclaim her asset.
+        IAbstractCoinVault(_coinVaults[vaultId]).nullifyFromReceipt(receipt);
+        uint256[] memory revertCommits = new uint256[](1);
+        revertCommits[0] = revertCommitA;
+        IAbstractCoinVault(_coinVaults[vaultId]).registerCoins(revertCommits);
 
         delete _pendingTransactions[pendingReceiptId];
 
@@ -905,6 +912,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
             );
     }
 
+    // CRIT-5 fix: nonReentrant prevents reentrancy via vault callbacks.
+    // Settlement order: nullify inputs FIRST, then insert outputs — prevents
+    // the double-spend window where commitments exist before nullifiers are spent.
     function _settleOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -912,7 +922,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) internal returns (bool) {
+    ) internal nonReentrant returns (bool) {
         //-----------------------
         // [[VERIFICATION]]
         //-----------------------
@@ -981,14 +991,15 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
         // [[SETTLEMENT]]
         //-----------------------
 
-        // inserting payment commitments into payment vault
-        paymentCoinVault.insertCommitmentsFromReceipt(receipt1);
-        // inserting delivery commitments into delivery vault
-        deliveryCoinVault.insertCommitmentsFromReceipt(receipt2);
-
-        // Nullifying the old coins
-        deliveryCoinVault.nullifyFromReceipt(receipt2);
+        // CRIT-5 fix: nullify inputs BEFORE inserting outputs.
+        // This closes the double-spend window: if output insertion fails, inputs
+        // are already spent so they cannot be reused in another transaction.
         paymentCoinVault.nullifyFromReceipt(receipt1);
+        deliveryCoinVault.nullifyFromReceipt(receipt2);
+
+        // Insert output commitments after inputs are permanently spent.
+        paymentCoinVault.insertCommitmentsFromReceipt(receipt1);
+        deliveryCoinVault.insertCommitmentsFromReceipt(receipt2);
 
         emit Settled(receipt2.statement[0], receipt1.statement[0]);
 
@@ -1087,6 +1098,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl {
             proof.proof,
             proof.public_signal
         );
+
+        // CRIT-1 fix: the caller-supplied commitment must match proof.public_signal[0].
+        // Without this check the owner could insert an arbitrary commitment that was
+        // never constrained by the ZK circuit, allowing phantom notes to be minted.
+        if (commitment != proof.public_signal[0]) {
+            revert PublicSignalMismatch();
+        }
 
         // Extract cipherText from public signals (index 3)
         uint256 cipherText = proof.public_signal[3];

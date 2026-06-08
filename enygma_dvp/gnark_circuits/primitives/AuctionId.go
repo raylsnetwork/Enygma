@@ -6,10 +6,6 @@ import(
 )
 
 
-func AuctionId(api frontend.API, commitment frontend.Variable)frontend.Variable{
-
-	idInter:= pos.Poseidon(api, []frontend.Variable{commitment})
-	id,_ := api.NewHint(ModHint, 2,idInter)
-	return id[0]
-
+func AuctionId(api frontend.API, commitment frontend.Variable) frontend.Variable {
+	return pos.Poseidon(api, []frontend.Variable{commitment})
 }

@@ -4,6 +4,7 @@
 pragma solidity ^0.8.0;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
 import {
@@ -14,7 +15,8 @@ import {Merkle} from "./Merkle.sol";
 abstract contract AbstractCoinVault is
     IAbstractCoinVault,
     Merkle,
-    AccessControl
+    AccessControl,
+    ReentrancyGuard
 {
     bytes32 public constant DEFAULT_DVP_ROLE =
         keccak256(abi.encodePacked("DvpRole"));
@@ -78,7 +80,7 @@ abstract contract AbstractCoinVault is
         return isValidRoot(treeNumber, root);
     }
 
-    constructor(address zkDvpAddress) Merkle() AccessControl() {
+    constructor(address zkDvpAddress) Merkle() AccessControl() ReentrancyGuard() {
         // _hashContractAddress = hashContractAddress;
         _setupRole(DEFAULT_OWNER_ROLE, msg.sender);
         _setupRole(DEFAULT_DVP_ROLE, zkDvpAddress);

@@ -8,8 +8,8 @@ import (
 
 // PaymentCircuitConfig holds the compile-time parameters for the Payment circuit.
 type PaymentCircuitConfig struct {
-	TmNInputs       int // number of input notes Alice spends (>= 1)
-	TmMOutputs      int // number of output notes created (>= 2: at least payment + change)
+	TmNInputs       int 
+	TmMOutputs      int 
 	TmMerkleTreeDepth int
 	TmRange         frontend.Variable // upper bound for range checks (e.g. 2^64)
 }
@@ -20,17 +20,18 @@ type PaymentCircuit struct {
 	// --- public inputs (statement) ---
 	// Layout (non-interleaved, matching ContractStatement):
 	//   [StMessage, StTreeNumbers[0..N-1], StMerkleRoots[0..N-1],
-	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1]]
+	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1], StContractAddress]
 	StMessage        frontend.Variable   `gnark:",public"` // domain-separation / DVP link (0 = standalone)
 	StTreeNumbers    []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
 	StMerkleRoots    []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input
-	StNullifiers     []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
+	StNullifiers     []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon3(sk[i], leafIndex[i], contractAddr)
 	StCommitmentsOut []frontend.Variable `gnark:",public"` // TmMOutputs — output commitment per output
+	StContractAddress frontend.Variable  `gnark:",public"` // vault contract address (uint160)
 
 	// --- private witnesses: inputs ---
 	WtPrivateKeysIn []frontend.Variable   // TmNInputs — sk_spend per input
 	WtValuesIn      []frontend.Variable   // TmNInputs — amount per input
-	WtSaltsIn       []frontend.Variable   // TmNInputs — saltIn[i] (from when Alice received this note)
+	WtSaltsIn       []frontend.Variable   // TmNInputs — saltIn[i] (from when Alice received this note)	
 	WtPathElements  [][]frontend.Variable // TmNInputs x TmMerkleTreeDepth
 	WtPathIndices   []frontend.Variable   // TmNInputs — leaf position per input
 
@@ -44,6 +45,12 @@ type PaymentCircuit struct {
 }
 
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
+	
+	api.AssertIsEqual(circuit.StMessage, 0)
+	
+	// Change outputs (j >= 1) are constrained to use this key below.
+	senderPk := primitives.PublicKey(api, circuit.WtPrivateKeysIn[0])
+
 	inputsTotal := frontend.Variable(0)
 	outputsTotal := frontend.Variable(0)
 
@@ -55,12 +62,24 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 		isValid1 := cmp.IsLessOrEqual(api, 0, circuit.WtValuesIn[i])
 		api.AssertIsEqual(isValid1, 1)
 
-		// Derive pk_spend from sk_spend inside the circuit
+		// isZero/enable must be computed first — used by nullifier, Merkle, and ownership checks.
+		isZero := api.IsZero(circuit.WtValuesIn[i])
+		enable := api.Sub(1, isZero)
+
+		// Derive pk_spend from sk_spend inside the circuit.
 		pkIn := primitives.PublicKey(api, circuit.WtPrivateKeysIn[i])
 
-		// Nullifier: nf[i] = Poseidon(sk[i], leafIndex[i])
-		nullifier := primitives.Nullifier(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i])
-		api.AssertIsEqual(nullifier, circuit.StNullifiers[i])
+		// Zero-value padding inputs are exempt — they may use any key.
+		if i > 0 {
+			pkDiff := api.Sub(pkIn, senderPk)
+			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
+		}
+
+		//prevent vulnerability detected by Claude
+		nullifier := primitives.NullifierBound(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i], circuit.StContractAddress)
+		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
+		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
+		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
 
 		// Input commitment: Poseidon(pk[i], saltIn[i], valueIn[i], tokenId)
 		commitment := primitives.Erc20CommitmentV2(api,
@@ -70,16 +89,17 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			circuit.WtTokenId,
 		)
 
-		// Merkle proof: enforce root match only when value > 0 (zero-value inputs are ignored).
+		// Merkle proof: enforce root match only when value > 0.
+		// VULN-3 fix: zero-value inputs MUST have StMerkleRoots[i] = 0 so the on-chain
+		// guard `if (root != 0)` correctly skips root validation and nullifier recording.
 		pathElements := make([]frontend.Variable, circuit.Config.TmMerkleTreeDepth)
 		for j := 0; j < circuit.Config.TmMerkleTreeDepth; j++ {
 			pathElements[j] = circuit.WtPathElements[i][j]
 		}
 		root := primitives.MerkleProof(api, commitment, circuit.WtPathIndices[i], pathElements)
-		isZero := api.IsZero(circuit.WtValuesIn[i])
-		enable := api.Sub(1, isZero)
 		diff := api.Sub(circuit.StMerkleRoots[i], root)
 		api.AssertIsEqual(api.Mul(diff, enable), 0)
+		api.AssertIsEqual(api.Mul(circuit.StMerkleRoots[i], isZero), 0)
 
 		inputsTotal = api.Add(inputsTotal, circuit.WtValuesIn[i])
 	}
@@ -100,6 +120,12 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			circuit.WtTokenId,
 		)
 		api.AssertIsEqual(commitment, circuit.StCommitmentsOut[j])
+
+		// VULN: vulnerability detected by claude
+		// Output 0 is the payment to the recipient — no ownership constraint.
+		if j >= 1 {
+			api.AssertIsEqual(circuit.WtSpendPublicKeysOut[j], senderPk)
+		}
 
 		outputsTotal = api.Add(outputsTotal, circuit.WtValuesOut[j])
 	}

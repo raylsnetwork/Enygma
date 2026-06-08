@@ -15,6 +15,8 @@ contract UserRegistry {
     }
 
     mapping(address => UserKeys) private _keys;
+    mapping(address => uint32)   private _userIndex; // 0-based index in _userList
+    address[]                    private _userList;  // ordered by registration
 
     event UserRegistered(
         address indexed user,
@@ -24,11 +26,14 @@ contract UserRegistry {
 
     error AlreadyRegistered(address user);
     error NotRegistered(address user);
+    error IndexOutOfRange(uint256 index, uint256 length);
 
     // register publishes the caller's spend and view public keys on-chain.
     // Each address can only register once.
     function register(uint256 pkSpend, bytes calldata pkView) external {
         if (_keys[msg.sender].pkSpend != 0) revert AlreadyRegistered(msg.sender);
+        _userIndex[msg.sender] = uint32(_userList.length);
+        _userList.push(msg.sender);
         _keys[msg.sender] = UserKeys({pkSpend: pkSpend, pkView: pkView});
         emit UserRegistered(msg.sender, pkSpend, pkView);
     }
@@ -43,5 +48,28 @@ contract UserRegistry {
     // isRegistered returns true if the address has called register().
     function isRegistered(address user) external view returns (bool) {
         return _keys[user].pkSpend != 0;
+    }
+
+    // getUserCount returns the total number of registered users.
+    function getUserCount() external view returns (uint256) {
+        return _userList.length;
+    }
+
+    // getUserAt returns the address at position index in registration order.
+    function getUserAt(uint256 index) external view returns (address) {
+        if (index >= _userList.length) revert IndexOutOfRange(index, _userList.length);
+        return _userList[index];
+    }
+
+    // getUserIndex returns the 0-based registration index for a registered user.
+    function getUserIndex(address user) external view returns (uint32) {
+        if (_keys[user].pkSpend == 0) revert NotRegistered(user);
+        return _userIndex[user];
+    }
+
+    // getAllUsers returns all registered addresses in registration order.
+    // Use only off-chain — gas cost grows with the number of registered users.
+    function getAllUsers() external view returns (address[] memory) {
+        return _userList;
     }
 }

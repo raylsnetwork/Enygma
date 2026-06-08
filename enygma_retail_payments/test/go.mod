@@ -6,6 +6,7 @@ require (
 	github.com/ethereum/go-ethereum v1.16.8
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
 	github.com/raylsnetwork/enygma_retail_payments/src v0.0.0
+	lattice_zk v0.0.0
 )
 
 require (
@@ -37,6 +38,7 @@ require (
 )
 
 replace github.com/raylsnetwork/enygma_retail_payments/src => ../src
+replace lattice_zk => ../lattice_zk
 
 // Local replace — remove once enygma_dvp is published as a standalone Go module.
 // Both repos must be cloned side-by-side: enygma_dvp/ and enygma_retail_payments/

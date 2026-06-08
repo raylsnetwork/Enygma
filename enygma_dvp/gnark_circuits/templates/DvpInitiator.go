@@ -65,6 +65,12 @@ type DvPInitiatorCircuit struct {
 }
 
 func (circuit *DvPInitiatorCircuit) Define(api frontend.API) error {
+	// HIGH-5 fix: StMessage must equal StCommitA (Alice's receiving commitment).
+	// On-chain _settleOnGroupPair verifies: receipt1.statement[0] == receipt2.statement[commitA_idx]
+	// Both sides must reference the same commitA — constraining StMessage here prevents
+	// a prover from setting it to an arbitrary value to forge the cross-swap linkage.
+	api.AssertIsEqual(circuit.StMessage, circuit.StCommitA)
+
 	// 1. Derive Alice's spend public key from her secret key.
 	pkAlice := primitives.PublicKey(api, circuit.WtSpendKeyIn)
 

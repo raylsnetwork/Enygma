@@ -14,7 +14,5 @@ import (
 // amount     — token amount
 // tokenId    — token identifier
 func Erc20CommitmentV2(api frontend.API, pkSpend, saltBField, amount, tokenId frontend.Variable) frontend.Variable {
-	commit := pos.Poseidon(api, []frontend.Variable{pkSpend, saltBField, amount, tokenId})
-	out, _ := api.NewHint(ModHint, 2, commit)
-	return out[0]
+	return pos.Poseidon(api, []frontend.Variable{pkSpend, saltBField, amount, tokenId})
 }

@@ -88,7 +88,7 @@ contract Erc721CoinVault is AbstractCoinVault {
         uint256[] memory withdrawParams,
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public override returns (bool) {
+    ) public override nonReentrant returns (bool) {
         //     receipt.statement;
         //     message;
         //     treeNumbers[numberOfInputs];
@@ -106,33 +106,19 @@ contract Erc721CoinVault is AbstractCoinVault {
         uint256[] memory assetParams = new uint256[](2);
         assetParams[0] = amount;
         assetParams[1] = uint256(uint160(_assetContractAddress));
-        // generating uniqueId for ERC20 token
         uint256 uid = generateUniqueId(assetParams);
 
-        // generating commitment based on uniqueId and publicKey
         uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon(
             [uid, uint256(uint160(recipient))]
         );
-
-        // checking if the computed commitment
-        // matches the first commitment in the proof.
 
         if (receipt.statement[commitmentsIndex] != commitment) {
             revert InvalidOpening();
         }
 
-        // checking generic JoinSplit proof conditions
-
         checkReceiptConditions(receipt);
 
-        // Transfering the tokens from ZkDvp to User
-        IERC721(_assetContractAddress).transferFrom(
-            address(this),
-            recipient,
-            amount
-        );
-
-        // Nullifying the input coins
+        // Effects: nullify input coins before external transfer (checks-effects-interactions)
         for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
             if (receipt.statement[nullifiersIndex + i] != 0) {
                 setNullifier(
@@ -146,6 +132,13 @@ contract Erc721CoinVault is AbstractCoinVault {
                 );
             }
         }
+
+        // Interaction: transfer token after all state changes
+        IERC721(_assetContractAddress).transferFrom(
+            address(this),
+            recipient,
+            amount
+        );
 
         return true;
     }
@@ -226,22 +219,26 @@ contract Erc721CoinVault is AbstractCoinVault {
             revert InvalidNullifier();
         }
 
-        // Try the standard ERC721 ownership VK first; fall back to DvP Destination VK.
-        // Both circuits share the same 5-element statement layout, so the VK determines
-        // which circuit generated the proof.
-        try IVerifier(_verifierContractAddress).verifyProof(
-            VK_ID_ERC721_1,
-            receipt.proof,
-            receipt.statement
-        ) returns (bool) {
-            return true;
-        } catch {
+        // HIGH-3 fix: use StMessage (statement[0]) as a proof-type discriminator
+        // instead of try/catch VK fallthrough.
+        // StMessage == 0  → standalone ERC721 transfer (retail circuit).
+        // StMessage != 0  → DvP Destination proof (swap_id is non-zero by construction).
+        // The try/catch pattern silently accepted cross-circuit proofs: a DvP Destination
+        // proof that failed VK_ID_ERC721_1 would be re-verified against VK_ID_DVP_DESTINATION,
+        // allowing semantic confusion between the two circuit types.
+        if (receipt.statement[0] == 0) {
+            IVerifier(_verifierContractAddress).verifyProof(
+                VK_ID_ERC721_1,
+                receipt.proof,
+                receipt.statement
+            );
+        } else {
             IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_DVP_DESTINATION,
                 receipt.proof,
                 receipt.statement
             );
-            return true;
         }
+        return true;
     }
 }

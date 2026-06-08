@@ -80,6 +80,9 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 	expectedTxValue := api.Sub(pDiffConstrained, vConstrained)
 	expectedTxValueInter, _ := api.NewHint(utils.ModHint, 2, expectedTxValue)
 	expectedTxValueMod := expectedTxValueInter[0]
+	expectedTxValueQ := expectedTxValueInter[1]
+	api.AssertIsEqual(api.Add(api.Mul(expectedTxValueQ, JubJubPrimeSubGroup), expectedTxValueMod), expectedTxValue)
+	api.AssertIsEqual(cmp.IsLess(api, expectedTxValueMod, JubJubPrimeSubGroup), 1)
 
 	api.AssertIsEqual(selectedVConstrained, expectedTxValueMod)
 	///////////////////////////////////**///////////////////////////////////
@@ -100,6 +103,9 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
 	secretInter, _ := api.NewHint(utils.ModHint, 2, secretSenderCalculated)
 	secretRemain := secretInter[0]
+	secretQ := secretInter[1]
+	api.AssertIsEqual(api.Add(api.Mul(secretQ, JubJubPrimeSubGroup), secretRemain), secretSenderCalculated)
+	api.AssertIsEqual(cmp.IsLess(api, secretRemain, JubJubPrimeSubGroup), 1)
 
 	api.AssertIsEqual(secretRemain, selectedSecret)
 
@@ -109,6 +115,9 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i], circuit.SharedSecrets[i]})
 		hashInter, _ := api.NewHint(utils.ModHint, 2, calculatedHash)
 		hashMod := hashInter[0]
+		hashQ := hashInter[1]
+		api.AssertIsEqual(api.Add(api.Mul(hashQ, JubJubPrimeSubGroup), hashMod), calculatedHash)
+		api.AssertIsEqual(cmp.IsLess(api, hashMod, JubJubPrimeSubGroup), 1)
 		api.AssertIsEqual(hashMod, circuit.HashedSharedSecrets[i])
 	}
 
@@ -123,6 +132,9 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 	pk := pos.Poseidon(api, []frontend.Variable{circuit.SecretKey, circuit.SecretKey})
 	pkInter, _ := api.NewHint(utils.ModHint, 2, pk)
 	pkMod := pkInter[0]
+	pkQ := pkInter[1]
+	api.AssertIsEqual(api.Add(api.Mul(pkQ, JubJubPrimeSubGroup), pkMod), pk)
+	api.AssertIsEqual(cmp.IsLess(api, pkMod, JubJubPrimeSubGroup), 1)
 
 	api.AssertIsEqual(selectedPK, pkMod)
 
@@ -196,6 +208,9 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 		calculatedMessageTag := pos.Poseidon(api, []frontend.Variable{HashTag, circuit.SharedSecrets[i], circuit.BlockNumber})
 		calculatedMessageTagInter, _ := api.NewHint(utils.ModHint, 2, calculatedMessageTag)
 		calculatedMessageTagMod := calculatedMessageTagInter[0]
+		calculatedMessageTagQ := calculatedMessageTagInter[1]
+		api.AssertIsEqual(api.Add(api.Mul(calculatedMessageTagQ, JubJubPrimeSubGroup), calculatedMessageTagMod), calculatedMessageTag)
+		api.AssertIsEqual(cmp.IsLess(api, calculatedMessageTagMod, JubJubPrimeSubGroup), 1)
 
 		api.AssertIsEqual(circuit.MessageTags[i], calculatedMessageTagMod)
 	}

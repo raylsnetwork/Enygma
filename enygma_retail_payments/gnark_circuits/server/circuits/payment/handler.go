@@ -67,8 +67,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		circuit := newCircuit()
 		witness := newCircuit()
 
-		witness.StMessage = frontend.Variable(request.StMessage)
-		witness.WtTokenId = frontend.Variable(request.WtTokenId)
+		witness.StMessage         = frontend.Variable(request.StMessage)
+		witness.StContractAddress = frontend.Variable(request.StContractAddress)
+		witness.WtTokenId         = frontend.Variable(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {
 			witness.StTreeNumbers[i] = frontend.Variable(request.StTreeNumbers[i])
@@ -144,7 +145,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [msg, treeNum[0], root[0], nf[0], cmt[0], cmt[1]]
+		// public signal: [msg, treeNum[0], root[0], nf[0], cmt[0], cmt[1], contractAddr]
 		var publicSignal []*big.Int
 		publicSignal = append(publicSignal, utils.ParseBigInt(request.StMessage))
 		for i := 0; i < cfg.TmNInputs; i++ {
@@ -155,6 +156,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		for i := 0; i < cfg.TmMOutputs; i++ {
 			publicSignal = append(publicSignal, utils.ParseBigInt(request.StCommitmentsOut[i]))
 		}
+		publicSignal = append(publicSignal, utils.ParseBigInt(request.StContractAddress))
 
 		c.JSON(http.StatusOK, PaymentOutput{
 			Proof:        proofRemix,

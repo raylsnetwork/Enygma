@@ -10,16 +10,8 @@ import(
 	 pos "gnark_server/poseidon"
 )
 
-func Commitment(api frontend.API, uniqueId frontend.Variable,publicKey frontend.Variable)frontend.Variable{
-
-	
-	commit:= pos.Poseidon(api, []frontend.Variable{uniqueId,publicKey})
-
-	commitout,_ := api.NewHint(ModHint, 2,commit)
-	
-	commitmentVar:=commitout[0]
-	return commitmentVar
-
+func Commitment(api frontend.API, uniqueId frontend.Variable, publicKey frontend.Variable) frontend.Variable {
+	return pos.Poseidon(api, []frontend.Variable{uniqueId, publicKey})
 }
 
 func CommitmentNative(api frontend.API, uniqueId frontend.Variable,publicKey frontend.Variable)frontend.Variable{

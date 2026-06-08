@@ -142,6 +142,15 @@ func GetNullifier(privateKey, pathIndices *big.Int) (*big.Int, error) {
 	return poseidon.Hash([]*big.Int{privateKey, pathIndices})
 }
 
+// GetNullifierBound computes a contract-address-bound nullifier.
+// Used by the retail payments circuit (VULN-5 fix): including the vault address
+// prevents cross-deployment proof replay.
+//
+//	nf = Poseidon3(sk, leafIndex, contractAddress)
+func GetNullifierBound(privateKey, pathIndices, contractAddress *big.Int) (*big.Int, error) {
+	return poseidon.Hash([]*big.Int{privateKey, pathIndices, contractAddress})
+}
+
 // GetCommitment computes a commitment from a unique ID and public key
 func GetCommitment(uniqueId, publicKey *big.Int) (*big.Int, error) {
 	return poseidon.Hash([]*big.Int{uniqueId, publicKey})

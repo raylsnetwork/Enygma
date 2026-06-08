@@ -16,12 +16,12 @@ interface IEnygma {
 
     struct WithdrawProof {
         uint256[8] proof;
-        uint256[1] public_signal;
+        uint256[50] public_signal;
     }
 
     struct DepositProof {
         uint256[8] proof;
-        uint256[2] public_signal;
+        uint256[50] public_signal;
     }
 
     struct SnarkProof {

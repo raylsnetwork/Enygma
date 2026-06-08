@@ -67,3 +67,4 @@ func (circuit *Erc1155BatchCircuit) Define(api frontend.API) error{
 	}
 	return nil
 }
+

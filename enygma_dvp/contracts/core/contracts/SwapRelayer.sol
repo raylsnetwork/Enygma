@@ -109,8 +109,15 @@ contract SwapRelayer {
         // emit ctI/ctII so the counterparty can discover the swap by scanning
         emit SwapReceiptSubmitted(swapId, isPayment, ctI, ctII);
 
-        // if both sides are in → settle atomically
+        // if both sides are in → validate vault pair then settle atomically
         if (s.paymentSubmitted && s.deliverySubmitted) {
+            // HIGH-11 fix: verify (paymentVaultId, deliveryVaultId) is a registered
+            // swap pair before settling. Without this check the second submitter can
+            // route the settlement through an unrelated vault of their choosing.
+            require(
+                dvp.isRegisteredSwapGroupPair(s.paymentVaultId, s.deliveryVaultId),
+                "SwapRelayer: vault pair not registered"
+            );
             dvp.swap(
                 s.paymentReceipt,
                 s.deliveryReceipt,
