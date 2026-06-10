@@ -15,9 +15,11 @@ pragma solidity ^0.8.24;
 contract UserRegistry {
 
     struct UserKeys {
-        bool    registered; // VULN-8 fix: explicit flag instead of pkSpend != 0 sentinel
-        uint256 pkSpend;    // Poseidon(sk_spend) — used to build output commitments
-        bytes   pkView;     // ML-KEM-768 encapsulation key (exactly 1184 bytes)
+        bool    registered;    // VULN-8 fix: explicit flag instead of pkSpend != 0 sentinel
+        uint256 pkSpend;       // Poseidon(sk_spend) — used to build output commitments
+        bytes   pkView;        // ML-KEM-768 encapsulation key (exactly 1184 bytes)
+        bytes   mlKemAuditCt;  // ML-KEM-768 capsule encrypting ss for the auditor (exactly 1088 bytes)
+        bytes   aesAuditCt;    // AES-256-GCM ciphertext of sk_view seed, keyed by HKDF(ss) (exactly 92 bytes)
     }
 
     mapping(address => UserKeys) private _keys;
@@ -32,7 +34,7 @@ contract UserRegistry {
     uint256 public registrationFee;
 
     // ── Events ─────────────────────────────────────────────────────────────────
-    event UserRegistered(address indexed user, uint256 pkSpend, bytes pkView);
+    event UserRegistered(address indexed user, uint256 pkSpend, bytes pkView, bytes mlKemAuditCt, bytes aesAuditCt);
     event RegistrationFeeUpdated(uint256 oldFee, uint256 newFee);
     event FeesWithdrawn(address indexed to, uint256 amount);
 
@@ -41,6 +43,8 @@ contract UserRegistry {
     error NotRegistered(address user);
     error IndexOutOfRange(uint256 index, uint256 length);
     error InvalidPkViewLength(uint256 got);             // pkView must be 1184 bytes
+    error InvalidMlKemAuditCtLength(uint256 got);       // mlKemAuditCt must be 1088 bytes
+    error InvalidAesAuditCtLength(uint256 got);         // aesAuditCt must be 92 bytes
     error InsufficientFee(uint256 required, uint256 provided);
     error NotOwner();
     error WithdrawFailed();
@@ -56,20 +60,38 @@ contract UserRegistry {
 
     // ── Registration ───────────────────────────────────────────────────────────
 
-    // register publishes the caller's spend and view public keys on-chain.
+    // register publishes the caller's spend key, view key, and audit ciphertexts on-chain.
+    // mlKemAuditCt is the ML-KEM-768 capsule produced by encapsulate(pk_auditor).
+    // aesAuditCt   is the AES-256-GCM encryption of sk_view, keyed by HKDF(ss), with
+    //              mlKemAuditCt as AEAD associated data — binding the two ciphertexts.
     // Requires msg.value >= registrationFee (Sybil protection when fee > 0).
     // Each address can only register once.
-    function register(uint256 pkSpend, bytes calldata pkView) external payable {
+    function register(
+        uint256        pkSpend,
+        bytes calldata pkView,
+        bytes calldata mlKemAuditCt,
+        bytes calldata aesAuditCt
+    ) external payable {
         if (msg.value < registrationFee)
             revert InsufficientFee(registrationFee, msg.value);
         if (pkView.length != 1184)
             revert InvalidPkViewLength(pkView.length);
+        if (mlKemAuditCt.length != 1088)
+            revert InvalidMlKemAuditCtLength(mlKemAuditCt.length);
+        if (aesAuditCt.length != 92)
+            revert InvalidAesAuditCtLength(aesAuditCt.length);
         if (_keys[msg.sender].registered)
             revert AlreadyRegistered(msg.sender);
         _userIndex[msg.sender] = uint32(_userList.length);
         _userList.push(msg.sender);
-        _keys[msg.sender] = UserKeys({registered: true, pkSpend: pkSpend, pkView: pkView});
-        emit UserRegistered(msg.sender, pkSpend, pkView);
+        _keys[msg.sender] = UserKeys({
+            registered:   true,
+            pkSpend:      pkSpend,
+            pkView:       pkView,
+            mlKemAuditCt: mlKemAuditCt,
+            aesAuditCt:   aesAuditCt
+        });
+        emit UserRegistered(msg.sender, pkSpend, pkView, mlKemAuditCt, aesAuditCt);
     }
 
     // ── Key lookups ────────────────────────────────────────────────────────────
@@ -79,6 +101,21 @@ contract UserRegistry {
         UserKeys storage k = _keys[user];
         if (!k.registered) revert NotRegistered(user);
         return (k.pkSpend, k.pkView);
+    }
+
+    // getAuditCiphertexts returns the audit ciphertext pair for a registered address.
+    // The auditor calls this to recover the user's sk_view:
+    //   ss      = decapsulate(sk_auditor, mlKemAuditCt)
+    //   enc_key = HKDF(ss, "enygma-audit-view-key-v1")
+    //   sk_view = AES-256-GCM-decrypt(enc_key, aesAuditCt, AAD=mlKemAuditCt)
+    function getAuditCiphertexts(address user)
+        external
+        view
+        returns (bytes memory mlKemAuditCt, bytes memory aesAuditCt)
+    {
+        UserKeys storage k = _keys[user];
+        if (!k.registered) revert NotRegistered(user);
+        return (k.mlKemAuditCt, k.aesAuditCt);
     }
 
     // isRegistered returns true if the address has called register().

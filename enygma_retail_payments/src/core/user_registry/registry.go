@@ -15,14 +15,20 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-// UserKeys holds the two public keys a sender needs to pay a recipient.
+// UserKeys holds the public keys a sender needs to pay a recipient, plus the
+// audit ciphertexts published at registration for the auditor to recover sk_view.
 type UserKeys struct {
-	SpendKey *big.Int // pk_spend — Poseidon(sk_spend)
-	ViewKey  []byte   // pk_view  — ML-KEM-768 encapsulation key (1184 bytes)
+	SpendKey    *big.Int // pk_spend    — Poseidon(sk_spend)
+	ViewKey     []byte   // pk_view     — ML-KEM-768 encapsulation key (1184 bytes)
+	MlKemAuditCt []byte // mlKemAuditCt — ML-KEM capsule for auditor (1088 bytes)
+	AesAuditCt   []byte // aesAuditCt   — AES-GCM encrypted sk_view seed (92 bytes)
 }
 
-// Register calls UserRegistry.register(pkSpend, pkView) on-chain.
+// Register calls UserRegistry.register(pkSpend, pkView, mlKemAuditCt, aesAuditCt) on-chain.
 // Each address can only register once — returns AlreadyRegistered on repeat calls.
+//
+// mlKemAuditCt and aesAuditCt are produced by auditor.EncryptViewKeyForAuditor and
+// bind the user's sk_view to the auditor's public key via AEAD (mlKemAuditCt as AAD).
 //
 // Sybil protection: the function automatically queries the current registrationFee
 // and sends the exact amount with the transaction. When the fee is 0 (default),
@@ -33,6 +39,8 @@ func Register(
 	registryAddr common.Address,
 	pkSpend *big.Int,
 	pkView []byte,
+	mlKemAuditCt []byte,
+	aesAuditCt []byte,
 ) error {
 	a, err := loadABI()
 	if err != nil {
@@ -51,7 +59,7 @@ func Register(
 	authCopy := *auth
 	authCopy.Value = fee
 
-	tx, err := c.Transact(&authCopy, "register", pkSpend, pkView)
+	tx, err := c.Transact(&authCopy, "register", pkSpend, pkView, mlKemAuditCt, aesAuditCt)
 	if err != nil {
 		return fmt.Errorf("UserRegistry.register: %w", err)
 	}
@@ -120,7 +128,7 @@ func WithdrawFees(
 	return err
 }
 
-// LookupKeys reads both spend and view keys for a registered address.
+// LookupKeys reads the spend and view keys for a registered address.
 func LookupKeys(
 	client *ethclient.Client,
 	registryAddr common.Address,
@@ -144,6 +152,33 @@ func LookupKeys(
 		return nil, fmt.Errorf("unexpected type for pkView")
 	}
 	return &UserKeys{SpendKey: pkSpend, ViewKey: pkView}, nil
+}
+
+// LookupAuditCiphertexts reads the audit ciphertext pair for a registered address.
+// The auditor calls this to recover the user's sk_view via AuditorDecryptViewKey.
+func LookupAuditCiphertexts(
+	client *ethclient.Client,
+	registryAddr common.Address,
+	user common.Address,
+) (mlKemAuditCt, aesAuditCt []byte, err error) {
+	a, err := loadABI()
+	if err != nil {
+		return nil, nil, err
+	}
+	c := bind.NewBoundContract(registryAddr, a, client, client, client)
+	var result []interface{}
+	if err := c.Call(&bind.CallOpts{}, &result, "getAuditCiphertexts", user); err != nil {
+		return nil, nil, fmt.Errorf("UserRegistry.getAuditCiphertexts(%s): %w", user.Hex(), err)
+	}
+	mlKemCt, ok := result[0].([]byte)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected type for mlKemAuditCt")
+	}
+	aesCt, ok := result[1].([]byte)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected type for aesAuditCt")
+	}
+	return mlKemCt, aesCt, nil
 }
 
 // GetUserCount returns the total number of registered users.
