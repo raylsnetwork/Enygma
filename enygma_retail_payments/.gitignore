@@ -4,7 +4,7 @@
 **/.claude/
 
 # Compiled gnark binaries
-/gnark_circuits/export_vk
+/gnark_circuits/export_vkI
 /gnark_circuits/poseidon/test
 
 artifacts/

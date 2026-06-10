@@ -20,19 +20,6 @@ package tests
 //        - Alice's recovered key → no notes (change has no on-chain ciphertext).
 //        - Bob's recovered key   → 1 note, amount 30 ✓
 //  13. Verify auditor's note matches Bob's direct scan.
-//
-// Prerequisites — all four services must be running:
-//
-//	Terminal 1: cd ../enygma_dvp && npx hardhat node        (fresh node)
-//	Terminal 2: bash setup.sh                               (from enygma_retail_payments/)
-//	Terminal 3: cd gnark_circuits && go run main.go
-//	Terminal 4: cd relayer && RELAYER_PRIVATE_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda \
-//	                         RELAYER_API_KEY=test-api-key-dev-only \
-//	                         CC=/usr/bin/clang go run main.go
-//
-// Run:
-//
-//	cd test && CC=/usr/bin/clang go test -run TestAuditedPaymentViaRelayer -v -timeout 300s
 
 import (
 	"bytes"
