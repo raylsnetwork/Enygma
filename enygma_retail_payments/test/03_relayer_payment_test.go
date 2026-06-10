@@ -198,13 +198,27 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 	t.Logf("  Alice pk_spend: %s", aliceSpend.PublicKey)
 	t.Logf("  Bob   pk_spend: %s", bobSpend.PublicKey)
 
+	// Generate auditor keypair and encrypt each user's view secret key for the auditor.
+	auditorPair, err := rpcore.NewAuditorKeyPair()
+	if err != nil {
+		t.Fatalf("NewAuditorKeyPair: %v", err)
+	}
+	aliceMlKemCt, aliceAesCt, err := rpcore.EncryptViewKeyForAuditor(auditorPair.EncapsKey, aliceView.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Alice): %v", err)
+	}
+	bobMlKemCt, bobAesCt, err := rpcore.EncryptViewKeyForAuditor(auditorPair.EncapsKey, bobView.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Bob): %v", err)
+	}
+
 	// ──────────────────────────────────────────────────────────────────────────
 	// Step 2: Registration — Alice and Bob register keys on-chain
 	// ──────────────────────────────────────────────────────────────────────────
 	t.Log("Step 2 — registering keys on-chain (UserRegistry)")
 
 	if err := rpcore.Register(client, aliceAuth, registryAddr,
-		aliceSpend.PublicKey, aliceView.EncapsKey); err != nil {
+		aliceSpend.PublicKey, aliceView.EncapsKey, aliceMlKemCt, aliceAesCt); err != nil {
 		if !strings.Contains(err.Error(), "AlreadyRegistered") && !strings.Contains(err.Error(), "0x45ed80e9") {
 			t.Fatalf("Alice Register: %v", err)
 		}
@@ -214,7 +228,7 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 	}
 
 	if err := rpcore.Register(client, bobAuth, registryAddr,
-		bobSpend.PublicKey, bobView.EncapsKey); err != nil {
+		bobSpend.PublicKey, bobView.EncapsKey, bobMlKemCt, bobAesCt); err != nil {
 		if !strings.Contains(err.Error(), "AlreadyRegistered") && !strings.Contains(err.Error(), "0x45ed80e9") {
 			t.Fatalf("Bob Register: %v", err)
 		}

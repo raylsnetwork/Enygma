@@ -25,19 +25,7 @@ import (
 )
 
 // mlkemEncapKeySize is the byte length of an ML-KEM-768 encapsulation key.
-// Matches mlkem.EncapKeySize — kept as a constant here so this file does not
-// need to import lattice_zk/mlkem.
 const mlkemEncapKeySize = 1184
-
-// makeViewKey returns a deterministic 1184-byte view key filled with fillByte.
-// Used only in tests — real deployments must use actual ML-KEM key generation.
-func makeViewKey(fillByte byte) []byte {
-	key := make([]byte, mlkemEncapKeySize)
-	for i := range key {
-		key[i] = fillByte
-	}
-	return key
-}
 
 func TestUserRegistration(t *testing.T) {
 	if !chainAvailable() {
@@ -56,14 +44,35 @@ func TestUserRegistration(t *testing.T) {
 	alicePkSpend := big.NewInt(0xA11CE)
 	bobPkSpend   := big.NewInt(0xB0B)
 
-	// Deterministic view keys — just filled bytes (not real ML-KEM keys).
-	aliceViewKey := makeViewKey(0xAA)
-	bobViewKey   := makeViewKey(0xBB)
+	// Generate real ML-KEM-768 view keypairs.
+	aliceViewPair, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		t.Fatalf("NewViewKeyPair (Alice): %v", err)
+	}
+	bobViewPair, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		t.Fatalf("NewViewKeyPair (Bob): %v", err)
+	}
+
+	// Generate auditor keypair and encrypt each user's view secret key for the auditor.
+	auditorPair, err := rpcore.NewAuditorKeyPair()
+	if err != nil {
+		t.Fatalf("NewAuditorKeyPair: %v", err)
+	}
+	aliceMlKemCt, aliceAesCt, err := rpcore.EncryptViewKeyForAuditor(auditorPair.EncapsKey, aliceViewPair.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Alice): %v", err)
+	}
+	bobMlKemCt, bobAesCt, err := rpcore.EncryptViewKeyForAuditor(auditorPair.EncapsKey, bobViewPair.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Bob): %v", err)
+	}
 
 	// ── Step 1: Alice registers ───────────────────────────────────────────────
-	t.Log("Step 1 — Alice registers her spend key and view key on-chain")
+	t.Log("Step 1 — Alice registers her spend key, view key, and audit ciphertexts on-chain")
 
-	if err := rpcore.Register(client, aliceAuth, registryAddr, alicePkSpend, aliceViewKey); err != nil {
+	if err := rpcore.Register(client, aliceAuth, registryAddr,
+		alicePkSpend, aliceViewPair.EncapsKey, aliceMlKemCt, aliceAesCt); err != nil {
 		if strings.Contains(err.Error(), "AlreadyRegistered") ||
 			strings.Contains(err.Error(), "45ed80e9") {
 			t.Skip("requires a fresh Hardhat node — Alice already registered")
@@ -73,9 +82,10 @@ func TestUserRegistration(t *testing.T) {
 	t.Logf("  Alice registered (Ethereum: %s)", aliceAuth.From.Hex())
 
 	// ── Step 2: Bob registers ─────────────────────────────────────────────────
-	t.Log("Step 2 — Bob registers his spend key and view key on-chain")
+	t.Log("Step 2 — Bob registers his spend key, view key, and audit ciphertexts on-chain")
 
-	if err := rpcore.Register(client, bobAuth, registryAddr, bobPkSpend, bobViewKey); err != nil {
+	if err := rpcore.Register(client, bobAuth, registryAddr,
+		bobPkSpend, bobViewPair.EncapsKey, bobMlKemCt, bobAesCt); err != nil {
 		t.Fatalf("Bob Register: %v", err)
 	}
 	t.Logf("  Bob registered (Ethereum: %s)", bobAuth.From.Hex())
@@ -95,6 +105,7 @@ func TestUserRegistration(t *testing.T) {
 		t.Errorf("Alice viewKey length: got %d, want %d", len(aliceKeys.ViewKey), mlkemEncapKeySize)
 	}
 	t.Logf("  Alice: pkSpend=%s viewKey=%d bytes ✓", aliceKeys.SpendKey, len(aliceKeys.ViewKey))
+	_ = auditorPair // used above to encrypt view keys
 
 	bobAddr := common.HexToAddress(hardhatBobAddr)
 	bobKeys, err := rpcore.LookupKeys(client, registryAddr, bobAddr)
@@ -209,7 +220,18 @@ func TestSybilProtection(t *testing.T) {
 	t.Log("Step 3 — Carol tries to register with 0 ETH → expects InsufficientFee")
 
 	carolPkSpend := big.NewInt(0xCA201)
-	carolViewKey := makeViewKey(0xCC)
+	carolViewPair, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		t.Fatalf("NewViewKeyPair (Carol): %v", err)
+	}
+	carolAuditorPair, err := rpcore.NewAuditorKeyPair()
+	if err != nil {
+		t.Fatalf("NewAuditorKeyPair: %v", err)
+	}
+	carolMlKemCt, carolAesCt, err := rpcore.EncryptViewKeyForAuditor(carolAuditorPair.EncapsKey, carolViewPair.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Carol): %v", err)
+	}
 
 	// Force value=0 to bypass the auto-fee logic and test the contract rejection.
 	carolAuthNoFee        := *carolAuth
@@ -219,7 +241,8 @@ func TestSybilProtection(t *testing.T) {
 	// We call the contract directly to test the revert.
 	registryABI := loadOnchainABI(t, "UserRegistry")
 	registry    := bindContract(t, client, registryAddr, registryABI)
-	_, err = registry.Transact(carolAuthNoFeePtr, "register", carolPkSpend, carolViewKey)
+	_, err = registry.Transact(carolAuthNoFeePtr, "register",
+		carolPkSpend, carolViewPair.EncapsKey, carolMlKemCt, carolAesCt)
 	if err == nil {
 		t.Fatal("expected InsufficientFee error, got nil")
 	}
@@ -234,7 +257,8 @@ func TestSybilProtection(t *testing.T) {
 	t.Log("Step 4 — Carol registers paying 1 wei → success")
 
 	// rpcore.Register auto-queries the fee and sends it.
-	if err := rpcore.Register(client, carolAuth, registryAddr, carolPkSpend, carolViewKey); err != nil {
+	if err := rpcore.Register(client, carolAuth, registryAddr,
+		carolPkSpend, carolViewPair.EncapsKey, carolMlKemCt, carolAesCt); err != nil {
 		if strings.Contains(err.Error(), "AlreadyRegistered") ||
 			strings.Contains(err.Error(), "45ed80e9") { // AlreadyRegistered(address) selector
 			t.Log("  Carol already registered — skipping registration step")
