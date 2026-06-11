@@ -84,4 +84,22 @@ sequenceDiagram
 
     %% obtain msg
     note right of auctioneer: $$msg, ok \longleftarrow AEAD.Dec(k, ctxt_{2}, ctxt_{1})$$
+    
+    %% parse msg
+    note right of auctioneer: $$(id_{B}, pk_{B}^{spend}, token_{id}, amount) \longleftarrow Parse(msg)$$
+
+    note right of auctioneer: $$C = Commit(pk_{B}^{spend}, salt_{B}, token_{id}, amount) $$
+
+    %% check if obtained commitment matches the submitted commitment
+    note right of auctioneer: $$C =^{?} commit_{B}$$
+
+    alt $$C \neq commit_{B}$$
+        auctioneer ->> chain: fraud
+    
+    else $$C {=}{=} commit_{B}$$
+        note right of auctioneer: create ZKP
+        auctioneer ->> chain: finalize auction
+    end
+
+
 
