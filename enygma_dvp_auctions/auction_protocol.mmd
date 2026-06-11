@@ -31,12 +31,12 @@ sequenceDiagram
     note over chain: Verify ZKP
 
     %% flow to check if ZK proof is correct
-    alt Verify(π) = true
-        note over chain: mark nf as locked
+    alt Spent(nf) == true
+        chain ->> bob: error
     else Verify(π) = false 
         chain ->> bob: error
-    else nf = used
-        chain ->> bob: error
+    else Verify(π) = true
+        note over chain: mark nullifier as locked
     end
 
     %% 
@@ -54,10 +54,18 @@ sequenceDiagram
     note left of alice: $$nf = H(sk_{A}^{spend}, index)$$
 
 
-    note left of alice: π: "I know 
+    note left of alice: π: <br>-I know the (spend) secret key for this nullifier<br> - The nullifier is well-formed
 
     %% submit bid
-    alice ->>chain: $$tx_{id}, ctxt_{1}, commit_{B}, ctxt_{2}, nf, \pi$$
+    alice ->>chain: $$tx_{id}, ctxt_{1}, commit_{B}, ctxt_{2}, nf_{A}, \pi$$
+
+    alt Spent(nf) == true
+        chain ->> alice: error
+    else Verify(π) = false 
+        chain ->> alice: error
+    else Verify(π) = true
+        note over chain: mark nullifier as locked
+    end
 
     %% notify auctioneer of new bid
     chain -->> auctioneer: new bid
