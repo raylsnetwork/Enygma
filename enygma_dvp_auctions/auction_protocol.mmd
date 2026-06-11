@@ -51,25 +51,31 @@ sequenceDiagram
     %% encrypt additional tx data
     note left of alice: $$ctxt_{2}, err = AEAD.Enc(k, msg)$$
 
+    %% create nullifier
     note left of alice: $$nf = H(sk_{A}^{spend}, index)$$
 
-
+    %% create zk proof
     note left of alice: π: <br>-I know the (spend) secret key for this nullifier<br> - The nullifier is well-formed
 
-    %% submit bid
-    alice ->>chain: $$tx_{id}, ctxt_{1}, commit_{B}, ctxt_{2}, nf_{A}, \pi$$
+    %% submit bid to chain
+    alice ->>chain: $$tx_{id}, ctxt_{1}, commit_{A}, commit_{B}, ctxt_{2}, nf_{A}, \pi_{A}$$
 
+    %% check if nullifier has already been spent
     alt Spent(nf) == true
         chain ->> alice: error
+    
+    %% check if zk proof is not valid
     else Verify(π) = false 
         chain ->> alice: error
+    
+    %% check if zk proof is valid
     else Verify(π) = true
         note over chain: mark nullifier as locked
     end
-
+    
     %% notify auctioneer of new bid
     chain -->> auctioneer: new bid
-
+    
     %% obtain shared secret
     note right of auctioneer: $$ss \longleftarrow ML{-}KEM.Decapsulate(ctxt_{1})$$
     
@@ -78,5 +84,4 @@ sequenceDiagram
 
     %% obtain msg
     note right of auctioneer: $$msg, ok \longleftarrow AEAD.Dec(k, ctxt_{2}, ctxt_{1})$$
-
 
