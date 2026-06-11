@@ -1,3 +1,9 @@
+---
+config:
+  look: handDrawn
+  theme: redux
+---
+
 sequenceDiagram
     participant alice as Alice
     participant chain as Blockchain
@@ -45,8 +51,13 @@ sequenceDiagram
     %% encrypt additional tx data
     note left of alice: $$ctxt_{2}, err = AEAD.Enc(k, msg)$$
 
+    note left of alice: $$nf = H(sk_{A}^{spend}, index)$$
+
+
+    note left of alice: π: "I know 
+
     %% submit bid
-    alice ->>chain: $$tx_{id}, ctxt_{1}, commit_{B}, ctxt_{2}$$
+    alice ->>chain: $$tx_{id}, ctxt_{1}, commit_{B}, ctxt_{2}, nf, \pi$$
 
     %% notify auctioneer of new bid
     chain -->> auctioneer: new bid
