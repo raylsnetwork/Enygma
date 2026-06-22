@@ -1,5 +1,5 @@
 # Enygma
-At Rayls, we have created a new suite of privacy protocols, which we call Enygma. There are three variants: 
+At Rayls, we have created a new suite of privacy protocols, which we call Enygma. There are four variants: 
 
 * [Enygma Institutional Payments](./enygma_payments) (Account-based)
 * [Enygma Retail Payments](./enygma_retail_payments) (UTXO-based)
