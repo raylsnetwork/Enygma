@@ -55,12 +55,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// populate public inputs
-		witness.StAuctionId  = frontend.Variable(req.StAuctionId)
-		witness.StTreeNumber = frontend.Variable(req.StTreeNumber)
-		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
-		witness.StNullifier  = frontend.Variable(req.StNullifier)
-		witness.StCommitA    = frontend.Variable(req.StCommitA)
-		witness.StCommitB    = frontend.Variable(req.StCommitB)
+		witness.StAuctionId    = frontend.Variable(req.StAuctionId)
+		witness.StTreeNumber   = frontend.Variable(req.StTreeNumber)
+		witness.StMerkleRoot   = frontend.Variable(req.StMerkleRoot)
+		witness.StNullifier    = frontend.Variable(req.StNullifier)
+		witness.StCommitA      = frontend.Variable(req.StCommitA)
+		witness.StCommitB      = frontend.Variable(req.StCommitB)
+		witness.StRevertCommit = frontend.Variable(req.StRevertCommit)
 
 		// populate private witnesses
 		witness.WtSpendKey   = frontend.Variable(req.WtSpendKey)
@@ -72,6 +73,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.WtSaltA      = frontend.Variable(req.WtSaltA)
 		witness.WtSaltB      = frontend.Variable(req.WtSaltB)
 		witness.WtBidAmount  = frontend.Variable(req.WtBidAmount)
+		witness.WtSaltRevert = frontend.Variable(req.WtSaltRevert)
 		for j := 0; j < bidMerkleDepth; j++ {
 			witness.WtPathElements[j] = frontend.Variable(req.WtPathElements[j])
 		}
@@ -120,7 +122,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB]
+		// public signal: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit]
 		publicSignal := []*big.Int{
 			utils.ParseBigInt(req.StAuctionId),
 			utils.ParseBigInt(req.StTreeNumber),
@@ -128,6 +130,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			utils.ParseBigInt(req.StNullifier),
 			utils.ParseBigInt(req.StCommitA),
 			utils.ParseBigInt(req.StCommitB),
+			utils.ParseBigInt(req.StRevertCommit),
 		}
 
 		c.JSON(http.StatusOK, AuctionBidOutput{Proof: proofRemix, PublicSignal: publicSignal})

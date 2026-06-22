@@ -1,4 +1,4 @@
-package auctionNotWinning
+package auctionBatch
 
 import (
 	"fmt"
@@ -19,33 +19,54 @@ import (
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
-// AuctionNotWinningCircuit. Keys are loaded once at startup.
+// AuctionBatchCircuit (Phase 1). Keys are loaded once at startup.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	curve := ecc.BN254
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
 
 	return func(c *gin.Context) {
-		var req AuctionNotWinningRequest
+		var req AuctionBatchRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		fmt.Println(req)
 
-		circuit := templates.AuctionNotWinningCircuit{}
-		witness := templates.AuctionNotWinningCircuit{}
+		n := templates.AuctionBatchSize
 
-		// populate public inputs
-		witness.StAuctionId     = frontend.Variable(req.StAuctionId)
-		witness.StCommitA       = frontend.Variable(req.StCommitA)
-		witness.StWinningAmount = frontend.Variable(req.StWinningAmount)
+		newCircuit := func() templates.AuctionBatchCircuit {
+			return templates.AuctionBatchCircuit{
+				StBidCommitA: make([]frontend.Variable, n),
+				WtActive:     make([]frontend.Variable, n),
+				WtPkBidder:   make([]frontend.Variable, n),
+				WtSaltA:      make([]frontend.Variable, n),
+				WtAmount:     make([]frontend.Variable, n),
+				WtTokenId:    make([]frontend.Variable, n),
+			}
+		}
 
-		// populate private witnesses
-		witness.WtPkBidder = frontend.Variable(req.WtPkBidder)
-		witness.WtSaltA    = frontend.Variable(req.WtSaltA)
-		witness.WtMyAmount = frontend.Variable(req.WtMyAmount)
-		witness.WtTokenId  = frontend.Variable(req.WtTokenId)
+		circuit := newCircuit()
+		witness := newCircuit()
+
+		// public inputs
+		witness.StAuctionId         = frontend.Variable(req.StAuctionId)
+		witness.StBatchWinnerCommit = frontend.Variable(req.StBatchWinnerCommit)
+		witness.StBatchWinnerPk     = frontend.Variable(req.StBatchWinnerPk)
+		witness.StBatchWinnerAmount = frontend.Variable(req.StBatchWinnerAmount)
+		for i := 0; i < n; i++ {
+			witness.StBidCommitA[i] = frontend.Variable(req.StBidCommitA[i])
+		}
+
+		// private witnesses
+		witness.WtWinnerIdx = frontend.Variable(req.WtWinnerIdx)
+		for i := 0; i < n; i++ {
+			witness.WtActive[i]   = frontend.Variable(req.WtActive[i])
+			witness.WtPkBidder[i] = frontend.Variable(req.WtPkBidder[i])
+			witness.WtSaltA[i]    = frontend.Variable(req.WtSaltA[i])
+			witness.WtAmount[i]   = frontend.Variable(req.WtAmount[i])
+			witness.WtTokenId[i]  = frontend.Variable(req.WtTokenId[i])
+		}
 
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
@@ -77,7 +98,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("verify: %v", err)})
 			return
 		}
-		fmt.Println("AuctionNotWinning proof verified successfully!")
+		fmt.Println("AuctionBatch proof verified successfully!")
 
 		p := proof.(*groth16_bn254.Proof)
 		ax, ay := new(big.Int), new(big.Int)
@@ -91,13 +112,17 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [stAuctionId, stCommitA, stWinningAmount]
-		publicSignal := []*big.Int{
-			utils.ParseBigInt(req.StAuctionId),
-			utils.ParseBigInt(req.StCommitA),
-			utils.ParseBigInt(req.StWinningAmount),
+		// public signal order matches gnark's witness serialization:
+		// [StAuctionId, StBidCommitA[0..99], StBatchWinnerCommit, StBatchWinnerPk, StBatchWinnerAmount]
+		publicSignal := make([]*big.Int, 0, n+4)
+		publicSignal = append(publicSignal, utils.ParseBigInt(req.StAuctionId))
+		for i := 0; i < n; i++ {
+			publicSignal = append(publicSignal, utils.ParseBigInt(req.StBidCommitA[i]))
 		}
+		publicSignal = append(publicSignal, utils.ParseBigInt(req.StBatchWinnerCommit))
+		publicSignal = append(publicSignal, utils.ParseBigInt(req.StBatchWinnerPk))
+		publicSignal = append(publicSignal, utils.ParseBigInt(req.StBatchWinnerAmount))
 
-		c.JSON(http.StatusOK, AuctionNotWinningOutput{Proof: proofRemix, PublicSignal: publicSignal})
+		c.JSON(http.StatusOK, AuctionBatchOutput{Proof: proofRemix, PublicSignal: publicSignal})
 	}
 }

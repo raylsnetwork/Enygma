@@ -28,19 +28,20 @@ type AuctionBidCircuitConfig struct {
 // The auctioneer decrypts ctxt_1/ctxt_2 (submitted alongside the proof) to
 // verify commitB's preimage and determine the winning bid.
 //
-// Public statement (6 elements):
+// Public statement (7 elements):
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB]
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit]
 type AuctionBidCircuit struct {
 	Config AuctionBidCircuitConfig
 
 	// --- public inputs ---
-	StAuctionId  frontend.Variable `gnark:",public"` // identifies which auction this bid targets
-	StTreeNumber frontend.Variable `gnark:",public"` // Alice's USDC Merkle sub-tree index
-	StMerkleRoot frontend.Variable `gnark:",public"` // current Merkle root
-	StNullifier  frontend.Variable `gnark:",public"` // nf_A = Poseidon(sk_A, leafIndex)
-	StCommitA    frontend.Variable `gnark:",public"` // Alice's locked bid commitment
-	StCommitB    frontend.Variable `gnark:",public"` // Bob's USDC payout destination commitment
+	StAuctionId    frontend.Variable `gnark:",public"` // identifies which auction this bid targets
+	StTreeNumber   frontend.Variable `gnark:",public"` // Alice's USDC Merkle sub-tree index
+	StMerkleRoot   frontend.Variable `gnark:",public"` // current Merkle root
+	StNullifier    frontend.Variable `gnark:",public"` // nf_A = Poseidon(sk_A, leafIndex)
+	StCommitA      frontend.Variable `gnark:",public"` // Alice's locked bid commitment
+	StCommitB      frontend.Variable `gnark:",public"` // Bob's USDC payout destination commitment
+	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
 
 	// --- private witnesses: Alice's input USDC note ---
 	WtSpendKey     frontend.Variable   // Alice's spend secret key
@@ -50,11 +51,12 @@ type AuctionBidCircuit struct {
 	WtPathElements []frontend.Variable // Merkle path (TmMerkleTreeDepth elements)
 	WtPathIndex    frontend.Variable   // leaf index in tree
 
-	// --- private witnesses: output notes ---
+	// --- private witnesses: output notes + timeout recovery ---
 	WtSpendPkBob frontend.Variable // Bob's spend public key (from his registration)
 	WtSaltA      frontend.Variable // salt for commitA (fresh random)
 	WtSaltB      frontend.Variable // salt for commitB = HKDF(ss, "note salt")
 	WtBidAmount  frontend.Variable // bid amount — constrained == WtAmount (all-in)
+	WtSaltRevert frontend.Variable // fresh random salt for revert commitment (≠ saltA)
 }
 
 func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
@@ -93,6 +95,16 @@ func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
 
 	isInRange := cmp.IsLess(api, circuit.WtBidAmount, circuit.Config.TmRange)
 	api.AssertIsEqual(isInRange, 1)
+
+	// 9. Revert commitment: same owner and amount, fresh recovery salt.
+	// Pre-committed at bid time so anyone can trigger bid recovery after the
+	// settlement deadline without requiring a new ZK proof from Alice.
+	revertCommit := primitives.Erc20CommitmentV2(api, pkAlice, circuit.WtSaltRevert, circuit.WtBidAmount, circuit.WtTokenId)
+	api.AssertIsEqual(revertCommit, circuit.StRevertCommit)
+
+	// 10. Recovery salt must differ from saltA — reusing saltA would make
+	// StRevertCommit trivially derivable from the already-public StCommitA.
+	api.AssertIsDifferent(circuit.WtSaltRevert, circuit.WtSaltA)
 
 	return nil
 }

@@ -20,9 +20,9 @@ type AuctionLockCircuitConfig struct {
 // Off-chain Bob generates a fresh WtSaltLocked using ML-KEM or random bytes.
 // The contract records stCommitLocked as the locked NFT commitment.
 //
-// Public statement (6 elements):
+// Public statement (7 elements):
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId]
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId, stRevertCommit]
 type AuctionLockCircuit struct {
 	Config AuctionLockCircuitConfig
 
@@ -33,6 +33,7 @@ type AuctionLockCircuit struct {
 	StNullifier    frontend.Variable `gnark:",public"` // nf_B = Poseidon(sk_B, leafIndex)
 	StCommitLocked frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltLocked)
 	StNftTokenId   frontend.Variable `gnark:",public"` // public tokenId so bidders know what is up for auction
+	StRevertCommit frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltRevert) — pre-committed recovery destination
 
 	// --- private witnesses: Bob's input NFT note ---
 	WtSpendKey     frontend.Variable   // Bob's spend secret key
@@ -41,8 +42,9 @@ type AuctionLockCircuit struct {
 	WtPathElements []frontend.Variable // Merkle path (TmMerkleTreeDepth elements)
 	WtPathIndex    frontend.Variable   // leaf index in tree
 
-	// --- private witness: auction-locked output ---
+	// --- private witnesses: auction-locked output + timeout recovery ---
 	WtSaltLocked frontend.Variable // fresh random salt for the locked commitment
+	WtSaltRevert frontend.Variable // fresh random salt for the revert commitment (≠ saltLocked)
 }
 
 func (circuit *AuctionLockCircuit) Define(api frontend.API) error {
@@ -76,6 +78,16 @@ func (circuit *AuctionLockCircuit) Define(api frontend.API) error {
 	// 7. Public tokenId must match the private witness — bidders verify what
 	// they are bidding on before the commitment preimage is revealed.
 	api.AssertIsEqual(circuit.WtTokenId, circuit.StNftTokenId)
+
+	// 8. Revert commitment: same owner and tokenId, fresh recovery salt.
+	// Pre-committed at auction init so anyone can trigger recovery after the
+	// settlement deadline without requiring a new ZK proof from Bob.
+	revertCommit := primitives.Erc721Commitment(api, circuit.WtTokenId, pkBob, circuit.WtSaltRevert)
+	api.AssertIsEqual(revertCommit, circuit.StRevertCommit)
+
+	// 9. Recovery salt must differ from the locked salt — reusing saltLocked would
+	// make StRevertCommit trivially derivable from the already-public StCommitLocked.
+	api.AssertIsDifferent(circuit.WtSaltRevert, circuit.WtSaltLocked)
 
 	return nil
 }

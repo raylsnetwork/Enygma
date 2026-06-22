@@ -1,0 +1,15 @@
+# Gnark proving keys (large binary files; regenerate with: go run generation.go)
+gnark_circuits/scripts/keys
+
+# Hardhat output (regenerate with: npx hardhat compile && node scripts/regen_poseidon.js)
+artifacts/
+cache/
+
+# Deployment receipts and exported VKs (environment-specific; regenerate with deploy + export)
+build/
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store

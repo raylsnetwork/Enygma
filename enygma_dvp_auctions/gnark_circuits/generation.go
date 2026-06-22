@@ -1,6 +1,6 @@
 package main
 
-// Key generation for the three auction circuits.
+// Key generation for the auction circuits.
 //
 // Run with:
 //
@@ -33,8 +33,10 @@ func main() {
 
 	generateAuctionLock()
 	generateAuctionBid()
-	generateAuctionSettle()
-	generateAuctionNotWinning()
+	generateAuctionWithdraw()
+	generateAuctionBatch()
+	generateAuctionFinal()
+	generateAuctionRevert()
 
 	fmt.Println("all keys generated → ./scripts/keys/")
 }
@@ -80,36 +82,74 @@ func generateAuctionBid() {
 	saveKeys("AuctionBid", pk, vk)
 }
 
-func generateAuctionSettle() {
-	cfg := templates.AuctionSettleCircuitConfig{
-		TmRange: frontend.Variable("1000000000000000000000000000000000000"),
+func generateAuctionBatch() {
+	n := templates.AuctionBatchSize
+	circuit := templates.AuctionBatchCircuit{
+		StBidCommitA: make([]frontend.Variable, n),
+		WtActive:     make([]frontend.Variable, n),
+		WtPkBidder:   make([]frontend.Variable, n),
+		WtSaltA:      make([]frontend.Variable, n),
+		WtAmount:     make([]frontend.Variable, n),
+		WtTokenId:    make([]frontend.Variable, n),
 	}
-	circuit := templates.AuctionSettleCircuit{Config: cfg}
 
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
-		log.Fatalf("AuctionSettle compile: %v", err)
+		log.Fatalf("AuctionBatch compile: %v", err)
 	}
 	pk, vk, err := groth16.Setup(ccs)
 	if err != nil {
-		log.Fatalf("AuctionSettle setup: %v", err)
+		log.Fatalf("AuctionBatch setup: %v", err)
 	}
-	saveKeys("AuctionSettle", pk, vk)
+	saveKeys("AuctionBatch", pk, vk)
 }
 
-func generateAuctionNotWinning() {
-	cfg := templates.AuctionNotWinningCircuit{}
-	circuit := cfg
+func generateAuctionFinal() {
+	k := templates.AuctionFinalBatches
+	circuit := templates.AuctionFinalCircuit{
+		StBatchWinnerCommit: make([]frontend.Variable, k),
+		StBatchWinnerPk:     make([]frontend.Variable, k),
+		StBatchWinnerAmount: make([]frontend.Variable, k),
+		WtBatchActive:       make([]frontend.Variable, k),
+	}
 
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
-		log.Fatalf("AuctionNotWinning compile: %v", err)
+		log.Fatalf("AuctionFinal compile: %v", err)
 	}
 	pk, vk, err := groth16.Setup(ccs)
 	if err != nil {
-		log.Fatalf("AuctionNotWinning setup: %v", err)
+		log.Fatalf("AuctionFinal setup: %v", err)
 	}
-	saveKeys("AuctionNotWinning", pk, vk)
+	saveKeys("AuctionFinal", pk, vk)
+}
+
+func generateAuctionWithdraw() {
+	circuit := templates.AuctionWithdrawCircuit{}
+
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+	if err != nil {
+		log.Fatalf("AuctionWithdraw compile: %v", err)
+	}
+	pk, vk, err := groth16.Setup(ccs)
+	if err != nil {
+		log.Fatalf("AuctionWithdraw setup: %v", err)
+	}
+	saveKeys("AuctionWithdraw", pk, vk)
+}
+
+func generateAuctionRevert() {
+	circuit := templates.AuctionRevertCircuit{}
+
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+	if err != nil {
+		log.Fatalf("AuctionRevert compile: %v", err)
+	}
+	pk, vk, err := groth16.Setup(ccs)
+	if err != nil {
+		log.Fatalf("AuctionRevert setup: %v", err)
+	}
+	saveKeys("AuctionRevert", pk, vk)
 }
 
 func saveKeys(name string, pk groth16.ProvingKey, vk groth16.VerifyingKey) {

@@ -6,7 +6,7 @@ import "math/big"
 //
 // Fixed config: Merkle depth 8.
 //
-// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId]
+// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId, stRevertCommit]
 type AuctionLockRequest struct {
 	StAuctionId    string    `json:"stAuctionId"    binding:"required"`
 	StTreeNumber   string    `json:"stTreeNumber"   binding:"required"`
@@ -14,6 +14,7 @@ type AuctionLockRequest struct {
 	StNullifier    string    `json:"stNullifier"    binding:"required"`
 	StCommitLocked string    `json:"stCommitLocked" binding:"required"`
 	StNftTokenId   string    `json:"stNftTokenId"   binding:"required"`
+	StRevertCommit string    `json:"stRevertCommit" binding:"required"`
 
 	WtSpendKey     string    `json:"wtSpendKey"     binding:"required"`
 	WtTokenId      string    `json:"wtTokenId"      binding:"required"`
@@ -21,6 +22,7 @@ type AuctionLockRequest struct {
 	WtPathElements [8]string `json:"wtPathElements" binding:"required"`
 	WtPathIndex    string    `json:"wtPathIndex"    binding:"required"`
 	WtSaltLocked   string    `json:"wtSaltLocked"   binding:"required"`
+	WtSaltRevert   string    `json:"wtSaltRevert"   binding:"required"`
 }
 
 // AuctionLockOutput is the JSON response from POST /proof/auctionLock.

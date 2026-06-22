@@ -1,0 +1,15 @@
+{
+  "name": "enygma_dvp_auctions",
+  "private": true,
+  "scripts": {
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.6",
+    "circomlibjs": "^0.1.7"
+  }
+}

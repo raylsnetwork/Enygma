@@ -6,14 +6,15 @@ import "math/big"
 //
 // Fixed config: Merkle depth 8, all-in bid (bidAmount == note amount).
 //
-// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB]
+// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit]
 type AuctionBidRequest struct {
-	StAuctionId  string    `json:"stAuctionId"  binding:"required"`
-	StTreeNumber string    `json:"stTreeNumber" binding:"required"`
-	StMerkleRoot string    `json:"stMerkleRoot" binding:"required"`
-	StNullifier  string    `json:"stNullifier"  binding:"required"`
-	StCommitA    string    `json:"stCommitA"    binding:"required"` // Alice's locked bid
-	StCommitB    string    `json:"stCommitB"    binding:"required"` // Bob's USDC payout destination
+	StAuctionId    string    `json:"stAuctionId"    binding:"required"`
+	StTreeNumber   string    `json:"stTreeNumber"   binding:"required"`
+	StMerkleRoot   string    `json:"stMerkleRoot"   binding:"required"`
+	StNullifier    string    `json:"stNullifier"    binding:"required"`
+	StCommitA      string    `json:"stCommitA"      binding:"required"` // Alice's locked bid
+	StCommitB      string    `json:"stCommitB"      binding:"required"` // Bob's USDC payout destination
+	StRevertCommit string    `json:"stRevertCommit" binding:"required"` // Alice's pre-committed recovery destination
 
 	WtSpendKey     string    `json:"wtSpendKey"     binding:"required"`
 	WtAmount       string    `json:"wtAmount"       binding:"required"`
@@ -25,6 +26,7 @@ type AuctionBidRequest struct {
 	WtSaltA        string    `json:"wtSaltA"        binding:"required"`
 	WtSaltB        string    `json:"wtSaltB"        binding:"required"` // HKDF(ML-KEM ss, "note salt")
 	WtBidAmount    string    `json:"wtBidAmount"    binding:"required"`
+	WtSaltRevert   string    `json:"wtSaltRevert"   binding:"required"` // fresh salt for revert commitment
 }
 
 // AuctionBidOutput is the JSON response from POST /proof/auctionBid.
