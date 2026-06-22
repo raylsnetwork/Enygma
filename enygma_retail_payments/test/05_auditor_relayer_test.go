@@ -146,7 +146,7 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 		t.Logf("  Bob registered (%s)", bobAuth.From.Hex())
 	}
 
-	// ── Step 5: Alice deposits 40 tokens ─────────────────────────────────────
+	// ── Step 5: Alice deposits 40 tokens ────────────────────────────────────
 	t.Log("Step 5 — Alice deposits 40 tokens into the private vault")
 
 	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From,
