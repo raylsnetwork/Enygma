@@ -16,6 +16,7 @@ type AuctionLockRequest struct {
 	StNftTokenId   string    `json:"stNftTokenId"   binding:"required"`
 	StRevertCommit string    `json:"stRevertCommit" binding:"required"`
 
+	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber
 	WtSpendKey     string    `json:"wtSpendKey"     binding:"required"`
 	WtTokenId      string    `json:"wtTokenId"      binding:"required"`
 	WtSaltIn       string    `json:"wtSaltIn"       binding:"required"`

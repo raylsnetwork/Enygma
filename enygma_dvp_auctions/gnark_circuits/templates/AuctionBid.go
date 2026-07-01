@@ -43,6 +43,10 @@ type AuctionBidCircuit struct {
 	StCommitB      frontend.Variable `gnark:",public"` // Bob's USDC payout destination commitment
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
 
+	// --- private witnesses ---
+	WtAuctionId    frontend.Variable   // must equal StAuctionId; binds proof to one auction
+	WtTreeNumber   frontend.Variable   // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
+
 	// --- private witnesses: Alice's input USDC note ---
 	WtSpendKey     frontend.Variable   // Alice's spend secret key
 	WtAmount       frontend.Variable   // USDC amount in Alice's note (== bidAmount, all-in)
@@ -60,11 +64,22 @@ type AuctionBidCircuit struct {
 }
 
 func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
+	// 0a. Bind the proof to a single auction so it cannot be replayed with a
+	//     different StAuctionId against another auction.
+	api.AssertIsEqual(circuit.WtAuctionId, circuit.StAuctionId)
+
+	// 0b. Bind StTreeNumber: incorporate the tree number into the nullifier so
+	//     a proof generated for tree T cannot be replayed with a different
+	//     StTreeNumber by exploiting shared Merkle roots across freshly-rolled trees.
+	api.AssertIsEqual(circuit.WtTreeNumber, circuit.StTreeNumber)
+	globalLeafIdx := api.Add(api.Mul(circuit.WtTreeNumber, 256), circuit.WtPathIndex)
+
 	// 1. Derive Alice's spend public key: pk_A = Poseidon(sk_A).
 	pkAlice := primitives.PublicKey(api, circuit.WtSpendKey)
 
-	// 2. Nullifier: nf_A = Poseidon(sk_A, leafIndex) — burns Alice's USDC note.
-	nullifier := primitives.Nullifier(api, circuit.WtSpendKey, circuit.WtPathIndex)
+	// 2. Nullifier: nf_A = Poseidon(sk_A, globalLeafIdx) — burns Alice's USDC note.
+	//    globalLeafIdx encodes both tree and position, preventing cross-tree replay.
+	nullifier := primitives.Nullifier(api, circuit.WtSpendKey, globalLeafIdx)
 	api.AssertIsEqual(nullifier, circuit.StNullifier)
 
 	// 3. Alice's current USDC input commitment.

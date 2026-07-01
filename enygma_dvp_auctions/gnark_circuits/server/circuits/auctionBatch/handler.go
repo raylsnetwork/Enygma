@@ -59,6 +59,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 
 		// private witnesses
+		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
 		witness.WtWinnerIdx = frontend.Variable(req.WtWinnerIdx)
 		for i := 0; i < n; i++ {
 			witness.WtActive[i]   = frontend.Variable(req.WtActive[i])

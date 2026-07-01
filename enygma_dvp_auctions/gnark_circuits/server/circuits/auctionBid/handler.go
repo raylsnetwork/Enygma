@@ -64,6 +64,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.StRevertCommit = frontend.Variable(req.StRevertCommit)
 
 		// populate private witnesses
+		witness.WtAuctionId  = frontend.Variable(req.WtAuctionId)
+		witness.WtTreeNumber = frontend.Variable(req.WtTreeNumber)
 		witness.WtSpendKey   = frontend.Variable(req.WtSpendKey)
 		witness.WtAmount     = frontend.Variable(req.WtAmount)
 		witness.WtTokenId    = frontend.Variable(req.WtTokenId)

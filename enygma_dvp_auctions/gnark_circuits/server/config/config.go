@@ -7,6 +7,12 @@ import (
 
 // Config holds file paths for the six auction circuit proving/verifying keys.
 type Config struct {
+	// APIKey, if non-empty, requires every request to carry an
+	// X-Gnark-Key header matching this value. Set in production to prevent
+	// unauthorized use of the proving keys by any process that can reach the
+	// server's loopback address.
+	APIKey string `json:"apiKey"`
+
 	AuctionLockPk     string `json:"auctionLockPk"`
 	AuctionLockVk     string `json:"auctionLockVk"`
 	AuctionBidPk      string `json:"auctionBidPk"`

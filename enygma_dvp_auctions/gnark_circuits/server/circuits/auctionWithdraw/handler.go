@@ -45,10 +45,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.StCommitA   = frontend.Variable(req.StCommitA)
 
 		// private witnesses
-		witness.WtSpendKey = frontend.Variable(req.WtSpendKey)
-		witness.WtSaltA    = frontend.Variable(req.WtSaltA)
-		witness.WtAmount   = frontend.Variable(req.WtAmount)
-		witness.WtTokenId  = frontend.Variable(req.WtTokenId)
+		witness.WtSpendKey  = frontend.Variable(req.WtSpendKey)
+		witness.WtSaltA     = frontend.Variable(req.WtSaltA)
+		witness.WtAmount    = frontend.Variable(req.WtAmount)
+		witness.WtTokenId   = frontend.Variable(req.WtTokenId)
+		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
 
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)

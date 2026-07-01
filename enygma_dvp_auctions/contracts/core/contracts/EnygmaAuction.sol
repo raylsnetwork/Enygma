@@ -166,6 +166,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     }
 
     function setChallengeWindow(uint256 window_) external onlyRole(OWNER_ROLE) {
+        require(window_ >= 1 hours, "EnygmaAuction: window too short");
         challengeWindow = window_;
     }
 
@@ -199,7 +200,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
         if (_auctions[auctionId].state != AuctionState.INACTIVE) revert AuctionAlreadyExists();
         if (deadline <= block.timestamp)                          revert InvalidDeadline();
-        if (settlementDeadline <= deadline)                       revert InvalidSettlementDeadline();
+        if (settlementDeadline < deadline + 2 days)               revert InvalidSettlementDeadline();
 
         // Verify the AuctionLock ZK proof.
         _verifyProof(VK_LOCK, proof, _toArr7(statement));
@@ -276,6 +277,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         _bids[auctionId][commitA] = BidData({
             active:       true,
             claimed:      false,
+            batched:      false,
             commitB:      commitB,
             revertCommit: revertCommit,
             nullifier:    nullifier,
@@ -372,11 +374,16 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (block.timestamp < _auctions[auctionId].deadline)    revert BidsStillOpen();
         if (_batches[auctionId][batchId].submitted)              revert BatchAlreadySubmitted();
 
-        // Every active slot must reference a real on-chain bid.
+        // Every active slot must reference a real, unbatched on-chain bid.
+        // Marking each bid as batched here prevents the same commitA from
+        // appearing in a second submitBatch call (cross-batch duplicate).
         for (uint256 i = 0; i < 100; i++) {
             uint256 commitA = statement[1 + i];
-            if (commitA != 0 && !_bids[auctionId][commitA].active)
-                revert UnknownBid(commitA);
+            if (commitA == 0) continue;
+            BidData storage b = _bids[auctionId][commitA];
+            if (!b.active)  revert UnknownBid(commitA);
+            if (b.batched)  revert BidAlreadyBatched(commitA);
+            b.batched = true;
         }
 
         // Verify the AuctionBatch ZK proof.
@@ -395,6 +402,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             batchWinnerAmount: batchWinnerAmount
         });
 
+        if (_auctions[auctionId].batchCount >= 10) revert MaxBatchesExceeded();
         _auctions[auctionId].batchCount++;
 
         emit BatchProcessed(auctionId, batchId, batchWinnerCommit, batchWinnerAmount);
@@ -433,7 +441,44 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (_auctions[auctionId].state != AuctionState.BIDDING) revert AuctionStateMismatch();
         if (block.timestamp < _auctions[auctionId].deadline)    revert DeadlineNotReached();
 
+        // Verify all submitted batches are present and no batchId is duplicated.
+        // Without this an auctioneer could omit the batch containing the highest
+        // bidder or repeat a lower batch to fill all 10 Phase-2 slots.
+        //
+        // Additionally enforce that batchIds[i] and statement[1+i] agree on
+        // zero/non-zero: a phantom slot (batchIds[i] != 0 but statement[1+i] == 0)
+        // passes the count check but is silently skipped by _crossCheckBatches,
+        // allowing the auctioneer to hide a high-bidding batch from the circuit.
+        uint256 nonZeroCount;
+        for (uint256 i = 0; i < 10; i++) {
+            bool hasId     = batchIds[i] != 0;
+            bool hasCommit = statement[1 + i] != 0;
+            if (hasId != hasCommit) revert BatchSlotMismatch(i);
+            if (!hasId) continue;
+            for (uint256 j = 0; j < i; j++) {
+                require(batchIds[j] != batchIds[i], "EnygmaAuction: duplicate batchId");
+            }
+            nonZeroCount++;
+        }
+        require(
+            nonZeroCount == _auctions[auctionId].batchCount,
+            "EnygmaAuction: not all batches included"
+        );
+
         _crossCheckBatches(auctionId, statement, batchIds);
+
+        // Ensure the overall winner (statement[31]) is one of the verified batch
+        // winners (statement[1..10]).  Without this check the auctioneer could name
+        // an arbitrary address as winner in Phase-2 and have it pass unchallenged if
+        // no watchdog calls challengeSettlement() within the window.
+        bool winnerFound = false;
+        for (uint256 i = 0; i < 10; i++) {
+            if (statement[1 + i] != 0 && statement[1 + i] == statement[31]) {
+                winnerFound = true;
+                break;
+            }
+        }
+        require(winnerFound, "EnygmaAuction: overall winner not in any verified batch");
 
         if (statement[35] != _auctions[auctionId].nftTokenId) revert InvalidNftTokenId();
         if (statement[37] != _auctions[auctionId].floorPrice) revert FloorPriceMismatch();
@@ -458,10 +503,19 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ///         within the challenge window. Resolves immediately and deterministically
     ///         — Groth16 verification is a one-shot check. Invalid proof voids the
     ///         claim and reopens bidding; valid proof finalizes settlement.
+    // Minimum gas that must remain before entering the verifyProof call inside
+    // challengeSettlement. Prevents a griefer from supplying exactly enough gas
+    // to reach the try block but not enough for verifyProof to complete: Solidity
+    // try/catch catches OOG the same as an explicit false return, so an OOG would
+    // void a valid optimistic claim and reopen bidding.
+    // Set conservatively above the ~200k–400k BN254 Groth16 pairing cost.
+    uint256 private constant CHALLENGE_VERIFY_GAS = 600_000;
+
     function challengeSettlement(uint256 auctionId) external nonReentrant returns (bool) {
         if (_auctions[auctionId].state != AuctionState.PENDING_SETTLEMENT) revert NoPendingSettlement();
         OptimisticClaim storage claim = _claims[auctionId];
         if (block.timestamp >= claim.challengeDeadline) revert ChallengeWindowClosed();
+        require(gasleft() >= CHALLENGE_VERIFY_GAS, "EnygmaAuction: insufficient gas for verification");
 
         uint256[] memory inputs = new uint256[](38);
         for (uint256 i = 0; i < 38; i++) inputs[i] = claim.statement[i];
@@ -528,9 +582,10 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256 revertedCommit = statement[3];
 
         AuctionCore storage a = _auctions[auctionId];
-        if (a.state != AuctionState.BIDDING) revert AuctionStateMismatch();
-        if (commitLocked != a.commitLocked) revert CommitLockedMismatch();
-        if (nftTokenId    != a.nftTokenId)   revert InvalidNftTokenId();
+        if (a.state != AuctionState.BIDDING)   revert AuctionStateMismatch();
+        if (block.timestamp >= a.deadline)     revert BiddingClosed();
+        if (commitLocked != a.commitLocked)    revert CommitLockedMismatch();
+        if (nftTokenId    != a.nftTokenId)     revert InvalidNftTokenId();
 
         uint256[] memory inputs = new uint256[](4);
         for (uint256 i = 0; i < 4; i++) inputs[i] = statement[i];
@@ -729,6 +784,10 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256 payoutCommit
     ) internal {
         BidData storage winnerBid = _bids[auctionId][winnerCommit];
+        // Bind settlement to exactly the commitB Alice published at submitBid time.
+        // Without this check the AuctionFinal circuit's private WtPkBob witness
+        // lets the auctioneer substitute an arbitrary recipient for the USDC payout.
+        require(payoutCommit == winnerBid.commitB, "EnygmaAuction: payout commitment mismatch");
         ICoinVault(_erc20Vault).unlockCoin(winnerBid.treeNumber, winnerBid.nullifier);
         ICoinVault(_erc20Vault).nullifyCoin(winnerBid.treeNumber, winnerBid.nullifier);
         winnerBid.claimed = true;
@@ -742,7 +801,8 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256[8] calldata p,
         uint256[]  memory   inputs
     ) internal view {
-        IVerifier(_verifier).verifyProof(vkId, _makeSnarkProof(p), inputs);
+        bool ok = IVerifier(_verifier).verifyProof(vkId, _makeSnarkProof(p), inputs);
+        require(ok, "EnygmaAuction: invalid proof");
     }
 
     function _verifyProofDyn(
@@ -750,7 +810,8 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256[8] memory   p,
         uint256[]  memory   inputs
     ) internal view {
-        IVerifier(_verifier).verifyProof(vkId, _makeSnarkProof(p), inputs);
+        bool ok = IVerifier(_verifier).verifyProof(vkId, _makeSnarkProof(p), inputs);
+        require(ok, "EnygmaAuction: invalid proof");
     }
 
     /// @dev Converts the flat [ax,ay,bx1,bx0,by1,by0,cx,cy] array emitted by

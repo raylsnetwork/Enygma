@@ -32,6 +32,7 @@ type AuctionFinalRequest struct {
 	StFloorPrice          string `json:"stFloorPrice"          binding:"required"` // seller's reserve price
 
 	// private witnesses
+	WtAuctionId      string     `json:"wtAuctionId"      binding:"required"` // must equal StAuctionId
 	WtBatchActive    [10]string `json:"wtBatchActive"    binding:"required"` // "0" or "1" per batch
 	WtWinnerBatchIdx string     `json:"wtWinnerBatchIdx" binding:"required"` // which batch contains the winner
 	WtPkBob          string     `json:"wtPkBob"          binding:"required"` // NFT seller's spend key (from decryption)

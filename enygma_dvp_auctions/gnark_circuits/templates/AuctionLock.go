@@ -35,6 +35,9 @@ type AuctionLockCircuit struct {
 	StNftTokenId   frontend.Variable `gnark:",public"` // public tokenId so bidders know what is up for auction
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltRevert) — pre-committed recovery destination
 
+	// --- private witnesses ---
+	WtTreeNumber   frontend.Variable   // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
+
 	// --- private witnesses: Bob's input NFT note ---
 	WtSpendKey     frontend.Variable   // Bob's spend secret key
 	WtTokenId      frontend.Variable   // NFT token ID (constrained == StNftTokenId)
@@ -48,11 +51,20 @@ type AuctionLockCircuit struct {
 }
 
 func (circuit *AuctionLockCircuit) Define(api frontend.API) error {
+	// 0. Bind StTreeNumber: incorporate the tree number into the nullifier so
+	//    a proof generated for tree T cannot be replayed with a different
+	//    StTreeNumber by exploiting shared Merkle roots across freshly-rolled trees.
+	api.AssertIsEqual(circuit.WtTreeNumber, circuit.StTreeNumber)
+	// Global leaf index = StTreeNumber * 256 + WtPathIndex (depth-8 tree → 256 leaves each).
+	globalLeafIdx := api.Add(api.Mul(circuit.WtTreeNumber, 256), circuit.WtPathIndex)
+
 	// 1. Derive Bob's spend public key: pk_B = Poseidon(sk_B).
 	pkBob := primitives.PublicKey(api, circuit.WtSpendKey)
 
-	// 2. Nullifier: nf_B = Poseidon(sk_B, leafIndex) — burns Bob's original note.
-	nullifier := primitives.Nullifier(api, circuit.WtSpendKey, circuit.WtPathIndex)
+	// 2. Nullifier: nf_B = Poseidon(sk_B, globalLeafIdx) — burns Bob's original note.
+	//    Using globalLeafIdx (not just WtPathIndex) ensures the nullifier encodes
+	//    which tree the note belongs to, preventing cross-tree replay.
+	nullifier := primitives.Nullifier(api, circuit.WtSpendKey, globalLeafIdx)
 	api.AssertIsEqual(nullifier, circuit.StNullifier)
 
 	// 3. Bob's current NFT input commitment.

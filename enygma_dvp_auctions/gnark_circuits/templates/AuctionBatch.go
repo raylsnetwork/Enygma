@@ -27,6 +27,9 @@ type AuctionBatchCircuit struct {
 	StBatchWinnerPk     frontend.Variable  `gnark:",public"` // spend public key of the batch winner
 	StBatchWinnerAmount frontend.Variable  `gnark:",public"` // bid amount of the batch winner
 
+	// --- private witnesses ---
+	WtAuctionId frontend.Variable   // must equal StAuctionId; binds proof to one auction
+
 	// --- private witnesses (auctioneer's ML-KEM decryptions) ---
 	WtActive    []frontend.Variable // boolean 0/1 per slot; length AuctionBatchSize
 	WtPkBidder  []frontend.Variable // bidder's spend public key = Poseidon(sk)
@@ -37,6 +40,9 @@ type AuctionBatchCircuit struct {
 }
 
 func (circuit *AuctionBatchCircuit) Define(api frontend.API) error {
+	// Bind the proof to a single auction so it cannot be replayed across auctions.
+	api.AssertIsEqual(circuit.WtAuctionId, circuit.StAuctionId)
+
 	n := AuctionBatchSize
 
 	for i := 0; i < n; i++ {

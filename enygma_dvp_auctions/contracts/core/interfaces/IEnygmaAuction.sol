@@ -24,6 +24,7 @@ interface IEnygmaAuction {
     struct BidData {
         bool     active;        // bid exists on-chain
         bool     claimed;       // commitA/revertCommit has been released into the tree
+        bool     batched;       // true once included in any submitBatch call; prevents cross-batch duplicates
         uint256  commitB;       // USDC payout destination if this bidder wins
         uint256  revertCommit;  // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery
         uint256  nullifier;     // nullifier of the bidder's input USDC note
@@ -136,9 +137,12 @@ interface IEnygmaAuction {
     error BidAlreadyClaimed();
     error WinnerCannotReclaim();
     error BatchAlreadySubmitted();
+    error MaxBatchesExceeded();
     error BatchNotFound();
     error UnknownBid(uint256 commitA);
+    error BidAlreadyBatched(uint256 commitA);
     error BatchResultMismatch(uint256 slot);
+    error BatchSlotMismatch(uint256 slot);
     error InvalidMerkleRoot();
     error InvalidNftTokenId();
     error CommitLockedMismatch();

@@ -59,6 +59,7 @@ contract Verifier is AccessControl {
     }
 
     function initializeVerifier(address g16Verifier_) external onlyRole(OWNER_ROLE) returns (bool) {
+        require(_g16Verifier == address(0), "Verifier: already initialized");
         _g16Verifier = g16Verifier_;
         return true;
     }

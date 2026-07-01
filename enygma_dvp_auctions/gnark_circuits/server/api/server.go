@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"gnark_server/server/circuits/auctionBatch"
@@ -15,6 +17,17 @@ import (
 // NewServer wires the six auction proof endpoints.
 func NewServer(cfg *config.Config) *gin.Engine {
 	r := gin.Default()
+
+	// API key guard: if configured, every request must carry a matching
+	// X-Gnark-Key header. This prevents any other local process from using
+	// the proving keys without the shared secret.
+	if cfg.APIKey != "" {
+		r.Use(func(c *gin.Context) {
+			if c.GetHeader("X-Gnark-Key") != cfg.APIKey {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			}
+		})
+	}
 
 	// Phase 0a — Bob locks his ERC-721 NFT for auction.
 	r.POST("/proof/auctionLock", auctionLock.NewHandler(cfg.AuctionLockPk, cfg.AuctionLockVk))

@@ -68,6 +68,23 @@ func jsonNumbersToBigInts(ns []json.Number) ([]*big.Int, error) {
 	return out, nil
 }
 
+// GetNullifierWithTree computes the nullifier used by the AuctionLock and
+// AuctionBid circuits after the Vuln 14/15 fix. It folds the tree number into
+// the global leaf index before hashing:
+//
+//	nf = Poseidon(sk, treeNumber*256 + pathIndex)
+//
+// Using a global index prevents a proof generated for tree T from being
+// replayed under a different StTreeNumber when multiple trees share the same
+// Merkle root (e.g., immediately after a tree roll-over).
+func GetNullifierWithTree(sk, treeNumber, pathIndex *big.Int) (*big.Int, error) {
+	globalIdx := new(big.Int).Add(
+		new(big.Int).Mul(treeNumber, big.NewInt(256)),
+		pathIndex,
+	)
+	return GetNullifier(sk, globalIdx)
+}
+
 // ── Phase 0a: AuctionLock ───────────────────────────────────────────────────
 
 // AuctionLockParams holds the inputs needed to prove that Bob owns an ERC-721
@@ -88,7 +105,7 @@ type AuctionLockParams struct {
 // StCommitLocked, StNftTokenId, StRevertCommit] — exactly the `statement`
 // argument initAuction() expects on-chain.
 func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResult, error) {
-	nullifier, err := GetNullifier(p.Bob.PrivateKey, p.MerkleProof.Indices)
+	nullifier, err := GetNullifierWithTree(p.Bob.PrivateKey, p.TreeNumber, p.MerkleProof.Indices)
 	if err != nil {
 		return nil, fmt.Errorf("nullifier: %w", err)
 	}
@@ -116,6 +133,7 @@ func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResu
 		"stCommitLocked": commitLocked.String(),
 		"stNftTokenId":   p.TokenId.String(),
 		"stRevertCommit": revertCommit.String(),
+		"wtTreeNumber":   p.TreeNumber.String(),
 		"wtSpendKey":     p.Bob.PrivateKey.String(),
 		"wtTokenId":      p.TokenId.String(),
 		"wtSaltIn":       p.SaltIn.String(),
@@ -151,7 +169,7 @@ type AuctionBidParams struct {
 // StCommitA, StCommitB, StRevertCommit] — exactly the `statement` argument
 // submitBid() expects on-chain.
 func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult, error) {
-	nullifier, err := GetNullifier(p.Bidder.PrivateKey, p.MerkleProof.Indices)
+	nullifier, err := GetNullifierWithTree(p.Bidder.PrivateKey, p.TreeNumber, p.MerkleProof.Indices)
 	if err != nil {
 		return nil, fmt.Errorf("nullifier: %w", err)
 	}
@@ -179,6 +197,8 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		"stCommitA":      commitA.String(),
 		"stCommitB":      commitB.String(),
 		"stRevertCommit": revertCommit.String(),
+		"wtAuctionId":    p.AuctionId.String(),
+		"wtTreeNumber":   p.TreeNumber.String(),
 		"wtSpendKey":     p.Bidder.PrivateKey.String(),
 		"wtAmount":       p.BidAmount.String(),
 		"wtTokenId":      p.TokenId.String(),
@@ -267,6 +287,7 @@ func (c *AuctionClient) AuctionBatchProof(p AuctionBatchParams) (*AuctionProofRe
 	winner := p.Slots[winnerIdx]
 	payload := map[string]interface{}{
 		"stAuctionId":         p.AuctionId.String(),
+		"wtAuctionId":         p.AuctionId.String(),
 		"stBidCommitA":        stBidCommitA,
 		"stBatchWinnerCommit": winner.CommitA.String(),
 		"stBatchWinnerPk":     winner.Pk.String(),
@@ -366,6 +387,7 @@ func (c *AuctionClient) AuctionFinalProof(p AuctionFinalParams) (*AuctionProofRe
 
 	payload := map[string]interface{}{
 		"stAuctionId":           p.AuctionId.String(),
+		"wtAuctionId":           p.AuctionId.String(),
 		"stBatchWinnerCommit":   stBatchWinnerCommit,
 		"stBatchWinnerPk":       stBatchWinnerPk,
 		"stBatchWinnerAmount":   stBatchWinnerAmount,
@@ -463,6 +485,7 @@ func (c *AuctionClient) AuctionWithdrawProof(p AuctionWithdrawParams) (*AuctionP
 		"wtSaltA":     p.SaltA.String(),
 		"wtAmount":    p.Amount.String(),
 		"wtTokenId":   p.TokenId.String(),
+		"wtAuctionId": p.AuctionId.String(),
 	}
 
 	return postAndParse(c.GnarkClient, "/proof/auctionWithdraw", payload)

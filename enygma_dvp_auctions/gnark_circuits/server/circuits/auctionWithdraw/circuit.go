@@ -15,10 +15,11 @@ type AuctionWithdrawRequest struct {
 	StAuctionId string `json:"stAuctionId" binding:"required"`
 	StCommitA   string `json:"stCommitA"   binding:"required"`
 
-	WtSpendKey string `json:"wtSpendKey" binding:"required"` // bidder's spend secret key
-	WtSaltA    string `json:"wtSaltA"    binding:"required"` // salt used to form commitA
-	WtAmount   string `json:"wtAmount"   binding:"required"` // USDC amount in commitA
-	WtTokenId  string `json:"wtTokenId"  binding:"required"` // USDC token ID
+	WtSpendKey  string `json:"wtSpendKey"  binding:"required"` // bidder's spend secret key
+	WtSaltA     string `json:"wtSaltA"     binding:"required"` // salt used to form commitA
+	WtAmount    string `json:"wtAmount"    binding:"required"` // USDC amount in commitA
+	WtTokenId   string `json:"wtTokenId"   binding:"required"` // USDC token ID
+	WtAuctionId string `json:"wtAuctionId" binding:"required"` // must equal StAuctionId
 }
 
 // AuctionWithdrawOutput is the JSON response from POST /proof/auctionWithdraw.

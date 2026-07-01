@@ -55,6 +55,7 @@ type AuctionFinalCircuit struct {
 	StFloorPrice          frontend.Variable `gnark:",public"` // seller's reserve price; must match auctions[id].floorPrice
 
 	// --- private witnesses ---
+	WtAuctionId      frontend.Variable   // must equal StAuctionId; binds proof to one auction
 	WtBatchActive    []frontend.Variable // boolean; length AuctionFinalBatches
 	WtWinnerBatchIdx frontend.Variable   // which batch contains the overall winner
 	WtPkBob          frontend.Variable   // NFT seller's spend key (from auctioneer's decryption)
@@ -65,6 +66,9 @@ type AuctionFinalCircuit struct {
 }
 
 func (circuit *AuctionFinalCircuit) Define(api frontend.API) error {
+	// Bind the proof to a single auction so it cannot be replayed across auctions.
+	api.AssertIsEqual(circuit.WtAuctionId, circuit.StAuctionId)
+
 	k := AuctionFinalBatches
 
 	for i := 0; i < k; i++ {

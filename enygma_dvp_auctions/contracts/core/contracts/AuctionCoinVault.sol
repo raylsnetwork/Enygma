@@ -47,6 +47,7 @@ contract AuctionCoinVault is AccessControl, ReentrancyGuard {
     uint256  private _treeDepth;
     uint256  private _nextLeafIndex;
     uint256  private _merkleRoot;
+    uint256  private _emptyRoot;         // all-zeros Merkle root; reused when rolling to a new sub-tree
     uint256  private _treeNumber;        // current sub-tree index
     uint256[] private _zeros;            // zero values per level
     uint256[] private _filledSubTrees;   // rightmost filled node per level
@@ -114,6 +115,8 @@ contract AuctionCoinVault is AccessControl, ReentrancyGuard {
 
     function lockCoin(uint256 treeNumber_, uint256 nullifier) external onlyRole(AUCTION_ROLE) returns (bool) {
         require(nullifier != 0, "Vault: nullifier zero");
+        require(!nullifiers[treeNumber_][nullifier],       "Vault: nullifier already spent");
+        require(!lockedNullifiers[treeNumber_][nullifier], "Vault: nullifier already locked");
         lockedNullifiers[treeNumber_][nullifier] = true;
         emit Locked(treeNumber_, nullifier);
         return true;
@@ -175,6 +178,7 @@ contract AuctionCoinVault is AccessControl, ReentrancyGuard {
             currentZero        = _hash(currentZero, currentZero);
         }
         _merkleRoot = currentZero;
+        _emptyRoot  = currentZero;
         rootHistory[0][currentZero] = true;
     }
 
@@ -189,7 +193,7 @@ contract AuctionCoinVault is AccessControl, ReentrancyGuard {
     // the tree level-by-level, updating _filledSubTrees as the rightmost path changes.
     function _insertLeaves(uint256[] memory leaves) internal {
         uint256 count = leaves.length;
-        if ((_nextLeafIndex + count) >= (2 ** _treeDepth)) {
+        if ((_nextLeafIndex + count) > (2 ** _treeDepth)) {
             _rollTree();
         }
 
@@ -253,6 +257,12 @@ contract AuctionCoinVault is AccessControl, ReentrancyGuard {
             _filledSubTrees[i] = _zeros[i];
         }
 
-        rootHistory[_treeNumber][_merkleRoot] = true;
+        // Record the empty-tree root (not the old tree's final root) as the
+        // first valid root for the new sub-tree.  Using the old root here would
+        // allow nullifiers spent in tree N-1 to be replayed in tree N, because
+        // nullifiers are keyed per-tree and the old Merkle path would still be
+        // valid against the same root value.
+        _merkleRoot = _emptyRoot;
+        rootHistory[_treeNumber][_emptyRoot] = true;
     }
 }

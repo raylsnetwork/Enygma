@@ -16,6 +16,8 @@ type AuctionBidRequest struct {
 	StCommitB      string    `json:"stCommitB"      binding:"required"` // Bob's USDC payout destination
 	StRevertCommit string    `json:"stRevertCommit" binding:"required"` // Alice's pre-committed recovery destination
 
+	WtAuctionId    string    `json:"wtAuctionId"    binding:"required"` // must equal StAuctionId
+	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber
 	WtSpendKey     string    `json:"wtSpendKey"     binding:"required"`
 	WtAmount       string    `json:"wtAmount"       binding:"required"`
 	WtTokenId      string    `json:"wtTokenId"      binding:"required"`

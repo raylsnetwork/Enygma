@@ -20,8 +20,8 @@ func main() {
 	}
 
 	r := api.NewServer(cfg)
-	log.Println("auction gnark server listening on :8083")
-	if err := r.Run(":8083"); err != nil {
+	log.Println("auction gnark server listening on 127.0.0.1:8083")
+	if err := r.Run("127.0.0.1:8083"); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }
