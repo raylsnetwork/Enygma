@@ -40,6 +40,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		cfg := templates.DvPDestinationCircuitConfig{
 			TmMerkleTreeDepth: merkleDepth,
+			TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 		}
 
 		newCircuit := func() templates.DvPDestinationCircuit {
@@ -70,11 +71,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness.WtSpendPkAlice = frontend.Variable(req.WtSpendPkAlice)
 		witness.WtSaltA        = frontend.Variable(req.WtSaltA)
+		witness.WtSaltB        = frontend.Variable(req.WtSaltB)
+		witness.WtValueAlice   = frontend.Variable(req.WtValueAlice)
+		witness.WtTokenIdAlice = frontend.Variable(req.WtTokenIdAlice)
 
 		// --- compile, prove, verify ---
 		solver.RegisterHint(primitives.ModHint)
-		solver.RegisterHint(primitives.ERC155UniqueIdNative)
-		solver.RegisterHint(primitives.PoseidonNative)
+	
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

@@ -65,7 +65,8 @@ func (c *GnarkClient) Erc20JoinSplitProof(
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
 		}
 
-		nullifier, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
+		// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+		nullifier, err := GetNullifierWithTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute nullifier for input %d: %w", i, err)
 		}
@@ -314,7 +315,8 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		}
 		merkleRoot = big.NewInt(0)
 	}
-	nullifier, err := GetNullifier(aliceKey.PrivateKey, pathIndices)
+	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+	nullifier, err := GetNullifierWithTree(aliceKey.PrivateKey, stTreeNumber, pathIndices, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("GetNullifier failed: %w", err)
 	}
@@ -443,7 +445,8 @@ func (c *GnarkClient) Erc20WithdrawProof(
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
 		}
 
-		nullifier, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
+		// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+		nullifier, err := GetNullifierWithTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute nullifier for input %d: %w", i, err)
 		}
@@ -552,7 +555,8 @@ func (c *GnarkClient) Erc721OwnershipProof(
 		return nil, fmt.Errorf("failed to compute erc721Commitment for input: %w", err)
 	}
 
-	nullifier, err := GetNullifier(keyIn.PrivateKey, merkleProof.Indices)
+	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+	nullifier, err := GetNullifierWithTree(keyIn.PrivateKey, stTreeNumber, merkleProof.Indices, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute nullifier: %w", err)
 	}
@@ -654,7 +658,8 @@ func (c *GnarkClient) Erc721OwnershipProofFromSalt(
 		return nil, fmt.Errorf("failed to compute erc721Commitment for input: %w", err)
 	}
 
-	nullifier, err := GetNullifier(keyIn.PrivateKey, merkleProof.Indices)
+	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+	nullifier, err := GetNullifierWithTree(keyIn.PrivateKey, stTreeNumber, merkleProof.Indices, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute nullifier: %w", err)
 	}
@@ -755,7 +760,8 @@ func (c *GnarkClient) Erc20JoinSplitProofFromSalts(
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
 		}
 
-		nullifier, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
+		// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+		nullifier, err := GetNullifierWithTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute nullifier for input %d: %w", i, err)
 		}
@@ -941,7 +947,8 @@ func (c *GnarkClient) Erc1155NonFungibleOwnershipProof(
 	wtErc1155ContractAddress *big.Int, wtErc1155TokenId *big.Int,
 	stAssetGroupTreeNumber *big.Int, assetGroupMerkleProof *MerkleProof,
 ) (*ProofResult, error) {
-	nullifier, err := GetNullifier(keyIn.PrivateKey, merkleProof.Indices)
+	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+	nullifier, err := GetNullifierWithTree(keyIn.PrivateKey, stTreeNumber, merkleProof.Indices, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute nullifier: %w", err)
 	}
@@ -1048,7 +1055,8 @@ func (c *GnarkClient) Erc1155NonFungibleOwnershipProofFromSalt(
 	wtErc1155ContractAddress *big.Int, wtErc1155TokenId *big.Int,
 	stAssetGroupTreeNumber *big.Int, assetGroupMerkleProof *MerkleProof,
 ) (*ProofResult, error) {
-	nullifier, err := GetNullifier(keyIn.PrivateKey, merkleProof.Indices)
+	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+	nullifier, err := GetNullifierWithTree(keyIn.PrivateKey, stTreeNumber, merkleProof.Indices, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute nullifier: %w", err)
 	}
@@ -1340,7 +1348,8 @@ func (c *GnarkClient) Erc1155NonFungibleAuditorProof(
 	stAssetGroupTreeNumber *big.Int, assetGroupMerkleProof *MerkleProof,
 	auditorPubKeyX, auditorPubKeyY *big.Int,
 ) (*ProofResult, error) {
-	nullifier, err := GetNullifier(keyIn.PrivateKey, merkleProof.Indices)
+	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+	nullifier, err := GetNullifierWithTree(keyIn.PrivateKey, stTreeNumber, merkleProof.Indices, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute nullifier: %w", err)
 	}
@@ -1626,7 +1635,8 @@ func (c *GnarkClient) PaymentProof(
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
 		}
-		nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
+		// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
+		nf, err := GetNullifierWithTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth)
 		if err != nil {
 			return nil, fmt.Errorf("GetNullifier input %d: %w", i, err)
 		}
@@ -1992,7 +2002,8 @@ func (c *GnarkClient) DvPInitiatorProof(
 	revertSalt := SaltBToField(revertSaltBytes)
 
 	pathIndex := merkleProof.Indices
-	nf, err := GetNullifier(aliceKey.PrivateKey, pathIndex)
+	// HIGH-1 fix: incorporate tree number into the nullifier.
+	nf, err := GetNullifierWithTree(aliceKey.PrivateKey, stTreeNumber, pathIndex, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("GetNullifier: %w", err)
 	}
@@ -2100,7 +2111,8 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 	merkleDepth int,
 ) (*DvPInitiatorResult, error) {
 	pathIndex := merkleProof.Indices
-	nf, err := GetNullifier(aliceKey.PrivateKey, pathIndex)
+	// HIGH-1 fix: incorporate tree number into the nullifier.
+	nf, err := GetNullifierWithTree(aliceKey.PrivateKey, stTreeNumber, pathIndex, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("GetNullifier: %w", err)
 	}
@@ -2194,42 +2206,60 @@ type DvPDestinationResult struct {
 }
 
 // DvPDestinationProof generates Bob's side of the DvP proof.
+//
+// HIGH-3 fix: the circuit now constrains StMessage == COMMIT_B (commitB).
+// Bob must supply saltB, valueAlice, tokenIdAlice (from ENC_TX_DATA decryption)
+// so the circuit can recompute commitB and verify stMessage equals it.
+// stMessage is now automatically derived as commitB — the caller no longer
+// passes an arbitrary stMessage.
 func (c *GnarkClient) DvPDestinationProof(
-	stMessage *big.Int,
 	bobKey KeyPair,
 	bobSaltIn *big.Int,
 	valueIn *big.Int,
 	tokenIdIn *big.Int,
 	aliceSpendPk *big.Int,
 	saltA *big.Int,
+	saltB *big.Int,     // HKDF(ss_B, "note salt") — used by Alice to build commitB for Bob
+	valueAlice *big.Int,  // Alice's delivered amount (from ENC_TX_DATA decryption)
+	tokenIdAlice *big.Int, // Alice's delivered tokenId (from ENC_TX_DATA decryption)
 	commitA *big.Int,
 	stTreeNumber *big.Int,
 	merkleProof *MerkleProof,
 	merkleDepth int,
 ) (*DvPDestinationResult, error) {
 	pathIndex := merkleProof.Indices
-	nf, err := GetNullifier(bobKey.PrivateKey, pathIndex)
+	// HIGH-1 fix: incorporate tree number into the nullifier.
+	nf, err := GetNullifierWithTree(bobKey.PrivateKey, stTreeNumber, pathIndex, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("GetNullifier: %w", err)
+	}
+
+	// HIGH-3 fix: commitB is the circuit-constrained value for stMessage.
+	commitB, err := Erc20CommitmentV2(bobKey.PublicKey, saltB, valueAlice, tokenIdAlice)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 (commitB): %w", err)
 	}
 
 	pathElems := make([]*big.Int, merkleDepth)
 	copy(pathElems, merkleProof.Elements[:merkleDepth])
 
 	payload := map[string]interface{}{
-		"stMessage":      stMessage.String(),
-		"stTreeNumber":   stTreeNumber.String(),
-		"stMerkleRoot":   merkleProof.Root.String(),
-		"stNullifier":    nf.String(),
-		"stCommitA":      commitA.String(),
-		"wtSpendKeyIn":   bobKey.PrivateKey.String(),
-		"wtValueIn":      valueIn.String(),
-		"wtSaltIn":       bobSaltIn.String(),
-		"wtTokenIdIn":    tokenIdIn.String(),
-		"wtPathElements": bigIntSliceToStrings(pathElems),
-		"wtPathIndex":    pathIndex.String(),
-		"wtSpendPkAlice": aliceSpendPk.String(),
-		"wtSaltA":        saltA.String(),
+		"stMessage":       commitB.String(), // HIGH-3: stMessage == commitB (circuit-enforced)
+		"stTreeNumber":    stTreeNumber.String(),
+		"stMerkleRoot":    merkleProof.Root.String(),
+		"stNullifier":     nf.String(),
+		"stCommitA":       commitA.String(),
+		"wtSpendKeyIn":    bobKey.PrivateKey.String(),
+		"wtValueIn":       valueIn.String(),
+		"wtSaltIn":        bobSaltIn.String(),
+		"wtTokenIdIn":     tokenIdIn.String(),
+		"wtPathElements":  bigIntSliceToStrings(pathElems),
+		"wtPathIndex":     pathIndex.String(),
+		"wtSpendPkAlice":  aliceSpendPk.String(),
+		"wtSaltA":         saltA.String(),
+		"wtSaltB":         saltB.String(),
+		"wtValueAlice":    valueAlice.String(),
+		"wtTokenIdAlice":  tokenIdAlice.String(),
 	}
 
 	body, err := c.PostProof("/proof/dvpDestination", payload)
@@ -2249,7 +2279,7 @@ func (c *GnarkClient) DvPDestinationProof(
 		proofStrs[i] = n.String()
 	}
 
-	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitA}
+	statement := []*big.Int{commitB, stTreeNumber, merkleProof.Root, nf, commitA}
 	return &DvPDestinationResult{
 		Proof:           proofStrs,
 		Statement:       statement,

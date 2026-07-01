@@ -40,6 +40,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		cfg := templates.DvPInitiatorCircuitConfig{
 			TmMerkleTreeDepth: merkleDepth,
+			TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 		}
 
 		newCircuit := func() templates.DvPInitiatorCircuit {
@@ -79,8 +80,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		// --- compile, prove, verify ---
 		solver.RegisterHint(primitives.ModHint)
-		solver.RegisterHint(primitives.ERC155UniqueIdNative)
-		solver.RegisterHint(primitives.PoseidonNative)
+		
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

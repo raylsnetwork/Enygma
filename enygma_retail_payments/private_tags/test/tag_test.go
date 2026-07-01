@@ -1213,7 +1213,7 @@ func TestUserRegistryIntegration(t *testing.T) {
 		json.Unmarshal(data, &artifact)
 		a, _ := abi.JSON(strings.NewReader(string(artifact.ABI)))
 		c := bind.NewBoundContract(userRegistryAddr, a, client, client, client)
-		tx, err := c.Transact(auth, "register", pkSpend, pkView)
+		tx, err := c.Transact(auth, "register", pkSpend, pkView, make([]byte, 1088), make([]byte, 92))
 		if err != nil { t.Fatalf("%s register: %v", name, err) }
 		bind.WaitMined(bg, client, tx)
 		t.Logf("  %s registered (addr=%s)", name, auth.From.Hex())

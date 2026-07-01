@@ -24,9 +24,6 @@ contract Erc721CoinVault is AbstractCoinVault {
     //              Constructor
     //////////////////////////////////////////////
 
-    // hashContractAddress: poseidon Wrapper contract address
-    // genericVerifierContractAddress: Groth16 generic verifier address.
-    // TODO:: some form of verification is needed
     constructor(
         address zkDvpContractAddress
     ) AbstractCoinVault(zkDvpContractAddress) {
@@ -34,17 +31,29 @@ contract Erc721CoinVault is AbstractCoinVault {
         // _setupRole(DEFAULT_OWNER_ROLE, msg.sender);
     }
 
-    // Standards that are currently supported: ERC20, ERC721, ERC1155
+    // C-1 fix: commitment is now computed on-chain from the caller-supplied key material
+    // so the actual deposited tokenId is binding.  Previously the caller could pass any
+    // commitment encoding a different tokenId, allowing theft of any other NFT in the vault.
+    //
     // params[0] = tokenId to deposit
-    // params[1] = commitment computed off-chain as poseidon([contractAddress, tokenId, publicKey, salt])
+    // params[1] = pkSpend — recipient's BabyJubJub spend public key (x-coordinate)
+    // params[2] = salt    — random field element chosen by the depositor
+    // Commitment = Poseidon4(pkSpend, salt, 1, tokenId) — matches Erc721Commitment circuit formula.
+    // Amount is always 1 for non-fungible tokens.
     function deposit(uint256[] memory params) public override returns (bool) {
         uint256 tokenId = params[0];
-        uint256 commitment = params[1];
+        uint256 pkSpend = params[1];
+        uint256 salt    = params[2];
 
         IERC721(_assetContractAddress).transferFrom(
             msg.sender,
             address(this),
             tokenId
+        );
+
+        // Commitment = Poseidon4(pkSpend, salt, 1, tokenId) — amount=1 for NFTs.
+        uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
+            [pkSpend, salt, 1, tokenId]
         );
 
         uint256[] memory commitments = new uint256[](1);
@@ -59,28 +68,14 @@ contract Erc721CoinVault is AbstractCoinVault {
 
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public override returns (bool) {
-        // receipt.inputs;
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-
-        uint jInputSize = receipt.numberOfInputs;
-        uint jTreeNumbersIndex = 1 + jInputSize;
-        uint jNullifiersIndex = jTreeNumbersIndex + (2 * jInputSize);
-        uint jCommitmentsIndex = jNullifiersIndex + jInputSize;
-
-        // checking the proof
-
+    ) public override nonReentrant returns (bool) {
         checkReceiptConditions(receipt);
-
-        _insertCommitmentsFromReceipt(receipt);
-
-        // Nullifying the old coins
+        // NEW-1 fix: nullify inputs before inserting outputs (CEI).
+        // Inserting first opened a reentrancy window via the Poseidon precompile
+        // inside insertLeaves(); a re-entrant call would find the input notes
+        // un-nullified and could double-spend them.
         _nullifyFromReceipt(receipt);
-
+        _insertCommitmentsFromReceipt(receipt);
         return true;
     }
 

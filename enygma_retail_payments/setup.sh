@@ -25,9 +25,37 @@ cp "$DVP_ROOT/artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20
    "$ROOT/contracts/abis/Erc20CoinVault.json"
 cd "$ROOT"
 
-echo "==> [4/5] Exporting Payment VK to build/Payment.json..."
+echo "==> [4/5] Exporting VKs and regenerating PrivateMintVerifier..."
 cd gnark_circuits
 go run ./cmd/export_vk/ ../build
+
+# Re-export the PrivateMint Solidity verifier from the current VK key,
+# then recompile and update contracts/abis/PrivateMintVerifier.json.
+# This must run every time after go run generation.go because Groth16
+# Setup() produces fresh random keys — the on-chain verifier bytecode
+# must always match the keys the server is using.
+go run ./cmd/export_verifier/ /tmp/PrivateMintVerifier.sol
+python3 - << 'PYEOF'
+import json, subprocess, re
+
+sol = "/tmp/PrivateMintVerifier.sol"
+cr = subprocess.run(["solc","--bin","--optimize","--no-cbor-metadata",sol],capture_output=True,text=True)
+rt = subprocess.run(["solc","--bin-runtime","--optimize","--no-cbor-metadata",sol],capture_output=True,text=True)
+ab = subprocess.run(["solc","--abi","--optimize",sol],capture_output=True,text=True)
+
+creation_bc = "0x" + re.search(r'Binary:\n([0-9a-f]+)',cr.stdout).group(1)
+runtime_bc  = "0x" + re.search(r'Binary of the runtime part:\n([0-9a-f]+)',rt.stdout).group(1)
+abi         = json.loads(re.search(r'Contract JSON ABI\n(\[.*\])',ab.stdout).group(1))
+
+path = "../contracts/abis/PrivateMintVerifier.json"
+with open(path) as f: artifact = json.load(f)
+artifact["abi"] = abi
+artifact["bytecode"] = creation_bc
+artifact["deployedBytecode"] = runtime_bc
+with open(path,"w") as f: json.dump(artifact,f,indent=2)
+print(f"  PrivateMintVerifier.json updated ({len(creation_bc)} bytes bytecode)")
+PYEOF
+
 cd "$ROOT"
 
 echo "==> [5/5] Deploying and initialising contracts..."

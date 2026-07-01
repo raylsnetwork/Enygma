@@ -107,7 +107,6 @@ interface IEnygmaDvp {
         uint256 auditorGroupId; // in case of having independent rings of auditors
         uint256[2] auditorPublicKey;
     }
-    // TODO:: add other desired attributes
 
     error AuctionIdMismatch();
     error BlindedBidMismatch();
@@ -144,7 +143,6 @@ interface IEnygmaDvp {
     error SwapNotExpiredYet();
     error Unauthorized();      // HIGH-10: caller is not the swap initiator
 
-    error BrokerAlreadyRegistered();
     error InvalidStatementSize();
     error InvalidVaultId();
     error InvalidPublicKey();
@@ -224,16 +222,6 @@ interface IEnygmaDvp {
     //     uint256 indexed auctionId,
     //     uint256 indexed blindedBid
     // );
-
-    event BrokerRegistered(
-        uint256 indexed vaultId,
-        uint256 indexed blindedBrokerPublicKey
-    );
-
-    event LegitBrokerReceipt(
-        uint256 indexed beacon,
-        uint256 indexed blindedBrokerPublicKey
-    );
 
     event PendingProofAddedToVault(
         uint256 indexed vaultId,
@@ -381,7 +369,6 @@ interface IEnygmaDvp {
         ProofReceipt memory receipt,
         uint256 groupId
     ) external view returns (bool);
-    // TODO:: implement it
     ///////////////////////////////////////////////
     //          Random Oracle functions
     //////////////////////////////////////////////
@@ -389,16 +376,6 @@ interface IEnygmaDvp {
         uint256 challenge
     ) external returns (bool);
 
-    ///////////////////////////////////////////////
-    //          Broker functions
-    //////////////////////////////////////////////
-    function registerBroker(
-        ProofReceipt memory brokerRegistrationProof
-    ) external returns (bool);
-
-    function verifyLegitBrokerReceipt(
-        ProofReceipt memory receipt
-    ) external returns (bool);
     ///////////////////////////////////////////////
     //          Swap/mix functions
     //////////////////////////////////////////////
@@ -446,8 +423,7 @@ interface IEnygmaDvp {
         ProofReceipt memory receipt,
         uint256 vaultId,
         uint256 groupId,
-        uint256 deadline,
-        uint256 revertCommitA
+        uint256 deadline
     ) external returns (bool);
 
     // Reclaim a timed-out pending swap. Callable by anyone once deadline has passed.

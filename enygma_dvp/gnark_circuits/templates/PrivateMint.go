@@ -2,17 +2,20 @@ package templates
 
 import(
 	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/std/math/cmp"
 	"gnark_server/primitives"
 	pos "gnark_server/poseidon"
 )
-// const maxCommissionPercentage = 4
-// const commissionPercentageDecimals = 4
 
 type PrivateMintConfig struct{
-
+	// TmRange is the exclusive upper bound on Amount — same constant used by
+	// JoinSplit ERC20 — baked in at circuit compile time so no extra public input
+	// is needed. Keys must be regenerated if this value changes.
+	TmRange frontend.Variable
 }
 
 type PrivateMintCircuit struct {
+	Config PrivateMintConfig `gnark:"-"`
 
 	// --- public inputs (statement) ---
 	Commitment      frontend.Variable `gnark:",public"` // Poseidon(pk_spend, salt, amount, tokenId) — inserted into the Merkle tree on-chain
@@ -28,6 +31,12 @@ type PrivateMintCircuit struct {
 
 
 func (circuit *PrivateMintCircuit) Define(api frontend.API) error{
+
+	// DVP-9 fix: amount range check — 0 ≤ Amount < TmRange.
+	// Without this, a prover can set Amount to a large field element that wraps
+	// to a small on-chain value, creating a commitment with a phantom balance.
+	api.AssertIsEqual(cmp.IsLess(api, circuit.Amount, circuit.Config.TmRange), 1)
+	api.AssertIsEqual(cmp.IsLessOrEqual(api, 0, circuit.Amount), 1)
 
 	// V2 commitment: Poseidon(pk_spend, salt, amount, tokenId)
 	// Matches the format expected by the JoinSplit circuit's input-side check.

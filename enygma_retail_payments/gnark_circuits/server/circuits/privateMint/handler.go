@@ -38,15 +38,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	
 		var publicSignal []*big.Int
 
-		circuitPrivateMint:=templates.PrivateMintCircuit{
-		
+		range_ := frontend.Variable("1000000000000000000000000000000000000")
+		circuitPrivateMint := templates.PrivateMintCircuit{
+			Config: templates.PrivateMintConfig{TmRange: range_},
 		}
-			
-		witness:=templates.PrivateMintCircuit{
-		
-		}
+		witness := templates.PrivateMintCircuit{}
 	
-
+		
 		witness.Commitment = frontend.Variable(request.Commitment)
 		witness.ContractAddress = frontend.Variable(request.ContractAddress)
 		witness.TokenId = frontend.Variable(request.TokenId)

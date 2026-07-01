@@ -140,8 +140,9 @@ func TestV2DvP(t *testing.T) {
 	if _, err := bind.WaitMined(ctx, client, approveErc20Tx); err != nil {
 		t.Fatalf("wait ERC20 approve: %v", err)
 	}
+	// C-1 fix: contract computes commitment on-chain from key material.
 	depositErc20Tx, err := erc20Vault.Transact(auth, "depositV2",
-		[]*big.Int{erc20Amount, aliceCommitment}, capsuleAlice, aliceDepositEnc)
+		[]*big.Int{erc20Amount, aliceSpend.PublicKey, aliceSaltField, erc20TokenId}, capsuleAlice, aliceDepositEnc)
 	if err != nil {
 		t.Fatalf("erc20Vault.depositV2: %v", err)
 	}
@@ -188,7 +189,8 @@ func TestV2DvP(t *testing.T) {
 	if _, err := bind.WaitMined(ctx, client, approveNftTx); err != nil {
 		t.Fatalf("wait ERC721 approve: %v", err)
 	}
-	depositNftTx, err := nftVault.Transact(auth, "deposit", []*big.Int{nftTokenId, bobCommitment})
+	// C-1 fix: contract computes commitment = Poseidon4(pkSpend, salt, 1, tokenId) on-chain.
+	depositNftTx, err := nftVault.Transact(auth, "deposit", []*big.Int{nftTokenId, bobSpend.PublicKey, bobNftSalt})
 	if err != nil {
 		t.Fatalf("nftVault.deposit: %v", err)
 	}
@@ -301,13 +303,15 @@ func TestV2DvP(t *testing.T) {
 	// the same amount and tokenId as his note.
 	// ─────────────────────────────────────────────────────────────────────────
 	destinationResult, err := gnarkClient.DvPDestinationProof(
-		big.NewInt(0), // stMessage = swap_id (0 for testing)
 		core.KeyPair{PrivateKey: bobSpend.PrivateKey, PublicKey: bobSpend.PublicKey},
 		bobNftSalt,    // Bob's NFT deposit salt (plain random)
 		nftAmount,     // Bob delivers amount=1
 		nftTokenId,    // Bob delivers tokenId=42
 		aliceSpend.PublicKey,
-		saltADerivedField,       // HKDF(ss_B, "Init Salt")
+		saltADerivedField,       // HKDF(ss_B, "Init Salt") — salt for Alice's output (she receives NFT)
+		saltBDerivedField,       // HKDF(ss_B, "note salt") — salt for Bob's output (he receives USDT)
+		decAmount,               // Alice's ERC20 amount that Bob receives
+		decTokenId,              // Alice's ERC20 tokenId that Bob receives
 		initiatorResult.CommitA, // COMMIT_A from Alice's proof
 		big.NewInt(0),
 		bobProof,

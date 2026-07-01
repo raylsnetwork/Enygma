@@ -54,7 +54,11 @@ func SetupPayment(config templates.PaymentCircuitConfig, circuitName string) {
 func SetupPrivateMint(circuitName string) {
 	fmt.Println("Initializing Setup Process")
 
-	circuit := templates.PrivateMintCircuit{}
+	circuit := templates.PrivateMintCircuit{
+		Config: templates.PrivateMintConfig{
+			TmRange: frontend.Variable("1000000000000000000000000000000000000"),
+		},
+	}
 
 	fmt.Printf("Generating Proving Key and Verifying Key for %s\n", circuitName)
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)

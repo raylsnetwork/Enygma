@@ -25,7 +25,6 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
     uint256 public constant VK_ID_ERC1155_FUNG_1 = 3;
     uint256 public constant VK_ID_ERC1155_2 = 4; // fungible joinSplit
     uint256 public constant VK_ID_ERC1155_10 = 5; // non-fungible batch
-    uint256 public constant VK_ID_ERC1155_FUNG_BROKER = 14;
     uint256 public constant VK_ID_ERC1155_FUNG_AUDITOR = 15;
     uint256 public constant VK_ID_ERC1155_NON_FUNG_AUDITOR = 16;
     ///////////////////////////////////////////////
@@ -58,21 +57,29 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
     //////////////////////////////////////////////
     // Vault functions
     //////////////////////////////////////////////
-    // Single deposit:
+    // C-1 fix: commitment is now computed on-chain from caller-supplied key material
+    // so the actual transferred amount is binding.  Previously a caller could pass any
+    // commitment encoding a different amount, enabling vault drain.
+    //
+    // Single deposit (params.length == 4):
     //   params[0] = amountOrOne
     //   params[1] = tokenId
-    //   params[2] = commitment (off-chain: poseidon([contractAddress, tokenId, amount, publicKey, salt]))
+    //   params[2] = pkSpend  — recipient's BabyJubJub spend public key (x-coordinate)
+    //   params[3] = salt     — random field element chosen by the depositor
+    //   Commitment = Poseidon4(tokenId, amountOrOne, pkSpend, salt)
     //
-    // Batch deposit (params.length is a multiple of 3):
-    //   params[0..tokenCount-1]            = tokenIds
-    //   params[tokenCount..2*tokenCount-1] = amounts
-    //   params[2*tokenCount..3*tokenCount-1] = commitments (one per token, computed off-chain)
+    // Batch deposit (params.length is a multiple of 4):
+    //   params[0..N-1]       = tokenIds
+    //   params[N..2N-1]      = amounts
+    //   params[2N..3N-1]     = pkSpeends (one per token)
+    //   params[3N..4N-1]     = salts     (one per token)
     function deposit(uint256[] memory params) public override returns (bool) {
-        if (params.length == 3) {
+        if (params.length == 4) {
             uint256 amountOrOne = params[0];
-            uint256 tokenId = params[1];
-            uint256 commitment = params[2];
-            bytes memory data = "";
+            uint256 tokenId     = params[1];
+            uint256 pkSpend     = params[2];
+            uint256 salt        = params[3];
+            bytes memory data   = "";
 
             IERC1155(_assetContractAddress).safeTransferFrom(
                 msg.sender,
@@ -82,6 +89,12 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
                 data
             );
 
+            // Commitment = Poseidon4(pkSpend, salt, amountOrOne, tokenId) — matches circuit
+            // Erc1155Commitment(tokenId, amount, pk, salt) = Erc20CommitmentV2(pk, salt, amount, tokenId).
+            uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
+                [pkSpend, salt, amountOrOne, tokenId]
+            );
+
             uint256[] memory commitments = new uint256[](1);
             commitments[0] = commitment;
 
@@ -89,17 +102,15 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
 
             emit Commitment(_vaultId, commitment);
         } else {
-            // batch mode
+            // batch mode: params layout [tokenIds | amounts | pkSpeends | salts]
+            uint256 tokenCount = params.length / 4;
 
-            uint256 tokenCount = params.length / 3;
             uint256[] memory tokenIds = new uint256[](tokenCount);
-            uint256[] memory amounts = new uint256[](tokenCount);
-            uint256[] memory batchCommitments = new uint256[](tokenCount);
+            uint256[] memory amounts  = new uint256[](tokenCount);
 
             for (uint i = 0; i < tokenCount; i++) {
                 tokenIds[i] = params[i];
-                amounts[i] = params[i + tokenCount];
-                batchCommitments[i] = params[i + (tokenCount * 2)];
+                amounts[i]  = params[i + tokenCount];
             }
 
             IERC1155(_assetContractAddress).safeBatchTransferFrom(
@@ -111,12 +122,19 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
             );
 
             for (uint i = 0; i < tokenCount; i++) {
+                uint256 pkSpend = params[i + tokenCount * 2];
+                uint256 salt    = params[i + tokenCount * 3];
+
+                uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
+                    [pkSpend, salt, amounts[i], tokenIds[i]]
+                );
+
                 uint256[] memory commitments = new uint256[](1);
-                commitments[0] = batchCommitments[i];
+                commitments[0] = commitment;
 
                 insertLeaves(commitments);
 
-                emit Commitment(_vaultId, batchCommitments[i]);
+                emit Commitment(_vaultId, commitment);
             }
         }
 
@@ -125,27 +143,16 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
 
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public override returns (bool) {
-        // receipt.inputs;
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-
-        uint jInputSize = receipt.numberOfInputs;
-        uint jTreeNumbersIndex = 1 + jInputSize;
-        uint jNullifiersIndex = jTreeNumbersIndex + (2 * jInputSize);
-        uint jCommitmentsIndex = jNullifiersIndex + jInputSize;
-
-        // checking the proof
+    ) public override nonReentrant returns (bool) {
+        // H-4 fix: added nonReentrant guard and corrected CEI ordering.
+        // Previously outputs were inserted before nullifiers were spent, opening a
+        // reentrancy window via the Poseidon precompile inside insertLeaves(). A
+        // re-entrant call would find the input notes un-nullified and could double-spend.
         checkReceiptConditions(receipt);
-
-        _insertCommitmentsFromReceipt(receipt);
-
-        // Nullifying the old coins
+        // Effects: nullify inputs FIRST so re-entrant calls find them already spent.
         _nullifyFromReceipt(receipt);
-
+        // Then insert outputs.
+        _insertCommitmentsFromReceipt(receipt);
         return true;
     }
 
@@ -320,14 +327,11 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
 
         uint256 receiptType;
 
-        // size of normal statement: 1 + 3 * numberOfInputs + numberOfOutputs + 2
-        // size broker-enabled statement: 3 + 3 * numberOfInputs + numberOfOutputs + 4
         uint256 expectedBatchSize = 1 + 6 * receipt.numberOfInputs;
         uint256 expectedNormalSize = 3 +
             3 *
             receipt.numberOfInputs +
             receipt.numberOfOutputs;
-        uint256 expectedBrokerSize = 5 + 3 * receipt.numberOfInputs + receipt.numberOfOutputs;
 
         uint256 expectedFungibleAuditorSize = expectedNormalSize +
             5 +
@@ -364,16 +368,6 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
             }
         } else if (receipt.statement.length == expectedBatchSize) {
             receiptType = 2;
-        } else if (receipt.statement.length == expectedBrokerSize) {
-            receiptType = 3;
-
-            if (receipt.numberOfInputs != 2) {
-                revert InvalidNumberOfInputs();
-            }
-
-            if (receipt.numberOfOutputs != 3) {
-                revert InvalidNumberOfOutputs();
-            }
         } else if (receipt.statement.length == expectedFungibleAuditorSize) {
             receiptType = 4;
         } else if (receipt.statement.length == expectedNonFungibleAuditorSize) {
@@ -448,18 +442,6 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
                 receipt.proof,
                 receipt.statement
             );
-        } else if (receiptType == 3) {
-            // it is a broker-enabled receipt
-            if (jInputSize == 2) {
-                // JoinSplit broker-enabled
-                IVerifier(_verifierContractAddress).verifyProof(
-                    VK_ID_ERC1155_FUNG_BROKER,
-                    receipt.proof,
-                    receipt.statement
-                );
-            } else {
-                revert InvalidStatmentSize();
-            }
         } else if (receiptType == 1) {
             // it is normal receipt
             if (jInputSize == 1) {

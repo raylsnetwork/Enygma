@@ -45,8 +45,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     uint256 public constant VK_ID_AUCTION_BID = 7;
     uint256 public constant VK_ID_AUCTION_PRIVATE_OPENING = 8;
     uint256 public constant VK_ID_AUCTION_NOT_WINNING_BID = 9;
-    uint256 public constant VK_ID_BROKER_REGISTRATION = 11;
-    uint256 public constant VK_ID_LEGIT_BROKER = 12;
 
     bytes32 public constant DEFAULT_OWNER_ROLE =
         keccak256(abi.encodePacked("ownerRole"));
@@ -95,9 +93,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // uniqueId of the receipt
     mapping(uint256 => TransactionMetadata) private _pendingTransactions;
 
-    // first broker_blindedPublicKey =>
-    mapping(uint256 => ProofReceipt) private _registeredBrokers;
-
     // auditor's mapping AuditorId -> AuditorData
     mapping(uint256 => AuditorData) private _registeredAuditors;
 
@@ -109,7 +104,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     // hashContractAddress: poseidon Wrapper contract address
     // genericVerifierContractAddress: Groth16 generic verifier address.
-    // TODO:: some form of verification is needed
     constructor(
         address hashContractAddress,
         address genericVerifierContractAddress
@@ -164,14 +158,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     function initializeDvp(
         address verifierAddress
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
-        // registering the verifier smart contract address
+        // DVP-1 fix: Verifier is now initialized directly by the deployer (via init.go)
+        // before this function is called. initializeVerifier is no longer called here
+        // because EnygmaDvp.initializeDvp was world-accessible between Verifier deployment
+        // and the first initializeDvp call, allowing an attacker to front-run initialization.
         _verifierContractAddress = verifierAddress;
-
-        // initializing the verifier by registering Snark circuits' verification keys.
-        // and the genericGroth16 verifier
-        IVerifier(_verifierContractAddress).initializeVerifier(
-            _genericVerifierContractAddress
-        );
         return true;
     }
 
@@ -490,7 +481,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId,
         uint256 groupId
     ) public view returns (bool) {
-        // TODO:: implement it
         IAssetGroup assetGroupContract = IAssetGroup(_assetGroups[groupId]);
 
         return assetGroupContract.isVaultMember(vaultId);
@@ -501,109 +491,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt memory receipt,
         uint256 groupId
     ) public view returns (bool) {
-        // TODO:: implement it
         IAssetGroup assetGroupContract = IAssetGroup(_assetGroups[groupId]);
 
         return assetGroupContract.isMemberFromProofReceipt(vaultId, receipt);
-    }
-
-    ///////////////////////////////////////////////
-    //          Broker functions
-    //////////////////////////////////////////////
-
-    function registerBroker(
-        ProofReceipt memory brokerRegistrationProof
-    ) public returns (bool) {
-        checkRegisterBrokerProof(brokerRegistrationProof);
-
-        uint256 vaultId = brokerRegistrationProof.statement[1];
-
-        uint256 blindedPublicKeyIndex = 3 +
-            brokerRegistrationProof.numberOfInputs *
-            3;
-        uint256 blindedPublicKey = brokerRegistrationProof.statement[
-            blindedPublicKeyIndex
-        ];
-
-        // Checking the key has not been set
-        // TODO:: needs audit
-        if (_registeredBrokers[blindedPublicKey].numberOfInputs == 0) {
-            _registeredBrokers[blindedPublicKey] = brokerRegistrationProof;
-
-            emit BrokerRegistered(vaultId, blindedPublicKey);
-        } else {
-            revert BrokerAlreadyRegistered();
-        }
-
-        return true;
-    }
-
-    function checkRegisterBrokerProof(
-        ProofReceipt memory receipt
-    ) internal returns (bool) {
-        // signal input st_beacon;
-        // signal input st_vaultId;
-        // signal input st_groupId;
-        // signal input st_delegator_treeNumbers[tm_numOfInputs];
-        // signal input st_delegator_merkleRoots[tm_numOfInputs];
-        // signal input st_delegator_nullifiers[tm_numOfInputs];
-        // signal input st_broker_blindedPublicKey;
-
-        // signal input st_assetGroup_treeNumber;
-        // signal input st_assetGroup_merkleRoot;
-
-        // TODO:: connect beacon
-        // bind numberOfInputs and numberOfOutputs to receipt.statement.length
-
-        if (receipt.numberOfInputs < 2) {
-            revert InvalidNumberOfInputs();
-        }
-
-        if (receipt.numberOfOutputs != 0) {
-            revert InvalidNumberOfOutputs();
-        }
-
-        uint256 vaultId = receipt.statement[1];
-        uint256 groupId = receipt.statement[2];
-        uint256 numberOfInputs = receipt.numberOfInputs;
-        uint256 nullifiersIndex = 3 + (numberOfInputs * 2);
-        uint256 blindedPkIndex = 3 + (numberOfInputs * 3);
-
-        // asserting item proof shows that item belongs to group1
-        if (
-            !IAssetGroup(_assetGroups[groupId]).isMemberFromProofReceipt(
-                vaultId,
-                receipt
-            )
-        ) {
-            revert GroupMembershipMismatch();
-        }
-
-        IAbstractCoinVault(_coinVaults[vaultId])
-            .checkRegisterBrokerProofConditions(receipt);
-
-        IVerifier(_verifierContractAddress).verifyProof(
-            VK_ID_BROKER_REGISTRATION,
-            receipt.proof,
-            receipt.statement
-        );
-
-        return true;
-    }
-
-    function verifyLegitBrokerReceipt(
-        ProofReceipt memory receipt
-    ) public returns (bool) {
-        uint256 beacon = receipt.statement[0];
-        uint256 blindedPublicKey = receipt.statement[1];
-
-        IVerifier(_verifierContractAddress).verifyProof(
-            VK_ID_LEGIT_BROKER,
-            receipt.proof,
-            receipt.statement
-        );
-        emit LegitBrokerReceipt(beacon, blindedPublicKey);
-        return true;
     }
 
     ///////////////////////////////////////////////
@@ -612,13 +502,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     function _proofType(
         ProofReceipt memory receipt
-    ) internal returns (uint256) {
+    ) internal pure returns (uint256) {
         uint256 expectedBatchSize = 1 + 6 * receipt.numberOfInputs;
         uint256 expectedNormalSize = 3 +
-            3 *
-            receipt.numberOfInputs +
-            receipt.numberOfOutputs;
-        uint256 expectedBrokerSize = 5 +
             3 *
             receipt.numberOfInputs +
             receipt.numberOfOutputs;
@@ -628,8 +514,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             return 1;
         } else if (receipt.statement.length == expectedBatchSize) {
             return 2;
-        } else if (receipt.statement.length == expectedBrokerSize) {
-            return 3;
         }
 
         revert InvalidStatementSize();
@@ -675,8 +559,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt memory receipt,
         uint256 vaultId,
         uint256 groupId,
-        uint256 deadline,
-        uint256 revertCommitA
+        uint256 deadline
     ) public returns (bool) {
         // uint256 prootType = _proofType(receipt);
         // uint inputSize = receipt.numberOfInputs;
@@ -731,50 +614,52 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(receipt2);
             delete _pendingTransactions[receiptMessage];
 
+            // Call _settleOnGroupPair directly (bypassing onlyRelayer on the public wrappers)
+            // since submitPartialSettlement is itself a permissionless entry point.
             if (!IAssetGroup(_assetGroups[groupId2]).isFungible()) {
-                swapOnGroupPair(receipt, receipt2, vaultId, vaultId2, groupId, groupId2);
+                if (!isValidSwapGroupPair(groupId, groupId2)) revert InvalidSwapGroupPair();
+                _settleOnGroupPair(receipt, receipt2, vaultId, vaultId2, groupId, groupId2);
             } else if (!IAssetGroup(_assetGroups[groupId]).isFungible()) {
-                swapOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
+                if (!isValidSwapGroupPair(groupId2, groupId)) revert InvalidSwapGroupPair();
+                _settleOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
             } else {
-                exchangeOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
+                if (!isValidExchangeGroupPair(groupId2, groupId)) revert InvalidExchangeGroupPair();
+                _settleOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
             }
         } else {
             if (deadline <= block.timestamp) {
                 revert SwapDeadlineMustBeInFuture();
             }
 
-            // commitB = receiptUniqueId (Alice's statement[commitmentsIndex] = StCommitB)
-            // commitA = statement[commitmentsIndex+1] (Alice's StCommitA — what Alice expects)
-            // commitB is used by Bob as his receiptUniqueId (DvP Destination statement[4] = commitA)
-            // Wait — in DvPInitiator: statement = [msg, tree, root, nf, commitB, commitA, revertCommitA]
+            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA]
             // commitmentsIndex = 4 → receiptUniqueId = commitB
-            // commitmentsIndex+1 = 5 → commitA
-            uint256 commitB    = receiptUniqueId;
-            uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
-            uint256 nfA        = receipt.statement[nullifiersIndex];
-
-            uint256 innerHash = IPoseidonWrapper(_hashContractAddress).poseidon4(
-                [commitB, revertCommitA, nfA, receiptMessage]
-            );
-            uint256 swapId = IPoseidonWrapper(_hashContractAddress).poseidon(
-                [innerHash, deadline]
-            );
-
-            // HIGH-2 fix: key by swapId (Bob's StMessage = swap_id in DvP Destination circuit).
-            // targetReceiptId = commitA_expected (Bob's receiptUniqueId = DvP Destination statement[4]).
+            // commitmentsIndex+1 = 5 → commitA_expected (what Alice expects Bob to deliver)
+            //
+            // HIGH-2 fix (corrected): key _pendingTransactions by commitB.
+            // The DvPDestinationCircuit enforces StMessage = commitB, so Bob's
+            // receiptMessage = commitB — this is the lookup key Bob uses when settling.
+            // Keying by commitB (not a derived swapId) aligns circuit and contract.
             // HIGH-10 fix: store initiator to restrict claimSwapTimeout.
-            _pendingTransactions[swapId].vaultId        = vaultId;
-            _pendingTransactions[swapId].groupId         = groupId;
-            _pendingTransactions[swapId].targetReceiptId = commitA_expected;
-            _pendingTransactions[swapId].deadline        = deadline;
-            _pendingTransactions[swapId].swapId          = swapId;
-            _pendingTransactions[swapId].revertCommitA   = revertCommitA;
-            _pendingTransactions[swapId].commitB         = commitB;
-            _pendingTransactions[swapId].initiator        = msg.sender;
+            uint256 commitB          = receiptUniqueId;
+            uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
+            // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
+            // accepting it as a caller-supplied parameter. The circuit constrains it to
+            // Poseidon4(pkAlice, revertSalt, valueIn, tokenIdIn) so only Alice can spend it.
+            // A caller-supplied value could be front-run to redirect the timeout refund.
+            uint256 revertCommitA    = receipt.statement[commitmentsIndex + 2]; // StRevertCommitA
+
+            _pendingTransactions[commitB].vaultId        = vaultId;
+            _pendingTransactions[commitB].groupId         = groupId;
+            _pendingTransactions[commitB].targetReceiptId = commitA_expected;
+            _pendingTransactions[commitB].deadline        = deadline;
+            _pendingTransactions[commitB].swapId          = commitB;
+            _pendingTransactions[commitB].revertCommitA   = revertCommitA;
+            _pendingTransactions[commitB].commitB         = commitB;
+            _pendingTransactions[commitB].initiator        = msg.sender;
 
             IAbstractCoinVault(_coinVaults[vaultId]).addPendingProofReceipt(receipt);
 
-            emit SwapInitiated(swapId, commitA_expected, commitB, deadline);
+            emit SwapInitiated(commitB, commitA_expected, commitB, deadline);
             emit PendingProofAddedToVault(vaultId, groupId, receiptMessage, receipt);
         }
     }
@@ -810,6 +695,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         // CRIT-2 fix: nullify Alice's input (mark as permanently spent)
         // then insert revertCommitA so Alice can reclaim her asset.
+        // The nullifiers were locked by addPendingProofReceipt; unlock first so nullifyFromReceipt succeeds.
+        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
         IAbstractCoinVault(_coinVaults[vaultId]).nullifyFromReceipt(receipt);
         uint256[] memory revertCommits = new uint256[](1);
         revertCommits[0] = revertCommitA;
@@ -826,7 +713,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt memory deliveryReceipt,
         uint256 paymentVaultId,
         uint256 deliveryVaultId
-    ) public returns (bool) {
+    ) public onlyRelayer returns (bool) {
         // Hard-coded groupIds
         // to enforce fungible payment
         // and non-fungible delivery
@@ -848,7 +735,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) public returns (bool) {
+    ) public onlyRelayer returns (bool) {
         // checking groupId1 and groupId2
         // to be in _swapGroupPairs
         if (!isValidSwapGroupPair(groupId1, groupId2)) {
@@ -871,7 +758,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt memory paymentReceipt2,
         uint256 paymentVaultId1,
         uint256 paymentVaultId2
-    ) public returns (bool) {
+    ) public onlyRelayer returns (bool) {
         // Hard-coded groupIds
         // to enforce fungible payment
         // and fungible payment
@@ -894,7 +781,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) public returns (bool) {
+    ) public onlyRelayer returns (bool) {
         // checking groupId1 and groupId2
         // to be in _exchangeGroupPairs
         if (!isValidExchangeGroupPair(groupId1, groupId2)) {
@@ -1010,8 +897,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //          Random oracle functions
     //////////////////////////////////////////////
 
-    // TODO:: this can later check the freshness of the challenge
-    // with Random Oracle
     function checkAndRegisterChallenge(
         uint256 challenge_
     ) public returns (bool) {
@@ -1020,8 +905,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (isRotten) {
             revert RottenChallenge();
         }
-
-        // TODO:: Require to check that challenge != valid address
 
         _rottenChallenges[challenge_] = true;
 
@@ -1055,16 +938,24 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
 
+        // NEW-3 fix: ERC20 JoinSplit circuit does not constrain StMessage in-circuit.
+        // Enforce here that retail payment proofs carry message == 0, preventing a
+        // prover from embedding arbitrary data in statement[0] which could confuse
+        // future protocol features that interpret that slot.
+        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
         // Verify ZK proof and check nullifier/root validity.
         vault.checkReceiptConditions(receipt);
 
-        // Insert all output commitments into the Merkle tree (atomically).
-        vault.insertCommitmentsFromReceipt(receipt);
-
-        // Mark all input nullifiers as spent.
+        // MEDIUM-5 fix: nullify inputs BEFORE inserting outputs — same order as
+        // _settleOnGroupPair. Inputs are permanently spent before outputs are
+        // created, preventing any double-spend window between the two calls.
         vault.nullifyFromReceipt(receipt);
+
+        // Insert all output commitments into the Merkle tree.
+        vault.insertCommitmentsFromReceipt(receipt);
 
         // Statement layout (non-interleaved / ContractStatement):
         //   [msg, treeNums[nIn], roots[nIn], nullifiers[nIn], cmts[nOut]]
@@ -1105,6 +996,15 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (commitment != proof.public_signal[0]) {
             revert PublicSignalMismatch();
         }
+
+        // DVP-7 fix: public signal[1] is ContractAddress — the circuit binds the proof to
+        // a specific deployment. Without this check a proof generated for a different
+        // EnygmaDvp deployment can be replayed here to mint a note that was never
+        // authorised for this contract.
+        require(
+            proof.public_signal[1] == uint256(uint160(address(this))),
+            "PrivateMint: proof bound to wrong contract"
+        );
 
         // Extract cipherText from public signals (index 3)
         uint256 cipherText = proof.public_signal[3];

@@ -1,8 +1,8 @@
-package primitives 
+package primitives
 
-import(
+import (
 	"github.com/consensys/gnark/frontend"
-	 pos "gnark_server/poseidon"
+	pos "gnark_server/poseidon"
 )
 
 func Nullifier(api frontend.API, privateKey frontend.Variable, pathIndex frontend.Variable) frontend.Variable {

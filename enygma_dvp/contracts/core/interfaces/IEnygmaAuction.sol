@@ -56,7 +56,6 @@ interface IEnygmaAuction {
         uint256 auctioneerGroupId; // in case of having independent rings of auctioneers
         uint256[2] auctioneerPublicKey;
     }
-    // TODO:: add other desired attributes
 
     error AuctionAlreadyExists();
     error AuctionStateMismatch();

@@ -245,7 +245,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
             TokenFungibility tFungibility = _metadatas[_id].tFungibility;
             uint256 maxSupply = _metadatas[_id].maxTotalSupply;
             uint256 totalSupply = _metadatas[_id].totalSupply;
-            // TODO:: check for overflow
             if (
                 tFungibility == TokenFungibility.NON_FUNGIBLE &&
                 totalSupply.add(_value) > maxSupply
@@ -274,8 +273,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         } else if (tokenType_ == TokenType.META_TOKEN_BOND) {
             _mintBond(_to, _id, _value, "");
         } else if (tokenType_ == TokenType.META_TOKEN_DLC) {
-            // TODO:: Add customized
-            //        batchTransferFrom logic for DLC
             revert NotImplemented();
         }
     }
@@ -300,9 +297,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         } else if (tokenType == TokenType.META_TOKEN_BOND) {
             super.safeTransferFrom(from, to, id, value, "");
         } else if (tokenType == TokenType.META_TOKEN_DLC) {
-            // TODO:: Add customized
-            //        safeTransferFrom logic for DLC
-
             revert NotImplemented();
         }
 
@@ -329,8 +323,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
             } else if (tokenType == TokenType.META_TOKEN_BOND) {
                 super.safeTransferFrom(from, to, ids[i], values[i], "");
             } else if (tokenType == TokenType.META_TOKEN_DLC) {
-                // TODO:: Add customized batch
-                //        batchTransferFrom logic for DLC
                 revert NotImplemented();
             }
 

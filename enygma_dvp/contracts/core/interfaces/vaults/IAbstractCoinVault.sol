@@ -166,7 +166,4 @@ interface IAbstractCoinVault {
         uint256 receiptUniqueId
     ) external returns (IEnygmaDvp.ProofReceipt memory receipt);
 
-    function checkRegisterBrokerProofConditions(
-        IEnygmaDvp.ProofReceipt memory receipt
-    ) external returns (bool);
 }

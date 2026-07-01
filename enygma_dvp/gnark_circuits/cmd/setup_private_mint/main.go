@@ -21,8 +21,7 @@ import (
 
 func main() {
 	solver.RegisterHint(primitives.ModHint)
-	solver.RegisterHint(primitives.ERC155UniqueIdNative)
-	solver.RegisterHint(primitives.PoseidonNative)
+	
 
 	circuit := templates.PrivateMintCircuit{}
 

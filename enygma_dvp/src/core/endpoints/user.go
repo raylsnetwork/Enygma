@@ -106,7 +106,10 @@ func getCommitmentsFromTx(contractABI abi.ABI, receipt *types.Receipt) ([]*big.I
 
 // DepositErc20 approves the vault to spend ERC-20 tokens, then deposits them.
 // Returns the commitment values emitted by the "Commitment" event.
-// Corresponds to: depositErc20(account, depositAmount, depositKey, erc20VaultContract, erc20Contract, merkleTree)
+//
+// C-1 fix: the contract now computes commitment = Poseidon4(pkSpend, salt, amount, tokenId)
+// on-chain, so callers must supply pkSpend, salt and tokenId instead of a pre-computed
+// commitment.  The contract emits the resulting commitment in the Commitment event.
 func DepositErc20(
 	client *ethclient.Client,
 	auth *bind.TransactOpts,
@@ -115,7 +118,9 @@ func DepositErc20(
 	erc20ABI abi.ABI,
 	erc20Addr common.Address,
 	depositAmount *big.Int,
-	depositCommitment *big.Int,
+	pkSpend *big.Int,
+	salt *big.Int,
+	tokenId *big.Int,
 ) ([]*big.Int, error) {
 	// Step 1: erc20.approve(vaultAddr, depositAmount)
 	erc20Contract := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
@@ -130,8 +135,8 @@ func DepositErc20(
 	fmt.Printf("...approves the transfer of Erc20 to ZkDvp\n")
 	fmt.Printf("gasUsed: %d\n", approveReceipt.GasUsed)
 
-	// Step 2: vault.deposit([depositAmount, depositCommitment])
-	params := []*big.Int{depositAmount, depositCommitment}
+	// Step 2: vault.deposit([amount, pkSpend, salt, tokenId]) — commitment computed on-chain.
+	params := []*big.Int{depositAmount, pkSpend, salt, tokenId}
 	vaultContract := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	depositTx, err := vaultContract.Transact(auth, "deposit", params)
 	if err != nil {
@@ -202,8 +207,10 @@ func DepositErc20V2(
 	fmt.Printf("...approves the transfer of Erc20 to ZkDvp\n")
 	fmt.Printf("gasUsed: %d\n", approveReceipt.GasUsed)
 
-	// Step 2: vault.depositV2([depositAmount, commitment], cipherText, encTxData)
-	params := []*big.Int{depositAmount, commitment}
+	// Step 2: vault.depositV2([amount, pkSpend, saltBField, tokenId], cipherText, encTxData)
+	// C-1 fix: contract computes commitment on-chain from the key material.
+	_ = commitment // retained for local logging; not sent to contract
+	params := []*big.Int{depositAmount, recipientSpendPk, saltBField, tokenId}
 	vaultContract := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	depositTx, err := vaultContract.Transact(auth, "depositV2", params, cipherText, encTxData)
 	if err != nil {
@@ -364,7 +371,10 @@ func WithdrawErc20V2(
 
 // DepositErc721 approves the vault to transfer an ERC-721 NFT, then deposits it.
 // Returns the commitment values emitted by the "Commitment" event.
-// Corresponds to: depositErc721(account, nft_id, depositKey, erc721VaultContract, erc721Contract, merkleTree)
+//
+// C-1 fix: the contract now computes commitment = Poseidon4(pkSpend, salt, 1, tokenId)
+// on-chain (matching Erc721Commitment circuit formula), binding the commitment to the
+// actual deposited NFT.  Callers supply pkSpend and salt instead of a pre-computed commitment.
 func DepositErc721(
 	client *ethclient.Client,
 	auth *bind.TransactOpts,
@@ -373,7 +383,8 @@ func DepositErc721(
 	erc721ABI abi.ABI,
 	erc721Addr common.Address,
 	nftID *big.Int,
-	depositCommitment *big.Int,
+	pkSpend *big.Int,
+	salt *big.Int,
 ) ([]*big.Int, error) {
 	// Step 1: erc721.approve(vaultAddr, nftID)
 	erc721Contract := bind.NewBoundContract(erc721Addr, erc721ABI, client, client, client)
@@ -388,8 +399,8 @@ func DepositErc721(
 	fmt.Printf("...approves the transfer of NFT to ZkDvp\n")
 	fmt.Printf("gasUsed: %d\n", approveReceipt.GasUsed)
 
-	// Step 2: vault.deposit([nftID, depositCommitment])
-	params := []*big.Int{nftID, depositCommitment}
+	// Step 2: vault.deposit([nftID, pkSpend, salt]) — commitment computed on-chain.
+	params := []*big.Int{nftID, pkSpend, salt}
 	vaultContract := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	depositTx, err := vaultContract.Transact(auth, "deposit", params)
 	if err != nil {
@@ -406,9 +417,9 @@ func DepositErc721(
 // DepositErc1155 approves the vault as operator for an ERC-1155 token, then deposits it.
 // If the contract reverts with a "FungibilityMerkle" custom error, the error is logged
 // and nil is returned (matching the JS try/catch behaviour).
-// Corresponds to: depositErc1155(account, tokenId, amount, data, depositKey,
 //
-//	erc1155VaultContract, erc1155Contract)
+// C-1 fix: the contract now computes commitment = Poseidon4(pkSpend, salt, amount, tokenId)
+// on-chain; callers supply pkSpend and salt instead of a pre-computed commitment.
 func DepositErc1155(
 	client *ethclient.Client,
 	auth *bind.TransactOpts,
@@ -418,7 +429,8 @@ func DepositErc1155(
 	erc1155Addr common.Address,
 	tokenID *big.Int,
 	amount *big.Int,
-	depositCommitment *big.Int,
+	pkSpend *big.Int,
+	salt *big.Int,
 ) ([]*big.Int, error) {
 	// Step 1: erc1155.setApprovalForAll(vaultAddr, true)
 	erc1155Contract := bind.NewBoundContract(erc1155Addr, erc1155ABI, client, client, client)
@@ -431,8 +443,8 @@ func DepositErc1155(
 	}
 	fmt.Printf("...approved the transfer of Erc1155 to ZkDvp\n")
 
-	// Step 2: vault.deposit([amount, tokenID, depositCommitment])
-	params := []*big.Int{amount, tokenID, depositCommitment}
+	// Step 2: vault.deposit([amount, tokenID, pkSpend, salt]) — commitment computed on-chain.
+	params := []*big.Int{amount, tokenID, pkSpend, salt}
 	vaultContract := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	depositTx, err := vaultContract.Transact(auth, "deposit", params)
 	if err != nil {
@@ -453,10 +465,9 @@ func DepositErc1155(
 }
 
 // DepositErc1155Batch approves the vault as operator and batch-deposits ERC-1155 tokens.
-// The deposit params are packed as: [...tokenIds, ...amounts, ...publicKeys].
-// Corresponds to: depositErc1155Batch(account, tokenIds, amounts, data, depositKeys,
 //
-//	erc1155VaultContract, erc1155Contract)
+// C-1 fix: params are now packed as: [...tokenIds, ...amounts, ...pkSpeends, ...salts].
+// The contract computes each commitment = Poseidon4(pkSpend, salt, amount, tokenId) on-chain.
 func DepositErc1155Batch(
 	client *ethclient.Client,
 	auth *bind.TransactOpts,
@@ -466,7 +477,8 @@ func DepositErc1155Batch(
 	erc1155Addr common.Address,
 	tokenIDs []*big.Int,
 	amounts []*big.Int,
-	depositCommitments []*big.Int,
+	pkSpeends []*big.Int,
+	salts []*big.Int,
 ) ([]*big.Int, error) {
 	// Step 1: erc1155.setApprovalForAll(vaultAddr, true)
 	erc1155Contract := bind.NewBoundContract(erc1155Addr, erc1155ABI, client, client, client)
@@ -479,15 +491,16 @@ func DepositErc1155Batch(
 	}
 	fmt.Printf("...approves the BatchTransfer of Erc1155 to ZkDvp\n")
 
-	// Pack params as: [...tokenIds, ...amounts, ...commitments]
-	params := make([]*big.Int, 0, len(tokenIDs)+len(amounts)+len(depositCommitments))
+	// Pack params as: [...tokenIds, ...amounts, ...pkSpeends, ...salts]
+	params := make([]*big.Int, 0, len(tokenIDs)*4)
 	params = append(params, tokenIDs...)
 	params = append(params, amounts...)
-	params = append(params, depositCommitments...)
+	params = append(params, pkSpeends...)
+	params = append(params, salts...)
 
-	fmt.Printf("tokenIds: %v amounts: %v commitments: %v\n", tokenIDs, amounts, depositCommitments)
+	fmt.Printf("tokenIds: %v amounts: %v\n", tokenIDs, amounts)
 
-	// Step 2: vault.deposit(params)
+	// Step 2: vault.deposit(params) — commitments computed on-chain.
 	vaultContract := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	depositTx, err := vaultContract.Transact(auth, "deposit", params)
 	if err != nil {

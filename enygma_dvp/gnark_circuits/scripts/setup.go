@@ -16,13 +16,13 @@ import(
 func SetupPrivateMint(config templates.PrivateMintConfig, circuitName string){
 	fmt.Print("Initializing Setup Process")
 	fmt.Print("\n")
-	circuitLegitBroker:=templates.PrivateMintCircuit{
-		
+	circuit := templates.PrivateMintCircuit{
+		Config: config,
 	}
 
 	printable:= fmt.Sprintf("Generating Proving Key and Veryfing key for %s",circuitName)
 	fmt.Println(printable)
-	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitLegitBroker)
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
 		panic(err)
 	}

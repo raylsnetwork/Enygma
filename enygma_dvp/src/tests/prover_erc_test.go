@@ -6,7 +6,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/raylsnetwork/enygma_dvp/src/core"
@@ -541,69 +540,6 @@ func TestAuctionPrivateOpeningProof2_SendsStVaultId(t *testing.T) {
 	}
 }
 
-// Bug 3 regression: Erc1155FungibleWithBrokerV1Proof should use correct endpoint and field names
-func TestErc1155FungibleWithBrokerV1Proof_CorrectEndpoint(t *testing.T) {
-	var receivedPath string
-	var receivedBody map[string]interface{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedPath = r.URL.Path
-		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
-		w.WriteHeader(200)
-		w.Write([]byte(`{"status":200,"message":"ok"}`))
-	}))
-	defer server.Close()
-
-	client := core.NewGnarkClient(server.URL)
-	merkleDepth := 8
-
-	keysIn := []core.KeyPair{makeKeyPair(10, 20), makeKeyPair(30, 40)}
-	keysOut := []core.KeyPair{makeKeyPair(50, 60), makeKeyPair(70, 80)}
-
-	_, err := client.Erc1155FungibleWithBrokerV1Proof(
-		big.NewInt(1),
-		[]*big.Int{big.NewInt(100), big.NewInt(200)},
-		keysIn,
-		[]*big.Int{big.NewInt(50), big.NewInt(50)},      // wtSaltsIn
-		[]*big.Int{big.NewInt(150), big.NewInt(150)},
-		keysOut,
-		[][]byte{nil, nil},                                // recipientViewEncapKeys (nil → random salt fallback)
-		merkleDepth,
-		[]*big.Int{big.NewInt(0), big.NewInt(0)},
-		MerkleProofPair(merkleDepth, 2),
-		big.NewInt(0xDEF),
-		big.NewInt(42),
-		big.NewInt(0),
-		makeMerkleProof(merkleDepth),
-		big.NewInt(777),
-		big.NewInt(5),
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should be /proof/erc1155FungibleWithBroker, NOT /proof/erc1155JoinSplitWithBrokerV1
-	if receivedPath != "/proof/erc1155FungibleWithBroker" {
-		t.Errorf("expected endpoint /proof/erc1155FungibleWithBroker, got %s", receivedPath)
-	}
-
-	// Should use StBrokerCommisionRate (server's typo), not StBrokerCommissionRate
-	if _, hasOld := receivedBody["StBrokerCommissionRate"]; hasOld {
-		t.Error("payload should use StBrokerCommisionRate (server typo), not StBrokerCommissionRate")
-	}
-	if receivedBody["StBrokerCommisionRate"] == nil {
-		t.Error("expected StBrokerCommisionRate in payload")
-	}
-
-	// Should use WtRecipientPk (lowercase k), not WtRecipientPK
-	if _, hasOld := receivedBody["WtRecipientPK"]; hasOld {
-		t.Error("payload should use WtRecipientPk, not WtRecipientPK")
-	}
-	if receivedBody["WtRecipientPk"] == nil {
-		t.Error("expected WtRecipientPk in payload")
-	}
-}
-
 // Bug 4 regression: GnarkProver dispatcher should route PrivateMint
 func TestGnarkProverDispatcher_PrivateMint(t *testing.T) {
 	var receivedPath string
@@ -840,25 +776,3 @@ func TestErc20PrivateMintProof_CommitmentUsableAsJoinSplitInput(t *testing.T) {
 	}
 }
 
-// Bug 2 regression: Erc20WithBrokerV1Proof should return unsupported error
-func TestErc20WithBrokerV1Proof_Unsupported(t *testing.T) {
-	client := core.NewGnarkClient("http://localhost:9999")
-	_, err := client.Erc20WithBrokerV1Proof(
-		big.NewInt(1),
-		[]*big.Int{big.NewInt(100)},
-		[]core.KeyPair{makeKeyPair(10, 20)},
-		[]*big.Int{big.NewInt(100)},
-		[]core.KeyPair{makeKeyPair(50, 60)},
-		8,
-		MerkleProofPair(8, 1),
-		[]*big.Int{big.NewInt(0)},
-		big.NewInt(0xABC),
-		big.NewInt(777),
-	)
-	if err == nil {
-		t.Fatal("expected error for unsupported Erc20WithBrokerV1Proof")
-	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("expected 'not supported' in error, got: %v", err)
-	}
-}

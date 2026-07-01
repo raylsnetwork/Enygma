@@ -31,27 +31,35 @@ contract Erc20CoinVault is AbstractCoinVault {
     //              Constructor
     //////////////////////////////////////////////
 
-    // hashContractAddress: poseidon Wrapper contract address
-    // genericVerifierContractAddress: Groth16 generic verifier address.
-    // TODO:: some form of verification is needed
     constructor(
         address zkDvpContractAddress
     ) AbstractCoinVault(zkDvpContractAddress) {
         _name = "ZkDvp - ERC20 Coin Vault";
     }
 
-    // Standards that are currently supported: ERC20, ERC721, ERC1155
+    // C-1 fix: commitment is now computed on-chain from the caller-supplied key material
+    // so the deposited amount is binding.  Previously the caller passed a pre-computed
+    // commitment that could encode any amount, allowing vault drain via inflated deposits.
+    //
     // params[0] = amount to deposit
-    // params[1] = commitment computed off-chain as
-    //             Poseidon(pk_spend, saltB_field, amount, tokenId)  (V2, non-interactive flow)
+    // params[1] = pkSpend  — recipient's BabyJubJub spend public key (x-coordinate)
+    // params[2] = salt     — random field element chosen by the depositor
+    // params[3] = tokenId  — token identifier (0 for plain ERC20 vaults)
     function deposit(uint256[] memory params) public override returns (bool) {
-        uint256 amount = params[0];
-        uint256 commitment = params[1];
+        uint256 amount  = params[0];
+        uint256 pkSpend = params[1];
+        uint256 salt    = params[2];
+        uint256 tokenId = params[3];
 
         IERC20(_assetContractAddress).transferFrom(
             msg.sender,
             address(this),
             amount
+        );
+
+        // Commitment = Poseidon4(pkSpend, salt, amount, tokenId) — on-chain, binding amount.
+        uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
+            [pkSpend, salt, amount, tokenId]
         );
 
         uint256[] memory commitments = new uint256[](1);
@@ -69,7 +77,9 @@ contract Erc20CoinVault is AbstractCoinVault {
     // scan the chain and discover notes sent to them without prior interaction.
     //
     // params[0]    = amount to deposit
-    // params[1]    = commitment = Poseidon(pk_spend, saltB_field, amount, tokenId)
+    // params[1]    = pkSpend  — recipient's BabyJubJub spend public key (x-coordinate)
+    // params[2]    = salt     — random field element chosen by the depositor
+    // params[3]    = tokenId  — token identifier (0 for plain ERC20 vaults)
     // ciphertextI  = ML-KEM-768 capsule (1088 bytes)
     // ciphertextII = ChaCha20-Poly1305 ciphertext of tokenId||amount
     function depositV2(
@@ -77,13 +87,20 @@ contract Erc20CoinVault is AbstractCoinVault {
         bytes calldata ciphertextI,
         bytes calldata ciphertextII
     ) public returns (bool) {
-        uint256 amount = params[0];
-        uint256 commitment = params[1];
+        uint256 amount  = params[0];
+        uint256 pkSpend = params[1];
+        uint256 salt    = params[2];
+        uint256 tokenId = params[3];
 
         IERC20(_assetContractAddress).transferFrom(
             msg.sender,
             address(this),
             amount
+        );
+
+        // C-1 fix: compute commitment on-chain to bind it to the actual transferred amount.
+        uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
+            [pkSpend, salt, amount, tokenId]
         );
 
         uint256[] memory commitments = new uint256[](1);
@@ -99,10 +116,22 @@ contract Erc20CoinVault is AbstractCoinVault {
 
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) public override returns (bool) {
+    ) public override nonReentrant returns (bool) {
+        // NEW-3 fix: ERC20 JoinSplit circuit does not constrain StMessage in-circuit;
+        // DvP Initiator proofs (numberOfOutputs == 1) are routed through this same
+        // function and are expected to carry a non-zero StMessage (= StCommitA).
+        // Only reject explicitly zero-expected receipt types: retail transfer proofs
+        // (2-output) must have message == 0.
+        if (receipt.numberOfOutputs == 2 && receipt.statement[0] != 0) {
+            revert IEnygmaDvp.InvalidPaymentMessage();
+        }
         checkReceiptConditions(receipt);
-        _insertCommitmentsFromReceipt(receipt);
+        // NEW-1 fix: nullify inputs before inserting outputs (CEI).
+        // Reversed order opened a reentrancy window via the Poseidon precompile
+        // call inside insertLeaves() — a re-entrant transfer() would find the
+        // input notes un-nullified and could spend them a second time.
         _nullifyFromReceipt(receipt);
+        _insertCommitmentsFromReceipt(receipt);
         return true;
     }
 
@@ -123,7 +152,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         IEnygmaDvp.ProofReceipt memory receipt,
         bytes[] calldata ciphertextI,
         bytes[] calldata ciphertextII
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         require(
             ciphertextI.length == receipt.numberOfOutputs &&
             ciphertextII.length == receipt.numberOfOutputs,
@@ -131,8 +160,9 @@ contract Erc20CoinVault is AbstractCoinVault {
         );
 
         checkReceiptConditions(receipt);
-        _insertCommitmentsFromReceipt(receipt);
+        // NEW-1 fix: nullify inputs before inserting outputs (CEI — matches transfer()).
         _nullifyFromReceipt(receipt);
+        _insertCommitmentsFromReceipt(receipt);
 
         // Emit EncryptedNote for each output so recipients can scan
         uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;

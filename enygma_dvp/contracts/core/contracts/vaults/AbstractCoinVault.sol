@@ -95,6 +95,10 @@ abstract contract AbstractCoinVault is
         address verifierContractAddress,
         address zkAuctionContractAddress
     ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+        // H-5 fix: prevent re-initialization. After the first call, the auction contract
+        // gains DEFAULT_DVP_ROLE and could call initializeVault again to replace the
+        // verifier or hash contract with a malicious one, bypassing all proof checks.
+        require(_hashContractAddress == address(0), "Vault: already initialized");
         _vaultId = vaultId;
         _zkDvpContractAddress = msg.sender;
         _hashContractAddress = hashContractAddress;
@@ -103,8 +107,6 @@ abstract contract AbstractCoinVault is
         _zkAuctionContractAddress = zkAuctionContractAddress;
         _numberOfIdentifiers = numberOfAssetIdentifiers;
 
-        // TODO:: give AUCTION_ROLE to zkAuction
-        // and add access in the function to AUCTION_ROLE
         _setupRole(DEFAULT_DVP_ROLE, _zkAuctionContractAddress);
 
         initializeMerkle(treeDepth, _vaultId, _hashContractAddress);
@@ -269,7 +271,6 @@ abstract contract AbstractCoinVault is
 
         uint256 utxoUniqueId = receipt.statement[commitmentsIndex];
 
-        // TODO:: you can check being empty but proof parameters being zero
         if (_pendingProofReceipts[utxoUniqueId].statement.length != 0) {
             // proofReceipt has been already added to the vault
             revert ProofReceiptAlreadyAdded();
@@ -295,53 +296,4 @@ abstract contract AbstractCoinVault is
         return _pendingProofReceipts[proofUniqueId];
     }
 
-    function checkRegisterBrokerProofConditions(
-        IEnygmaDvp.ProofReceipt memory receipt
-    ) public returns (bool) {
-        // signal input st_beacon;
-        // signal input st_vaultId;
-        // signal input st_groupId;
-        // signal input st_delegator_treeNumbers[tm_numOfInputs];
-        // signal input st_delegator_merkleRoots[tm_numOfInputs];
-        // signal input st_delegator_nullifiers[tm_numOfInputs];
-        // signal input st_broker_blindedPublicKey;
-
-        // signal input st_assetGroup_treeNumber;
-        // signal input st_assetGroup_merkleRoot;
-
-        uint jInputSize = receipt.numberOfInputs;
-        uint jTreeNumbersIndex = 3;
-        uint jRootsIndex = jTreeNumbersIndex + jInputSize;
-        uint jNullifiersIndex = jRootsIndex + jInputSize;
-
-        for (uint i = 0; i < jInputSize; i++) {
-            if (receipt.statement[jRootsIndex + i] != 0) {
-                if (
-                    !isValidRoot(
-                        receipt.statement[jTreeNumbersIndex + i],
-                        receipt.statement[jRootsIndex + i]
-                    )
-                ) {
-                    revert InvalidMerkleRoot();
-                }
-
-                if (
-                    isValidNullifier(
-                        receipt.statement[jTreeNumbersIndex + i],
-                        receipt.statement[jNullifiersIndex + i]
-                    )
-                ) {
-                    revert InvalidNullifier();
-                }
-
-                // locking the coins for later settlement
-                lockCoin(
-                    receipt.statement[jTreeNumbersIndex + i],
-                    receipt.statement[jNullifiersIndex + i]
-                );
-            }
-        }
-
-        return true;
-    }
 }

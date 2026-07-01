@@ -100,6 +100,10 @@ contract SwapRelayer {
 
         // set expiry on first submission
         if (s.expiry == 0) {
+            // LOW-6 fix: reject zero or past expiry so the first submitter cannot
+            // immediately cancel their own leg via cancelSwap (expiry=0 passes the
+            // "block.timestamp < s.expiry" check as false for any uint256 timestamp).
+            require(expiry > block.timestamp, "SwapRelayer: expiry must be in the future");
             s.expiry = expiry;
         }
 
@@ -118,6 +122,13 @@ contract SwapRelayer {
                 dvp.isRegisteredSwapGroupPair(s.paymentVaultId, s.deliveryVaultId),
                 "SwapRelayer: vault pair not registered"
             );
+            // H-6 fix: unlock both nullifier sets before calling swap().
+            // lockReceiptNullifiers() was called when each leg was submitted.
+            // setNullifier() (inside _nullifyFromReceipt) checks lockedNullifiers
+            // and reverts with CantSpendLockedCoin if the nullifier is still locked —
+            // so settlement would always fail without unlocking first.
+            dvp.unlockReceiptNullifiers(s.paymentReceipt, s.paymentVaultId);
+            dvp.unlockReceiptNullifiers(s.deliveryReceipt, s.deliveryVaultId);
             dvp.swap(
                 s.paymentReceipt,
                 s.deliveryReceipt,

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -272,6 +274,41 @@ func ethGetLogs(rpcURL, contractAddr, topic0 string) ([]logEntry, error) {
 	return logs, nil
 }
 
+// ─── Input validation ─────────────────────────────────────────────────────────
+
+// validateReceiptsPath rejects absolute paths and traversals that escape more
+// than one directory level above cwd (e.g. ../../etc/passwd).
+// The default "../build/receipts.json" (one level up) is intentionally allowed.
+func validateReceiptsPath(p string) error {
+	if filepath.IsAbs(p) {
+		return fmt.Errorf("receiptsPath must be a relative path")
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	depth := 0
+	for _, seg := range strings.Split(clean, "/") {
+		if seg == ".." {
+			depth++
+			if depth > 1 {
+				return fmt.Errorf("receiptsPath traverses outside the project directory")
+			}
+		}
+	}
+	return nil
+}
+
+// validateRPCURL ensures the caller-supplied URL uses http or https so that
+// internal-only schemes (file://, gopher://, dict://) cannot be used for SSRF.
+func validateRPCURL(raw string) error {
+	u, err := url.ParseRequestURI(raw)
+	if err != nil {
+		return fmt.Errorf("invalid rpcUrl: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("rpcUrl must use http or https scheme, got %q", u.Scheme)
+	}
+	return nil
+}
+
 // ─── Receipts ─────────────────────────────────────────────────────────────────
 
 type contractReceipt struct {
@@ -363,6 +400,15 @@ func MerkleStatusHandler() gin.HandlerFunc {
 		}
 		if req.ReceiptsPath == "" {
 			req.ReceiptsPath = "../build/receipts.json"
+		}
+
+		if err := validateRPCURL(req.RpcUrl); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := validateReceiptsPath(req.ReceiptsPath); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
 
 		vaultAddrs, err := loadVaultAddresses(req.ReceiptsPath)
@@ -555,6 +601,15 @@ func MerkleVaultHandler() gin.HandlerFunc {
 		}
 		if req.ReceiptsPath == "" {
 			req.ReceiptsPath = "../build/receipts.json"
+		}
+
+		if err := validateRPCURL(req.RpcUrl); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := validateReceiptsPath(req.ReceiptsPath); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
 
 		// Resolve vault name from either field.

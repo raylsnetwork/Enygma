@@ -35,6 +35,9 @@ func LoadVerifyingKey(curve ecc.ID, filename string) (groth16.VerifyingKey, erro
 }
 
 func ParseBigInt(s string) *big.Int {
-    n, _ := new(big.Int).SetString(s, 10)
+    n, ok := new(big.Int).SetString(s, 10)
+    if !ok {
+        panic("ParseBigInt: invalid decimal integer: " + s)
+    }
     return n
 }

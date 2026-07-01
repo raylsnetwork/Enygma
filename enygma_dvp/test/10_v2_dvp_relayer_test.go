@@ -314,8 +314,9 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	approveErc20Tx, err := erc20.Transact(auth, "approve", erc20VaultAddr, erc20Amount)
 	if err != nil { t.Fatalf("ERC20.approve: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, approveErc20Tx); err != nil { t.Fatalf("wait approve: %v", err) }
+	// C-1 fix: contract computes commitment on-chain; send key material instead.
 	depositErc20Tx, err := erc20Vault.Transact(auth, "depositV2",
-		[]*big.Int{erc20Amount, aliceCmt}, capsuleAlice, aliceDepositEnc)
+		[]*big.Int{erc20Amount, aliceSpend.PublicKey, aliceSaltField, erc20TokenId}, capsuleAlice, aliceDepositEnc)
 	if err != nil { t.Fatalf("erc20Vault.depositV2: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, depositErc20Tx); err != nil { t.Fatalf("wait ERC20 depositV2: %v", err) }
 	t.Logf("  Alice deposited %s USDT (commitment %s)", erc20Amount, aliceCmt)
@@ -339,7 +340,8 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	approveNftTx, err := erc721.Transact(auth, "approve", nftVaultAddr, nftTokenId)
 	if err != nil { t.Fatalf("ERC721.approve: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, approveNftTx); err != nil { t.Fatalf("wait NFT approve: %v", err) }
-	depositNftTx, err := nftVault.Transact(auth, "deposit", []*big.Int{nftTokenId, bobNftCmt})
+	// C-1 fix: contract computes commitment = Poseidon4(pkSpend, salt, 1, tokenId) on-chain.
+	depositNftTx, err := nftVault.Transact(auth, "deposit", []*big.Int{nftTokenId, bobSpend.PublicKey, bobNftSalt})
 	if err != nil { t.Fatalf("nftVault.deposit: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, depositNftTx); err != nil { t.Fatalf("wait NFT deposit: %v", err) }
 	t.Logf("  Bob deposited ticket tokenId=%s (commitment %s)", nftTokenId, bobNftCmt)
@@ -402,10 +404,13 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	t.Log("Step 5 — Bob generates DvPDestinationProof")
 
 	destination, err := gnarkClient.DvPDestinationProof(
-		initiator.CommitB,
 		core.KeyPair{PrivateKey: bobSpend.PrivateKey, PublicKey: bobSpend.PublicKey},
 		bobNftSalt, nftAmount, nftTokenId,
-		aliceSpend.PublicKey, saltAField, initiator.CommitA,
+		aliceSpend.PublicKey, saltAField,
+		saltBField,  // Bob's HKDF payment salt (for Bob's ERC20 output commitment)
+		decAmount,   // Alice's ERC20 amount Bob receives
+		decTokenId,  // Alice's ERC20 tokenId Bob receives
+		initiator.CommitA,
 		big.NewInt(0), bobProof, merkleDepth,
 	)
 	if err != nil { t.Fatalf("DvPDestinationProof: %v", err) }
@@ -568,8 +573,9 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	if err != nil { t.Fatalf("ERC20.approve: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, approveTx); err != nil { t.Fatalf("wait approve: %v", err) }
 
+	// C-1 fix: contract computes commitment on-chain from key material.
 	depositAliceTx, err := erc20Vault.Transact(auth, "depositV2",
-		[]*big.Int{aliceAmt, aliceCmt}, capsuleAlice, aliceDepositEnc)
+		[]*big.Int{aliceAmt, aliceSpend.PublicKey, aliceSaltField, tokenId}, capsuleAlice, aliceDepositEnc)
 	if err != nil { t.Fatalf("Alice depositV2: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, depositAliceTx); err != nil { t.Fatalf("wait Alice deposit: %v", err) }
 	t.Logf("  Alice deposited %s tokens (commitment %s)", aliceAmt, aliceCmt)
@@ -589,8 +595,9 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	bobDepositEnc, err := core.EncryptPayload(bobEncKey, tokenId, bobAmt)
 	if err != nil { t.Fatalf("EncryptPayload (Bob): %v", err) }
 
+	// C-1 fix: contract computes commitment on-chain from key material.
 	depositBobTx, err := erc20Vault.Transact(auth, "depositV2",
-		[]*big.Int{bobAmt, bobCmt}, capsuleBob, bobDepositEnc)
+		[]*big.Int{bobAmt, bobSpend.PublicKey, bobSaltField, tokenId}, capsuleBob, bobDepositEnc)
 	if err != nil { t.Fatalf("Bob depositV2: %v", err) }
 	if _, err := bind.WaitMined(ctx, client, depositBobTx); err != nil { t.Fatalf("wait Bob deposit: %v", err) }
 	t.Logf("  Bob deposited %s tokens (commitment %s)", bobAmt, bobCmt)

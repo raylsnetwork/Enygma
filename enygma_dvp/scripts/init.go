@@ -165,8 +165,34 @@ func initializeDvp() error {
 
 	enygmaDvpAddress := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	verifierAddress := common.HexToAddress(receipts["Verifier"].ContractAddress)
+	g16VerifierAddress := common.HexToAddress(receipts["G16Verifier"].ContractAddress)
 
 	fmt.Printf("Verifier Address: %s\n", verifierAddress.Hex())
+
+	// DVP-1 fix: Verifier is now initialized directly by the deployer rather than
+	// indirectly through EnygmaDvp.initializeDvp. This closes the front-running
+	// window that existed when initializeVerifier was world-callable between Verifier
+	// deployment and the first initializeDvp call.
+	verifierABI, err := loadContractABI("core/contracts/Verifier.sol/Verifier")
+	if err != nil {
+		return fmt.Errorf("failed to load Verifier ABI: %w", err)
+	}
+
+	fmt.Println("Initializing Verifier with G16 verifier address...")
+	_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "initializeVerifier", g16VerifierAddress)
+	if err != nil {
+		return fmt.Errorf("failed to initialize Verifier: %w", err)
+	}
+
+	// DVP-1 fix: Grant DEFAULT_OWNER_ROLE on Verifier to EnygmaDvp so it can
+	// register verification keys via Verifier.addVerificationKey.
+	// DEFAULT_OWNER_ROLE = keccak256(abi.encodePacked("ownerRole"))
+	dvpOwnerRole := crypto.Keccak256Hash([]byte("ownerRole"))
+	fmt.Println("Granting DEFAULT_OWNER_ROLE on Verifier to EnygmaDvp...")
+	_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "grantRole", dvpOwnerRole, enygmaDvpAddress)
+	if err != nil {
+		return fmt.Errorf("failed to grant Verifier owner role to EnygmaDvp: %w", err)
+	}
 
 	// Initialize EnygmaDvp
 	fmt.Println("initializing EnygmaDvp smart contract...")
@@ -435,31 +461,39 @@ func getVerificationKeys(circuits []struct {
 	return verificationKeys, nil
 }
 
+func mustParseBigInt(s, field string) *big.Int {
+	v, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		panic(fmt.Sprintf("formatVKey: invalid decimal integer for %s: %q", field, s))
+	}
+	return v
+}
+
 func formatVKey(vkey VerificationKeyJSON) VerifyingKey {
 	var ic []G1Point
-	for _, point := range vkey.IC {
-		x, _ := new(big.Int).SetString(point[0], 10)
-		y, _ := new(big.Int).SetString(point[1], 10)
+	for i, point := range vkey.IC {
+		x := mustParseBigInt(point[0], fmt.Sprintf("IC[%d].X", i))
+		y := mustParseBigInt(point[1], fmt.Sprintf("IC[%d].Y", i))
 		ic = append(ic, G1Point{X: x, Y: y})
 	}
 
-	alpha1X, _ := new(big.Int).SetString(vkey.VkAlpha1[0], 10)
-	alpha1Y, _ := new(big.Int).SetString(vkey.VkAlpha1[1], 10)
+	alpha1X := mustParseBigInt(vkey.VkAlpha1[0], "VkAlpha1.X")
+	alpha1Y := mustParseBigInt(vkey.VkAlpha1[1], "VkAlpha1.Y")
 
-	beta2X0, _ := new(big.Int).SetString(vkey.VkBeta2[0][0], 10)
-	beta2X1, _ := new(big.Int).SetString(vkey.VkBeta2[0][1], 10)
-	beta2Y0, _ := new(big.Int).SetString(vkey.VkBeta2[1][0], 10)
-	beta2Y1, _ := new(big.Int).SetString(vkey.VkBeta2[1][1], 10)
+	beta2X0 := mustParseBigInt(vkey.VkBeta2[0][0], "VkBeta2[0][0]")
+	beta2X1 := mustParseBigInt(vkey.VkBeta2[0][1], "VkBeta2[0][1]")
+	beta2Y0 := mustParseBigInt(vkey.VkBeta2[1][0], "VkBeta2[1][0]")
+	beta2Y1 := mustParseBigInt(vkey.VkBeta2[1][1], "VkBeta2[1][1]")
 
-	gamma2X0, _ := new(big.Int).SetString(vkey.VkGamma2[0][0], 10)
-	gamma2X1, _ := new(big.Int).SetString(vkey.VkGamma2[0][1], 10)
-	gamma2Y0, _ := new(big.Int).SetString(vkey.VkGamma2[1][0], 10)
-	gamma2Y1, _ := new(big.Int).SetString(vkey.VkGamma2[1][1], 10)
+	gamma2X0 := mustParseBigInt(vkey.VkGamma2[0][0], "VkGamma2[0][0]")
+	gamma2X1 := mustParseBigInt(vkey.VkGamma2[0][1], "VkGamma2[0][1]")
+	gamma2Y0 := mustParseBigInt(vkey.VkGamma2[1][0], "VkGamma2[1][0]")
+	gamma2Y1 := mustParseBigInt(vkey.VkGamma2[1][1], "VkGamma2[1][1]")
 
-	delta2X0, _ := new(big.Int).SetString(vkey.VkDelta2[0][0], 10)
-	delta2X1, _ := new(big.Int).SetString(vkey.VkDelta2[0][1], 10)
-	delta2Y0, _ := new(big.Int).SetString(vkey.VkDelta2[1][0], 10)
-	delta2Y1, _ := new(big.Int).SetString(vkey.VkDelta2[1][1], 10)
+	delta2X0 := mustParseBigInt(vkey.VkDelta2[0][0], "VkDelta2[0][0]")
+	delta2X1 := mustParseBigInt(vkey.VkDelta2[0][1], "VkDelta2[0][1]")
+	delta2Y0 := mustParseBigInt(vkey.VkDelta2[1][0], "VkDelta2[1][0]")
+	delta2Y1 := mustParseBigInt(vkey.VkDelta2[1][1], "VkDelta2[1][1]")
 
 	// VkBeta2[0][0] = A1 (imaginary), VkBeta2[0][1] = A0 (real).
 	// EIP-197 / GenericGroth16Verifier expects x[0]=imaginary, x[1]=real,

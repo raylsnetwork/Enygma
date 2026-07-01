@@ -251,7 +251,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	// ── Step 4: Register Alice and Bob in UserRegistry ───────────────────────
 	t.Log("Step 4 — registering Alice and Bob in UserRegistry")
 
-	if err := rpcore.Register(client, aliceAuth, registryAddr, aliceSpend.PublicKey, aliceView.EncapsKey); err != nil {
+	if err := rpcore.Register(client, aliceAuth, registryAddr, aliceSpend.PublicKey, aliceView.EncapsKey, make([]byte, 1088), make([]byte, 92)); err != nil {
 		if !strings.Contains(err.Error(), "AlreadyRegistered") && !strings.Contains(err.Error(), "45ed80e9") {
 			t.Fatalf("Alice Register: %v", err)
 		}
@@ -260,7 +260,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		t.Logf("  Alice registered (%s)", aliceAuth.From.Hex())
 	}
 
-	if err := rpcore.Register(client, bobAuth, registryAddr, bobSpend.PublicKey, bobView.EncapsKey); err != nil {
+	if err := rpcore.Register(client, bobAuth, registryAddr, bobSpend.PublicKey, bobView.EncapsKey, make([]byte, 1088), make([]byte, 92)); err != nil {
 		if !strings.Contains(err.Error(), "AlreadyRegistered") && !strings.Contains(err.Error(), "45ed80e9") {
 			t.Fatalf("Bob Register: %v", err)
 		}
@@ -340,7 +340,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	if err != nil { t.Fatalf("EncryptPayload (deposit): %v", err) }
 
 	depositTx, err := vault.Transact(aliceAuth, "depositV2",
-		[]*big.Int{depositAmt, aliceCommitment}, capsule, depositCtxt)
+		[]*big.Int{depositAmt, aliceSpend.PublicKey, aliceSaltBField, tokenId}, capsule, depositCtxt)
 	if err != nil { t.Fatalf("vault.depositV2: %v", err) }
 	depositReceipt, err := bind.WaitMined(ctx, client, depositTx)
 	if err != nil { t.Fatalf("wait depositV2: %v", err) }

@@ -42,7 +42,6 @@ interface IRaylsERC1155 {
         REGISTERED,
         FROZEN
     }
-    // TODO:: add new state if needed
 
     /////////////////////////////////////////
     //     Token metadata structure

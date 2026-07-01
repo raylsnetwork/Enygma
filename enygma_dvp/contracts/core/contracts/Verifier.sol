@@ -30,23 +30,36 @@ contract Verifier is IVerifier, AccessControl {
     // 4 vkJSErc1155:                   Fungible Erc1155 two input / joinSplit
     // 5 vkBatchErc1155Fungible:        Fungible Erc1155 10 input / batch logic
     // 6 vkJS102:                       Erc20 10 input / JoinSplitLogic
-    // 7 vkAuctionInit,
-    // 8 vkAuctionBid,
-    // 9 vkAuctionPrivateOpening,
+    // 7 vkAuctionInit
+    // 8 vkAuctionBid
+    // 9 vkAuctionPrivateOpening
     // 10 vkAuctionNotWinningBid
     // 11 vkOwnershipErc1155Fungible:   fungible erc1155 1 to 1
-    // 12 vkBrokerRegistration:         2 input broker registration
-    // 13 vkLegitBroker
-    // 14 vkJoinSplitErc20WithBrokerV1
-    // 15 vkJoinSplitErc1155WithBrokerV1
+    // 12-14: (reserved)
+    // 15 vkJoinSplitErc1155FungibleWithAuditor
+    // 16 vkOwnershipErc1155NonFungibleWithAuditor
+    // ...
+    // 23 vkDvPInitiator
+    // 24 vkDvPDestination
 
-    constructor() AccessControl() {}
+    constructor() AccessControl() {
+        // DVP-1 fix: grant both roles to the deployer at construction time so that:
+        //  - DEFAULT_ADMIN_ROLE  lets the deployer call grantRole (e.g. to give EnygmaDvp
+        //                        DEFAULT_OWNER_ROLE after it is deployed).
+        //  - DEFAULT_OWNER_ROLE  lets the deployer call initializeVerifier directly,
+        //                        closing the front-running window that existed when
+        //                        initializeVerifier was world-callable.
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(DEFAULT_OWNER_ROLE, msg.sender);
+    }
 
     function initializeVerifier(
         address groth16Verifier_
-    ) public returns (bool) {
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        // DVP-1 fix: prevent re-initialization — a second call would replace
+        // _groth16Verifier with a malicious always-true contract.
+        require(_groth16Verifier == address(0), "Verifier: already initialized");
         _groth16Verifier = groth16Verifier_;
-        _setupRole(DEFAULT_OWNER_ROLE, msg.sender);
         return true;
     }
 
@@ -89,6 +102,12 @@ contract Verifier is IVerifier, AccessControl {
         IEnygmaDvp.SnarkProof memory proof_,
         uint256[] memory inputs_
     ) public view returns (bool) {
+        // HIGH-3 fix: reject out-of-range indices so an unregistered (all-zero) VK slot
+        // can never be used. Without this check an index >= _vkLength silently reads
+        // an uninitialised storage slot whose ic array has length 0, which would revert
+        // inside GenericGroth16Verifier via "verifier-bad-statement-length" — safe today
+        // but fragile; any future refactor could expose proof acceptance against a zero VK.
+        require(verificationKeyIndex_ < _vkLength, "Verifier: VK not registered");
         return
             IGenericGroth16Verifier(_groth16Verifier).verify(
                 _verificationKeys[verificationKeyIndex_],

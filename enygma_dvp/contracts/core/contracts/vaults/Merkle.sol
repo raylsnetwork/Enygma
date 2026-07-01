@@ -18,7 +18,6 @@ contract Merkle is IMerkle {
 
     uint256 internal treeDepth;
 
-    // TODO:: consider using different ZERO-VALUES for different merkleTrees
     uint256 public constant ZERO_VALUE =
         uint256(keccak256("ZkDvp")) % SNARK_SCALAR_FIELD;
     uint256 internal nextLeafIndex;
@@ -77,8 +76,11 @@ contract Merkle is IMerkle {
         uint256 _treeNumber,
         uint256 _nullifierId
     ) internal returns (bool) {
-        // TODO:: relaxed this requirement, needs audit
-        // require(lockedNullifiers[_treeNumber][_nullifierId] == false, "Merkle: Nullifier already locked.");
+        // NEW-2 fix: reject a second lock on the same nullifier.
+        // Without this, two DvP swap receipts sharing an input nullifier could
+        // both be locked; only the first to settle would succeed, but the pending
+        // state for the second would remain inconsistent and waste gas.
+        require(lockedNullifiers[_treeNumber][_nullifierId] == false, "Merkle: Nullifier already locked.");
         require(_nullifierId != 0, "Merkle: Nullifier can not be zero.");
 
         lockedNullifiers[_treeNumber][_nullifierId] = true;

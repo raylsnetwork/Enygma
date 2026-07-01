@@ -73,6 +73,12 @@ func (circuit *Erc20Circuit) Define(api frontend.API) error {
 		// Skip Merkle check for dummy (zero-value) inputs
 		isZero := api.IsZero(circuit.WtValuesIn[i])
 		enable := api.Sub(1, isZero)
+		// H-1 fix: force StNullifiers[i] = 0 for zero-value padding inputs.
+		// Without this, the prover must supply a valid nullifier for dummy slots —
+		// any (sk, treeNum, pathIndex) triple satisfies the unconditional AssertIsEqual
+		// above, so a malicious prover can plant a victim's nullifier in a dummy slot,
+		// permanently leaking the nullifier-to-note link (privacy violation).
+		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
 		diff := api.Sub(circuit.StMerkleRoots[i], root)
 		api.AssertIsEqual(api.Mul(diff, enable), 0)
 

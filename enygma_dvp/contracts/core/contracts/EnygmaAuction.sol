@@ -43,8 +43,6 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     uint256 public constant VK_ID_AUCTION_BID = 7;
     uint256 public constant VK_ID_AUCTION_NOT_WINNING_BID = 9;
     uint256 public constant VK_ID_AUCTION_PRIVATE_OPENING = 10;
-    uint256 public constant VK_ID_BROKER_REGISTRATION = 11;
-    uint256 public constant VK_ID_LEGIT_BROKER = 12;
     uint256 public constant VK_ID_AUCTION_INIT_AUDITOR = 21;
     uint256 public constant VK_ID_AUCTION_BID_AUDITOR = 22;
 
@@ -77,9 +75,6 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     //              Constructor
     //////////////////////////////////////////////
 
-    // hashContractAddress: poseidon Wrapper contract address
-    // genericVerifierContractAddress: Groth16 generic verifier address.
-    // TODO:: some form of verification is needed
     constructor(address enygmaDvpContractAddress) AccessControl() {
         _name = "EnygmaAuction smart contract";
         _enygmaDvpContractAddress = enygmaDvpContractAddress;
@@ -181,8 +176,6 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     //          Auction functions
     //////////////////////////////////////////////
 
-    // TODO:: this can later check the freshness of the challenge
-    // with Random Oracle
     function checkAndRegisterChallenge(
         uint256 challenge_
     ) public returns (bool) {
@@ -191,8 +184,6 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         if (isRotten) {
             revert RottenChallenge();
         }
-
-        // TODO:: Require to check that challenge != valid address
 
         _rottenChallenges[challenge_] = true;
 

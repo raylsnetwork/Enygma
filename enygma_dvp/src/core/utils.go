@@ -137,9 +137,31 @@ func NewKeyPair() (privateKey, publicKey *big.Int, err error) {
 	return privateKey, publicKey, nil
 }
 
-// GetNullifier computes the nullifier from a private key and path indices
+// GetNullifier computes the nullifier from a private key and path indices.
+// Deprecated: use GetNullifierWithTree for all new circuits to prevent cross-tree
+// double-spend (HIGH-1). GetNullifier remains for backward-compatibility with legacy
+// circuits (deprecated template files) that have not been regenerated yet.
 func GetNullifier(privateKey, pathIndices *big.Int) (*big.Int, error) {
 	return poseidon.Hash([]*big.Int{privateKey, pathIndices})
+}
+
+// GetNullifierWithTree computes a globally-unique nullifier that binds the leaf
+// to a specific (treeNumber, pathIndex) pair within a vault.
+//
+// HIGH-1 fix: Poseidon(sk, pathIndex) alone is identical for the same slot
+// in two different trees, enabling cross-tree double-spend (see NullifierWithTree
+// in gnark_circuits/primitives/Nullifier.go for full explanation).
+//
+//	globalIdx      = treeNumber * treeCapacity + pathIndex
+//	treeCapacity   = 2^treeDepth  (e.g. 256 for depth 8)
+//	nullifier      = Poseidon(sk, globalIdx)
+func GetNullifierWithTree(sk, treeNumber, pathIndex *big.Int, treeDepth int) (*big.Int, error) {
+	capacity := new(big.Int).Lsh(big.NewInt(1), uint(treeDepth)) // 2^treeDepth
+	globalIdx := new(big.Int).Add(
+		new(big.Int).Mul(treeNumber, capacity),
+		pathIndex,
+	)
+	return poseidon.Hash([]*big.Int{sk, globalIdx})
 }
 
 // GetNullifierBound computes a contract-address-bound nullifier.

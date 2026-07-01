@@ -55,7 +55,7 @@ type circomVK struct {
 // circuitMapping maps circuit names (used in enygmadvp.config.json) to VK key files
 // (relative to the gnark_circuits/ directory).
 //
-// All 25 entries must be present because the vault contracts use hardcoded VK
+// All 21 entries must be present because the vault contracts use hardcoded VK
 // indices: VK_ID_ERC20_JOINSPLIT=0, VK_ID_DVP_INITIATOR=23, VK_ID_DVP_DESTINATION=24.
 // Entries at unused positions (1–22) use pre-existing keys so the index numbering
 // is maintained; those VKs are never exercised by integration tests (test/01–04).
@@ -74,11 +74,7 @@ var circuitMapping = map[string]string{
 	"AuctionBid":                             "scripts/keys/AuctionBidVK.key",
 	"AuctionNotWinningBid":                   "scripts/keys/AuctionNotWinningVK.key",
 	"AuctionPrivateOpening":                  "scripts/keys/AuctionPrivateOpeningVK.key",
-	"BrokerRegistration":                     "scripts/keys/BrokerRegistrationVK.key",
-	"LegitBroker":                            "scripts/keys/LegitBrokerVK.key",
-	"JoinSplitErc20WithBrokerV1":             "scripts/keys/JoinERC20WithBrokerVK.key",
-	"JoinSplitErc1155WithBrokerV1":           "scripts/keys/JoiSplitERC1155WithBrokerVK.key",
-	"JoinSplitErc1155WithAuditor":            "scripts/keys/JoinSplitERC1155AuditorVK.key",
+"JoinSplitErc1155WithAuditor":            "scripts/keys/JoinSplitERC1155AuditorVK.key",
 	"OwnershipErc1155NonFungibleWithAuditor": "scripts/keys/OwnershipERC1155NonFungibleAuditorVK.key",
 	"BatchErc1155NonFungibleWithAuditor":     "scripts/keys/ERC1155BatchAuditorVK.key",
 	"OwnershipErc721WithAuditor":             "scripts/keys/OwnershipERC721AuditorVK.key",

@@ -2,11 +2,15 @@ package templates
 
 import (
 	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/std/math/cmp"
 	"gnark_server/primitives"
 )
 
 type DvPInitiatorCircuitConfig struct {
 	TmMerkleTreeDepth int
+	// H-2 fix: exclusive upper bound for amount witnesses — same constant used by
+	// JoinSplit ERC20. Keys must be regenerated if this value changes.
+	TmRange frontend.Variable
 }
 
 // DvPInitiatorCircuit proves Alice's side of a DvP (Delivery vs Payment) swap.
@@ -70,6 +74,15 @@ func (circuit *DvPInitiatorCircuit) Define(api frontend.API) error {
 	// Both sides must reference the same commitA — constraining StMessage here prevents
 	// a prover from setting it to an arbitrary value to forge the cross-swap linkage.
 	api.AssertIsEqual(circuit.StMessage, circuit.StCommitA)
+
+	// H-2 fix: amount range checks on all value witnesses.
+	// Without these, a prover can set WtValueIn or WtValueBob to a large BN254 field
+	// element (≈2^254) that wraps during on-chain uint256 arithmetic, enabling vault
+	// drain or permanently bricking the DvP flow for a token pair.
+	api.AssertIsEqual(cmp.IsLess(api, circuit.WtValueIn, circuit.Config.TmRange), 1)
+	api.AssertIsEqual(cmp.IsLessOrEqual(api, 0, circuit.WtValueIn), 1)
+	api.AssertIsEqual(cmp.IsLess(api, circuit.WtValueBob, circuit.Config.TmRange), 1)
+	api.AssertIsEqual(cmp.IsLessOrEqual(api, 0, circuit.WtValueBob), 1)
 
 	// 1. Derive Alice's spend public key from her secret key.
 	pkAlice := primitives.PublicKey(api, circuit.WtSpendKeyIn)

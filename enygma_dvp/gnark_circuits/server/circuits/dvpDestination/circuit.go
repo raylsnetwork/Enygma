@@ -22,6 +22,9 @@ type DvPDestinationRequest struct {
 
 	WtSpendPkAlice string `json:"wtSpendPkAlice" binding:"required"`
 	WtSaltA        string `json:"wtSaltA"        binding:"required"`
+	WtSaltB        string `json:"wtSaltB"        binding:"required"`
+	WtValueAlice   string `json:"wtValueAlice"   binding:"required"`
+	WtTokenIdAlice string `json:"wtTokenIdAlice" binding:"required"`
 }
 
 // DvPDestinationOutput is the JSON response from /proof/dvpDestination.

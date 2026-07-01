@@ -14,7 +14,9 @@
 
 # Compiled deploy scripts
 /scripts/deploy
+/scripts/deploy_contracts
 /scripts/init
+/scripts/init_contracts
 
 # macOS artifacts
 .DS_Store
@@ -35,3 +37,7 @@
 
 #go client
 /scripts_go/deploy
+
+
+## docs
+payment_protocol.md

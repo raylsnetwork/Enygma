@@ -31,9 +31,6 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     //              Constructor
     //////////////////////////////////////////////
 
-    // hashContractAddress: poseidon Wrapper contract address
-    // genericVerifierContractAddress: Groth16 generic verifier address.
-    // TODO:: some form of verification is needed
     constructor(
         address zkDvpContractAddress
     ) AbstractCoinVault(zkDvpContractAddress) {
@@ -52,10 +49,6 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     function depositThroughEnygma(
         uint256[] memory depositParams
     ) public override onlyRole(DEFAULT_ENYGMA_ROLE) returns (bool, uint256) {
-        // Generating uniqueId for Enygma tokens.
-        // TODO:: here consider adding another id to differentiate
-        // between the erc20 tokens id and Enygma tokens Id.
-
         uint256 amount = depositParams[0];
         uint256 publicKey = depositParams[1];
 

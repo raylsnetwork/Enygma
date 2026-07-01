@@ -35,8 +35,7 @@ func GenerationVkPk() {
 	}
 	script.SetupPayment(payment2inConfig, "Payment2in")
 
-	// PrivateMint keys are NOT regenerated here — the PrivateMintVerifier contract
-	// bytecode has dvp's VK baked in. Copy PrivateMintPK/VK.key from enygma_dvp.
+	script.SetupPrivateMint("PrivateMint")
 }
 
 func main() {

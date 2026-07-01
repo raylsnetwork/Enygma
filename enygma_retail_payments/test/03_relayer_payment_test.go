@@ -283,7 +283,7 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 	}
 
 	depositTx, err := vault.Transact(aliceAuth, "depositV2",
-		[]*big.Int{depositAmt, aliceCommitment}, capsule, aliceDepositCtxtII)
+		[]*big.Int{depositAmt, aliceSpend.PublicKey, aliceSaltBField, tokenId}, capsule, aliceDepositCtxtII)
 	if err != nil {
 		t.Fatalf("vault.depositV2: %v", err)
 	}
