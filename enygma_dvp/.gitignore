@@ -11,6 +11,7 @@
 /gnark_circuits/poseidon/test
 /gnark_circuits/generation
 /gnark_circuits/main
+/gnark_circuits/bench_prover
 
 # Compiled deploy scripts
 /scripts/deploy
@@ -41,3 +42,6 @@
 
 ## docs
 payment_protocol.md
+
+
+/src/bench_gas
