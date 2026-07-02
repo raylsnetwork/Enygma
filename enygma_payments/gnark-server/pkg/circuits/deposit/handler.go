@@ -1,23 +1,20 @@
 package deposit
 
 import (
+	"fmt"
 	"log"
-	
 	"math/big"
-    "net/http"
+	"net/http"
 
 	utils "enygma-server/utils"
 
-    "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark-crypto/ecc"
-    "github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/constraint/solver"
-
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
-	
-
 )
 
 func createDepositCircuitTemplate(config DepositEnygmaCircuitConfig) DepositEnygmaCircuit {
@@ -38,25 +35,27 @@ func createDepositCircuitTemplate(config DepositEnygmaCircuitConfig) DepositEnyg
 
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
-	curve := ecc.BN254 
+	curve := ecc.BN254
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
-	
-	return func(c *gin.Context) {
-        var request DepositRequest
-		
-        if err := c.ShouldBindJSON(&request); err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-            return
-        } 
 
-		config := DepositEnygmaCircuitConfig{
-			NCommitment: 6,
+	config := DepositEnygmaCircuitConfig{NCommitment: 6}
+	circuitTemplate := createDepositCircuitTemplate(config)
+	solver.RegisterHint(utils.ModHint)
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitTemplate)
+	if err != nil {
+		log.Fatalf("failed to compile deposit circuit: %v", err)
+	}
+
+	return func(c *gin.Context) {
+		var request DepositRequest
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
-		solver.RegisterHint(utils.ModHint)
-		
+
 		witness := createDepositCircuitTemplate(config)
-		circuit := createDepositCircuitTemplate(config)
-	
+
 		var publicSignal []*big.Int
 
 		witness.SenderId = frontend.Variable(request.SenderID)
@@ -94,20 +93,16 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
 
 		
-		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-		if err != nil {
-			log.Fatal(err)
-		}
-		
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {
-			log.Fatal(err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid witness: %v", err)})
+			return
 		}
-		
+
 		proof, err := groth16.Prove(ccs, pk, witnessFull)
-		
 		if err != nil {
-			log.Fatal(err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof generation failed: %v", err)})
+			return
 		}
 		p := proof.(*groth16_bn254.Proof)
 		A_x1 := new(big.Int)

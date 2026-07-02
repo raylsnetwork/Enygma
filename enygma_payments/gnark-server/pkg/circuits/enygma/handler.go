@@ -1,21 +1,20 @@
 package enygma
 
 import (
+	"fmt"
 	"log"
 	"math/big"
-    "net/http"
+	"net/http"
 
-	"fmt"
 	utils "enygma-server/utils"
 
-    "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark-crypto/ecc"
-    "github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/constraint/solver"
-    "github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
- 
 )
 
 func createCircuitTemplate(config EnygmaCircuitConfig) EnygmaCircuit {
@@ -38,25 +37,28 @@ func createCircuitTemplate(config EnygmaCircuitConfig) EnygmaCircuit {
 
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
-	curve := ecc.BN254 
+	curve := ecc.BN254
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 
+	config := EnygmaCircuitConfig{NCommitment: 6}
+	circuitTemplate := createCircuitTemplate(config)
+	solver.RegisterHint(utils.ModHint)
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitTemplate)
+	if err != nil {
+		log.Fatalf("failed to compile enygma circuit: %v", err)
+	}
+
 	return func(c *gin.Context) {
-        var request EnygmaRequest
-        if err := c.ShouldBindJSON(&request); err != nil {
-			fmt.Println(request)
-            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-            return
-        } 
-		config := EnygmaCircuitConfig{
-			NCommitment: 6,
+		var request EnygmaRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
+
 		witness := createCircuitTemplate(config)
-        circuit := createCircuitTemplate(config)
-	
+
 		var publicSignal []*big.Int
-		solver.RegisterHint(utils.ModHint)
-			 
+
 		witness.SenderId = frontend.Variable(request.SenderID)
 		witness.SenderTxValue = frontend.Variable(request.SenderTxValue)
 		witness.SecretKey = frontend.Variable(request.SecretKey)
@@ -83,21 +85,16 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
 
 
-		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {
-			log.Fatal(err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid witness: %v", err)})
+			return
 		}
-		proof, err := groth16.Prove(ccs, pk, witnessFull)
 
+		proof, err := groth16.Prove(ccs, pk, witnessFull)
 		if err != nil {
-			log.Fatal(err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof generation failed: %v", err)})
+			return
 		}
 
 

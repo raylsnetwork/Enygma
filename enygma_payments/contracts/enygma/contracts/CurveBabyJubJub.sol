@@ -37,11 +37,11 @@ library CurveBabyJubJub {
         uint256 _x2,
         uint256 _y2
     ) internal view returns (uint256 x3, uint256 y3) {
-        if (_x1 == 0 && _y1 == 0) {
+        if (_x1 == 0 && _y1 == 1) {
             return (_x2, _y2);
         }
 
-        if (_x2 == 0 && _y1 == 0) {
+        if (_x2 == 0 && _y2 == 1) {
             return (_x1, _y1);
         }
 
