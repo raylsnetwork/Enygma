@@ -31,6 +31,8 @@ MANIFEST
 .DS_Store
 
 # Runtime created files
+run_scripts/build/
+run_scripts/log/
 bin/
 circom/input.json
 circom/node_modules/
@@ -51,7 +53,6 @@ circom/compilation.ZkDvp/*
 gnark-server/main_test.go
 gnark-server/poseidon.go
 gnark-server/proving.key
-gnark-server/verifierEnygma.sol
 gnark-server/verifying.key
 
 
@@ -79,8 +80,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-go_client/enygma_test/
-go_client/test
 # Translations
 *.mo
 *.pot

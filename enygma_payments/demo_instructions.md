@@ -1,196 +1,137 @@
 # Enygma Payment Demo - Quick Start Guide
 
-This guide will walk you through running a complete Enygma payment demo, including smart contract deployment, ZK proof server setup, and executing a private transaction.
+This guide walks through a complete end-to-end demo: deploy the smart contracts, start the ZK proof server, and run a confidential payment that is verified on-chain.
 
-### Overview
+## Overview
 
-The Enygma payment demo demonstrates a complete private transaction workflow:
+What happens in the demo:
 
-1. Smart Contract Deployment: Deploy the Enygma payment contract and ZK verifier to an EVM-compatible blockchain
-
-2. ZK Proof Server: Start the gnark-based server that generates and verifies zero-knowledge proofs
-
-3. Private Transaction: Execute a confidential payment using the Go client
-
-What happens during a demo transaction:
-
-- The client generates a zero-knowledge proof for a payment of 100 tokens
-- The proof ensures transaction privacy while maintaining verifiability
-- The smart contract verifies the proof on-chain and processes the payment
-
-### Environment Setup
-
-Before starting, ensure you have:
-
-1. Cloned the repository:
-
-```bash
-    git clone https://github.com/raylsnetwork/Enygma.git
-
-    cd Enygma/enygma_payments
-```
-
-2. Installed dependencies:
-
-```bash
-   # Python dependencies
-   pip install -r requirements.txt
-
-   # Go dependencies
-   cd gnark_server && go mod download && cd ..
-   cd go_client && go mod download && cd ..
-```
-
-### Architecture
-
-    ┌─────────────┐
-    │  Go Client  │ (Initiates transaction)
-    └──────┬──────┘
-           │
-           │ 1. Request proof generation
-           ▼
-    ┌─────────────────┐
-    │  Gnark Server   │ (Generates ZK proofs)
-    └──────┬──────────┘
-           │
-           │ 2. Returns proof
-           ▼
-    ┌─────────────┐
-    │  Go Client  │
-    └──────┬──────┘
-           │
-           │ 3. Submit proof + transaction
-           ▼
-    ┌─────────────────────┐
-    │   Enygma.sol        │ (On-chain verification)
-    │ + Verifier.sol      │
-    └──────┬──────────────┘
-           │
-           │ 4. Verifies proof
-           │ 5. Processes payment
-           ▼
-      [Blockchain]
-
-### Quick Start
-
-```bash
-# 1. Deploy contracts
-
-cd run_scripts
-python deploy_enygma.py
-
-# 2. Start gnark server (in a new terminal)
-
-cd ../gnark_server
-go run cmd/server/main.go
-
-# 3. Execute transaction (in another terminal)
-
-cd ../go_client
-go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
-```
-
-### Step-by-Step Instructions
-
-Step 1: Deploy Smart Contracts
-
-The first step is to deploy the Enygma payment contract and the ZK proof verifier to your chosen blockchain.
-
-```bash
-cd run_scripts
-python deploy_enygma.py
+1. **Smart contract deployment** — `Enygma.sol` (the payment contract) and `Verifier.sol` (the Groth16 verifier) are deployed to a local chain.
+2. **ZK proof generation** — a gnark server generates a Groth16 proof that a payment of 100 tokens is valid without revealing sender/receiver balances.
+3. **On-chain verification** — the Enygma contract calls the verifier, checks the proof, and updates the homomorphic balance commitments.
 
 ```
+  Go integration test
+         │
+         │ 1. POST /proof/enygma (inputs)
+         ▼
+  ┌─────────────────┐
+  │  gnark server   │  generates Groth16 proof (~30s)
+  └────────┬────────┘
+           │ 2. proof + public signals
+           ▼
+  Go integration test
+           │
+           │ 3. Transfer(commitmentDeltas, proof, participantIds)
+           ▼
+  ┌──────────────────────┐
+  │  Enygma.sol          │  verifies proof on-chain
+  │  + Verifier.sol      │  updates balance commitments
+  └──────────────────────┘
+```
 
-What this script does:
+## Prerequisites
 
-- Compiles the Enygma.sol and Verifier.sol contracts
-- Deploys them to the configured network
-- Saves deployment addresses to a configuration file
-- Verifies contracts on block explorers (if configured)
+- **Go** 1.21+
+- **Node.js** 18+ with `npx hardhat` available (from the `enygma_dvp` project)
+- **Python 3.8+** with the `run_scripts/.venv` virtualenv (created with `pip install -r run_scripts/requirements.txt`)
+- **macOS**: use `CC=/usr/bin/clang` for all Go commands that import go-ethereum (CGo dependency)
+
+## Step 1 — Start a local Hardhat node
+
+The integration test expects a chain at `localhost:8545` with `chainId=1337`. Use the Hardhat node from the `enygma_dvp` project, which has the correct account configuration:
+
+```bash
+# In a dedicated terminal — keep this running
+cd ../enygma_dvp
+npx hardhat node
+```
+
+> **Important:** the test uses a fixed sender private key tied to account[0] of this node's mnemonic. Start from a **fresh node** for every test run — the test uses fixed Pedersen commitment randomness that does not survive chain reuse.
+
+## Step 2 — Start the gnark server
+
+The gnark server exposes `POST /proof/enygma` and generates Groth16 proofs on request. It must be started from the `gnark-server/` directory because key paths are relative.
+
+```bash
+# In a dedicated terminal — keep this running
+cd gnark-server
+go run ./cmd/server/main.go
+```
 
 Expected output:
 
 ```
-2025-11-24 14:15:11,481 : Printing out Enygma data
-2025-11-24 14:15:11,481 : token_address = 0xF879a1569B591AA8CcC7e0317aab0d2672eE63D6
-2025-11-24 14:15:11,482 : [Token information]
-name =  Enygma
-symbol =  EN
-verifier =  0x3E8Ff3685CCe5E44e79204FC497aDdB9fb7916A7
-BankCount =  6
-2025-11-24 14:15:11,512 : Demo.transactions
-2025-11-24 14:15:11,512 : enygma.check
-2025-11-24 14:15:12,547 : Done enygma.check
-2025-11-24 14:15:12,547 : Minting 1000 tokens for account 0
-2025-11-24 14:15:13,581 : Done minting.
-2025-11-24 14:15:13,581 :
-2025-11-24 14:15:13,581 : Enygma.check
-2025-11-24 14:15:14,614 : Done Enygma.check
-2025-11-24 14:15:14,615 :
-```
-
-Step 2: Start the Gnark Server
-
-The gnark server generates zero-knowledge proofs for private transactions.
-Open a new terminal window and run:
-
-```bash
-cd gnark_server
-go run cmd/server/main.go
-```
-
-What this server does:
-
-- Loads the ZK circuit definition
-- Exposes REST/gRPC endpoints for proof generation
-- Validates transaction inputs
-- Generates proofs using the gnark library
-
-Expected output:
-
-```
-[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
-
-[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
- - using env:   export GIN_MODE=release
- - using code:  gin.SetMode(gin.ReleaseMode)
-
 [GIN-debug] POST   /proof/enygma             --> enygma-server/pkg/circuits/enygma.NewHandler.func1 (3 handlers)
 [GIN-debug] POST   /proof/withdraw/1         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/withdraw/2         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/withdraw/3         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/withdraw/4         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/withdraw/5         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/withdraw/6         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/deposit            --> enygma-server/pkg/circuits/deposit.NewHandler.func1 (3 handlers)
-[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
-Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
+...
 [GIN-debug] Listening and serving HTTP on :8080
 ```
 
-Step 3: Execute a Private Transaction
+## Step 3 — Deploy the contracts
 
-Now execute a confidential payment using the Go client.
-
-Open another new terminal window and run:
+Deploy `Enygma.sol` and `Verifier.sol` to the running node. The script reads compiled artifacts from `contracts/enygma/artifacts/` and writes the deployed addresses to `run_scripts/build/enygma/web3/deploy_receipts.json`.
 
 ```bash
-cd go_client
-go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR> <blockHash>
-
+cd run_scripts
+.venv/bin/python3 deploy_direct.py
 ```
 
-What happens:
+Expected output:
 
-1. Client validates input parameters
-2. Connects to gnark server to generate ZK proof
-3. Constructs transaction with proof
-4. Submits transaction to Enygma smart contract
-5. Contract verifies proof and processes payment
+```
+Deployer: 0x0F1013e0e46B97144b25b3131668EF99858BD8D0
+Block: 0
 
-Expected output
+Deploying Enygma...
+  deployed at: 0x...
+
+Deploying EnygmaVerifier...
+  deployed at: 0x...
+
+Wrote .../deploy_receipts.json
+```
+
+> If the Hardhat artifacts need to be regenerated (e.g. after editing `Enygma.sol`), run `npx hardhat compile` from `contracts/enygma/` first.
+
+## Step 4 — Run the integration test
+
+The test registers 6 banks, mints 500 tokens to bank 0, requests a ZK proof from the gnark server, submits the `Transfer` transaction, and verifies the homomorphic balance update.
 
 ```bash
-Transfer was successful
+cd go_client/enygma_test
+CC=/usr/bin/clang go test -run TestFullTransactionFlow -v -timeout 300s
 ```
+
+Proof generation takes ~30 seconds. Expected output:
+
+```
+=== RUN   TestFullTransactionFlow
+    transaction_test.go: TOKEN:    0x...
+    transaction_test.go: VERIFIER: 0x...
+    transaction_test.go: contract initialized
+    transaction_test.go: verifier registered
+    transaction_test.go: registered 6 banks (accountIds 1–6)
+    transaction_test.go: minted 500 to bank 0 (accountId=1)
+    transaction_test.go: requesting proof (may take ~30s)...
+    transaction_test.go: proof received
+    transaction_test.go: Transfer succeeded: 0x...
+    transaction_test.go: bank 0 homomorphic check PASSED (prevBal + txDelta = newBal)
+    transaction_test.go: bank 1 homomorphic check PASSED
+--- PASS: TestFullTransactionFlow (1.77s)
+```
+
+## Re-running the demo
+
+Restart the Hardhat node (step 1) before each run — this resets the chain state. Steps 2–4 can then be repeated without restarting the gnark server.
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `contracts/enygma/contracts/Enygma.sol` | Core payment contract |
+| `contracts/enygma/contracts/EnygmaVerifier.sol` | Groth16 verifier (generated from `gnark-server/keys/EnygmaVerifier.sol`) |
+| `gnark-server/keys/EnygmaVerifier.sol` | Canonical verifier source — regenerate with `gnark-server/keygen/generate_keys.go` if keys change |
+| `run_scripts/deploy_direct.py` | Deploys both contracts and writes `deploy_receipts.json` |
+| `go_client/enygma_test/transaction_test.go` | End-to-end integration test |
+| `test/enygma_test.go` | Standalone unit tests (no chain or server required) |

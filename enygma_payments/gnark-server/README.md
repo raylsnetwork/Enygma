@@ -7,7 +7,7 @@ The Gnark Server is a zero-knowledge proof (ZK-SNARK) service that provides cryp
 1. Navigate to Server Directory
 
 ```bash
-cd gnark_server
+cd gnark-server
 ```
 
 2. Install Dependencies
@@ -90,7 +90,7 @@ Generating Keys
 If Keys are not present, you can generate them in
 
 ```bash
-go run key_gen/generate_keys.go
+go run ./keygen/generate_keys.go
 ```
 
 ---
@@ -104,6 +104,19 @@ go run cmd/server/main.go
 ```
 
 This launches the local ZK-SNARK service that listens for proof-generation and verification requests.
+
+### Transparent Setup (Generator H)
+
+The second generator H used in Pedersen commitments is derived from a nothing-up-my-sleeve number so that no one knows its discrete log relative to G. To reproduce or verify the derivation:
+
+```bash
+cd gnark-server
+go run ./cmd/setup/main.go
+```
+
+This hashes the seed `1` via SHA256 repeatedly until the result is a valid Baby JubJub X-coordinate, clears the cofactor (×8), and verifies the resulting point on-chain via a Groth16 proof. The printed `Q.X` / `Q.Y` values are the canonical H coordinates hardcoded into the Enygma circuit.
+
+---
 
 ### Tech Stack
 

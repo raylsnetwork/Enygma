@@ -79,6 +79,9 @@ contract Enygma is IEnygma {
     /// @notice ZkDvp contract addresses
     mapping(uint256 => address) private _zkDvpContracts;
 
+    /// @notice Consumed nullifiers — prevents proof replay
+    mapping(uint256 => bool) private _nullifiers;
+
     // ============================================
     // EVENTS
     // ============================================
@@ -100,6 +103,7 @@ contract Enygma is IEnygma {
     error VerifierNotFound();
     error ZkDvpOperationFailed();
     error InvalidBlockNumber();
+    error NullifierAlreadyUsed();
 
     // ============================================
     // MODIFIERS
@@ -349,11 +353,14 @@ contract Enygma is IEnygma {
         // Verify zero-knowledge proof
         _verifyTransferProof(proof, commitmentDeltas.length);
 
-        // Verify public inputs match current state
-        _verifyPublicInputs(proof.public_signal, participantIds);
+        // Verify public inputs match current state and commitment deltas match proof
+        _verifyPublicInputs(proof.public_signal, participantIds, commitmentDeltas);
 
-        //  Verify block number freshness
+        // Verify block number freshness
         _verifyBlockNumber(proof.public_signal);
+
+        // Record nullifier before state changes (Fix C-2)
+        _consumeNullifier(proof.public_signal);
 
         // Update balances
         _updateBalancesForTransfer(commitmentDeltas, participantIds);
@@ -384,11 +391,14 @@ contract Enygma is IEnygma {
         );
         if (!success) revert InvalidProof();
 
-        // Verify public inputs are bound to current on-chain state
-        _verifyPublicInputs(proof.public_signal, participantIds);
+        // Verify public inputs are bound to current on-chain state and deltas match proof
+        _verifyPublicInputs(proof.public_signal, participantIds, commitmentDeltas);
 
         // Verify proof was generated against the current block
         _verifyBlockNumber(proof.public_signal);
+
+        // Record nullifier before state changes (Fix C-2)
+        _consumeNullifier(proof.public_signal);
 
         // Execute ZkDvp deposits
         uint256[] memory zkDvpCommitments = _executeZkDvpDeposits(
@@ -423,11 +433,14 @@ contract Enygma is IEnygma {
         );
         if (!success) revert InvalidProof();
 
-        // Verify public inputs are bound to current on-chain state
-        _verifyPublicInputs(proof.public_signal, participantIds);
+        // Verify public inputs are bound to current on-chain state and deltas match proof
+        _verifyPublicInputs(proof.public_signal, participantIds, commitmentDeltas);
 
         // Verify proof was generated against the current block
         _verifyBlockNumber(proof.public_signal);
+
+        // Record nullifier before state changes (Fix C-2)
+        _consumeNullifier(proof.public_signal);
 
         // Execute ZkDvp withdrawal
         IZkDvp zkDvp = IZkDvp(_zkDvpAddress);
@@ -572,14 +585,15 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify public inputs match contract state
+     * @notice Verify public inputs match contract state and commitment deltas match proof
      */
     function _verifyPublicInputs(
         uint256[50] calldata public_signal,
-        uint256[] calldata participantIds
+        uint256[] calldata participantIds,
+        Point[] calldata commitmentDeltas
     ) private view {
         (Point[] memory balances, uint256[] memory keys) = getPublicValues(
-            _totalRegisteredParties
+            _totalRegisteredParties + 1
         );
 
         uint256 len = participantIds.length;
@@ -594,8 +608,8 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
-            // Verify balance commitment
-            uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1); // i * 2
+            // Verify previous balance commitment matches current on-chain state
+            uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1);
             if (
                 uint256(public_signal[commitOffset]) !=
                 balances[accountId].c1 ||
@@ -605,10 +619,28 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
+            // Fix C-1: verify caller-supplied commitmentDeltas match TxCommit in proof
+            uint256 txOffset = TX_COMMIT_OFFSET + (i << 1);
+            if (
+                commitmentDeltas[i].c1 != public_signal[txOffset] ||
+                commitmentDeltas[i].c2 != public_signal[txOffset + 1]
+            ) {
+                revert InvalidPublicInputs();
+            }
+
             unchecked {
                 ++i;
             }
         }
+    }
+
+    /**
+     * @notice Record nullifier as spent; reverts if already used (Fix C-2)
+     */
+    function _consumeNullifier(uint256[50] calldata public_signal) private {
+        uint256 nullifier = public_signal[NULLIFIER_OFFSET];
+        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _nullifiers[nullifier] = true;
     }
 
     /**

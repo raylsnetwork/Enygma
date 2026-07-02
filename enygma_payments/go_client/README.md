@@ -1,132 +1,41 @@
-## Enygma Go Client
+# Enygma Go Client
 
-The Enygma Go Client is a command-line tool that enables private transactions using zero-knowledge proofs. It generates cryptographic commitments, communicates with the gnark proof server, and submits verified transactions to the Enygma smart contracts.
+Go module for interacting with the Enygma smart contracts. Provides the ABI binding, internal cryptographic helpers, and the end-to-end integration test.
 
-#### Overview
+## Structure
 
-The Go Client performs the following operations:
-
-1. Generates Pedersen Commitments - Creates cryptographic commitments for transaction values
-2. Requests ZK Proofs - Communicates with the gnark server to generate zero-knowledge proofs
-3. Submits Transactions - Sends verified transactions to the Enygma smart contract
-4. Maintains Privacy - Ensures transaction details remain confidential while being verifiable
-
-Key Features:
-
-- Private multi-party payments
-- Nullifier-based double-spend protection
-- Pedersen commitment scheme for value hiding
-
----
-
-#### Configuration
-
-Environment Setup
-The client requires several configuration values that are currently hardcoded in main.go. Before running, ensure these are set correctly:
-
-1. Contract Address Configuration
-
-The contract address is read from `.config/address.json`:
-
-```json
-{
-  "address": "0xYourEnygmaContractAddress"
-}
+```
+contracts/          ABI binding generated from Enygma.sol (enygma.go)
+internal/
+  contract/         Ethereum client wrapper
+  curve/            Baby Jubjub curve constants (G, H, P)
+  randomness/       Shared-secret and commitment derivation
+  proof/            gnark server HTTP client
+  types/            Shared types
+transaction/        Standalone CLI for manual demo transactions
+enygma_test/        End-to-end integration test (separate Go module)
+zkdvp/              DVP integration helpers
+interfacezkdvp/     DVP contract interface
 ```
 
-1. Network Configuration (in `./config/config.go`)
+## Running the integration test
 
-```go
-// RPC endpoint for the blockchain
-CommitChainURL = "http://127.0.0.1:8545"  // Change for different networks
-
-// Gnark proof server URL
-ProofServerURL = "http://127.0.0.1:8080/proof/enygma"
-
-// Private key for signing transactions (DO NOT commit this!)
-PrivateKey = "YOUR_PRIVATE_KEY_HERE"
-```
-
-3. Bank Secrets Configuration (in `./transaction/main.go`)
-
-This is only for demo purpose. It was randomly created. Please refer to protocol description to read how to proper manage secret
-
-```go
-// Secret values for each bank (used for commitment randomness)
-secrets = []*big.Int{
-
-			big.NewInt(412321),
-			big.NewInt(634609235),
-			big.NewInt(8352331231),
-			big.NewInt(289412412),
-			big.NewInt(8932589237),
-			big.NewInt(423423523),
-
-}
-```
-
-#### Usage
-
-Basic Command
+The integration test is the primary way to verify the full flow end-to-end. It registers banks, mints tokens, requests a ZK proof from the gnark server, submits a `Transfer`, and checks the homomorphic balance update.
 
 ```bash
+cd enygma_test
+CC=/usr/bin/clang go test -run TestFullTransactionFlow -v -timeout 300s
+```
+
+Prerequisites: Hardhat node on `:8545`, gnark server on `:8080`, contracts deployed via `run_scripts/deploy_direct.py`. See `demo_instructions.md` for the full setup sequence.
+
+## Running the standalone CLI
+
+`transaction/main.go` is a manual demo tool for running a single transaction from the command line. It reads the contract address from `config/address.json` (update this after each deployment).
+
+```bash
+cd go_client
 go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
-
 ```
 
-Breakdown:
-
-- 6 banks in the network
-- 100 total tokens to send
-- 0 is the sender ID (Bank 0)
-- 35 is the sender's secret key
-- 1000 was the previous transaction value for this account
-- 0 was the previous randomness
-
-Transaction Values Configuration
-
-The transaction distribution is configured in `./transaction/main.go`:
-
-```go
-// Current configuration (modify as needed)
-txValues := []*big.Int{
-    vNegate,          // Position 0: Sender (negative value)
-    big.NewInt(60),   // Position 1: Bank 1 receives 60
-    big.NewInt(40),   // Position 2: Bank 2 receives 40
-    big.NewInt(0),    // Position 3: Bank 3 receives 0
-    big.NewInt(0),    // Position 4: Bank 4 receives 0
-    big.NewInt(0),    // Position 5: Bank 5 receives 0
-}
-```
-
-**Note**: The sum of all values (excluding sender) must equal the value being sent. The sender's value is automatically negated.
-
-KIndex Participation configuration
-
-KIndex array is configured in `./transaction/main.go`:
-
-```go
-
-  k0:= big.NewInt(0)
-  k1:= big.NewInt(1)
-  k2:= big.NewInt(2)
-  k3:= big.NewInt(3)
-  k4:= big.NewInt(4)
-  k5:= big.NewInt(5)
-
-
-	kIndex := []*big.Int{k0, k1, k2,k3,k4,k5}
-
-```
-
----
-
-**Observation**
-
-The following folder and files are for `enygma_dvp` integration
-
-- `go_client/zkdvp/`
-- `go_client/interfacezkdvp/`
-- `go_client/utils/`
-
----
+**Note:** `zkdvp/`, `interfacezkdvp/`, and `utils/` support the `enygma_dvp` integration layer and are not used by the core payment flow.
