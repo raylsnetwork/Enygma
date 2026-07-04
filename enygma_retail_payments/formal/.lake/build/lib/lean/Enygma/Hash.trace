@@ -1,0 +1,32 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["d19c3b656564c9da.olean"],
+  "m": false,
+  "i": "28e657ab4b5b4e93.ilean",
+  "c": "b7307b3c607ff05e.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean /Users/stephenyang/.elan/toolchains/leanprover--lean4---v4.31.0/bin/lean /Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/Enygma/Hash.lean -o /Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean/Enygma/Hash.olean -i /Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean/Enygma/Hash.ilean -c /Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/ir/Enygma/Hash.c --setup /Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/ir/Enygma/Hash.setup.json --json",
+   "level": "trace"}],
+ "inputs":
+ [["Enygma.Hash:deps",
+   [["deps",
+     [["EnygmaFormal/Enygma:extraDep",
+       [["@EnygmaFormal:extraDep", "00000000000006bb"]]],
+      ["imports", "00000000000006bb"]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.31.0, commit 68218e876d2a38b1985b8590fff244a83c321783",
+   "fc45ac412f28501c"],
+  ["/Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/Enygma/Hash.lean",
+   "ecda72122559cac2"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Enygma.Hash", "b69ff9623d8f19c5"],
+  ["Package.id?: (some EnygmaFormal)", "49ff6380ea72e9f5"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "a3ea04cf5f08d75a"}
