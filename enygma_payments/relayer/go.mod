@@ -1,11 +1,10 @@
-module enygma-test
+module enygma_payments_relayer
 
 go 1.21.6
 
 require (
-	enygma_payments_relayer v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.14.5
-	github.com/iden3/go-iden3-crypto v0.0.16
+	github.com/gin-gonic/gin v1.10.0
 )
 
 require (
@@ -20,14 +19,12 @@ require (
 	github.com/consensys/bavard v0.1.13 // indirect
 	github.com/consensys/gnark-crypto v0.12.1 // indirect
 	github.com/crate-crypto/go-kzg-4844 v1.0.0 // indirect
-	github.com/dchest/blake512 v1.0.0 // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/ethereum/c-kzg-4844 v1.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
-	github.com/gin-gonic/gin v1.10.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
@@ -61,5 +58,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
-
-replace enygma_payments_relayer => ../relayer

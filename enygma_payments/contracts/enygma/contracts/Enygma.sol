@@ -40,6 +40,7 @@ contract Enygma is IEnygma {
     // Contract state
     uint256 private _status;
     address private immutable _owner;
+    uint256 public immutable epochInterval;
     uint256 public lastBlockNum;
     uint256 private _totalRegisteredParties;
 
@@ -128,10 +129,12 @@ contract Enygma is IEnygma {
     // CONSTRUCTOR
     // ============================================
 
-    constructor() {
+    constructor(uint256 _epochInterval) {
+        require(_epochInterval > 0, "epochInterval must be > 0");
         _owner = msg.sender;
         _status = STATUS_NOT_INITIALIZED;
-        lastBlockNum = block.number;
+        epochInterval = _epochInterval;
+        lastBlockNum = _currentEpochStart(_epochInterval);
     }
 
     // ============================================
@@ -173,9 +176,16 @@ contract Enygma is IEnygma {
         publicKeys[accountId] = publicKey;
         addressToAccountId[addr] = accountId;
 
-        // Create initial balance commitment: Com(0, randomness)
+        // Create initial balance commitment: Com(0, randomness) = randomness*H
         (uint256 commitX, uint256 commitY) = pedCom(0, randomness);
         balanceCommitments[lastBlockNum][accountId] = Point(commitX, commitY);
+
+        // Include initial commitment in totalSupply so check() invariant holds:
+        // Σ(balances) = Σ(registration commitments) + Σ(minted amounts) = totalSupply
+        (totalSupplyX, totalSupplyY) = CurveBabyJubJub.pointAdd(
+            totalSupplyX, totalSupplyY,
+            commitX, commitY
+        );
 
         unchecked {
             ++_totalRegisteredParties;
@@ -213,7 +223,7 @@ contract Enygma is IEnygma {
             totalSupplyAmount += amount;
         }
 
-        // Propagate balances to new block
+        // Propagate balances to current epoch start
         _propagateBalancesExcept(recipientId);
 
         // Update recipient's balance
@@ -227,8 +237,9 @@ contract Enygma is IEnygma {
             amountY
         );
 
-        balanceCommitments[block.number][recipientId] = Point(newX, newY);
-        lastBlockNum = block.number;
+        uint256 epochStart = _currentEpochStart();
+        balanceCommitments[epochStart][recipientId] = Point(newX, newY);
+        lastBlockNum = epochStart;
 
         emit SupplyMinted(lastBlockNum, amount, recipientId);
         return true;
@@ -265,8 +276,9 @@ contract Enygma is IEnygma {
             negCommitY
         );
 
-        balanceCommitments[block.number][accountId] = Point(newX, newY);
-        lastBlockNum = block.number;
+        uint256 epochStart = _currentEpochStart();
+        balanceCommitments[epochStart][accountId] = Point(newX, newY);
+        lastBlockNum = epochStart;
 
         emit BurnSuccessful(accountId, amount);
         return true;
@@ -508,7 +520,8 @@ contract Enygma is IEnygma {
         uint256 sumX;
         uint256 sumY = 1; // Start with neutral element
 
-        for (uint256 i; i < _totalRegisteredParties; ) {
+        // AccountIds are 1-based: registered banks occupy slots 1.._totalRegisteredParties.
+        for (uint256 i = 1; i <= _totalRegisteredParties; ) {
             (uint256 balX, uint256 balY) = getBalance(i);
             (sumX, sumY) = CurveBabyJubJub.pointAdd(sumX, sumY, balX, balY);
 
@@ -564,6 +577,22 @@ contract Enygma is IEnygma {
     // ============================================
     // INTERNAL FUNCTIONS
     // ============================================
+
+    /**
+     * @notice Returns the start block of the current epoch.
+     *         epochStart = floor(block.number / epochInterval) * epochInterval
+     *         All balance writes within the same epoch share the same storage slot,
+     *         so transactions chain correctly inside an epoch and lastBlockNum only
+     *         advances when the epoch rolls over.
+     */
+    function _currentEpochStart() private view returns (uint256) {
+        return (block.number / epochInterval) * epochInterval;
+    }
+
+    // Overload used in the constructor before the immutable is set.
+    function _currentEpochStart(uint256 interval) private view returns (uint256) {
+        return (block.number / interval) * interval;
+    }
 
     /**
      * @notice Verify zero-knowledge proof for transfer
@@ -650,13 +679,15 @@ contract Enygma is IEnygma {
         Point[] calldata commitmentDeltas,
         uint256[] calldata participantIds
     ) private {
-        // Copy balances for non-participants
+        uint256 epochStart = _currentEpochStart();
+
+        // Copy balances for non-participants to the current epoch slot
         uint256 totalParties = _totalRegisteredParties;
         for (uint256 i; i < totalParties; ) {
             _initializeBalanceIfNeeded(i);
 
             if (!_isParticipant(participantIds, i)) {
-                balanceCommitments[block.number][i] = balanceCommitments[
+                balanceCommitments[epochStart][i] = balanceCommitments[
                     lastBlockNum
                 ][i];
             }
@@ -666,7 +697,7 @@ contract Enygma is IEnygma {
             }
         }
 
-        // Update participant balances
+        // Update participant balances at the current epoch slot
         uint256 len = commitmentDeltas.length;
         for (uint256 i; i < len; ) {
             uint256 accountId = participantIds[i];
@@ -681,14 +712,14 @@ contract Enygma is IEnygma {
                 commitmentDeltas[i].c2
             );
 
-            balanceCommitments[block.number][accountId] = Point(newX, newY);
+            balanceCommitments[epochStart][accountId] = Point(newX, newY);
 
             unchecked {
                 ++i;
             }
         }
 
-        lastBlockNum = block.number;
+        lastBlockNum = epochStart;
     }
 
     /**
@@ -698,6 +729,7 @@ contract Enygma is IEnygma {
         Point[] calldata commitmentDeltas,
         uint256[] calldata participantIds
     ) private {
+        uint256 epochStart = _currentEpochStart();
         uint256 len = commitmentDeltas.length;
         for (uint256 i; i < len; ) {
             uint256 accountId = participantIds[i];
@@ -712,14 +744,14 @@ contract Enygma is IEnygma {
                 commitmentDeltas[i].c2
             );
 
-            balanceCommitments[block.number][accountId] = Point(newX, newY);
+            balanceCommitments[epochStart][accountId] = Point(newX, newY);
 
             unchecked {
                 ++i;
             }
         }
 
-        lastBlockNum = block.number;
+        lastBlockNum = epochStart;
     }
 
     /**
@@ -757,12 +789,14 @@ contract Enygma is IEnygma {
      * @notice Propagate balances to new block except one account
      */
     function _propagateBalancesExcept(uint256 excludeId) private {
+        uint256 epochStart = _currentEpochStart();
         uint256 totalParties = _totalRegisteredParties;
-        for (uint256 i; i < totalParties; ) {
+        // AccountIds are 1-based: iterate 1.._totalRegisteredParties (not 0..n-1)
+        for (uint256 i = 1; i <= totalParties; ) {
             _initializeBalanceIfNeeded(i);
 
             if (i != excludeId) {
-                balanceCommitments[block.number][i] = balanceCommitments[
+                balanceCommitments[epochStart][i] = balanceCommitments[
                     lastBlockNum
                 ][i];
             }

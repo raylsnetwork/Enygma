@@ -9,9 +9,8 @@ import (
 // Config holds application configuration
 type Config struct {
 	ContractAddress string `json:"address"`
-	CommitChainURL  string
 	ProofServerURL  string
-	PrivateKey      string
+	RelayerURL      string
 }
 
 // addressFile is the structure of address.json
@@ -27,12 +26,15 @@ func Load(addressFilePath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read address: %w", err)
 	}
 
-	// TODO: Load from environment variables or config file
+	relayerURL := os.Getenv("RELAYER_URL")
+	if relayerURL == "" {
+		relayerURL = "http://127.0.0.1:8082"
+	}
+
 	return &Config{
 		ContractAddress: address,
-		CommitChainURL:  "http://127.0.0.1:8545",
 		ProofServerURL:  "http://127.0.0.1:8080/proof/enygma",
-		PrivateKey:      "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154",
+		RelayerURL:      relayerURL,
 	}, nil
 }
 

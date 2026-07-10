@@ -153,10 +153,12 @@ func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*bi
 // ── Test constants ─────────────────────────────────────────────────────────────
 
 const (
-	chainURL     = "http://127.0.0.1:8545"
+	chainURL     = "https://mainnet-rpc.rayls.com"
 	gnarkURL     = "http://127.0.0.1:8080/proof/enygma"
-	chainID      = 1337 // Ganache default (matches go_client/internal/contract/client.go)
-	ownerPrivKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
+	relayerURL   = "http://127.0.0.1:8082"
+	relayerKey   = "enygma-test-secret" // must match RELAYER_API_KEY set when starting the relayer
+	chainID      = 72957
+	ownerPrivKey = "PASTE_YOUR_MAINNET_PRIVATE_KEY_HERE" // set via env or replace locally; never commit a real key
 
 	nBanks      = 6
 	senderIdx   = 0
@@ -213,11 +215,14 @@ var bankSks = []*big.Int{
 }
 
 func TestFullTransactionFlow(t *testing.T) {
-	if !tcpAvailable("127.0.0.1:8545") {
-		t.Skip("chain not reachable at localhost:8545 — start node and deploy contracts first")
+	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
+		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443 — check network connectivity")
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
+	}
+	if !tcpAvailable("127.0.0.1:8082") {
+		t.Skip("relayer not reachable at localhost:8082 — start the relayer first")
 	}
 
 	// Read contract addresses from deploy_receipts.json (updated by deploy scripts).
@@ -435,41 +440,87 @@ func TestFullTransactionFlow(t *testing.T) {
 	}
 	t.Log("proof received")
 
-	// ── Build Transfer arguments ───────────────────────────────────────────────
-	// Fix C-1: commitmentDeltas must equal publicSignal[TX_COMMIT_OFFSET + 2i].
-	// TX_COMMIT_OFFSET = 6 (hash secrets) + 6 (public keys) + 12 (prevCommit) = 24.
+	// ── Build relay Transfer request ───────────────────────────────────────────
+	// commitmentDeltas are the per-bank Pedersen delta points read from the
+	// public signal at TX_COMMIT_OFFSET = 6 (hashes) + 6 (pks) + 12 (prevCommit) = 24.
 	const txCommitOffset = 24
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
+	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
-		commitmentDeltas[i] = enygma.IEnygmaPoint{
-			C1: proofResp.PublicSignal[txCommitOffset+2*i],
-			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
-		}
+		c1 := proofResp.PublicSignal[txCommitOffset+2*i]
+		c2 := proofResp.PublicSignal[txCommitOffset+2*i+1]
+		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: c1, C2: c2}
+		commFinal[i] = []string{c1.String(), c2.String()}
 	}
 
-	var proofArr [8]*big.Int
+	var proof8 [8]string
 	for i := 0; i < 8; i++ {
-		proofArr[i] = proofResp.Proof[i]
+		proof8[i] = proofResp.Proof[i].String()
 	}
-	var pubSigArr [50]*big.Int
-	for i := 0; i < 50; i++ {
-		pubSigArr[i] = proofResp.PublicSignal[i]
+
+	pubSigStrs := make([]string, len(proofResp.PublicSignal))
+	for i, v := range proofResp.PublicSignal {
+		pubSigStrs[i] = v.String()
 	}
-	contractProof := enygma.IEnygmaProof{Proof: proofArr, PublicSignal: pubSigArr}
 
 	// participantIds[i] = i+1 (maps circuit bank i → on-chain accountId i+1)
-	participantIds := make([]*big.Int, nBanks)
-	for i := range participantIds {
-		participantIds[i] = big.NewInt(int64(i + 1))
+	kIdx64 := make([]int64, nBanks)
+	for i := range kIdx64 {
+		kIdx64[i] = int64(i + 1)
 	}
 
-	// ── Submit Transfer on-chain ───────────────────────────────────────────────
-	t.Log("submitting Transfer...")
-	receipt := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, contractProof, participantIds))
-	if receipt.Status != 1 {
-		t.Fatalf("Transfer reverted (status=0), tx=%s", receipt.TxHash.Hex())
+	relayReq := struct {
+		Proof        [8]string  `json:"proof"`
+		PublicSignal []string   `json:"publicSignal"`
+		Commitments  [][]string `json:"commitments"`
+		KIndex       []int64    `json:"kIndex"`
+	}{
+		Proof:        proof8,
+		PublicSignal: pubSigStrs,
+		Commitments:  commFinal,
+		KIndex:       kIdx64,
 	}
-	t.Logf("Transfer succeeded: %s", receipt.TxHash.Hex())
+
+	// ── Submit Transfer via relayer ────────────────────────────────────────────
+	t.Log("submitting Transfer via relayer...")
+	relayBody, err := json.Marshal(relayReq)
+	if err != nil {
+		t.Fatalf("marshal relay request: %v", err)
+	}
+
+	apiKey := os.Getenv("RELAYER_API_KEY")
+	if apiKey == "" {
+		apiKey = relayerKey
+	}
+
+	relayHTTPReq, err := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer", bytes.NewReader(relayBody))
+	if err != nil {
+		t.Fatalf("build relay request: %v", err)
+	}
+	relayHTTPReq.Header.Set("Content-Type", "application/json")
+	relayHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	relayHTTPResp, err := http.DefaultClient.Do(relayHTTPReq)
+	if err != nil {
+		t.Fatalf("relay POST: %v", err)
+	}
+	defer relayHTTPResp.Body.Close()
+
+	relayRespBody, _ := io.ReadAll(relayHTTPResp.Body)
+	if relayHTTPResp.StatusCode != http.StatusOK {
+		t.Fatalf("relayer returned %d: %s", relayHTTPResp.StatusCode, relayRespBody)
+	}
+
+	var relayResp struct {
+		TxHash      string `json:"txHash"`
+		BlockNumber uint64 `json:"blockNumber"`
+		GasUsed     uint64 `json:"gasUsed"`
+	}
+	if err := json.Unmarshal(relayRespBody, &relayResp); err != nil {
+		t.Fatalf("parse relay response: %v", err)
+	}
+	t.Logf("Transfer succeeded via relayer: tx=%s block=%d gas=%d",
+		relayResp.TxHash, relayResp.BlockNumber, relayResp.GasUsed)
 
 	// ── Verify: bank 0 balance changed ────────────────────────────────────────
 	newBal, err := instance.GetBalance(&bind.CallOpts{}, big.NewInt(1))
