@@ -282,10 +282,7 @@ func TestEpochIntervalFlow(t *testing.T) {
 		t.Fatalf("create contract: %v", err)
 	}
 
-	privKey, err := crypto.HexToECDSA(ownerPrivKey)
-	if err != nil {
-		t.Fatalf("parse private key: %v", err)
-	}
+	privKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
 
 	mkAuth := func() *bind.TransactOpts {
@@ -627,7 +624,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 		t.Fatalf("new contract: %v", err)
 	}
 
-	privKey, _ := crypto.HexToECDSA(ownerPrivKey)
+	privKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
 
 	mkAuth := func() *bind.TransactOpts {

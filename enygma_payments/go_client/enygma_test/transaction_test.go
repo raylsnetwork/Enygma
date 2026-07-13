@@ -153,12 +153,11 @@ func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*bi
 // ── Test constants ─────────────────────────────────────────────────────────────
 
 const (
-	chainURL     = "https://mainnet-rpc.rayls.com"
-	gnarkURL     = "http://127.0.0.1:8080/proof/enygma"
-	relayerURL   = "http://127.0.0.1:8082"
-	relayerKey   = "enygma-test-secret" // must match RELAYER_API_KEY set when starting the relayer
-	chainID      = 72957
-	ownerPrivKey = "PASTE_YOUR_MAINNET_PRIVATE_KEY_HERE" // set via env or replace locally; never commit a real key
+	chainURL   = "https://mainnet-rpc.rayls.com"
+	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
+	relayerURL = "http://127.0.0.1:8082"
+	relayerKey = "enygma-test-secret" // must match RELAYER_API_KEY set when starting the relayer
+	chainID    = 72957
 
 	nBanks      = 6
 	senderIdx   = 0
@@ -171,6 +170,15 @@ const (
 	senderPrevR = 67890
 	senderPrevV = mintAmt
 )
+
+// ownerPrivKey is loaded from the MY_KEY environment variable at test startup.
+// Never hardcode a real key here — set:  export MY_KEY=<your-hex-key>
+var ownerPrivKey = func() string {
+	if k := os.Getenv("MY_KEY"); k != "" {
+		return k
+	}
+	return "" // tests will fail with a clear "MY_KEY not set" message via mustPrivKey
+}()
 
 // receipts holds contract addresses read from deploy_receipts.json.
 type receipts struct {
@@ -237,10 +245,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	}
 	defer client.Close()
 
-	privKey, err := crypto.HexToECDSA(ownerPrivKey)
-	if err != nil {
-		t.Fatalf("parse private key: %v", err)
-	}
+	privKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
 	t.Logf("owner: %s", ownerAddr.Hex())
 
