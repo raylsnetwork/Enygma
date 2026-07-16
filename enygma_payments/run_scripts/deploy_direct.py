@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from web3 import Web3
 
-OWNER_KEY = os.environ["MY_KEY"]   # export OWNER_KEY=<hex> — never hardcode mainnet key
+OWNER_KEY = os.environ["OWNER_KEY"]   # export OWNER_KEY=<hex> — never hardcode mainnet key
 CHAIN_ID = int(os.environ.get("CHAIN_ID", "72957"))
 RPC_URL = os.environ.get("RPC_URL", "https://mainnet-rpc.rayls.com")
 

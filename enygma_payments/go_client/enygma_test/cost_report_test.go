@@ -95,8 +95,8 @@ func weiToETH(wei *big.Int) string {
 // ── TestCostReport ────────────────────────────────────────────────────────────
 
 func TestCostReport(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
@@ -600,7 +600,7 @@ func TestCostReport(t *testing.T) {
 	t.Logf("  ZK proof generation time : %s (off-chain, no gas)", proofDuration.Round(time.Millisecond))
 	t.Logf("  Transfer submission time : %s (submit → mined)", transferDuration.Round(time.Millisecond))
 	t.Log("")
-	t.Log("  Note: 'native' = Rayls native gas token (chainID 72957).")
+	t.Logf("  Note: 'native' = chain native gas token (chainID %d, RPC %s).", chainID, chainURL)
 	t.Log("  Deployment costs (A) are one-time. Ongoing cost per")
 	t.Log("  confidential transfer = Section D only (~1.8M gas).")
 	t.Log("════════════════════════════════════════════════════════")

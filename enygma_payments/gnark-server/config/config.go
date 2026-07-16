@@ -2,9 +2,11 @@ package config
 
 
 type Config struct {
-    Port     string
-    EnygmaPk  string
-    EnygmaVk  string
+    Port         string
+    EnygmaPk     string
+    EnygmaVk     string
+    EnygmaFeePk  string
+    EnygmaFeeVk  string
 	WithdrawPk1 string
 	WithdrawVk1 string
     WithdrawPk2 string
@@ -25,8 +27,10 @@ type Config struct {
 func Load() *Config {
     return &Config{
         Port:    	   "8080",
-        EnygmaPk:      "./keys/EnygmaPk.key",
-        EnygmaVk: 	   "./keys/EnygmaVk.key",
+        EnygmaPk:     "./keys/EnygmaPk.key",
+        EnygmaVk:     "./keys/EnygmaVk.key",
+        EnygmaFeePk:  "./keys/EnygmaFeePk.key",
+        EnygmaFeeVk:  "./keys/EnygmaFeeVk.key",
         WithdrawPk1:    "./keys/zkdvp/WithdrawPk1.key",
         WithdrawVk1:    "./keys/zkdvp/WithdrawVk1.key",
         WithdrawPk2:    "./keys/zkdvp/WithdrawPk2.key",

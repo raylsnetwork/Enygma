@@ -1,14 +1,17 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
-	"github.com/consensys/gnark/frontend"
+
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
 	enygma "enygma-server/pkg/circuits/enygma"
+	enygma_fee "enygma-server/pkg/circuits/enygma_fee"
 	deposit "enygma-server/pkg/circuits/deposit"
 	withdraw "enygma-server/pkg/circuits/withdraw"
 	utils "enygma-server/utils"
@@ -73,6 +76,28 @@ func generateKeysEnygma() error {
 	)
 }
 
+func generateKeysEnygmaFee() error {
+	config := enygma_fee.EnygmaFeeCircuitConfig{NCommitment: 6}
+	circuit := enygma_fee.EnygmaFeeCircuit{
+		Config:              config,
+		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
+		PublicKey:           make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
+		MessageTags:         make([]frontend.Variable, config.NCommitment),
+		TxValues:            make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+	}
+	return generateKeys(
+		&circuit,
+		"keys/EnygmaFeePk.key",
+		"keys/EnygmaFeeVk.key",
+		"keys/EnygmaFeeVerifier.sol",
+	)
+}
+
 func generateKeysZkDvpDeposit() error {
 	config := deposit.DepositEnygmaCircuitConfig{
 		NCommitment: 6,
@@ -127,24 +152,54 @@ func generateKeysZkDvpWithdraw() error {
 	return nil
 }
 
+// main runs key generation.
+//
+// Usage (MUST run from the gnark-server/ directory, not from keygen/):
+//
+//	cd enygma_payments/gnark-server
+//	go run ./keygen/generate_keys.go              # regenerate ALL keys
+//	go run ./keygen/generate_keys.go -circuit enygma_fee  # only fee keys
+//
+// Available -circuit values: all, enygma, enygma_fee, deposit, withdraw
 func main() {
-	fmt.Println("Starting key generation...")
-	
-	// Sequential execution with error handling
-	if err := generateKeysEnygma(); err != nil {
-		fmt.Printf("Error generating Enygma keys: %v\n", err)
-		return
+	circuit := flag.String("circuit", "all",
+		"which circuit keys to generate: all | enygma | enygma_fee | deposit | withdraw")
+	flag.Parse()
+
+	type job struct {
+		name string
+		fn   func() error
 	}
-	
-	if err := generateKeysZkDvpDeposit(); err != nil {
-		fmt.Printf("Error generating Deposit keys: %v\n", err)
-		return
+
+	all := []job{
+		{"enygma", generateKeysEnygma},
+		{"enygma_fee", generateKeysEnygmaFee},
+		{"deposit", generateKeysZkDvpDeposit},
+		{"withdraw", generateKeysZkDvpWithdraw},
 	}
-	
-	if err := generateKeysZkDvpWithdraw(); err != nil {
-		fmt.Printf("Error generating Withdraw keys: %v\n", err)
-		return
+
+	var jobs []job
+	if *circuit == "all" {
+		jobs = all
+	} else {
+		for _, j := range all {
+			if j.name == *circuit {
+				jobs = append(jobs, j)
+				break
+			}
+		}
+		if len(jobs) == 0 {
+			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, deposit, withdraw\n", *circuit)
+			os.Exit(1)
+		}
 	}
-	
-	fmt.Println("✓ All keys generated successfully!")
+
+	fmt.Printf("Starting key generation (circuit=%s)…\n", *circuit)
+	for _, j := range jobs {
+		if err := j.fn(); err != nil {
+			fmt.Printf("Error generating %s keys: %v\n", j.name, err)
+			os.Exit(1)
+		}
+	}
+	fmt.Println("✓ Keys generated successfully!")
 }

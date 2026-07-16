@@ -28,9 +28,11 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -152,12 +154,39 @@ func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*bi
 
 // ── Test constants ─────────────────────────────────────────────────────────────
 
+// chainURL and chainID are configurable via environment variables so the same
+// test suite runs against both a local Hardhat node and Rayls mainnet.
+//
+// Local Hardhat:
+//
+//	export ENYGMA_CHAIN_URL=http://127.0.0.1:8545
+//	export ENYGMA_CHAIN_ID=31337
+//	export MY_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+//
+// Rayls mainnet (default, no env vars needed):
+//
+//	export MY_KEY=<your-mainnet-key>
+var (
+	chainURL = func() string {
+		if u := os.Getenv("ENYGMA_CHAIN_URL"); u != "" {
+			return u
+		}
+		return "https://mainnet-rpc.rayls.com"
+	}()
+	chainID = func() int64 {
+		if s := os.Getenv("ENYGMA_CHAIN_ID"); s != "" {
+			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+				return n
+			}
+		}
+		return 72957
+	}()
+)
+
 const (
-	chainURL   = "https://mainnet-rpc.rayls.com"
 	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
 	relayerURL = "http://127.0.0.1:8082"
-	relayerKey = "enygma-test-secret" // must match RELAYER_API_KEY set when starting the relayer
-	chainID    = 72957
+	relayerKey = "enygma-test-secret" // must match RELAYER_API_KEY
 
 	nBanks      = 6
 	senderIdx   = 0
@@ -223,8 +252,8 @@ var bankSks = []*big.Int{
 }
 
 func TestFullTransactionFlow(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443 — check network connectivity")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
@@ -570,4 +599,22 @@ func tcpAvailable(addr string) bool {
 	}
 	conn.Close()
 	return true
+}
+
+// chainAvailable probes the configured chainURL via TCP.
+// Works for both local Hardhat (http://127.0.0.1:8545) and mainnet (https://...).
+func chainAvailable() bool {
+	u, err := url.Parse(chainURL)
+	if err != nil {
+		return false
+	}
+	host := u.Host
+	if u.Port() == "" {
+		if u.Scheme == "https" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+	return tcpAvailable(host)
 }

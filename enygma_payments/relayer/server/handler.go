@@ -26,6 +26,7 @@ import (
 // The concrete *enygma.Enygma satisfies this interface.
 type EnygmaContract interface {
 	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, participantIds []*big.Int) (*types.Transaction, error)
+	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int) (*types.Transaction, error)
 }
 
 // txTimeout is the maximum time to wait for a transaction to be mined.
@@ -197,6 +198,92 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	}
 	if receipt.Status != 1 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transfer transaction reverted on-chain"})
+		return
+	}
+
+	c.JSON(http.StatusOK, RelayResponse{
+		TxHash:      receipt.TxHash.Hex(),
+		BlockNumber: receipt.BlockNumber.Uint64(),
+		GasUsed:     receipt.GasUsed,
+	})
+}
+
+// ── TransferFee ───────────────────────────────────────────────────────────────
+
+// RelayTransferFee handles POST /relay/transfer_fee.
+//
+// Calls Enygma.transferWithFee(commitmentDeltas, proof, participantIds).
+// Used for confidential transfers where the user embeds a public fee in the
+// ZK proof (enygma_fee circuit, 51-element public signal).
+// The fee amount is at publicSignal[50] and is visible to the relayer without
+// revealing any other private information.
+func (h *Handler) RelayTransferFee(c *gin.Context) {
+	var req RelayTransferFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	proof8, err := parseProof8(req.Proof)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
+		return
+	}
+	if len(req.PublicSignal) != 54 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: fee circuit requires exactly 54 elements, got %d", len(req.PublicSignal))})
+		return
+	}
+
+	var pubSig54 [54]*big.Int
+	for i := range pubSig54 {
+		pubSig54[i] = big.NewInt(0)
+	}
+	for i, s := range req.PublicSignal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[%d]: invalid decimal %q", i, s)})
+			return
+		}
+		pubSig54[i] = n
+	}
+
+	commitments, err := parseCommitments(req.Commitments)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("commitments: %v", err)})
+		return
+	}
+	kIndex := int64sToBI(req.KIndex)
+
+	feeProof := enygma.IEnygmaFeeProof{
+		Proof:        proof8,
+		PublicSignal: pubSig54,
+	}
+
+	dedupKey := "transfer_fee:" + req.Proof[0]
+	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
+		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
+		return
+	}
+	defer h.inFlight.Delete(dedupKey)
+
+	h.txMu.Lock()
+	defer h.txMu.Unlock()
+
+	tx, err := h.instance.TransferWithFee(h.auth, commitments, feeProof, kIndex)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transferWithFee(): %v", err)})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	receipt, err := bind.WaitMined(ctx, h.client, tx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+		return
+	}
+	if receipt.Status != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transferWithFee transaction reverted on-chain"})
 		return
 	}
 

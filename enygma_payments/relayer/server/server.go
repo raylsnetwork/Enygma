@@ -47,6 +47,7 @@ func applyRoutes(r *gin.Engine, apiKey string, h *Handler) {
 	relay := r.Group("/relay", bearerAuth(apiKey))
 	{
 		relay.POST("/transfer", h.RelayTransfer)
+		relay.POST("/transfer_fee", h.RelayTransferFee)
 	}
 }
 

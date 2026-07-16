@@ -15,6 +15,11 @@ package enygma_test
 //   TestInvalidProofRejection     — a garbage all-zero SNARK proof is rejected on-chain
 //                                   (Status=0) without modifying any contract state.
 //
+// See sequential_transfer_test.go for:
+//   TestSequentialTransfers       — two back-to-back ZK transfers from bank 0 through the
+//                                   full stack (gnark → relayer → chain); derives updated
+//                                   Pedersen randomness between rounds and verifies check().
+//
 // Prerequisites for all tests:
 //   chain: Rayls mainnet reachable at https://mainnet-rpc.rayls.com
 //   gnark: gnark server running on localhost:8080 (only for TestNullifierReuseProtection)
@@ -115,8 +120,8 @@ func deployFromArtifact(
 // that the homomorphic sum of all bank balance commitments equals totalSupply.
 // Expected to be run after TestFullTransactionFlow on the same contract.
 func TestCheckInvariant(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 	tokenAddr, _ := readReceipts(t)
 
@@ -177,8 +182,8 @@ func TestCheckInvariant(t *testing.T) {
 // Transfer() is called directly on the contract binding — no relayer needed.
 // This makes the test independent of which contract address the relayer is pointed at.
 func TestNullifierReuseProtection(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080")
@@ -457,13 +462,25 @@ func freshSetup(
 	return instance
 }
 
-// mustPrivKey parses ownerPrivKey (loaded from MY_KEY env var) or fatals with a clear message.
+// hardhatTestKey is the publicly committed key in contracts/enygma/hardhat.config.js.
+// It is safe to use only on local Hardhat nodes — never on mainnet.
+const hardhatTestKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
+
+// mustPrivKey returns the signing key for the test.
+// On mainnet (non-localhost chainURL) MY_KEY must be set.
+// On a local Hardhat node (chainURL contains "127.0.0.1" or "localhost") the
+// committed test key is used automatically when MY_KEY is not set.
 func mustPrivKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
-	if ownerPrivKey == "" {
+	key := ownerPrivKey
+	if key == "" && (strings.Contains(chainURL, "127.0.0.1") || strings.Contains(chainURL, "localhost")) {
+		key = hardhatTestKey
+		t.Log("using committed Hardhat test key (safe for local node only)")
+	}
+	if key == "" {
 		t.Fatal("MY_KEY env var not set — export MY_KEY=<your-hex-private-key> before running")
 	}
-	pk, err := crypto.HexToECDSA(ownerPrivKey)
+	pk, err := crypto.HexToECDSA(key)
 	if err != nil {
 		t.Fatalf("MY_KEY parse error: %v", err)
 	}
@@ -520,8 +537,8 @@ func scenarioClient(t *testing.T) (*ethclient.Client, func() *bind.TransactOpts,
 //
 //	CC=/usr/bin/clang go test -run TestBurnBalanceUpdate -v -timeout 60s
 func TestBurnBalanceUpdate(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)
@@ -599,8 +616,8 @@ func TestBurnBalanceUpdate(t *testing.T) {
 //
 //	CC=/usr/bin/clang go test -run TestDoubleInitializeReverts -v -timeout 60s
 func TestDoubleInitializeReverts(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)
@@ -645,8 +662,8 @@ func TestDoubleInitializeReverts(t *testing.T) {
 //
 //	CC=/usr/bin/clang go test -run TestMintAccumulation -v -timeout 60s
 func TestMintAccumulation(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)
@@ -710,8 +727,8 @@ func TestMintAccumulation(t *testing.T) {
 //
 //	CC=/usr/bin/clang go test -run TestInvalidProofRejection -v -timeout 60s
 func TestInvalidProofRejection(t *testing.T) {
-	if !tcpAvailable("mainnet-rpc.rayls.com:443") {
-		t.Skip("chain not reachable at mainnet-rpc.rayls.com:443")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)

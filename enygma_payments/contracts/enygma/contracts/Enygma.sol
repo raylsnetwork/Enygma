@@ -54,6 +54,7 @@ contract Enygma is IEnygma {
     address private _withdrawVerifier;
     address private _depositVerifier;
     address private _zkDvpAddress;
+    address private _feeVerifier;
 
     // ============================================
     // MAPPINGS
@@ -334,6 +335,19 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Register fee transfer verifier contract (verifies 51-signal fee proofs)
+     * @param verifier Address of fee verifier contract
+     */
+    function addFeeVerifier(address verifier) external onlyOwner returns (bool) {
+        if (verifier == address(0)) revert ZeroAddress();
+
+        _feeVerifier = verifier;
+
+        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        return true;
+    }
+
+    /**
      * @notice Register ZkDvp contract
      * @param zkDvp Address of ZkDvp contract
      */
@@ -377,6 +391,26 @@ contract Enygma is IEnygma {
         // Update balances
         _updateBalancesForTransfer(commitmentDeltas, participantIds);
 
+        emit TransactionSuccessful(msg.sender);
+        return true;
+    }
+
+    /**
+     * @notice Execute confidential transfer with public fee (51-signal fee circuit)
+     * @param commitmentDeltas Balance changes for each participant
+     * @param proof Zero-knowledge fee proof (51 public signals; fee at index 50)
+     * @param participantIds Account IDs involved in transfer
+     */
+    function transferWithFee(
+        Point[] calldata commitmentDeltas,
+        FeeProof calldata proof,
+        uint256[] calldata participantIds
+    ) external onlyRegistered whenInitialized returns (bool) {
+        _verifyFeeTransferProof(proof);
+        _verifyFeePublicInputs(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyFeeBlockNumber(proof.public_signal);
+        _consumeFeeNullifier(proof.public_signal);
+        _updateBalancesForTransfer(commitmentDeltas, participantIds);
         emit TransactionSuccessful(msg.sender);
         return true;
     }
@@ -846,6 +880,81 @@ contract Enygma is IEnygma {
         if (proofBlockNumber != lastBlockNum) {
             revert InvalidBlockNumber();
         }
+    }
+
+    /**
+     * @notice Verify zero-knowledge fee proof (delegates to 54-signal fee verifier)
+     */
+    function _verifyFeeTransferProof(FeeProof calldata proof) private {
+        if (_feeVerifier == address(0)) revert VerifierNotFound();
+
+        (bool success, ) = _feeVerifier.delegatecall(
+            abi.encodeWithSignature(
+                "verifyProof(uint256[8],uint256[54])",
+                proof
+            )
+        );
+        if (!success) revert InvalidProof();
+    }
+
+    /**
+     * @notice Verify fee public inputs match contract state (same offsets as base, 54-element array)
+     */
+    function _verifyFeePublicInputs(
+        uint256[54] calldata public_signal,
+        uint256[] calldata participantIds,
+        Point[] calldata commitmentDeltas
+    ) private view {
+        (Point[] memory balances, uint256[] memory keys) = getPublicValues(
+            _totalRegisteredParties + 1
+        );
+
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 accountId = participantIds[i];
+
+            if (uint256(public_signal[PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1);
+            if (
+                uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
+                uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 txOffset = TX_COMMIT_OFFSET + (i << 1);
+            if (
+                commitmentDeltas[i].c1 != public_signal[txOffset] ||
+                commitmentDeltas[i].c2 != public_signal[txOffset + 1]
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Verify block number freshness for fee proof
+     */
+    function _verifyFeeBlockNumber(uint256[54] calldata public_signal) private view {
+        if (uint256(public_signal[BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+            revert InvalidBlockNumber();
+        }
+    }
+
+    /**
+     * @notice Record fee nullifier as spent
+     */
+    function _consumeFeeNullifier(uint256[54] calldata public_signal) private {
+        uint256 nullifier = public_signal[NULLIFIER_OFFSET];
+        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _nullifiers[nullifier] = true;
     }
 
     // ============================================

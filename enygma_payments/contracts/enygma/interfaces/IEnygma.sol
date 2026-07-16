@@ -31,6 +31,11 @@ interface IEnygma {
         uint256[1] public_signal;
     }
 
+    struct FeeProof {
+        uint256[8] proof;
+        uint256[54] public_signal;
+    }
+
     struct DepositParams {
         uint256 amount;
         address erc20Adress;
@@ -93,6 +98,14 @@ interface IEnygma {
     ) external returns (bool);
 
     function burn(uint256 bankIndex, uint256 burnValue) external returns (bool);
+
+    function addFeeVerifier(address verifier) external returns (bool);
+
+    function transferWithFee(
+        Point[] memory commitments,
+        FeeProof memory proof,
+        uint256[] memory k
+    ) external returns (bool);
 
     function derivePk(uint256 v) external view returns (uint256 x2, uint256 y2);
     function derivePkH(

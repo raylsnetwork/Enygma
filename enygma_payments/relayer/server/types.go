@@ -13,6 +13,18 @@ type RelayTransferRequest struct {
 	KIndex       []int64    `json:"kIndex"       binding:"required"`
 }
 
+// RelayTransferFeeRequest is the JSON body accepted by POST /relay/transfer_fee.
+//
+// Used for Enygma-to-Enygma confidential transfers with a public relayer fee
+// (the enygma_fee circuit). The public signal must have exactly 51 elements
+// with the fee at index 50.
+type RelayTransferFeeRequest struct {
+	Proof        [8]string  `json:"proof"        binding:"required"`
+	PublicSignal []string   `json:"publicSignal" binding:"required"`
+	Commitments  [][]string `json:"commitments"  binding:"required"`
+	KIndex       []int64    `json:"kIndex"       binding:"required"`
+}
+
 // ── Shared response ───────────────────────────────────────────────────────────
 
 // RelayResponse is returned by the relay endpoint on success.
