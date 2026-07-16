@@ -1560,16 +1560,26 @@ type PaymentResult struct {
 	// ContractAddress is non-nil when the proof was generated via BoundPaymentProof (VULN-5 fix).
 	// ContractStatement() appends it as the last statement element for on-chain verification.
 	ContractAddress *big.Int
+	// Fee is non-nil when generated via BoundPaymentFeeProof.
+	// ContractStatement() appends it after ContractAddress so the on-chain verifier can
+	// check statement[last] == PROTOCOL_FEE.
+	Fee *big.Int
+	// SaltRelayer is the random salt used for the relayer fee note (output 2) in
+	// BoundPaymentRelayerProof. Alice must communicate this to the relayer off-chain.
+	SaltRelayer *big.Int
 }
 
 // ContractStatement de-interleaves the statement for on-chain submission.
-// When ContractAddress is set (BoundPaymentProof), it is appended as the last element so
-// the vault can verify statement[last] == address(this) (VULN-5 fix).
+// When ContractAddress is set (BoundPaymentProof), it is appended as the last element.
+// When Fee is also set (BoundPaymentFeeProof), it is appended after ContractAddress.
 func (r *PaymentResult) ContractStatement() []*big.Int {
 	nIn := r.NumberOfInputs
 	nOut := r.NumberOfOutputs
 	size := 1 + 3*nIn + nOut
 	if r.ContractAddress != nil {
+		size++
+	}
+	if r.Fee != nil {
 		size++
 	}
 	out := make([]*big.Int, size)
@@ -1583,8 +1593,13 @@ func (r *PaymentResult) ContractStatement() []*big.Int {
 	for i := 0; i < nOut; i++ {
 		out[1+3*nIn+i] = r.Statement[1+3*nIn+i]
 	}
+	idx := 1 + 3*nIn + nOut
 	if r.ContractAddress != nil {
-		out[1+3*nIn+nOut] = r.ContractAddress
+		out[idx] = r.ContractAddress
+		idx++
+	}
+	if r.Fee != nil {
+		out[idx] = r.Fee
 	}
 	return out
 }
@@ -1927,6 +1942,357 @@ func (c *GnarkClient) BoundPaymentProof(
 		EncTxData:       encTxData,
 		SaltB:           wtSaltsOut[0],
 		SaltA:           saltA,
+		ContractAddress: contractAddress,
+	}, nil
+}
+
+// BoundPaymentFeeProof generates a PaymentFee proof where the sender's note absorbs
+// the protocol fee: Σ(valuesIn) == Σ(valuesOut) + stFee.
+//
+// stFee must equal PROTOCOL_FEE; the relayer checks this before submitting on-chain.
+// The resulting ContractStatement() appends [contractAddress, stFee] at the end.
+//
+// The circuit posts to /proof/paymentFee on the gnark server.
+func (c *GnarkClient) BoundPaymentFeeProof(
+	contractAddress *big.Int,
+	stFee *big.Int,
+	stMessage *big.Int,
+	wtValuesIn []*big.Int,
+	keysIn []KeyPair,
+	wtSaltsIn []*big.Int,
+	wtValuesOut []*big.Int,
+	recipientSpendPks []*big.Int,
+	recipientViewEncapKeys [][]byte,
+	merkleDepth int,
+	merkleProofs []*MerkleProof,
+	stTreeNumbers []*big.Int,
+	wtTokenId *big.Int,
+) (*PaymentResult, error) {
+	nIn := len(wtValuesIn)
+	nOut := len(wtValuesOut)
+
+	stNullifiers := make([]*big.Int, nIn)
+	wtPathIndices := make([]*big.Int, nIn)
+	wtPathElements := make([]*big.Int, 0, nIn*merkleDepth)
+
+	for i := 0; i < nIn; i++ {
+		if wtValuesIn[i].Sign() == 0 {
+			stNullifiers[i] = big.NewInt(0)
+			wtPathIndices[i] = big.NewInt(0)
+			zeros := make([]*big.Int, merkleDepth)
+			for j := range zeros {
+				zeros[j] = big.NewInt(0)
+			}
+			wtPathElements = append(wtPathElements, zeros...)
+		} else {
+			wtPathIndices[i] = merkleProofs[i].Indices
+			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
+			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+			if err != nil {
+				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+			}
+			stNullifiers[i] = nf
+		}
+	}
+
+	wtSaltsOut := make([]*big.Int, nOut)
+	stCommitmentsOut := make([]*big.Int, nOut)
+	var cipherText, encTxData []byte
+	var saltA *big.Int
+
+	ss0, ctxt0, err := Encapsulate(recipientViewEncapKeys[0])
+	if err != nil {
+		return nil, fmt.Errorf("Encapsulate Bob output: %w", err)
+	}
+	saltB0, err := DerivePaymentSalt(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentSalt Bob output: %w", err)
+	}
+	encKey0, err := DerivePaymentKey(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentKey Bob output: %w", err)
+	}
+	ctxtII0, err := EncryptPayload(encKey0, wtTokenId, wtValuesOut[0])
+	if err != nil {
+		return nil, fmt.Errorf("EncryptPayload Bob output: %w", err)
+	}
+	cipherText = ctxt0
+	encTxData = ctxtII0
+	wtSaltsOut[0] = SaltBToField(saltB0)
+	cmt0, err := Erc20CommitmentV2(recipientSpendPks[0], wtSaltsOut[0], wtValuesOut[0], wtTokenId)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 Bob output: %w", err)
+	}
+	stCommitmentsOut[0] = cmt0
+
+	for i := 1; i < nOut; i++ {
+		randSalt, err := RandomInField()
+		if err != nil {
+			return nil, fmt.Errorf("RandomInField change output %d: %w", i, err)
+		}
+		if i == 1 {
+			saltA = randSalt
+		}
+		wtSaltsOut[i] = randSalt
+		cmt, err := Erc20CommitmentV2(recipientSpendPks[i], randSalt, wtValuesOut[i], wtTokenId)
+		if err != nil {
+			return nil, fmt.Errorf("Erc20CommitmentV2 change output %d: %w", i, err)
+		}
+		stCommitmentsOut[i] = cmt
+	}
+
+	stMerkleRoots := make([]*big.Int, nIn)
+	for i := range wtValuesIn {
+		if wtValuesIn[i].Sign() == 0 {
+			stMerkleRoots[i] = big.NewInt(0)
+		} else {
+			stMerkleRoots[i] = merkleProofs[i].Root
+		}
+	}
+
+	pathElementChunks := chunkBigIntSlice(wtPathElements, merkleDepth)
+
+	payload := map[string]interface{}{
+		"stMessage":            stMessage.String(),
+		"stTreeNumbers":        bigIntSliceToStrings(stTreeNumbers),
+		"stMerkleRoots":        bigIntSliceToStrings(stMerkleRoots),
+		"stNullifiers":         bigIntSliceToStrings(stNullifiers),
+		"stCommitmentsOut":     bigIntSliceToStrings(stCommitmentsOut),
+		"stContractAddress":    contractAddress.String(),
+		"stFee":                stFee.String(),
+		"wtPrivateKeysIn":      bigIntSliceToStrings(extractPrivateKeys(keysIn)),
+		"wtValuesIn":           bigIntSliceToStrings(wtValuesIn),
+		"wtSaltsIn":            bigIntSliceToStrings(wtSaltsIn),
+		"wtPathElements":       bigIntChunksToStringChunks(pathElementChunks),
+		"wtPathIndices":        bigIntSliceToStrings(wtPathIndices),
+		"wtTokenId":            wtTokenId.String(),
+		"wtSpendPublicKeysOut": bigIntSliceToStrings(recipientSpendPks),
+		"wtValuesOut":          bigIntSliceToStrings(wtValuesOut),
+		"wtSaltsOut":           bigIntSliceToStrings(wtSaltsOut),
+	}
+
+	body, err := c.PostProof("/proof/paymentFee", payload)
+	if err != nil {
+		return nil, fmt.Errorf("payment fee proof request failed: %w", err)
+	}
+
+	var gnarkResp struct {
+		Proof        []json.Number `json:"proof"`
+		PublicSignal []json.Number `json:"publicSignal"`
+	}
+	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+		return nil, fmt.Errorf("parse payment fee proof response: %w", err)
+	}
+	proofStrs := make([]string, len(gnarkResp.Proof))
+	for i, n := range gnarkResp.Proof {
+		proofStrs[i] = n.String()
+	}
+
+	// Statement: interleaved [msg, tree0, root0, nf0, ..., cmt0, cmt1, contractAddr, fee]
+	statement := make([]*big.Int, 0, 1+3*nIn+nOut+2)
+	statement = append(statement, stMessage)
+	for i := 0; i < nIn; i++ {
+		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
+	}
+	statement = append(statement, stCommitmentsOut...)
+	statement = append(statement, contractAddress)
+	statement = append(statement, stFee)
+
+	return &PaymentResult{
+		Proof:           proofStrs,
+		Statement:       statement,
+		NumberOfInputs:  nIn,
+		NumberOfOutputs: nOut,
+		CipherText:      cipherText,
+		EncTxData:       encTxData,
+		SaltB:           wtSaltsOut[0],
+		SaltA:           saltA,
+		ContractAddress: contractAddress,
+		Fee:             stFee,
+	}, nil
+}
+
+// BoundPaymentRelayerProof generates a 1-in/3-out payment proof where the third
+// output is a spendable fee note for the relayer.
+//
+// Output layout:
+//
+//	output[0] = Bob's payment  — any pk_spend (ML-KEM delivery via bobViewEncapKey)
+//	output[1] = Alice's change — constrained to senderPk in-circuit (random salt, SaltA)
+//	output[2] = Relayer fee    — any pk_spend (random salt, SaltRelayer)
+//
+// Conservation: Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]   (no value burned)
+//
+// Contract statement (8 elements):
+//
+//	[msg, treeNum, root, nf, cmt_bob, cmt_change, cmt_relayer, contractAddr]
+func (c *GnarkClient) BoundPaymentRelayerProof(
+	contractAddress *big.Int,
+	stMessage *big.Int,
+	wtValuesIn []*big.Int,
+	keysIn []KeyPair,
+	wtSaltsIn []*big.Int,
+	wtValuesOut []*big.Int, // [bobAmt, changeAmt, relayerFeeAmt]
+	relayerSpendPk *big.Int, // relayer's BabyJubJub spend public key
+	recipientSpendPks []*big.Int, // [bobSpendPk, aliceSpendPk] — relayer is appended internally
+	bobViewEncapKey []byte, // ML-KEM encapsulation key for Bob only
+	merkleDepth int,
+	merkleProofs []*MerkleProof,
+	stTreeNumbers []*big.Int,
+	wtTokenId *big.Int,
+) (*PaymentResult, error) {
+	nIn := len(wtValuesIn)
+	// nOut is always 3 for this circuit
+	nOut := 3
+	if len(wtValuesOut) != 3 {
+		return nil, fmt.Errorf("BoundPaymentRelayerProof: want 3 output values, got %d", len(wtValuesOut))
+	}
+
+	stNullifiers := make([]*big.Int, nIn)
+	wtPathIndices := make([]*big.Int, nIn)
+	wtPathElements := make([]*big.Int, 0, nIn*merkleDepth)
+
+	for i := 0; i < nIn; i++ {
+		if wtValuesIn[i].Sign() == 0 {
+			stNullifiers[i] = big.NewInt(0)
+			wtPathIndices[i] = big.NewInt(0)
+			zeros := make([]*big.Int, merkleDepth)
+			for j := range zeros {
+				zeros[j] = big.NewInt(0)
+			}
+			wtPathElements = append(wtPathElements, zeros...)
+		} else {
+			wtPathIndices[i] = merkleProofs[i].Indices
+			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
+			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+			if err != nil {
+				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+			}
+			stNullifiers[i] = nf
+		}
+	}
+
+	wtSaltsOut := make([]*big.Int, nOut)
+	stCommitmentsOut := make([]*big.Int, nOut)
+
+	// Output 0: Bob's payment — ML-KEM delivery
+	ss0, ctxt0, err := Encapsulate(bobViewEncapKey)
+	if err != nil {
+		return nil, fmt.Errorf("Encapsulate Bob output: %w", err)
+	}
+	saltB0, err := DerivePaymentSalt(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentSalt Bob output: %w", err)
+	}
+	encKey0, err := DerivePaymentKey(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentKey Bob output: %w", err)
+	}
+	ctxtII0, err := EncryptPayload(encKey0, wtTokenId, wtValuesOut[0])
+	if err != nil {
+		return nil, fmt.Errorf("EncryptPayload Bob output: %w", err)
+	}
+	bobSpendPk := recipientSpendPks[0]
+	wtSaltsOut[0] = SaltBToField(saltB0)
+	cmt0, err := Erc20CommitmentV2(bobSpendPk, wtSaltsOut[0], wtValuesOut[0], wtTokenId)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 Bob output: %w", err)
+	}
+	stCommitmentsOut[0] = cmt0
+
+	// Output 1: Alice's change — random salt (SaltA)
+	saltA, err := RandomInField()
+	if err != nil {
+		return nil, fmt.Errorf("RandomInField change output: %w", err)
+	}
+	aliceSpendPk := recipientSpendPks[1]
+	wtSaltsOut[1] = saltA
+	cmt1, err := Erc20CommitmentV2(aliceSpendPk, saltA, wtValuesOut[1], wtTokenId)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 change output: %w", err)
+	}
+	stCommitmentsOut[1] = cmt1
+
+	// Output 2: Relayer fee note — random salt (SaltRelayer)
+	saltRelayer, err := RandomInField()
+	if err != nil {
+		return nil, fmt.Errorf("RandomInField relayer output: %w", err)
+	}
+	wtSaltsOut[2] = saltRelayer
+	cmt2, err := Erc20CommitmentV2(relayerSpendPk, saltRelayer, wtValuesOut[2], wtTokenId)
+	if err != nil {
+		return nil, fmt.Errorf("Erc20CommitmentV2 relayer output: %w", err)
+	}
+	stCommitmentsOut[2] = cmt2
+
+	// Build all spend public keys in order [bob, alice, relayer]
+	allSpendPks := []*big.Int{bobSpendPk, aliceSpendPk, relayerSpendPk}
+
+	stMerkleRoots := make([]*big.Int, nIn)
+	for i := range wtValuesIn {
+		if wtValuesIn[i].Sign() == 0 {
+			stMerkleRoots[i] = big.NewInt(0)
+		} else {
+			stMerkleRoots[i] = merkleProofs[i].Root
+		}
+	}
+
+	pathElementChunks := chunkBigIntSlice(wtPathElements, merkleDepth)
+
+	payload := map[string]interface{}{
+		"stMessage":            stMessage.String(),
+		"stTreeNumbers":        bigIntSliceToStrings(stTreeNumbers),
+		"stMerkleRoots":        bigIntSliceToStrings(stMerkleRoots),
+		"stNullifiers":         bigIntSliceToStrings(stNullifiers),
+		"stCommitmentsOut":     bigIntSliceToStrings(stCommitmentsOut),
+		"stContractAddress":    contractAddress.String(),
+		"wtPrivateKeysIn":      bigIntSliceToStrings(extractPrivateKeys(keysIn)),
+		"wtValuesIn":           bigIntSliceToStrings(wtValuesIn),
+		"wtSaltsIn":            bigIntSliceToStrings(wtSaltsIn),
+		"wtPathElements":       bigIntChunksToStringChunks(pathElementChunks),
+		"wtPathIndices":        bigIntSliceToStrings(wtPathIndices),
+		"wtTokenId":            wtTokenId.String(),
+		"wtSpendPublicKeysOut": bigIntSliceToStrings(allSpendPks),
+		"wtValuesOut":          bigIntSliceToStrings(wtValuesOut),
+		"wtSaltsOut":           bigIntSliceToStrings(wtSaltsOut),
+	}
+
+	body, err := c.PostProof("/proof/paymentRelayer", payload)
+	if err != nil {
+		return nil, fmt.Errorf("payment relayer proof request failed: %w", err)
+	}
+
+	var gnarkResp struct {
+		Proof        []json.Number `json:"proof"`
+		PublicSignal []json.Number `json:"publicSignal"`
+	}
+	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+		return nil, fmt.Errorf("parse payment relayer proof response: %w", err)
+	}
+	proofStrs := make([]string, len(gnarkResp.Proof))
+	for i, n := range gnarkResp.Proof {
+		proofStrs[i] = n.String()
+	}
+
+	// Statement (interleaved): [msg, tree0, root0, nf0, cmt0, cmt1, cmt2, contractAddr]
+	statement := make([]*big.Int, 0, 1+3*nIn+nOut+1)
+	statement = append(statement, stMessage)
+	for i := 0; i < nIn; i++ {
+		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
+	}
+	statement = append(statement, stCommitmentsOut...)
+	statement = append(statement, contractAddress)
+
+	return &PaymentResult{
+		Proof:           proofStrs,
+		Statement:       statement,
+		NumberOfInputs:  nIn,
+		NumberOfOutputs: nOut,
+		CipherText:      ctxt0,
+		EncTxData:       ctxtII0,
+		SaltB:           wtSaltsOut[0],
+		SaltA:           saltA,
+		SaltRelayer:     saltRelayer,
 		ContractAddress: contractAddress,
 	}, nil
 }

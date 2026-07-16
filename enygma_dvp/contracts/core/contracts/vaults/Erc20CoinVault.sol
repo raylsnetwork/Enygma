@@ -23,6 +23,12 @@ contract Erc20CoinVault is AbstractCoinVault {
     // VULN-2 fix: 1-in and 2-in circuits have different R1CS constraint counts and
     // therefore different Groth16 VKs.  They MUST NOT share the same VK slot.
     uint256 public constant VK_ID_ERC20_JOINSPLIT_2INPUT = 1;
+    // 1-input / 2-output fee payment circuit (VK slot 2).
+    // Same topology as JOINSPLIT but has an extra StFee public signal (8-element statement).
+    uint256 public constant VK_ID_ERC20_JOINSPLIT_FEE = 2;
+    // 1-input / 3-output relayer fee payment circuit (VK slot 3).
+    // Alice pays Bob (output 0), keeps change (output 1), relayer earns spendable note (output 2).
+    uint256 public constant VK_ID_ERC20_JOINSPLIT_RELAYER = 3;
     uint256 public constant VK_ID_ERC20_10INPUT = 6;
     // DvP Initiator circuit: circuit id=24 in enygmadvp.config.json → VK slot 23 (0-indexed)
     uint256 public constant VK_ID_DVP_INITIATOR = 23;
@@ -309,9 +315,9 @@ contract Erc20CoinVault is AbstractCoinVault {
 
         // VULN-5 fix: verify the proof is bound to THIS vault contract.
         // statement layout: [...commitments, contractAddress] — contractAddress is last.
-        // Only retail payment proofs (1-in/2-out and 2-in/2-out) carry StContractAddress.
+        // Retail payment proofs (1-in/2-out and 1-in/3-out and 2-in/2-out) carry StContractAddress.
         // DvP Initiator proofs (numberOfOutputs == 1) do not include it.
-        if (receipt.numberOfOutputs == 2) {
+        if (receipt.numberOfOutputs == 2 || receipt.numberOfOutputs == 3) {
             uint contractAddrIdx = jCommitmentsIndex + receipt.numberOfOutputs;
             require(
                 receipt.statement[contractAddrIdx] == uint256(uint160(address(this))),
@@ -352,9 +358,27 @@ contract Erc20CoinVault is AbstractCoinVault {
             revert InvalidNumberOfInputs();
         }
         if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
-            // Retail Payment circuit: 1-input/2-output, VK registered at slot 0.
+            // Fee payment circuit has 8 public signals (adds StFee at index 7).
+            // Regular payment circuit has 7 public signals — dispatch by statement length.
+            if (receipt.statement.length == 8) {
+                IVerifier(_verifierContractAddress).verifyProof(
+                    VK_ID_ERC20_JOINSPLIT_FEE,
+                    receipt.proof,
+                    receipt.statement
+                );
+            } else {
+                // Retail Payment circuit: 1-input/2-output, VK registered at slot 0.
+                IVerifier(_verifierContractAddress).verifyProof(
+                    VK_ID_ERC20_JOINSPLIT,
+                    receipt.proof,
+                    receipt.statement
+                );
+            }
+        } else if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 3) {
+            // PaymentRelayer circuit: 1-in/3-out, 8-element statement.
+            // output[0]=Bob, output[1]=Alice change, output[2]=relayer fee note.
             IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_JOINSPLIT,
+                VK_ID_ERC20_JOINSPLIT_RELAYER,
                 receipt.proof,
                 receipt.statement
             );

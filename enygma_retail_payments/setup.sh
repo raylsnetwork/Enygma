@@ -20,9 +20,11 @@ npx hardhat compile
 echo "==> [2/5] Regenerating Poseidon artifacts..."
 node "$DVP_ROOT/regen_poseidon.mjs"
 
-echo "==> [3/5] Copying updated ABI to retail payments..."
+echo "==> [3/5] Copying updated ABIs to retail payments..."
 cp "$DVP_ROOT/artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json" \
    "$ROOT/contracts/abis/Erc20CoinVault.json"
+cp "$DVP_ROOT/artifacts/contracts/core/contracts/EnygmaDvp.sol/EnygmaDvp.json" \
+   "$ROOT/contracts/abis/EnygmaDvp.json"
 cd "$ROOT"
 
 echo "==> [4/5] Exporting VKs and regenerating PrivateMintVerifier..."

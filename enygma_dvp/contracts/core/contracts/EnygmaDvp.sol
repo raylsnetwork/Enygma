@@ -968,6 +968,92 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // paymentWithFee is the fee-aware variant of payment().
+    // The ZK circuit enforces valueIn == Σ(valuesOut) + StFee, so the fee is
+    // absorbed in Alice's input commitment rather than collected as an ERC-20 transfer.
+    // The on-chain check here confirms that the fee embedded in the proof matches
+    // the protocolFee passed by the caller, preventing a prover from substituting
+    // a different fee amount.
+    //
+    // Statement layout (1-in/2-out fee circuit, 8 elements):
+    //   [0] StMessage          = 0
+    //   [1] StTreeNumbers[0]   = tree index
+    //   [2] StMerkleRoots[0]   = Merkle root
+    //   [3] StNullifiers[0]    = nullifier
+    //   [4] StCommitmentsOut[0] = Bob's commitment
+    //   [5] StCommitmentsOut[1] = Alice's change commitment
+    //   [6] StContractAddress   = vault address (VULN-5 binding)
+    //   [7] StFee               = protocol fee
+    function paymentWithFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 protocolFee,
+        bytes calldata ctxt,
+        bytes calldata encTxData
+    ) public returns (bool) {
+        if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        // feeIdx = 1 + 3*nIn + nOut + 1  (contractAddr is at nIn+nOut, fee follows it)
+        uint256 feeIdx = 1 + 3 * receipt.numberOfInputs + receipt.numberOfOutputs + 1;
+        require(receipt.statement[feeIdx] == protocolFee, "EnygmaDvp: fee mismatch");
+
+        IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
+
+        // Verify ZK proof with fee VK (dispatched in checkReceiptConditions by statement.length).
+        vault.checkReceiptConditions(receipt);
+
+        vault.nullifyFromReceipt(receipt);
+        vault.insertCommitmentsFromReceipt(receipt);
+
+        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
+        uint256 commitmentOut = receipt.statement[commitmentsIndex];
+        emit Payment(vaultId, commitmentOut, ctxt, encTxData);
+
+        return true;
+    }
+
+    // paymentWithRelayerFee is the 3-output variant of payment().
+    // Alice pays Bob (output 0), receives change (output 1), and the relayer earns
+    // a spendable note (output 2). The ZK circuit enforces:
+    //   Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]   (no value burned)
+    // Only output[1] is constrained to Alice's senderPk in-circuit.
+    //
+    // Statement layout (1-in/3-out, 8 elements):
+    //   [0] StMessage          = 0
+    //   [1] StTreeNumbers[0]
+    //   [2] StMerkleRoots[0]
+    //   [3] StNullifiers[0]
+    //   [4] StCommitmentsOut[0] = Bob's commitment
+    //   [5] StCommitmentsOut[1] = Alice's change commitment
+    //   [6] StCommitmentsOut[2] = Relayer fee commitment
+    //   [7] StContractAddress   = vault address (VULN-5 binding)
+    //
+    // ctxt / encTxData are Bob's note discovery data (ML-KEM capsule / AEAD ciphertext).
+    function paymentWithRelayerFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        bytes calldata ctxt,
+        bytes calldata encTxData
+    ) public returns (bool) {
+        if (receipt.numberOfOutputs != 3) revert InvalidNumberOfOutputs();
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
+
+        vault.checkReceiptConditions(receipt);
+        vault.nullifyFromReceipt(receipt);
+        vault.insertCommitmentsFromReceipt(receipt);
+
+        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
+        uint256 commitmentBob = receipt.statement[commitmentsIndex];
+        emit Payment(vaultId, commitmentBob, ctxt, encTxData);
+
+        return true;
+    }
+
     ///////////////////////////////////////////////
     //          Private Mint functions
     //////////////////////////////////////////////

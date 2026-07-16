@@ -446,6 +446,17 @@ interface IEnygmaDvp {
         bytes calldata encTxData
     ) external returns (bool);
 
+    // paymentWithFee is the fee-aware variant of payment().
+    // The circuit enforces valueIn == Σ(valuesOut) + StFee; the on-chain call
+    // confirms statement[7] == protocolFee before accepting the proof.
+    function paymentWithFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 protocolFee,
+        bytes calldata ctxt,
+        bytes calldata encTxData
+    ) external returns (bool);
+
     // lockReceiptNullifiers / unlockReceiptNullifiers are used by SwapRelayer
     // to hold nullifiers while awaiting the counterparty's leg.
     function lockReceiptNullifiers(
