@@ -51,21 +51,25 @@ func generateKeys(circuit frontend.Circuit, pkPath, vkPath, solPath string) erro
 }
 
 func generateKeysEnygma() error {
-	config:= enygma.EnygmaCircuitConfig{
-		NCommitment:6,
+	config := enygma.EnygmaCircuitConfig{
+		NCommitment: 6,
 	}
-	
-	enygmaCircuit:= enygma.EnygmaCircuit{
-		Config:config,
-		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-		PublicKey:           make([]frontend.Variable, config.NCommitment),
-		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-		MessageTags:         make([]frontend.Variable, config.NCommitment),
-		TxValues:            make([]frontend.Variable, config.NCommitment),
-		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
+	enygmaCircuit := enygma.EnygmaCircuit{
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
 	}
 
 	return generateKeys(

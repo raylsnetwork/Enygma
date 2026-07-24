@@ -188,11 +188,11 @@ func TestSequentialTransfers(t *testing.T) {
 		t.Logf("  [%s] proving: block=%s senderBalance=%d", label, blockHash, prevV)
 
 		sk := big.NewInt(senderSk)
-		hashArray := hashArrayGen(secrets)
+		fp := fingerPrintGen(secrets, senderIdx)
 		tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
 		txCommit, txRand := genCommitmentAndRandom(
 			senderIdx, big.NewInt(txAmt), txVals, new(big.Int).Set(blockHash), secrets)
-		nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+		nullifier, _ := poseidon.Hash([]*big.Int{secrets[senderIdx], blockHash})
 
 		toStrs := func(vals []*big.Int) []string {
 			s := make([]string, len(vals))
@@ -220,7 +220,7 @@ func TestSequentialTransfers(t *testing.T) {
 		}
 
 		reqBody, _ := json.Marshal(map[string]interface{}{
-			"hashed_shared_secrets":        toStrs(hashArray),
+			"fingerprint_shared_secrets":   fp2Strs(fp),
 			"public_keys":                  keyStrs,
 			"previous_commits":             prevCommitSlice,
 			"tx_commits":                   txCommitSlice,
@@ -254,14 +254,14 @@ func TestSequentialTransfers(t *testing.T) {
 		if err := json.NewDecoder(gnarkResp.Body).Decode(&proofResp); err != nil {
 			t.Fatalf("[%s] decode proof: %v", label, err)
 		}
-		if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 50 {
+		if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
 			t.Fatalf("[%s] unexpected sizes: proof=%d signal=%d",
 				label, len(proofResp.Proof), len(proofResp.PublicSignal))
 		}
 		t.Logf("  [%s] proof received", label)
 
-		// Extract per-bank commitment deltas from public signal (offset 24).
-		const txCommitOffset = 24
+		// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
+		const txCommitOffset = 54
 		deltas := make([]enygma.IEnygmaPoint, nBanks)
 		commStrs := make([][]string, nBanks)
 		for i := 0; i < nBanks; i++ {

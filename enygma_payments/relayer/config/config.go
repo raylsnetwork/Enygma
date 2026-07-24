@@ -80,7 +80,7 @@ func Load() (*Config, error) {
 	cfg.ChainID = chainID
 
 	// Parse gas limit.
-	gasLimitStr := getenv("RELAYER_GAS_LIMIT", "300000000")
+	gasLimitStr := getenv("RELAYER_GAS_LIMIT", "5000000")
 	gasLimit, ok := new(big.Int).SetString(gasLimitStr, 10)
 	if !ok || !gasLimit.IsUint64() {
 		return nil, fmt.Errorf("RELAYER_GAS_LIMIT: invalid uint64 %q", gasLimitStr)

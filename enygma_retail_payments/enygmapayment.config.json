@@ -40,11 +40,6 @@
         "id": 3,
         "filename": "PaymentFee",
         "tags": ["payment", "fee", "erc20", "merkle", "1-input", "2-output", "fungible"]
-      },
-      {
-        "id": 4,
-        "filename": "PaymentRelayer",
-        "tags": ["payment", "relayer-fee", "erc20", "merkle", "1-input", "3-output", "fungible"]
       }
     ]
   }

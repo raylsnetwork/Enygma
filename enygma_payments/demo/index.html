@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enygma Payments · Demo</title>
+<style>
+:root {
+  --bg:    #07111f;
+  --s1:    #0b1929;
+  --s2:    #0f2038;
+  --bd:    #162f4e;
+  --bd2:   #1c3d65;
+  --subtle:#1e3d5c;
+  --blue:      #52b8ff; --blue-dim:  rgba(82,184,255,.09); --blue-glow:  #1a5a9a;
+  --teal:      #3dd4b0; --teal-dim:  rgba(61,212,176,.09); --teal-glow:  #0d6b5a;
+  --green:     #3dcc75; --green-dim: rgba(61,204,117,.09); --green-glow: #0d5a2a;
+  --red:       #ff5566; --red-dim:   rgba(255,85,102,.08);
+  --amber:     #f0a030; --amber-dim: rgba(240,160,48,.08);  --amber-glow: #7a4a00;
+  --purple:    #a07cef; --purple-dim:rgba(160,124,239,.08); --purple-glow:#4a2a8a;
+  --text:  #c8e0f8; --muted: #3d6080; --label: #6a9abf;
+  --mono: 'SF Mono','Fira Code',Consolas,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --r: 6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5;height:100%}
+
+.app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* ── Top bar ── */
+.topbar{display:flex;align-items:center;gap:12px;padding:8px 18px;background:var(--s1);border-bottom:1px solid var(--bd);flex-shrink:0}
+.brand{font-family:var(--mono);font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);font-weight:700}
+.topbar h1{font-size:13px;font-weight:700;flex:1}
+.prereqs{font-family:var(--mono);font-size:9px;color:var(--muted)}
+.prereqs span{color:var(--label)}
+.status-row{display:flex;align-items:center;gap:7px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .3s,box-shadow .3s;flex-shrink:0}
+.dot.running{background:var(--blue);box-shadow:0 0 6px var(--blue);animation:blink 1.2s infinite}
+.dot.success{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot.error{background:var(--red);box-shadow:0 0 6px var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.status-txt{font-family:var(--mono);font-size:10px;color:var(--label);min-width:55px}
+
+/* ── Tab bar ── */
+.tabbar{display:flex;background:var(--bg);border-bottom:2px solid var(--bd);flex-shrink:0;padding:0 18px}
+.tab{padding:9px 16px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .2s,border-color .2s;user-select:none;display:flex;align-items:center;gap:6px}
+.tab:hover{color:var(--label)}
+.tab.active{color:var(--text);border-color:var(--teal)}
+.tab-badge{width:5px;height:5px;border-radius:50%}
+.setup-tab .tab-badge{background:var(--amber)}
+.onboard-tab .tab-badge{background:var(--purple)}
+.transfer-tab .tab-badge{background:var(--teal)}
+.verify-tab .tab-badge{background:var(--blue)}
+.tab-prog{font-family:var(--mono);font-size:9px;color:var(--muted)}
+.tab.active .tab-prog{color:var(--teal)}
+
+.tabs-wrap{flex:1;overflow:hidden;position:relative}
+.tab-panel{position:absolute;inset:0;overflow-y:auto;display:none;flex-direction:column}
+.tab-panel.active{display:flex}
+.tab-panel::-webkit-scrollbar{width:4px}
+.tab-panel::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+
+/* ── Section header ── */
+.sec-hdr{padding:9px 18px 8px;border-bottom:1px solid var(--bd);background:var(--s1);display:flex;align-items:center;gap:10px;flex-shrink:0;position:sticky;top:0;z-index:10}
+.sec-num{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:700;flex-shrink:0}
+.sec-title{font-size:13px;font-weight:700}
+.sec-sub{font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:auto}
+
+/* ── Action button ── */
+.action-btn{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.07em;padding:6px 16px;border-radius:var(--r);border:none;cursor:pointer;transition:opacity .2s,transform .1s}
+.action-btn:hover:not(:disabled){opacity:.82;transform:translateY(-1px)}
+.action-btn:disabled{opacity:.3;cursor:not-allowed}
+.btn-setup{background:var(--amber);color:#180e00}
+.btn-onboard{background:var(--purple);color:#0e0818}
+.btn-transfer{background:var(--teal);color:#021510}
+.btn-sm{padding:4px 9px;font-size:9px}
+
+/* ── Horizontal step strip ── */
+.hstrip{display:flex;align-items:center;padding:10px 18px;gap:0;flex-wrap:wrap}
+.hstep{border:1px solid var(--bd);background:var(--s1);border-radius:var(--r);padding:7px 11px 7px 10px;min-width:150px;position:relative;overflow:hidden;transition:border-color .2s,background .2s}
+.hstep::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px;background:var(--muted);transition:background .2s}
+.hstep-top{display:flex;align-items:center;gap:6px}
+.hstep-ic{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--muted);display:flex;align-items:center;justify-content:center;font-size:7px;color:var(--muted);font-family:var(--mono);transition:all .2s;flex-shrink:0}
+.hstep-lbl{font-size:11px;font-weight:600;color:var(--label);transition:color .2s}
+.hstep-sub{font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-top:2px;padding-left:20px}
+.harrow{padding:0 6px;color:var(--muted);font-size:11px;align-self:center}
+.hstep.running::before{background:var(--blue)} .hstep.running{border-color:var(--blue-glow);background:#071520}
+.hstep.running .hstep-ic{border-color:var(--blue);color:var(--blue);animation:spin 1s linear infinite}
+.hstep.running .hstep-lbl{color:var(--blue)}
+.hstep.success::before{background:var(--green)} .hstep.success{border-color:var(--green-glow);background:#04160a}
+.hstep.success .hstep-ic{border-color:var(--green);color:var(--green);background:rgba(61,204,117,.1)}
+.hstep.success .hstep-lbl{color:var(--green)} .hstep.success .hstep-sub{color:var(--teal)}
+.hstep.error::before{background:var(--red)} .hstep.error{border-color:#5a0f1a;background:#120309}
+.hstep.error .hstep-ic{border-color:var(--red);color:var(--red)} .hstep.error .hstep-lbl{color:var(--red)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Contract address cards ── */
+.cc-strip{display:flex;gap:10px;padding:0 18px 14px;flex-wrap:wrap}
+.cc-card{flex:1;min-width:200px;background:var(--s2);border:1px solid var(--bd);border-radius:var(--r);padding:8px 12px;transition:border-color .3s}
+.cc-card.lit{border-color:var(--amber-glow)}
+.cc-lbl{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin-bottom:3px}
+.cc-type{font-family:var(--mono);font-size:8px;color:var(--muted);float:right}
+.cc-addr{font-family:var(--mono);font-size:10.5px;color:var(--muted);word-break:break-all;transition:color .3s}
+.cc-addr.set{color:var(--text)}
+.cc-meta{margin-top:3px;font-family:var(--mono);font-size:8.5px;color:var(--muted)}
+.cc-meta span{color:var(--label)}
+
+/* ── Bank grid (onboarding) ── */
+.bank-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:14px 18px}
+.bank-card{border:1px solid var(--bd);border-radius:var(--r);background:var(--s1);overflow:hidden;transition:border-color .3s}
+.bank-card.registered{border-color:var(--green-glow)}
+.bank-head{padding:8px 10px 7px;border-bottom:1px solid var(--bd);background:var(--s2)}
+.bank-name{font-weight:700;font-size:12px;margin-bottom:3px}
+.bank-badge{font-family:var(--mono);font-size:7.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:1px 5px;border-radius:3px;display:inline-block}
+.badge-sender{background:rgba(255,85,102,.15);color:var(--red);border:1px solid rgba(255,85,102,.3)}
+.badge-receiver{background:rgba(61,204,117,.12);color:var(--green);border:1px solid rgba(61,204,117,.3)}
+.badge-observer{background:rgba(106,154,191,.10);color:var(--label);border:1px solid rgba(106,154,191,.2)}
+.bank-fields{padding:5px 10px;font-family:var(--mono);font-size:8.5px;display:flex;flex-direction:column;gap:2px}
+.brow{display:flex;gap:5px}
+.bk{color:var(--muted);min-width:24px;flex-shrink:0}
+.bv{color:var(--muted);word-break:break-all;transition:color .3s}
+.bv.set{color:var(--text)}
+.bv.reg{color:var(--green)}
+.bank-steps{padding:0 10px 6px;display:flex;flex-direction:column;gap:3px}
+.bstep{border-radius:4px;border:1px solid var(--bd);padding:3px 7px;font-family:var(--mono);font-size:8px;display:flex;align-items:center;gap:5px;color:var(--muted);transition:all .2s}
+.bstep.running{border-color:var(--blue-glow);color:var(--blue);background:rgba(82,184,255,.05)}
+.bstep.success{border-color:var(--green-glow);color:var(--green);background:rgba(61,204,117,.05)}
+.bstep.error{border-color:#5a0f1a;color:var(--red)}
+.bstep-ic{min-width:8px;font-size:7px;transition:all .2s}
+.bstep.running .bstep-ic{animation:spin 1s linear infinite;display:inline-block}
+.bank-footer{padding:6px 10px;border-top:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;gap:6px}
+.bstat{font-family:var(--mono);font-size:8px;color:var(--muted)}
+.bstat.reg{color:var(--green)}
+
+/* ── Mint row ── */
+.mint-row{display:flex;align-items:center;gap:12px;padding:0 18px 14px;flex-wrap:wrap}
+.mint-info{font-family:var(--mono);font-size:9.5px;color:var(--muted);flex:1}
+.mint-info strong{color:var(--label)}
+.mint-step{border:1px solid var(--bd);border-radius:var(--r);padding:5px 10px;font-family:var(--mono);font-size:9px;color:var(--muted);transition:all .2s;display:flex;align-items:center;gap:6px}
+.mint-step.running{border-color:var(--purple-glow);color:var(--purple)}
+.mint-step.success{border-color:var(--green-glow);color:var(--green)}
+.mint-step.error{border-color:#5a0f1a;color:var(--red)}
+
+/* ── Banner ── */
+.banner{display:none;margin:10px 18px 14px;padding:8px 14px;border-radius:var(--r);font-family:var(--mono);font-size:10.5px;font-weight:700}
+.banner.success{display:block;background:#04160a;border:1px solid var(--green);color:var(--green)}
+.banner.error{display:block;background:#120309;border:1px solid var(--red);color:var(--red)}
+
+/* ── Transfer: Tx summary ── */
+.tx-card{margin:12px 18px 0;background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:10px 16px;display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:8px;position:relative;overflow:hidden}
+.tx-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--muted);border-radius:3px 0 0 3px;transition:background .4s}
+.tx-card.settling::before{background:var(--blue)}
+.tx-card.settled::before{background:var(--green)}
+.tx-pname{font-size:12px;font-weight:700}
+.tx-prole{font-family:var(--mono);font-size:8px;letter-spacing:.1em;text-transform:uppercase}
+.tx-sender .tx-prole{color:var(--red)}
+.tx-receiver .tx-prole{color:var(--green)}
+.tx-arrow{font-size:13px;color:var(--muted);transition:color .3s;text-align:center}
+.tx-arrow.active{color:var(--blue)} .tx-arrow.done{color:var(--green)}
+.tx-amt-lbl{font-family:var(--mono);font-size:8px;color:var(--muted);text-align:center}
+.tx-pill{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;border-radius:10px;border:1px solid var(--bd);color:var(--muted);transition:all .3s;display:block;text-align:center;margin-bottom:4px}
+.tx-pill.running{background:var(--blue-dim);border-color:var(--blue-glow);color:var(--blue);animation:blink 1.2s infinite}
+.tx-pill.success{background:var(--green-dim);border-color:var(--green-glow);color:var(--green)}
+.tx-pill.error{background:var(--red-dim);border-color:#5a0f1a;color:var(--red)}
+.tx-recv-row{display:flex;align-items:center;gap:5px;font-size:11px}
+.tx-recv-amt{font-family:var(--mono);font-weight:700;color:var(--green)}.tx-recv-amt.tx-priv{color:var(--muted);font-weight:400}
+
+/* ── Metrics ── */
+.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;padding:10px 18px 0}
+.mc{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:8px 11px;transition:border-color .3s}
+.mc.lit{border-color:var(--bd2)}
+.mc-key{font-family:var(--mono);font-size:7.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.mc-val{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--muted);line-height:1.1;font-variant-numeric:tabular-nums;transition:color .4s}
+.mc-val.set{color:var(--text)} .mc-val.hl{color:var(--teal)}
+.mc-sub{font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:3px}
+.mc-bar{height:2px;background:var(--bd);border-radius:1px;margin-top:5px;overflow:hidden}
+.mc-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--teal),var(--blue));transition:width 1.4s cubic-bezier(.16,1,.3,1)}
+
+/* ── Swimlanes ── */
+.swimlanes{display:grid;grid-template-columns:1fr 14px 210px 14px 1fr;padding:12px 18px 0}
+.lane-hdr{font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;padding:5px 10px 6px;border-radius:var(--r) var(--r) 0 0}
+.lane-body{padding:7px;display:flex;flex-direction:column;gap:4px;border-radius:0 0 var(--r) var(--r)}
+.lane.sender .lane-hdr{color:var(--blue);background:var(--blue-dim);border:1px solid var(--blue-glow);border-bottom:none}
+.lane.sender .lane-body{background:var(--blue-dim);border:1px solid var(--blue-glow);border-top:none}
+.lane.gnark  .lane-hdr{color:var(--teal);background:var(--teal-dim);border:1px solid var(--teal-glow);border-bottom:none}
+.lane.gnark  .lane-body{background:var(--teal-dim);border:1px solid var(--teal-glow);border-top:none}
+.lane.chain  .lane-hdr{color:var(--green);background:var(--green-dim);border:1px solid var(--green-glow);border-bottom:none}
+.lane.chain  .lane-body{background:var(--green-dim);border:1px solid var(--green-glow);border-top:none}
+.ldiv{display:flex;flex-direction:column;align-items:center}
+.ldiv-line{width:1px;flex:1;background:var(--bd)}
+.fdot{width:8px;height:8px;border-radius:50%;background:transparent;transition:all .35s;flex-shrink:0;margin:3px 0}
+.fdot.ab{background:var(--blue);box-shadow:0 0 7px var(--blue);animation:travel 1.5s ease-in-out infinite}
+.fdot.at{background:var(--teal);box-shadow:0 0 7px var(--teal);animation:travel 1.5s ease-in-out infinite}
+@keyframes travel{0%,100%{transform:translateY(0);opacity:.3}50%{transform:translateY(6px);opacity:1}}
+.sc{border:1px solid var(--bd);background:var(--s1);border-radius:5px;padding:6px 9px 6px 11px;position:relative;overflow:hidden;transition:all .2s}
+.sc::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--muted);border-radius:3px 0 0 3px;transition:background .2s}
+.sc-top{display:flex;align-items:center;gap:6px}
+.sc-ic{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--muted);display:flex;align-items:center;justify-content:center;font-size:7px;color:var(--muted);font-family:var(--mono);transition:all .2s;flex-shrink:0}
+.sc-lbl{font-size:10.5px;font-weight:600;color:var(--label);transition:color .2s}
+.sc-sub{font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-top:2px;padding-left:20px}
+.sc.running::before{background:var(--blue)} .sc.running{border-color:var(--blue-glow);background:#071520}
+.sc.running .sc-ic{border-color:var(--blue);color:var(--blue);animation:spin 1s linear infinite}
+.sc.running .sc-lbl{color:var(--blue)}
+.sc.success::before{background:var(--green)} .sc.success{border-color:var(--green-glow);background:#04160a}
+.sc.success .sc-ic{border-color:var(--green);color:var(--green);background:rgba(61,204,117,.1)}
+.sc.success .sc-lbl{color:var(--green)} .sc.success .sc-sub{color:var(--teal)}
+.sc.error::before{background:var(--red)} .sc.error{border-color:#5a0f1a;background:#120309}
+.sc.error .sc-ic{border-color:var(--red);color:var(--red)} .sc.error .sc-lbl{color:var(--red)}
+.lane.gnark .sc.running{border-color:var(--teal-glow)}
+.lane.gnark .sc.running::before{background:var(--teal)}
+.lane.gnark .sc.running .sc-ic{border-color:var(--teal);color:var(--teal)}
+.lane.gnark .sc.running .sc-lbl{color:var(--teal)}
+
+/* ZK explainer */
+.zk-box{display:none;margin-top:4px;background:linear-gradient(135deg,rgba(61,212,176,.08),rgba(82,184,255,.06));border:1px solid var(--teal-glow);border-radius:5px;padding:9px 12px}
+.zk-box.on{display:block}
+.zk-title{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.zk-spin{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--teal);border-top-color:transparent;animation:spin .9s linear infinite;flex-shrink:0}
+.zk-bullet{display:flex;align-items:baseline;gap:5px;font-size:10px;color:var(--muted);opacity:.4;transition:all .4s;padding:2px 0}
+.zk-bullet.active{color:var(--teal);opacity:1} .zk-bullet.done{color:var(--green);opacity:.7}
+.zk-bd{width:4px;height:4px;border-radius:50%;background:var(--muted);flex-shrink:0;margin-top:4px;transition:background .4s}
+.zk-bullet.active .zk-bd{background:var(--teal)} .zk-bullet.done .zk-bd{background:var(--green)}
+.zk-elapsed{margin-top:7px;padding-top:6px;border-top:1px solid var(--subtle);font-family:var(--mono);font-size:9px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.zk-bw{flex:1;height:2px;background:var(--bd);border-radius:1px;overflow:hidden}
+.zk-bar{height:100%;width:0%;background:var(--teal);transition:width 1s linear}
+#zkSecs{color:var(--teal);min-width:24px;text-align:right}
+.proof-badge{display:none;margin-top:4px;background:var(--s2);border:1px solid var(--teal-glow);border-radius:5px;padding:8px 11px}
+.proof-badge.on{display:block}
+.proof-size{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--teal);display:block;margin-bottom:2px}
+.proof-meta{font-family:var(--mono);font-size:8.5px;color:var(--label);line-height:1.9}
+.proof-meta em{color:var(--teal);opacity:.7;font-style:normal}
+
+/* Balance panel */
+.bal-panel{display:none;margin:10px 18px 0;border:1px solid var(--green-glow);border-radius:var(--r);overflow:hidden}
+.bal-panel.on{display:block}
+.bal-head{padding:7px 14px;background:var(--green-dim);border-bottom:1px solid var(--green-glow);display:flex;align-items:center;gap:10px}
+.bal-title{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--green)}
+.bal-badge{font-family:var(--mono);font-size:8.5px;color:var(--teal);background:rgba(61,212,176,.08);border:1px solid var(--teal-glow);border-radius:3px;padding:1px 7px}
+.bal-cols{display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
+.bal-col{padding:12px 18px}
+.bal-col-c{padding:12px 0;text-align:center}
+.bal-role{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px;color:var(--muted)}
+.bal-role.after{color:var(--green)}
+.bal-tokens{font-family:var(--mono);font-size:24px;font-weight:700;margin-bottom:3px;font-variant-numeric:tabular-nums}
+.bal-tokens.before{color:var(--label)} .bal-tokens.after{color:var(--green)}
+.bal-commit{font-family:var(--mono);font-size:8.5px;color:var(--muted);word-break:break-all;transition:color .3s}
+.bal-commit.set{color:var(--label)}
+.bal-arrow{font-family:var(--mono);font-size:28px;color:var(--muted);display:block;margin-bottom:2px}
+.bal-delta{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--red);display:block}
+.bal-note{padding:7px 18px;border-top:1px solid var(--bd);font-size:10px;color:var(--muted);background:var(--s2);line-height:1.55}
+.bal-note strong{color:var(--label)}
+
+/* ── Mini balance grid (transfer tab) ── */
+.bbgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 18px 0}
+.bbcard{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:7px 10px}
+.bbc-name{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--label);margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em}
+.bbc-row{display:flex;justify-content:space-between;align-items:baseline;gap:4px;margin-bottom:1px}
+.bbc-lbl{font-family:var(--mono);font-size:7.5px;color:var(--muted)}
+.bbc-val{font-family:var(--mono);font-size:8px;color:var(--muted);transition:color .4s;word-break:break-all}
+.bbc-val.pre.set{color:var(--label)}.bbc-val.fin.set{color:var(--teal)}
+
+/* ── Verify tab ── */
+.vcard{margin:10px 18px 0;background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px}
+.vcard-title{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;margin-bottom:10px}
+.vbal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.vbal-card{background:var(--s2);border:1px solid var(--bd2);border-radius:5px;padding:8px 10px}
+.vbal-name{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--label);margin-bottom:4px}
+.vbal-point{font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.5;transition:color .3s}
+.vbal-point.set{color:var(--teal)}
+.vcalc-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.vcalc-lbl{font-family:var(--mono);font-size:9px;color:var(--muted);min-width:80px}
+.vcalc-inp{background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:4px 8px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none;width:220px;max-width:100%}
+.vcalc-inp:focus{border-color:var(--blue)}
+.vcalc-out{background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:8px 12px;margin-top:4px;font-family:var(--mono);font-size:9px;word-break:break-all;line-height:1.7;display:none}
+.vcalc-out.on{display:block}
+.rv-sum-ok{color:var(--green)}.rv-sum-bad{color:var(--red)}
+.rv-cards{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.rv-card{background:var(--s2);border:1px solid var(--bd2);border-radius:5px;padding:8px 10px}
+.rv-card-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.rv-card-name{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--text)}
+.rv-card-role{font-family:var(--mono);font-size:8px;color:var(--muted);flex:1}
+.rv-copy-btn{font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd2);color:var(--muted);border-radius:3px;padding:2px 8px;cursor:pointer;transition:border-color .2s,color .2s;white-space:nowrap;flex-shrink:0}
+.rv-copy-btn:hover{border-color:var(--teal);color:var(--teal)}
+.rv-copy-btn.copied{border-color:var(--green);color:var(--green)}
+.rv-val{font-family:var(--mono);font-size:8px;color:var(--teal);word-break:break-all;line-height:1.6;user-select:all;cursor:text}
+.rv-top-bar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.rv-copyall-btn{font-family:var(--mono);font-size:8.5px;background:none;border:1px solid var(--bd2);color:var(--muted);border-radius:4px;padding:3px 10px;cursor:pointer;transition:border-color .2s,color .2s}
+.rv-copyall-btn:hover{border-color:var(--amber);color:var(--amber)}
+.rv-copyall-btn.copied{border-color:var(--green);color:var(--green)}
+
+/* ── Log ── */
+.log-panel{height:148px;flex-shrink:0;border-top:1px solid var(--bd);background:var(--s1);display:flex;flex-direction:column}
+.log-hdr{padding:4px 14px;background:var(--s2);border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px}
+.log-dot{width:5px;height:5px;border-radius:50%;background:var(--muted);transition:background .3s}
+#logOut{flex:1;overflow-y:auto;padding:5px 14px;display:flex;flex-direction:column;font-family:var(--mono);font-size:9px;line-height:1.75}
+.ll{display:flex;gap:8px}
+.lts{color:var(--muted);flex-shrink:0;width:72px}
+.lb{color:var(--text);word-break:break-word}
+.lb.ok{color:var(--green)} .lb.err{color:var(--red)} .lb.info{color:var(--teal)}
+#logOut::-webkit-scrollbar{width:3px}
+#logOut::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <div>
+    <div class="brand">Enygma Payments</div>
+    <h1>Confidential Interbank Settlement · Hardhat Demo</h1>
+  </div>
+  <div class="prereqs"><span>Hardhat :8545</span> · <span>Gnark :8080</span> · <span>Relayer :8082</span></div>
+  <div class="status-row">
+    <div class="dot" id="gDot"></div>
+    <span class="status-txt" id="gStatus">Ready</span>
+  </div>
+</div>
+
+<!-- ── Tab bar ── -->
+<div class="tabbar">
+  <div class="tab setup-tab active" data-tab="setup">
+    <div class="tab-badge"></div>I · Setup
+    <span class="tab-prog" id="tp-setup"></span>
+  </div>
+  <div class="tab onboard-tab" data-tab="onboard">
+    <div class="tab-badge"></div>II · Bank Onboarding
+    <span class="tab-prog" id="tp-onboard"></span>
+  </div>
+  <div class="tab transfer-tab" data-tab="transfer">
+    <div class="tab-badge"></div>III · Payment Demo
+    <span class="tab-prog" id="tp-transfer"></span>
+  </div>
+  <div class="tab verify-tab" data-tab="verify">
+    <div class="tab-badge"></div>IV · Verify
+  </div>
+</div>
+
+<div class="tabs-wrap">
+
+<!-- ══════════ TAB I: SETUP ══════════ -->
+<div class="tab-panel active" id="panel-setup">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--amber);color:var(--amber)">I</div>
+    <div class="sec-title" style="color:var(--amber)">Contract Setup</div>
+    <div class="sec-sub">Chain · Enygma · ZK Verifier</div>
+    <button class="action-btn btn-setup" id="setupBtn">▶ Run Setup</button>
+  </div>
+  <div class="hstrip">
+    <div class="hstep" id="hs-prerequisites">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-prerequisites">○</div><div class="hstep-lbl">Prerequisites</div></div>
+      <div class="hstep-sub" id="hsub-prerequisites">Hardhat · Gnark · Relayer</div>
+    </div>
+    <div class="harrow">→</div>
+    <div class="hstep" id="hs-dial_chain">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-dial_chain">○</div><div class="hstep-lbl">Dial Chain</div></div>
+      <div class="hstep-sub" id="hsub-dial_chain">ethclient.Dial(RPC)</div>
+    </div>
+    <div class="harrow">→</div>
+    <div class="hstep" id="hs-init_contract">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-init_contract">○</div><div class="hstep-lbl">Init Contract</div></div>
+      <div class="hstep-sub" id="hsub-init_contract">initialize() — idempotent</div>
+    </div>
+    <div class="harrow">→</div>
+    <div class="hstep" id="hs-add_verifier">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-add_verifier">○</div><div class="hstep-lbl">Add Verifier</div></div>
+      <div class="hstep-sub" id="hsub-add_verifier">addVerifier(addr)</div>
+    </div>
+  </div>
+  <div class="cc-strip">
+    <div class="cc-card" id="cc-enygma">
+      <div class="cc-lbl">Enygma Contract <span class="cc-type">Confidential ERC-20</span></div>
+      <div class="cc-addr" id="addr-enygma">—</div>
+      <div class="cc-meta">Owner: <span id="addr-owner">—</span></div>
+    </div>
+    <div class="cc-card" id="cc-verifier">
+      <div class="cc-lbl">ZK Verifier <span class="cc-type">Groth16 · BN254</span></div>
+      <div class="cc-addr" id="addr-verifier">—</div>
+      <div class="cc-meta">Block: <span id="chain-block">—</span></div>
+    </div>
+  </div>
+  <div class="banner" id="setup-banner"></div>
+</div>
+
+<!-- ══════════ TAB II: ONBOARDING ══════════ -->
+<div class="tab-panel" id="panel-onboard">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--purple);color:var(--purple)">II</div>
+    <div class="sec-title" style="color:var(--purple)">Bank Onboarding</div>
+    <div class="sec-sub">Register banks one at a time</div>
+  </div>
+  <div class="bank-grid" id="bankGrid"></div>
+  <div class="banner" id="onboard-banner"></div>
+</div>
+
+<!-- ══════════ TAB III: TRANSFER ══════════ -->
+<div class="tab-panel" id="panel-transfer">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--teal);color:var(--teal)">III</div>
+    <div class="sec-title" style="color:var(--teal)">Confidential Payment Demo</div>
+    <div class="sec-sub">6-bank anonymity set · Groth16 ZK · On-chain settlement</div>
+    <button class="action-btn btn-transfer" id="transferBtn">▶ Run Transfer</button>
+  </div>
+
+  <!-- Mint section -->
+  <div style="margin:12px 18px 0;background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--purple)">Mint Tokens</div>
+    <div style="display:flex;align-items:center;gap:6px;flex:1">
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)">bank</label>
+      <select id="mintBankSelect"
+        style="background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 7px;font-family:var(--mono);font-size:11px;color:var(--purple);font-weight:700;outline:none;cursor:pointer">
+        <option value="0">Bank 0</option><option value="1">Bank 1</option><option value="2">Bank 2</option>
+        <option value="3">Bank 3</option><option value="4">Bank 4</option><option value="5">Bank 5</option>
+      </select>
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)">amount</label>
+      <input id="mintAmountInput" type="number" value="500" min="1" step="100"
+        style="width:90px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:4px 8px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none">
+      <button class="action-btn btn-onboard btn-sm" id="mintBtn">Mint</button>
+      <div class="mint-step" id="mintStep" style="flex:1"><span id="mintIc">○</span>&nbsp;<span id="mintLbl">Run mint before transfer</span></div>
+    </div>
+  </div>
+
+  <!-- Transfer amounts config -->
+  <div style="margin:8px 18px 0;background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:10px 14px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+      <div style="font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)">Transfer Amounts</div>
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)">sender</label>
+      <select id="txSenderSelect"
+        style="background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 7px;font-family:var(--mono);font-size:11px;color:var(--red);font-weight:700;outline:none;cursor:pointer">
+        <option value="0">Bank 0</option><option value="1">Bank 1</option><option value="2">Bank 2</option>
+        <option value="3">Bank 3</option><option value="4">Bank 4</option><option value="5">Bank 5</option>
+      </select>
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)">sends</label>
+      <input id="txSenderInput" type="number" value="100" min="1" step="10"
+        style="width:76px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:4px 7px;font-family:var(--mono);font-size:12px;color:var(--red);font-weight:700;outline:none">
+      <span id="txAmtAllocated" style="font-family:var(--mono);font-size:9px;color:var(--green)">allocated 100 / 100</span>
+      <span id="txAmtErr" style="font-family:var(--mono);font-size:9px;color:var(--red);display:none">⚠ amounts must sum to sender total</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--muted)">→</span>
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="txRecvLbl-0">Bank 0</label>
+      <input id="txRecvInput-0" type="number" value="0" min="0" step="10"
+        style="width:64px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;color:var(--green);font-weight:700;outline:none">
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="txRecvLbl-1">Bank 1</label>
+      <input id="txRecvInput-1" type="number" value="60" min="0" step="10"
+        style="width:64px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;color:var(--green);font-weight:700;outline:none">
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="txRecvLbl-2">Bank 2</label>
+      <input id="txRecvInput-2" type="number" value="40" min="0" step="10"
+        style="width:64px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;color:var(--green);font-weight:700;outline:none">
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="txRecvLbl-3">Bank 3</label>
+      <input id="txRecvInput-3" type="number" value="0" min="0" step="10"
+        style="width:64px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;color:var(--green);font-weight:700;outline:none">
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="txRecvLbl-4">Bank 4</label>
+      <input id="txRecvInput-4" type="number" value="0" min="0" step="10"
+        style="width:64px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;color:var(--green);font-weight:700;outline:none">
+      <label style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="txRecvLbl-5">Bank 5</label>
+      <input id="txRecvInput-5" type="number" value="0" min="0" step="10"
+        style="width:64px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:11px;color:var(--green);font-weight:700;outline:none">
+    </div>
+  </div>
+
+  <!-- Tx card -->
+  <div class="tx-card" id="txCard">
+    <div class="tx-sender">
+      <div class="tx-pname" id="txCardSenderName">Bank 0</div>
+      <div class="tx-prole">Sending Bank</div>
+      <div id="txCardSenderAmt" style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--red);margin-top:2px">−100 tokens</div>
+    </div>
+    <div style="text-align:center">
+      <div class="tx-arrow" id="txA1">→</div>
+      <div class="tx-amt-lbl">amount hidden</div>
+    </div>
+    <div style="text-align:center">
+      <div class="tx-pill" id="txPill">Waiting</div>
+      <div style="font-family:var(--mono);font-size:8px;color:var(--muted)">ZK · BN254 · Groth16 · 6 participants</div>
+    </div>
+    <div style="text-align:center">
+      <div class="tx-arrow" id="txA2">→</div>
+      <div class="tx-amt-lbl">amount hidden</div>
+    </div>
+    <div id="txCardReceivers">
+      <div class="tx-recv-row" id="txCardRow-0" style="display:none"><span>Bank 0</span>&nbsp;<span class="tx-recv-amt tx-priv" id="txCardBankAmt-0">0</span></div>
+      <div class="tx-recv-row" id="txCardRow-1"><span>Bank 1</span>&nbsp;<span class="tx-recv-amt" id="txCardBankAmt-1">+60</span></div>
+      <div class="tx-recv-row" id="txCardRow-2"><span>Bank 2</span>&nbsp;<span class="tx-recv-amt" id="txCardBankAmt-2">+40</span></div>
+      <div class="tx-recv-row" id="txCardRow-3"><span>Bank 3</span>&nbsp;<span class="tx-recv-amt tx-priv" id="txCardBankAmt-3">0</span></div>
+      <div class="tx-recv-row" id="txCardRow-4"><span>Bank 4</span>&nbsp;<span class="tx-recv-amt tx-priv" id="txCardBankAmt-4">0</span></div>
+      <div class="tx-recv-row" id="txCardRow-5"><span>Bank 5</span>&nbsp;<span class="tx-recv-amt tx-priv" id="txCardBankAmt-5">0</span></div>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="mc" id="mc-proofTime"><div class="mc-key">Proof Generation</div><div class="mc-val" id="mv-proofTime">—</div><div class="mc-sub">Groth16 witness + prove</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-proofTime"></div></div></div>
+    <div class="mc" id="mc-proofSize"><div class="mc-key">Proof Size</div><div class="mc-val" id="mv-proofSize">—</div><div class="mc-sub">8 × 32-byte field elems</div></div>
+    <div class="mc" id="mc-verifyTime"><div class="mc-key">Verify RTT</div><div class="mc-val" id="mv-verifyTime">—</div><div class="mc-sub">POST relay → confirmed</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-verifyTime"></div></div></div>
+    <div class="mc" id="mc-verifyGas"><div class="mc-key">Verify Gas</div><div class="mc-val" id="mv-verifyGas">—</div><div class="mc-sub">transfer() on-chain</div></div>
+    <div class="mc" id="mc-totalGas"><div class="mc-key">Total Gas</div><div class="mc-val hl" id="mv-totalGas">—</div><div class="mc-sub">all txs combined</div></div>
+    <div class="mc" id="mc-flowTime"><div class="mc-key">Flow Time</div><div class="mc-val hl" id="mv-flowTime">—</div><div class="mc-sub">end-to-end</div></div>
+  </div>
+
+  <!-- Swimlanes -->
+  <div class="swimlanes">
+    <div class="lane sender">
+      <div class="lane-hdr">Sending Bank · Privacy Node</div>
+      <div class="lane-body">
+        <div class="sc" id="sc-read_state"><div class="sc-top"><div class="sc-ic" id="si-read_state">○</div><div class="sc-lbl">Read On-Chain State</div></div><div class="sc-sub" id="ss-read_state">getPublicValues + getBlckHash</div></div>
+        <div class="sc" id="sc-derive_secrets"><div class="sc-top"><div class="sc-ic" id="si-derive_secrets">○</div><div class="sc-lbl">Shared Secrets</div></div><div class="sc-sub" id="ss-derive_secrets">s₀ = Poseidon(prevR, sk)</div></div>
+        <div class="sc" id="sc-compute_randoms"><div class="sc-top"><div class="sc-ic" id="si-compute_randoms">○</div><div class="sc-lbl">Privacy Randomizers</div></div><div class="sc-sub" id="ss-compute_randoms">r_i = Poseidon(H₂₁, s_i, epoch)</div></div>
+        <div class="sc" id="sc-build_commits"><div class="sc-top"><div class="sc-ic" id="si-build_commits">○</div><div class="sc-lbl">Encrypt Amounts</div></div><div class="sc-sub" id="ss-build_commits">v·G + r·H (Pedersen)</div></div>
+        <div class="sc" id="sc-compute_tags"><div class="sc-top"><div class="sc-ic" id="si-compute_tags">○</div><div class="sc-lbl">Message Tags ×6</div></div><div class="sc-sub" id="ss-compute_tags">t_i = Poseidon(H₁₂, s_i, epoch)</div></div>
+        <div class="sc" id="sc-compute_nullifier"><div class="sc-top"><div class="sc-ic" id="si-compute_nullifier">○</div><div class="sc-lbl">Spend Nullifier</div></div><div class="sc-sub" id="ss-compute_nullifier">η = Poseidon(H(s₀), epoch)</div></div>
+      </div>
+    </div>
+    <div class="ldiv"><div class="ldiv-line"></div><div class="fdot" id="fdot-sg"></div><div class="ldiv-line"></div></div>
+    <div class="lane gnark">
+      <div class="lane-hdr">ZK Engine · Gnark Prover</div>
+      <div class="lane-body">
+        <div class="sc" id="sc-zk_proof"><div class="sc-top"><div class="sc-ic" id="si-zk_proof">○</div><div class="sc-lbl">ZK Proof Generation</div></div><div class="sc-sub" id="ss-zk_proof">POST /proof/enygma · Groth16</div></div>
+        <div class="zk-box" id="zkBox">
+          <div class="zk-title"><div class="zk-spin"></div>Prover is computing…</div>
+          <div class="zk-bullet" id="zkb0"><div class="zk-bd"></div>Verifying sender holds the private key</div>
+          <div class="zk-bullet" id="zkb1"><div class="zk-bd"></div>Proving encrypted amounts sum to zero</div>
+          <div class="zk-bullet" id="zkb2"><div class="zk-bd"></div>Binding all signals to the epoch block</div>
+          <div class="zk-bullet" id="zkb3"><div class="zk-bd"></div>Generating 256-byte Groth16 proof</div>
+          <div class="zk-elapsed"><span>elapsed</span><div class="zk-bw"><div class="zk-bar" id="zkBar"></div></div><span id="zkSecs">0s</span></div>
+        </div>
+        <div class="proof-badge" id="proofBadge">
+          <span class="proof-size">256 bytes</span>
+          <div class="proof-meta"><em>8 field elements</em> · BN254 · Groth16<br><em>Verifies in &lt;1ms</em> on any EVM chain</div>
+        </div>
+      </div>
+    </div>
+    <div class="ldiv"><div class="ldiv-line"></div><div class="fdot" id="fdot-gc"></div><div class="ldiv-line"></div></div>
+    <div class="lane chain">
+      <div class="lane-hdr">Settlement Network · On-Chain</div>
+      <div class="lane-body">
+        <div class="sc" id="sc-relay_transfer"><div class="sc-top"><div class="sc-ic" id="si-relay_transfer">○</div><div class="sc-lbl">Submit via Relayer</div></div><div class="sc-sub" id="ss-relay_transfer">POST /relay/transfer → transfer()</div></div>
+        <div class="sc" id="sc-verify_balance"><div class="sc-top"><div class="sc-ic" id="si-verify_balance">○</div><div class="sc-lbl">Verify Settlement</div></div><div class="sc-sub" id="ss-verify_balance">getBalance + homomorphic check</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- All-bank balance grid -->
+  <div class="bbgrid" id="bbGrid"></div>
+
+  <!-- Balance panel -->
+  <div class="bal-panel" id="balPanel">
+    <div class="bal-head">
+      <span class="bal-title" id="balPanelTitle">Settlement Confirmed — Bank 0</span>
+      <span class="bal-badge">Verified on-chain ✓</span>
+    </div>
+    <div class="bal-cols">
+      <div class="bal-col">
+        <div class="bal-role">Balance Before</div>
+        <div class="bal-tokens before">500 tokens</div>
+        <div style="font-size:9.5px;color:var(--muted);margin-bottom:2px">Encrypted commitment</div>
+        <div class="bal-commit" id="balBefore">reading…</div>
+      </div>
+      <div class="bal-col-c">
+        <span class="bal-arrow">→</span>
+        <span class="bal-delta">−100</span>
+        <span style="font-size:9px;color:var(--muted)">private</span>
+      </div>
+      <div class="bal-col">
+        <div class="bal-role after">Balance After ✓</div>
+        <div class="bal-tokens after">400 tokens</div>
+        <div style="font-size:9.5px;color:var(--muted);margin-bottom:2px">Encrypted commitment</div>
+        <div class="bal-commit" id="balAfter">settling…</div>
+      </div>
+    </div>
+    <div class="bal-note"><strong>What the blockchain sees:</strong> two different elliptic curve points. The amounts 500 and 400 are <strong>never stored on-chain</strong> — only banks with the correct private keys can decrypt them.</div>
+  </div>
+
+  <div class="banner" id="transfer-banner"></div>
+</div>
+
+<!-- ══════════ TAB IV: VERIFY ══════════ -->
+<div class="tab-panel" id="panel-verify">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--blue);color:var(--blue)">IV</div>
+    <div class="sec-title" style="color:var(--blue)">Verify & Calculate</div>
+    <div class="sec-sub">On-chain balances · Pedersen calculator · Random factor conservation</div>
+  </div>
+
+  <!-- On-chain Balances -->
+  <div class="vcard">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div class="vcard-title" style="color:var(--blue);margin-bottom:0">On-Chain Balances · Pedersen Commitment Points</div>
+      <button class="action-btn btn-sm" style="background:var(--blue);color:#001428" onclick="refreshBalances()">⟳ Refresh</button>
+      <span id="vbalStatus" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)"></span>
+    </div>
+    <div class="vbal-grid" id="vbalGrid"></div>
+  </div>
+
+  <!-- Pedersen Commitment Calculator -->
+  <div class="vcard" style="margin-top:8px">
+    <div class="vcard-title" style="color:var(--purple)">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
+    <div class="vcalc-row">
+      <span class="vcalc-lbl">v (value)</span>
+      <input class="vcalc-inp" id="calcV" type="text" inputmode="numeric" placeholder="e.g. 500" value="500">
+    </div>
+    <div class="vcalc-row">
+      <span class="vcalc-lbl">r (random factor)</span>
+      <input class="vcalc-inp" id="calcR" type="text" inputmode="numeric" placeholder="e.g. 67890" value="67890">
+    </div>
+    <button class="action-btn btn-sm" style="background:var(--purple);color:#0e0818" onclick="calcPedersen()">Compute</button>
+    <div class="vcalc-out" id="calcOut">
+      <div style="color:var(--muted);margin-bottom:4px">Com(<span id="co-v">—</span>, <span id="co-r">—</span>) =</div>
+      <div>C1 (x): <span id="calcC1" style="color:var(--teal)">—</span></div>
+      <div>C2 (y): <span id="calcC2" style="color:var(--teal)">—</span></div>
+    </div>
+  </div>
+
+  <!-- Random Factor Sum (Conservation Check) -->
+  <div class="vcard" style="margin-top:8px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div class="vcard-title" style="color:var(--amber);margin-bottom:0">Random Factor · TxRandomValues</div>
+      <button class="action-btn btn-sm" style="background:var(--amber);color:#180e00" onclick="loadRValues()">⟳ Load Last Transfer</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:10px;line-height:1.7">
+      Each transfer produces 6 blinding factors. The sender's <strong style="color:var(--amber)">txRandom[0]</strong> = Σ raw_r[1..5]; each receiver's <strong style="color:var(--amber)">txRandom[i]</strong> = P − raw_r[i], so <strong style="color:var(--amber)">Σ txRandom ≡ 0 (mod P)</strong>.
+      Each value below is the <em>actual txRandomValue</em> used in <code style="color:var(--teal)">Com(v, r) = v·G + r·H</code> — use these directly to verify on-chain balances.
+    </div>
+    <div id="rvContent" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">Run a transfer first, then click Load Last Transfer.</div>
+  </div>
+
+  <!-- Cumulative R across transfers -->
+  <div class="vcard" style="margin-top:8px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div class="vcard-title" style="color:var(--teal);margin-bottom:0">Cumulative R · Balance Verification</div>
+      <button class="action-btn btn-sm" style="background:var(--teal);color:#001a18" onclick="loadCumulativeR()">⟳ Refresh</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:10px;line-height:1.7">
+      Running sum of <code style="color:var(--teal)">txRandom</code> across <strong id="cumTransferCount" style="color:var(--teal)">all</strong> transfers.
+      Pedersen commitments are additive: <code style="color:var(--teal)">Σ Com(v, r) = Com(Σv, Σr)</code> —
+      so <code style="color:var(--teal)">Com(cumulative_balance, cumulative_r)</code> must equal the on-chain commitment point.
+      Use these r values together with the Pedersen Calculator above to cross-check.
+    </div>
+    <div id="cumContent" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">Run at least one transfer, then click Refresh.</div>
+  </div>
+</div>
+
+</div><!-- tabs-wrap -->
+
+<!-- ── Log ── -->
+<div class="log-panel">
+  <div class="log-hdr">
+    <div class="log-dot" id="logDot"></div>Trace log — all tabs
+    <button id="copyBtn" style="margin-left:auto;font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd);color:var(--muted);border-radius:3px;padding:1px 6px;cursor:pointer">copy</button>
+  </div>
+  <div id="logOut"></div>
+</div>
+
+</div><!-- app -->
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let currentSenderIdx = 0;
+
+// ── Banks ────────────────────────────────────────────────────────────────────
+const BANKS=[
+  {name:'Bank 0',badge:'SENDER',  cls:'badge-sender',  sk:'424242',acct:'#1'},
+  {name:'Bank 1',badge:'RECEIVER',cls:'badge-receiver',sk:'1',     acct:'#2'},
+  {name:'Bank 2',badge:'RECEIVER',cls:'badge-receiver',sk:'2',     acct:'#3'},
+  {name:'Bank 3',badge:'OBSERVER',cls:'badge-observer',sk:'3',     acct:'#4'},
+  {name:'Bank 4',badge:'OBSERVER',cls:'badge-observer',sk:'4',     acct:'#5'},
+  {name:'Bank 5',badge:'OBSERVER',cls:'badge-observer',sk:'5',     acct:'#6'},
+];
+
+function buildBanks(){
+  const g=document.getElementById('bankGrid'); g.innerHTML='';
+  BANKS.forEach((b,i)=>{
+    const d=document.createElement('div'); d.className='bank-card'; d.id='bc-'+i;
+    d.innerHTML=`
+      <div class="bank-head"><div class="bank-name">${b.name}</div><span class="bank-badge ${b.cls}">${b.badge}</span></div>
+      <div class="bank-fields">
+        <div class="brow"><span class="bk">acct</span><span class="bv">${b.acct}</span></div>
+        <div style="padding:2px 0">
+          <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-bottom:2px">sk (secret key — editable)</div>
+          <input id="bsk-${i}" type="text" inputmode="numeric" value="${b.sk}"
+            style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:3px 6px;font-family:var(--mono);font-size:10px;color:var(--amber);font-weight:700;outline:none;transition:border-color .2s"
+            onfocus="this.style.borderColor='var(--amber)'" onblur="this.style.borderColor='var(--bd2)'"
+            oninput="document.getElementById('bpk-${i}').textContent='—';document.getElementById('bpk-${i}').style.color='var(--muted)'">
+        </div>
+        <div style="padding:2px 0">
+          <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-bottom:1px">pk (public key)</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.4;transition:color .3s" id="bpk-${i}">—</div>
+        </div>
+      </div>
+      <div class="bank-steps">
+        <div class="bstep" id="bst-${i}-key"><span class="bstep-ic">○</span>&nbsp;Derive key</div>
+        <div class="bstep" id="bst-${i}-reg"><span class="bstep-ic">○</span>&nbsp;Register on-chain</div>
+      </div>
+      <div class="bank-footer">
+        <span class="bstat" id="bstat-${i}">Pending</span>
+        <button class="action-btn btn-onboard btn-sm" id="bregBtn-${i}" onclick="registerBank(${i})">Register</button>
+      </div>`;
+    g.appendChild(d);
+  });
+}
+
+function setBankStep(i,sfx,state,msg){
+  const el=document.getElementById(`bst-${i}-${sfx}`); if(!el) return;
+  el.className='bstep '+(state||'');
+  const ic=el.querySelector('.bstep-ic');
+  ic.textContent=state==='running'?'↻':state==='success'?'✓':state==='error'?'✗':'○';
+  if(msg){ const t=el.childNodes[2]; if(t) t.textContent=' '+msg.slice(0,28); }
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-'+t.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Global status ────────────────────────────────────────────────────────────
+function setGlobal(state,txt){
+  document.getElementById('gDot').className='dot '+(state||'');
+  document.getElementById('gStatus').textContent=txt;
+  const c=state==='running'?'var(--blue)':state==='success'?'var(--green)':state==='error'?'var(--red)':'var(--muted)';
+  document.getElementById('logDot').style.background=c;
+}
+
+// ── Hstep update ─────────────────────────────────────────────────────────────
+const HDEFAULTS={prerequisites:'Hardhat · Gnark · Relayer',dial_chain:'ethclient.Dial(RPC)',init_contract:'initialize() — idempotent',add_verifier:'addVerifier(addr)'};
+function updateHstep(step,status,msg){
+  const c=document.getElementById('hs-'+step); if(!c) return;
+  c.className='hstep '+(status||'');
+  const ic=document.getElementById('hi-'+step);
+  if(ic) ic.textContent=status==='running'?'↻':status==='success'?'✓':status==='error'?'✗':'○';
+  if(msg){const sub=document.getElementById('hsub-'+step);if(sub) sub.textContent=msg;}
+}
+
+// ── Swimlane step update ─────────────────────────────────────────────────────
+const SDEFAULTS={read_state:'getPublicValues + getBlckHash',derive_secrets:'s₀ = Poseidon(prevR, sk)',compute_randoms:'r_i = Poseidon(H₂₁, s_i, epoch)',build_commits:'v·G + r·H (Pedersen)',compute_tags:'t_i = Poseidon(H₁₂, s_i, epoch)',compute_nullifier:'η = Poseidon(H(s₀), epoch)',zk_proof:'POST /proof/enygma · Groth16',relay_transfer:'POST /relay/transfer → transfer()',verify_balance:'getBalance + homomorphic check'};
+function updateScard(step,status,msg){
+  const c=document.getElementById('sc-'+step); if(!c) return;
+  c.className='sc '+(status||'');
+  const ic=document.getElementById('si-'+step);
+  if(ic) ic.textContent=status==='running'?'↻':status==='success'?'✓':status==='error'?'✗':'○';
+  if(msg){const sub=document.getElementById('ss-'+step);if(sub) sub.textContent=msg;}
+  if(step==='zk_proof'){
+    if(status==='running'){startZk();document.getElementById('fdot-sg').className='fdot ab';}
+    if(status==='success'||status==='error'){stopZk(status==='success');document.getElementById('fdot-sg').className='fdot';}
+  }
+  if(step==='relay_transfer'){
+    if(status==='running'){setTxPill('running');document.getElementById('fdot-gc').className='fdot at';}
+    if(status==='success'){setTxPill('success');document.getElementById('fdot-gc').className='fdot';}
+    if(status==='error')  {setTxPill('error');  document.getElementById('fdot-gc').className='fdot';}
+  }
+  if(step==='verify_balance'&&status==='success') document.getElementById('balPanel').classList.add('on');
+}
+
+// ── Tx pill ──────────────────────────────────────────────────────────────────
+function setTxPill(s){
+  const p=document.getElementById('txPill'),a1=document.getElementById('txA1'),a2=document.getElementById('txA2'),c=document.getElementById('txCard');
+  p.className='tx-pill '+(s||'');
+  p.textContent=s==='running'?'● Settling…':s==='success'?'✓ Settled':s==='error'?'✗ Failed':'Waiting';
+  a1.className='tx-arrow'+(s==='running'?' active':s==='success'?' done':'');
+  a2.className=a1.className;
+  c.className='tx-card'+(s==='running'?' settling':s==='success'?' settled':'');
+}
+
+// ── ZK explainer ─────────────────────────────────────────────────────────────
+let zkT=null,zkBT=null,zkBIdx=0,zkS=0;
+function startZk(){
+  document.getElementById('zkBox').className='zk-box on';
+  document.getElementById('proofBadge').className='proof-badge';
+  [0,1,2,3].forEach(i=>{const b=document.getElementById('zkb'+i);b.className='zk-bullet';});
+  zkBIdx=0;zkS=Date.now();activateZkB(0);
+  zkBT=setInterval(()=>{zkBIdx++;if(zkBIdx<4)activateZkB(zkBIdx);},7500);
+  const bar=document.getElementById('zkBar'),sec=document.getElementById('zkSecs');
+  bar.style.width='0%';
+  zkT=setInterval(()=>{const e=Date.now()-zkS;bar.style.width=Math.min(100,(e/32000)*100)+'%';sec.textContent=(e/1000).toFixed(0)+'s';},1000);
+}
+function activateZkB(idx){
+  for(let i=0;i<idx;i++){const b=document.getElementById('zkb'+i);b.classList.remove('active');b.classList.add('done');}
+  const c=document.getElementById('zkb'+idx);if(c)c.classList.add('active');
+}
+function stopZk(ok){
+  clearInterval(zkT);clearInterval(zkBT);
+  if(ok){[0,1,2,3].forEach(i=>{const b=document.getElementById('zkb'+i);b.classList.remove('active');b.classList.add('done');});document.getElementById('zkBar').style.width='100%';}
+  setTimeout(()=>{document.getElementById('zkBox').className='zk-box';if(ok)document.getElementById('proofBadge').className='proof-badge on';},900);
+}
+
+// ── Metrics ──────────────────────────────────────────────────────────────────
+function commas(n){return String(n).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
+function setMetric(id,val,barId,bv,bm){
+  const e=document.getElementById('mv-'+id);if(e){e.textContent=val;e.classList.add('set');}
+  const mc=document.getElementById('mc-'+id);if(mc)mc.classList.add('lit');
+  if(barId&&bm>0){const b=document.getElementById(barId);if(b)b.style.width=Math.min(100,(bv/bm)*100)+'%';}
+}
+function resetMetrics(){
+  ['proofTime','proofSize','verifyTime','verifyGas','totalGas','flowTime'].forEach(id=>{
+    const e=document.getElementById('mv-'+id);if(e){e.textContent='—';e.classList.remove('set');}
+    const mc=document.getElementById('mc-'+id);if(mc)mc.classList.remove('lit');
+  });
+  ['mb-proofTime','mb-verifyTime'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.width='0%';});
+}
+function handleMetric(f,v){
+  const n=parseInt(v);
+  if(f==='proofTimeMs')  setMetric('proofTime', n+'ms','mb-proofTime',n,60000);
+  if(f==='proofSizeBytes')setMetric('proofSize', v+' B');
+  if(f==='verifyTimeMs') setMetric('verifyTime',n+'ms','mb-verifyTime',n,30000);
+  if(f==='verifyGas')    setMetric('verifyGas', commas(v));
+  if(f==='totalGas')     setMetric('totalGas',  commas(v));
+  if(f==='flowTimeMs')   setMetric('flowTime',  (n/1000).toFixed(1)+'s');
+}
+
+// ── Proto ────────────────────────────────────────────────────────────────────
+function handleProto(f,v){
+  if(f==='tokenAddr'){document.getElementById('addr-enygma').textContent=v;document.getElementById('addr-enygma').classList.add('set');document.getElementById('cc-enygma').classList.add('lit');}
+  if(f==='verifierAddr'){document.getElementById('addr-verifier').textContent=v;document.getElementById('addr-verifier').classList.add('set');document.getElementById('cc-verifier').classList.add('lit');}
+  if(f==='ownerAddr')  document.getElementById('addr-owner').textContent=v.slice(0,20)+'…';
+  if(f==='blockNum')   document.getElementById('chain-block').textContent=v;
+  if(f==='senderIdx'){
+    currentSenderIdx=parseInt(v)||0;
+    const sn=document.getElementById('txCardSenderName');if(sn)sn.textContent='Bank '+currentSenderIdx;
+    const bp=document.getElementById('balPanelTitle');if(bp)bp.textContent='Settlement Confirmed — Bank '+currentSenderIdx;
+  }
+}
+
+// ── Participant ──────────────────────────────────────────────────────────────
+function handleParticipant(pid,field,value){
+  if(field==='pk'){
+    const e=document.getElementById('bpk-'+pid);
+    if(e){e.textContent=value;e.style.color='var(--teal)';}
+  }
+  if(field==='balance'&&pid===currentSenderIdx){const e=document.getElementById('balAfter');if(e){e.textContent=value;e.classList.add('set');}}
+  if(field==='prevBalance'&&pid===currentSenderIdx){const e=document.getElementById('balBefore');if(e){e.textContent=value;e.classList.add('set');}}
+  if(field==='prevBal'){
+    const e=document.getElementById('bbc-pre-'+pid);
+    if(e){e.textContent=value;e.className='bbc-val pre set';}
+    // reset final
+    const f=document.getElementById('bbc-fin-'+pid);
+    if(f){f.textContent='—';f.className='bbc-val fin';}
+  }
+  if(field==='finalBal'){
+    const e=document.getElementById('bbc-fin-'+pid);
+    if(e){e.textContent=value;e.className='bbc-val fin set';}
+    // also update verify tab balance card
+    const v=document.getElementById('vbal-pt-'+pid);
+    if(v){v.textContent=value;v.className='vbal-point set';}
+  }
+}
+
+// ── Step routing ─────────────────────────────────────────────────────────────
+function handleStep(d){
+  const {tab,step,status,msg}=d;
+  if(tab==='setup'){
+    updateHstep(step,status,msg);
+    if(status==='running') setGlobal('running',step.replace(/_/g,' '));
+  } else if(tab==='onboarding'){
+    if(step&&step.startsWith('bank_')){
+      const pts=step.split('_'), idx=parseInt(pts[1]), sfx=pts[2];
+      setBankStep(idx,sfx,status,msg);
+      if(status==='success'&&sfx==='reg'){
+        const bc=document.getElementById('bc-'+idx);if(bc)bc.classList.add('registered');
+        const bs=document.getElementById('bstat-'+idx);if(bs){bs.textContent='✓ Registered';bs.className='bstat reg';}
+      }
+      if(status==='running') setGlobal('running','Register Bank '+idx);
+    }
+  } else if(tab==='transfer'){
+    // mint_supply now lives on the transfer tab
+    if(step==='mint_supply'){
+      const ms=document.getElementById('mintStep');
+      ms.className='mint-step '+(status||'');
+      document.getElementById('mintIc').textContent=status==='running'?'↻':status==='success'?'✓':'✗';
+      if(msg) document.getElementById('mintLbl').textContent=msg;
+      if(status==='running') setGlobal('running','Minting supply');
+      return;
+    }
+    updateScard(step,status,msg);
+    if(status==='running') setGlobal('running',step.replace(/_/g,' '));
+  }
+}
+
+// ── Done ─────────────────────────────────────────────────────────────────────
+function handleDone(d){
+  const ok=d.status==='success';
+  setGlobal(ok?'success':'error',ok?'Done':'Failed');
+  const ids={setup:'setup-banner',onboarding:'onboard-banner',transfer:'transfer-banner'};
+  const bid=ids[d.tab]; const bn=bid&&document.getElementById(bid);
+  if(bn){bn.className='banner '+(ok?'success':'error');bn.textContent=(ok?'✓  ':'✗  ')+(d.msg||'');}
+  if(d.tab==='setup') document.getElementById('tp-setup').textContent=ok?'✓':'✗';
+  if(d.tab==='transfer') document.getElementById('tp-transfer').textContent=ok?'✓':'✗';
+  enableBtns();
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────
+let allLogs=[];
+function appendLog(d){
+  const ts=d.ts||now(),msg=d.msg||'';
+  allLogs.push({ts,msg});
+  const out=document.getElementById('logOut');
+  const line=document.createElement('div');line.className='ll';
+  const tsEl=document.createElement('span');tsEl.className='lts';tsEl.textContent=ts;
+  const bodyEl=document.createElement('span');bodyEl.className='lb';
+  if(msg.startsWith('✓'))bodyEl.classList.add('ok');
+  else if(msg.startsWith('✗'))bodyEl.classList.add('err');
+  else if(msg.startsWith('→')||msg.startsWith('←'))bodyEl.classList.add('info');
+  bodyEl.textContent=msg;
+  line.appendChild(tsEl);line.appendChild(bodyEl);
+  out.appendChild(line);out.scrollTop=out.scrollHeight;
+}
+function now(){return new Date().toLocaleTimeString([],{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+
+// ── SSE ──────────────────────────────────────────────────────────────────────
+let es=null;
+function connectSSE(){
+  if(es)es.close();
+  es=new EventSource('/events');
+  es.onmessage=e=>{
+    let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.type==='step')        handleStep(d);
+    else if(d.type==='log')    appendLog(d);
+    else if(d.type==='done')   handleDone(d);
+    else if(d.type==='metric') handleMetric(d.field,d.value);
+    else if(d.type==='proto')  handleProto(d.field,d.value);
+    else if(d.type==='participant') handleParticipant(d.pid,d.field,d.value);
+  };
+  es.onerror=()=>setTimeout(connectSSE,3000);
+}
+
+// ── Button helpers ───────────────────────────────────────────────────────────
+function disableBtns(){
+  ['setupBtn','mintBtn','transferBtn'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=true;});
+  document.querySelectorAll('[id^=bregBtn-]').forEach(b=>b.disabled=true);
+}
+function enableBtns(){
+  ['setupBtn','mintBtn','transferBtn'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=false;});
+  document.querySelectorAll('[id^=bregBtn-]').forEach(b=>b.disabled=false);
+}
+function postRun(url,body){
+  setGlobal('running','Running…');
+  disableBtns();
+  fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined})
+    .then(r=>{if(!r.ok)r.text().then(t=>{setGlobal('error','Error');appendLog({msg:'Server: '+t});enableBtns();});})
+    .catch(err=>{setGlobal('error','Error');appendLog({msg:'Cannot reach server: '+err});enableBtns();});
+}
+
+document.getElementById('setupBtn').addEventListener('click',()=>{
+  Object.keys(HDEFAULTS).forEach(s=>{
+    const c=document.getElementById('hs-'+s);if(c)c.className='hstep';
+    const ic=document.getElementById('hi-'+s);if(ic)ic.textContent='○';
+    const sub=document.getElementById('hsub-'+s);if(sub)sub.textContent=HDEFAULTS[s];
+  });
+  document.getElementById('setup-banner').className='banner';
+  document.getElementById('addr-enygma').textContent='—';document.getElementById('addr-enygma').classList.remove('set');document.getElementById('cc-enygma').classList.remove('lit');
+  document.getElementById('addr-verifier').textContent='—';document.getElementById('addr-verifier').classList.remove('set');document.getElementById('cc-verifier').classList.remove('lit');
+  document.getElementById('tp-setup').textContent='';
+  postRun('/run/setup');
+});
+
+function registerBank(idx){
+  const skInput=document.getElementById('bsk-'+idx);
+  const sk=(skInput&&skInput.value.trim())||BANKS[idx].sk;
+  if(!sk||!/^\d+$/.test(sk)||BigInt(sk)<=0n){
+    alert('Please enter a valid positive integer for the secret key of Bank '+idx);return;
+  }
+  setBankStep(idx,'key','','Derive key');setBankStep(idx,'reg','','Register on-chain');
+  const bc=document.getElementById('bc-'+idx);if(bc)bc.classList.remove('registered');
+  const bs=document.getElementById('bstat-'+idx);if(bs){bs.textContent='Registering…';bs.className='bstat';}
+  document.getElementById('bpk-'+idx).textContent='—';
+  document.getElementById('bpk-'+idx).style.color='var(--muted)';
+  document.getElementById('onboard-banner').className='banner';
+  postRun('/run/register-bank',{bankIdx:idx,sk});
+}
+
+document.getElementById('mintBtn').addEventListener('click',()=>{
+  const amount=parseInt(document.getElementById('mintAmountInput').value)||500;
+  const bankIdx=parseInt(document.getElementById('mintBankSelect').value)||0;
+  const ms=document.getElementById('mintStep');ms.className='mint-step';
+  document.getElementById('mintIc').textContent='○';document.getElementById('mintLbl').textContent='Minting…';
+  postRun('/run/mint',{amount,bankIdx});
+});
+
+// Transfer amount inputs — sync tx-card and validate sum == sender
+function getSelectedSenderIdx(){return parseInt(document.getElementById('txSenderSelect').value)||0;}
+
+function updateSenderSelect(){
+  const sidx=getSelectedSenderIdx();
+  for(let i=0;i<6;i++){
+    const inp=document.getElementById('txRecvInput-'+i);
+    const lbl=document.getElementById('txRecvLbl-'+i);
+    const row=document.getElementById('txCardRow-'+i);
+    if(i===sidx){
+      if(inp){inp.value='0';inp.disabled=true;inp.style.opacity='0.3';inp.style.cursor='not-allowed';}
+      if(lbl)lbl.style.opacity='0.3';
+      if(row)row.style.display='none';
+    } else {
+      if(inp){inp.disabled=false;inp.style.opacity='1';inp.style.cursor='';}
+      if(lbl)lbl.style.opacity='1';
+      if(row)row.style.display='';
+    }
+  }
+  const sn=document.getElementById('txCardSenderName');if(sn)sn.textContent='Bank '+sidx;
+  updateTxAmounts();
+}
+
+function updateTxAmounts(){
+  const sidx=getSelectedSenderIdx();
+  const sender=parseInt(document.getElementById('txSenderInput').value)||0;
+  const recvs=Array.from({length:6},(_,i)=>{
+    if(i===sidx)return 0;
+    return Math.max(0,parseInt(document.getElementById('txRecvInput-'+i).value)||0);
+  });
+  const total=recvs.reduce((a,c)=>a+c,0);
+  document.getElementById('txCardSenderAmt').textContent='−'+sender+' tokens';
+  for(let i=0;i<6;i++){
+    if(i===sidx)continue;
+    const el=document.getElementById('txCardBankAmt-'+i);if(!el)continue;
+    if(recvs[i]>0){el.textContent='+'+recvs[i];el.classList.remove('tx-priv');}
+    else{el.textContent='0';el.classList.add('tx-priv');}
+  }
+  const alloc=document.getElementById('txAmtAllocated');
+  const remaining=sender-total;
+  alloc.textContent='allocated '+total+' / '+sender;
+  alloc.style.color=remaining===0?'var(--green)':remaining>0?'var(--amber)':'var(--red)';
+  document.getElementById('txAmtErr').style.display=remaining!==0?'inline':'none';
+  document.getElementById('transferBtn').disabled=(remaining!==0||sender<=0);
+}
+
+document.getElementById('txSenderSelect').addEventListener('change',updateSenderSelect);
+for(let i=0;i<6;i++)document.getElementById('txRecvInput-'+i).addEventListener('input',updateTxAmounts);
+document.getElementById('txSenderInput').addEventListener('input',updateTxAmounts);
+updateSenderSelect();
+
+document.getElementById('transferBtn').addEventListener('click',()=>{
+  const senderIdx=getSelectedSenderIdx();
+  const senderAmt=parseInt(document.getElementById('txSenderInput').value)||0;
+  const receiverAmts=Array.from({length:6},(_,i)=>{
+    if(i===senderIdx)return 0;
+    return Math.max(0,parseInt(document.getElementById('txRecvInput-'+i).value)||0);
+  });
+  if(receiverAmts.reduce((a,c)=>a+c,0)!==senderAmt||senderAmt<=0)return;
+  Object.keys(SDEFAULTS).forEach(s=>{
+    const c=document.getElementById('sc-'+s);if(c)c.className='sc';
+    const ic=document.getElementById('si-'+s);if(ic)ic.textContent='○';
+    const sub=document.getElementById('ss-'+s);if(sub)sub.textContent=SDEFAULTS[s];
+  });
+  setTxPill('');
+  document.getElementById('fdot-sg').className='fdot';document.getElementById('fdot-gc').className='fdot';
+  document.getElementById('balPanel').classList.remove('on');
+  document.getElementById('balBefore').textContent='reading…';document.getElementById('balBefore').classList.remove('set');
+  document.getElementById('balAfter').textContent='settling…';document.getElementById('balAfter').classList.remove('set');
+  document.getElementById('transfer-banner').className='banner';
+  document.getElementById('tp-transfer').textContent='';
+  document.getElementById('proofBadge').className='proof-badge';
+  document.getElementById('zkBox').className='zk-box';
+  resetMetrics();
+  postRun('/run/transfer',{senderIdx,senderAmt,receiverAmts});
+});
+
+document.getElementById('copyBtn').addEventListener('click',()=>{
+  navigator.clipboard.writeText(allLogs.map(l=>l.ts+'  '+l.msg).join('\n')).then(()=>{
+    document.getElementById('copyBtn').textContent='copied!';
+    setTimeout(()=>document.getElementById('copyBtn').textContent='copy',1500);
+  });
+});
+
+// ── Mini balance grid (transfer tab) ─────────────────────────────────────────
+function buildBankBalGrid(){
+  const g=document.getElementById('bbGrid');if(!g)return;
+  g.innerHTML='';
+  BANKS.forEach((b,i)=>{
+    const d=document.createElement('div');d.className='bbcard';
+    d.innerHTML=`<div class="bbc-name">${b.name}</div>
+      <div class="bbc-row"><span class="bbc-lbl">Before</span><span class="bbc-val pre" id="bbc-pre-${i}">—</span></div>
+      <div class="bbc-row"><span class="bbc-lbl">After</span><span class="bbc-val fin" id="bbc-fin-${i}">—</span></div>`;
+    g.appendChild(d);
+  });
+}
+
+// ── Verify tab balance grid ───────────────────────────────────────────────────
+function buildVbalGrid(){
+  const g=document.getElementById('vbalGrid');if(!g)return;
+  g.innerHTML='';
+  BANKS.forEach((b,i)=>{
+    const d=document.createElement('div');d.className='vbal-card';
+    d.innerHTML=`<div class="vbal-name">${b.name}</div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
+    g.appendChild(d);
+  });
+}
+
+async function refreshBalances(){
+  const st=document.getElementById('vbalStatus');
+  if(st)st.textContent='fetching…';
+  try{
+    const r=await fetch('/state/balances');
+    if(!r.ok){const t=await r.text();if(st)st.textContent='Error: '+t;return;}
+    const d=await r.json();
+    (d.balances||[]).forEach((pt,i)=>{
+      const el=document.getElementById('vbal-pt-'+i);
+      if(el){
+        if(!pt.registered){
+          el.textContent='not registered';
+          el.className='vbal-point';
+          el.style.color='var(--muted)';
+          el.style.fontStyle='italic';
+        } else {
+          const short=s=>s.length>16?s.slice(0,8)+'…'+s.slice(-4):s;
+          el.textContent='('+short(pt.c1)+', '+short(pt.c2)+')';
+          el.className='vbal-point set';
+          el.style.color='';
+          el.style.fontStyle='';
+        }
+      }
+    });
+    if(st)st.textContent='updated '+new Date().toLocaleTimeString();
+  }catch(e){if(st)st.textContent='Error: '+e.message;}
+}
+
+// ── Pedersen Calculator ───────────────────────────────────────────────────────
+async function calcPedersen(){
+  const v=document.getElementById('calcV').value.trim();
+  const r=document.getElementById('calcR').value.trim();
+  if(!v||!r){alert('Enter v and r');return;}
+  const out=document.getElementById('calcOut');
+  out.className='vcalc-out on';
+  document.getElementById('calcC1').textContent='computing…';
+  document.getElementById('calcC2').textContent='computing…';
+  document.getElementById('co-v').textContent=v;
+  document.getElementById('co-r').textContent=r;
+  try{
+    const res=await fetch('/calc/pedersen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({v,r})});
+    const d=await res.json();
+    if(d.error){document.getElementById('calcC1').textContent='Error: '+d.error;document.getElementById('calcC2').textContent='';return;}
+    document.getElementById('calcC1').textContent=d.c1;
+    document.getElementById('calcC2').textContent=d.c2;
+  }catch(e){document.getElementById('calcC1').textContent='Error: '+e.message;}
+}
+
+// ── Random Factor Sum ─────────────────────────────────────────────────────────
+function copyRV(idx,btn){
+  const el=document.getElementById('rvval-'+idx);
+  if(!el)return;
+  navigator.clipboard.writeText(el.textContent).then(()=>{
+    btn.textContent='copied!';btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied');},1800);
+  });
+}
+
+function copyAllRV(btn,vals){
+  const text=vals.map((v,i)=>`r[${i}] = ${v}`).join('\n');
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.textContent='✓ copied all';btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent='copy all';btn.classList.remove('copied');},1800);
+  });
+}
+
+async function loadRValues(){
+  const div=document.getElementById('rvContent');
+  div.innerHTML='<span style="color:var(--muted)">Loading…</span>';
+  try{
+    const res=await fetch('/state/last-transfer');
+    if(!res.ok){div.innerHTML='<span style="color:var(--red)">Error: run a transfer first, then reload.</span>';return;}
+    const d=await res.json();
+    const rv=d.rValues||[];const P=d.P||'';const lsidx=d.senderIdx||0;
+    let sum=0n,sumOk=false;
+    try{const Pb=BigInt(P);rv.forEach(v=>{sum=(sum+BigInt(v))%Pb;});sumOk=sum===0n;}catch{}
+
+    // build container
+    const wrap=document.createElement('div');
+
+    // top bar with copy-all
+    const topBar=document.createElement('div');topBar.className='rv-top-bar';
+    const hint=document.createElement('span');
+    hint.style.cssText='font-family:var(--mono);font-size:8.5px;color:var(--muted);flex:1';
+    hint.textContent='TxRandomValues from last transfer — click a value to select, or use copy button';
+    const copyAllBtn=document.createElement('button');
+    copyAllBtn.className='rv-copyall-btn';copyAllBtn.textContent='copy all';
+    copyAllBtn.onclick=()=>copyAllRV(copyAllBtn,rv);
+    topBar.appendChild(hint);topBar.appendChild(copyAllBtn);
+    wrap.appendChild(topBar);
+
+    // cards
+    const cards=document.createElement('div');cards.className='rv-cards';
+    const roles=Array.from({length:6},(_,i)=>
+      i===lsidx
+        ?`Sender · txRandom[${i}] = Σ raw_r[receivers]`
+        :`Receiver · txRandom[${i}] = P − raw_r[${i}]`
+    );
+    rv.forEach((v,i)=>{
+      const card=document.createElement('div');card.className='rv-card';
+      // head row
+      const head=document.createElement('div');head.className='rv-card-head';
+      const nameEl=document.createElement('span');nameEl.className='rv-card-name';nameEl.textContent='Bank '+i;
+      const roleEl=document.createElement('span');roleEl.className='rv-card-role';roleEl.textContent=roles[i]||'';
+      const btn=document.createElement('button');btn.className='rv-copy-btn';btn.textContent='copy';
+      btn.onclick=()=>copyRV(i,btn);
+      head.appendChild(nameEl);head.appendChild(roleEl);head.appendChild(btn);
+      // value
+      const val=document.createElement('div');val.className='rv-val';val.id='rvval-'+i;val.textContent=v;
+      card.appendChild(head);card.appendChild(val);
+      cards.appendChild(card);
+    });
+    wrap.appendChild(cards);
+
+    // conservation result
+    const sumBox=document.createElement('div');
+    sumBox.style.cssText=`margin-top:10px;padding:10px 14px;border-radius:5px;border:1px solid ${sumOk?'var(--green-glow)':'var(--red)'};background:${sumOk?'var(--green-dim)':'var(--red-dim)'}`;
+    sumBox.innerHTML=`
+      <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:${sumOk?'var(--green)':'var(--red)'}">
+        Σ TxRandom mod P = ${sum.toString()}&nbsp;&nbsp;${sumOk?'✓ Conservation holds':'✗ Mismatch'}
+      </div>
+      <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-top:5px;line-height:1.7">
+        Σ txRandom[i] = txRandom[0] + txRandom[1] + … + txRandom[5] ≡ 0 (mod P)<br>
+        <span style="color:var(--label)">P = </span><span style="user-select:all;cursor:text">${P}</span>
+      </div>`;
+    wrap.appendChild(sumBox);
+
+    div.innerHTML='';div.appendChild(wrap);
+  }catch(e){div.innerHTML=`<span style="color:var(--red)">Error: ${e.message}</span>`;}
+}
+
+async function loadCumulativeR(){
+  const div=document.getElementById('cumContent');
+  div.innerHTML='<span style="color:var(--muted)">Loading…</span>';
+  try{
+    const res=await fetch('/state/cumulative-r');
+    if(!res.ok){div.innerHTML='<span style="color:var(--red)">Error loading cumulative R.</span>';return;}
+    const d=await res.json();
+    const cr=d.cumulativeR||[];
+    const count=d.transferCount||0;
+    const P=d.P||'';
+
+    // update transfer count label
+    const cntEl=document.getElementById('cumTransferCount');
+    if(cntEl)cntEl.textContent=count+' transfer'+(count===1?'':'s');
+
+    const wrap=document.createElement('div');
+
+    // one row per bank
+    const cards=document.createElement('div');cards.className='rv-cards';
+    const bankLabel=Array.from({length:6},(_,i)=>'Bank '+i+(i===currentSenderIdx?' · Sender':' · Receiver'));
+    cr.forEach((v,i)=>{
+      const card=document.createElement('div');card.className='rv-card';
+      const head=document.createElement('div');head.className='rv-card-head';
+      const nameEl=document.createElement('span');nameEl.className='rv-card-name';nameEl.textContent=bankLabel[i]||('Bank '+i);
+      const roleEl=document.createElement('span');roleEl.className='rv-card-role';
+      roleEl.textContent='cumulative r['+i+'] = Σ txRandom['+i+'] over '+count+' transfers';
+      const btn=document.createElement('button');btn.className='rv-copy-btn';btn.textContent='copy';
+      btn.onclick=()=>{
+        navigator.clipboard.writeText(v).then(()=>{btn.textContent='copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied');},1800);});
+      };
+      head.appendChild(nameEl);head.appendChild(roleEl);head.appendChild(btn);
+      const val=document.createElement('div');val.className='rv-val';val.style.userSelect='all';val.style.cursor='text';val.textContent=v;
+      card.appendChild(head);card.appendChild(val);
+      cards.appendChild(card);
+    });
+    wrap.appendChild(cards);
+
+    // hint box
+    const hint=document.createElement('div');
+    hint.style.cssText='margin-top:10px;padding:10px 14px;border-radius:5px;border:1px solid var(--bd2);background:var(--s2);font-family:var(--mono);font-size:8.5px;color:var(--muted);line-height:1.8';
+    hint.innerHTML=`To verify Bank <em>i</em>'s on-chain balance: enter <code style="color:var(--teal)">cumulative_balance_i</code> as <strong>v</strong> and <code style="color:var(--teal)">cumulative r[i]</code> above as <strong>r</strong> in the Pedersen Calculator — the result must match the on-chain commitment point.<br>
+    <span style="color:var(--label)">P = </span><span style="user-select:all;cursor:text">${P}</span>`;
+    wrap.appendChild(hint);
+
+    div.innerHTML='';div.appendChild(wrap);
+  }catch(e){div.innerHTML=`<span style="color:var(--red)">Error: ${e.message}</span>`;}
+}
+
+buildBanks();
+buildBankBalGrid();
+buildVbalGrid();
+connectSSE();
+</script>
+</body>
+</html>

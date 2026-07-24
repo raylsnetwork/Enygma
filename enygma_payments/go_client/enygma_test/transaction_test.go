@@ -90,11 +90,46 @@ func init() {
 }
 
 // hashArrayGen computes Poseidon(s, s) mod P for each secret s.
+// Used only by the fee circuit (enygma_fee) which retains the 1-D hash layout.
 func hashArrayGen(secrets []*big.Int) []*big.Int {
 	out := make([]*big.Int, len(secrets))
 	for i, s := range secrets {
 		h, _ := poseidon.Hash([]*big.Int{s, s})
 		out[i] = h.Mod(h, curveP)
+	}
+	return out
+}
+
+// fingerPrintGen builds the k×k FingerPrint matrix for the EnygmaCircuit.
+// fp[i][senderCol] = Poseidon(secrets[i]) mod P for i ≠ senderCol (sender's column).
+// Diagonal and non-sender columns are zeroed — those entries are unconstrained.
+func fingerPrintGen(secrets []*big.Int, senderCol int) [][]*big.Int {
+	k := len(secrets)
+	fp := make([][]*big.Int, k)
+	for i := range fp {
+		fp[i] = make([]*big.Int, k)
+		for j := range fp[i] {
+			fp[i][j] = big.NewInt(0)
+		}
+	}
+	for i := 0; i < k; i++ {
+		if i == senderCol {
+			continue
+		}
+		h, _ := poseidon.Hash([]*big.Int{secrets[i]})
+		fp[i][senderCol] = h.Mod(h, curveP)
+	}
+	return fp
+}
+
+// fp2Strs converts a [][]*big.Int matrix to [][]string for JSON encoding.
+func fp2Strs(fp [][]*big.Int) [][]string {
+	out := make([][]string, len(fp))
+	for i, row := range fp {
+		out[i] = make([]string, len(row))
+		for j, v := range row {
+			out[i][j] = v.String()
+		}
 	}
 	return out
 }
@@ -377,7 +412,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	copy(secrets, baseSecrets)
 	secrets[senderIdx] = senderSecret
 
-	hashArray := hashArrayGen(secrets)
+	fp := fingerPrintGen(secrets, senderIdx)
 
 	// txValues: bank 0 sends 100, bank 1 receives 60, bank 2 receives 40
 	txValues := []*big.Int{
@@ -394,7 +429,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	bh2 := new(big.Int).Set(blockHash)
 	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, bh2, secrets)
 
-	nullifier, err := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	nullifier, err := poseidon.Hash([]*big.Int{senderSecret, blockHash})
 	if err != nil {
 		t.Fatalf("nullifier: %v", err)
 	}
@@ -428,7 +463,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	}
 
 	reqBody, err := json.Marshal(map[string]interface{}{
-		"hashed_shared_secrets":        toStrs(hashArray),
+		"fingerprint_shared_secrets":   fp2Strs(fp),
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
 		"tx_commits":                   txCommitSlice,
@@ -469,15 +504,14 @@ func TestFullTransactionFlow(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 50 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
 		t.Fatalf("bad sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")
 
 	// ── Build relay Transfer request ───────────────────────────────────────────
-	// commitmentDeltas are the per-bank Pedersen delta points read from the
-	// public signal at TX_COMMIT_OFFSET = 6 (hashes) + 6 (pks) + 12 (prevCommit) = 24.
-	const txCommitOffset = 24
+	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
+	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {

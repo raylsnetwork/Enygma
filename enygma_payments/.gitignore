@@ -54,6 +54,10 @@ gnark-server/main_test.go
 gnark-server/poseidon.go
 gnark-server/proving.key
 gnark-server/verifying.key
+gnark-server/cmd/poseidon_hash/
+
+# Poseidon scratch tools
+poseidon_calc/
 
 
 # PyInstaller

@@ -288,7 +288,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	copy(secrets, baseSecrets)
 	secrets[senderIdx] = senderSecret
 
-	hashArray := hashArrayGen(secrets)
+	fp := fingerPrintGen(secrets, senderIdx)
 	tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
 
 	txValues := []*big.Int{
@@ -297,7 +297,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 		big.NewInt(0), big.NewInt(0), big.NewInt(0),
 	}
 	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, new(big.Int).Set(blockHash), secrets)
-	nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
 
 	toStrs := func(vals []*big.Int) []string {
 		s := make([]string, len(vals))
@@ -324,7 +324,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"hashed_shared_secrets":        toStrs(hashArray),
+		"fingerprint_shared_secrets":   fp2Strs(fp),
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
 		"tx_commits":                   txCommitSlice,
@@ -359,25 +359,27 @@ func TestNullifierReuseProtection(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 50 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
 		t.Fatalf("unexpected proof sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")
 
 	// Build on-chain proof struct.
+	// NOTE: IEnygmaProof.PublicSignal must be [80]*big.Int after contract/binding regeneration.
 	var proof8 [8]*big.Int
 	for i := 0; i < 8; i++ {
 		proof8[i] = proofResp.Proof[i]
 	}
-	var pubSig50 [50]*big.Int
-	for i := range pubSig50 {
-		pubSig50[i] = big.NewInt(0)
+	var pubSig80 [80]*big.Int
+	for i := range pubSig80 {
+		pubSig80[i] = big.NewInt(0)
 	}
 	for i, v := range proofResp.PublicSignal {
-		pubSig50[i] = v
+		pubSig80[i] = v
 	}
 
-	const txCommitOffset = 24
+	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
+	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commitmentDeltas[i] = enygma.IEnygmaPoint{
@@ -386,7 +388,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 		}
 	}
 
-	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig50}
+	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig80}
 
 	participantIds := make([]*big.Int, nBanks)
 	for i := range participantIds {
@@ -750,7 +752,7 @@ func TestInvalidProofRejection(t *testing.T) {
 	for i := range badProof {
 		badProof[i] = big.NewInt(0)
 	}
-	var badPubSig [50]*big.Int
+	var badPubSig [80]*big.Int
 	for i := range badPubSig {
 		badPubSig[i] = big.NewInt(0)
 	}

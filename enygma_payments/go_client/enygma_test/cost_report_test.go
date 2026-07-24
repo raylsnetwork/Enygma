@@ -312,7 +312,7 @@ func TestCostReport(t *testing.T) {
 	copy(secrets, baseSecrets)
 	secrets[senderIdx] = senderSecret
 
-	hashArray := hashArrayGen(secrets)
+	fp := fingerPrintGen(secrets, senderIdx)
 	txValues := []*big.Int{
 		negMod(big.NewInt(transferAmt)),
 		big.NewInt(60), big.NewInt(40),
@@ -320,7 +320,7 @@ func TestCostReport(t *testing.T) {
 	}
 	tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
 	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, new(big.Int).Set(blockHash), secrets)
-	nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
 
 	toStrs := func(vals []*big.Int) []string {
 		s := make([]string, len(vals))
@@ -347,7 +347,7 @@ func TestCostReport(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"hashed_shared_secrets":        toStrs(hashArray),
+		"fingerprint_shared_secrets":   fp2Strs(fp),
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
 		"tx_commits":                   txCommitSlice,
@@ -384,7 +384,7 @@ func TestCostReport(t *testing.T) {
 		t.Fatalf("decode proof: %v", err)
 	}
 	proofDuration := time.Since(proofStart)
-	t.Logf("  Proof generated in %s (8 elements + 50 public signals)", proofDuration.Round(time.Millisecond))
+	t.Logf("  Proof generated in %s (8 elements + 80 public signals)", proofDuration.Round(time.Millisecond))
 	t.Log("  Cost: $0.00 (proof generation is off-chain, runs on your server)")
 
 	// ══════════════════════════════════════════════════════════════════════════
@@ -464,7 +464,8 @@ func TestCostReport(t *testing.T) {
 	t.Log("  test-local relayer ready ✓")
 
 	// ── Build relay request and submit ────────────────────────────────────────
-	const txCommitOffset = 24
+	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
+	const txCommitOffset = 54
 	commitmentDeltas := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commitmentDeltas[i] = []string{

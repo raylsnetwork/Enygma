@@ -48,9 +48,9 @@ def deploy_contract(w3, account, artifact, constructor_args=None):
         "nonce": nonce,
     })
     signed = account.sign_transaction(txn)
-    tx_hash = w3.eth.sendRawTransaction(signed.rawTransaction)
+    tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction if hasattr(signed, 'rawTransaction') else signed.raw_transaction)
     print(f"  tx: {tx_hash.hex()}")
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=600)
     assert receipt.status == 1, f"deployment failed: {receipt}"
     print(f"  deployed at: {receipt.contractAddress}")
     return receipt
@@ -58,7 +58,7 @@ def deploy_contract(w3, account, artifact, constructor_args=None):
 
 def main():
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
-    assert w3.isConnected(), "Cannot connect to chain at " + RPC_URL
+    assert w3.is_connected(), "Cannot connect to chain at " + RPC_URL
     account = w3.eth.account.from_key(OWNER_KEY)
     print(f"Deployer: {account.address}")
     print(f"Block: {w3.eth.block_number}")

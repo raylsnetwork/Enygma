@@ -13,7 +13,7 @@ contract Enygma is IEnygma {
     uint256 private constant STATUS_INITIALIZED = 1;
     uint256 private constant DEFAULT_SIZE = 6;
 
-    // Public signal array offsets for proof verification
+    // Public signal offsets for the 50-signal layout (withdraw, fee, deposit circuits)
     // Layout (k=6): [HashSecrets×6][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
     uint256 private constant ARRAY_HASH_SECRET_OFFSET = 0;
     uint256 private constant ARRAY_HASH_SECRET_SIZE = 6;
@@ -28,6 +28,22 @@ contract Enygma is IEnygma {
     uint256 private constant K_INDEX_SIZE = 6;
     uint256 private constant MESSAGE_TAGS_OFFSET = 43;
     uint256 private constant NULLIFIER_OFFSET = 49;
+
+    // Public signal offsets for the 80-signal FingerPrint layout (main transfer circuit)
+    // Layout (k=6): [FingerPrint×36][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
+    uint256 private constant FP_FINGERPRINT_OFFSET = 0;
+    uint256 private constant FP_FINGERPRINT_SIZE = 36;
+    uint256 private constant FP_PUBLIC_KEY_OFFSET = 36;
+    uint256 private constant FP_PUBLIC_KEY_SIZE = 6;
+    uint256 private constant FP_PREVIOUS_COMMIT_OFFSET = 42;
+    uint256 private constant FP_PREVIOUS_COMMIT_SIZE = 12;
+    uint256 private constant FP_TX_COMMIT_OFFSET = 54;
+    uint256 private constant FP_TX_COMMIT_SIZE = 12;
+    uint256 private constant FP_BLOCK_NUMBER_OFFSET = 66;
+    uint256 private constant FP_K_INDEX_OFFSET = 67;
+    uint256 private constant FP_K_INDEX_SIZE = 6;
+    uint256 private constant FP_MESSAGE_TAGS_OFFSET = 73;
+    uint256 private constant FP_NULLIFIER_OFFSET = 79;
 
     // ============================================
     // STATE VARIABLES
@@ -380,13 +396,13 @@ contract Enygma is IEnygma {
         _verifyTransferProof(proof, commitmentDeltas.length);
 
         // Verify public inputs match current state and commitment deltas match proof
-        _verifyPublicInputs(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyPublicInputsFP(proof.public_signal, participantIds, commitmentDeltas);
 
         // Verify block number freshness
-        _verifyBlockNumber(proof.public_signal);
+        _verifyBlockNumberFP(proof.public_signal);
 
         // Record nullifier before state changes (Fix C-2)
-        _consumeNullifier(proof.public_signal);
+        _consumeNullifierFP(proof.public_signal);
 
         // Update balances
         _updateBalancesForTransfer(commitmentDeltas, participantIds);
@@ -640,7 +656,7 @@ contract Enygma is IEnygma {
 
         (bool success, ) = verifier.delegatecall(
             abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[50])",
+                "verifyProof(uint256[8],uint256[80])",
                 proof
             )
         );
@@ -648,7 +664,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify public inputs match contract state and commitment deltas match proof
+     * @notice Verify public inputs match contract state and commitment deltas match proof (50-signal: withdraw)
      */
     function _verifyPublicInputs(
         uint256[50] calldata public_signal,
@@ -702,6 +718,66 @@ contract Enygma is IEnygma {
      */
     function _consumeNullifier(uint256[50] calldata public_signal) private {
         uint256 nullifier = public_signal[NULLIFIER_OFFSET];
+        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _nullifiers[nullifier] = true;
+    }
+
+    /**
+     * @notice Verify public inputs for the 80-signal FingerPrint transfer circuit
+     */
+    function _verifyPublicInputsFP(
+        uint256[80] calldata public_signal,
+        uint256[] calldata participantIds,
+        Point[] calldata commitmentDeltas
+    ) private view {
+        (Point[] memory balances, uint256[] memory keys) = getPublicValues(
+            _totalRegisteredParties + 1
+        );
+
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 accountId = participantIds[i];
+
+            if (uint256(public_signal[FP_PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 commitOffset = FP_PREVIOUS_COMMIT_OFFSET + (i << 1);
+            if (
+                uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
+                uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 txOffset = FP_TX_COMMIT_OFFSET + (i << 1);
+            if (
+                commitmentDeltas[i].c1 != public_signal[txOffset] ||
+                commitmentDeltas[i].c2 != public_signal[txOffset + 1]
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Verify block number freshness for the 80-signal FingerPrint transfer circuit
+     */
+    function _verifyBlockNumberFP(uint256[80] calldata public_signal) private view {
+        if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+            revert InvalidBlockNumber();
+        }
+    }
+
+    /**
+     * @notice Record nullifier as spent for the 80-signal FingerPrint transfer circuit
+     */
+    function _consumeNullifierFP(uint256[80] calldata public_signal) private {
+        uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;
     }
@@ -869,7 +945,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Check if sent blocknumber is the same as in the smart contract
+     * @notice Check if sent blocknumber is the same as in the smart contract (50-signal: withdraw)
      */
     function _verifyBlockNumber(uint256[50] calldata public_signal) private view {
         uint256 proofBlockNumber = uint256(

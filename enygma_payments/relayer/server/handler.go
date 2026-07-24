@@ -128,8 +128,8 @@ func (h *Handler) Info(c *gin.Context) {
 //
 // Calls Enygma.transfer(commitmentDeltas, proof, participantIds).
 // Used for confidential Enygma-to-Enygma balance updates (the enygma circuit).
-// The public signal array supports up to 50 elements; unused slots are zero-padded
-// to fill the fixed [50]*big.Int expected by the contract.
+// The public signal array supports up to 80 elements (FingerPrint 6×6 layout);
+// unused slots are zero-padded to fill the fixed [80]*big.Int expected by the contract.
 func (h *Handler) RelayTransfer(c *gin.Context) {
 	var req RelayTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -142,15 +142,15 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
 		return
 	}
-	if len(req.PublicSignal) > 50 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: %d elements exceeds maximum of 50", len(req.PublicSignal))})
+	if len(req.PublicSignal) > 80 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: %d elements exceeds maximum of 80", len(req.PublicSignal))})
 		return
 	}
 
-	// Zero-pad to [50]*big.Int; the circuit only uses the first N slots.
-	var pubSig50 [50]*big.Int
-	for i := range pubSig50 {
-		pubSig50[i] = big.NewInt(0)
+	// Zero-pad to [80]*big.Int; the circuit only uses the first N slots.
+	var pubSig80 [80]*big.Int
+	for i := range pubSig80 {
+		pubSig80[i] = big.NewInt(0)
 	}
 	for i, s := range req.PublicSignal {
 		n, ok := new(big.Int).SetString(s, 10)
@@ -158,7 +158,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[%d]: invalid decimal %q", i, s)})
 			return
 		}
-		pubSig50[i] = n
+		pubSig80[i] = n
 	}
 
 	commitments, err := parseCommitments(req.Commitments)
@@ -170,7 +170,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 
 	transferProof := enygma.IEnygmaProof{
 		Proof:        proof8,
-		PublicSignal: pubSig50,
+		PublicSignal: pubSig80,
 	}
 
 	dedupKey := "transfer:" + req.Proof[0]

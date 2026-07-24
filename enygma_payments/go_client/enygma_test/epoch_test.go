@@ -67,7 +67,7 @@ func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEny
 	copy(secrets, baseSecrets)
 	secrets[senderIdx] = senderSecret
 
-	hashArray := hashArrayGen(secrets)
+	fp := fingerPrintGen(secrets, senderIdx)
 	txValues := []*big.Int{
 		negMod(big.NewInt(transferAmt)),
 		big.NewInt(60), big.NewInt(40),
@@ -77,7 +77,7 @@ func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEny
 	bh := new(big.Int).Set(blockHash)
 	tagMessages := tagMessageGen(secrets, bh)
 	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, new(big.Int).Set(blockHash), secrets)
-	nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
 
 	toStrs := func(vals []*big.Int) []string {
 		s := make([]string, len(vals))
@@ -103,7 +103,7 @@ func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEny
 		kIndex[i] = big.NewInt(int64(i))
 	}
 	body, _ := json.Marshal(map[string]interface{}{
-		"hashed_shared_secrets":        toStrs(hashArray),
+		"fingerprint_shared_secrets":   fp2Strs(fp),
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
 		"tx_commits":                   txCommitSlice,
@@ -143,7 +143,7 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	if e := json.NewDecoder(httpResp.Body).Decode(&resp); e != nil {
 		t.Fatalf("decode proof: %v", e)
 	}
-	if len(resp.Proof) != 8 || len(resp.PublicSignal) != 50 {
+	if len(resp.Proof) != 8 || len(resp.PublicSignal) != 80 {
 		t.Fatalf("unexpected sizes: proof=%d publicSignal=%d", len(resp.Proof), len(resp.PublicSignal))
 	}
 	t.Log("proof received ✓")
@@ -152,11 +152,12 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	for i := 0; i < 8; i++ {
 		proof8[i] = resp.Proof[i].String()
 	}
-	pubSigStrs := make([]string, 50)
+	pubSigStrs := make([]string, 80)
 	for i, v := range resp.PublicSignal {
 		pubSigStrs[i] = v.String()
 	}
-	const txCommitOffset = 24
+	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
+	const txCommitOffset = 54
 	deltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		deltas[i] = enygma.IEnygmaPoint{
