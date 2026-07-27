@@ -35,21 +35,13 @@ func GenerationVkPk() {
 	}
 	script.SetupPayment(payment2inConfig, "Payment2in")
 
-	paymentFeeConfig := templates.PaymentCircuitConfig{
-		TmNInputs:         1,
-		TmMOutputs:        2,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
-	script.SetupPaymentFee(paymentFeeConfig, "PaymentFee")
-
-	paymentRelayerConfig := templates.PaymentCircuitConfig{
+	paymentRelayerFeePublicConfig := templates.PaymentCircuitConfig{
 		TmNInputs:         1,
 		TmMOutputs:        3,
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPaymentRelayer(paymentRelayerConfig, "PaymentRelayer")
+	script.SetupPaymentRelayerFeePublic(paymentRelayerFeePublicConfig, "PaymentRelayerFeePublic")
 
 	script.SetupPrivateMint("PrivateMint")
 }

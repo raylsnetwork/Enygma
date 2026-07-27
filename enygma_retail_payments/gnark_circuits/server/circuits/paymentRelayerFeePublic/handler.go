@@ -1,4 +1,4 @@
-package paymentRelayer
+package paymentRelayerFeePublic
 
 import (
 	"fmt"
@@ -18,16 +18,18 @@ import (
 	utils "gnark_server/utils"
 )
 
-// NewHandler returns a gin.HandlerFunc for POST /proof/paymentRelayer.
+// NewHandler returns a gin.HandlerFunc for POST /proof/paymentRelayerFeePublic.
 //
-// Circuit: 1 input / 3 outputs / Merkle depth 8. Conservation law:
+// Circuit: 1 input / 3 outputs / Merkle depth 8.
 //
-//	Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]
+// Conservation: Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]
+// Fee binding:  valOut[2] == StFee  (relayer's amount == public fee signal)
 //
-// Public signal layout (8 elements):
+// Public signal layout (9 elements):
 //
 //	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2], StContractAddress]
+//	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2],
+//	 StContractAddress, StFee]
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	curve := ecc.BN254
 
@@ -41,8 +43,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 
-	newCircuit := func() templates.PaymentRelayerCircuit {
-		cir := templates.PaymentRelayerCircuit{
+	newCircuit := func() templates.PaymentRelayerFeePublicCircuit {
+		cir := templates.PaymentRelayerFeePublicCircuit{
 			Config:               cfg,
 			StTreeNumbers:        make([]frontend.Variable, cfg.TmNInputs),
 			StMerkleRoots:        make([]frontend.Variable, cfg.TmNInputs),
@@ -72,11 +74,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
-		panic(fmt.Sprintf("compile paymentRelayer circuit: %v", err))
+		panic(fmt.Sprintf("compile paymentRelayerFeePublic circuit: %v", err))
 	}
 
 	return func(c *gin.Context) {
-		var request PaymentRelayerRequest
+		var request PaymentRelayerFeePublicRequest
 		if err := c.ShouldBindJSON(&request); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -86,6 +88,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness.StMessage         = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
+		witness.StFee             = frontend.Variable(request.StFee)
 		witness.WtTokenId         = frontend.Variable(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {
@@ -148,7 +151,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [msg, treeNum[0], root[0], nf[0], cmt_bob, cmt_change, cmt_relayer, contractAddr]
+		// public signal (9 elements):
+		// [msg, treeNum[0], root[0], nf[0], cmt_bob, cmt_change, cmt_relayer, contractAddr, fee]
 		var publicSignal []*big.Int
 		publicSignal = append(publicSignal, utils.ParseBigInt(request.StMessage))
 		for i := 0; i < cfg.TmNInputs; i++ {
@@ -160,8 +164,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			publicSignal = append(publicSignal, utils.ParseBigInt(request.StCommitmentsOut[i]))
 		}
 		publicSignal = append(publicSignal, utils.ParseBigInt(request.StContractAddress))
+		publicSignal = append(publicSignal, utils.ParseBigInt(request.StFee))
 
-		c.JSON(http.StatusOK, PaymentRelayerOutput{
+		c.JSON(http.StatusOK, PaymentRelayerFeePublicOutput{
 			Proof:        proofRemix,
 			PublicSignal: publicSignal,
 		})

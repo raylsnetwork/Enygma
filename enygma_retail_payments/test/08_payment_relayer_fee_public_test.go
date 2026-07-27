@@ -1,0 +1,460 @@
+package tests
+
+// TestRetailErc20_PaymentRelayerFeePublic exercises the combined PaymentRelayerFeePublic circuit.
+//
+// Fee model:
+//
+//	Alice pays Bob AND leaves a spendable fee note for the relayer (Carol).
+//	  valueIn = paymentAmt + changeAmt + StFee
+//	  StFee is a PUBLIC signal — the chain can verify the exact fee Alice paid the relayer.
+//	  Relayer receives a real, spendable note commitment (not a burned amount).
+//
+//	depositAmt    = 45 (payment(30) + change(10) + relayerFee(5))
+//	paymentAmt    = 30 (to Bob)
+//	changeAmt     = 10 (back to Alice)
+//	relayerFeeAmt =  5 (spendable note for relayer / Carol) — PUBLICLY VISIBLE
+//
+// Signal layout (1-in / 3-out, 9 elements):
+//
+//	signal[0]  StMessage             = 0
+//	signal[1]  StTreeNumbers[0]      = tree index
+//	signal[2]  StMerkleRoots[0]      = Merkle root
+//	signal[3]  StNullifiers[0]       = nullifier
+//	signal[4]  StCommitmentsOut[0]   = Bob's commitment   (output 0)
+//	signal[5]  StCommitmentsOut[1]   = Alice's change     (output 1, constrained to senderPk)
+//	signal[6]  StCommitmentsOut[2]   = Relayer fee note   (output 2)
+//	signal[7]  StContractAddress     = vault address
+//	signal[8]  StFee                 = relayer fee amount (NEW — publicly verifiable)
+//
+// Prerequisites:
+//
+//	cd ../enygma_dvp && npx hardhat node
+//	bash setup.sh                                              (from enygma_retail_payments/)
+//	cd gnark_circuits && go run generation.go                  (regenerate keys incl. PaymentRelayerFeePublic)
+//	cd gnark_circuits && go run main.go                        (start gnark server :8082)
+//
+// Run:
+//
+//	cd test && go test -run TestRetailErc20_PaymentRelayerFeePublic -v -timeout 300s
+//
+// Note on on-chain submission:
+//
+//	The on-chain function paymentWithRelayerFeePublic does not yet exist in EnygmaDvp.
+//	This test verifies the gnark proof and all commitment math. When EnygmaDvp is updated
+//	with the new function (9-element statement, new VK slot), add the dvp.Transact call.
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"strings"
+	"testing"
+
+	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
+	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
+)
+
+const (
+	rfpDeposit    = 45 // paymentAmt(30) + changeAmt(10) + relayerFeeAmt(5)
+	rfpPayAmt     = 30
+	rfpChangeAmt  = 10
+	rfpRelayerAmt = 5
+)
+
+// gnarkURL is the base URL for the gnark proof server.
+const gnarkURL = "http://localhost:8082"
+
+func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
+	if !chainAvailable() {
+		t.Skip("Hardhat node not running on localhost:8545 — skipping")
+	}
+	if !serverAvailable("localhost:8082") {
+		t.Skip("gnark server not running on localhost:8082 — skipping")
+	}
+
+	ctx := context.Background()
+
+	client, err := ethclient.Dial(hardhatRPC)
+	if err != nil {
+		t.Fatalf("ethclient.Dial: %v", err)
+	}
+	defer client.Close()
+
+	receipts := loadOnchainReceipts(t)
+	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
+
+	erc20ABI := loadOnchainABI(t, "RaylsERC20")
+	vaultABI  := loadOnchainABI(t, "Erc20CoinVault")
+
+	vault := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
+	erc20 := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
+
+	aliceAuth := hardhatAuth(t, client)
+	bobAuth   := hardhatBobAuth(t, client)
+
+	merkleDepth := 8
+	tokenId     := big.NewInt(0)
+	depositAmt  := big.NewInt(int64(rfpDeposit))
+	paymentAmt  := big.NewInt(int64(rfpPayAmt))
+	changeAmt   := big.NewInt(int64(rfpChangeAmt))
+	relayerAmt  := big.NewInt(int64(rfpRelayerAmt))
+	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
+
+	// ── Step 1: Key generation ────────────────────────────────────────────────
+	t.Log("Step 1 — generating ZK key pairs for Alice, Bob, and relayer (Carol)")
+
+	aliceSpend, err := rpcore.NewSpendKeyPair()
+	if err != nil {
+		t.Fatalf("Alice NewSpendKeyPair: %v", err)
+	}
+	aliceView, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		t.Fatalf("Alice NewViewKeyPair: %v", err)
+	}
+	bobSpend, err := rpcore.NewSpendKeyPair()
+	if err != nil {
+		t.Fatalf("Bob NewSpendKeyPair: %v", err)
+	}
+	bobView, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		t.Fatalf("Bob NewViewKeyPair: %v", err)
+	}
+	relayerSpend, err := rpcore.NewSpendKeyPair()
+	if err != nil {
+		t.Fatalf("Relayer NewSpendKeyPair: %v", err)
+	}
+
+	t.Logf("  Alice   pk_spend: %s", aliceSpend.PublicKey)
+	t.Logf("  Bob     pk_spend: %s", bobSpend.PublicKey)
+	t.Logf("  Relayer pk_spend: %s", relayerSpend.PublicKey)
+
+	auditorPair, err := rpcore.NewAuditorKeyPair()
+	if err != nil {
+		t.Fatalf("NewAuditorKeyPair: %v", err)
+	}
+	aliceMlKemCt, aliceAesCt, err := rpcore.EncryptViewKeyForAuditor(auditorPair.EncapsKey, aliceView.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Alice): %v", err)
+	}
+	bobMlKemCt, bobAesCt, err := rpcore.EncryptViewKeyForAuditor(auditorPair.EncapsKey, bobView.DecapsKey)
+	if err != nil {
+		t.Fatalf("EncryptViewKeyForAuditor (Bob): %v", err)
+	}
+
+	// ── Step 2: Registration ─────────────────────────────────────────────────
+	t.Log("Step 2 — registering keys on-chain (UserRegistry)")
+
+	if err := rpcore.Register(client, aliceAuth, registryAddr,
+		aliceSpend.PublicKey, aliceView.EncapsKey, aliceMlKemCt, aliceAesCt); err != nil {
+		if !strings.Contains(err.Error(), "AlreadyRegistered") && !strings.Contains(err.Error(), "0x45ed80e9") {
+			t.Fatalf("Alice Register: %v", err)
+		}
+		t.Log("  Alice already registered")
+	} else {
+		t.Logf("  Alice registered (%s)", aliceAuth.From.Hex())
+	}
+
+	if err := rpcore.Register(client, bobAuth, registryAddr,
+		bobSpend.PublicKey, bobView.EncapsKey, bobMlKemCt, bobAesCt); err != nil {
+		if !strings.Contains(err.Error(), "AlreadyRegistered") && !strings.Contains(err.Error(), "0x45ed80e9") {
+			t.Fatalf("Bob Register: %v", err)
+		}
+		t.Log("  Bob already registered")
+	} else {
+		t.Logf("  Bob registered (%s)", bobAuth.From.Hex())
+	}
+
+	// ── Step 3: Deposit — Alice deposits 45 tokens ───────────────────────────
+	t.Logf("Step 3 — Alice deposits %d tokens (payment=%d + change=%d + relayerFee=%d)",
+		rfpDeposit, rfpPayAmt, rfpChangeAmt, rfpRelayerAmt)
+
+	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From,
+		new(big.Int).Mul(depositAmt, big.NewInt(10)))
+	if err != nil {
+		t.Fatalf("ERC20.mint: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, mintTx); err != nil {
+		t.Fatalf("wait mint: %v", err)
+	}
+
+	approveTx, err := erc20.Transact(aliceAuth, "approve", vaultAddr, depositAmt)
+	if err != nil {
+		t.Fatalf("ERC20.approve: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, approveTx); err != nil {
+		t.Fatalf("wait approve: %v", err)
+	}
+
+	ss, capsule, err := rpcore.Encapsulate(aliceView.EncapsKey)
+	if err != nil {
+		t.Fatalf("Encapsulate (deposit): %v", err)
+	}
+	aliceSaltB, err := rpcore.DerivePaymentSalt(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt: %v", err)
+	}
+	aliceEncKey, err := rpcore.DerivePaymentKey(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
+	}
+	aliceSaltBField := rpcore.SaltBToField(aliceSaltB)
+
+	aliceCommitment, err := rpcore.Erc20CommitmentV2(
+		aliceSpend.PublicKey, aliceSaltBField, depositAmt, tokenId)
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (deposit): %v", err)
+	}
+
+	aliceDepositCtxtII, err := rpcore.EncryptPayload(aliceEncKey, tokenId, depositAmt)
+	if err != nil {
+		t.Fatalf("EncryptPayload: %v", err)
+	}
+
+	depositTx, err := vault.Transact(aliceAuth, "depositV2",
+		[]*big.Int{depositAmt, aliceSpend.PublicKey, aliceSaltBField, tokenId}, capsule, aliceDepositCtxtII)
+	if err != nil {
+		t.Fatalf("vault.depositV2: %v", err)
+	}
+	depositReceipt, err := bind.WaitMined(ctx, client, depositTx)
+	if err != nil {
+		t.Fatalf("wait depositV2: %v", err)
+	}
+	t.Logf("  depositV2 mined (block %d, gas %d, commitment %s)",
+		depositReceipt.BlockNumber, depositReceipt.GasUsed, aliceCommitment)
+
+	mt := loadVaultMerkleTree(t, client, vaultAddr, merkleDepth)
+	aliceProof, err := mt.GenerateProof(aliceCommitment)
+	if err != nil {
+		t.Fatalf("GenerateProof: %v", err)
+	}
+	t.Logf("  Merkle root: %s", aliceProof.Root)
+
+	// ── Step 4: Build PaymentRelayerFeePublic proof request ──────────────────
+	t.Logf("Step 4 — building PaymentRelayerFeePublic proof request (pay=%d to Bob, change=%d to Alice, fee=%d to relayer, fee is PUBLIC)",
+		rfpPayAmt, rfpChangeAmt, rfpRelayerAmt)
+
+	// Compute nullifier: Poseidon(sk, pathIndices, contractAddress)
+	nullifier, err := dvpcore.GetNullifierBound(aliceSpend.PrivateKey, aliceProof.Indices, vaultAddrBig)
+	if err != nil {
+		t.Fatalf("GetNullifierBound: %v", err)
+	}
+	t.Logf("  nullifier: %s", nullifier)
+
+	// Output 0: Bob's payment — ML-KEM delivery
+	ssBob, ctxtBob, err := rpcore.Encapsulate(bobView.EncapsKey)
+	if err != nil {
+		t.Fatalf("Encapsulate (Bob output): %v", err)
+	}
+	saltBobRaw, err := rpcore.DerivePaymentSalt(ssBob)
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt (Bob): %v", err)
+	}
+	encKeyBob, err := rpcore.DerivePaymentKey(ssBob)
+	if err != nil {
+		t.Fatalf("DerivePaymentKey (Bob): %v", err)
+	}
+	ctxtIIBob, err := rpcore.EncryptPayload(encKeyBob, tokenId, paymentAmt)
+	if err != nil {
+		t.Fatalf("EncryptPayload (Bob): %v", err)
+	}
+	saltBobField := rpcore.SaltBToField(saltBobRaw)
+	cmtBob, err := rpcore.Erc20CommitmentV2(bobSpend.PublicKey, saltBobField, paymentAmt, tokenId)
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (Bob): %v", err)
+	}
+
+	// Output 1: Alice's change — random salt (SaltA)
+	saltA, err := dvpcore.RandomInField()
+	if err != nil {
+		t.Fatalf("RandomInField (change): %v", err)
+	}
+	cmtChange, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, saltA, changeAmt, tokenId)
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (change): %v", err)
+	}
+
+	// Output 2: Relayer fee note — random salt (SaltRelayer)
+	saltRelayer, err := dvpcore.RandomInField()
+	if err != nil {
+		t.Fatalf("RandomInField (relayer): %v", err)
+	}
+	cmtRelayer, err := rpcore.Erc20CommitmentV2(relayerSpend.PublicKey, saltRelayer, relayerAmt, tokenId)
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (relayer): %v", err)
+	}
+
+	// Build path elements as [8]string
+	var pathElements [8]string
+	for j, elem := range aliceProof.Elements {
+		if j >= 8 {
+			break
+		}
+		pathElements[j] = elem.String()
+	}
+
+	reqBody := map[string]interface{}{
+		"stMessage":            "0",
+		"stTreeNumbers":        [1]string{"0"},
+		"stMerkleRoots":        [1]string{aliceProof.Root.String()},
+		"stNullifiers":         [1]string{nullifier.String()},
+		"stCommitmentsOut":     [3]string{cmtBob.String(), cmtChange.String(), cmtRelayer.String()},
+		"stContractAddress":    vaultAddrBig.String(),
+		"stFee":                relayerAmt.String(),
+		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
+		"wtValuesIn":           [1]string{depositAmt.String()},
+		"wtSaltsIn":            [1]string{aliceSaltBField.String()},
+		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathIndices":        [1]string{aliceProof.Indices.String()},
+		"wtTokenId":            tokenId.String(),
+		"wtSpendPublicKeysOut": [3]string{bobSpend.PublicKey.String(), aliceSpend.PublicKey.String(), relayerSpend.PublicKey.String()},
+		"wtValuesOut":          [3]string{paymentAmt.String(), changeAmt.String(), relayerAmt.String()},
+		"wtSaltsOut":           [3]string{saltBobField.String(), saltA.String(), saltRelayer.String()},
+	}
+
+	// ── Step 5: Request proof from gnark server ───────────────────────────────
+	t.Log("Step 5 — requesting PaymentRelayerFeePublic proof from gnark server")
+
+	proofResp, err := postProof(gnarkURL+"/proof/paymentRelayerFeePublic", reqBody)
+	if err != nil {
+		t.Fatalf("postProof paymentRelayerFeePublic: %v", err)
+	}
+	t.Log("  PaymentRelayerFeePublic proof generated ✓")
+
+	// ── Step 6: Verify public signals ────────────────────────────────────────
+	t.Log("Step 6 — verifying public signals (9 elements)")
+
+	sig := proofResp.PublicSignal
+	if len(sig) != 9 {
+		t.Fatalf("expected 9 public signals, got %d", len(sig))
+	}
+	t.Logf("  signal[0] msg           = %s", sig[0])
+	t.Logf("  signal[1] treeNum       = %s", sig[1])
+	t.Logf("  signal[2] root          = %s", sig[2])
+	t.Logf("  signal[3] nullifier     = %s", sig[3])
+	t.Logf("  signal[4] cmt_bob       = %s", sig[4])
+	t.Logf("  signal[5] cmt_change    = %s", sig[5])
+	t.Logf("  signal[6] cmt_relayer   = %s", sig[6])
+	t.Logf("  signal[7] contractAddr  = %s", sig[7])
+	t.Logf("  signal[8] StFee         = %s", sig[8])
+
+	checkBig := func(label string, got, want *big.Int) {
+		t.Helper()
+		if got.Cmp(want) != 0 {
+			t.Errorf("%s: got %s, want %s", label, got, want)
+		} else {
+			t.Logf("  %s ✓", label)
+		}
+	}
+
+	checkBig("signal[2] merkle root", sig[2], aliceProof.Root)
+	checkBig("signal[3] nullifier",   sig[3], nullifier)
+	checkBig("signal[4] cmt_bob",     sig[4], cmtBob)
+	checkBig("signal[5] cmt_change",  sig[5], cmtChange)
+	checkBig("signal[6] cmt_relayer", sig[6], cmtRelayer)
+	checkBig("signal[7] contractAddr",sig[7], vaultAddrBig)
+	checkBig("signal[8] StFee",       sig[8], relayerAmt)
+
+	// ── Step 7: Bob scans his note via ML-KEM ────────────────────────────────
+	t.Log("Step 7 — Bob scans his note via ML-KEM")
+
+	bobEvents := []dvpcore.OnChainErc20Event{{
+		Commitment: cmtBob,
+		CipherText: ctxtBob,
+		EncTxData:  ctxtIIBob,
+	}}
+	bobNotes, err := dvpcore.ScanForErc20Notes(bobView.DecapsKey, bobSpend.PublicKey, bobEvents)
+	if err != nil {
+		t.Fatalf("ScanForErc20Notes: %v", err)
+	}
+	if len(bobNotes) != 1 {
+		t.Fatalf("Bob expected 1 note, got %d", len(bobNotes))
+	}
+	if bobNotes[0].Amount.Cmp(paymentAmt) != 0 {
+		t.Errorf("Bob's note amount: got %s, want %s", bobNotes[0].Amount, paymentAmt)
+	}
+	t.Logf("  Bob's note: amount=%s tokenId=%s ✓", bobNotes[0].Amount, bobNotes[0].TokenId)
+
+	// ── Step 8: Alice verifies her change commitment ──────────────────────────
+	t.Log("Step 8 — Alice verifies her change commitment locally")
+
+	aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, saltA, changeAmt, tokenId)
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (change verify): %v", err)
+	}
+	if aliceChangeCmt.Cmp(sig[5]) != 0 {
+		t.Errorf("Alice's change commitment mismatch: got %s, want %s", aliceChangeCmt, sig[5])
+	}
+	t.Logf("  Alice's change note: amount=%s saltA=%s ✓", changeAmt, saltA)
+
+	// ── Step 9: Relayer verifies fee commitment ───────────────────────────────
+	t.Log("Step 9 — relayer verifies fee commitment locally (using SaltRelayer)")
+
+	relayerFeeCmt, err := rpcore.Erc20CommitmentV2(relayerSpend.PublicKey, saltRelayer, relayerAmt, tokenId)
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (relayer verify): %v", err)
+	}
+	if relayerFeeCmt.Cmp(sig[6]) != 0 {
+		t.Errorf("Relayer fee commitment mismatch: got %s, want %s", relayerFeeCmt, sig[6])
+	}
+	t.Logf("  Relayer fee note: amount=%s saltRelayer=%s ✓", relayerAmt, saltRelayer)
+
+	// ── Step 10: Confirm public fee is visible ────────────────────────────────
+	t.Log("Step 10 — confirming public fee signal equals relayer fee amount")
+
+	if sig[8].Cmp(relayerAmt) != 0 {
+		t.Errorf("public StFee signal mismatch: got %s, want %s", sig[8], relayerAmt)
+	}
+	t.Logf("  StFee=%s is publicly visible on-chain ✓ (anyone can verify Alice paid the relayer exactly %s tokens)",
+		sig[8], relayerAmt)
+
+	t.Logf("=== PAYMENT RELAYER FEE PUBLIC FLOW COMPLETE ===")
+	t.Logf("    Alice paid %s tokens to Bob", paymentAmt)
+	t.Logf("    Alice kept %s tokens as change", changeAmt)
+	t.Logf("    Relayer earned spendable note of %s tokens (publicly verifiable via StFee)", relayerAmt)
+	t.Log("    NOTE: on-chain submission requires adding paymentWithRelayerFeePublic to EnygmaDvp")
+}
+
+// proofResponse mirrors the JSON response from /proof/paymentRelayerFeePublic.
+type proofResponse struct {
+	Proof        []*big.Int `json:"proof"`
+	PublicSignal []*big.Int `json:"publicSignal"`
+	Error        string     `json:"error"`
+}
+
+// postProof POSTs a JSON payload to the gnark server and returns the parsed response.
+func postProof(url string, body interface{}) (*proofResponse, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("http.Post: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gnark server %d: %s", resp.StatusCode, string(raw))
+	}
+	var out proofResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	if out.Error != "" {
+		return nil, fmt.Errorf("gnark error: %s", out.Error)
+	}
+	return &out, nil
+}

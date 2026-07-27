@@ -107,7 +107,7 @@ func main() {
 	// publicKey and randomness are dummy values: the relayer is only the
 	// msg.sender for on-chain submissions and does not participate in ZK
 	// circuits as a bank. The contract only checks accountId != 0.
-	tx, err := instance.RegisterAccount(auth, relayerAddr, big.NewInt(*accountID), big.NewInt(1), big.NewInt(0))
+	tx, err := instance.RegisterAccount(auth, relayerAddr, big.NewInt(*accountID), big.NewInt(1), big.NewInt(0), []byte{})
 	if err != nil {
 		log.Fatalf("registerAccount(): %v", err)
 	}

@@ -37,6 +37,7 @@ import (
 	"time"
 
 	enygma "enygma/contracts"
+	"enygma/agreement"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -270,15 +271,42 @@ func readReceipts(t *testing.T) (tokenAddr, verifierAddr string) {
 	return r.TOKEN.ContractAddress, r.VERIFIER.ContractAddress
 }
 
-// Pre-shared secrets for banks 1-5 (from initializeSecrets in transaction/main.go).
-var baseSecrets = []*big.Int{
-	nil, // bank 0: derived at runtime from (prevR, sk)
-	big.NewInt(54142),
-	big.NewInt(814712),
-	big.NewInt(250912012),
-	big.NewInt(12312512),
-	big.NewInt(12312512),
-}
+// testKeysDir holds the temporary directory for ML-KEM view keys in tests.
+// Created once per test binary invocation; cleaned up by os.Exit.
+var testKeysDir string
+
+// baseSecrets holds ML-KEM-derived pairwise shared secrets between bank 0 (sender)
+// and banks 1-5.  Bank 0's slot is nil — it is replaced at runtime by
+// Poseidon(prevR, sk).  Generated once per process in init().
+var baseSecrets = func() []*big.Int {
+	dir, err := os.MkdirTemp("", "enygma-test-keys-*")
+	if err != nil {
+		panic("create temp keys dir: " + err.Error())
+	}
+	testKeysDir = dir
+
+	mgrs := make([]*agreement.Manager, nBanks)
+	for i := 0; i < nBanks; i++ {
+		m, err := agreement.New(i, dir)
+		if err != nil {
+			panic(fmt.Sprintf("create agreement manager for bank %d: %v", i, err))
+		}
+		mgrs[i] = m
+	}
+
+	// Bank 0 is the leader: encapsulate to each peer's public key.
+	secrets := make([]*big.Int, nBanks)
+	secrets[0] = nil // set at runtime from Poseidon(prevR, sk)
+	sender := mgrs[0]
+	for i := 1; i < nBanks; i++ {
+		ss, err := sender.GetOrEstablish(i, mgrs[i].EncapsulationKey())
+		if err != nil {
+			panic(fmt.Sprintf("establish ML-KEM secret with bank %d: %v", i, err))
+		}
+		secrets[i] = ss
+	}
+	return secrets
+}()
 
 // Secret keys per bank (bank 0 uses senderSk).
 var bankSks = []*big.Int{
@@ -368,7 +396,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	// Register banks with accountIds 1-6 (avoids onlyRegistered sentinel=0 bug).
 	// All use ownerAddr; addressToAccountId is overwritten each call — last value is 6 ≠ 0.
 	for i := 0; i < nBanks; i++ {
-		r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR)))
+		r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{}))
 		if r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}

@@ -254,7 +254,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	}
 	for i := 0; i < nBanks; i++ {
 		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR))); r.Status != 1 {
+			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
@@ -456,7 +456,7 @@ func freshSetup(
 	}
 	for i := 0; i < nBanks; i++ {
 		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR))); r.Status != 1 {
+			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}

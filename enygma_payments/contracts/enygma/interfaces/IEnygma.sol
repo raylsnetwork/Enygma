@@ -74,7 +74,8 @@ interface IEnygma {
         address addr,
         uint256 accountNum,
         uint256 k,
-        uint256 r
+        uint256 r,
+        bytes calldata viewKey
     ) external returns (bool);
 
     function initialize() external returns (bool);

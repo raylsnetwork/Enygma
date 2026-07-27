@@ -79,8 +79,11 @@ contract Enygma is IEnygma {
     /// @notice Balance commitments per block per account
     mapping(uint256 => mapping(uint256 => Point)) public balanceCommitments;
 
-    /// @notice Public keys for each account
+    /// @notice Public spend keys for each account (Poseidon(sk,sk) mod P)
     mapping(uint256 => uint256) public publicKeys;
+
+    /// @notice Public view keys for each account (ML-KEM-768 encapsulation key, 1184 bytes)
+    mapping(uint256 => bytes) public viewKeys;
 
     /// @notice Maps Ethereum address to account ID
     mapping(address => uint256) public addressToAccountId;
@@ -180,17 +183,20 @@ contract Enygma is IEnygma {
      * @notice Register new account with initial balance commitment
      * @param addr Ethereum address to register
      * @param accountId Unique account identifier
-     * @param publicKey Institution public key
+     * @param publicKey Institution public spend key (Poseidon(sk,sk) mod P)
      * @param randomness Randomness for initial balance commitment
+     * @param viewKey Institution public view key (ML-KEM-768 encapsulation key, 1184 bytes)
      */
 
     function registerAccount(
         address addr,
         uint256 accountId,
         uint256 publicKey,
-        uint256 randomness
+        uint256 randomness,
+        bytes calldata viewKey
     ) external onlyOwner returns (bool) {
         publicKeys[accountId] = publicKey;
+        viewKeys[accountId] = viewKey;
         addressToAccountId[addr] = accountId;
 
         // Create initial balance commitment: Com(0, randomness) = randomness*H

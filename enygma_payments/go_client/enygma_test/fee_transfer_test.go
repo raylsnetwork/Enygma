@@ -162,7 +162,7 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 	for i := 0; i < nBanks; i++ {
 		if r := waitTx(enygmaInstance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR))); r.Status != 1 {
+			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}

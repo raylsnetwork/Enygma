@@ -6,24 +6,33 @@ import (
 	"gnark_server/primitives"
 )
 
-// PaymentRelayerCircuit is a 1-in / 3-out payment circuit where output[2] carries
-// the relayer fee as a spendable commitment (not burned).
+// PaymentRelayerFeePublicCircuit combines PaymentRelayerCircuit and PaymentFeeCircuit:
+//   - 3 output commitments: Bob's payment, Alice's change, Relayer's spendable fee note
+//   - StFee is a public signal — the chain can verify the exact fee being paid
+//   - WtValuesOut[2] (relayer's amount) is constrained to equal StFee
+//
+// Conservation law (nothing burned — all value accounted for in outputs):
+//
+//	Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]
+//
+// Fee binding (links public StFee to the relayer's private note amount):
+//
+//	WtValuesOut[2] == StFee
+//
+// Combined this means: valueIn = payAmt + changeAmt + StFee
 //
 // Output layout:
 //
 //	[0] Bob's payment  — no ownership constraint (any pk_spend)
 //	[1] Alice's change — constrained to senderPk
-//	[2] Relayer fee    — no ownership constraint (relayer's pk_spend)
+//	[2] Relayer fee    — any pk_spend, but amount == StFee (publicly verifiable)
 //
-// Conservation law (no value burned):
-//
-//	Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]
-//
-// Public signal layout (1-in / 3-out, 8 elements):
+// Public signal layout (9 elements):
 //
 //	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2], StContractAddress]
-type PaymentRelayerCircuit struct {
+//	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2],
+//	 StContractAddress, StFee]
+type PaymentRelayerFeePublicCircuit struct {
 	Config PaymentCircuitConfig
 
 	// --- public inputs ---
@@ -33,6 +42,7 @@ type PaymentRelayerCircuit struct {
 	StNullifiers      []frontend.Variable `gnark:",public"`
 	StCommitmentsOut  []frontend.Variable `gnark:",public"` // length 3: [bob, change, relayer]
 	StContractAddress frontend.Variable   `gnark:",public"`
+	StFee             frontend.Variable   `gnark:",public"` // relayer fee amount, publicly verifiable
 
 	// --- private witnesses: inputs ---
 	WtPrivateKeysIn []frontend.Variable
@@ -49,7 +59,7 @@ type PaymentRelayerCircuit struct {
 	WtSaltsOut           []frontend.Variable // [saltBob, saltChange, saltRelayer]
 }
 
-func (circuit *PaymentRelayerCircuit) Define(api frontend.API) error {
+func (circuit *PaymentRelayerFeePublicCircuit) Define(api frontend.API) error {
 
 	api.AssertIsEqual(circuit.StMessage, 0)
 
@@ -114,7 +124,7 @@ func (circuit *PaymentRelayerCircuit) Define(api frontend.API) error {
 		)
 		api.AssertIsEqual(commitment, circuit.StCommitmentsOut[j])
 
-		// Only output[1] (Alice's change) is constrained to senderPk.
+		// output[1] (Alice's change) must be owned by sender.
 		// output[0] = Bob's payment (any key), output[2] = relayer fee (any key).
 		if j == 1 {
 			api.AssertIsEqual(circuit.WtSpendPublicKeysOut[j], senderPk)
@@ -123,8 +133,12 @@ func (circuit *PaymentRelayerCircuit) Define(api frontend.API) error {
 		outputsTotal = api.Add(outputsTotal, circuit.WtValuesOut[j])
 	}
 
-	// Conservation: all 3 outputs sum to all inputs — nothing is burned.
+	// Conservation: all 3 outputs sum to all inputs — nothing burned.
 	api.AssertIsEqual(outputsTotal, inputsTotal)
+
+	// Fee binding: relayer's note amount must equal the public StFee signal.
+	// This prevents Alice from under-paying the relayer while claiming a higher fee on-chain.
+	api.AssertIsEqual(circuit.WtValuesOut[2], circuit.StFee)
 
 	return nil
 }

@@ -125,7 +125,7 @@ func TestSequentialTransfers(t *testing.T) {
 	}
 	for i := 0; i < nBanks; i++ {
 		waitTxOK(instance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR)))
+			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{}))
 	}
 	waitTxOK(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1)))
 	t.Logf("setup: %d banks registered, %d tokens minted to bank 0 (accountId=1)", nBanks, mintAmt)

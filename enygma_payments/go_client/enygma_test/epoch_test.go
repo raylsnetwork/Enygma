@@ -339,7 +339,7 @@ func TestEpochIntervalFlow(t *testing.T) {
 		pks[i] = pk.Mod(pk, curveP)
 	}
 	for i := 0; i < nBanks; i++ {
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR))); r.Status != 1 {
+		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
@@ -668,7 +668,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 		pks[i] = pk.Mod(pk, curveP)
 	}
 	for i := 0; i < nBanks; i++ {
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR))); r.Status != 1 {
+		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}

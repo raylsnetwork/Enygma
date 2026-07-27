@@ -1,6 +1,6 @@
 module demo
 
-go 1.21.6
+go 1.25.0
 
 require (
 	enygma v0.0.0

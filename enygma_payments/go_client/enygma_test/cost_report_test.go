@@ -262,7 +262,7 @@ func TestCostReport(t *testing.T) {
 	}
 	var regTotalGas uint64
 	for i := 0; i < nBanks; i++ {
-		tx, txErr := instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR))
+		tx, txErr := instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})
 		r := record(fmt.Sprintf("registerAccount(bank %d)", i+1), tx, txErr)
 		addRec(r)
 		regTotalGas += r.gasUsed

@@ -11,6 +11,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -230,6 +233,8 @@ type connState struct {
 	lastRValues    [nBanks]*big.Int  // TxRandomValues from the last successful transfer; for verify tab
 	cumulativeR    [nBanks]*big.Int  // running sum of txRandom per bank across all transfers (mod P)
 	transferCount  int               // number of completed transfers
+	kaSecrets      [nBanks][nBanks]*big.Int  // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
+	kaEKs          [nBanks][]byte           // ML-KEM-768 encapsulation keys (1184B each, public_view_key)
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -608,7 +613,17 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 
 	stepKey := fmt.Sprintf("bank_%d", bankIdx)
 
-	// Derive key
+	// Collect view key (ML-KEM ek); empty if key agreement hasn't been run yet
+	s.state.mu.Lock()
+	ek := s.state.kaEKs[bankIdx]
+	s.state.mu.Unlock()
+
+	ekDesc := "(run Key Agreement first)"
+	if len(ek) > 0 {
+		ekDesc = hex.EncodeToString(ek[:8]) + "… (1184B)"
+	}
+
+	// Derive spend key
 	fc.emitBank(bankIdx, stepKey+"_key", "running",
 		fmt.Sprintf("Bank %d · Derive Key", bankIdx),
 		fmt.Sprintf("pk = Poseidon(%s, %s) mod P", trunc(sk.String(), 10), trunc(sk.String(), 10)))
@@ -618,16 +633,22 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 		fmt.Sprintf("Bank %d · Key Derived", bankIdx),
 		fmt.Sprintf("pk = %s", trunc(pk.String(), 22)))
 	fc.participant(bankIdx, "pk", pk.String())
+	fc.participant(bankIdx, "spend_key", pk.String())
+	if len(ek) == 0 {
+		fc.participant(bankIdx, "view_ek", "(run Key Agreement first)")
+	} else {
+		fc.participant(bankIdx, "view_ek", hex.EncodeToString(ek[:8])+"… (1184B)")
+	}
 	fc.log(fmt.Sprintf("Bank %d: pk = Poseidon(%s,%s) = %s", bankIdx, sk.String(), sk.String(), trunc(pk.String(), 30)))
 	pause(400 * time.Millisecond)
 
 	// Register on-chain
 	fc.emitBank(bankIdx, stepKey+"_reg", "running",
 		fmt.Sprintf("Bank %d · RegisterAccount", bankIdx),
-		fmt.Sprintf("registerAccount(id=%d, pk=%s…, prevR=%d)", bankIdx+1, trunc(pk.String(), 10), senderPrevRVal))
+		fmt.Sprintf("registerAccount(id=%d, spendPk=%s…, viewEk=%s)", bankIdx+1, trunc(pk.String(), 10), ekDesc))
 	raTx, raErr := s.state.inst.RegisterAccount(
 		fc.mkAuth(), s.state.owner,
-		big.NewInt(int64(bankIdx+1)), pk, big.NewInt(senderPrevRVal))
+		big.NewInt(int64(bankIdx+1)), pk, big.NewInt(senderPrevRVal), ek)
 	if raErr == nil {
 		if _, waitErr := fc.waitTx(fmt.Sprintf("RegisterAccount[%d]", bankIdx), raTx, raErr); waitErr != nil {
 			fc.log(fmt.Sprintf("Bank %d already registered (OK — idempotent)", bankIdx))
@@ -637,7 +658,7 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 	}
 	fc.emitBank(bankIdx, stepKey+"_reg", "success",
 		fmt.Sprintf("Bank %d · Registered ✓", bankIdx),
-		fmt.Sprintf("accountId=%d · prevR=%d", bankIdx+1, senderPrevRVal))
+		fmt.Sprintf("accountId=%d · spendPk+viewEk on-chain", bankIdx+1))
 	s.state.mu.Lock()
 	s.state.registeredSks[bankIdx] = new(big.Int).Set(sk)
 	s.state.mu.Unlock()
@@ -728,6 +749,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	} else {
 		prevSenderR = new(big.Int) // 0 on first transfer for this bank
 	}
+	kaSecretsSnap := s.state.kaSecrets // copy [nBanks]*big.Int array
 	s.state.mu.Unlock()
 	if senderSk == nil {
 		senderSk = bankSks[senderIdx]
@@ -735,13 +757,18 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	fc.emit("derive_secrets", "running", "Derive shared secrets", "s₀ = Poseidon(prevR, sk) mod P")
 	senderSecret, _ := poseidon.Hash([]*big.Int{prevSenderR, senderSk})
 	senderSecret.Mod(senderSecret, curveP)
-	baseSecrets := [nBanks]*big.Int{
-		big.NewInt(31415),
-		big.NewInt(54142), big.NewInt(814712),
-		big.NewInt(250912012), big.NewInt(12312512), big.NewInt(12312512),
+	// Use ML-KEM derived secrets if key agreement has been run; fall back to demo defaults.
+	demoDefaults := [nBanks]int64{31415, 54142, 814712, 250912012, 12312512, 12312512}
+	var secrets [nBanks]*big.Int
+	for i := 0; i < nBanks; i++ {
+		if i == senderIdx {
+			secrets[i] = senderSecret
+		} else if kaSecretsSnap[senderIdx][i] != nil {
+			secrets[i] = new(big.Int).Set(kaSecretsSnap[senderIdx][i])
+		} else {
+			secrets[i] = big.NewInt(demoDefaults[i])
+		}
 	}
-	secrets := baseSecrets
-	secrets[senderIdx] = senderSecret
 	fc.emit("derive_secrets", "success", "Derive shared secrets",
 		fmt.Sprintf("s[%d] = Poseidon(%s, %s) = %s", senderIdx, trunc(prevSenderR.String(), 10), trunc(senderSk.String(), 10), trunc(senderSecret.String(), 20)))
 	for i, s := range secrets {
@@ -1070,6 +1097,158 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	fc.done(true, fmt.Sprintf("Transfer of %d tokens settled and verified on-chain", senderAmt))
 }
 
+// ── Tab 5: Key Agreement flow ─────────────────────────────────────────────────
+
+func (s *Server) handleRunKeyAgreement(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	s.startFlow(w, func() { runKeyAgreement(s) })
+}
+
+// runKeyAgreement simulates ML-KEM-768 pairwise key agreement with realistic
+// key sizes (NIST FIPS 203): dk seed=64B, ek=1184B, ct=1088B, rawSS=32B.
+// It derives Baby JubJub field elements via SHA-256("enygma-view-key-v1:"||rawSS) mod P.
+func runKeyAgreement(s *Server) {
+	fc := newCtx(s, "agreement")
+	t0 := time.Now()
+
+	type bankData struct {
+		ek       []byte // full 1184-byte simulated ML-KEM-768 encapsulation key
+		ekPrefix [8]byte
+	}
+	banks := make([]bankData, nBanks)
+
+	// ── Phase 1: Keygen ──────────────────────────────────────────────────────────
+	fc.emit("ka_keygen", "running", "Keygen ×6", "GenerateKey() → (dk seed 64B, ek 1184B) per bank")
+	pause(200 * time.Millisecond)
+
+	for i := 0; i < nBanks; i++ {
+		fc.emitBank(i, fmt.Sprintf("ka_keygen_%d", i), "running",
+			fmt.Sprintf("Bank %d · GenerateKey()", i),
+			"rand(64B seed) → dk  |  derive ek (1184B)")
+
+		var seed [64]byte
+		if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
+			fc.done(false, "rand failed: "+err.Error())
+			return
+		}
+		// Derive a 1184-byte simulated ML-KEM-768 encapsulation key from the seed
+		// using a chain of SHA-256 digests (46 × 32B = 1472B, truncated to 1184B).
+		ek := make([]byte, 1184)
+		prev := seed[:]
+		for off := 0; off < 1184; off += 32 {
+			h := sha256.Sum256(prev)
+			end := off + 32
+			if end > 1184 {
+				end = 1184
+			}
+			copy(ek[off:end], h[:end-off])
+			prev = h[:]
+		}
+		banks[i].ek = ek
+		copy(banks[i].ekPrefix[:], ek[:8])
+		pause(220 * time.Millisecond)
+
+		fc.emitBank(i, fmt.Sprintf("ka_keygen_%d", i), "success",
+			fmt.Sprintf("Bank %d · Keypair Ready", i),
+			fmt.Sprintf("ek = %s… (1184B)", hex.EncodeToString(banks[i].ekPrefix[:])))
+		fc.participant(i, "ka_ek", hex.EncodeToString(banks[i].ekPrefix[:])+"…")
+		pause(80 * time.Millisecond)
+	}
+	fc.emit("ka_keygen", "success", "Keygen ×6 Complete",
+		"6 ML-KEM-768 keypairs — ek (1184B) published, dk (64B seed) kept private")
+	pause(500 * time.Millisecond)
+
+	// ── Phase 2: Encapsulate — all C(6,2)=15 pairs, leader = lower index ────────
+	fc.emit("ka_encap", "running", "Encapsulate ×15",
+		"Each bank encapsulates to every peer with a higher index — 15 pairs total")
+
+	var rawSecrets [nBanks][nBanks][32]byte
+	var ctPrefixes [nBanks][nBanks][8]byte
+
+	for i := 0; i < nBanks-1; i++ {
+		for j := i + 1; j < nBanks; j++ {
+			stepName := fmt.Sprintf("ka_encap_%d_%d", i, j)
+			fc.emitBank(i, stepName, "running",
+				fmt.Sprintf("Bank %d → Bank %d · Encapsulate", i, j),
+				fmt.Sprintf("Encapsulate(ek[%d]) → ct (1088B) + rawSS (32B)", j))
+			pause(100 * time.Millisecond)
+
+			if _, err := io.ReadFull(rand.Reader, rawSecrets[i][j][:]); err != nil {
+				fc.done(false, "rand failed: "+err.Error())
+				return
+			}
+			ctHash := sha256.Sum256(append([]byte("ct:"), rawSecrets[i][j][:]...))
+			copy(ctPrefixes[i][j][:], ctHash[:8])
+
+			fc.emitBank(i, stepName, "success",
+				fmt.Sprintf("Bank %d → Bank %d · Sent", i, j),
+				fmt.Sprintf("ct = %s… (1088B)", hex.EncodeToString(ctPrefixes[i][j][:])))
+			pause(30 * time.Millisecond)
+		}
+	}
+	fc.emit("ka_encap", "success", "Encapsulate ×15 Complete",
+		"15 ciphertexts dispatched — every peer can now independently decapsulate")
+	pause(400 * time.Millisecond)
+
+	// ── Phase 3: Decapsulate + field element derivation — all 15 pairs ──────────
+	fc.emit("ka_decap", "running", "Decapsulate ×15",
+		"Each peer: dk + ct → same rawSS → SHA-256('enygma-view-key-v1:'||rawSS) mod P")
+
+	var fieldElems [nBanks][nBanks]*big.Int
+	agreedCount := [nBanks]int{}
+
+	for i := 0; i < nBanks-1; i++ {
+		for j := i + 1; j < nBanks; j++ {
+			stepName := fmt.Sprintf("ka_decap_%d_%d", i, j)
+			fc.emitBank(j, stepName, "running",
+				fmt.Sprintf("Bank %d · Decapsulate ct from %d", j, i),
+				fmt.Sprintf("dk[%d] + ct_%d→%d → rawSS → SHA-256 → mod P", j, i, j))
+			pause(130 * time.Millisecond)
+
+			h := sha256.New()
+			h.Write([]byte("enygma-view-key-v1:"))
+			h.Write(rawSecrets[i][j][:])
+			digest := h.Sum(nil)
+			fe := new(big.Int).SetBytes(digest)
+			fe.Mod(fe, curveP)
+			fieldElems[i][j] = fe
+			fieldElems[j][i] = new(big.Int).Set(fe) // symmetric
+
+			agreedCount[i]++
+			agreedCount[j]++
+			fc.emitBank(j, stepName, "success",
+				fmt.Sprintf("Bank %d ↔ Bank %d · Agreed ✓", i, j),
+				fmt.Sprintf("fe = %s…", trunc(fe.String(), 16)))
+			fc.participant(i, "ka_done", fmt.Sprintf("%d/5", agreedCount[i]))
+			fc.participant(j, "ka_done", fmt.Sprintf("%d/5", agreedCount[j]))
+			fc.log(fmt.Sprintf("  ss[%d↔%d] = %s…", i, j, trunc(fe.String(), 52)))
+			pause(30 * time.Millisecond)
+		}
+	}
+
+	fc.emit("ka_decap", "success", "All 15 Secrets Established",
+		"Every bank pair has an identical pairwise ML-KEM-768 secret — full mesh complete")
+	fc.emit("ka_field", "success", "15 Baby JubJub Scalars Ready",
+		"SHA-256('enygma-view-key-v1:'||rawSS) mod P — usable as view-key secrets for any sender")
+
+	s.state.mu.Lock()
+	for i := 0; i < nBanks; i++ {
+		s.state.kaEKs[i] = banks[i].ek
+		for j := 0; j < nBanks; j++ {
+			if fieldElems[i][j] != nil {
+				s.state.kaSecrets[i][j] = fieldElems[i][j]
+			}
+		}
+	}
+	s.state.mu.Unlock()
+
+	ms := time.Since(t0).Milliseconds()
+	fc.done(true, fmt.Sprintf("ML-KEM-768 agreement complete in %dms — 5 pairwise secrets ready for payments", ms))
+}
+
 // ── Verify / calculator endpoints ─────────────────────────────────────────────
 
 func (s *Server) handleCalcPedersen(w http.ResponseWriter, r *http.Request) {
@@ -1211,6 +1390,7 @@ func main() {
 	mux.HandleFunc("/run/register-bank", srv.handleRunRegisterBank)
 	mux.HandleFunc("/run/mint", srv.handleRunMint)
 	mux.HandleFunc("/run/transfer", srv.handleRunTransfer)
+	mux.HandleFunc("/run/key-agreement", srv.handleRunKeyAgreement)
 	mux.HandleFunc("/calc/pedersen", srv.handleCalcPedersen)
 	mux.HandleFunc("/state/balances", srv.handleStateBalances)
 	mux.HandleFunc("/state/last-transfer", srv.handleStateLastTransfer)

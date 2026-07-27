@@ -1,0 +1,1779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Enygma Retail Payments — Protocol Flow</title>
+<style>
+  :root {
+    --alice:   #6366f1;
+    --bob:     #10b981;
+    --chain:   #f59e0b;
+    --auditor: #ef4444;
+    --gnark:   #8b5cf6;
+    --bg:      #0f172a;
+    --card:    #1e293b;
+    --border:  #334155;
+    --text:    #e2e8f0;
+    --muted:   #94a3b8;
+    --accent:  #38bdf8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  header {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 40px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: -0.5px;
+  }
+
+  header p {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 2px;
+  }
+
+  .logo {
+    width: 44px; height: 44px;
+    background: linear-gradient(135deg, var(--alice), var(--accent));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 900; color: #fff;
+    flex-shrink: 0;
+  }
+
+  /* Tab nav */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 16px 40px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    overflow-x: auto;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .tab-btn {
+    padding: 10px 18px;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all 0.2s;
+    border-radius: 6px 6px 0 0;
+  }
+
+  .tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(56,189,248,0.06); }
+
+  .tab-content { display: none; padding: 32px 40px; max-width: 1200px; margin: 0 auto; }
+  .tab-content.active { display: block; }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Flow diagram */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .phase-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 32px 0 16px;
+  }
+
+  .phase-header:first-child { margin-top: 0; }
+
+  .phase-badge {
+    background: var(--accent);
+    color: #0f172a;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 10px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  .phase-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .phase-sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+
+  /* Actor swim-lanes */
+  .swimlane-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr 1fr 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 28px;
+  }
+
+  .lane-header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px;
+    font-weight: 700;
+    font-size: 12px;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .lane-header.alice  { color: var(--alice);   border-right: 1px solid var(--border); }
+  .lane-header.bob    { color: var(--bob);     border-right: 1px solid var(--border); }
+  .lane-header.chain  { color: var(--chain);   border-right: 1px solid var(--border); }
+  .lane-header.gnark  { color: var(--gnark);   border-right: 1px solid var(--border); }
+  .lane-header.auditor{ color: var(--auditor); }
+  .lane-header.label  { color: var(--muted);   border-right: 1px solid var(--border); font-size: 11px; }
+
+  /* Step cards */
+  .step-row {
+    display: contents;
+  }
+
+  .step-label {
+    background: rgba(30,41,59,0.6);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .step-cell {
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px;
+    min-height: 60px;
+    position: relative;
+  }
+
+  .step-cell:last-child { border-right: none; }
+  .step-row:last-child .step-cell,
+  .step-row:last-child .step-label { border-bottom: none; }
+
+  .step-cell.alice-cell  { background: rgba(99,102,241,0.05); }
+  .step-cell.bob-cell    { background: rgba(16,185,129,0.05); }
+  .step-cell.chain-cell  { background: rgba(245,158,11,0.05); }
+  .step-cell.gnark-cell  { background: rgba(139,92,246,0.05); }
+  .step-cell.auditor-cell{ background: rgba(239,68,68,0.05); }
+  .step-cell.empty       { background: transparent; }
+
+  .action {
+    display: inline-block;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    margin-bottom: 4px;
+    width: 100%;
+  }
+
+  .action.alice-action  { border-left: 3px solid var(--alice); }
+  .action.bob-action    { border-left: 3px solid var(--bob); }
+  .action.chain-action  { border-left: 3px solid var(--chain); }
+  .action.gnark-action  { border-left: 3px solid var(--gnark); }
+  .action.auditor-action{ border-left: 3px solid var(--auditor); }
+  .action.check         { border-left: 3px solid #22c55e; }
+
+  .action-title {
+    font-weight: 700;
+    font-size: 11px;
+    margin-bottom: 2px;
+  }
+
+  .action-body {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  code {
+    background: rgba(56,189,248,0.12);
+    color: var(--accent);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 11px;
+  }
+
+  /* Arrow */
+  .arrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .arrow-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+    position: relative;
+  }
+
+  .arrow-line::after {
+    content: '▶';
+    position: absolute;
+    right: -4px;
+    top: -7px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* Horizontal flow cards */
+  .hflow {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin-bottom: 28px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .hflow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 160px;
+  }
+
+  .hflow-connector {
+    display: flex;
+    align-items: center;
+    padding-top: 28px;
+    color: var(--muted);
+    font-size: 18px;
+    padding-left: 4px;
+    padding-right: 4px;
+    flex-shrink: 0;
+  }
+
+  .hnode {
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 11px;
+    line-height: 1.5;
+    width: 100%;
+    text-align: center;
+  }
+
+  .hnode-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  .hnode.alice-node  { background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.4); }
+  .hnode.bob-node    { background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.4); }
+  .hnode.chain-node  { background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.4); }
+  .hnode.gnark-node  { background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.4); }
+  .hnode.auditor-node{ background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); }
+
+  .hnode-label.alice   { color: var(--alice); }
+  .hnode-label.bob     { color: var(--bob); }
+  .hnode-label.chain   { color: var(--chain); }
+  .hnode-label.gnark   { color: var(--gnark); }
+  .hnode-label.auditor { color: var(--auditor); }
+
+  .connector-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    max-width: 80px;
+    margin-top: 4px;
+  }
+
+  /* Formula box */
+  .formula-box {
+    background: rgba(56,189,248,0.06);
+    border: 1px solid rgba(56,189,248,0.2);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    font-family: 'Fira Code', monospace;
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .formula-box .comment { color: var(--muted); }
+
+  /* Callout */
+  .callout {
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    font-size: 13px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .callout.info  { background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.25); }
+  .callout.warn  { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); }
+  .callout.green { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); }
+  .callout.red   { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.25); }
+
+  .callout-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+
+  .callout-body strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .callout-body p { color: var(--muted); font-size: 12px; }
+
+  /* Comparison table */
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    margin: 16px 0;
+  }
+
+  .compare-table th {
+    background: var(--card);
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compare-table td {
+    padding: 12px 16px;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(51,65,85,0.5);
+    vertical-align: top;
+  }
+
+  .compare-table tr:last-child td { border-bottom: none; }
+  .compare-table tr:nth-child(even) td { background: rgba(30,41,59,0.3); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .badge.new    { background: rgba(16,185,129,0.2); color: var(--bob); }
+  .badge.same   { background: rgba(99,102,241,0.2); color: var(--alice); }
+  .badge.diff   { background: rgba(245,158,11,0.2); color: var(--chain); }
+
+  /* Primitives grid */
+  .primitives-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  .primitive-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .primitive-card h4 {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .primitive-card p {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .primitive-card code { font-size: 11px; }
+
+  /* Section divider */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 24px 0;
+  }
+
+  /* Signal table */
+  .signal-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 12px;
+  }
+
+  .signal-table th {
+    background: var(--card);
+    padding: 8px 14px;
+    text-align: left;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .signal-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(51,65,85,0.4);
+    vertical-align: middle;
+  }
+
+  .signal-table tr:last-child td { border-bottom: none; }
+  .signal-table tr:nth-child(even) td { background: rgba(30,41,59,0.3); }
+  .highlight-row td { background: rgba(16,185,129,0.08) !important; color: var(--bob); font-weight: 600; }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .pill.pub  { background: rgba(245,158,11,0.2); color: var(--chain); }
+  .pill.priv { background: rgba(99,102,241,0.2); color: var(--alice); }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .tabs { padding: 12px 16px 0; }
+    .tab-content { padding: 20px 16px; }
+    header { padding: 16px; }
+    .swimlane-grid { grid-template-columns: 80px 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">E</div>
+  <div>
+    <h1>Enygma Retail Payments</h1>
+    <p>Full Protocol Flow — with and without fee</p>
+  </div>
+</header>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+  <button class="tab-btn" onclick="showTab('registration')">Phase 1 · Registration</button>
+  <button class="tab-btn" onclick="showTab('deposit')">Phase 2 · Deposit</button>
+  <button class="tab-btn" onclick="showTab('payment-nofee')">Phase 3a · Payment (no fee)</button>
+  <button class="tab-btn" onclick="showTab('payment-fee')">Phase 3b · Payment (with fee)</button>
+  <button class="tab-btn" onclick="showTab('channel')">Channel Mode</button>
+  <button class="tab-btn" onclick="showTab('auditing')">Phase 4 · Auditing</button>
+  <button class="tab-btn" onclick="showTab('crypto')">Cryptography</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ OVERVIEW ══ -->
+<div id="tab-overview" class="tab-content active">
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--alice)"></div>Alice (Sender)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--bob)"></div>Bob (Recipient)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--chain)"></div>Blockchain</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--gnark)"></div>Gnark ZK Server</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--auditor)"></div>Auditor</div>
+  </div>
+
+  <!-- High-level flow -->
+  <div class="phase-header">
+    <div class="phase-badge">End-to-End</div>
+    <div class="phase-title">Protocol Lifecycle</div>
+  </div>
+
+  <div class="hflow">
+    <div class="hflow-step">
+      <div class="hnode auditor-node">
+        <div class="hnode-label auditor">Auditor Setup</div>
+        Generate ML-KEM-768 keypair<br/>Publish <code>pk_auditor</code>
+      </div>
+      <div class="connector-label">One-time</div>
+    </div>
+    <div class="hflow-connector">→</div>
+
+    <div class="hflow-step">
+      <div class="hnode alice-node">
+        <div class="hnode-label alice">Phase 1</div>
+        Key Gen + Registration<br/>Store keys on-chain<br/>(± ETH fee)
+      </div>
+      <div class="connector-label">Alice &amp; Bob</div>
+    </div>
+    <div class="hflow-connector">→</div>
+
+    <div class="hflow-step">
+      <div class="hnode alice-node">
+        <div class="hnode-label alice">Phase 2</div>
+        Deposit ERC20<br/>Into private vault<br/>Get commitment
+      </div>
+      <div class="connector-label">Alice</div>
+    </div>
+    <div class="hflow-connector">→</div>
+
+    <div class="hflow-step">
+      <div class="hnode gnark-node">
+        <div class="hnode-label gnark">Phase 3</div>
+        Generate ZK proof<br/>(Groth16 / BN254)<br/>Gnark server
+      </div>
+      <div class="connector-label">Off-chain</div>
+    </div>
+    <div class="hflow-connector">→</div>
+
+    <div class="hflow-step">
+      <div class="hnode chain-node">
+        <div class="hnode-label chain">Phase 3</div>
+        Submit payment<br/>Verify proof on-chain<br/>Emit events
+      </div>
+      <div class="connector-label">EnygmaDvp</div>
+    </div>
+    <div class="hflow-connector">→</div>
+
+    <div class="hflow-step">
+      <div class="hnode bob-node">
+        <div class="hnode-label bob">Phase 3</div>
+        Scan events<br/>Decapsulate<br/>Decrypt &amp; verify
+      </div>
+      <div class="connector-label">Bob</div>
+    </div>
+    <div class="hflow-connector">→</div>
+
+    <div class="hflow-step">
+      <div class="hnode auditor-node">
+        <div class="hnode-label auditor">Phase 4</div>
+        Recover <code>sk_view</code><br/>Audit all payments<br/>Compliance
+      </div>
+      <div class="connector-label">Auditor</div>
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <!-- Key entities -->
+  <div class="phase-header">
+    <div class="phase-badge">Entities</div>
+    <div class="phase-title">Key Types per Actor</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:28px;">
+
+    <div class="primitive-card" style="border-top:3px solid var(--alice)">
+      <h4 style="color:var(--alice)">Alice (Sender)</h4>
+      <p>
+        <code>sk_spend</code> random field element<br/>
+        <code>pk_spend</code> = Poseidon(sk_spend)<br/>
+        <code>sk_view</code> ML-KEM-768 decaps key<br/>
+        <code>pk_view</code> ML-KEM-768 encaps key
+      </p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--bob)">
+      <h4 style="color:var(--bob)">Bob (Recipient)</h4>
+      <p>
+        <code>sk_spend</code> random field element<br/>
+        <code>pk_spend</code> = Poseidon(sk_spend)<br/>
+        <code>sk_view</code> ML-KEM-768 decaps key<br/>
+        <code>pk_view</code> ML-KEM-768 encaps key
+      </p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--chain)">
+      <h4 style="color:var(--chain)">Blockchain</h4>
+      <p>
+        <code>UserRegistry</code> stores public keys<br/>
+        <code>Erc20CoinVault</code> locks ERC20<br/>
+        <code>EnygmaDvp</code> verifies ZK proofs<br/>
+        Merkle tree of commitments
+      </p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--auditor)">
+      <h4 style="color:var(--auditor)">Auditor</h4>
+      <p>
+        <code>sk_auditor</code> ML-KEM-768 decaps key<br/>
+        <code>pk_auditor</code> ML-KEM-768 encaps key<br/>
+        Can recover any user's <code>sk_view</code><br/>
+        Can audit all historical payments
+      </p>
+    </div>
+
+  </div>
+
+  <!-- Note commitment structure -->
+  <div class="phase-header">
+    <div class="phase-badge">Core</div>
+    <div class="phase-title">Note Commitment Structure</div>
+  </div>
+
+  <div class="formula-box">
+    <span class="comment">// Every private note is represented by a Poseidon commitment</span><br/>
+    Commitment = Poseidon( pk_spend <span class="comment">// owner's spend public key</span><br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; || salt    <span class="comment">// randomness (HKDF-derived or random)</span><br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; || amount  <span class="comment">// token amount</span><br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; || tokenId <span class="comment">// ERC20 token identifier</span><br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)<br/><br/>
+    Nullifier = Poseidon( sk_spend <span class="comment">// proves ownership when spending</span><br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; || leafIndex <span class="comment">// position in Merkle tree</span><br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)
+  </div>
+
+  <div class="callout info">
+    <div class="callout-icon">ℹ️</div>
+    <div class="callout-body">
+      <strong>Value Conservation</strong>
+      <p>Without fee: <code>valueIn = Σ valueOut</code> &nbsp;·&nbsp; With fee: <code>valueIn = Σ valueOut + fee</code><br/>
+      The ZK circuit enforces this — no trusted party can inflate balances.</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════ REGISTRATION ══ -->
+<div id="tab-registration" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Phase 1</div>
+    <div class="phase-title">User Registration</div>
+    <div class="phase-sub">Each user registers once — ~900k gas (stores 1184-byte ML-KEM key)</div>
+  </div>
+
+  <div class="callout green">
+    <div class="callout-icon">🔑</div>
+    <div class="callout-body">
+      <strong>What gets published on-chain</strong>
+      <p><code>pk_spend</code> (uint256) · <code>pk_view</code> (1184 bytes) · <code>mlKemAuditCt</code> (1088 bytes) · <code>aesAuditCt</code> (92 bytes)</p>
+    </div>
+  </div>
+
+  <!-- WITHOUT FEE -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--bob)">Mode A</div>
+    <div class="phase-title">Without Registration Fee</div>
+  </div>
+
+  <div class="swimlane-grid">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Alice / Bob</div>
+    <div class="lane-header auditor">Auditor</div>
+    <div class="lane-header chain">Blockchain</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <!-- Step 1 -->
+    <div class="step-label">1</div>
+    <div class="step-cell alice-cell" style="grid-column:span 1;">
+      <div class="action alice-action">
+        <div class="action-title">Key Generation</div>
+        <div class="action-body">
+          <code>sk_spend</code> ← random field element<br/>
+          <code>pk_spend</code> = Poseidon(<code>sk_spend</code>)<br/>
+          (<code>dk_view</code>, <code>ek_view</code>) ← ML-KEM-768.KeyGen()
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <!-- Step 2 -->
+    <div class="step-label">2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Encrypt view key for auditor</div>
+        <div class="action-body">
+          (ss, <code>mlKemAuditCt</code>) ← ML-KEM.Encaps(<code>pk_auditor</code>)<br/>
+          enc_key = HKDF-SHA256(ss, <em>"enygma-audit-view-key-v1"</em>)<br/>
+          <code>aesAuditCt</code> = AES-256-GCM(enc_key, <code>dk_view.seed</code>, AAD=<code>mlKemAuditCt</code>)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell auditor-cell">
+      <div class="action auditor-action">
+        <div class="action-title">Publish pk_auditor</div>
+        <div class="action-body">Made available to all users so they can encrypt their view keys</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <!-- Step 3 -->
+    <div class="step-label">3</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Call register()</div>
+        <div class="action-body">
+          <code>msg.value = 0</code> (free registration)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">UserRegistry.register()</div>
+        <div class="action-body">
+          ✓ pkView.length == 1184<br/>
+          ✓ mlKemAuditCt.length == 1088<br/>
+          ✓ aesAuditCt.length == 92<br/>
+          ✓ not already registered<br/>
+          ✓ msg.value ≥ 0<br/>
+          → stores keys, emits <code>UserRegistered</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+  </div>
+
+  <!-- WITH FEE -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--chain)">Mode B</div>
+    <div class="phase-title">With Registration Fee (Sybil Protection)</div>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout-icon">⚠️</div>
+    <div class="callout-body">
+      <strong>Sybil Protection</strong>
+      <p>Owner sets <code>registrationFee &gt; 0</code> to make flooding the registry economically costly. Each fake identity costs the attacker exactly <code>registrationFee</code> ETH.</p>
+    </div>
+  </div>
+
+  <div class="swimlane-grid">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Owner / User</div>
+    <div class="lane-header auditor">Auditor</div>
+    <div class="lane-header chain">Blockchain</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <div class="step-label">O</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Owner: setRegistrationFee(N ETH)</div>
+        <div class="action-body">Only contract owner can call this</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Emits RegistrationFeeUpdated</div>
+        <div class="action-body"><code>registrationFee</code> = N ETH</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">1–2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Key Gen + Audit Encryption</div>
+        <div class="action-body">Same as Mode A steps 1-2</div>
+      </div>
+    </div>
+    <div class="step-cell auditor-cell">
+      <div class="action auditor-action">
+        <div class="action-title">pk_auditor available</div>
+        <div class="action-body">User fetches it to encrypt their view key</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">3</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Query fee &amp; register</div>
+        <div class="action-body">
+          fee ← <code>UserRegistry.registrationFee()</code><br/>
+          Call <code>register(...)</code> with <code>msg.value = fee</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Validates msg.value ≥ fee</div>
+        <div class="action-body">ETH accumulates in contract<br/>Reverts with <code>InsufficientFee</code> if underpaid</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">4</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Owner: withdrawFees()</div>
+        <div class="action-body">Transfers all accumulated ETH to owner</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Emits FeesWithdrawn</div>
+        <div class="action-body">Sends entire balance to owner address</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════ DEPOSIT ══ -->
+<div id="tab-deposit" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Phase 2</div>
+    <div class="phase-title">Deposit — Alice Enters the Private Pool</div>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-icon">💡</div>
+    <div class="callout-body">
+      <strong>Why self-encapsulate?</strong>
+      <p>Alice encapsulates against her OWN view key. This lets her later scan deposit events and discover her own note — the same way Bob would discover a payment.</p>
+    </div>
+  </div>
+
+  <div class="swimlane-grid">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Alice</div>
+    <div class="lane-header gnark">ERC20 Contract</div>
+    <div class="lane-header chain">Erc20CoinVault</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <div class="step-label">1</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Mint / obtain ERC20 tokens</div>
+        <div class="action-body">Alice holds <code>depositAmt</code> tokens off-chain</div>
+      </div>
+    </div>
+    <div class="step-cell gnark-cell">
+      <div class="action gnark-action">
+        <div class="action-title">ERC20.mint(alice, amount)</div>
+        <div class="action-body">Then <code>ERC20.approve(vaultAddr, depositAmt)</code></div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">ML-KEM Self-Encapsulation</div>
+        <div class="action-body">
+          (ss, capsule) ← ML-KEM.Encaps(<code>alice.pk_view</code>)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">3</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Derive salt + AES key</div>
+        <div class="action-body">
+          salt = HKDF-SHA256(ss, <em>"Bob salt"</em>)<br/>
+          enc_key = HKDF-SHA256(ss, <em>"Bob symmetric key"</em>)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">4</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Build commitment + encrypt</div>
+        <div class="action-body">
+          C_A = Poseidon(<code>pk_spend_A</code> || salt || depositAmt || tokenId)<br/>
+          encTxData = AES-256-GCM(enc_key, tokenId || depositAmt)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">5</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Submit deposit</div>
+        <div class="action-body">
+          <code>Erc20CoinVault.depositV2([amt, pk_spend, salt, tokenId], capsule, encTxData)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Vault actions</div>
+        <div class="action-body">
+          • Pulls ERC20 from Alice via transferFrom<br/>
+          • Inserts C_A into Merkle tree (depth-8)<br/>
+          • Emits Deposit event with capsule + encTxData
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">6</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Build Merkle proof</div>
+        <div class="action-body">
+          mt = load all commitments from Deposit events<br/>
+          aliceProof = mt.GenerateProof(C_A)<br/>
+          → {root, siblings[8], pathBits, leafIndex}
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ PAYMENT NO FEE ══ -->
+<div id="tab-payment-nofee" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Phase 3a</div>
+    <div class="phase-title">Payment — Without Protocol Fee</div>
+    <div class="phase-sub">On-chain function: <code>EnygmaDvp.payment()</code></div>
+  </div>
+
+  <div class="phase-header" style="margin-top:0;margin-bottom:8px;">
+    <div class="phase-badge" style="background:var(--alice)">Alice</div>
+    <div class="phase-title">Sending Side</div>
+  </div>
+
+  <div class="swimlane-grid" style="grid-template-columns:100px 1fr 1fr 1fr 1fr;">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Alice</div>
+    <div class="lane-header gnark">Gnark Server :8082</div>
+    <div class="lane-header chain">EnygmaDvp (Chain)</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <div class="step-label">A1</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Lookup Bob's keys</div>
+        <div class="action-body">
+          (pk_spend_B, pk_view_B) ← <code>UserRegistry.getKeys(bobAddr)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">A2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Request ZK proof</div>
+        <div class="action-body">
+          <code>BoundPaymentProof(vaultAddr, inputs=[45], spendKeys, salts, outputs=[30,10], pkSpends=[B,A], pkViews=[B,A], merkleProofs, tokenId)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell gnark-cell">
+      <div class="action gnark-action">
+        <div class="action-title">ZK Circuit proves (Groth16)</div>
+        <div class="action-body">
+          ✓ C_A is in Merkle tree (Merkle inclusion)<br/>
+          ✓ Know sk_spend_A s.t. pk_spend_A = Poseidon(sk_spend_A)<br/>
+          ✓ nf = Poseidon(sk_spend_A || leafIndex)<br/>
+          ✓ C_B = Poseidon(pk_spend_B || salt_B || 30 || tokenId)<br/>
+          ✓ C_change = Poseidon(pk_spend_A || salt_A || 10 || tokenId)<br/>
+          ✓ 45 = 30 + 10 (value conservation)<br/>
+          ✓ same tokenId across all commitments<br/>
+          ✓ contractAddress matches vault<br/>
+          <br/>
+          Produces: ML-KEM.Encaps(pk_view_B) → capsule + encTxData
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">A3</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Submit payment</div>
+        <div class="action-body">
+          <code>EnygmaDvp.payment(receipt, vaultId, cipherText, encTxData)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">On-chain verification</div>
+        <div class="action-body">
+          ✓ Groth16.verify(proof, statement)<br/>
+          ✓ nullifier not spent<br/>
+          → mark nullifier spent<br/>
+          → insert C_B into Merkle tree<br/>
+          → insert C_change into Merkle tree<br/>
+          → emit <code>Payment(vaultId, C_B, capsule, encTxData)</code><br/>
+          → emit <code>Nullifier(vaultId, treeNum, nf)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+  </div>
+
+  <!-- Public statement layout -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--gnark)">ZK</div>
+    <div class="phase-title">Public Statement Layout — 7 signals</div>
+  </div>
+
+  <table class="signal-table">
+    <thead>
+      <tr><th>Index</th><th>Name</th><th>Value</th><th>Visibility</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>[0]</td><td>stMessage</td><td><code>0</code></td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[1]</td><td>treeIndex</td><td>Merkle tree number</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[2]</td><td>merkleRoot</td><td>Poseidon root of commitment tree</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[3]</td><td>nullifier</td><td>Poseidon(sk_spend_A || leafIndex)</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[4]</td><td>C_B</td><td>Bob's destination commitment</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[5]</td><td>C_change</td><td>Alice's change commitment</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[6]</td><td>contractAddress</td><td>Vault address (binding)</td><td><span class="pill pub">Public</span></td></tr>
+    </tbody>
+  </table>
+
+  <!-- BOB SCANNING -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--bob)">Bob</div>
+    <div class="phase-title">Receiving Side — Scanning</div>
+  </div>
+
+  <div class="swimlane-grid" style="grid-template-columns:100px 1fr 1fr 1fr 1fr;">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header bob">Bob</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <div class="step-label">B1</div>
+    <div class="step-cell bob-cell" style="grid-column:span 4;">
+      <div class="action bob-action">
+        <div class="action-title">Download ALL Payment events (trivial PIR)</div>
+        <div class="action-body">Bob downloads every event to avoid leaking which transaction he's interested in</div>
+      </div>
+    </div>
+
+    <div class="step-label">B2</div>
+    <div class="step-cell bob-cell" style="grid-column:span 4;">
+      <div class="action bob-action">
+        <div class="action-title">ML-KEM Decapsulation</div>
+        <div class="action-body">
+          ss' ← ML-KEM.Decaps(<code>bob.sk_view</code>, cipherText)<br/>
+          <em>Always returns a value — Bob can't yet tell if it's valid</em>
+        </div>
+      </div>
+    </div>
+
+    <div class="step-label">B3</div>
+    <div class="step-cell bob-cell" style="grid-column:span 4;">
+      <div class="action bob-action">
+        <div class="action-title">Derive key + salt</div>
+        <div class="action-body">
+          enc_key' = HKDF-SHA256(ss', <em>"Bob symmetric key"</em>)<br/>
+          salt'    = HKDF-SHA256(ss', <em>"Bob salt"</em>)
+        </div>
+      </div>
+    </div>
+
+    <div class="step-label">B4</div>
+    <div class="step-cell bob-cell" style="grid-column:span 4;">
+      <div class="action bob-action">
+        <div class="action-title">AES-256-GCM Decrypt</div>
+        <div class="action-body">
+          (tokenId', amount') = AES-GCM-Decrypt(enc_key', encTxData)<br/>
+          <strong>If authentication tag FAILS → not Bob's note → skip</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="step-label">B5</div>
+    <div class="step-cell bob-cell" style="grid-column:span 4;">
+      <div class="action check">
+        <div class="action-title">Recompute &amp; verify commitment</div>
+        <div class="action-body">
+          C' = Poseidon(<code>bob.pk_spend</code> || salt' || amount' || tokenId')<br/>
+          Accept if and only if: <strong>C' == C_B (from event)</strong><br/>
+          Bob now knows amount + tokenId + salt → can spend with sk_spend
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALICE CHANGE -->
+  <div class="callout green" style="margin-top:24px;">
+    <div class="callout-icon">🔄</div>
+    <div class="callout-body">
+      <strong>Alice's Change Note — No Scanning Needed</strong>
+      <p>The Gnark server returns <code>saltA</code> directly in the proof result. Alice computes <code>C_change = Poseidon(pk_spend_A || saltA || changeAmt || tokenId)</code> and verifies it equals <code>statement[5]</code>. She can spend her change using <code>(sk_spend_A, saltA)</code>.</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════ PAYMENT WITH FEE ══ -->
+<div id="tab-payment-fee" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Phase 3b</div>
+    <div class="phase-title">Payment — With Protocol Fee</div>
+    <div class="phase-sub">On-chain function: <code>EnygmaDvp.paymentWithFee()</code></div>
+  </div>
+
+  <!-- Fee model explainer -->
+  <div class="formula-box" style="margin-bottom:20px;">
+    <span class="comment">// Fee model — all values proven inside the ZK circuit</span><br/>
+    valueIn    = paymentAmt + changeAmt + PROTOCOL_FEE<br/>
+    <br/>
+    <span class="comment">// Example: depositAmt = 45</span><br/>
+    45 = 30 (to Bob) + 10 (change to Alice) + 5 (protocol fee)<br/>
+    <br/>
+    <span class="comment">// The fee is NOT a 3rd output commitment — it is simply "missing"</span><br/>
+    <span class="comment">// from the outputs. The circuit enforces the gap equals the fee.</span>
+  </div>
+
+  <!-- Comparison table -->
+  <div class="phase-header" style="margin-top:0;margin-bottom:8px;">
+    <div class="phase-badge" style="background:var(--chain)">Diff</div>
+    <div class="phase-title">Differences vs. No-Fee Payment</div>
+  </div>
+
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th>Aspect</th>
+        <th>Without Fee (Phase 3a)</th>
+        <th>With Fee (Phase 3b)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Proof function</strong></td>
+        <td><code>BoundPaymentProof()</code></td>
+        <td><code>BoundPaymentFeeProof()</code> <span class="badge diff">diff</span></td>
+      </tr>
+      <tr>
+        <td><strong>On-chain function</strong></td>
+        <td><code>EnygmaDvp.payment()</code></td>
+        <td><code>EnygmaDvp.paymentWithFee()</code> <span class="badge diff">diff</span></td>
+      </tr>
+      <tr>
+        <td><strong>Value conservation</strong></td>
+        <td>valueIn = Σ valueOut</td>
+        <td>valueIn = Σ valueOut + fee <span class="badge diff">diff</span></td>
+      </tr>
+      <tr>
+        <td><strong>Statement size</strong></td>
+        <td>7 public signals</td>
+        <td>8 public signals <span class="badge new">new</span></td>
+      </tr>
+      <tr>
+        <td><strong>signal[7]</strong></td>
+        <td>— (does not exist)</td>
+        <td><code>PROTOCOL_FEE</code> (public, verifiable) <span class="badge new">new</span></td>
+      </tr>
+      <tr>
+        <td><strong>Fee output commitment</strong></td>
+        <td>—</td>
+        <td>None — fee is absorbed in the arithmetic gap <span class="badge diff">diff</span></td>
+      </tr>
+      <tr>
+        <td><strong>Deposit amount</strong></td>
+        <td>paymentAmt + changeAmt</td>
+        <td>paymentAmt + changeAmt + fee <span class="badge diff">diff</span></td>
+      </tr>
+      <tr>
+        <td><strong>Key exchange, scanning, auditing</strong></td>
+        <td>Standard ML-KEM flow</td>
+        <td>Identical <span class="badge same">same</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Public statement with fee -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--gnark)">ZK</div>
+    <div class="phase-title">Public Statement Layout — 8 signals</div>
+  </div>
+
+  <table class="signal-table">
+    <thead>
+      <tr><th>Index</th><th>Name</th><th>Value</th><th>Visibility</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>[0]</td><td>stMessage</td><td><code>0</code></td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[1]</td><td>treeIndex</td><td>Merkle tree number</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[2]</td><td>merkleRoot</td><td>Poseidon root</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[3]</td><td>nullifier</td><td>Poseidon(sk_spend_A || leafIndex)</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[4]</td><td>C_B</td><td>Bob's destination commitment</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[5]</td><td>C_change</td><td>Alice's change commitment</td><td><span class="pill pub">Public</span></td></tr>
+      <tr><td>[6]</td><td>contractAddress</td><td>Vault address</td><td><span class="pill pub">Public</span></td></tr>
+      <tr class="highlight-row"><td>[7]</td><td><strong>fee</strong></td><td><code>PROTOCOL_FEE</code> — new in PaymentFee</td><td><span class="pill pub">Public</span></td></tr>
+    </tbody>
+  </table>
+
+  <!-- Full flow swimlane -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--chain)">Full Flow</div>
+    <div class="phase-title">Payment With Fee — Complete Steps</div>
+  </div>
+
+  <div class="swimlane-grid" style="grid-template-columns:100px 1fr 1fr 1fr 1fr;">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Alice</div>
+    <div class="lane-header gnark">Gnark Server</div>
+    <div class="lane-header chain">EnygmaDvp (Chain)</div>
+    <div class="lane-header bob">Bob</div>
+
+    <div class="step-label">1</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Deposit 45 tokens</div>
+        <div class="action-body">depositAmt = payAmt(30) + change(10) + fee(5)<br/>Same deposit process as Phase 2</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Request PaymentFee proof</div>
+        <div class="action-body">
+          <code>BoundPaymentFeeProof(vaultAddr, fee=5, ...)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell gnark-cell">
+      <div class="action gnark-action">
+        <div class="action-title">PaymentFee circuit</div>
+        <div class="action-body">
+          All Phase 3a clauses PLUS:<br/>
+          ✓ 45 = 30 + 10 + 5 (fee included in balance)<br/>
+          signal[7] = fee = 5
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">3</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Submit paymentWithFee</div>
+        <div class="action-body">
+          <code>paymentWithFee(receipt, vaultId=0, fee=5, cipherText, encTxData)</code>
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Verify + commit</div>
+        <div class="action-body">
+          ✓ Groth16.verify(proof)<br/>
+          ✓ statement[7] == fee parameter<br/>
+          ✓ nullifier not spent<br/>
+          → mark nullifier<br/>
+          → insert C_B + C_change<br/>
+          → emit Payment, Nullifier
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">4</div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell bob-cell">
+      <div class="action bob-action">
+        <div class="action-title">Scan — identical to Phase 3a</div>
+        <div class="action-body">
+          Bob's scanning is the same.<br/>
+          He receives exactly 30 tokens.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ CHANNEL MODE ══ -->
+<div id="tab-channel" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Optimization</div>
+    <div class="phase-title">Channel Mode — High-Frequency Payments</div>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-icon">⚡</div>
+    <div class="callout-body">
+      <strong>Why Channel Mode?</strong>
+      <p>Standard mode runs a fresh ML-KEM encapsulation per payment (1088-byte capsule on-chain). Channel mode derives a shared key once and reuses it — payments only post a 32-byte <code>channelId</code> instead of a 1088-byte capsule, saving ~90% calldata for the ciphertext field.</p>
+    </div>
+  </div>
+
+  <!-- Setup phase -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--bob)">Setup</div>
+    <div class="phase-title">One-Time Channel Setup</div>
+  </div>
+
+  <div class="swimlane-grid" style="grid-template-columns:100px 1fr 1fr 1fr 1fr;">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Alice</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+    <div class="lane-header bob">Bob</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <div class="step-label">S1</div>
+    <div class="step-cell alice-cell" style="grid-column:span 2;">
+      <div class="action alice-action">
+        <div class="action-title">Encapsulate against Bob's view key</div>
+        <div class="action-body">
+          (ss_channel, capsule) ← ML-KEM.Encaps(<code>bob.pk_view</code>)<br/>
+          channel_key = HKDF-SHA256(ss_channel, <em>"enygma-channel-key-v1"</em>)<br/>
+          channelId = bytes32 identifier (e.g. hash of alice+bob addresses)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty" style="grid-column:span 2;"></div>
+
+    <div class="step-label">S2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Send capsule to Bob</div>
+        <div class="action-body">Capsule sent off-chain (or via SetupChannel on-chain)</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell bob-cell">
+      <div class="action bob-action">
+        <div class="action-title">Recover channel_key</div>
+        <div class="action-body">
+          ss_channel ← ML-KEM.Decaps(<code>bob.sk_view</code>, capsule)<br/>
+          channel_key = HKDF-SHA256(ss_channel, <em>"enygma-channel-key-v1"</em>)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+  </div>
+
+  <!-- Per-payment channel -->
+  <div class="phase-header" style="margin-top:24px;">
+    <div class="phase-badge" style="background:var(--alice)">Per Payment</div>
+    <div class="phase-title">Channel Payment — No New ML-KEM per Transaction</div>
+  </div>
+
+  <div class="swimlane-grid" style="grid-template-columns:100px 1fr 1fr 1fr 1fr;">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header alice">Alice</div>
+    <div class="lane-header gnark">Gnark Server</div>
+    <div class="lane-header chain">EnygmaDvp (Chain)</div>
+    <div class="lane-header bob">Bob</div>
+
+    <div class="step-label">P1</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Fresh per-payment salt</div>
+        <div class="action-body">salt ← random field element</div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">P2</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Build commitment + channel-encrypt</div>
+        <div class="action-body">
+          C_B = Poseidon(pk_spend_B || salt || amount || tokenId)<br/>
+          plaintext = amount(32B) || tokenId(32B) || salt(32B) = 96 bytes<br/>
+          encTxData = AES-256-GCM(channel_key, plaintext) → 124 bytes<br/>
+          cipherText = <code>channelId</code> (bytes32, NOT a capsule)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">P3</div>
+    <div class="step-cell alice-cell">
+      <div class="action alice-action">
+        <div class="action-title">Request + submit ZK proof</div>
+        <div class="action-body">Same proof generation as standard payment</div>
+      </div>
+    </div>
+    <div class="step-cell gnark-cell">
+      <div class="action gnark-action">
+        <div class="action-title">Same ZK circuit</div>
+        <div class="action-body">Proof is identical — encTxData interpretation differs only at app layer</div>
+      </div>
+    </div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">payment(receipt, vaultId, channelId, encTxData)</div>
+        <div class="action-body">
+          cipherText = channelId (bytes32)<br/>
+          Contract treats it identically — just stores and emits it
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">P4</div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell bob-cell">
+      <div class="action bob-action">
+        <div class="action-title">Channel-mode scan</div>
+        <div class="action-body">
+          Recognize cipherText == channelId (not 1088 bytes)<br/>
+          (amount, tokenId, salt) = ChannelDecryptNote(channel_key, encTxData)<br/>
+          C' = Poseidon(pk_spend_B || salt || amount || tokenId)<br/>
+          Accept if C' == C_B ✓
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Comparison -->
+  <table class="compare-table" style="margin-top:24px;">
+    <thead>
+      <tr><th>Property</th><th>Standard ML-KEM Mode</th><th>Channel Mode</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>cipherText on-chain</td><td>1088 bytes (ML-KEM capsule)</td><td>32 bytes (channelId)</td></tr>
+      <tr><td>encTxData content</td><td>AES-GCM(k, tokenId||amount)</td><td>AES-GCM(channel_key, amount||tokenId||salt)</td></tr>
+      <tr><td>Key agreement per payment</td><td>Yes — fresh ML-KEM encapsulation</td><td>No — reuses shared channel_key</td></tr>
+      <tr><td>Salt source</td><td>HKDF(ss, "Bob salt")</td><td>Random per payment</td></tr>
+      <tr><td>ZK circuit</td><td>Same</td><td>Same</td></tr>
+      <tr><td>On-chain function</td><td>Same</td><td>Same</td></tr>
+      <tr><td>Setup required</td><td>None</td><td>One-time SetupChannel</td></tr>
+    </tbody>
+  </table>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════ AUDITING ══ -->
+<div id="tab-auditing" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Phase 4</div>
+    <div class="phase-title">Auditing — Regulatory Compliance</div>
+  </div>
+
+  <div class="callout red">
+    <div class="callout-icon">🔍</div>
+    <div class="callout-body">
+      <strong>Design Goal</strong>
+      <p>Users encrypt their <code>sk_view</code> for the auditor at registration time. The auditor can later recover any user's view key and replay the scanning process — without needing any interaction with the user post-hoc.</p>
+    </div>
+  </div>
+
+  <div class="swimlane-grid" style="grid-template-columns:100px 1fr 1fr 1fr 1fr;">
+    <div class="lane-header label">Step</div>
+    <div class="lane-header auditor">Auditor</div>
+    <div class="lane-header chain">UserRegistry (Chain)</div>
+    <div class="lane-header chain" style="color:var(--chain)">EnygmaDvp (Chain)</div>
+    <div class="lane-header" style="color:transparent;border-right:none;">—</div>
+
+    <div class="step-label">1</div>
+    <div class="step-cell auditor-cell">
+      <div class="action auditor-action">
+        <div class="action-title">Fetch audit ciphertexts for target user</div>
+        <div class="action-body">
+          <code>UserRegistry.getAuditCiphertexts(userAddr)</code><br/>
+          → (mlKemAuditCt, aesAuditCt)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Returns stored ciphertext pair</div>
+        <div class="action-body">
+          mlKemAuditCt: 1088-byte ML-KEM capsule<br/>
+          aesAuditCt: 92-byte AES-GCM ciphertext
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">2</div>
+    <div class="step-cell auditor-cell" style="grid-column:span 3;">
+      <div class="action auditor-action">
+        <div class="action-title">Recover user's view key (3-step)</div>
+        <div class="action-body">
+          <strong>a)</strong> ss = ML-KEM.Decaps(<code>sk_auditor</code>, mlKemAuditCt)<br/>
+          <strong>b)</strong> enc_key = HKDF-SHA256(ss, <em>"enygma-audit-view-key-v1"</em>)<br/>
+          <strong>c)</strong> seed = AES-256-GCM-Decrypt(enc_key, aesAuditCt, AAD=mlKemAuditCt)<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;← AEAD binding prevents mlKemAuditCt swap attack<br/>
+          <strong>d)</strong> dk_view = ML-KEM.NewDecapsKey(seed)
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+
+    <div class="step-label">3</div>
+    <div class="step-cell auditor-cell">
+      <div class="action auditor-action">
+        <div class="action-title">Scan all Payment events</div>
+        <div class="action-body">
+          Using recovered <code>dk_view</code>, auditor runs the exact same scanning process as Bob (Phase 3a B1–B5).<br/>
+          Decapsulates every event → finds all payments to/from this user.
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+    <div class="step-cell chain-cell">
+      <div class="action chain-action">
+        <div class="action-title">Payment events (historical)</div>
+        <div class="action-body">
+          All events already on-chain — auditor reads them all
+        </div>
+      </div>
+    </div>
+    <div class="step-cell empty"></div>
+  </div>
+
+  <hr class="divider" />
+
+  <!-- Security of audit mechanism -->
+  <div class="phase-header" style="margin-top:0;">
+    <div class="phase-badge" style="background:var(--auditor)">Security</div>
+    <div class="phase-title">AEAD Binding Protection</div>
+  </div>
+
+  <div class="formula-box">
+    <span class="comment">// At registration: user binds the two ciphertexts together via AEAD AAD</span><br/>
+    (ss_audit, mlKemAuditCt) ← ML-KEM.Encaps(pk_auditor)<br/>
+    enc_key = HKDF-SHA256(ss_audit, "enygma-audit-view-key-v1")<br/>
+    aesAuditCt = AES-256-GCM.Encrypt(enc_key, dk_view.seed, AAD=mlKemAuditCt)<br/>
+    <br/>
+    <span class="comment">// If an attacker swaps mlKemAuditCt on-chain with a different capsule,</span><br/>
+    <span class="comment">// the AEAD authentication tag fails when auditor tries to decrypt aesAuditCt</span><br/>
+    <span class="comment">// (because the AAD no longer matches) → protection against ciphertext substitution</span>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════ CRYPTOGRAPHY ══ -->
+<div id="tab-crypto" class="tab-content">
+
+  <div class="phase-header">
+    <div class="phase-badge">Reference</div>
+    <div class="phase-title">Cryptographic Primitives</div>
+  </div>
+
+  <div class="primitives-grid">
+
+    <div class="primitive-card" style="border-top:3px solid var(--alice)">
+      <h4>Spend Key (Hash-based)</h4>
+      <p><code>sk_spend</code> ← random field element<br/>
+      <code>pk_spend</code> = Poseidon(sk_spend)<br/>
+      Proves ownership inside the ZK circuit without revealing sk_spend</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--accent)">
+      <h4>View Key (ML-KEM-768)</h4>
+      <p>Post-quantum secure key encapsulation.<br/>
+      <code>ek</code> (public, 1184 bytes) stored on-chain<br/>
+      <code>dk</code> (private, kept secret by user / auditor)<br/>
+      Used for non-interactive key agreement per payment</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--chain)">
+      <h4>Commitment Scheme</h4>
+      <p>Poseidon hash (ZK-friendly)<br/>
+      <code>C = Poseidon(pk_spend || salt || amount || tokenId)</code><br/>
+      Stored in a depth-8 Poseidon Merkle tree on-chain</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--gnark)">
+      <h4>Zero-Knowledge Proof</h4>
+      <p>Groth16 on BN254 curve<br/>
+      Generated by gnark server on port :8082<br/>
+      Verified on-chain by EnygmaDvp (constant gas, ~250k)</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--bob)">
+      <h4>Symmetric Encryption</h4>
+      <p>AES-256-GCM (authenticated)<br/>
+      Key derived via HKDF-SHA256 from ML-KEM shared secret<br/>
+      Authentication tag failure = "not my note" signal</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--auditor)">
+      <h4>Key Derivation (HKDF)</h4>
+      <p>HKDF-SHA256 with domain-separated info strings:<br/>
+      <code>"Bob salt"</code> → payment salt<br/>
+      <code>"Bob symmetric key"</code> → AES key<br/>
+      <code>"enygma-channel-key-v1"</code> → channel key<br/>
+      <code>"enygma-audit-view-key-v1"</code> → audit key</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--chain)">
+      <h4>Nullifier</h4>
+      <p><code>nf = Poseidon(sk_spend || leafIndex)</code><br/>
+      Prevents double-spending without revealing which note is spent.<br/>
+      Stored in spent set on-chain (EnygmaDvp)</p>
+    </div>
+
+    <div class="primitive-card" style="border-top:3px solid var(--accent)">
+      <h4>Channel Key</h4>
+      <p>AES-256-GCM with reusable shared key<br/>
+      Derived once via ML-KEM, reused for all payments in a channel<br/>
+      Nonce: random 12 bytes per payment (GCM safety)</p>
+    </div>
+
+  </div>
+
+  <hr class="divider" />
+
+  <!-- ZK Circuit clauses -->
+  <div class="phase-header" style="margin-top:0;">
+    <div class="phase-badge" style="background:var(--gnark)">ZK Circuit</div>
+    <div class="phase-title">What the Groth16 Circuit Proves</div>
+  </div>
+
+  <table class="compare-table">
+    <thead>
+      <tr><th>#</th><th>Clause</th><th>Payment</th><th>PaymentFee</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>C_A is in the Merkle tree (Merkle inclusion at leafIndex)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>2</td><td>Know sk_spend_A s.t. pk_spend_A = Poseidon(sk_spend_A)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>3</td><td>nf = Poseidon(sk_spend_A || leafIndex) is well-formed</td><td>✓</td><td>✓</td></tr>
+      <tr><td>4</td><td>C_B = Poseidon(pk_spend_B || salt_B || payAmt || tokenId)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>5</td><td>C_change = Poseidon(pk_spend_A || salt_A || changeAmt || tokenId)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>6</td><td>tokenId is consistent across all commitments</td><td>✓</td><td>✓</td></tr>
+      <tr><td>7</td><td>contractAddress binds proof to specific vault</td><td>✓</td><td>✓</td></tr>
+      <tr><td>8</td><td>valueIn = payAmt + changeAmt (no fee)</td><td>✓</td><td>✗</td></tr>
+      <tr class="highlight-row"><td>9</td><td>valueIn = payAmt + changeAmt + fee (with fee)</td><td>✗</td><td>✓ NEW</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info" style="margin-top:24px;">
+    <div class="callout-icon">🔒</div>
+    <div class="callout-body">
+      <strong>Privacy Properties</strong>
+      <p>
+        <strong>Sender privacy:</strong> The nullifier hides which note is spent (no link to pk_spend on-chain).<br/>
+        <strong>Recipient privacy:</strong> Bob's scan is private — he downloads all events so observers can't tell which one he was looking for.<br/>
+        <strong>Amount privacy:</strong> All amounts are inside commitments and ZK proofs — only the fee (if any) is public.<br/>
+        <strong>Auditor access:</strong> Controlled via the AEAD-bound audit ciphertexts registered on-chain. Auditor access is non-interactive — users do not need to be online.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function showTab(id) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + id).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>

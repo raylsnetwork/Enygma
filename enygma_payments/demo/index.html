@@ -52,6 +52,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 .onboard-tab .tab-badge{background:var(--purple)}
 .transfer-tab .tab-badge{background:var(--teal)}
 .verify-tab .tab-badge{background:var(--blue)}
+.agreement-tab .tab-badge{background:var(--green)}
 .tab-prog{font-family:var(--mono);font-size:9px;color:var(--muted)}
 .tab.active .tab-prog{color:var(--teal)}
 
@@ -74,6 +75,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 .btn-setup{background:var(--amber);color:#180e00}
 .btn-onboard{background:var(--purple);color:#0e0818}
 .btn-transfer{background:var(--teal);color:#021510}
+.btn-agreement{background:var(--green);color:#020f05}
 .btn-sm{padding:4px 9px;font-size:9px}
 
 /* ── Horizontal step strip ── */
@@ -289,6 +291,81 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 .rv-copyall-btn:hover{border-color:var(--amber);color:var(--amber)}
 .rv-copyall-btn.copied{border-color:var(--green);color:var(--green)}
 
+/* ── Key Agreement tab ── */
+.ka-concept{display:flex;gap:10px;padding:12px 18px;flex-wrap:wrap}
+.ka-ccard{flex:1;min-width:180px;background:var(--s1);border:1px solid var(--green-glow);border-radius:var(--r);padding:10px 14px}
+.ka-cnum{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--green);color:var(--green);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:700;margin-bottom:6px;flex-shrink:0}
+.ka-ctitle{font-size:11px;font-weight:700;color:var(--green);margin-bottom:5px}
+.ka-cbody{font-family:var(--mono);font-size:8.5px;color:var(--muted);line-height:1.7}
+.ka-cbody em{color:var(--label);font-style:normal}
+.ka-cbody code{color:var(--teal);background:rgba(61,212,176,.08);padding:0 3px;border-radius:3px;font-size:8px}
+.ka-cstat{font-family:var(--mono);font-size:8px;color:var(--label);margin-top:7px;padding-top:5px;border-top:1px solid var(--bd);letter-spacing:.04em}
+.ka-bank-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:0 18px 14px}
+.ka-bank-card{border:1px solid var(--bd);border-radius:var(--r);background:var(--s1);overflow:hidden;transition:border-color .35s}
+.ka-bank-card.agreed{border-color:var(--green-glow)}
+.ka-bank-head{padding:8px 10px 7px;border-bottom:1px solid var(--bd);background:var(--s2)}
+.ka-bank-name{font-weight:700;font-size:12px;margin-bottom:3px}
+.ka-fields{padding:6px 10px;font-family:var(--mono);font-size:8px;display:flex;flex-direction:column;gap:3px}
+.ka-row{display:flex;gap:5px;align-items:baseline}
+.ka-k{color:var(--muted);min-width:22px;flex-shrink:0;font-size:7.5px;letter-spacing:.04em}
+.ka-v{color:var(--muted);word-break:break-all;transition:color .3s;flex:1}
+.ka-v.set{color:var(--text)}
+.ka-v.teal{color:var(--teal)}
+.ka-v.green{color:var(--green)}
+.ka-hint{padding:5px 10px 8px;font-family:var(--mono);font-size:8px;color:var(--blue);line-height:1.6}
+.ka-arrow-row{display:flex;align-items:center;justify-content:center;gap:0;padding:4px 18px 12px;flex-wrap:nowrap;overflow-x:auto}
+.ka-arrow-seg{display:flex;align-items:center;gap:0;flex:1;min-width:0}
+.ka-bank-pill{font-family:var(--mono);font-size:8px;font-weight:700;padding:3px 7px;border-radius:4px;white-space:nowrap;border:1px solid var(--green-glow);color:var(--green);background:var(--green-dim);flex-shrink:0}
+.ka-ct-pill{font-family:var(--mono);font-size:7.5px;padding:2px 6px;border-radius:3px;border:1px solid var(--blue-glow);color:var(--blue);background:var(--blue-dim);white-space:nowrap;flex-shrink:0}
+.ka-arrow-line{flex:1;height:1px;background:var(--bd2);min-width:4px}
+.ka-arrow-head{color:var(--bd2);font-size:10px;margin-left:-2px;flex-shrink:0}
+
+/* ── KA Matrix & counter ── */
+.ka-matrix-wrap{padding:4px 18px 14px}
+.ka-matrix-head{display:flex;align-items:baseline;gap:14px;margin-bottom:10px}
+.ka-matrix-title{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.ka-counter{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--muted);transition:color .4s;font-variant-numeric:tabular-nums;line-height:1}
+.ka-counter.active{color:var(--green)}
+.ka-counter-sub{font-family:var(--mono);font-size:9px;color:var(--muted)}
+.ka-matrix{display:grid;grid-template-columns:26px repeat(6,1fr);gap:3px;max-width:500px}
+.ka-mlabel{font-family:var(--mono);font-size:8px;color:var(--muted);display:flex;align-items:center;justify-content:center;padding:3px 0;letter-spacing:.04em}
+.ka-mlabel.row{justify-content:flex-end;padding-right:5px}
+.ka-mcell{height:30px;border-radius:4px;border:1px solid var(--bd2);background:var(--s2);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;color:var(--muted);transition:border-color .3s,background .3s,color .3s}
+.ka-mcell.self{background:var(--bg);border-color:var(--bd);color:var(--subtle)}
+.ka-mcell.encapping{border-color:var(--blue-glow);background:rgba(82,184,255,.12);color:var(--blue);animation:blink 1s infinite}
+.ka-mcell.done{border-color:var(--green-glow);background:rgba(61,204,117,.12);color:var(--green)}
+/* KA peer dots */
+.ka-peer-dots{display:flex;gap:3px;flex-wrap:wrap;margin-top:2px}
+.ka-peer-dot{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--bd2);background:var(--s2);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:6.5px;color:var(--muted);transition:all .3s;flex-shrink:0;cursor:default}
+.ka-peer-dot.agreed{border-color:var(--green-glow);background:rgba(61,204,117,.18);color:var(--green)}
+/* ── Transfer tab improvements ── */
+.sc-why{font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:2px;padding-left:20px;line-height:1.5;font-style:italic;opacity:.85}
+.sc.success .sc-why{color:var(--teal);opacity:1}
+.bbc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.bbc-role{font-family:var(--mono);font-size:6.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:1px 5px;border-radius:3px}
+.bbc-role.sender{background:rgba(255,85,102,.15);color:var(--red);border:1px solid rgba(255,85,102,.3)}
+.bbc-role.receiver{background:rgba(61,204,117,.12);color:var(--green);border:1px solid rgba(61,204,117,.3)}
+.bbc-role.observer{background:rgba(106,154,191,.10);color:var(--label);border:1px solid rgba(106,154,191,.2)}
+.bbc-delta{font-family:var(--mono);font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;margin-bottom:3px}
+.bbc-delta.neg{color:var(--red)}.bbc-delta.pos{color:var(--green)}.bbc-delta.neutral{color:var(--muted)}
+.priv-summary{margin:10px 18px 0;border:1px solid var(--green-glow);border-radius:var(--r);overflow:hidden;display:none}
+.priv-summary.on{display:block}
+.priv-cols{display:grid;grid-template-columns:1fr 1fr}
+.priv-col{padding:12px 16px}
+.priv-col-lbl{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px;font-weight:700}
+.priv-col.configured{border-right:1px solid var(--bd2);background:rgba(61,212,176,.04)}
+.priv-col.configured .priv-col-lbl{color:var(--teal)}
+.priv-col.onchain .priv-col-lbl{color:var(--label)}
+.priv-item{font-family:var(--mono);font-size:8.5px;color:var(--label);padding:2px 0;line-height:1.6}
+.priv-item strong{color:var(--text)}
+.priv-item.muted{color:var(--muted);font-style:italic;font-size:8px;margin-top:3px}
+.fp-mini{margin-top:8px;padding-top:7px;border-top:1px solid var(--subtle)}
+.fp-mini-title{font-family:var(--mono);font-size:7.5px;color:var(--teal);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
+.fp-grid{display:grid;gap:2px}
+.fp-cell{width:20px;height:20px;border-radius:3px;border:1px solid var(--bd2);background:var(--bg);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:6px;color:var(--muted)}
+.fp-cell.sender-col{border-color:var(--teal-glow);background:rgba(61,212,176,.1);color:var(--teal)}
+.fp-cell.self-diag{background:var(--bg);border-color:var(--bd);color:var(--subtle)}
+
 /* ── Log ── */
 .log-panel{height:148px;flex-shrink:0;border-top:1px solid var(--bd);background:var(--s1);display:flex;flex-direction:column}
 .log-hdr{padding:4px 14px;background:var(--s2);border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px}
@@ -324,16 +401,20 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
     <div class="tab-badge"></div>I · Setup
     <span class="tab-prog" id="tp-setup"></span>
   </div>
+  <div class="tab agreement-tab" data-tab="agreement">
+    <div class="tab-badge"></div>II · Key Agreement
+    <span class="tab-prog" id="tp-agreement"></span>
+  </div>
   <div class="tab onboard-tab" data-tab="onboard">
-    <div class="tab-badge"></div>II · Bank Onboarding
+    <div class="tab-badge"></div>III · Bank Onboarding
     <span class="tab-prog" id="tp-onboard"></span>
   </div>
   <div class="tab transfer-tab" data-tab="transfer">
-    <div class="tab-badge"></div>III · Payment Demo
+    <div class="tab-badge"></div>IV · Payment Demo
     <span class="tab-prog" id="tp-transfer"></span>
   </div>
   <div class="tab verify-tab" data-tab="verify">
-    <div class="tab-badge"></div>IV · Verify
+    <div class="tab-badge"></div>V · Verify
   </div>
 </div>
 
@@ -383,10 +464,102 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
   <div class="banner" id="setup-banner"></div>
 </div>
 
-<!-- ══════════ TAB II: ONBOARDING ══════════ -->
+<!-- ══════════ TAB II: KEY AGREEMENT ══════════ -->
+<div class="tab-panel" id="panel-agreement">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--green);color:var(--green)">II</div>
+    <div class="sec-title" style="color:var(--green)">ML-KEM-768 Key Agreement</div>
+    <div class="sec-sub">Post-quantum pairwise secrets · No blockchain required</div>
+    <button class="action-btn btn-agreement" id="agreementBtn">▶ Run Key Agreement</button>
+  </div>
+
+  <!-- Concept explainer cards -->
+  <div class="ka-concept">
+    <div class="ka-ccard">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+        <div class="ka-cnum">1</div>
+        <div class="ka-ctitle">Generate Key Pairs</div>
+      </div>
+      <div class="ka-cbody">
+        Each of the 6 banks creates a <em>quantum-resistant key pair</em> (ML-KEM-768).<br>
+        The <em>public lock</em> (ek, 1184 B) is shared openly with all peers.<br>
+        The <em>private key</em> (dk, 64 B seed) never leaves the bank.
+      </div>
+      <div class="ka-cstat">Public lock: 1184 B · Private key: 64 B seed</div>
+    </div>
+    <div class="ka-ccard" style="border-color:var(--blue-glow)">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+        <div class="ka-cnum" style="color:var(--blue);border-color:var(--blue)">2</div>
+        <div class="ka-ctitle" style="color:var(--blue)">Seal a Secret</div>
+      </div>
+      <div class="ka-cbody">
+        For each of the 15 bank pairs, the lower-index bank <em>seals a random secret</em><br>
+        inside the peer's public lock. This produces a <em>ciphertext</em> (1088 B)<br>
+        that only the peer can open — no network negotiation needed.
+      </div>
+      <div class="ka-cstat">Ciphertext: 1088 B · Shared secret: 32 B (one side so far)</div>
+    </div>
+    <div class="ka-ccard" style="border-color:var(--amber-glow)">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+        <div class="ka-cnum" style="color:var(--amber);border-color:var(--amber)">3</div>
+        <div class="ka-ctitle" style="color:var(--amber)">Open &amp; Agree</div>
+      </div>
+      <div class="ka-cbody">
+        Each peer opens the ciphertext with its <em>private key</em>, recovering the<br>
+        <em>exact same 32-byte secret</em> — no extra messages, no central server.<br>
+        Both banks derive a <em>BabyJubJub field element</em> used in payment proofs.
+      </div>
+      <div class="ka-cstat">Identical secret on both sides · quantum-safe · no coordinator</div>
+    </div>
+  </div>
+
+  <!-- Phase progress strip -->
+  <div class="hstrip">
+    <div class="hstep" id="hs-ka_keygen">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-ka_keygen">○</div><div class="hstep-lbl">Keygen ×6</div></div>
+      <div class="hstep-sub" id="hsub-ka_keygen">GenerateKey() → (dk, ek)</div>
+    </div>
+    <div class="harrow">→</div>
+    <div class="hstep" id="hs-ka_encap">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-ka_encap">○</div><div class="hstep-lbl">Encapsulate ×15</div></div>
+      <div class="hstep-sub" id="hsub-ka_encap">lower-index bank → ct per pair · 15 total</div>
+    </div>
+    <div class="harrow">→</div>
+    <div class="hstep" id="hs-ka_decap">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-ka_decap">○</div><div class="hstep-lbl">Decapsulate ×15</div></div>
+      <div class="hstep-sub" id="hsub-ka_decap">peer dk + ct → same rawSS ✓ → mod P</div>
+    </div>
+    <div class="harrow">→</div>
+    <div class="hstep" id="hs-ka_field">
+      <div class="hstep-top"><div class="hstep-ic" id="hi-ka_field">○</div><div class="hstep-lbl">Field Elements</div></div>
+      <div class="hstep-sub" id="hsub-ka_field">SHA-256 → mod P → BabyJubJub scalar</div>
+    </div>
+  </div>
+
+  <!-- Live 6×6 secret matrix + running counter -->
+  <div class="ka-matrix-wrap">
+    <div class="ka-matrix-head">
+      <span class="ka-matrix-title">Shared Secret Matrix — C(6,2) = 15 pairs</span>
+      <span class="ka-counter" id="kaCounter">0</span>
+      <span class="ka-counter-sub">/ 15 secrets established</span>
+    </div>
+    <div class="ka-matrix" id="kaMatrix"></div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:8px;line-height:1.7">
+      Blue cell = ciphertext in transit · Green cell = secret agreed on both sides.<br>
+      When all 15 are green, any bank can initiate a confidential payment.
+    </div>
+  </div>
+
+  <!-- Bank cards grid -->
+  <div class="ka-bank-grid" id="kaBankGrid"></div>
+
+  <div class="banner" id="agreement-banner"></div>
+</div>
+
+<!-- ══════════ TAB III: ONBOARDING ══════════ -->
 <div class="tab-panel" id="panel-onboard">
   <div class="sec-hdr">
-    <div class="sec-num" style="border:1.5px solid var(--purple);color:var(--purple)">II</div>
+    <div class="sec-num" style="border:1.5px solid var(--purple);color:var(--purple)">III</div>
     <div class="sec-title" style="color:var(--purple)">Bank Onboarding</div>
     <div class="sec-sub">Register banks one at a time</div>
   </div>
@@ -394,10 +567,10 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
   <div class="banner" id="onboard-banner"></div>
 </div>
 
-<!-- ══════════ TAB III: TRANSFER ══════════ -->
+<!-- ══════════ TAB IV: TRANSFER ══════════ -->
 <div class="tab-panel" id="panel-transfer">
   <div class="sec-hdr">
-    <div class="sec-num" style="border:1.5px solid var(--teal);color:var(--teal)">III</div>
+    <div class="sec-num" style="border:1.5px solid var(--teal);color:var(--teal)">IV</div>
     <div class="sec-title" style="color:var(--teal)">Confidential Payment Demo</div>
     <div class="sec-sub">6-bank anonymity set · Groth16 ZK · On-chain settlement</div>
     <button class="action-btn btn-transfer" id="transferBtn">▶ Run Transfer</button>
@@ -493,10 +666,10 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
   <div class="metrics">
     <div class="mc" id="mc-proofTime"><div class="mc-key">Proof Generation</div><div class="mc-val" id="mv-proofTime">—</div><div class="mc-sub">Groth16 witness + prove</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-proofTime"></div></div></div>
     <div class="mc" id="mc-proofSize"><div class="mc-key">Proof Size</div><div class="mc-val" id="mv-proofSize">—</div><div class="mc-sub">8 × 32-byte field elems</div></div>
-    <div class="mc" id="mc-verifyTime"><div class="mc-key">Verify RTT</div><div class="mc-val" id="mv-verifyTime">—</div><div class="mc-sub">POST relay → confirmed</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-verifyTime"></div></div></div>
-    <div class="mc" id="mc-verifyGas"><div class="mc-key">Verify Gas</div><div class="mc-val" id="mv-verifyGas">—</div><div class="mc-sub">transfer() on-chain</div></div>
-    <div class="mc" id="mc-totalGas"><div class="mc-key">Total Gas</div><div class="mc-val hl" id="mv-totalGas">—</div><div class="mc-sub">all txs combined</div></div>
-    <div class="mc" id="mc-flowTime"><div class="mc-key">Flow Time</div><div class="mc-val hl" id="mv-flowTime">—</div><div class="mc-sub">end-to-end</div></div>
+    <div class="mc" id="mc-verifyTime"><div class="mc-key">Verification Time</div><div class="mc-val" id="mv-verifyTime">—</div><div class="mc-sub">relay → on-chain confirmed</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-verifyTime"></div></div></div>
+    <div class="mc" id="mc-verifyGas"><div class="mc-key">On-Chain Gas</div><div class="mc-val" id="mv-verifyGas">—</div><div class="mc-sub">EVM gas for transfer()</div></div>
+    <div class="mc" id="mc-totalGas"><div class="mc-key">Total Gas Used</div><div class="mc-val hl" id="mv-totalGas">—</div><div class="mc-sub">all txs combined</div></div>
+    <div class="mc" id="mc-flowTime"><div class="mc-key">End-to-End Time</div><div class="mc-val hl" id="mv-flowTime">—</div><div class="mc-sub">client → settled on-chain</div></div>
   </div>
 
   <!-- Swimlanes -->
@@ -504,12 +677,12 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
     <div class="lane sender">
       <div class="lane-hdr">Sending Bank · Privacy Node</div>
       <div class="lane-body">
-        <div class="sc" id="sc-read_state"><div class="sc-top"><div class="sc-ic" id="si-read_state">○</div><div class="sc-lbl">Read On-Chain State</div></div><div class="sc-sub" id="ss-read_state">getPublicValues + getBlckHash</div></div>
-        <div class="sc" id="sc-derive_secrets"><div class="sc-top"><div class="sc-ic" id="si-derive_secrets">○</div><div class="sc-lbl">Shared Secrets</div></div><div class="sc-sub" id="ss-derive_secrets">s₀ = Poseidon(prevR, sk)</div></div>
-        <div class="sc" id="sc-compute_randoms"><div class="sc-top"><div class="sc-ic" id="si-compute_randoms">○</div><div class="sc-lbl">Privacy Randomizers</div></div><div class="sc-sub" id="ss-compute_randoms">r_i = Poseidon(H₂₁, s_i, epoch)</div></div>
-        <div class="sc" id="sc-build_commits"><div class="sc-top"><div class="sc-ic" id="si-build_commits">○</div><div class="sc-lbl">Encrypt Amounts</div></div><div class="sc-sub" id="ss-build_commits">v·G + r·H (Pedersen)</div></div>
-        <div class="sc" id="sc-compute_tags"><div class="sc-top"><div class="sc-ic" id="si-compute_tags">○</div><div class="sc-lbl">Message Tags ×6</div></div><div class="sc-sub" id="ss-compute_tags">t_i = Poseidon(H₁₂, s_i, epoch)</div></div>
-        <div class="sc" id="sc-compute_nullifier"><div class="sc-top"><div class="sc-ic" id="si-compute_nullifier">○</div><div class="sc-lbl">Spend Nullifier</div></div><div class="sc-sub" id="ss-compute_nullifier">η = Poseidon(H(s₀), epoch)</div></div>
+        <div class="sc" id="sc-read_state"><div class="sc-top"><div class="sc-ic" id="si-read_state">○</div><div class="sc-lbl">Read On-Chain State</div></div><div class="sc-sub" id="ss-read_state">getPublicValues + getBlckHash</div><div class="sc-why">Fetch the current encrypted balances and block hash — amounts stay hidden from the chain</div></div>
+        <div class="sc" id="sc-derive_secrets"><div class="sc-top"><div class="sc-ic" id="si-derive_secrets">○</div><div class="sc-lbl">Shared Secrets</div></div><div class="sc-sub" id="ss-derive_secrets">s₀ = Poseidon(prevR, sk)</div><div class="sc-why">Derive ML-KEM pairwise secrets — only the two banks sharing a key can compute the same value</div></div>
+        <div class="sc" id="sc-compute_randoms"><div class="sc-top"><div class="sc-ic" id="si-compute_randoms">○</div><div class="sc-lbl">Privacy Randomizers</div></div><div class="sc-sub" id="ss-compute_randoms">r_i = Poseidon(H₂₁, s_i, epoch)</div><div class="sc-why">Blind each amount so the chain only ever sees elliptic curve points, never raw numbers</div></div>
+        <div class="sc" id="sc-build_commits"><div class="sc-top"><div class="sc-ic" id="si-build_commits">○</div><div class="sc-lbl">Encrypt Amounts</div></div><div class="sc-sub" id="ss-build_commits">v·G + r·H (Pedersen)</div><div class="sc-why">Commit to each value with a Pedersen binding — mathematically hiding yet later verifiable</div></div>
+        <div class="sc" id="sc-compute_tags"><div class="sc-top"><div class="sc-ic" id="si-compute_tags">○</div><div class="sc-lbl">Message Tags ×6</div></div><div class="sc-sub" id="ss-compute_tags">t_i = Poseidon(H₁₂, s_i, epoch)</div><div class="sc-why">Authenticate each bank's participation in this epoch without revealing their identity on-chain</div></div>
+        <div class="sc" id="sc-compute_nullifier"><div class="sc-top"><div class="sc-ic" id="si-compute_nullifier">○</div><div class="sc-lbl">Spend Nullifier</div></div><div class="sc-sub" id="ss-compute_nullifier">η = Poseidon(H(s₀), epoch)</div><div class="sc-why">One-time token that lets the chain reject replays — without linking it to the sender's identity</div></div>
       </div>
     </div>
     <div class="ldiv"><div class="ldiv-line"></div><div class="fdot" id="fdot-sg"></div><div class="ldiv-line"></div></div>
@@ -523,6 +696,11 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
           <div class="zk-bullet" id="zkb1"><div class="zk-bd"></div>Proving encrypted amounts sum to zero</div>
           <div class="zk-bullet" id="zkb2"><div class="zk-bd"></div>Binding all signals to the epoch block</div>
           <div class="zk-bullet" id="zkb3"><div class="zk-bd"></div>Generating 256-byte Groth16 proof</div>
+          <div class="fp-mini" id="zkFpMini">
+            <div class="fp-mini-title">FingerPrint matrix — ML-KEM shared secrets woven into proof</div>
+            <div class="fp-grid" id="fpGridInner"></div>
+            <div style="font-family:var(--mono);font-size:7px;color:var(--muted);margin-top:3px">Teal column = sender · <span style="color:var(--teal)">f</span> = Poseidon(shared secret) · · = zero padding</div>
+          </div>
           <div class="zk-elapsed"><span>elapsed</span><div class="zk-bw"><div class="zk-bar" id="zkBar"></div></div><span id="zkSecs">0s</span></div>
         </div>
         <div class="proof-badge" id="proofBadge">
@@ -535,8 +713,8 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
     <div class="lane chain">
       <div class="lane-hdr">Settlement Network · On-Chain</div>
       <div class="lane-body">
-        <div class="sc" id="sc-relay_transfer"><div class="sc-top"><div class="sc-ic" id="si-relay_transfer">○</div><div class="sc-lbl">Submit via Relayer</div></div><div class="sc-sub" id="ss-relay_transfer">POST /relay/transfer → transfer()</div></div>
-        <div class="sc" id="sc-verify_balance"><div class="sc-top"><div class="sc-ic" id="si-verify_balance">○</div><div class="sc-lbl">Verify Settlement</div></div><div class="sc-sub" id="ss-verify_balance">getBalance + homomorphic check</div></div>
+        <div class="sc" id="sc-relay_transfer"><div class="sc-top"><div class="sc-ic" id="si-relay_transfer">○</div><div class="sc-lbl">Submit via Relayer</div></div><div class="sc-sub" id="ss-relay_transfer">POST /relay/transfer → transfer()</div><div class="sc-why">A neutral relayer posts the proof on-chain — the sender never touches the blockchain directly</div></div>
+        <div class="sc" id="sc-verify_balance"><div class="sc-top"><div class="sc-ic" id="si-verify_balance">○</div><div class="sc-lbl">Verify Settlement</div></div><div class="sc-sub" id="ss-verify_balance">getBalance + homomorphic check</div><div class="sc-why">The EVM verifier checks the proof in &lt;1ms — amounts update homomorphically, never decrypted</div></div>
       </div>
     </div>
   </div>
@@ -572,13 +750,30 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
     <div class="bal-note"><strong>What the blockchain sees:</strong> two different elliptic curve points. The amounts 500 and 400 are <strong>never stored on-chain</strong> — only banks with the correct private keys can decrypt them.</div>
   </div>
 
+  <!-- Privacy summary: what you configured vs. what the blockchain stored -->
+  <div class="priv-summary" id="privSummary">
+    <div class="priv-cols">
+      <div class="priv-col configured">
+        <div class="priv-col-lbl">What you configured</div>
+        <div id="privConfigured"></div>
+      </div>
+      <div class="priv-col onchain">
+        <div class="priv-col-lbl">What the blockchain stored</div>
+        <div class="priv-item">✓ <strong>256-byte Groth16 proof</strong></div>
+        <div class="priv-item">✓ <strong>6 Pedersen commitments</strong> — elliptic curve points</div>
+        <div class="priv-item">✓ <strong>1 nullifier</strong> — prevents double-spend</div>
+        <div class="priv-item muted">No amounts · No sender · No receiver identity</div>
+      </div>
+    </div>
+  </div>
+
   <div class="banner" id="transfer-banner"></div>
 </div>
 
-<!-- ══════════ TAB IV: VERIFY ══════════ -->
+<!-- ══════════ TAB V: VERIFY ══════════ -->
 <div class="tab-panel" id="panel-verify">
   <div class="sec-hdr">
-    <div class="sec-num" style="border:1.5px solid var(--blue);color:var(--blue)">IV</div>
+    <div class="sec-num" style="border:1.5px solid var(--blue);color:var(--blue)">V</div>
     <div class="sec-title" style="color:var(--blue)">Verify & Calculate</div>
     <div class="sec-sub">On-chain balances · Pedersen calculator · Random factor conservation</div>
   </div>
@@ -641,6 +836,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
   </div>
 </div>
 
+
 </div><!-- tabs-wrap -->
 
 <!-- ── Log ── -->
@@ -684,8 +880,12 @@ function buildBanks(){
             oninput="document.getElementById('bpk-${i}').textContent='—';document.getElementById('bpk-${i}').style.color='var(--muted)'">
         </div>
         <div style="padding:2px 0">
-          <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-bottom:1px">pk (public key)</div>
+          <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-bottom:1px">public spend key <span style="color:var(--subtle)">(Poseidon(sk,sk) mod P)</span></div>
           <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.4;transition:color .3s" id="bpk-${i}">—</div>
+        </div>
+        <div style="padding:2px 0">
+          <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-bottom:1px">public view key <span style="color:var(--subtle)">(ML-KEM ek prefix)</span></div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.4;transition:color .3s" id="bvk-${i}">—</div>
         </div>
       </div>
       <div class="bank-steps">
@@ -698,6 +898,64 @@ function buildBanks(){
       </div>`;
     g.appendChild(d);
   });
+}
+
+function buildKaBanks(){
+  const g=document.getElementById('kaBankGrid'); if(!g) return;
+  g.innerHTML='';
+  BANKS.forEach((b,i)=>{
+    const d=document.createElement('div'); d.className='ka-bank-card'; d.id='kbc-'+i;
+    const peers=[0,1,2,3,4,5].filter(j=>j!==i);
+    const dotsHtml=peers.map(j=>`<div class="ka-peer-dot" id="ka-dot-${i}-${j}" title="B${i} ↔ B${j}">B${j}</div>`).join('');
+    d.innerHTML=`
+      <div class="ka-bank-head"><div class="ka-bank-name">${b.name}</div></div>
+      <div class="ka-fields">
+        <div class="ka-row"><span class="ka-k">ek</span><span class="ka-v" id="ka-ek-${i}">—</span></div>
+        <div class="ka-row"><span class="ka-k" style="font-size:7px;color:var(--subtle)">1184B · public lock</span></div>
+        <div class="ka-row" style="margin-top:5px">
+          <span class="ka-k">peers</span>
+          <div class="ka-peer-dots">${dotsHtml}</div>
+        </div>
+        <div class="ka-row" style="margin-top:3px">
+          <span class="ka-v" id="ka-ok-${i}" style="color:var(--muted);font-size:9px;min-height:11px">—</span>
+        </div>
+      </div>`;
+    g.appendChild(d);
+  });
+}
+
+// ── KA Matrix ────────────────────────────────────────────────────────────────
+let kaSecretsCount=0;
+
+function buildKaMatrix(){
+  const m=document.getElementById('kaMatrix'); if(!m) return;
+  m.innerHTML='';
+  m.appendChild(document.createElement('div')); // corner
+  for(let j=0;j<6;j++){const l=document.createElement('div');l.className='ka-mlabel';l.textContent='B'+j;m.appendChild(l);}
+  for(let i=0;i<6;i++){
+    const rl=document.createElement('div');rl.className='ka-mlabel row';rl.textContent='B'+i;m.appendChild(rl);
+    for(let j=0;j<6;j++){
+      const c=document.createElement('div');
+      c.id=`ka-cell-${i}-${j}`;
+      c.className='ka-mcell'+(i===j?' self':'');
+      c.textContent=i===j?'—':'';
+      m.appendChild(c);
+    }
+  }
+}
+
+function setKaPair(i,j,state){
+  [[i,j],[j,i]].forEach(([r,c])=>{
+    const el=document.getElementById(`ka-cell-${r}-${c}`); if(!el||el.classList.contains('done')) return;
+    if(state==='encapping'){el.className='ka-mcell encapping';el.textContent='ct';}
+    else if(state==='done'){el.className='ka-mcell done';el.textContent='✓';}
+  });
+}
+
+function incrementKaCounter(){
+  kaSecretsCount++;
+  const el=document.getElementById('kaCounter');
+  if(el){el.textContent=kaSecretsCount;if(kaSecretsCount===15)el.className='ka-counter active';}
 }
 
 function setBankStep(i,sfx,state,msg){
@@ -827,9 +1085,31 @@ function handleProto(f,v){
 
 // ── Participant ──────────────────────────────────────────────────────────────
 function handleParticipant(pid,field,value){
-  if(field==='pk'){
+  // Key agreement tab fields
+  if(field==='ka_ek'){const e=document.getElementById('ka-ek-'+pid);if(e){e.textContent=value;e.classList.add('set');}}
+  if(field==='ka_ct'){const e=document.getElementById('ka-ct-'+pid);if(e){e.textContent=value;e.classList.add('set');}}
+  if(field==='ka_ss_raw'){const e=document.getElementById('ka-ss-'+pid);if(e){e.textContent=value;e.className='ka-v teal';}}
+  if(field==='ka_fe'){const e=document.getElementById('ka-fe-'+pid);if(e){e.textContent=value;e.className='ka-v green';}}
+  if(field==='ka_done'&&value==='5/5'){
+    const bc=document.getElementById('kbc-'+pid);if(bc)bc.classList.add('agreed');
+    const ok=document.getElementById('ka-ok-'+pid);
+    if(ok){ok.textContent='✓ All 5 peers agreed';ok.style.color='var(--green)';}
+  }
+  if(field==='ka_ok'){
+    const e=document.getElementById('ka-ok-'+pid);if(e){e.textContent=value;e.style.color='var(--green)';}
+    const bc=document.getElementById('kbc-'+pid);if(bc)bc.classList.add('agreed');
+  }
+  if(field==='pk'||field==='spend_key'){
     const e=document.getElementById('bpk-'+pid);
     if(e){e.textContent=value;e.style.color='var(--teal)';}
+  }
+  if(field==='view_ek'){
+    const e=document.getElementById('bvk-'+pid);
+    if(e){
+      const isPlaceholder=value.startsWith('(run');
+      e.textContent=value;
+      e.style.color=isPlaceholder?'var(--muted)':'var(--green)';
+    }
   }
   if(field==='balance'&&pid===currentSenderIdx){const e=document.getElementById('balAfter');if(e){e.textContent=value;e.classList.add('set');}}
   if(field==='prevBalance'&&pid===currentSenderIdx){const e=document.getElementById('balBefore');if(e){e.textContent=value;e.classList.add('set');}}
@@ -877,6 +1157,34 @@ function handleStep(d){
     }
     updateScard(step,status,msg);
     if(status==='running') setGlobal('running',step.replace(/_/g,' '));
+  } else if(tab==='agreement'){
+    // Phase-level steps → progress strip
+    if(['ka_keygen','ka_encap','ka_decap','ka_field'].includes(step)){
+      updateHstep(step,status,msg);
+    }
+    // Per-pair steps → matrix cells + peer dots + counter
+    if(step&&/^ka_(encap|decap)_\d+_\d+$/.test(step)){
+      const parts=step.split('_');
+      const type=parts[1]; // 'encap' or 'decap'
+      const pi=parseInt(parts[2]), pj=parseInt(parts[3]);
+      if(type==='encap'&&status==='running'){
+        setKaPair(pi,pj,'encapping');
+      } else if(type==='decap'&&status==='success'){
+        setKaPair(pi,pj,'done');
+        const di=document.getElementById(`ka-dot-${pi}-${pj}`);if(di)di.classList.add('agreed');
+        const dj=document.getElementById(`ka-dot-${pj}-${pi}`);if(dj)dj.classList.add('agreed');
+        incrementKaCounter();
+      }
+    }
+    // Per-bank keygen → card border pulse
+    if(step&&/^ka_keygen_\d+$/.test(step)){
+      const i=d.bankIdx;
+      const kbc=document.getElementById('kbc-'+i); if(kbc){
+        if(status==='running')      kbc.style.borderColor='var(--blue-glow)';
+        else if(status==='success') kbc.style.borderColor='';
+      }
+    }
+    if(status==='running') setGlobal('running','Key Agreement');
   }
 }
 
@@ -884,11 +1192,19 @@ function handleStep(d){
 function handleDone(d){
   const ok=d.status==='success';
   setGlobal(ok?'success':'error',ok?'Done':'Failed');
-  const ids={setup:'setup-banner',onboarding:'onboard-banner',transfer:'transfer-banner'};
+  const ids={setup:'setup-banner',onboarding:'onboard-banner',transfer:'transfer-banner',agreement:'agreement-banner'};
   const bid=ids[d.tab]; const bn=bid&&document.getElementById(bid);
-  if(bn){bn.className='banner '+(ok?'success':'error');bn.textContent=(ok?'✓  ':'✗  ')+(d.msg||'');}
+  if(bn){
+    bn.className='banner '+(ok?'success':'error');
+    if(ok&&d.tab==='agreement'){
+      bn.textContent='✓  Full-mesh complete — 15 unique pairwise secrets established. Any of the 6 banks can now initiate a confidential payment without a central coordinator.';
+    } else {
+      bn.textContent=(ok?'✓  ':'✗  ')+(d.msg||'');
+    }
+  }
   if(d.tab==='setup') document.getElementById('tp-setup').textContent=ok?'✓':'✗';
-  if(d.tab==='transfer') document.getElementById('tp-transfer').textContent=ok?'✓':'✗';
+  if(d.tab==='transfer'){document.getElementById('tp-transfer').textContent=ok?'✓':'✗';if(ok)showPrivSummary();}
+  if(d.tab==='agreement') document.getElementById('tp-agreement').textContent=ok?'✓':'✗';
   enableBtns();
 }
 
@@ -929,11 +1245,11 @@ function connectSSE(){
 
 // ── Button helpers ───────────────────────────────────────────────────────────
 function disableBtns(){
-  ['setupBtn','mintBtn','transferBtn'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=true;});
+  ['setupBtn','mintBtn','transferBtn','agreementBtn'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=true;});
   document.querySelectorAll('[id^=bregBtn-]').forEach(b=>b.disabled=true);
 }
 function enableBtns(){
-  ['setupBtn','mintBtn','transferBtn'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=false;});
+  ['setupBtn','mintBtn','transferBtn','agreementBtn'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=false;});
   document.querySelectorAll('[id^=bregBtn-]').forEach(b=>b.disabled=false);
 }
 function postRun(url,body){
@@ -1039,6 +1355,10 @@ document.getElementById('transferBtn').addEventListener('click',()=>{
     return Math.max(0,parseInt(document.getElementById('txRecvInput-'+i).value)||0);
   });
   if(receiverAmts.reduce((a,c)=>a+c,0)!==senderAmt||senderAmt<=0)return;
+  lastTxSenderIdx=senderIdx;lastTxSenderAmt=senderAmt;lastTxReceiverAmts=receiverAmts;
+  updateBbgridRoles(senderIdx,receiverAmts);
+  buildFpGrid(senderIdx);
+  document.getElementById('privSummary')?.classList.remove('on');
   Object.keys(SDEFAULTS).forEach(s=>{
     const c=document.getElementById('sc-'+s);if(c)c.className='sc';
     const ic=document.getElementById('si-'+s);if(ic)ic.textContent='○';
@@ -1070,11 +1390,63 @@ function buildBankBalGrid(){
   g.innerHTML='';
   BANKS.forEach((b,i)=>{
     const d=document.createElement('div');d.className='bbcard';
-    d.innerHTML=`<div class="bbc-name">${b.name}</div>
+    d.innerHTML=`
+      <div class="bbc-top"><div class="bbc-name">${b.name}</div><span class="bbc-role observer" id="bbc-role-${i}">OBSERVER</span></div>
+      <div class="bbc-delta neutral" id="bbc-delta-${i}">—</div>
       <div class="bbc-row"><span class="bbc-lbl">Before</span><span class="bbc-val pre" id="bbc-pre-${i}">—</span></div>
       <div class="bbc-row"><span class="bbc-lbl">After</span><span class="bbc-val fin" id="bbc-fin-${i}">—</span></div>`;
     g.appendChild(d);
   });
+}
+
+// ── Transfer tab enhancements ─────────────────────────────────────────────────
+let lastTxSenderIdx=0,lastTxSenderAmt=0,lastTxReceiverAmts=[0,0,0,0,0,0];
+
+function updateBbgridRoles(senderIdx,receiverAmts){
+  for(let i=0;i<6;i++){
+    const role=document.getElementById('bbc-role-'+i);
+    const delta=document.getElementById('bbc-delta-'+i);
+    if(i===senderIdx){
+      if(role){role.textContent='SENDER';role.className='bbc-role sender';}
+      if(delta){delta.textContent='−'+lastTxSenderAmt;delta.className='bbc-delta neg';}
+    }else if((receiverAmts[i]||0)>0){
+      if(role){role.textContent='RECEIVER';role.className='bbc-role receiver';}
+      if(delta){delta.textContent='+'+receiverAmts[i];delta.className='bbc-delta pos';}
+    }else{
+      if(role){role.textContent='OBSERVER';role.className='bbc-role observer';}
+      if(delta){delta.textContent='0';delta.className='bbc-delta neutral';}
+    }
+  }
+}
+
+function buildFpGrid(senderIdx){
+  const container=document.getElementById('fpGridInner');if(!container)return;
+  container.style.gridTemplateColumns='22px repeat(6,20px)';
+  container.innerHTML='';
+  const mk=(cls,txt,extra)=>{const e=document.createElement('div');if(cls)e.className=cls;if(txt!=null)e.textContent=txt;if(extra)Object.assign(e.style,extra);return e;};
+  // Header row
+  container.appendChild(mk('','',{}));
+  for(let j=0;j<6;j++) container.appendChild(mk('',`B${j}`,{fontFamily:'var(--mono)',fontSize:'6.5px',color:j===senderIdx?'var(--teal)':'var(--muted)',fontWeight:j===senderIdx?'700':'400',display:'flex',alignItems:'center',justifyContent:'center',padding:'2px 0'}));
+  // Data rows
+  for(let i=0;i<6;i++){
+    container.appendChild(mk('',`B${i}`,{fontFamily:'var(--mono)',fontSize:'6.5px',color:'var(--muted)',display:'flex',alignItems:'center',justifyContent:'flex-end',paddingRight:'3px'}));
+    for(let j=0;j<6;j++){
+      let cls='fp-cell',txt='.';
+      if(i===j){cls+=' self-diag';txt='—';}
+      else if(j===senderIdx){cls+=' sender-col';txt='f';}
+      container.appendChild(mk(cls,txt));
+    }
+  }
+}
+
+function showPrivSummary(){
+  const box=document.getElementById('privSummary');const cfg=document.getElementById('privConfigured');
+  if(!box||!cfg)return;
+  let html=`<div class="priv-item"><strong>Bank ${lastTxSenderIdx}</strong> sends <strong>${lastTxSenderAmt} tokens</strong></div>`;
+  for(let i=0;i<6;i++){if(i!==lastTxSenderIdx&&(lastTxReceiverAmts[i]||0)>0)html+=`<div class="priv-item">→ <strong>Bank ${i}</strong> receives <strong>${lastTxReceiverAmts[i]} tokens</strong></div>`;}
+  const obs=[];for(let i=0;i<6;i++){if(i!==lastTxSenderIdx&&(lastTxReceiverAmts[i]||0)===0)obs.push('Bank '+i);}
+  if(obs.length)html+=`<div class="priv-item muted">${obs.join(' · ')} — shielded participants</div>`;
+  cfg.innerHTML=html;box.classList.add('on');
 }
 
 // ── Verify tab balance grid ───────────────────────────────────────────────────
@@ -1267,7 +1639,28 @@ async function loadCumulativeR(){
   }catch(e){div.innerHTML=`<span style="color:var(--red)">Error: ${e.message}</span>`;}
 }
 
+document.getElementById('agreementBtn').addEventListener('click',()=>{
+  // Reset phase strip
+  ['ka_keygen','ka_encap','ka_decap','ka_field'].forEach(s=>{
+    const c=document.getElementById('hs-'+s);if(c)c.className='hstep';
+    const ic=document.getElementById('hi-'+s);if(ic)ic.textContent='○';
+    const sub=document.getElementById('hsub-'+s);
+    if(sub){const defaults={'ka_keygen':'GenerateKey() → (dk, ek)','ka_encap':'lower-index bank → ct per pair · 15 total','ka_decap':'peer dk + ct → same rawSS ✓ → mod P','ka_field':'SHA-256 → mod P → BabyJubJub scalar'};sub.textContent=defaults[s]||'';}
+  });
+  // Reset matrix + counter
+  kaSecretsCount=0;
+  const kc=document.getElementById('kaCounter');if(kc){kc.textContent='0';kc.className='ka-counter';}
+  buildKaMatrix();
+  // Reset bank cards
+  buildKaBanks();
+  document.getElementById('agreement-banner').className='banner';
+  document.getElementById('tp-agreement').textContent='';
+  postRun('/run/key-agreement');
+});
+
 buildBanks();
+buildKaBanks();
+buildKaMatrix();
 buildBankBalGrid();
 buildVbalGrid();
 connectSSE();

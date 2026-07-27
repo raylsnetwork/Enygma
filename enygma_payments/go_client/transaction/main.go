@@ -13,6 +13,7 @@ import (
 
 	"enygma/config"
 	enygma "enygma/contracts"
+	"enygma/agreement"
 	"enygma/internal/curve"
 	"enygma/internal/proof"
 	"enygma/internal/randomness"
@@ -66,7 +67,10 @@ func run() error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	secrets := initializeSecrets()
+	secrets, err := initializeSecrets(args.SenderId, "./keys", args.QtyBanks)
+	if err != nil {
+		return fmt.Errorf("initialize ML-KEM secrets: %w", err)
+	}
 	senderSecret, _ := poseidon.Hash([]*big.Int{args.PreviousR, args.Sk})
 	senderSecret.Mod(senderSecret, curve.P)
 	secrets[args.SenderId] = senderSecret
@@ -251,21 +255,34 @@ func generateKIndex() []*big.Int {
 	}
 }
 
-func initializeSecrets() []*big.Int {
-	return []*big.Int{
-		mustParseBigInt("1057552177615391071371517357831905644488869902410624499760761745282922661721"),
-		big.NewInt(54142),
-		big.NewInt(814712),
-		big.NewInt(250912012),
-		big.NewInt(12312512),
-		big.NewInt(12312512),
+// initializeSecrets creates ML-KEM-768 pairwise shared secrets for the sender.
+//
+// In this demo all bank view keys live under storeDir on the same machine.
+// The sender (senderID) is the "leader": it encapsulates to each peer's public
+// key on first call, producing a ciphertext that the peer can later decapsulate
+// to recover the same shared secret.  Subsequent calls read from disk cache.
+func initializeSecrets(senderID int, storeDir string, nBanks int) ([]*big.Int, error) {
+	mgrs := make([]*agreement.Manager, nBanks)
+	for i := 0; i < nBanks; i++ {
+		m, err := agreement.New(i, storeDir)
+		if err != nil {
+			return nil, fmt.Errorf("bank %d manager: %w", i, err)
+		}
+		mgrs[i] = m
 	}
-}
 
-func mustParseBigInt(s string) *big.Int {
-	n := new(big.Int)
-	if _, ok := n.SetString(s, 10); !ok {
-		panic(fmt.Sprintf("invalid big int: %s", s))
+	sender := mgrs[senderID]
+	secrets := make([]*big.Int, nBanks)
+	for i := 0; i < nBanks; i++ {
+		if i == senderID {
+			continue // set by caller from Poseidon(prevR, sk)
+		}
+		peerEK := mgrs[i].EncapsulationKey()
+		ss, err := sender.GetOrEstablish(i, peerEK)
+		if err != nil {
+			return nil, fmt.Errorf("establish secret with bank %d: %w", i, err)
+		}
+		secrets[i] = ss
 	}
-	return n
+	return secrets, nil
 }
