@@ -1,6 +1,9 @@
 *.aes
 *.ptau
 
+# Compiled binaries (rebuild locally with go build)
+relayer/relayer_bin
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

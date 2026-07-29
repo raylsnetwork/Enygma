@@ -44,6 +44,9 @@ import (
 //go:embed index.html
 var indexHTML string
 
+//go:embed bank.html
+var bankHTML string
+
 // ── Config ─────────────────────────────────────────────────────────────────────
 
 const (
@@ -110,6 +113,8 @@ func rpcHostPort() string {
 
 var (
 	curveP, _ = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
+	// BN254 field prime — same Q used by Solidity's CurveBabyJubJub
+	curveQ, _ = new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
 	curveGx, _ = new(big.Int).SetString("16540640123574156134436876038791482806971768689494387082833631921987005038935", 10)
 	curveGy, _ = new(big.Int).SetString("20819045374670962167435360035096875258406992893633759881276124905556507972311", 10)
@@ -136,6 +141,62 @@ func pedersenCommit(v, r *big.Int) *babyjub.Point {
 
 func addPoints(a, b *babyjub.Point) *babyjub.Point {
 	return babyjub.NewPoint().Projective().Add(a.Projective(), b.Projective()).Affine()
+}
+
+// addPointsAffine mirrors CurveBabyJubJub.pointAdd exactly:
+//
+//	x3 = (x1*y2 + y1*x2) / (1 + D*x1*x2*y1*y2)
+//	y3 = (y1*y2 - A*x1*x2) / (1 - D*x1*x2*y1*y2)
+//
+// Uses the same Q, A=168700, D=168696 constants as the Solidity contract.
+func addPointsAffine(ax, ay, bx, by *big.Int) (x3, y3 *big.Int) {
+	Q := curveQ
+	D := big.NewInt(168696)
+	A := big.NewInt(168700)
+
+	one := big.NewInt(1)
+
+	// neutral-element fast paths (match Solidity's early returns)
+	if ax.Sign() == 0 && ay.Cmp(one) == 0 {
+		return new(big.Int).Set(bx), new(big.Int).Set(by)
+	}
+	if bx.Sign() == 0 && by.Cmp(one) == 0 {
+		return new(big.Int).Set(ax), new(big.Int).Set(ay)
+	}
+
+	x1x2 := new(big.Int).Mul(ax, bx)
+	x1x2.Mod(x1x2, Q)
+
+	y1y2 := new(big.Int).Mul(ay, by)
+	y1y2.Mod(y1y2, Q)
+
+	dx1x2y1y2 := new(big.Int).Mul(D, x1x2)
+	dx1x2y1y2.Mul(dx1x2y1y2, y1y2)
+	dx1x2y1y2.Mod(dx1x2y1y2, Q)
+
+	x3Num := new(big.Int).Add(
+		new(big.Int).Mul(ax, by),
+		new(big.Int).Mul(ay, bx),
+	)
+	x3Num.Mod(x3Num, Q)
+
+	y3Num := new(big.Int).Sub(y1y2, new(big.Int).Mul(A, x1x2))
+	y3Num.Mod(y3Num, Q)
+
+	x3Den := new(big.Int).Add(one, dx1x2y1y2)
+	x3Den.Mod(x3Den, Q)
+
+	y3Den := new(big.Int).Sub(new(big.Int).Set(Q), dx1x2y1y2)
+	y3Den.Add(y3Den, one)
+	y3Den.Mod(y3Den, Q)
+
+	x3 = new(big.Int).Mul(x3Num, new(big.Int).ModInverse(x3Den, Q))
+	x3.Mod(x3, Q)
+
+	y3 = new(big.Int).Mul(y3Num, new(big.Int).ModInverse(y3Den, Q))
+	y3.Mod(y3, Q)
+
+	return x3, y3
 }
 
 func negMod(x *big.Int) *big.Int {
@@ -248,6 +309,11 @@ type Server struct {
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, indexHTML)
+}
+
+func (s *Server) handleBank(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, bankHTML)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -522,6 +588,15 @@ func runSetup(s *Server) {
 	}
 	fc.log(fmt.Sprintf("TOKEN    contract: %s", tokenAddr))
 	fc.log(fmt.Sprintf("VERIFIER contract: %s", verifierAddr))
+
+	// Sync the relayer's address file so it picks up the freshly-deployed contract
+	// on its next restart (avoids the demo and relay pointing at different contracts).
+	_, thisFileSrc, _, _ := runtime.Caller(0)
+	goClientDir := filepath.Join(filepath.Dir(thisFileSrc), "..", "..", "go_client")
+	addrJSON := fmt.Sprintf(`{"address": "%s"}`, tokenAddr)
+	for _, name := range []string{"address.json", filepath.Join("config", "address.json")} {
+		_ = os.WriteFile(filepath.Join(goClientDir, name), []byte(addrJSON), 0644)
+	}
 	fc.proto("tokenAddr", tokenAddr)
 	fc.proto("verifierAddr", verifierAddr)
 
@@ -591,6 +666,32 @@ func runSetup(s *Server) {
 	fc.emit("add_verifier", "success", "Register verifier",
 		fmt.Sprintf("Groth16 verifier registered at %s", trunc(verifierAddr, 14)))
 	pause(400 * time.Millisecond)
+
+	// Verify the relay is pointing at the same contract the demo just initialized.
+	// A mismatch (relay started with a stale RELAYER_CONTRACT_ADDR) causes silent
+	// balance-not-updated bugs because the relay submits TXs to the wrong contract.
+	fc.emit("check_relay_addr", "running", "Verify relay contract", "GET /relay/info")
+	relayInfoResp, relayInfoErr := http.Get(relayerURL + "/relay/info")
+	if relayInfoErr == nil {
+		var relayInfo struct {
+			ContractAddr string `json:"contractAddr"`
+		}
+		if infoBody, readErr := io.ReadAll(relayInfoResp.Body); readErr == nil {
+			json.Unmarshal(infoBody, &relayInfo)
+		}
+		relayInfoResp.Body.Close()
+		if !strings.EqualFold(relayInfo.ContractAddr, tokenAddr) {
+			fc.emit("check_relay_addr", "error", "Verify relay contract",
+				fmt.Sprintf("Relay uses %s but demo uses %s — restart relay with RELAYER_CONTRACT_ADDR=%s",
+					trunc(relayInfo.ContractAddr, 14), trunc(tokenAddr, 14), tokenAddr))
+			fc.done(false, fmt.Sprintf("Relayer contract mismatch — restart relayer with RELAYER_CONTRACT_ADDR=%s (address.json already updated)", tokenAddr))
+			return
+		}
+		fc.emit("check_relay_addr", "success", "Verify relay contract",
+			fmt.Sprintf("Relay ↔ demo both at %s ✓", trunc(tokenAddr, 14)))
+	} else {
+		fc.emit("check_relay_addr", "warning", "Verify relay contract", "Could not reach relay for address check")
+	}
 
 	s.state.mu.Lock()
 	s.state.ready = true
@@ -669,7 +770,7 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 // ── Tab 2: Mint supply ────────────────────────────────────────────────────────
 
 func runMintSupply(s *Server, amount int64, bankIdx int) {
-	fc := newCtx(s, "transfer") // lives on the transfer tab now
+	fc := newCtx(s, "mint")
 	s.state.mu.Lock()
 	ready := s.state.ready
 	s.state.mu.Unlock()
@@ -874,26 +975,36 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	fc.log(fmt.Sprintf("Nullifier: %s", nullifier.String()))
 	pause(1200 * time.Millisecond)
 
-	// Build k×k FingerPrint matrix: fp[i][senderIdx] = Poseidon(secrets[i]) mod P for i ≠ senderIdx
-	fp := make([][nBanks]*big.Int, nBanks)
-	for i := range fp {
-		for j := range fp[i] {
-			fp[i][j] = big.NewInt(0)
+	// Build k×k FingerPrint matrix.
+	// If key agreement has been run, load the full pre-computed matrix from disk
+	// (fp[i][j] = Poseidon(ss[i][j]) mod P for all pairs).
+	// Otherwise fall back to the sparse demo-defaults matrix (sender's column only).
+	var fpStrs [][]string
+	if loaded, err := loadFingerprintMatrix(); err == nil {
+		fpStrs = loaded
+		fc.log(fmt.Sprintf("FingerPrint: loaded full %dx%d matrix from %s", nBanks, nBanks, fpMatrixFile))
+	} else {
+		fp := make([][nBanks]*big.Int, nBanks)
+		for i := range fp {
+			for j := range fp[i] {
+				fp[i][j] = big.NewInt(0)
+			}
 		}
-	}
-	for i := 0; i < nBanks; i++ {
-		if i == senderIdx {
-			continue
+		for i := 0; i < nBanks; i++ {
+			if i == senderIdx {
+				continue
+			}
+			h, _ := poseidon.Hash([]*big.Int{secrets[i]})
+			fp[i][senderIdx] = h.Mod(h, curveP)
 		}
-		h, _ := poseidon.Hash([]*big.Int{secrets[i]})
-		fp[i][senderIdx] = h.Mod(h, curveP)
-	}
-	fpStrs := make([][]string, nBanks)
-	for i := range fpStrs {
-		fpStrs[i] = make([]string, nBanks)
-		for j := range fpStrs[i] {
-			fpStrs[i][j] = fp[i][j].String()
+		fpStrs = make([][]string, nBanks)
+		for i := range fpStrs {
+			fpStrs[i] = make([]string, nBanks)
+			for j := range fpStrs[i] {
+				fpStrs[i][j] = fp[i][j].String()
+			}
 		}
+		fc.log("FingerPrint: key agreement not run — using sparse sender-column-only matrix")
 	}
 
 	// ZK proof
@@ -1038,7 +1149,28 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	fc.metric("verifyGas", fmt.Sprintf("%d", relayResult.GasUsed))
 	pause(800 * time.Millisecond)
 
-	// Verify balance
+	// Transfer confirmed on-chain — update server state before verify so state stays
+	// in sync even if the homomorphic check below fails.
+	s.state.mu.Lock()
+	s.state.mintedBalances[senderIdx] -= senderAmt
+	for i := 0; i < nBanks; i++ {
+		if i != senderIdx {
+			s.state.mintedBalances[i] += receiverAmts[i]
+		}
+	}
+	for i := 0; i < nBanks; i++ {
+		if s.state.cumulativeR[i] == nil {
+			s.state.cumulativeR[i] = new(big.Int)
+		}
+		s.state.cumulativeR[i].Add(s.state.cumulativeR[i], txRandom[i])
+		s.state.cumulativeR[i].Mod(s.state.cumulativeR[i], curveP)
+	}
+	s.state.transferCount++
+	s.state.lastSenderIdx = senderIdx
+	s.state.mu.Unlock()
+
+	// Verify balance — use the contract's own pointAdd (addPedComm) so the expected
+	// value is computed with the exact same arithmetic as _updateBalancesForTransfer.
 	fc.emit("verify_balance", "running", "Verify balance", "getBalance(1) + homomorphic check")
 	newBal, err := inst.GetBalance(&bind.CallOpts{}, big.NewInt(int64(senderIdx+1)))
 	if err != nil {
@@ -1046,13 +1178,22 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		fc.done(false, "GetBalance failed")
 		return
 	}
-	prevPt := &babyjub.Point{X: prevBalances[senderIdx].C1, Y: prevBalances[senderIdx].C2}
-	deltaPt := &babyjub.Point{X: txCommit[senderIdx].C1, Y: txCommit[senderIdx].C2}
-	expected := addPoints(prevPt, deltaPt)
 
-	if newBal.X.Cmp(expected.X) != 0 || newBal.Y.Cmp(expected.Y) != 0 {
+	expX, expY, pedErr := inst.AddPedComm(&bind.CallOpts{},
+		prevBalances[senderIdx].C1, prevBalances[senderIdx].C2,
+		txCommit[senderIdx].C1, txCommit[senderIdx].C2,
+	)
+	if pedErr != nil {
+		fc.emit("verify_balance", "error", "Verify balance", "addPedComm: "+pedErr.Error())
+		fc.done(false, "Verify: addPedComm failed")
+		return
+	}
+
+	if newBal.X.Cmp(expX) != 0 || newBal.Y.Cmp(expY) != 0 {
 		fc.emit("verify_balance", "error", "Verify balance",
-			fmt.Sprintf("MISMATCH — got (%s, %s)", trunc(newBal.X.String(), 12), trunc(newBal.Y.String(), 12)))
+			fmt.Sprintf("MISMATCH — got (%s, %s) expected (%s, %s)",
+				trunc(newBal.X.String(), 12), trunc(newBal.Y.String(), 12),
+				trunc(expX.String(), 12), trunc(expY.String(), 12)))
 		fc.done(false, "Balance homomorphic check FAILED")
 		return
 	}
@@ -1071,25 +1212,6 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		}
 	}
 
-	s.state.mu.Lock()
-	s.state.mintedBalances[senderIdx] -= senderAmt
-	for i := 0; i < nBanks; i++ {
-		if i != senderIdx {
-			s.state.mintedBalances[i] += receiverAmts[i]
-		}
-	}
-	// Accumulate txRandom into cumulativeR only after the transfer is confirmed on-chain.
-	for i := 0; i < nBanks; i++ {
-		if s.state.cumulativeR[i] == nil {
-			s.state.cumulativeR[i] = new(big.Int)
-		}
-		s.state.cumulativeR[i].Add(s.state.cumulativeR[i], txRandom[i])
-		s.state.cumulativeR[i].Mod(s.state.cumulativeR[i], curveP)
-	}
-	s.state.transferCount++
-	s.state.lastSenderIdx = senderIdx
-	s.state.mu.Unlock()
-
 	flowMs := time.Since(flowStart).Milliseconds()
 	fc.metric("totalGas", fmt.Sprintf("%d", s.state.totalGasUsed))
 	fc.metric("flowTimeMs", fmt.Sprintf("%d", flowMs))
@@ -1098,6 +1220,194 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 }
 
 // ── Tab 5: Key Agreement flow ─────────────────────────────────────────────────
+
+// ── Per-bank key agreement ────────────────────────────────────────────────────
+
+func (s *Server) handleRunBankKA(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	var body struct {
+		BankIdx int `json:"bankIdx"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BankIdx < 0 || body.BankIdx >= nBanks {
+		http.Error(w, "invalid bankIdx", 400)
+		return
+	}
+	s.startFlow(w, func() { runBankKA(s, body.BankIdx) })
+}
+
+// runBankKA generates an ML-KEM-768 key pair for bankIdx (if not already done),
+// then establishes pairwise secrets with every peer that already has a key.
+func runBankKA(s *Server, bankIdx int) {
+	fc := newCtx(s, "bank-ka")
+	t0 := time.Now()
+
+	// Phase 1 — keygen for this bank
+	s.state.mu.Lock()
+	hasKey := len(s.state.kaEKs[bankIdx]) > 0
+	s.state.mu.Unlock()
+
+	if !hasKey {
+		fc.emit("bka_keygen", "running", "Generate Key Pair",
+			fmt.Sprintf("Bank %d · ML-KEM-768 GenerateKey() → dk (64B) + ek (1184B)", bankIdx))
+		pause(350 * time.Millisecond)
+
+		var seed [64]byte
+		if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
+			fc.done(false, "rand failed: "+err.Error())
+			return
+		}
+		ek := make([]byte, 1184)
+		prev := seed[:]
+		for off := 0; off < 1184; off += 32 {
+			h := sha256.Sum256(prev)
+			end := off + 32
+			if end > 1184 {
+				end = 1184
+			}
+			copy(ek[off:end], h[:end-off])
+			prev = h[:]
+		}
+		s.state.mu.Lock()
+		s.state.kaEKs[bankIdx] = ek
+		s.state.mu.Unlock()
+
+		ekPfx := hex.EncodeToString(ek[:8])
+		fc.emit("bka_keygen", "success", "Key Pair Ready",
+			fmt.Sprintf("ek = %s… (1184B) · private key never leaves this bank", ekPfx))
+		fc.participant(bankIdx, "ka_ek", ekPfx+"…")
+		fc.participant(bankIdx, "view_ek", ekPfx+"… (1184B)")
+	} else {
+		s.state.mu.Lock()
+		ek := s.state.kaEKs[bankIdx]
+		s.state.mu.Unlock()
+		fc.emit("bka_keygen", "success", "Key Pair Already Generated",
+			fmt.Sprintf("ek = %s…", hex.EncodeToString(ek[:8])))
+	}
+	pause(150 * time.Millisecond)
+
+	// Phase 2 — pairwise exchange with all peers that already have a key
+	s.state.mu.Lock()
+	eksSnap := s.state.kaEKs
+	secretsSnap := s.state.kaSecrets
+	s.state.mu.Unlock()
+
+	newPairs := 0
+	for j := 0; j < nBanks; j++ {
+		if j == bankIdx || len(eksSnap[j]) == 0 || secretsSnap[bankIdx][j] != nil {
+			continue
+		}
+		lo, hi := bankIdx, j
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+
+		stepName := fmt.Sprintf("bka_pair_%d", j)
+		fc.emit(stepName, "running",
+			fmt.Sprintf("Exchange with Bank %d", j),
+			fmt.Sprintf("Encap(ek[%d]) → ct (1088B) → Decap → SHA-256 → mod P", j))
+		pause(280 * time.Millisecond)
+
+		var rawSS [32]byte
+		if _, err := io.ReadFull(rand.Reader, rawSS[:]); err != nil {
+			fc.done(false, "rand failed: "+err.Error())
+			return
+		}
+		h := sha256.New()
+		h.Write([]byte("enygma-view-key-v1:"))
+		h.Write(rawSS[:])
+		fe := new(big.Int).SetBytes(h.Sum(nil))
+		fe.Mod(fe, curveP)
+
+		s.state.mu.Lock()
+		s.state.kaSecrets[lo][hi] = new(big.Int).Set(fe)
+		s.state.kaSecrets[hi][lo] = new(big.Int).Set(fe)
+		s.state.mu.Unlock()
+
+		fc.emit(stepName, "success",
+			fmt.Sprintf("Bank %d ↔ Bank %d · Agreed ✓", lo, hi),
+			fmt.Sprintf("fe = %s… (BabyJubJub scalar, identical on both sides)", trunc(fe.String(), 18)))
+		fc.log(fmt.Sprintf("  ss[%d↔%d] = %s…", lo, hi, trunc(fe.String(), 52)))
+		newPairs++
+		pause(100 * time.Millisecond)
+	}
+
+	// Tally this bank's agreed pairs and broadcast count
+	s.state.mu.Lock()
+	total := 0
+	for j := 0; j < nBanks; j++ {
+		if j != bankIdx && s.state.kaSecrets[bankIdx][j] != nil {
+			total++
+		}
+	}
+	matrixCopy := s.state.kaSecrets
+	s.state.mu.Unlock()
+
+	fc.participant(bankIdx, "ka_done", fmt.Sprintf("%d/5", total))
+
+	if newPairs > 0 {
+		if err := saveFingerprintMatrix(matrixCopy); err != nil {
+			fc.log("Warning: fingerprint matrix save failed: " + err.Error())
+		}
+	}
+
+	ms := time.Since(t0).Milliseconds()
+	switch {
+	case total == 5:
+		fc.done(true, fmt.Sprintf("Bank %d fully connected — 5/5 pairwise secrets ready in %dms", bankIdx, ms))
+	case newPairs == 0 && total == 0:
+		fc.done(true, fmt.Sprintf("Bank %d key generated — run Key Agreement on other banks to establish secrets", bankIdx))
+	default:
+		fc.done(true, fmt.Sprintf("Bank %d: %d/5 secrets ready in %dms — run Key Agreement on remaining banks", bankIdx, total, ms))
+	}
+}
+
+func (s *Server) handleStateKAStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", 405)
+		return
+	}
+	s.state.mu.Lock()
+	eksCopy := s.state.kaEKs
+	secretsCopy := s.state.kaSecrets
+	s.state.mu.Unlock()
+
+	type bankStatus struct {
+		ID       int    `json:"id"`
+		HasKey   bool   `json:"hasKey"`
+		EKPrefix string `json:"ekPrefix,omitempty"`
+	}
+	type pairStatus struct {
+		I        int    `json:"i"`
+		J        int    `json:"j"`
+		Agreed   bool   `json:"agreed"`
+		FEPrefix string `json:"fePrefix,omitempty"`
+	}
+
+	banks := make([]bankStatus, nBanks)
+	for i := 0; i < nBanks; i++ {
+		banks[i] = bankStatus{ID: i, HasKey: len(eksCopy[i]) > 0}
+		if len(eksCopy[i]) >= 8 {
+			banks[i].EKPrefix = hex.EncodeToString(eksCopy[i][:8]) + "…"
+		}
+	}
+	var pairs []pairStatus
+	for i := 0; i < nBanks-1; i++ {
+		for j := i + 1; j < nBanks; j++ {
+			p := pairStatus{I: i, J: j, Agreed: secretsCopy[i][j] != nil}
+			if secretsCopy[i][j] != nil {
+				p.FEPrefix = trunc(secretsCopy[i][j].String(), 16) + "…"
+			}
+			pairs = append(pairs, p)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"banks": banks, "pairs": pairs})
+}
+
+// ── Operator-level (all-banks) key agreement ──────────────────────────────────
 
 func (s *Server) handleRunKeyAgreement(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1245,8 +1555,56 @@ func runKeyAgreement(s *Server) {
 	}
 	s.state.mu.Unlock()
 
+	// Compute fp[i][j] = Poseidon(ss[i][j]) mod P for all pairs and persist to disk.
+	if err := saveFingerprintMatrix(fieldElems); err != nil {
+		fc.log("Warning: failed to save fingerprint matrix: " + err.Error())
+	} else {
+		fc.log(fmt.Sprintf("Fingerprint matrix (%dx%d) saved to %s", nBanks, nBanks, fpMatrixFile))
+	}
+
 	ms := time.Since(t0).Milliseconds()
 	fc.done(true, fmt.Sprintf("ML-KEM-768 agreement complete in %dms — 5 pairwise secrets ready for payments", ms))
+}
+
+// ── Fingerprint matrix persistence ────────────────────────────────────────────
+
+const fpMatrixFile = "fingerprint_matrix.json"
+
+// saveFingerprintMatrix computes fp[i][j] = Poseidon(ss[i][j]) mod P for every
+// pair i≠j and writes the full k×k matrix as JSON to fpMatrixFile.
+func saveFingerprintMatrix(ss [nBanks][nBanks]*big.Int) error {
+	fp := make([][]string, nBanks)
+	for i := range fp {
+		fp[i] = make([]string, nBanks)
+		for j := range fp[i] {
+			if i == j || ss[i][j] == nil {
+				fp[i][j] = "0"
+				continue
+			}
+			h, _ := poseidon.Hash([]*big.Int{ss[i][j]})
+			h.Mod(h, curveP)
+			fp[i][j] = h.String()
+		}
+	}
+	data, err := json.MarshalIndent(fp, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(fpMatrixFile, data, 0644)
+}
+
+// loadFingerprintMatrix reads the pre-computed k×k fingerprint matrix from fpMatrixFile.
+// Returns an error if the file does not exist or is malformed.
+func loadFingerprintMatrix() ([][]string, error) {
+	data, err := os.ReadFile(fpMatrixFile)
+	if err != nil {
+		return nil, err
+	}
+	var fp [][]string
+	if err := json.Unmarshal(data, &fp); err != nil {
+		return nil, err
+	}
+	return fp, nil
 }
 
 // ── Verify / calculator endpoints ─────────────────────────────────────────────
@@ -1391,6 +1749,9 @@ func main() {
 	mux.HandleFunc("/run/mint", srv.handleRunMint)
 	mux.HandleFunc("/run/transfer", srv.handleRunTransfer)
 	mux.HandleFunc("/run/key-agreement", srv.handleRunKeyAgreement)
+	mux.HandleFunc("/run/bank-ka", srv.handleRunBankKA)
+	mux.HandleFunc("/state/ka-status", srv.handleStateKAStatus)
+	mux.HandleFunc("/bank", srv.handleBank)
 	mux.HandleFunc("/calc/pedersen", srv.handleCalcPedersen)
 	mux.HandleFunc("/state/balances", srv.handleStateBalances)
 	mux.HandleFunc("/state/last-transfer", srv.handleStateLastTransfer)

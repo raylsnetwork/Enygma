@@ -1,0 +1,1414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bank Dashboard · Enygma Payments</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:    #07111f;
+  --s1:    #0b1929;
+  --s2:    #0f2038;
+  --bd:    #162f4e;
+  --bd2:   #1c3d65;
+  --subtle:#1e3d5c;
+  --blue:      #52b8ff; --blue-dim:  rgba(82,184,255,.09); --blue-glow:  #1a5a9a;
+  --teal:      #3dd4b0; --teal-dim:  rgba(61,212,176,.09); --teal-glow:  #0d6b5a;
+  --green:     #3dcc75; --green-dim: rgba(61,204,117,.09); --green-glow: #0d5a2a;
+  --red:       #ff5566; --red-dim:   rgba(255,85,102,.08);
+  --amber:     #f0a030; --amber-dim: rgba(240,160,48,.08);  --amber-glow: #7a4a00;
+  --purple:    #a07cef; --purple-dim:rgba(160,124,239,.08); --purple-glow:#4a2a8a;
+  --text:  #c8e0f8; --muted: #3d6080; --label: #6a9abf;
+  --mono: 'JetBrains Mono','SF Mono','Fira Code',Consolas,monospace;
+  --sans: 'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --r: 0px;
+  --topbar-h: 52px;
+  --sidebar-w: 256px;
+  --log-h: 148px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5;height:100%}
+
+.app{position:relative;height:100vh;overflow:hidden}
+
+/* ── Icons ── */
+.material-symbols-outlined{font-family:'Material Symbols Outlined';font-weight:normal;font-style:normal;font-size:16px;line-height:1;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 20;vertical-align:middle}
+
+/* ── Focus glow ── */
+.glow-active:focus-within{box-shadow:0 0 8px rgba(61,212,176,.25)}
+
+/* ── Hairline-divider grid (identity strip) ── */
+.hgrid{display:grid;gap:1px;background:var(--bd);border:1px solid var(--bd)}
+.hgrid > div{background:var(--s1)}
+
+/* ── Top bar ── */
+.topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);display:flex;align-items:center;gap:14px;padding:0 18px;background:var(--s1);border-bottom:1px solid var(--bd);border-top:3px solid var(--teal);z-index:200}
+.brand{font-family:var(--mono);font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);font-weight:700}
+.topbar h1{font-size:12.5px;font-weight:700;color:var(--text);flex:1}
+.topbar-icons{display:flex;align-items:center;gap:14px}
+.topbar-icons .material-symbols-outlined{color:var(--label);opacity:.7;transition:opacity .2s,color .2s;cursor:default}
+.topbar-icons .material-symbols-outlined:hover{opacity:1;color:var(--teal)}
+.back-link{font-family:var(--mono);font-size:9px;color:var(--muted);text-decoration:none;padding:4px 9px;border:1px solid var(--bd);transition:color .2s,border-color .2s;white-space:nowrap}
+.back-link:hover{color:var(--label);border-color:var(--bd2)}
+.status-row{display:flex;align-items:center;gap:7px;margin-left:auto}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .3s,box-shadow .3s;flex-shrink:0}
+.dot.running{background:var(--blue);box-shadow:0 0 6px var(--blue);animation:blink 1.2s infinite}
+.dot.success{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot.error{background:var(--red);box-shadow:0 0 6px var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.status-txt{font-family:var(--mono);font-size:10px;color:var(--label);min-width:55px}
+
+/* ── Sidebar ── */
+.sidebar{position:fixed;top:var(--topbar-h);left:0;bottom:var(--log-h);width:var(--sidebar-w);background:var(--s1);border-right:1px solid var(--bd);z-index:150;display:flex;flex-direction:column;overflow-y:auto}
+.side-id{padding:18px 18px 16px;border-bottom:1px solid var(--bd)}
+.side-id .brand{font-size:11px;letter-spacing:.18em;line-height:1.6}
+.side-id-sub{font-family:var(--mono);font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+
+.sidenav{padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.tab{display:flex;align-items:center;gap:9px;padding:9px 10px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-left:2px solid transparent;transition:color .2s,border-color .2s,background .2s;user-select:none}
+.tab:hover{color:var(--label);background:rgba(255,255,255,.02)}
+.tab.active{color:var(--text);border-left-color:var(--teal);background:var(--teal-dim)}
+.tab .material-symbols-outlined{font-size:15px;flex-shrink:0;opacity:.7;transition:opacity .2s}
+.tab.active .material-symbols-outlined{opacity:1}
+.send-tab .material-symbols-outlined{color:var(--teal)}
+.verify-tab .material-symbols-outlined{color:var(--blue)}
+.ka-tab .material-symbols-outlined{color:var(--purple)}
+.tab-prog{font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:auto}
+.tab.active .tab-prog{color:var(--teal)}
+
+.side-action{margin-top:auto;padding:14px;border-top:1px solid var(--bd)}
+
+/* ── Main content ── */
+.main-wrap{position:fixed;top:var(--topbar-h);left:var(--sidebar-w);right:0;bottom:var(--log-h);overflow:hidden}
+.tabs-wrap{position:relative;width:100%;height:100%}
+.tab-panel{position:absolute;inset:0;overflow-y:auto;display:none}
+.tab-panel.active{display:block}
+.tab-panel::-webkit-scrollbar{width:4px}
+.tab-panel::-webkit-scrollbar-thumb{background:var(--bd2)}
+
+/* ── Section header ── */
+.sec-hdr{padding:12px 20px;border-bottom:1px solid var(--bd);background:var(--s1);display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10}
+.sec-num{width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:700;flex-shrink:0}
+.sec-title{font-size:13px;font-weight:700}
+.sec-sub{font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:auto}
+
+/* ── 12-col grid ── */
+.pg{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;padding:16px 20px}
+.gc-3{grid-column:span 3} .gc-4{grid-column:span 4} .gc-5{grid-column:span 5}
+.gc-6{grid-column:span 6} .gc-7{grid-column:span 7} .gc-8{grid-column:span 8}
+.gc-12{grid-column:span 12}
+
+/* ── Action button ── */
+.action-btn{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.07em;padding:8px 16px;border:none;cursor:pointer;transition:opacity .2s,transform .1s;text-transform:uppercase}
+.action-btn:hover:not(:disabled){opacity:.82;transform:translateY(-1px)}
+.action-btn:disabled{opacity:.3;cursor:not-allowed}
+.btn-transfer{background:var(--teal);color:#021510;width:100%}
+.btn-sm{padding:4px 9px;font-size:9px}
+
+/* ── Identity + balance cards ── */
+.info-card{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--bd2);padding:14px 16px}
+.info-title{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px}
+.info-row{display:flex;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:8.5px}
+.info-k{color:var(--muted);min-width:68px;flex-shrink:0}
+.info-v{color:var(--label);word-break:break-all;transition:color .3s}
+.info-v.set{color:var(--text)}
+.info-v.green{color:var(--green)}
+
+/* ── Transfer form ── */
+.tx-form{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--teal);padding:16px 18px}
+.tx-form-title{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin-bottom:10px}
+.tx-amount-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.tx-receivers{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:8px}
+.tx-recv-cell{background:var(--s2);border:1px solid var(--bd2);padding:7px 8px}
+.tx-recv-name{font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.tx-recv-inp{width:100%;background:transparent;border:none;border-bottom:1px solid var(--bd2);font-family:var(--mono);font-size:12px;color:var(--green);font-weight:700;outline:none;padding:2px 0;transition:border-color .2s}
+.tx-recv-inp:focus{border-bottom-color:var(--teal)}
+.tx-alloc{font-family:var(--mono);font-size:9px;transition:color .3s}
+.tx-err{font-family:var(--mono);font-size:9px;color:var(--red);display:none}
+
+/* ── Banner ── */
+.banner{display:none;padding:9px 14px;font-family:var(--mono);font-size:10.5px;font-weight:700}
+.banner.success{display:block;background:#04160a;border:1px solid var(--green);color:var(--green)}
+.banner.error{display:block;background:#120309;border:1px solid var(--red);color:var(--red)}
+
+/* ── Swimlanes ── */
+.swimlanes{display:grid;grid-template-columns:1fr 14px 210px 14px 1fr}
+.lane-hdr{font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;padding:6px 10px 7px}
+.lane-body{padding:7px;display:flex;flex-direction:column;gap:4px}
+.lane.sender .lane-hdr{color:var(--blue);background:var(--blue-dim);border:1px solid var(--blue-glow);border-bottom:none}
+.lane.sender .lane-body{background:var(--blue-dim);border:1px solid var(--blue-glow);border-top:none}
+.lane.gnark  .lane-hdr{color:var(--teal);background:var(--teal-dim);border:1px solid var(--teal-glow);border-bottom:none}
+.lane.gnark  .lane-body{background:var(--teal-dim);border:1px solid var(--teal-glow);border-top:none}
+.lane.chain  .lane-hdr{color:var(--green);background:var(--green-dim);border:1px solid var(--green-glow);border-bottom:none}
+.lane.chain  .lane-body{background:var(--green-dim);border:1px solid var(--green-glow);border-top:none}
+.ldiv{display:flex;flex-direction:column;align-items:center}
+.ldiv-line{width:1px;flex:1;background:var(--bd)}
+.fdot{width:8px;height:8px;border-radius:50%;background:transparent;transition:all .35s;flex-shrink:0;margin:3px 0}
+.fdot.ab{background:var(--blue);box-shadow:0 0 7px var(--blue);animation:travel 1.5s ease-in-out infinite}
+.fdot.at{background:var(--teal);box-shadow:0 0 7px var(--teal);animation:travel 1.5s ease-in-out infinite}
+@keyframes travel{0%,100%{transform:translateY(0);opacity:.3}50%{transform:translateY(6px);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sc{border:1px solid var(--bd);background:var(--s1);padding:6px 9px 6px 11px;position:relative;overflow:hidden;transition:all .2s}
+.sc::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--muted);transition:background .2s}
+.sc-top{display:flex;align-items:center;gap:6px}
+.sc-ic{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--muted);display:flex;align-items:center;justify-content:center;font-size:7px;color:var(--muted);font-family:var(--mono);transition:all .2s;flex-shrink:0}
+.sc-lbl{font-size:10.5px;font-weight:600;color:var(--label);transition:color .2s}
+.sc-sub{font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-top:2px;padding-left:20px}
+.sc-why{font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:2px;padding-left:20px;line-height:1.5;font-style:italic;opacity:.85}
+.sc.running::before{background:var(--blue)} .sc.running{border-color:var(--blue-glow);background:#071520}
+.sc.running .sc-ic{border-color:var(--blue);color:var(--blue);animation:spin 1s linear infinite}
+.sc.running .sc-lbl{color:var(--blue)}
+.sc.success::before{background:var(--green)} .sc.success{border-color:var(--green-glow);background:#04160a}
+.sc.success .sc-ic{border-color:var(--green);color:var(--green);background:rgba(61,204,117,.1)}
+.sc.success .sc-lbl{color:var(--green)} .sc.success .sc-sub{color:var(--teal)} .sc.success .sc-why{color:var(--teal);opacity:1}
+.sc.error::before{background:var(--red)} .sc.error{border-color:#5a0f1a;background:#120309}
+.sc.error .sc-ic{border-color:var(--red);color:var(--red)} .sc.error .sc-lbl{color:var(--red)}
+.lane.gnark .sc.running{border-color:var(--teal-glow)}
+.lane.gnark .sc.running::before{background:var(--teal)}
+.lane.gnark .sc.running .sc-ic{border-color:var(--teal);color:var(--teal)}
+.lane.gnark .sc.running .sc-lbl{color:var(--teal)}
+
+/* ── ZK explainer ── */
+.zk-box{display:none;margin-top:4px;position:relative;isolation:isolate;overflow:hidden;background:linear-gradient(135deg,rgba(61,212,176,.08),rgba(82,184,255,.06));border:1px solid var(--teal-glow);padding:9px 12px}
+.zk-box::before{content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;background-image:repeating-linear-gradient(90deg,rgba(140,145,156,.14) 0,rgba(140,145,156,.14) 1px,transparent 1px,transparent 25%);-webkit-mask-image:linear-gradient(to bottom,transparent 0%,black 45%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0%,black 45%,transparent 100%)}
+.zk-box.on{display:block}
+.zk-title{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.zk-spin{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--teal);border-top-color:transparent;animation:spin .9s linear infinite;flex-shrink:0}
+.zk-bullet{display:flex;align-items:baseline;gap:5px;font-size:10px;color:var(--muted);opacity:.4;transition:all .4s;padding:2px 0}
+.zk-bullet.active{color:var(--teal);opacity:1} .zk-bullet.done{color:var(--green);opacity:.7}
+.zk-bd{width:4px;height:4px;border-radius:50%;background:var(--muted);flex-shrink:0;margin-top:4px;transition:background .4s}
+.zk-bullet.active .zk-bd{background:var(--teal)} .zk-bullet.done .zk-bd{background:var(--green)}
+.zk-elapsed{margin-top:7px;padding-top:6px;border-top:1px solid var(--subtle);font-family:var(--mono);font-size:9px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.zk-bw{flex:1;height:2px;background:var(--bd);overflow:hidden}
+.zk-bar{height:100%;width:0%;background:var(--teal);transition:width 1s linear}
+#zkSecs{color:var(--teal);min-width:24px;text-align:right}
+.fp-mini{margin-top:8px;padding-top:7px;border-top:1px solid var(--subtle)}
+.fp-mini-title{font-family:var(--mono);font-size:7.5px;color:var(--teal);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
+.fp-grid{display:grid;gap:2px}
+.fp-cell{width:20px;height:20px;border:1px solid var(--bd2);background:var(--bg);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:6px;color:var(--muted)}
+.fp-cell.sender-col{border-color:var(--teal-glow);background:rgba(61,212,176,.1);color:var(--teal)}
+.fp-cell.self-diag{background:var(--bg);border-color:var(--bd);color:var(--subtle)}
+.proof-badge{display:none;margin-top:4px;background:var(--s2);border:1px solid var(--teal-glow);padding:8px 11px}
+.proof-badge.on{display:block}
+.proof-size{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--teal);display:block;margin-bottom:2px}
+.proof-meta{font-family:var(--mono);font-size:8.5px;color:var(--label);line-height:1.9}
+.proof-meta em{color:var(--teal);opacity:.7;font-style:normal}
+
+/* ── Metrics ── */
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.mc{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--bd2);padding:9px 12px;transition:border-color .3s}
+.mc.lit{border-left-color:var(--teal)}
+.mc-key{font-family:var(--mono);font-size:7.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.mc-val{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--muted);line-height:1.1;font-variant-numeric:tabular-nums;transition:color .4s}
+.mc-val.set{color:var(--text)} .mc-val.hl{color:var(--teal)}
+.mc-sub{font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:3px}
+.mc-bar{height:2px;background:var(--bd);margin-top:5px;overflow:hidden}
+.mc-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--teal),var(--blue));transition:width 1.4s cubic-bezier(.16,1,.3,1)}
+
+/* ── Balance panel ── */
+.bal-panel{display:none;border:1px solid var(--green-glow);overflow:hidden}
+.bal-panel.on{display:block}
+.bal-head{padding:8px 14px;background:var(--green-dim);border-bottom:1px solid var(--green-glow);display:flex;align-items:center;gap:10px}
+.bal-title{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--green)}
+.bal-badge{font-family:var(--mono);font-size:8.5px;color:var(--teal);background:rgba(61,212,176,.08);border:1px solid var(--teal-glow);padding:1px 7px}
+.bal-cols{display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
+.bal-col{padding:14px 18px}
+.bal-col-c{padding:14px 0;text-align:center}
+.bal-role{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px;color:var(--muted)}
+.bal-role.after{color:var(--green)}
+.bal-tokens{font-family:var(--mono);font-size:24px;font-weight:700;margin-bottom:3px;font-variant-numeric:tabular-nums}
+.bal-tokens.before{color:var(--label)} .bal-tokens.after{color:var(--green)}
+.bal-commit{font-family:var(--mono);font-size:8.5px;color:var(--muted);word-break:break-all;transition:color .3s}
+.bal-commit.set{color:var(--label)}
+.bal-arrow{font-family:var(--mono);font-size:28px;color:var(--muted);display:block;margin-bottom:2px}
+.bal-delta{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--red);display:block}
+.bal-note{padding:8px 18px;border-top:1px solid var(--bd);font-size:10px;color:var(--muted);background:var(--s2);line-height:1.55}
+.bal-note strong{color:var(--label)}
+
+/* ── Mini bank balance grid ── */
+.bbgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.bbcard{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--bd2);padding:8px 10px}
+.bbc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.bbc-name{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--label);text-transform:uppercase;letter-spacing:.08em}
+.bbc-role{font-family:var(--mono);font-size:6.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:1px 5px}
+.bbc-role.sender{background:rgba(255,85,102,.15);color:var(--red);border:1px solid rgba(255,85,102,.3)}
+.bbc-role.receiver{background:rgba(61,204,117,.12);color:var(--green);border:1px solid rgba(61,204,117,.3)}
+.bbc-role.observer{background:rgba(106,154,191,.10);color:var(--label);border:1px solid rgba(106,154,191,.2)}
+.bbc-delta{font-family:var(--mono);font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;margin-bottom:3px}
+.bbc-delta.neg{color:var(--red)}.bbc-delta.pos{color:var(--green)}.bbc-delta.neutral{color:var(--muted)}
+.bbc-row{display:flex;justify-content:space-between;align-items:baseline;gap:4px;margin-bottom:1px}
+.bbc-lbl{font-family:var(--mono);font-size:7.5px;color:var(--muted)}
+.bbc-val{font-family:var(--mono);font-size:8px;color:var(--muted);transition:color .4s;word-break:break-all}
+.bbc-val.pre.set{color:var(--label)}.bbc-val.fin.set{color:var(--teal)}
+
+/* ── Privacy summary ── */
+.priv-summary{border:1px solid var(--green-glow);overflow:hidden;display:none}
+.priv-summary.on{display:block}
+.priv-cols{display:grid;grid-template-columns:1fr 1fr}
+.priv-col{padding:14px 16px}
+.priv-col-lbl{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px;font-weight:700}
+.priv-col.configured{border-right:1px solid var(--bd2);background:rgba(61,212,176,.04)}
+.priv-col.configured .priv-col-lbl{color:var(--teal)}
+.priv-col.onchain .priv-col-lbl{color:var(--label)}
+.priv-item{font-family:var(--mono);font-size:8.5px;color:var(--label);padding:2px 0;line-height:1.6}
+.priv-item strong{color:var(--text)}
+.priv-item.muted{color:var(--muted);font-style:italic;font-size:8px;margin-top:3px}
+
+/* ── Verify tab ── */
+.vcard{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--blue-glow);padding:14px 16px}
+.vcard-title{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;margin-bottom:10px}
+.vbal-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.vbal-card{background:var(--s2);border:1px solid var(--bd2);padding:8px 10px}
+.vbal-name{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--label);margin-bottom:4px}
+.vbal-point{font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.5;transition:color .3s}
+.vbal-point.set{color:var(--teal)}
+.vcalc-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.vcalc-lbl{font-family:var(--mono);font-size:9px;color:var(--muted);min-width:80px}
+.vcalc-inp{background:var(--s2);border:1px solid var(--bd2);padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none;width:220px;max-width:100%}
+.vcalc-inp:focus{border-color:var(--blue)}
+.vcalc-out{background:var(--s2);border:1px solid var(--bd2);padding:8px 12px;margin-top:4px;font-family:var(--mono);font-size:9px;word-break:break-all;line-height:1.7;display:none}
+.vcalc-out.on{display:block}
+.rv-cards{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.rv-card{background:var(--s2);border:1px solid var(--bd2);padding:8px 10px}
+.rv-card-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.rv-card-name{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--text)}
+.rv-card-role{font-family:var(--mono);font-size:8px;color:var(--muted);flex:1}
+.rv-copy-btn{font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd2);color:var(--muted);padding:2px 8px;cursor:pointer;transition:border-color .2s,color .2s;white-space:nowrap;flex-shrink:0}
+.rv-copy-btn:hover{border-color:var(--teal);color:var(--teal)}
+.rv-copy-btn.copied{border-color:var(--green);color:var(--green)}
+.rv-val{font-family:var(--mono);font-size:8px;color:var(--teal);word-break:break-all;line-height:1.6;user-select:all;cursor:text}
+.rv-top-bar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.rv-copyall-btn{font-family:var(--mono);font-size:8.5px;background:none;border:1px solid var(--bd2);color:var(--muted);padding:3px 10px;cursor:pointer;transition:border-color .2s,color .2s}
+.rv-copyall-btn:hover{border-color:var(--amber);color:var(--amber)}
+.rv-copyall-btn.copied{border-color:var(--green);color:var(--green)}
+
+/* ── Key Agreement tab ── */
+.kas-card{background:var(--s1);border:1px solid var(--bd);border-left:2px solid var(--purple-glow);padding:12px 16px}
+.kas-lbl{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.kas-val{font-family:var(--mono);font-size:10.5px;color:var(--label);word-break:break-all;line-height:1.5;transition:color .3s}
+.kas-val.ready{color:var(--teal)}
+.kas-big{display:flex;align-items:baseline;gap:6px}
+.kas-count{font-family:var(--mono);font-size:30px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1;transition:color .4s}
+.kas-count.full{color:var(--green)}
+.kas-denom{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.kap-grid{display:grid;grid-template-columns:1fr;gap:7px}
+.kap-card{background:var(--s1);border:1px solid var(--bd);padding:9px 11px;transition:border-color .3s}
+.kap-name{font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);margin-bottom:6px}
+.kap-st{font-family:var(--mono);font-size:7.5px;padding:2px 6px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;display:inline-block;margin-bottom:5px}
+.kap-st.pending{color:var(--muted);background:var(--s2);border:1px solid var(--bd)}
+.kap-st.waiting{color:var(--amber);background:rgba(240,160,48,.08);border:1px solid var(--amber)}
+.kap-st.ready{color:var(--blue);background:rgba(82,184,255,.08);border:1px solid var(--blue-glow)}
+.kap-st.agreed{color:var(--green);background:rgba(61,204,117,.08);border:1px solid var(--green-glow)}
+.kap-fe{font-family:var(--mono);font-size:7px;color:var(--muted);word-break:break-all;line-height:1.5;margin-top:3px;min-height:10px}
+.ka-steps{display:flex;flex-direction:column;gap:5px}
+.ka-steps-hdr{font-family:var(--mono);font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.ka-note{background:var(--s1);border:1px solid var(--bd);padding:11px 14px;font-family:var(--mono);font-size:9px;color:var(--muted);line-height:1.8}
+.ka-note em{color:var(--label);font-style:normal}
+
+/* ── KA agreement matrix ── */
+.ka-matrix-wrap{background:var(--s1);border:1px solid var(--bd);padding:10px 12px;transition:border-color .6s,box-shadow .6s}
+.ka-matrix-wrap.ka-matrix-complete{border-color:var(--green-glow);box-shadow:0 0 10px rgba(61,204,117,.15)}
+@keyframes matpulse{0%{box-shadow:0 0 0 0 rgba(61,204,117,.45)}70%{box-shadow:0 0 0 8px rgba(61,204,117,0)}100%{box-shadow:0 0 0 0 rgba(61,204,117,0)}}
+.ka-matrix-hdr{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.ka-matrix-title{font-family:var(--mono);font-size:7px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.ka-matrix-done{font-family:var(--mono);font-size:7px;color:var(--green);display:none}
+.ka-matrix-done.on{display:inline}
+.ka-matrix{display:grid;grid-template-columns:16px repeat(6,1fr);gap:2px}
+.ka-mhdr{font-family:var(--mono);font-size:7px;color:var(--muted);text-align:center;padding:2px 0;font-weight:700;line-height:1}
+.ka-mhdr.me{color:var(--teal)}
+.ka-mhdr-row{text-align:right;padding-right:3px}
+.ka-mcell{aspect-ratio:1;min-width:22px;border:1px solid var(--bd);background:var(--s2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:background .35s,border-color .35s,color .35s;overflow:hidden}
+.ka-mcell.diag{background:var(--bg);border-color:var(--bd2);color:var(--subtle)}
+.ka-mcell.pending{color:var(--muted)}
+.ka-mcell.waiting{background:rgba(240,160,48,.07);border-color:var(--amber-glow);color:var(--amber)}
+.ka-mcell.both-ready{background:rgba(82,184,255,.09);border-color:var(--blue-glow);color:var(--blue)}
+.ka-mcell.agreed{background:rgba(61,204,117,.13);border-color:var(--green-glow);color:var(--green);animation:matpulse .8s ease-out 1}
+.ka-mcell.my-band{box-shadow:inset 0 0 0 1px rgba(61,212,176,.18)}
+.ka-msym{font-size:9px;line-height:1}
+.ka-mfe{font-size:5px;font-family:var(--mono);opacity:.65;line-height:1;word-break:break-all;text-align:center;padding:0 1px}
+
+/* ── Log (fixed, bottom) ── */
+.log-panel{position:fixed;left:0;right:0;bottom:0;height:var(--log-h);border-top:1px solid var(--bd);background:var(--s1);display:flex;z-index:200}
+.log-sys{width:var(--sidebar-w);flex-shrink:0;border-right:1px solid var(--bd);padding:12px 16px;display:flex;flex-direction:column;gap:8px;background:var(--s2)}
+.log-sys-lbl{font-family:var(--mono);font-size:7.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.log-sys-row{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px}
+.log-sys-k{color:var(--muted)}
+.log-sys-v{color:var(--label)}
+.log-content{flex:1;display:flex;flex-direction:column;min-width:0}
+.log-hdr{padding:5px 14px;background:var(--s2);border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px}
+.log-dot{width:5px;height:5px;border-radius:50%;background:var(--muted);transition:background .3s}
+#logOut{flex:1;overflow-y:auto;padding:6px 14px;display:flex;flex-direction:column;font-family:var(--mono);font-size:9px;line-height:1.75}
+.ll{display:flex;gap:8px}
+.lts{color:var(--muted);flex-shrink:0;width:72px}
+.lb{color:var(--text);word-break:break-word}
+.lb.ok{color:var(--green)} .lb.err{color:var(--red)} .lb.info{color:var(--teal)}
+#logOut::-webkit-scrollbar{width:3px}
+#logOut::-webkit-scrollbar-thumb{background:var(--bd2)}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <a class="back-link" href="/">← Operator</a>
+  <div class="brand">Enygma Payments</div>
+  <h1 id="bankTitle">Bank Dashboard</h1>
+  <div class="topbar-icons">
+    <span class="material-symbols-outlined">account_balance_wallet</span>
+    <span class="material-symbols-outlined">terminal</span>
+  </div>
+  <div class="status-row">
+    <div class="dot" id="gDot"></div>
+    <span class="status-txt" id="gStatus">Ready</span>
+  </div>
+</div>
+
+<!-- ── Sidebar ── -->
+<div class="sidebar">
+  <div class="side-id">
+    <div class="brand">Enygma<br>Payments</div>
+    <div class="side-id-sub">Bank Node</div>
+  </div>
+  <div class="sidenav">
+    <div class="tab send-tab active" data-tab="send">
+      <span class="material-symbols-outlined">send</span>Send Payment
+      <span class="tab-prog" id="tp-send"></span>
+    </div>
+    <div class="tab ka-tab" data-tab="ka">
+      <span class="material-symbols-outlined">vpn_key</span>Key Agreement
+      <span class="tab-prog" id="tp-ka"></span>
+    </div>
+    <div class="tab verify-tab" data-tab="verify">
+      <span class="material-symbols-outlined">verified</span>Verify Balance
+    </div>
+  </div>
+  <div class="side-action">
+    <button class="action-btn btn-transfer" id="transferBtn" disabled>▶ Send Payment</button>
+  </div>
+</div>
+
+<div class="main-wrap">
+<div class="tabs-wrap">
+
+<!-- ══════════ SEND TAB ══════════ -->
+<div class="tab-panel active" id="panel-send">
+
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--teal);color:var(--teal)" id="bankNum">—</div>
+    <div class="sec-title" style="color:var(--teal)" id="bankLabel">Confidential Payment</div>
+    <div class="sec-sub" id="bankSub">6-bank anonymity set · Groth16 ZK · On-chain settlement</div>
+  </div>
+
+  <div class="pg">
+
+  <!-- Identity + balance cards -->
+  <div class="info-card gc-6">
+    <div class="info-title" style="color:var(--label)">My Identity</div>
+    <div class="hgrid" style="grid-template-columns:1fr 1fr">
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">Account</div><span class="info-v" id="myAccount">—</span></div>
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">Secret key</div><span class="info-v" id="mySk">—</span></div>
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">Spend key</div><span class="info-v" id="mySpendKey">—</span></div>
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">View key</div><span class="info-v" id="myViewKey">(run Key Agreement in operator)</span></div>
+      <div style="padding:8px 10px;grid-column:span 2"><div class="info-k" style="margin-bottom:3px">Status</div><span class="info-v" id="myStatus">unknown — run Setup in operator</span></div>
+    </div>
+  </div>
+  <div class="info-card gc-6">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div class="info-title" style="color:var(--green);margin-bottom:0">My On-Chain Balance</div>
+      <button class="action-btn btn-sm" style="background:var(--green);color:#001a18;margin-left:auto" onclick="refreshMyBalance()">⟳ Refresh</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:6px">Pedersen commitment (encrypted on-chain)</div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:2px">C1 (x):</div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;margin-bottom:5px;line-height:1.4;transition:color .3s" id="myBalC1">—</div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:2px">C2 (y):</div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.4;transition:color .3s" id="myBalC2">—</div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:5px" id="myBalStatus"></div>
+  </div>
+
+  <!-- Transfer form -->
+  <div class="tx-form gc-12">
+    <div class="tx-form-title">Transfer Configuration</div>
+    <div class="tx-amount-row glow-active">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--muted)">I send</span>
+      <input id="txSenderInput" type="number" value="100" min="1" step="10"
+        style="width:80px;background:var(--s2);border:1px solid var(--bd2);padding:5px 7px;font-family:var(--mono);font-size:13px;color:var(--red);font-weight:700;outline:none">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--muted)">tokens  →</span>
+      <span class="tx-alloc" id="txAlloc" style="color:var(--green)">allocated 100 / 100</span>
+      <span class="tx-err" id="txErr">⚠ amounts must sum to sender total</span>
+    </div>
+    <div class="tx-receivers" id="txReceivers">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- Swimlanes -->
+  <div class="swimlanes gc-12">
+    <div class="lane sender">
+      <div class="lane-hdr">Sending Bank · Privacy Node</div>
+      <div class="lane-body">
+        <div class="sc" id="sc-read_state"><div class="sc-top"><div class="sc-ic" id="si-read_state">○</div><div class="sc-lbl">Read On-Chain State</div></div><div class="sc-sub" id="ss-read_state">getPublicValues + getBlckHash</div><div class="sc-why">Fetch encrypted balances and block hash — amounts stay hidden from the chain</div></div>
+        <div class="sc" id="sc-derive_secrets"><div class="sc-top"><div class="sc-ic" id="si-derive_secrets">○</div><div class="sc-lbl">Shared Secrets</div></div><div class="sc-sub" id="ss-derive_secrets">s₀ = Poseidon(prevR, sk)</div><div class="sc-why">Derive ML-KEM pairwise secrets — only the two banks sharing a key compute the same value</div></div>
+        <div class="sc" id="sc-compute_randoms"><div class="sc-top"><div class="sc-ic" id="si-compute_randoms">○</div><div class="sc-lbl">Privacy Randomizers</div></div><div class="sc-sub" id="ss-compute_randoms">r_i = Poseidon(H₂₁, s_i, epoch)</div><div class="sc-why">Blind each amount so the chain only ever sees elliptic curve points, never raw numbers</div></div>
+        <div class="sc" id="sc-build_commits"><div class="sc-top"><div class="sc-ic" id="si-build_commits">○</div><div class="sc-lbl">Encrypt Amounts</div></div><div class="sc-sub" id="ss-build_commits">v·G + r·H (Pedersen)</div><div class="sc-why">Commit to each value with a Pedersen binding — hiding yet verifiable</div></div>
+        <div class="sc" id="sc-compute_tags"><div class="sc-top"><div class="sc-ic" id="si-compute_tags">○</div><div class="sc-lbl">Message Tags ×6</div></div><div class="sc-sub" id="ss-compute_tags">t_i = Poseidon(H₁₂, s_i, epoch)</div><div class="sc-why">Authenticate each bank's participation without revealing identity on-chain</div></div>
+        <div class="sc" id="sc-compute_nullifier"><div class="sc-top"><div class="sc-ic" id="si-compute_nullifier">○</div><div class="sc-lbl">Spend Nullifier</div></div><div class="sc-sub" id="ss-compute_nullifier">η = Poseidon(H(s₀), epoch)</div><div class="sc-why">One-time token that lets the chain reject replays without revealing the sender</div></div>
+      </div>
+    </div>
+    <div class="ldiv"><div class="ldiv-line"></div><div class="fdot" id="fdot-sg"></div><div class="ldiv-line"></div></div>
+    <div class="lane gnark">
+      <div class="lane-hdr">ZK Engine · Gnark Prover</div>
+      <div class="lane-body">
+        <div class="sc" id="sc-zk_proof"><div class="sc-top"><div class="sc-ic" id="si-zk_proof">○</div><div class="sc-lbl">ZK Proof Generation</div></div><div class="sc-sub" id="ss-zk_proof">POST /proof/enygma · Groth16</div></div>
+        <div class="zk-box" id="zkBox">
+          <div class="zk-title"><div class="zk-spin"></div>Prover is computing…</div>
+          <div class="zk-bullet" id="zkb0"><div class="zk-bd"></div>Verifying sender holds the private key</div>
+          <div class="zk-bullet" id="zkb1"><div class="zk-bd"></div>Proving encrypted amounts sum to zero</div>
+          <div class="zk-bullet" id="zkb2"><div class="zk-bd"></div>Binding all signals to the epoch block</div>
+          <div class="zk-bullet" id="zkb3"><div class="zk-bd"></div>Generating 256-byte Groth16 proof</div>
+          <div class="fp-mini" id="zkFpMini">
+            <div class="fp-mini-title">FingerPrint matrix — ML-KEM shared secrets woven into proof</div>
+            <div class="fp-grid" id="fpGridInner"></div>
+            <div style="font-family:var(--mono);font-size:7px;color:var(--muted);margin-top:3px">Teal column = sender · <span style="color:var(--teal)">f</span> = Poseidon(shared secret) · · = zero padding</div>
+          </div>
+          <div class="zk-elapsed"><span>elapsed</span><div class="zk-bw"><div class="zk-bar" id="zkBar"></div></div><span id="zkSecs">0s</span></div>
+        </div>
+        <div class="proof-badge" id="proofBadge">
+          <span class="proof-size">256 bytes</span>
+          <div class="proof-meta"><em>8 field elements</em> · BN254 · Groth16<br><em>Verifies in &lt;1ms</em> on any EVM chain</div>
+        </div>
+      </div>
+    </div>
+    <div class="ldiv"><div class="ldiv-line"></div><div class="fdot" id="fdot-gc"></div><div class="ldiv-line"></div></div>
+    <div class="lane chain">
+      <div class="lane-hdr">Settlement Network · On-Chain</div>
+      <div class="lane-body">
+        <div class="sc" id="sc-relay_transfer"><div class="sc-top"><div class="sc-ic" id="si-relay_transfer">○</div><div class="sc-lbl">Submit via Relayer</div></div><div class="sc-sub" id="ss-relay_transfer">POST /relay/transfer → transfer()</div><div class="sc-why">A neutral relayer posts the proof — the sender never touches the blockchain directly</div></div>
+        <div class="sc" id="sc-verify_balance"><div class="sc-top"><div class="sc-ic" id="si-verify_balance">○</div><div class="sc-lbl">Verify Settlement</div></div><div class="sc-sub" id="ss-verify_balance">getBalance + homomorphic check</div><div class="sc-why">The EVM verifier checks the proof in &lt;1ms — amounts update homomorphically, never decrypted</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics gc-12">
+    <div class="mc" id="mc-proofTime"><div class="mc-key">Proof Generation</div><div class="mc-val" id="mv-proofTime">—</div><div class="mc-sub">Groth16 witness + prove</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-proofTime"></div></div></div>
+    <div class="mc" id="mc-verifyGas"><div class="mc-key">On-Chain Gas</div><div class="mc-val" id="mv-verifyGas">—</div><div class="mc-sub">EVM gas for transfer()</div></div>
+    <div class="mc" id="mc-flowTime"><div class="mc-key">End-to-End Time</div><div class="mc-val hl" id="mv-flowTime">—</div><div class="mc-sub">client → settled on-chain</div></div>
+  </div>
+
+  <!-- All-bank balance grid -->
+  <div class="bbgrid gc-12" id="bbGrid"></div>
+
+  <!-- Balance confirmation panel -->
+  <div class="bal-panel gc-12" id="balPanel">
+    <div class="bal-head">
+      <span class="bal-title" id="balPanelTitle">Settlement Confirmed</span>
+      <span class="bal-badge">Verified on-chain ✓</span>
+    </div>
+    <div class="bal-cols">
+      <div class="bal-col">
+        <div class="bal-role">Balance Before</div>
+        <div class="bal-tokens before" id="balTokensBefore">— tokens</div>
+        <div style="font-size:9.5px;color:var(--muted);margin-bottom:2px">Encrypted commitment</div>
+        <div class="bal-commit" id="balBefore">reading…</div>
+      </div>
+      <div class="bal-col-c">
+        <span class="bal-arrow">→</span>
+        <span class="bal-delta" id="balDelta">—</span>
+        <span style="font-size:9px;color:var(--muted)">private</span>
+      </div>
+      <div class="bal-col">
+        <div class="bal-role after">Balance After ✓</div>
+        <div class="bal-tokens after" id="balTokensAfter">— tokens</div>
+        <div style="font-size:9.5px;color:var(--muted);margin-bottom:2px">Encrypted commitment</div>
+        <div class="bal-commit" id="balAfter">settling…</div>
+      </div>
+    </div>
+    <div class="bal-note"><strong>What the blockchain sees:</strong> two different elliptic curve points. The amounts are <strong>never stored on-chain</strong> — only banks with the correct private keys can decrypt them.</div>
+  </div>
+
+  <!-- Privacy summary -->
+  <div class="priv-summary gc-12" id="privSummary">
+    <div class="priv-cols">
+      <div class="priv-col configured">
+        <div class="priv-col-lbl">What you configured</div>
+        <div id="privConfigured"></div>
+      </div>
+      <div class="priv-col onchain">
+        <div class="priv-col-lbl">What the blockchain stored</div>
+        <div class="priv-item">✓ <strong>256-byte Groth16 proof</strong></div>
+        <div class="priv-item">✓ <strong>6 Pedersen commitments</strong> — elliptic curve points</div>
+        <div class="priv-item">✓ <strong>1 nullifier</strong> — prevents double-spend</div>
+        <div class="priv-item muted">No amounts · No sender · No receiver identity</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="banner gc-12" id="send-banner"></div>
+
+  </div><!-- pg -->
+</div>
+
+<!-- ══════════ VERIFY TAB ══════════ -->
+<div class="tab-panel" id="panel-verify">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--blue);color:var(--blue)">V</div>
+    <div class="sec-title" style="color:var(--blue)">Verify Balance</div>
+    <div class="sec-sub">On-chain commitments · Pedersen calculator · Random factor conservation</div>
+  </div>
+
+  <div class="pg">
+
+  <!-- All banks' on-chain balances -->
+  <div class="vcard gc-12">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div class="vcard-title" style="color:var(--blue);margin-bottom:0">All Banks · On-Chain Balances</div>
+      <button class="action-btn btn-sm" style="background:var(--blue);color:#001428" onclick="refreshBalances()">⟳ Refresh</button>
+      <span id="vbalStatus" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)"></span>
+    </div>
+    <div class="vbal-grid" id="vbalGrid"></div>
+  </div>
+
+  <!-- Pedersen Calculator -->
+  <div class="vcard gc-6">
+    <div class="vcard-title" style="color:var(--purple)">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
+    <div class="vcalc-row glow-active">
+      <span class="vcalc-lbl">v (value)</span>
+      <input class="vcalc-inp" id="calcV" type="text" inputmode="numeric" placeholder="e.g. 500" value="500">
+    </div>
+    <div class="vcalc-row glow-active">
+      <span class="vcalc-lbl">r (random factor)</span>
+      <input class="vcalc-inp" id="calcR" type="text" inputmode="numeric" placeholder="e.g. 67890" value="67890">
+    </div>
+    <button class="action-btn btn-sm" style="background:var(--purple);color:#0e0818" onclick="calcPedersen()">Compute</button>
+    <div class="vcalc-out" id="calcOut">
+      <div style="color:var(--muted);margin-bottom:4px">Com(<span id="co-v">—</span>, <span id="co-r">—</span>) =</div>
+      <div>C1 (x): <span id="calcC1" style="color:var(--teal)">—</span></div>
+      <div>C2 (y): <span id="calcC2" style="color:var(--teal)">—</span></div>
+    </div>
+  </div>
+
+  <!-- Random Factor Sum -->
+  <div class="vcard gc-6">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div class="vcard-title" style="color:var(--amber);margin-bottom:0">Random Factor · TxRandomValues</div>
+      <button class="action-btn btn-sm" style="background:var(--amber);color:#180e00" onclick="loadRValues()">⟳ Load Last Transfer</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:10px;line-height:1.7">
+      Each transfer produces 6 blinding factors. The sender's <strong style="color:var(--amber)">txRandom</strong> = Σ raw_r[receivers]; each receiver's <strong style="color:var(--amber)">txRandom</strong> = P − raw_r. So <strong style="color:var(--amber)">Σ txRandom ≡ 0 (mod P)</strong>.
+    </div>
+    <div id="rvContent" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">Run a transfer first, then click Load Last Transfer.</div>
+  </div>
+
+  </div><!-- pg -->
+</div>
+
+<!-- ══════════ KEY AGREEMENT TAB ══════════ -->
+<div class="tab-panel" id="panel-ka">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border:1.5px solid var(--teal);color:var(--teal)">KA</div>
+    <div class="sec-title" style="color:var(--teal)">ML-KEM-768 Key Agreement</div>
+    <div class="sec-sub">Post-quantum pairwise secrets · run once per bank</div>
+    <button class="action-btn btn-transfer" id="kaBtn">▶ Run Key Agreement</button>
+  </div>
+
+  <div class="pg">
+
+  <!-- My key status + counter -->
+  <div class="kas-card gc-6">
+    <div class="kas-lbl">My Encapsulation Key (ek · 1184 B)</div>
+    <div class="kas-val" id="kaMyEK">Pending — not generated yet</div>
+  </div>
+  <div class="kas-card gc-6">
+    <div class="kas-lbl">Secrets Established</div>
+    <div class="kas-big">
+      <span class="kas-count" id="kaCountDisp">0</span>
+      <span class="kas-denom">/ 5</span>
+    </div>
+  </div>
+
+  <!-- Pairwise agreement matrix -->
+  <div class="ka-matrix-wrap gc-7" id="kaMatrixWrap">
+    <div class="ka-matrix-hdr">
+      <span class="ka-matrix-title">Pairwise Agreement Matrix</span>
+      <span class="ka-matrix-done" id="kaMatrixDone">· All 15 pairs complete ✓</span>
+    </div>
+    <div class="ka-matrix" id="kaMatrix"><!-- built by JS --></div>
+  </div>
+
+  <!-- 5-peer cards -->
+  <div class="kap-grid gc-5" id="kaPeerGrid"><!-- built by JS --></div>
+
+  <!-- Protocol note -->
+  <div class="ka-note gc-12">
+    Each bank runs this once. When two banks both hold keys, the lower-index bank
+    <em>encapsulates</em> a random secret inside the peer's public key and sends the ciphertext (1088 B).
+    The peer <em>decapsulates</em> using its private key — both sides arrive at the
+    <em>identical 32-byte secret</em> with no coordinator. The secret is hashed into a
+    <em>BabyJubJub scalar</em> used as a view key in payment proofs.
+  </div>
+
+  <!-- Live progress (shown while running) -->
+  <div class="gc-12" id="kaStepsWrap" style="display:none">
+    <div class="ka-steps">
+      <div class="ka-steps-hdr">Progress</div>
+      <div id="kaStepCards"></div>
+    </div>
+  </div>
+
+  <div class="banner gc-12" id="ka-banner"></div>
+
+  </div><!-- pg -->
+</div>
+
+</div><!-- tabs-wrap -->
+</div><!-- main-wrap -->
+
+<!-- ── Log ── -->
+<div class="log-panel">
+  <div class="log-sys">
+    <div class="log-sys-lbl">System</div>
+    <div class="log-sys-row"><span class="log-sys-k">Network</span><span class="log-sys-v">Hardhat Local</span></div>
+    <div class="log-sys-row"><span class="log-sys-k">Server</span><span class="log-sys-v">:9090</span></div>
+  </div>
+  <div class="log-content">
+    <div class="log-hdr">
+      <div class="log-dot" id="logDot"></div>Trace log
+      <button id="copyBtn" style="margin-left:auto;font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd);color:var(--muted);padding:1px 6px;cursor:pointer">copy</button>
+    </div>
+    <div id="logOut"></div>
+  </div>
+</div>
+
+</div><!-- app -->
+
+<script>
+// ── Bank identity ─────────────────────────────────────────────────────────────
+const bankId = Math.min(5, Math.max(0, parseInt(new URLSearchParams(location.search).get('id')) || 0));
+const BANKS = [
+  {name:'Bank 0', sk:'424242', acct:'#1'},
+  {name:'Bank 1', sk:'1',      acct:'#2'},
+  {name:'Bank 2', sk:'2',      acct:'#3'},
+  {name:'Bank 3', sk:'3',      acct:'#4'},
+  {name:'Bank 4', sk:'4',      acct:'#5'},
+  {name:'Bank 5', sk:'5',      acct:'#6'},
+];
+const me = BANKS[bankId];
+
+// Per-bank background palette — each bank gets a distinct hue
+const BANK_THEMES = [
+  {bg:'#07111f',s1:'#0b1929',s2:'#0f2038',bd:'#162f4e',bd2:'#1c3d65',accent:'#52b8ff',accentDim:'rgba(82,184,255,.09)',accentGlow:'#1a5a9a'},   // 0 blue
+  {bg:'#071a14',s1:'#0b2519',s2:'#0f2e1e',bd:'#163d2a',bd2:'#1c5038',accent:'#3dd4b0',accentDim:'rgba(61,212,176,.09)',accentGlow:'#0d6b5a'},   // 1 teal
+  {bg:'#130b1f',s1:'#1c1029',s2:'#231438',bd:'#2e164e',bd2:'#3d1d65',accent:'#a07cef',accentDim:'rgba(160,124,239,.09)',accentGlow:'#4a2a8a'}, // 2 purple
+  {bg:'#1a1007',s1:'#23180b',s2:'#2e1f0f',bd:'#4e3016',bd2:'#654010',accent:'#f0a030',accentDim:'rgba(240,160,48,.09)',accentGlow:'#7a4a00'},   // 3 amber
+  {bg:'#1a070d',s1:'#230b11',s2:'#2e0f16',bd:'#4e1620',bd2:'#65192a',accent:'#ff5566',accentDim:'rgba(255,85,102,.09)',accentGlow:'#6a1020'},   // 4 red
+  {bg:'#071a1a',s1:'#0b2525',s2:'#0f2e2e',bd:'#163d3d',bd2:'#1c5050',accent:'#3ddcdc',accentDim:'rgba(61,220,220,.09)',accentGlow:'#0d6060'},   // 5 cyan
+];
+const theme = BANK_THEMES[bankId];
+const root = document.documentElement;
+root.style.setProperty('--bg',        theme.bg);
+root.style.setProperty('--s1',        theme.s1);
+root.style.setProperty('--s2',        theme.s2);
+root.style.setProperty('--bd',        theme.bd);
+root.style.setProperty('--bd2',       theme.bd2);
+root.style.setProperty('--teal',      theme.accent);
+root.style.setProperty('--teal-dim',  theme.accentDim);
+root.style.setProperty('--teal-glow', theme.accentGlow);
+
+document.title = me.name + ' · Enygma Payments';
+document.getElementById('bankTitle').textContent = me.name + ' · Confidential Payments';
+document.getElementById('bankNum').textContent = bankId;
+document.getElementById('bankLabel').textContent = me.name + ' · Send Payment';
+document.getElementById('myAccount').textContent = me.acct;
+document.getElementById('mySk').textContent = me.sk;
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Global status ────────────────────────────────────────────────────────────
+function setGlobal(state, txt) {
+  document.getElementById('gDot').className = 'dot ' + (state || '');
+  document.getElementById('gStatus').textContent = txt;
+  const c = state === 'running' ? 'var(--blue)' : state === 'success' ? 'var(--green)' : state === 'error' ? 'var(--red)' : 'var(--muted)';
+  document.getElementById('logDot').style.background = c;
+}
+
+// ── Transfer form ─────────────────────────────────────────────────────────────
+let lastTxSenderAmt = 0;
+let lastTxReceiverAmts = [0, 0, 0, 0, 0, 0];
+
+function buildReceiverGrid() {
+  const g = document.getElementById('txReceivers');
+  g.innerHTML = '';
+  BANKS.forEach((b, i) => {
+    if (i === bankId) return;
+    const cell = document.createElement('div');
+    cell.className = 'tx-recv-cell glow-active';
+    cell.innerHTML = `
+      <div class="tx-recv-name">${b.name}</div>
+      <input class="tx-recv-inp" id="txRecv-${i}" type="number" value="0" min="0" step="10"
+        oninput="updateTxAmounts()">`;
+    g.appendChild(cell);
+  });
+  // Default: 60 to Bank 1 if sender is Bank 0, else distribute evenly
+  const first = bankId === 0 ? 1 : 0;
+  const second = bankId <= 1 ? 2 : 1;
+  const inp1 = document.getElementById('txRecv-' + first);
+  const inp2 = document.getElementById('txRecv-' + second);
+  if (inp1) inp1.value = '60';
+  if (inp2) inp2.value = '40';
+  updateTxAmounts();
+}
+
+function updateTxAmounts() {
+  const sender = Math.max(0, parseInt(document.getElementById('txSenderInput').value) || 0);
+  let total = 0;
+  for (let i = 0; i < 6; i++) {
+    if (i === bankId) continue;
+    total += Math.max(0, parseInt(document.getElementById('txRecv-' + i)?.value) || 0);
+  }
+  const remaining = sender - total;
+  const alloc = document.getElementById('txAlloc');
+  alloc.textContent = 'allocated ' + total + ' / ' + sender;
+  alloc.style.color = remaining === 0 ? 'var(--green)' : remaining > 0 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById('txErr').style.display = remaining !== 0 ? 'inline' : 'none';
+  document.getElementById('transferBtn').disabled = (remaining !== 0 || sender <= 0);
+}
+
+document.getElementById('txSenderInput').addEventListener('input', updateTxAmounts);
+
+// ── Swimlane step update ─────────────────────────────────────────────────────
+const SDEFAULTS = {
+  read_state: 'getPublicValues + getBlckHash',
+  derive_secrets: 's₀ = Poseidon(prevR, sk)',
+  compute_randoms: 'r_i = Poseidon(H₂₁, s_i, epoch)',
+  build_commits: 'v·G + r·H (Pedersen)',
+  compute_tags: 't_i = Poseidon(H₁₂, s_i, epoch)',
+  compute_nullifier: 'η = Poseidon(H(s₀), epoch)',
+  zk_proof: 'POST /proof/enygma · Groth16',
+  relay_transfer: 'POST /relay/transfer → transfer()',
+  verify_balance: 'getBalance + homomorphic check'
+};
+
+function updateScard(step, status, msg) {
+  const c = document.getElementById('sc-' + step); if (!c) return;
+  c.className = 'sc ' + (status || '');
+  const ic = document.getElementById('si-' + step);
+  if (ic) ic.textContent = status === 'running' ? '↻' : status === 'success' ? '✓' : status === 'error' ? '✗' : '○';
+  if (msg) { const sub = document.getElementById('ss-' + step); if (sub) sub.textContent = msg; }
+  if (step === 'zk_proof') {
+    if (status === 'running') { startZk(); document.getElementById('fdot-sg').className = 'fdot ab'; }
+    if (status === 'success' || status === 'error') { stopZk(status === 'success'); document.getElementById('fdot-sg').className = 'fdot'; }
+  }
+  if (step === 'relay_transfer') {
+    if (status === 'running') document.getElementById('fdot-gc').className = 'fdot at';
+    if (status !== 'running') document.getElementById('fdot-gc').className = 'fdot';
+  }
+  if (step === 'verify_balance' && status === 'success') document.getElementById('balPanel').classList.add('on');
+}
+
+// ── ZK explainer ─────────────────────────────────────────────────────────────
+let zkT = null, zkBT = null, zkBIdx = 0, zkS = 0;
+function startZk() {
+  document.getElementById('zkBox').className = 'zk-box on';
+  document.getElementById('proofBadge').className = 'proof-badge';
+  [0, 1, 2, 3].forEach(i => { document.getElementById('zkb' + i).className = 'zk-bullet'; });
+  zkBIdx = 0; zkS = Date.now(); activateZkB(0);
+  zkBT = setInterval(() => { zkBIdx++; if (zkBIdx < 4) activateZkB(zkBIdx); }, 7500);
+  const bar = document.getElementById('zkBar'), sec = document.getElementById('zkSecs');
+  bar.style.width = '0%';
+  zkT = setInterval(() => { const e = Date.now() - zkS; bar.style.width = Math.min(100, (e / 32000) * 100) + '%'; sec.textContent = (e / 1000).toFixed(0) + 's'; }, 1000);
+}
+function activateZkB(idx) {
+  for (let i = 0; i < idx; i++) { const b = document.getElementById('zkb' + i); b.classList.remove('active'); b.classList.add('done'); }
+  const c = document.getElementById('zkb' + idx); if (c) c.classList.add('active');
+}
+function stopZk(ok) {
+  clearInterval(zkT); clearInterval(zkBT);
+  if (ok) { [0, 1, 2, 3].forEach(i => { const b = document.getElementById('zkb' + i); b.classList.remove('active'); b.classList.add('done'); }); document.getElementById('zkBar').style.width = '100%'; }
+  setTimeout(() => { document.getElementById('zkBox').className = 'zk-box'; if (ok) document.getElementById('proofBadge').className = 'proof-badge on'; }, 900);
+}
+
+// ── FP mini-grid ─────────────────────────────────────────────────────────────
+function buildFpGrid(senderIdx) {
+  const container = document.getElementById('fpGridInner'); if (!container) return;
+  container.style.gridTemplateColumns = '22px repeat(6,20px)';
+  container.innerHTML = '';
+  const mk = (cls, txt, extra) => { const e = document.createElement('div'); if (cls) e.className = cls; if (txt != null) e.textContent = txt; if (extra) Object.assign(e.style, extra); return e; };
+  container.appendChild(mk('', '', {}));
+  for (let j = 0; j < 6; j++) container.appendChild(mk('', 'B' + j, { fontFamily: 'var(--mono)', fontSize: '6.5px', color: j === senderIdx ? 'var(--teal)' : 'var(--muted)', fontWeight: j === senderIdx ? '700' : '400', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2px 0' }));
+  for (let i = 0; i < 6; i++) {
+    container.appendChild(mk('', 'B' + i, { fontFamily: 'var(--mono)', fontSize: '6.5px', color: 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: '3px' }));
+    for (let j = 0; j < 6; j++) {
+      let cls = 'fp-cell', txt = '.';
+      if (i === j) { cls += ' self-diag'; txt = '—'; }
+      else if (j === senderIdx) { cls += ' sender-col'; txt = 'f'; }
+      container.appendChild(mk(cls, txt));
+    }
+  }
+}
+
+// ── Metrics ──────────────────────────────────────────────────────────────────
+function commas(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function setMetric(id, val, barId, bv, bm) {
+  const e = document.getElementById('mv-' + id); if (e) { e.textContent = val; e.classList.add('set'); }
+  const mc = document.getElementById('mc-' + id); if (mc) mc.classList.add('lit');
+  if (barId && bm > 0) { const b = document.getElementById(barId); if (b) b.style.width = Math.min(100, (bv / bm) * 100) + '%'; }
+}
+function resetMetrics() {
+  ['proofTime', 'verifyGas', 'flowTime'].forEach(id => {
+    const e = document.getElementById('mv-' + id); if (e) { e.textContent = '—'; e.classList.remove('set'); }
+    const mc = document.getElementById('mc-' + id); if (mc) mc.classList.remove('lit');
+  });
+  const b = document.getElementById('mb-proofTime'); if (b) b.style.width = '0%';
+}
+function handleMetric(f, v) {
+  const n = parseInt(v);
+  if (f === 'proofTimeMs') setMetric('proofTime', n + 'ms', 'mb-proofTime', n, 60000);
+  if (f === 'verifyGas') setMetric('verifyGas', commas(v));
+  if (f === 'flowTimeMs') setMetric('flowTime', (n / 1000).toFixed(1) + 's');
+}
+
+// ── Mini bank balance grid ────────────────────────────────────────────────────
+function buildBankBalGrid() {
+  const g = document.getElementById('bbGrid'); if (!g) return;
+  g.innerHTML = '';
+  BANKS.forEach((b, i) => {
+    const d = document.createElement('div'); d.className = 'bbcard';
+    const isSelf = i === bankId;
+    d.innerHTML = `
+      <div class="bbc-top"><div class="bbc-name">${b.name}${isSelf ? ' ★' : ''}</div><span class="bbc-role observer" id="bbc-role-${i}">OBSERVER</span></div>
+      <div class="bbc-delta neutral" id="bbc-delta-${i}">—</div>
+      <div class="bbc-row"><span class="bbc-lbl">Before</span><span class="bbc-val pre" id="bbc-pre-${i}">—</span></div>
+      <div class="bbc-row"><span class="bbc-lbl">After</span><span class="bbc-val fin" id="bbc-fin-${i}">—</span></div>`;
+    if (isSelf) d.style.borderColor = 'var(--teal-glow)';
+    g.appendChild(d);
+  });
+}
+
+// ── Privacy summary ───────────────────────────────────────────────────────────
+function showPrivSummary(senderIdx, senderAmt, receiverAmts) {
+  const box = document.getElementById('privSummary');
+  const cfg = document.getElementById('privConfigured');
+  if (!box || !cfg) return;
+  let html = `<div class="priv-item"><strong>${BANKS[senderIdx].name}</strong> sends <strong>${senderAmt} tokens</strong></div>`;
+  for (let i = 0; i < 6; i++) {
+    if (i !== senderIdx && (receiverAmts[i] || 0) > 0)
+      html += `<div class="priv-item">→ <strong>${BANKS[i].name}</strong> receives <strong>${receiverAmts[i]} tokens</strong></div>`;
+  }
+  const obs = [];
+  for (let i = 0; i < 6; i++) { if (i !== senderIdx && (receiverAmts[i] || 0) === 0) obs.push(BANKS[i].name); }
+  if (obs.length) html += `<div class="priv-item muted">${obs.join(' · ')} — shielded participants</div>`;
+  cfg.innerHTML = html; box.classList.add('on');
+}
+
+// ── SSE step routing ──────────────────────────────────────────────────────────
+function handleStep(d) {
+  const { tab, step, status, msg } = d;
+  if (tab === 'transfer') {
+    updateScard(step, status, msg);
+    if (status === 'running') setGlobal('running', step.replace(/_/g, ' '));
+  } else if (tab === 'bank-ka') {
+    updateKAStep(step, status, msg);
+    if (status === 'running') setGlobal('running', 'Key Agreement');
+  }
+}
+
+// ── Done ─────────────────────────────────────────────────────────────────────
+function handleDone(d) {
+  const ok = d.status === 'success';
+  setGlobal(ok ? 'success' : 'error', ok ? 'Done' : 'Failed');
+  if (d.tab === 'transfer') {
+    document.getElementById('tp-send').textContent = ok ? '✓' : '✗';
+    const bn = document.getElementById('send-banner');
+    if (bn) { bn.className = 'banner ' + (ok ? 'success' : 'error'); bn.textContent = (ok ? '✓  ' : '✗  ') + (d.msg || ''); }
+    enableBtn();
+    setTimeout(() => { disconnectSSE(); refreshMyBalance(); }, 2000);
+  } else if (d.tab === 'bank-ka') {
+    document.getElementById('tp-ka').textContent = ok ? '✓' : '✗';
+    const bn = document.getElementById('ka-banner');
+    if (bn) { bn.className = 'banner ' + (ok ? 'success' : 'error'); bn.textContent = (ok ? '✓  ' : '✗  ') + (d.msg || ''); }
+    enableKABtn();
+    setTimeout(() => { disconnectSSE(); loadKAStatus(); }, 1500);
+  }
+}
+
+// ── Participant ───────────────────────────────────────────────────────────────
+function handleParticipant(pid, field, value) {
+  if (field === 'prevBal') {
+    const e = document.getElementById('bbc-pre-' + pid); if (e) { e.textContent = value; e.className = 'bbc-val pre set'; }
+    const f = document.getElementById('bbc-fin-' + pid); if (f) { f.textContent = '—'; f.className = 'bbc-val fin'; }
+    if (pid === bankId) {
+      document.getElementById('myBalC1').textContent = value.replace(/^\(/, '').split(',')[0]?.trim() || value;
+      document.getElementById('myBalC1').style.color = 'var(--label)';
+    }
+  }
+  if (field === 'finalBal') {
+    const e = document.getElementById('bbc-fin-' + pid); if (e) { e.textContent = value; e.className = 'bbc-val fin set'; }
+    const v = document.getElementById('vbal-pt-' + pid); if (v) { v.textContent = value; v.className = 'vbal-point set'; }
+    if (pid === bankId) {
+      document.getElementById('myBalC1').textContent = value;
+      document.getElementById('myBalC1').style.color = 'var(--green)';
+      document.getElementById('myBalStatus').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    }
+  }
+  if (field === 'balance' && pid === bankId) {
+    const e = document.getElementById('balAfter'); if (e) { e.textContent = value; e.classList.add('set'); }
+  }
+  if (field === 'prevBalance' && pid === bankId) {
+    const e = document.getElementById('balBefore'); if (e) { e.textContent = value; e.classList.add('set'); }
+  }
+  if (field === 'status' && pid === bankId && value === 'registered') {
+    document.getElementById('myStatus').textContent = '✓ Registered on-chain';
+    document.getElementById('myStatus').style.color = 'var(--green)';
+  }
+  if (field === 'spend_key' && pid === bankId) {
+    document.getElementById('mySpendKey').textContent = value;
+    document.getElementById('mySpendKey').classList.add('set');
+  }
+  if (field === 'view_ek' && pid === bankId) {
+    const e = document.getElementById('myViewKey');
+    e.textContent = value;
+    e.style.color = value.startsWith('(run') ? 'var(--muted)' : 'var(--green)';
+  }
+  if (field === 'ka_done' && pid === bankId) {
+    const count = parseInt(value.split('/')[0]);
+    const el = document.getElementById('kaCountDisp');
+    if (el) { el.textContent = count; el.className = 'kas-count' + (count === 5 ? ' full' : ''); }
+  }
+  if (field === 'ka_ek' && pid === bankId) {
+    const el = document.getElementById('kaMyEK');
+    if (el) { el.textContent = value + ' (1184B)'; el.classList.add('ready'); }
+  }
+  // mini grid roles during transfer
+  if (field === 'amount') {
+    const role = document.getElementById('bbc-role-' + pid);
+    const delta = document.getElementById('bbc-delta-' + pid);
+    if (role && delta) {
+      if (value.startsWith('−')) { role.textContent = 'SENDER'; role.className = 'bbc-role sender'; delta.textContent = value; delta.className = 'bbc-delta neg'; }
+      else if (value.startsWith('+') && !value.startsWith('+0')) { role.textContent = 'RECEIVER'; role.className = 'bbc-role receiver'; delta.textContent = value; delta.className = 'bbc-delta pos'; }
+      else { role.textContent = 'OBSERVER'; role.className = 'bbc-role observer'; delta.textContent = '0'; delta.className = 'bbc-delta neutral'; }
+    }
+  }
+}
+
+// ── Proto ─────────────────────────────────────────────────────────────────────
+function handleProto(f, v) {
+  if (f === 'senderIdx') {
+    const bp = document.getElementById('balPanelTitle');
+    if (bp) bp.textContent = 'Settlement Confirmed — ' + BANKS[parseInt(v) || 0].name;
+  }
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+let allLogs = [];
+function appendLog(d) {
+  const ts = d.ts || now(), msg = d.msg || '';
+  allLogs.push({ ts, msg });
+  const out = document.getElementById('logOut');
+  const line = document.createElement('div'); line.className = 'll';
+  const tsEl = document.createElement('span'); tsEl.className = 'lts'; tsEl.textContent = ts;
+  const bodyEl = document.createElement('span'); bodyEl.className = 'lb';
+  if (msg.startsWith('✓')) bodyEl.classList.add('ok');
+  else if (msg.startsWith('✗')) bodyEl.classList.add('err');
+  else if (msg.startsWith('→') || msg.startsWith('←')) bodyEl.classList.add('info');
+  bodyEl.textContent = msg;
+  line.appendChild(tsEl); line.appendChild(bodyEl);
+  out.appendChild(line); out.scrollTop = out.scrollHeight;
+}
+function now() { return new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+// SSE is opened only while a transfer is running (avoids HTTP/1.1 6-conn limit
+// when all 6 bank tabs + operator tab are open simultaneously).
+let es = null, sseWanted = false;
+function connectSSE() {
+  if (es) es.close();
+  es = new EventSource('/events');
+  es.onmessage = e => {
+    let d; try { d = JSON.parse(e.data); } catch { return; }
+    if (d.type === 'step') handleStep(d);
+    else if (d.type === 'log') appendLog(d);
+    else if (d.type === 'done') handleDone(d);
+    else if (d.type === 'metric') handleMetric(d.field, d.value);
+    else if (d.type === 'proto') handleProto(d.field, d.value);
+    else if (d.type === 'participant') handleParticipant(d.pid, d.field, d.value);
+  };
+  es.onerror = () => { if (sseWanted) setTimeout(connectSSE, 3000); };
+}
+function disconnectSSE() {
+  sseWanted = false;
+  if (es) { es.close(); es = null; }
+}
+
+// ── Button ────────────────────────────────────────────────────────────────────
+function disableBtn() { document.getElementById('transferBtn').disabled = true; }
+function enableBtn() { updateTxAmounts(); } // re-evaluate validation state
+function postRun(url, body) {
+  setGlobal('running', 'Running…');
+  disableBtn();
+  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+    .then(r => { if (!r.ok) r.text().then(t => { setGlobal('error', 'Error'); appendLog({ msg: 'Server: ' + t }); enableBtn(); }); })
+    .catch(err => { setGlobal('error', 'Error'); appendLog({ msg: 'Cannot reach server: ' + err }); enableBtn(); });
+}
+
+document.getElementById('transferBtn').addEventListener('click', () => {
+  const senderAmt = parseInt(document.getElementById('txSenderInput').value) || 0;
+  const receiverAmts = [0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < 6; i++) {
+    if (i === bankId) continue;
+    receiverAmts[i] = Math.max(0, parseInt(document.getElementById('txRecv-' + i)?.value) || 0);
+  }
+  if (receiverAmts.reduce((a, c) => a + c, 0) !== senderAmt || senderAmt <= 0) return;
+
+  // Save for summary
+  lastTxSenderAmt = senderAmt;
+  lastTxReceiverAmts = receiverAmts;
+
+  // Reset UI
+  Object.keys(SDEFAULTS).forEach(s => {
+    const c = document.getElementById('sc-' + s); if (c) c.className = 'sc';
+    const ic = document.getElementById('si-' + s); if (ic) ic.textContent = '○';
+    const sub = document.getElementById('ss-' + s); if (sub) sub.textContent = SDEFAULTS[s];
+  });
+  document.getElementById('fdot-sg').className = 'fdot';
+  document.getElementById('fdot-gc').className = 'fdot';
+  document.getElementById('balPanel').classList.remove('on');
+  document.getElementById('balBefore').textContent = 'reading…'; document.getElementById('balBefore').classList.remove('set');
+  document.getElementById('balAfter').textContent = 'settling…'; document.getElementById('balAfter').classList.remove('set');
+  document.getElementById('balDelta').textContent = '−' + senderAmt;
+  document.getElementById('send-banner').className = 'banner';
+  document.getElementById('tp-send').textContent = '';
+  document.getElementById('proofBadge').className = 'proof-badge';
+  document.getElementById('zkBox').className = 'zk-box';
+  document.getElementById('privSummary').classList.remove('on');
+  resetMetrics();
+  buildFpGrid(bankId);
+
+  sseWanted = true;
+  connectSSE();
+  postRun('/run/transfer', { senderIdx: bankId, senderAmt, receiverAmts });
+});
+
+// ── Verify: Balance refresh ───────────────────────────────────────────────────
+async function refreshMyBalance() {
+  document.getElementById('myBalStatus').textContent = 'fetching…';
+  try {
+    const r = await fetch('/state/balances');
+    if (!r.ok) { document.getElementById('myBalStatus').textContent = 'Error — run Setup first'; return; }
+    const d = await r.json();
+    const pt = (d.balances || [])[bankId];
+    if (!pt) return;
+    if (!pt.registered) {
+      document.getElementById('myBalC1').textContent = 'Not registered';
+      document.getElementById('myBalC2').textContent = '(register in operator)';
+      document.getElementById('myBalStatus').textContent = '';
+    } else {
+      document.getElementById('myBalC1').textContent = pt.c1;
+      document.getElementById('myBalC1').style.color = 'var(--teal)';
+      document.getElementById('myBalC2').textContent = pt.c2;
+      document.getElementById('myBalC2').style.color = 'var(--teal)';
+      document.getElementById('myStatus').textContent = '✓ Registered on-chain';
+      document.getElementById('myStatus').style.color = 'var(--green)';
+      document.getElementById('myBalStatus').textContent = 'updated ' + new Date().toLocaleTimeString();
+    }
+  } catch (e) { document.getElementById('myBalStatus').textContent = 'Error: ' + e.message; }
+}
+
+// ── Verify tab: all balances ──────────────────────────────────────────────────
+function buildVbalGrid() {
+  const g = document.getElementById('vbalGrid'); if (!g) return;
+  g.innerHTML = '';
+  BANKS.forEach((b, i) => {
+    const d = document.createElement('div'); d.className = 'vbal-card';
+    if (i === bankId) d.style.borderColor = 'var(--teal-glow)';
+    d.innerHTML = `<div class="vbal-name">${b.name}${i === bankId ? ' ★ (me)' : ''}</div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
+    g.appendChild(d);
+  });
+}
+
+async function refreshBalances() {
+  const st = document.getElementById('vbalStatus');
+  if (st) st.textContent = 'fetching…';
+  try {
+    const r = await fetch('/state/balances');
+    if (!r.ok) { if (st) st.textContent = 'Error — run Setup in operator first'; return; }
+    const d = await r.json();
+    (d.balances || []).forEach((pt, i) => {
+      const el = document.getElementById('vbal-pt-' + i);
+      if (el) {
+        if (!pt.registered) { el.textContent = 'not registered'; el.className = 'vbal-point'; el.style.color = 'var(--muted)'; el.style.fontStyle = 'italic'; }
+        else { const short = s => s.length > 16 ? s.slice(0, 8) + '…' + s.slice(-4) : s; el.textContent = '(' + short(pt.c1) + ', ' + short(pt.c2) + ')'; el.className = 'vbal-point set'; el.style.color = ''; el.style.fontStyle = ''; }
+      }
+    });
+    if (st) st.textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) { if (st) st.textContent = 'Error: ' + e.message; }
+}
+
+// ── Pedersen Calculator ───────────────────────────────────────────────────────
+async function calcPedersen() {
+  const v = document.getElementById('calcV').value.trim();
+  const r = document.getElementById('calcR').value.trim();
+  if (!v || !r) { alert('Enter v and r'); return; }
+  const out = document.getElementById('calcOut'); out.className = 'vcalc-out on';
+  document.getElementById('calcC1').textContent = 'computing…';
+  document.getElementById('calcC2').textContent = 'computing…';
+  document.getElementById('co-v').textContent = v;
+  document.getElementById('co-r').textContent = r;
+  try {
+    const res = await fetch('/calc/pedersen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v, r }) });
+    const d = await res.json();
+    if (d.error) { document.getElementById('calcC1').textContent = 'Error: ' + d.error; document.getElementById('calcC2').textContent = ''; return; }
+    document.getElementById('calcC1').textContent = d.c1;
+    document.getElementById('calcC2').textContent = d.c2;
+  } catch (e) { document.getElementById('calcC1').textContent = 'Error: ' + e.message; }
+}
+
+// ── Random Factor Values ──────────────────────────────────────────────────────
+async function loadRValues() {
+  const div = document.getElementById('rvContent');
+  div.innerHTML = '<span style="color:var(--muted)">Loading…</span>';
+  try {
+    const res = await fetch('/state/last-transfer');
+    if (!res.ok) { div.innerHTML = '<span style="color:var(--red)">Error: run a transfer first.</span>'; return; }
+    const d = await res.json();
+    const rv = d.rValues || []; const P = d.P || ''; const lsidx = d.senderIdx || 0;
+    let sum = 0n, sumOk = false;
+    try { const Pb = BigInt(P); rv.forEach(v => { sum = (sum + BigInt(v)) % Pb; }); sumOk = sum === 0n; } catch {}
+    const wrap = document.createElement('div');
+    const topBar = document.createElement('div'); topBar.className = 'rv-top-bar';
+    const hint = document.createElement('span');
+    hint.style.cssText = 'font-family:var(--mono);font-size:8.5px;color:var(--muted);flex:1';
+    hint.textContent = 'TxRandomValues from last transfer';
+    const copyAllBtn = document.createElement('button'); copyAllBtn.className = 'rv-copyall-btn'; copyAllBtn.textContent = 'copy all';
+    copyAllBtn.onclick = () => { const text = rv.map((v, i) => 'r[' + i + '] = ' + v).join('\n'); navigator.clipboard.writeText(text).then(() => { copyAllBtn.textContent = '✓ copied'; copyAllBtn.classList.add('copied'); setTimeout(() => { copyAllBtn.textContent = 'copy all'; copyAllBtn.classList.remove('copied'); }, 1800); }); };
+    topBar.appendChild(hint); topBar.appendChild(copyAllBtn); wrap.appendChild(topBar);
+    const cards = document.createElement('div'); cards.className = 'rv-cards';
+    rv.forEach((v, i) => {
+      const card = document.createElement('div'); card.className = 'rv-card';
+      if (i === bankId) card.style.borderColor = 'var(--teal-glow)';
+      const head = document.createElement('div'); head.className = 'rv-card-head';
+      const nameEl = document.createElement('span'); nameEl.className = 'rv-card-name'; nameEl.textContent = BANKS[i].name + (i === bankId ? ' ★' : '');
+      const roleEl = document.createElement('span'); roleEl.className = 'rv-card-role';
+      roleEl.textContent = i === lsidx ? 'Sender · txRandom = Σ raw_r[receivers]' : 'Receiver · txRandom = P − raw_r[' + i + ']';
+      const btn = document.createElement('button'); btn.className = 'rv-copy-btn'; btn.textContent = 'copy';
+      btn.onclick = () => { navigator.clipboard.writeText(v).then(() => { btn.textContent = 'copied!'; btn.classList.add('copied'); setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1800); }); };
+      head.appendChild(nameEl); head.appendChild(roleEl); head.appendChild(btn);
+      const val = document.createElement('div'); val.className = 'rv-val'; val.textContent = v;
+      card.appendChild(head); card.appendChild(val); cards.appendChild(card);
+    });
+    wrap.appendChild(cards);
+    const sumBox = document.createElement('div');
+    sumBox.style.cssText = `margin-top:10px;padding:10px 14px;border-radius:5px;border:1px solid ${sumOk ? 'var(--green-glow)' : 'var(--red)'};background:${sumOk ? 'var(--green-dim)' : 'var(--red-dim)'}`;
+    sumBox.innerHTML = `<div style="font-family:var(--mono);font-size:11px;font-weight:700;color:${sumOk ? 'var(--green)' : 'var(--red)'}">Σ TxRandom mod P = ${sum.toString()} &nbsp;${sumOk ? '✓ Conservation holds' : '✗ Mismatch'}</div><div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-top:5px;line-height:1.7"><span style="color:var(--label)">P = </span><span style="user-select:all;cursor:text">${P}</span></div>`;
+    wrap.appendChild(sumBox);
+    div.innerHTML = ''; div.appendChild(wrap);
+  } catch (e) { div.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`; }
+}
+
+// ── Copy log ──────────────────────────────────────────────────────────────────
+document.getElementById('copyBtn').addEventListener('click', () => {
+  navigator.clipboard.writeText(allLogs.map(l => l.ts + '  ' + l.msg).join('\n')).then(() => {
+    document.getElementById('copyBtn').textContent = 'copied!';
+    setTimeout(() => document.getElementById('copyBtn').textContent = 'copy', 1500);
+  });
+});
+
+// ── Key Agreement ─────────────────────────────────────────────────────────────
+
+// Step definitions for this bank's KA flow
+const KA_STEP_DEFS = { bka_keygen: 'Generate Key Pair' };
+for (let _j = 0; _j < 6; _j++) {
+  if (_j !== bankId) KA_STEP_DEFS['bka_pair_' + _j] = 'Exchange with Bank ' + _j;
+}
+
+function buildKAStepCards() {
+  const c = document.getElementById('kaStepCards'); if (!c) return;
+  c.innerHTML = '';
+  Object.entries(KA_STEP_DEFS).forEach(([id, lbl]) => {
+    const d = document.createElement('div'); d.className = 'sc'; d.id = 'kasc-' + id;
+    d.innerHTML = `<div class="sc-top"><div class="sc-ic" id="kasci-${id}">○</div><div class="sc-lbl">${lbl}</div></div><div class="sc-sub" id="kass-${id}"></div>`;
+    c.appendChild(d);
+  });
+}
+
+function updateKAStep(step, status, msg) {
+  const sc = document.getElementById('kasc-' + step); if (!sc) return;
+  sc.className = 'sc ' + (status || '');
+  const ic = document.getElementById('kasci-' + step);
+  if (ic) ic.textContent = status === 'running' ? '↻' : status === 'success' ? '✓' : status === 'error' ? '✗' : '○';
+  const sub = document.getElementById('kass-' + step);
+  if (sub && msg) sub.textContent = msg;
+}
+
+function disableKABtn() { const b = document.getElementById('kaBtn'); if (b) b.disabled = true; }
+function enableKABtn()  { const b = document.getElementById('kaBtn'); if (b) b.disabled = false; }
+
+function buildKAPeers() {
+  const g = document.getElementById('kaPeerGrid'); if (!g) return;
+  g.innerHTML = '';
+  BANKS.forEach((b, j) => {
+    if (j === bankId) return;
+    const d = document.createElement('div'); d.className = 'kap-card'; d.id = 'kapc-' + j;
+    d.innerHTML = `<div class="kap-name">${b.name}</div><span class="kap-st pending" id="kaps-${j}">Pending</span><div class="kap-fe" id="kapfe-${j}"></div>`;
+    g.appendChild(d);
+  });
+}
+
+function buildKAMatrix() {
+  const mat = document.getElementById('kaMatrix'); if (!mat) return;
+  mat.innerHTML = '';
+  // top-left blank corner
+  const corner = document.createElement('div'); corner.className = 'ka-mhdr'; mat.appendChild(corner);
+  // column headers
+  for (let j = 0; j < 6; j++) {
+    const h = document.createElement('div');
+    h.className = 'ka-mhdr' + (j === bankId ? ' me' : '');
+    h.textContent = 'B' + j;
+    mat.appendChild(h);
+  }
+  // rows
+  for (let i = 0; i < 6; i++) {
+    const rh = document.createElement('div');
+    rh.className = 'ka-mhdr ka-mhdr-row' + (i === bankId ? ' me' : '');
+    rh.textContent = 'B' + i;
+    mat.appendChild(rh);
+    for (let j = 0; j < 6; j++) {
+      const cell = document.createElement('div');
+      const myBand = (i === bankId || j === bankId) && i !== j;
+      cell.className = 'ka-mcell ' + (i === j ? 'diag' : 'pending') + (myBand ? ' my-band' : '');
+      cell.id = 'kamcell-' + i + '-' + j;
+      cell.innerHTML = i === j ? '<span class="ka-msym" style="font-size:8px;opacity:.3">—</span>' : '<span class="ka-msym" style="opacity:.25">·</span>';
+      mat.appendChild(cell);
+    }
+  }
+}
+
+function updateKAMatrix(banks, pairs) {
+  // Build lookup: "min,max" → pair object
+  const pairMap = {};
+  pairs.forEach(p => { pairMap[Math.min(p.i,p.j)+','+Math.max(p.i,p.j)] = p; });
+
+  let agreedCount = 0;
+  pairs.forEach(p => { if (p.agreed) agreedCount++; });
+
+  for (let i = 0; i < 6; i++) {
+    for (let j = 0; j < 6; j++) {
+      if (i === j) continue;
+      const cell = document.getElementById('kamcell-' + i + '-' + j); if (!cell) continue;
+      const pair = pairMap[Math.min(i,j)+','+Math.max(i,j)];
+      const iKey = (banks[i] || {}).hasKey, jKey = (banks[j] || {}).hasKey;
+      const myBand = (i === bankId || j === bankId) ? ' my-band' : '';
+      if (pair && pair.agreed) {
+        cell.className = 'ka-mcell agreed' + myBand;
+        const fe = (pair.fePrefix || '').slice(0, 4);
+        cell.innerHTML = '<span class="ka-msym">✓</span>' + (fe ? '<span class="ka-mfe">' + fe + '…</span>' : '');
+      } else if (iKey && jKey) {
+        cell.className = 'ka-mcell both-ready' + myBand;
+        cell.innerHTML = '<span class="ka-msym">⇄</span>';
+      } else if (iKey || jKey) {
+        cell.className = 'ka-mcell waiting' + myBand;
+        cell.innerHTML = '<span class="ka-msym" style="font-size:9px">◌</span>';
+      } else {
+        cell.className = 'ka-mcell pending' + myBand;
+        cell.innerHTML = '<span class="ka-msym" style="opacity:.25">·</span>';
+      }
+    }
+  }
+
+  const doneEl = document.getElementById('kaMatrixDone');
+  const wrap = document.getElementById('kaMatrixWrap');
+  if (doneEl) doneEl.classList.toggle('on', agreedCount === 15);
+  if (wrap) wrap.classList.toggle('ka-matrix-complete', agreedCount === 15);
+}
+
+async function loadKAStatus() {
+  try {
+    const r = await fetch('/state/ka-status');
+    if (!r.ok) return;
+    const data = await r.json();
+    const banks = data.banks || [], pairs = data.pairs || [];
+    const me = banks[bankId] || {};
+
+    const myKeyEl = document.getElementById('kaMyEK');
+    if (myKeyEl) {
+      if (me.hasKey) { myKeyEl.textContent = (me.ekPrefix || '') + ' (1184B)'; myKeyEl.classList.add('ready'); }
+      else { myKeyEl.textContent = 'Pending — not generated yet'; myKeyEl.classList.remove('ready'); }
+    }
+
+    let myCount = 0;
+    pairs.forEach(p => {
+      if (p.i !== bankId && p.j !== bankId) return;
+      const peerId = p.i === bankId ? p.j : p.i;
+      if (p.agreed) myCount++;
+      const stEl = document.getElementById('kaps-' + peerId);
+      const feEl = document.getElementById('kapfe-' + peerId);
+      const card = document.getElementById('kapc-' + peerId);
+      if (!stEl) return;
+      const peerHasKey = (banks[peerId] || {}).hasKey;
+      if (p.agreed) {
+        stEl.className = 'kap-st agreed'; stEl.textContent = '✓ Agreed';
+        if (card) card.style.borderColor = 'var(--green-glow)';
+        if (feEl) feEl.textContent = p.fePrefix || '';
+      } else if (me.hasKey && peerHasKey) {
+        stEl.className = 'kap-st ready'; stEl.textContent = 'Run to exchange';
+        if (card) card.style.borderColor = 'var(--blue-glow)';
+      } else if (me.hasKey && !peerHasKey) {
+        stEl.className = 'kap-st waiting'; stEl.textContent = 'Awaiting peer';
+        if (card) card.style.borderColor = '';
+      } else {
+        stEl.className = 'kap-st pending'; stEl.textContent = 'Pending';
+        if (card) card.style.borderColor = '';
+      }
+    });
+
+    const countEl = document.getElementById('kaCountDisp');
+    if (countEl) { countEl.textContent = myCount; countEl.className = 'kas-count' + (myCount === 5 ? ' full' : ''); }
+
+    updateKAMatrix(banks, pairs);
+  } catch (_) { /* server not ready */ }
+}
+
+document.getElementById('kaBtn').addEventListener('click', () => {
+  buildKAStepCards();
+  document.getElementById('kaStepsWrap').style.display = 'block';
+  document.getElementById('ka-banner').className = 'banner';
+  document.getElementById('tp-ka').textContent = '';
+  disableKABtn();
+  sseWanted = true;
+  connectSSE();
+  fetch('/run/bank-ka', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bankIdx: bankId })
+  }).then(r => {
+    if (!r.ok) r.text().then(t => {
+      setGlobal('error', 'Error');
+      const bn = document.getElementById('ka-banner');
+      if (bn) { bn.className = 'banner error'; bn.textContent = '✗  ' + t; }
+      enableKABtn();
+    });
+  }).catch(err => { setGlobal('error', 'Error'); enableKABtn(); });
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+buildReceiverGrid();
+buildBankBalGrid();
+buildVbalGrid();
+buildKAPeers();
+buildKAMatrix();
+loadKAStatus();
+refreshMyBalance();
+</script>
+</body>
+</html>
