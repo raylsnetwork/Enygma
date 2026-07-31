@@ -54,6 +54,11 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 .back-link{font-family:var(--mono);font-size:9px;color:var(--muted);text-decoration:none;padding:4px 9px;border:1px solid var(--bd);transition:color .2s,border-color .2s;white-space:nowrap}
 .back-link:hover{color:var(--label);border-color:var(--bd2)}
 .status-row{display:flex;align-items:center;gap:7px;margin-left:auto}
+.present-toggle{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:12px;border:1px solid var(--bd2);background:var(--s2);color:var(--label);font-family:var(--mono);font-size:9px;cursor:pointer;transition:border-color .2s,color .2s,background .2s}
+.present-toggle:hover{border-color:var(--teal);color:var(--teal)}
+.present-toggle.active{border-color:var(--teal);color:var(--teal);background:var(--teal-dim)}
+.present-toggle .material-symbols-outlined{font-size:12px}
+body.presentation-mode{zoom:1.3}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .3s,box-shadow .3s;flex-shrink:0}
 .dot.running{background:var(--blue);box-shadow:0 0 6px var(--blue);animation:blink 1.2s infinite}
 .dot.success{background:var(--green);box-shadow:0 0 6px var(--green)}
@@ -340,6 +345,8 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 .log-content{flex:1;display:flex;flex-direction:column;min-width:0}
 .log-hdr{padding:5px 14px;background:var(--s2);border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px}
 .log-dot{width:5px;height:5px;border-radius:50%;background:var(--muted);transition:background .3s}
+.log-filter-select{font-family:var(--mono);font-size:8px;text-transform:none;letter-spacing:normal;background:var(--bg);border:1px solid var(--bd);color:var(--muted);border-radius:3px;padding:1px 5px;cursor:pointer}
+.log-filter-select:hover{border-color:var(--bd2);color:var(--label)}
 #logOut{flex:1;overflow-y:auto;padding:6px 14px;display:flex;flex-direction:column;font-family:var(--mono);font-size:9px;line-height:1.75}
 .ll{display:flex;gap:8px}
 .lts{color:var(--muted);flex-shrink:0;width:72px}
@@ -347,6 +354,28 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 .lb.ok{color:var(--green)} .lb.err{color:var(--red)} .lb.info{color:var(--teal)}
 #logOut::-webkit-scrollbar{width:3px}
 #logOut::-webkit-scrollbar-thumb{background:var(--bd2)}
+
+/* ── Responsive ── */
+.tab-panel{overflow-x:auto}
+@media (max-width: 1100px) {
+  :root{--sidebar-w:200px}
+  .gc-3,.gc-4,.gc-5,.gc-6,.gc-7,.gc-8{grid-column:span 12}
+  .swimlanes{grid-template-columns:1fr}
+  .swimlanes .ldiv{display:none}
+  .tx-receivers{grid-template-columns:repeat(3,1fr)}
+  .bbgrid,.vbal-grid{grid-template-columns:repeat(3,1fr)}
+  .metrics{grid-template-columns:1fr}
+  .bal-cols{grid-template-columns:1fr}
+  .bal-col-c{padding:10px 0}
+  .priv-cols{grid-template-columns:1fr}
+  .priv-col.configured{border-right:none;border-bottom:1px solid var(--bd2)}
+}
+@media (max-width: 760px) {
+  :root{--sidebar-w:170px;--log-h:120px}
+  .tx-receivers,.bbgrid,.vbal-grid{grid-template-columns:repeat(2,1fr)}
+  .log-sys{display:none}
+  .present-toggle-label{display:none}
+}
 </style>
 </head>
 <body>
@@ -361,6 +390,9 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
     <span class="material-symbols-outlined">account_balance_wallet</span>
     <span class="material-symbols-outlined">terminal</span>
   </div>
+  <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
+    <span class="material-symbols-outlined">zoom_in</span><span class="present-toggle-label">Presentation</span>
+  </button>
   <div class="status-row">
     <div class="dot" id="gDot"></div>
     <span class="status-txt" id="gStatus">Ready</span>
@@ -410,9 +442,9 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
     <div class="info-title" style="color:var(--label)">My Identity</div>
     <div class="hgrid" style="grid-template-columns:1fr 1fr">
       <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">Account</div><span class="info-v" id="myAccount">—</span></div>
-      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">Secret key</div><span class="info-v" id="mySk">—</span></div>
-      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">Spend key</div><span class="info-v" id="mySpendKey">—</span></div>
-      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">View key</div><span class="info-v" id="myViewKey">(run Key Agreement in operator)</span></div>
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px" title="A private number only this bank knows. Every other key this bank uses is derived from it.">Secret key</div><span class="info-v" id="mySk">—</span></div>
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px" title="Poseidon hash of the secret key — safe to publish on-chain, used to address payments to this bank.">Spend key</div><span class="info-v" id="mySpendKey">—</span> <button class="rv-copy-btn copy-mini" data-copy-target="mySpendKey" style="margin-left:4px">copy</button></div>
+      <div style="padding:8px 10px"><div class="info-k" style="margin-bottom:3px">View key</div><span class="info-v" id="myViewKey" title="Post-quantum (ML-KEM-768) key used to agree on private pairwise secrets with other banks. Generated on the Key Agreement tab, in this dashboard.">(run Key Agreement below)</span> <button class="rv-copy-btn copy-mini" data-copy-target="myViewKey" style="margin-left:4px">copy</button></div>
       <div style="padding:8px 10px;grid-column:span 2"><div class="info-k" style="margin-bottom:3px">Status</div><span class="info-v" id="myStatus">unknown — run Setup in operator</span></div>
     </div>
   </div>
@@ -422,9 +454,9 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
       <button class="action-btn btn-sm" style="background:var(--green);color:#001a18;margin-left:auto" onclick="refreshMyBalance()">⟳ Refresh</button>
     </div>
     <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:6px">Pedersen commitment (encrypted on-chain)</div>
-    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:2px">C1 (x):</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">C1 (x):</span><button class="rv-copy-btn copy-mini" data-copy-target="myBalC1">copy</button></div>
     <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;margin-bottom:5px;line-height:1.4;transition:color .3s" id="myBalC1">—</div>
-    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:2px">C2 (y):</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">C2 (y):</span><button class="rv-copy-btn copy-mini" data-copy-target="myBalC2">copy</button></div>
     <div style="font-family:var(--mono);font-size:8px;color:var(--muted);word-break:break-all;line-height:1.4;transition:color .3s" id="myBalC2">—</div>
     <div style="font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:5px" id="myBalStatus"></div>
   </div>
@@ -476,7 +508,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
           </div>
           <div class="zk-elapsed"><span>elapsed</span><div class="zk-bw"><div class="zk-bar" id="zkBar"></div></div><span id="zkSecs">0s</span></div>
         </div>
-        <div class="proof-badge" id="proofBadge">
+        <div class="proof-badge" id="proofBadge" title="Groth16 is a zero-knowledge proof system: it lets the chain confirm the transfer is valid (sender owns the funds, amounts balance to zero, no double-spend) without ever seeing the amounts or identities involved.">
           <span class="proof-size">256 bytes</span>
           <div class="proof-meta"><em>8 field elements</em> · BN254 · Groth16<br><em>Verifies in &lt;1ms</em> on any EVM chain</div>
         </div>
@@ -574,7 +606,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 
   <!-- Pedersen Calculator -->
   <div class="vcard gc-6">
-    <div class="vcard-title" style="color:var(--purple)">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
+    <div class="vcard-title" style="color:var(--purple)" title="A Pedersen commitment hides a value v behind a random blinding factor r using elliptic-curve points G and H. Commitments can be added together homomorphically, but v and r can't be recovered from the result alone.">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
     <div class="vcalc-row glow-active">
       <span class="vcalc-lbl">v (value)</span>
       <input class="vcalc-inp" id="calcV" type="text" inputmode="numeric" placeholder="e.g. 500" value="500">
@@ -584,6 +616,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
       <input class="vcalc-inp" id="calcR" type="text" inputmode="numeric" placeholder="e.g. 67890" value="67890">
     </div>
     <button class="action-btn btn-sm" style="background:var(--purple);color:#0e0818" onclick="calcPedersen()">Compute</button>
+    <div class="vcalc-err" id="calcErr" style="display:none;color:var(--red);font-family:var(--mono);font-size:9px;margin-top:6px">⚠ enter both v and r</div>
     <div class="vcalc-out" id="calcOut">
       <div style="color:var(--muted);margin-bottom:4px">Com(<span id="co-v">—</span>, <span id="co-r">—</span>) =</div>
       <div>C1 (x): <span id="calcC1" style="color:var(--teal)">—</span></div>
@@ -610,7 +643,7 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 <div class="tab-panel" id="panel-ka">
   <div class="sec-hdr">
     <div class="sec-num" style="border:1.5px solid var(--teal);color:var(--teal)">KA</div>
-    <div class="sec-title" style="color:var(--teal)">ML-KEM-768 Key Agreement</div>
+    <div class="sec-title" style="color:var(--teal)" title="ML-KEM-768 is a post-quantum key-encapsulation scheme (NIST FIPS 203). Two banks use it to agree on an identical private secret without ever transmitting the secret itself — only public keys and ciphertexts cross the wire.">ML-KEM-768 Key Agreement</div>
     <div class="sec-sub">Post-quantum pairwise secrets · run once per bank</div>
     <button class="action-btn btn-transfer" id="kaBtn">▶ Run Key Agreement</button>
   </div>
@@ -619,11 +652,11 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
 
   <!-- My key status + counter -->
   <div class="kas-card gc-6">
-    <div class="kas-lbl">My Encapsulation Key (ek · 1184 B)</div>
+    <div class="kas-lbl" title="Public key this bank publishes on-chain. Peers encapsulate a random secret inside it; only this bank's private key can decapsulate it back out.">My Encapsulation Key (ek · 1184 B)</div>
     <div class="kas-val" id="kaMyEK">Pending — not generated yet</div>
   </div>
   <div class="kas-card gc-6">
-    <div class="kas-lbl">Secrets Established</div>
+    <div class="kas-lbl" title="Number of the other 5 banks this bank has successfully agreed a shared secret with. Needs 5/5 before this bank can shield its transfers behind the full anonymity set.">Secrets Established</div>
     <div class="kas-big">
       <span class="kas-count" id="kaCountDisp">0</span>
       <span class="kas-denom">/ 5</span>
@@ -677,6 +710,11 @@ html,body{background:var(--bg);color:var(--text);font-family:var(--sans);font-si
   <div class="log-content">
     <div class="log-hdr">
       <div class="log-dot" id="logDot"></div>Trace log
+      <select id="logFilter" class="log-filter-select" title="Show only log lines from one part of the flow">
+        <option value="all">All</option>
+        <option value="transfer">Send Payment</option>
+        <option value="bank-ka">Key Agreement</option>
+      </select>
       <button id="copyBtn" style="margin-left:auto;font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd);color:var(--muted);padding:1px 6px;cursor:pointer">copy</button>
     </div>
     <div id="logOut"></div>
@@ -1012,11 +1050,14 @@ function handleProto(f, v) {
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 let allLogs = [];
+let currentLogFilter = 'all';
 function appendLog(d) {
   const ts = d.ts || now(), msg = d.msg || '';
   allLogs.push({ ts, msg });
   const out = document.getElementById('logOut');
   const line = document.createElement('div'); line.className = 'll';
+  line.dataset.tab = d.tab || '';
+  if (currentLogFilter !== 'all' && line.dataset.tab !== currentLogFilter) line.style.display = 'none';
   const tsEl = document.createElement('span'); tsEl.className = 'lts'; tsEl.textContent = ts;
   const bodyEl = document.createElement('span'); bodyEl.className = 'lb';
   if (msg.startsWith('✓')) bodyEl.classList.add('ok');
@@ -1027,6 +1068,13 @@ function appendLog(d) {
   out.appendChild(line); out.scrollTop = out.scrollHeight;
 }
 function now() { return new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+
+document.getElementById('logFilter').addEventListener('change', (e) => {
+  currentLogFilter = e.target.value;
+  document.querySelectorAll('#logOut .ll').forEach(line => {
+    line.style.display = (currentLogFilter === 'all' || line.dataset.tab === currentLogFilter) ? '' : 'none';
+  });
+});
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
 // SSE is opened only while a transfer is running (avoids HTTP/1.1 6-conn limit
@@ -1132,7 +1180,7 @@ function buildVbalGrid() {
   BANKS.forEach((b, i) => {
     const d = document.createElement('div'); d.className = 'vbal-card';
     if (i === bankId) d.style.borderColor = 'var(--teal-glow)';
-    d.innerHTML = `<div class="vbal-name">${b.name}${i === bankId ? ' ★ (me)' : ''}</div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
+    d.innerHTML = `<div style="display:flex;align-items:center;gap:6px"><div class="vbal-name">${b.name}${i === bankId ? ' ★ (me)' : ''}</div><button class="rv-copy-btn copy-mini" data-copy-target="vbal-pt-${i}">copy</button></div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
     g.appendChild(d);
   });
 }
@@ -1147,8 +1195,8 @@ async function refreshBalances() {
     (d.balances || []).forEach((pt, i) => {
       const el = document.getElementById('vbal-pt-' + i);
       if (el) {
-        if (!pt.registered) { el.textContent = 'not registered'; el.className = 'vbal-point'; el.style.color = 'var(--muted)'; el.style.fontStyle = 'italic'; }
-        else { const short = s => s.length > 16 ? s.slice(0, 8) + '…' + s.slice(-4) : s; el.textContent = '(' + short(pt.c1) + ', ' + short(pt.c2) + ')'; el.className = 'vbal-point set'; el.style.color = ''; el.style.fontStyle = ''; }
+        if (!pt.registered) { el.textContent = 'not registered'; el.className = 'vbal-point'; el.style.color = 'var(--muted)'; el.style.fontStyle = 'italic'; delete el.dataset.full; el.title = ''; }
+        else { const short = s => s.length > 16 ? s.slice(0, 8) + '…' + s.slice(-4) : s; const full = '(' + pt.c1 + ', ' + pt.c2 + ')'; el.textContent = '(' + short(pt.c1) + ', ' + short(pt.c2) + ')'; el.className = 'vbal-point set'; el.style.color = ''; el.style.fontStyle = ''; el.title = full; el.dataset.full = full; }
       }
     });
     if (st) st.textContent = 'updated ' + new Date().toLocaleTimeString();
@@ -1159,7 +1207,9 @@ async function refreshBalances() {
 async function calcPedersen() {
   const v = document.getElementById('calcV').value.trim();
   const r = document.getElementById('calcR').value.trim();
-  if (!v || !r) { alert('Enter v and r'); return; }
+  const errEl = document.getElementById('calcErr');
+  if (!v || !r) { if (errEl) errEl.style.display = 'block'; return; }
+  if (errEl) errEl.style.display = 'none';
   const out = document.getElementById('calcOut'); out.className = 'vcalc-out on';
   document.getElementById('calcC1').textContent = 'computing…';
   document.getElementById('calcC2').textContent = 'computing…';
@@ -1400,6 +1450,33 @@ document.getElementById('kaBtn').addEventListener('click', () => {
     });
   }).catch(err => { setGlobal('error', 'Error'); enableKABtn(); });
 });
+
+// ── Generic copy-to-clipboard (delegated — works for static and JS-built elements) ──
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.copy-mini');
+  if (!btn) return;
+  const target = document.getElementById(btn.dataset.copyTarget);
+  if (!target) return;
+  const text = target.dataset.full || target.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+});
+
+// ── Presentation mode ──────────────────────────────────────────────────────
+(function initPresentationMode() {
+  const btn = document.getElementById('presentToggle');
+  if (!btn) return;
+  function apply(on) {
+    document.body.classList.toggle('presentation-mode', on);
+    btn.classList.toggle('active', on);
+    localStorage.setItem('enygmaPresentationMode', on ? '1' : '0');
+  }
+  btn.addEventListener('click', () => apply(!document.body.classList.contains('presentation-mode')));
+  apply(localStorage.getItem('enygmaPresentationMode') === '1');
+})();
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 buildReceiverGrid();

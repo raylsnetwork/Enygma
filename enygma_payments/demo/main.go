@@ -719,7 +719,7 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 	ek := s.state.kaEKs[bankIdx]
 	s.state.mu.Unlock()
 
-	ekDesc := "(run Key Agreement first)"
+	ekDesc := "(run Key Agreement on this bank's dashboard)"
 	if len(ek) > 0 {
 		ekDesc = hex.EncodeToString(ek[:8]) + "… (1184B)"
 	}
@@ -736,7 +736,7 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 	fc.participant(bankIdx, "pk", pk.String())
 	fc.participant(bankIdx, "spend_key", pk.String())
 	if len(ek) == 0 {
-		fc.participant(bankIdx, "view_ek", "(run Key Agreement first)")
+		fc.participant(bankIdx, "view_ek", "(run Key Agreement on this bank's dashboard)")
 	} else {
 		fc.participant(bankIdx, "view_ek", hex.EncodeToString(ek[:8])+"… (1184B)")
 	}

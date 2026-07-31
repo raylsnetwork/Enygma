@@ -114,6 +114,16 @@ html, body {
   transition: background .3s, box-shadow .3s;
 }
 .status-row { display: flex; align-items: center; gap: 8px; margin-left: auto }
+.present-toggle {
+  display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 12px;
+  border: 1px solid var(--bd2); background: var(--s2); color: var(--label);
+  font-family: var(--mono); font-size: 9px; cursor: pointer;
+  transition: border-color .2s, color .2s, background .2s;
+}
+.present-toggle:hover { border-color: var(--gold); color: var(--gold) }
+.present-toggle.active { border-color: var(--gold); color: var(--gold); background: var(--gold-dim) }
+.present-toggle .material-symbols-outlined { font-size: 12px }
+body.presentation-mode { zoom: 1.3 }
 .gdot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--muted); transition: background .3s, box-shadow .3s; flex-shrink: 0;
@@ -126,11 +136,11 @@ html, body {
 /* ── Tab bar ────────────────────────────────────────────────────────────── */
 .tabbar {
   display: flex; background: var(--bg); border-bottom: 1px solid var(--bd);
-  flex-shrink: 0; padding: 0 24px; gap: 2px;
+  flex-shrink: 0; padding: 0 24px; gap: 2px; overflow-x: auto;
 }
 .tab {
   display: flex; align-items: center; gap: 8px; padding: 11px 20px;
-  cursor: pointer; user-select: none;
+  cursor: pointer; user-select: none; flex-shrink: 0; white-space: nowrap;
   font-family: var(--mono); font-size: 10px; font-weight: 700;
   letter-spacing: .10em; text-transform: uppercase;
   color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
@@ -170,6 +180,18 @@ html, body {
 }
 .sec-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em }
 .sec-sub { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-left: auto }
+
+/* ── Intro / orientation card ───────────────────────────────────────────── */
+.intro-card { margin: 14px 24px 0; background: #0d1726; border: 1px solid var(--bd); border-left: 3px solid var(--gold) }
+.intro-hdr { display: flex; align-items: center; gap: 8px; padding: 11px 16px; cursor: pointer; user-select: none }
+.intro-title { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: var(--gold) }
+.intro-toggle-ic { margin-left: auto; color: var(--muted); font-size: 11px }
+.intro-body { padding: 0 16px 16px; font-size: 12px; color: var(--label); line-height: 1.6 }
+.intro-body p { margin-bottom: 10px }
+.intro-steps { list-style: none; display: flex; flex-direction: column; gap: 6px }
+.intro-steps li { display: flex; align-items: baseline; gap: 8px }
+.intro-steps strong { color: var(--text) }
+.intro-step-num { font-family: var(--mono); font-size: 10px; font-weight: 700; flex-shrink: 0; width: 14px }
 
 /* ── Action buttons ─────────────────────────────────────────────────────── */
 .action-btn {
@@ -345,6 +367,15 @@ html, body {
 }
 .consensus-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px }
 .consensus-sub { font-family: var(--mono); font-size: 9px; color: var(--muted) }
+
+/* ── KA aggregate progress strip (operator-side, read-only) ────────────── */
+.ka-progress-strip { margin: 0 24px 16px; padding: 10px 20px; background: var(--s1); border: 1px solid var(--bd); border-left: 3px solid var(--teal-glow); transition: border-color .4s }
+.ka-progress-strip.complete { border-left-color: var(--green) }
+.ka-progress-row { display: flex; align-items: center; gap: 8px }
+.ka-progress-text { font-family: var(--mono); font-size: 10px; color: var(--label) }
+.ka-progress-strip.complete .ka-progress-text { color: var(--green) }
+.ka-progress-bar-track { height: 3px; background: var(--bd); margin-top: 8px; overflow: hidden }
+.ka-progress-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--teal), var(--green)); transition: width .5s cubic-bezier(.16,1,.3,1) }
 
 /* ── Mint tab — Stitch style ────────────────────────────────────────────── */
 .mint-form-card {
@@ -577,6 +608,12 @@ html, body {
 .log-hdr-title { color: var(--gold); font-weight: 700 }
 .log-hdr-status { color: var(--muted); font-size: 8px; opacity: .6 }
 .log-activity { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); transition: background .3s }
+.log-filter-select {
+  margin-left: auto; font-family: var(--mono); font-size: 8px; text-transform: none;
+  letter-spacing: normal; background: var(--bg); border: 1px solid var(--bd); color: var(--muted);
+  border-radius: 3px; padding: 2px 6px; cursor: pointer;
+}
+.log-filter-select:hover { border-color: var(--bd2); color: var(--label) }
 #logOut {
   flex: 1; overflow-y: auto; padding: 6px 20px;
   display: flex; flex-direction: column;
@@ -605,6 +642,26 @@ html, body {
 .field-label { font-family: var(--mono); font-size: 7px; color: var(--muted); margin-bottom: 2px; letter-spacing: .03em }
 .field-val { font-family: var(--mono); font-size: 8px; color: var(--muted); word-break: break-all; line-height: 1.45; transition: color .3s }
 code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182,.08); padding: 0 3px; border-radius: 3px; font-size: .9em }
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+.tab-panel { overflow-x: auto }
+@media (max-width: 1100px) {
+  .bank-grid, .dash-grid, .ka-bank-grid { grid-template-columns: repeat(3, 1fr) }
+  .vbal-grid, .rv-cards { grid-template-columns: repeat(2, 1fr) }
+  .vcalc-grid { grid-template-columns: 1fr }
+  .vcalc-input-panel { border-right: none; border-bottom: 1px solid var(--bd); padding-right: 0; padding-bottom: 16px; margin-bottom: 16px }
+  .vcalc-output-panel { padding-left: 0 }
+}
+@media (max-width: 700px) {
+  .bank-grid, .dash-grid, .ka-bank-grid, .vbal-grid, .rv-cards { grid-template-columns: repeat(2, 1fr) }
+  .mint-params { flex-direction: column; align-items: flex-start }
+  .prereqs { display: none }
+  .present-toggle-label { display: none }
+}
+@media (max-width: 480px) {
+  .bank-grid, .dash-grid, .ka-bank-grid, .vbal-grid, .rv-cards { grid-template-columns: 1fr }
+  .cc-strip { grid-template-columns: 1fr }
+}
 </style>
 </head>
 <body>
@@ -628,6 +685,9 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <span class="material-symbols-outlined">sync_alt</span><div class="prereq-dot"></div>Relayer :8082
     </div>
   </div>
+  <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
+    <span class="material-symbols-outlined">zoom_in</span><span class="present-toggle-label">Presentation</span>
+  </button>
   <div class="status-row">
     <div class="gdot" id="gDot"></div>
     <span class="status-txt" id="gStatus">Ready</span>
@@ -664,9 +724,31 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
     <button class="action-btn btn-setup" id="setupBtn">▶ Run Setup</button>
   </div>
 
+  <!-- Orientation card -->
+  <div class="intro-card" id="introCard">
+    <div class="intro-hdr" id="introToggle">
+      <span class="material-symbols-outlined" style="font-size:16px;color:var(--gold)">info</span>
+      <span class="intro-title">What you're about to see</span>
+      <span class="intro-toggle-ic" id="introToggleIc">▾</span>
+    </div>
+    <div class="intro-body" id="introBody">
+      <p>
+        Enygma is a confidential payments protocol: six banks transact on a public chain, but amounts,
+        senders, and receivers stay hidden behind Pedersen commitments and a Groth16 zero-knowledge proof.
+        This console walks through the full protocol, in order:
+      </p>
+      <ol class="intro-steps">
+        <li><span class="intro-step-num" style="color:var(--gold)">I</span> <strong>Setup</strong> — deploy-check the chain, initialize the Enygma contract, register its ZK verifier.</li>
+        <li><span class="intro-step-num" style="color:var(--teal)">II</span> <strong>Bank Onboarding</strong> — register all 6 banks on-chain, then open each bank's own dashboard to run ML-KEM-768 Key Agreement (post-quantum, pairwise, off this screen).</li>
+        <li><span class="intro-step-num" style="color:var(--teal)">III</span> <strong>Mint Supply</strong> — credit a bank's encrypted balance with tokens, as the operator.</li>
+        <li><span class="intro-step-num" style="color:var(--blue)">IV</span> <strong>Balances &amp; Verify</strong> — send a payment from a bank's own dashboard, then use the tools here to independently check the math behind what settled on-chain.</li>
+      </ol>
+    </div>
+  </div>
+
   <!-- Step pipeline -->
   <div class="hstrip">
-    <div class="hstep" id="hs-prerequisites">
+    <div class="hstep" id="hs-prerequisites" title="Checks that the local blockchain node, ZK prover, and payment relayer are all reachable before doing anything else.">
       <div class="hstep-num">01</div>
       <div class="hstep-top">
         <div class="hstep-ic" id="hi-prerequisites">○</div>
@@ -675,7 +757,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <div class="hstep-sub" id="hsub-prerequisites">Hardhat · Gnark · Relayer</div>
     </div>
     <div class="hconn"></div>
-    <div class="hstep" id="hs-dial_chain">
+    <div class="hstep" id="hs-dial_chain" title="Opens a connection to the chain and loads the operator's signing key, used to send the setup transactions below.">
       <div class="hstep-num">02</div>
       <div class="hstep-top">
         <div class="hstep-ic" id="hi-dial_chain">○</div>
@@ -684,7 +766,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <div class="hstep-sub" id="hsub-dial_chain">ethclient.Dial(RPC)</div>
     </div>
     <div class="hconn"></div>
-    <div class="hstep" id="hs-init_contract">
+    <div class="hstep" id="hs-init_contract" title="Calls the Enygma contract's one-time initializer. Safe to re-run — has no effect if it's already initialized.">
       <div class="hstep-num">03</div>
       <div class="hstep-top">
         <div class="hstep-ic" id="hi-init_contract">○</div>
@@ -693,7 +775,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <div class="hstep-sub" id="hsub-init_contract">initialize() — idempotent</div>
     </div>
     <div class="hconn"></div>
-    <div class="hstep" id="hs-add_verifier">
+    <div class="hstep" id="hs-add_verifier" title="Registers the Groth16 ZK verifier contract so Enygma can check transfer proofs on-chain.">
       <div class="hstep-num">04</div>
       <div class="hstep-top">
         <div class="hstep-ic" id="hi-add_verifier">○</div>
@@ -702,7 +784,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <div class="hstep-sub" id="hsub-add_verifier">addVerifier(addr)</div>
     </div>
     <div class="hconn"></div>
-    <div class="hstep" id="hs-check_relay_addr">
+    <div class="hstep" id="hs-check_relay_addr" title="Confirms the relayer service is pointed at the same contract just deployed, so payments don't silently fail against a stale address.">
       <div class="hstep-num">05</div>
       <div class="hstep-top">
         <div class="hstep-ic" id="hi-check_relay_addr">○</div>
@@ -716,18 +798,24 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
   <div class="cc-strip">
     <div class="cc-card" id="cc-enygma">
       <div class="cc-row">
-        <div class="cc-label">Enygma Contract</div>
+        <div class="cc-label" title="The confidential ERC-20-style token contract holding every bank's encrypted balance.">Enygma Contract</div>
         <div class="cc-type">Confidential ERC-20</div>
       </div>
-      <div class="cc-addr" id="addr-enygma">—</div>
-      <div class="cc-meta">Owner: <span id="addr-owner">—</span></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="cc-addr" id="addr-enygma" style="flex:1">—</div>
+        <button class="rv-copy-btn copy-mini" data-copy-target="addr-enygma" title="Copy full address">copy</button>
+      </div>
+      <div class="cc-meta">Owner: <span id="addr-owner">—</span> <button class="rv-copy-btn copy-mini" data-copy-target="addr-owner" style="margin-left:6px" title="Copy full owner address">copy</button></div>
     </div>
     <div class="cc-card" id="cc-verifier">
       <div class="cc-row">
-        <div class="cc-label">ZK Verifier</div>
+        <div class="cc-label" title="On-chain Groth16 verifier that checks each zero-knowledge transfer proof in under 1ms.">ZK Verifier</div>
         <div class="cc-type">Groth16 · BN254</div>
       </div>
-      <div class="cc-addr" id="addr-verifier">—</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="cc-addr" id="addr-verifier" style="flex:1">—</div>
+        <button class="rv-copy-btn copy-mini" data-copy-target="addr-verifier" title="Copy full address">copy</button>
+      </div>
       <div class="cc-meta">Block: <span id="chain-block">—</span></div>
     </div>
   </div>
@@ -754,6 +842,13 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <div class="consensus-sub">After registering, open each bank's dashboard to complete ML-KEM-768 pairwise key exchange</div>
     </div>
     <button class="action-btn btn-onboard" onclick="document.querySelector('[data-tab=mint]').click()">Open Dashboards →</button>
+  </div>
+  <div class="ka-progress-strip" id="kaProgressStrip" title="Live status pulled from each bank's own Key Agreement run — updates automatically, no action needed here.">
+    <div class="ka-progress-row">
+      <span class="material-symbols-outlined" style="font-size:14px;color:var(--teal)">vpn_key</span>
+      <span class="ka-progress-text" id="kaProgressText">0 / 15 pairwise secrets agreed · 0 / 6 banks have generated a key</span>
+    </div>
+    <div class="ka-progress-bar-track"><div class="ka-progress-bar-fill" id="kaProgressBar"></div></div>
   </div>
   <div class="banner" id="onboard-banner">
     <span id="onboard-banner-txt"></span>
@@ -796,7 +891,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <span id="mintIc">○</span>&ensp;<span id="mintLbl">Select bank and amount, then click Mint</span>
     </div>
     <div class="mint-note">
-      Adds <strong>Com(amount, 0)</strong> to the bank's on-chain commitment.
+      Adds <strong title="A Pedersen commitment to (amount, blinding factor 0), added homomorphically to the bank's existing encrypted balance.">Com(amount, 0)</strong> to the bank's on-chain commitment.
       The plaintext amount is <strong>never stored on-chain</strong> — only banks
       with the correct key can verify their balance.
       Run <em>Setup</em> and register banks first.
@@ -838,7 +933,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
   <!-- Pedersen calculator -->
   <div class="vcard" style="margin-top:8px">
     <div class="vcard-bar" style="background:var(--teal)"></div>
-    <div class="vcard-title" style="color:var(--teal);margin-bottom:18px">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
+    <div class="vcard-title" style="color:var(--teal);margin-bottom:18px" title="A Pedersen commitment hides a value v behind a random blinding factor r using elliptic-curve points G and H. Commitments can be added together homomorphically, but v and r can't be recovered from the result alone.">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
     <div class="vcalc-grid">
       <div class="vcalc-input-panel">
         <div class="glow-active">
@@ -850,6 +945,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
           <input class="vcalc-inp" id="calcR" type="text" inputmode="numeric" placeholder="e.g. 67890" value="67890">
         </div>
         <button class="action-btn" style="background:var(--teal);color:#001a18;margin-top:4px" onclick="calcPedersen()">Compute</button>
+        <div class="vcalc-err" id="calcErr" style="display:none;color:var(--red);font-family:var(--mono);font-size:9px;margin-top:2px">⚠ enter both v and r</div>
       </div>
       <div class="vcalc-output-panel">
         <div class="vcalc-out-label">Resulting Commitment</div>
@@ -869,7 +965,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
   <div class="vcard" style="margin-top:8px">
     <div class="vcard-bar" style="background:var(--gold)"></div>
     <div class="vcard-hdr">
-      <div class="vcard-title" style="color:var(--gold)">Random Factor · TxRandomValues</div>
+      <div class="vcard-title" style="color:var(--gold)" title="The blinding factors used to hide each transfer's amounts. They cancel out across all 6 banks, which is how the chain confirms a transfer balances to zero without seeing the amounts.">Random Factor · TxRandomValues</div>
       <button class="action-btn btn-sm" style="background:var(--gold);color:#140e00" onclick="loadRValues()">⟳ Load Last Transfer</button>
     </div>
     <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:14px;line-height:1.8">
@@ -884,7 +980,7 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
   <div class="vcard" style="margin-top:8px;margin-bottom:16px">
     <div class="vcard-bar" style="background:var(--teal)"></div>
     <div class="vcard-hdr">
-      <div class="vcard-title" style="color:var(--teal)">Cumulative R · Balance Verification</div>
+      <div class="vcard-title" style="color:var(--teal)" title="Because Pedersen commitments are additive, summing every transfer's blinding factor for a bank lets you reconstruct — and independently check — that bank's current on-chain commitment.">Cumulative R · Balance Verification</div>
       <button class="action-btn btn-sm" style="background:var(--teal);color:#001a18" onclick="loadCumulativeR()">⟳ Refresh</button>
     </div>
     <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:14px;line-height:1.8">
@@ -904,7 +1000,15 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
     <div class="log-activity" id="logDot"></div>
     <span class="log-hdr-title">Terminal Logs</span>
     <span class="log-hdr-status">· All Tabs</span>
-    <button id="copyBtn" style="margin-left:auto;font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd);color:var(--muted);border-radius:3px;padding:2px 8px;cursor:pointer;transition:border-color .2s,color .2s">copy</button>
+    <select id="logFilter" class="log-filter-select" title="Show only log lines from one part of the flow">
+      <option value="all">All tabs</option>
+      <option value="setup">Setup</option>
+      <option value="onboarding">Bank Onboarding</option>
+      <option value="mint">Mint Supply</option>
+      <option value="transfer">Send Payment</option>
+      <option value="bank-ka">Key Agreement</option>
+    </select>
+    <button id="copyBtn" style="font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd);color:var(--muted);border-radius:3px;padding:2px 8px;cursor:pointer;transition:border-color .2s,color .2s">copy</button>
   </div>
   <div id="logOut"></div>
 </div>
@@ -941,17 +1045,23 @@ function buildBanks() {
       </div>
       <div class="bc-fields">
         <div class="bc-field-row glow-active">
-          <label class="bc-field-label">Secret Key (sk)</label>
+          <label class="bc-field-label" title="A private number only this bank knows. Every other key below is derived from it.">Secret Key (sk)</label>
           <input id="bsk-${i}" type="text" inputmode="numeric" value="${b.sk}" class="sk-input"
             onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--bd2)'"
             oninput="document.getElementById('bpk-${i}').textContent='—';document.getElementById('bpk-${i}').style.color='var(--muted)'">
         </div>
         <div class="bc-field-row">
-          <label class="bc-field-label">Public Spend Key</label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <label class="bc-field-label" title="Poseidon hash of the secret key — safe to publish on-chain, used to address payments to this bank.">Public Spend Key</label>
+            <button class="rv-copy-btn copy-mini" data-copy-target="bpk-${i}">copy</button>
+          </div>
           <div class="bc-val" id="bpk-${i}">—</div>
         </div>
         <div class="bc-field-row">
-          <label class="bc-field-label">ML-KEM View Key</label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <label class="bc-field-label" title="Post-quantum (ML-KEM-768) public key used to agree on private pairwise secrets with the other 5 banks. Generated on this bank's own dashboard, not here.">ML-KEM View Key</label>
+            <button class="rv-copy-btn copy-mini" data-copy-target="bvk-${i}">copy</button>
+          </div>
           <div class="bc-val" id="bvk-${i}">—</div>
         </div>
       </div>
@@ -1090,7 +1200,7 @@ function handleMetric(f, v) {}
 function handleProto(f, v) {
   if (f === 'tokenAddr')   { document.getElementById('addr-enygma').textContent = v; document.getElementById('addr-enygma').classList.add('set'); document.getElementById('cc-enygma').classList.add('lit'); }
   if (f === 'verifierAddr'){ document.getElementById('addr-verifier').textContent = v; document.getElementById('addr-verifier').classList.add('set'); document.getElementById('cc-verifier').classList.add('lit'); }
-  if (f === 'ownerAddr')   document.getElementById('addr-owner').textContent = v.slice(0,20) + '…';
+  if (f === 'ownerAddr')   { const el = document.getElementById('addr-owner'); el.textContent = v.slice(0,20) + '…'; el.title = v; el.dataset.full = v; }
   if (f === 'blockNum')    document.getElementById('chain-block').textContent = v;
   if (f === 'senderIdx')   currentSenderIdx = parseInt(v) || 0;
 }
@@ -1210,11 +1320,14 @@ function handleDone(d) {
 
 // ── Log ───────────────────────────────────────────────────────────────────
 let allLogs = [];
+let currentLogFilter = 'all';
 function appendLog(d) {
   const ts = d.ts || now(), msg = d.msg || '';
   allLogs.push({ ts, msg });
   const out = document.getElementById('logOut');
   const line = document.createElement('div'); line.className = 'll';
+  line.dataset.tab = d.tab || '';
+  if (currentLogFilter !== 'all' && line.dataset.tab !== currentLogFilter) line.style.display = 'none';
   const tsEl = document.createElement('span'); tsEl.className = 'lts'; tsEl.textContent = ts;
   const bodyEl = document.createElement('span'); bodyEl.className = 'lb';
   if (msg.startsWith('✓')) bodyEl.classList.add('ok');
@@ -1226,6 +1339,13 @@ function appendLog(d) {
   out.appendChild(line); out.scrollTop = out.scrollHeight;
 }
 function now() { return new Date().toLocaleTimeString([], { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' }); }
+
+document.getElementById('logFilter').addEventListener('change', (e) => {
+  currentLogFilter = e.target.value;
+  document.querySelectorAll('#logOut .ll').forEach(line => {
+    line.style.display = (currentLogFilter === 'all' || line.dataset.tab === currentLogFilter) ? '' : 'none';
+  });
+});
 
 // ── SSE ───────────────────────────────────────────────────────────────────
 let es = null;
@@ -1283,12 +1403,16 @@ document.getElementById('setupBtn').addEventListener('click', () => {
 function registerBank(idx) {
   const skInput = document.getElementById('bsk-' + idx);
   const sk = (skInput && skInput.value.trim()) || BANKS[idx].sk;
+  const bs = document.getElementById('bstat-' + idx);
   if (!sk || !/^\d+$/.test(sk) || BigInt(sk) <= 0n) {
-    alert('Please enter a valid positive integer for the secret key of Bank ' + idx); return;
+    if (skInput) skInput.style.borderColor = 'var(--red)';
+    if (bs) { bs.textContent = '⚠ enter a positive integer'; bs.className = 'bstat'; bs.style.color = 'var(--red)'; }
+    return;
   }
+  if (skInput) skInput.style.borderColor = '';
   setBankStep(idx,'key','','Derive key'); setBankStep(idx,'reg','','Register on-chain');
   const bc = document.getElementById('bc-' + idx); if (bc) bc.classList.remove('registered');
-  const bs = document.getElementById('bstat-' + idx); if (bs) { bs.textContent = 'Registering…'; bs.className = 'bstat'; }
+  if (bs) { bs.textContent = 'Registering…'; bs.className = 'bstat'; bs.style.color = ''; }
   document.getElementById('bpk-' + idx).textContent = '—'; document.getElementById('bpk-' + idx).style.color = 'var(--muted)';
   document.getElementById('onboard-banner').className = 'banner';
   postRun('/run/register-bank', { bankIdx:idx, sk });
@@ -1332,7 +1456,7 @@ function buildVbalGrid() {
   g.innerHTML = '';
   BANKS.forEach((b, i) => {
     const d = document.createElement('div'); d.className = 'vbal-card';
-    d.innerHTML = `<div class="vbal-name">${b.name}</div><div class="vbal-pt-label">Commitment Point</div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
+    d.innerHTML = `<div style="display:flex;align-items:center;gap:6px"><div class="vbal-name">${b.name}</div><button class="rv-copy-btn copy-mini" data-copy-target="vbal-pt-${i}">copy</button></div><div class="vbal-pt-label">Commitment Point</div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
     g.appendChild(d);
   });
 }
@@ -1348,10 +1472,13 @@ async function refreshBalances() {
       if (el) {
         if (!pt.registered) {
           el.textContent = 'not registered'; el.className = 'vbal-point'; el.style.color = 'var(--muted)'; el.style.fontStyle = 'italic';
+          delete el.dataset.full; el.title = '';
         } else {
           const short = s => s.length > 16 ? s.slice(0,8) + '…' + s.slice(-4) : s;
+          const full = '(' + pt.c1 + ', ' + pt.c2 + ')';
           el.textContent = '(' + short(pt.c1) + ', ' + short(pt.c2) + ')';
           el.className = 'vbal-point set'; el.style.color = ''; el.style.fontStyle = '';
+          el.title = full; el.dataset.full = full;
         }
       }
     });
@@ -1363,7 +1490,9 @@ async function refreshBalances() {
 async function calcPedersen() {
   const v = document.getElementById('calcV').value.trim();
   const r = document.getElementById('calcR').value.trim();
-  if (!v || !r) { alert('Enter v and r'); return; }
+  const errEl = document.getElementById('calcErr');
+  if (!v || !r) { if (errEl) errEl.style.display = 'block'; return; }
+  if (errEl) errEl.style.display = 'none';
   const out = document.getElementById('calcOut'); out.className = 'vcalc-out on';
   document.getElementById('calcC1').textContent = 'computing…';
   document.getElementById('calcC2').textContent = 'computing…';
@@ -1484,11 +1613,74 @@ async function loadCumulativeR() {
   } catch(e) { div.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`; }
 }
 
+// ── Intro card ────────────────────────────────────────────────────────────
+(function initIntro() {
+  const body = document.getElementById('introBody');
+  const ic = document.getElementById('introToggleIc');
+  const toggle = document.getElementById('introToggle');
+  if (!body || !ic || !toggle) return;
+  function setCollapsed(collapsed) {
+    body.style.display = collapsed ? 'none' : 'block';
+    ic.textContent = collapsed ? '▸' : '▾';
+    localStorage.setItem('enygmaIntroCollapsed', collapsed ? '1' : '0');
+  }
+  toggle.addEventListener('click', () => setCollapsed(body.style.display !== 'none'));
+  setCollapsed(localStorage.getItem('enygmaIntroCollapsed') === '1');
+})();
+
+// ── Generic copy-to-clipboard (delegated — works for static and JS-built elements) ──
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.copy-mini');
+  if (!btn) return;
+  const target = document.getElementById(btn.dataset.copyTarget);
+  if (!target) return;
+  const text = target.dataset.full || target.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+});
+
+// ── Presentation mode ─────────────────────────────────────────────────────
+(function initPresentationMode() {
+  const btn = document.getElementById('presentToggle');
+  if (!btn) return;
+  function apply(on) {
+    document.body.classList.toggle('presentation-mode', on);
+    btn.classList.toggle('active', on);
+    localStorage.setItem('enygmaPresentationMode', on ? '1' : '0');
+  }
+  btn.addEventListener('click', () => apply(!document.body.classList.contains('presentation-mode')));
+  apply(localStorage.getItem('enygmaPresentationMode') === '1');
+})();
+
+// ── Key Agreement aggregate status (polled — banks run KA on their own dashboards) ──
+async function pollKaStatus() {
+  const textEl = document.getElementById('kaProgressText');
+  const barEl = document.getElementById('kaProgressBar');
+  if (!textEl) return;
+  try {
+    const r = await fetch('/state/ka-status');
+    if (!r.ok) return;
+    const d = await r.json();
+    const banks = d.banks || [], pairs = d.pairs || [];
+    const keyed = banks.filter(b => b.hasKey).length;
+    const agreed = pairs.filter(p => p.agreed).length;
+    textEl.textContent = `${agreed} / 15 pairwise secrets agreed · ${keyed} / 6 banks have generated a key`;
+    if (barEl) barEl.style.width = Math.round((agreed / 15) * 100) + '%';
+    const wrap = document.getElementById('kaProgressStrip');
+    if (wrap) wrap.classList.toggle('complete', agreed === 15);
+  } catch (_) { /* server not up yet */ }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 buildBanks();
 buildBankDashGrid();
 buildVbalGrid();
 connectSSE();
+pollKaStatus();
+setInterval(pollKaStatus, 4000);
 </script>
 </body>
 </html>
