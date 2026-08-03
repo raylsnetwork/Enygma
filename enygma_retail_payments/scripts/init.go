@@ -151,11 +151,26 @@ func initializePayment() error {
 	if err != nil {
 		return fmt.Errorf("failed to load EnygmaDvp ABI: %w", err)
 	}
+	verifierABI, err := loadContractABI("Verifier")
+	if err != nil {
+		return fmt.Errorf("failed to load Verifier ABI: %w", err)
+	}
 
 	enygmaDvpAddress := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	verifierAddress := common.HexToAddress(receipts["Verifier"].ContractAddress)
+	g16VerifierAddress := common.HexToAddress(receipts["G16Verifier"].ContractAddress)
 	fmt.Printf("EnygmaDvp:  %s\n", enygmaDvpAddress.Hex())
 	fmt.Printf("Verifier:   %s\n", verifierAddress.Hex())
+
+	// The deployed Verifier.json has initializeVerifier as a world-callable function
+	// that stores the G16 verifier address AND grants DEFAULT_OWNER_ROLE to msg.sender.
+	// Calling it as the deployer grants the deployer DEFAULT_OWNER_ROLE on Verifier,
+	// which lets us call addVerificationKey directly (bypassing EnygmaDvp).
+	fmt.Println("Initializing Verifier (groth16 backend)...")
+	_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "initializeVerifier", g16VerifierAddress)
+	if err != nil {
+		return fmt.Errorf("failed to initialize Verifier: %w", err)
+	}
 
 	fmt.Println("Initializing EnygmaDvp...")
 	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "initializeDvp", verifierAddress)
@@ -163,9 +178,11 @@ func initializePayment() error {
 		return fmt.Errorf("failed to initialize EnygmaDvp: %w", err)
 	}
 
+	// Register VKs directly on Verifier — the deployer has DEFAULT_OWNER_ROLE after
+	// calling initializeVerifier above.
 	for i, vkey := range vkeys {
 		fmt.Printf("Registering verification key %d...\n", i+1)
-		_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerNewVerificationKey", vkey)
+		_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "addVerificationKey", vkey)
 		if err != nil {
 			return fmt.Errorf("failed to register verification key %d: %w", i, err)
 		}

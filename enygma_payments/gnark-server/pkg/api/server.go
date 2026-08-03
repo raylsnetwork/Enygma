@@ -4,7 +4,8 @@ import (
     
     "github.com/gin-gonic/gin"
     "enygma-server/config"
-    "enygma-server/pkg/circuits/enygma" 
+    "enygma-server/pkg/circuits/enygma"
+    "enygma-server/pkg/circuits/enygma_fee"
     "enygma-server/pkg/circuits/withdraw"
     "enygma-server/pkg/circuits/deposit"
     
@@ -15,6 +16,7 @@ func NewServer(cfg *config.Config) *gin.Engine {
     r := gin.Default()
  
     r.POST("/proof/enygma", enygma.NewHandler(cfg.EnygmaPk, cfg.EnygmaVk))
+    r.POST("/proof/enygma_fee", enygma_fee.NewHandler(cfg.EnygmaFeePk, cfg.EnygmaFeeVk))
     r.POST("/proof/withdraw/1",  withdraw.NewHandler(cfg.WithdrawPk1,  cfg.WithdrawVk1))
     r.POST("/proof/withdraw/2",  withdraw.NewHandler(cfg.WithdrawPk2,  cfg.WithdrawVk2))
     r.POST("/proof/withdraw/3",  withdraw.NewHandler(cfg.WithdrawPk3,  cfg.WithdrawVk3))

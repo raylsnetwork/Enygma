@@ -1,0 +1,15 @@
+{"plugins": [],
+ "package": "EnygmaFormal",
+ "options": {},
+ "name": "Enygma.Circuit",
+ "isModule": false,
+ "importArts":
+ {"Enygma.Nullifier":
+  ["/Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean/Enygma/Nullifier.olean"],
+  "Enygma.MerkleTree":
+  ["/Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean/Enygma/MerkleTree.olean"],
+  "Enygma.Hash":
+  ["/Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean/Enygma/Hash.olean"],
+  "Enygma.Commitment":
+  ["/Users/stephenyang/Desktop/Parfin/research/Enygma/enygma_retail_payments/formal/.lake/build/lib/lean/Enygma/Commitment.olean"]},
+ "dynlibs": []}

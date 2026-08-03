@@ -28,13 +28,16 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
 	enygma "enygma/contracts"
+	"enygma/agreement"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -88,11 +91,46 @@ func init() {
 }
 
 // hashArrayGen computes Poseidon(s, s) mod P for each secret s.
+// Used only by the fee circuit (enygma_fee) which retains the 1-D hash layout.
 func hashArrayGen(secrets []*big.Int) []*big.Int {
 	out := make([]*big.Int, len(secrets))
 	for i, s := range secrets {
 		h, _ := poseidon.Hash([]*big.Int{s, s})
 		out[i] = h.Mod(h, curveP)
+	}
+	return out
+}
+
+// fingerPrintGen builds the k×k FingerPrint matrix for the EnygmaCircuit.
+// fp[i][senderCol] = Poseidon(secrets[i]) mod P for i ≠ senderCol (sender's column).
+// Diagonal and non-sender columns are zeroed — those entries are unconstrained.
+func fingerPrintGen(secrets []*big.Int, senderCol int) [][]*big.Int {
+	k := len(secrets)
+	fp := make([][]*big.Int, k)
+	for i := range fp {
+		fp[i] = make([]*big.Int, k)
+		for j := range fp[i] {
+			fp[i][j] = big.NewInt(0)
+		}
+	}
+	for i := 0; i < k; i++ {
+		if i == senderCol {
+			continue
+		}
+		h, _ := poseidon.Hash([]*big.Int{secrets[i]})
+		fp[i][senderCol] = h.Mod(h, curveP)
+	}
+	return fp
+}
+
+// fp2Strs converts a [][]*big.Int matrix to [][]string for JSON encoding.
+func fp2Strs(fp [][]*big.Int) [][]string {
+	out := make([][]string, len(fp))
+	for i, row := range fp {
+		out[i] = make([]string, len(row))
+		for j, v := range row {
+			out[i][j] = v.String()
+		}
 	}
 	return out
 }
@@ -152,11 +190,39 @@ func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*bi
 
 // ── Test constants ─────────────────────────────────────────────────────────────
 
+// chainURL and chainID are configurable via environment variables so the same
+// test suite runs against both a local Hardhat node and Rayls mainnet.
+//
+// Local Hardhat:
+//
+//	export ENYGMA_CHAIN_URL=http://127.0.0.1:8545
+//	export ENYGMA_CHAIN_ID=31337
+//	export MY_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+//
+// Rayls mainnet (default, no env vars needed):
+//
+//	export MY_KEY=<your-mainnet-key>
+var (
+	chainURL = func() string {
+		if u := os.Getenv("ENYGMA_CHAIN_URL"); u != "" {
+			return u
+		}
+		return "https://mainnet-rpc.rayls.com"
+	}()
+	chainID = func() int64 {
+		if s := os.Getenv("ENYGMA_CHAIN_ID"); s != "" {
+			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+				return n
+			}
+		}
+		return 72957
+	}()
+)
+
 const (
-	chainURL     = "http://127.0.0.1:8545"
-	gnarkURL     = "http://127.0.0.1:8080/proof/enygma"
-	chainID      = 1337 // Ganache default (matches go_client/internal/contract/client.go)
-	ownerPrivKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
+	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
+	relayerURL = "http://127.0.0.1:8082"
+	relayerKey = "enygma-test-secret" // must match RELAYER_API_KEY
 
 	nBanks      = 6
 	senderIdx   = 0
@@ -169,6 +235,15 @@ const (
 	senderPrevR = 67890
 	senderPrevV = mintAmt
 )
+
+// ownerPrivKey is loaded from the MY_KEY environment variable at test startup.
+// Never hardcode a real key here — set:  export MY_KEY=<your-hex-key>
+var ownerPrivKey = func() string {
+	if k := os.Getenv("MY_KEY"); k != "" {
+		return k
+	}
+	return "" // tests will fail with a clear "MY_KEY not set" message via mustPrivKey
+}()
 
 // receipts holds contract addresses read from deploy_receipts.json.
 type receipts struct {
@@ -196,15 +271,42 @@ func readReceipts(t *testing.T) (tokenAddr, verifierAddr string) {
 	return r.TOKEN.ContractAddress, r.VERIFIER.ContractAddress
 }
 
-// Pre-shared secrets for banks 1-5 (from initializeSecrets in transaction/main.go).
-var baseSecrets = []*big.Int{
-	nil, // bank 0: derived at runtime from (prevR, sk)
-	big.NewInt(54142),
-	big.NewInt(814712),
-	big.NewInt(250912012),
-	big.NewInt(12312512),
-	big.NewInt(12312512),
-}
+// testKeysDir holds the temporary directory for ML-KEM view keys in tests.
+// Created once per test binary invocation; cleaned up by os.Exit.
+var testKeysDir string
+
+// baseSecrets holds ML-KEM-derived pairwise shared secrets between bank 0 (sender)
+// and banks 1-5.  Bank 0's slot is nil — it is replaced at runtime by
+// Poseidon(prevR, sk).  Generated once per process in init().
+var baseSecrets = func() []*big.Int {
+	dir, err := os.MkdirTemp("", "enygma-test-keys-*")
+	if err != nil {
+		panic("create temp keys dir: " + err.Error())
+	}
+	testKeysDir = dir
+
+	mgrs := make([]*agreement.Manager, nBanks)
+	for i := 0; i < nBanks; i++ {
+		m, err := agreement.New(i, dir)
+		if err != nil {
+			panic(fmt.Sprintf("create agreement manager for bank %d: %v", i, err))
+		}
+		mgrs[i] = m
+	}
+
+	// Bank 0 is the leader: encapsulate to each peer's public key.
+	secrets := make([]*big.Int, nBanks)
+	secrets[0] = nil // set at runtime from Poseidon(prevR, sk)
+	sender := mgrs[0]
+	for i := 1; i < nBanks; i++ {
+		ss, err := sender.GetOrEstablish(i, mgrs[i].EncapsulationKey())
+		if err != nil {
+			panic(fmt.Sprintf("establish ML-KEM secret with bank %d: %v", i, err))
+		}
+		secrets[i] = ss
+	}
+	return secrets
+}()
 
 // Secret keys per bank (bank 0 uses senderSk).
 var bankSks = []*big.Int{
@@ -213,11 +315,14 @@ var bankSks = []*big.Int{
 }
 
 func TestFullTransactionFlow(t *testing.T) {
-	if !tcpAvailable("127.0.0.1:8545") {
-		t.Skip("chain not reachable at localhost:8545 — start node and deploy contracts first")
+	if !chainAvailable() {
+		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
+	}
+	if !tcpAvailable("127.0.0.1:8082") {
+		t.Skip("relayer not reachable at localhost:8082 — start the relayer first")
 	}
 
 	// Read contract addresses from deploy_receipts.json (updated by deploy scripts).
@@ -232,10 +337,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	}
 	defer client.Close()
 
-	privKey, err := crypto.HexToECDSA(ownerPrivKey)
-	if err != nil {
-		t.Fatalf("parse private key: %v", err)
-	}
+	privKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
 	t.Logf("owner: %s", ownerAddr.Hex())
 
@@ -294,7 +396,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	// Register banks with accountIds 1-6 (avoids onlyRegistered sentinel=0 bug).
 	// All use ownerAddr; addressToAccountId is overwritten each call — last value is 6 ≠ 0.
 	for i := 0; i < nBanks; i++ {
-		r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR)))
+		r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{}))
 		if r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
@@ -338,7 +440,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	copy(secrets, baseSecrets)
 	secrets[senderIdx] = senderSecret
 
-	hashArray := hashArrayGen(secrets)
+	fp := fingerPrintGen(secrets, senderIdx)
 
 	// txValues: bank 0 sends 100, bank 1 receives 60, bank 2 receives 40
 	txValues := []*big.Int{
@@ -355,7 +457,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	bh2 := new(big.Int).Set(blockHash)
 	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, bh2, secrets)
 
-	nullifier, err := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	nullifier, err := poseidon.Hash([]*big.Int{senderSecret, blockHash})
 	if err != nil {
 		t.Fatalf("nullifier: %v", err)
 	}
@@ -389,7 +491,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	}
 
 	reqBody, err := json.Marshal(map[string]interface{}{
-		"hashed_shared_secrets":        toStrs(hashArray),
+		"fingerprint_shared_secrets":   fp2Strs(fp),
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
 		"tx_commits":                   txCommitSlice,
@@ -430,46 +532,91 @@ func TestFullTransactionFlow(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 50 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
 		t.Fatalf("bad sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")
 
-	// ── Build Transfer arguments ───────────────────────────────────────────────
-	// Fix C-1: commitmentDeltas must equal publicSignal[TX_COMMIT_OFFSET + 2i].
-	// TX_COMMIT_OFFSET = 6 (hash secrets) + 6 (public keys) + 12 (prevCommit) = 24.
-	const txCommitOffset = 24
+	// ── Build relay Transfer request ───────────────────────────────────────────
+	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
+	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
+	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
-		commitmentDeltas[i] = enygma.IEnygmaPoint{
-			C1: proofResp.PublicSignal[txCommitOffset+2*i],
-			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
-		}
+		c1 := proofResp.PublicSignal[txCommitOffset+2*i]
+		c2 := proofResp.PublicSignal[txCommitOffset+2*i+1]
+		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: c1, C2: c2}
+		commFinal[i] = []string{c1.String(), c2.String()}
 	}
 
-	var proofArr [8]*big.Int
+	var proof8 [8]string
 	for i := 0; i < 8; i++ {
-		proofArr[i] = proofResp.Proof[i]
+		proof8[i] = proofResp.Proof[i].String()
 	}
-	var pubSigArr [50]*big.Int
-	for i := 0; i < 50; i++ {
-		pubSigArr[i] = proofResp.PublicSignal[i]
+
+	pubSigStrs := make([]string, len(proofResp.PublicSignal))
+	for i, v := range proofResp.PublicSignal {
+		pubSigStrs[i] = v.String()
 	}
-	contractProof := enygma.IEnygmaProof{Proof: proofArr, PublicSignal: pubSigArr}
 
 	// participantIds[i] = i+1 (maps circuit bank i → on-chain accountId i+1)
-	participantIds := make([]*big.Int, nBanks)
-	for i := range participantIds {
-		participantIds[i] = big.NewInt(int64(i + 1))
+	kIdx64 := make([]int64, nBanks)
+	for i := range kIdx64 {
+		kIdx64[i] = int64(i + 1)
 	}
 
-	// ── Submit Transfer on-chain ───────────────────────────────────────────────
-	t.Log("submitting Transfer...")
-	receipt := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, contractProof, participantIds))
-	if receipt.Status != 1 {
-		t.Fatalf("Transfer reverted (status=0), tx=%s", receipt.TxHash.Hex())
+	relayReq := struct {
+		Proof        [8]string  `json:"proof"`
+		PublicSignal []string   `json:"publicSignal"`
+		Commitments  [][]string `json:"commitments"`
+		KIndex       []int64    `json:"kIndex"`
+	}{
+		Proof:        proof8,
+		PublicSignal: pubSigStrs,
+		Commitments:  commFinal,
+		KIndex:       kIdx64,
 	}
-	t.Logf("Transfer succeeded: %s", receipt.TxHash.Hex())
+
+	// ── Submit Transfer via relayer ────────────────────────────────────────────
+	t.Log("submitting Transfer via relayer...")
+	relayBody, err := json.Marshal(relayReq)
+	if err != nil {
+		t.Fatalf("marshal relay request: %v", err)
+	}
+
+	apiKey := os.Getenv("RELAYER_API_KEY")
+	if apiKey == "" {
+		apiKey = relayerKey
+	}
+
+	relayHTTPReq, err := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer", bytes.NewReader(relayBody))
+	if err != nil {
+		t.Fatalf("build relay request: %v", err)
+	}
+	relayHTTPReq.Header.Set("Content-Type", "application/json")
+	relayHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	relayHTTPResp, err := http.DefaultClient.Do(relayHTTPReq)
+	if err != nil {
+		t.Fatalf("relay POST: %v", err)
+	}
+	defer relayHTTPResp.Body.Close()
+
+	relayRespBody, _ := io.ReadAll(relayHTTPResp.Body)
+	if relayHTTPResp.StatusCode != http.StatusOK {
+		t.Fatalf("relayer returned %d: %s", relayHTTPResp.StatusCode, relayRespBody)
+	}
+
+	var relayResp struct {
+		TxHash      string `json:"txHash"`
+		BlockNumber uint64 `json:"blockNumber"`
+		GasUsed     uint64 `json:"gasUsed"`
+	}
+	if err := json.Unmarshal(relayRespBody, &relayResp); err != nil {
+		t.Fatalf("parse relay response: %v", err)
+	}
+	t.Logf("Transfer succeeded via relayer: tx=%s block=%d gas=%d",
+		relayResp.TxHash, relayResp.BlockNumber, relayResp.GasUsed)
 
 	// ── Verify: bank 0 balance changed ────────────────────────────────────────
 	newBal, err := instance.GetBalance(&bind.CallOpts{}, big.NewInt(1))
@@ -514,4 +661,22 @@ func tcpAvailable(addr string) bool {
 	}
 	conn.Close()
 	return true
+}
+
+// chainAvailable probes the configured chainURL via TCP.
+// Works for both local Hardhat (http://127.0.0.1:8545) and mainnet (https://...).
+func chainAvailable() bool {
+	u, err := url.Parse(chainURL)
+	if err != nil {
+		return false
+	}
+	host := u.Host
+	if u.Port() == "" {
+		if u.Scheme == "https" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+	return tcpAvailable(host)
 }

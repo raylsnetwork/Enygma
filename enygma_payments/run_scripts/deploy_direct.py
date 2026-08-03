@@ -11,9 +11,17 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from web3 import Web3
 
-OWNER_KEY = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
-CHAIN_ID = 1337
-RPC_URL = "http://127.0.0.1:8545"
+OWNER_KEY = os.environ["OWNER_KEY"]   # export OWNER_KEY=<hex> — never hardcode mainnet key
+CHAIN_ID = int(os.environ.get("CHAIN_ID", "72957"))
+RPC_URL = os.environ.get("RPC_URL", "https://mainnet-rpc.rayls.com")
+
+# Number of blocks per epoch. Transactions in the same epoch share the same
+# balance-commitment slot, so lastBlockNum only advances every EPOCH_INTERVAL
+# blocks. At ~0.5-1s Rayls block times:
+#   10  blocks ≈  5-10 s
+#   30  blocks ≈ 15-30 s
+#   60  blocks ≈ 30-60 s
+EPOCH_INTERVAL = int(os.environ.get("EPOCH_INTERVAL", "30"))
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONTRACTS_DIR = os.path.join(ROOT, "..", "contracts", "enygma", "artifacts", "contracts")
@@ -40,9 +48,9 @@ def deploy_contract(w3, account, artifact, constructor_args=None):
         "nonce": nonce,
     })
     signed = account.sign_transaction(txn)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction if hasattr(signed, 'rawTransaction') else signed.raw_transaction)
     print(f"  tx: {tx_hash.hex()}")
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=600)
     assert receipt.status == 1, f"deployment failed: {receipt}"
     print(f"  deployed at: {receipt.contractAddress}")
     return receipt
@@ -55,9 +63,9 @@ def main():
     print(f"Deployer: {account.address}")
     print(f"Block: {w3.eth.block_number}")
 
-    print("\nDeploying Enygma...")
+    print(f"\nDeploying Enygma (epochInterval={EPOCH_INTERVAL})...")
     enygma_artifact = load_artifact(ENYGMA_ARTIFACT)
-    enygma_receipt = deploy_contract(w3, account, enygma_artifact)
+    enygma_receipt = deploy_contract(w3, account, enygma_artifact, constructor_args={"_epochInterval": EPOCH_INTERVAL})
 
     print("\nDeploying EnygmaVerifier...")
     verifier_artifact = load_artifact(VERIFIER_ARTIFACT)

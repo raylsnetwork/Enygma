@@ -1,0 +1,49 @@
+// Lean compiler output
+// Module: Enygma.Circuit
+// Imports: public import Init public meta import Init public import Enygma.Hash public import Enygma.Commitment public import Enygma.Nullifier public import Enygma.MerkleTree
+#include <lean/lean.h>
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wunused-label"
+#elif defined(__GNUC__) && !defined(__CLANG__)
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-label"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
+lean_object* initialize_Init(uint8_t builtin);
+lean_object* initialize_Init(uint8_t builtin);
+lean_object* initialize_EnygmaFormal_Enygma_Hash(uint8_t builtin);
+lean_object* initialize_EnygmaFormal_Enygma_Commitment(uint8_t builtin);
+lean_object* initialize_EnygmaFormal_Enygma_Nullifier(uint8_t builtin);
+lean_object* initialize_EnygmaFormal_Enygma_MerkleTree(uint8_t builtin);
+static bool _G_initialized = false;
+LEAN_EXPORT lean_object* initialize_EnygmaFormal_Enygma_Circuit(uint8_t builtin) {
+lean_object * res;
+if (_G_initialized) return lean_io_result_mk_ok(lean_box(0));
+_G_initialized = true;
+res = initialize_Init(builtin);
+if (lean_io_result_is_error(res)) return res;
+lean_dec_ref(res);
+res = initialize_Init(builtin);
+if (lean_io_result_is_error(res)) return res;
+lean_dec_ref(res);
+res = initialize_EnygmaFormal_Enygma_Hash(builtin);
+if (lean_io_result_is_error(res)) return res;
+lean_dec_ref(res);
+res = initialize_EnygmaFormal_Enygma_Commitment(builtin);
+if (lean_io_result_is_error(res)) return res;
+lean_dec_ref(res);
+res = initialize_EnygmaFormal_Enygma_Nullifier(builtin);
+if (lean_io_result_is_error(res)) return res;
+lean_dec_ref(res);
+res = initialize_EnygmaFormal_Enygma_MerkleTree(builtin);
+if (lean_io_result_is_error(res)) return res;
+lean_dec_ref(res);
+return lean_io_result_mk_ok(lean_box(0));
+}
+#ifdef __cplusplus
+}
+#endif

@@ -208,6 +208,28 @@ func deploy() error {
 	fmt.Printf("UserRegistry → %s\n", userRegistryAddress.Hex())
 	receipts["UserRegistry"] = receiptToData(receipt, userRegistryAddress)
 
+	fmt.Println("Deploying TagChannelRegistry...")
+	tagChannelRegistryAddress, receipt, err := deployContractFromPath(
+		client, owner,
+		filepath.Join(projectRoot, "private_tags", "contracts", "TagChannelRegistry.json"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to deploy TagChannelRegistry: %w", err)
+	}
+	fmt.Printf("TagChannelRegistry → %s\n", tagChannelRegistryAddress.Hex())
+	receipts["TagChannelRegistry"] = receiptToData(receipt, tagChannelRegistryAddress)
+
+	fmt.Println("Deploying TagRegistry...")
+	tagRegistryAddress, receipt, err := deployContractFromPath(
+		client, owner,
+		filepath.Join(projectRoot, "private_tags", "contracts", "TagRegistry.json"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to deploy TagRegistry: %w", err)
+	}
+	fmt.Printf("TagRegistry → %s\n", tagRegistryAddress.Hex())
+	receipts["TagRegistry"] = receiptToData(receipt, tagRegistryAddress)
+
 	if err := saveReceipts(receipts); err != nil {
 		return fmt.Errorf("failed to save receipts: %w", err)
 	}

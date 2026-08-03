@@ -11,24 +11,21 @@ import (
 	"encoding/json"
 
 	enygma "enygma/contracts"
-	
-	"github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/iden3/go-iden3-crypto/babyjub"
 	"github.com/iden3/go-iden3-crypto/poseidon"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	
 )
 
 // Configuration and Constants
 var (
-	CommitChainURL     = "http://127.0.0.1:8545"
 	HttpPostURL        = "http://127.0.0.1:3000/generateProof"
 	ZkdvpAddLeaveURL   = "http://127.0.0.1:3001/insertMerkleTree"
 	ZkdvpGetMerkleTree = "http://127.0.0.1:3001/getMerkleTree"
 	ZkdvpGetProof      = "http://127.0.0.1:3001/generateJoinEnygmaProof"
 	WithdrawProofURL   = "http://127.0.0.1:8080/proof/withdraw"
-	DepositProofURL   = "http://127.0.0.1:8080/proof/deposit"
+	DepositProofURL    = "http://127.0.0.1:8080/proof/deposit"
+	RelayerURL         = "http://127.0.0.1:8082"
+	RelayerAPIKey      = envOr("RELAYER_API_KEY", "change-me")
 	Address            = readJSONFile()
 	P, _               = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
 	G                  = initPoint("16540640123574156134436876038791482806971768689494387082833631921987005038935", "20819045374670962167435360035096875258406992893633759881276124905556507972311")
@@ -39,6 +36,14 @@ var (
 
 
 // Utility Functions
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func initPoint(xStr, yStr string) *babyjub.Point {
 	x, _ := new(big.Int).SetString(xStr, 10)
 	y, _ := new(big.Int).SetString(yStr, 10)
@@ -223,24 +228,6 @@ func getTxRandomAndRValues(s []*big.Int, block_number *big.Int, senderId int, kI
 	return rValues
 }
 
-func ConnectToSmartContract() (*ethclient.Client, *bind.TransactOpts, error) {
-	client, err := ethclient.Dial(CommitChainURL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to Ethereum client: %v", err)
-	}
-
-	privateKey, err := crypto.HexToECDSA(PrivateKeyString)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse private key: %v", err)
-	}
-
-	auth, _ := bind.NewKeyedTransactorWithChainID(privateKey, big.NewInt(1337))
-	auth.Value = big.NewInt(0)
-	auth.GasLimit = uint64(3000000)
-	auth.GasPrice, _ = client.SuggestGasPrice(nil)
-
-	return client, auth, nil
-}
 
 func InsertLeaves(commitment string) error {
 	jsonInfo := struct {

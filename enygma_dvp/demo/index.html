@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enygma DvP · NFT ↔ ERC20 Swap · Live Demo</title>
+<style>
+:root {
+  --bg:        #06101c;
+  --s1:        #09172a;
+  --s2:        #0d1f37;
+  --s3:        #112644;
+  --bd:        #152e4d;
+  --bd2:       #1b3d66;
+  --teal:      #3dd4b0;
+  --teal-dim:  rgba(61,212,176,.08);
+  --teal-glow: #0d6b5a;
+  --blue:      #52b8ff;
+  --blue-dim:  rgba(82,184,255,.09);
+  --blue-glow: #1a5a9a;
+  --green:     #3dcc75;
+  --green-dim: rgba(61,204,117,.08);
+  --green-glow:#0d5a2a;
+  --red:       #ff5566;
+  --red-dim:   rgba(255,85,102,.07);
+  --amber:     #ffcc40;
+  --purple:    #c3a0ff;
+  --purple-dim:rgba(195,160,255,.08);
+  --orange:    #ff9040;
+  --orange-dim:rgba(255,144,64,.08);
+  --text:      #c0d8f0;
+  --text2:     #8ab0d0;
+  --muted:     #3a5e7a;
+  --label:     #6090b8;
+  --mono: 'SF Mono','Fira Code',Consolas,'Courier New',monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;
+  --r: 7px; --r2: 11px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; line-height: 1.55; min-height: 100vh; overflow-x: hidden; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 3px; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header { padding: 9px 18px; border-bottom: 1px solid var(--bd); background: var(--s1); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; position: sticky; top: 0; z-index: 100; }
+.brand { font-family: var(--mono); font-size: 8.5px; letter-spacing: .26em; text-transform: uppercase; color: var(--teal); font-weight: 700; }
+.title { font-size: 13.5px; font-weight: 700; letter-spacing: -.1px; flex: 1; }
+.title small { font-weight: 400; color: var(--label); font-size: 11px; margin-left: 6px; }
+.controls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background .3s, box-shadow .3s; }
+.status-dot.running { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse-dot 1.2s infinite; }
+.status-dot.success { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.error   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
+#statusText { font-family: var(--mono); font-size: 10px; color: var(--label); min-width: 56px; }
+#runBtn { background: var(--teal); color: #031410; border: none; border-radius: 5px; padding: 6px 18px; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .07em; cursor: pointer; transition: opacity .2s, transform .1s; }
+#runBtn:hover:not(:disabled) { opacity: .82; transform: translateY(-1px); }
+#runBtn:disabled { opacity: .3; cursor: not-allowed; }
+.present-toggle { display: flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); color: var(--muted); font-family: var(--mono); font-size: 9.5px; cursor: pointer; transition: border-color .2s, color .2s, background .2s; }
+.present-toggle:hover { border-color: var(--teal); color: var(--teal); }
+.present-toggle.active { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
+html.presentation-mode { zoom: 1.25; }
+
+/* ── Progress + steps ───────────────────────────────────────────────────── */
+.progress-wrap { height: 2px; background: var(--bd); }
+.progress-bar  { height: 100%; width: 0%; background: linear-gradient(90deg, var(--teal), var(--blue)); transition: width .5s ease; }
+.steps-wrap { padding: 10px 18px 9px; background: var(--s1); border-bottom: 1px solid var(--bd); overflow-x: auto; }
+.steps { display: flex; gap: 0; align-items: center; min-width: max-content; }
+.step-item { display: flex; align-items: center; font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.step-pill { padding: 3px 10px; border: 1px solid var(--bd); border-radius: 20px; color: var(--muted); background: var(--s2); white-space: nowrap; transition: all .25s; }
+.step-item.running .step-pill { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); animation: pulse-pill 1.4s infinite; }
+.step-item.success .step-pill { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
+.step-item.error   .step-pill { border-color: var(--red);  color: var(--red);  background: var(--red-dim); }
+@keyframes pulse-pill { 0%,100%{opacity:1} 50%{opacity:.55} }
+.step-arrow { color: var(--bd2); padding: 0 4px; font-size: 10px; }
+
+/* ── Three-column layout ─────────────────────────────────────────────────── */
+.body-wrap { display: grid; grid-template-columns: 230px 1fr 230px; grid-template-rows: 1fr auto; height: calc(100vh - 108px); overflow: hidden; }
+@media (max-width: 860px) { .body-wrap { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; height: auto; } }
+
+/* ── Participant panels ───────────────────────────────────────────────────── */
+.participant { display: flex; flex-direction: column; border-right: 1px solid var(--bd); overflow-y: auto; overflow-x: hidden; }
+.participant:last-of-type { border-right: none; border-left: 1px solid var(--bd); }
+.participant-header { padding: 10px 14px 8px; border-bottom: 1px solid var(--bd); background: var(--s1); display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 10; }
+.p-avatar { width: 28px; height: 28px; border-radius: 50%; font-size: 13px; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+.p-avatar.alice { background: rgba(61,212,176,.12); color: var(--teal); border: 1px solid var(--teal-glow); }
+.p-avatar.bob   { background: rgba(255,144,64,.12); color: var(--orange); border: 1px solid rgba(255,144,64,.3); }
+.p-name { font-weight: 700; font-size: 13px; }
+.p-role { font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-top: 1px; }
+.p-fields { padding: 10px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.p-row { display: flex; flex-direction: column; gap: 3px; }
+.p-key  { font-family: var(--mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.p-val  { font-family: var(--mono); font-size: 10.5px; color: var(--label); min-height: 16px; transition: color .3s; }
+.p-val.set { color: var(--text); }
+.p-val.dim { color: var(--muted); }
+.hex-val { font-family: var(--mono); font-size: 10.5px; color: var(--text); cursor: pointer; word-break: break-all; border-bottom: 1px dashed var(--bd2); display: inline-block; }
+.hex-val:hover { color: var(--blue); border-color: var(--blue); }
+.hex-val::after { content: ' ▸'; font-size: 8px; color: var(--muted); }
+.hex-val.expanded::after { content: ' ▾'; }
+.hex-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.hex-copy-btn { font-family: var(--mono); font-size: 8px; background: none; border: 1px solid var(--bd2); color: var(--muted); border-radius: 3px; padding: 0 4px; cursor: pointer; line-height: 1.6; transition: border-color .2s, color .2s; flex-shrink: 0; }
+.hex-copy-btn:hover { border-color: var(--blue); color: var(--blue); }
+.hex-copy-btn.copied { border-color: var(--green); color: var(--green); }
+.balance-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 4px; font-family: var(--mono); font-size: 11px; }
+.balance-chip.deposited { background: var(--teal-dim);  color: var(--teal);  border: 1px solid var(--teal-glow); }
+.balance-chip.spent     { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(255,85,102,.2); }
+.balance-chip.received  { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-glow); }
+.section-sep { height: 1px; background: var(--bd); margin: 8px 14px 0; }
+
+/* ── Center panel ────────────────────────────────────────────────────────── */
+.center-panel { display: flex; flex-direction: column; gap: 0; overflow-y: auto; overflow-x: hidden; background: var(--bg); border-right: 1px solid var(--bd); }
+
+/* ── Intro / orientation card ───────────────────────────────────────────── */
+.intro-card { margin: 12px 14px 0; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--bd2); border-left: 3px solid var(--teal); overflow: hidden; flex-shrink: 0; }
+.intro-hdr { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.intro-title { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); }
+.intro-toggle-ic { margin-left: auto; color: var(--muted); font-size: 11px; }
+.intro-body { padding: 0 12px 12px; font-size: 11.5px; color: var(--text2); line-height: 1.6; }
+.intro-body p { margin-bottom: 8px; }
+.intro-body strong { color: var(--text); }
+.intro-legs { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.intro-leg-row { display: flex; gap: 8px; align-items: baseline; }
+.intro-leg-tag { font-family: var(--mono); font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 10px; flex-shrink: 0; letter-spacing: .06em; }
+.intro-leg-tag.alice { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
+.intro-leg-tag.bob   { color: var(--orange); border: 1px solid rgba(255,144,64,.3); background: var(--orange-dim); }
+
+/* ── Step Visualizer Card ────────────────────────────────────────────────── */
+.step-viz-card { margin: 12px 14px 0; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--bd2); overflow: hidden; flex-shrink: 0; }
+.svz-header { padding: 8px 12px 7px; border-bottom: 1px solid var(--bd); display: flex; align-items: center; justify-content: space-between; }
+.svz-step-label { font-family: var(--mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); font-weight: 700; }
+.svz-badge { font-family: var(--mono); font-size: 8px; padding: 2px 8px; border-radius: 10px; }
+.svz-badge.idle    { color: var(--muted); border: 1px solid var(--bd); }
+.svz-badge.running { color: var(--blue); border: 1px solid var(--blue-glow); background: var(--blue-dim); animation: pulse-dot 1.2s infinite; }
+.svz-badge.success { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
+.svz-badge.error   { color: var(--red);  border: 1px solid var(--red);       background: var(--red-dim); }
+.svz-diagram { padding: 12px 14px; min-height: 90px; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+.svz-desc { padding: 8px 12px; border-top: 1px solid var(--bd); font-size: 11px; color: var(--text2); line-height: 1.6; background: rgba(0,0,0,.15); }
+.svz-idle { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 10px; font-style: italic; }
+
+/* actor boxes */
+.svz-actors { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.svz-actor  { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+.svz-actor-box { width: 100%; padding: 5px 4px; border-radius: 5px; text-align: center; font-family: var(--mono); font-size: 9.5px; font-weight: 700; border: 1px solid; transition: all .4s; }
+.svz-actor-box.alice    { border-color: var(--teal-glow); color: var(--teal); background: var(--teal-dim); }
+.svz-actor-box.bob      { border-color: rgba(255,144,64,.35); color: var(--orange); background: var(--orange-dim); }
+.svz-actor-box.contract { border-color: rgba(195,160,255,.3); color: var(--purple); background: var(--purple-dim); }
+.svz-actor-box.chain    { border-color: var(--green-glow); color: var(--green); background: var(--green-dim); }
+.svz-actor-box.gnark    { border-color: rgba(255,204,64,.3); color: var(--amber); background: rgba(255,204,64,.06); }
+.svz-actor-name { font-family: var(--mono); font-size: 7px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+
+/* animated flow arrows */
+.svz-arrow-wrap { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; gap: 1px; }
+.svz-arrow-line { width: 28px; height: 1px; background: var(--bd2); position: relative; overflow: hidden; }
+.svz-arrow-line::after { content: ''; position: absolute; top: 0; left: -60%; width: 60%; height: 100%; background: linear-gradient(90deg, transparent, var(--teal), transparent); animation: flow-anim 1.4s linear infinite; }
+@keyframes flow-anim { to { left: 110%; } }
+.svz-arrow-head { color: var(--muted); font-size: 10px; line-height: 1; }
+.svz-arrow-label { font-family: var(--mono); font-size: 7px; color: var(--muted); white-space: nowrap; }
+
+/* key rows */
+.svz-keyrows { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.svz-keyrow  { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 4px; background: var(--s1); border: 1px solid var(--bd); }
+.svz-keyrow-algo  { font-family: var(--mono); font-size: 8px; color: var(--muted); flex-shrink: 0; min-width: 80px; }
+.svz-keyrow-val   { font-family: var(--mono); font-size: 8.5px; color: var(--label); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .4s; }
+.svz-keyrow-val.set { color: var(--text); }
+.svz-keyrow-size  { font-family: var(--mono); font-size: 7.5px; color: var(--amber); padding: 1px 4px; border-radius: 3px; border: 1px solid rgba(255,204,64,.2); background: rgba(255,204,64,.05); flex-shrink: 0; }
+.svz-keyrow-purpose { font-family: var(--mono); font-size: 7px; color: var(--muted); flex-shrink: 0; }
+
+/* sub-step lists */
+.svz-substeps { display: flex; flex-direction: column; gap: 3px; }
+.svz-substep  { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 9.5px; color: var(--muted); transition: color .3s; }
+.svz-substep.done   { color: var(--teal); }
+.svz-substep.active { color: var(--blue); }
+.svz-substep-icon   { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--bd); display: flex; align-items: center; justify-content: center; font-size: 8px; flex-shrink: 0; transition: all .3s; }
+.svz-substep.done   .svz-substep-icon { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
+.svz-substep.active .svz-substep-icon { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); animation: pulse-dot 1.2s infinite; }
+
+/* Poseidon commitment diagram */
+.svz-poseidon { display: flex; align-items: center; gap: 6px; }
+.svz-inputs   { display: flex; flex-direction: column; gap: 3px; }
+.svz-input-tag { font-family: var(--mono); font-size: 8.5px; padding: 3px 7px; border-radius: 3px; border: 1px solid var(--bd); background: var(--s1); color: var(--label); }
+.svz-input-tag.secret { border-style: dashed; color: var(--muted); }
+.svz-hash-fn  { padding: 8px 10px; border-radius: 5px; border: 1px solid rgba(195,160,255,.3); background: var(--purple-dim); font-family: var(--mono); font-size: 9px; color: var(--purple); white-space: nowrap; text-align: center; }
+.svz-output-tag { font-family: var(--mono); font-size: 8.5px; padding: 3px 7px; border-radius: 3px; border: 1px solid var(--teal-glow); background: var(--teal-dim); color: var(--teal); }
+.svz-chevron  { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+
+/* ZK circuit */
+.svz-circuit { display: grid; grid-template-columns: 1fr 60px 1fr; gap: 6px; align-items: stretch; }
+.svz-circuit-col { display: flex; flex-direction: column; gap: 3px; }
+.svz-circuit-title { font-family: var(--mono); font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; text-align: center; }
+.svz-circuit-io { font-family: var(--mono); font-size: 8px; padding: 3px 6px; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.svz-circuit-io.priv { color: var(--muted); background: var(--s1); border: 1px solid var(--bd); }
+.svz-circuit-io.pub  { color: var(--teal);  background: var(--teal-dim); border: 1px solid var(--teal-glow); }
+.svz-circuit-io.warn { color: var(--amber); background: rgba(255,204,64,.05); border: 1px solid rgba(255,204,64,.2); }
+.svz-circuit-box { border: 2px solid rgba(195,160,255,.3); border-radius: var(--r); background: var(--purple-dim); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 6px 4px; }
+.svz-circuit-box-label { font-family: var(--mono); font-size: 9px; color: var(--purple); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; text-align: center; }
+.svz-circuit-box-sub   { font-family: var(--mono); font-size: 7px; color: rgba(195,160,255,.5); text-align: center; }
+.svz-io-badge { font-size: 7px; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; }
+.svz-io-badge.priv { color: var(--muted); border: 1px solid var(--bd); }
+.svz-io-badge.pub  { color: var(--green); border: 1px solid var(--green-glow); background: var(--green-dim); }
+
+/* deadline / countdown */
+.svz-deadline-note { font-family: var(--mono); font-size: 8.5px; padding: 5px 10px; border-radius: 4px; background: rgba(255,204,64,.06); border: 1px dashed rgba(255,204,64,.3); color: var(--amber); text-align: center; margin-top: 4px; }
+
+/* Guarantees */
+.privacy-section { margin: 10px 14px 0; }
+.privacy-title   { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.privacy-badges  { display: flex; flex-direction: column; gap: 5px; }
+.priv-badge      { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); transition: all .4s; }
+.priv-badge.verified { border-color: var(--green-glow); background: var(--green-dim); }
+.priv-dot        { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background .4s, box-shadow .4s; }
+.priv-badge.verified .priv-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.priv-badge-label { font-family: var(--mono); font-size: 9.5px; color: var(--muted); flex: 1; transition: color .4s; }
+.priv-badge.verified .priv-badge-label { color: var(--green); }
+.priv-badge-sub  { font-family: var(--mono); font-size: 8px; color: var(--muted); }
+.priv-badge.verified .priv-badge-sub { color: rgba(61,204,117,.6); }
+
+/* Token flow (bidirectional) */
+.token-flow  { margin: 10px 14px 0; }
+.flow-title  { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.flow-rows   { display: flex; flex-direction: column; gap: 6px; }
+.flow-viz    { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
+.flow-party  { text-align: center; }
+.flow-name   { font-family: var(--mono); font-size: 8.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 3px; }
+.flow-box    { padding: 6px 8px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); text-align: center; }
+.flow-before { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-bottom: 2px; }
+.flow-after  { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--label); transition: color .5s; }
+.flow-after.alice-final { color: var(--orange); }
+.flow-after.bob-final   { color: var(--teal); }
+.flow-arrow-col  { text-align: center; }
+.flow-arrow-icon { font-size: 18px; color: var(--muted); transition: color .4s; }
+.flow-arrow-icon.active { color: var(--teal); }
+.flow-amt    { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-top: 2px; transition: color .4s; }
+.flow-amt.active { color: var(--teal); }
+
+/* Metrics */
+.metrics-section { margin: 10px 14px 0; }
+.metrics-title   { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.metrics-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.metric-item     { padding: 8px 10px; border-radius: var(--r); background: var(--s2); border: 1px solid var(--bd); transition: border-color .5s; }
+.metric-item.set { border-color: var(--bd2); }
+.metric-key      { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 4px; }
+.metric-val      { font-family: var(--mono); font-size: 17px; font-weight: 700; color: var(--label); transition: color .5s; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.metric-val.lit  { color: var(--text); }
+.metric-val.hl   { color: var(--teal); }
+.metric-sub      { font-family: var(--mono); font-size: 8px; color: var(--muted); margin-top: 3px; }
+
+/* Protocol addresses */
+.proto-section { margin: 10px 14px 0; }
+.proto-title   { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.proto-rows    { display: flex; flex-direction: column; gap: 4px; }
+.proto-row     { display: flex; gap: 8px; align-items: baseline; }
+.proto-key     { font-family: var(--mono); font-size: 8.5px; color: var(--muted); flex-shrink: 0; min-width: 100px; }
+.proto-val     { font-family: var(--mono); font-size: 9.5px; color: var(--label); word-break: break-all; }
+
+/* Tx cards */
+.tx-section    { margin: 10px 14px 12px; }
+.tx-title      { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.tx-cards      { display: flex; flex-direction: column; gap: 6px; }
+.tx-card       { padding: 8px 10px; border-radius: var(--r); background: var(--s2); border: 1px solid var(--bd); }
+.tx-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.tx-card-label  { font-family: var(--mono); font-size: 8.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.tx-card-status { font-family: var(--mono); font-size: 8px; padding: 2px 6px; border-radius: 10px; }
+.tx-card-status.pending { color: var(--muted); border: 1px solid var(--bd); }
+.tx-card-status.done    { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
+.tx-meta       { display: flex; gap: 12px; flex-wrap: wrap; }
+.tx-meta-item  { display: flex; flex-direction: column; gap: 1px; }
+.tx-meta-key   { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.tx-meta-val   { font-family: var(--mono); font-size: 9.5px; color: var(--label); }
+
+/* Summary card */
+.summary-card  { display: none; margin: 12px 14px; padding: 14px; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--green-glow); }
+.summary-card.show { display: block; }
+.summary-title { font-family: var(--mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--green); margin-bottom: 10px; font-weight: 700; }
+.summary-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.summary-item  { display: flex; flex-direction: column; gap: 2px; }
+.summary-key   { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.summary-val   { font-family: var(--mono); font-size: 11px; color: var(--text); font-weight: 600; }
+.summary-highlight { color: var(--teal); }
+.summary-privacy { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--bd); font-size: 11px; color: var(--text2); line-height: 1.6; }
+.summary-privacy strong { color: var(--teal); }
+
+/* Log */
+.log-wrap    { grid-column: 1 / -1; border-top: 1px solid var(--bd); background: var(--bg); display: flex; flex-direction: column; height: 160px; flex-shrink: 0; }
+.log-header  { padding: 5px 14px; border-bottom: 1px solid var(--bd); background: var(--s1); font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.log-clear   { cursor: pointer; font-size: 8.5px; color: var(--muted); background: none; border: none; padding: 2px 6px; }
+.log-clear:hover { color: var(--label); }
+.log-filter-select { margin-left: auto; font-family: var(--mono); font-size: 8.5px; text-transform: none; letter-spacing: normal; background: var(--bg); border: 1px solid var(--bd); color: var(--muted); border-radius: 3px; padding: 2px 6px; cursor: pointer; }
+.log-filter-select:hover { border-color: var(--bd2); color: var(--label); }
+.log-body    { flex: 1; overflow-y: auto; padding: 4px 0; }
+.log-line    { display: flex; gap: 8px; align-items: baseline; font-family: var(--mono); font-size: 10px; line-height: 1.7; padding: 1px 14px; }
+.log-line:hover { background: var(--s1); }
+.log-ts      { color: var(--muted); flex-shrink: 0; font-size: 8.5px; }
+.cat-badge   { font-size: 7.5px; font-weight: 700; letter-spacing: .08em; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; font-family: var(--mono); text-transform: uppercase; }
+.cat-key     { background: rgba(195,160,255,.1); color: var(--purple); border: 1px solid rgba(195,160,255,.2); }
+.cat-chain   { background: rgba(82,184,255,.1);  color: var(--blue);   border: 1px solid rgba(82,184,255,.2); }
+.cat-zk      { background: rgba(61,212,176,.1);  color: var(--teal);   border: 1px solid rgba(61,212,176,.2); }
+.log-msg     { color: var(--text); flex: 1; }
+.log-msg.ok  { color: var(--teal); }
+.log-msg.err { color: var(--red); }
+
+/* ── Responsive (kept last so it wins the cascade over same-specificity base rules) ── */
+@media (max-width: 480px) {
+  .metrics-grid, .summary-grid { grid-template-columns: 1fr; }
+  .svz-circuit { grid-template-columns: 1fr; }
+  .header { padding: 8px 12px; gap: 8px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="brand">Enygma</span>
+  <div><div class="title">DvP · NFT ↔ ERC20 Swap <small>· Live Demo</small></div></div>
+  <div class="controls">
+    <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
+      <span class="present-toggle-label">Presentation</span>
+    </button>
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">idle</span>
+    <button id="runBtn" onclick="run()">Run Flow</button>
+  </div>
+</div>
+
+<div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+
+<div class="steps-wrap"><div class="steps" id="stepsRow"></div></div>
+
+<div class="body-wrap">
+
+  <!-- ── Alice ── -->
+  <div class="participant" id="p0">
+    <div class="participant-header">
+      <div class="p-avatar alice">A</div>
+      <div><div class="p-name">Alice</div><div class="p-role">Has 50 USDT</div></div>
+    </div>
+    <div class="p-fields">
+      <div class="p-row"><div class="p-key" title="Alice's Ethereum address. Both settlement transactions in this demo are sent from the same operator wallet — Alice and Bob are distinguished by their private spend/view keys, not by Ethereum address.">ETH Address</div><div class="p-val dim" id="p0-ethAddr">—</div></div>
+      <div class="p-row"><div class="p-key" title="BabyJubJub public key used inside the ZK circuit to prove note ownership.">pk_spend (BJJ)</div><div class="p-val" id="p0-pkSpend">—</div></div>
+      <div class="p-row"><div class="p-key" title="Post-quantum public key (ML-KEM-768) used so Alice can send Bob an encrypted swap offer with no prior interaction.">pk_view (ML-KEM-768)</div><div class="p-val" id="p0-pkView">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key" title="Poseidon commitment to Alice's deposited 50 USDT — hides the amount from anyone watching the chain.">ERC20 Commitment</div><div class="p-val" id="p0-commitment">—</div></div>
+      <div class="p-row"><div class="p-key" title="Root of the ERC20 vault's Merkle tree at the time Alice generated her proof.">Merkle Root</div><div class="p-val" id="p0-merkleRoot">—</div></div>
+      <div class="p-row"><div class="p-key" title="What Alice will receive if the swap settles: a commitment to the ticket NFT.">Commit A (incoming ticket)</div><div class="p-val" id="p0-commitA">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key">Token Balance</div><div class="p-val" id="p0-balance">—</div></div>
+    </div>
+  </div>
+
+  <!-- ── Center ── -->
+  <div class="center-panel">
+
+    <!-- Orientation card -->
+    <div class="intro-card" id="introCard">
+      <div class="intro-hdr" id="introToggle">
+        <span class="intro-title">What you're about to see</span>
+        <span class="intro-toggle-ic" id="introToggleIc">▾</span>
+      </div>
+      <div class="intro-body" id="introBody">
+        <p>
+          A <strong>Delivery-vs-Payment (DvP) atomic swap</strong>: Alice deposits 50 USDT into a private vault,
+          Bob deposits an NFT ticket into a separate vault, and they swap — Alice ends up with the ticket,
+          Bob ends up with the USDT — with <strong>no counterparty risk</strong>: either both legs settle
+          on-chain, or neither does.
+        </p>
+        <div class="intro-legs">
+          <div class="intro-leg-row"><span class="intro-leg-tag alice">LEG 1</span> Alice runs the <strong>DvP Initiator</strong> circuit, locking in the swap terms and encrypting an offer for Bob with his ML-KEM-768 view key.</div>
+          <div class="intro-leg-row"><span class="intro-leg-tag bob">LEG 2</span> Bob decrypts the offer, runs the <strong>DvP Destination</strong> circuit to accept it, and submits — settling both sides atomically in one transaction.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary card -->
+    <div class="summary-card" id="summaryCard">
+      <div class="summary-title">Swap Complete</div>
+      <div class="summary-grid">
+        <div class="summary-item"><div class="summary-key">Alice Delivered</div><div class="summary-val summary-highlight" id="sum-alice">50 USDT</div></div>
+        <div class="summary-item"><div class="summary-key">Bob Delivered</div><div class="summary-val summary-highlight" id="sum-bob">ticket</div></div>
+        <div class="summary-item"><div class="summary-key">On-chain Txs</div><div class="summary-val" id="sum-txcount">—</div></div>
+        <div class="summary-item"><div class="summary-key">Total Protocol Gas</div><div class="summary-val" id="sum-gas">—</div></div>
+        <div class="summary-item" style="grid-column:1/-1"><div class="summary-key">Timing</div><div class="summary-val" id="sum-extra" style="font-size:10px;color:var(--text2)">—</div></div>
+      </div>
+      <div class="summary-privacy"><strong>Atomic &amp; hiding:</strong> both legs settled in the same logical swap — Bob could never have taken the USDT without delivering the ticket, or vice versa. The amount and tokenId stayed behind Poseidon commitments the entire time; only nullifiers and commitment hashes ever touched the chain.</div>
+    </div>
+
+    <!-- Step Visualizer Card -->
+    <div class="step-viz-card" id="stepVizCard">
+      <div class="svz-header">
+        <span class="svz-step-label" id="svzLabel">Waiting</span>
+        <span class="svz-badge idle" id="svzBadge">idle</span>
+      </div>
+      <div class="svz-diagram" id="svzDiagram">
+        <div class="svz-idle">Click <strong>Run Flow</strong> to start the NFT ↔ ERC20 swap demo.</div>
+      </div>
+      <div class="svz-desc" id="svzDesc" style="display:none"></div>
+    </div>
+
+    <!-- Swap guarantees -->
+    <div class="privacy-section">
+      <div class="privacy-title">Swap Guarantees</div>
+      <div class="privacy-badges">
+        <div class="priv-badge" id="priv-atomic">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Atomic settlement</div><div class="priv-badge-sub">Both legs settle together, or neither does</div></div>
+        </div>
+        <div class="priv-badge" id="priv-commitment">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Commitment hiding</div><div class="priv-badge-sub">Amount &amp; tokenId hidden by Poseidon hash</div></div>
+        </div>
+        <div class="priv-badge" id="priv-nullifier">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Nullifiers spent on-chain</div><div class="priv-badge-sub">Neither note can be double-spent</div></div>
+        </div>
+        <div class="priv-badge" id="priv-timeout">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Timeout protection</div><div class="priv-badge-sub">Alice can reclaim her funds via claimSwapTimeout if Bob never responds</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Token flow -->
+    <div class="token-flow">
+      <div class="flow-title">Token Flow</div>
+      <div class="flow-rows">
+        <div class="flow-viz">
+          <div class="flow-party"><div class="flow-name">Alice</div>
+            <div class="flow-box"><div class="flow-before">deposited 50 USDT</div><div class="flow-after" id="flowAliceOut">−50 USDT</div></div>
+          </div>
+          <div class="flow-arrow-col"><div class="flow-arrow-icon" id="flowArrow1">→</div><div class="flow-amt" id="flowAmt1">50 USDT</div></div>
+          <div class="flow-party"><div class="flow-name">Bob</div>
+            <div class="flow-box"><div class="flow-before">started: 0 USDT</div><div class="flow-after bob-final" id="flowBobIn">+50 USDT</div></div>
+          </div>
+        </div>
+        <div class="flow-viz">
+          <div class="flow-party"><div class="flow-name">Bob</div>
+            <div class="flow-box"><div class="flow-before">deposited ticket</div><div class="flow-after" id="flowBobOut">−ticket</div></div>
+          </div>
+          <div class="flow-arrow-col"><div class="flow-arrow-icon" id="flowArrow2">→</div><div class="flow-amt" id="flowAmt2">ticket</div></div>
+          <div class="flow-party"><div class="flow-name">Alice</div>
+            <div class="flow-box"><div class="flow-before">started: no ticket</div><div class="flow-after alice-final" id="flowAliceIn">+ticket</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="metrics-section">
+      <div class="metrics-title">Performance Metrics</div>
+      <div class="metrics-grid">
+        <div class="metric-item" id="metric-proofTime"><div class="metric-key">DvP Initiator Proof</div><div class="metric-val" id="mv-proofTime">—</div><div class="metric-sub">Groth16 witness + prove (Alice)</div></div>
+        <div class="metric-item" id="metric-aliceGas"><div class="metric-key">Alice Leg Gas</div><div class="metric-val" id="mv-aliceGas">—</div><div class="metric-sub">submitPartialSettlement (leg 1)</div></div>
+        <div class="metric-item" id="metric-bobGas"><div class="metric-key">Bob Leg Gas</div><div class="metric-val" id="mv-bobGas">—</div><div class="metric-sub">submitPartialSettlement (leg 2, settles)</div></div>
+        <div class="metric-item" id="metric-totalGas"><div class="metric-key">Total Protocol Gas</div><div class="metric-val hl" id="mv-totalGas">—</div><div class="metric-sub">Deposits + both settlement legs</div></div>
+        <div class="metric-item" id="metric-flowTime" style="grid-column:1/-1"><div class="metric-key">Total Flow Time</div><div class="metric-val hl" id="mv-flowTime">—</div><div class="metric-sub">End-to-end wall-clock</div></div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--bd);margin:10px 14px 0"></div>
+
+    <!-- Protocol addresses -->
+    <div class="proto-section">
+      <div class="proto-title">Contracts</div>
+      <div class="proto-rows">
+        <div class="proto-row"><div class="proto-key" title="Holds Alice's deposited USDT behind Poseidon commitments.">Erc20CoinVault</div><div class="proto-val" id="proto-erc20VaultAddr">—</div></div>
+        <div class="proto-row"><div class="proto-key" title="Holds Bob's deposited NFT ticket behind Poseidon commitments.">Erc721CoinVault</div><div class="proto-val" id="proto-erc721VaultAddr">—</div></div>
+        <div class="proto-row"><div class="proto-key" title="Orchestrates the atomic swap: checks both ZK proofs, then nullifies both inputs and inserts both outputs together.">EnygmaDvp</div><div class="proto-val" id="proto-dvpAddr">—</div></div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--bd);margin:10px 14px 0"></div>
+
+    <!-- Transaction record -->
+    <div class="tx-section">
+      <div class="tx-title">Transaction Record</div>
+      <div class="tx-cards">
+        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label">Leg 1 — Alice (EnygmaDvp.submitPartialSettlement)</span><span class="tx-card-status pending" id="txstatus-alice">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-alice">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-alice">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-alice">—</div></div></div></div>
+        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label">Leg 2 — Bob (EnygmaDvp.submitPartialSettlement, settles)</span><span class="tx-card-status pending" id="txstatus-bob">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-bob">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-bob">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-bob">—</div></div></div></div>
+      </div>
+    </div>
+
+  </div><!-- /center -->
+
+  <!-- ── Bob ── -->
+  <div class="participant" id="p1">
+    <div class="participant-header">
+      <div class="p-avatar bob">B</div>
+      <div><div class="p-name">Bob</div><div class="p-role">Has the NFT ticket</div></div>
+    </div>
+    <div class="p-fields">
+      <div class="p-row"><div class="p-key" title="Bob's Ethereum address. Both settlement transactions in this demo are sent from the same operator wallet — Alice and Bob are distinguished by their private spend/view keys, not by Ethereum address.">ETH Address</div><div class="p-val dim" id="p1-ethAddr">—</div></div>
+      <div class="p-row"><div class="p-key" title="BabyJubJub public key used inside the ZK circuit to prove note ownership.">pk_spend (BJJ)</div><div class="p-val" id="p1-pkSpend">—</div></div>
+      <div class="p-row"><div class="p-key" title="Post-quantum public key (ML-KEM-768) Alice encrypts her swap offer against, so only Bob can read it.">pk_view (ML-KEM-768)</div><div class="p-val" id="p1-pkView">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key" title="Poseidon commitment to Bob's deposited ticket — hides which tokenId from anyone watching the chain.">NFT Commitment</div><div class="p-val" id="p1-commitment">—</div></div>
+      <div class="p-row"><div class="p-key" title="Root of the ERC721 vault's Merkle tree at the time Bob generated his proof.">Merkle Root</div><div class="p-val" id="p1-merkleRoot">—</div></div>
+      <div class="p-row"><div class="p-key" title="What Bob will receive if the swap settles: a commitment to Alice's USDT.">Commit B (incoming USDT)</div><div class="p-val" id="p1-commitB">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key">Token Balance</div><div class="p-val" id="p1-balance">—</div></div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="log-wrap">
+    <div class="log-header"><span>Event Log</span><select id="logFilter" class="log-filter-select" title="Show only log lines from one category"><option value="all">All</option><option value="key">Key</option><option value="chain">Chain</option><option value="zk">ZK</option></select><button class="log-clear" onclick="clearLog()">clear</button></div>
+    <div class="log-body" id="logBody"></div>
+  </div>
+
+</div><!-- /body-wrap -->
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let es = null, txCount = 0;
+const liveData = {};
+
+// ── Step definitions ──────────────────────────────────────────────────────────
+const STEPS = [
+  { id:'prereqs',         label:'Prerequisites' },
+  { id:'keygen',          label:'Key Gen' },
+  { id:'deposit_erc20',   label:'Alice Deposits ERC20' },
+  { id:'deposit_nft',     label:'Bob Deposits NFT' },
+  { id:'dvp_initiator',   label:'DvP Initiator' },
+  { id:'bob_scan',        label:'Bob Scans' },
+  { id:'dvp_destination', label:'DvP Destination' },
+  { id:'settle_alice',    label:'Alice Submits' },
+  { id:'settle_bob',      label:'Bob Submits' },
+  { id:'verify',          label:'Verify' },
+];
+
+// ── Step Visualizer Templates ─────────────────────────────────────────────────
+function actor(cls, label, sub) {
+  return `<div class="svz-actor"><div class="svz-actor-box ${cls}">${label}</div><div class="svz-actor-name">${sub||''}</div></div>`;
+}
+function arrowRight(label) {
+  return `<div class="svz-arrow-wrap"><div class="svz-arrow-line"></div><div class="svz-arrow-head">›</div>${label?`<div class="svz-arrow-label">${label}</div>`:''}</div>`;
+}
+function arrowLeft(label) {
+  return `<div class="svz-arrow-wrap"><div class="svz-arrow-label">${label||''}</div><div class="svz-arrow-head">‹</div><div class="svz-arrow-line" style="transform:scaleX(-1)"></div></div>`;
+}
+function substep(id, text) {
+  return `<div class="svz-substep" id="ss-${id}"><div class="svz-substep-icon">·</div>${text}</div>`;
+}
+function keyrow(algo, valId, size, purpose) {
+  return `<div class="svz-keyrow"><span class="svz-keyrow-algo">${algo}</span><span class="svz-keyrow-val" id="${valId}">generating…</span><span class="svz-keyrow-size">${size}</span><span class="svz-keyrow-purpose">${purpose}</span></div>`;
+}
+
+const VIZ = {
+
+  prereqs: () => `
+    <div class="svz-substeps">
+      ${substep('chain', 'Hardhat node · :8545 (EVM chain)')}
+      ${substep('gnark', 'gnark server · :8081 (DvP Groth16 circuits)')}
+    </div>
+    <div class="svz-actors" style="margin-top:10px">
+      ${actor('chain','Chain',':8545')}
+      ${arrowRight('TCP')}
+      ${actor('gnark','gnark',':8081')}
+    </div>`,
+
+  keygen: () => `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <div style="font-family:var(--mono);font-size:8px;color:var(--teal);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Alice</div>
+        <div class="svz-keyrows">
+          ${keyrow('BabyJubJub pk','viz-a-spend','32 B','ZK ownership')}
+          ${keyrow('ML-KEM-768 ek','viz-a-ek','1184 B','offer encrypt')}
+        </div>
+      </div>
+      <div>
+        <div style="font-family:var(--mono);font-size:8px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Bob</div>
+        <div class="svz-keyrows">
+          ${keyrow('BabyJubJub pk','viz-b-spend','32 B','ZK ownership')}
+          ${keyrow('ML-KEM-768 ek','viz-b-ek','1184 B','offer decrypt')}
+        </div>
+      </div>
+    </div>`,
+
+  deposit_erc20: () => `
+    <div class="svz-poseidon">
+      <div class="svz-inputs">
+        <div class="svz-input-tag">pk_spend (Alice)</div>
+        <div class="svz-input-tag secret">salt (random)</div>
+        <div class="svz-input-tag">amount = 50</div>
+        <div class="svz-input-tag">tokenId = 0</div>
+      </div>
+      <div class="svz-chevron">›</div>
+      <div class="svz-hash-fn">Poseidon<br>hash</div>
+      <div class="svz-chevron">›</div>
+      <div>
+        <div class="svz-output-tag">commitment</div>
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:3px;text-align:center">hiding on-chain</div>
+      </div>
+    </div>
+    <div class="svz-actors" style="margin-top:10px">
+      ${actor('alice','Alice','50 USDT')}
+      ${arrowRight('depositV2()')}
+      ${actor('contract','Erc20Coin<br>Vault','stores cmt')}
+    </div>`,
+
+  deposit_nft: () => `
+    <div class="svz-poseidon">
+      <div class="svz-inputs">
+        <div class="svz-input-tag">pk_spend (Bob)</div>
+        <div class="svz-input-tag secret">salt (random)</div>
+        <div class="svz-input-tag">amount = 1</div>
+        <div class="svz-input-tag">tokenId = ticket #</div>
+      </div>
+      <div class="svz-chevron">›</div>
+      <div class="svz-hash-fn">Poseidon<br>hash</div>
+      <div class="svz-chevron">›</div>
+      <div>
+        <div class="svz-output-tag">commitment</div>
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:3px;text-align:center">hiding on-chain</div>
+      </div>
+    </div>
+    <div class="svz-actors" style="margin-top:10px">
+      ${actor('bob','Bob','ticket')}
+      ${arrowRight('deposit()')}
+      ${actor('contract','Erc721Coin<br>Vault','stores cmt')}
+    </div>`,
+
+  dvp_initiator: () => `
+    <div class="svz-actors">
+      ${actor('alice','Alice','proves USDT note')}
+      ${arrowRight('KEM.Encaps(bob.ek)')}
+      ${actor('gnark','DvP Initiator<br>circuit','Groth16')}
+    </div>
+    <div class="svz-keyrows" style="margin-top:8px">
+      <div class="svz-keyrow"><span class="svz-keyrow-algo">commitB</span><span class="svz-keyrow-val" id="viz-commitB">computing…</span><span class="svz-keyrow-purpose">Bob receives 50 USDT</span></div>
+      <div class="svz-keyrow"><span class="svz-keyrow-algo">commitA</span><span class="svz-keyrow-val" id="viz-commitA">computing…</span><span class="svz-keyrow-purpose">Alice receives ticket</span></div>
+      <div class="svz-keyrow"><span class="svz-keyrow-algo">revertCommitA</span><span class="svz-keyrow-val" style="color:var(--muted)">Alice's fallback</span><span class="svz-keyrow-purpose">if Bob never responds</span></div>
+    </div>`,
+
+  bob_scan: () => `
+    <div class="svz-actors">
+      ${actor('bob','Bob','view key')}
+      ${arrowLeft('KEM.Decaps(ctxt, dk)')}
+      ${actor('alice','Alice','encrypted offer')}
+    </div>
+    <div class="svz-substeps" style="margin-top:8px">
+      ${substep('bs-decap','ML-KEM decapsulate → recover shared secret')}
+      ${substep('bs-decrypt','AES-GCM decrypt → {amount=50, tokenId=0}')}
+      ${substep('bs-verify','Recompute commitB &amp; commitA locally → both match ✓')}
+    </div>`,
+
+  dvp_destination: () => `
+    <div class="svz-circuit">
+      <div class="svz-circuit-col">
+        <div class="svz-circuit-title">Private Inputs</div>
+        <div class="svz-circuit-io priv"><span>pk_spend (Bob)</span><span class="svz-io-badge priv">secret</span></div>
+        <div class="svz-circuit-io priv"><span>ticket salt</span><span class="svz-io-badge priv">secret</span></div>
+        <div class="svz-circuit-io priv"><span>Merkle path</span><span class="svz-io-badge priv">secret</span></div>
+      </div>
+      <div class="svz-circuit-box">
+        <div class="svz-circuit-box-label">Groth16</div>
+        <div class="svz-circuit-box-sub">gnark</div>
+        <div class="svz-circuit-box-sub" id="viz-dest-ms" style="margin-top:4px;color:var(--amber)">proving…</div>
+      </div>
+      <div class="svz-circuit-col">
+        <div class="svz-circuit-title">Public Outputs</div>
+        <div class="svz-circuit-io pub"><span>Merkle root</span><span class="svz-io-badge pub">public</span></div>
+        <div class="svz-circuit-io warn"><span>nullifier</span><span class="svz-io-badge pub">revealed</span></div>
+        <div class="svz-circuit-io pub"><span>commitA (matches)</span><span class="svz-io-badge pub">checked</span></div>
+      </div>
+    </div>`,
+
+  settle_alice: () => `
+    <div class="svz-actors">
+      ${actor('alice','Alice','leg 1/2')}
+      ${arrowRight('submitPartialSettlement()')}
+      ${actor('contract','EnygmaDvp','stores pending')}
+    </div>
+    <div class="svz-deadline-note">Deadline set 1 hour out — Bob has plenty of time to submit his leg</div>`,
+
+  settle_bob: () => `
+    <div class="svz-actors">
+      ${actor('bob','Bob','leg 2/2')}
+      ${arrowRight('submitPartialSettlement()')}
+      ${actor('contract','EnygmaDvp','settles atomically')}
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-top:8px;text-align:center">Both nullifiers spent, both commitments inserted — in the same transaction</div>`,
+
+  verify: () => `
+    <div class="svz-substeps">
+      ${substep('vf-commitb','commitB inserted into ERC20 vault (Bob receives)')}
+      ${substep('vf-commita','commitA inserted into ERC721 vault (Alice receives)')}
+      ${substep('vf-null','Nullifiers spent — both original notes retired')}
+    </div>`,
+};
+
+const VIZ_DESC = {
+  prereqs:  'Checking that the Hardhat node (port 8545) and gnark prover (port 8081) are both reachable. Also loading contract addresses from <code>build/receipts.json</code>.',
+  keygen:   'Each party generates two keypairs locally. The <strong>BabyJubJub</strong> keypair proves note ownership inside the ZK circuits. The <strong>ML-KEM-768</strong> keypair (NIST PQC standard) lets Alice send Bob an encrypted swap offer with no prior interaction. Private keys never leave each party.',
+  deposit_erc20: 'Alice deposits 50 ERC-20 tokens into the vault. A <strong>Poseidon commitment</strong> <code>H(pk_spend, salt, amount, tokenId)</code> is recorded on-chain instead of the plaintext values.',
+  deposit_nft: 'Bob deposits his NFT ticket into a separate vault. Same commitment scheme as the ERC20 vault — <code>H(pk_spend, salt, 1, tokenId)</code> — hides which specific ticket he holds.',
+  dvp_initiator: 'The <strong>gnark server</strong> runs the DvP Initiator circuit: Alice proves she owns her USDT note, then the circuit computes <strong>commitB</strong> (what Bob will receive), <strong>commitA</strong> (what Alice will receive — the ticket), and a <strong>revertCommitA</strong> fallback, and encrypts the offer for Bob via ML-KEM-768. Nothing about the amounts is revealed on-chain yet.',
+  bob_scan: 'Bob decapsulates Alice\'s ML-KEM ciphertext to recover a shared secret, decrypts the offer, and independently recomputes <code>commitB</code>/<code>commitA</code> to confirm they match what Alice\'s proof produced — before he commits to anything on-chain.',
+  dvp_destination: 'The <strong>gnark server</strong> runs the DvP Destination circuit: Bob proves he owns his ticket note, and the circuit checks that <code>commitA</code> really does encode the same amount/tokenId that Alice is expecting. This is what makes the swap safe to settle atomically.',
+  settle_alice: 'Alice submits her leg to <code>EnygmaDvp.submitPartialSettlement()</code>. This locks in the swap terms on-chain (keyed by commitB) with a deadline, and emits <code>SwapInitiated</code> — but nothing is nullified or inserted yet.',
+  settle_bob: 'Bob submits his leg. The contract sees his receipt\'s cross-reference matches Alice\'s pending entry, and calls its internal settlement routine: both nullifiers are spent and <strong>both</strong> output commitments are inserted — in the same transaction. If this transaction reverts, Alice\'s original leg is untouched.',
+  verify: 'Parsing the settlement transaction\'s events to confirm both <code>commitA</code> and <code>commitB</code> were inserted and that nullifiers were spent for both input notes — proof the swap fully and atomically completed.',
+};
+
+// ── Render the step visualizer ────────────────────────────────────────────────
+function renderStepViz(stepId, status) {
+  const labelEl = document.getElementById('svzLabel');
+  const badgeEl = document.getElementById('svzBadge');
+  const diagEl  = document.getElementById('svzDiagram');
+  const descEl  = document.getElementById('svzDesc');
+
+  const stepNames = {
+    prereqs:'Prerequisites', keygen:'Key Generation', deposit_erc20:'Alice Deposits ERC20',
+    deposit_nft:'Bob Deposits NFT', dvp_initiator:'DvP Initiator Proof', bob_scan:'Bob Scans & Verifies',
+    dvp_destination:'DvP Destination Proof', settle_alice:'Alice Submits (Leg 1/2)',
+    settle_bob:'Bob Submits (Leg 2/2)', verify:'Verify Settlement',
+  };
+
+  labelEl.textContent = stepNames[stepId] || stepId;
+  badgeEl.className = 'svz-badge ' + status;
+  badgeEl.textContent = status;
+
+  if (VIZ[stepId]) {
+    diagEl.innerHTML = VIZ[stepId]();
+    populateVizData(stepId);
+  }
+  if (VIZ_DESC[stepId]) {
+    descEl.innerHTML = VIZ_DESC[stepId];
+    descEl.style.display = '';
+  }
+}
+
+function populateVizData(stepId) {
+  const d = liveData;
+  function set(id, val) {
+    const el = document.getElementById(id);
+    if (el && val) { el.textContent = trunc(val, 18); el.classList.add('set'); }
+  }
+  if (stepId === 'keygen') {
+    set('viz-a-spend', d['p0-pkSpend']);
+    set('viz-b-spend', d['p1-pkSpend']);
+    set('viz-a-ek', d['p0-pkView']);
+    set('viz-b-ek', d['p1-pkView']);
+  }
+  if (stepId === 'dvp_initiator') {
+    set('viz-commitB', d['p0-commitB']);
+    set('viz-commitA', d['p0-commitA']);
+  }
+}
+
+function trunc(s, n) {
+  if (!s || s.length <= n) return s;
+  return s.slice(0, n) + '…';
+}
+
+function markSubstep(id, state) {
+  const el = document.getElementById('ss-' + id);
+  if (el) { el.className = 'svz-substep ' + state; el.querySelector('.svz-substep-icon').textContent = state === 'done' ? '✓' : '·'; }
+}
+
+// ── Step track ────────────────────────────────────────────────────────────────
+function renderSteps() {
+  const row = document.getElementById('stepsRow');
+  row.innerHTML = '';
+  STEPS.forEach((s, i) => {
+    const item = document.createElement('div');
+    item.className = 'step-item';
+    item.id = 'step-' + s.id;
+    item.innerHTML = `<div class="step-pill">${s.label}</div>`;
+    row.appendChild(item);
+    if (i < STEPS.length - 1) {
+      const arrow = document.createElement('div');
+      arrow.innerHTML = '<span class="step-arrow">›</span>';
+      row.appendChild(arrow);
+    }
+  });
+}
+
+function setStep(id, status) {
+  const el = document.getElementById('step-' + id);
+  if (!el) return;
+  el.className = el.className.replace(/\b(running|success|error)\b/g,'').trim() + ' ' + status;
+  updateProgress();
+  if (status === 'running' || status === 'success' || status === 'error') {
+    renderStepViz(id, status);
+  }
+  if (id === 'prereqs' && status === 'success') {
+    ['chain','gnark'].forEach(s => markSubstep(s,'done'));
+  }
+  if (id === 'bob_scan' && status === 'success') {
+    ['bs-decap','bs-decrypt','bs-verify'].forEach(s => markSubstep(s,'done'));
+  }
+  if (id === 'verify' && status === 'success') {
+    ['vf-commitb','vf-commita','vf-null'].forEach(s => markSubstep(s,'done'));
+  }
+}
+
+function updateProgress() {
+  let done = 0;
+  STEPS.forEach(s => { const el = document.getElementById('step-'+s.id); if (el && (el.classList.contains('success')||el.classList.contains('error'))) done++; });
+  document.getElementById('progressBar').style.width = (done/STEPS.length*100) + '%';
+}
+
+// ── Participant panel ──────────────────────────────────────────────────────────
+function setField(pid, field, value) {
+  const el = document.getElementById('p'+pid+'-'+field);
+  if (!el) return;
+  liveData['p'+pid+'-'+field] = value;
+  const hexFields = ['pkSpend','pkView','commitment','merkleRoot','commitA','commitB','ethAddr'];
+  if (hexFields.includes(field) && value && value.startsWith('0x') && value.length > 20) {
+    el.innerHTML = makeHex(value);
+  } else if (field === 'balance') {
+    el.innerHTML = makeBalanceChip(value);
+  } else {
+    el.textContent = value;
+  }
+  el.classList.add('set');
+  el.classList.remove('dim');
+  const activeStep = currentActiveStep();
+  if (activeStep) populateVizData(activeStep);
+}
+
+function currentActiveStep() {
+  for (const s of STEPS) {
+    const el = document.getElementById('step-' + s.id);
+    if (el && el.classList.contains('running')) return s.id;
+  }
+  return null;
+}
+
+function makeHex(full) {
+  const short = full.slice(0,14)+'…';
+  return `<span class="hex-wrap"><span class="hex-val" data-full="${escHtml(full)}" data-short="${escHtml(short)}" onclick="toggleHex(this)">${escHtml(short)}</span><button class="hex-copy-btn" onclick="copyHexVal(event,this)" title="Copy full value">copy</button></span>`;
+}
+function makeHexInline(full) {
+  if (!full || full==='—') return '—';
+  const short = full.slice(0,18)+'…';
+  return `<span class="hex-wrap"><span class="hex-val" data-full="${escHtml(full)}" data-short="${escHtml(short)}" onclick="toggleHex(this)">${escHtml(short)}</span><button class="hex-copy-btn" onclick="copyHexVal(event,this)" title="Copy full value">copy</button></span>`;
+}
+function copyHexVal(e, btn) {
+  e.stopPropagation();
+  const valEl = btn.previousElementSibling;
+  const text = valEl && valEl.dataset.full;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+}
+function toggleHex(el) {
+  const expanded = el.classList.toggle('expanded');
+  el.textContent = expanded ? el.dataset.full : el.dataset.short;
+  el.classList.toggle('expanded', expanded);
+}
+function makeBalanceChip(value) {
+  let cls = '';
+  if (value.includes('deposited')) cls = 'deposited';
+  else if (value.includes('received')) cls = 'received';
+  return cls ? `<span class="balance-chip ${cls}">${escHtml(value)}</span>` : escHtml(value);
+}
+
+// ── Proto (center panel) ──────────────────────────────────────────────────────
+function setProto(field, value) {
+  liveData[field] = value;
+  const el = document.getElementById('proto-' + field);
+  if (el) {
+    el.innerHTML = (value && value.startsWith('0x') && value.length > 20) ? makeHexInline(value) : escHtml(value);
+    return;
+  }
+  switch (field) {
+    case 'aliceTxHash':
+      document.getElementById('txhash-alice').innerHTML = makeHexInline(value);
+      document.getElementById('txstatus-alice').textContent = 'confirmed';
+      document.getElementById('txstatus-alice').className = 'tx-card-status done';
+      txCount++;
+      document.getElementById('priv-atomic').classList.add('verified');
+      break;
+    case 'aliceBlock': document.getElementById('txblock-alice').textContent = value; break;
+    case 'aliceGas':
+      document.getElementById('txgas-alice').textContent = commaNum(value);
+      setMetricVal('aliceGas', commaNum(value));
+      break;
+    case 'bobTxHash':
+      document.getElementById('txhash-bob').innerHTML = makeHexInline(value);
+      document.getElementById('txstatus-bob').textContent = 'confirmed';
+      document.getElementById('txstatus-bob').className = 'tx-card-status done';
+      txCount++;
+      document.getElementById('flowArrow1').classList.add('active');
+      document.getElementById('flowAmt1').classList.add('active');
+      document.getElementById('flowArrow2').classList.add('active');
+      document.getElementById('flowAmt2').classList.add('active');
+      document.getElementById('priv-commitment').classList.add('verified');
+      break;
+    case 'bobBlock': document.getElementById('txblock-bob').textContent = value; break;
+    case 'bobGas':
+      document.getElementById('txgas-bob').textContent = commaNum(value);
+      setMetricVal('bobGas', commaNum(value));
+      break;
+    case 'proofTimeMs': {
+      const ms = parseInt(value);
+      setMetricVal('proofTime', ms + ' ms');
+      break;
+    }
+    case 'totalGas':
+      setMetricVal('totalGas', commaNum(value));
+      break;
+    case 'flowTimeMs': {
+      const sec = (parseInt(value)/1000).toFixed(1);
+      setMetricVal('flowTime', sec + ' s');
+      break;
+    }
+  }
+}
+
+function commaNum(s) { return String(s).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+
+function setMetricVal(id, display) {
+  const el = document.getElementById('mv-' + id);
+  if (el) { el.textContent = display; el.classList.add('lit'); }
+  const card = document.getElementById('metric-' + id);
+  if (card) card.classList.add('set');
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────
+let currentLogFilter = 'all';
+function appendLog(ts, msg, cat) {
+  const body = document.getElementById('logBody');
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.dataset.cat = cat || '';
+  if (currentLogFilter !== 'all' && line.dataset.cat !== currentLogFilter) line.style.display = 'none';
+  const isOk = msg.startsWith('✓'), isErr = msg.startsWith('✗');
+  const msgCls = isOk ? ' ok' : isErr ? ' err' : '';
+  const cats = { key:'KEY', chain:'CHAIN', zk:'ZK' };
+  const catHtml = (cat && cats[cat]) ? `<span class="cat-badge cat-${cat}">${cats[cat]}</span>` : '';
+  line.innerHTML = `<span class="log-ts">${ts||''}</span>${catHtml}<span class="log-msg${msgCls}">${escHtml(msg)}</span>`;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+document.getElementById('logFilter').addEventListener('change', (e) => {
+  currentLogFilter = e.target.value;
+  document.querySelectorAll('#logBody .log-line').forEach(line => {
+    line.style.display = (currentLogFilter === 'all' || line.dataset.cat === currentLogFilter) ? '' : 'none';
+  });
+});
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Reset ──────────────────────────────────────────────────────────────────────
+function resetUI() {
+  renderSteps();
+  txCount = 0;
+  Object.keys(liveData).forEach(k => delete liveData[k]);
+
+  const pFields = ['ethAddr','pkSpend','pkView','commitment','merkleRoot','commitA','commitB','balance'];
+  [0,1].forEach(pid => {
+    pFields.forEach(f => {
+      const el = document.getElementById('p'+pid+'-'+f);
+      if (!el) return;
+      el.innerHTML = '—';
+      el.className = 'p-val' + (f==='ethAddr' ? ' dim' : '');
+    });
+  });
+
+  ['erc20VaultAddr','erc721VaultAddr','dvpAddr'].forEach(f => {
+    const el = document.getElementById('proto-'+f);
+    if (el) el.textContent = '—';
+  });
+
+  ['alice','bob'].forEach(t => {
+    ['txhash-','txblock-','txgas-'].forEach(p => { const el = document.getElementById(p+t); if (el) el.textContent = '—'; });
+    const s = document.getElementById('txstatus-'+t);
+    if (s) { s.textContent = 'pending'; s.className = 'tx-card-status pending'; }
+  });
+
+  document.querySelectorAll('.priv-badge').forEach(el => el.classList.remove('verified'));
+  document.getElementById('summaryCard').classList.remove('show');
+  ['flowArrow1','flowArrow2'].forEach(id => document.getElementById(id).classList.remove('active'));
+  ['flowAmt1','flowAmt2'].forEach(id => document.getElementById(id).classList.remove('active'));
+
+  ['proofTime','aliceGas','bobGas','totalGas','flowTime'].forEach(id => {
+    const el = document.getElementById('mv-'+id); if (el) { el.textContent = '—'; el.classList.remove('lit'); }
+    const card = document.getElementById('metric-'+id); if (card) card.classList.remove('set');
+  });
+
+  document.getElementById('svzLabel').textContent = 'Waiting';
+  document.getElementById('svzBadge').className = 'svz-badge idle';
+  document.getElementById('svzBadge').textContent = 'idle';
+  document.getElementById('svzDiagram').innerHTML = '<div class="svz-idle">Click <strong>Run Flow</strong> to start the NFT ↔ ERC20 swap demo.</div>';
+  document.getElementById('svzDesc').style.display = 'none';
+
+  document.getElementById('progressBar').style.width = '0%';
+  setStatus('idle');
+}
+
+// ── Status ──────────────────────────────────────────────────────────────────────
+function setStatus(st, text) {
+  document.getElementById('statusDot').className = 'status-dot ' + (st||'');
+  document.getElementById('statusText').textContent = text || st || 'idle';
+  document.getElementById('runBtn').disabled = st === 'running';
+}
+
+// ── SSE / run ─────────────────────────────────────────────────────────────────
+function run() {
+  if (es) { es.close(); es = null; }
+  resetUI();
+  clearLog();
+  setStatus('running', 'running');
+  es = new EventSource('/events');
+  es.onmessage = e => handleEvent(JSON.parse(e.data));
+  es.onerror = () => setStatus('error', 'disconnected');
+  fetch('/run', { method:'POST' })
+    .then(r => { if (!r.ok) r.text().then(t => { appendLog('','✗ '+t,''); setStatus('error','error'); }); })
+    .catch(err => { appendLog('','✗ fetch: '+err,''); setStatus('error','error'); });
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case 'reset':
+      resetUI(); setStatus('running','running');
+      break;
+    case 'step':
+      setStep(ev.step, ev.status);
+      if (ev.status === 'running') appendLog(null,'▶ '+(ev.label||ev.step)+(ev.msg?' — '+ev.msg:''),'');
+      if (ev.status === 'error')   appendLog(null,'✗ '+(ev.label||ev.step)+': '+ev.msg,'');
+      if (ev.step==='prereqs' && ev.status==='running') {
+        setTimeout(() => ['chain','gnark'].forEach((s,i) => setTimeout(() => markSubstep(s,'done'), i*400)), 400);
+      }
+      if (ev.step==='bob_scan' && ev.status==='running') {
+        setTimeout(() => markSubstep('bs-decap','done'), 500);
+        setTimeout(() => markSubstep('bs-decrypt','done'), 1000);
+      }
+      if (ev.step==='verify' && ev.status==='running') {
+        setTimeout(() => markSubstep('vf-commitb','done'), 300);
+        setTimeout(() => markSubstep('vf-commita','done'), 600);
+      }
+      break;
+    case 'log':
+      appendLog(ev.ts, ev.msg, ev.cat);
+      break;
+    case 'participant':
+      setField(ev.pid, ev.field, ev.value);
+      break;
+    case 'proto':
+      setProto(ev.field, ev.value);
+      break;
+    case 'done':
+      if (ev.status==='success') {
+        setStatus('success','done');
+        appendLog(null,'✓ '+ev.msg,'');
+        document.getElementById('priv-nullifier').classList.add('verified');
+        document.getElementById('priv-timeout').classList.add('verified');
+        showSummary();
+      } else {
+        setStatus('error','error');
+        appendLog(null,'✗ '+ev.msg,'');
+      }
+      if (es) { es.close(); es = null; }
+      break;
+  }
+}
+
+function showSummary() {
+  const balAlice = document.getElementById('p0-balance');
+  const balBob = document.getElementById('p1-balance');
+  document.getElementById('sum-alice').textContent = balBob ? balBob.textContent.replace(/\s*\(.*\)/,'') : '50 USDT';
+  document.getElementById('sum-bob').textContent = balAlice ? balAlice.textContent.replace(/\s*\(.*\)/,'') : 'ticket';
+  document.getElementById('sum-txcount').textContent = txCount + ' on-chain';
+  const tg = document.getElementById('mv-totalGas');
+  document.getElementById('sum-gas').textContent = (tg && tg.textContent!=='—') ? tg.textContent+' gas' : '—';
+  const ft = document.getElementById('mv-flowTime');
+  const pt = document.getElementById('mv-proofTime');
+  const sumExtra = document.getElementById('sum-extra');
+  if (ft && ft.textContent!=='—') sumExtra.textContent = 'Flow: '+(ft.textContent)+' · Initiator proof: '+(pt?pt.textContent:'—');
+  document.getElementById('summaryCard').classList.add('show');
+}
+
+// ── Presentation mode (applied to <html> so it's independent of any body class churn) ──
+(function initPresentationMode() {
+  const btn = document.getElementById('presentToggle');
+  if (!btn) return;
+  function apply(on) {
+    document.documentElement.classList.toggle('presentation-mode', on);
+    btn.classList.toggle('active', on);
+    localStorage.setItem('enygmaDvpPresentationMode', on ? '1' : '0');
+  }
+  btn.addEventListener('click', () => apply(!document.documentElement.classList.contains('presentation-mode')));
+  apply(localStorage.getItem('enygmaDvpPresentationMode') === '1');
+})();
+
+// ── Intro card ────────────────────────────────────────────────────────────
+(function initIntro() {
+  const body = document.getElementById('introBody');
+  const ic = document.getElementById('introToggleIc');
+  const toggle = document.getElementById('introToggle');
+  if (!body || !ic || !toggle) return;
+  function setCollapsed(collapsed) {
+    body.style.display = collapsed ? 'none' : 'block';
+    ic.textContent = collapsed ? '▸' : '▾';
+    localStorage.setItem('enygmaDvpIntroCollapsed', collapsed ? '1' : '0');
+  }
+  toggle.addEventListener('click', () => setCollapsed(body.style.display !== 'none'));
+  setCollapsed(localStorage.getItem('enygmaDvpIntroCollapsed') === '1');
+})();
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+renderSteps();
+setStatus('idle');
+</script>
+</body>
+</html>

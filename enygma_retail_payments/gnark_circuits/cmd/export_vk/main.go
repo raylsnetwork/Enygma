@@ -140,6 +140,8 @@ func main() {
 	exports := []struct{ keyFile, outName string }{
 		{"scripts/keys/PaymentVK.key", "Payment.json"},
 		{"scripts/keys/Payment2inVK.key", "Payment2in.json"},
+		{"scripts/keys/PaymentFeeVK.key", "PaymentFee.json"},
+		{"scripts/keys/PaymentRelayerFeePublicVK.key", "PaymentRelayerFeePublic.json"},
 	}
 	for _, e := range exports {
 		outPath := filepath.Join(buildDir, e.outName)

@@ -24,7 +24,7 @@ type EnygmaCircuit struct {
 	Config EnygmaCircuitConfig
 
 	// Public signals
-	HashedSharedSecrets []frontend.Variable    `gnark:",public"` // Array of hash of shared secrets (1D: sender's row)
+	FingerPrintofSharedSecrets [][]frontend.Variable `gnark:",public"` // k×k matrix: FingerPrint[i][j] = Poseidon(secret[i][j]); diagonal skipped
 	PublicKey           []frontend.Variable    `gnark:",public"` // Public keys from all other PLs
 	PreviousCommit      [][2]frontend.Variable `gnark:",public"` // Array of previous balances (Pedersen commitments)
 	TxCommit            [][2]frontend.Variable `gnark:",public"` // Array containing the commitments for this new tx
@@ -116,16 +116,30 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 
 	///////////////////////////////////**///////////////////////////////////
-	// Check if Hash Array of Secret is well formed
+	// Check if FingerPrintofSharedSecrets is well formed for sender's column
+	// SharedSecrets[i] = secret between bank i and the sender (sender's column)
+	// FingerPrintofSharedSecrets[i][senderCol] = Poseidon(SharedSecrets[i]) for i ≠ senderCol
+	// Diagonal entries (i == senderCol) are skipped — no self-shared-secret
 
 	for i := 0; i < k; i++ {
-		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i], circuit.SharedSecrets[i]})
+		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i]})
 		hashInter, _ := api.NewHint(utils.ModHint, 2, calculatedHash)
 		hashMod := hashInter[0]
 		hashQ := hashInter[1]
 		api.AssertIsEqual(api.Add(api.Mul(hashQ, JubJubPrimeSubGroup), hashMod), calculatedHash)
 		api.AssertIsEqual(cmp.IsLess(api, hashMod, JubJubPrimeSubGroup), 1)
-		api.AssertIsEqual(hashMod, circuit.HashedSharedSecrets[i])
+
+		isRowSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
+
+		for j := 0; j < k; j++ {
+			isColSender := api.IsZero(api.Sub(circuit.AnonymitySet[j], circuit.SenderId))
+			// isNotDiagonal = 1 - (isRowSender AND isColSender); only 0 when both i and j are the sender's position
+			isNotDiagonal := api.Sub(1, api.Mul(isRowSender, isColSender))
+			// Enforce: if j is the sender's column AND not the diagonal → FingerPrint[i][j] == hashMod
+			shouldCheck := api.Mul(isColSender, isNotDiagonal)
+			diff := api.Sub(circuit.FingerPrintofSharedSecrets[i][j], hashMod)
+			api.AssertIsEqual(api.Mul(shouldCheck, diff), 0)
+		}
 	}
 
 	///////////////////////////////////**///////////////////////////////////
@@ -223,17 +237,11 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(api.IsZero(api.Add(vGreaterEqualZero, frontend.Variable(1))), frontend.Variable(0))
 
 	///////////////////////////////////**//////////////////////////////////////
-	// Knoweldge of Nullifier
+	// Knowledge of Nullifier
+	// Preimage = secretRemain (Poseidon(prevR, sk) mod p) — unique per sender per round
+	// Diagonal of FingerPrintofSharedSecrets is skipped, so we use the sender's self-derived secret
 
-	selectedPreImage := frontend.Variable(0)
-
-	for i := 0; i < k; i++ {
-		diff := api.Sub(circuit.SenderId, circuit.AnonymitySet[i])
-		eq := api.IsZero(diff)
-		selectedPreImage = api.Add(selectedPreImage, api.Mul(eq, circuit.HashedSharedSecrets[i]))
-	}
-
-	computedNullifier := pos.Poseidon(api, []frontend.Variable{selectedPreImage, circuit.BlockNumber})
+	computedNullifier := pos.Poseidon(api, []frontend.Variable{secretRemain, circuit.BlockNumber})
 	api.AssertIsEqual(computedNullifier, circuit.Nullifier)
 
 
@@ -304,7 +312,7 @@ func (circuit *EnygmaCircuit) Define(api frontend.API) error {
 
 type EnygmaRequest struct {
 	
-	HashedSharedSecrets       []string    `json:"hashed_shared_secrets" binding:"required,min=1,max=6"`
+	FingerPrintofSharedSecrets [][]string `json:"fingerprint_shared_secrets" binding:"required,min=1,max=6"`
 	PublicKey                 []string    `json:"public_keys" binding:"required,min=1,max=6"`
 	PreviousCommit            [][2]string `json:"previous_commits" binding:"required,min=1,max=6,dive,len=2"`
 	TxCommit                  [][2]string `json:"tx_commits" binding:"required,min=1,max=6,dive,len=2"`
@@ -327,3 +335,5 @@ type EnygmaOutput struct {
 	Proof        []*big.Int `json:"proof"`
 	PublicSignal []*big.Int `json:"publicSignal"`
 }
+
+

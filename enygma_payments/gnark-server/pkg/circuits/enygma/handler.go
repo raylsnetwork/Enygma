@@ -18,17 +18,21 @@ import (
 )
 
 func createCircuitTemplate(config EnygmaCircuitConfig) EnygmaCircuit {
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
 	circuit := EnygmaCircuit{
-		Config:              config,
-		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-		PublicKey:           make([]frontend.Variable, config.NCommitment),
-		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-		MessageTags:         make([]frontend.Variable, config.NCommitment),
-		TxValues:            make([]frontend.Variable, config.NCommitment),
-		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
 	}
 	return circuit
 }
@@ -65,7 +69,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		for i := 0; i < config.NCommitment; i++ {
 			witness.SharedSecrets[i] = utils.ParseBigInt(request.SharedSecrets[i])
-			witness.HashedSharedSecrets[i] = utils.ParseBigInt(request.HashedSharedSecrets[i])
+			for j := 0; j < config.NCommitment; j++ {
+				witness.FingerPrintofSharedSecrets[i][j] = utils.ParseBigInt(request.FingerPrintofSharedSecrets[i][j])
+			}
 			witness.PublicKey[i] = utils.ParseBigInt(request.PublicKey[i])
 
 			witness.PreviousCommit[i][0] = utils.ParseBigInt(request.PreviousCommit[i][0])
@@ -132,8 +138,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 
 		// Generate public signal - order must match circuit public signal order
+		// FingerPrintofSharedSecrets is k×k, flattened row-major (36 values for k=6)
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.HashedSharedSecrets[i]))
+			for j := 0; j < config.NCommitment; j++ {
+				publicSignal = append(publicSignal, utils.ParseBigInt(request.FingerPrintofSharedSecrets[i][j]))
+			}
 		}
 
 		for i := 0; i < config.NCommitment; i++ {

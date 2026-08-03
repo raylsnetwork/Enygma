@@ -1,0 +1,1686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enygma Payments · Operator Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+<style>
+/* ── Parfin Palette ─────────────────────────────────────────────────────── */
+:root {
+  --bg:  #060B18;
+  --s1:  #0D1525;
+  --s2:  #121D34;
+  --s3:  #16243E;
+  --bd:  #1A2540;
+  --bd2: #1f2f4f;
+  --subtle: #253550;
+
+  /* Primary — Gold */
+  --gold:        #d4a832;
+  --gold-dim:    rgba(212,168,50,.08);
+  --gold-glow:   #2a1e00;
+  --amber:       #d4a832;
+  --amber-dim:   rgba(212,168,50,.08);
+  --amber-glow:  #2a1e00;
+
+  /* Secondary — Teal (Onboarding / Mint) */
+  --teal:        #2EC4B6;
+  --teal-dim:    rgba(46,196,182,.09);
+  --teal-glow:   #0a2220;
+  --purple:      #2EC4B6;
+  --purple-dim:  rgba(46,196,182,.09);
+  --purple-glow: #0a2220;
+
+  /* Tertiary — Blue (Verify / Running) */
+  --blue:        #7aaeff;
+  --blue-dim:    rgba(122,174,255,.09);
+  --blue-glow:   #0d1e38;
+
+  /* Semantic */
+  --green:       #22C55E;
+  --green-dim:   rgba(34,197,94,.09);
+  --green-glow:  #0a2a12;
+  --red:         #EF4444;
+  --red-dim:     rgba(239,68,68,.08);
+  --red-glow:    #2a0a0a;
+
+  --text:   #dde2f5;
+  --muted:  #475569;
+  --label:  #7a8aaa;
+  --mono:   'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, monospace;
+  --sans:   'Inter', system-ui, sans-serif;
+  --r:      6px;
+}
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0 }
+html, body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--sans); font-size: 13px; line-height: 1.5; height: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 4px; height: 4px }
+::-webkit-scrollbar-track { background: transparent }
+::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 2px }
+
+/* ── App shell ─────────────────────────────────────────────────────────── */
+.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden }
+
+/* ── Icons ─────────────────────────────────────────────────────────────── */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined'; font-weight: normal; font-style: normal;
+  font-size: 16px; line-height: 1; display: inline-block; white-space: nowrap;
+  word-wrap: normal; direction: ltr; font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  vertical-align: middle;
+}
+
+/* ── Focus glow ────────────────────────────────────────────────────────── */
+.glow-active:focus-within { box-shadow: 0 0 8px rgba(212,168,50,.2) }
+
+/* ── Hairline-divider grid ─────────────────────────────────────────────── */
+.hgrid { display: grid; gap: 1px; background: var(--bd); border: 1px solid var(--bd) }
+.hgrid > * { background: var(--s2) }
+
+/* ── Top bar ────────────────────────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; gap: 16px; padding: 0 24px;
+  height: 52px; background: var(--s1);
+  border-bottom: 1px solid var(--bd);
+  border-top: 3px solid var(--gold);
+  flex-shrink: 0;
+}
+.brand-block { display: flex; flex-direction: column; gap: 2px; margin-right: 6px }
+.brand {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .30em;
+  text-transform: uppercase; color: var(--gold); font-weight: 700; line-height: 1;
+}
+.topbar-title {
+  font-size: 10px; font-weight: 400; color: var(--label); line-height: 1; letter-spacing: .015em;
+}
+.topbar-sep { width: 1px; height: 26px; background: var(--bd2); flex-shrink: 0; margin: 0 4px }
+.prereqs { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 9px }
+.prereq-pill {
+  display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 12px;
+  border: 1px solid var(--bd2); background: var(--s2); color: var(--label);
+  transition: border-color .3s, color .3s;
+}
+.prereq-pill .material-symbols-outlined { font-size: 12px; opacity: .55 }
+.prereq-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0;
+  transition: background .3s, box-shadow .3s;
+}
+.status-row { display: flex; align-items: center; gap: 8px; margin-left: auto }
+.present-toggle {
+  display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 12px;
+  border: 1px solid var(--bd2); background: var(--s2); color: var(--label);
+  font-family: var(--mono); font-size: 9px; cursor: pointer;
+  transition: border-color .2s, color .2s, background .2s;
+}
+.present-toggle:hover { border-color: var(--gold); color: var(--gold) }
+.present-toggle.active { border-color: var(--gold); color: var(--gold); background: var(--gold-dim) }
+.present-toggle .material-symbols-outlined { font-size: 12px }
+body.presentation-mode { zoom: 1.3 }
+.gdot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); transition: background .3s, box-shadow .3s; flex-shrink: 0;
+}
+.gdot.running { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: blink 1.2s infinite }
+.gdot.success { background: var(--green); box-shadow: 0 0 8px var(--green) }
+.gdot.error   { background: var(--red);   box-shadow: 0 0 8px var(--red) }
+.status-txt { font-family: var(--mono); font-size: 10px; color: var(--label); min-width: 62px }
+
+/* ── Tab bar ────────────────────────────────────────────────────────────── */
+.tabbar {
+  display: flex; background: var(--bg); border-bottom: 1px solid var(--bd);
+  flex-shrink: 0; padding: 0 24px; gap: 2px; overflow-x: auto;
+}
+.tab {
+  display: flex; align-items: center; gap: 8px; padding: 11px 20px;
+  cursor: pointer; user-select: none; flex-shrink: 0; white-space: nowrap;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .10em; text-transform: uppercase;
+  color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .2s, border-color .2s;
+}
+.tab:hover { color: var(--label) }
+.tab.active { color: var(--text) }
+.setup-tab.active    { border-color: var(--gold) }
+.onboard-tab.active  { border-color: var(--teal) }
+.transfer-tab.active { border-color: var(--teal) }
+.verify-tab.active   { border-color: var(--blue) }
+.tab .material-symbols-outlined { font-size: 15px; flex-shrink: 0; opacity: .65; transition: opacity .2s }
+.tab.active .material-symbols-outlined { opacity: 1 }
+.setup-tab .material-symbols-outlined    { color: var(--gold) }
+.onboard-tab .material-symbols-outlined  { color: var(--teal) }
+.transfer-tab .material-symbols-outlined { color: var(--teal) }
+.verify-tab .material-symbols-outlined   { color: var(--blue) }
+.tab-check { font-size: 10px; display: none }
+.tab-check.on { display: inline }
+
+/* ── Content area ───────────────────────────────────────────────────────── */
+.tabs-wrap { flex: 1; overflow: hidden; position: relative }
+.tab-panel { position: absolute; inset: 0; overflow-y: auto; display: none }
+.tab-panel.active { display: block }
+
+/* ── Section header ─────────────────────────────────────────────────────── */
+.sec-hdr {
+  display: flex; align-items: center; gap: 14px; padding: 14px 24px;
+  background: var(--s1); border-bottom: 1px solid var(--bd);
+  flex-shrink: 0; position: sticky; top: 0; z-index: 10;
+}
+.sec-num {
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 14px; font-weight: 700;
+  border-width: 2px; border-style: solid; background: var(--s2);
+}
+.sec-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em }
+.sec-sub { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-left: auto }
+
+/* ── Intro / orientation card ───────────────────────────────────────────── */
+.intro-card { margin: 14px 24px 0; background: #0d1726; border: 1px solid var(--bd); border-left: 3px solid var(--gold) }
+.intro-hdr { display: flex; align-items: center; gap: 8px; padding: 11px 16px; cursor: pointer; user-select: none }
+.intro-title { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: var(--gold) }
+.intro-toggle-ic { margin-left: auto; color: var(--muted); font-size: 11px }
+.intro-body { padding: 0 16px 16px; font-size: 12px; color: var(--label); line-height: 1.6 }
+.intro-body p { margin-bottom: 10px }
+.intro-steps { list-style: none; display: flex; flex-direction: column; gap: 6px }
+.intro-steps li { display: flex; align-items: baseline; gap: 8px }
+.intro-steps strong { color: var(--text) }
+.intro-step-num { font-family: var(--mono); font-size: 10px; font-weight: 700; flex-shrink: 0; width: 14px }
+
+/* ── Action buttons ─────────────────────────────────────────────────────── */
+.action-btn {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .07em; padding: 7px 20px; border-radius: var(--r);
+  border: none; cursor: pointer;
+  transition: opacity .15s, transform .1s;
+}
+.action-btn:hover:not(:disabled) { opacity: .85; transform: translateY(-1px) }
+.action-btn:active:not(:disabled) { transform: translateY(0) }
+.action-btn:disabled { opacity: .28; cursor: not-allowed }
+.btn-setup   { background: var(--gold);  color: #140e00 }
+.btn-onboard { background: var(--teal);  color: #001a18 }
+.btn-blue    { background: var(--blue);  color: var(--bg) }
+.btn-sm { padding: 4px 12px; font-size: 9px }
+
+/* ── Step strip ─────────────────────────────────────────────────────────── */
+.hstrip {
+  display: flex; align-items: stretch; padding: 16px 24px 16px; gap: 0;
+  flex-wrap: wrap; row-gap: 10px; border-bottom: 1px solid var(--bd);
+  position: relative; isolation: isolate;
+}
+.hstrip::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background-image: repeating-linear-gradient(90deg, rgba(140,145,156,.08) 0, rgba(140,145,156,.08) 1px, transparent 1px, transparent 8.3%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 50%, transparent 100%);
+}
+.hstep {
+  flex: 1; min-width: 120px;
+  border: 1px solid var(--bd); border-left: 3px solid var(--muted);
+  background: var(--s1); border-radius: var(--r);
+  padding: 12px 14px; position: relative;
+  transition: border-color .25s, background .25s, box-shadow .25s;
+}
+.hstep-num {
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .12em; color: var(--muted); margin-bottom: 8px;
+  transition: color .25s;
+}
+.hstep-top { display: flex; align-items: center; gap: 8px }
+.hstep-ic {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--muted); display: flex; align-items: center;
+  justify-content: center; font-family: var(--mono); font-size: 9px;
+  color: var(--muted); transition: all .25s;
+}
+.hstep-lbl { font-size: 12px; font-weight: 600; color: var(--label); transition: color .25s; white-space: nowrap }
+.hstep-sub {
+  font-family: var(--mono); font-size: 8px; color: var(--muted);
+  margin-top: 5px; padding-left: 28px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hconn { width: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center }
+.hconn::after { content: ''; display: block; width: 100%; height: 1px; background: var(--bd2) }
+
+.hstep.running { border-left-color: var(--blue); border-color: var(--blue-glow); background: rgba(122,174,255,.03); box-shadow: 0 0 14px rgba(122,174,255,.05) }
+.hstep.running .hstep-ic  { border-color: var(--blue); color: var(--blue); animation: spin 1s linear infinite }
+.hstep.running .hstep-lbl { color: var(--blue) }
+.hstep.running .hstep-num { color: var(--blue) }
+.hstep.success { border-left-color: var(--green); border-color: var(--green-glow); background: rgba(34,197,94,.03) }
+.hstep.success .hstep-ic  { border-color: var(--green); color: var(--green); background: rgba(34,197,94,.1) }
+.hstep.success .hstep-lbl { color: var(--green) }
+.hstep.success .hstep-num { color: var(--green) }
+.hstep.success .hstep-sub { color: var(--teal) }
+.hstep.error { border-left-color: var(--red); border-color: var(--red-glow); background: rgba(239,68,68,.04) }
+.hstep.error .hstep-ic    { border-color: var(--red); color: var(--red) }
+.hstep.error .hstep-lbl   { color: var(--red) }
+.hstep.error .hstep-num   { color: var(--red) }
+.hstep.warning { border-left-color: var(--gold); border-color: var(--gold-glow); background: rgba(212,168,50,.03) }
+.hstep.warning .hstep-ic  { border-color: var(--gold); color: var(--gold) }
+.hstep.warning .hstep-lbl { color: var(--gold) }
+
+/* ── Contract address cards ─────────────────────────────────────────────── */
+.cc-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px; background: var(--bd); border: 1px solid var(--bd); margin: 16px 24px;
+}
+.cc-card {
+  min-width: 0; background: var(--s2); border-left: 3px solid var(--bd2);
+  padding: 13px 16px; transition: border-color .3s;
+}
+.cc-card.lit { border-left-color: var(--gold) }
+.cc-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 5px }
+.cc-label { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--gold) }
+.cc-type  { font-family: var(--mono); font-size: 8px; color: var(--muted) }
+.cc-addr  { font-family: var(--mono); font-size: 10px; color: var(--muted); word-break: break-all; transition: color .3s; line-height: 1.5 }
+.cc-addr.set { color: var(--text) }
+.cc-meta  { margin-top: 5px; font-family: var(--mono); font-size: 8.5px; color: var(--muted) }
+.cc-meta span { color: var(--label) }
+
+/* ── Banner ─────────────────────────────────────────────────────────────── */
+.banner { display: none; margin: 4px 24px 14px; padding: 10px 16px; border-radius: var(--r); font-family: var(--mono); font-size: 10.5px }
+.banner.success { display: flex; align-items: baseline; gap: 8px; background: rgba(34,197,94,.04); border: 1px solid var(--green); color: var(--green) }
+.banner.error   { display: flex; align-items: baseline; gap: 8px; background: rgba(239,68,68,.04);  border: 1px solid var(--red);   color: var(--red) }
+.banner-close { margin-left: auto; cursor: pointer; opacity: .6; font-size: 13px; line-height: 1; padding: 0 4px }
+.banner-close:hover { opacity: 1 }
+
+/* ── Bank grid (onboarding) — Stitch style ────────────────────────────── */
+.sec-hdr-sub { font-size: 11px; color: var(--muted); margin-top: 3px; font-family: var(--sans) }
+
+.bank-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 12px; padding: 16px 24px 0 }
+.bank-card {
+  background: #0d1726;
+  border: 1px solid var(--bd); border-radius: 0;
+  padding: 16px; position: relative; overflow: hidden;
+  display: flex; flex-direction: column; gap: 10px;
+  transition: border-color .35s;
+}
+.bank-card-bar {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--bd2); transition: background .35s;
+}
+.bank-card.registered { border-color: rgba(34,197,94,.18) }
+.bank-card.registered .bank-card-bar { background: var(--green) }
+
+.bc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px }
+.bc-title {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin-bottom: 2px;
+}
+.bc-acct { font-family: var(--mono); font-size: 9px; color: var(--muted) }
+
+.bank-badge {
+  font-family: var(--mono); font-size: 7px; font-weight: 700;
+  letter-spacing: .10em; text-transform: uppercase; padding: 2px 6px;
+  border-radius: 3px; display: inline-block; flex-shrink: 0;
+}
+.badge-sender   { background: rgba(239,68,68,.12);   color: var(--red);   border: 1px solid rgba(239,68,68,.25) }
+.badge-receiver { background: rgba(34,197,94,.10);   color: var(--green); border: 1px solid rgba(34,197,94,.25) }
+.badge-observer { background: rgba(122,138,170,.08); color: var(--label); border: 1px solid rgba(122,138,170,.18) }
+
+.bc-fields { display: flex; flex-direction: column; gap: 8px; flex: 1 }
+.bc-field-row { display: flex; flex-direction: column; gap: 3px }
+.bc-field-label {
+  font-family: var(--mono); font-size: 8px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.bc-val {
+  font-family: var(--mono); font-size: 9px; color: var(--muted);
+  background: rgba(6,11,24,.6); padding: 5px 8px;
+  word-break: break-all; line-height: 1.4; transition: color .3s; min-height: 26px;
+}
+
+.bc-pills { display: flex; flex-wrap: wrap; gap: 5px }
+.bstep {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--mono); font-size: 9px;
+  padding: 3px 9px; border-radius: 12px;
+  border: 1px solid var(--bd2); color: var(--muted);
+  background: transparent; transition: all .2s; white-space: nowrap;
+}
+.bstep.running { background: rgba(122,174,255,.08); color: var(--blue);  border-color: rgba(122,174,255,.25) }
+.bstep.success { background: rgba(34,197,94,.08);  color: var(--green); border-color: rgba(34,197,94,.22) }
+.bstep.error   { background: rgba(239,68,68,.08);  color: var(--red);   border-color: rgba(239,68,68,.22) }
+.bstep-ic { font-size: 9px; transition: all .2s }
+.bstep.running .bstep-ic { animation: spin 1s linear infinite; display: inline-block }
+
+.bank-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding-top: 10px; border-top: 1px solid var(--bd); margin-top: auto;
+}
+.bstat { font-family: var(--mono); font-size: 9px; color: var(--muted) }
+.bstat.reg { color: var(--green) }
+
+/* ── Consensus / KA bar ─────────────────────────────────────────────────── */
+.consensus-bar {
+  margin: 12px 24px 16px; padding: 16px 20px;
+  background: var(--s1); border: 1px solid var(--bd);
+  border-left: 3px solid var(--teal);
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  flex-wrap: wrap; gap: 12px;
+}
+.consensus-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px }
+.consensus-sub { font-family: var(--mono); font-size: 9px; color: var(--muted) }
+
+/* ── KA aggregate progress strip (operator-side, read-only) ────────────── */
+.ka-progress-strip { margin: 0 24px 16px; padding: 10px 20px; background: var(--s1); border: 1px solid var(--bd); border-left: 3px solid var(--teal-glow); transition: border-color .4s }
+.ka-progress-strip.complete { border-left-color: var(--green) }
+.ka-progress-row { display: flex; align-items: center; gap: 8px }
+.ka-progress-text { font-family: var(--mono); font-size: 10px; color: var(--label) }
+.ka-progress-strip.complete .ka-progress-text { color: var(--green) }
+.ka-progress-bar-track { height: 3px; background: var(--bd); margin-top: 8px; overflow: hidden }
+.ka-progress-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--teal), var(--green)); transition: width .5s cubic-bezier(.16,1,.3,1) }
+
+/* ── Mint tab — Stitch style ────────────────────────────────────────────── */
+.mint-form-card {
+  margin: 16px 24px 0; background: #0d1726;
+  border: 1px solid var(--bd); padding: 20px 22px;
+  position: relative; overflow: hidden;
+}
+.mint-form-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--teal) }
+.mint-form-header { margin-bottom: 18px }
+.mint-form-title {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--teal); margin-bottom: 4px;
+}
+.mint-form-sub { font-family: var(--mono); font-size: 9px; color: var(--muted) }
+.mint-params { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 14px }
+.mint-field-group { display: flex; flex-direction: column; gap: 5px }
+.mint-field-label {
+  font-family: var(--mono); font-size: 8px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .10em;
+}
+.mint-select {
+  background: rgba(6,11,24,.6); border: 1px solid var(--bd2);
+  padding: 8px 14px; font-family: var(--mono); font-size: 12px;
+  color: var(--teal); font-weight: 700; outline: none; cursor: pointer;
+  transition: border-color .2s; min-width: 150px;
+}
+.mint-select:focus { border-color: var(--teal) }
+.mint-number-input {
+  width: 150px; background: rgba(6,11,24,.6); border: 1px solid var(--bd2);
+  padding: 8px 12px; font-family: var(--mono); font-size: 14px;
+  color: var(--teal); font-weight: 700; outline: none; transition: border-color .2s;
+}
+.mint-number-input:focus { border-color: var(--teal) }
+.mint-step {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border: 1px solid var(--bd);
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  background: rgba(6,11,24,.3); margin-bottom: 14px; transition: all .2s;
+}
+.mint-step.running { border-color: var(--teal-glow); color: var(--teal); background: rgba(46,196,182,.04) }
+.mint-step.success { border-color: var(--green-glow); color: var(--green); background: rgba(34,197,94,.04) }
+.mint-step.error   { border-color: var(--red-glow);   color: var(--red);   background: rgba(239,68,68,.04) }
+.mint-note {
+  font-family: var(--mono); font-size: 8.5px; color: var(--muted); line-height: 1.8;
+  padding-top: 14px; border-top: 1px solid var(--bd);
+}
+.mint-note strong { color: var(--label) }
+.mint-note em { color: var(--gold); font-style: normal }
+
+/* ── Bank dashboard — Stitch style ──────────────────────────────────────── */
+.dash-section { margin: 20px 24px 0 }
+.dash-section-hdr {
+  font-family: var(--mono); font-size: 8px; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 12px;
+}
+.dash-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 10px }
+.dash-card {
+  background: #0d1726; border: 1px solid var(--bd); border-left: 2px solid var(--bd2);
+  padding: 14px 14px; text-decoration: none;
+  display: flex; flex-direction: column; gap: 5px; position: relative;
+  transition: border-left-color .2s, border-color .2s, background .2s;
+}
+.dash-card:hover { border-left-color: var(--teal); border-color: rgba(46,196,182,.2); background: #0f1a2a }
+.dash-card-name {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--text);
+}
+.dash-card-role { font-family: var(--mono); font-size: 8px; color: var(--muted) }
+.dash-card-arrow {
+  font-family: var(--mono); font-size: 8px; color: var(--teal);
+  letter-spacing: .06em; margin-top: auto; padding-top: 10px;
+  border-top: 1px solid var(--bd);
+}
+
+/* ── Verify / Balances tab — Stitch style ───────────────────────────────── */
+.vcard {
+  margin: 14px 24px 0; background: #0d1726;
+  border: 1px solid var(--bd); padding: 18px 22px;
+  position: relative; overflow: hidden;
+}
+.vcard-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 2px }
+.vcard-hdr { display: flex; align-items: center; gap: 10px; margin-bottom: 16px }
+.vcard-title { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase }
+
+/* Balance grid */
+.vbal-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px }
+.vbal-card {
+  background: rgba(6,11,24,.5); border: 1px solid var(--bd);
+  border-left: 2px solid var(--gold); padding: 12px 14px;
+}
+.vbal-name {
+  font-family: var(--mono); font-size: 8px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px;
+}
+.vbal-pt-label {
+  font-family: var(--mono); font-size: 7.5px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em; margin-bottom: 3px;
+}
+.vbal-point {
+  font-family: var(--mono); font-size: 8px; color: var(--muted);
+  word-break: break-all; line-height: 1.6; transition: color .3s;
+  background: rgba(6,11,24,.4); padding: 5px 8px;
+}
+.vbal-point.set { color: var(--teal) }
+
+/* Pedersen calculator */
+.vcalc-grid { display: grid; grid-template-columns: 240px 1fr; gap: 0; align-items: stretch }
+.vcalc-input-panel { display: flex; flex-direction: column; gap: 12px; padding-right: 20px; border-right: 1px solid var(--bd) }
+.vcalc-output-panel { padding-left: 20px; display: flex; flex-direction: column; justify-content: center }
+.vcalc-field-label {
+  font-family: var(--mono); font-size: 8px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .10em; margin-bottom: 5px;
+}
+.vcalc-inp {
+  background: rgba(6,11,24,.6); border: 1px solid var(--bd2);
+  padding: 8px 12px; font-family: var(--mono); font-size: 12px;
+  color: var(--text); outline: none; width: 100%; transition: border-color .2s;
+}
+.vcalc-inp:focus { border-color: var(--blue) }
+.vcalc-out-label {
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .10em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+}
+.vcalc-out {
+  font-family: var(--mono); font-size: 9px; word-break: break-all;
+  line-height: 1.8; display: none;
+}
+.vcalc-out.on { display: block }
+.vcalc-out.on ~ .vcalc-placeholder { display: none }
+.vcalc-placeholder { font-family: var(--mono); font-size: 8.5px; color: var(--muted); line-height: 1.8 }
+.vcalc-axis { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 3px }
+.vcalc-val { font-family: var(--mono); font-size: 9px; color: var(--teal); word-break: break-all; margin-bottom: 10px; background: rgba(6,11,24,.4); padding: 5px 8px }
+
+/* TxRandom + Cumulative R shared styles (built by JS) */
+.rv-top-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px }
+.rv-hint { font-family: var(--mono); font-size: 8.5px; color: var(--muted); flex: 1 }
+.rv-copyall-btn {
+  font-family: var(--mono); font-size: 8px; background: none;
+  border: 1px solid var(--bd2); color: var(--muted);
+  padding: 3px 12px; cursor: pointer; transition: border-color .2s, color .2s;
+}
+.rv-copyall-btn:hover { border-color: var(--gold); color: var(--gold) }
+.rv-copyall-btn.copied { border-color: var(--green); color: var(--green) }
+.rv-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 10px }
+.rv-card {
+  background: rgba(6,11,24,.5); border: 1px solid var(--bd);
+  border-left: 2px solid var(--gold); padding: 10px 12px;
+}
+.rv-card-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 6px;
+}
+.rv-card-name { font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--text) }
+.rv-card-role {
+  font-family: var(--mono); font-size: 7.5px; color: var(--muted);
+  flex-basis: 100%; order: 3; line-height: 1.4;
+}
+.rv-copy-btn {
+  font-family: var(--mono); font-size: 7.5px; background: none;
+  border: 1px solid var(--bd2); color: var(--muted);
+  padding: 2px 8px; cursor: pointer; transition: border-color .2s, color .2s;
+  white-space: nowrap; flex-shrink: 0; margin-left: auto;
+}
+.rv-copy-btn:hover { border-color: var(--teal); color: var(--teal) }
+.rv-copy-btn.copied { border-color: var(--green); color: var(--green) }
+.rv-val {
+  font-family: var(--mono); font-size: 8px; color: var(--teal);
+  word-break: break-all; line-height: 1.7; user-select: all; cursor: text;
+  background: rgba(6,11,24,.4); padding: 4px 8px;
+}
+.rv-sum-box { margin-top: 12px; padding: 12px 16px; font-family: var(--mono); font-size: 9px }
+.rv-sum-ok  { background: var(--green-dim); border: 1px solid rgba(34,197,94,.2) }
+.rv-sum-bad { background: var(--red-dim);   border: 1px solid rgba(239,68,68,.2) }
+.rv-sum-title { font-weight: 700; font-size: 11px; margin-bottom: 5px }
+.rv-sum-title.ok  { color: var(--green) }
+.rv-sum-title.bad { color: var(--red) }
+
+/* ── KA components (used by agreement tab JS) ───────────────────────────── */
+.ka-bank-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 10px; padding: 0 24px 14px }
+.ka-bank-card { border: 1px solid var(--bd); border-radius: var(--r); background: var(--s1); overflow: hidden; transition: border-color .35s }
+.ka-bank-card.agreed { border-color: var(--green-glow) }
+.ka-bank-head { padding: 9px 12px 7px; border-bottom: 1px solid var(--bd); background: var(--s2) }
+.ka-bank-name { font-weight: 600; font-size: 12px; margin-bottom: 3px }
+.ka-fields { padding: 6px 12px; font-family: var(--mono); font-size: 8px; display: flex; flex-direction: column; gap: 3px }
+.ka-row { display: flex; gap: 5px; align-items: baseline }
+.ka-k { color: var(--muted); min-width: 22px; flex-shrink: 0; font-size: 7.5px; letter-spacing: .04em }
+.ka-v { color: var(--muted); word-break: break-all; transition: color .3s; flex: 1 }
+.ka-v.set { color: var(--text) }
+.ka-v.teal { color: var(--teal) }
+.ka-v.green { color: var(--green) }
+.ka-hint { padding: 5px 12px 8px; font-family: var(--mono); font-size: 8px; color: var(--blue); line-height: 1.6 }
+.ka-peer-dots { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 2px }
+.ka-peer-dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid var(--bd2); background: var(--s2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 6.5px; color: var(--muted);
+  transition: all .3s; flex-shrink: 0; cursor: default;
+}
+.ka-peer-dot.agreed { border-color: var(--green-glow); background: rgba(34,197,94,.18); color: var(--green) }
+.ka-matrix-wrap { padding: 4px 24px 14px }
+.ka-matrix-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px }
+.ka-matrix-title { font-family: var(--mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted) }
+.ka-counter { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--muted); transition: color .4s; font-variant-numeric: tabular-nums; line-height: 1 }
+.ka-counter.active { color: var(--green) }
+.ka-counter-sub { font-family: var(--mono); font-size: 9px; color: var(--muted) }
+.ka-matrix { display: grid; grid-template-columns: 26px repeat(6,1fr); gap: 3px; max-width: 500px }
+.ka-mlabel { font-family: var(--mono); font-size: 8px; color: var(--muted); display: flex; align-items: center; justify-content: center; padding: 3px 0; letter-spacing: .04em }
+.ka-mlabel.row { justify-content: flex-end; padding-right: 5px }
+.ka-mcell {
+  height: 30px; border-radius: 4px; border: 1px solid var(--bd2); background: var(--s2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 9px; color: var(--muted); transition: all .3s;
+}
+.ka-mcell.self { background: var(--bg); border-color: var(--bd); color: var(--subtle) }
+.ka-mcell.encapping { border-color: var(--blue-glow); background: rgba(122,174,255,.12); color: var(--blue); animation: blink 1s infinite }
+.ka-mcell.done { border-color: var(--green-glow); background: rgba(34,197,94,.12); color: var(--green) }
+
+/* ── Log panel ──────────────────────────────────────────────────────────── */
+.log-panel {
+  height: 152px; flex-shrink: 0;
+  border-top: 1px solid var(--bd); background: var(--s1);
+  display: flex; flex-direction: column;
+}
+.log-hdr {
+  display: flex; align-items: center; gap: 8px; padding: 6px 20px;
+  background: var(--s2); border-bottom: 1px solid var(--bd); flex-shrink: 0;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted);
+}
+.log-hdr-title { color: var(--gold); font-weight: 700 }
+.log-hdr-status { color: var(--muted); font-size: 8px; opacity: .6 }
+.log-activity { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); transition: background .3s }
+.log-filter-select {
+  margin-left: auto; font-family: var(--mono); font-size: 8px; text-transform: none;
+  letter-spacing: normal; background: var(--bg); border: 1px solid var(--bd); color: var(--muted);
+  border-radius: 3px; padding: 2px 6px; cursor: pointer;
+}
+.log-filter-select:hover { border-color: var(--bd2); color: var(--label) }
+#logOut {
+  flex: 1; overflow-y: auto; padding: 6px 20px;
+  display: flex; flex-direction: column;
+  font-family: var(--mono); font-size: 9px; line-height: 1.8;
+}
+.ll { display: flex; gap: 10px }
+.lts { color: var(--muted); flex-shrink: 0; width: 74px }
+.lb { color: var(--text); word-break: break-word }
+.lb.ok   { color: var(--green) }
+.lb.err  { color: var(--red) }
+.lb.info { color: var(--teal) }
+.lb.warn { color: var(--gold) }
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes spin  { to { transform: rotate(360deg) } }
+@keyframes blink { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+.sk-input {
+  width: 100%; background: var(--s2); border: 1px solid var(--bd2);
+  border-radius: 4px; padding: 4px 7px; font-family: var(--mono);
+  font-size: 10px; color: var(--gold); font-weight: 700; outline: none;
+  transition: border-color .2s; box-sizing: border-box;
+}
+.sk-input:focus { border-color: var(--gold) }
+.field-label { font-family: var(--mono); font-size: 7px; color: var(--muted); margin-bottom: 2px; letter-spacing: .03em }
+.field-val { font-family: var(--mono); font-size: 8px; color: var(--muted); word-break: break-all; line-height: 1.45; transition: color .3s }
+code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182,.08); padding: 0 3px; border-radius: 3px; font-size: .9em }
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+.tab-panel { overflow-x: auto }
+@media (max-width: 1100px) {
+  .bank-grid, .dash-grid, .ka-bank-grid { grid-template-columns: repeat(3, 1fr) }
+  .vbal-grid, .rv-cards { grid-template-columns: repeat(2, 1fr) }
+  .vcalc-grid { grid-template-columns: 1fr }
+  .vcalc-input-panel { border-right: none; border-bottom: 1px solid var(--bd); padding-right: 0; padding-bottom: 16px; margin-bottom: 16px }
+  .vcalc-output-panel { padding-left: 0 }
+}
+@media (max-width: 700px) {
+  .bank-grid, .dash-grid, .ka-bank-grid, .vbal-grid, .rv-cards { grid-template-columns: repeat(2, 1fr) }
+  .mint-params { flex-direction: column; align-items: flex-start }
+  .prereqs { display: none }
+  .present-toggle-label { display: none }
+}
+@media (max-width: 480px) {
+  .bank-grid, .dash-grid, .ka-bank-grid, .vbal-grid, .rv-cards { grid-template-columns: 1fr }
+  .cc-strip { grid-template-columns: 1fr }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Top bar ────────────────────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="brand-block">
+    <div class="brand">Parfin</div>
+    <div class="topbar-title">Enygma · Confidential Interbank Settlement</div>
+  </div>
+  <div class="topbar-sep"></div>
+  <div class="prereqs">
+    <div class="prereq-pill" id="prereq-hardhat">
+      <span class="material-symbols-outlined">dns</span><div class="prereq-dot"></div>Hardhat :8545
+    </div>
+    <div class="prereq-pill" id="prereq-gnark">
+      <span class="material-symbols-outlined">memory</span><div class="prereq-dot"></div>Gnark :8080
+    </div>
+    <div class="prereq-pill" id="prereq-relayer">
+      <span class="material-symbols-outlined">sync_alt</span><div class="prereq-dot"></div>Relayer :8082
+    </div>
+  </div>
+  <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
+    <span class="material-symbols-outlined">zoom_in</span><span class="present-toggle-label">Presentation</span>
+  </button>
+  <div class="status-row">
+    <div class="gdot" id="gDot"></div>
+    <span class="status-txt" id="gStatus">Ready</span>
+  </div>
+</div>
+
+<!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
+<div class="tabbar">
+  <div class="tab setup-tab active" data-tab="setup">
+    <span class="material-symbols-outlined">tune</span>I · Setup
+    <span class="tab-check" id="tp-setup"></span>
+  </div>
+  <div class="tab onboard-tab" data-tab="onboard">
+    <span class="material-symbols-outlined">domain_add</span>II · Bank Onboarding
+    <span class="tab-check" id="tp-onboard"></span>
+  </div>
+  <div class="tab transfer-tab" data-tab="mint">
+    <span class="material-symbols-outlined">paid</span>III · Mint Supply
+    <span class="tab-check" id="tp-mint"></span>
+  </div>
+  <div class="tab verify-tab" data-tab="verify">
+    <span class="material-symbols-outlined">verified</span>IV · Balances
+  </div>
+</div>
+
+<div class="tabs-wrap">
+
+<!-- ══════════════ TAB I · SETUP ══════════════════════════════════════════ -->
+<div class="tab-panel active" id="panel-setup">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border-color:var(--gold);color:var(--gold)">I</div>
+    <div class="sec-title" style="color:var(--gold)">Contract Setup</div>
+    <div class="sec-sub">Chain · Enygma Contract · ZK Verifier</div>
+    <button class="action-btn btn-setup" id="setupBtn">▶ Run Setup</button>
+  </div>
+
+  <!-- Orientation card -->
+  <div class="intro-card" id="introCard">
+    <div class="intro-hdr" id="introToggle">
+      <span class="material-symbols-outlined" style="font-size:16px;color:var(--gold)">info</span>
+      <span class="intro-title">What you're about to see</span>
+      <span class="intro-toggle-ic" id="introToggleIc">▾</span>
+    </div>
+    <div class="intro-body" id="introBody">
+      <p>
+        Enygma is a confidential payments protocol: six banks transact on a public chain, but amounts,
+        senders, and receivers stay hidden behind Pedersen commitments and a Groth16 zero-knowledge proof.
+        This console walks through the full protocol, in order:
+      </p>
+      <ol class="intro-steps">
+        <li><span class="intro-step-num" style="color:var(--gold)">I</span> <strong>Setup</strong> — deploy-check the chain, initialize the Enygma contract, register its ZK verifier.</li>
+        <li><span class="intro-step-num" style="color:var(--teal)">II</span> <strong>Bank Onboarding</strong> — register all 6 banks on-chain, then open each bank's own dashboard to run ML-KEM-768 Key Agreement (post-quantum, pairwise, off this screen).</li>
+        <li><span class="intro-step-num" style="color:var(--teal)">III</span> <strong>Mint Supply</strong> — credit a bank's encrypted balance with tokens, as the operator.</li>
+        <li><span class="intro-step-num" style="color:var(--blue)">IV</span> <strong>Balances &amp; Verify</strong> — send a payment from a bank's own dashboard, then use the tools here to independently check the math behind what settled on-chain.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Step pipeline -->
+  <div class="hstrip">
+    <div class="hstep" id="hs-prerequisites" title="Checks that the local blockchain node, ZK prover, and payment relayer are all reachable before doing anything else.">
+      <div class="hstep-num">01</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-prerequisites">○</div>
+        <div class="hstep-lbl">Prerequisites</div>
+      </div>
+      <div class="hstep-sub" id="hsub-prerequisites">Hardhat · Gnark · Relayer</div>
+    </div>
+    <div class="hconn"></div>
+    <div class="hstep" id="hs-dial_chain" title="Opens a connection to the chain and loads the operator's signing key, used to send the setup transactions below.">
+      <div class="hstep-num">02</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-dial_chain">○</div>
+        <div class="hstep-lbl">Dial Chain</div>
+      </div>
+      <div class="hstep-sub" id="hsub-dial_chain">ethclient.Dial(RPC)</div>
+    </div>
+    <div class="hconn"></div>
+    <div class="hstep" id="hs-init_contract" title="Calls the Enygma contract's one-time initializer. Safe to re-run — has no effect if it's already initialized.">
+      <div class="hstep-num">03</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-init_contract">○</div>
+        <div class="hstep-lbl">Init Contract</div>
+      </div>
+      <div class="hstep-sub" id="hsub-init_contract">initialize() — idempotent</div>
+    </div>
+    <div class="hconn"></div>
+    <div class="hstep" id="hs-add_verifier" title="Registers the Groth16 ZK verifier contract so Enygma can check transfer proofs on-chain.">
+      <div class="hstep-num">04</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-add_verifier">○</div>
+        <div class="hstep-lbl">Add Verifier</div>
+      </div>
+      <div class="hstep-sub" id="hsub-add_verifier">addVerifier(addr)</div>
+    </div>
+    <div class="hconn"></div>
+    <div class="hstep" id="hs-check_relay_addr" title="Confirms the relayer service is pointed at the same contract just deployed, so payments don't silently fail against a stale address.">
+      <div class="hstep-num">05</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-check_relay_addr">○</div>
+        <div class="hstep-lbl">Verify Relay</div>
+      </div>
+      <div class="hstep-sub" id="hsub-check_relay_addr">GET /relay/info</div>
+    </div>
+  </div>
+
+  <!-- Contract address cards -->
+  <div class="cc-strip">
+    <div class="cc-card" id="cc-enygma">
+      <div class="cc-row">
+        <div class="cc-label" title="The confidential ERC-20-style token contract holding every bank's encrypted balance.">Enygma Contract</div>
+        <div class="cc-type">Confidential ERC-20</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="cc-addr" id="addr-enygma" style="flex:1">—</div>
+        <button class="rv-copy-btn copy-mini" data-copy-target="addr-enygma" title="Copy full address">copy</button>
+      </div>
+      <div class="cc-meta">Owner: <span id="addr-owner">—</span> <button class="rv-copy-btn copy-mini" data-copy-target="addr-owner" style="margin-left:6px" title="Copy full owner address">copy</button></div>
+    </div>
+    <div class="cc-card" id="cc-verifier">
+      <div class="cc-row">
+        <div class="cc-label" title="On-chain Groth16 verifier that checks each zero-knowledge transfer proof in under 1ms.">ZK Verifier</div>
+        <div class="cc-type">Groth16 · BN254</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="cc-addr" id="addr-verifier" style="flex:1">—</div>
+        <button class="rv-copy-btn copy-mini" data-copy-target="addr-verifier" title="Copy full address">copy</button>
+      </div>
+      <div class="cc-meta">Block: <span id="chain-block">—</span></div>
+    </div>
+  </div>
+
+  <div class="banner" id="setup-banner">
+    <span id="setup-banner-txt"></span>
+    <span class="banner-close" onclick="this.parentElement.className='banner'">✕</span>
+  </div>
+</div>
+
+<!-- ══════════════ TAB II · ONBOARDING ════════════════════════════════════ -->
+<div class="tab-panel" id="panel-onboard">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border-color:var(--teal);color:var(--teal)">II</div>
+    <div>
+      <div class="sec-title" style="color:var(--teal)">Bank Onboarding</div>
+      <div class="sec-hdr-sub">Register 6 banks on-chain · Key agreement runs on each bank's own dashboard</div>
+    </div>
+  </div>
+  <div class="bank-grid" id="bankGrid"></div>
+  <div class="consensus-bar">
+    <div>
+      <div class="consensus-title">Key Agreement</div>
+      <div class="consensus-sub">After registering, open each bank's dashboard to complete ML-KEM-768 pairwise key exchange</div>
+    </div>
+    <button class="action-btn btn-onboard" onclick="document.querySelector('[data-tab=mint]').click()">Open Dashboards →</button>
+  </div>
+  <div class="ka-progress-strip" id="kaProgressStrip" title="Live status pulled from each bank's own Key Agreement run — updates automatically, no action needed here.">
+    <div class="ka-progress-row">
+      <span class="material-symbols-outlined" style="font-size:14px;color:var(--teal)">vpn_key</span>
+      <span class="ka-progress-text" id="kaProgressText">0 / 15 pairwise secrets agreed · 0 / 6 banks have generated a key</span>
+    </div>
+    <div class="ka-progress-bar-track"><div class="ka-progress-bar-fill" id="kaProgressBar"></div></div>
+  </div>
+  <div class="banner" id="onboard-banner">
+    <span id="onboard-banner-txt"></span>
+    <span class="banner-close" onclick="this.parentElement.className='banner'">✕</span>
+  </div>
+</div>
+
+<!-- ══════════════ TAB III · MINT SUPPLY ══════════════════════════════════ -->
+<div class="tab-panel" id="panel-mint">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border-color:var(--teal);color:var(--teal)">III</div>
+    <div>
+      <div class="sec-title" style="color:var(--teal)">Mint Supply</div>
+      <div class="sec-hdr-sub">Add tokens to any bank's encrypted balance · Operator only</div>
+    </div>
+    <button class="action-btn btn-onboard" id="mintBtn">▶ Mint</button>
+  </div>
+
+  <div class="mint-form-card">
+    <div class="mint-form-bar"></div>
+    <div class="mint-form-header">
+      <div class="mint-form-title">Mint Parameters</div>
+      <div class="mint-form-sub">Select a target bank and token amount, then execute mint</div>
+    </div>
+    <div class="mint-params">
+      <div class="mint-field-group glow-active">
+        <label class="mint-field-label">Target Bank</label>
+        <select id="mintBankSelect" class="mint-select">
+          <option value="0">Bank 0</option><option value="1">Bank 1</option>
+          <option value="2">Bank 2</option><option value="3">Bank 3</option>
+          <option value="4">Bank 4</option><option value="5">Bank 5</option>
+        </select>
+      </div>
+      <div class="mint-field-group glow-active">
+        <label class="mint-field-label">Token Amount</label>
+        <input id="mintAmountInput" type="number" value="500" min="1" step="100" class="mint-number-input">
+      </div>
+    </div>
+    <div class="mint-step" id="mintStep">
+      <span id="mintIc">○</span>&ensp;<span id="mintLbl">Select bank and amount, then click Mint</span>
+    </div>
+    <div class="mint-note">
+      Adds <strong title="A Pedersen commitment to (amount, blinding factor 0), added homomorphically to the bank's existing encrypted balance.">Com(amount, 0)</strong> to the bank's on-chain commitment.
+      The plaintext amount is <strong>never stored on-chain</strong> — only banks
+      with the correct key can verify their balance.
+      Run <em>Setup</em> and register banks first.
+    </div>
+  </div>
+
+  <div class="dash-section">
+    <div class="dash-section-hdr">Bank Dashboards — open a bank's payment interface</div>
+    <div class="dash-grid" id="bankDashGrid"></div>
+  </div>
+
+  <div class="banner" id="mint-banner" style="margin-top:16px">
+    <span id="mint-banner-txt"></span>
+    <span class="banner-close" onclick="this.parentElement.className='banner'">✕</span>
+  </div>
+</div>
+
+<!-- ══════════════ TAB IV · BALANCES ══════════════════════════════════════ -->
+<div class="tab-panel" id="panel-verify">
+  <div class="sec-hdr">
+    <div class="sec-num" style="border-color:var(--blue);color:var(--blue)">IV</div>
+    <div>
+      <div class="sec-title" style="color:var(--blue)">Balances &amp; Verify</div>
+      <div class="sec-hdr-sub">Homomorphic balance audit · Pedersen commitment verification · Random factor conservation</div>
+    </div>
+  </div>
+
+  <!-- On-chain balances -->
+  <div class="vcard">
+    <div class="vcard-bar" style="background:var(--blue)"></div>
+    <div class="vcard-hdr">
+      <div class="vcard-title" style="color:var(--blue)">On-Chain Balances · Encrypted Commitment Points</div>
+      <button class="action-btn btn-sm btn-blue" onclick="refreshBalances()">⟳ Refresh</button>
+      <span id="vbalStatus" style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-left:auto"></span>
+    </div>
+    <div class="vbal-grid" id="vbalGrid"></div>
+  </div>
+
+  <!-- Pedersen calculator -->
+  <div class="vcard" style="margin-top:8px">
+    <div class="vcard-bar" style="background:var(--teal)"></div>
+    <div class="vcard-title" style="color:var(--teal);margin-bottom:18px" title="A Pedersen commitment hides a value v behind a random blinding factor r using elliptic-curve points G and H. Commitments can be added together homomorphically, but v and r can't be recovered from the result alone.">Pedersen Commitment Calculator · Com(v, r) = v·G + r·H</div>
+    <div class="vcalc-grid">
+      <div class="vcalc-input-panel">
+        <div class="glow-active">
+          <div class="vcalc-field-label">Value (v)</div>
+          <input class="vcalc-inp" id="calcV" type="text" inputmode="numeric" placeholder="e.g. 500" value="500">
+        </div>
+        <div class="glow-active">
+          <div class="vcalc-field-label">Blinding Factor (r)</div>
+          <input class="vcalc-inp" id="calcR" type="text" inputmode="numeric" placeholder="e.g. 67890" value="67890">
+        </div>
+        <button class="action-btn" style="background:var(--teal);color:#001a18;margin-top:4px" onclick="calcPedersen()">Compute</button>
+        <div class="vcalc-err" id="calcErr" style="display:none;color:var(--red);font-family:var(--mono);font-size:9px;margin-top:2px">⚠ enter both v and r</div>
+      </div>
+      <div class="vcalc-output-panel">
+        <div class="vcalc-out-label">Resulting Commitment</div>
+        <div class="vcalc-out" id="calcOut">
+          <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:10px">Com(<span id="co-v">—</span>, <span id="co-r">—</span>) =</div>
+          <div class="vcalc-axis">C1 (x-coordinate)</div>
+          <div class="vcalc-val" id="calcC1">—</div>
+          <div class="vcalc-axis">C2 (y-coordinate)</div>
+          <div class="vcalc-val" id="calcC2">—</div>
+        </div>
+        <div class="vcalc-placeholder">Enter v and r values, then click Compute to derive the elliptic curve commitment point.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TxRandom values -->
+  <div class="vcard" style="margin-top:8px">
+    <div class="vcard-bar" style="background:var(--gold)"></div>
+    <div class="vcard-hdr">
+      <div class="vcard-title" style="color:var(--gold)" title="The blinding factors used to hide each transfer's amounts. They cancel out across all 6 banks, which is how the chain confirms a transfer balances to zero without seeing the amounts.">Random Factor · TxRandomValues</div>
+      <button class="action-btn btn-sm" style="background:var(--gold);color:#140e00" onclick="loadRValues()">⟳ Load Last Transfer</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:14px;line-height:1.8">
+      Each transfer produces 6 blinding factors. The sender's <strong style="color:var(--gold)">txRandom[0]</strong> = Σ raw_r[1..5];
+      each receiver's <strong style="color:var(--gold)">txRandom[i]</strong> = P − raw_r[i], so <strong style="color:var(--gold)">Σ txRandom ≡ 0 (mod P)</strong>.
+      Use these directly with <code>Com(v, r)</code> to verify on-chain balances.
+    </div>
+    <div id="rvContent" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">Run a transfer first, then click Load Last Transfer.</div>
+  </div>
+
+  <!-- Cumulative R -->
+  <div class="vcard" style="margin-top:8px;margin-bottom:16px">
+    <div class="vcard-bar" style="background:var(--teal)"></div>
+    <div class="vcard-hdr">
+      <div class="vcard-title" style="color:var(--teal)" title="Because Pedersen commitments are additive, summing every transfer's blinding factor for a bank lets you reconstruct — and independently check — that bank's current on-chain commitment.">Cumulative R · Balance Verification</div>
+      <button class="action-btn btn-sm" style="background:var(--teal);color:#001a18" onclick="loadCumulativeR()">⟳ Refresh</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);margin-bottom:14px;line-height:1.8">
+      Running sum of <code>txRandom</code> across <strong id="cumTransferCount" style="color:var(--teal)">all</strong> transfers.
+      Pedersen commitments are additive: <code>Σ Com(v, r) = Com(Σv, Σr)</code> —
+      so <code>Com(cumulative_balance, cumulative_r)</code> must match the on-chain commitment point.
+    </div>
+    <div id="cumContent" style="font-family:var(--mono);font-size:8.5px;color:var(--muted)">Run at least one transfer, then click Refresh.</div>
+  </div>
+</div>
+
+</div><!-- tabs-wrap -->
+
+<!-- ── Log panel ──────────────────────────────────────────────────────────── -->
+<div class="log-panel">
+  <div class="log-hdr">
+    <div class="log-activity" id="logDot"></div>
+    <span class="log-hdr-title">Terminal Logs</span>
+    <span class="log-hdr-status">· All Tabs</span>
+    <select id="logFilter" class="log-filter-select" title="Show only log lines from one part of the flow">
+      <option value="all">All tabs</option>
+      <option value="setup">Setup</option>
+      <option value="onboarding">Bank Onboarding</option>
+      <option value="mint">Mint Supply</option>
+      <option value="transfer">Send Payment</option>
+      <option value="bank-ka">Key Agreement</option>
+    </select>
+    <button id="copyBtn" style="font-family:var(--mono);font-size:8px;background:none;border:1px solid var(--bd);color:var(--muted);border-radius:3px;padding:2px 8px;cursor:pointer;transition:border-color .2s,color .2s">copy</button>
+  </div>
+  <div id="logOut"></div>
+</div>
+
+</div><!-- app -->
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let currentSenderIdx = 0;
+
+// ── Bank definitions ──────────────────────────────────────────────────────
+const BANKS = [
+  { name:'Bank 0', badge:'SENDER',   cls:'badge-sender',   sk:'424242', acct:'#1' },
+  { name:'Bank 1', badge:'RECEIVER', cls:'badge-receiver', sk:'1',      acct:'#2' },
+  { name:'Bank 2', badge:'RECEIVER', cls:'badge-receiver', sk:'2',      acct:'#3' },
+  { name:'Bank 3', badge:'OBSERVER', cls:'badge-observer', sk:'3',      acct:'#4' },
+  { name:'Bank 4', badge:'OBSERVER', cls:'badge-observer', sk:'4',      acct:'#5' },
+  { name:'Bank 5', badge:'OBSERVER', cls:'badge-observer', sk:'5',      acct:'#6' },
+];
+
+// ── Build bank onboarding grid ────────────────────────────────────────────
+function buildBanks() {
+  const g = document.getElementById('bankGrid'); g.innerHTML = '';
+  BANKS.forEach((b, i) => {
+    const d = document.createElement('div'); d.className = 'bank-card'; d.id = 'bc-' + i;
+    d.innerHTML = `
+      <div class="bank-card-bar"></div>
+      <div class="bc-header">
+        <div>
+          <div class="bc-title">${b.name}</div>
+          <div class="bc-acct">${b.acct}</div>
+        </div>
+        <span class="bank-badge ${b.cls}">${b.badge}</span>
+      </div>
+      <div class="bc-fields">
+        <div class="bc-field-row glow-active">
+          <label class="bc-field-label" title="A private number only this bank knows. Every other key below is derived from it.">Secret Key (sk)</label>
+          <input id="bsk-${i}" type="text" inputmode="numeric" value="${b.sk}" class="sk-input"
+            onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--bd2)'"
+            oninput="document.getElementById('bpk-${i}').textContent='—';document.getElementById('bpk-${i}').style.color='var(--muted)'">
+        </div>
+        <div class="bc-field-row">
+          <div style="display:flex;align-items:center;gap:6px">
+            <label class="bc-field-label" title="Poseidon hash of the secret key — safe to publish on-chain, used to address payments to this bank.">Public Spend Key</label>
+            <button class="rv-copy-btn copy-mini" data-copy-target="bpk-${i}">copy</button>
+          </div>
+          <div class="bc-val" id="bpk-${i}">—</div>
+        </div>
+        <div class="bc-field-row">
+          <div style="display:flex;align-items:center;gap:6px">
+            <label class="bc-field-label" title="Post-quantum (ML-KEM-768) public key used to agree on private pairwise secrets with the other 5 banks. Generated on this bank's own dashboard, not here.">ML-KEM View Key</label>
+            <button class="rv-copy-btn copy-mini" data-copy-target="bvk-${i}">copy</button>
+          </div>
+          <div class="bc-val" id="bvk-${i}">—</div>
+        </div>
+      </div>
+      <div class="bc-pills">
+        <div class="bstep" id="bst-${i}-key"><span class="bstep-ic">○</span> Derive Key</div>
+        <div class="bstep" id="bst-${i}-reg"><span class="bstep-ic">○</span> Register</div>
+      </div>
+      <div class="bank-footer">
+        <span class="bstat" id="bstat-${i}">Pending</span>
+        <button class="action-btn btn-onboard btn-sm" id="bregBtn-${i}" onclick="registerBank(${i})">Register</button>
+      </div>`;
+    g.appendChild(d);
+  });
+}
+
+// ── KA bank grid (used by agreement tab JS) ───────────────────────────────
+function buildKaBanks() {
+  const g = document.getElementById('kaBankGrid'); if (!g) return;
+  g.innerHTML = '';
+  BANKS.forEach((b, i) => {
+    const d = document.createElement('div'); d.className = 'ka-bank-card'; d.id = 'kbc-' + i;
+    const peers = [0,1,2,3,4,5].filter(j => j !== i);
+    const dotsHtml = peers.map(j => `<div class="ka-peer-dot" id="ka-dot-${i}-${j}" title="B${i} ↔ B${j}">B${j}</div>`).join('');
+    d.innerHTML = `
+      <div class="ka-bank-head"><div class="ka-bank-name">${b.name}</div></div>
+      <div class="ka-fields">
+        <div class="ka-row"><span class="ka-k">ek</span><span class="ka-v" id="ka-ek-${i}">—</span></div>
+        <div class="ka-row"><span class="ka-k" style="font-size:7px;color:var(--subtle)">1184B · public lock</span></div>
+        <div class="ka-row" style="margin-top:5px">
+          <span class="ka-k">peers</span>
+          <div class="ka-peer-dots">${dotsHtml}</div>
+        </div>
+        <div class="ka-row" style="margin-top:3px">
+          <span class="ka-v" id="ka-ok-${i}" style="color:var(--muted);font-size:9px;min-height:11px">—</span>
+        </div>
+      </div>`;
+    g.appendChild(d);
+  });
+}
+
+// ── KA Matrix ─────────────────────────────────────────────────────────────
+let kaSecretsCount = 0;
+
+function buildKaMatrix() {
+  const m = document.getElementById('kaMatrix'); if (!m) return;
+  m.innerHTML = '';
+  m.appendChild(document.createElement('div'));
+  for (let j = 0; j < 6; j++) {
+    const l = document.createElement('div'); l.className = 'ka-mlabel'; l.textContent = 'B' + j; m.appendChild(l);
+  }
+  for (let i = 0; i < 6; i++) {
+    const rl = document.createElement('div'); rl.className = 'ka-mlabel row'; rl.textContent = 'B' + i; m.appendChild(rl);
+    for (let j = 0; j < 6; j++) {
+      const c = document.createElement('div');
+      c.id = `ka-cell-${i}-${j}`;
+      c.className = 'ka-mcell' + (i === j ? ' self' : '');
+      c.textContent = i === j ? '—' : '';
+      m.appendChild(c);
+    }
+  }
+}
+
+function setKaPair(i, j, state) {
+  [[i,j],[j,i]].forEach(([r,c]) => {
+    const el = document.getElementById(`ka-cell-${r}-${c}`); if (!el || el.classList.contains('done')) return;
+    if (state === 'encapping') { el.className = 'ka-mcell encapping'; el.textContent = 'ct'; }
+    else if (state === 'done') { el.className = 'ka-mcell done'; el.textContent = '✓'; }
+  });
+}
+
+function incrementKaCounter() {
+  kaSecretsCount++;
+  const el = document.getElementById('kaCounter');
+  if (el) { el.textContent = kaSecretsCount; if (kaSecretsCount === 15) el.className = 'ka-counter active'; }
+}
+
+function setBankStep(i, sfx, state, msg) {
+  const el = document.getElementById(`bst-${i}-${sfx}`); if (!el) return;
+  el.className = 'bstep ' + (state || '');
+  const ic = el.querySelector('.bstep-ic');
+  ic.textContent = state === 'running' ? '↻' : state === 'success' ? '✓' : state === 'error' ? '✗' : '○';
+  if (msg) { const t = el.childNodes[2]; if (t) t.textContent = ' ' + msg.slice(0,28); }
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Global status ─────────────────────────────────────────────────────────
+function setGlobal(state, txt) {
+  document.getElementById('gDot').className = 'gdot ' + (state || '');
+  document.getElementById('gStatus').textContent = txt;
+  const c = state === 'running' ? 'var(--blue)' : state === 'success' ? 'var(--green)' : state === 'error' ? 'var(--red)' : 'var(--muted)';
+  document.getElementById('logDot').style.background = c;
+}
+
+// ── Step strip update ─────────────────────────────────────────────────────
+const HDEFAULTS = {
+  prerequisites: 'Hardhat · Gnark · Relayer',
+  dial_chain:    'ethclient.Dial(RPC)',
+  init_contract: 'initialize() — idempotent',
+  add_verifier:  'addVerifier(addr)',
+  check_relay_addr: 'GET /relay/info',
+};
+
+function updateHstep(step, status, msg) {
+  const c = document.getElementById('hs-' + step); if (!c) return;
+  c.className = 'hstep ' + (status || '');
+  const ic = document.getElementById('hi-' + step);
+  if (ic) ic.textContent = status === 'running' ? '↻' : status === 'success' ? '✓' : status === 'error' ? '✗' : status === 'warning' ? '!' : '○';
+  if (msg) { const sub = document.getElementById('hsub-' + step); if (sub) sub.textContent = msg; }
+
+  // Light up prereq pills when prerequisites step resolves
+  if (step === 'prerequisites' && status === 'success') {
+    ['hardhat','gnark','relayer'].forEach(id => {
+      const pill = document.getElementById('prereq-' + id);
+      if (pill) {
+        const dot = pill.querySelector('.prereq-dot');
+        if (dot) { dot.style.background = 'var(--green)'; dot.style.boxShadow = '0 0 6px var(--green)'; }
+        pill.style.borderColor = 'var(--green-glow)'; pill.style.color = 'var(--green)';
+      }
+    });
+  }
+}
+
+// ── Metrics ───────────────────────────────────────────────────────────────
+function handleMetric(f, v) {}
+
+// ── Proto ─────────────────────────────────────────────────────────────────
+function handleProto(f, v) {
+  if (f === 'tokenAddr')   { document.getElementById('addr-enygma').textContent = v; document.getElementById('addr-enygma').classList.add('set'); document.getElementById('cc-enygma').classList.add('lit'); }
+  if (f === 'verifierAddr'){ document.getElementById('addr-verifier').textContent = v; document.getElementById('addr-verifier').classList.add('set'); document.getElementById('cc-verifier').classList.add('lit'); }
+  if (f === 'ownerAddr')   { const el = document.getElementById('addr-owner'); el.textContent = v.slice(0,20) + '…'; el.title = v; el.dataset.full = v; }
+  if (f === 'blockNum')    document.getElementById('chain-block').textContent = v;
+  if (f === 'senderIdx')   currentSenderIdx = parseInt(v) || 0;
+}
+
+// ── Participant ───────────────────────────────────────────────────────────
+function handleParticipant(pid, field, value) {
+  if (field === 'ka_ek') { const e = document.getElementById('ka-ek-' + pid); if (e) { e.textContent = value; e.classList.add('set'); } }
+  if (field === 'ka_ct') { const e = document.getElementById('ka-ct-' + pid); if (e) { e.textContent = value; e.classList.add('set'); } }
+  if (field === 'ka_ss_raw') { const e = document.getElementById('ka-ss-' + pid); if (e) { e.textContent = value; e.className = 'ka-v teal'; } }
+  if (field === 'ka_fe')     { const e = document.getElementById('ka-fe-' + pid); if (e) { e.textContent = value; e.className = 'ka-v green'; } }
+  if (field === 'ka_done' && value === '5/5') {
+    const bc = document.getElementById('kbc-' + pid); if (bc) bc.classList.add('agreed');
+    const ok = document.getElementById('ka-ok-' + pid);
+    if (ok) { ok.textContent = '✓ All 5 peers agreed'; ok.style.color = 'var(--green)'; }
+  }
+  if (field === 'ka_ok') {
+    const e = document.getElementById('ka-ok-' + pid); if (e) { e.textContent = value; e.style.color = 'var(--green)'; }
+    const bc = document.getElementById('kbc-' + pid); if (bc) bc.classList.add('agreed');
+  }
+  if (field === 'pk' || field === 'spend_key') {
+    const e = document.getElementById('bpk-' + pid);
+    if (e) { e.textContent = value; e.style.color = 'var(--teal)'; }
+  }
+  if (field === 'view_ek') {
+    const e = document.getElementById('bvk-' + pid);
+    if (e) {
+      const isPlaceholder = value.startsWith('(run');
+      e.textContent = value;
+      e.style.color = isPlaceholder ? 'var(--muted)' : 'var(--green)';
+    }
+  }
+  if (field === 'finalBal') {
+    const v = document.getElementById('vbal-pt-' + pid);
+    if (v) { v.textContent = value; v.className = 'vbal-point set'; }
+  }
+}
+
+// ── Step routing ──────────────────────────────────────────────────────────
+function handleStep(d) {
+  const { tab, step, status, msg } = d;
+  if (tab === 'setup') {
+    updateHstep(step, status, msg);
+    if (status === 'running') setGlobal('running', step.replace(/_/g,' '));
+  } else if (tab === 'onboarding') {
+    if (step && step.startsWith('bank_')) {
+      const pts = step.split('_'), idx = parseInt(pts[1]), sfx = pts[2];
+      setBankStep(idx, sfx, status, msg);
+      if (status === 'success' && sfx === 'reg') {
+        const bc = document.getElementById('bc-' + idx); if (bc) bc.classList.add('registered');
+        const bs = document.getElementById('bstat-' + idx);
+        if (bs) { bs.textContent = '✓ Registered'; bs.className = 'bstat reg'; }
+      }
+      if (status === 'running') setGlobal('running', 'Register Bank ' + idx);
+    }
+  } else if (tab === 'mint') {
+    if (step === 'mint_supply') {
+      const ms = document.getElementById('mintStep');
+      ms.className = 'mint-step ' + (status || '');
+      document.getElementById('mintIc').textContent = status === 'running' ? '↻' : status === 'success' ? '✓' : '✗';
+      if (msg) document.getElementById('mintLbl').textContent = msg;
+      if (status === 'running') setGlobal('running', 'Minting supply');
+    }
+  } else if (tab === 'agreement') {
+    if (['ka_keygen','ka_encap','ka_decap','ka_field'].includes(step)) {
+      updateHstep(step, status, msg);
+    }
+    if (step && /^ka_(encap|decap)_\d+_\d+$/.test(step)) {
+      const parts = step.split('_');
+      const type = parts[1]; const pi = parseInt(parts[2]), pj = parseInt(parts[3]);
+      if (type === 'encap' && status === 'running') setKaPair(pi, pj, 'encapping');
+      else if (type === 'decap' && status === 'success') {
+        setKaPair(pi, pj, 'done');
+        const di = document.getElementById(`ka-dot-${pi}-${pj}`); if (di) di.classList.add('agreed');
+        const dj = document.getElementById(`ka-dot-${pj}-${pi}`); if (dj) dj.classList.add('agreed');
+        incrementKaCounter();
+      }
+    }
+    if (step && /^ka_keygen_\d+$/.test(step)) {
+      const i = d.bankIdx;
+      const kbc = document.getElementById('kbc-' + i);
+      if (kbc) {
+        if (status === 'running')       kbc.style.borderColor = 'var(--blue-glow)';
+        else if (status === 'success')  kbc.style.borderColor = '';
+      }
+    }
+    if (status === 'running') setGlobal('running', 'Key Agreement');
+  }
+}
+
+// ── Done ──────────────────────────────────────────────────────────────────
+function handleDone(d) {
+  const ok = d.status === 'success';
+  setGlobal(ok ? 'success' : 'error', ok ? 'Done' : 'Failed');
+
+  const ids = { setup:'setup-banner', onboarding:'onboard-banner', mint:'mint-banner', agreement:'agreement-banner' };
+  const bid = ids[d.tab];
+  const bn = bid && document.getElementById(bid);
+  if (bn) {
+    bn.className = 'banner ' + (ok ? 'success' : 'error');
+    const txtEl = bn.querySelector('[id$="-banner-txt"]') || bn.querySelector('span:first-child');
+    const msg = ok && d.tab === 'agreement'
+      ? '✓  Full-mesh complete — 15 unique pairwise secrets established.'
+      : (ok ? '✓  ' : '✗  ') + (d.msg || '');
+    if (txtEl) txtEl.textContent = msg; else bn.prepend(Object.assign(document.createElement('span'), { textContent: msg }));
+  }
+
+  if (d.tab === 'setup') {
+    const el = document.getElementById('tp-setup');
+    el.textContent = ok ? '✓' : '✗'; el.style.color = ok ? 'var(--green)' : 'var(--red)'; el.className = 'tab-check on';
+  }
+  if (d.tab === 'mint') {
+    const el = document.getElementById('tp-mint');
+    el.textContent = ok ? '✓' : '✗'; el.style.color = ok ? 'var(--green)' : 'var(--red)'; el.className = 'tab-check on';
+  }
+  enableBtns();
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────
+let allLogs = [];
+let currentLogFilter = 'all';
+function appendLog(d) {
+  const ts = d.ts || now(), msg = d.msg || '';
+  allLogs.push({ ts, msg });
+  const out = document.getElementById('logOut');
+  const line = document.createElement('div'); line.className = 'll';
+  line.dataset.tab = d.tab || '';
+  if (currentLogFilter !== 'all' && line.dataset.tab !== currentLogFilter) line.style.display = 'none';
+  const tsEl = document.createElement('span'); tsEl.className = 'lts'; tsEl.textContent = ts;
+  const bodyEl = document.createElement('span'); bodyEl.className = 'lb';
+  if (msg.startsWith('✓')) bodyEl.classList.add('ok');
+  else if (msg.startsWith('✗')) bodyEl.classList.add('err');
+  else if (msg.startsWith('→') || msg.startsWith('←')) bodyEl.classList.add('info');
+  else if (msg.startsWith('⚠')) bodyEl.classList.add('warn');
+  bodyEl.textContent = msg;
+  line.appendChild(tsEl); line.appendChild(bodyEl);
+  out.appendChild(line); out.scrollTop = out.scrollHeight;
+}
+function now() { return new Date().toLocaleTimeString([], { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' }); }
+
+document.getElementById('logFilter').addEventListener('change', (e) => {
+  currentLogFilter = e.target.value;
+  document.querySelectorAll('#logOut .ll').forEach(line => {
+    line.style.display = (currentLogFilter === 'all' || line.dataset.tab === currentLogFilter) ? '' : 'none';
+  });
+});
+
+// ── SSE ───────────────────────────────────────────────────────────────────
+let es = null;
+function connectSSE() {
+  if (es) es.close();
+  es = new EventSource('/events');
+  es.onmessage = e => {
+    let d; try { d = JSON.parse(e.data); } catch { return; }
+    if      (d.type === 'step')        handleStep(d);
+    else if (d.type === 'log')         appendLog(d);
+    else if (d.type === 'done')        handleDone(d);
+    else if (d.type === 'metric')      handleMetric(d.field, d.value);
+    else if (d.type === 'proto')       handleProto(d.field, d.value);
+    else if (d.type === 'participant') handleParticipant(d.pid, d.field, d.value);
+  };
+  es.onerror = () => setTimeout(connectSSE, 3000);
+}
+
+// ── Button helpers ────────────────────────────────────────────────────────
+function disableBtns() {
+  ['setupBtn','mintBtn'].forEach(id => { const e = document.getElementById(id); if (e) e.disabled = true; });
+  document.querySelectorAll('[id^=bregBtn-]').forEach(b => b.disabled = true);
+}
+function enableBtns() {
+  ['setupBtn','mintBtn'].forEach(id => { const e = document.getElementById(id); if (e) e.disabled = false; });
+  document.querySelectorAll('[id^=bregBtn-]').forEach(b => b.disabled = false);
+}
+function postRun(url, body) {
+  setGlobal('running', 'Running…'); disableBtns();
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined })
+    .then(r => { if (!r.ok) r.text().then(t => { setGlobal('error','Error'); appendLog({msg:'Server: '+t}); enableBtns(); }); })
+    .catch(err => { setGlobal('error','Error'); appendLog({msg:'Cannot reach server: '+err}); enableBtns(); });
+}
+
+// ── Setup button ──────────────────────────────────────────────────────────
+document.getElementById('setupBtn').addEventListener('click', () => {
+  Object.keys(HDEFAULTS).forEach(s => {
+    const c = document.getElementById('hs-' + s); if (c) c.className = 'hstep';
+    const ic = document.getElementById('hi-' + s); if (ic) ic.textContent = '○';
+    const sub = document.getElementById('hsub-' + s); if (sub) sub.textContent = HDEFAULTS[s];
+  });
+  document.getElementById('setup-banner').className = 'banner';
+  document.getElementById('addr-enygma').textContent = '—'; document.getElementById('addr-enygma').classList.remove('set'); document.getElementById('cc-enygma').classList.remove('lit');
+  document.getElementById('addr-verifier').textContent = '—'; document.getElementById('addr-verifier').classList.remove('set'); document.getElementById('cc-verifier').classList.remove('lit');
+  document.getElementById('tp-setup').textContent = ''; document.getElementById('tp-setup').className = 'tab-check';
+  // reset prereq pills
+  ['hardhat','gnark','relayer'].forEach(id => {
+    const pill = document.getElementById('prereq-' + id);
+    if (pill) { const dot = pill.querySelector('.prereq-dot'); if (dot) { dot.style.background = ''; dot.style.boxShadow = ''; } pill.style.borderColor = ''; pill.style.color = ''; }
+  });
+  postRun('/run/setup');
+});
+
+// ── Register bank ─────────────────────────────────────────────────────────
+function registerBank(idx) {
+  const skInput = document.getElementById('bsk-' + idx);
+  const sk = (skInput && skInput.value.trim()) || BANKS[idx].sk;
+  const bs = document.getElementById('bstat-' + idx);
+  if (!sk || !/^\d+$/.test(sk) || BigInt(sk) <= 0n) {
+    if (skInput) skInput.style.borderColor = 'var(--red)';
+    if (bs) { bs.textContent = '⚠ enter a positive integer'; bs.className = 'bstat'; bs.style.color = 'var(--red)'; }
+    return;
+  }
+  if (skInput) skInput.style.borderColor = '';
+  setBankStep(idx,'key','','Derive key'); setBankStep(idx,'reg','','Register on-chain');
+  const bc = document.getElementById('bc-' + idx); if (bc) bc.classList.remove('registered');
+  if (bs) { bs.textContent = 'Registering…'; bs.className = 'bstat'; bs.style.color = ''; }
+  document.getElementById('bpk-' + idx).textContent = '—'; document.getElementById('bpk-' + idx).style.color = 'var(--muted)';
+  document.getElementById('onboard-banner').className = 'banner';
+  postRun('/run/register-bank', { bankIdx:idx, sk });
+}
+
+// ── Mint button ───────────────────────────────────────────────────────────
+document.getElementById('mintBtn').addEventListener('click', () => {
+  const amount = parseInt(document.getElementById('mintAmountInput').value) || 500;
+  const bankIdx = parseInt(document.getElementById('mintBankSelect').value) || 0;
+  const ms = document.getElementById('mintStep'); ms.className = 'mint-step';
+  document.getElementById('mintIc').textContent = '○'; document.getElementById('mintLbl').textContent = 'Minting…';
+  postRun('/run/mint', { amount, bankIdx });
+});
+
+// ── Copy log ──────────────────────────────────────────────────────────────
+document.getElementById('copyBtn').addEventListener('click', () => {
+  navigator.clipboard.writeText(allLogs.map(l => l.ts + '  ' + l.msg).join('\n')).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'copied!'; btn.style.borderColor = 'var(--green)'; btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = 'copy'; btn.style.borderColor = ''; btn.style.color = ''; }, 1800);
+  });
+});
+
+// ── Bank dashboard grid ───────────────────────────────────────────────────
+function buildBankDashGrid() {
+  const g = document.getElementById('bankDashGrid'); if (!g) return;
+  BANKS.forEach((b, i) => {
+    const a = document.createElement('a');
+    a.href = '/bank?id=' + i; a.target = '_blank'; a.className = 'dash-card';
+    a.innerHTML = `
+      <div class="dash-card-name">${b.name}</div>
+      <div class="dash-card-role">Account #${i+1} · sk default: ${b.sk}</div>
+      <div class="dash-card-arrow">↗ OPEN DASHBOARD</div>`;
+    g.appendChild(a);
+  });
+}
+
+// ── Verify tab balance grid ───────────────────────────────────────────────
+function buildVbalGrid() {
+  const g = document.getElementById('vbalGrid'); if (!g) return;
+  g.innerHTML = '';
+  BANKS.forEach((b, i) => {
+    const d = document.createElement('div'); d.className = 'vbal-card';
+    d.innerHTML = `<div style="display:flex;align-items:center;gap:6px"><div class="vbal-name">${b.name}</div><button class="rv-copy-btn copy-mini" data-copy-target="vbal-pt-${i}">copy</button></div><div class="vbal-pt-label">Commitment Point</div><div class="vbal-point" id="vbal-pt-${i}">—</div>`;
+    g.appendChild(d);
+  });
+}
+
+async function refreshBalances() {
+  const st = document.getElementById('vbalStatus'); if (st) st.textContent = 'fetching…';
+  try {
+    const r = await fetch('/state/balances');
+    if (!r.ok) { const t = await r.text(); if (st) st.textContent = 'Error: ' + t; return; }
+    const d = await r.json();
+    (d.balances || []).forEach((pt, i) => {
+      const el = document.getElementById('vbal-pt-' + i);
+      if (el) {
+        if (!pt.registered) {
+          el.textContent = 'not registered'; el.className = 'vbal-point'; el.style.color = 'var(--muted)'; el.style.fontStyle = 'italic';
+          delete el.dataset.full; el.title = '';
+        } else {
+          const short = s => s.length > 16 ? s.slice(0,8) + '…' + s.slice(-4) : s;
+          const full = '(' + pt.c1 + ', ' + pt.c2 + ')';
+          el.textContent = '(' + short(pt.c1) + ', ' + short(pt.c2) + ')';
+          el.className = 'vbal-point set'; el.style.color = ''; el.style.fontStyle = '';
+          el.title = full; el.dataset.full = full;
+        }
+      }
+    });
+    if (st) st.textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch(e) { if (st) st.textContent = 'Error: ' + e.message; }
+}
+
+// ── Pedersen calculator ───────────────────────────────────────────────────
+async function calcPedersen() {
+  const v = document.getElementById('calcV').value.trim();
+  const r = document.getElementById('calcR').value.trim();
+  const errEl = document.getElementById('calcErr');
+  if (!v || !r) { if (errEl) errEl.style.display = 'block'; return; }
+  if (errEl) errEl.style.display = 'none';
+  const out = document.getElementById('calcOut'); out.className = 'vcalc-out on';
+  document.getElementById('calcC1').textContent = 'computing…';
+  document.getElementById('calcC2').textContent = 'computing…';
+  document.getElementById('co-v').textContent = v; document.getElementById('co-r').textContent = r;
+  try {
+    const res = await fetch('/calc/pedersen', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({v,r}) });
+    const d = await res.json();
+    if (d.error) { document.getElementById('calcC1').textContent = 'Error: ' + d.error; document.getElementById('calcC2').textContent = ''; return; }
+    document.getElementById('calcC1').textContent = d.c1;
+    document.getElementById('calcC2').textContent = d.c2;
+  } catch(e) { document.getElementById('calcC1').textContent = 'Error: ' + e.message; }
+}
+
+// ── Random factor (TxRandom) ──────────────────────────────────────────────
+function copyRV(idx, btn) {
+  const el = document.getElementById('rvval-' + idx); if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    btn.textContent = 'copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1800);
+  });
+}
+
+function copyAllRV(btn, vals) {
+  const text = vals.map((v, i) => `r[${i}] = ${v}`).join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ copied all'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'copy all'; btn.classList.remove('copied'); }, 1800);
+  });
+}
+
+async function loadRValues() {
+  const div = document.getElementById('rvContent');
+  div.innerHTML = '<span style="color:var(--muted)">Loading…</span>';
+  try {
+    const res = await fetch('/state/last-transfer');
+    if (!res.ok) { div.innerHTML = '<span style="color:var(--red)">Error: run a transfer first, then reload.</span>'; return; }
+    const d = await res.json();
+    const rv = d.rValues || []; const P = d.P || ''; const lsidx = d.senderIdx || 0;
+    let sum = 0n, sumOk = false;
+    try { const Pb = BigInt(P); rv.forEach(v => { sum = (sum + BigInt(v)) % Pb; }); sumOk = sum === 0n; } catch {}
+
+    const wrap = document.createElement('div');
+    const topBar = document.createElement('div'); topBar.className = 'rv-top-bar';
+    const hint = document.createElement('span'); hint.className = 'rv-hint';
+    hint.textContent = 'TxRandomValues from last transfer — click a value to select all, or use copy button';
+    const copyAllBtn = document.createElement('button'); copyAllBtn.className = 'rv-copyall-btn'; copyAllBtn.textContent = 'copy all';
+    copyAllBtn.onclick = () => copyAllRV(copyAllBtn, rv);
+    topBar.appendChild(hint); topBar.appendChild(copyAllBtn);
+    wrap.appendChild(topBar);
+
+    const cards = document.createElement('div'); cards.className = 'rv-cards';
+    const roles = Array.from({length:6}, (_,i) =>
+      i === lsidx ? `Sender · txRandom[${i}] = Σ raw_r[receivers]`
+                  : `Receiver · txRandom[${i}] = P − raw_r[${i}]`
+    );
+    rv.forEach((v, i) => {
+      const card = document.createElement('div'); card.className = 'rv-card';
+      const head = document.createElement('div'); head.className = 'rv-card-head';
+      const nameEl = document.createElement('span'); nameEl.className = 'rv-card-name'; nameEl.textContent = 'Bank ' + i;
+      const roleEl = document.createElement('span'); roleEl.className = 'rv-card-role'; roleEl.textContent = roles[i] || '';
+      const btn = document.createElement('button'); btn.className = 'rv-copy-btn'; btn.textContent = 'copy';
+      btn.onclick = () => copyRV(i, btn);
+      head.appendChild(nameEl); head.appendChild(roleEl); head.appendChild(btn);
+      const val = document.createElement('div'); val.className = 'rv-val'; val.id = 'rvval-' + i; val.textContent = v;
+      card.appendChild(head); card.appendChild(val);
+      cards.appendChild(card);
+    });
+    wrap.appendChild(cards);
+
+    const sumBox = document.createElement('div');
+    sumBox.className = 'rv-sum-box ' + (sumOk ? 'rv-sum-ok' : 'rv-sum-bad');
+    sumBox.innerHTML = `
+      <div class="rv-sum-title ${sumOk?'ok':'bad'}">Σ TxRandom mod P = ${sum.toString()}&ensp;${sumOk?'✓ Conservation holds':'✗ Mismatch'}</div>
+      <div style="font-family:var(--mono);font-size:8.5px;color:var(--muted);line-height:1.8">
+        Σ txRandom[i] = txRandom[0] + … + txRandom[5] ≡ 0 (mod P)<br>
+        <span style="color:var(--label)">P = </span><span style="user-select:all;cursor:text">${P}</span>
+      </div>`;
+    wrap.appendChild(sumBox);
+    div.innerHTML = ''; div.appendChild(wrap);
+  } catch(e) { div.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`; }
+}
+
+// ── Cumulative R ──────────────────────────────────────────────────────────
+async function loadCumulativeR() {
+  const div = document.getElementById('cumContent');
+  div.innerHTML = '<span style="color:var(--muted)">Loading…</span>';
+  try {
+    const res = await fetch('/state/cumulative-r');
+    if (!res.ok) { div.innerHTML = '<span style="color:var(--red)">Error loading cumulative R.</span>'; return; }
+    const d = await res.json();
+    const cr = d.cumulativeR || []; const count = d.transferCount || 0; const P = d.P || '';
+    const cntEl = document.getElementById('cumTransferCount');
+    if (cntEl) cntEl.textContent = count + ' transfer' + (count === 1 ? '' : 's');
+
+    const wrap = document.createElement('div');
+    const cards = document.createElement('div'); cards.className = 'rv-cards';
+    const bankLabel = Array.from({length:6}, (_,i) => 'Bank ' + i + (i === currentSenderIdx ? ' · Sender' : ' · Receiver'));
+    cr.forEach((v, i) => {
+      const card = document.createElement('div'); card.className = 'rv-card';
+      const head = document.createElement('div'); head.className = 'rv-card-head';
+      const nameEl = document.createElement('span'); nameEl.className = 'rv-card-name'; nameEl.textContent = bankLabel[i] || ('Bank ' + i);
+      const roleEl = document.createElement('span'); roleEl.className = 'rv-card-role';
+      roleEl.textContent = 'cumulative r[' + i + '] = Σ txRandom[' + i + '] over ' + count + ' transfers';
+      const btn = document.createElement('button'); btn.className = 'rv-copy-btn'; btn.textContent = 'copy';
+      btn.onclick = () => { navigator.clipboard.writeText(v).then(() => { btn.textContent='copied!'; btn.classList.add('copied'); setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied');},1800); }); };
+      head.appendChild(nameEl); head.appendChild(roleEl); head.appendChild(btn);
+      const val = document.createElement('div'); val.className = 'rv-val'; val.style.userSelect = 'all'; val.style.cursor = 'text'; val.textContent = v;
+      card.appendChild(head); card.appendChild(val);
+      cards.appendChild(card);
+    });
+    wrap.appendChild(cards);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'margin-top:10px;padding:10px 14px;border-radius:4px;border:1px solid var(--bd2);background:var(--s2);font-family:var(--mono);font-size:8.5px;color:var(--muted);line-height:1.8';
+    hint.innerHTML = `To verify Bank <em>i</em>'s on-chain balance: enter <code>cumulative_balance_i</code> as <strong>v</strong> and <code>cumulative r[i]</code> above as <strong>r</strong> in the Pedersen Calculator — result must match the on-chain commitment point.<br><span style="color:var(--label)">P = </span><span style="user-select:all;cursor:text">${P}</span>`;
+    wrap.appendChild(hint);
+    div.innerHTML = ''; div.appendChild(wrap);
+  } catch(e) { div.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`; }
+}
+
+// ── Intro card ────────────────────────────────────────────────────────────
+(function initIntro() {
+  const body = document.getElementById('introBody');
+  const ic = document.getElementById('introToggleIc');
+  const toggle = document.getElementById('introToggle');
+  if (!body || !ic || !toggle) return;
+  function setCollapsed(collapsed) {
+    body.style.display = collapsed ? 'none' : 'block';
+    ic.textContent = collapsed ? '▸' : '▾';
+    localStorage.setItem('enygmaIntroCollapsed', collapsed ? '1' : '0');
+  }
+  toggle.addEventListener('click', () => setCollapsed(body.style.display !== 'none'));
+  setCollapsed(localStorage.getItem('enygmaIntroCollapsed') === '1');
+})();
+
+// ── Generic copy-to-clipboard (delegated — works for static and JS-built elements) ──
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.copy-mini');
+  if (!btn) return;
+  const target = document.getElementById(btn.dataset.copyTarget);
+  if (!target) return;
+  const text = target.dataset.full || target.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+});
+
+// ── Presentation mode ─────────────────────────────────────────────────────
+(function initPresentationMode() {
+  const btn = document.getElementById('presentToggle');
+  if (!btn) return;
+  function apply(on) {
+    document.body.classList.toggle('presentation-mode', on);
+    btn.classList.toggle('active', on);
+    localStorage.setItem('enygmaPresentationMode', on ? '1' : '0');
+  }
+  btn.addEventListener('click', () => apply(!document.body.classList.contains('presentation-mode')));
+  apply(localStorage.getItem('enygmaPresentationMode') === '1');
+})();
+
+// ── Key Agreement aggregate status (polled — banks run KA on their own dashboards) ──
+async function pollKaStatus() {
+  const textEl = document.getElementById('kaProgressText');
+  const barEl = document.getElementById('kaProgressBar');
+  if (!textEl) return;
+  try {
+    const r = await fetch('/state/ka-status');
+    if (!r.ok) return;
+    const d = await r.json();
+    const banks = d.banks || [], pairs = d.pairs || [];
+    const keyed = banks.filter(b => b.hasKey).length;
+    const agreed = pairs.filter(p => p.agreed).length;
+    textEl.textContent = `${agreed} / 15 pairwise secrets agreed · ${keyed} / 6 banks have generated a key`;
+    if (barEl) barEl.style.width = Math.round((agreed / 15) * 100) + '%';
+    const wrap = document.getElementById('kaProgressStrip');
+    if (wrap) wrap.classList.toggle('complete', agreed === 15);
+  } catch (_) { /* server not up yet */ }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+buildBanks();
+buildBankDashGrid();
+buildVbalGrid();
+connectSSE();
+pollKaStatus();
+setInterval(pollKaStatus, 4000);
+</script>
+</body>
+</html>

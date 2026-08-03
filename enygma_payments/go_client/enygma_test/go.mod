@@ -1,6 +1,6 @@
 module enygma_test
 
-go 1.21.6
+go 1.25.0
 
 require (
 	enygma v0.0.0
@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	filippo.io/mlkem768 v0.0.0-20260214141301-2e7bebc7d88d // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect

@@ -1,8 +1,9 @@
 module enygma
 
-go 1.21.6
+go 1.25.0
 
 require (
+	filippo.io/mlkem768 v0.0.0-20260214141301-2e7bebc7d88d
 	github.com/ethereum/go-ethereum v1.14.5
 	github.com/iden3/go-iden3-crypto v0.0.16
 	github.com/miguelmota/go-ethereum-hdwallet v0.1.2

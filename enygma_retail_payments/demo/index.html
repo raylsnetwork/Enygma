@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enygma Retail Payments · Live Demo</title>
+<style>
+:root {
+  --bg:        #06101c;
+  --s1:        #09172a;
+  --s2:        #0d1f37;
+  --s3:        #112644;
+  --bd:        #152e4d;
+  --bd2:       #1b3d66;
+  --teal:      #3dd4b0;
+  --teal-dim:  rgba(61,212,176,.08);
+  --teal-glow: #0d6b5a;
+  --blue:      #52b8ff;
+  --blue-dim:  rgba(82,184,255,.09);
+  --blue-glow: #1a5a9a;
+  --green:     #3dcc75;
+  --green-dim: rgba(61,204,117,.08);
+  --green-glow:#0d5a2a;
+  --red:       #ff5566;
+  --red-dim:   rgba(255,85,102,.07);
+  --amber:     #ffcc40;
+  --purple:    #c3a0ff;
+  --purple-dim:rgba(195,160,255,.08);
+  --orange:    #ff9040;
+  --orange-dim:rgba(255,144,64,.08);
+  --text:      #c0d8f0;
+  --text2:     #8ab0d0;
+  --muted:     #3a5e7a;
+  --label:     #6090b8;
+  --mono: 'SF Mono','Fira Code',Consolas,'Courier New',monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;
+  --r: 7px; --r2: 11px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; line-height: 1.55; min-height: 100vh; overflow-x: hidden; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 3px; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header { padding: 9px 18px; border-bottom: 1px solid var(--bd); background: var(--s1); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; position: sticky; top: 0; z-index: 100; }
+.brand { font-family: var(--mono); font-size: 8.5px; letter-spacing: .26em; text-transform: uppercase; color: var(--teal); font-weight: 700; }
+.title { font-size: 13.5px; font-weight: 700; letter-spacing: -.1px; flex: 1; }
+.title small { font-weight: 400; color: var(--label); font-size: 11px; margin-left: 6px; }
+.mode-wrap { display: flex; align-items: center; gap: 8px; }
+.mode-label { font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: .08em; }
+.mode-toggle { display: flex; border: 1px solid var(--bd); border-radius: 5px; overflow: hidden; }
+.mode-btn { padding: 5px 12px; font-family: var(--mono); font-size: 10px; font-weight: 600; background: none; border: none; color: var(--muted); cursor: pointer; letter-spacing: .05em; transition: background .15s, color .15s; }
+.mode-btn.active { background: var(--teal-dim); color: var(--teal); }
+.mode-btn:first-child { border-right: 1px solid var(--bd); }
+.mode-tip { font-size: 10.5px; color: var(--muted); font-style: italic; max-width: 240px; display: none; }
+body.mode-tag .mode-tip { display: block; }
+.controls { display: flex; align-items: center; gap: 10px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background .3s, box-shadow .3s; }
+.status-dot.running { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse-dot 1.2s infinite; }
+.status-dot.success { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.error   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
+#statusText { font-family: var(--mono); font-size: 10px; color: var(--label); min-width: 56px; }
+#runBtn { background: var(--teal); color: #031410; border: none; border-radius: 5px; padding: 6px 18px; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .07em; cursor: pointer; transition: opacity .2s, transform .1s; }
+#runBtn:hover:not(:disabled) { opacity: .82; transform: translateY(-1px); }
+#runBtn:disabled { opacity: .3; cursor: not-allowed; }
+.present-toggle { display: flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); color: var(--muted); font-family: var(--mono); font-size: 9.5px; cursor: pointer; transition: border-color .2s, color .2s, background .2s; }
+.present-toggle:hover { border-color: var(--teal); color: var(--teal); }
+.present-toggle.active { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
+html.presentation-mode { zoom: 1.25; }
+
+/* ── Progress + steps ───────────────────────────────────────────────────── */
+.progress-wrap { height: 2px; background: var(--bd); }
+.progress-bar  { height: 100%; width: 0%; background: linear-gradient(90deg, var(--teal), var(--blue)); transition: width .5s ease; }
+.steps-wrap { padding: 10px 18px 9px; background: var(--s1); border-bottom: 1px solid var(--bd); overflow-x: auto; }
+.steps { display: flex; gap: 0; align-items: center; min-width: max-content; }
+.step-item { display: flex; align-items: center; font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.step-pill { padding: 3px 10px; border: 1px solid var(--bd); border-radius: 20px; color: var(--muted); background: var(--s2); white-space: nowrap; transition: all .25s; }
+.step-pill.tag-only { border-style: dashed; }
+.step-item.running .step-pill { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); animation: pulse-pill 1.4s infinite; }
+.step-item.success .step-pill { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
+.step-item.error   .step-pill { border-color: var(--red);  color: var(--red);  background: var(--red-dim); }
+@keyframes pulse-pill { 0%,100%{opacity:1} 50%{opacity:.55} }
+.step-arrow { color: var(--bd2); padding: 0 4px; font-size: 10px; }
+.step-item.tag-only { transition: opacity .2s; }
+body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
+
+/* ── Three-column layout ─────────────────────────────────────────────────── */
+.body-wrap { display: grid; grid-template-columns: 230px 1fr 230px; grid-template-rows: 1fr auto; height: calc(100vh - 108px); overflow: hidden; }
+@media (max-width: 860px) { .body-wrap { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; height: auto; } }
+
+/* ── Participant panels ───────────────────────────────────────────────────── */
+.participant { display: flex; flex-direction: column; border-right: 1px solid var(--bd); overflow-y: auto; overflow-x: hidden; }
+.participant:last-of-type { border-right: none; border-left: 1px solid var(--bd); }
+.participant-header { padding: 10px 14px 8px; border-bottom: 1px solid var(--bd); background: var(--s1); display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 10; }
+.p-avatar { width: 28px; height: 28px; border-radius: 50%; font-size: 13px; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+.p-avatar.alice { background: rgba(61,212,176,.12); color: var(--teal); border: 1px solid var(--teal-glow); }
+.p-avatar.bob   { background: rgba(82,184,255,.10); color: var(--blue); border: 1px solid var(--blue-glow); }
+.p-name { font-weight: 700; font-size: 13px; }
+.p-role { font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-top: 1px; }
+.p-fields { padding: 10px 14px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.p-row { display: flex; flex-direction: column; gap: 3px; }
+.p-key  { font-family: var(--mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.p-val  { font-family: var(--mono); font-size: 10.5px; color: var(--label); min-height: 16px; transition: color .3s; }
+.p-val.set { color: var(--text); }
+.p-val.dim { color: var(--muted); }
+.hex-val { font-family: var(--mono); font-size: 10.5px; color: var(--text); cursor: pointer; word-break: break-all; border-bottom: 1px dashed var(--bd2); display: inline-block; }
+.hex-val:hover { color: var(--blue); border-color: var(--blue); }
+.hex-val::after { content: ' ▸'; font-size: 8px; color: var(--muted); }
+.hex-val.expanded::after { content: ' ▾'; }
+.hex-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.hex-copy-btn { font-family: var(--mono); font-size: 8px; background: none; border: 1px solid var(--bd2); color: var(--muted); border-radius: 3px; padding: 0 4px; cursor: pointer; line-height: 1.6; transition: border-color .2s, color .2s; flex-shrink: 0; }
+.hex-copy-btn:hover { border-color: var(--blue); color: var(--blue); }
+.hex-copy-btn.copied { border-color: var(--green); color: var(--green); }
+.balance-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 4px; font-family: var(--mono); font-size: 11px; }
+.balance-chip.deposited { background: var(--teal-dim);  color: var(--teal);  border: 1px solid var(--teal-glow); }
+.balance-chip.spent     { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(255,85,102,.2); }
+.balance-chip.received  { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-glow); }
+.balance-chip.change    { background: var(--blue-dim);  color: var(--blue);  border: 1px solid var(--blue-glow); }
+.section-sep { height: 1px; background: var(--bd); margin: 8px 14px 0; }
+
+/* ── Center panel ────────────────────────────────────────────────────────── */
+.center-panel { display: flex; flex-direction: column; gap: 0; overflow-y: auto; overflow-x: hidden; background: var(--bg); border-right: 1px solid var(--bd); }
+
+/* ── Intro / orientation card ───────────────────────────────────────────── */
+.intro-card { margin: 12px 14px 0; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--bd2); border-left: 3px solid var(--teal); overflow: hidden; flex-shrink: 0; }
+.intro-hdr { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.intro-title { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); }
+.intro-toggle-ic { margin-left: auto; color: var(--muted); font-size: 11px; }
+.intro-body { padding: 0 12px 12px; font-size: 11.5px; color: var(--text2); line-height: 1.6; }
+.intro-body p { margin-bottom: 8px; }
+.intro-body strong { color: var(--text); }
+.intro-modes { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.intro-mode-row { display: flex; gap: 8px; align-items: baseline; }
+.intro-mode-tag { font-family: var(--mono); font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 10px; flex-shrink: 0; letter-spacing: .06em; }
+.intro-mode-tag.plain { color: var(--blue); border: 1px solid var(--blue-glow); background: var(--blue-dim); }
+.intro-mode-tag.tag   { color: var(--purple); border: 1px solid rgba(195,160,255,.3); background: var(--purple-dim); }
+
+/* ── Step Visualizer Card ────────────────────────────────────────────────── */
+.step-viz-card { margin: 12px 14px 0; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--bd2); overflow: hidden; flex-shrink: 0; }
+.svz-header { padding: 8px 12px 7px; border-bottom: 1px solid var(--bd); display: flex; align-items: center; justify-content: space-between; }
+.svz-step-label { font-family: var(--mono); font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); font-weight: 700; }
+.svz-badge { font-family: var(--mono); font-size: 8px; padding: 2px 8px; border-radius: 10px; }
+.svz-badge.idle    { color: var(--muted); border: 1px solid var(--bd); }
+.svz-badge.running { color: var(--blue); border: 1px solid var(--blue-glow); background: var(--blue-dim); animation: pulse-dot 1.2s infinite; }
+.svz-badge.success { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
+.svz-badge.error   { color: var(--red);  border: 1px solid var(--red);       background: var(--red-dim); }
+.svz-diagram { padding: 12px 14px; min-height: 90px; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+.svz-desc { padding: 8px 12px; border-top: 1px solid var(--bd); font-size: 11px; color: var(--text2); line-height: 1.6; background: rgba(0,0,0,.15); }
+.svz-idle { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 10px; font-style: italic; }
+
+/* actor boxes */
+.svz-actors { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.svz-actor  { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+.svz-actor-box { width: 100%; padding: 5px 4px; border-radius: 5px; text-align: center; font-family: var(--mono); font-size: 9.5px; font-weight: 700; border: 1px solid; transition: all .4s; }
+.svz-actor-box.alice    { border-color: var(--teal-glow); color: var(--teal); background: var(--teal-dim); }
+.svz-actor-box.bob      { border-color: var(--blue-glow); color: var(--blue); background: var(--blue-dim); }
+.svz-actor-box.relay    { border-color: rgba(255,144,64,.35); color: var(--orange); background: var(--orange-dim); }
+.svz-actor-box.contract { border-color: rgba(195,160,255,.3); color: var(--purple); background: var(--purple-dim); }
+.svz-actor-box.chain    { border-color: var(--green-glow); color: var(--green); background: var(--green-dim); }
+.svz-actor-box.gnark    { border-color: rgba(255,204,64,.3); color: var(--amber); background: rgba(255,204,64,.06); }
+.svz-actor-name { font-family: var(--mono); font-size: 7px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+
+/* animated flow arrows */
+.svz-arrow-wrap { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; gap: 1px; }
+.svz-arrow-line { width: 28px; height: 1px; background: var(--bd2); position: relative; overflow: hidden; }
+.svz-arrow-line::after { content: ''; position: absolute; top: 0; left: -60%; width: 60%; height: 100%; background: linear-gradient(90deg, transparent, var(--teal), transparent); animation: flow-anim 1.4s linear infinite; }
+@keyframes flow-anim { to { left: 110%; } }
+.svz-arrow-head { color: var(--muted); font-size: 10px; line-height: 1; }
+.svz-arrow-label { font-family: var(--mono); font-size: 7px; color: var(--muted); white-space: nowrap; }
+
+/* key rows */
+.svz-keyrows { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.svz-keyrow  { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 4px; background: var(--s1); border: 1px solid var(--bd); }
+.svz-keyrow-algo  { font-family: var(--mono); font-size: 8px; color: var(--muted); flex-shrink: 0; min-width: 80px; }
+.svz-keyrow-val   { font-family: var(--mono); font-size: 8.5px; color: var(--label); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .4s; }
+.svz-keyrow-val.set { color: var(--text); }
+.svz-keyrow-size  { font-family: var(--mono); font-size: 7.5px; color: var(--amber); padding: 1px 4px; border-radius: 3px; border: 1px solid rgba(255,204,64,.2); background: rgba(255,204,64,.05); flex-shrink: 0; }
+.svz-keyrow-purpose { font-family: var(--mono); font-size: 7px; color: var(--muted); flex-shrink: 0; }
+
+/* sub-step lists */
+.svz-substeps { display: flex; flex-direction: column; gap: 3px; }
+.svz-substep  { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 9.5px; color: var(--muted); transition: color .3s; }
+.svz-substep.done   { color: var(--teal); }
+.svz-substep.active { color: var(--blue); }
+.svz-substep-icon   { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--bd); display: flex; align-items: center; justify-content: center; font-size: 8px; flex-shrink: 0; transition: all .3s; }
+.svz-substep.done   .svz-substep-icon { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
+.svz-substep.active .svz-substep-icon { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); animation: pulse-dot 1.2s infinite; }
+
+/* Poseidon commitment diagram */
+.svz-poseidon { display: flex; align-items: center; gap: 6px; }
+.svz-inputs   { display: flex; flex-direction: column; gap: 3px; }
+.svz-input-tag { font-family: var(--mono); font-size: 8.5px; padding: 3px 7px; border-radius: 3px; border: 1px solid var(--bd); background: var(--s1); color: var(--label); }
+.svz-input-tag.secret { border-style: dashed; color: var(--muted); }
+.svz-hash-fn  { padding: 8px 10px; border-radius: 5px; border: 1px solid rgba(195,160,255,.3); background: var(--purple-dim); font-family: var(--mono); font-size: 9px; color: var(--purple); white-space: nowrap; text-align: center; }
+.svz-output-tag { font-family: var(--mono); font-size: 8.5px; padding: 3px 7px; border-radius: 3px; border: 1px solid var(--teal-glow); background: var(--teal-dim); color: var(--teal); }
+.svz-chevron  { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+
+/* Merkle tree */
+.svz-tree     { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.svz-tree-row { display: flex; gap: 3px; justify-content: center; }
+.svz-node     { width: 30px; height: 18px; border-radius: 3px; border: 1px solid var(--bd); background: var(--s3); font-family: var(--mono); font-size: 7px; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: all .5s; }
+.svz-node.leaf    { color: var(--label); border-color: var(--bd2); }
+.svz-node.target  { color: var(--teal); border-color: var(--teal-glow); background: var(--teal-dim); box-shadow: 0 0 6px rgba(61,212,176,.2); }
+.svz-node.path    { color: var(--blue); border-color: var(--blue-glow); background: var(--blue-dim); }
+.svz-node.root    { color: var(--green); border-color: var(--green-glow); background: var(--green-dim); }
+.svz-tree-connectors { display: flex; gap: 3px; justify-content: center; font-family: var(--mono); font-size: 8px; color: var(--bd2); }
+
+/* ZK circuit */
+.svz-circuit { display: grid; grid-template-columns: 1fr 60px 1fr; gap: 6px; align-items: stretch; }
+.svz-circuit-col { display: flex; flex-direction: column; gap: 3px; }
+.svz-circuit-title { font-family: var(--mono); font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; text-align: center; }
+.svz-circuit-io { font-family: var(--mono); font-size: 8px; padding: 3px 6px; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.svz-circuit-io.priv { color: var(--muted); background: var(--s1); border: 1px solid var(--bd); }
+.svz-circuit-io.pub  { color: var(--teal);  background: var(--teal-dim); border: 1px solid var(--teal-glow); }
+.svz-circuit-io.warn { color: var(--amber); background: rgba(255,204,64,.05); border: 1px solid rgba(255,204,64,.2); }
+.svz-circuit-box { border: 2px solid rgba(195,160,255,.3); border-radius: var(--r); background: var(--purple-dim); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 6px 4px; }
+.svz-circuit-box-label { font-family: var(--mono); font-size: 9px; color: var(--purple); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; text-align: center; }
+.svz-circuit-box-sub   { font-family: var(--mono); font-size: 7px; color: rgba(195,160,255,.5); text-align: center; }
+.svz-io-badge { font-size: 7px; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; }
+.svz-io-badge.priv { color: var(--muted); border: 1px solid var(--bd); }
+.svz-io-badge.pub  { color: var(--green); border: 1px solid var(--green-glow); background: var(--green-dim); }
+
+/* relay diagram */
+.svz-relay-note { font-family: var(--mono); font-size: 8.5px; padding: 5px 10px; border-radius: 4px; background: rgba(255,85,102,.07); border: 1px dashed rgba(255,85,102,.3); color: var(--red); text-align: center; margin-top: 4px; }
+
+/* Privacy badges */
+.privacy-section { margin: 10px 14px 0; }
+.privacy-title   { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.privacy-badges  { display: flex; flex-direction: column; gap: 5px; }
+.priv-badge      { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); transition: all .4s; }
+.priv-badge.verified { border-color: var(--green-glow); background: var(--green-dim); }
+.priv-dot        { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background .4s, box-shadow .4s; }
+.priv-badge.verified .priv-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.priv-badge-label { font-family: var(--mono); font-size: 9.5px; color: var(--muted); flex: 1; transition: color .4s; }
+.priv-badge.verified .priv-badge-label { color: var(--green); }
+.priv-badge-sub  { font-family: var(--mono); font-size: 8px; color: var(--muted); }
+.priv-badge.verified .priv-badge-sub { color: rgba(61,204,117,.6); }
+
+/* Token flow */
+.token-flow  { margin: 10px 14px 0; }
+.flow-title  { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.flow-viz    { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
+.flow-party  { text-align: center; }
+.flow-name   { font-family: var(--mono); font-size: 8.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 3px; }
+.flow-box    { padding: 6px 8px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); text-align: center; }
+.flow-before { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-bottom: 2px; }
+.flow-after  { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--label); transition: color .5s; }
+.flow-after.alice-final { color: var(--blue); }
+.flow-after.bob-final   { color: var(--green); }
+.flow-arrow-col  { text-align: center; }
+.flow-arrow-icon { font-size: 18px; color: var(--muted); transition: color .4s; }
+.flow-arrow-icon.active { color: var(--teal); }
+.flow-amt    { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-top: 2px; transition: color .4s; }
+.flow-amt.active { color: var(--teal); }
+
+/* Metrics */
+.metrics-section { margin: 10px 14px 0; }
+.metrics-title   { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.metrics-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.metric-item     { padding: 8px 10px; border-radius: var(--r); background: var(--s2); border: 1px solid var(--bd); transition: border-color .5s; }
+.metric-item.set { border-color: var(--bd2); }
+.metric-key      { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 4px; }
+.metric-val      { font-family: var(--mono); font-size: 17px; font-weight: 700; color: var(--label); transition: color .5s; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.metric-val.lit  { color: var(--text); }
+.metric-val.hl   { color: var(--teal); }
+.metric-sub      { font-family: var(--mono); font-size: 8px; color: var(--muted); margin-top: 3px; }
+.metric-bar      { height: 2px; background: var(--bd); border-radius: 1px; margin-top: 6px; overflow: hidden; }
+.metric-bar-fill { height: 100%; width: 0%; border-radius: 1px; background: linear-gradient(90deg, var(--teal), var(--blue)); transition: width 1.4s cubic-bezier(.16,1,.3,1); }
+
+/* Protocol addresses */
+.proto-section { margin: 10px 14px 0; }
+.proto-title   { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.proto-rows    { display: flex; flex-direction: column; gap: 4px; }
+.proto-row     { display: flex; gap: 8px; align-items: baseline; }
+.proto-key     { font-family: var(--mono); font-size: 8.5px; color: var(--muted); flex-shrink: 0; min-width: 100px; }
+.proto-val     { font-family: var(--mono); font-size: 9.5px; color: var(--label); word-break: break-all; }
+
+/* Tx cards */
+.tx-section    { margin: 10px 14px 12px; }
+.tx-title      { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.tx-cards      { display: flex; flex-direction: column; gap: 6px; }
+.tx-card       { padding: 8px 10px; border-radius: var(--r); background: var(--s2); border: 1px solid var(--bd); }
+.tx-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.tx-card-label  { font-family: var(--mono); font-size: 8.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.tx-card-status { font-family: var(--mono); font-size: 8px; padding: 2px 6px; border-radius: 10px; }
+.tx-card-status.pending { color: var(--muted); border: 1px solid var(--bd); }
+.tx-card-status.done    { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
+.tx-meta       { display: flex; gap: 12px; flex-wrap: wrap; }
+.tx-meta-item  { display: flex; flex-direction: column; gap: 1px; }
+.tx-meta-key   { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.tx-meta-val   { font-family: var(--mono); font-size: 9.5px; color: var(--label); }
+
+/* Summary card */
+.summary-card  { display: none; margin: 12px 14px; padding: 14px; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--green-glow); }
+.summary-card.show { display: block; }
+.summary-title { font-family: var(--mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--green); margin-bottom: 10px; font-weight: 700; }
+.summary-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.summary-item  { display: flex; flex-direction: column; gap: 2px; }
+.summary-key   { font-family: var(--mono); font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.summary-val   { font-family: var(--mono); font-size: 11px; color: var(--text); font-weight: 600; }
+.summary-highlight { color: var(--teal); }
+.summary-privacy { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--bd); font-size: 11px; color: var(--text2); line-height: 1.6; }
+.summary-privacy strong { color: var(--teal); }
+
+/* Log */
+.log-wrap    { grid-column: 1 / -1; border-top: 1px solid var(--bd); background: var(--bg); display: flex; flex-direction: column; height: 160px; flex-shrink: 0; }
+.log-header  { padding: 5px 14px; border-bottom: 1px solid var(--bd); background: var(--s1); font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.log-clear   { cursor: pointer; font-size: 8.5px; color: var(--muted); background: none; border: none; padding: 2px 6px; }
+.log-clear:hover { color: var(--label); }
+.log-filter-select { margin-left: auto; font-family: var(--mono); font-size: 8.5px; text-transform: none; letter-spacing: normal; background: var(--bg); border: 1px solid var(--bd); color: var(--muted); border-radius: 3px; padding: 2px 6px; cursor: pointer; }
+.log-filter-select:hover { border-color: var(--bd2); color: var(--label); }
+.log-body    { flex: 1; overflow-y: auto; padding: 4px 0; }
+.log-line    { display: flex; gap: 8px; align-items: baseline; font-family: var(--mono); font-size: 10px; line-height: 1.7; padding: 1px 14px; }
+.log-line:hover { background: var(--s1); }
+.log-ts      { color: var(--muted); flex-shrink: 0; font-size: 8.5px; }
+.cat-badge   { font-size: 7.5px; font-weight: 700; letter-spacing: .08em; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; font-family: var(--mono); text-transform: uppercase; }
+.cat-key     { background: rgba(195,160,255,.1); color: var(--purple); border: 1px solid rgba(195,160,255,.2); }
+.cat-chain   { background: rgba(82,184,255,.1);  color: var(--blue);   border: 1px solid rgba(82,184,255,.2); }
+.cat-zk      { background: rgba(61,212,176,.1);  color: var(--teal);   border: 1px solid rgba(61,212,176,.2); }
+.cat-tag     { background: rgba(255,144,64,.1);  color: var(--orange); border: 1px solid rgba(255,144,64,.2); }
+.log-msg     { color: var(--text); flex: 1; }
+.log-msg.ok  { color: var(--teal); }
+.log-msg.err { color: var(--red); }
+
+/* ── Responsive (kept last so it wins the cascade over same-specificity base rules) ── */
+@media (max-width: 480px) {
+  .metrics-grid, .summary-grid { grid-template-columns: 1fr; }
+  .svz-circuit { grid-template-columns: 1fr; }
+  .header { padding: 8px 12px; gap: 8px; }
+  .mode-label { display: none; }
+}
+</style>
+</head>
+<body class="mode-plain">
+
+<div class="header">
+  <span class="brand">Enygma</span>
+  <div><div class="title">Retail Payments <small>· Live Demo</small></div></div>
+  <div class="mode-wrap">
+    <span class="mode-label">Mode</span>
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="btnPlain" onclick="setMode('plain')">Plain</button>
+      <button class="mode-btn" id="btnTag" onclick="setMode('tag')">With Tag</button>
+    </div>
+    <span class="mode-tip">+ ML-KEM channel &amp; TagRegistry notification</span>
+  </div>
+  <div class="controls">
+    <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
+      <span class="present-toggle-label">Presentation</span>
+    </button>
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">idle</span>
+    <button id="runBtn" onclick="run()">Run Flow</button>
+  </div>
+</div>
+
+<div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+
+<div class="steps-wrap"><div class="steps" id="stepsRow"></div></div>
+
+<div class="body-wrap">
+
+  <!-- ── Alice ── -->
+  <div class="participant" id="p0">
+    <div class="participant-header">
+      <div class="p-avatar alice">A</div>
+      <div><div class="p-name">Alice</div><div class="p-role">Sender</div></div>
+    </div>
+    <div class="p-fields">
+      <div class="p-row"><div class="p-key">ETH Address</div><div class="p-val dim" id="p0-ethAddr">—</div></div>
+      <div class="p-row"><div class="p-key" title="BabyJubJub public key used inside the ZK circuit to prove note ownership, without revealing the matching private key.">pk_spend (BJJ)</div><div class="p-val" id="p0-pkSpend">—</div></div>
+      <div class="p-row"><div class="p-key" title="Post-quantum public key (NIST FIPS 203) used to encrypt/decrypt payment notes so only the intended recipient can read them.">pk_view (ML-KEM-768)</div><div class="p-val" id="p0-pkView">—</div></div>
+      <div class="p-row"><div class="p-key" title="On-chain registration status in UserRegistry — the only transaction where this party's real Ethereum address appears as msg.sender.">Registry</div><div class="p-val" id="p0-status">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key" title="A hash of (pk_spend, salt, amount, tokenId) recorded on-chain instead of the plaintext values — hides the amount and owner.">Poseidon Commitment</div><div class="p-val" id="p0-commitment">—</div></div>
+      <div class="p-row"><div class="p-key" title="Root of the tree containing every deposit commitment. Alice proves her note is included without revealing which leaf it is.">Merkle Root</div><div class="p-val" id="p0-merkleRoot">—</div></div>
+      <div class="p-row"><div class="p-key" title="A one-time value derived from Alice's note that the contract marks as spent on-chain, preventing the same note from being spent twice.">Nullifier (spent)</div><div class="p-val" id="p0-nullifier">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key">Token Balance</div><div class="p-val" id="p0-balance">—</div></div>
+    </div>
+  </div>
+
+  <!-- ── Center ── -->
+  <div class="center-panel">
+
+    <!-- Orientation card -->
+    <div class="intro-card" id="introCard">
+      <div class="intro-hdr" id="introToggle">
+        <span class="intro-title">What you're about to see</span>
+        <span class="intro-toggle-ic" id="introToggleIc">▾</span>
+      </div>
+      <div class="intro-body" id="introBody">
+        <p>
+          Alice deposits ERC-20 tokens into a private vault behind a <strong>Poseidon commitment</strong>, then
+          pays Bob <strong>30 of 40 tokens</strong> using a <strong>Groth16 zero-knowledge proof</strong> —
+          submitted by a relayer so Alice's Ethereum address never touches the payment transaction.
+          Bob discovers and decrypts his note using an <strong>ML-KEM-768</strong> (post-quantum) view key.
+        </p>
+        <div class="intro-modes">
+          <div class="intro-mode-row"><span class="intro-mode-tag plain">PLAIN</span> Bob finds his note by trial-decrypting every on-chain Payment event with his view key.</div>
+          <div class="intro-mode-row"><span class="intro-mode-tag tag">WITH TAG</span> Alice also opens an ML-KEM channel and publishes an encrypted "tag" pointer, so Bob can find his note directly without scanning every event.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary card -->
+    <div class="summary-card" id="summaryCard">
+      <div class="summary-title">Payment Complete</div>
+      <div class="summary-grid">
+        <div class="summary-item"><div class="summary-key">Transferred</div><div class="summary-val summary-highlight" id="sum-amount">30 tokens</div></div>
+        <div class="summary-item"><div class="summary-key">Mode</div><div class="summary-val" id="sum-mode">Plain</div></div>
+        <div class="summary-item"><div class="summary-key">On-chain Txs</div><div class="summary-val" id="sum-txcount">—</div></div>
+        <div class="summary-item"><div class="summary-key">Total Protocol Gas</div><div class="summary-val" id="sum-gas">—</div></div>
+        <div class="summary-item" style="grid-column:1/-1"><div class="summary-key">Timing</div><div class="summary-val" id="sum-extra" style="font-size:10px;color:var(--text2)">—</div></div>
+      </div>
+      <div class="summary-privacy"><strong>Privacy guaranteed:</strong> Alice's Ethereum address never appeared on the payment or tag transactions — the relayer submitted them as <strong>msg.sender</strong>. Amount and owner are hidden behind a <strong>Poseidon commitment</strong>. Bob's note is sealed with <strong>ML-KEM-768</strong>.</div>
+    </div>
+
+    <!-- Step Visualizer Card -->
+    <div class="step-viz-card" id="stepVizCard">
+      <div class="svz-header">
+        <span class="svz-step-label" id="svzLabel">Waiting</span>
+        <span class="svz-badge idle" id="svzBadge">idle</span>
+      </div>
+      <div class="svz-diagram" id="svzDiagram">
+        <div class="svz-idle">Click <strong>Run Flow</strong> to start the confidential ERC-20 payment demo.</div>
+      </div>
+      <div class="svz-desc" id="svzDesc" style="display:none"></div>
+    </div>
+
+    <!-- Privacy guarantees -->
+    <div class="privacy-section">
+      <div class="privacy-title">Privacy Guarantees</div>
+      <div class="privacy-badges">
+        <div class="priv-badge" id="priv-sender">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">msg.sender = relayer</div><div class="priv-badge-sub">Alice's address never on payment tx</div></div>
+        </div>
+        <div class="priv-badge" id="priv-nullifier">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Nullifier spent on-chain</div><div class="priv-badge-sub">Alice's note cannot be double-spent</div></div>
+        </div>
+        <div class="priv-badge" id="priv-commitment">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Commitment hiding</div><div class="priv-badge-sub">Amount &amp; owner hidden by Poseidon hash</div></div>
+        </div>
+        <div class="priv-badge" id="priv-note">
+          <div class="priv-dot"></div>
+          <div style="flex:1"><div class="priv-badge-label">Note encrypted (ML-KEM-768)</div><div class="priv-badge-sub">Only Bob can decrypt the payment note</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Token flow -->
+    <div class="token-flow">
+      <div class="flow-title">Token Flow</div>
+      <div class="flow-viz">
+        <div class="flow-party"><div class="flow-name">Alice</div>
+          <div class="flow-box"><div class="flow-before">deposited 40</div><div class="flow-after alice-final" id="flowAlice">10 change</div></div>
+        </div>
+        <div class="flow-arrow-col"><div class="flow-arrow-icon" id="flowArrow">→</div><div class="flow-amt" id="flowAmt">30 tokens</div></div>
+        <div class="flow-party"><div class="flow-name">Bob</div>
+          <div class="flow-box"><div class="flow-before">started: 0</div><div class="flow-after bob-final" id="flowBob">30 received</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="metrics-section">
+      <div class="metrics-title">Performance Metrics</div>
+      <div class="metrics-grid">
+        <div class="metric-item" id="metric-proofTime"><div class="metric-key">Proof Generation</div><div class="metric-val" id="mv-proofTime">—</div><div class="metric-sub" id="ms-proofTime">Groth16 witness + prove</div><div class="metric-bar"><div class="metric-bar-fill" id="mb-proofTime"></div></div></div>
+        <div class="metric-item" id="metric-proofSize"><div class="metric-key">Proof Size</div><div class="metric-val" id="mv-proofSize">—</div><div class="metric-sub">8 × 32-byte field elements</div></div>
+        <div class="metric-item" id="metric-verifyTime"><div class="metric-key">Verify Round-Trip</div><div class="metric-val" id="mv-verifyTime">—</div><div class="metric-sub">Submit → tx confirmed</div><div class="metric-bar"><div class="metric-bar-fill" id="mb-verifyTime"></div></div></div>
+        <div class="metric-item" id="metric-verifyGas"><div class="metric-key">Verification Gas</div><div class="metric-val" id="mv-verifyGas">—</div><div class="metric-sub">EnygmaDvp.payment() gas</div></div>
+        <div class="metric-item" id="metric-totalGas"><div class="metric-key">Total Protocol Gas</div><div class="metric-val hl" id="mv-totalGas">—</div><div class="metric-sub">Deposit + payment + tags</div></div>
+        <div class="metric-item" id="metric-flowTime"><div class="metric-key">Total Flow Time</div><div class="metric-val hl" id="mv-flowTime">—</div><div class="metric-sub">End-to-end wall-clock</div></div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--bd);margin:10px 14px 0"></div>
+
+    <!-- Protocol addresses -->
+    <div class="proto-section">
+      <div class="proto-title">Contracts &amp; Relayer</div>
+      <div class="proto-rows">
+        <div class="proto-row"><div class="proto-key" title="Holds deposited ERC-20 tokens behind Poseidon commitments and verifies Groth16 payment proofs.">Erc20CoinVault</div><div class="proto-val" id="proto-vaultAddr">—</div></div>
+        <div class="proto-row"><div class="proto-key" title="On-chain directory of each party's public spend and view keys.">UserRegistry</div><div class="proto-val" id="proto-registryAddr">—</div></div>
+        <div class="proto-row"><div class="proto-key" title="Submits payment transactions as msg.sender so Alice's own address never appears on-chain.">Relayer</div><div class="proto-val" id="proto-relayerAddr">—</div></div>
+        <div class="proto-row tag-only-row" style="display:none"><div class="proto-key" title="Stores ML-KEM-768 ciphertexts so two parties can derive a shared secret without a direct off-chain channel.">TagChannelRegistry</div><div class="proto-val" id="proto-tagChannelAddr">—</div></div>
+        <div class="proto-row tag-only-row" style="display:none"><div class="proto-key" title="Public ledger of encrypted, HMAC-indexed payment notes — lets Bob find his payment without scanning every vault event.">TagRegistry</div><div class="proto-val" id="proto-tagRegistryAddr">—</div></div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--bd);margin:10px 14px 0"></div>
+
+    <!-- Transaction record -->
+    <div class="tx-section">
+      <div class="tx-title">Transaction Record</div>
+      <div class="tx-cards">
+        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label">Payment (EnygmaDvp.payment)</span><span class="tx-card-status pending" id="txstatus-payment">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-payment">—</div></div></div></div>
+        <div class="tx-card tag-only-card" style="display:none"><div class="tx-card-header"><span class="tx-card-label">Channel Setup (TagChannelRegistry)</span><span class="tx-card-status pending" id="txstatus-channel">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-channel">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-channel">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-channel">—</div></div></div></div>
+        <div class="tx-card tag-only-card" style="display:none"><div class="tx-card-header"><span class="tx-card-label">Tag Publish (TagRegistry)</span><span class="tx-card-status pending" id="txstatus-tag">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-tag">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-tag">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-tag">—</div></div></div></div>
+      </div>
+    </div>
+
+  </div><!-- /center -->
+
+  <!-- ── Bob ── -->
+  <div class="participant" id="p1">
+    <div class="participant-header">
+      <div class="p-avatar bob">B</div>
+      <div><div class="p-name">Bob</div><div class="p-role">Receiver</div></div>
+    </div>
+    <div class="p-fields">
+      <div class="p-row"><div class="p-key">ETH Address</div><div class="p-val dim" id="p1-ethAddr">—</div></div>
+      <div class="p-row"><div class="p-key" title="BabyJubJub public key used inside the ZK circuit to prove note ownership, without revealing the matching private key.">pk_spend (BJJ)</div><div class="p-val" id="p1-pkSpend">—</div></div>
+      <div class="p-row"><div class="p-key" title="Post-quantum public key (NIST FIPS 203) used to encrypt/decrypt payment notes so only the intended recipient can read them.">pk_view (ML-KEM-768)</div><div class="p-val" id="p1-pkView">—</div></div>
+      <div class="p-row"><div class="p-key" title="On-chain registration status in UserRegistry — the only transaction where this party's real Ethereum address appears as msg.sender.">Registry</div><div class="p-val" id="p1-status">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key" title="Poseidon commitment to Bob's new note — hides the amount he received until he decrypts it himself.">Output Commitment</div><div class="p-val" id="p1-commitment">—</div></div>
+      <div class="p-row tag-only-field" style="display:none"><div class="p-key" title="Pairwise secret Alice and Bob share after an ML-KEM-768 key exchange, used to seal the private payment tag.">ML-KEM Channel</div><div class="p-val" id="p1-channel">—</div></div>
+      <div class="p-row"><div class="p-key" title="Random blinding value recovered from the decrypted note — needed alongside the amount to recompute and verify the Poseidon commitment.">Note Salt (decrypted)</div><div class="p-val" id="p1-salt">—</div></div>
+      <div class="section-sep" style="margin:8px 0 0"></div>
+      <div class="p-row"><div class="p-key">Token Balance</div><div class="p-val" id="p1-balance">—</div></div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="log-wrap">
+    <div class="log-header"><span>Event Log</span><select id="logFilter" class="log-filter-select" title="Show only log lines from one category"><option value="all">All</option><option value="key">Key</option><option value="chain">Chain</option><option value="zk">ZK</option><option value="tag">Tag</option></select><button class="log-clear" onclick="clearLog()">clear</button></div>
+    <div class="log-body" id="logBody"></div>
+  </div>
+
+</div><!-- /body-wrap -->
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let mode = 'plain', es = null, txCount = 0;
+
+// Live data cache — updated as participant/proto events arrive so diagrams can reference it
+const liveData = {};
+
+// ── Step definitions ──────────────────────────────────────────────────────────
+const STEPS_PLAIN = [
+  { id:'prereqs',  label:'Prerequisites' },
+  { id:'keygen',   label:'Key Gen' },
+  { id:'register', label:'Register' },
+  { id:'deposit',  label:'Deposit' },
+  { id:'merkle',   label:'Merkle Proof' },
+  { id:'zkproof',  label:'ZK Proof' },
+  { id:'relay',    label:'Relay Payment' },
+  { id:'scan',     label:'Bob Scans' },
+];
+const STEPS_TAG = [
+  { id:'prereqs',  label:'Prerequisites' },
+  { id:'keygen',   label:'Key Gen' },
+  { id:'register', label:'Register' },
+  { id:'channel',  label:'Channel Setup', tagOnly:true },
+  { id:'deposit',  label:'Deposit' },
+  { id:'merkle',   label:'Merkle Proof' },
+  { id:'zkproof',  label:'ZK Proof' },
+  { id:'relay',    label:'Relay Payment' },
+  { id:'tag',      label:'Publish Tag', tagOnly:true },
+  { id:'scan_tag', label:'Bob Scans Tag', tagOnly:true },
+  { id:'verify',   label:'Verify', tagOnly:true },
+];
+function currentSteps() { return mode === 'tag' ? STEPS_TAG : STEPS_PLAIN; }
+
+// ── Step Visualizer Templates ─────────────────────────────────────────────────
+function actor(cls, label, sub) {
+  return `<div class="svz-actor"><div class="svz-actor-box ${cls}">${label}</div><div class="svz-actor-name">${sub||''}</div></div>`;
+}
+function arrowRight(label) {
+  return `<div class="svz-arrow-wrap"><div class="svz-arrow-line"></div><div class="svz-arrow-head">›</div>${label?`<div class="svz-arrow-label">${label}</div>`:''}</div>`;
+}
+function arrowLeft(label) {
+  return `<div class="svz-arrow-wrap"><div class="svz-arrow-label">${label||''}</div><div class="svz-arrow-head">‹</div><div class="svz-arrow-line" style="transform:scaleX(-1)"></div></div>`;
+}
+function substep(id, text) {
+  return `<div class="svz-substep" id="ss-${id}"><div class="svz-substep-icon">·</div>${text}</div>`;
+}
+function keyrow(algo, valId, size, purpose) {
+  return `<div class="svz-keyrow"><span class="svz-keyrow-algo">${algo}</span><span class="svz-keyrow-val" id="${valId}">generating…</span><span class="svz-keyrow-size">${size}</span><span class="svz-keyrow-purpose">${purpose}</span></div>`;
+}
+
+const VIZ = {
+
+  prereqs: () => `
+    <div class="svz-substeps">
+      ${substep('chain', 'Hardhat node · :8545 (EVM chain)')}
+      ${substep('gnark', 'gnark server · :8082 (Groth16 prover)')}
+      ${substep('relay', 'Relayer       · :8090 (tx submitter)')}
+    </div>
+    <div class="svz-actors" style="margin-top:10px">
+      ${actor('chain','Chain',':8545')}
+      ${arrowRight('TCP')}
+      ${actor('gnark','gnark',':8082')}
+      ${arrowRight('TCP')}
+      ${actor('relay','Relayer',':8090')}
+    </div>`,
+
+  keygen: () => `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <div style="font-family:var(--mono);font-size:8px;color:var(--teal);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Alice</div>
+        <div class="svz-keyrows">
+          ${keyrow('BabyJubJub pk','viz-a-spend','32 B','ZK ownership')}
+          ${keyrow('ML-KEM-768 ek','viz-a-ek','1184 B','note encrypt')}
+          ${keyrow('ML-KEM-768 dk','viz-a-dk','2400 B','note decrypt')}
+        </div>
+      </div>
+      <div>
+        <div style="font-family:var(--mono);font-size:8px;color:var(--blue);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Bob</div>
+        <div class="svz-keyrows">
+          ${keyrow('BabyJubJub pk','viz-b-spend','32 B','ZK ownership')}
+          ${keyrow('ML-KEM-768 ek','viz-b-ek','1184 B','note encrypt')}
+          ${keyrow('ML-KEM-768 dk','viz-b-dk','2400 B','note decrypt')}
+        </div>
+      </div>
+    </div>`,
+
+  register: () => `
+    <div class="svz-actors">
+      ${actor('alice','Alice','sender')}
+      ${arrowRight('register(pk_spend, pk_view)')}
+      ${actor('contract','UserRegistry','on-chain')}
+      ${arrowLeft('register(pk_spend, pk_view)')}
+      ${actor('bob','Bob','receiver')}
+    </div>
+    <div class="svz-substeps" style="margin-top:8px">
+      ${substep('reg-alice', 'Alice.register() → UserRegistry tx mined')}
+      ${substep('reg-bob',   'Bob.register()   → UserRegistry tx mined')}
+    </div>
+    <div class="svz-relay-note" style="margin-top:6px">⚠ Only step where Alice &amp; Bob ETH addresses appear as msg.sender</div>`,
+
+  channel: () => `
+    <div class="svz-actors">
+      ${actor('alice','Alice','sender')}
+      ${arrowRight('KEM.Encaps(bob.ek)')}
+      ${actor('contract','TagChannel<br>Registry','on-chain')}
+      ${arrowLeft('KEM.Decaps(c1, dk)')}
+      ${actor('bob','Bob','receiver')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px">
+      <div class="svz-keyrows">
+        <div class="svz-keyrow"><span class="svz-keyrow-algo">c1 (ciphertext)</span><span class="svz-keyrow-val" id="viz-c1">encapsulating…</span><span class="svz-keyrow-size">1088 B</span></div>
+        <div class="svz-keyrow"><span class="svz-keyrow-algo">shared secret</span><span class="svz-keyrow-val" id="viz-ss">hidden</span><span class="svz-keyrow-size">32 B</span></div>
+      </div>
+      <div class="svz-keyrows">
+        <div class="svz-keyrow"><span class="svz-keyrow-algo">Bob recovers SS</span><span class="svz-keyrow-val" id="viz-ss-bob">decapsulating…</span><span class="svz-keyrow-size">32 B</span></div>
+        <div class="svz-keyrow"><span class="svz-keyrow-algo">bitmap</span><span class="svz-keyrow-val" id="viz-bitmap">PrivacyFull</span><span class="svz-keyrow-size">var</span></div>
+      </div>
+    </div>`,
+
+  deposit: () => `
+    <div class="svz-poseidon">
+      <div class="svz-inputs">
+        <div class="svz-input-tag">pk_spend</div>
+        <div class="svz-input-tag secret">saltB (random)</div>
+        <div class="svz-input-tag">amount = 40</div>
+        <div class="svz-input-tag">tokenId = 0</div>
+      </div>
+      <div class="svz-chevron">›</div>
+      <div class="svz-hash-fn">Poseidon<br>hash</div>
+      <div class="svz-chevron">›</div>
+      <div>
+        <div class="svz-output-tag">commitment</div>
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:3px;text-align:center">hiding on-chain</div>
+      </div>
+    </div>
+    <div class="svz-actors" style="margin-top:10px">
+      ${actor('alice','Alice','40 tokens')}
+      ${arrowRight('depositV2()')}
+      ${actor('contract','Erc20Coin<br>Vault','stores cmt')}
+    </div>`,
+
+  merkle: () => `
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div class="svz-tree">
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--green);margin-bottom:4px;text-transform:uppercase;letter-spacing:.1em">Root</div>
+        <div class="svz-tree-row"><div class="svz-node root" id="viz-root">H01</div></div>
+        <div class="svz-tree-connectors" style="gap:28px">╱ ╲</div>
+        <div class="svz-tree-row"><div class="svz-node path" id="viz-n1">H0</div><div style="width:6px"></div><div class="svz-node leaf">H1</div></div>
+        <div class="svz-tree-connectors" style="gap:6px">╱ ╲  ╱ ╲</div>
+        <div class="svz-tree-row"><div class="svz-node target" id="viz-leaf">C₀</div><div style="width:2px"></div><div class="svz-node path" id="viz-sib">C₁</div><div style="width:2px"></div><div class="svz-node leaf">C₂</div><div style="width:2px"></div><div class="svz-node leaf">C₃</div></div>
+        <div style="font-family:var(--mono);font-size:7px;color:var(--muted);margin-top:3px;text-align:center">depth = 8 (4 leaves shown)</div>
+      </div>
+      <div style="flex:1">
+        <div class="svz-keyrows">
+          <div class="svz-keyrow"><span class="svz-keyrow-algo" style="color:var(--teal)">C₀ (Alice)</span><span class="svz-keyrow-val set" id="viz-leaf-val">commitment</span></div>
+          <div class="svz-keyrow"><span class="svz-keyrow-algo">sibling</span><span class="svz-keyrow-val" id="viz-sib-val">—</span></div>
+          <div class="svz-keyrow"><span class="svz-keyrow-algo" style="color:var(--green)">root</span><span class="svz-keyrow-val" id="viz-root-val">computing…</span></div>
+        </div>
+        <div class="svz-substeps" style="margin-top:8px">
+          ${substep('mk-scan','Scan Commitment events from vault')}
+          ${substep('mk-build','Rebuild Merkle tree locally')}
+          ${substep('mk-prove','Generate inclusion proof')}
+        </div>
+      </div>
+    </div>`,
+
+  zkproof: () => `
+    <div class="svz-circuit">
+      <div class="svz-circuit-col">
+        <div class="svz-circuit-title">Private Inputs</div>
+        <div class="svz-circuit-io priv"><span>pk_spend (Alice)</span><span class="svz-io-badge priv">secret</span></div>
+        <div class="svz-circuit-io priv"><span>saltB</span><span class="svz-io-badge priv">secret</span></div>
+        <div class="svz-circuit-io priv"><span>amount = 40</span><span class="svz-io-badge priv">secret</span></div>
+        <div class="svz-circuit-io priv"><span>Merkle path</span><span class="svz-io-badge priv">secret</span></div>
+        <div class="svz-circuit-io priv"><span>outputs = [30, 10]</span><span class="svz-io-badge priv">secret</span></div>
+      </div>
+      <div class="svz-circuit-box">
+        <div class="svz-circuit-box-label">Groth16</div>
+        <div class="svz-circuit-box-sub">gnark</div>
+        <div class="svz-circuit-box-sub" id="viz-proof-ms" style="margin-top:4px;color:var(--amber)">proving…</div>
+      </div>
+      <div class="svz-circuit-col">
+        <div class="svz-circuit-title">Public Outputs</div>
+        <div class="svz-circuit-io pub"><span>Merkle root</span><span class="svz-io-badge pub">public</span></div>
+        <div class="svz-circuit-io warn"><span>nullifier</span><span class="svz-io-badge pub">revealed</span></div>
+        <div class="svz-circuit-io pub"><span>cmt_bob</span><span class="svz-io-badge pub">public</span></div>
+        <div class="svz-circuit-io pub"><span>cmt_alice</span><span class="svz-io-badge pub">public</span></div>
+        <div class="svz-circuit-io pub"><span>π = [A, B, C]</span><span class="svz-io-badge pub">256 B</span></div>
+      </div>
+    </div>`,
+
+  relay: () => `
+    <div class="svz-actors">
+      ${actor('alice','Alice','proof sender')}
+      ${arrowRight('POST /relay/payment')}
+      ${actor('relay','Relayer','msg.sender')}
+      ${arrowRight('payment(π, stmt)')}
+      ${actor('contract','EnygmaDvp','verifies ZK')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:8px;font-family:var(--mono);font-size:8px;text-align:center">
+      <div style="padding:5px;border-radius:4px;background:var(--teal-dim);border:1px solid var(--teal-glow);color:var(--teal)">Alice signs<br><span style="font-size:7px;color:rgba(61,212,176,.5)">proof payload</span></div>
+      <div style="padding:5px;border-radius:4px;background:var(--orange-dim);border:1px solid rgba(255,144,64,.3);color:var(--orange)">Relayer pays<br><span style="font-size:7px;color:rgba(255,144,64,.5)">gas fees</span></div>
+      <div style="padding:5px;border-radius:4px;background:var(--purple-dim);border:1px solid rgba(195,160,255,.3);color:var(--purple)">On-chain verify<br><span style="font-size:7px;color:rgba(195,160,255,.5)">Groth16 pairing</span></div>
+    </div>
+    <div class="svz-relay-note">Alice's ETH address NEVER appears on the payment transaction</div>`,
+
+  tag: () => `
+    <div class="svz-actors">
+      ${actor('alice','Alice','seals note')}
+      ${arrowRight('HMAC tag + AES-GCM note')}
+      ${actor('contract','TagRegistry','public ledger')}
+      ${arrowLeft('ScanBlocksFromCursor')}
+      ${actor('bob','Bob','discovers tag')}
+    </div>
+    <div class="svz-keyrows" style="margin-top:8px">
+      <div class="svz-keyrow"><span class="svz-keyrow-algo">note plaintext</span><span class="svz-keyrow-val">{amount=30, tokenId, saltB}</span><span class="svz-keyrow-purpose">before seal</span></div>
+      <div class="svz-keyrow"><span class="svz-keyrow-algo">AES-GCM key</span><span class="svz-keyrow-val" style="color:var(--muted)">derived from shared secret</span><span class="svz-keyrow-size">32 B</span></div>
+      <div class="svz-keyrow"><span class="svz-keyrow-algo">ciphertext</span><span class="svz-keyrow-val" id="viz-tag-ct">sealing…</span><span class="svz-keyrow-purpose">on-chain</span></div>
+    </div>`,
+
+  scan_tag: () => `
+    <div class="svz-actors">
+      ${actor('bob','Bob','scans')}
+      ${arrowRight('HMAC match')}
+      ${actor('contract','TagRegistry','')}
+    </div>
+    <div class="svz-substeps" style="margin-top:8px">
+      ${substep('st-scan',  'Scan TagRegistry blocks')}
+      ${substep('st-hmac',  'HMAC-match tags with shared secret')}
+      ${substep('st-dec',   'AES-GCM decrypt → {amount, tokenId, saltB}')}
+      ${substep('st-verify','Recompute Poseidon commitment → verify ✓')}
+    </div>`,
+
+  scan: () => `
+    <div class="svz-actors">
+      ${actor('bob','Bob','view key')}
+      ${arrowRight('KEM.Decaps(ct, dk)')}
+      ${actor('contract','Erc20Coin<br>Vault','Payment event')}
+    </div>
+    <div class="svz-substeps" style="margin-top:8px">
+      ${substep('sc-decap',  'ML-KEM decapsulate → derive note key')}
+      ${substep('sc-decrypt','AES-GCM decrypt ciphertext → {amount, tokenId, saltB}')}
+      ${substep('sc-verify', 'Poseidon(pk_spend, saltB, amount, tokenId) == cmt ✓')}
+    </div>`,
+
+  verify: () => `
+    <div class="svz-poseidon">
+      <div class="svz-inputs">
+        <div class="svz-input-tag">bob.pk_spend</div>
+        <div class="svz-input-tag" id="viz-salt-inp">saltB (decrypted)</div>
+        <div class="svz-input-tag">amount = 30</div>
+        <div class="svz-input-tag">tokenId = 0</div>
+      </div>
+      <div class="svz-chevron">›</div>
+      <div class="svz-hash-fn">Poseidon<br>hash</div>
+      <div class="svz-chevron">›</div>
+      <div>
+        <div class="svz-output-tag" id="viz-cmt-match">cmt_bob</div>
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--muted);margin-top:3px;text-align:center">must match</div>
+        <div style="font-family:var(--mono);font-size:7.5px;color:var(--label);margin-top:2px;text-align:center">on-chain stmt[4]</div>
+      </div>
+    </div>`,
+};
+
+const VIZ_DESC = {
+  prereqs:  'Checking that the Hardhat node (port 8545), gnark prover (port 8082), and relayer (port 8090) are all reachable. Also loading contract addresses from <code>build/receipts.json</code> and relayer info.',
+  keygen:   'Each party generates two keypairs locally. The <strong>BabyJubJub</strong> keypair is used inside Groth16 circuits to prove note ownership. The <strong>ML-KEM-768</strong> keypair (NIST PQC standard) encrypts/decrypts payment notes. Private keys never leave the party.',
+  register: 'Alice and Bob publish their public keys to the <strong>UserRegistry</strong> on-chain contract. This is the only transaction where their Ethereum addresses appear as <code>msg.sender</code>. All subsequent transactions go through the relayer.',
+  channel:  'Alice performs <strong>ML-KEM-768 encapsulation</strong> against Bob\'s public encapsulation key, deriving a 32-byte shared secret and a 1088-byte ciphertext. The relayer stores it in <strong>TagChannelRegistry</strong>. Only Bob can recover the shared secret via decapsulation.',
+  deposit:  'Alice deposits 40 ERC-20 tokens into the private vault. A <strong>Poseidon commitment</strong> <code>H(pk_spend, saltB, amount, tokenId)</code> is recorded on-chain instead of the plaintext values — the amount and owner remain hidden.',
+  merkle:   'Alice scans all on-chain <code>Commitment</code> events, rebuilds the full <strong>Merkle tree</strong> (depth=8) locally, and generates a sibling-path inclusion proof for her deposit note. The proof shows membership without revealing which leaf.',
+  zkproof:  'The <strong>gnark server</strong> generates a Groth16 proof that: (1) Alice knows a note in the Merkle tree, (2) outputs sum to the input, (3) the nullifier is correctly derived. Private inputs are never revealed — only the proof and public signals leave the prover.',
+  relay:    'Alice sends the unsigned Groth16 proof to the relayer via <code>POST /relay/payment</code>. The relayer submits <code>EnygmaDvp.payment()</code> on-chain as <code>msg.sender</code>. The on-chain verifier runs the Groth16 pairing check. Alice\'s address is never exposed.',
+  tag:      'Alice seals the payment note <code>{amount, tokenId, saltB}</code> with the ML-KEM shared secret using AES-GCM and publishes it to <strong>TagRegistry</strong>. The tag is indexed by a one-time HMAC so Bob can scan without Alice being identified.',
+  scan_tag: 'Bob scans <strong>TagRegistry</strong> using his ML-KEM shared secret, matches his tag by HMAC, decrypts the note, and recomputes the Poseidon commitment to verify it matches the on-chain output.',
+  scan:     'Bob iterates vault Payment events and attempts <strong>ML-KEM decapsulation</strong> on each ciphertext using his view decapsulation key. When successful, he recovers <code>{amount, tokenId, saltB}</code> and verifies the Poseidon commitment.',
+  verify:   'Bob recomputes <code>H(pk_spend, saltB, amount, tokenId)</code> from the decrypted note and confirms it equals the on-chain commitment from the payment transaction. Alice\'s change commitment is also verified.',
+};
+
+// ── Render the step visualizer ────────────────────────────────────────────────
+function renderStepViz(stepId, status) {
+  const labelEl = document.getElementById('svzLabel');
+  const badgeEl = document.getElementById('svzBadge');
+  const diagEl  = document.getElementById('svzDiagram');
+  const descEl  = document.getElementById('svzDesc');
+
+  const stepNames = {
+    prereqs:'Prerequisites', keygen:'Key Generation', register:'On-Chain Registration',
+    channel:'ML-KEM Channel Setup', deposit:'Private Deposit', merkle:'Merkle Proof',
+    zkproof:'Groth16 ZK Proof', relay:'Relay Payment', tag:'Publish Tag',
+    scan_tag:'Bob Scans TagRegistry', scan:'Bob Scans Payment Event', verify:'Verify Commitments',
+  };
+
+  labelEl.textContent = stepNames[stepId] || stepId;
+  badgeEl.className = 'svz-badge ' + status;
+  badgeEl.textContent = status;
+
+  if (VIZ[stepId]) {
+    diagEl.innerHTML = VIZ[stepId]();
+    // populate with any already-arrived live data
+    populateVizData(stepId);
+  }
+  if (VIZ_DESC[stepId]) {
+    descEl.innerHTML = VIZ_DESC[stepId];
+    descEl.style.display = '';
+  }
+}
+
+// Populate viz diagram elements with cached live data
+function populateVizData(stepId) {
+  const d = liveData;
+  function set(id, val) {
+    const el = document.getElementById(id);
+    if (el && val) { el.textContent = trunc(val, 18); el.classList.add('set'); }
+  }
+  if (stepId === 'keygen') {
+    set('viz-a-spend', d['p0-pkSpend']);
+    set('viz-b-spend', d['p1-pkSpend']);
+    set('viz-a-ek', d['p0-pkView']);
+    set('viz-b-ek', d['p1-pkView']);
+    if (d['p0-pkView']) { set('viz-a-dk', '(private — not transmitted)'); }
+    if (d['p1-pkView']) { set('viz-b-dk', '(private — not transmitted)'); }
+  }
+  if (stepId === 'merkle') {
+    set('viz-root-val', d['p0-merkleRoot']);
+    if (d['p0-commitment']) { set('viz-leaf-val', d['p0-commitment']); }
+  }
+  if (stepId === 'zkproof' && d['proofTimeMs']) {
+    const el = document.getElementById('viz-proof-ms');
+    if (el) el.textContent = d['proofTimeMs'] + ' ms';
+  }
+}
+
+function trunc(s, n) {
+  if (!s || s.length <= n) return s;
+  return s.slice(0, n) + '…';
+}
+
+// Mark substeps as done
+function markSubstep(id, state) {
+  const el = document.getElementById('ss-' + id);
+  if (el) { el.className = 'svz-substep ' + state; el.querySelector('.svz-substep-icon').textContent = state === 'done' ? '✓' : '·'; }
+}
+
+// ── Mode ──────────────────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  document.body.className = 'mode-' + m;
+  document.getElementById('btnPlain').classList.toggle('active', m === 'plain');
+  document.getElementById('btnTag').classList.toggle('active', m === 'tag');
+  document.querySelectorAll('.tag-only-row, .tag-only-card, .tag-only-field').forEach(el => {
+    el.style.display = m === 'tag' ? '' : 'none';
+  });
+  renderSteps();
+  resetUI();
+}
+
+// ── Step track ────────────────────────────────────────────────────────────────
+function renderSteps() {
+  const steps = currentSteps();
+  const row = document.getElementById('stepsRow');
+  row.innerHTML = '';
+  steps.forEach((s, i) => {
+    const item = document.createElement('div');
+    item.className = 'step-item' + (s.tagOnly ? ' tag-only' : '');
+    item.id = 'step-' + s.id;
+    item.innerHTML = `<div class="step-pill${s.tagOnly?' tag-only':''}">${s.label}</div>`;
+    row.appendChild(item);
+    if (i < steps.length - 1) {
+      const arrow = document.createElement('div');
+      const nextTagOnly = steps[i+1] && steps[i+1].tagOnly;
+      arrow.className = 'step-item' + (s.tagOnly && nextTagOnly ? ' tag-only' : '');
+      arrow.innerHTML = '<span class="step-arrow">›</span>';
+      row.appendChild(arrow);
+    }
+  });
+}
+
+function setStep(id, status) {
+  const el = document.getElementById('step-' + id);
+  if (!el) return;
+  el.className = el.className.replace(/\b(running|success|error)\b/g,'').trim() + ' ' + status;
+  updateProgress();
+  if (status === 'running' || status === 'success' || status === 'error') {
+    renderStepViz(id, status);
+  }
+  // mark prereq sub-steps done on success
+  if (id === 'prereqs' && status === 'success') {
+    ['chain','gnark','relay'].forEach(s => markSubstep(s,'done'));
+  }
+  if (id === 'register' && status === 'success') {
+    ['reg-alice','reg-bob'].forEach(s => markSubstep(s,'done'));
+  }
+  if (id === 'merkle' && status === 'success') {
+    ['mk-scan','mk-build','mk-prove'].forEach(s => markSubstep(s,'done'));
+  }
+  if (id === 'scan_tag' && status === 'success') {
+    ['st-scan','st-hmac','st-dec','st-verify'].forEach(s => markSubstep(s,'done'));
+  }
+  if (id === 'scan' && status === 'success') {
+    ['sc-decap','sc-decrypt','sc-verify'].forEach(s => markSubstep(s,'done'));
+  }
+}
+
+function updateProgress() {
+  const steps = currentSteps();
+  let done = 0;
+  steps.forEach(s => { const el = document.getElementById('step-'+s.id); if (el && (el.classList.contains('success')||el.classList.contains('error'))) done++; });
+  document.getElementById('progressBar').style.width = (done/steps.length*100) + '%';
+}
+
+// ── Participant panel ──────────────────────────────────────────────────────────
+function setField(pid, field, value) {
+  const el = document.getElementById('p'+pid+'-'+field);
+  if (!el) return;
+  liveData['p'+pid+'-'+field] = value;
+  const hexFields = ['pkSpend','pkView','commitment','merkleRoot','nullifier','salt','ethAddr'];
+  if (hexFields.includes(field) && value && value.startsWith('0x') && value.length > 20) {
+    el.innerHTML = makeHex(value);
+  } else if (field === 'balance') {
+    el.innerHTML = makeBalanceChip(value);
+  } else {
+    el.textContent = value;
+  }
+  el.classList.add('set');
+  el.classList.remove('dim');
+  // Feed into active viz
+  const activeStep = currentActiveStep();
+  if (activeStep) populateVizData(activeStep);
+}
+
+function currentActiveStep() {
+  const steps = currentSteps();
+  for (const s of steps) {
+    const el = document.getElementById('step-' + s.id);
+    if (el && el.classList.contains('running')) return s.id;
+  }
+  return null;
+}
+
+function makeHex(full) {
+  const short = full.slice(0,14)+'…';
+  return `<span class="hex-wrap"><span class="hex-val" data-full="${escHtml(full)}" data-short="${escHtml(short)}" onclick="toggleHex(this)">${escHtml(short)}</span><button class="hex-copy-btn" onclick="copyHexVal(event,this)" title="Copy full value">copy</button></span>`;
+}
+function makeHexInline(full) {
+  if (!full || full==='—') return '—';
+  const short = full.slice(0,18)+'…';
+  return `<span class="hex-wrap"><span class="hex-val" data-full="${escHtml(full)}" data-short="${escHtml(short)}" onclick="toggleHex(this)">${escHtml(short)}</span><button class="hex-copy-btn" onclick="copyHexVal(event,this)" title="Copy full value">copy</button></span>`;
+}
+function copyHexVal(e, btn) {
+  e.stopPropagation();
+  const valEl = btn.previousElementSibling;
+  const text = valEl && valEl.dataset.full;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+}
+function toggleHex(el) {
+  const expanded = el.classList.toggle('expanded');
+  el.textContent = expanded ? el.dataset.full : el.dataset.short;
+  el.classList.toggle('expanded', expanded);
+}
+function makeBalanceChip(value) {
+  let cls = '';
+  if (value.includes('deposited')) cls = 'deposited';
+  else if (value.includes('spent') || value.includes('0 tokens')) cls = 'spent';
+  else if (value.includes('received') || value.includes('discovered')) cls = 'received';
+  else if (value.includes('change')) cls = 'change';
+  return cls ? `<span class="balance-chip ${cls}">${escHtml(value)}</span>` : escHtml(value);
+}
+
+// ── Proto (center panel) ──────────────────────────────────────────────────────
+function setProto(field, value) {
+  liveData[field] = value;
+  const el = document.getElementById('proto-' + field);
+  if (el) {
+    el.innerHTML = (value && value.startsWith('0x') && value.length > 20) ? makeHexInline(value) : escHtml(value);
+    return;
+  }
+  switch (field) {
+    case 'payTxHash':
+      document.getElementById('txhash-payment').innerHTML = makeHexInline(value);
+      document.getElementById('txstatus-payment').textContent = 'confirmed';
+      document.getElementById('txstatus-payment').className = 'tx-card-status done';
+      txCount++;
+      privVerify('priv-sender');
+      privVerify('priv-nullifier');
+      break;
+    case 'payBlock': document.getElementById('txblock-payment').textContent = value; break;
+    case 'payGas':
+      document.getElementById('txgas-payment').textContent = commaNum(value);
+      setMetricVal('verifyGas', commaNum(value));
+      break;
+    case 'chTxHash':
+      document.getElementById('txhash-channel').innerHTML = makeHexInline(value);
+      document.getElementById('txstatus-channel').textContent = 'confirmed';
+      document.getElementById('txstatus-channel').className = 'tx-card-status done';
+      txCount++;
+      break;
+    case 'chBlock': document.getElementById('txblock-channel').textContent = value; break;
+    case 'chGas':   document.getElementById('txgas-channel').textContent = commaNum(value); break;
+    case 'tagTxHash':
+      document.getElementById('txhash-tag').innerHTML = makeHexInline(value);
+      document.getElementById('txstatus-tag').textContent = 'confirmed';
+      document.getElementById('txstatus-tag').className = 'tx-card-status done';
+      txCount++;
+      break;
+    case 'tagBlock': document.getElementById('txblock-tag').textContent = value; break;
+    case 'tagGas':   document.getElementById('txgas-tag').textContent = commaNum(value); break;
+    case 'proofTimeMs': {
+      const ms = parseInt(value);
+      setMetric('proofTime', ms + ' ms', ms, 15000, 'mb-proofTime');
+      document.getElementById('ms-proofTime').textContent = 'Groth16 witness + prove (' + (ms/1000).toFixed(2) + 's)';
+      // update viz if zkproof diagram is showing
+      const el2 = document.getElementById('viz-proof-ms');
+      if (el2) el2.textContent = ms + ' ms';
+      break;
+    }
+    case 'proofSizeBytes':
+      setMetric('proofSize', value + ' B', 0, 0, null);
+      break;
+    case 'verifyTimeMs': {
+      const ms = parseInt(value);
+      setMetric('verifyTime', ms + ' ms', ms, 30000, 'mb-verifyTime');
+      break;
+    }
+    case 'totalGas': setMetricVal('totalGas', commaNum(value)); break;
+    case 'flowTimeMs': {
+      const sec = (parseInt(value)/1000).toFixed(1);
+      setMetric('flowTime', sec + ' s', parseInt(value), 120000, null);
+      break;
+    }
+  }
+}
+
+function privVerify(id) { const el = document.getElementById(id); if (el) el.classList.add('verified'); }
+
+function commaNum(s) { return String(s).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+
+function setMetric(id, display, value, maxVal, barId) {
+  const el = document.getElementById('mv-' + id);
+  if (el) { el.textContent = display; el.classList.add('lit'); }
+  const card = document.getElementById('metric-' + id);
+  if (card) card.classList.add('set');
+  if (barId && maxVal > 0) { const bar = document.getElementById(barId); if (bar) bar.style.width = Math.min(100, value/maxVal*100) + '%'; }
+}
+function setMetricVal(id, display) {
+  const el = document.getElementById('mv-' + id);
+  if (el) { el.textContent = display; el.classList.add('lit'); }
+  const card = document.getElementById('metric-' + id);
+  if (card) card.classList.add('set');
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────
+let currentLogFilter = 'all';
+function appendLog(ts, msg, cat) {
+  const body = document.getElementById('logBody');
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.dataset.cat = cat || '';
+  if (currentLogFilter !== 'all' && line.dataset.cat !== currentLogFilter) line.style.display = 'none';
+  const isOk = msg.startsWith('✓'), isErr = msg.startsWith('✗');
+  const msgCls = isOk ? ' ok' : isErr ? ' err' : '';
+  const cats = { key:'KEY', chain:'CHAIN', zk:'ZK', tag:'TAG' };
+  const catHtml = (cat && cats[cat]) ? `<span class="cat-badge cat-${cat}">${cats[cat]}</span>` : '';
+  line.innerHTML = `<span class="log-ts">${ts||''}</span>${catHtml}<span class="log-msg${msgCls}">${escHtml(msg)}</span>`;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+document.getElementById('logFilter').addEventListener('change', (e) => {
+  currentLogFilter = e.target.value;
+  document.querySelectorAll('#logBody .log-line').forEach(line => {
+    line.style.display = (currentLogFilter === 'all' || line.dataset.cat === currentLogFilter) ? '' : 'none';
+  });
+});
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Reset ──────────────────────────────────────────────────────────────────────
+function resetUI() {
+  renderSteps();
+  txCount = 0;
+  Object.keys(liveData).forEach(k => delete liveData[k]);
+
+  const pFields = ['ethAddr','pkSpend','pkView','status','balance','commitment','merkleRoot','nullifier','salt','channel','proof'];
+  [0,1].forEach(pid => {
+    pFields.forEach(f => {
+      const el = document.getElementById('p'+pid+'-'+f);
+      if (!el) return;
+      el.innerHTML = '—';
+      el.className = 'p-val' + (f==='ethAddr' ? ' dim' : '');
+    });
+  });
+
+  ['vaultAddr','registryAddr','relayerAddr','tagChannelAddr','tagRegistryAddr'].forEach(f => {
+    const el = document.getElementById('proto-'+f);
+    if (el) el.textContent = '—';
+  });
+
+  ['payment','channel','tag'].forEach(t => {
+    ['txhash-','txblock-','txgas-'].forEach(p => { const el = document.getElementById(p+t); if (el) el.textContent = '—'; });
+    const s = document.getElementById('txstatus-'+t);
+    if (s) { s.textContent = 'pending'; s.className = 'tx-card-status pending'; }
+  });
+
+  document.querySelectorAll('.priv-badge').forEach(el => el.classList.remove('verified'));
+  document.getElementById('summaryCard').classList.remove('show');
+  document.getElementById('flowArrow').classList.remove('active');
+  document.getElementById('flowAmt').classList.remove('active');
+
+  // Reset metrics
+  ['proofTime','proofSize','verifyTime','verifyGas','totalGas','flowTime'].forEach(id => {
+    const el = document.getElementById('mv-'+id); if (el) { el.textContent = '—'; el.classList.remove('lit'); }
+    const card = document.getElementById('metric-'+id); if (card) card.classList.remove('set');
+  });
+  ['mb-proofTime','mb-verifyTime'].forEach(id => { const el = document.getElementById(id); if (el) el.style.width='0%'; });
+  const msSub = document.getElementById('ms-proofTime');
+  if (msSub) msSub.textContent = 'Groth16 witness + prove';
+
+  // Reset viz card
+  document.getElementById('svzLabel').textContent = 'Waiting';
+  document.getElementById('svzBadge').className = 'svz-badge idle';
+  document.getElementById('svzBadge').textContent = 'idle';
+  document.getElementById('svzDiagram').innerHTML = '<div class="svz-idle">Click <strong>Run Flow</strong> to start the confidential ERC-20 payment demo.</div>';
+  document.getElementById('svzDesc').style.display = 'none';
+
+  document.getElementById('progressBar').style.width = '0%';
+  setStatus('idle');
+}
+
+// ── Status ──────────────────────────────────────────────────────────────────────
+function setStatus(st, text) {
+  document.getElementById('statusDot').className = 'status-dot ' + (st||'');
+  document.getElementById('statusText').textContent = text || st || 'idle';
+  document.getElementById('runBtn').disabled = st === 'running';
+}
+
+// ── SSE / run ─────────────────────────────────────────────────────────────────
+function run() {
+  if (es) { es.close(); es = null; }
+  resetUI();
+  clearLog();
+  setStatus('running', 'running');
+  es = new EventSource('/events');
+  es.onmessage = e => handleEvent(JSON.parse(e.data));
+  es.onerror = () => setStatus('error', 'disconnected');
+  fetch('/run?mode='+mode, { method:'POST' })
+    .then(r => { if (!r.ok) r.text().then(t => { appendLog('','✗ '+t,''); setStatus('error','error'); }); })
+    .catch(err => { appendLog('','✗ fetch: '+err,''); setStatus('error','error'); });
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case 'reset':
+      resetUI(); setStatus('running','running');
+      break;
+    case 'step':
+      setStep(ev.step, ev.status);
+      if (ev.status === 'running') appendLog(null,'▶ '+(ev.label||ev.step)+(ev.msg?' — '+ev.msg:''),'');
+      if (ev.status === 'error')   appendLog(null,'✗ '+(ev.label||ev.step)+': '+ev.msg,'');
+      if (ev.step==='prereqs' && ev.status==='running') {
+        setTimeout(() => ['chain','gnark','relay'].forEach((s,i) => setTimeout(() => markSubstep(s,'done'), i*400)), 400);
+      }
+      if (ev.step==='register' && ev.status==='running') {
+        setTimeout(() => markSubstep('reg-alice','done'), 1200);
+        setTimeout(() => markSubstep('reg-bob','done'), 2400);
+      }
+      if (ev.step==='merkle' && ev.status==='running') {
+        setTimeout(() => markSubstep('mk-scan','done'), 600);
+        setTimeout(() => markSubstep('mk-build','done'), 1200);
+      }
+      if (ev.step==='merkle' && ev.status==='success') markSubstep('mk-prove','done');
+      if (ev.step==='relay' && ev.status==='success') {
+        document.getElementById('flowArrow').classList.add('active');
+        document.getElementById('flowAmt').classList.add('active');
+        privVerify('priv-commitment');
+      }
+      if ((ev.step==='scan'||ev.step==='scan_tag'||ev.step==='verify') && ev.status==='success') privVerify('priv-note');
+      break;
+    case 'log':
+      appendLog(ev.ts, ev.msg, ev.cat);
+      break;
+    case 'participant':
+      setField(ev.pid, ev.field, ev.value);
+      break;
+    case 'proto':
+      setProto(ev.field, ev.value);
+      break;
+    case 'done':
+      if (ev.status==='success') {
+        setStatus('success','done');
+        appendLog(null,'✓ '+ev.msg,'');
+        showSummary();
+      } else {
+        setStatus('error','error');
+        appendLog(null,'✗ '+ev.msg,'');
+      }
+      if (es) { es.close(); es = null; }
+      break;
+  }
+}
+
+function showSummary() {
+  document.getElementById('sum-amount').textContent = '30 tokens';
+  document.getElementById('sum-mode').textContent = mode==='tag' ? 'With Tag (private notification)' : 'Plain (direct note scan)';
+  document.getElementById('sum-txcount').textContent = txCount + ' on-chain';
+  const tg = document.getElementById('mv-totalGas');
+  document.getElementById('sum-gas').textContent = (tg && tg.textContent!=='—') ? tg.textContent+' gas' : '—';
+  const ft = document.getElementById('mv-flowTime');
+  const pt = document.getElementById('mv-proofTime');
+  const sumExtra = document.getElementById('sum-extra');
+  if (ft && ft.textContent!=='—') sumExtra.textContent = 'Flow: '+(ft.textContent)+' · Proof: '+(pt?pt.textContent:'—');
+  document.getElementById('summaryCard').classList.add('show');
+}
+
+// ── Intro card ────────────────────────────────────────────────────────────
+(function initIntro() {
+  const body = document.getElementById('introBody');
+  const ic = document.getElementById('introToggleIc');
+  const toggle = document.getElementById('introToggle');
+  if (!body || !ic || !toggle) return;
+  function setCollapsed(collapsed) {
+    body.style.display = collapsed ? 'none' : 'block';
+    ic.textContent = collapsed ? '▸' : '▾';
+    localStorage.setItem('enygmaRetailIntroCollapsed', collapsed ? '1' : '0');
+  }
+  toggle.addEventListener('click', () => setCollapsed(body.style.display !== 'none'));
+  setCollapsed(localStorage.getItem('enygmaRetailIntroCollapsed') === '1');
+})();
+
+// ── Presentation mode (applied to <html> — setMode() overwrites body.className) ──
+(function initPresentationMode() {
+  const btn = document.getElementById('presentToggle');
+  if (!btn) return;
+  function apply(on) {
+    document.documentElement.classList.toggle('presentation-mode', on);
+    btn.classList.toggle('active', on);
+    localStorage.setItem('enygmaRetailPresentationMode', on ? '1' : '0');
+  }
+  btn.addEventListener('click', () => apply(!document.documentElement.classList.contains('presentation-mode')));
+  apply(localStorage.getItem('enygmaRetailPresentationMode') === '1');
+})();
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+renderSteps();
+setStatus('idle');
+</script>
+</body>
+</html>

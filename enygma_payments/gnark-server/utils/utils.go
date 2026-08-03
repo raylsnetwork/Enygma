@@ -14,7 +14,7 @@ import (
 )
 
 var(
-	A = big.NewInt(168700) 
+	A = big.NewInt(168700)
 	D =  big.NewInt(168696)
     gx, _ = new(big.Int).SetString("5299619240641551281634865583518297030282874472190772894086521144482721001553", 10)
 	gy, _ = new(big.Int).SetString("16950150798460657717958625567821834550301663161624707787222815936182638968203", 10)
@@ -25,7 +25,13 @@ var(
  	HBabyJub     = &babyjub.Point{X: hx, Y: hy}
 
 	P, _  = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
-														
+
+	// CircuitGBabyJub is the G generator used inside the gnark circuit's PedersenCommitment.
+	// Distinct from GBabyJub (standard BJJ generator); must match utils/circuits.go var G.
+	circuitGx, _ = new(big.Int).SetString("16540640123574156134436876038791482806971768689494387082833631921987005038935", 10)
+	circuitGy, _ = new(big.Int).SetString("20819045374670962167435360035096875258406992893633759881276124905556507972311", 10)
+	CircuitGBabyJub = &babyjub.Point{X: circuitGx, Y: circuitGy}
+
 )									
 
 

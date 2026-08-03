@@ -179,6 +179,27 @@ func proofStringsToOnchain(t *testing.T, proof []string) onchainSnarkProof {
 	}
 }
 
+// onchainProofReceipt mirrors the IEnygmaDvp.ProofReceipt struct for ABI encoding.
+type onchainProofReceipt struct {
+	Proof           onchainSnarkProof `abi:"proof"`
+	Statement       []*big.Int        `abi:"statement"`
+	NumberOfInputs  *big.Int          `abi:"numberOfInputs"`
+	NumberOfOutputs *big.Int          `abi:"numberOfOutputs"`
+}
+
+// paymentResultToReceipt converts a PaymentResult to an onchainProofReceipt.
+// It uses ContractStatement() to get the de-interleaved statement.
+func paymentResultToReceipt(t *testing.T, result *rpcore.PaymentResult) onchainProofReceipt {
+	t.Helper()
+	snarkProof := proofStringsToOnchain(t, result.Proof)
+	return onchainProofReceipt{
+		Proof:           snarkProof,
+		Statement:       result.ContractStatement(),
+		NumberOfInputs:  big.NewInt(int64(result.NumberOfInputs)),
+		NumberOfOutputs: big.NewInt(int64(result.NumberOfOutputs)),
+	}
+}
+
 // ── Merkle tree helpers ────────────────────────────────────────────────────────
 
 func loadVaultMerkleTree(t *testing.T, client *ethclient.Client, vaultAddr common.Address, merkleDepth int) *rpcore.MerkleTree {

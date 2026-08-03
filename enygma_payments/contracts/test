@@ -1,0 +1,13 @@
+RELAYER_RPC_URL=https://mainnet-rpc.rayls.com \
+RELAYER_CHAIN_ID=72957 \
+RELAYER_PRIVATE_KEY=$MY_KEY \
+RELAYER_API_KEY=$MY_API_KEY \
+RELAYER_GAS_LIMIT=10000000 \
+./run.sh
+
+cd enygma_payments/relayer
+RELAYER_PRIVATE_KEY=b30e25be347c12d89cdfd78acc3df240fc95b2d5624ce65aa50fc166c3936f58 \
+RELAYER_API_KEY=enygma-test-secret     \
+RELAYER_RPC_URL=https://mainnet-rpc.rayls.com \
+RELAYER_CHAIN_ID=72957                 \
+go run main.go

@@ -35,6 +35,26 @@ func GenerationVkPk() {
 	}
 	script.SetupPayment(payment2inConfig, "Payment2in")
 
+	// 1-input/2-output fee circuit: fee absorbed into sender's input (not a
+	// separate output note). Separate VK slot (VK_ID_ERC20_JOINSPLIT_FEE = 2).
+	paymentFeeConfig := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPaymentFee(paymentFeeConfig, "PaymentFee")
+
+	// 1-input/3-output relayer-fee circuit: fee paid out as its own spendable
+	// note. Separate VK slot (VK_ID_ERC20_JOINSPLIT_RELAYER = 3).
+	paymentRelayerFeePublicConfig := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        3,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPaymentRelayerFeePublic(paymentRelayerFeePublicConfig, "PaymentRelayerFeePublic")
+
 	script.SetupPrivateMint("PrivateMint")
 }
 

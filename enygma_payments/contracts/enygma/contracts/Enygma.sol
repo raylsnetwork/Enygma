@@ -13,7 +13,7 @@ contract Enygma is IEnygma {
     uint256 private constant STATUS_INITIALIZED = 1;
     uint256 private constant DEFAULT_SIZE = 6;
 
-    // Public signal array offsets for proof verification
+    // Public signal offsets for the 50-signal layout (withdraw, fee, deposit circuits)
     // Layout (k=6): [HashSecrets×6][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
     uint256 private constant ARRAY_HASH_SECRET_OFFSET = 0;
     uint256 private constant ARRAY_HASH_SECRET_SIZE = 6;
@@ -29,6 +29,22 @@ contract Enygma is IEnygma {
     uint256 private constant MESSAGE_TAGS_OFFSET = 43;
     uint256 private constant NULLIFIER_OFFSET = 49;
 
+    // Public signal offsets for the 80-signal FingerPrint layout (main transfer circuit)
+    // Layout (k=6): [FingerPrint×36][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
+    uint256 private constant FP_FINGERPRINT_OFFSET = 0;
+    uint256 private constant FP_FINGERPRINT_SIZE = 36;
+    uint256 private constant FP_PUBLIC_KEY_OFFSET = 36;
+    uint256 private constant FP_PUBLIC_KEY_SIZE = 6;
+    uint256 private constant FP_PREVIOUS_COMMIT_OFFSET = 42;
+    uint256 private constant FP_PREVIOUS_COMMIT_SIZE = 12;
+    uint256 private constant FP_TX_COMMIT_OFFSET = 54;
+    uint256 private constant FP_TX_COMMIT_SIZE = 12;
+    uint256 private constant FP_BLOCK_NUMBER_OFFSET = 66;
+    uint256 private constant FP_K_INDEX_OFFSET = 67;
+    uint256 private constant FP_K_INDEX_SIZE = 6;
+    uint256 private constant FP_MESSAGE_TAGS_OFFSET = 73;
+    uint256 private constant FP_NULLIFIER_OFFSET = 79;
+
     // ============================================
     // STATE VARIABLES
     // ============================================
@@ -40,6 +56,7 @@ contract Enygma is IEnygma {
     // Contract state
     uint256 private _status;
     address private immutable _owner;
+    uint256 public immutable epochInterval;
     uint256 public lastBlockNum;
     uint256 private _totalRegisteredParties;
 
@@ -53,6 +70,7 @@ contract Enygma is IEnygma {
     address private _withdrawVerifier;
     address private _depositVerifier;
     address private _zkDvpAddress;
+    address private _feeVerifier;
 
     // ============================================
     // MAPPINGS
@@ -61,8 +79,11 @@ contract Enygma is IEnygma {
     /// @notice Balance commitments per block per account
     mapping(uint256 => mapping(uint256 => Point)) public balanceCommitments;
 
-    /// @notice Public keys for each account
+    /// @notice Public spend keys for each account (Poseidon(sk,sk) mod P)
     mapping(uint256 => uint256) public publicKeys;
+
+    /// @notice Public view keys for each account (ML-KEM-768 encapsulation key, 1184 bytes)
+    mapping(uint256 => bytes) public viewKeys;
 
     /// @notice Maps Ethereum address to account ID
     mapping(address => uint256) public addressToAccountId;
@@ -128,10 +149,12 @@ contract Enygma is IEnygma {
     // CONSTRUCTOR
     // ============================================
 
-    constructor() {
+    constructor(uint256 _epochInterval) {
+        require(_epochInterval > 0, "epochInterval must be > 0");
         _owner = msg.sender;
         _status = STATUS_NOT_INITIALIZED;
-        lastBlockNum = block.number;
+        epochInterval = _epochInterval;
+        lastBlockNum = _currentEpochStart(_epochInterval);
     }
 
     // ============================================
@@ -160,22 +183,32 @@ contract Enygma is IEnygma {
      * @notice Register new account with initial balance commitment
      * @param addr Ethereum address to register
      * @param accountId Unique account identifier
-     * @param publicKey Institution public key
+     * @param publicKey Institution public spend key (Poseidon(sk,sk) mod P)
      * @param randomness Randomness for initial balance commitment
+     * @param viewKey Institution public view key (ML-KEM-768 encapsulation key, 1184 bytes)
      */
 
     function registerAccount(
         address addr,
         uint256 accountId,
         uint256 publicKey,
-        uint256 randomness
+        uint256 randomness,
+        bytes calldata viewKey
     ) external onlyOwner returns (bool) {
         publicKeys[accountId] = publicKey;
+        viewKeys[accountId] = viewKey;
         addressToAccountId[addr] = accountId;
 
-        // Create initial balance commitment: Com(0, randomness)
+        // Create initial balance commitment: Com(0, randomness) = randomness*H
         (uint256 commitX, uint256 commitY) = pedCom(0, randomness);
         balanceCommitments[lastBlockNum][accountId] = Point(commitX, commitY);
+
+        // Include initial commitment in totalSupply so check() invariant holds:
+        // Σ(balances) = Σ(registration commitments) + Σ(minted amounts) = totalSupply
+        (totalSupplyX, totalSupplyY) = CurveBabyJubJub.pointAdd(
+            totalSupplyX, totalSupplyY,
+            commitX, commitY
+        );
 
         unchecked {
             ++_totalRegisteredParties;
@@ -213,7 +246,7 @@ contract Enygma is IEnygma {
             totalSupplyAmount += amount;
         }
 
-        // Propagate balances to new block
+        // Propagate balances to current epoch start
         _propagateBalancesExcept(recipientId);
 
         // Update recipient's balance
@@ -227,8 +260,9 @@ contract Enygma is IEnygma {
             amountY
         );
 
-        balanceCommitments[block.number][recipientId] = Point(newX, newY);
-        lastBlockNum = block.number;
+        uint256 epochStart = _currentEpochStart();
+        balanceCommitments[epochStart][recipientId] = Point(newX, newY);
+        lastBlockNum = epochStart;
 
         emit SupplyMinted(lastBlockNum, amount, recipientId);
         return true;
@@ -265,8 +299,9 @@ contract Enygma is IEnygma {
             negCommitY
         );
 
-        balanceCommitments[block.number][accountId] = Point(newX, newY);
-        lastBlockNum = block.number;
+        uint256 epochStart = _currentEpochStart();
+        balanceCommitments[epochStart][accountId] = Point(newX, newY);
+        lastBlockNum = epochStart;
 
         emit BurnSuccessful(accountId, amount);
         return true;
@@ -322,6 +357,19 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Register fee transfer verifier contract (verifies 51-signal fee proofs)
+     * @param verifier Address of fee verifier contract
+     */
+    function addFeeVerifier(address verifier) external onlyOwner returns (bool) {
+        if (verifier == address(0)) revert ZeroAddress();
+
+        _feeVerifier = verifier;
+
+        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        return true;
+    }
+
+    /**
      * @notice Register ZkDvp contract
      * @param zkDvp Address of ZkDvp contract
      */
@@ -354,17 +402,37 @@ contract Enygma is IEnygma {
         _verifyTransferProof(proof, commitmentDeltas.length);
 
         // Verify public inputs match current state and commitment deltas match proof
-        _verifyPublicInputs(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyPublicInputsFP(proof.public_signal, participantIds, commitmentDeltas);
 
         // Verify block number freshness
-        _verifyBlockNumber(proof.public_signal);
+        _verifyBlockNumberFP(proof.public_signal);
 
         // Record nullifier before state changes (Fix C-2)
-        _consumeNullifier(proof.public_signal);
+        _consumeNullifierFP(proof.public_signal);
 
         // Update balances
         _updateBalancesForTransfer(commitmentDeltas, participantIds);
 
+        emit TransactionSuccessful(msg.sender);
+        return true;
+    }
+
+    /**
+     * @notice Execute confidential transfer with public fee (51-signal fee circuit)
+     * @param commitmentDeltas Balance changes for each participant
+     * @param proof Zero-knowledge fee proof (51 public signals; fee at index 50)
+     * @param participantIds Account IDs involved in transfer
+     */
+    function transferWithFee(
+        Point[] calldata commitmentDeltas,
+        FeeProof calldata proof,
+        uint256[] calldata participantIds
+    ) external onlyRegistered whenInitialized returns (bool) {
+        _verifyFeeTransferProof(proof);
+        _verifyFeePublicInputs(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyFeeBlockNumber(proof.public_signal);
+        _consumeFeeNullifier(proof.public_signal);
+        _updateBalancesForTransfer(commitmentDeltas, participantIds);
         emit TransactionSuccessful(msg.sender);
         return true;
     }
@@ -508,7 +576,8 @@ contract Enygma is IEnygma {
         uint256 sumX;
         uint256 sumY = 1; // Start with neutral element
 
-        for (uint256 i; i < _totalRegisteredParties; ) {
+        // AccountIds are 1-based: registered banks occupy slots 1.._totalRegisteredParties.
+        for (uint256 i = 1; i <= _totalRegisteredParties; ) {
             (uint256 balX, uint256 balY) = getBalance(i);
             (sumX, sumY) = CurveBabyJubJub.pointAdd(sumX, sumY, balX, balY);
 
@@ -566,6 +635,22 @@ contract Enygma is IEnygma {
     // ============================================
 
     /**
+     * @notice Returns the start block of the current epoch.
+     *         epochStart = floor(block.number / epochInterval) * epochInterval
+     *         All balance writes within the same epoch share the same storage slot,
+     *         so transactions chain correctly inside an epoch and lastBlockNum only
+     *         advances when the epoch rolls over.
+     */
+    function _currentEpochStart() private view returns (uint256) {
+        return (block.number / epochInterval) * epochInterval;
+    }
+
+    // Overload used in the constructor before the immutable is set.
+    function _currentEpochStart(uint256 interval) private view returns (uint256) {
+        return (block.number / interval) * interval;
+    }
+
+    /**
      * @notice Verify zero-knowledge proof for transfer
      */
     function _verifyTransferProof(
@@ -577,7 +662,7 @@ contract Enygma is IEnygma {
 
         (bool success, ) = verifier.delegatecall(
             abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[50])",
+                "verifyProof(uint256[8],uint256[80])",
                 proof
             )
         );
@@ -585,7 +670,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify public inputs match contract state and commitment deltas match proof
+     * @notice Verify public inputs match contract state and commitment deltas match proof (50-signal: withdraw)
      */
     function _verifyPublicInputs(
         uint256[50] calldata public_signal,
@@ -644,19 +729,81 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Verify public inputs for the 80-signal FingerPrint transfer circuit
+     */
+    function _verifyPublicInputsFP(
+        uint256[80] calldata public_signal,
+        uint256[] calldata participantIds,
+        Point[] calldata commitmentDeltas
+    ) private view {
+        (Point[] memory balances, uint256[] memory keys) = getPublicValues(
+            _totalRegisteredParties + 1
+        );
+
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 accountId = participantIds[i];
+
+            if (uint256(public_signal[FP_PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 commitOffset = FP_PREVIOUS_COMMIT_OFFSET + (i << 1);
+            if (
+                uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
+                uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 txOffset = FP_TX_COMMIT_OFFSET + (i << 1);
+            if (
+                commitmentDeltas[i].c1 != public_signal[txOffset] ||
+                commitmentDeltas[i].c2 != public_signal[txOffset + 1]
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Verify block number freshness for the 80-signal FingerPrint transfer circuit
+     */
+    function _verifyBlockNumberFP(uint256[80] calldata public_signal) private view {
+        if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+            revert InvalidBlockNumber();
+        }
+    }
+
+    /**
+     * @notice Record nullifier as spent for the 80-signal FingerPrint transfer circuit
+     */
+    function _consumeNullifierFP(uint256[80] calldata public_signal) private {
+        uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
+        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _nullifiers[nullifier] = true;
+    }
+
+    /**
      * @notice Update balances for transfer participants
      */
     function _updateBalancesForTransfer(
         Point[] calldata commitmentDeltas,
         uint256[] calldata participantIds
     ) private {
-        // Copy balances for non-participants
+        uint256 epochStart = _currentEpochStart();
+
+        // Copy balances for non-participants to the current epoch slot
         uint256 totalParties = _totalRegisteredParties;
         for (uint256 i; i < totalParties; ) {
             _initializeBalanceIfNeeded(i);
 
             if (!_isParticipant(participantIds, i)) {
-                balanceCommitments[block.number][i] = balanceCommitments[
+                balanceCommitments[epochStart][i] = balanceCommitments[
                     lastBlockNum
                 ][i];
             }
@@ -666,7 +813,7 @@ contract Enygma is IEnygma {
             }
         }
 
-        // Update participant balances
+        // Update participant balances at the current epoch slot
         uint256 len = commitmentDeltas.length;
         for (uint256 i; i < len; ) {
             uint256 accountId = participantIds[i];
@@ -681,14 +828,14 @@ contract Enygma is IEnygma {
                 commitmentDeltas[i].c2
             );
 
-            balanceCommitments[block.number][accountId] = Point(newX, newY);
+            balanceCommitments[epochStart][accountId] = Point(newX, newY);
 
             unchecked {
                 ++i;
             }
         }
 
-        lastBlockNum = block.number;
+        lastBlockNum = epochStart;
     }
 
     /**
@@ -698,6 +845,7 @@ contract Enygma is IEnygma {
         Point[] calldata commitmentDeltas,
         uint256[] calldata participantIds
     ) private {
+        uint256 epochStart = _currentEpochStart();
         uint256 len = commitmentDeltas.length;
         for (uint256 i; i < len; ) {
             uint256 accountId = participantIds[i];
@@ -712,14 +860,14 @@ contract Enygma is IEnygma {
                 commitmentDeltas[i].c2
             );
 
-            balanceCommitments[block.number][accountId] = Point(newX, newY);
+            balanceCommitments[epochStart][accountId] = Point(newX, newY);
 
             unchecked {
                 ++i;
             }
         }
 
-        lastBlockNum = block.number;
+        lastBlockNum = epochStart;
     }
 
     /**
@@ -757,12 +905,14 @@ contract Enygma is IEnygma {
      * @notice Propagate balances to new block except one account
      */
     function _propagateBalancesExcept(uint256 excludeId) private {
+        uint256 epochStart = _currentEpochStart();
         uint256 totalParties = _totalRegisteredParties;
-        for (uint256 i; i < totalParties; ) {
+        // AccountIds are 1-based: iterate 1.._totalRegisteredParties (not 0..n-1)
+        for (uint256 i = 1; i <= totalParties; ) {
             _initializeBalanceIfNeeded(i);
 
             if (i != excludeId) {
-                balanceCommitments[block.number][i] = balanceCommitments[
+                balanceCommitments[epochStart][i] = balanceCommitments[
                     lastBlockNum
                 ][i];
             }
@@ -801,7 +951,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Check if sent blocknumber is the same as in the smart contract
+     * @notice Check if sent blocknumber is the same as in the smart contract (50-signal: withdraw)
      */
     function _verifyBlockNumber(uint256[50] calldata public_signal) private view {
         uint256 proofBlockNumber = uint256(
@@ -812,6 +962,81 @@ contract Enygma is IEnygma {
         if (proofBlockNumber != lastBlockNum) {
             revert InvalidBlockNumber();
         }
+    }
+
+    /**
+     * @notice Verify zero-knowledge fee proof (delegates to 54-signal fee verifier)
+     */
+    function _verifyFeeTransferProof(FeeProof calldata proof) private {
+        if (_feeVerifier == address(0)) revert VerifierNotFound();
+
+        (bool success, ) = _feeVerifier.delegatecall(
+            abi.encodeWithSignature(
+                "verifyProof(uint256[8],uint256[54])",
+                proof
+            )
+        );
+        if (!success) revert InvalidProof();
+    }
+
+    /**
+     * @notice Verify fee public inputs match contract state (same offsets as base, 54-element array)
+     */
+    function _verifyFeePublicInputs(
+        uint256[54] calldata public_signal,
+        uint256[] calldata participantIds,
+        Point[] calldata commitmentDeltas
+    ) private view {
+        (Point[] memory balances, uint256[] memory keys) = getPublicValues(
+            _totalRegisteredParties + 1
+        );
+
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 accountId = participantIds[i];
+
+            if (uint256(public_signal[PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1);
+            if (
+                uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
+                uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 txOffset = TX_COMMIT_OFFSET + (i << 1);
+            if (
+                commitmentDeltas[i].c1 != public_signal[txOffset] ||
+                commitmentDeltas[i].c2 != public_signal[txOffset + 1]
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Verify block number freshness for fee proof
+     */
+    function _verifyFeeBlockNumber(uint256[54] calldata public_signal) private view {
+        if (uint256(public_signal[BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+            revert InvalidBlockNumber();
+        }
+    }
+
+    /**
+     * @notice Record fee nullifier as spent
+     */
+    function _consumeFeeNullifier(uint256[54] calldata public_signal) private {
+        uint256 nullifier = public_signal[NULLIFIER_OFFSET];
+        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _nullifiers[nullifier] = true;
     }
 
     // ============================================
