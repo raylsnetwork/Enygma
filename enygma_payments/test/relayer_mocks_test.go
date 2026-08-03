@@ -35,6 +35,10 @@ func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint
 	return m.tx, m.err
 }
 
+func (m *mockContract) TransferWithFee(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaFeeProof, _ []*big.Int) (*types.Transaction, error) {
+	return m.tx, m.err
+}
+
 // ── Mock miner (bind.DeployBackend) ──────────────────────────────────────────
 
 // mockMiner implements bind.DeployBackend for use with bind.WaitMined.

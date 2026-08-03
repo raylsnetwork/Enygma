@@ -163,7 +163,7 @@ func TestRelayHandler_Transfer_InvalidCommitment(t *testing.T) {
 
 func TestRelayHandler_Transfer_TooManyPublicSignals(t *testing.T) {
 	body := validTransferBody()
-	body.PublicSignal = make([]string, 51)
+	body.PublicSignal = make([]string, 81)
 	for i := range body.PublicSignal {
 		body.PublicSignal[i] = "1"
 	}
