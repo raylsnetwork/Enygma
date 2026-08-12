@@ -1,7 +1,10 @@
 // Enygma DvP · NFT ↔ ERC20 Swap · Live Demo
 //
 // A local HTTP server that runs the full DvP (Delivery vs Payment) atomic
-// swap flow and streams each step as a Server-Sent Event to a live dashboard.
+// swap flow step by step and streams each step as a Server-Sent Event to a
+// live dashboard. Each of the 10 steps is triggered independently by its own
+// button in the UI — press "Run" on a step to execute it and inspect the
+// result before moving on to the next one.
 //
 // Scenario: Alice has 50 USDT (ERC20). Bob has an NFT ticket (ERC721).
 // They swap atomically — Alice delivers 50 USDT to Bob, Bob delivers the
@@ -15,14 +18,14 @@
 //
 // Prerequisites (all must be running before clicking Run):
 //
-//	1. Hardhat node  :  npx hardhat node                       (from enygma_dvp/)
-//	2. Deploy+init   :  see enygma_dvp/MEMORY.md / scripts/
-//	3. Gnark server  :  cd gnark_circuits && go run main.go     (must include DvP keys)
+//  1. Hardhat node  :  npx hardhat node                       (from enygma_dvp/)
+//  2. Deploy+init   :  see enygma_dvp/MEMORY.md / scripts/
+//  3. Gnark server  :  cd gnark_circuits && go run main.go     (must include DvP keys)
 package main
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -44,6 +47,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -151,11 +155,113 @@ func (b *Broker) publish(e Event) {
 	}
 }
 
+// emitStep publishes a step status transition (running / success / error).
+func emitStep(b *Broker, step, status, label, msg string) {
+	b.publish(Event{Type: "step", Step: step, Status: status, Label: label, Msg: msg})
+}
+
+// logMsg publishes a free-form event-log line, optionally tagged with a category.
+func logMsg(b *Broker, cat, msg string) {
+	b.publish(Event{Type: "log", Cat: cat, Msg: msg, TS: time.Now().Format("15:04:05.000")})
+}
+
+// panelSet publishes a field update for one of the two participant panels (0=Alice, 1=Bob).
+func panelSet(b *Broker, pid int, field, value string) {
+	b.publish(Event{Type: "participant", Pid: pid, Field: field, Value: value})
+}
+
+// protoSet publishes a field update for the shared protocol/metrics panel.
+func protoSet(b *Broker, field, value string) {
+	b.publish(Event{Type: "proto", Field: field, Value: value})
+}
+
+// ── Flow state ────────────────────────────────────────────────────────────────
+//
+// FlowState holds everything one step hands off to the next. It lives on the
+// Server and is replaced wholesale by /reset. Because the HTTP layer only
+// ever runs one step at a time (guarded by Server.runLock, held for the
+// entire duration of a step — including on /reset), fields need no locking
+// of their own beyond that single mutex.
+
+// stepOrder is the fixed sequence a swap must be walked through. A step can
+// only be started once every step before it in this list has completed.
+var stepOrder = []string{
+	"prereqs", "keygen", "deposit_erc20", "deposit_nft",
+	"dvp_initiator", "bob_scan", "dvp_destination",
+	"settle_alice", "settle_bob", "verify",
+}
+
+var stepIndex = func() map[string]int {
+	m := make(map[string]int, len(stepOrder))
+	for i, s := range stepOrder {
+		m[s] = i
+	}
+	return m
+}()
+
+type FlowState struct {
+	broker *Broker
+	done   map[string]bool
+
+	// set by prereqs
+	ctx                                                          context.Context
+	client                                                       *ethclient.Client
+	dir                                                          string
+	erc20VaultAddr, erc721VaultAddr, dvpAddr                     common.Address
+	erc20Addr, erc721Addr                                        common.Address
+	erc20Vault, erc20Token, erc721Vault, erc721Token, dvp        *bind.BoundContract
+	auth                                                         *bind.TransactOpts
+	gnarkClient                                                  *core.GnarkClient
+	nftTokenIdInt                                                int64
+	erc20AmountBig, erc20TokenIdBig, nftTokenIdBig, nftAmountBig *big.Int
+	flowStart                                                    time.Time
+	totalGasUsed                                                 uint64
+
+	// keygen
+	aliceSpend, bobSpend *core.SpendKeyPair
+	aliceView, bobView   *core.ViewKeyPair
+
+	// deposit_erc20
+	ssAlice, capsuleAlice []byte
+	aliceSaltField        *big.Int
+	aliceCommitment       *big.Int
+
+	// deposit_nft
+	bobNftSalt    *big.Int
+	bobCommitment *big.Int
+
+	// merkle proofs, computed at the start of dvp_initiator (after both deposits)
+	aliceMerkleProof, bobMerkleProof *core.MerkleProof
+
+	// dvp_initiator
+	initiatorResult *core.DvPInitiatorResult
+	proofGenMs      int64
+
+	// bob_scan
+	saltAField, saltBField *big.Int
+	decTokenId, decAmount  *big.Int
+
+	// dvp_destination
+	destinationResult *core.DvPDestinationResult
+	aliceReceipt      onchainProofReceipt
+	bobReceipt        onchainProofReceipt
+
+	// settle_alice / settle_bob
+	deadline       *big.Int
+	aliceTxReceipt *types.Receipt
+	bobTxReceipt   *types.Receipt
+}
+
+func newFlowState(b *Broker) *FlowState {
+	return &FlowState{broker: b, done: make(map[string]bool), ctx: context.Background()}
+}
+
 // ── Server ────────────────────────────────────────────────────────────────────
 
 type Server struct {
 	broker  *Broker
 	runLock sync.Mutex
+	fs      *FlowState
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -197,21 +303,65 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
+// stepFns maps each step id to the function that executes it. Registered in
+// init() below, once all the step functions are declared.
+var stepFns map[string]func(*FlowState)
+
+// handleStep runs exactly one step, identified by the URL path /step/{id}.
+// It refuses to start a step whose prerequisites haven't completed yet, and
+// refuses to start a second step while one is already running.
+func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/step/")
+	fn, ok := stepFns[id]
+	if !ok {
+		http.Error(w, `{"error":"unknown step"}`, 404)
+		return
+	}
+	if !s.runLock.TryLock() {
+		http.Error(w, `{"error":"a step is already running"}`, 409)
+		return
+	}
+	idx := stepIndex[id]
+	for _, prev := range stepOrder[:idx] {
+		if !s.fs.done[prev] {
+			s.runLock.Unlock()
+			http.Error(w, fmt.Sprintf(`{"error":"run %q first"}`, prev), 409)
+			return
+		}
+	}
+	if s.fs.done[id] {
+		s.runLock.Unlock()
+		http.Error(w, `{"error":"step already completed — Reset to run the flow again"}`, 409)
+		return
+	}
+	go func() {
+		defer s.runLock.Unlock()
+		fn(s.fs)
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"status":"started"}`)
+}
+
+// handleReset clears all flow state and tells every connected client to
+// blank their UI. Refuses to run while a step is in flight.
+func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", 405)
 		return
 	}
 	if !s.runLock.TryLock() {
-		http.Error(w, `{"error":"flow already running"}`, 409)
+		http.Error(w, `{"error":"a step is running — wait for it to finish"}`, 409)
 		return
 	}
-	go func() {
-		defer s.runLock.Unlock()
-		runFlow(s.broker)
-	}()
+	defer s.runLock.Unlock()
+	s.fs = newFlowState(s.broker)
+	s.broker.publish(Event{Type: "reset"})
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{"status":"started"}`)
+	fmt.Fprint(w, `{"status":"reset"}`)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -360,40 +510,12 @@ func loadVaultMerkleTree(ctx context.Context, client *ethclient.Client, vaultAdd
 	return mt, nil
 }
 
-// ── Main flow ─────────────────────────────────────────────────────────────────
+// ── Step 1: Prerequisites ───────────────────────────────────────────────────
 
-func runFlow(b *Broker) {
-	b.publish(Event{Type: "reset"})
-	time.Sleep(80 * time.Millisecond)
-
-	ctx := context.Background()
-
-	emit := func(step, status, label, msg string) {
-		b.publish(Event{Type: "step", Step: step, Status: status, Label: label, Msg: msg})
-	}
-	logMsg := func(cat, msg string) {
-		b.publish(Event{Type: "log", Cat: cat, Msg: msg, TS: time.Now().Format("15:04:05.000")})
-	}
-	panel := func(pid int, field, value string) {
-		b.publish(Event{Type: "participant", Pid: pid, Field: field, Value: value})
-	}
-	proto := func(field, value string) {
-		b.publish(Event{Type: "proto", Field: field, Value: value})
-	}
-	fail := func(step, label string, err error) {
-		emit(step, "error", label, err.Error())
-		b.publish(Event{Type: "done", Status: "error", Msg: err.Error()})
-	}
-
-	var totalGasUsed uint64
-	var proofGenMs int64
-	flowStart := time.Now()
-
-	_, thisFile, _, _ := runtime.Caller(0)
-	dir := filepath.Dir(thisFile)
-
-	// ── Step: Prerequisites ───────────────────────────────────────────────────
-	emit("prereqs", "running", "Check prerequisites", "Probing chain · gnark server…")
+func stepPrereqs(fs *FlowState) {
+	b := fs.broker
+	fs.flowStart = time.Now()
+	emitStep(b, "prereqs", "running", "Check prerequisites", "Probing chain · gnark server…")
 	pause(1200 * time.Millisecond)
 
 	chainOK := tcpAvailable("127.0.0.1:8545")
@@ -406,454 +528,517 @@ func runFlow(b *Broker) {
 		missing = append(missing, "gnark server (8081)")
 	}
 	if len(missing) > 0 {
-		fail("prereqs", "Check prerequisites", fmt.Errorf("services not running: %s", strings.Join(missing, ", ")))
+		emitStep(b, "prereqs", "error", "Check prerequisites", fmt.Errorf("services not running: %s", strings.Join(missing, ", ")).Error())
 		return
 	}
-	logMsg("", "✓ chain and gnark server are both reachable")
+	logMsg(b, "", "✓ chain and gnark server are both reachable")
 
-	receipts, err := loadReceipts(dir)
+	_, thisFile, _, _ := runtime.Caller(0)
+	fs.dir = filepath.Dir(thisFile)
+
+	receipts, err := loadReceipts(fs.dir)
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
-	erc20VaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
-	erc721VaultAddr := common.HexToAddress(receipts["Erc721CoinVault"].ContractAddress)
-	erc721Addr := common.HexToAddress(receipts["ERC721"].ContractAddress)
-	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+	fs.erc20VaultAddr = common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	fs.erc20Addr = common.HexToAddress(receipts["ERC20"].ContractAddress)
+	fs.erc721VaultAddr = common.HexToAddress(receipts["Erc721CoinVault"].ContractAddress)
+	fs.erc721Addr = common.HexToAddress(receipts["ERC721"].ContractAddress)
+	fs.dvpAddr = common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 
-	proto("erc20VaultAddr", erc20VaultAddr.Hex())
-	proto("erc721VaultAddr", erc721VaultAddr.Hex())
-	proto("dvpAddr", dvpAddr.Hex())
-	logMsg("chain", fmt.Sprintf("Erc20CoinVault:  %s", shortHex(erc20VaultAddr.Hex(), 18)))
-	logMsg("chain", fmt.Sprintf("Erc721CoinVault: %s", shortHex(erc721VaultAddr.Hex(), 18)))
-	logMsg("chain", fmt.Sprintf("EnygmaDvp:       %s", shortHex(dvpAddr.Hex(), 18)))
+	protoSet(b, "erc20VaultAddr", fs.erc20VaultAddr.Hex())
+	protoSet(b, "erc721VaultAddr", fs.erc721VaultAddr.Hex())
+	protoSet(b, "dvpAddr", fs.dvpAddr.Hex())
+	logMsg(b, "chain", fmt.Sprintf("Erc20CoinVault:  %s", shortHex(fs.erc20VaultAddr.Hex(), 18)))
+	logMsg(b, "chain", fmt.Sprintf("Erc721CoinVault: %s", shortHex(fs.erc721VaultAddr.Hex(), 18)))
+	logMsg(b, "chain", fmt.Sprintf("EnygmaDvp:       %s", shortHex(fs.dvpAddr.Hex(), 18)))
 
 	client, err := ethclient.Dial(rpcURL)
 	if err != nil {
-		fail("prereqs", "Check prerequisites", fmt.Errorf("ethclient.Dial: %w", err))
+		emitStep(b, "prereqs", "error", "Check prerequisites", fmt.Errorf("ethclient.Dial: %w", err).Error())
 		return
 	}
-	defer client.Close()
+	fs.client = client
 
-	erc20VaultABI, err := loadABI(dir, "core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
+	erc20VaultABI, err := loadABI(fs.dir, "core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
-	erc20ABI, err := loadABI(dir, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json")
+	erc20ABI, err := loadABI(fs.dir, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json")
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
-	erc721VaultABI, err := loadABI(dir, "core/contracts/vaults/Erc721CoinVault.sol/Erc721CoinVault.json")
+	erc721VaultABI, err := loadABI(fs.dir, "core/contracts/vaults/Erc721CoinVault.sol/Erc721CoinVault.json")
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
-	erc721ABI, err := loadABI(dir, "erc721/contracts/RaylsERC721.sol/RaylsERC721.json")
+	erc721ABI, err := loadABI(fs.dir, "erc721/contracts/RaylsERC721.sol/RaylsERC721.json")
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
-	dvpABI, err := loadABI(dir, "core/contracts/EnygmaDvp.sol/EnygmaDvp.json")
+	dvpABI, err := loadABI(fs.dir, "core/contracts/EnygmaDvp.sol/EnygmaDvp.json")
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
 
-	erc20Vault := bind.NewBoundContract(erc20VaultAddr, erc20VaultABI, client, client, client)
-	erc20Token := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
-	erc721Vault := bind.NewBoundContract(erc721VaultAddr, erc721VaultABI, client, client, client)
-	erc721Token := bind.NewBoundContract(erc721Addr, erc721ABI, client, client, client)
-	dvp := bind.NewBoundContract(dvpAddr, dvpABI, client, client, client)
+	fs.erc20Vault = bind.NewBoundContract(fs.erc20VaultAddr, erc20VaultABI, client, client, client)
+	fs.erc20Token = bind.NewBoundContract(fs.erc20Addr, erc20ABI, client, client, client)
+	fs.erc721Vault = bind.NewBoundContract(fs.erc721VaultAddr, erc721VaultABI, client, client, client)
+	fs.erc721Token = bind.NewBoundContract(fs.erc721Addr, erc721ABI, client, client, client)
+	fs.dvp = bind.NewBoundContract(fs.dvpAddr, dvpABI, client, client, client)
 
 	auth, err := makeAuth()
 	if err != nil {
-		fail("prereqs", "Check prerequisites", err)
+		emitStep(b, "prereqs", "error", "Check prerequisites", err.Error())
 		return
 	}
-	panel(0, "ethAddr", auth.From.Hex())
-	panel(1, "ethAddr", auth.From.Hex())
+	fs.auth = auth
+	panelSet(b, 0, "ethAddr", auth.From.Hex())
+	panelSet(b, 1, "ethAddr", auth.From.Hex())
 
-	gnarkClient := core.NewGnarkClient(gnarkURL)
-	emit("prereqs", "success", "Check prerequisites", "All services running")
-	pause(1200 * time.Millisecond)
+	fs.gnarkClient = core.NewGnarkClient(gnarkURL)
 
 	// Randomize the NFT tokenId each run so repeated demo runs never collide.
-	nftTokenIdInt := int64(1_000_000 + rand.Intn(900_000))
-	erc20AmountBig := big.NewInt(erc20Amount)
-	erc20TokenIdBig := big.NewInt(erc20TokenId)
-	nftTokenIdBig := big.NewInt(nftTokenIdInt)
-	nftAmountBig := big.NewInt(nftAmount)
+	fs.nftTokenIdInt = int64(1_000_000 + rand.Intn(900_000))
+	fs.erc20AmountBig = big.NewInt(erc20Amount)
+	fs.erc20TokenIdBig = big.NewInt(erc20TokenId)
+	fs.nftTokenIdBig = big.NewInt(fs.nftTokenIdInt)
+	fs.nftAmountBig = big.NewInt(nftAmount)
 
-	// ── Step: Key generation ──────────────────────────────────────────────────
-	emit("keygen", "running", "Generate key pairs", "Alice & Bob each generate spend+view keypairs…")
+	emitStep(b, "prereqs", "success", "Check prerequisites", "All services running")
+	fs.done["prereqs"] = true
+}
+
+// ── Step 2: Key generation ──────────────────────────────────────────────────
+
+func stepKeygen(fs *FlowState) {
+	b := fs.broker
+	emitStep(b, "keygen", "running", "Generate key pairs", "Alice & Bob each generate spend+view keypairs…")
 	pause(1800 * time.Millisecond)
 
 	aliceSpend, err := core.NewSpendKeyPair()
 	if err != nil {
-		fail("keygen", "Generate key pairs", err)
+		emitStep(b, "keygen", "error", "Generate key pairs", err.Error())
 		return
 	}
 	aliceView, err := core.NewViewKeyPair()
 	if err != nil {
-		fail("keygen", "Generate key pairs", err)
+		emitStep(b, "keygen", "error", "Generate key pairs", err.Error())
 		return
 	}
 	bobSpend, err := core.NewSpendKeyPair()
 	if err != nil {
-		fail("keygen", "Generate key pairs", err)
+		emitStep(b, "keygen", "error", "Generate key pairs", err.Error())
 		return
 	}
 	bobView, err := core.NewViewKeyPair()
 	if err != nil {
-		fail("keygen", "Generate key pairs", err)
+		emitStep(b, "keygen", "error", "Generate key pairs", err.Error())
 		return
 	}
+	fs.aliceSpend, fs.aliceView, fs.bobSpend, fs.bobView = aliceSpend, aliceView, bobSpend, bobView
 
-	panel(0, "pkSpend", "0x"+aliceSpend.PublicKey.Text(16))
-	panel(1, "pkSpend", "0x"+bobSpend.PublicKey.Text(16))
-	panel(0, "pkView", "0x"+common.Bytes2Hex(aliceView.EncapsKey))
-	panel(1, "pkView", "0x"+common.Bytes2Hex(bobView.EncapsKey))
-	logMsg("key", fmt.Sprintf("Alice pk_spend: 0x%s…", aliceSpend.PublicKey.Text(16)[:16]))
-	logMsg("key", fmt.Sprintf("Bob   pk_spend: 0x%s…", bobSpend.PublicKey.Text(16)[:16]))
-	emit("keygen", "success", "Generate key pairs", "BabyJubJub spend keys + ML-KEM-768 view keypairs generated")
-	pause(1600 * time.Millisecond)
+	panelSet(b, 0, "pkSpend", "0x"+aliceSpend.PublicKey.Text(16))
+	panelSet(b, 1, "pkSpend", "0x"+bobSpend.PublicKey.Text(16))
+	panelSet(b, 0, "pkView", "0x"+common.Bytes2Hex(aliceView.EncapsKey))
+	panelSet(b, 1, "pkView", "0x"+common.Bytes2Hex(bobView.EncapsKey))
+	logMsg(b, "key", fmt.Sprintf("Alice pk_spend: 0x%s…", aliceSpend.PublicKey.Text(16)[:16]))
+	logMsg(b, "key", fmt.Sprintf("Bob   pk_spend: 0x%s…", bobSpend.PublicKey.Text(16)[:16]))
+	emitStep(b, "keygen", "success", "Generate key pairs", "BabyJubJub spend keys + ML-KEM-768 view keypairs generated")
+	fs.done["keygen"] = true
+}
 
-	// ── Step: Alice deposits ERC20 ────────────────────────────────────────────
-	emit("deposit_erc20", "running", "Alice Deposits ERC20", fmt.Sprintf("Alice mints and deposits %d USDT into the vault…", erc20Amount))
+// ── Step 3: Alice deposits ERC20 ────────────────────────────────────────────
 
-	ssAlice, capsuleAlice, err := core.Encapsulate(aliceView.EncapsKey)
+func stepDepositErc20(fs *FlowState) {
+	b := fs.broker
+	ctx := fs.ctx
+	client := fs.client
+	emitStep(b, "deposit_erc20", "running", "Alice Deposits ERC20", fmt.Sprintf("Alice mints and deposits %d USDT into the vault…", erc20Amount))
+
+	ssAlice, capsuleAlice, err := core.Encapsulate(fs.aliceView.EncapsKey)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("Encapsulate: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("Encapsulate: %w", err).Error())
 		return
 	}
+	fs.ssAlice, fs.capsuleAlice = ssAlice, capsuleAlice
 	aliceSaltBytes, err := core.DerivePaymentSalt(ssAlice)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", err)
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", err.Error())
 		return
 	}
 	aliceEncKey, err := core.DerivePaymentKey(ssAlice)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", err)
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", err.Error())
 		return
 	}
-	aliceSaltField := core.SaltBToField(aliceSaltBytes)
+	fs.aliceSaltField = core.SaltBToField(aliceSaltBytes)
 
-	aliceCommitment, err := core.Erc20CommitmentV2(aliceSpend.PublicKey, aliceSaltField, erc20AmountBig, erc20TokenIdBig)
+	aliceCommitment, err := core.Erc20CommitmentV2(fs.aliceSpend.PublicKey, fs.aliceSaltField, fs.erc20AmountBig, fs.erc20TokenIdBig)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", err)
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", err.Error())
 		return
 	}
-	aliceDepositEnc, err := core.EncryptPayload(aliceEncKey, erc20TokenIdBig, erc20AmountBig)
+	fs.aliceCommitment = aliceCommitment
+	aliceDepositEnc, err := core.EncryptPayload(aliceEncKey, fs.erc20TokenIdBig, fs.erc20AmountBig)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", err)
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", err.Error())
 		return
 	}
 
-	mintErc20Tx, err := erc20Token.Transact(auth, "mint", auth.From, new(big.Int).Mul(erc20AmountBig, big.NewInt(10)))
+	mintErc20Tx, err := fs.erc20Token.Transact(fs.auth, "mint", fs.auth.From, new(big.Int).Mul(fs.erc20AmountBig, big.NewInt(10)))
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("ERC20.mint: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("ERC20.mint: %w", err).Error())
 		return
 	}
 	if _, err := bind.WaitMined(ctx, client, mintErc20Tx); err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("wait mint: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("wait mint: %w", err).Error())
 		return
 	}
-	approveErc20Tx, err := erc20Token.Transact(auth, "approve", erc20VaultAddr, erc20AmountBig)
+	approveErc20Tx, err := fs.erc20Token.Transact(fs.auth, "approve", fs.erc20VaultAddr, fs.erc20AmountBig)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("ERC20.approve: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("ERC20.approve: %w", err).Error())
 		return
 	}
 	if _, err := bind.WaitMined(ctx, client, approveErc20Tx); err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("wait approve: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("wait approve: %w", err).Error())
 		return
 	}
-	depositErc20Tx, err := erc20Vault.Transact(auth, "depositV2",
-		[]*big.Int{erc20AmountBig, aliceSpend.PublicKey, aliceSaltField, erc20TokenIdBig}, capsuleAlice, aliceDepositEnc)
+	depositErc20Tx, err := fs.erc20Vault.Transact(fs.auth, "depositV2",
+		[]*big.Int{fs.erc20AmountBig, fs.aliceSpend.PublicKey, fs.aliceSaltField, fs.erc20TokenIdBig}, capsuleAlice, aliceDepositEnc)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("depositV2: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("depositV2: %w", err).Error())
 		return
 	}
 	depositErc20Receipt, err := bind.WaitMined(ctx, client, depositErc20Tx)
 	if err != nil {
-		fail("deposit_erc20", "Alice Deposits ERC20", fmt.Errorf("wait depositV2: %w", err))
+		emitStep(b, "deposit_erc20", "error", "Alice Deposits ERC20", fmt.Errorf("wait depositV2: %w", err).Error())
 		return
 	}
-	totalGasUsed += depositErc20Receipt.GasUsed
-	logMsg("chain", fmt.Sprintf("Erc20CoinVault.depositV2() → block %d  gas %s", depositErc20Receipt.BlockNumber, formatNum(depositErc20Receipt.GasUsed)))
-	logMsg("key", fmt.Sprintf("Alice commitment: 0x%s…", aliceCommitment.Text(16)[:16]))
-	panel(0, "commitment", "0x"+aliceCommitment.Text(16))
-	panel(0, "balance", fmt.Sprintf("%d USDT (deposited)", erc20Amount))
-	emit("deposit_erc20", "success", "Alice Deposits ERC20", fmt.Sprintf("Alice deposited %d USDT — Poseidon commitment recorded on-chain (block %d)", erc20Amount, depositErc20Receipt.BlockNumber))
-	pause(1600 * time.Millisecond)
+	fs.totalGasUsed += depositErc20Receipt.GasUsed
+	logMsg(b, "chain", fmt.Sprintf("Erc20CoinVault.depositV2() → block %d  gas %s", depositErc20Receipt.BlockNumber, formatNum(depositErc20Receipt.GasUsed)))
+	logMsg(b, "key", fmt.Sprintf("Alice commitment: 0x%s…", aliceCommitment.Text(16)[:16]))
+	panelSet(b, 0, "commitment", "0x"+aliceCommitment.Text(16))
+	panelSet(b, 0, "balance", fmt.Sprintf("%d USDT (deposited)", erc20Amount))
+	emitStep(b, "deposit_erc20", "success", "Alice Deposits ERC20", fmt.Sprintf("Alice deposited %d USDT — Poseidon commitment recorded on-chain (block %d)", erc20Amount, depositErc20Receipt.BlockNumber))
+	fs.done["deposit_erc20"] = true
+}
 
-	// ── Step: Bob deposits NFT ────────────────────────────────────────────────
-	emit("deposit_nft", "running", "Bob Deposits NFT", fmt.Sprintf("Bob mints and deposits ticket tokenId=%d into the NFT vault…", nftTokenIdInt))
+// ── Step 4: Bob deposits NFT ────────────────────────────────────────────────
+
+func stepDepositNft(fs *FlowState) {
+	b := fs.broker
+	ctx := fs.ctx
+	client := fs.client
+	emitStep(b, "deposit_nft", "running", "Bob Deposits NFT", fmt.Sprintf("Bob mints and deposits ticket tokenId=%d into the NFT vault…", fs.nftTokenIdInt))
 
 	bobNftSalt, err := core.RandomInField()
 	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", err)
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", err.Error())
 		return
 	}
-	bobCommitment, err := core.Erc721Commitment(nftTokenIdBig, bobSpend.PublicKey, bobNftSalt)
+	fs.bobNftSalt = bobNftSalt
+	bobCommitment, err := core.Erc721Commitment(fs.nftTokenIdBig, fs.bobSpend.PublicKey, bobNftSalt)
 	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", err)
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", err.Error())
 		return
 	}
+	fs.bobCommitment = bobCommitment
 
-	mintNftTx, err := erc721Token.Transact(auth, "mint", auth.From, nftTokenIdBig)
+	mintNftTx, err := fs.erc721Token.Transact(fs.auth, "mint", fs.auth.From, fs.nftTokenIdBig)
 	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("ERC721.mint: %w", err))
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", fmt.Errorf("ERC721.mint: %w", err).Error())
 		return
 	}
 	if _, err := bind.WaitMined(ctx, client, mintNftTx); err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("wait mint: %w", err))
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", fmt.Errorf("wait mint: %w", err).Error())
 		return
 	}
-	approveNftTx, err := erc721Token.Transact(auth, "approve", erc721VaultAddr, nftTokenIdBig)
+	approveNftTx, err := fs.erc721Token.Transact(fs.auth, "approve", fs.erc721VaultAddr, fs.nftTokenIdBig)
 	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("ERC721.approve: %w", err))
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", fmt.Errorf("ERC721.approve: %w", err).Error())
 		return
 	}
 	if _, err := bind.WaitMined(ctx, client, approveNftTx); err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("wait approve: %w", err))
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", fmt.Errorf("wait approve: %w", err).Error())
 		return
 	}
-	depositNftTx, err := erc721Vault.Transact(auth, "deposit", []*big.Int{nftTokenIdBig, bobSpend.PublicKey, bobNftSalt})
+	depositNftTx, err := fs.erc721Vault.Transact(fs.auth, "deposit", []*big.Int{fs.nftTokenIdBig, fs.bobSpend.PublicKey, bobNftSalt})
 	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("deposit: %w", err))
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", fmt.Errorf("deposit: %w", err).Error())
 		return
 	}
 	depositNftReceipt, err := bind.WaitMined(ctx, client, depositNftTx)
 	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("wait deposit: %w", err))
+		emitStep(b, "deposit_nft", "error", "Bob Deposits NFT", fmt.Errorf("wait deposit: %w", err).Error())
 		return
 	}
-	totalGasUsed += depositNftReceipt.GasUsed
-	logMsg("chain", fmt.Sprintf("Erc721CoinVault.deposit() → block %d  gas %s", depositNftReceipt.BlockNumber, formatNum(depositNftReceipt.GasUsed)))
-	logMsg("key", fmt.Sprintf("Bob commitment: 0x%s…", bobCommitment.Text(16)[:16]))
-	panel(1, "commitment", "0x"+bobCommitment.Text(16))
-	panel(1, "balance", fmt.Sprintf("ticket #%d (deposited)", nftTokenIdInt))
-	emit("deposit_nft", "success", "Bob Deposits NFT", fmt.Sprintf("Bob deposited ticket #%d — Poseidon commitment recorded on-chain (block %d)", nftTokenIdInt, depositNftReceipt.BlockNumber))
-	pause(1600 * time.Millisecond)
+	fs.totalGasUsed += depositNftReceipt.GasUsed
+	logMsg(b, "chain", fmt.Sprintf("Erc721CoinVault.deposit() → block %d  gas %s", depositNftReceipt.BlockNumber, formatNum(depositNftReceipt.GasUsed)))
+	logMsg(b, "key", fmt.Sprintf("Bob commitment: 0x%s…", bobCommitment.Text(16)[:16]))
+	panelSet(b, 1, "commitment", "0x"+bobCommitment.Text(16))
+	panelSet(b, 1, "balance", fmt.Sprintf("ticket #%d (deposited)", fs.nftTokenIdInt))
+	emitStep(b, "deposit_nft", "success", "Bob Deposits NFT", fmt.Sprintf("Bob deposited ticket #%d — Poseidon commitment recorded on-chain (block %d)", fs.nftTokenIdInt, depositNftReceipt.BlockNumber))
+	fs.done["deposit_nft"] = true
+}
 
-	// ── Merkle proofs (one tree per vault) ────────────────────────────────────
-	erc20Mt, err := loadVaultMerkleTree(ctx, client, erc20VaultAddr)
-	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", err)
-		return
-	}
-	aliceMerkleProof, err := erc20Mt.GenerateProof(aliceCommitment)
-	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("GenerateProof (Alice ERC20): %w", err))
-		return
-	}
-	nftMt, err := loadVaultMerkleTree(ctx, client, erc721VaultAddr)
-	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", err)
-		return
-	}
-	bobMerkleProof, err := nftMt.GenerateProof(bobCommitment)
-	if err != nil {
-		fail("deposit_nft", "Bob Deposits NFT", fmt.Errorf("GenerateProof (Bob NFT): %w", err))
-		return
-	}
-	panel(0, "merkleRoot", "0x"+aliceMerkleProof.Root.Text(16))
-	panel(1, "merkleRoot", "0x"+bobMerkleProof.Root.Text(16))
+// ── Step 5: DvP Initiator (Alice) ───────────────────────────────────────────
 
-	// ── Step: DvP Initiator (Alice) ───────────────────────────────────────────
-	emit("dvp_initiator", "running", "DvP Initiator Proof", "Alice proves ownership of her USDT note and locks in the swap terms…")
+func stepDvpInitiator(fs *FlowState) {
+	b := fs.broker
+	ctx := fs.ctx
+	client := fs.client
+	emitStep(b, "dvp_initiator", "running", "DvP Initiator Proof", "Alice proves ownership of her USDT note and locks in the swap terms…")
+
+	// Merkle proofs — computed now, against the tree state after both deposits.
+	erc20Mt, err := loadVaultMerkleTree(ctx, client, fs.erc20VaultAddr)
+	if err != nil {
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", err.Error())
+		return
+	}
+	aliceMerkleProof, err := erc20Mt.GenerateProof(fs.aliceCommitment)
+	if err != nil {
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("GenerateProof (Alice ERC20): %w", err).Error())
+		return
+	}
+	nftMt, err := loadVaultMerkleTree(ctx, client, fs.erc721VaultAddr)
+	if err != nil {
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", err.Error())
+		return
+	}
+	bobMerkleProof, err := nftMt.GenerateProof(fs.bobCommitment)
+	if err != nil {
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("GenerateProof (Bob NFT): %w", err).Error())
+		return
+	}
+	fs.aliceMerkleProof, fs.bobMerkleProof = aliceMerkleProof, bobMerkleProof
+	panelSet(b, 0, "merkleRoot", "0x"+aliceMerkleProof.Root.Text(16))
+	panelSet(b, 1, "merkleRoot", "0x"+bobMerkleProof.Root.Text(16))
 
 	proofStart := time.Now()
-	initiatorResult, err := gnarkClient.DvPInitiatorProof(
-		core.KeyPair{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey},
-		aliceSaltField,
-		erc20AmountBig, erc20TokenIdBig,
-		bobSpend.PublicKey, bobView.EncapsKey,
-		nftAmountBig, nftTokenIdBig,
+	initiatorResult, err := fs.gnarkClient.DvPInitiatorProof(
+		core.KeyPair{PrivateKey: fs.aliceSpend.PrivateKey, PublicKey: fs.aliceSpend.PublicKey},
+		fs.aliceSaltField,
+		fs.erc20AmountBig, fs.erc20TokenIdBig,
+		fs.bobSpend.PublicKey, fs.bobView.EncapsKey,
+		fs.nftAmountBig, fs.nftTokenIdBig,
 		big.NewInt(0),
 		aliceMerkleProof, merkleDepth,
 	)
 	if err != nil {
-		fail("dvp_initiator", "DvP Initiator Proof", fmt.Errorf("DvPInitiatorProof: %w", err))
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("DvPInitiatorProof: %w", err).Error())
 		return
 	}
 	if len(initiatorResult.Proof) != 8 {
-		fail("dvp_initiator", "DvP Initiator Proof", fmt.Errorf("expected 8-element proof, got %d", len(initiatorResult.Proof)))
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("expected 8-element proof, got %d", len(initiatorResult.Proof)).Error())
 		return
 	}
-	proofGenMs = time.Since(proofStart).Milliseconds()
-	logMsg("zk", fmt.Sprintf("DvP Initiator proof generated in %d ms", proofGenMs))
-	logMsg("zk", fmt.Sprintf("commitB (Bob receives %d USDT):  0x%s…", erc20Amount, initiatorResult.CommitB.Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("commitA (Alice receives ticket): 0x%s…", initiatorResult.CommitA.Text(16)[:16]))
-	proto("proofTimeMs", fmt.Sprintf("%d", proofGenMs))
-	panel(0, "commitB", "0x"+initiatorResult.CommitB.Text(16))
-	panel(0, "commitA", "0x"+initiatorResult.CommitA.Text(16))
-	emit("dvp_initiator", "success", "DvP Initiator Proof", fmt.Sprintf("Groth16 proof generated in %d ms — swap terms locked, note encrypted for Bob", proofGenMs))
-	pause(1800 * time.Millisecond)
+	fs.initiatorResult = initiatorResult
+	fs.proofGenMs = time.Since(proofStart).Milliseconds()
+	logMsg(b, "zk", fmt.Sprintf("DvP Initiator proof generated in %d ms", fs.proofGenMs))
+	logMsg(b, "zk", fmt.Sprintf("commitB (Bob receives %d USDT):  0x%s…", erc20Amount, initiatorResult.CommitB.Text(16)[:16]))
+	logMsg(b, "zk", fmt.Sprintf("commitA (Alice receives ticket): 0x%s…", initiatorResult.CommitA.Text(16)[:16]))
+	protoSet(b, "proofTimeMs", fmt.Sprintf("%d", fs.proofGenMs))
+	panelSet(b, 0, "commitB", "0x"+initiatorResult.CommitB.Text(16))
+	panelSet(b, 0, "commitA", "0x"+initiatorResult.CommitA.Text(16))
+	emitStep(b, "dvp_initiator", "success", "DvP Initiator Proof", fmt.Sprintf("Groth16 proof generated in %d ms — swap terms locked, note encrypted for Bob", fs.proofGenMs))
+	fs.done["dvp_initiator"] = true
+}
 
-	// ── Step: Bob scans and verifies ──────────────────────────────────────────
-	emit("bob_scan", "running", "Bob Scans & Verifies", "Bob decapsulates Alice's message and verifies the swap terms…")
-	pause(1400 * time.Millisecond)
+// ── Step 6: Bob scans and verifies ──────────────────────────────────────────
 
-	ssBob, err := core.Decapsulate(bobView.DecapsKey, initiatorResult.CipherText)
+func stepBobScan(fs *FlowState) {
+	b := fs.broker
+	emitStep(b, "bob_scan", "running", "Bob Scans & Verifies", "Bob decapsulates Alice's message and verifies the swap terms…")
+	pause(600 * time.Millisecond)
+
+	ssBob, err := core.Decapsulate(fs.bobView.DecapsKey, fs.initiatorResult.CipherText)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", fmt.Errorf("Decapsulate: %w", err))
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", fmt.Errorf("Decapsulate: %w", err).Error())
 		return
 	}
 	bobSaltBBytes, err := core.DerivePaymentSalt(ssBob)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", err)
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
 	bobSaltABytes, err := core.DeriveDvpSaltInit(ssBob)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", err)
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
 	bobEncKey, err := core.DerivePaymentKey(ssBob)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", err)
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
-	saltBField := core.SaltBToField(bobSaltBBytes)
-	saltAField := core.SaltBToField(bobSaltABytes)
+	fs.saltBField = core.SaltBToField(bobSaltBBytes)
+	fs.saltAField = core.SaltBToField(bobSaltABytes)
 
-	decTokenId, decAmount, err := core.DecryptPayload(bobEncKey, initiatorResult.EncTxData)
+	decTokenId, decAmount, err := core.DecryptPayload(bobEncKey, fs.initiatorResult.EncTxData)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", fmt.Errorf("DecryptPayload: %w", err))
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", fmt.Errorf("DecryptPayload: %w", err).Error())
 		return
 	}
-	logMsg("key", fmt.Sprintf("Bob decrypted: tokenId=%s amount=%s (Alice's USDT)", decTokenId, decAmount))
+	fs.decTokenId, fs.decAmount = decTokenId, decAmount
+	logMsg(b, "key", fmt.Sprintf("Bob decrypted: tokenId=%s amount=%s (Alice's USDT)", decTokenId, decAmount))
 
-	expectedCommitB, err := core.Erc20CommitmentV2(bobSpend.PublicKey, saltBField, decAmount, decTokenId)
+	expectedCommitB, err := core.Erc20CommitmentV2(fs.bobSpend.PublicKey, fs.saltBField, decAmount, decTokenId)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", err)
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
-	if expectedCommitB.Cmp(initiatorResult.CommitB) != 0 {
-		fail("bob_scan", "Bob Scans & Verifies", fmt.Errorf("commitB mismatch"))
+	if expectedCommitB.Cmp(fs.initiatorResult.CommitB) != 0 {
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", "commitB mismatch")
 		return
 	}
-	expectedCommitA, err := core.Erc20CommitmentV2(aliceSpend.PublicKey, saltAField, nftAmountBig, nftTokenIdBig)
+	expectedCommitA, err := core.Erc20CommitmentV2(fs.aliceSpend.PublicKey, fs.saltAField, fs.nftAmountBig, fs.nftTokenIdBig)
 	if err != nil {
-		fail("bob_scan", "Bob Scans & Verifies", err)
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
-	if expectedCommitA.Cmp(initiatorResult.CommitA) != 0 {
-		fail("bob_scan", "Bob Scans & Verifies", fmt.Errorf("commitA mismatch"))
+	if expectedCommitA.Cmp(fs.initiatorResult.CommitA) != 0 {
+		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", "commitA mismatch")
 		return
 	}
-	logMsg("key", "commitB and commitA both verified ✓ — swap terms match")
-	emit("bob_scan", "success", "Bob Scans & Verifies", fmt.Sprintf("Bob confirmed he'll receive %s USDT, and Alice will receive the ticket", decAmount))
-	pause(1400 * time.Millisecond)
+	logMsg(b, "key", "commitB and commitA both verified ✓ — swap terms match")
+	emitStep(b, "bob_scan", "success", "Bob Scans & Verifies", fmt.Sprintf("Bob confirmed he'll receive %s USDT, and Alice will receive the ticket", decAmount))
+	fs.done["bob_scan"] = true
+}
 
-	// ── Step: DvP Destination (Bob) ───────────────────────────────────────────
-	emit("dvp_destination", "running", "DvP Destination Proof", "Bob proves ownership of his ticket and accepts the swap…")
+// ── Step 7: DvP Destination (Bob) ───────────────────────────────────────────
+
+func stepDvpDestination(fs *FlowState) {
+	b := fs.broker
+	emitStep(b, "dvp_destination", "running", "DvP Destination Proof", "Bob proves ownership of his ticket and accepts the swap…")
 
 	destProofStart := time.Now()
-	destinationResult, err := gnarkClient.DvPDestinationProof(
-		core.KeyPair{PrivateKey: bobSpend.PrivateKey, PublicKey: bobSpend.PublicKey},
-		bobNftSalt, nftAmountBig, nftTokenIdBig,
-		aliceSpend.PublicKey, saltAField, saltBField,
-		decAmount, decTokenId,
-		initiatorResult.CommitA,
+	destinationResult, err := fs.gnarkClient.DvPDestinationProof(
+		core.KeyPair{PrivateKey: fs.bobSpend.PrivateKey, PublicKey: fs.bobSpend.PublicKey},
+		fs.bobNftSalt, fs.nftAmountBig, fs.nftTokenIdBig,
+		fs.aliceSpend.PublicKey, fs.saltAField, fs.saltBField,
+		fs.decAmount, fs.decTokenId,
+		fs.initiatorResult.CommitA,
 		big.NewInt(0),
-		bobMerkleProof, merkleDepth,
+		fs.bobMerkleProof, merkleDepth,
 	)
 	if err != nil {
-		fail("dvp_destination", "DvP Destination Proof", fmt.Errorf("DvPDestinationProof: %w", err))
+		emitStep(b, "dvp_destination", "error", "DvP Destination Proof", fmt.Errorf("DvPDestinationProof: %w", err).Error())
 		return
 	}
 	if len(destinationResult.Proof) != 8 {
-		fail("dvp_destination", "DvP Destination Proof", fmt.Errorf("expected 8-element proof, got %d", len(destinationResult.Proof)))
+		emitStep(b, "dvp_destination", "error", "DvP Destination Proof", fmt.Errorf("expected 8-element proof, got %d", len(destinationResult.Proof)).Error())
 		return
 	}
+	fs.destinationResult = destinationResult
 	destProofMs := time.Since(destProofStart).Milliseconds()
-	logMsg("zk", fmt.Sprintf("DvP Destination proof generated in %d ms", destProofMs))
-	emit("dvp_destination", "success", "DvP Destination Proof", fmt.Sprintf("Groth16 proof generated in %d ms — Bob has accepted the swap", destProofMs))
-	pause(1600 * time.Millisecond)
+	logMsg(b, "zk", fmt.Sprintf("DvP Destination proof generated in %d ms", destProofMs))
 
-	// ── Settlement receipts ────────────────────────────────────────────────────
-	aliceProof8, err := proofStringsToOnchain(initiatorResult.Proof)
+	// Build both on-chain receipts now so settle_alice / settle_bob can submit directly.
+	aliceProof8, err := proofStringsToOnchain(fs.initiatorResult.Proof)
 	if err != nil {
-		fail("dvp_destination", "DvP Destination Proof", err)
+		emitStep(b, "dvp_destination", "error", "DvP Destination Proof", err.Error())
 		return
 	}
-	aliceReceipt := onchainProofReceipt{
+	fs.aliceReceipt = onchainProofReceipt{
 		Proof:           aliceProof8,
-		Statement:       initiatorResult.Statement,
-		NumberOfInputs:  big.NewInt(int64(initiatorResult.NumberOfInputs)),
-		NumberOfOutputs: big.NewInt(int64(initiatorResult.NumberOfOutputs)),
+		Statement:       fs.initiatorResult.Statement,
+		NumberOfInputs:  big.NewInt(int64(fs.initiatorResult.NumberOfInputs)),
+		NumberOfOutputs: big.NewInt(int64(fs.initiatorResult.NumberOfOutputs)),
 	}
 	bobProof8, err := proofStringsToOnchain(destinationResult.Proof)
 	if err != nil {
-		fail("dvp_destination", "DvP Destination Proof", err)
+		emitStep(b, "dvp_destination", "error", "DvP Destination Proof", err.Error())
 		return
 	}
-	bobReceipt := onchainProofReceipt{
+	fs.bobReceipt = onchainProofReceipt{
 		Proof:           bobProof8,
 		Statement:       destinationResult.Statement,
 		NumberOfInputs:  big.NewInt(int64(destinationResult.NumberOfInputs)),
 		NumberOfOutputs: big.NewInt(int64(destinationResult.NumberOfOutputs)),
 	}
 
-	// ── Step: Alice submits leg 1 ─────────────────────────────────────────────
-	emit("settle_alice", "running", "Alice Submits (Leg 1/2)", "Alice submits her ERC20 leg — locks in the swap on-chain…")
+	emitStep(b, "dvp_destination", "success", "DvP Destination Proof", fmt.Sprintf("Groth16 proof generated in %d ms — Bob has accepted the swap", destProofMs))
+	fs.done["dvp_destination"] = true
+}
 
-	deadline := new(big.Int).SetInt64(time.Now().Unix() + deadlineWindowSeconds)
-	aliceTx, err := dvp.Transact(auth, "submitPartialSettlement", aliceReceipt, big.NewInt(vaultIdErc20), big.NewInt(groupFungible), deadline)
+// ── Step 8: Alice submits leg 1 ─────────────────────────────────────────────
+
+func stepSettleAlice(fs *FlowState) {
+	b := fs.broker
+	ctx := fs.ctx
+	client := fs.client
+	emitStep(b, "settle_alice", "running", "Alice Submits (Leg 1/2)", "Alice submits her ERC20 leg — locks in the swap on-chain…")
+
+	fs.deadline = new(big.Int).SetInt64(time.Now().Unix() + deadlineWindowSeconds)
+	aliceTx, err := fs.dvp.Transact(fs.auth, "submitPartialSettlement", fs.aliceReceipt, big.NewInt(vaultIdErc20), big.NewInt(groupFungible), fs.deadline)
 	if err != nil {
-		fail("settle_alice", "Alice Submits (Leg 1/2)", fmt.Errorf("submitPartialSettlement: %w", err))
+		emitStep(b, "settle_alice", "error", "Alice Submits (Leg 1/2)", fmt.Errorf("submitPartialSettlement: %w", err).Error())
 		return
 	}
 	aliceTxReceipt, err := bind.WaitMined(ctx, client, aliceTx)
 	if err != nil {
-		fail("settle_alice", "Alice Submits (Leg 1/2)", fmt.Errorf("wait submitPartialSettlement: %w", err))
+		emitStep(b, "settle_alice", "error", "Alice Submits (Leg 1/2)", fmt.Errorf("wait submitPartialSettlement: %w", err).Error())
 		return
 	}
-	totalGasUsed += aliceTxReceipt.GasUsed
-	proto("aliceTxHash", aliceTx.Hash().Hex())
-	proto("aliceBlock", fmt.Sprintf("%d", aliceTxReceipt.BlockNumber))
-	proto("aliceGas", fmt.Sprintf("%d", aliceTxReceipt.GasUsed))
-	logMsg("chain", fmt.Sprintf("EnygmaDvp.submitPartialSettlement() [Alice] → block %d  gas %s  tx %s…",
+	fs.aliceTxReceipt = aliceTxReceipt
+	fs.totalGasUsed += aliceTxReceipt.GasUsed
+	protoSet(b, "aliceTxHash", aliceTx.Hash().Hex())
+	protoSet(b, "aliceBlock", fmt.Sprintf("%d", aliceTxReceipt.BlockNumber))
+	protoSet(b, "aliceGas", fmt.Sprintf("%d", aliceTxReceipt.GasUsed))
+	logMsg(b, "chain", fmt.Sprintf("EnygmaDvp.submitPartialSettlement() [Alice] → block %d  gas %s  tx %s…",
 		aliceTxReceipt.BlockNumber, formatNum(aliceTxReceipt.GasUsed), shortHex(aliceTx.Hash().Hex(), 18)))
-	emit("settle_alice", "success", "Alice Submits (Leg 1/2)", fmt.Sprintf("SwapInitiated on-chain (block %d) — waiting for Bob's leg, deadline in %ds", aliceTxReceipt.BlockNumber, deadlineWindowSeconds))
-	pause(1800 * time.Millisecond)
+	emitStep(b, "settle_alice", "success", "Alice Submits (Leg 1/2)", fmt.Sprintf("SwapInitiated on-chain (block %d) — waiting for Bob's leg, deadline in %ds", aliceTxReceipt.BlockNumber, deadlineWindowSeconds))
+	fs.done["settle_alice"] = true
+}
 
-	// ── Step: Bob submits leg 2 — atomic settlement ───────────────────────────
-	emit("settle_bob", "running", "Bob Submits (Leg 2/2)", "Bob submits his ERC721 leg — settles the swap atomically…")
+// ── Step 9: Bob submits leg 2 — atomic settlement ───────────────────────────
 
-	bobTx, err := dvp.Transact(auth, "submitPartialSettlement", bobReceipt, big.NewInt(vaultIdErc721), big.NewInt(groupNonFung), big.NewInt(0))
+func stepSettleBob(fs *FlowState) {
+	b := fs.broker
+	ctx := fs.ctx
+	client := fs.client
+	emitStep(b, "settle_bob", "running", "Bob Submits (Leg 2/2)", "Bob submits his ERC721 leg — settles the swap atomically…")
+
+	bobTx, err := fs.dvp.Transact(fs.auth, "submitPartialSettlement", fs.bobReceipt, big.NewInt(vaultIdErc721), big.NewInt(groupNonFung), big.NewInt(0))
 	if err != nil {
-		fail("settle_bob", "Bob Submits (Leg 2/2)", fmt.Errorf("submitPartialSettlement: %w", err))
+		emitStep(b, "settle_bob", "error", "Bob Submits (Leg 2/2)", fmt.Errorf("submitPartialSettlement: %w", err).Error())
 		return
 	}
 	bobTxReceipt, err := bind.WaitMined(ctx, client, bobTx)
 	if err != nil {
-		fail("settle_bob", "Bob Submits (Leg 2/2)", fmt.Errorf("wait submitPartialSettlement: %w", err))
+		emitStep(b, "settle_bob", "error", "Bob Submits (Leg 2/2)", fmt.Errorf("wait submitPartialSettlement: %w", err).Error())
 		return
 	}
-	totalGasUsed += bobTxReceipt.GasUsed
-	proto("bobTxHash", bobTx.Hash().Hex())
-	proto("bobBlock", fmt.Sprintf("%d", bobTxReceipt.BlockNumber))
-	proto("bobGas", fmt.Sprintf("%d", bobTxReceipt.GasUsed))
-	proto("totalGas", fmt.Sprintf("%d", totalGasUsed))
-	logMsg("chain", fmt.Sprintf("EnygmaDvp.submitPartialSettlement() [Bob] → block %d  gas %s  tx %s…",
+	fs.bobTxReceipt = bobTxReceipt
+	fs.totalGasUsed += bobTxReceipt.GasUsed
+	protoSet(b, "bobTxHash", bobTx.Hash().Hex())
+	protoSet(b, "bobBlock", fmt.Sprintf("%d", bobTxReceipt.BlockNumber))
+	protoSet(b, "bobGas", fmt.Sprintf("%d", bobTxReceipt.GasUsed))
+	protoSet(b, "totalGas", fmt.Sprintf("%d", fs.totalGasUsed))
+	logMsg(b, "chain", fmt.Sprintf("EnygmaDvp.submitPartialSettlement() [Bob] → block %d  gas %s  tx %s…",
 		bobTxReceipt.BlockNumber, formatNum(bobTxReceipt.GasUsed), shortHex(bobTx.Hash().Hex(), 18)))
-	emit("settle_bob", "success", "Bob Submits (Leg 2/2)", fmt.Sprintf("Swap settled atomically on-chain (block %d)", bobTxReceipt.BlockNumber))
-	pause(1200 * time.Millisecond)
+	emitStep(b, "settle_bob", "success", "Bob Submits (Leg 2/2)", fmt.Sprintf("Swap settled atomically on-chain (block %d)", bobTxReceipt.BlockNumber))
+	fs.done["settle_bob"] = true
+}
 
-	// ── Step: Verify ───────────────────────────────────────────────────────────
-	emit("verify", "running", "Verify Settlement", "Checking on-chain events confirm both sides settled…")
-	pause(800 * time.Millisecond)
+// ── Step 10: Verify ───────────────────────────────────────────────────────────
+
+func stepVerify(fs *FlowState) {
+	b := fs.broker
+	emitStep(b, "verify", "running", "Verify Settlement", "Checking on-chain events confirm both sides settled…")
+	pause(500 * time.Millisecond)
 
 	commitmentSig := crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
 	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	foundCommitA, foundCommitB, nullifierCount := false, false, 0
-	for _, l := range bobTxReceipt.Logs {
+	for _, l := range fs.bobTxReceipt.Logs {
 		if len(l.Topics) == 0 {
 			continue
 		}
@@ -863,9 +1048,9 @@ func runFlow(b *Broker) {
 				continue
 			}
 			cmt := l.Topics[2].Big()
-			if cmt.Cmp(initiatorResult.CommitB) == 0 {
+			if cmt.Cmp(fs.initiatorResult.CommitB) == 0 {
 				foundCommitB = true
-			} else if cmt.Cmp(initiatorResult.CommitA) == 0 {
+			} else if cmt.Cmp(fs.initiatorResult.CommitA) == 0 {
 				foundCommitA = true
 			}
 		case nullifierSig:
@@ -873,36 +1058,53 @@ func runFlow(b *Broker) {
 		}
 	}
 	if !foundCommitA || !foundCommitB {
-		fail("verify", "Verify Settlement", fmt.Errorf("expected commitments not found in settlement events (commitA=%v commitB=%v)", foundCommitA, foundCommitB))
+		emitStep(b, "verify", "error", "Verify Settlement", fmt.Errorf("expected commitments not found in settlement events (commitA=%v commitB=%v)", foundCommitA, foundCommitB).Error())
 		return
 	}
-	logMsg("chain", fmt.Sprintf("✓ commitB inserted (Bob's USDT note) · commitA inserted (Alice's ticket note) · %d nullifier(s) spent", nullifierCount))
-	panel(1, "balance", fmt.Sprintf("%d USDT (received)", erc20Amount))
-	panel(0, "balance", fmt.Sprintf("ticket #%d (received)", nftTokenIdInt))
-	emit("verify", "success", "Verify Settlement", "Both commitments confirmed on-chain — swap complete")
+	logMsg(b, "chain", fmt.Sprintf("✓ commitB inserted (Bob's USDT note) · commitA inserted (Alice's ticket note) · %d nullifier(s) spent", nullifierCount))
+	panelSet(b, 1, "balance", fmt.Sprintf("%d USDT (received)", erc20Amount))
+	panelSet(b, 0, "balance", fmt.Sprintf("ticket #%d (received)", fs.nftTokenIdInt))
+	emitStep(b, "verify", "success", "Verify Settlement", "Both commitments confirmed on-chain — swap complete")
+	fs.done["verify"] = true
 
-	flowMs := time.Since(flowStart).Milliseconds()
-	proto("flowTimeMs", fmt.Sprintf("%d", flowMs))
-	logMsg("", fmt.Sprintf("✓ Total flow: %d ms  total protocol gas: %s", flowMs, formatNum(totalGasUsed)))
+	flowMs := time.Since(fs.flowStart).Milliseconds()
+	protoSet(b, "flowTimeMs", fmt.Sprintf("%d", flowMs))
+	logMsg(b, "", fmt.Sprintf("✓ Total flow: %d ms  total protocol gas: %s", flowMs, formatNum(fs.totalGasUsed)))
 	b.publish(Event{
 		Type:   "done",
 		Status: "success",
-		Msg:    fmt.Sprintf("Swap complete: Alice's %d USDT ↔ Bob's ticket #%d", erc20Amount, nftTokenIdInt),
+		Msg:    fmt.Sprintf("Swap complete: Alice's %d USDT ↔ Bob's ticket #%d", erc20Amount, fs.nftTokenIdInt),
 	})
+}
+
+func init() {
+	stepFns = map[string]func(*FlowState){
+		"prereqs":         stepPrereqs,
+		"keygen":          stepKeygen,
+		"deposit_erc20":   stepDepositErc20,
+		"deposit_nft":     stepDepositNft,
+		"dvp_initiator":   stepDvpInitiator,
+		"bob_scan":        stepBobScan,
+		"dvp_destination": stepDvpDestination,
+		"settle_alice":    stepSettleAlice,
+		"settle_bob":      stepSettleBob,
+		"verify":          stepVerify,
+	}
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func main() {
 	broker := newBroker()
-	srv := &Server{broker: broker}
+	srv := &Server{broker: broker, fs: newFlowState(broker)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.handleIndex)
 	mux.HandleFunc("/events", srv.handleEvents)
-	mux.HandleFunc("/run", srv.handleRun)
+	mux.HandleFunc("/step/", srv.handleStep)
+	mux.HandleFunc("/reset", srv.handleReset)
 
-	log.Printf("Enygma DvP · NFT ↔ ERC20 Swap Demo listening on http://localhost%s", listenAddr)
+	log.Printf("Enygma DvP · NFT ↔ ERC20 Swap Demo (step-by-step) listening on http://localhost%s", listenAddr)
 	log.Printf("Open http://localhost%s in your browser", listenAddr)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal(err)

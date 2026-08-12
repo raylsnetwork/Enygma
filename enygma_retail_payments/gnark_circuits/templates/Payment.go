@@ -24,7 +24,7 @@ type PaymentCircuit struct {
 	StMessage        frontend.Variable   `gnark:",public"` // domain-separation / DVP link (0 = standalone)
 	StTreeNumbers    []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
 	StMerkleRoots    []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input
-	StNullifiers     []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon3(sk[i], leafIndex[i], contractAddr)
+	StNullifiers     []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
 	StCommitmentsOut []frontend.Variable `gnark:",public"` // TmMOutputs — output commitment per output
 	StContractAddress frontend.Variable  `gnark:",public"` // vault contract address (uint160)
 
@@ -75,8 +75,7 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		//prevent vulnerability detected by Claude
-		nullifier := primitives.NullifierBound(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i], circuit.StContractAddress)
+		nullifier := primitives.Nullifier(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i])
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
