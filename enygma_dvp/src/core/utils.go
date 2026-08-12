@@ -165,8 +165,10 @@ func GetNullifierWithTree(sk, treeNumber, pathIndex *big.Int, treeDepth int) (*b
 }
 
 // GetNullifierBound computes a contract-address-bound nullifier.
-// Used by the retail payments circuit (VULN-5 fix): including the vault address
-// prevents cross-deployment proof replay.
+// Not currently used by any circuit — the retail payments Payment/PaymentFee/
+// PaymentRelayerFeePublic circuits use the plain GetNullifier(sk, leafIndex)
+// instead. Kept available for callers that want cross-deployment replay
+// protection (the property this formula was originally added for).
 //
 //	nf = Poseidon3(sk, leafIndex, contractAddress)
 func GetNullifierBound(privateKey, pathIndices, contractAddress *big.Int) (*big.Int, error) {

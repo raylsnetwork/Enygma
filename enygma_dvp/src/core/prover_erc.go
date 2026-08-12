@@ -1780,14 +1780,16 @@ func (c *GnarkClient) PaymentProof(
 	}, nil
 }
 
-// BoundPaymentProof is identical to PaymentProof but binds the proof to a specific vault
-// contract address (VULN-5 fix).
+// BoundPaymentProof is identical to PaymentProof but also carries the vault contract
+// address through the statement.
 //
 // contractAddress must be the uint160 representation of the Erc20CoinVault address
 // (i.e., new(big.Int).SetBytes(vaultAddr.Bytes())).
 //
+// Nullifier: Poseidon(sk, leafIndex) — same formula as PaymentProof; contractAddress
+// is not folded into it.
+//
 // Differences from PaymentProof:
-//   - Nullifier: Poseidon3(sk, leafIndex, contractAddress) instead of Poseidon2(sk, leafIndex).
 //   - Payload: includes "stContractAddress" in the gnark server request.
 //   - Result:  ContractAddress field is set; ContractStatement() appends it to the statement.
 func (c *GnarkClient) BoundPaymentProof(
@@ -1823,10 +1825,10 @@ func (c *GnarkClient) BoundPaymentProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			// Bound nullifier: Poseidon3(sk, leafIndex, contractAddress)
-			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+			// nullifier: Poseidon(sk, leafIndex)
+			nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifier input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}
@@ -1987,9 +1989,9 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifier input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}
@@ -2164,9 +2166,9 @@ func (c *GnarkClient) BoundPaymentRelayerProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifier input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}

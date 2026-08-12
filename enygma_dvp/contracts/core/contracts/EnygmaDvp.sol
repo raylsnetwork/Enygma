@@ -982,7 +982,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   [3] StNullifiers[0]    = nullifier
     //   [4] StCommitmentsOut[0] = Bob's commitment
     //   [5] StCommitmentsOut[1] = Alice's change commitment
-    //   [6] StContractAddress   = vault address (VULN-5 binding)
+    //   [6] StContractAddress   = vault address (carried for wire-format compatibility;
+    //                             not bound into the nullifier — nf = Poseidon(sk, leafIndex))
     //   [7] StFee               = protocol fee
     function paymentWithFee(
         ProofReceipt memory receipt,
@@ -1028,7 +1029,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   [4] StCommitmentsOut[0] = Bob's commitment
     //   [5] StCommitmentsOut[1] = Alice's change commitment
     //   [6] StCommitmentsOut[2] = Relayer fee commitment
-    //   [7] StContractAddress   = vault address (VULN-5 binding)
+    //   [7] StContractAddress   = vault address (carried for wire-format compatibility;
+    //                             not bound into the nullifier — nf = Poseidon(sk, leafIndex))
     //
     // ctxt / encTxData are Bob's note discovery data (ML-KEM capsule / AEAD ciphertext).
     function paymentWithRelayerFee(

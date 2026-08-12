@@ -54,9 +54,9 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--sans)
 .status-dot.error   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
 @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
 #statusText { font-family: var(--mono); font-size: 10px; color: var(--label); min-width: 56px; }
-#runBtn { background: var(--teal); color: #031410; border: none; border-radius: 5px; padding: 6px 18px; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .07em; cursor: pointer; transition: opacity .2s, transform .1s; }
-#runBtn:hover:not(:disabled) { opacity: .82; transform: translateY(-1px); }
-#runBtn:disabled { opacity: .3; cursor: not-allowed; }
+#resetBtn { background: var(--s3); color: var(--text2); border: 1px solid var(--bd2); border-radius: 5px; padding: 6px 16px; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .07em; cursor: pointer; transition: opacity .2s, transform .1s, border-color .2s, color .2s; }
+#resetBtn:hover:not(:disabled) { border-color: var(--red); color: var(--red); transform: translateY(-1px); }
+#resetBtn:disabled { opacity: .3; cursor: not-allowed; }
 .present-toggle { display: flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 5px; border: 1px solid var(--bd); background: var(--s2); color: var(--muted); font-family: var(--mono); font-size: 9.5px; cursor: pointer; transition: border-color .2s, color .2s, background .2s; }
 .present-toggle:hover { border-color: var(--teal); color: var(--teal); }
 .present-toggle.active { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
@@ -124,6 +124,32 @@ html.presentation-mode { zoom: 1.25; }
 .intro-leg-tag { font-family: var(--mono); font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 10px; flex-shrink: 0; letter-spacing: .06em; }
 .intro-leg-tag.alice { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
 .intro-leg-tag.bob   { color: var(--orange); border: 1px solid rgba(255,144,64,.3); background: var(--orange-dim); }
+
+/* ── Manual Controls Card ────────────────────────────────────────────────── */
+.controls-card { margin: 12px 14px 0; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--bd2); overflow: hidden; flex-shrink: 0; }
+.controls-header { padding: 9px 12px; border-bottom: 1px solid var(--bd); display: flex; align-items: center; justify-content: space-between; }
+.controls-title { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); }
+.controls-hint { font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
+.controls-list { display: flex; flex-direction: column; }
+.ctrl-row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--bd); transition: background .3s; }
+.ctrl-row:last-child { border-bottom: none; }
+.ctrl-row.is-running { background: var(--blue-dim); }
+.ctrl-row.is-success { background: rgba(61,204,117,.04); }
+.ctrl-row.is-error { background: var(--red-dim); }
+.ctrl-num { font-family: var(--mono); font-size: 9px; color: var(--muted); width: 14px; flex-shrink: 0; text-align: right; }
+.ctrl-info { flex: 1; min-width: 0; }
+.ctrl-label { font-family: var(--mono); font-size: 10.5px; color: var(--text); font-weight: 700; }
+.ctrl-sub { font-size: 10px; color: var(--text2); margin-top: 1px; line-height: 1.4; }
+.ctrl-badge { font-family: var(--mono); font-size: 7.5px; padding: 2px 7px; border-radius: 10px; flex-shrink: 0; white-space: nowrap; }
+.ctrl-badge.idle    { color: var(--muted); border: 1px solid var(--bd); }
+.ctrl-badge.running { color: var(--blue); border: 1px solid var(--blue-glow); background: var(--blue-dim); animation: pulse-dot 1.2s infinite; }
+.ctrl-badge.success { color: var(--teal); border: 1px solid var(--teal-glow); background: var(--teal-dim); }
+.ctrl-badge.error   { color: var(--red);  border: 1px solid var(--red);       background: var(--red-dim); }
+.ctrl-run-btn { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .05em; padding: 5px 12px; border-radius: 5px; border: 1px solid var(--teal-glow); background: var(--teal-dim); color: var(--teal); cursor: pointer; flex-shrink: 0; transition: opacity .2s, transform .1s; white-space: nowrap; }
+.ctrl-run-btn:hover:not(:disabled) { opacity: .8; transform: translateY(-1px); }
+.ctrl-run-btn:disabled { opacity: .25; cursor: not-allowed; border-color: var(--bd2); background: none; color: var(--muted); }
+.ctrl-run-btn.retry { border-color: var(--red); background: var(--red-dim); color: var(--red); }
+.ctrl-run-btn.done { opacity: .35; border-color: var(--bd2); background: none; color: var(--muted); cursor: default; }
 
 /* ── Step Visualizer Card ────────────────────────────────────────────────── */
 .step-viz-card { margin: 12px 14px 0; border-radius: var(--r2); background: var(--s2); border: 1px solid var(--bd2); overflow: hidden; flex-shrink: 0; }
@@ -311,14 +337,14 @@ html.presentation-mode { zoom: 1.25; }
 
 <div class="header">
   <span class="brand">Enygma</span>
-  <div><div class="title">DvP · NFT ↔ ERC20 Swap <small>· Live Demo</small></div></div>
+  <div><div class="title">DvP · NFT ↔ ERC20 Swap <small>· Step-by-Step Demo</small></div></div>
   <div class="controls">
     <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
       <span class="present-toggle-label">Presentation</span>
     </button>
     <div class="status-dot" id="statusDot"></div>
     <span id="statusText">idle</span>
-    <button id="runBtn" onclick="run()">Run Flow</button>
+    <button id="resetBtn" onclick="resetFlow()">Reset</button>
   </div>
 </div>
 
@@ -370,6 +396,15 @@ html.presentation-mode { zoom: 1.25; }
       </div>
     </div>
 
+    <!-- Manual Controls -->
+    <div class="controls-card" id="controlsCard">
+      <div class="controls-header">
+        <span class="controls-title">Manual Controls</span>
+        <span class="controls-hint">run one step, inspect it, then run the next</span>
+      </div>
+      <div class="controls-list" id="controlsList"></div>
+    </div>
+
     <!-- Summary card -->
     <div class="summary-card" id="summaryCard">
       <div class="summary-title">Swap Complete</div>
@@ -390,7 +425,7 @@ html.presentation-mode { zoom: 1.25; }
         <span class="svz-badge idle" id="svzBadge">idle</span>
       </div>
       <div class="svz-diagram" id="svzDiagram">
-        <div class="svz-idle">Click <strong>Run Flow</strong> to start the NFT ↔ ERC20 swap demo.</div>
+        <div class="svz-idle">Run <strong>Step 1 — Check prerequisites</strong> below to start.</div>
       </div>
       <div class="svz-desc" id="svzDesc" style="display:none"></div>
     </div>
@@ -514,16 +549,16 @@ const liveData = {};
 
 // ── Step definitions ──────────────────────────────────────────────────────────
 const STEPS = [
-  { id:'prereqs',         label:'Prerequisites' },
-  { id:'keygen',          label:'Key Gen' },
-  { id:'deposit_erc20',   label:'Alice Deposits ERC20' },
-  { id:'deposit_nft',     label:'Bob Deposits NFT' },
-  { id:'dvp_initiator',   label:'DvP Initiator' },
-  { id:'bob_scan',        label:'Bob Scans' },
-  { id:'dvp_destination', label:'DvP Destination' },
-  { id:'settle_alice',    label:'Alice Submits' },
-  { id:'settle_bob',      label:'Bob Submits' },
-  { id:'verify',          label:'Verify' },
+  { id:'prereqs',         label:'Prerequisites',       full:'Check prerequisites',        sub:'Probe chain + gnark server, load contract addresses' },
+  { id:'keygen',          label:'Key Gen',             full:'Generate key pairs',          sub:'Alice &amp; Bob each generate a spend + view keypair' },
+  { id:'deposit_erc20',   label:'Alice Deposits ERC20', full:'Alice deposits ERC20',       sub:'Mint 50 USDT, deposit into Erc20CoinVault' },
+  { id:'deposit_nft',     label:'Bob Deposits NFT',    full:'Bob deposits NFT',            sub:'Mint a ticket, deposit into Erc721CoinVault' },
+  { id:'dvp_initiator',   label:'DvP Initiator',       full:'Generate DvP Initiator proof', sub:'Alice proves her note and locks in the swap terms' },
+  { id:'bob_scan',        label:'Bob Scans',           full:'Bob scans &amp; verifies',    sub:'Decapsulate, decrypt, and recompute both commitments' },
+  { id:'dvp_destination', label:'DvP Destination',     full:'Generate DvP Destination proof', sub:'Bob proves his note and accepts the swap' },
+  { id:'settle_alice',    label:'Alice Submits',       full:'Alice submits leg 1/2',       sub:'submitPartialSettlement() — locks in, starts the deadline' },
+  { id:'settle_bob',      label:'Bob Submits',         full:'Bob submits leg 2/2',         sub:'submitPartialSettlement() — settles atomically' },
+  { id:'verify',          label:'Verify',              full:'Verify settlement',           sub:'Confirm both commitments landed on-chain' },
 ];
 
 // ── Step Visualizer Templates ─────────────────────────────────────────────────
@@ -776,12 +811,14 @@ function renderSteps() {
 
 function setStep(id, status) {
   const el = document.getElementById('step-' + id);
-  if (!el) return;
-  el.className = el.className.replace(/\b(running|success|error)\b/g,'').trim() + ' ' + status;
+  if (el) {
+    el.className = el.className.replace(/\b(running|success|error)\b/g,'').trim() + ' ' + status;
+  }
   updateProgress();
   if (status === 'running' || status === 'success' || status === 'error') {
     renderStepViz(id, status);
   }
+  updateControlRow(id, status);
   if (id === 'prereqs' && status === 'success') {
     ['chain','gnark'].forEach(s => markSubstep(s,'done'));
   }
@@ -791,6 +828,80 @@ function setStep(id, status) {
   if (id === 'verify' && status === 'success') {
     ['vf-commitb','vf-commita','vf-null'].forEach(s => markSubstep(s,'done'));
   }
+}
+
+// ── Manual controls (step-by-step buttons) ─────────────────────────────────────
+const completedSteps = new Set();
+
+function renderControls() {
+  const list = document.getElementById('controlsList');
+  list.innerHTML = STEPS.map((s, i) => `
+    <div class="ctrl-row" id="ctrl-${s.id}">
+      <div class="ctrl-num">${i+1}</div>
+      <div class="ctrl-info">
+        <div class="ctrl-label">${s.full}</div>
+        <div class="ctrl-sub">${s.sub}</div>
+      </div>
+      <span class="ctrl-badge idle" id="ctrl-badge-${s.id}">idle</span>
+      <button class="ctrl-run-btn" id="ctrl-btn-${s.id}" ${i===0 ? '' : 'disabled'} onclick="runStep('${s.id}')">Run</button>
+    </div>`).join('');
+}
+
+function updateControlRow(id, status) {
+  const row = document.getElementById('ctrl-' + id);
+  const badge = document.getElementById('ctrl-badge-' + id);
+  const btn = document.getElementById('ctrl-btn-' + id);
+  if (!row || !badge || !btn) return;
+
+  row.className = 'ctrl-row' + (status ? ' is-' + status : '');
+  badge.className = 'ctrl-badge ' + status;
+  badge.textContent = status;
+
+  const idx = STEPS.findIndex(s => s.id === id);
+
+  if (status === 'running') {
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    btn.className = 'ctrl-run-btn';
+  } else if (status === 'success') {
+    completedSteps.add(id);
+    btn.disabled = true;
+    btn.textContent = '✓ Done';
+    btn.className = 'ctrl-run-btn done';
+    const next = STEPS[idx + 1];
+    if (next) {
+      const nextBtn = document.getElementById('ctrl-btn-' + next.id);
+      if (nextBtn) { nextBtn.disabled = false; }
+    }
+  } else if (status === 'error') {
+    btn.disabled = false;
+    btn.textContent = 'Retry';
+    btn.className = 'ctrl-run-btn retry';
+  }
+}
+
+function runStep(id) {
+  const btn = document.getElementById('ctrl-btn-' + id);
+  if (btn) btn.disabled = true;
+  setStatus('running', 'running');
+  fetch('/step/' + id, { method: 'POST' })
+    .then(r => {
+      if (!r.ok) return r.text().then(t => {
+        appendLog('', '✗ ' + id + ': ' + t, '');
+        setStatus('error', 'error');
+        if (btn) btn.disabled = false;
+      });
+    })
+    .catch(err => {
+      appendLog('', '✗ fetch: ' + err, '');
+      setStatus('error', 'error');
+      if (btn) btn.disabled = false;
+    });
+}
+
+function resetFlow() {
+  fetch('/reset', { method: 'POST' })
+    .catch(err => appendLog('', '✗ reset failed: ' + err, ''));
 }
 
 function updateProgress() {
@@ -948,6 +1059,8 @@ function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 // ── Reset ──────────────────────────────────────────────────────────────────────
 function resetUI() {
   renderSteps();
+  renderControls();
+  completedSteps.clear();
   txCount = 0;
   Object.keys(liveData).forEach(k => delete liveData[k]);
 
@@ -985,7 +1098,7 @@ function resetUI() {
   document.getElementById('svzLabel').textContent = 'Waiting';
   document.getElementById('svzBadge').className = 'svz-badge idle';
   document.getElementById('svzBadge').textContent = 'idle';
-  document.getElementById('svzDiagram').innerHTML = '<div class="svz-idle">Click <strong>Run Flow</strong> to start the NFT ↔ ERC20 swap demo.</div>';
+  document.getElementById('svzDiagram').innerHTML = '<div class="svz-idle">Run <strong>Step 1 — Check prerequisites</strong> below to start.</div>';
   document.getElementById('svzDesc').style.display = 'none';
 
   document.getElementById('progressBar').style.width = '0%';
@@ -996,32 +1109,27 @@ function resetUI() {
 function setStatus(st, text) {
   document.getElementById('statusDot').className = 'status-dot ' + (st||'');
   document.getElementById('statusText').textContent = text || st || 'idle';
-  document.getElementById('runBtn').disabled = st === 'running';
+  document.getElementById('resetBtn').disabled = st === 'running';
 }
 
-// ── SSE / run ─────────────────────────────────────────────────────────────────
-function run() {
-  if (es) { es.close(); es = null; }
-  resetUI();
-  clearLog();
-  setStatus('running', 'running');
+// ── SSE (opened once, kept alive across every step) ────────────────────────────
+function initSSE() {
   es = new EventSource('/events');
   es.onmessage = e => handleEvent(JSON.parse(e.data));
-  es.onerror = () => setStatus('error', 'disconnected');
-  fetch('/run', { method:'POST' })
-    .then(r => { if (!r.ok) r.text().then(t => { appendLog('','✗ '+t,''); setStatus('error','error'); }); })
-    .catch(err => { appendLog('','✗ fetch: '+err,''); setStatus('error','error'); });
+  es.onerror = () => setStatus('error', 'disconnected — retrying…');
+  es.onopen = () => { if (document.getElementById('statusText').textContent.includes('disconnected')) setStatus('idle'); };
 }
 
 function handleEvent(ev) {
   switch (ev.type) {
     case 'reset':
-      resetUI(); setStatus('running','running');
+      resetUI(); clearLog(); setStatus('idle');
       break;
     case 'step':
       setStep(ev.step, ev.status);
-      if (ev.status === 'running') appendLog(null,'▶ '+(ev.label||ev.step)+(ev.msg?' — '+ev.msg:''),'');
-      if (ev.status === 'error')   appendLog(null,'✗ '+(ev.label||ev.step)+': '+ev.msg,'');
+      if (ev.status === 'running') { appendLog(null,'▶ '+(ev.label||ev.step)+(ev.msg?' — '+ev.msg:''),''); setStatus('running','running'); }
+      if (ev.status === 'success' && ev.step !== 'verify') { setStatus('idle','ready'); }
+      if (ev.status === 'error')   { appendLog(null,'✗ '+(ev.label||ev.step)+': '+ev.msg,''); setStatus('error','error'); }
       if (ev.step==='prereqs' && ev.status==='running') {
         setTimeout(() => ['chain','gnark'].forEach((s,i) => setTimeout(() => markSubstep(s,'done'), i*400)), 400);
       }
@@ -1054,7 +1162,6 @@ function handleEvent(ev) {
         setStatus('error','error');
         appendLog(null,'✗ '+ev.msg,'');
       }
-      if (es) { es.close(); es = null; }
       break;
   }
 }
@@ -1104,7 +1211,9 @@ function showSummary() {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 renderSteps();
+renderControls();
 setStatus('idle');
+initSSE();
 </script>
 </body>
 </html>
