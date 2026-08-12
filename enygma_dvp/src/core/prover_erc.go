@@ -1989,7 +1989,7 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
+nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
 			if err != nil {
 				return nil, fmt.Errorf("GetNullifier input %d: %w", i, err)
 			}
@@ -2166,7 +2166,7 @@ func (c *GnarkClient) BoundPaymentRelayerProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
+nf, err := GetNullifier(keysIn[i].PrivateKey, wtPathIndices[i])
 			if err != nil {
 				return nil, fmt.Errorf("GetNullifier input %d: %w", i, err)
 			}
