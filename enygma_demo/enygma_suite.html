@@ -15,7 +15,7 @@
 html,body{ margin:0; padding:0; }
 body{ background:var(--shell-bg); font-family:var(--shell-sans); overflow-x:hidden; }
 .suite-switcher{ position:sticky; top:0; z-index:50; background:color-mix(in srgb, var(--shell-bg) 90%, transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--shell-border); }
-.suite-switcher-inner{ max-width:1180px; margin:0 auto; padding:10px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.suite-switcher-inner{ max-width:1240px; margin:0 auto; padding:10px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
 .suite-brand{ display:flex; align-items:baseline; gap:7px; color:var(--shell-text); }
 .suite-brand b{ font-weight:800; font-size:13.5px; letter-spacing:-.01em; }
 .suite-brand span{ font-weight:700; font-size:10px; color:var(--shell-text-muted); text-transform:uppercase; letter-spacing:.07em; }
@@ -211,7 +211,7 @@ body{ background:var(--shell-bg); font-family:var(--shell-sans); overflow-x:hidd
 @media (max-width:860px){.app-retail .grid2{ grid-template-columns:1fr; }.app-retail .grid3{grid-template-columns:1fr;} }.app-retail .field{ display:flex; flex-direction:column; gap:5px; }.app-retail .field label{ font-size:10.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }.app-retail select, .app-retail input[type=number], .app-retail input[type=text]{
   background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 10px;
   font-size:12.5px; color:var(--text); font-family:inherit; width:100%;
-}.app-retail select:focus, .app-retail input:focus{ outline:2px solid var(--accent-soft-border); outline-offset:1px; border-color:var(--accent); }.app-retail .arch{ display:grid; grid-template-columns:repeat(4,1fr); gap:0; align-items:stretch; }.app-retail .arch-box{
+}.app-retail select:focus, .app-retail input:focus{ outline:2px solid var(--accent-soft-border); outline-offset:1px; border-color:var(--accent); }.app-retail button:focus-visible, .app-retail [role="button"]:focus-visible, .app-retail a:focus-visible{ outline:2px solid var(--accent-soft-border); outline-offset:2px; border-radius:6px; }.app-retail .arch{ display:grid; grid-template-columns:repeat(4,1fr); gap:0; align-items:stretch; }.app-retail .arch-box{
   border:1px solid var(--border); background:var(--surface-2); border-radius:12px; padding:13px 12px;
   display:flex; flex-direction:column; gap:6px; margin:6px;
 }.app-retail .arch-box h4{ margin:0; font-size:12px; font-weight:800; }.app-retail .arch-box p{ margin:0; font-size:11px; color:var(--text-muted); line-height:1.45; }.app-retail .arch-arrow{ display:flex; align-items:center; justify-content:center; color:var(--text-faint); }.app-retail .arch-arrow svg{ width:16px; height:16px; }
@@ -4427,7 +4427,13 @@ function fdPhase(activeIds, doneIds){
 function fdNodeEl(name){ return $(`#flowDiagram .fd-node[data-node="${name}"]`); }
 function wireDiagram(){
   $$('#flowDiagram .fd-node').forEach(n=>{
-    n.addEventListener('click', ()=>{
+    // these nodes are clickable info triggers, not a semantic <button> — give them the same
+    // keyboard behavior a button would have: reachable by Tab, activatable with Enter/Space.
+    n.tabIndex = 0;
+    n.setAttribute('role', 'button');
+    const label = n.querySelector('h5')?.textContent;
+    if(label) n.setAttribute('aria-label', `${label} — show what this step does`);
+    const activate = ()=>{
       const key = n.dataset.node;
       const subject = (key==='alice') ? users[+$('#selSender').value]
                      : (key==='bob' || key==='registry') ? users[+$('#selRecipient').value]
@@ -4436,6 +4442,10 @@ function wireDiagram(){
         ? 'No one is registered yet — head to Key Setup and press ▶ to create some users first.'
         : NODE_DESC[key](subject);
       $('#fdDetail').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><span>${text}</span>`;
+    };
+    n.addEventListener('click', activate);
+    n.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter' || e.key===' '){ e.preventDefault(); activate(); }
     });
   });
 }
@@ -8649,7 +8659,9 @@ boot();
       ? `<span>π ${trunc(tx.proof,8,6)}</span><span>ct ${trunc(tx.ct,10,6)}</span>`
       : `<span>π ${trunc(tx.proof,8,6)}</span><span>nullifier ${trunc(tx.nullifier,8,6)}</span><span>${tx.payloads.length} encrypted payload${tx.payloads.length>1?'s':''}</span>`;
     const sel = tx.type==="payment" && selectedTx() && selectedTx().id===tx.id;
-    const clickable = tx.type==="payment" ? ` data-sel-tx="${tx.id}"` : "";
+    // pickable rows are clickable info triggers, not a semantic <button> — give them the
+    // same keyboard behavior a button would have: reachable by Tab, activatable with Enter/Space.
+    const clickable = tx.type==="payment" ? ` data-sel-tx="${tx.id}" tabindex="0" role="button" aria-label="View payment details"` : "";
     return `<div class="txrow${sel?' selected':''}${tx.type==="payment"?' pickable':''}"${clickable}>
       <div class="txh"><span class="tx-type ${tx.type}">${txTypeLabel[tx.type]||tx.type}</span><div class="tx-parties">${txParties(tx)}</div>${amtHtml}</div>
       <div class="txb">
@@ -8663,11 +8675,17 @@ boot();
     $("#txCount").textContent = state.txs.length;
     if(!state.txs.length){ list.innerHTML = `<div class="txempty">No transactions yet. ${isBank()?"Compose a confidential payment above.":"Switch to a bank to compose one."}</div>`; return; }
     list.innerHTML = state.txs.map(txRow).join("");
-    list.querySelectorAll("[data-sel-tx]").forEach(row => row.addEventListener("click", (e)=>{
-      if(e.target.closest("[data-disc-tx]")) return;      // don't hijack the disclose button
-      state.selTx = +row.dataset.selTx;
-      renderBalances(); renderDerivation(); renderEnvelope(); renderRetrieve(); renderTxList();
-    }));
+    list.querySelectorAll("[data-sel-tx]").forEach(row => {
+      const activate = (e)=>{
+        if(e.target.closest("[data-disc-tx]")) return;      // don't hijack the disclose button
+        state.selTx = +row.dataset.selTx;
+        renderBalances(); renderDerivation(); renderEnvelope(); renderRetrieve(); renderTxList();
+      };
+      row.addEventListener("click", activate);
+      row.addEventListener("keydown", (e)=>{
+        if(e.key==="Enter" || e.key===" "){ e.preventDefault(); activate(e); }
+      });
+    });
     list.querySelectorAll("[data-disc-tx]").forEach(b => b.addEventListener("click", ()=>{
       const tx = state.txs.find(t=>t.id === +b.dataset.discTx);
       if(tx){ tx.disclosed = true; renderDerivation(); renderEnvelope(); renderTxList(); }
