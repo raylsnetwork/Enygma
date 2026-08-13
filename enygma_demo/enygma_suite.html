@@ -344,7 +344,7 @@ body{ background:var(--shell-bg); font-family:var(--shell-sans); overflow-x:hidd
 @keyframes flashRow_dvp{ 0%{ background:var(--accent-soft); } 100%{ background:transparent; } }.app-dvp tr.just-added{ animation:flashRow_dvp 1.6s ease-out; }
 @keyframes flashCard_dvp{ 0%{ box-shadow:0 0 0 3px var(--accent-soft), var(--shadow); border-color:var(--accent); } 100%{ box-shadow:var(--shadow); border-color:var(--border); } }.app-dvp .just-added-card{ animation:flashCard_dvp 1.6s ease-out; }.app-dvp .math-section{ padding-top:20px; border-top:1px solid var(--border); }.app-dvp .math-section:first-child{ padding-top:0; border-top:none; }.app-dvp .math-section .num{ display:inline-flex; align-items:center; justify-content:center; width:19px; height:19px; border-radius:6px; background:var(--accent-soft); color:var(--accent-ink); font-size:10px; font-weight:800; margin-right:7px; }.app-dvp .math-section h4{ margin:8px 0 6px; font-size:14.5px; font-weight:800; letter-spacing:-.005em; }.app-dvp .math-section p{ margin:0 0 10px; font-size:12.5px; color:var(--text-muted); max-width:72ch; line-height:1.6; }.app-dvp .math-section .formula{ margin-bottom:10px; line-height:1.7; }.app-dvp .stepper{ display:flex; flex-direction:column; }.app-dvp .step{ display:flex; gap:14px; position:relative; }.app-dvp .step .dot2{ width:22px; height:22px; border-radius:50%; border:2px solid var(--border); background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:var(--text-faint); flex-shrink:0; z-index:1; transition:all .2s; }.app-dvp .step.done .dot2{ background:var(--teal); border-color:var(--teal); color:#fff; }.app-dvp .step.active .dot2{ background:var(--accent); border-color:var(--accent); color:#fff; box-shadow:0 0 0 4px var(--accent-soft); }.app-dvp .step.failed .dot2{ background:var(--rose); border-color:var(--rose); color:#fff; }.app-dvp .step .line{ width:2px; flex:1; background:var(--border); margin:2px 0; min-height:14px; }.app-dvp .step.done .line, .app-dvp .step.failed .line{ background:var(--teal); }.app-dvp .step-body{ padding-bottom:22px; flex:1; min-width:0; }.app-dvp .step-body h4{ margin:0 0 3px; font-size:12.5px; font-weight:800; }.app-dvp .step-body p{ margin:0 0 8px; font-size:12px; color:var(--text-muted); line-height:1.55; }.app-dvp .step-body .formula{ font-size:11px; padding:9px 11px; margin-bottom:8px; line-height:1.6; }.app-dvp .step:last-child .step-body{ padding-bottom:2px; }.app-dvp .step.pending .step-body{ opacity:.4; }.app-dvp .stepper-h{ display:flex; align-items:flex-start; gap:0; }.app-dvp .step-h{ flex:1; min-width:0; display:flex; flex-direction:column; position:relative; padding:0 12px; }.app-dvp .step-h:first-child{ padding-left:0; }.app-dvp .step-h:last-child{ padding-right:0; }.app-dvp .step-h::before{ content:''; position:absolute; top:11px; left:calc(-50% + 11px); width:calc(100% - 22px); height:2px; background:var(--border); z-index:0; }.app-dvp .step-h:first-child::before{ display:none; }.app-dvp .step-h.done::before{ background:var(--teal); }.app-dvp .step-h .dot2{ width:22px; height:22px; border-radius:50%; border:2px solid var(--border); background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:var(--text-faint); flex-shrink:0; z-index:1; transition:all .2s; margin-bottom:11px; }.app-dvp .step-h.done .dot2{ background:var(--teal); border-color:var(--teal); color:#fff; }.app-dvp .step-h.active .dot2{ background:var(--accent); border-color:var(--accent); color:#fff; box-shadow:0 0 0 4px var(--accent-soft); }.app-dvp .step-h .step-body{ padding-bottom:0; min-width:0; }.app-dvp .step-h .step-body h4{ margin:0 0 3px; font-size:12px; font-weight:800; }.app-dvp .step-h .step-body p{ margin:0 0 8px; font-size:11px; color:var(--text-muted); line-height:1.5; }.app-dvp .step-h.pending .step-body{ opacity:.4; }.app-dvp .step-h .formula{ font-size:10.5px; padding:9px 10px; }.app-dvp .step-h .kv{ font-size:10.5px; padding:8px 10px; }
 @media (max-width:900px){.app-dvp .stepper-h{ flex-direction:column; gap:0; }.app-dvp .step-h{ padding:0; flex-direction:row; gap:12px; }.app-dvp .step-h::before{ display:none; }.app-dvp .step-h .dot2{ margin-bottom:0; }.app-dvp .step-h .step-body{ padding-bottom:20px; }.app-dvp .step-h:last-child .step-body{ padding-bottom:2px; } }.app-dvp .grid2{ display:grid; grid-template-columns:1.1fr .9fr; gap:16px; }.app-dvp .grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }.app-dvp .grid4{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
-@media (max-width:860px){.app-dvp .grid2{ grid-template-columns:1fr; }.app-dvp .grid3{grid-template-columns:1fr;}.app-dvp .grid4{grid-template-columns:1fr 1fr;} }.app-dvp .field{ display:flex; flex-direction:column; gap:5px; }.app-dvp .field label{ font-size:10.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }.app-dvp select, .app-dvp input[type=number], .app-dvp input[type=text]{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 10px; font-size:12.5px; color:var(--text); font-family:inherit; width:100%; }.app-dvp select:focus, .app-dvp input:focus{ outline:2px solid var(--accent-soft-border); outline-offset:1px; border-color:var(--accent); }/* keyboard focus — same accent ring language as inputs, extended to every custom
+@media (max-width:860px){.app-dvp .grid2{ grid-template-columns:1fr; }.app-dvp .grid3{grid-template-columns:1fr;}.app-dvp .grid4{grid-template-columns:1fr 1fr;} }.app-dvp .field{ display:flex; flex-direction:column; gap:5px; }.app-dvp .field label{ font-size:10.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }.app-dvp select, .app-dvp input[type=number], .app-dvp input[type=text]{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 10px; font-size:12.5px; color:var(--text); font-family:inherit; width:100%; }.app-dvp select:focus, .app-dvp input:focus{ outline:2px solid var(--accent-soft-border); outline-offset:1px; border-color:var(--accent); }.app-dvp button:focus-visible, .app-dvp [role="button"]:focus-visible, .app-dvp a:focus-visible{ outline:2px solid var(--accent-soft-border); outline-offset:2px; border-radius:6px; }/* keyboard focus — same accent ring language as inputs, extended to every custom
    interactive element (buttons, tabs, segmented controls, and the fd-node diagram
    triggers, which are focusable via tabindex but aren't real <button> elements). */
 .app-dvp button:focus-visible, .app-dvp [role="button"]:focus-visible, .app-dvp a:focus-visible{
@@ -3866,7 +3866,7 @@ function renderRegistry(justAddedIdx){
     return;
   }
   $('#registryBody').innerHTML = users.map((u,i)=>`
-    <tr data-idx="${i}" class="${selectedIdx===i?'selected':''} ${justAddedIdx===i?'just-added':''}">
+    <tr data-idx="${i}" tabindex="0" role="button" aria-label="Inspect ${u.name}" class="${selectedIdx===i?'selected':''} ${justAddedIdx===i?'just-added':''}">
       <td><div class="user-chip"><div class="avatar" style="background:${u.color}">${initial(u.name)}</div>${u.name}</div></td>
       <td class="mono hexval">k=${i}</td>
       <td class="mono hexval"><b>${trunc(u.pkSpend,8,6)}</b></td>
@@ -3875,7 +3875,11 @@ function renderRegistry(justAddedIdx){
           ? `<span class="badge badge-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>decryptable</span>`
           : `<span class="badge badge-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>sealed</span>`}</td>
     </tr>`).join('');
-  $$('#registryBody tr').forEach(tr=> tr.addEventListener('click', ()=>{ selectedIdx = +tr.dataset.idx; renderRegistry(); renderInspector(); }));
+  $$('#registryBody tr').forEach(tr=> {
+    const activate = ()=>{ selectedIdx = +tr.dataset.idx; renderRegistry(); renderInspector(); };
+    tr.addEventListener('click', activate);
+    tr.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); activate(); } });
+  });
   renderProtocolPreview();
 }
 
@@ -4802,8 +4806,12 @@ const MODES = [
 ];
 let activeMode = 'subset';
 function renderModes(){
-  $('#modeGrid').innerHTML = MODES.map(m=>`<div class="mode-card ${m.key===activeMode?'active':''}" data-mode="${m.key}"><h5>${m.name}</h5><p>${m.desc}</p></div>`).join('');
-  $$('.mode-card').forEach(c=> c.addEventListener('click', ()=>{ activeMode=c.dataset.mode; renderModes(); renderBitmap(); }));
+  $('#modeGrid').innerHTML = MODES.map(m=>`<div class="mode-card ${m.key===activeMode?'active':''}" data-mode="${m.key}" tabindex="0" role="button" aria-label="${m.name} anonymity set"><h5>${m.name}</h5><p>${m.desc}</p></div>`).join('');
+  $$('.mode-card').forEach(c=> {
+    const activate = ()=>{ activeMode=c.dataset.mode; renderModes(); renderBitmap(); };
+    c.addEventListener('click', activate);
+    c.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); activate(); } });
+  });
   renderBitmap();
 }
 function renderBitmap(){
@@ -5002,13 +5010,17 @@ function renderRegistry(justAddedIdx){
     return;
   }
   $('#registryBody').innerHTML = users.map((u,i)=>`
-    <tr data-idx="${i}" class="${selectedIdx===i?'selected':''} ${justAddedIdx===i?'just-added':''}">
+    <tr data-idx="${i}" tabindex="0" role="button" aria-label="Inspect ${u.name}" class="${selectedIdx===i?'selected':''} ${justAddedIdx===i?'just-added':''}">
       <td><div class="user-chip"><div class="avatar" style="background:${u.color}">${initial(u.name)}</div>${u.name}</div></td>
       <td class="mono hexval">k=${i}</td>
       <td class="mono hexval"><b>${trunc(u.pkSpend,8,6)}</b></td>
       <td class="mono hexval"><b>${trunc(u.pkView,8,6)}</b></td>
     </tr>`).join('');
-  $$('#registryBody tr').forEach(tr=> tr.addEventListener('click', ()=>{ selectedIdx = +tr.dataset.idx; renderRegistry(); renderInspector(); }));
+  $$('#registryBody tr').forEach(tr=> {
+    const activate = ()=>{ selectedIdx = +tr.dataset.idx; renderRegistry(); renderInspector(); };
+    tr.addEventListener('click', activate);
+    tr.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); activate(); } });
+  });
   renderProtocolPreview();
 }
 
