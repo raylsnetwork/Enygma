@@ -29,6 +29,10 @@ contract Enygma is IEnygma {
     uint256 private constant MESSAGE_TAGS_OFFSET = 43;
     uint256 private constant NULLIFIER_OFFSET = 49;
 
+    // Additional offset for the 54-signal fee circuit (extends the 50-signal
+    // layout above with Fee, SumTxCommit×2, SumTxValuesWithFee).
+    uint256 private constant FEE_OFFSET = 50;
+
     // Public signal offsets for the 80-signal FingerPrint layout (main transfer circuit)
     // Layout (k=6): [FingerPrint×36][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
     uint256 private constant FP_FINGERPRINT_OFFSET = 0;
@@ -71,6 +75,11 @@ contract Enygma is IEnygma {
     address private _depositVerifier;
     address private _zkDvpAddress;
     address private _feeVerifier;
+
+    /// @notice Reserved account ID credited with the protocol fee on every
+    /// transferWithFee() call. 0 means "not configured" — transferWithFee()
+    /// reverts with TreasuryNotSet until the owner calls setTreasuryAccountId.
+    uint256 public treasuryAccountId;
 
     // ============================================
     // MAPPINGS
@@ -125,6 +134,8 @@ contract Enygma is IEnygma {
     error ZkDvpOperationFailed();
     error InvalidBlockNumber();
     error NullifierAlreadyUsed();
+    error InvalidTreasuryAccount();
+    error TreasuryNotSet();
 
     // ============================================
     // MODIFIERS
@@ -370,6 +381,21 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Set the reserved account that collects protocol fees from
+     *         transferWithFee(). Must be called (with a registered account
+     *         ID) before any fee transfer will succeed.
+     * @param accountId Account ID to credit with fees; must be non-zero
+     */
+    function setTreasuryAccountId(uint256 accountId) external onlyOwner returns (bool) {
+        if (accountId == 0) revert InvalidTreasuryAccount();
+
+        treasuryAccountId = accountId;
+
+        emit TreasuryAccountSet(accountId);
+        return true;
+    }
+
+    /**
      * @notice Register ZkDvp contract
      * @param zkDvp Address of ZkDvp contract
      */
@@ -418,9 +444,9 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Execute confidential transfer with public fee (51-signal fee circuit)
+     * @notice Execute confidential transfer with public fee (54-signal fee circuit)
      * @param commitmentDeltas Balance changes for each participant
-     * @param proof Zero-knowledge fee proof (51 public signals; fee at index 50)
+     * @param proof Zero-knowledge fee proof (54 public signals; fee at index 50)
      * @param participantIds Account IDs involved in transfer
      */
     function transferWithFee(
@@ -428,11 +454,24 @@ contract Enygma is IEnygma {
         FeeProof calldata proof,
         uint256[] calldata participantIds
     ) external onlyRegistered whenInitialized returns (bool) {
+        if (treasuryAccountId == 0) revert TreasuryNotSet();
+
         _verifyFeeTransferProof(proof);
         _verifyFeePublicInputs(proof.public_signal, participantIds, commitmentDeltas);
         _verifyFeeBlockNumber(proof.public_signal);
         _consumeFeeNullifier(proof.public_signal);
-        _updateBalancesForTransfer(commitmentDeltas, participantIds);
+
+        // Credit the protocol fee to the treasury. The circuit's conservation
+        // constraint (Σ(TxCommit) + fee·G == (0,1)) already proves that
+        // exactly `fee` worth of value is missing from the participants'
+        // deltas; without this credit that value silently vanishes from
+        // Σ(balances), drifting it out of sync with totalSupply. Fee·G uses
+        // implicit randomness 0 — Fee is already a public signal, so there is
+        // no privacy to gain from blinding it further.
+        (Point[] memory deltasWithFee, uint256[] memory participantsWithFee) =
+            _withFeeCredit(commitmentDeltas, participantIds, proof.public_signal[FEE_OFFSET]);
+        _updateBalancesForTransfer(deltasWithFee, participantsWithFee);
+
         emit TransactionSuccessful(msg.sender);
         return true;
     }
@@ -789,11 +828,63 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Build commitment-delta/participant arrays with the protocol
+     *         fee credited to the treasury account.
+     * @dev If treasuryAccountId already appears in participantIds (e.g. the
+     *      treasury is itself part of the circuit's anonymity set), the fee
+     *      is folded into that existing slot instead of appending a
+     *      duplicate accountId — _updateBalancesForTransfer reads the
+     *      pre-transfer balance fresh for every array entry, so two entries
+     *      for the same account would silently clobber each other rather
+     *      than accumulate.
+     */
+    function _withFeeCredit(
+        Point[] calldata commitmentDeltas,
+        uint256[] calldata participantIds,
+        uint256 fee
+    ) private view returns (Point[] memory deltas, uint256[] memory participants) {
+        (uint256 feeX, uint256 feeY) = derivePk(fee);
+        uint256 len = participantIds.length;
+
+        for (uint256 i; i < len; ) {
+            if (participantIds[i] == treasuryAccountId) {
+                deltas = new Point[](len);
+                participants = new uint256[](len);
+                for (uint256 j; j < len; ) {
+                    participants[j] = participantIds[j];
+                    if (j == i) {
+                        (uint256 x, uint256 y) = CurveBabyJubJub.pointAdd(
+                            commitmentDeltas[j].c1, commitmentDeltas[j].c2, feeX, feeY
+                        );
+                        deltas[j] = Point(x, y);
+                    } else {
+                        deltas[j] = commitmentDeltas[j];
+                    }
+                    unchecked { ++j; }
+                }
+                return (deltas, participants);
+            }
+            unchecked { ++i; }
+        }
+
+        // Treasury isn't already a participant — append a new slot for it.
+        deltas = new Point[](len + 1);
+        participants = new uint256[](len + 1);
+        for (uint256 i2; i2 < len; ) {
+            deltas[i2] = commitmentDeltas[i2];
+            participants[i2] = participantIds[i2];
+            unchecked { ++i2; }
+        }
+        deltas[len] = Point(feeX, feeY);
+        participants[len] = treasuryAccountId;
+    }
+
+    /**
      * @notice Update balances for transfer participants
      */
     function _updateBalancesForTransfer(
-        Point[] calldata commitmentDeltas,
-        uint256[] calldata participantIds
+        Point[] memory commitmentDeltas,
+        uint256[] memory participantIds
     ) private {
         uint256 epochStart = _currentEpochStart();
 
@@ -937,7 +1028,7 @@ contract Enygma is IEnygma {
      * @notice Check if account is in participant list
      */
     function _isParticipant(
-        uint256[] calldata participants,
+        uint256[] memory participants,
         uint256 accountId
     ) private pure returns (bool) {
         uint256 len = participants.length;

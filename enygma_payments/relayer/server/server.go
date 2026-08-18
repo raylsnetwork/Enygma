@@ -38,13 +38,20 @@ func NewWithHandler(apiKey string, h *Handler) *gin.Engine {
 
 func applyRoutes(r *gin.Engine, apiKey string, h *Handler) {
 	// Public endpoints — no authentication required.
+	// /health is a pure liveness probe: no dependencies, so an RPC hiccup
+	// can't make an orchestrator think the process itself is dead.
+	// /health/ready actually checks whether the relayer can do its job.
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/health/ready", h.Ready)
 	r.GET("/relay/info", h.Info)
 
-	// Protected endpoints — require Authorization: Bearer <RELAYER_API_KEY>.
-	relay := r.Group("/relay", bearerAuth(apiKey))
+	// Protected endpoints — require Authorization: Bearer <RELAYER_API_KEY>,
+	// then a per-caller rate limit (429 if exceeded) before any proof
+	// verification, chain call, or gas is spent.
+	rl := newRateLimiter(h.cfg.RateLimitRPS, h.cfg.RateLimitBurst)
+	relay := r.Group("/relay", bearerAuth(apiKey), rl.middleware())
 	{
 		relay.POST("/transfer", h.RelayTransfer)
 		relay.POST("/transfer_fee", h.RelayTransferFee)

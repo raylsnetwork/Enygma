@@ -4,6 +4,10 @@
 # Compiled binaries (rebuild locally with go build)
 relayer/relayer_bin
 
+# Relayer's persistent idempotency store (local runtime state, not source)
+relayer/relayer_state.db
+relayer/*.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

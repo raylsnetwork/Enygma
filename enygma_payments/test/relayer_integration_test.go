@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"enygma_payments_relayer/server"
 )
@@ -152,14 +153,15 @@ func TestRelayIntegration_Transfer(t *testing.T) {
 
 func TestRelayIntegration_Deduplication(t *testing.T) {
 	tx := dummyTx()
-	h := newTestHandler(&mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)})
+	h, st := newTestHandlerWithStore(&mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)}, 5*time.Minute)
 	srv := httptest.NewServer(server.NewWithHandler(testAPIKey, h))
 	t.Cleanup(srv.Close)
 
 	body := validTransferBody()
-	// Mark the dedup key as in-flight to simulate a concurrent duplicate.
-	h.SetInFlight("transfer:"+body.Proof[0], struct{}{})
-	defer h.DeleteInFlight("transfer:" + body.Proof[0])
+	// Pre-seed a fresh Pending record to simulate a concurrent duplicate.
+	if _, _, err := st.TryBeginPending("transfer:"+body.Proof[0], 5*time.Minute); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
 
 	resp := postURL(t, srv.URL+"/relay/transfer", testAPIKey, body)
 	resp.Body.Close()

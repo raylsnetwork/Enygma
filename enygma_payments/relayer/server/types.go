@@ -43,4 +43,7 @@ type InfoResponse struct {
 	RelayerAddr  string `json:"relayerAddr"`
 	ContractAddr string `json:"contractAddr"`
 	ChainID      int64  `json:"chainId"`
+	// MinFee is the minimum value the relayer requires at publicSignal[50]
+	// for POST /relay/transfer_fee, as a decimal string. "0" means disabled.
+	MinFee string `json:"minFee"`
 }

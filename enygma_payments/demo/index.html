@@ -784,8 +784,26 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
       <div class="hstep-sub" id="hsub-add_verifier">addVerifier(addr)</div>
     </div>
     <div class="hconn"></div>
-    <div class="hstep" id="hs-check_relay_addr" title="Confirms the relayer service is pointed at the same contract just deployed, so payments don't silently fail against a stale address.">
+    <div class="hstep" id="hs-add_fee_verifier" title="Registers the second Groth16 verifier — for the fee circuit — so Enygma can check fee-transfer proofs on-chain. Skipped (warning, not error) if deploy_receipts.json predates the fee system.">
       <div class="hstep-num">05</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-add_fee_verifier">○</div>
+        <div class="hstep-lbl">Add Fee Verifier</div>
+      </div>
+      <div class="hstep-sub" id="hsub-add_fee_verifier">addFeeVerifier(addr)</div>
+    </div>
+    <div class="hconn"></div>
+    <div class="hstep" id="hs-setup_treasury" title="Registers a reserved account and points the contract's fee logic at it, so protocol fees land somewhere real on-chain instead of vanishing.">
+      <div class="hstep-num">06</div>
+      <div class="hstep-top">
+        <div class="hstep-ic" id="hi-setup_treasury">○</div>
+        <div class="hstep-lbl">Setup Treasury</div>
+      </div>
+      <div class="hstep-sub" id="hsub-setup_treasury">setTreasuryAccountId(id)</div>
+    </div>
+    <div class="hconn"></div>
+    <div class="hstep" id="hs-check_relay_addr" title="Confirms the relayer service is pointed at the same contract just deployed, so payments don't silently fail against a stale address.">
+      <div class="hstep-num">07</div>
       <div class="hstep-top">
         <div class="hstep-ic" id="hi-check_relay_addr">○</div>
         <div class="hstep-lbl">Verify Relay</div>
@@ -817,6 +835,17 @@ code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182
         <button class="rv-copy-btn copy-mini" data-copy-target="addr-verifier" title="Copy full address">copy</button>
       </div>
       <div class="cc-meta">Block: <span id="chain-block">—</span></div>
+    </div>
+    <div class="cc-card" id="cc-treasury">
+      <div class="cc-row">
+        <div class="cc-label" title="The reserved account that transferWithFee() credits with the protocol fee on every fee transfer — check its balance on the Balances tab to see fees actually accumulate.">Fee Treasury</div>
+        <div class="cc-type">accountId=7</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="cc-addr" id="addr-feeverifier" style="flex:1">—</div>
+        <button class="rv-copy-btn copy-mini" data-copy-target="addr-feeverifier" title="Copy full address">copy</button>
+      </div>
+      <div class="cc-meta">Fee verifier · <span id="treasury-status">not configured</span></div>
     </div>
   </div>
 
@@ -1170,6 +1199,8 @@ const HDEFAULTS = {
   dial_chain:    'ethclient.Dial(RPC)',
   init_contract: 'initialize() — idempotent',
   add_verifier:  'addVerifier(addr)',
+  add_fee_verifier: 'addFeeVerifier(addr)',
+  setup_treasury:   'setTreasuryAccountId(id)',
   check_relay_addr: 'GET /relay/info',
 };
 
@@ -1200,6 +1231,8 @@ function handleMetric(f, v) {}
 function handleProto(f, v) {
   if (f === 'tokenAddr')   { document.getElementById('addr-enygma').textContent = v; document.getElementById('addr-enygma').classList.add('set'); document.getElementById('cc-enygma').classList.add('lit'); }
   if (f === 'verifierAddr'){ document.getElementById('addr-verifier').textContent = v; document.getElementById('addr-verifier').classList.add('set'); document.getElementById('cc-verifier').classList.add('lit'); }
+  if (f === 'feeVerifierAddr') { document.getElementById('addr-feeverifier').textContent = v; document.getElementById('addr-feeverifier').classList.add('set'); document.getElementById('cc-treasury').classList.add('lit'); }
+  if (f === 'treasuryReady') { const el = document.getElementById('treasury-status'); el.textContent = 'ready ✓'; el.style.color = 'var(--green)'; }
   if (f === 'ownerAddr')   { const el = document.getElementById('addr-owner'); el.textContent = v.slice(0,20) + '…'; el.title = v; el.dataset.full = v; }
   if (f === 'blockNum')    document.getElementById('chain-block').textContent = v;
   if (f === 'senderIdx')   currentSenderIdx = parseInt(v) || 0;
