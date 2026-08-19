@@ -64,3 +64,23 @@ func (nm *NonceManager) release(n uint64) {
 		nm.next = n
 	}
 }
+
+// resync discards the local counter and re-fetches the next nonce from the
+// chain. Unlike release, this is for the case where we genuinely don't know
+// where the chain's nonce state stands — a gas-bump resubmission that itself
+// errored (the original tx may or may not still be pending; the replacement
+// never broadcast). Continuing to hand out locally-incremented nonces after
+// that would either collide with the original tx (if it never mined) or
+// leave a permanent gap (if it did), stalling every future submission until
+// an operator intervenes. A resync failure is left to the caller to log —
+// the local counter is unchanged so a subsequent call can retry.
+func (nm *NonceManager) resync(ctx context.Context, client pendingNonceAt, addr common.Address) error {
+	n, err := client.PendingNonceAt(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("resync nonce: %w", err)
+	}
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
+	nm.next = n
+	return nil
+}

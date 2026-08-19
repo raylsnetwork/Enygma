@@ -36,6 +36,13 @@ type Verifier struct {
 // is not a secret. nbPublic is the exact public-signal count the circuit
 // declares (e.g. 54 for enygma_fee, 80 for the FingerPrint transfer
 // circuit); Verify fails closed if the supplied signal length doesn't match.
+//
+// This deliberately duplicates the open-file/ReadFrom sequence the gnark
+// server's own loader uses, rather than importing it: relayer and
+// gnark-server are separate Go modules deployed as separate services, and
+// pulling gnark-server in as a relayer dependency would couple the two
+// services' build/deploy lifecycles for the sake of ~10 lines of stable,
+// unlikely-to-change gnark boilerplate.
 func Load(vkPath string, nbPublic int) (*Verifier, error) {
 	f, err := os.Open(vkPath)
 	if err != nil {

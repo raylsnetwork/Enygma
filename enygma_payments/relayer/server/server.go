@@ -36,6 +36,16 @@ func NewWithHandler(apiKey string, h *Handler) *gin.Engine {
 	return r
 }
 
+// apiTokenContextKey is where bearerAuth stashes the validated bearer token
+// (parts[1] of "Bearer <token>") for downstream middleware — specifically
+// the rate limiter, which needs to key on caller identity, not the raw
+// Authorization header. Keying on the raw header would let one caller with
+// the one valid token multiply their effective rate limit by varying the
+// "Bearer" scheme's case ("Bearer"/"bearer"/"BEARER"/...), since bearerAuth
+// itself accepts the scheme case-insensitively (strings.EqualFold) while
+// the header string as a whole is case-sensitive.
+const apiTokenContextKey = "relayer_api_token"
+
 func applyRoutes(r *gin.Engine, apiKey string, h *Handler) {
 	// Public endpoints — no authentication required.
 	// /health is a pure liveness probe: no dependencies, so an RPC hiccup
@@ -88,6 +98,9 @@ func bearerAuth(expectedToken string) gin.HandlerFunc {
 			return
 		}
 
+		// Stash the validated token (not the raw header) for the rate
+		// limiter to key on — see apiTokenContextKey.
+		c.Set(apiTokenContextKey, parts[1])
 		c.Next()
 	}
 }

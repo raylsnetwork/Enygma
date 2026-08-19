@@ -94,19 +94,26 @@ func (s *Store) TryBeginPending(key string, staleness time.Duration) (blocked bo
 		raw := b.Get([]byte(key))
 		if raw != nil {
 			var rec Record
-			if jsonErr := json.Unmarshal(raw, &rec); jsonErr == nil {
-				switch rec.Status {
-				case StatusMined:
+			if jsonErr := json.Unmarshal(raw, &rec); jsonErr != nil {
+				// Corrupt or partially-written record (e.g. a crash mid-write).
+				// Fail closed: don't silently treat this as a free key and
+				// overwrite whatever terminal state it might have held —
+				// surface the error so the caller gets a 500 and an operator
+				// can investigate, instead of quietly losing a MarkMined
+				// result or double-submitting.
+				return fmt.Errorf("corrupt dedup record for key %q: %w", key, jsonErr)
+			}
+			switch rec.Status {
+			case StatusMined:
+				blocked = true
+				cached = &rec
+				return nil
+			case StatusPending:
+				if time.Since(rec.UpdatedAt) < staleness {
 					blocked = true
-					cached = &rec
 					return nil
-				case StatusPending:
-					if time.Since(rec.UpdatedAt) < staleness {
-						blocked = true
-						return nil
-					}
-					// stale — fall through and reclaim the key
 				}
+				// stale — fall through and reclaim the key
 			}
 		}
 

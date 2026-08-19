@@ -16,7 +16,7 @@ type RelayTransferRequest struct {
 // RelayTransferFeeRequest is the JSON body accepted by POST /relay/transfer_fee.
 //
 // Used for Enygma-to-Enygma confidential transfers with a public relayer fee
-// (the enygma_fee circuit). The public signal must have exactly 51 elements
+// (the enygma_fee circuit). The public signal must have exactly 54 elements
 // with the fee at index 50.
 type RelayTransferFeeRequest struct {
 	Proof        [8]string  `json:"proof"        binding:"required"`

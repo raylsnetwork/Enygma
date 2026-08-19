@@ -524,6 +524,43 @@ func TestRelayHandler_RateLimit_UnauthenticatedDoesNotConsumeBudget(t *testing.T
 	}
 }
 
+// TestRelayHandler_RateLimit_SchemeCaseDoesNotMultiplyBudget guards against
+// keying the limiter on the raw Authorization header: bearerAuth accepts the
+// "Bearer" scheme case-insensitively, so if the limiter keyed on the header
+// string as a whole, the same caller could get a fresh bucket per case
+// variant ("Bearer", "bearer", "BEARER", ...) and multiply its effective
+// rate limit. It must key on the validated token instead, so every case
+// variant shares one bucket.
+func TestRelayHandler_RateLimit_SchemeCaseDoesNotMultiplyBudget(t *testing.T) {
+	tx := dummyTx()
+	c := &mockContract{tx: tx}
+	h := newTestHandlerWithRateLimit(c, &mockMiner{receipt: successReceipt(tx)}, big.NewInt(0),
+		&mockVerifier{}, &mockVerifier{}, 0.0001, 1) // burst=1, negligible refill
+	r := server.NewWithHandler(testAPIKey, h)
+
+	postWithScheme := func(scheme string) *httptest.ResponseRecorder {
+		data, _ := json.Marshal(validTransferBody())
+		req := httptest.NewRequest(http.MethodPost, "/relay/transfer", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", scheme+" "+testAPIKey)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := postWithScheme("Bearer"); w.Code != http.StatusOK {
+		t.Fatalf("first request (Bearer): got %d, want 200: %s", w.Code, w.Body.String())
+	}
+	// Burst is exhausted — a different scheme casing must still hit the same
+	// bucket and be rejected, not get its own fresh allowance.
+	if w := postWithScheme("bearer"); w.Code != http.StatusTooManyRequests {
+		t.Errorf("second request (bearer, lowercase): got %d, want 429 — scheme case must not grant a fresh rate-limit bucket", w.Code)
+	}
+	if w := postWithScheme("BEARER"); w.Code != http.StatusTooManyRequests {
+		t.Errorf("third request (BEARER, uppercase): got %d, want 429 — scheme case must not grant a fresh rate-limit bucket", w.Code)
+	}
+}
+
 // ── Readiness ─────────────────────────────────────────────────────────────────
 
 func TestRelayHandler_Ready_AllChecksPass(t *testing.T) {
@@ -668,11 +705,15 @@ func TestRelayHandler_Transfer_FailedSubmissionAllowsImmediateRetry(t *testing.T
 func TestRelayHandler_Transfer_GasBumpRetrySucceeds(t *testing.T) {
 	tx := dummyTx()
 	c := &mockContract{tx: tx}
-	// notFoundCalls=1: the first (unbumped) attempt polls once, gets
+	// notFoundCalls=2: the first (unbumped) attempt polls once, gets
 	// "not mined yet", then its short txTimeout fires before the next poll
-	// — a genuine timeout, not an instant failure. The bumped resubmission's
-	// first poll then finds notFoundCalls exhausted and succeeds.
-	m := &mockMiner{receipt: successReceipt(tx), notFoundCalls: 1}
+	// — a genuine timeout, not an instant failure. submitWithRetry's
+	// one-shot recheck (right before deciding to resubmit) consumes a
+	// second "not mined yet", so it correctly falls through to the bumped
+	// resubmission instead of short-circuiting as if the tx had actually
+	// mined right at the deadline. The resubmission's first poll then finds
+	// notFoundCalls exhausted and succeeds.
+	m := &mockMiner{receipt: successReceipt(tx), notFoundCalls: 2}
 	h := newTestHandlerWithTxTimeout(c, m, 600*time.Millisecond)
 	r := server.NewWithHandler(testAPIKey, h)
 
@@ -682,6 +723,32 @@ func TestRelayHandler_Transfer_GasBumpRetrySucceeds(t *testing.T) {
 	}
 	if c.transferCalls != 2 {
 		t.Errorf("Transfer() called %d times, want 2 (initial + one gas-bump resubmit)", c.transferCalls)
+	}
+}
+
+// TestRelayHandler_Transfer_MinedRightAtDeadlineSkipsResubmit covers the
+// race submitWithRetry's one-shot recheck exists for: the tx actually mines
+// in the same instant the wait context's deadline fires. Without the
+// recheck, this would resubmit a same-nonce replacement for a transfer that
+// already succeeded — the node would reject it (nonce already used) and the
+// caller would see a spurious 500 for a request that, on-chain, worked.
+func TestRelayHandler_Transfer_MinedRightAtDeadlineSkipsResubmit(t *testing.T) {
+	tx := dummyTx()
+	c := &mockContract{tx: tx}
+	// notFoundCalls=1: the initial waitMined poll consumes it, so by the
+	// time submitWithRetry's recheck runs, TransactionReceipt already has
+	// the real receipt available — simulating the tx mining just after the
+	// poll but before the deadline fired.
+	m := &mockMiner{receipt: successReceipt(tx), notFoundCalls: 1}
+	h := newTestHandlerWithTxTimeout(c, m, 600*time.Millisecond)
+	r := server.NewWithHandler(testAPIKey, h)
+
+	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, validTransferBody())
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (should recover via the mined-at-deadline recheck): %s", w.Code, w.Body.String())
+	}
+	if c.transferCalls != 1 {
+		t.Errorf("Transfer() called %d times, want exactly 1 (no resubmit — the recheck should have found it already mined)", c.transferCalls)
 	}
 }
 

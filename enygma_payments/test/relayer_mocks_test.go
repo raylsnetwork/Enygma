@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sync"
+	"testing"
 	"time"
 
 	"enygma_payments_relayer/config"
@@ -42,20 +44,31 @@ type mockContract struct {
 
 	simErr error
 
-	transferCalled bool
-	transferCalls  int
+	transferCalled bool // true if either Transfer or TransferWithFee was invoked
+	transferCalls  int  // count of either Transfer or TransferWithFee invocations
 	simulateCalled bool
+
+	// Per-method counters, additive to the shared ones above, so a test can
+	// assert exactly which underlying contract method the handler invoked
+	// (RelayTransfer -> Transfer vs RelayTransferFee -> TransferWithFee)
+	// instead of only that "some" transfer method fired — the shared
+	// counters alone can't catch RelayTransferFee being wired to the wrong
+	// method (or vice versa).
+	transferOnlyCalls        int
+	transferWithFeeOnlyCalls int
 }
 
 func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []*big.Int) (*types.Transaction, error) {
 	m.transferCalled = true
 	m.transferCalls++
+	m.transferOnlyCalls++
 	return m.tx, m.err
 }
 
 func (m *mockContract) TransferWithFee(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaFeeProof, _ []*big.Int) (*types.Transaction, error) {
 	m.transferCalled = true
 	m.transferCalls++
+	m.transferWithFeeOnlyCalls++
 	return m.tx, m.err
 }
 
@@ -183,6 +196,20 @@ type testHandlerOpts struct {
 	minBalance *big.Int
 }
 
+// testStores tracks every store newTestStore opens (dir + handle) so
+// TestMain can close and remove them all after the package's tests finish.
+// newTestStore is called from shared handler-factory helpers with no
+// *testing.T of their own to register per-test cleanup against, so a single
+// package-level sweep is the low-friction way to avoid leaking a bbolt file
+// handle and a temp directory per call across the whole suite (~50 sites).
+var (
+	testStoresMu sync.Mutex
+	testStores   []struct {
+		dir string
+		st  *store.Store
+	}
+)
+
 // newTestStore opens a bbolt store in a fresh temp directory — real
 // persistence machinery, isolated per call, not a mock. bbolt operations
 // are microseconds, so this adds no meaningful test latency.
@@ -195,7 +222,26 @@ func newTestStore() *store.Store {
 	if err != nil {
 		panic("newTestStore: " + err.Error())
 	}
+	testStoresMu.Lock()
+	testStores = append(testStores, struct {
+		dir string
+		st  *store.Store
+	}{dir, st})
+	testStoresMu.Unlock()
 	return st
+}
+
+// TestMain runs the package's tests, then closes and removes every bbolt
+// store newTestStore opened along the way — see testStores.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	testStoresMu.Lock()
+	for _, ts := range testStores {
+		ts.st.Close()
+		os.RemoveAll(ts.dir)
+	}
+	testStoresMu.Unlock()
+	os.Exit(code)
 }
 
 // newTestHandlerOpts builds a Handler plus its backing store — the store is

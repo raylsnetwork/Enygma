@@ -42,10 +42,14 @@ func (rl *rateLimiter) forKey(key string) *rate.Limiter {
 }
 
 // middleware returns gin middleware enforcing the limit. It must run after
-// bearerAuth in the chain — it keys on the already-validated bearer token,
-// so an unauthenticated request never consumes budget from a real caller,
-// and can't be used to exhaust another caller's allowance by guessing at
-// keys (a wrong key is rejected by bearerAuth with 401/403 first).
+// bearerAuth in the chain — it keys on the already-validated bearer token
+// (stashed in the gin context under apiTokenContextKey, not the raw
+// Authorization header — the header's "Bearer" scheme is case-insensitive
+// but a raw-header key isn't, which would let one caller multiply its
+// effective rate limit by varying the scheme's case), so an unauthenticated
+// request never consumes budget from a real caller, and can't be used to
+// exhaust another caller's allowance by guessing at keys (a wrong key is
+// rejected by bearerAuth with 401/403 first).
 //
 // rps <= 0 disables rate limiting entirely (every call passes through).
 func (rl *rateLimiter) middleware() gin.HandlerFunc {
@@ -54,8 +58,9 @@ func (rl *rateLimiter) middleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		key := c.GetHeader("Authorization")
-		if !rl.forKey(key).Allow() {
+		key, _ := c.Get(apiTokenContextKey)
+		keyStr, _ := key.(string)
+		if !rl.forKey(keyStr).Allow() {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "rate limit exceeded — slow down and retry",
 			})

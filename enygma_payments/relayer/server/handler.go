@@ -81,8 +81,41 @@ const readinessTimeout = 3 * time.Second
 
 // gasBumpNumerator/Denominator: the minimum bump most nodes require to
 // accept a same-nonce replacement transaction is 10%; 12% gives a small
-// margin above that floor rather than sitting exactly on it.
+// margin above that floor rather than sitting exactly on it. Because this is
+// integer division, the percentage bump alone is a no-op for any gasPrice
+// <= 8 wei (it rounds right back to the same value) — submitWithRetry backs
+// that with an explicit "advance by at least 1 wei" floor.
 const gasBumpNumerator, gasBumpDenominator = 112, 100
+
+// submitTimeout bounds one nonce-claim-and-broadcast attempt (SuggestGasPrice
+// plus the eth_sendTransaction call itself) — the part that must run under
+// h.txMu, since NonceManager.release()'s safety depends on claims being
+// strictly serialized. Previously this phase ran under context.Background()
+// with no deadline at all, so a hung RPC node could block every other caller
+// behind the lock indefinitely; now the lock is held for at most this long.
+const submitTimeout = 15 * time.Second
+
+// mineRecheckTimeout bounds the one-shot receipt check submitWithRetry makes
+// right before a gas-bump resubmit, to rule out the original tx having
+// actually mined in the same instant the mined-wait's deadline fired.
+const mineRecheckTimeout = 5 * time.Second
+
+// bumpGasPrice returns a gas price strictly greater than gasPrice, for a
+// same-nonce replacement transaction. The 12% bump alone isn't enough at low
+// values — gasPrice*112/100 is integer division, which rounds right back to
+// gasPrice for any gasPrice <= 8 wei (floor(gasPrice*112/100) only exceeds
+// gasPrice once gasPrice >= 9) — so this falls back to gasPrice+1 whenever
+// the percentage bump would be a no-op, guaranteeing forward progress
+// regardless of how low gasPrice is (plausible on a near-zero-gas
+// permissioned chain).
+func bumpGasPrice(gasPrice *big.Int) *big.Int {
+	bumped := new(big.Int).Mul(gasPrice, big.NewInt(gasBumpNumerator))
+	bumped.Div(bumped, big.NewInt(gasBumpDenominator))
+	if bumped.Cmp(gasPrice) <= 0 {
+		return new(big.Int).Add(gasPrice, big.NewInt(1))
+	}
+	return bumped
+}
 
 // Exact public-signal counts the two circuits declare — must match the
 // verifying keys loaded from cfg.VKTransferPath / cfg.VKFeePath.
@@ -388,24 +421,38 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		return
 	}
 
-	h.txMu.Lock()
-	defer h.txMu.Unlock()
+	// From here on we own dedupKey's Pending claim and must finalize it one
+	// way or another — even on a panic below (e.g. a nil tx from a
+	// misbehaving binding), which gin.Recovery() converts to a 500 but would
+	// otherwise skip the markMined/markFailed calls entirely, leaving the
+	// key stuck Pending for the full dedup staleness window instead of free
+	// for an immediate retry. Mirrors the guarantee the old in-memory
+	// sync.Map cleanup gave via `defer h.inFlight.Delete(dedupKey)`.
+	finalized := false
+	defer func() {
+		if !finalized {
+			h.markFailed(dedupKey)
+		}
+	}()
 
 	receipt, err := h.submitWithRetry(context.Background(), func(auth *bind.TransactOpts) (*types.Transaction, error) {
 		return h.instance.Transfer(auth, commitments, transferProof, kIndex)
 	})
 	if err != nil {
 		h.markFailed(dedupKey)
+		finalized = true
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transfer(): %v", err)})
 		return
 	}
 	if receipt.Status != 1 {
 		h.markFailed(dedupKey)
+		finalized = true
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transfer transaction reverted on-chain"})
 		return
 	}
 
 	h.markMined(dedupKey, receipt)
+	finalized = true
 	c.JSON(http.StatusOK, RelayResponse{
 		TxHash:      receipt.TxHash.Hex(),
 		BlockNumber: receipt.BlockNumber.Uint64(),
@@ -509,24 +556,32 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 		return
 	}
 
-	h.txMu.Lock()
-	defer h.txMu.Unlock()
+	// See RelayTransfer — guarantees dedupKey is freed even on a panic below.
+	finalized := false
+	defer func() {
+		if !finalized {
+			h.markFailed(dedupKey)
+		}
+	}()
 
 	receipt, err := h.submitWithRetry(context.Background(), func(auth *bind.TransactOpts) (*types.Transaction, error) {
 		return h.instance.TransferWithFee(auth, commitments, feeProof, kIndex)
 	})
 	if err != nil {
 		h.markFailed(dedupKey)
+		finalized = true
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transferWithFee(): %v", err)})
 		return
 	}
 	if receipt.Status != 1 {
 		h.markFailed(dedupKey)
+		finalized = true
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transferWithFee transaction reverted on-chain"})
 		return
 	}
 
 	h.markMined(dedupKey, receipt)
+	finalized = true
 	c.JSON(http.StatusOK, RelayResponse{
 		TxHash:      receipt.TxHash.Hex(),
 		BlockNumber: receipt.BlockNumber.Uint64(),
@@ -536,30 +591,19 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 
 // ── Submission (nonce + gas-bump retry) ───────────────────────────────────────
 
-// submitWithRetry claims a nonce, submits via doCall, and waits up to
-// h.txTimeout for it to be mined. If that wait times out — the tx is stuck,
-// most likely underpriced for current chain conditions — it resubmits the
-// SAME nonce once with a bumped gas price and waits again. This is a single
-// retry, not an unbounded loop: the goal is recovering from a transient gas
-// spike, not fighting a chain that's fundamentally stuck (that needs an
-// operator, not a retry loop).
-//
-// Must be called with h.txMu held — it claims a nonce and nothing else may
-// submit until this either succeeds or gives up.
+// submitWithRetry claims a nonce and broadcasts via doCall (both under
+// h.txMu, bounded by submitTimeout — see claimAndBroadcast), then waits up
+// to h.txTimeout for it to be mined with the lock released, so a slow mined-
+// wait never blocks other callers from claiming their own nonces and
+// submitting. If that wait times out — the tx is stuck, most likely
+// underpriced for current chain conditions — it resubmits the SAME nonce
+// once with a bumped gas price and waits again. This is a single retry, not
+// an unbounded loop: the goal is recovering from a transient gas spike, not
+// fighting a chain that's fundamentally stuck (that needs an operator, not a
+// retry loop).
 func (h *Handler) submitWithRetry(ctx context.Context, doCall func(auth *bind.TransactOpts) (*types.Transaction, error)) (*types.Receipt, error) {
-	gasPrice, err := h.client.SuggestGasPrice(ctx)
+	tx, gasPrice, nonce, err := h.claimAndBroadcast(ctx, doCall)
 	if err != nil {
-		return nil, fmt.Errorf("suggest gas price: %w", err)
-	}
-
-	nonce := h.nonces.take()
-	auth := *h.auth
-	auth.Nonce = new(big.Int).SetUint64(nonce)
-	auth.GasPrice = gasPrice
-
-	tx, err := doCall(&auth)
-	if err != nil {
-		h.nonces.release(nonce)
 		return nil, err
 	}
 
@@ -571,14 +615,33 @@ func (h *Handler) submitWithRetry(ctx context.Context, doCall func(auth *bind.Tr
 		return nil, fmt.Errorf("wait mined (tx %s): %w", tx.Hash().Hex(), waitErr)
 	}
 
+	// The wait context's deadline may have fired in the same instant the
+	// node actually mined tx — check once more before treating it as stuck,
+	// so a transfer that already succeeded on-chain isn't reported as a
+	// failure and resubmitted as a conflicting same-nonce replacement.
+	recheckCtx, recheckCancel := context.WithTimeout(context.Background(), mineRecheckTimeout)
+	recheckReceipt, recheckErr := h.client.TransactionReceipt(recheckCtx, tx.Hash())
+	recheckCancel()
+	if recheckErr == nil && recheckReceipt != nil {
+		log.Printf("relayer: tx %s was mined right at the wait deadline; skipping gas-bump resubmit", tx.Hash().Hex())
+		return recheckReceipt, nil
+	}
+
 	log.Printf("relayer: tx %s not mined within %s, resubmitting nonce %d with bumped gas price", tx.Hash().Hex(), h.txTimeout, nonce)
 
-	bumped := new(big.Int).Mul(gasPrice, big.NewInt(gasBumpNumerator))
-	bumped.Div(bumped, big.NewInt(gasBumpDenominator))
-	auth.GasPrice = bumped
+	bumped := bumpGasPrice(gasPrice)
 
-	tx2, err := doCall(&auth)
+	tx2, err := h.broadcast(ctx, doCall, nonce, bumped)
 	if err != nil {
+		// We no longer know where the chain's nonce state stands: the
+		// original tx may or may not still be pending, and this replacement
+		// never broadcast either. Re-sync from the chain rather than let
+		// every future submission keep signing a nonce the chain may never
+		// accept in order — that would otherwise stall the relayer until an
+		// operator restarts it.
+		if resyncErr := h.nonces.resync(ctx, h.client, h.auth.From); resyncErr != nil {
+			log.Printf("relayer: nonce resync after failed gas-bump resubmit also failed: %v", resyncErr)
+		}
 		return nil, fmt.Errorf("gas-bump resubmit failed (original tx %s may still be pending): %w", tx.Hash().Hex(), err)
 	}
 	receipt, waitErr = h.waitMined(ctx, tx2)
@@ -586,6 +649,57 @@ func (h *Handler) submitWithRetry(ctx context.Context, doCall func(auth *bind.Tr
 		return nil, fmt.Errorf("stuck after gas-bump retry (tx %s): %w", tx2.Hash().Hex(), waitErr)
 	}
 	return receipt, nil
+}
+
+// claimAndBroadcast claims the next nonce and submits doCall — the only part
+// that must be serialized (NonceManager.release()'s safety depends on claims
+// being strictly ordered) and so the only part that briefly blocks other
+// callers. Bounded by submitTimeout so one hung RPC call can't hold h.txMu —
+// and therefore every other caller — forever.
+func (h *Handler) claimAndBroadcast(ctx context.Context, doCall func(auth *bind.TransactOpts) (*types.Transaction, error)) (tx *types.Transaction, gasPrice *big.Int, nonce uint64, err error) {
+	h.txMu.Lock()
+	defer h.txMu.Unlock()
+
+	subCtx, cancel := context.WithTimeout(ctx, submitTimeout)
+	defer cancel()
+
+	gasPrice, err = h.client.SuggestGasPrice(subCtx)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("suggest gas price: %w", err)
+	}
+
+	nonce = h.nonces.take()
+	auth := *h.auth
+	auth.Nonce = new(big.Int).SetUint64(nonce)
+	auth.GasPrice = gasPrice
+	auth.Context = subCtx
+
+	tx, err = doCall(&auth)
+	if err != nil {
+		h.nonces.release(nonce)
+		return nil, nil, 0, err
+	}
+	return tx, gasPrice, nonce, nil
+}
+
+// broadcast resubmits doCall with an already-claimed nonce and a new gas
+// price — the gas-bump retry path. No new nonce claim, so no release path is
+// needed on failure here; see submitWithRetry's resync call instead. Still
+// serialized by h.txMu and bounded by submitTimeout for the same reason as
+// claimAndBroadcast.
+func (h *Handler) broadcast(ctx context.Context, doCall func(auth *bind.TransactOpts) (*types.Transaction, error), nonce uint64, gasPrice *big.Int) (*types.Transaction, error) {
+	h.txMu.Lock()
+	defer h.txMu.Unlock()
+
+	subCtx, cancel := context.WithTimeout(ctx, submitTimeout)
+	defer cancel()
+
+	auth := *h.auth
+	auth.Nonce = new(big.Int).SetUint64(nonce)
+	auth.GasPrice = gasPrice
+	auth.Context = subCtx
+
+	return doCall(&auth)
 }
 
 // waitMined wraps bind.WaitMined with h.txTimeout. On timeout it returns

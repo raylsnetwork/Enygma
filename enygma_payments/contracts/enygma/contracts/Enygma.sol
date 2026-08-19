@@ -384,10 +384,21 @@ contract Enygma is IEnygma {
      * @notice Set the reserved account that collects protocol fees from
      *         transferWithFee(). Must be called (with a registered account
      *         ID) before any fee transfer will succeed.
-     * @param accountId Account ID to credit with fees; must be non-zero
+     * @param accountId Account ID to credit with fees; must be non-zero and
+     *        already registered via registerAccount()
      */
     function setTreasuryAccountId(uint256 accountId) external onlyOwner returns (bool) {
         if (accountId == 0) revert InvalidTreasuryAccount();
+        // publicKeys[accountId] is only ever written by registerAccount(),
+        // never cleared, so a zero value means this ID was never registered.
+        // Without this check, _withFeeCredit's pointAdd would run against an
+        // uninitialized (0,0) balance slot instead of the curve identity
+        // (0,1) — CurveBabyJubJub.pointAdd only special-cases (0,1), so the
+        // general formula degenerates and returns (0,0) again: every fee
+        // credited to this account would be silently discarded on-chain,
+        // permanently breaking the Σ(balances) == totalSupply invariant
+        // with no revert anywhere in the call.
+        if (publicKeys[accountId] == 0) revert InvalidTreasuryAccount();
 
         treasuryAccountId = accountId;
 
@@ -846,37 +857,38 @@ contract Enygma is IEnygma {
         (uint256 feeX, uint256 feeY) = derivePk(fee);
         uint256 len = participantIds.length;
 
+        // One scan to find whether the treasury is already a participant
+        // (and at which index) — treasuryIdx == len is the "not found"
+        // sentinel, since a real index is always < len.
+        uint256 treasuryIdx = len;
         for (uint256 i; i < len; ) {
             if (participantIds[i] == treasuryAccountId) {
-                deltas = new Point[](len);
-                participants = new uint256[](len);
-                for (uint256 j; j < len; ) {
-                    participants[j] = participantIds[j];
-                    if (j == i) {
-                        (uint256 x, uint256 y) = CurveBabyJubJub.pointAdd(
-                            commitmentDeltas[j].c1, commitmentDeltas[j].c2, feeX, feeY
-                        );
-                        deltas[j] = Point(x, y);
-                    } else {
-                        deltas[j] = commitmentDeltas[j];
-                    }
-                    unchecked { ++j; }
-                }
-                return (deltas, participants);
+                treasuryIdx = i;
+                break;
             }
             unchecked { ++i; }
         }
 
-        // Treasury isn't already a participant — append a new slot for it.
-        deltas = new Point[](len + 1);
-        participants = new uint256[](len + 1);
-        for (uint256 i2; i2 < len; ) {
-            deltas[i2] = commitmentDeltas[i2];
-            participants[i2] = participantIds[i2];
-            unchecked { ++i2; }
+        // One build pass for both cases — found folds the fee into the
+        // existing slot at treasuryIdx; not-found appends a new slot after.
+        deltas = new Point[](treasuryIdx == len ? len + 1 : len);
+        participants = new uint256[](deltas.length);
+        for (uint256 j; j < len; ) {
+            participants[j] = participantIds[j];
+            if (j == treasuryIdx) {
+                (uint256 x, uint256 y) = CurveBabyJubJub.pointAdd(
+                    commitmentDeltas[j].c1, commitmentDeltas[j].c2, feeX, feeY
+                );
+                deltas[j] = Point(x, y);
+            } else {
+                deltas[j] = commitmentDeltas[j];
+            }
+            unchecked { ++j; }
         }
-        deltas[len] = Point(feeX, feeY);
-        participants[len] = treasuryAccountId;
+        if (treasuryIdx == len) {
+            deltas[len] = Point(feeX, feeY);
+            participants[len] = treasuryAccountId;
+        }
     }
 
     /**
@@ -888,9 +900,16 @@ contract Enygma is IEnygma {
     ) private {
         uint256 epochStart = _currentEpochStart();
 
-        // Copy balances for non-participants to the current epoch slot
+        // Copy balances for non-participants to the current epoch slot.
+        // AccountIds are 1-based: iterate 1.._totalRegisteredParties (not
+        // 0..n-1) — matching _propagateBalancesExcept and check(). The old
+        // 0-based bound touched the never-real accountId 0 and silently
+        // skipped the highest valid accountId (== totalParties) whenever it
+        // wasn't a transfer participant, leaving its balance stale after an
+        // epoch roll — exactly the pattern a treasury account (registered
+        // last, so numerically highest) would hit if left out of a transfer.
         uint256 totalParties = _totalRegisteredParties;
-        for (uint256 i; i < totalParties; ) {
+        for (uint256 i = 1; i <= totalParties; ) {
             _initializeBalanceIfNeeded(i);
 
             if (!_isParticipant(participantIds, i)) {
