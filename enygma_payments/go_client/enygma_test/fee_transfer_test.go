@@ -537,15 +537,27 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 	t.Logf("transferWithFee: tx=%s block=%d gas=%d", relayResp.TxHash, relayResp.BlockNumber, relayResp.GasUsed)
 
-	// ── Replay the identical request: must be rejected by the dry-run ─────────
-	// This proof's nullifier is already consumed on-chain. Resubmitting the
-	// exact same request must be caught by SimulateTransferWithFee's eth_call
-	// and rejected with 400 — proving the dry-run works against a real chain,
-	// a real ABI-encoded call, and a real revert reason, not just a mock.
-	// It must NOT reach WaitMined (that would mean gas was spent on a proof
-	// that was already known to be dead on arrival).
+	// ── Replay the identical request: must be an idempotent cache hit ─────────
+	// The relayer's dedup check runs before local verify and the dry-run (a
+	// cheap in-process store lookup, ahead of a pairing verification and an
+	// RPC eth_call — see RelayTransferFee's doc comment), so an exact replay
+	// of an already-mined request is now caught there first: the client gets
+	// its original success response back, not a dry-run rejection. This is
+	// the documented dedup contract ("a request identical to one already
+	// mined gets the cached result replayed rather than resubmitted or
+	// rejected"), not a new revert path — and it must NOT reach WaitMined
+	// (that would mean gas was spent on a request already known to have
+	// succeeded).
+	//
+	// The dry-run's own real-chain rejection mechanics (a well-formed but
+	// on-chain-stale proof, distinct from this exact-duplicate case) are
+	// exercised against mocks in relayer_handler_test.go
+	// (TestRelayHandler_Transfer_SimulateReverts /
+	// TransferFee_SimulateReverts), not against a live chain here — a real
+	// second proof for that scenario would need its own ~30s gnark proving
+	// run, which this test doesn't currently pay for.
 	t.Log("")
-	t.Log("── Dry-Run Rejection (replay) ───────────────────────────────────────────")
+	t.Log("── Idempotent Replay ────────────────────────────────────────────────────")
 	replayHTTPReq, _ := http.NewRequest(http.MethodPost, feeRelayerURL+"/relay/transfer_fee", bytes.NewReader(relayBody))
 	replayHTTPReq.Header.Set("Content-Type", "application/json")
 	replayHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
@@ -555,13 +567,19 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 	defer replayResp.Body.Close()
 	replayBody2, _ := io.ReadAll(replayResp.Body)
-	if replayResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("replay: got %d, want 400 (dry-run rejection): %s", replayResp.StatusCode, replayBody2)
+	if replayResp.StatusCode != http.StatusOK {
+		t.Fatalf("replay: got %d, want 200 (idempotent cache hit): %s", replayResp.StatusCode, replayBody2)
 	}
-	if !strings.Contains(string(replayBody2), "dry-run") {
-		t.Fatalf("replay: expected dry-run rejection message, got: %s", replayBody2)
+	var replayParsed struct {
+		TxHash string `json:"txHash"`
 	}
-	t.Logf("replay correctly rejected before broadcast: %s", replayBody2)
+	if err := json.Unmarshal(replayBody2, &replayParsed); err != nil {
+		t.Fatalf("parse replay response: %v", err)
+	}
+	if replayParsed.TxHash != relayResp.TxHash {
+		t.Fatalf("replay: txHash %s does not match the original submission's %s — not a clean cache hit", replayParsed.TxHash, relayResp.TxHash)
+	}
+	t.Logf("replay correctly served from the idempotency cache, same tx: %s", replayParsed.TxHash)
 
 	// ── Verify on-chain balances ──────────────────────────────────────────────
 	t.Log("")
