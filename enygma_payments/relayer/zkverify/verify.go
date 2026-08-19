@@ -54,6 +54,17 @@ func Load(vkPath string, nbPublic int) (*Verifier, error) {
 	if _, err := vk.ReadFrom(f); err != nil {
 		return nil, fmt.Errorf("read verifying key %s: %w", vkPath, err)
 	}
+
+	// Fail fast at startup if the caller's declared nbPublic doesn't match
+	// what's actually baked into the key file — otherwise a mismatch (e.g.
+	// RELAYER_VK_FEE_PATH pointing at a stale or wrong-circuit key) would
+	// surface later as every proof being rejected with the same generic
+	// "invalid zk proof" 400, indistinguishable from a genuinely forged
+	// proof, instead of a clear configuration error right now.
+	if got := vk.NbPublicWitness(); got != nbPublic {
+		return nil, fmt.Errorf("verifying key %s: circuit expects %d public signals, but %d were declared — wrong circuit version?", vkPath, got, nbPublic)
+	}
+
 	return &Verifier{vk: vk, nbPublic: nbPublic}, nil
 }
 

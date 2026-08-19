@@ -109,7 +109,19 @@ func (s *Store) TryBeginPending(key string, staleness time.Duration) (blocked bo
 				cached = &rec
 				return nil
 			case StatusPending:
-				if time.Since(rec.UpdatedAt) < staleness {
+				// rec.UpdatedAt round-tripped through JSON, which strips
+				// the monotonic clock reading, so this falls back to plain
+				// wall-clock subtraction — a backward system clock
+				// adjustment (NTP correction, VM pause/resume) between the
+				// write and now would otherwise make elapsed negative,
+				// which is "< staleness" for any positive staleness and so
+				// would permanently block reclaim of a genuinely abandoned
+				// key. Treat a negative reading itself as a clock anomaly
+				// and a reason to allow reclaim, not as extra freshness —
+				// no worse than the already-accepted risk on a forward
+				// clock jump (premature reclaim of a still-in-flight key).
+				elapsed := time.Since(rec.UpdatedAt)
+				if elapsed >= 0 && elapsed < staleness {
 					blocked = true
 					return nil
 				}

@@ -10,21 +10,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// New creates the gin engine with all relayer routes attached.
+// New creates the gin engine with all relayer routes attached, and returns
+// the underlying Handler alongside it so the caller can call Handler.Close()
+// on shutdown — releasing the persistent idempotency store's bbolt file
+// lock cleanly instead of only on a hard exit.
 //
 // Route layout:
 //
 //	GET  /health         — liveness probe (public, no auth)
 //	GET  /relay/info     — contract + relayer addresses (public, no auth)
 //	POST /relay/transfer — relay Enygma.transfer() (requires Bearer token)
-func New(cfg *config.Config) (*gin.Engine, error) {
+func New(cfg *config.Config) (*gin.Engine, *Handler, error) {
 	h, err := NewHandler(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	r := gin.Default()
 	applyRoutes(r, cfg.APIKey, h)
-	return r, nil
+	return r, h, nil
 }
 
 // NewWithHandler creates the gin engine with a pre-built Handler.

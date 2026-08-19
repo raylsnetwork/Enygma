@@ -244,6 +244,20 @@ func newHandlerDeps(d HandlerDeps) *Handler {
 	if txTimeout == 0 {
 		txTimeout = defaultTxTimeout
 	}
+	// Defensive defaults for external callers of the exported
+	// NewHandlerWithDeps that build a config.Config by hand instead of
+	// going through config.Load() (which always populates these fields) —
+	// Handler code calls MinFee.Sign()/MinBalanceWei.Sign() unconditionally,
+	// so a nil here would panic on the first request instead of just
+	// meaning "no minimum".
+	if d.Cfg != nil {
+		if d.Cfg.MinFee == nil {
+			d.Cfg.MinFee = big.NewInt(0)
+		}
+		if d.Cfg.MinBalanceWei == nil {
+			d.Cfg.MinBalanceWei = big.NewInt(0)
+		}
+	}
 	return &Handler{
 		cfg:          d.Cfg,
 		contractAddr: d.ContractAddr,
@@ -351,6 +365,39 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		return
 	}
 
+	// Dedup check first: a cheap, in-process bbolt lookup that rejects an
+	// exact duplicate/replay before paying for a pairing verification and an
+	// RPC eth_call dry-run on every request, including ones about to be
+	// rejected anyway.
+	dedupKey := "transfer:" + req.Proof[0]
+	blocked, cached, err := h.store.TryBeginPending(dedupKey, h.cfg.DedupStaleness)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup store: %v", err)})
+		return
+	}
+	if blocked {
+		if cached != nil {
+			c.JSON(http.StatusOK, RelayResponse{TxHash: cached.TxHash, BlockNumber: cached.BlockNumber, GasUsed: cached.GasUsed})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
+		return
+	}
+
+	// From here on we own dedupKey's Pending claim and must finalize it one
+	// way or another — even on a panic below (e.g. a nil tx from a
+	// misbehaving binding), which gin.Recovery() converts to a 500 but would
+	// otherwise skip the markMined/markFailed calls entirely, leaving the
+	// key stuck Pending for the full dedup staleness window instead of free
+	// for an immediate retry. Mirrors the guarantee the old in-memory
+	// sync.Map cleanup gave via `defer h.inFlight.Delete(dedupKey)`.
+	finalized := false
+	defer func() {
+		if !finalized {
+			h.markFailed(dedupKey)
+		}
+	}()
+
 	proof8, err := parseProof8(req.Proof)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
@@ -398,48 +445,24 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 
 	// Dry-run before touching dedup/mutex/chain state: a proof that would
 	// revert has already burned nothing here, versus real gas if broadcast.
+	// Pending:true evaluates against the relayer's own still-unmined
+	// broadcasts, not just the latest mined block — otherwise a transfer
+	// whose proof assumes an earlier, already-broadcast-but-not-yet-mined
+	// transfer already applied would be dry-run against stale pre-transfer
+	// state and rejected even though it would succeed once mined in order.
 	simCtx, simCancel := context.WithTimeout(context.Background(), simulateTimeout)
-	simErr := h.instance.SimulateTransfer(&bind.CallOpts{From: h.auth.From, Context: simCtx}, commitments, transferProof, kIndex)
+	simErr := h.instance.SimulateTransfer(&bind.CallOpts{From: h.auth.From, Context: simCtx, Pending: true}, commitments, transferProof, kIndex)
 	simCancel()
 	if simErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("transfer would revert on-chain (dry-run, no gas spent): %v", simErr)})
 		return
 	}
 
-	dedupKey := "transfer:" + req.Proof[0]
-	blocked, cached, err := h.store.TryBeginPending(dedupKey, h.cfg.DedupStaleness)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup store: %v", err)})
-		return
-	}
-	if blocked {
-		if cached != nil {
-			c.JSON(http.StatusOK, RelayResponse{TxHash: cached.TxHash, BlockNumber: cached.BlockNumber, GasUsed: cached.GasUsed})
-			return
-		}
-		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
-		return
-	}
-
-	// From here on we own dedupKey's Pending claim and must finalize it one
-	// way or another — even on a panic below (e.g. a nil tx from a
-	// misbehaving binding), which gin.Recovery() converts to a 500 but would
-	// otherwise skip the markMined/markFailed calls entirely, leaving the
-	// key stuck Pending for the full dedup staleness window instead of free
-	// for an immediate retry. Mirrors the guarantee the old in-memory
-	// sync.Map cleanup gave via `defer h.inFlight.Delete(dedupKey)`.
-	finalized := false
-	defer func() {
-		if !finalized {
-			h.markFailed(dedupKey)
-		}
-	}()
-
 	receipt, err := h.submitWithRetry(context.Background(), func(auth *bind.TransactOpts) (*types.Transaction, error) {
 		return h.instance.Transfer(auth, commitments, transferProof, kIndex)
 	})
 	if err != nil {
-		h.markFailed(dedupKey)
+		h.finalizeSubmitError(dedupKey, err)
 		finalized = true
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transfer(): %v", err)})
 		return
@@ -478,6 +501,31 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Dedup check first — see RelayTransfer. Cheapest check available, so it
+	// runs before local verify, the fee check, and the dry-run.
+	dedupKey := "transfer_fee:" + req.Proof[0]
+	blocked, cached, err := h.store.TryBeginPending(dedupKey, h.cfg.DedupStaleness)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup store: %v", err)})
+		return
+	}
+	if blocked {
+		if cached != nil {
+			c.JSON(http.StatusOK, RelayResponse{TxHash: cached.TxHash, BlockNumber: cached.BlockNumber, GasUsed: cached.GasUsed})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
+		return
+	}
+
+	// See RelayTransfer — guarantees dedupKey is freed even on a panic below.
+	finalized := false
+	defer func() {
+		if !finalized {
+			h.markFailed(dedupKey)
+		}
+	}()
 
 	proof8, err := parseProof8(req.Proof)
 	if err != nil {
@@ -534,41 +582,18 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 
 	// Dry-run before touching dedup/mutex/chain state — see SimulateTransfer.
 	simCtx, simCancel := context.WithTimeout(context.Background(), simulateTimeout)
-	simErr := h.instance.SimulateTransferWithFee(&bind.CallOpts{From: h.auth.From, Context: simCtx}, commitments, feeProof, kIndex)
+	simErr := h.instance.SimulateTransferWithFee(&bind.CallOpts{From: h.auth.From, Context: simCtx, Pending: true}, commitments, feeProof, kIndex)
 	simCancel()
 	if simErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("transferWithFee would revert on-chain (dry-run, no gas spent): %v", simErr)})
 		return
 	}
 
-	dedupKey := "transfer_fee:" + req.Proof[0]
-	blocked, cached, err := h.store.TryBeginPending(dedupKey, h.cfg.DedupStaleness)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup store: %v", err)})
-		return
-	}
-	if blocked {
-		if cached != nil {
-			c.JSON(http.StatusOK, RelayResponse{TxHash: cached.TxHash, BlockNumber: cached.BlockNumber, GasUsed: cached.GasUsed})
-			return
-		}
-		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
-		return
-	}
-
-	// See RelayTransfer — guarantees dedupKey is freed even on a panic below.
-	finalized := false
-	defer func() {
-		if !finalized {
-			h.markFailed(dedupKey)
-		}
-	}()
-
 	receipt, err := h.submitWithRetry(context.Background(), func(auth *bind.TransactOpts) (*types.Transaction, error) {
 		return h.instance.TransferWithFee(auth, commitments, feeProof, kIndex)
 	})
 	if err != nil {
-		h.markFailed(dedupKey)
+		h.finalizeSubmitError(dedupKey, err)
 		finalized = true
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transferWithFee(): %v", err)})
 		return
@@ -591,6 +616,33 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 
 // ── Submission (nonce + gas-bump retry) ───────────────────────────────────────
 
+// errAmbiguousOutcome marks a submitWithRetry error where the underlying
+// transaction may actually have been broadcast (or even mined) despite the
+// error — an RPC ack-loss, a mined-wait that failed for a reason other than
+// a clean timeout, or a gas-bump resubmit whose own send failed after the
+// original tx was already live. Callers must not treat this the same as a
+// definite failure (a dry-run rejection or a clean on-chain revert): marking
+// the dedup key outright failed and freeing it for an immediate identical
+// retry risks a double-submission, or a confusing rejection against a
+// nullifier the ambiguous attempt may have already consumed. Left as a
+// Pending record instead, so the existing staleness window governs recovery.
+var errAmbiguousOutcome = errors.New("submission outcome ambiguous — transaction may have been broadcast")
+
+// recheckMined does one bounded, one-shot receipt lookup for tx — used right
+// before deciding a mined-wait's deadline means "stuck" and something needs
+// resubmitting. Catches the tx having actually mined in the same instant the
+// wait's deadline fired, so a transfer that already succeeded on-chain isn't
+// reported as failed and resubmitted as a conflicting same-nonce replacement.
+func (h *Handler) recheckMined(tx *types.Transaction) *types.Receipt {
+	ctx, cancel := context.WithTimeout(context.Background(), mineRecheckTimeout)
+	defer cancel()
+	receipt, err := h.client.TransactionReceipt(ctx, tx.Hash())
+	if err != nil || receipt == nil {
+		return nil
+	}
+	return receipt
+}
+
 // submitWithRetry claims a nonce and broadcasts via doCall (both under
 // h.txMu, bounded by submitTimeout — see claimAndBroadcast), then waits up
 // to h.txTimeout for it to be mined with the lock released, so a slow mined-
@@ -612,19 +664,19 @@ func (h *Handler) submitWithRetry(ctx context.Context, doCall func(auth *bind.Tr
 		return receipt, nil
 	}
 	if !errors.Is(waitErr, context.DeadlineExceeded) {
-		return nil, fmt.Errorf("wait mined (tx %s): %w", tx.Hash().Hex(), waitErr)
+		// tx was successfully broadcast — a wait failure that isn't a clean
+		// deadline (an RPC error while polling, say) leaves its actual
+		// on-chain outcome unknown, not definitely failed.
+		return nil, fmt.Errorf("wait mined (tx %s): %w: %w", tx.Hash().Hex(), waitErr, errAmbiguousOutcome)
 	}
 
 	// The wait context's deadline may have fired in the same instant the
 	// node actually mined tx — check once more before treating it as stuck,
 	// so a transfer that already succeeded on-chain isn't reported as a
 	// failure and resubmitted as a conflicting same-nonce replacement.
-	recheckCtx, recheckCancel := context.WithTimeout(context.Background(), mineRecheckTimeout)
-	recheckReceipt, recheckErr := h.client.TransactionReceipt(recheckCtx, tx.Hash())
-	recheckCancel()
-	if recheckErr == nil && recheckReceipt != nil {
+	if r := h.recheckMined(tx); r != nil {
 		log.Printf("relayer: tx %s was mined right at the wait deadline; skipping gas-bump resubmit", tx.Hash().Hex())
-		return recheckReceipt, nil
+		return r, nil
 	}
 
 	log.Printf("relayer: tx %s not mined within %s, resubmitting nonce %d with bumped gas price", tx.Hash().Hex(), h.txTimeout, nonce)
@@ -639,16 +691,38 @@ func (h *Handler) submitWithRetry(ctx context.Context, doCall func(auth *bind.Tr
 		// every future submission keep signing a nonce the chain may never
 		// accept in order — that would otherwise stall the relayer until an
 		// operator restarts it.
-		if resyncErr := h.nonces.resync(ctx, h.client, h.auth.From); resyncErr != nil {
+		if resyncErr := h.resyncNonce(ctx); resyncErr != nil {
 			log.Printf("relayer: nonce resync after failed gas-bump resubmit also failed: %v", resyncErr)
 		}
-		return nil, fmt.Errorf("gas-bump resubmit failed (original tx %s may still be pending): %w", tx.Hash().Hex(), err)
+		return nil, fmt.Errorf("gas-bump resubmit failed (original tx %s may still be pending): %w: %w", tx.Hash().Hex(), err, errAmbiguousOutcome)
 	}
 	receipt, waitErr = h.waitMined(ctx, tx2)
 	if waitErr != nil {
-		return nil, fmt.Errorf("stuck after gas-bump retry (tx %s): %w", tx2.Hash().Hex(), waitErr)
+		// Same deadline-vs-mined race as the first wait, for the
+		// gas-bumped replacement.
+		if r := h.recheckMined(tx2); r != nil {
+			log.Printf("relayer: gas-bumped tx %s was mined right at the wait deadline", tx2.Hash().Hex())
+			return r, nil
+		}
+		return nil, fmt.Errorf("stuck after gas-bump retry (tx %s): %w: %w", tx2.Hash().Hex(), waitErr, errAmbiguousOutcome)
 	}
 	return receipt, nil
+}
+
+// resyncNonce re-fetches the next nonce from the chain under h.txMu.
+// NonceManager.resync itself only locks its own internal counter, not
+// h.txMu — calling it directly here (outside the lock claimAndBroadcast and
+// broadcast hold for their own claim+send) would let its PendingNonceAt read
+// race a concurrent claimAndBroadcast: if a concurrent claim lands and
+// broadcasts a higher nonce while this read is in flight, the stale read
+// completing afterward would rewind nm.next back below it, and the next
+// take() would hand out a nonce that's already in use. Holding h.txMu here
+// closes that window, restoring the "all claims are serialized" invariant
+// NonceManager's own doc comment assumes.
+func (h *Handler) resyncNonce(ctx context.Context) error {
+	h.txMu.Lock()
+	defer h.txMu.Unlock()
+	return h.nonces.resync(ctx, h.client, h.auth.From)
 }
 
 // claimAndBroadcast claims the next nonce and submits doCall — the only part
@@ -676,6 +750,22 @@ func (h *Handler) claimAndBroadcast(ctx context.Context, doCall func(auth *bind.
 
 	tx, err = doCall(&auth)
 	if err != nil {
+		// A doCall error doesn't guarantee the node never received or
+		// accepted the transaction — it could equally be an ack-loss (the
+		// RPC response was lost, e.g. to a timeout or connection reset,
+		// after the node already accepted the tx into its mempool).
+		// Releasing the nonce unconditionally here would risk handing it
+		// out again to a different transaction, colliding with one that's
+		// actually live. Confirm the chain still agrees the nonce is
+		// unused first; a stale local counter is recoverable (resync, or
+		// an operator restart) — a nonce collision on-chain is not.
+		if pending, pErr := h.client.PendingNonceAt(subCtx, h.auth.From); pErr != nil {
+			log.Printf("relayer: could not verify nonce %d is unused before releasing (pending-nonce check failed: %v) — not releasing", nonce, pErr)
+			return nil, nil, 0, fmt.Errorf("%w: %w", err, errAmbiguousOutcome)
+		} else if pending > nonce {
+			log.Printf("relayer: doCall for nonce %d errored, but the chain already shows next-pending nonce %d — not releasing (possible ack-loss, not a definite non-send)", nonce, pending)
+			return nil, nil, 0, fmt.Errorf("%w: %w", err, errAmbiguousOutcome)
+		}
 		h.nonces.release(nonce)
 		return nil, nil, 0, err
 	}
@@ -727,6 +817,25 @@ func (h *Handler) markFailed(dedupKey string) {
 	if err := h.store.MarkFailed(dedupKey); err != nil {
 		log.Printf("relayer: mark failed (key=%s): %v", dedupKey, err)
 	}
+}
+
+// finalizeSubmitError decides how to leave dedupKey's record after a
+// submitWithRetry error. A definite failure (err doesn't wrap
+// errAmbiguousOutcome — e.g. the nonce was cleanly released before any
+// broadcast) is safe to mark failed: store.MarkFailed deletes the record
+// outright, freeing the key for an immediate retry with no risk of
+// collision. An ambiguous outcome is left untouched (still Pending) instead
+// — we don't know whether the transaction actually broadcast or mined, so
+// deleting the record and allowing a blind immediate retry risks a
+// double-submission or a confusing rejection against a nullifier the
+// ambiguous attempt may have already consumed. The existing staleness
+// window governs recovery for that case instead.
+func (h *Handler) finalizeSubmitError(dedupKey string, err error) {
+	if errors.Is(err, errAmbiguousOutcome) {
+		log.Printf("relayer: leaving dedup key %q as Pending — submission outcome ambiguous, not safe to mark failed for an immediate retry", dedupKey)
+		return
+	}
+	h.markFailed(dedupKey)
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────

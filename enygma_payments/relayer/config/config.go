@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"strconv"
@@ -50,7 +51,7 @@ type Config struct {
 	Port string
 
 	// GasLimit is the gas limit applied to every on-chain submission.
-	// Default: 300000000
+	// Default: 5000000
 	GasLimit uint64
 
 	// MinFee is the minimum acceptable value at publicSignal[50] (the
@@ -162,7 +163,12 @@ func Load() (*Config, error) {
 	// Parse per-caller rate limit.
 	rpsStr := getenv("RELAYER_RATE_LIMIT_RPS", "5")
 	rps, err := strconv.ParseFloat(rpsStr, 64)
-	if err != nil || rps < 0 {
+	// ParseFloat accepts "NaN"/"Inf" without error, and NaN fails every
+	// ordering comparison (including "< 0"), so the naive check below would
+	// silently pass a NaN or infinite rate straight into rate.NewLimiter,
+	// where Allow()'s behavior is undefined — most likely silently
+	// defeating the rate limit entirely instead of erroring at startup.
+	if err != nil || math.IsNaN(rps) || math.IsInf(rps, 0) || rps < 0 {
 		return nil, fmt.Errorf("RELAYER_RATE_LIMIT_RPS: invalid non-negative number %q", rpsStr)
 	}
 	cfg.RateLimitRPS = rps

@@ -700,6 +700,43 @@ func TestRelayHandler_Transfer_FailedSubmissionAllowsImmediateRetry(t *testing.T
 	}
 }
 
+// TestRelayHandler_Transfer_AmbiguousSubmissionBlocksImmediateRetry covers
+// the opposite case from FailedSubmissionAllowsImmediateRetry: when doCall
+// errors but the chain already shows the claimed nonce as consumed (an
+// ack-loss, not a definite non-send), the dedup key must NOT be cleared —
+// an immediate identical retry would risk a double-submission or a
+// confusing rejection against a nullifier the ambiguous attempt may have
+// already consumed.
+func TestRelayHandler_Transfer_AmbiguousSubmissionBlocksImmediateRetry(t *testing.T) {
+	tx := dummyTx()
+	c := &mockContract{tx: tx, err: fmt.Errorf("connection reset")}
+	// nonce=1: the handler's NonceManager starts at 0 (newTestHandlerWithStore
+	// -> NewNonceManagerFromStart(0)), so claimAndBroadcast claims nonce 0;
+	// the mock's PendingNonceAt reporting 1 simulates the chain already
+	// having accepted a transaction at nonce 0 despite doCall's error.
+	m := &mockMiner{receipt: successReceipt(tx), nonce: 1}
+	h, _ := newTestHandlerWithStore(c, m, 5*time.Minute)
+	r := server.NewWithHandler(testAPIKey, h)
+
+	body := validTransferBody()
+	w1 := serveHTTPPost(r, "/relay/transfer", testAPIKey, body)
+	if w1.Code != http.StatusInternalServerError {
+		t.Fatalf("first request: got %d, want 500: %s", w1.Code, w1.Body.String())
+	}
+	if !strings.Contains(w1.Body.String(), "ambiguous") {
+		t.Errorf("expected the error to mention the ambiguous outcome, got: %s", w1.Body.String())
+	}
+
+	// Even with the mock fixed to succeed, an immediate retry of the
+	// identical request must be blocked as still in-flight — the dedup key
+	// was left Pending, not cleared.
+	c.err = nil
+	w2 := serveHTTPPost(r, "/relay/transfer", testAPIKey, body)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("immediate retry after ambiguous outcome: got %d, want 409 (key should still be Pending, not cleared): %s", w2.Code, w2.Body.String())
+	}
+}
+
 // ── Nonce & gas-bump retry ───────────────────────────────────────────────────
 
 func TestRelayHandler_Transfer_GasBumpRetrySucceeds(t *testing.T) {

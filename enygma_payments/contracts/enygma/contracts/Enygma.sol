@@ -398,7 +398,17 @@ contract Enygma is IEnygma {
         // credited to this account would be silently discarded on-chain,
         // permanently breaking the Σ(balances) == totalSupply invariant
         // with no revert anywhere in the call.
-        if (publicKeys[accountId] == 0) revert InvalidTreasuryAccount();
+        if (publicKeys[accountId] == 0) {
+            // publicKeys[accountId] can legitimately be 0 only in the
+            // cryptographically-negligible case where Poseidon(sk,sk) mod P
+            // happens to equal 0 — registerAccount() never validates the
+            // supplied publicKey is non-zero. Fall back to checking the
+            // balance-commitment slot registerAccount() always writes: a
+            // real registration leaves it at a valid Pedersen commitment,
+            // never the raw uninitialized (0,0) sentinel.
+            Point storage bal = balanceCommitments[lastBlockNum][accountId];
+            if (bal.c1 == 0 && bal.c2 == 0) revert InvalidTreasuryAccount();
+        }
 
         treasuryAccountId = accountId;
 
@@ -859,12 +869,20 @@ contract Enygma is IEnygma {
 
         // One scan to find whether the treasury is already a participant
         // (and at which index) — treasuryIdx == len is the "not found"
-        // sentinel, since a real index is always < len.
+        // sentinel, since a real index is always < len. Scans the full
+        // array (no early break) to also reject a SECOND occurrence: if
+        // treasuryAccountId appeared twice, folding the fee into only the
+        // first match would leave the second index's delta applied against
+        // a duplicate accountId in _updateBalancesForTransfer, which reads
+        // the pre-transfer balance fresh per array entry — the second write
+        // would silently clobber the first instead of accumulating,
+        // reintroducing the exact totalSupply-desync this function exists
+        // to prevent.
         uint256 treasuryIdx = len;
         for (uint256 i; i < len; ) {
             if (participantIds[i] == treasuryAccountId) {
+                if (treasuryIdx != len) revert InvalidPublicInputs();
                 treasuryIdx = i;
-                break;
             }
             unchecked { ++i; }
         }
