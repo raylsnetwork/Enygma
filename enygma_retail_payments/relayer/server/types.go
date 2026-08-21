@@ -50,6 +50,51 @@ type parsed struct {
 	encTxData    []byte
 }
 
+// ── Payment via relayer, with fee ────────────────────────────────────────────
+
+// RelayPaymentFeeRequest is the JSON body accepted by POST /relay/payment_fee.
+//
+// Used when the payer chooses to route through the relayer rather than
+// self-submit: the relayer sponsors gas, and in exchange requires a fee.
+// Unlike RelayPaymentRequest's plain payment() (2 outputs: Bob + Alice's
+// change), this uses the PaymentRelayerFeePublic circuit (1 input / 3
+// outputs) — Alice's proof commits to a THIRD output note that the relayer
+// receives and can later spend. The fee amount is publicly verifiable at
+// publicSignal[8] (StFee); RELAYER_MIN_FEE is enforced against it before any
+// chain interaction.
+//
+// Proof element order (8 elements, decimal strings):
+//
+//	[Ax, Ay, BX_imag, BX_real, BY_imag, BY_real, Cx, Cy]
+//
+// PublicSignal layout for the PaymentRelayerFeePublic circuit (1 input / 3 outputs):
+//
+//	[msg, treeNum0, root0, nullifier0, commitBob, commitChange, commitFee, contractAddress, fee]
+type RelayPaymentFeeRequest struct {
+	// VaultId identifies which Erc20CoinVault tree the input note belongs to.
+	VaultId string `json:"vaultId" binding:"required"`
+	// Proof is the 8-element Groth16 proof array (decimal strings).
+	Proof [8]string `json:"proof" binding:"required"`
+	// PublicSignal is the 9-element public witness array (decimal strings).
+	PublicSignal [9]string `json:"publicSignal" binding:"required"`
+	// CipherText is hex-encoded bytes passed opaquely to
+	// EnygmaDvp.paymentWithRelayerFee() — Bob's note discovery data.
+	CipherText string `json:"cipherText" binding:"required"`
+	// EncTxData is hex-encoded bytes passed opaquely to
+	// EnygmaDvp.paymentWithRelayerFee() — Bob's encrypted note payload.
+	EncTxData string `json:"encTxData" binding:"required"`
+}
+
+// parsedFee holds the decoded form of a RelayPaymentFeeRequest ready for
+// validation and on-chain submission.
+type parsedFee struct {
+	vaultId      *big.Int
+	proof        [8]*big.Int
+	publicSignal [9]*big.Int
+	cipherText   []byte
+	encTxData    []byte
+}
+
 // ── Info ──────────────────────────────────────────────────────────────────────
 
 // InfoResponse is returned by GET /relay/info.
@@ -61,6 +106,9 @@ type InfoResponse struct {
 	TagRegistryAddr        string `json:"tagRegistryAddr"`
 	TagChannelRegistryAddr string `json:"tagChannelRegistryAddr"`
 	ChainID                int64  `json:"chainId"`
+	// MinFee is the minimum value the relayer requires at publicSignal[8]
+	// for POST /relay/payment_fee, as a decimal string. "0" means disabled.
+	MinFee string `json:"minFee"`
 }
 
 // ── Tag relay ─────────────────────────────────────────────────────────────────
@@ -129,7 +177,3 @@ type RelayChannelResponse struct {
 	BlockNumber uint64 `json:"blockNumber"`
 	GasUsed     uint64 `json:"gasUsed"`
 }
-
-
-
-

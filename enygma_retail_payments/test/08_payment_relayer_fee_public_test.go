@@ -26,26 +26,33 @@ package tests
 //	signal[7]  StContractAddress     = vault address
 //	signal[8]  StFee                 = relayer fee amount (NEW — publicly verifiable)
 //
-// Prerequisites:
+// Prerequisites — all four services must be running:
 //
-//	cd ../enygma_dvp && npx hardhat node
-//	bash setup.sh                                              (from enygma_retail_payments/)
-//	cd gnark_circuits && go run generation.go                  (regenerate keys incl. PaymentRelayerFeePublic)
-//	cd gnark_circuits && go run main.go                        (start gnark server :8082)
+//	Terminal 1: cd ../enygma_dvp && npx hardhat node
+//	Terminal 2: bash setup.sh                                        (from enygma_retail_payments/)
+//	Terminal 3: cd gnark_circuits && go run generation.go && go run main.go
+//	Terminal 4: cd relayer && RELAYER_PRIVATE_KEY=<key> RELAYER_API_KEY=<token> \
+//	              RELAYER_MIN_FEE=0 go run main.go
+//	            (RELAYER_MIN_FEE must be <= 5, or unset/0, or the relayer
+//	             rejects this test's relayerFeeAmt=5 with 402 before ever
+//	             touching the chain — see relayer/config's RELAYER_MIN_FEE doc)
 //
 // Run:
 //
 //	cd test && go test -run TestRetailErc20_PaymentRelayerFeePublic -v -timeout 300s
 //
-// Note on on-chain submission:
+// On-chain submission:
 //
-//	The on-chain function paymentWithRelayerFeePublic does not yet exist in EnygmaDvp.
-//	This test verifies the gnark proof and all commitment math. When EnygmaDvp is updated
-//	with the new function (9-element statement, new VK slot), add the dvp.Transact call.
+//	EnygmaDvp.paymentWithRelayerFee() and the relayer's POST /relay/payment_fee
+//	both exist and are exercised end-to-end below: the proof built in steps 1-10
+//	is sent to the relayer, which enforces RELAYER_MIN_FEE against the public
+//	StFee signal, dry-runs, and submits paymentWithRelayerFee() on Alice's
+//	behalf — she never signs an Ethereum transaction or touches gas.
 
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,6 +66,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
@@ -78,6 +87,9 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	}
 	if !serverAvailable("localhost:8082") {
 		t.Skip("gnark server not running on localhost:8082 — skipping")
+	}
+	if !serverAvailable("localhost:8090") {
+		t.Skip("relayer not running on localhost:8090 — skipping")
 	}
 
 	ctx := context.Background()
@@ -417,11 +429,148 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	t.Logf("  StFee=%s is publicly visible on-chain ✓ (anyone can verify Alice paid the relayer exactly %s tokens)",
 		sig[8], relayerAmt)
 
-	t.Logf("=== PAYMENT RELAYER FEE PUBLIC FLOW COMPLETE ===")
+	// ── Step 11: Relay — Alice sends the proof to the relayer ────────────────
+	// Alice does NOT sign an Ethereum transaction. The relayer enforces
+	// RELAYER_MIN_FEE against sig[8] (StFee), dry-runs, and submits
+	// paymentWithRelayerFee() on her behalf.
+	t.Log("Step 11 — Alice sends proof to relayer (POST /relay/payment_fee)")
+
+	relayReq := relayPaymentFeeRequest{
+		VaultId:      "0",
+		Proof:        bigsToArray8(t, proofResp.Proof),
+		PublicSignal: bigsToArray9(t, sig),
+		CipherText:   "0x" + hex.EncodeToString(ctxtBob),
+		EncTxData:    "0x" + hex.EncodeToString(ctxtIIBob),
+	}
+
+	relayResp, statusCode, err := postPaymentFeeToRelayer(t, relayerAPIKey, relayReq)
+	if err != nil {
+		t.Fatalf("postPaymentFeeToRelayer: %v", err)
+	}
+	if statusCode != http.StatusOK {
+		t.Fatalf("relayer returned %d: %s", statusCode, relayResp.Error)
+	}
+	t.Logf("  Relayer response: txHash=%s block=%d gasUsed=%d",
+		relayResp.TxHash, relayResp.BlockNumber, relayResp.GasUsed)
+
+	// ── Step 12: Verify on-chain events and that the relayer, not Alice, signed ─
+	t.Log("Step 12 — verifying on-chain Payment + Nullifier events")
+
+	txHash := common.HexToHash(relayResp.TxHash)
+	txReceipt, err := client.TransactionReceipt(ctx, txHash)
+	if err != nil {
+		t.Fatalf("TransactionReceipt(%s): %v", relayResp.TxHash, err)
+	}
+
+	paymentEventSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	nullifierEventSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
+	var paymentEvents, nullifierEvents int
+	for _, lg := range txReceipt.Logs {
+		switch lg.Topics[0] {
+		case paymentEventSig:
+			paymentEvents++
+			t.Logf("  Payment event: commitment=%s", lg.Topics[2].Big())
+		case nullifierEventSig:
+			nullifierEvents++
+			t.Logf("  Nullifier event: nullifier=%s", lg.Topics[3].Big())
+		}
+	}
+	if paymentEvents != 1 {
+		t.Errorf("expected 1 Payment event (Bob's destination), got %d", paymentEvents)
+	}
+	if nullifierEvents != 1 {
+		t.Errorf("expected 1 Nullifier event (Alice's input burned), got %d", nullifierEvents)
+	}
+
+	tx, _, err := client.TransactionByHash(ctx, txHash)
+	if err != nil {
+		t.Fatalf("TransactionByHash: %v", err)
+	}
+	signer := types.LatestSignerForChainID(big.NewInt(hardhatChainID))
+	if senderAddr, err := types.Sender(signer, tx); err == nil {
+		if senderAddr == common.HexToAddress(hardhatAliceAddr) {
+			t.Error("tx.from == Alice — relayer did not sign the transaction")
+		} else {
+			t.Logf("  tx.from = %s (relayer, not Alice)", senderAddr.Hex())
+		}
+	}
+
+	t.Logf("=== PAYMENT RELAYER FEE PUBLIC FLOW COMPLETE (on-chain) ===")
 	t.Logf("    Alice paid %s tokens to Bob", paymentAmt)
 	t.Logf("    Alice kept %s tokens as change", changeAmt)
 	t.Logf("    Relayer earned spendable note of %s tokens (publicly verifiable via StFee)", relayerAmt)
-	t.Log("    NOTE: on-chain submission requires adding paymentWithRelayerFeePublic to EnygmaDvp")
+	t.Log("    Alice's Ethereum address was NOT the transaction sender")
+}
+
+// ── relayer request/response types (POST /relay/payment_fee) ──────────────────
+//
+// Mirrors relayer/server.RelayPaymentFeeRequest/RelayPaymentResponse — this
+// test module doesn't import the relayer's Go module, so the wire shape is
+// duplicated here rather than shared, same as relayPaymentRequest in
+// 03_relayer_payment_test.go.
+
+type relayPaymentFeeRequest struct {
+	VaultId      string    `json:"vaultId"`
+	Proof        [8]string `json:"proof"`
+	PublicSignal [9]string `json:"publicSignal"`
+	CipherText   string    `json:"cipherText"`
+	EncTxData    string    `json:"encTxData"`
+}
+
+// postPaymentFeeToRelayer sends a signed (Bearer token) relay request to
+// POST /relay/payment_fee and returns the response — see postToRelayer in
+// 03_relayer_payment_test.go for the plain-payment equivalent.
+func postPaymentFeeToRelayer(t *testing.T, apiKey string, req relayPaymentFeeRequest) (*relayPaymentResponse, int, error) {
+	t.Helper()
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, relayerURL+"/relay/payment_fee", bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var result relayPaymentResponse
+	_ = json.Unmarshal(raw, &result)
+	return &result, resp.StatusCode, nil
+}
+
+// bigsToArray8 converts a []*big.Int of length 8 (the gnark proof response's
+// Proof field) into the [8]string decimal array the relayer expects.
+func bigsToArray8(t *testing.T, in []*big.Int) [8]string {
+	t.Helper()
+	if len(in) != 8 {
+		t.Fatalf("expected 8 proof elements, got %d", len(in))
+	}
+	var out [8]string
+	for i, v := range in {
+		out[i] = v.String()
+	}
+	return out
+}
+
+// bigsToArray9 converts a []*big.Int of length 9 (the PaymentRelayerFeePublic
+// circuit's public signal) into the [9]string decimal array the relayer expects.
+func bigsToArray9(t *testing.T, in []*big.Int) [9]string {
+	t.Helper()
+	if len(in) != 9 {
+		t.Fatalf("expected 9 public signal elements, got %d", len(in))
+	}
+	var out [9]string
+	for i, v := range in {
+		out[i] = v.String()
+	}
+	return out
 }
 
 // proofResponse mirrors the JSON response from /proof/paymentRelayerFeePublic.
