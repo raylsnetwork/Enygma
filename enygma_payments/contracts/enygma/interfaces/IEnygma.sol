@@ -64,6 +64,8 @@ interface IEnygma {
 
     event BurnSuccessful(uint256 bankIndex, uint256 burnValue);
 
+    event TreasuryAccountSet(uint256 indexed accountId);
+
     function Name() external view returns (string memory);
     function Symbol() external view returns (string memory);
     function TotalRegisteredBanks() external view returns (uint256);
@@ -101,6 +103,9 @@ interface IEnygma {
     function burn(uint256 bankIndex, uint256 burnValue) external returns (bool);
 
     function addFeeVerifier(address verifier) external returns (bool);
+
+    function treasuryAccountId() external view returns (uint256);
+    function setTreasuryAccountId(uint256 accountId) external returns (bool);
 
     function transferWithFee(
         Point[] memory commitments,

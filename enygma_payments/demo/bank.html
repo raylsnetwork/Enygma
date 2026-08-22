@@ -475,6 +475,14 @@ body.presentation-mode{zoom:1.3}
     <div class="tx-receivers" id="txReceivers">
       <!-- populated by JS -->
     </div>
+    <div class="tx-amount-row" style="margin-bottom:0;margin-top:4px;padding-top:8px;border-top:1px dashed var(--bd2)">
+      <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;color:var(--muted);cursor:pointer">
+        <input id="txFeeToggle" type="checkbox" style="accent-color:var(--amber)">
+        Include protocol fee → treasury
+      </label>
+      <input id="txFeeInput" type="number" value="20" min="0" step="5" style="display:none;width:64px;background:var(--s2);border:1px solid var(--bd2);padding:5px 7px;font-family:var(--mono);font-size:13px;color:var(--amber);font-weight:700;outline:none">
+      <span id="txFeeNote" style="display:none;font-family:var(--mono);font-size:8.5px;color:var(--muted)">on top of the transfer — sender debits amount + fee</span>
+    </div>
   </div>
 
   <!-- Swimlanes -->
@@ -518,7 +526,8 @@ body.presentation-mode{zoom:1.3}
     <div class="lane chain">
       <div class="lane-hdr">Settlement Network · On-Chain</div>
       <div class="lane-body">
-        <div class="sc" id="sc-relay_transfer"><div class="sc-top"><div class="sc-ic" id="si-relay_transfer">○</div><div class="sc-lbl">Submit via Relayer</div></div><div class="sc-sub" id="ss-relay_transfer">POST /relay/transfer → transfer()</div><div class="sc-why">A neutral relayer posts the proof — the sender never touches the blockchain directly</div></div>
+        <div class="sc" id="sc-relay_transfer"><div class="sc-top"><div class="sc-ic" id="si-relay_transfer">○</div><div class="sc-lbl">Submit via Relayer</div></div><div class="sc-sub" id="ss-relay_transfer">POST /relay/transfer → transfer()</div><div class="sc-why">A neutral relayer posts the proof — the sender never touches the blockchain directly. Fee mode: relayer enforces RELAYER_MIN_FEE (402 if too low)</div></div>
+        <div class="sc" id="sc-treasury_credit"><div class="sc-top"><div class="sc-ic" id="si-treasury_credit">○</div><div class="sc-lbl">Treasury Credited</div></div><div class="sc-sub" id="ss-treasury_credit">— (only on fee transfers)</div><div class="sc-why">The fee doesn't vanish — it's homomorphically added to a dedicated treasury account, same as any other credit</div></div>
         <div class="sc" id="sc-verify_balance"><div class="sc-top"><div class="sc-ic" id="si-verify_balance">○</div><div class="sc-lbl">Verify Settlement</div></div><div class="sc-sub" id="ss-verify_balance">getBalance + homomorphic check</div><div class="sc-why">The EVM verifier checks the proof in &lt;1ms — amounts update homomorphically, never decrypted</div></div>
       </div>
     </div>
@@ -529,6 +538,7 @@ body.presentation-mode{zoom:1.3}
     <div class="mc" id="mc-proofTime"><div class="mc-key">Proof Generation</div><div class="mc-val" id="mv-proofTime">—</div><div class="mc-sub">Groth16 witness + prove</div><div class="mc-bar"><div class="mc-bar-fill" id="mb-proofTime"></div></div></div>
     <div class="mc" id="mc-verifyGas"><div class="mc-key">On-Chain Gas</div><div class="mc-val" id="mv-verifyGas">—</div><div class="mc-sub">EVM gas for transfer()</div></div>
     <div class="mc" id="mc-flowTime"><div class="mc-key">End-to-End Time</div><div class="mc-val hl" id="mv-flowTime">—</div><div class="mc-sub">client → settled on-chain</div></div>
+    <div class="mc" id="mc-feeAmt" style="display:none"><div class="mc-key">Protocol Fee</div><div class="mc-val" id="mv-feeAmt">—</div><div class="mc-sub">signal[50] → treasury·G</div></div>
   </div>
 
   <!-- All-bank balance grid -->
@@ -824,6 +834,14 @@ function updateTxAmounts() {
 }
 
 document.getElementById('txSenderInput').addEventListener('input', updateTxAmounts);
+document.getElementById('txFeeToggle').addEventListener('change', (e) => {
+  const on = e.target.checked;
+  document.getElementById('txFeeInput').style.display = on ? '' : 'none';
+  document.getElementById('txFeeNote').style.display = on ? '' : 'none';
+  document.getElementById('mc-feeAmt').style.display = on ? '' : 'none';
+  const sub = document.getElementById('ss-relay_transfer');
+  if (sub) sub.textContent = on ? 'POST /relay/transfer_fee → transferWithFee()' : SDEFAULTS.relay_transfer;
+});
 
 // ── Swimlane step update ─────────────────────────────────────────────────────
 const SDEFAULTS = {
@@ -835,6 +853,7 @@ const SDEFAULTS = {
   compute_nullifier: 'η = Poseidon(H(s₀), epoch)',
   zk_proof: 'POST /proof/enygma · Groth16',
   relay_transfer: 'POST /relay/transfer → transfer()',
+  treasury_credit: '— (only on fee transfers)',
   verify_balance: 'getBalance + homomorphic check'
 };
 
@@ -904,7 +923,7 @@ function setMetric(id, val, barId, bv, bm) {
   if (barId && bm > 0) { const b = document.getElementById(barId); if (b) b.style.width = Math.min(100, (bv / bm) * 100) + '%'; }
 }
 function resetMetrics() {
-  ['proofTime', 'verifyGas', 'flowTime'].forEach(id => {
+  ['proofTime', 'verifyGas', 'flowTime', 'feeAmt'].forEach(id => {
     const e = document.getElementById('mv-' + id); if (e) { e.textContent = '—'; e.classList.remove('set'); }
     const mc = document.getElementById('mc-' + id); if (mc) mc.classList.remove('lit');
   });
@@ -915,6 +934,7 @@ function handleMetric(f, v) {
   if (f === 'proofTimeMs') setMetric('proofTime', n + 'ms', 'mb-proofTime', n, 60000);
   if (f === 'verifyGas') setMetric('verifyGas', commas(v));
   if (f === 'flowTimeMs') setMetric('flowTime', (n / 1000).toFixed(1) + 's');
+  if (f === 'feeAmt') setMetric('feeAmt', v + ' tokens → treasury');
 }
 
 // ── Mini bank balance grid ────────────────────────────────────────────────────
@@ -1119,6 +1139,9 @@ document.getElementById('transferBtn').addEventListener('click', () => {
   }
   if (receiverAmts.reduce((a, c) => a + c, 0) !== senderAmt || senderAmt <= 0) return;
 
+  const feeOn = document.getElementById('txFeeToggle').checked;
+  const feeAmt = feeOn ? Math.max(0, parseInt(document.getElementById('txFeeInput').value) || 0) : 0;
+
   // Save for summary
   lastTxSenderAmt = senderAmt;
   lastTxReceiverAmts = receiverAmts;
@@ -1129,6 +1152,9 @@ document.getElementById('transferBtn').addEventListener('click', () => {
     const ic = document.getElementById('si-' + s); if (ic) ic.textContent = '○';
     const sub = document.getElementById('ss-' + s); if (sub) sub.textContent = SDEFAULTS[s];
   });
+  // Reapply the fee-mode label — the reset above just overwrote it with the
+  // base-circuit default from SDEFAULTS.
+  if (feeOn) document.getElementById('ss-relay_transfer').textContent = 'POST /relay/transfer_fee → transferWithFee()';
   document.getElementById('fdot-sg').className = 'fdot';
   document.getElementById('fdot-gc').className = 'fdot';
   document.getElementById('balPanel').classList.remove('on');
@@ -1145,7 +1171,11 @@ document.getElementById('transferBtn').addEventListener('click', () => {
 
   sseWanted = true;
   connectSSE();
-  postRun('/run/transfer', { senderIdx: bankId, senderAmt, receiverAmts });
+  if (feeOn) {
+    postRun('/run/transfer-fee', { senderIdx: bankId, senderAmt, receiverAmts, feeAmt });
+  } else {
+    postRun('/run/transfer', { senderIdx: bankId, senderAmt, receiverAmts });
+  }
 });
 
 // ── Verify: Balance refresh ───────────────────────────────────────────────────

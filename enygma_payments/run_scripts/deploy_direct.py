@@ -28,6 +28,7 @@ CONTRACTS_DIR = os.path.join(ROOT, "..", "contracts", "enygma", "artifacts", "co
 
 ENYGMA_ARTIFACT = os.path.join(CONTRACTS_DIR, "Enygma.sol", "Enygma.json")
 VERIFIER_ARTIFACT = os.path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json")
+FEE_VERIFIER_ARTIFACT = os.path.join(CONTRACTS_DIR, "EnygmaFeeVerifier.sol", "Verifier.json")
 
 RECEIPTS_DIR = os.path.join(ROOT, "build", "enygma", "web3")
 RECEIPTS_PATH = os.path.join(RECEIPTS_DIR, "deploy_receipts.json")
@@ -71,9 +72,14 @@ def main():
     verifier_artifact = load_artifact(VERIFIER_ARTIFACT)
     verifier_receipt = deploy_contract(w3, account, verifier_artifact)
 
+    print("\nDeploying EnygmaFeeVerifier...")
+    fee_verifier_artifact = load_artifact(FEE_VERIFIER_ARTIFACT)
+    fee_verifier_receipt = deploy_contract(w3, account, fee_verifier_artifact)
+
     receipts = {
         "TOKEN": {"contractAddress": enygma_receipt.contractAddress},
         "VERIFIER": {"contractAddress": verifier_receipt.contractAddress},
+        "FEE_VERIFIER": {"contractAddress": fee_verifier_receipt.contractAddress},
     }
 
     os.makedirs(RECEIPTS_DIR, exist_ok=True)

@@ -55,6 +55,10 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--sans)
 .mode-btn:first-child { border-right: 1px solid var(--bd); }
 .mode-tip { font-size: 10.5px; color: var(--muted); font-style: italic; max-width: 240px; display: none; }
 body.mode-tag .mode-tip { display: block; }
+.fee-toggle-wrap { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); cursor: pointer; user-select: none; letter-spacing: .05em; }
+.fee-toggle-wrap input[type=checkbox] { accent-color: var(--amber); cursor: pointer; }
+.fee-toggle-wrap.on { color: var(--amber); }
+#feeAmtInput { width: 42px; background: var(--s2); border: 1px solid var(--bd2); border-radius: 4px; padding: 3px 5px; font-family: var(--mono); font-size: 11px; color: var(--amber); font-weight: 700; outline: none; }
 .controls { display: flex; align-items: center; gap: 10px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background .3s, box-shadow .3s; }
 .status-dot.running { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse-dot 1.2s infinite; }
@@ -345,6 +349,11 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
       <button class="mode-btn" id="btnTag" onclick="setMode('tag')">With Tag</button>
     </div>
     <span class="mode-tip">+ ML-KEM channel &amp; TagRegistry notification</span>
+    <label class="fee-toggle-wrap" id="feeToggleWrap" title="Route through the relayer with an embedded fee (PaymentRelayerFeePublic circuit, 1-in/3-out) instead of the relayer's fee-free payment() path. The relayer earns a real, spendable fee note — not a burned amount.">
+      <input type="checkbox" id="feeToggle" onchange="onFeeToggle()">
+      <span>Relayer Fee</span>
+    </label>
+    <input type="number" id="feeAmtInput" value="5" min="1" max="20" step="1" style="display:none">
   </div>
   <div class="controls">
     <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
@@ -458,7 +467,7 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
       <div class="flow-title">Token Flow</div>
       <div class="flow-viz">
         <div class="flow-party"><div class="flow-name">Alice</div>
-          <div class="flow-box"><div class="flow-before">deposited 40</div><div class="flow-after alice-final" id="flowAlice">10 change</div></div>
+          <div class="flow-box"><div class="flow-before" id="flowDepositAmt">deposited 40</div><div class="flow-after alice-final" id="flowAlice">10 change</div></div>
         </div>
         <div class="flow-arrow-col"><div class="flow-arrow-icon" id="flowArrow">→</div><div class="flow-amt" id="flowAmt">30 tokens</div></div>
         <div class="flow-party"><div class="flow-name">Bob</div>
@@ -474,7 +483,8 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
         <div class="metric-item" id="metric-proofTime"><div class="metric-key">Proof Generation</div><div class="metric-val" id="mv-proofTime">—</div><div class="metric-sub" id="ms-proofTime">Groth16 witness + prove</div><div class="metric-bar"><div class="metric-bar-fill" id="mb-proofTime"></div></div></div>
         <div class="metric-item" id="metric-proofSize"><div class="metric-key">Proof Size</div><div class="metric-val" id="mv-proofSize">—</div><div class="metric-sub">8 × 32-byte field elements</div></div>
         <div class="metric-item" id="metric-verifyTime"><div class="metric-key">Verify Round-Trip</div><div class="metric-val" id="mv-verifyTime">—</div><div class="metric-sub">Submit → tx confirmed</div><div class="metric-bar"><div class="metric-bar-fill" id="mb-verifyTime"></div></div></div>
-        <div class="metric-item" id="metric-verifyGas"><div class="metric-key">Verification Gas</div><div class="metric-val" id="mv-verifyGas">—</div><div class="metric-sub">EnygmaDvp.payment() gas</div></div>
+        <div class="metric-item" id="metric-verifyGas"><div class="metric-key">Verification Gas</div><div class="metric-val" id="mv-verifyGas">—</div><div class="metric-sub" id="ms-verifyGas">EnygmaDvp.payment() gas</div></div>
+        <div class="metric-item" id="metric-feeAmt" style="display:none"><div class="metric-key">Relayer Fee</div><div class="metric-val hl" id="mv-feeAmt">—</div><div class="metric-sub">StFee — publicly verifiable, spendable note</div></div>
         <div class="metric-item" id="metric-totalGas"><div class="metric-key">Total Protocol Gas</div><div class="metric-val hl" id="mv-totalGas">—</div><div class="metric-sub">Deposit + payment + tags</div></div>
         <div class="metric-item" id="metric-flowTime"><div class="metric-key">Total Flow Time</div><div class="metric-val hl" id="mv-flowTime">—</div><div class="metric-sub">End-to-end wall-clock</div></div>
       </div>
@@ -500,7 +510,7 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
     <div class="tx-section">
       <div class="tx-title">Transaction Record</div>
       <div class="tx-cards">
-        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label">Payment (EnygmaDvp.payment)</span><span class="tx-card-status pending" id="txstatus-payment">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-payment">—</div></div></div></div>
+        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label" id="txlabel-payment">Payment (EnygmaDvp.payment)</span><span class="tx-card-status pending" id="txstatus-payment">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-payment">—</div></div></div></div>
         <div class="tx-card tag-only-card" style="display:none"><div class="tx-card-header"><span class="tx-card-label">Channel Setup (TagChannelRegistry)</span><span class="tx-card-status pending" id="txstatus-channel">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-channel">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-channel">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-channel">—</div></div></div></div>
         <div class="tx-card tag-only-card" style="display:none"><div class="tx-card-header"><span class="tx-card-label">Tag Publish (TagRegistry)</span><span class="tx-card-status pending" id="txstatus-tag">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-tag">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-tag">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-tag">—</div></div></div></div>
       </div>
@@ -538,7 +548,15 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
 
 <script>
 // ── State ─────────────────────────────────────────────────────────────────────
-let mode = 'plain', es = null, txCount = 0;
+let mode = 'plain', es = null, txCount = 0, feeOn = false;
+
+// ── Fee toggle ─────────────────────────────────────────────────────────────────
+function onFeeToggle() {
+  feeOn = document.getElementById('feeToggle').checked;
+  document.getElementById('feeToggleWrap').classList.toggle('on', feeOn);
+  document.getElementById('feeAmtInput').style.display = feeOn ? '' : 'none';
+  document.getElementById('metric-feeAmt').style.display = feeOn ? '' : 'none';
+}
 
 // Live data cache — updated as participant/proto events arrive so diagrams can reference it
 const liveData = {};
@@ -1031,6 +1049,15 @@ function setProto(field, value) {
     case 'payGas':
       document.getElementById('txgas-payment').textContent = commaNum(value);
       setMetricVal('verifyGas', commaNum(value));
+      { const gasSub = document.getElementById('ms-verifyGas'); if (gasSub) gasSub.textContent = feeOn ? 'EnygmaDvp.paymentWithRelayerFee() gas' : 'EnygmaDvp.payment() gas'; }
+      break;
+    case 'depositAmt': {
+      const el = document.getElementById('flowDepositAmt');
+      if (el) el.textContent = 'deposited ' + value;
+      break;
+    }
+    case 'feeAmt':
+      setMetricVal('feeAmt', value + ' tokens');
       break;
     case 'chTxHash':
       document.getElementById('txhash-channel').innerHTML = makeHexInline(value);
@@ -1150,13 +1177,17 @@ function resetUI() {
   document.getElementById('flowAmt').classList.remove('active');
 
   // Reset metrics
-  ['proofTime','proofSize','verifyTime','verifyGas','totalGas','flowTime'].forEach(id => {
+  ['proofTime','proofSize','verifyTime','verifyGas','feeAmt','totalGas','flowTime'].forEach(id => {
     const el = document.getElementById('mv-'+id); if (el) { el.textContent = '—'; el.classList.remove('lit'); }
     const card = document.getElementById('metric-'+id); if (card) card.classList.remove('set');
   });
   ['mb-proofTime','mb-verifyTime'].forEach(id => { const el = document.getElementById(id); if (el) el.style.width='0%'; });
   const msSub = document.getElementById('ms-proofTime');
   if (msSub) msSub.textContent = 'Groth16 witness + prove';
+  const gasSub = document.getElementById('ms-verifyGas');
+  if (gasSub) gasSub.textContent = 'EnygmaDvp.payment() gas';
+  const depEl = document.getElementById('flowDepositAmt');
+  if (depEl) depEl.textContent = 'deposited ' + (feeOn ? '—' : '40');
 
   // Reset viz card
   document.getElementById('svzLabel').textContent = 'Waiting';
@@ -1185,7 +1216,19 @@ function run() {
   es = new EventSource('/events');
   es.onmessage = e => handleEvent(JSON.parse(e.data));
   es.onerror = () => setStatus('error', 'disconnected');
-  fetch('/run?mode='+mode, { method:'POST' })
+
+  // parseInt('0') is 0, which is falsy — `|| 5` would silently replace a
+  // deliberately-entered 0 with the default 5. Only fall back to 5 when the
+  // field didn't parse to a number at all; otherwise clamp to the field's
+  // stated min of 1 (matches #feeAmtInput's min="1" attribute).
+  const feeAmtRaw = parseInt(document.getElementById('feeAmtInput').value);
+  const feeAmt = feeOn ? Math.max(1, Number.isNaN(feeAmtRaw) ? 5 : feeAmtRaw) : 0;
+  const txLabel = document.getElementById('txlabel-payment');
+  if (txLabel) txLabel.textContent = feeAmt > 0 ? 'Payment (EnygmaDvp.paymentWithRelayerFee)' : 'Payment (EnygmaDvp.payment)';
+
+  let url = '/run?mode='+mode;
+  if (feeAmt > 0) url += '&fee='+feeAmt;
+  fetch(url, { method:'POST' })
     .then(r => { if (!r.ok) r.text().then(t => { appendLog('','✗ '+t,''); setStatus('error','error'); }); })
     .catch(err => { appendLog('','✗ fetch: '+err,''); setStatus('error','error'); });
 }
@@ -1243,7 +1286,9 @@ function handleEvent(ev) {
 
 function showSummary() {
   document.getElementById('sum-amount').textContent = '30 tokens';
-  document.getElementById('sum-mode').textContent = mode==='tag' ? 'With Tag (private notification)' : 'Plain (direct note scan)';
+  let modeTxt = mode==='tag' ? 'With Tag (private notification)' : 'Plain (direct note scan)';
+  if (feeOn) modeTxt += ' + Relayer Fee';
+  document.getElementById('sum-mode').textContent = modeTxt;
   document.getElementById('sum-txcount').textContent = txCount + ' on-chain';
   const tg = document.getElementById('mv-totalGas');
   document.getElementById('sum-gas').textContent = (tg && tg.textContent!=='—') ? tg.textContent+' gas' : '—';

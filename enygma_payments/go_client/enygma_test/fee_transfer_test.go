@@ -23,12 +23,15 @@ package enygma_test
 //
 // Flow:
 //
-//	Sender pays PROTOCOL_FEE to Relayer (off-chain, fixed amount — no negotiation)
-//	→ Sender builds proof with txValues (Σ=0) and fee=PROTOCOL_FEE at signal[50]
-//	→ gnark server /proof/enygma_fee  →  proof[8] + publicSignal[51]
-//	→ Relayer checks signal[50] == PROTOCOL_FEE  →  accepts transaction
+//	Sender builds proof with txValues (Σ=−fee) and fee=PROTOCOL_FEE at signal[50]
+//	→ gnark server /proof/enygma_fee  →  proof[8] + publicSignal[54]
+//	→ Relayer checks signal[50] >= RELAYER_MIN_FEE  →  accepts transaction
 //	→ Relayer POSTs /relay/transfer_fee  →  Enygma.transferWithFee() on-chain
 //	→ On-chain: commitments updated (bank 0 −100, bank 1 +60, bank 2 +40)
+//	→ On-chain: treasury account credited +fee·G (see treasuryAccountId /
+//	  setTreasuryAccountId) — restores Σ(balances)==totalSupply, which would
+//	  otherwise silently drift since the circuit's conservation constraint
+//	  only proves fee is missing from the k participants, not where it goes.
 //
 // Prerequisites:
 //
@@ -55,6 +58,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +172,29 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 	t.Logf("registered %d banks", nBanks)
 
+	// ── Register + configure the fee treasury ───────────────────────────────
+	// A reserved account (accountId = nBanks+1) that transferWithFee() credits
+	// with fee·G on every call. Registered with randomness=0 so its initial
+	// commitment is the identity point (0,1) — simplest possible baseline for
+	// the balance-delta check below.
+	treasuryId := big.NewInt(int64(nBanks) + 1)
+	treasurySk := big.NewInt(31337)
+	treasuryPk, _ := poseidon.Hash([]*big.Int{treasurySk, treasurySk})
+	treasuryPk.Mod(treasuryPk, curveP)
+	if r := waitTx(enygmaInstance.RegisterAccount(mkAuth(), ownerAddr,
+		treasuryId, treasuryPk, big.NewInt(0), []byte{})); r.Status != 1 {
+		t.Fatal("registerAccount treasury failed")
+	}
+	if r := waitTx(enygmaInstance.SetTreasuryAccountId(mkAuth(), treasuryId)); r.Status != 1 {
+		t.Fatal("setTreasuryAccountId failed")
+	}
+	t.Logf("registered treasury: accountId=%s", treasuryId)
+
+	treasuryBalBefore, err := enygmaInstance.GetBalance(&bind.CallOpts{}, treasuryId)
+	if err != nil {
+		t.Fatalf("GetBalance(treasury): %v", err)
+	}
+
 	if r := waitTx(enygmaInstance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
@@ -203,7 +230,16 @@ func TestFeeTransferFlow(t *testing.T) {
 		"RELAYER_GAS_LIMIT=10000000",
 		"RELAYER_CONTRACT_ADDR="+enygmaAddr.Hex(),
 		"RELAYER_PORT="+feeRelayerPort,
-		fmt.Sprintf("RELAYER_PROTOCOL_FEE=%d", PROTOCOL_FEE),
+		// Unique per test run — the default (./relayer_state.db, relative to
+		// relayerDir) would otherwise accumulate idempotency records across
+		// every run of this test forever.
+		"RELAYER_STORE_PATH="+filepath.Join(t.TempDir(), "relayer_state.db"),
+		// Exercises real fee-policy enforcement: the proof's signal[50] must be
+		// >= RELAYER_MIN_FEE or the relayer rejects with 402 before submitting.
+		// Set equal to PROTOCOL_FEE to test the inclusive boundary against a
+		// real proof (previously this env var was named RELAYER_PROTOCOL_FEE,
+		// which the relayer never read — enforcement was silently a no-op).
+		fmt.Sprintf("RELAYER_MIN_FEE=%d", PROTOCOL_FEE),
 		"GIN_MODE=release",
 	)
 	relayerStderr, _ := os.CreateTemp("", "relayer-stderr-*.txt")
@@ -231,7 +267,7 @@ func TestFeeTransferFlow(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	t.Logf("fee relayer ready on :%s → %s (PROTOCOL_FEE=%d)", feeRelayerPort, enygmaAddr.Hex(), PROTOCOL_FEE)
+	t.Logf("fee relayer ready on :%s → %s (RELAYER_MIN_FEE=%d, enforced)", feeRelayerPort, enygmaAddr.Hex(), PROTOCOL_FEE)
 
 	// ── Read on-chain state ───────────────────────────────────────────────────
 	blockHash, err := enygmaInstance.GetBlckHash(&bind.CallOpts{})
@@ -433,16 +469,48 @@ func TestFeeTransferFlow(t *testing.T) {
 		KIndex       []int64    `json:"kIndex"`
 	}{proof8, pubSigStrs, commFinal, kIdx64}
 
-	// ── Submit via relayer ────────────────────────────────────────────────────
-	// Sender has already paid PROTOCOL_FEE to the relayer (fixed, no negotiation).
-	// Relayer verifies signal[50] == PROTOCOL_FEE, then calls transferWithFee().
-	t.Log("submitting via /relay/transfer_fee…")
-
 	relayBody, _ := json.Marshal(relayFeeReq)
 	apiKey := os.Getenv("RELAYER_API_KEY")
 	if apiKey == "" {
 		apiKey = relayerKey
 	}
+
+	// ── Local ZK verify rejects a tampered proof, before any network call ──────
+	// Corrupt one proof element (still a well-formed decimal string, just the
+	// wrong curve point) — the relayer's native gnark verify must reject this
+	// on its own, without ever reaching the eth_call dry-run or the chain.
+	t.Log("")
+	t.Log("── Local Proof Verification (tampered proof) ────────────────────────────")
+	tamperedProof := proof8
+	tampered := new(big.Int).Add(proofResp.Proof[0], big.NewInt(1))
+	tamperedProof[0] = tampered.String()
+	tamperedReq := relayFeeReq
+	tamperedReq.Proof = tamperedProof
+	tamperedBody, _ := json.Marshal(tamperedReq)
+
+	tamperedHTTPReq, _ := http.NewRequest(http.MethodPost, feeRelayerURL+"/relay/transfer_fee", bytes.NewReader(tamperedBody))
+	tamperedHTTPReq.Header.Set("Content-Type", "application/json")
+	tamperedHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+	tamperedResp, err := http.DefaultClient.Do(tamperedHTTPReq)
+	if err != nil {
+		t.Fatalf("tampered-proof POST: %v", err)
+	}
+	defer tamperedResp.Body.Close()
+	tamperedRespBody, _ := io.ReadAll(tamperedResp.Body)
+	if tamperedResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("tampered proof: got %d, want 400: %s", tamperedResp.StatusCode, tamperedRespBody)
+	}
+	if !strings.Contains(string(tamperedRespBody), "invalid zk proof") {
+		t.Fatalf("tampered proof: expected local-verification rejection message, got: %s", tamperedRespBody)
+	}
+	t.Logf("tampered proof correctly rejected by local verify: %s", tamperedRespBody)
+
+	// ── Submit via relayer ────────────────────────────────────────────────────
+	// Sender has already paid PROTOCOL_FEE to the relayer (fixed, no negotiation).
+	// Relayer verifies the proof locally, checks signal[50] >= RELAYER_MIN_FEE,
+	// dry-runs via eth_call, then calls transferWithFee().
+	t.Log("")
+	t.Log("submitting via /relay/transfer_fee…")
 
 	relayHTTPReq, _ := http.NewRequest(http.MethodPost, feeRelayerURL+"/relay/transfer_fee", bytes.NewReader(relayBody))
 	relayHTTPReq.Header.Set("Content-Type", "application/json")
@@ -468,6 +536,50 @@ func TestFeeTransferFlow(t *testing.T) {
 		t.Fatalf("parse relay response: %v", err)
 	}
 	t.Logf("transferWithFee: tx=%s block=%d gas=%d", relayResp.TxHash, relayResp.BlockNumber, relayResp.GasUsed)
+
+	// ── Replay the identical request: must be an idempotent cache hit ─────────
+	// The relayer's dedup check runs before local verify and the dry-run (a
+	// cheap in-process store lookup, ahead of a pairing verification and an
+	// RPC eth_call — see RelayTransferFee's doc comment), so an exact replay
+	// of an already-mined request is now caught there first: the client gets
+	// its original success response back, not a dry-run rejection. This is
+	// the documented dedup contract ("a request identical to one already
+	// mined gets the cached result replayed rather than resubmitted or
+	// rejected"), not a new revert path — and it must NOT reach WaitMined
+	// (that would mean gas was spent on a request already known to have
+	// succeeded).
+	//
+	// The dry-run's own real-chain rejection mechanics (a well-formed but
+	// on-chain-stale proof, distinct from this exact-duplicate case) are
+	// exercised against mocks in relayer_handler_test.go
+	// (TestRelayHandler_Transfer_SimulateReverts /
+	// TransferFee_SimulateReverts), not against a live chain here — a real
+	// second proof for that scenario would need its own ~30s gnark proving
+	// run, which this test doesn't currently pay for.
+	t.Log("")
+	t.Log("── Idempotent Replay ────────────────────────────────────────────────────")
+	replayHTTPReq, _ := http.NewRequest(http.MethodPost, feeRelayerURL+"/relay/transfer_fee", bytes.NewReader(relayBody))
+	replayHTTPReq.Header.Set("Content-Type", "application/json")
+	replayHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+	replayResp, err := http.DefaultClient.Do(replayHTTPReq)
+	if err != nil {
+		t.Fatalf("replay POST: %v", err)
+	}
+	defer replayResp.Body.Close()
+	replayBody2, _ := io.ReadAll(replayResp.Body)
+	if replayResp.StatusCode != http.StatusOK {
+		t.Fatalf("replay: got %d, want 200 (idempotent cache hit): %s", replayResp.StatusCode, replayBody2)
+	}
+	var replayParsed struct {
+		TxHash string `json:"txHash"`
+	}
+	if err := json.Unmarshal(replayBody2, &replayParsed); err != nil {
+		t.Fatalf("parse replay response: %v", err)
+	}
+	if replayParsed.TxHash != relayResp.TxHash {
+		t.Fatalf("replay: txHash %s does not match the original submission's %s — not a clean cache hit", replayParsed.TxHash, relayResp.TxHash)
+	}
+	t.Logf("replay correctly served from the idempotency cache, same tx: %s", replayParsed.TxHash)
 
 	// ── Verify on-chain balances ──────────────────────────────────────────────
 	t.Log("")
@@ -498,6 +610,32 @@ func TestFeeTransferFlow(t *testing.T) {
 		} else {
 			t.Logf("  %-26s ✓", tc.label)
 		}
+	}
+
+	// Treasury: transferWithFee() credits fee·G on top of the k proof
+	// participants' deltas — without this credit, Σ(balances) silently drops
+	// by fee·G every fee-transfer and drifts out of sync with totalSupply.
+	treasuryBalAfter, err := enygmaInstance.GetBalance(&bind.CallOpts{}, treasuryId)
+	if err != nil {
+		t.Fatalf("getBalance(treasury): %v", err)
+	}
+	feeGPointEarly := babyjub.NewPoint().Mul(big.NewInt(PROTOCOL_FEE), curveG)
+	expectedTreasury := addBJPoints(&babyjub.Point{X: treasuryBalBefore.X, Y: treasuryBalBefore.Y}, feeGPointEarly)
+	gotTreasury := &babyjub.Point{X: treasuryBalAfter.X, Y: treasuryBalAfter.Y}
+	if gotTreasury.X.Cmp(expectedTreasury.X) != 0 || gotTreasury.Y.Cmp(expectedTreasury.Y) != 0 {
+		t.Errorf("  %-26s MISMATCH\n    got      (%s, %s)\n    expected (%s, %s)",
+			"treasury (+fee=20)", gotTreasury.X, gotTreasury.Y, expectedTreasury.X, expectedTreasury.Y)
+	} else {
+		t.Logf("  %-26s ✓", "treasury (+fee=20)")
+	}
+
+	// Solvency invariant: Σ(balances) == totalSupply. This is exactly the
+	// check that would fail without the treasury credit above — the fee
+	// would vanish from Σ(balances) while totalSupply stayed constant.
+	if ok, err := enygmaInstance.Check(&bind.CallOpts{}); err != nil || !ok {
+		t.Errorf("Check() (Σ(balances)==totalSupply): ok=%v err=%v", ok, err)
+	} else {
+		t.Log("  Check(): Σ(balances) == totalSupply ✓")
 	}
 
 	// ── Point conservation: Σ(TxCommit) + fee·G = (0,1) ────────────────────

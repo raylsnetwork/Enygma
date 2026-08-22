@@ -85,6 +85,39 @@ func TestInt64sToBI(t *testing.T) {
 	}
 }
 
+// ── bumpGasPrice ──────────────────────────────────────────────────────────────
+
+func TestBumpGasPrice_AlwaysStrictlyGreater(t *testing.T) {
+	// Covers the full range where the 112/100 integer-division bump alone
+	// would be a no-op (1..8 wei), the boundary where it starts working on
+	// its own (9 wei), and realistic higher values.
+	for _, gasPrice := range []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100, 1_000_000_000} {
+		gp := big.NewInt(gasPrice)
+		bumped := bumpGasPrice(gp)
+		if bumped.Cmp(gp) <= 0 {
+			t.Errorf("bumpGasPrice(%d) = %v, want strictly greater than %d", gasPrice, bumped, gasPrice)
+		}
+	}
+}
+
+func TestBumpGasPrice_LowPriceFallsBackToPlusOne(t *testing.T) {
+	// At gasPrice=1, 1*112/100 truncates to 1 (no-op) — must fall back to
+	// exactly gasPrice+1, not silently stay at gasPrice.
+	got := bumpGasPrice(big.NewInt(1))
+	if got.Int64() != 2 {
+		t.Errorf("bumpGasPrice(1) = %v, want 2 (gasPrice+1 fallback)", got)
+	}
+}
+
+func TestBumpGasPrice_HighPriceUsesPercentageBump(t *testing.T) {
+	// At realistic gas prices the 12% bump dominates the +1 floor.
+	got := bumpGasPrice(big.NewInt(1_000_000_000))
+	want := big.NewInt(1_120_000_000)
+	if got.Cmp(want) != 0 {
+		t.Errorf("bumpGasPrice(1e9) = %v, want %v", got, want)
+	}
+}
+
 // ── readAddressJSON ───────────────────────────────────────────────────────────
 
 func TestReadAddressJSON_Valid(t *testing.T) {

@@ -64,13 +64,14 @@ const (
 	listenAddr    = ":9091"
 	relayerURL    = "http://localhost:8090"
 	relayerAPIKey = "test-api-key-dev-only"
+	gnarkURL      = "http://localhost:8082"
 
 	// Hardhat account[0] — Alice (deposits into the vault)
 	alicePrivKeyHex = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 	// Hardhat account[1] — Bob (receives payment)
 	bobPrivKeyHex = "69b5623bd1cfe22983c8849d155ca641238c18ab1b2e34c5ae943ed2ce4716b7"
 
-	depositAmt  = int64(40)
+	depositAmt  = int64(40) // no-fee deposit: paymentAmt + changeAmt
 	paymentAmt  = int64(30)
 	changeAmt   = int64(10)
 	merkleDepth = 8
@@ -116,7 +117,16 @@ type Event struct {
 	TS     string `json:"ts,omitempty"`
 	Cat    string `json:"cat,omitempty"` // log category: key|chain|zk|tag
 	// Participant panel
-	Pid   int    `json:"pid,omitempty"`
+	//
+	// Pid has no `,omitempty`: Alice is pid 0, and omitempty on an int field
+	// treats the zero value as absent, dropping "pid" from the JSON
+	// entirely for every one of her participant events. The client's
+	// `case 'participant': setField(ev.pid, ...)` then reads
+	// ev.pid===undefined, looks up the DOM id "pundefined-<field>", finds
+	// nothing, and silently no-ops — so Alice's whole panel stayed blank in
+	// every mode. Bob (pid 1) was never affected, which is why this went
+	// unnoticed: his side of the UI always worked.
+	Pid   int    `json:"pid"`
 	Field string `json:"field,omitempty"`
 	Value string `json:"value,omitempty"`
 }
@@ -212,9 +222,15 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	mode := r.URL.Query().Get("mode")
 	withTag := mode == "tag"
+	var feeAmt int64
+	if v := r.URL.Query().Get("fee"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			feeAmt = n
+		}
+	}
 	go func() {
 		defer s.runLock.Unlock()
-		runFlow(s.broker, withTag)
+		runFlow(s.broker, withTag, feeAmt)
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"status":"started"}`)
@@ -227,6 +243,11 @@ type relayInfoResponse struct {
 	TagRegistryAddr        string `json:"tagRegistryAddr"`
 	TagChannelRegistryAddr string `json:"tagChannelRegistryAddr"`
 	ChainID                int64  `json:"chainId"`
+	// MinFee is the relayer's configured RELAYER_MIN_FEE floor (decimal
+	// string, "0" = disabled) — checked against feeAmt before running the
+	// full flow, so a fee chosen below the relayer's floor fails fast
+	// instead of only after the slowest step (ZK proof generation).
+	MinFee string `json:"minFee"`
 }
 
 type relayPaymentRequest struct {
@@ -242,6 +263,78 @@ type relayPaymentResponse struct {
 	BlockNumber uint64 `json:"blockNumber"`
 	GasUsed     uint64 `json:"gasUsed"`
 	Error       string `json:"error,omitempty"`
+}
+
+// relayPaymentFeeRequest is the fee-paying counterpart to relayPaymentRequest
+// — POST /relay/payment_fee, using the PaymentRelayerFeePublic circuit
+// (1 input / 3 outputs, 9-element public signal with a public StFee at
+// index 8) instead of the plain 2-output Payment circuit. See
+// relayer/server.RelayPaymentFeeRequest for the authoritative shape.
+type relayPaymentFeeRequest struct {
+	VaultId      string    `json:"vaultId"`
+	Proof        [8]string `json:"proof"`
+	PublicSignal [9]string `json:"publicSignal"`
+	CipherText   string    `json:"cipherText"`
+	EncTxData    string    `json:"encTxData"`
+}
+
+// gnarkProofResponse mirrors the JSON response from any /proof/* endpoint on
+// the gnark server — used for the fee circuit, which (unlike the plain
+// Payment circuit) has no rpcore.PaymentClient wrapper, so the request is
+// built and posted directly.
+type gnarkProofResponse struct {
+	Proof        []*big.Int `json:"proof"`
+	PublicSignal []*big.Int `json:"publicSignal"`
+	Error        string     `json:"error"`
+}
+
+func postProof(url string, body interface{}) (*gnarkProofResponse, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("http.Post: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gnark server %d: %s", resp.StatusCode, string(raw))
+	}
+	var out gnarkProofResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	if out.Error != "" {
+		return nil, fmt.Errorf("gnark error: %s", out.Error)
+	}
+	return &out, nil
+}
+
+// bigsToArray8/9 convert a gnark JSON response's []*big.Int fields into the
+// fixed-size decimal-string arrays the relayer's wire format expects.
+func bigsToArray8(in []*big.Int) (out [8]string, err error) {
+	if len(in) != 8 {
+		return out, fmt.Errorf("expected 8 proof elements, got %d", len(in))
+	}
+	for i, v := range in {
+		out[i] = v.String()
+	}
+	return out, nil
+}
+
+func bigsToArray9(in []*big.Int) (out [9]string, err error) {
+	if len(in) != 9 {
+		return out, fmt.Errorf("expected 9 public signal elements, got %d", len(in))
+	}
+	for i, v := range in {
+		out[i] = v.String()
+	}
+	return out, nil
 }
 
 type relayChannelRequest struct {
@@ -360,23 +453,6 @@ func postRelayer(path string, body interface{}, result interface{}) (int, error)
 	return resp.StatusCode, nil
 }
 
-func buildRelayPaymentRequest(result *dvpcore.PaymentResult) relayPaymentRequest {
-	var proof [8]string
-	copy(proof[:], result.Proof)
-	stmt := result.ContractStatement()
-	var sig [7]string
-	for i, v := range stmt {
-		sig[i] = v.String()
-	}
-	return relayPaymentRequest{
-		VaultId:      "0",
-		Proof:        proof,
-		PublicSignal: sig,
-		CipherText:   "0x" + hex.EncodeToString(result.CipherText),
-		EncTxData:    "0x" + hex.EncodeToString(result.EncTxData),
-	}
-}
-
 func buildVaultMerkleTree(ctx context.Context, client *ethclient.Client, vaultAddr common.Address) (*rpcore.MerkleTree, error) {
 	commitmentSig := crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
 	query := ethereum.FilterQuery{
@@ -421,7 +497,7 @@ func formatNum(n uint64) string {
 
 // ── Main flow ─────────────────────────────────────────────────────────────────
 
-func runFlow(b *Broker, withTag bool) {
+func runFlow(b *Broker, withTag bool, feeAmt int64) {
 	b.publish(Event{Type: "reset"})
 	time.Sleep(80 * time.Millisecond)
 
@@ -483,6 +559,18 @@ func runFlow(b *Broker, withTag bool) {
 			if info.RelayerAddr != "" {
 				proto("relayerAddr", info.RelayerAddr)
 				logMsg("chain", fmt.Sprintf("relayer: %s", shortHex(info.RelayerAddr, 18)))
+			}
+			// Fee mode: fail fast against the relayer's configured floor
+			// before running keygen/deposit/proof-generation, rather than
+			// discovering the mismatch only after POST /relay/payment_fee
+			// rejects it with 402 — the ZK proof step alone is the slowest
+			// part of the flow and would otherwise be wasted every time.
+			if feeAmt > 0 && info.MinFee != "" {
+				if minFee, ok := new(big.Int).SetString(info.MinFee, 10); ok && minFee.Sign() > 0 && big.NewInt(feeAmt).Cmp(minFee) < 0 {
+					fail("prereqs", "Check prerequisites", fmt.Errorf(
+						"chosen fee %d is below the relayer's minimum fee %s — raise the fee amount and retry", feeAmt, minFee))
+					return
+				}
 			}
 			if withTag {
 				zeroAddr := common.Address{}.Hex()
@@ -560,6 +648,16 @@ func runFlow(b *Broker, withTag bool) {
 
 	gnarkClient := rpcore.NewPaymentClient("")
 	tokenId     := big.NewInt(0)
+
+	// depAmt is what Alice deposits. In fee mode her input note must cover
+	// the relayer's fee note too — paymentAmt + changeAmt + feeAmt, matching
+	// the PaymentRelayerFeePublic circuit's 1-in/3-out conservation law
+	// (Σvaluesin == valOut[0]+valOut[1]+valOut[2]) — rather than the plain
+	// 2-output circuit's paymentAmt + changeAmt.
+	depAmt := depositAmt
+	if feeAmt > 0 {
+		depAmt = paymentAmt + changeAmt + feeAmt
+	}
 
 	// ── Step: Key generation ──────────────────────────────────────────────────
 	emit("keygen", "running", "Generate key pairs", "Alice & Bob each generate spend+view keypairs…")
@@ -672,17 +770,17 @@ func runFlow(b *Broker, withTag bool) {
 	}
 
 	// ── Step: Deposit ─────────────────────────────────────────────────────────
-	emit("deposit", "running", "Deposit ERC-20", fmt.Sprintf("Alice mints and deposits %d tokens into the private vault…", depositAmt))
+	emit("deposit", "running", "Deposit ERC-20", fmt.Sprintf("Alice mints and deposits %d tokens into the private vault…", depAmt))
 
 	// Mint tokens to Alice.
-	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From, big.NewInt(depositAmt*10))
+	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From, big.NewInt(depAmt*10))
 	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("ERC20.mint: %w", err)); return }
 	if _, err := waitMined(ctx, client, mintTx); err != nil {
 		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait mint: %w", err)); return
 	}
-	logMsg("chain", fmt.Sprintf("ERC20.mint(%d tokens) → Alice", depositAmt*10))
+	logMsg("chain", fmt.Sprintf("ERC20.mint(%d tokens) → Alice", depAmt*10))
 
-	approveTx, err := erc20.Transact(aliceAuth, "approve", vaultAddr, big.NewInt(depositAmt))
+	approveTx, err := erc20.Transact(aliceAuth, "approve", vaultAddr, big.NewInt(depAmt))
 	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("ERC20.approve: %w", err)); return }
 	if _, err := waitMined(ctx, client, approveTx); err != nil {
 		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait approve: %w", err)); return
@@ -697,14 +795,14 @@ func runFlow(b *Broker, withTag bool) {
 	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("DerivePaymentKey: %w", err)); return }
 	aliceSaltBField := rpcore.SaltBToField(aliceSaltB)
 
-	aliceCommitment, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, aliceSaltBField, big.NewInt(depositAmt), tokenId)
+	aliceCommitment, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, aliceSaltBField, big.NewInt(depAmt), tokenId)
 	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("Erc20CommitmentV2: %w", err)); return }
 
-	depositCtxt, err := rpcore.EncryptPayload(aliceEncKey, tokenId, big.NewInt(depositAmt))
+	depositCtxt, err := rpcore.EncryptPayload(aliceEncKey, tokenId, big.NewInt(depAmt))
 	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("EncryptPayload: %w", err)); return }
 
 	depositTx, err := vault.Transact(aliceAuth, "depositV2",
-		[]*big.Int{big.NewInt(depositAmt), aliceSpend.PublicKey, aliceSaltBField, tokenId},
+		[]*big.Int{big.NewInt(depAmt), aliceSpend.PublicKey, aliceSaltBField, tokenId},
 		capsule, depositCtxt)
 	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("depositV2: %w", err)); return }
 	depositReceipt, err := waitMined(ctx, client, depositTx)
@@ -714,11 +812,12 @@ func runFlow(b *Broker, withTag bool) {
 	logMsg("chain", fmt.Sprintf("Erc20CoinVault.depositV2() → block %d  gas %s",
 		depositReceipt.BlockNumber, formatNum(depositReceipt.GasUsed)))
 	logMsg("key", fmt.Sprintf("Poseidon commitment: 0x%s…", aliceCommitment.Text(16)[:16]))
+	proto("depositAmt", fmt.Sprintf("%d", depAmt))
 	proto("depositBlock", fmt.Sprintf("%d", depositReceipt.BlockNumber))
 	proto("depositGas", fmt.Sprintf("%d", depositReceipt.GasUsed))
-	panel(0, "balance", fmt.Sprintf("%d tokens (deposited)", depositAmt))
+	panel(0, "balance", fmt.Sprintf("%d tokens (deposited)", depAmt))
 	panel(0, "commitment", "0x"+aliceCommitment.Text(16))
-	emit("deposit", "success", "Deposit ERC-20", fmt.Sprintf("Alice deposited %d tokens — Poseidon commitment recorded on-chain (block %d)", depositAmt, depositReceipt.BlockNumber))
+	emit("deposit", "success", "Deposit ERC-20", fmt.Sprintf("Alice deposited %d tokens — Poseidon commitment recorded on-chain (block %d)", depAmt, depositReceipt.BlockNumber))
 	pause(2000 * time.Millisecond)
 
 	// ── Step: Merkle proof ────────────────────────────────────────────────────
@@ -735,66 +834,212 @@ func runFlow(b *Broker, withTag bool) {
 	pause(2000 * time.Millisecond)
 
 	// ── Step: ZK proof ────────────────────────────────────────────────────────
-	emit("zkproof", "running", "Generate ZK Proof",
-		fmt.Sprintf("Gnark server: proving pay=%d to Bob, change=%d to Alice…", paymentAmt, changeAmt))
-
-	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
-	proofGenStart := time.Now()
-	paymentResult, err := gnarkClient.BoundPaymentProof(
-		vaultAddrBig,
-		big.NewInt(0),
-		[]*big.Int{big.NewInt(depositAmt)},
-		[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
-		[]*big.Int{aliceSaltBField},
-		[]*big.Int{big.NewInt(paymentAmt), big.NewInt(changeAmt)},
-		[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
-		[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
-		merkleDepth,
-		[]*rpcore.MerkleProof{aliceProof},
-		[]*big.Int{big.NewInt(0)},
-		tokenId,
+	// feeAmt==0 uses the plain 1-in/2-out Payment circuit (BoundPaymentProof
+	// wraps POST /proof/payment). feeAmt>0 uses the 1-in/3-out
+	// PaymentRelayerFeePublic circuit instead — Alice's proof commits to a
+	// third output note (the relayer's fee) with a publicly verifiable
+	// amount (StFee). There's no rpcore wrapper for that circuit, so its
+	// request is built and posted directly, mirroring
+	// test/08_payment_relayer_fee_public_test.go.
+	//
+	// Both branches converge on a shared set of variables the rest of the
+	// flow (relay, tag, scan) reads: stmt[3..5] (nullifier, Bob's
+	// commitment, Alice's change commitment — the same indices in both the
+	// 7-element and 9-element public signal), proofStrs, outSaltA,
+	// outSaltBob, cipherTextBob, encTxDataBob.
+	var (
+		stmt                        []*big.Int
+		proofStrs                   [8]string
+		outSaltA, outSaltBob        *big.Int
+		cipherTextBob, encTxDataBob []byte
 	)
-	proofGenMs = time.Since(proofGenStart).Milliseconds()
-	if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundPaymentProof: %w", err)); return }
+	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
 
-	stmt := paymentResult.ContractStatement()
-	logMsg("zk", fmt.Sprintf("proof generation: %d ms  size: 256 bytes (Groth16: 8 × 32-byte field elements)", proofGenMs))
-	logMsg("zk", fmt.Sprintf("nullifier: 0x%s…", stmt[3].Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("Bob commitment:   0x%s…", stmt[4].Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("Alice change cmt: 0x%s…", stmt[5].Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("Bob saltB: 0x%s…", paymentResult.SaltB.Text(16)[:16]))
-	panel(0, "nullifier", "0x"+stmt[3].Text(16))
-	panel(0, "proof", "0x"+paymentResult.Proof[0])
-	panel(1, "commitment", "0x"+stmt[4].Text(16))
-	proto("proofTimeMs", fmt.Sprintf("%d", proofGenMs))
-	proto("proofSizeBytes", "256")
-	emit("zkproof", "success", "Generate ZK Proof", fmt.Sprintf("Groth16 proof generated in %d ms — nullifier and output commitments revealed, inputs remain private", proofGenMs))
+	if feeAmt == 0 {
+		emit("zkproof", "running", "Generate ZK Proof",
+			fmt.Sprintf("Gnark server: proving pay=%d to Bob, change=%d to Alice…", paymentAmt, changeAmt))
+
+		proofGenStart := time.Now()
+		paymentResult, err := gnarkClient.BoundPaymentProof(
+			vaultAddrBig,
+			big.NewInt(0),
+			[]*big.Int{big.NewInt(depAmt)},
+			[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
+			[]*big.Int{aliceSaltBField},
+			[]*big.Int{big.NewInt(paymentAmt), big.NewInt(changeAmt)},
+			[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
+			[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
+			merkleDepth,
+			[]*rpcore.MerkleProof{aliceProof},
+			[]*big.Int{big.NewInt(0)},
+			tokenId,
+		)
+		proofGenMs = time.Since(proofGenStart).Milliseconds()
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundPaymentProof: %w", err)); return }
+
+		stmt = paymentResult.ContractStatement()
+		copy(proofStrs[:], paymentResult.Proof)
+		outSaltA, outSaltBob = paymentResult.SaltA, paymentResult.SaltB
+		cipherTextBob, encTxDataBob = paymentResult.CipherText, paymentResult.EncTxData
+
+		logMsg("zk", fmt.Sprintf("proof generation: %d ms  size: 256 bytes (Groth16: 8 × 32-byte field elements)", proofGenMs))
+		logMsg("zk", fmt.Sprintf("nullifier: 0x%s…", stmt[3].Text(16)[:16]))
+		logMsg("zk", fmt.Sprintf("Bob commitment:   0x%s…", stmt[4].Text(16)[:16]))
+		logMsg("zk", fmt.Sprintf("Alice change cmt: 0x%s…", stmt[5].Text(16)[:16]))
+		logMsg("zk", fmt.Sprintf("Bob saltB: 0x%s…", outSaltBob.Text(16)[:16]))
+		panel(0, "nullifier", "0x"+stmt[3].Text(16))
+		panel(0, "proof", "0x"+proofStrs[0])
+		panel(1, "commitment", "0x"+stmt[4].Text(16))
+		proto("proofTimeMs", fmt.Sprintf("%d", proofGenMs))
+		proto("proofSizeBytes", "256")
+		emit("zkproof", "success", "Generate ZK Proof", fmt.Sprintf("Groth16 proof generated in %d ms — nullifier and output commitments revealed, inputs remain private", proofGenMs))
+	} else {
+		emit("zkproof", "running", "Generate ZK Proof",
+			fmt.Sprintf("Gnark server: proving pay=%d to Bob, change=%d to Alice, fee=%d to relayer…", paymentAmt, changeAmt, feeAmt))
+
+		relayerSpend, err := rpcore.NewSpendKeyPair()
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("relayer NewSpendKeyPair: %w", err)); return }
+
+		nullifier, err := rpcore.GetNullifier(aliceSpend.PrivateKey, aliceProof.Indices)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("GetNullifier: %w", err)); return }
+
+		// Output 0: Bob's payment — ML-KEM delivery, same as the plain path.
+		ssBob, ctxtBobCapsule, err := rpcore.Encapsulate(bobView.EncapsKey)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("Encapsulate (Bob): %w", err)); return }
+		saltBobRaw, err := rpcore.DerivePaymentSalt(ssBob)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("DerivePaymentSalt (Bob): %w", err)); return }
+		encKeyBob, err := rpcore.DerivePaymentKey(ssBob)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("DerivePaymentKey (Bob): %w", err)); return }
+		ctxtIIBob, err := rpcore.EncryptPayload(encKeyBob, tokenId, big.NewInt(paymentAmt))
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("EncryptPayload (Bob): %w", err)); return }
+		saltBobField := rpcore.SaltBToField(saltBobRaw)
+		cmtBob, err := rpcore.Erc20CommitmentV2(bobSpend.PublicKey, saltBobField, big.NewInt(paymentAmt), tokenId)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("Erc20CommitmentV2 (Bob): %w", err)); return }
+
+		// Output 1: Alice's change — random salt.
+		saltA, err := rpcore.RandomInField()
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("RandomInField (change): %w", err)); return }
+		cmtChange, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, saltA, big.NewInt(changeAmt), tokenId)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("Erc20CommitmentV2 (change): %w", err)); return }
+
+		// Output 2: the relayer's fee note — a real, spendable note (not a
+		// burned amount), random salt.
+		saltRelayer, err := rpcore.RandomInField()
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("RandomInField (relayer): %w", err)); return }
+		cmtRelayer, err := rpcore.Erc20CommitmentV2(relayerSpend.PublicKey, saltRelayer, big.NewInt(feeAmt), tokenId)
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("Erc20CommitmentV2 (relayer): %w", err)); return }
+
+		var pathElements [8]string
+		for j, el := range aliceProof.Elements {
+			if j >= 8 { break }
+			pathElements[j] = el.String()
+		}
+
+		proofGenStart := time.Now()
+		proofResp, err := postProof(gnarkURL+"/proof/paymentRelayerFeePublic", map[string]interface{}{
+			"stMessage":            "0",
+			"stTreeNumbers":        [1]string{"0"},
+			"stMerkleRoots":        [1]string{aliceProof.Root.String()},
+			"stNullifiers":         [1]string{nullifier.String()},
+			"stCommitmentsOut":     [3]string{cmtBob.String(), cmtChange.String(), cmtRelayer.String()},
+			"stContractAddress":    vaultAddrBig.String(),
+			"stFee":                fmt.Sprintf("%d", feeAmt),
+			"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
+			"wtValuesIn":           [1]string{fmt.Sprintf("%d", depAmt)},
+			"wtSaltsIn":            [1]string{aliceSaltBField.String()},
+			"wtPathElements":       [1][8]string{pathElements},
+			"wtPathIndices":        [1]string{aliceProof.Indices.String()},
+			"wtTokenId":            tokenId.String(),
+			"wtSpendPublicKeysOut": [3]string{bobSpend.PublicKey.String(), aliceSpend.PublicKey.String(), relayerSpend.PublicKey.String()},
+			"wtValuesOut":          [3]string{fmt.Sprintf("%d", paymentAmt), fmt.Sprintf("%d", changeAmt), fmt.Sprintf("%d", feeAmt)},
+			"wtSaltsOut":           [3]string{saltBobField.String(), saltA.String(), saltRelayer.String()},
+		})
+		proofGenMs = time.Since(proofGenStart).Milliseconds()
+		if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("paymentRelayerFeePublic proof: %w", err)); return }
+
+		stmt = proofResp.PublicSignal
+		if len(stmt) != 9 {
+			fail("zkproof", "Generate ZK Proof", fmt.Errorf("expected 9 public signal elements, got %d", len(stmt)))
+			return
+		}
+		proofStrs, err = bigsToArray8(proofResp.Proof)
+		if err != nil { fail("zkproof", "Generate ZK Proof", err); return }
+		outSaltA, outSaltBob = saltA, saltBobField
+		cipherTextBob, encTxDataBob = ctxtBobCapsule, ctxtIIBob
+
+		logMsg("zk", fmt.Sprintf("proof generation: %d ms  size: 256 bytes (Groth16: 8 × 32-byte field elements)", proofGenMs))
+		logMsg("zk", fmt.Sprintf("nullifier: 0x%s…", stmt[3].Text(16)[:16]))
+		logMsg("zk", fmt.Sprintf("Bob commitment:   0x%s…", stmt[4].Text(16)[:16]))
+		logMsg("zk", fmt.Sprintf("Alice change cmt: 0x%s…", stmt[5].Text(16)[:16]))
+		logMsg("zk", fmt.Sprintf("Relayer fee note: 0x%s…  amount=%d (publicly verifiable via StFee)", stmt[6].Text(16)[:16], feeAmt))
+		logMsg("zk", fmt.Sprintf("Bob saltB: 0x%s…", outSaltBob.Text(16)[:16]))
+		panel(0, "nullifier", "0x"+stmt[3].Text(16))
+		panel(0, "proof", "0x"+proofStrs[0])
+		panel(1, "commitment", "0x"+stmt[4].Text(16))
+		proto("proofTimeMs", fmt.Sprintf("%d", proofGenMs))
+		proto("proofSizeBytes", "256")
+		proto("feeAmt", fmt.Sprintf("%d", feeAmt))
+		emit("zkproof", "success", "Generate ZK Proof", fmt.Sprintf("Groth16 proof generated in %d ms — nullifier, output commitments, and the public relayer fee revealed; inputs remain private", proofGenMs))
+	}
 	pause(2000 * time.Millisecond)
 
 	// ── Step: Relay payment ───────────────────────────────────────────────────
-	emit("relay", "running", "Relay Payment", "Alice sends unsigned proof to relayer (POST /relay/payment)…")
-
-	relayReq := buildRelayPaymentRequest(paymentResult)
 	var payResp relayPaymentResponse
+	var status int
+	var relayErr error
 	relayCallStart := time.Now()
-	status, err := postRelayer("/relay/payment", relayReq, &payResp)
+
+	if feeAmt == 0 {
+		emit("relay", "running", "Relay Payment", "Alice sends unsigned proof to relayer (POST /relay/payment)…")
+		var sig7 [7]string
+		for i := 0; i < 7; i++ {
+			sig7[i] = stmt[i].String()
+		}
+		relayReq := relayPaymentRequest{
+			VaultId:      "0",
+			Proof:        proofStrs,
+			PublicSignal: sig7,
+			CipherText:   "0x" + hex.EncodeToString(cipherTextBob),
+			EncTxData:    "0x" + hex.EncodeToString(encTxDataBob),
+		}
+		status, relayErr = postRelayer("/relay/payment", relayReq, &payResp)
+	} else {
+		emit("relay", "running", "Relay Payment", fmt.Sprintf("Alice sends unsigned proof to relayer, embedding a %d-token fee (POST /relay/payment_fee)…", feeAmt))
+		sig9, err9 := bigsToArray9(stmt)
+		if err9 != nil { fail("relay", "Relay Payment", err9); return }
+		relayReq := relayPaymentFeeRequest{
+			VaultId:      "0",
+			Proof:        proofStrs,
+			PublicSignal: sig9,
+			CipherText:   "0x" + hex.EncodeToString(cipherTextBob),
+			EncTxData:    "0x" + hex.EncodeToString(encTxDataBob),
+		}
+		status, relayErr = postRelayer("/relay/payment_fee", relayReq, &payResp)
+	}
 	relayRTTms = time.Since(relayCallStart).Milliseconds()
-	if err != nil { fail("relay", "Relay Payment", err); return }
+	if relayErr != nil { fail("relay", "Relay Payment", relayErr); return }
 	if status != http.StatusOK {
 		fail("relay", "Relay Payment", fmt.Errorf("relayer %d: %s", status, payResp.Error))
 		return
 	}
+
+	onchainMethod := "payment()"
+	if feeAmt > 0 { onchainMethod = "paymentWithRelayerFee()" }
 
 	totalGasUsed += payResp.GasUsed
 	proto("payTxHash", payResp.TxHash)
 	proto("payBlock", fmt.Sprintf("%d", payResp.BlockNumber))
 	proto("payGas", fmt.Sprintf("%d", payResp.GasUsed))
 	proto("verifyTimeMs", fmt.Sprintf("%d", relayRTTms))
-	logMsg("chain", fmt.Sprintf("EnygmaDvp.payment() → block %d  gas %s  tx %s…",
-		payResp.BlockNumber, formatNum(payResp.GasUsed), shortHex(payResp.TxHash, 18)))
+	logMsg("chain", fmt.Sprintf("EnygmaDvp.%s → block %d  gas %s  tx %s…",
+		onchainMethod, payResp.BlockNumber, formatNum(payResp.GasUsed), shortHex(payResp.TxHash, 18)))
 	logMsg("zk", fmt.Sprintf("relay round-trip (submit→confirmed): %d ms  verify gas: %s", relayRTTms, formatNum(payResp.GasUsed)))
 	panel(0, "balance", fmt.Sprintf("0 tokens (note spent at block %d)", payResp.BlockNumber))
-	emit("relay", "success", "Relay Payment", fmt.Sprintf("Relayer submitted payment() on-chain (block %d, gas %s)", payResp.BlockNumber, formatNum(payResp.GasUsed)))
+	successMsg := fmt.Sprintf("Relayer submitted %s on-chain (block %d, gas %s)", onchainMethod, payResp.BlockNumber, formatNum(payResp.GasUsed))
+	if feeAmt > 0 {
+		successMsg += fmt.Sprintf(" — relayer earned a spendable %d-token fee note", feeAmt)
+	}
+	emit("relay", "success", "Relay Payment", successMsg)
 	pause(2000 * time.Millisecond)
 
 	// ── Step: Tag notification (with-tag mode) ────────────────────────────────
@@ -806,7 +1051,7 @@ func runFlow(b *Broker, withTag bool) {
 			client, 3,
 			bobSpend.PublicKey,
 			channelSS,
-			big.NewInt(paymentAmt), tokenId, paymentResult.SaltB,
+			big.NewInt(paymentAmt), tokenId, outSaltBob,
 		)
 		if err != nil { fail("tag", "Publish Tag", fmt.Errorf("PreparePaymentTag: %w", err)); return }
 
@@ -872,7 +1117,7 @@ func runFlow(b *Broker, withTag bool) {
 		emit("verify", "running", "Verify Commitment", "Checking Bob and Alice commitments match on-chain state…")
 		pause(1200 * time.Millisecond)
 
-		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
+		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, outSaltA, big.NewInt(changeAmt), tokenId)
 		if err != nil { fail("verify", "Verify Commitment", err); return }
 		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
 			fail("verify", "Verify Commitment", fmt.Errorf("Alice change commitment mismatch"))
@@ -890,8 +1135,8 @@ func runFlow(b *Broker, withTag bool) {
 
 		bobEvents := []dvpcore.OnChainErc20Event{{
 			Commitment: stmt[4],
-			CipherText: paymentResult.CipherText,
-			EncTxData:  paymentResult.EncTxData,
+			CipherText: cipherTextBob,
+			EncTxData:  encTxDataBob,
 		}}
 		bobNotes, err := dvpcore.ScanForErc20Notes(bobView.DecapsKey, bobSpend.PublicKey, bobEvents)
 		if err != nil { fail("scan", "Bob Scans Note", fmt.Errorf("ScanForErc20Notes: %w", err)); return }
@@ -906,7 +1151,7 @@ func runFlow(b *Broker, withTag bool) {
 		}
 
 		// Verify Alice's change commitment locally.
-		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
+		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, outSaltA, big.NewInt(changeAmt), tokenId)
 		if err != nil { fail("scan", "Bob Scans Note", err); return }
 		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
 			fail("scan", "Bob Scans Note", fmt.Errorf("Alice change commitment mismatch"))
@@ -915,7 +1160,7 @@ func runFlow(b *Broker, withTag bool) {
 		logMsg("key", fmt.Sprintf("Bob decrypted note via ML-KEM: amount=%s tokenId=%s", bobNote.Amount, bobNote.TokenId))
 		logMsg("key", fmt.Sprintf("Alice change commitment: 0x%s… ✓", aliceChangeCmt.Text(16)[:16]))
 		panel(1, "balance", fmt.Sprintf("%d tokens (received)", bobNote.Amount))
-		panel(1, "salt", "0x"+paymentResult.SaltB.Text(16))
+		panel(1, "salt", "0x"+outSaltBob.Text(16))
 		panel(0, "balance", fmt.Sprintf("%d tokens change (spendable)", changeAmt))
 		emit("scan", "success", "Bob Scans Note",
 			fmt.Sprintf("Bob decrypted note via ML-KEM view key: %d tokens received", paymentAmt))
@@ -928,10 +1173,14 @@ func runFlow(b *Broker, withTag bool) {
 	logMsg("", fmt.Sprintf("✓ Total flow: %d ms  total protocol gas: %s", flowMs, formatNum(totalGasUsed)))
 	mode := "plain"
 	if withTag { mode = "with private tag" }
+	msg := fmt.Sprintf("Payment complete (%s): Alice → %d tokens → Bob", mode, paymentAmt)
+	if feeAmt > 0 {
+		msg += fmt.Sprintf(", %d tokens → relayer fee", feeAmt)
+	}
 	b.publish(Event{
 		Type:   "done",
 		Status: "success",
-		Msg:    fmt.Sprintf("Payment complete (%s): Alice → %d tokens → Bob", mode, paymentAmt),
+		Msg:    msg,
 	})
 }
 

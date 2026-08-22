@@ -4,77 +4,67 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
-	"sync"
 
 	"enygma_relayer/config"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/time/rate"
 )
 
-// globalLimiter caps total relay throughput across all clients (20 req/s, burst 30).
-var globalLimiter = rate.NewLimiter(rate.Limit(20), 30)
+// apiTokenContextKey is where bearerAuth stashes the validated bearer token
+// (parts[1] of "Bearer <token>") for downstream middleware — specifically
+// the rate limiter, which needs to key on caller identity, not the raw
+// Authorization header. Keying on the raw header would let one caller with
+// the one valid token multiply their effective rate limit by varying the
+// "Bearer" scheme's case ("Bearer"/"bearer"/"BEARER"/...), since bearerAuth
+// itself accepts the scheme case-insensitively (strings.EqualFold) while
+// the header string as a whole is case-sensitive.
+const apiTokenContextKey = "relayer_api_token"
 
-// ipLimiters holds per-IP token buckets (5 req/s per IP, burst 10).
-// Note: the map grows unboundedly; in production replace with an LRU+TTL cache.
-var ipLimiters = &ipLimiterStore{m: make(map[string]*rate.Limiter)}
-
-type ipLimiterStore struct {
-	mu sync.Mutex
-	m  map[string]*rate.Limiter
-}
-
-func (s *ipLimiterStore) get(ip string) *rate.Limiter {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if l, ok := s.m[ip]; ok {
-		return l
-	}
-	l := rate.NewLimiter(rate.Limit(5), 10)
-	s.m[ip] = l
-	return l
-}
-
-// rateLimitMiddleware enforces both the global and per-IP rate limits.
-// Returns HTTP 429 if either limit is exceeded.
-func rateLimitMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !globalLimiter.Allow() {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "global rate limit exceeded"})
-			return
-		}
-		if !ipLimiters.get(c.ClientIP()).Allow() {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "per-IP rate limit exceeded"})
-			return
-		}
-		c.Next()
-	}
-}
-
-// New creates the gin engine with all relayer routes attached.
-func New(cfg *config.Config) (*gin.Engine, error) {
+// New creates the gin engine with all relayer routes attached, and returns
+// the underlying Handler alongside it so the caller can call Handler.Close()
+// on shutdown — releasing the persistent idempotency store's bbolt file
+// lock cleanly instead of only on a hard exit.
+func New(cfg *config.Config) (*gin.Engine, *Handler, error) {
 	h, err := NewHandler(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-
 	r := gin.Default()
+	applyRoutes(r, cfg, h)
+	return r, h, nil
+}
 
-	// /health and /relay/info are public — no auth required.
+// NewWithHandler creates the gin engine with a pre-built Handler. Used in
+// tests to inject a Handler built without dialing a real chain.
+func NewWithHandler(cfg *config.Config, h *Handler) *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	applyRoutes(r, cfg, h)
+	return r
+}
+
+func applyRoutes(r *gin.Engine, cfg *config.Config, h *Handler) {
+	// /health, /health/ready, and /relay/info are public — no auth required.
+	// /health is a pure liveness probe: no dependencies, so an RPC hiccup
+	// can't make an orchestrator think the process itself is dead.
+	// /health/ready actually checks whether the relayer can do its job.
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/health/ready", h.Ready)
 	r.GET("/relay/info", h.Info)
 
-	// All /relay/* routes require a valid Bearer token and are rate-limited.
-	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rateLimitMiddleware())
+	// All /relay/* routes require a valid Bearer token, then a per-caller
+	// rate limit (429 if exceeded) before any proof verification, chain
+	// call, or gas is spent.
+	rl := newRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rl.middleware())
 	{
 		relay.POST("/payment", h.RelayPayment)
-		relay.POST("/tag",     h.RelayTag)
+		relay.POST("/payment_fee", h.RelayPaymentFee)
+		relay.POST("/tag", h.RelayTag)
 		relay.POST("/channel", h.RelayChannel)
 	}
-
-	return r, nil
 }
 
 // bearerAuth returns a gin middleware that enforces Bearer token authentication.
@@ -83,8 +73,9 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 //
 //	Authorization: Bearer <token>
 //
-// Responds with 401 if the header is missing or the token does not match.
-// Responds with 403 if the token format is valid but the value is wrong.
+// Responds with 401 if the header is missing or malformed.
+// Responds with 403 if the token format is valid but the value is wrong
+// (constant-time comparison to prevent timing attacks).
 func bearerAuth(expectedToken string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -111,6 +102,9 @@ func bearerAuth(expectedToken string) gin.HandlerFunc {
 			return
 		}
 
+		// Stash the validated token (not the raw header) for the rate
+		// limiter to key on — see apiTokenContextKey.
+		c.Set(apiTokenContextKey, token)
 		c.Next()
 	}
 }

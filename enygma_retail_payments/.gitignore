@@ -8,3 +8,7 @@
 /gnark_circuits/poseidon/test
 
 artifacts/
+
+# Relayer's persistent idempotency store (local runtime state, not source)
+relayer/relayer_state.db
+relayer/*.db

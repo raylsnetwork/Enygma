@@ -52,17 +52,25 @@ var bankHTML string
 const (
 	listenAddr = ":9090"
 	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
+	gnarkFeeURL = "http://127.0.0.1:8080/proof/enygma_fee"
 	relayerURL = "http://127.0.0.1:8082"
 
 	nBanks      = 6
 	mintAmount  = 500
 	transferAmt = 100
+	defaultFeeAmt = 20 // demo default protocol fee — matches enygma_test's PROTOCOL_FEE convention
 
 	defaultOwnerKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 	defaultRelayKey = "enygma-test-secret"
 
 	senderSkVal    = 424242
 	senderPrevRVal = 0 // initial balance = Com(0,0) = (0,1) on BabyJubJub
+
+	// Treasury: a reserved account (accountId = nBanks+1, outside the 6 demo
+	// banks) that transferWithFee() credits with fee·G on every fee transfer.
+	// Registered during Setup alongside the fee verifier — see runSetup.
+	treasuryAccountIdVal = nBanks + 1
+	treasurySkVal        = 31337
 )
 
 var (
@@ -287,6 +295,9 @@ type connState struct {
 	inst          *enygma.Enygma
 	tokenAddr     string
 	verifierAddr  string
+	feeVerifierAddr string
+	treasuryReady   bool  // true once the fee verifier is registered and treasury account configured
+	treasuryFeeTotal int64 // cumulative plaintext fee total credited to the treasury this session
 	totalGasUsed  uint64
 	mintedBalances [nBanks]int64      // cumulative plaintext balance per bank; updated after each mint/transfer
 	lastSenderIdx  int               // senderIdx from the most recent completed transfer
@@ -455,6 +466,50 @@ func (s *Server) handleRunTransfer(w http.ResponseWriter, r *http.Request) {
 	s.startFlow(w, func() { runTransfer(s, sidx, sa, ramts) })
 }
 
+func (s *Server) handleRunTransferWithFee(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	var body struct {
+		SenderIdx    int           `json:"senderIdx"`
+		SenderAmt    int64         `json:"senderAmt"`
+		ReceiverAmts [nBanks]int64 `json:"receiverAmts"`
+		FeeAmt       int64         `json:"feeAmt"`
+	}
+	body.SenderAmt = int64(transferAmt)
+	body.ReceiverAmts[1] = 60
+	body.ReceiverAmts[2] = 40
+	body.FeeAmt = defaultFeeAmt
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.SenderIdx < 0 || body.SenderIdx >= nBanks {
+		http.Error(w, `{"error":"senderIdx out of range 0-5"}`, 400)
+		return
+	}
+	if body.SenderAmt <= 0 {
+		body.SenderAmt = int64(transferAmt)
+	}
+	if body.FeeAmt < 0 {
+		http.Error(w, `{"error":"feeAmt must be >= 0"}`, 400)
+		return
+	}
+	var receiverSum int64
+	for i := 0; i < nBanks; i++ {
+		if i != body.SenderIdx {
+			receiverSum += body.ReceiverAmts[i]
+		}
+	}
+	if receiverSum != body.SenderAmt {
+		http.Error(w, `{"error":"receiver amounts must sum to senderAmt (fee is on top, not included)"}`, 400)
+		return
+	}
+	sidx := body.SenderIdx
+	sa := body.SenderAmt
+	ramts := body.ReceiverAmts
+	fa := body.FeeAmt
+	s.startFlow(w, func() { runTransferWithFee(s, sidx, sa, ramts, fa) })
+}
+
 // ── Flow context ──────────────────────────────────────────────────────────────
 
 type flowCtx struct {
@@ -532,14 +587,16 @@ func (fc *flowCtx) waitTx(label string, tx *ethtypes.Transaction, txErr error) (
 // ── Contract address resolver ─────────────────────────────────────────────────
 
 type deployReceipts struct {
-	TOKEN    struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
-	VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	TOKEN        struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
+	VERIFIER     struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	FEE_VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"FEE_VERIFIER"`
 }
 
-func resolveAddresses() (token, verifier string, err error) {
+func resolveAddresses() (token, verifier, feeVerifier string, err error) {
 	token = os.Getenv("ENYGMA_TOKEN_ADDR")
 	verifier = os.Getenv("ENYGMA_VERIFIER_ADDR")
-	if token != "" && verifier != "" {
+	feeVerifier = os.Getenv("ENYGMA_FEE_VERIFIER_ADDR")
+	if token != "" && verifier != "" && feeVerifier != "" {
 		return
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -553,11 +610,19 @@ func resolveAddresses() (token, verifier string, err error) {
 			if verifier == "" {
 				verifier = rec.VERIFIER.ContractAddress
 			}
+			if feeVerifier == "" {
+				feeVerifier = rec.FEE_VERIFIER.ContractAddress
+			}
 		}
 	}
 	if token == "" || verifier == "" {
 		err = fmt.Errorf("contract addresses not found — set ENYGMA_TOKEN_ADDR / ENYGMA_VERIFIER_ADDR or run deploy scripts")
+		return
 	}
+	// feeVerifier is allowed to stay empty — older deploy_receipts.json files
+	// (from before the fee system existed) won't have it. Setup surfaces this
+	// clearly and skips fee-verifier registration rather than failing setup
+	// entirely; the fee-transfer mode just won't work until re-deployed.
 	return
 }
 
@@ -580,14 +645,17 @@ func runSetup(s *Server) {
 	fc.log("✓ Chain RPC, Gnark server, and Relayer all reachable")
 	pause(800 * time.Millisecond)
 
-	tokenAddr, verifierAddr, err := resolveAddresses()
+	tokenAddr, verifierAddr, feeVerifierAddr, err := resolveAddresses()
 	if err != nil {
 		fc.emit("dial_chain", "error", "Dial chain", err.Error())
 		fc.done(false, err.Error())
 		return
 	}
-	fc.log(fmt.Sprintf("TOKEN    contract: %s", tokenAddr))
-	fc.log(fmt.Sprintf("VERIFIER contract: %s", verifierAddr))
+	fc.log(fmt.Sprintf("TOKEN        contract: %s", tokenAddr))
+	fc.log(fmt.Sprintf("VERIFIER     contract: %s", verifierAddr))
+	if feeVerifierAddr != "" {
+		fc.log(fmt.Sprintf("FEE_VERIFIER contract: %s", feeVerifierAddr))
+	}
 
 	// Sync the relayer's address file so it picks up the freshly-deployed contract
 	// on its next restart (avoids the demo and relay pointing at different contracts).
@@ -641,6 +709,7 @@ func runSetup(s *Server) {
 	s.state.inst = inst
 	s.state.tokenAddr = tokenAddr
 	s.state.verifierAddr = verifierAddr
+	s.state.feeVerifierAddr = feeVerifierAddr
 	s.state.mu.Unlock()
 
 	fc.emit("init_contract", "running", "Initialize contract", "Enygma.initialize() — idempotent")
@@ -666,6 +735,57 @@ func runSetup(s *Server) {
 	fc.emit("add_verifier", "success", "Register verifier",
 		fmt.Sprintf("Groth16 verifier registered at %s", trunc(verifierAddr, 14)))
 	pause(400 * time.Millisecond)
+
+	// Fee verifier + treasury — required before the fee-transfer mode can run.
+	// Both idempotent, same pattern as add_verifier above. A pre-existing
+	// deploy_receipts.json from before the fee system existed won't have a
+	// FEE_VERIFIER address; skip cleanly rather than failing setup — the
+	// fee-transfer mode just stays unavailable until re-deployed.
+	if feeVerifierAddr == "" {
+		fc.emit("add_fee_verifier", "warning", "Register fee verifier",
+			"No FEE_VERIFIER in deploy_receipts.json — re-run the deploy script to enable fee transfers")
+	} else {
+		fc.emit("add_fee_verifier", "running", "Register fee verifier",
+			fmt.Sprintf("addFeeVerifier(%s)", trunc(feeVerifierAddr, 14)))
+		if afvTx, afvErr := inst.AddFeeVerifier(fc.mkAuth(), common.HexToAddress(feeVerifierAddr)); afvErr == nil {
+			if _, waitErr := fc.waitTx("AddFeeVerifier", afvTx, afvErr); waitErr != nil {
+				fc.log("Fee verifier already registered (OK — idempotent)")
+			}
+		} else {
+			fc.log("AddFeeVerifier skipped: " + afvErr.Error())
+		}
+		fc.emit("add_fee_verifier", "success", "Register fee verifier",
+			fmt.Sprintf("Groth16 fee verifier registered at %s", trunc(feeVerifierAddr, 14)))
+		fc.proto("feeVerifierAddr", feeVerifierAddr)
+		pause(400 * time.Millisecond)
+
+		fc.emit("setup_treasury", "running", "Configure treasury",
+			fmt.Sprintf("registerAccount(id=%d) + setTreasuryAccountId(%d)", treasuryAccountIdVal, treasuryAccountIdVal))
+		treasuryPk, _ := poseidon.Hash([]*big.Int{big.NewInt(treasurySkVal), big.NewInt(treasurySkVal)})
+		treasuryPk.Mod(treasuryPk, curveP)
+		if trTx, trErr := inst.RegisterAccount(fc.mkAuth(), owner,
+			big.NewInt(treasuryAccountIdVal), treasuryPk, big.NewInt(0), []byte{}); trErr == nil {
+			if _, waitErr := fc.waitTx("RegisterAccount[treasury]", trTx, trErr); waitErr != nil {
+				fc.log("Treasury account already registered (OK — idempotent)")
+			}
+		} else {
+			fc.log("Treasury RegisterAccount skipped: " + trErr.Error())
+		}
+		if stTx, stErr := inst.SetTreasuryAccountId(fc.mkAuth(), big.NewInt(treasuryAccountIdVal)); stErr == nil {
+			if _, waitErr := fc.waitTx("SetTreasuryAccountId", stTx, stErr); waitErr != nil {
+				fc.log("Treasury account ID already set (OK — idempotent)")
+			}
+		} else {
+			fc.log("SetTreasuryAccountId skipped: " + stErr.Error())
+		}
+		fc.emit("setup_treasury", "success", "Configure treasury",
+			fmt.Sprintf("treasuryAccountId=%d ready to receive fee·G on every fee transfer", treasuryAccountIdVal))
+		fc.proto("treasuryReady", "1")
+		s.state.mu.Lock()
+		s.state.treasuryReady = true
+		s.state.mu.Unlock()
+		pause(400 * time.Millisecond)
+	}
 
 	// Verify the relay is pointing at the same contract the demo just initialized.
 	// A mismatch (relay started with a stale RELAYER_CONTRACT_ADDR) causes silent
@@ -1219,6 +1339,463 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	fc.done(true, fmt.Sprintf("Transfer of %d tokens settled and verified on-chain", senderAmt))
 }
 
+// ── Tab 3b: Transfer with protocol fee ──────────────────────────────────────────
+//
+// Mirrors runTransfer above but drives the enygma_fee circuit (54 public
+// signals) instead of the base FingerPrint circuit (80 signals) — a
+// genuinely different circuit, not a parameter variant, so it gets its own
+// function rather than a conditional branch threaded through runTransfer.
+// Reuses the same SSE step ids as runTransfer (same swimlane UI on the bank
+// dashboard) plus one fee-specific step, "treasury_credit", at the end.
+//
+// Differences from the base circuit, all straight from
+// gnark-server/pkg/circuits/enygma_fee and go_client/enygma_test/fee_transfer_test.go:
+//   - Per-participant proof-of-knowledge is a flat hash array
+//     (Poseidon(secret,secret) mod P), not the k×k FingerPrint matrix.
+//   - The nullifier is derived from that hash, not the raw secret.
+//   - The sender's committed value is -(amount+fee); the fee itself, plus
+//     the two conservation-check outputs (SumTxCommit, SumTxValuesWithFee),
+//     are additional public signals the relayer and contract both check.
+func runTransferWithFee(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks]int64, feeAmt int64) {
+	fc := newCtx(s, "transfer")
+	s.state.mu.Lock()
+	ready := s.state.ready
+	inst := s.state.inst
+	treasuryReady := s.state.treasuryReady
+	s.state.mu.Unlock()
+	if !ready || inst == nil {
+		fc.done(false, "Run Setup first")
+		return
+	}
+	if !treasuryReady {
+		fc.done(false, "Fee transfers need the treasury configured — re-run Setup (requires FEE_VERIFIER in deploy_receipts.json)")
+		return
+	}
+
+	flowStart := time.Now()
+
+	// Read on-chain state — including the treasury's pre-transfer balance,
+	// so the new treasury_credit step can show a real before/after delta.
+	fc.emit("read_state", "running", "Read on-chain state", "getPublicValues(7) + getBlckHash() + treasury balance")
+	pubVals, err := inst.GetPublicValues(&bind.CallOpts{}, big.NewInt(nBanks+1))
+	if err != nil {
+		fc.emit("read_state", "error", "Read on-chain state", err.Error())
+		fc.done(false, "GetPublicValues failed")
+		return
+	}
+	blockHash, err := inst.GetBlckHash(&bind.CallOpts{})
+	if err != nil {
+		fc.emit("read_state", "error", "Read on-chain state", err.Error())
+		fc.done(false, "GetBlckHash failed")
+		return
+	}
+	treasuryBalBefore, err := inst.GetBalance(&bind.CallOpts{}, big.NewInt(treasuryAccountIdVal))
+	if err != nil {
+		fc.emit("read_state", "error", "Read on-chain state", "treasury: "+err.Error())
+		fc.done(false, "GetBalance(treasury) failed")
+		return
+	}
+	prevBalances := pubVals.Balances[1:]
+	onChainKeys := pubVals.Keys[1:]
+	fc.emit("read_state", "success", "Read on-chain state",
+		fmt.Sprintf("epochBlockHash = %s · %d accounts · treasury @ id=%d", trunc(blockHash.String(), 12), nBanks, treasuryAccountIdVal))
+	fc.proto("senderIdx", fmt.Sprintf("%d", senderIdx))
+	for i := 0; i < nBanks; i++ {
+		fc.b.publish(Event{Type: "participant", Tab: "transfer", Pid: i, Field: "prevBal",
+			Value: fmt.Sprintf("(%s…,%s…)", trunc(prevBalances[i].C1.String(), 8), trunc(prevBalances[i].C2.String(), 8))})
+	}
+	pause(600 * time.Millisecond)
+
+	// Derive shared secrets — identical scheme to the base circuit.
+	s.state.mu.Lock()
+	senderSk := s.state.registeredSks[senderIdx]
+	var prevSenderR *big.Int
+	if s.state.cumulativeR[senderIdx] != nil {
+		prevSenderR = new(big.Int).Set(s.state.cumulativeR[senderIdx])
+	} else {
+		prevSenderR = new(big.Int)
+	}
+	kaSecretsSnap := s.state.kaSecrets
+	s.state.mu.Unlock()
+	if senderSk == nil {
+		senderSk = bankSks[senderIdx]
+	}
+	fc.emit("derive_secrets", "running", "Derive shared secrets", "s₀ = Poseidon(prevR, sk) mod P")
+	senderSecret, _ := poseidon.Hash([]*big.Int{prevSenderR, senderSk})
+	senderSecret.Mod(senderSecret, curveP)
+	demoDefaults := [nBanks]int64{31415, 54142, 814712, 250912012, 12312512, 12312512}
+	var secrets [nBanks]*big.Int
+	for i := 0; i < nBanks; i++ {
+		if i == senderIdx {
+			secrets[i] = senderSecret
+		} else if kaSecretsSnap[senderIdx][i] != nil {
+			secrets[i] = new(big.Int).Set(kaSecretsSnap[senderIdx][i])
+		} else {
+			secrets[i] = big.NewInt(demoDefaults[i])
+		}
+	}
+	fc.emit("derive_secrets", "success", "Derive shared secrets",
+		fmt.Sprintf("s[%d] = Poseidon(%s, %s) = %s", senderIdx, trunc(prevSenderR.String(), 10), trunc(senderSk.String(), 10), trunc(senderSecret.String(), 20)))
+	for i, sv := range secrets {
+		fc.participant(i, "secret", trunc(sv.String(), 16)+"…")
+	}
+	pause(1000 * time.Millisecond)
+
+	// Random factors — identical scheme to the base circuit.
+	fc.emit("compute_randoms", "running", "Compute random factors", "r_i = Poseidon(H₂₁, s_i, epochHash)")
+	bh := new(big.Int).Set(blockHash)
+	var rValues [nBanks]*big.Int
+	rSum := new(big.Int)
+	for i := 0; i < nBanks; i++ {
+		r := rValue(secrets[i], bh)
+		rValues[i] = r
+		if i != senderIdx {
+			rSum.Add(rSum, r)
+			rSum.Mod(rSum, curveP)
+		}
+	}
+	rValues[senderIdx] = rSum
+	fc.emit("compute_randoms", "success", "Compute random factors",
+		fmt.Sprintf("r[0] = Σr_receivers = %s  (conservation)", trunc(rSum.String(), 20)))
+	for i := 0; i < nBanks; i++ {
+		fc.participant(i, "r", trunc(rValues[i].String(), 16)+"…")
+	}
+	pause(1000 * time.Millisecond)
+
+	// Commitments — sender debits (amount + fee), not just amount. This is
+	// the one line that's structurally different from the base circuit: the
+	// fee is folded straight into the sender's committed value, not billed
+	// separately, which is what lets the circuit prove conservation with a
+	// single extra term (fee·G) rather than a whole second transaction.
+	fc.emit("build_commits", "running", "Build Pedersen commitments", "TxCommit_i = v_i·G + r_i·H  (sender debits amount+fee)")
+	senderDebit := senderAmt + feeAmt
+	var txValues [nBanks]*big.Int
+	for i := 0; i < nBanks; i++ {
+		if i == senderIdx {
+			txValues[i] = negMod(big.NewInt(senderDebit))
+		} else {
+			txValues[i] = big.NewInt(receiverAmts[i])
+		}
+	}
+	var txRandom [nBanks]*big.Int
+	var txCommitPts [nBanks]*babyjub.Point
+	var txCommit [nBanks]enygma.IEnygmaPoint
+	for i := 0; i < nBanks; i++ {
+		var pt *babyjub.Point
+		if i == senderIdx {
+			pt = pedersenCommit(negMod(big.NewInt(senderDebit)), rValues[i])
+			txRandom[i] = rValues[i]
+		} else {
+			pt = pedersenCommit(txValues[i], negMod(rValues[i]))
+			txRandom[i] = negMod(rValues[i])
+		}
+		txCommitPts[i] = pt
+		txCommit[i] = enygma.IEnygmaPoint{C1: pt.X, C2: pt.Y}
+	}
+	s.state.mu.Lock()
+	for i := 0; i < nBanks; i++ {
+		s.state.lastRValues[i] = new(big.Int).Set(txRandom[i])
+	}
+	s.state.mu.Unlock()
+	fc.emit("build_commits", "success", "Build Pedersen commitments",
+		fmt.Sprintf("Bank%d −%d (−%d transfer −%d fee) · Σreceivers=%d · Σ+fee·G=(0,1) ✓", senderIdx, senderDebit, senderAmt, feeAmt, senderAmt))
+	for i := 0; i < nBanks; i++ {
+		amtLabel := "0  (privacy)"
+		if i == senderIdx {
+			amtLabel = fmt.Sprintf("−%d  (−%d xfer −%d fee)", senderDebit, senderAmt, feeAmt)
+		} else if receiverAmts[i] > 0 {
+			amtLabel = fmt.Sprintf("+%d  (credit)", receiverAmts[i])
+		}
+		fc.participant(i, "amount", amtLabel)
+		fc.participant(i, "commit", fmt.Sprintf("(%s…, %s…)", trunc(txCommit[i].C1.String(), 10), trunc(txCommit[i].C2.String(), 10)))
+	}
+	pause(1000 * time.Millisecond)
+
+	// Message tags — identical scheme to the base circuit.
+	fc.emit("compute_tags", "running", "Compute message tags", "t_i = Poseidon(H₁₂, s_i, epochHash)")
+	var tagMessages [nBanks]*big.Int
+	for i := 0; i < nBanks; i++ {
+		tagMessages[i] = tagValue(secrets[i], blockHash)
+	}
+	fc.emit("compute_tags", "success", "Compute message tags",
+		fmt.Sprintf("tag[0] = %s", trunc(tagMessages[0].String(), 20)))
+	for i := 0; i < nBanks; i++ {
+		fc.participant(i, "tag", trunc(tagMessages[i].String(), 16)+"…")
+	}
+	pause(1000 * time.Millisecond)
+
+	// Hash array + nullifier — the fee circuit's proof-of-knowledge scheme.
+	// Poseidon(secret,secret) replaces the FingerPrint matrix; the nullifier
+	// is derived from that hash rather than the raw secret directly.
+	fc.emit("compute_nullifier", "running", "Compute nullifier", "h_i = Poseidon(s_i,s_i) · η = Poseidon(h₀, epochHash)")
+	var hashArray [nBanks]*big.Int
+	for i := 0; i < nBanks; i++ {
+		h, _ := poseidon.Hash([]*big.Int{secrets[i], secrets[i]})
+		hashArray[i] = h.Mod(h, curveP)
+	}
+	nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	fc.emit("compute_nullifier", "success", "Compute nullifier",
+		fmt.Sprintf("η = %s", trunc(nullifier.String(), 20)))
+	pause(1000 * time.Millisecond)
+
+	// Fee conservation outputs — SumTxCommit and SumTxValuesWithFee. The
+	// circuit hard-asserts Σ(TxCommit)+fee·G == (0,1); computing it here too
+	// lets the demo show the same identity the ZK proof is about to prove.
+	sumCommit := txCommitPts[0]
+	for i := 1; i < nBanks; i++ {
+		sumCommit = addPoints(sumCommit, txCommitPts[i])
+	}
+	feeGPoint := babyjub.NewPoint().Mul(big.NewInt(feeAmt), curveG)
+	sumCommit = addPoints(sumCommit, feeGPoint)
+	sumTxVal := new(big.Int)
+	for i := 0; i < nBanks; i++ {
+		sumTxVal.Add(sumTxVal, txValues[i])
+	}
+	sumTxVal.Add(sumTxVal, big.NewInt(feeAmt))
+	sumTxVal.Mod(sumTxVal, curveP)
+
+	// ZK proof — enygma_fee circuit.
+	fc.emit("zk_proof", "running", "Generate ZK proof", "POST /proof/enygma_fee — ~30s")
+	toStrs := func(vals [nBanks]*big.Int) []string {
+		s := make([]string, nBanks)
+		for i, v := range vals {
+			s[i] = v.String()
+		}
+		return s
+	}
+	prevCommitSlice := make([][]string, nBanks)
+	for i, pt := range prevBalances {
+		prevCommitSlice[i] = []string{pt.C1.String(), pt.C2.String()}
+	}
+	txCommitSlice := make([][]string, nBanks)
+	for i, pt := range txCommit {
+		txCommitSlice[i] = []string{pt.C1.String(), pt.C2.String()}
+	}
+	keyStrs := make([]string, nBanks)
+	for i, k := range onChainKeys {
+		keyStrs[i] = k.String()
+	}
+	anonSet := make([]string, nBanks)
+	for i := range anonSet {
+		anonSet[i] = fmt.Sprintf("%d", i)
+	}
+	proofReqBody, _ := json.Marshal(map[string]interface{}{
+		"hashed_shared_secrets":        toStrs(hashArray),
+		"public_keys":                  keyStrs,
+		"previous_commits":             prevCommitSlice,
+		"tx_commits":                   txCommitSlice,
+		"block_number":                 blockHash.String(),
+		"anonymity_set":                anonSet,
+		"message_tags":                 toStrs(tagMessages),
+		"nullifier":                    nullifier.String(),
+		"fee":                          fmt.Sprintf("%d", feeAmt),
+		"sender_id":                    fmt.Sprintf("%d", senderIdx),
+		"shared_secrets":               toStrs(secrets),
+		"secret_key":                   senderSk.String(),
+		"previous_sender_balance":      fmt.Sprintf("%d", s.state.mintedBalances[senderIdx]),
+		"previous_sender_random_value": prevSenderR.String(),
+		"tx_values":                    toStrs(txValues),
+		"tx_random_values":             toStrs(txRandom),
+		"sender_tx_value":              fmt.Sprintf("%d", senderAmt),
+	})
+
+	t0Proof := time.Now()
+	httpResp, err := http.Post(gnarkFeeURL, "application/json", bytes.NewReader(proofReqBody))
+	if err != nil {
+		fc.emit("zk_proof", "error", "Generate ZK proof", err.Error())
+		fc.done(false, "Gnark server unreachable")
+		return
+	}
+	defer httpResp.Body.Close()
+	proofBody, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode != http.StatusOK {
+		fc.emit("zk_proof", "error", "Generate ZK proof", string(proofBody))
+		fc.done(false, "Fee proof generation failed")
+		return
+	}
+	var proofResp struct {
+		Proof        []*big.Int `json:"proof"`
+		PublicSignal []*big.Int `json:"publicSignal"`
+	}
+	if err := json.Unmarshal(proofBody, &proofResp); err != nil {
+		fc.emit("zk_proof", "error", "Generate ZK proof", "bad response: "+err.Error())
+		fc.done(false, "Cannot parse proof response")
+		return
+	}
+	proofElapsed := time.Since(t0Proof)
+	conservationOK := sumCommit.X.Sign() == 0 && sumCommit.Y.Cmp(big.NewInt(1)) == 0 && sumTxVal.Sign() == 0
+	conservationLabel := "Σ+fee·G=(0,1) ✓"
+	if !conservationOK {
+		conservationLabel = "Σ+fee·G conservation check FAILED"
+	}
+	fc.emit("zk_proof", "success", "Generate ZK proof",
+		fmt.Sprintf("π ready in %s · %d signals · fee=%d · %s", proofElapsed.Round(time.Millisecond), len(proofResp.PublicSignal), feeAmt, conservationLabel))
+	fc.metric("proofTimeMs", fmt.Sprintf("%d", proofElapsed.Milliseconds()))
+	fc.metric("feeAmt", fmt.Sprintf("%d", feeAmt))
+	pause(300 * time.Millisecond)
+
+	// Relay — POST /relay/transfer_fee. The relayer runs its own local
+	// Groth16 verify, checks signal[50] (fee) against RELAYER_MIN_FEE,
+	// dry-runs via eth_call, then submits. A 402 here means the embedded fee
+	// was below the relayer's floor — surfaced distinctly, not as a generic
+	// failure, since it's the fee system's enforcement actually firing.
+	const txCommitOffset = 24 // 54-signal layout: 6 hashes + 6 keys + 12 prevCommit = 24
+	commFinal := make([][]string, nBanks)
+	for i := 0; i < nBanks; i++ {
+		commFinal[i] = []string{
+			proofResp.PublicSignal[txCommitOffset+2*i].String(),
+			proofResp.PublicSignal[txCommitOffset+2*i+1].String(),
+		}
+	}
+	var proof8 [8]string
+	for i := 0; i < 8; i++ {
+		proof8[i] = proofResp.Proof[i].String()
+	}
+	pubSigStrs := make([]string, len(proofResp.PublicSignal))
+	for i, v := range proofResp.PublicSignal {
+		pubSigStrs[i] = v.String()
+	}
+	kIdx64 := make([]int64, nBanks)
+	for i := range kIdx64 {
+		kIdx64[i] = int64(i + 1)
+	}
+	relayReqBody, _ := json.Marshal(struct {
+		Proof        [8]string  `json:"proof"`
+		PublicSignal []string   `json:"publicSignal"`
+		Commitments  [][]string `json:"commitments"`
+		KIndex       []int64    `json:"kIndex"`
+	}{proof8, pubSigStrs, commFinal, kIdx64})
+
+	relayAPIKey := os.Getenv("RELAYER_API_KEY")
+	if relayAPIKey == "" {
+		relayAPIKey = defaultRelayKey
+	}
+	fc.emit("relay_transfer", "running", "Submit via Relayer", fmt.Sprintf("POST /relay/transfer_fee — fee=%d", feeAmt))
+	relayStart := time.Now()
+	relayHTTPReq, _ := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer_fee", bytes.NewReader(relayReqBody))
+	relayHTTPReq.Header.Set("Content-Type", "application/json")
+	relayHTTPReq.Header.Set("Authorization", "Bearer "+relayAPIKey)
+
+	relayHTTPResp, err := http.DefaultClient.Do(relayHTTPReq)
+	if err != nil {
+		fc.emit("relay_transfer", "error", "Submit via Relayer", err.Error())
+		fc.done(false, "Relayer unreachable")
+		return
+	}
+	defer relayHTTPResp.Body.Close()
+	relayRespBody, _ := io.ReadAll(relayHTTPResp.Body)
+	if relayHTTPResp.StatusCode != http.StatusOK {
+		reason := fmt.Sprintf("HTTP %d", relayHTTPResp.StatusCode)
+		switch relayHTTPResp.StatusCode {
+		case http.StatusPaymentRequired:
+			reason = "402 Payment Required — fee too low for this relayer's minimum"
+		case http.StatusTooManyRequests:
+			reason = "429 Too Many Requests — rate limited"
+		case http.StatusBadRequest:
+			reason = "400 Bad Request — proof or dry-run rejected"
+		}
+		fc.emit("relay_transfer", "error", "Submit via Relayer",
+			fmt.Sprintf("%s: %s", reason, trunc(string(relayRespBody), 160)))
+		fc.done(false, "Fee transfer rejected — "+reason)
+		return
+	}
+	var relayResult struct {
+		TxHash      string `json:"txHash"`
+		BlockNumber uint64 `json:"blockNumber"`
+		GasUsed     uint64 `json:"gasUsed"`
+	}
+	json.Unmarshal(relayRespBody, &relayResult)
+	relayRTT := time.Since(relayStart)
+	s.state.totalGasUsed += relayResult.GasUsed
+	fc.emit("relay_transfer", "success", "Submit via Relayer",
+		fmt.Sprintf("tx %s · block %d · gas %d", trunc(relayResult.TxHash, 14), relayResult.BlockNumber, relayResult.GasUsed))
+	fc.metric("verifyTimeMs", fmt.Sprintf("%d", relayRTT.Milliseconds()))
+	fc.metric("verifyGas", fmt.Sprintf("%d", relayResult.GasUsed))
+	pause(600 * time.Millisecond)
+
+	s.state.mu.Lock()
+	s.state.mintedBalances[senderIdx] -= senderDebit
+	for i := 0; i < nBanks; i++ {
+		if i != senderIdx {
+			s.state.mintedBalances[i] += receiverAmts[i]
+		}
+	}
+	for i := 0; i < nBanks; i++ {
+		if s.state.cumulativeR[i] == nil {
+			s.state.cumulativeR[i] = new(big.Int)
+		}
+		s.state.cumulativeR[i].Add(s.state.cumulativeR[i], txRandom[i])
+		s.state.cumulativeR[i].Mod(s.state.cumulativeR[i], curveP)
+	}
+	s.state.treasuryFeeTotal += feeAmt
+	s.state.transferCount++
+	s.state.lastSenderIdx = senderIdx
+	s.state.mu.Unlock()
+
+	// Treasury credited — the payoff step. Shows the fee actually landing
+	// somewhere on-chain, not just vanishing, which is the whole point of
+	// the treasury-crediting fix: query the real balance again and confirm
+	// it moved by exactly fee·G.
+	fc.emit("treasury_credit", "running", "Treasury credited", fmt.Sprintf("getBalance(%d)", treasuryAccountIdVal))
+	treasuryBalAfter, err := inst.GetBalance(&bind.CallOpts{}, big.NewInt(treasuryAccountIdVal))
+	if err != nil {
+		fc.emit("treasury_credit", "error", "Treasury credited", err.Error())
+	} else {
+		expTX, expTY := addPointsAffine(treasuryBalBefore.X, treasuryBalBefore.Y, feeGPoint.X, feeGPoint.Y)
+		if treasuryBalAfter.X.Cmp(expTX) == 0 && treasuryBalAfter.Y.Cmp(expTY) == 0 {
+			fc.emit("treasury_credit", "success", "Treasury credited",
+				fmt.Sprintf("+%d·G confirmed · treasury cumulative fees this session: %d", feeAmt, s.state.treasuryFeeTotal))
+		} else {
+			fc.emit("treasury_credit", "error", "Treasury credited",
+				fmt.Sprintf("MISMATCH — got (%s…, %s…) expected (%s…, %s…)",
+					trunc(treasuryBalAfter.X.String(), 10), trunc(treasuryBalAfter.Y.String(), 10),
+					trunc(expTX.String(), 10), trunc(expTY.String(), 10)))
+		}
+	}
+	pause(400 * time.Millisecond)
+
+	// Verify sender balance — same homomorphic check as the base flow.
+	fc.emit("verify_balance", "running", "Verify balance", "getBalance(1) + homomorphic check")
+	newBal, err := inst.GetBalance(&bind.CallOpts{}, big.NewInt(int64(senderIdx+1)))
+	if err != nil {
+		fc.emit("verify_balance", "error", "Verify balance", err.Error())
+		fc.done(false, "GetBalance failed")
+		return
+	}
+	expX, expY, pedErr := inst.AddPedComm(&bind.CallOpts{},
+		prevBalances[senderIdx].C1, prevBalances[senderIdx].C2,
+		txCommit[senderIdx].C1, txCommit[senderIdx].C2,
+	)
+	if pedErr != nil {
+		fc.emit("verify_balance", "error", "Verify balance", "addPedComm: "+pedErr.Error())
+		fc.done(false, "Verify: addPedComm failed")
+		return
+	}
+	if newBal.X.Cmp(expX) != 0 || newBal.Y.Cmp(expY) != 0 {
+		fc.emit("verify_balance", "error", "Verify balance",
+			fmt.Sprintf("MISMATCH — got (%s, %s) expected (%s, %s)",
+				trunc(newBal.X.String(), 12), trunc(newBal.Y.String(), 12), trunc(expX.String(), 12), trunc(expY.String(), 12)))
+		fc.done(false, "Balance homomorphic check FAILED")
+		return
+	}
+	fc.emit("verify_balance", "success", "Verify balance",
+		fmt.Sprintf("prevBalance + TxCommit[%d] = newBalance ✓  (−%d tokens = −%d xfer −%d fee)", senderIdx, senderDebit, senderAmt, feeAmt))
+	fc.participant(senderIdx, "balance", fmt.Sprintf("(%s…, %s…)", trunc(newBal.X.String(), 10), trunc(newBal.Y.String(), 10)))
+	fc.participant(senderIdx, "status", "settled")
+	if pubValsNew, errNew := inst.GetPublicValues(&bind.CallOpts{}, big.NewInt(nBanks+1)); errNew == nil {
+		for i := 0; i < nBanks; i++ {
+			bal := pubValsNew.Balances[i+1]
+			fc.b.publish(Event{Type: "participant", Tab: "transfer", Pid: i, Field: "finalBal",
+				Value: fmt.Sprintf("(%s…,%s…)", trunc(bal.C1.String(), 8), trunc(bal.C2.String(), 8))})
+		}
+	}
+
+	flowMs := time.Since(flowStart).Milliseconds()
+	fc.metric("totalGas", fmt.Sprintf("%d", s.state.totalGasUsed))
+	fc.metric("flowTimeMs", fmt.Sprintf("%d", flowMs))
+	fc.done(true, fmt.Sprintf("Fee transfer settled: %d tokens + %d fee → treasury, verified on-chain", senderAmt, feeAmt))
+}
+
 // ── Tab 5: Key Agreement flow ─────────────────────────────────────────────────
 
 // ── Per-bank key agreement ────────────────────────────────────────────────────
@@ -1748,6 +2325,7 @@ func main() {
 	mux.HandleFunc("/run/register-bank", srv.handleRunRegisterBank)
 	mux.HandleFunc("/run/mint", srv.handleRunMint)
 	mux.HandleFunc("/run/transfer", srv.handleRunTransfer)
+	mux.HandleFunc("/run/transfer-fee", srv.handleRunTransferWithFee)
 	mux.HandleFunc("/run/key-agreement", srv.handleRunKeyAgreement)
 	mux.HandleFunc("/run/bank-ka", srv.handleRunBankKA)
 	mux.HandleFunc("/state/ka-status", srv.handleStateKAStatus)

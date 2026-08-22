@@ -139,25 +139,56 @@ func TestSequentialTransfers(t *testing.T) {
 	if _, statErr := os.Stat(relayerBin); os.IsNotExist(statErr) {
 		t.Fatalf("relayer binary not found: %s\nRun: cd enygma_payments/relayer && ./run.sh", relayerBin)
 	}
+	// macOS 25.x (Tahoe) enforces code signing — ad-hoc sign so the binary can
+	// run when exec'd from within the go test process. Without this the child
+	// process fails to launch silently (exec.Command.Start() doesn't observe
+	// it — only a later Wait() would), and the tcpAvailable poll below just
+	// times out after 20s. See fee_transfer_test.go for the same workaround.
+	if out, signErr := exec.Command("codesign", "--force", "--deep", "--sign", "-", relayerBin).CombinedOutput(); signErr != nil {
+		t.Logf("codesign warning (non-fatal): %v — %s", signErr, out)
+	}
 
 	const seqRelayerPort = "8084"
 	seqRelayerURL := "http://127.0.0.1:" + seqRelayerPort
+
+	// ownerPrivKey is only the raw MY_KEY env var — empty on local Hardhat
+	// runs, where mustPrivKey() falls back to hardhatTestKey internally. That
+	// fallback isn't visible here, so it must be reapplied explicitly or the
+	// relayer subprocess gets RELAYER_PRIVATE_KEY="" and fails config.Load(),
+	// exiting immediately (see fee_transfer_test.go for the same pattern).
+	relayerPrivKey := ownerPrivKey
+	if relayerPrivKey == "" {
+		relayerPrivKey = hardhatTestKey
+	}
 
 	relayerCmd := exec.Command(relayerBin)
 	relayerCmd.Dir = relayerDir
 	relayerCmd.Env = append(os.Environ(),
 		"RELAYER_RPC_URL="+chainURL,
 		fmt.Sprintf("RELAYER_CHAIN_ID=%d", chainID),
-		"RELAYER_PRIVATE_KEY="+ownerPrivKey,
+		"RELAYER_PRIVATE_KEY="+relayerPrivKey,
 		"RELAYER_API_KEY="+relayerKey,
 		"RELAYER_GAS_LIMIT=10000000",
 		"RELAYER_CONTRACT_ADDR="+enygmaAddr.Hex(),
 		"RELAYER_PORT="+seqRelayerPort,
+		// Unique per test run — see the same env var in fee_transfer_test.go.
+		"RELAYER_STORE_PATH="+filepath.Join(t.TempDir(), "relayer_state.db"),
 	)
+	relayerStderr, _ := os.CreateTemp("", "relayer-stderr-*.txt")
+	relayerCmd.Stdout = relayerStderr
+	relayerCmd.Stderr = relayerStderr
 	if err := relayerCmd.Start(); err != nil {
 		t.Fatalf("start relayer subprocess: %v", err)
 	}
-	t.Cleanup(func() { relayerCmd.Process.Kill() })
+	t.Cleanup(func() {
+		relayerCmd.Process.Kill()
+		if name := relayerStderr.Name(); name != "" {
+			if data, rerr := os.ReadFile(name); rerr == nil && len(data) > 0 {
+				t.Logf("relayer output:\n%s", data)
+			}
+			os.Remove(name)
+		}
+	})
 
 	for i := 0; i < 20; i++ {
 		if tcpAvailable("127.0.0.1:" + seqRelayerPort) {
