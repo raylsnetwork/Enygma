@@ -1,0 +1,38 @@
+title = "Enygma gitleaks config"
+
+# Start from gitleaks' built-in rule set (private keys, API tokens, JWTs,
+# cloud-provider credentials, generic high-entropy secrets, ...) and layer
+# repo-specific exceptions on top.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths that are noisy but not secrets: vendored deps, build output, and generated cryptographic constants"
+paths = [
+  '''node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)artifacts/''',
+  '''(^|/)cache/''',
+  # gnark/circom Poseidon round constants and BN254/BabyJubJub curve
+  # parameters — long hex/decimal literals that are public math, not secrets.
+  '''gnark-server/poseidon/constants\.go$''',
+  '''poseidon_calc/''',
+  '''\.r1cs$''',
+  '''\.wtns$''',
+]
+
+# Known, deliberately-public local-devnet keys. Neither of these is a live
+# credential; both are only reachable from a local Hardhat/Anvil node.
+regexes = [
+  # Hardhat/Anvil's publicly documented default account #0 key (mnemonic:
+  # "test test test ... junk"). A universally known throwaway.
+  '''ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+  # enygma_payments' own committed local-Hardhat-only account key, wired
+  # into contracts/enygma/hardhat.config.js's "hardhat" network block and
+  # reused by go_client/enygma_test. Audit ENYGMA_PAYMENTS_AUDIT_2026-08-22.md
+  # finding H-08 confirmed nonce 0 / zero balance on the live chain as of
+  # 2026-08-22. Tracked as a follow-up to replace with the standard key
+  # above rather than re-flagged on every commit until then — see that
+  # finding before assuming this is fine to leave long-term.
+  '''34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154''',
+]
