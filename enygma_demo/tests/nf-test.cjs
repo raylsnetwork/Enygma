@@ -1,4 +1,4 @@
-const { chromium, launchOpts, PAGE } = require('./_env.cjs');
+const { chromium, launchOpts, PAGE, enterProduct } = require('./_env.cjs');
 const w=(p,ms)=>p.waitForTimeout(ms);
 let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
 const persona = async (pg,label) => {
@@ -12,6 +12,7 @@ const persona = async (pg,label) => {
   const errs=[]; pg.on('pageerror',e=>errs.push('pageerror: '+e.message));
   pg.on('console',m=>{ if(m.type()==='error') errs.push(m.text()); });
   await pg.goto(PAGE); await w(pg,2000);
+  await enterProduct(pg, 'institutional');
   await pg.click('#tabDvp'); await w(pg,800);
 
   console.log('--- the notes table exposes no per-leaf spend state ---');
@@ -46,15 +47,15 @@ const persona = async (pg,label) => {
   pass(/have I seen this nullifier|already in the set/i.test(nf0.txt), 'states the contract check');
   pass(!/leaf/i.test(nf0.txt.split('There is no column')[0]), 'the set itself never names a leaf');
 
-  console.log('\n--- open a swap: exactly one nullifier appears, unlinked to any leaf ---');
+  console.log('\n--- spend one note: exactly one nullifier appears, unlinked to any leaf ---');
   const opened = await pg.evaluate(async ()=>{
     const S=window.__T.state, F=window.__T;
-    const mine = S.dvp.notes.filter(n=>n.owner===0 && n.status==='unspent');
-    if(!mine.length) await F.bridgeIn(0, 1000000, 'CASH');
-    const m = S.dvp.notes.filter(n=>n.owner===0 && n.status==='unspent');
-    const s = await F.openSwap(0, m[0].id, 1, 'BOND', 5000);
-    await F.bobRetrieve(s);
-    return { nfA: s.nfA, leaf: S.dvp.notes[s.inNote].leaf };
+    await F.bridgeIn(0, 1000000, 'CASH');
+    await F.bridgeIn(0, 250000, 'CASH');
+    const m = S.dvp.notes.filter(n=>n.owner===0 && n.status==='unspent' && n.token==='CASH');
+    const spent = m[0];
+    await F.bridgeOut(0, spent.id);      // bridging back is a spend: it publishes a nullifier
+    return { nfA: S.dvp.nullifiers[0].nf, leaf: spent.leaf };
   });
   await pg.evaluate(()=>window.__T && document.querySelector('#tabDvp').click()); await w(pg,900);
   const nf1 = await pg.evaluate(()=>{
@@ -65,34 +66,38 @@ const persona = async (pg,label) => {
              foot: document.querySelector('#notesBody .env-foot').innerText };
   });
   pass(nf1.n===1, `one nullifier published (${nf1.n})`);
-  pass(nf1.states[0]==='locked', `its state is "locked", not tied to a note (${nf1.states[0]})`);
+  pass(nf1.states[0]==='spent', `its state says only "spent" — nothing ties it to a note (${nf1.states[0]})`);
   pass(!new RegExp('leaf\\s*'+opened.leaf+'\\b','i').test(nf1.rowText[0]),
        `the row does not name leaf ${opened.leaf} (its actual source)`);
   pass(/1 nullifiers published|1 nullifier/i.test(nf1.foot) || /nullifiers published/.test(nf1.foot),
        'the footer counts published nullifiers, not spent notes');
   pass(/no leaf is ever marked spent/i.test(nf1.foot), 'the footer says plainly that no leaf is marked spent');
 
-  console.log('\n--- the ZK statement and check order are stated on the settlement panel ---');
+  console.log('\n--- the ZK statement and check order are stated where spending happens ---');
   const zk = await pg.evaluate(()=>{
     const z=document.querySelector('.zks'); return z ? z.innerText.replace(/\s+/g,' ') : null; });
-  pass(!!zk, 'the swap panel states what the proof proves');
+  pass(!!zk, 'the notes panel states what the proof proves');
   pass(/Merkle path/i.test(zk) && /stay private/i.test(zk), 'private Merkle inclusion path is named');
-  pass(/outputs add up to the amount committed in that leaf/i.test(zk), 'output amounts = input amount is named');
+  pass(/amount committed in that leaf/i.test(zk), 'the amount credited back = the amount in the leaf is named');
   pass(/already in the nullifier set/i.test(zk) && /reverts here/i.test(zk), 'nullifier-membership check comes first');
   pass(zk.indexOf('already in the nullifier set') < zk.indexOf('verify'), 'and it is stated BEFORE proof verification');
   pass(/cannot ask/i.test(zk) && /is that note spent/i.test(zk), 'says outright the contract cannot ask if a note is spent');
 
-  console.log('\n--- settle, then both nullifiers are in the set and still unlinked ---');
-  await pg.evaluate(async ()=>{ const S=window.__T.state; await window.__T.completeSwap(S.dvp.swaps[0]); });
+  console.log('\n--- spend a second note: both nullifiers are in the set and still unlinked ---');
+  await pg.evaluate(async ()=>{
+    const S=window.__T.state, F=window.__T;
+    const m = S.dvp.notes.filter(n=>n.owner===0 && n.status==='unspent' && n.token==='CASH');
+    await F.bridgeOut(0, m[0].id);
+  });
   await pg.evaluate(()=>document.querySelector('#tabDvp').click()); await w(pg,900);
   const nf2 = await pg.evaluate(()=>{
     const rows=[...document.querySelectorAll('.nfset .nfrow')];
     return { n: rows.length, states: rows.map(r=>r.querySelector('.nst').textContent.trim().toLowerCase()),
              tableTxt: document.querySelector('#notesBody .notes-wrap').innerText };
   });
-  pass(nf2.n===2, `two nullifiers after settlement (${nf2.n})`);
+  pass(nf2.n===2, `two nullifiers after the second spend (${nf2.n})`);
   pass(nf2.states.every(s=>s==='spent'), `both read "spent" (${nf2.states.join(',')})`);
-  pass(!/\bspent\b/i.test(nf2.tableTxt), 'the leaf table STILL says nothing about spending after a settlement');
+  pass(!/\bspent\b/i.test(nf2.tableTxt), 'the leaf table STILL says nothing about spending after two of them');
 
   console.log('\n--- the owner can still tell, because it recomputes its own nullifier ---');
   const own = await pg.evaluate(async ()=>{
@@ -112,10 +117,8 @@ const persona = async (pg,label) => {
        `every one of Bank 1's ${own.out.length} leaves: recomputed nullifier membership matches its true state`);
   pass(own.keyBound, 'another bank\'s key on the same leaf index yields a different nullifier');
 
-  const hint = await pg.evaluate(()=>({ notes: document.querySelector('#notesHint').innerText,
-                                        swap: document.querySelector('#swapHint').innerText }));
+  const hint = await pg.evaluate(()=>({ notes: document.querySelector('#notesHint').innerText }));
   pass(!/unspent/i.test(hint.notes), `panel header counts leaves, not unspent notes ("${hint.notes}")`);
-  pass(/spendable by you/i.test(hint.swap), `the swap composer scopes it to the viewer ("${hint.swap}")`);
 
   console.log('\n--- the FAQ answers it too ---');
   await pg.click('#tabProtocol'); await w(pg,700);
@@ -123,7 +126,7 @@ const persona = async (pg,label) => {
     const ds=[...document.querySelectorAll('#faqBlock details.faq')];
     const d=ds.find(x=>/which notes have been spent/i.test(x.querySelector('summary').innerText));
     return { n: ds.length, found: !!d, txt: d ? d.querySelector('.faq-a').textContent.replace(/\s+/g,' ') : '',
-             count: document.querySelector('#faqCount').textContent };
+             count: document.querySelector('#app-payment #faqCount').textContent };
   });
   pass(faq.found, 'a FAQ entry asks "Can anyone tell which notes have been spent?"');
   pass(/structurally incapable|No —/.test(faq.txt), 'and answers no');

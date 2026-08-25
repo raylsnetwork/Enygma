@@ -1,4 +1,4 @@
-const { chromium, launchOpts, PAGE, shot } = require('./_env.cjs');
+const { chromium, launchOpts, PAGE, shot, enterProduct } = require('./_env.cjs');
 const w=(p,ms)=>p.waitForTimeout(ms);
 let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
 
@@ -42,6 +42,7 @@ const snap = pg => pg.evaluate(()=>{
   const errs=[]; pg.on('pageerror',e=>errs.push('pageerror: '+e.message));
   pg.on('console',m=>{ if(m.type()==='error') errs.push(m.text()); });
   await pg.goto(PAGE); await w(pg,1800);
+  await enterProduct(pg, 'institutional');
 
   console.log('--- tabs on load ---');
   let t = await pg.evaluate(()=>({
@@ -93,13 +94,13 @@ const snap = pg => pg.evaluate(()=>{
   await runFlow(pg);
   s = await snap(pg);
   pass(s.phase==='Complete', `flow completed (phase="${s.phase}")`);
-  pass(s.kInst==='6', `six institutions registered (${s.kInst})`);
-  pass(s.kAgr==='15', `all 15 channels agreed (${s.kAgr})`);
-  pass(s.kAud==='15/15', `every channel checked (${s.kAud})`);
+  pass(s.kInst==='10', `ten institutions registered (${s.kInst})`);
+  pass(s.kAgr==='45', `all 45 channels agreed (${s.kAgr})`);
+  pass(s.kAud==='45/45', `every channel checked (${s.kAud})`);
   pass(s.txCount==='0', `NO issuance or payment happened in this flow (ledger=${s.txCount})`);
-  const allIdentity = s.balRows.slice(0,6).every(c=>/𝒪/.test(c));
-  pass(allIdentity, `all six balances still at the identity point (${s.balRows[0]})`);
-  pass(/𝒪/.test(s.balRows[6]||''), `supply row at 𝒪 too ("${s.balRows[6]}")`);
+  const allIdentity = s.balRows.slice(0,10).every(c=>/𝒪/.test(c));
+  pass(allIdentity, `all ten balances still at the identity point (${s.balRows[0]})`);
+  pass(/𝒪/.test(s.balRows[10]||''), `supply row at 𝒪 too ("${s.balRows[10]}")`);
   pass(s.persona==='Regulator', `ends on the Regulator perspective (${s.persona})`);
   await pg.screenshot({path:shot('flow-keys-done.png')});
 
@@ -179,6 +180,7 @@ const snap = pg => pg.evaluate(()=>{
   const errs2=[]; pg2.on('pageerror',e=>errs2.push('pageerror: '+e.message));
   pg2.on('console',m=>{ if(m.type()==='error') errs2.push(m.text()); });
   await pg2.goto(PAGE); await w(pg2,1800);
+  await enterProduct(pg2, 'institutional');
   await pg2.click('#tabKeys'); await w(pg2,150);
   await pg2.click('#tourStart'); await w(pg2,900);        // starts key material => registry emptied
   await pg2.click('#tourExit'); await w(pg2,300);

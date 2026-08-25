@@ -1,4 +1,4 @@
-const { chromium, launchOpts, PAGE } = require('./_env.cjs');
+const { chromium, launchOpts, PAGE, enterProduct } = require('./_env.cjs');
 const w=(p,ms)=>p.waitForTimeout(ms);
 let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
 const cellSel = (a,b) => `#matrix button.cell[data-i="${Math.max(a,b)}"][data-j="${Math.min(a,b)}"]`;
@@ -14,6 +14,7 @@ const persona = async (pg,label) => {
   const errs=[]; pg.on('pageerror',e=>errs.push('pageerror: '+e.message));
   pg.on('console',m=>{ if(m.type()==='error') errs.push(m.text()); });
   await pg.goto(PAGE); await w(pg,2000);
+  await enterProduct(pg, 'institutional');
 
   // Bank 1 discloses its channel with Bank 2 to the Regulator
   const sel = await pg.evaluate(()=>{
@@ -40,6 +41,9 @@ const persona = async (pg,label) => {
   pass(/Decapsulate ctxt with delegated view key/.test(pre.label||''), `the regulator sees "${pre.label}"`);
   pass(/pending/.test(pre.verdict), 'and the verdict still reads Awaiting audit before decapsulating');
   const kpiBefore = Number(pre.kpi.split('/')[0]);
+  // how many agreed-but-unaudited pairs the button offers right now — the registry size decides it
+  const agreedBefore = await pg.evaluate(()=>
+    Number((document.querySelector('#runAllBtn').innerText.match(/\((\d+)\)/)||[])[1]));
 
   console.log('\n--- decapsulating IS the audit for that index ---');
   await pg.evaluate(()=>document.querySelector('[data-open]').click()); await w(pg,900);
@@ -65,7 +69,10 @@ const persona = async (pg,label) => {
   pass(/ok|posted ok/.test(post.cellCls), `the matrix cell is now a verified cell ("${post.cellCls}")`);
   pass(Number(post.kpi.split('/')[0])===kpiBefore+1, `the audit KPI advanced ${pre.kpi} → ${post.kpi}`);
   pass(/decaps/.test(post.logRow||''), `the audit log records the route ("${post.logRow}")`);
-  pass(/\(11\)/.test(post.runAll), `Run audit now offers the remaining 11 ("${post.runAll}")`);
+  // the registry holds ten banks, so 45 pairs exist and 42 are agreed; one just got audited
+  const remaining = Number((post.runAll.match(/\((\d+)\)/)||[])[1]);
+  pass(remaining === agreedBefore - 1,
+       `Run audit now offers the remaining ${agreedBefore - 1} ("${post.runAll}")`);
 
   console.log('\n--- a mismatch would NOT be marked audited ---');
   const bad = await pg.evaluate(async ()=>{

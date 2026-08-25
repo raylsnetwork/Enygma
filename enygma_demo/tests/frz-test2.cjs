@@ -1,4 +1,4 @@
-const { chromium, launchOpts, PAGE, shot } = require('./_env.cjs');
+const { chromium, launchOpts, PAGE, shot, enterProduct } = require('./_env.cjs');
 const w=(p,ms)=>p.waitForTimeout(ms);
 let fails=0;
 const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
@@ -11,6 +11,7 @@ const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
     const errs=[]; pg.on('pageerror',e=>errs.push(e.message));
     pg.on('console',m=>{ if(m.type()==='error') errs.push(m.text()); });
     await pg.goto(url); await w(pg,1600);
+    await enterProduct(pg, 'institutional');
     async function persona(p){ await pg.click('#personaBtn'); await w(pg,180); await pg.click(`#personaMenu button[data-p="${p}"]`); await w(pg,420); }
 
     console.log(`--- ${scheme}: freeze then run the walkthrough ---`);
