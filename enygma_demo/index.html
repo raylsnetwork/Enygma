@@ -5383,13 +5383,8 @@ async function registerTen(){
     await sleep(1200);
   }
 
-  say('Issuer minting an opening balance for each party…');
-  await seedNote(0, "ticket", 1);                       // you hold the asset
-  for(let i=1; i<10; i++) await seedNote(i, "usdr", 5); // everyone else holds cash to pay with
-  renderNotes();
-  renderStats();
-  populateSwapSelectors();
-  say(`${users.length} parties registered · ${notes.length} notes minted — pick a counterparty and open a swap.`);
+  say(`${users.length} parties registered, and that is all that has happened — every one of them holds ` +
+      `a registered public key and no balance. Issuance is the next step: mint a note below, then a swap has something to move.`);
   // the next network you visit can skip the formation now that you have watched one
   window.__ENYGMA.networkFormed("dvp");
   const doneBtn = $('#btnRegisterTen');
@@ -6423,14 +6418,8 @@ async function registerTen(){
     await sleep(1200);
   }
 
-  say('Minting the lot to you, and bidding cash to everyone else…');
-  await seedNote(0, "art", 1);
-  for(let i=1; i<10; i++) await seedNote(i, "usdc", 5000);
-  renderNotes();
-  renderStats();
-  renderBidderFields();
-  populateAuctionSelectors();
-  say(`${users.length} parties registered · ${notes.length} notes minted. Generate the auctioneer keypair to open bidding.`);
+  say(`${users.length} parties registered and nothing else — no lot minted, no auctioneer key yet. ` +
+      `Next: mint the lot below, then generate the auctioneer keypair that every sealed bid will be encrypted to.`);
   // the next network you visit can skip the formation now that you have watched one
   window.__ENYGMA.networkFormed("auctions");
   const doneBtn = $('#btnRegisterTen');
@@ -9617,23 +9606,15 @@ window.__ENYGMA.register("auctions", boot);
       await sleep(mine ? 1500 : 1200);          // yours runs slower — it is the one worth reading
     }
 
-    setNote("Agreeing pairwise ML-KEM channels…");
-    await sleep(500);
-    const n = state.insts.length; const skip = new Set(["1-3","2-4","0-4"]);
-    for(let i=0;i<n;i++) for(let j=i+1;j<n;j++) if(!skip.has(i+"-"+j)) await runAgreement(i,j);
+    // Stop here on purpose. Every bank now holds a registered public key and nothing else: no
+    // channel has been agreed and no balance issued. Those are the next two steps, and they are
+    // yours to take — section 2 below, then Payments.
+    const pairs = state.insts.length * (state.insts.length - 1) / 2;
+    setNote(`${state.insts.length} banks registered · 0 of ${pairs} pairwise channels agreed · no balances issued yet. ` +
+            `Registration publishes public keys and nothing more. Next, in order: agree your channels in ` +
+            `section 2 below — each is its own ML-KEM key agreement — then issue opening balances on the Payments tab.`);
     renderAll();
-
-    setNote("Issuer minting opening balances…");
-    await sleep(500);
-    for(const code of ONBOARD){ const idx = state.insts.findIndex(x=>x.code===code); await issueTo(idx, SEED_BAL[code]); }
-    // deliberately no example payment: the first one is yours to compose.
-    // the DvP side starts with bond notes only — cash arrives by bridging, which is the point
-    for(const code of ["B2","B3","B4"]){
-      const idx = state.insts.findIndex(x=>x.code===code);
-      if(idx>=0) await mintNote(idx, "BOND", 5000);
-    }
-    setNote(`${state.insts.length} banks registered · ${(n*(n-1)/2)} pairwise channels · opening balances issued`);
-    renderAll();
+    setOnboardButton("replay");
     window.__ENYGMA.networkFormed("payment");
     onboarding = false;
   }
