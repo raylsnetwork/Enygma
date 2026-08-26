@@ -25,6 +25,12 @@ jobs:
         with:
           go-version: "stable"
       - name: Install gitleaks
-        run: go install github.com/gitleaks/gitleaks/v8@latest
+        # gitleaks' go.mod still declares its module path as
+        # github.com/zricethezav/gitleaks/v8 (its name before the project
+        # moved to the gitleaks GitHub org) — installing via the newer
+        # github.com/gitleaks/gitleaks/v8 import path fails Go's module
+        # identity check ("module declares its path as ... but was
+        # required as ..."), even though that's the current repo URL.
+        run: go install github.com/zricethezav/gitleaks/v8@latest
       - name: Scan
         run: gitleaks detect --source . --config .gitleaks.toml --redact -v
