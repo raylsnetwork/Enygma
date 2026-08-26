@@ -123,11 +123,20 @@ func TestSequentialTransfers(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
+	// directly) since it mints below too — senderRegR + senderMintR ==
+	// senderPrevR, used as prevR1 further down.
 	for i := 0; i < nBanks; i++ {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
 		waitTxOK(instance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{}))
+			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
 	}
-	waitTxOK(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1)))
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	waitTxOK(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy))
 	t.Logf("setup: %d banks registered, %d tokens minted to bank 0 (accountId=1)", nBanks, mintAmt)
 
 	// ── Start test-local relayer on :8084 ─────────────────────────────────────
@@ -189,10 +198,12 @@ func TestSequentialTransfers(t *testing.T) {
 
 		sk := big.NewInt(senderSk)
 		fp := fingerPrintGen(secrets, senderIdx)
-		tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
-		txCommit, txRand := genCommitmentAndRandom(
-			senderIdx, big.NewInt(txAmt), txVals, new(big.Int).Set(blockHash), secrets)
+		// nullifier computed before tagMessageGen/genCommitmentAndRandom:
+		// Fix H-01/H-02 use it (not blockHash) as the per-transaction value.
 		nullifier, _ := poseidon.Hash([]*big.Int{secrets[senderIdx], blockHash})
+		tagMessages := tagMessageGen(senderIdx, secrets, nullifier)
+		txCommit, txRand := genCommitmentAndRandom(
+			senderIdx, big.NewInt(txAmt), txVals, nullifier, secrets)
 
 		toStrs := func(vals []*big.Int) []string {
 			s := make([]string, len(vals))
@@ -236,6 +247,7 @@ func TestSequentialTransfers(t *testing.T) {
 			"tx_values":                    toStrs(txVals),
 			"tx_random_values":             toStrs(txRand),
 			"sender_tx_value":              fmt.Sprintf("%d", txAmt),
+			"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 		})
 
 		gnarkResp, err := http.Post(gnarkURL, "application/json", bytes.NewReader(reqBody))
@@ -254,7 +266,7 @@ func TestSequentialTransfers(t *testing.T) {
 		if err := json.NewDecoder(gnarkResp.Body).Decode(&proofResp); err != nil {
 			t.Fatalf("[%s] decode proof: %v", label, err)
 		}
-		if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
+		if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
 			t.Fatalf("[%s] unexpected sizes: proof=%d signal=%d",
 				label, len(proofResp.Proof), len(proofResp.PublicSignal))
 		}

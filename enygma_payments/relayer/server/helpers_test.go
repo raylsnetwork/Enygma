@@ -73,15 +73,53 @@ func TestParseCommitments_InvalidDecimal(t *testing.T) {
 	}
 }
 
-// ── int64sToBI ────────────────────────────────────────────────────────────────
+// ── parseParticipantIds ───────────────────────────────────────────────────────
 
-func TestInt64sToBI(t *testing.T) {
-	got := int64sToBI([]int64{1, 2, 3})
+func TestParseParticipantIds_Valid(t *testing.T) {
+	got, err := parseParticipantIds([]int64{1, 2, 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(got) != 3 || got[0].Int64() != 1 || got[1].Int64() != 2 || got[2].Int64() != 3 {
 		t.Errorf("unexpected result: %v", got)
 	}
-	if len(int64sToBI(nil)) != 0 {
+	got, err = parseParticipantIds(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
 		t.Error("expected empty slice for nil input")
+	}
+}
+
+// Fix H-10 (mechanism 2): a negative id must be rejected outright, not
+// silently two's-complemented into a huge uint256 by the ABI encoder later.
+func TestParseParticipantIds_NegativeRejected(t *testing.T) {
+	if _, err := parseParticipantIds([]int64{1, -1, 3}); err == nil {
+		t.Fatal("expected error for negative id, got nil")
+	}
+}
+
+// ── checkParticipantCount ─────────────────────────────────────────────────────
+
+func TestCheckParticipantCount_Valid(t *testing.T) {
+	if err := checkParticipantCount(maxParticipants, maxParticipants); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCheckParticipantCount_WrongLength(t *testing.T) {
+	if err := checkParticipantCount(maxParticipants+1, maxParticipants+1); err == nil {
+		t.Fatal("expected error for oversized participant count, got nil")
+	}
+	if err := checkParticipantCount(1, 1); err == nil {
+		t.Fatal("expected error for undersized participant count, got nil")
+	}
+}
+
+func TestCheckParticipantCount_LengthMismatch(t *testing.T) {
+	if err := checkParticipantCount(maxParticipants, maxParticipants-1); err == nil {
+		t.Fatal("expected error for commitments/kIndex length mismatch, got nil")
 	}
 }
 

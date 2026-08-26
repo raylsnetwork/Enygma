@@ -5,16 +5,14 @@ import (
 
 	pos "enygma-server/poseidon"
 	utils "enygma-server/utils"
-	
-   "github.com/consensys/gnark/frontend"
-	cmp "github.com/consensys/gnark/std/math/cmp"
+
+	"github.com/consensys/gnark/frontend"
 )
 
 const JubJubPrimeSubGroupStr = "2736030358979909402780800718157159386076813972158567259200215660948447373041"
 
-type WithdrawEnygmaCircuitConfig struct{
-
-		NCommitment int
+type WithdrawEnygmaCircuitConfig struct {
+	NCommitment int
 }
 
 // const nSplit =6
@@ -30,29 +28,38 @@ type WithdrawEnygmaCircuit struct {
 	AnonymitySet        []frontend.Variable    `gnark:",public"` // K-anonymity set
 	MessageTags         []frontend.Variable    `gnark:",public"` // Tag messages
 	Nullifier           frontend.Variable      `gnark:",public"` // Nullifier
+	// Fix C-09: Σ VPerDeposit, exposed so Enygma.sol can bind it against
+	// Σ depositParams[i].amount before forwarding to the DvP vault — see
+	// the assertion below for why this alone closes the finding for the
+	// withdraw leg (deposit's symmetric gap is a separate, cross-repo
+	// binding this fix does not attempt — see Enygma.sol's withdraw()
+	// comment).
+	TotalDepositValue frontend.Variable `gnark:",public"`
+	// Fix L-01: chainId<<160 | contractAddress — see enygma/circuit.go's
+	// DomainId field doc comment for the full reasoning; identical here.
+	DomainId frontend.Variable `gnark:",public"`
 
 	// Private signals
-	SenderId                  frontend.Variable      // Identifier of the sender
-	SharedSecrets             []frontend.Variable     // Shared secrets (1D: sender's row)
-	SecretKey                 frontend.Variable       // Secret key
-	PreviousSenderBalance     frontend.Variable       // Previous balance
-	PreviousSenderRandomValue frontend.Variable       // Previous random factor
-	TxValues                  []frontend.Variable     // Balances debited/credited
-	TxRandomValues            []frontend.Variable     // Random factors for pedersen commitments
-	SenderTxValue             frontend.Variable       // Amount to withdraw
-	Hashes                    [10]frontend.Variable   // Deposit hashes (always 10)
-	SkDeposits                [10]frontend.Variable   // Secret keys for deposits
-	VPerDeposit               [10]frontend.Variable   // Value per deposit
-	Address                   frontend.Variable       // Withdraw address
+	SenderId                  frontend.Variable     // Identifier of the sender
+	SharedSecrets             []frontend.Variable   // Shared secrets (1D: sender's row)
+	SecretKey                 frontend.Variable     // Secret key
+	PreviousSenderBalance     frontend.Variable     // Previous balance
+	PreviousSenderRandomValue frontend.Variable     // Previous random factor
+	TxValues                  []frontend.Variable   // Balances debited/credited
+	TxRandomValues            []frontend.Variable   // Random factors for pedersen commitments
+	SenderTxValue             frontend.Variable     // Amount to withdraw
+	Hashes                    [10]frontend.Variable // Deposit hashes (always 10)
+	SkDeposits                [10]frontend.Variable // Secret keys for deposits
+	VPerDeposit               [10]frontend.Variable // Value per deposit
+	Address                   frontend.Variable     // Withdraw address
 }
 
-
-func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {	
+func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	k := circuit.Config.NCommitment
 
 	// Subgroup order
 	JubJubPrimeSubGroup := frontend.Variable(JubJubPrimeSubGroupStr)
-	
+
 	//////////////////////////////////**///////////////////////////////////
 	// Check if SenderId is in K
 	sumIsInK := frontend.Variable(0)
@@ -64,6 +71,14 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check if Amount To Withdraw Corresponds To Sender TxValues
+	//
+	// Fix M-15 (direction inversion): this used to assert
+	// selectedVConstrained == vConstrained — i.e. the sender's own
+	// TxValues slot equals +SenderTxValue, a CREDIT. That is backwards:
+	// withdraw() moves value OUT of the shielded pool (to the DvP side),
+	// so the sender must be DEBITED, exactly like deposit's own (correct)
+	// direction before this fix swapped the two. Encoded the same way
+	// the base transfer circuit encodes every debit: P - SenderTxValue.
 	selected_v := frontend.Variable(0)
 	for i := 0; i < k; i++ {
 		diff := api.Sub(circuit.SenderId, circuit.AnonymitySet[i])
@@ -71,13 +86,45 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 		contribution := api.Mul(eq, circuit.TxValues[i])
 		selected_v = api.Add(selected_v, contribution)
 	}
+	// selectedVBits stays at 252 bits: it's the sender's TxValues slot, the
+	// mod-P NEGATIVE (debit) encoding, which is legitimately close to P
+	// (~251 bits) for any nonzero amount — narrowing it would reject
+	// honest withdrawals. See deposit/circuit.go's identical comment.
 	selectedVBits := api.ToBinary(selected_v, 252)
-	vBits := api.ToBinary(circuit.SenderTxValue, 252)
+	// vBits: Fix C-02. Bounded to 64 bits so it can't alias +P/+2P.
+	vBits := api.ToBinary(circuit.SenderTxValue, 64)
+	pDiffBits := api.ToBinary(JubJubPrimeSubGroup, 252)
 
 	selectedVConstrained := api.FromBinary(selectedVBits...)
 	vConstrained := api.FromBinary(vBits...)
-	api.AssertIsEqual(selectedVConstrained, vConstrained)
-	
+	pDiffConstrained := api.FromBinary(pDiffBits...)
+
+	expectedTxValue := api.Sub(pDiffConstrained, vConstrained)
+	expectedTxValueMod := utils.ReduceModP(api, expectedTxValue) // Fix C-01
+
+	api.AssertIsEqual(selectedVConstrained, expectedTxValueMod)
+
+	///////////////////////////////////**///////////////////////////////////
+	// Fix C-03: only the sender's own slot had any bound on its magnitude.
+	// Every other TxValues[i] was unconstrained except for the aggregate
+	// Pedersen equality further below (Σ_all TxValues[i] ≡ selected_v mod
+	// P, i.e. Σ_{i≠sender} ≡ 0 mod P) — and P − w (a debit of w) is a
+	// perfectly valid field element satisfying that congruence. Unlike
+	// transfer/deposit, withdraw has no legitimate non-sender credits at
+	// all (this is a single-party operation), so the target here is 0,
+	// not SenderTxValue: range-checking every non-sender slot to 64 bits
+	// and requiring their sum to be exactly 0 forces each one individually
+	// to be 0 (all terms non-negative), closing the gap completely.
+	sumNonSenderValues := frontend.Variable(0)
+	for i := 0; i < k; i++ {
+		isSenderSlot := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
+		nonSenderValue := api.Select(isSenderSlot, frontend.Variable(0), circuit.TxValues[i])
+		nonSenderBits := api.ToBinary(nonSenderValue, 64)
+		nonSenderConstrained := api.FromBinary(nonSenderBits...)
+		sumNonSenderValues = api.Add(sumNonSenderValues, nonSenderConstrained)
+	}
+	api.AssertIsEqual(sumNonSenderValues, frontend.Variable(0))
+
 	///////////////////////////////////**///////////////////////////////////
 	// Check knowledge of secret of sender
 	selectedSecret := frontend.Variable(0)
@@ -87,11 +134,7 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	}
 
 	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
-	secretInter, _ := api.NewHint(utils.ModHint, 2, secretSenderCalculated)
-	secretRemain := secretInter[0]
-	secretQ := secretInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(secretQ, JubJubPrimeSubGroup), secretRemain), secretSenderCalculated)
-	api.AssertIsEqual(cmp.IsLess(api, secretRemain, JubJubPrimeSubGroup), 1)
+	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 
 	api.AssertIsEqual(secretRemain, selectedSecret)
 
@@ -99,11 +142,7 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	// Check if Hash Array of Secret is well formed
 	for i := 0; i < k; i++ {
 		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i], circuit.SharedSecrets[i]})
-		hashInter, _ := api.NewHint(utils.ModHint, 2, calculatedHash)
-		hashMod := hashInter[0]
-		hashQ := hashInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(hashQ, JubJubPrimeSubGroup), hashMod), calculatedHash)
-		api.AssertIsEqual(cmp.IsLess(api, hashMod, JubJubPrimeSubGroup), 1)
+		hashMod := utils.ReduceModP(api, calculatedHash) // Fix C-01
 
 		api.AssertIsEqual(hashMod, circuit.HashedSharedSecrets[i])
 	}
@@ -118,11 +157,7 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	}
 
 	pk := pos.Poseidon(api, []frontend.Variable{circuit.SecretKey, circuit.SecretKey})
-	pkInter, _ := api.NewHint(utils.ModHint, 2, pk)
-	pkMod := pkInter[0]
-	pkQ := pkInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(pkQ, JubJubPrimeSubGroup), pkMod), pk)
-	api.AssertIsEqual(cmp.IsLess(api, pkMod, JubJubPrimeSubGroup), 1)
+	pkMod := utils.ReduceModP(api, pk) // Fix C-01
 
 	api.AssertIsEqual(selectedPK, pkMod)
 
@@ -132,7 +167,6 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 		utils.AssertPointsIsOnCurve(api, circuit.PreviousCommit[i][0], circuit.PreviousCommit[i][1])
 		utils.AssertPointsIsOnCurve(api, circuit.TxCommit[i][0], circuit.TxCommit[i][1])
 	}
-
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check Knowledge of Previous Commitment
@@ -169,7 +203,30 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(PedersenObtained.Y, PedersenExpected.Y)
 
 	///////////////////////////////////**///////////////////////////////////
-	// Range Proof: sender_tx_value >= 0
+	// Range Proof: previousV >= sender_tx_value and sender_tx_value >= 0
+	// Fix C-08: this circuit had no solvency comparator at all — only the
+	// sender_tx_value >= 0 check below, which api.Cmp(v, 0) makes vacuous
+	// anyway (compiles to ~3800 constraints that prove nothing: Cmp is an
+	// unsigned comparison, and 0 as the right operand means every bit of
+	// the right side is 0, so the "less than" branch is unreachable for
+	// any field element — that gadget is a pre-existing no-op in all four
+	// circuits, harmless elsewhere only because the OTHER comparator
+	// (previousV >= v) actually does the work; withdraw was the one
+	// circuit missing that other comparator entirely). Without it, an
+	// account with balance 0 could credit itself any amount and instruct
+	// the DvP payout leg to pay it out, with no debit and no rejection.
+	//
+	// Also range-checks PreviousSenderBalance to 64 bits (the C-02 fix,
+	// not previously needed here since this witness had no second,
+	// narrower use to create the alias — adding the comparator below
+	// creates exactly that second use, so the bound has to come with it,
+	// not after).
+	previousVBits := api.ToBinary(circuit.PreviousSenderBalance, 64)
+	previousVConstrained := api.FromBinary(previousVBits...)
+
+	prevVGreaterEqualV := api.Cmp(previousVConstrained, vConstrained)
+	api.AssertIsEqual(api.IsZero(api.Add(prevVGreaterEqualV, frontend.Variable(1))), frontend.Variable(0))
+
 	vGreaterEqualZero := api.Cmp(vConstrained, frontend.Variable(0))
 	api.AssertIsEqual(api.IsZero(api.Add(vGreaterEqualZero, frontend.Variable(1))), frontend.Variable(0))
 
@@ -198,11 +255,7 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	HashTag := pos.Poseidon(api, []frontend.Variable{12})
 	for i := 0; i < k; i++ {
 		calculatedMessageTag := pos.Poseidon(api, []frontend.Variable{HashTag, circuit.SharedSecrets[i], circuit.BlockNumber})
-		calculatedMessageTagInter, _ := api.NewHint(utils.ModHint, 2, calculatedMessageTag)
-		calculatedMessageTagMod := calculatedMessageTagInter[0]
-		calculatedMessageTagQ := calculatedMessageTagInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(calculatedMessageTagQ, JubJubPrimeSubGroup), calculatedMessageTagMod), calculatedMessageTag)
-		api.AssertIsEqual(cmp.IsLess(api, calculatedMessageTagMod, JubJubPrimeSubGroup), 1)
+		calculatedMessageTagMod := utils.ReduceModP(api, calculatedMessageTag) // Fix C-01
 
 		api.AssertIsEqual(circuit.MessageTags[i], calculatedMessageTagMod)
 	}
@@ -218,13 +271,7 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	for i := 0; i < k; i++ {
 		RandomFactor := pos.Poseidon(api, []frontend.Variable{HashRandom, circuit.SharedSecrets[i], circuit.BlockNumber})
 
-		randomInter, _ := api.NewHint(utils.ModHint, 2, RandomFactor)
-		hashModP := randomInter[0]
-		q := randomInter[1]
-
-		api.AssertIsEqual(api.Add(api.Mul(q, JubJubPrimeSubGroup), hashModP), RandomFactor)
-		isValid := cmp.IsLess(api, hashModP, JubJubPrimeSubGroup)
-		api.AssertIsEqual(isValid, 1)
+		hashModP := utils.ReduceModP(api, RandomFactor) // Fix C-01
 
 		receiverHashesModP[i] = hashModP
 
@@ -234,13 +281,7 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 		sumOfReceiverHashes = api.Add(sumOfReceiverHashes, api.Mul(isReceiver, hashModP))
 	}
 
-	sumInter, _ := api.NewHint(utils.ModHint, 2, sumOfReceiverHashes)
-	senderRandomFactor := sumInter[0]
-	sumQ := sumInter[1]
-
-	api.AssertIsEqual(api.Add(api.Mul(sumQ, JubJubPrimeSubGroup), senderRandomFactor), sumOfReceiverHashes)
-	isSumValid := cmp.IsLess(api, senderRandomFactor, JubJubPrimeSubGroup)
-	api.AssertIsEqual(isSumValid, 1)
+	senderRandomFactor := utils.ReduceModP(api, sumOfReceiverHashes) // Fix C-01
 
 	for i := 0; i < k; i++ {
 		isSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
@@ -254,6 +295,23 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 
 	///////////////////////////////////**//////////////////////////////////////
 	// Process multiple commitment withdraw - always process exactly 10 deposits
+	//
+	// Fix C-09: this loop's per-slot Hash check was, and remains,
+	// self-consistent only — the prover picks VPerDeposit/SkDeposits/
+	// Address freely and computes Hashes to match, so on its own it
+	// constrains nothing about how much value actually leaves the
+	// shielded pool. Before this fix, NOTHING anywhere related
+	// Σ VPerDeposit to SenderTxValue (the amount this circuit's own
+	// solvency/debit logic above actually debits the sender for), so a
+	// prover could debit an arbitrarily small (or zero) shielded amount
+	// while claiming an arbitrarily large VPerDeposit sum — unlimited
+	// unbacked value creation on the DvP side, the moment the bridge is
+	// wired up (C-09's "Critical-on-arming" framing). sumVPerDeposit
+	// below, asserted equal to SenderTxValue and exposed as the new
+	// TotalDepositValue public signal, is what Enygma.sol's withdraw()
+	// then binds against Σ depositParams[i].amount before ever calling
+	// out to the DvP vault — closing the gap for this leg completely.
+	sumVPerDeposit := frontend.Variable(0)
 	for i := 0; i < 10; i++ {
 		// Check if deposit value is zero
 		isDepositZero := api.IsZero(circuit.VPerDeposit[i])
@@ -277,34 +335,58 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 		conditionalDifference := api.Mul(enabled, difference)
 
 		api.AssertIsEqual(conditionalDifference, frontend.Variable(0))
+
+		sumVPerDeposit = api.Add(sumVPerDeposit, circuit.VPerDeposit[i])
 	}
+	// VPerDeposit entries are individually unbounded field elements, but
+	// bounding sumVPerDeposit here (not each entry) is sufficient: it's
+	// asserted equal to SenderTxValue immediately below, and vBits above
+	// already range-checks SenderTxValue itself to 64 bits (Fix C-02) —
+	// so this equality transitively bounds the sum without needing a
+	// second, redundant range check on the sum itself.
+	api.AssertIsEqual(sumVPerDeposit, circuit.SenderTxValue)
+	// Bind the public TotalDepositValue signal itself to the same sum —
+	// a prover cannot publish anything other than the true Σ VPerDeposit
+	// (equivalently, SenderTxValue) here.
+	api.AssertIsEqual(circuit.TotalDepositValue, sumVPerDeposit)
+
+	// Fix L-01: keep DomainId a genuinely constrained wire.
+	api.AssertIsEqual(circuit.DomainId, circuit.DomainId)
 
 	return nil
 }
 
-
-
+// Fix M-08 (remote panics): see the identical note on enygma's
+// EnygmaRequest — these tags used to allow 1-6 elements while the handler
+// always indexes [0..5]. len=6 (and dive,len=2 on the [2]string pairs)
+// matches what the handler actually requires. Hashes/SkDeposits/
+// VPerDeposit are already fixed-size Go arrays ([10]string), so their
+// length can't vary; a short JSON array would silently zero-pad rather
+// than error, but ParseBigInt's Fix M-08 error-return (see utils.go)
+// already rejects an empty-string element before any witness is built.
 type WithdrawRequest struct {
-	HashedSharedSecrets       []string      `json:"hashed_shared_secrets" binding:"required,min=1,max=6"`
-	PublicKey                 []string      `json:"public_keys" binding:"required,min=1,max=6"`
-	PreviousCommit            [][2]string   `json:"previous_commits" binding:"required,min=1,max=6,dive,len=2"`
-	TxCommit                  [][2]string   `json:"tx_commits" binding:"required,min=1,max=6,dive,len=2"`
-	BlockNumber               string        `json:"block_number" binding:"required"`
-	AnonymitySet              []string      `json:"anonymity_set" binding:"required,min=1,max=6"`
-	MessageTags               []string      `json:"message_tags" binding:"required,min=1,max=6"`
-	Nullifier                 string        `json:"nullifier" binding:"required"`
-	SenderID                  string        `json:"sender_id" binding:"required"`
-	SharedSecrets             []string      `json:"shared_secrets" binding:"required,min=1,max=6"`
-	SecretKey                 string        `json:"secret_key" binding:"required"`
-	PreviousSenderBalance     string        `json:"previous_sender_balance" binding:"required"`
-	PreviousSenderRandomValue string        `json:"previous_sender_random_value" binding:"required"`
-	TxValues                  []string      `json:"tx_values" binding:"required,min=1,max=6"`
-	TxRandomValues            []string      `json:"tx_random_values" binding:"required,min=1,max=6"`
-	SenderTxValue             string        `json:"sender_tx_value" binding:"required"`
-	Hashes                    [10]string    `json:"hashes" binding:"required"`
-	SkDeposits                [10]string    `json:"sk_deposits" binding:"required"`
-	VPerDeposit               [10]string    `json:"v_per_deposit" binding:"required"`
-	Address                   string        `json:"address" binding:"required"`
+	HashedSharedSecrets       []string    `json:"hashed_shared_secrets" binding:"required,len=6"`
+	PublicKey                 []string    `json:"public_keys" binding:"required,len=6"`
+	PreviousCommit            [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
+	TxCommit                  [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
+	BlockNumber               string      `json:"block_number" binding:"required"`
+	AnonymitySet              []string    `json:"anonymity_set" binding:"required,len=6"`
+	MessageTags               []string    `json:"message_tags" binding:"required,len=6"`
+	Nullifier                 string      `json:"nullifier" binding:"required"`
+	SenderID                  string      `json:"sender_id" binding:"required"`
+	SharedSecrets             []string    `json:"shared_secrets" binding:"required,len=6"`
+	SecretKey                 string      `json:"secret_key" binding:"required"`
+	PreviousSenderBalance     string      `json:"previous_sender_balance" binding:"required"`
+	PreviousSenderRandomValue string      `json:"previous_sender_random_value" binding:"required"`
+	TxValues                  []string    `json:"tx_values" binding:"required,len=6"`
+	TxRandomValues            []string    `json:"tx_random_values" binding:"required,len=6"`
+	SenderTxValue             string      `json:"sender_tx_value" binding:"required"`
+	Hashes                    [10]string  `json:"hashes" binding:"required"`
+	SkDeposits                [10]string  `json:"sk_deposits" binding:"required"`
+	VPerDeposit               [10]string  `json:"v_per_deposit" binding:"required"`
+	Address                   string      `json:"address" binding:"required"`
+	// Fix L-01: caller-supplied chainId<<160|contractAddress.
+	DomainId string `json:"domain_id" binding:"required"`
 }
 
 type WithdrawOutput struct {

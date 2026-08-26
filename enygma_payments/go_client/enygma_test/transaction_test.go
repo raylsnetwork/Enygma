@@ -51,8 +51,10 @@ import (
 // ── Curve constants (mirrors go_client/internal/curve/curve.go) ──────────────
 
 var (
-	curveGx, _ = new(big.Int).SetString("16540640123574156134436876038791482806971768689494387082833631921987005038935", 10)
-	curveGy, _ = new(big.Int).SetString("20819045374670962167435360035096875258406992893633759881276124905556507972311", 10)
+	// curveG: NUMS hash-to-curve derivation, seed "2" (H-11 fix). Reproduce
+	// with: cd gnark-server && go run ./cmd/derive_generator
+	curveGx, _ = new(big.Int).SetString("12337812418750581066638756637363471856433191340622504180842886595232027947307", 10)
+	curveGy, _ = new(big.Int).SetString("15225366398330386329633463986700597127113326976080712967801565482915963669722", 10)
 	curveG     = &babyjub.Point{X: curveGx, Y: curveGy}
 
 	curveHx, _ = new(big.Int).SetString("10100005861917718053548237064487763771145251762383025193119768015180892676690", 10)
@@ -68,6 +70,20 @@ func pedersenCommitment(v, r *big.Int) *babyjub.Point {
 	vG := babyjub.NewPoint().Mul(v, curveG)
 	rH := babyjub.NewPoint().Mul(r, curveH)
 	return babyjub.NewPoint().Projective().Add(vG.Projective(), rH.Projective()).Affine()
+}
+
+// regCommit and mintCommit build the pre-computed commitment points
+// registerAccount/mintSupply now take instead of a raw randomness scalar
+// or r=0 (Fix H-02 residual). r is whatever off-chain secret blinding
+// factor the caller chose; nothing about these helpers is test-specific.
+func regCommit(r *big.Int) (x, y *big.Int) {
+	pt := pedersenCommitment(big.NewInt(0), r)
+	return pt.X, pt.Y
+}
+
+func mintCommitPt(amount, r *big.Int) (x, y *big.Int) {
+	pt := pedersenCommitment(amount, r)
+	return pt.X, pt.Y
 }
 
 // addBJPoints adds two Baby Jubjub points.
@@ -135,33 +151,44 @@ func fp2Strs(fp [][]*big.Int) [][]string {
 	return out
 }
 
-// tagMessageGen computes Poseidon(HashTag, s[i], blockHash) mod P for each bank.
-func tagMessageGen(secrets []*big.Int, blockHash *big.Int) []*big.Int {
-	bh := new(big.Int).Mod(blockHash, curveP)
+// perSlotNonce folds nullifier (Fix H-01/H-02's per-transaction value,
+// replacing the epoch-constant blockHash) and a direction tag
+// Poseidon(senderId, receiverId) into one value, matching
+// gnark-server/pkg/circuits/enygma/circuit.go's perSlotNonce exactly (two
+// chained 2-input Poseidon calls — the in-circuit Poseidon gadget's S-box
+// constant table tops out at 3 inputs per call).
+func perSlotNonce(nullifier *big.Int, senderId, receiverId int) *big.Int {
+	dir, _ := poseidon.Hash([]*big.Int{big.NewInt(int64(senderId)), big.NewInt(int64(receiverId))})
+	n, _ := poseidon.Hash([]*big.Int{nullifier, dir})
+	return n
+}
+
+// tagMessageGen computes Poseidon(HashTag, s[i], perSlotNonce) mod P for each bank.
+func tagMessageGen(senderId int, secrets []*big.Int, nullifier *big.Int) []*big.Int {
 	out := make([]*big.Int, len(secrets))
 	for i, s := range secrets {
-		h, _ := poseidon.Hash([]*big.Int{hashTag, s, bh})
+		h, _ := poseidon.Hash([]*big.Int{hashTag, s, perSlotNonce(nullifier, senderId, i)})
 		out[i] = h.Mod(h, curveP)
 	}
 	return out
 }
 
-// rValue computes Poseidon(HashRandom, s, blockHash) mod P for bank i.
-func rValue(s, blockHash *big.Int) *big.Int {
-	h, _ := poseidon.Hash([]*big.Int{hashRandom, s, blockHash})
+// rValue computes Poseidon(HashRandom, s, perSlotNonce) mod P for bank i.
+func rValue(s, nullifier *big.Int, senderId, receiverId int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandom, s, perSlotNonce(nullifier, senderId, receiverId)})
 	return h.Mod(h, curveP)
 }
 
 // genCommitmentAndRandom mirrors randomness.GenCommitmentAndRandom.
 // Returns (txCommit, txRandom) where txRandom[sender] = sum of receiver randoms,
 // txRandom[receiver] = negated random (matches circuit expectation).
-func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*big.Int, blockHash *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
+func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*big.Int, nullifier *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
 	n := len(secrets)
 	rValues := make([]*big.Int, n)
 	rSum := new(big.Int)
 
 	for i := 0; i < n; i++ {
-		r := rValue(secrets[i], blockHash)
+		r := rValue(secrets[i], nullifier, senderId, i)
 		rValues[i] = r
 		if i != senderId {
 			rSum.Add(rSum, r)
@@ -182,6 +209,65 @@ func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*bi
 			// receiver: Com(txValues[i], -r[i])
 			pt = pedersenCommitment(txValues[i], negMod(rValues[i]))
 			txRandom[i] = negMod(rValues[i]) // negated for circuit
+		}
+		commits[i] = enygma.IEnygmaPoint{C1: pt.X, C2: pt.Y}
+	}
+	return commits, txRandom
+}
+
+// ── Legacy (pre-H-01/H-02) formula, kept for the enygma_fee circuit ──────────
+//
+// H-01/H-02 fixed only gnark-server/pkg/circuits/enygma/circuit.go — the
+// plain transfer circuit the audit's evidence and remediation are scoped
+// to. enygma_fee/deposit/withdraw still use the original
+// Poseidon(domain, secret, BlockNumber) formula (see those circuits'
+// MessageTags/RandomFactor blocks), so fee_transfer_test.go — which
+// targets /proof/enygma_fee, not /proof/enygma — must keep computing tags
+// and random factors the old way rather than picking up
+// tagMessageGen/rValue/genCommitmentAndRandom's new nullifier-based
+// signatures above. Renamed with a legacy* prefix instead of silently
+// changing behavior under the same name.
+
+func legacyTagMessageGen(secrets []*big.Int, blockHash *big.Int) []*big.Int {
+	bh := new(big.Int).Mod(blockHash, curveP)
+	out := make([]*big.Int, len(secrets))
+	for i, s := range secrets {
+		h, _ := poseidon.Hash([]*big.Int{hashTag, s, bh})
+		out[i] = h.Mod(h, curveP)
+	}
+	return out
+}
+
+func legacyRValue(s, blockHash *big.Int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandom, s, blockHash})
+	return h.Mod(h, curveP)
+}
+
+func legacyGenCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*big.Int, blockHash *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
+	n := len(secrets)
+	rValues := make([]*big.Int, n)
+	rSum := new(big.Int)
+
+	for i := 0; i < n; i++ {
+		r := legacyRValue(secrets[i], blockHash)
+		rValues[i] = r
+		if i != senderId {
+			rSum.Add(rSum, r)
+			rSum.Mod(rSum, curveP)
+		}
+	}
+	rValues[senderId] = rSum
+
+	commits := make([]enygma.IEnygmaPoint, n)
+	txRandom := make([]*big.Int, n)
+	for i := 0; i < n; i++ {
+		var pt *babyjub.Point
+		if i == senderId {
+			pt = pedersenCommitment(negMod(transferValue), rSum)
+			txRandom[i] = rSum
+		} else {
+			pt = pedersenCommitment(txValues[i], negMod(rValues[i]))
+			txRandom[i] = negMod(rValues[i])
 		}
 		commits[i] = enygma.IEnygmaPoint{C1: pt.X, C2: pt.Y}
 	}
@@ -219,6 +305,19 @@ var (
 	}()
 )
 
+// expectedDomainId mirrors Enygma.sol's _expectedDomainId() (Fix L-01):
+// (block.chainid << 160) | uint256(uint160(address(this))). Every hand-built
+// public_signal array in this package must place this value in its domain
+// separator slot, or every proof-consuming entrypoint (transfer,
+// transferWithFee, deposit, withdraw, burn) will revert InvalidDomain — the
+// check runs in Solidity itself, unconditionally, independent of which
+// verifier (real or mock) is registered.
+func expectedDomainId(contractAddr common.Address) *big.Int {
+	addr := new(big.Int).SetBytes(contractAddr.Bytes())
+	chain := new(big.Int).Lsh(big.NewInt(chainID), 160)
+	return new(big.Int).Or(chain, addr)
+}
+
 const (
 	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
 	relayerURL = "http://127.0.0.1:8082"
@@ -234,6 +333,17 @@ const (
 	senderSk    = 424242
 	senderPrevR = 67890
 	senderPrevV = mintAmt
+
+	// Fix H-02 residual: registerAccount/mintSupply no longer take raw
+	// randomness/r=0 on chain — they take a pre-computed commitment point.
+	// senderRegR and senderMintR are split so senderRegR + senderMintR ==
+	// senderPrevR exactly, preserving every existing
+	// PreviousSenderRandomValue == senderPrevR assumption throughout this
+	// suite (see the comment above) without touching any downstream
+	// proof-building code — only the registerAccount/mintSupply call
+	// sites themselves change.
+	senderRegR  = 50000
+	senderMintR = senderPrevR - senderRegR // 17890
 )
 
 // ownerPrivKey is loaded from the MY_KEY environment variable at test startup.
@@ -395,16 +505,26 @@ func TestFullTransactionFlow(t *testing.T) {
 
 	// Register banks with accountIds 1-6 (avoids onlyRegistered sentinel=0 bug).
 	// All use ownerAddr; addressToAccountId is overwritten each call — last value is 6 ≠ 0.
+	// Bank 0 registers with senderRegR (not senderPrevR directly) since it
+	// mints below too — senderRegR + senderMintR == senderPrevR, see that
+	// constant's comment. Banks 1-5 never mint in this test, so their
+	// registration commitment can reuse senderPrevR as-is unchanged.
 	for i := 0; i < nBanks; i++ {
-		r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{}))
-		if r.Status != 1 {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
+		rcpt := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
+		if rcpt.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
 	t.Logf("registered %d banks (accountIds 1–%d)", nBanks, nBanks)
 
 	// ── Setup: mint to bank 0 (accountId=1) ───────────────────────────────────
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
@@ -450,17 +570,16 @@ func TestFullTransactionFlow(t *testing.T) {
 		big.NewInt(0), big.NewInt(0), big.NewInt(0),
 	}
 
-	// GenCommitmentAndRandom mutates blockHash in original — use a copy
-	bh := new(big.Int).Set(blockHash)
-	tagMessages := tagMessageGen(secrets, bh)
-
-	bh2 := new(big.Int).Set(blockHash)
-	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, bh2, secrets)
-
+	// nullifier must be computed before tagMessageGen/genCommitmentAndRandom:
+	// Fix H-01/H-02 use it (not blockHash, the epoch anchor) as the
+	// per-transaction value mixed into both derivations.
 	nullifier, err := poseidon.Hash([]*big.Int{senderSecret, blockHash})
 	if err != nil {
 		t.Fatalf("nullifier: %v", err)
 	}
+
+	tagMessages := tagMessageGen(senderIdx, secrets, nullifier)
+	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, nullifier, secrets)
 
 	// ── Build gnark server request ─────────────────────────────────────────────
 	toStrs := func(vals []*big.Int) []string {
@@ -507,6 +626,7 @@ func TestFullTransactionFlow(t *testing.T) {
 		"tx_values":                    toStrs(txValues),
 		"tx_random_values":             toStrs(txRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", transferAmt),
+		"domain_id":                    expectedDomainId(common.HexToAddress(tokenAddr)).String(), // Fix L-01
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -532,7 +652,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
 		t.Fatalf("bad sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")

@@ -14,8 +14,6 @@ internal/
   types/            Shared types
 transaction/        Standalone CLI for manual demo transactions
 enygma_test/        End-to-end integration test (separate Go module)
-zkdvp/              DVP integration helpers
-interfacezkdvp/     DVP contract interface
 ```
 
 ## Running the integration test
@@ -33,9 +31,12 @@ Prerequisites: Hardhat node on `:8545`, gnark server on `:8080`, contracts deplo
 
 `transaction/main.go` is a manual demo tool for running a single transaction from the command line. It reads the contract address from `config/address.json` (update this after each deployment).
 
+Fix M-10: `sk` (the spend authority), `previousV` and `previousR` (the sender's balance opening) are read from environment variables, not command-line arguments — `os.Args` is world-readable via `ps aux` / `/proc/<pid>/cmdline` on a shared host and persists in shell history.
+
 ```bash
 cd go_client
-go run ./transaction/main.go <qtyBank> <value> <senderId> <sk> <previousV> <previousR>
+ENYGMA_SK=<sk> ENYGMA_PREVIOUS_V=<balance> ENYGMA_PREVIOUS_R=<blinding> \
+  go run ./transaction/main.go <qtyBank> <value> <senderId>
 ```
 
-**Note:** `zkdvp/`, `interfacezkdvp/`, and `utils/` support the `enygma_dvp` integration layer and are not used by the core payment flow.
+**Note (Fix L-13):** `zkdvp/`, `interfacezkdvp/`, and `utils/` — an experimental `enygma_dvp` integration layer, not used by the core payment flow — were removed. That code never compiled (`zkdvp/deposit.go` and `withdraw.go` both declared `func main()` in the same package), POSTed to `/relay/deposit` and `/relay/withdraw` routes the relayer never registered, and derived every DvP blinding factor from constants checked into the repository (`secrets := []*big.Int{1234567890, ...}`) rather than the ML-KEM `agreement` package — commitments built from it were never actually hiding. See the audit finding for the full analysis; its own remediation names deletion as an acceptable fix given the code shipped no working path to begin with.

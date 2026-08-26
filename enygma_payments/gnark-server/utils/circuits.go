@@ -1,16 +1,20 @@
 package utils
 
 import (
-	
+
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
-	
+	cmp "github.com/consensys/gnark/std/math/cmp"
+
 )
 
 var(
+	// G: NUMS hash-to-curve derivation, seed "2" (H-11 fix — must match
+	// utils/utils.go CircuitGBabyJub). Reproduce with:
+	// go run ./cmd/derive_generator
 	G = twistededwards.Point{
-		X: "16540640123574156134436876038791482806971768689494387082833631921987005038935",
-		Y: "20819045374670962167435360035096875258406992893633759881276124905556507972311",
+		X: "12337812418750581066638756637363471856433191340622504180842886595232027947307",
+		Y: "15225366398330386329633463986700597127113326976080712967801565482915963669722",
 	}
 
 	H= twistededwards.Point{
@@ -82,6 +86,35 @@ func ScalarMul(api frontend.API, p twistededwards.Point, scalar frontend.Variabl
 }
 
 
+
+// ReduceModP performs a fully-constrained reduction of value modulo the Baby
+// Jubjub prime subgroup order P. Fixes C-01: the raw two-constraint hint
+// gadget this replaces (q·P + r == value, r < P, copy-pasted at all 28 call
+// sites across the four circuits) left the quotient q completely unbounded.
+// Because P is invertible in the BN254 scalar field Fr, a satisfying q =
+// (value - r)·P⁻¹ exists for ANY chosen r in [0, P), so the "reduction"
+// proved nothing — a prover could make ModHint return whatever r it wanted
+// (e.g. to mint from a zero balance) simply by overriding the hint at prove
+// time; the circuit itself never rejected it. Fr is ~254 bits and P is ~251
+// bits, so floor(Fr/P) == 7: binding q to 3 bits closes this off.
+//
+// That bound is api.ToBinary(q, 3), not api.AssertIsLessOrEqual(q, 7):
+// gnark's AssertIsLessOrEqual, even for a constant bound, decomposes the
+// compared value into the FULL field width (~254 bits, api.go's
+// ToBinary(..., FieldBitLen())) before comparing — measured at roughly
+// 1.7k-2.1k extra constraints per call site, 28 sites. ToBinary(q, 3)
+// decomposes into exactly 3 bits and gets the identical soundness
+// property (no valid witness exists for q > 7) for a handful of
+// constraints — this is what "three-bit decomposition, essentially free"
+// actually requires.
+func ReduceModP(api frontend.API, value frontend.Variable) frontend.Variable {
+	out, _ := api.NewHint(ModHint, 2, value)
+	r, q := out[0], out[1]
+	api.AssertIsEqual(api.Add(api.Mul(q, P), r), value)
+	api.AssertIsEqual(cmp.IsLess(api, r, P), 1)
+	api.ToBinary(q, 3)
+	return r
+}
 
 func AssertPointsIsOnCurve(api frontend.API, X, Y frontend.Variable) {
 	// Compute X² and Y²

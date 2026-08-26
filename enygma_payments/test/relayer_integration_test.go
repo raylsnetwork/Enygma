@@ -24,7 +24,7 @@ import (
 func newIntegrationServer(t *testing.T, c *mockContract, m *mockMiner) *httptest.Server {
 	t.Helper()
 	h := newTestHandler(c, m)
-	r := server.NewWithHandler(testAPIKey, h)
+	r := server.NewWithHandler(testAPIKeys, h)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv
@@ -153,13 +153,20 @@ func TestRelayIntegration_Transfer(t *testing.T) {
 func TestRelayIntegration_Deduplication(t *testing.T) {
 	tx := dummyTx()
 	h := newTestHandler(&mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)})
-	srv := httptest.NewServer(server.NewWithHandler(testAPIKey, h))
+	srv := httptest.NewServer(server.NewWithHandler(testAPIKeys, h))
 	t.Cleanup(srv.Close)
 
 	body := validTransferBody()
 	// Mark the dedup key as in-flight to simulate a concurrent duplicate.
-	h.SetInFlight("transfer:"+body.Proof[0], struct{}{})
-	defer h.DeleteInFlight("transfer:" + body.Proof[0])
+	// Fix H-10: the dedup key is now a hash of the whole body, not just
+	// "transfer:"+proof[0] — server.DedupKey computes it the same way
+	// RelayTransfer does.
+	dedupKey, err := server.DedupKey("transfer", body)
+	if err != nil {
+		t.Fatalf("DedupKey: %v", err)
+	}
+	h.SetInFlight(dedupKey, struct{}{})
+	defer h.DeleteInFlight(dedupKey)
 
 	resp := postURL(t, srv.URL+"/relay/transfer", testAPIKey, body)
 	resp.Body.Close()
@@ -184,16 +191,19 @@ func TestRelayIntegration_PublicEndpointsNoAuth(t *testing.T) {
 
 // ── PublicSignal zero-padding ─────────────────────────────────────────────────
 
-func TestRelayIntegration_TransferPublicSignalPadding(t *testing.T) {
-	tx := dummyTx()
-	srv := newIntegrationServer(t, &mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)})
+// TestRelayIntegration_TransferPublicSignalRejectsShort reproduces L-05
+// over the real HTTP stack (not just the in-process handler test in
+// relayer_handler_test.go): a short publicSignal must be rejected, not
+// silently zero-padded and forwarded as a signed, broadcast transaction.
+func TestRelayIntegration_TransferPublicSignalRejectsShort(t *testing.T) {
+	srv := newIntegrationServer(t, &mockContract{}, &mockMiner{})
 
 	body := validTransferBody()
-	body.PublicSignal = []string{big.NewInt(999).String()} // only 1 signal; rest zero-padded
+	body.PublicSignal = []string{big.NewInt(999).String()} // only 1 signal, want exactly transferPublicSignalLen
 
 	resp := postURL(t, srv.URL+"/relay/transfer", testAPIKey, body)
 	b := readAll(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("got %d: %s", resp.StatusCode, b)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("FAIL (L-05 regressed): got %d, want 400 (a short publicSignal must be rejected, not zero-padded): %s", resp.StatusCode, b)
 	}
 }

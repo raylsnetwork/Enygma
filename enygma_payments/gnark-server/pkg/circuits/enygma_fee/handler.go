@@ -8,14 +8,14 @@ import (
 
 	utils "enygma-server/utils"
 
-	"github.com/gin-gonic/gin"
-	"github.com/iden3/go-iden3-crypto/babyjub"
-	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
+	"github.com/consensys/gnark/constraint/solver"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/gin-gonic/gin"
+	"github.com/iden3/go-iden3-crypto/babyjub"
 )
 
 func createCircuitTemplate(config EnygmaFeeCircuitConfig) EnygmaFeeCircuit {
@@ -37,7 +37,7 @@ func createCircuitTemplate(config EnygmaFeeCircuitConfig) EnygmaFeeCircuit {
 // pkPath and vkPath are the file paths to the Groth16 proving and verifying keys.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	curve := ecc.BN254
-	pk, _ := utils.LoadProvingKey(curve, pkPath)
+	pk, vk := utils.MustLoadKeys(curve, pkPath, vkPath) // Fix L-04 part 1
 
 	config := EnygmaFeeCircuitConfig{NCommitment: 6}
 	circuitTemplate := createCircuitTemplate(config)
@@ -56,39 +56,46 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness := createCircuitTemplate(config)
 
+		// Fix M-08: bp.Parse accumulates the first parse failure instead
+		// of silently turning a malformed decimal into nil. bp.Err() is
+		// checked below, before frontend.NewWitness is ever called — see
+		// utils.ParseBigInt's doc for why that ordering closes the
+		// witness.Fill goroutine leak.
+		bp := &utils.BigIntParser{}
+
 		witness.SenderId = frontend.Variable(request.SenderID)
 		witness.SenderTxValue = frontend.Variable(request.SenderTxValue)
 		witness.SecretKey = frontend.Variable(request.SecretKey)
-		witness.Fee = utils.ParseBigInt(request.Fee)
+		witness.Fee = bp.Parse(request.Fee)
 
 		for i := 0; i < config.NCommitment; i++ {
-			witness.SharedSecrets[i] = utils.ParseBigInt(request.SharedSecrets[i])
-			witness.HashedSharedSecrets[i] = utils.ParseBigInt(request.HashedSharedSecrets[i])
-			witness.PublicKey[i] = utils.ParseBigInt(request.PublicKey[i])
+			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])
+			witness.HashedSharedSecrets[i] = bp.Parse(request.HashedSharedSecrets[i])
+			witness.PublicKey[i] = bp.Parse(request.PublicKey[i])
 
-			witness.PreviousCommit[i][0] = utils.ParseBigInt(request.PreviousCommit[i][0])
-			witness.PreviousCommit[i][1] = utils.ParseBigInt(request.PreviousCommit[i][1])
+			witness.PreviousCommit[i][0] = bp.Parse(request.PreviousCommit[i][0])
+			witness.PreviousCommit[i][1] = bp.Parse(request.PreviousCommit[i][1])
 
-			witness.TxCommit[i][0] = utils.ParseBigInt(request.TxCommit[i][0])
-			witness.TxCommit[i][1] = utils.ParseBigInt(request.TxCommit[i][1])
-			witness.TxValues[i] = utils.ParseBigInt(request.TxValues[i])
-			witness.TxRandomValues[i] = utils.ParseBigInt(request.TxRandomValues[i])
-			witness.AnonymitySet[i] = utils.ParseBigInt(request.AnonymitySet[i])
-			witness.MessageTags[i] = utils.ParseBigInt(request.MessageTags[i])
+			witness.TxCommit[i][0] = bp.Parse(request.TxCommit[i][0])
+			witness.TxCommit[i][1] = bp.Parse(request.TxCommit[i][1])
+			witness.TxValues[i] = bp.Parse(request.TxValues[i])
+			witness.TxRandomValues[i] = bp.Parse(request.TxRandomValues[i])
+			witness.AnonymitySet[i] = bp.Parse(request.AnonymitySet[i])
+			witness.MessageTags[i] = bp.Parse(request.MessageTags[i])
 		}
 
-		witness.PreviousSenderBalance = utils.ParseBigInt(request.PreviousSenderBalance)
-		witness.PreviousSenderRandomValue = utils.ParseBigInt(request.PreviousSenderRandomValue)
-		witness.Nullifier = utils.ParseBigInt(request.Nullifier)
+		witness.PreviousSenderBalance = bp.Parse(request.PreviousSenderBalance)
+		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
+		witness.Nullifier = bp.Parse(request.Nullifier)
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
 
 		// ── Compute aggregate public outputs ─────────────────────────────────
 		// SumTxValuesWithFee = (Σ TxValues + fee) mod P_bjj
 		sumTxVal := new(big.Int)
 		for i := 0; i < config.NCommitment; i++ {
-			sumTxVal.Add(sumTxVal, utils.ParseBigInt(request.TxValues[i]))
+			sumTxVal.Add(sumTxVal, bp.Parse(request.TxValues[i]))
 		}
-		sumTxVal.Add(sumTxVal, utils.ParseBigInt(request.Fee))
+		sumTxVal.Add(sumTxVal, bp.Parse(request.Fee))
 		sumTxVal.Mod(sumTxVal, utils.P)
 		witness.SumTxValuesWithFee = sumTxVal
 
@@ -97,22 +104,28 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// Adding fee·G gives (0)·G = identity (0,1) — the conservation invariant.
 		// Start from TxCommit[0] to mirror the circuit's chain exactly.
 		sumCommit := &babyjub.Point{
-			X: utils.ParseBigInt(request.TxCommit[0][0]),
-			Y: utils.ParseBigInt(request.TxCommit[0][1]),
+			X: bp.Parse(request.TxCommit[0][0]),
+			Y: bp.Parse(request.TxCommit[0][1]),
 		}
 		for i := 1; i < config.NCommitment; i++ {
 			pt := &babyjub.Point{
-				X: utils.ParseBigInt(request.TxCommit[i][0]),
-				Y: utils.ParseBigInt(request.TxCommit[i][1]),
+				X: bp.Parse(request.TxCommit[i][0]),
+				Y: bp.Parse(request.TxCommit[i][1]),
 			}
 			sumCommit = utils.AddPks(sumCommit, pt)
 		}
 		// Add fee·G using the same generator G as the gnark circuit
-		feeInt := utils.ParseBigInt(request.Fee)
+		feeInt := bp.Parse(request.Fee)
 		feeGPoint := babyjub.NewPoint().Mul(feeInt, utils.CircuitGBabyJub)
 		sumCommit = utils.AddPks(sumCommit, feeGPoint)
 		witness.SumTxCommit[0] = sumCommit.X
 		witness.SumTxCommit[1] = sumCommit.Y
+		witness.DomainId = bp.Parse(request.DomainId) // Fix L-01
+
+		if err := bp.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
 
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {
@@ -120,9 +133,22 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
+		// Fix M-08: bound how many groth16.Prove calls run concurrently —
+		// see utils.ProveLimiter's doc.
+		if !utils.ProveLimiter.Acquire() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "proving server is busy, try again shortly"})
+			return
+		}
 		proof, err := groth16.Prove(ccs, pk, witnessFull)
+		utils.ProveLimiter.Release()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof generation failed: %v", err)})
+			return
+		}
+
+		// Fix L-04 part 2: self-verify before returning.
+		if err := utils.SelfVerify(proof, vk, witnessFull); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("server-side %v", err)})
 			return
 		}
 
@@ -155,31 +181,32 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		var publicSignal []*big.Int
 
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.HashedSharedSecrets[i])) // 0–5
+			publicSignal = append(publicSignal, bp.Parse(request.HashedSharedSecrets[i])) // 0–5
 		}
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.PublicKey[i])) // 6–11
+			publicSignal = append(publicSignal, bp.Parse(request.PublicKey[i])) // 6–11
 		}
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.PreviousCommit[i][0])) // 12–23
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.PreviousCommit[i][1]))
+			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][0])) // 12–23
+			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][1]))
 		}
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.TxCommit[i][0])) // 24–35
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.TxCommit[i][1]))
+			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][0])) // 24–35
+			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][1]))
 		}
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.BlockNumber)) // 36
+		publicSignal = append(publicSignal, bp.Parse(request.BlockNumber)) // 36
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.AnonymitySet[i])) // 37–42
+			publicSignal = append(publicSignal, bp.Parse(request.AnonymitySet[i])) // 37–42
 		}
 		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.MessageTags[i])) // 43–48
+			publicSignal = append(publicSignal, bp.Parse(request.MessageTags[i])) // 43–48
 		}
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.Nullifier)) // 49
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.Fee))       // 50
-		publicSignal = append(publicSignal, sumCommit.X)                          // 51 SumTxCommit.X
-		publicSignal = append(publicSignal, sumCommit.Y)                          // 52 SumTxCommit.Y
-		publicSignal = append(publicSignal, sumTxVal)                             // 53 SumTxValuesWithFee
+		publicSignal = append(publicSignal, bp.Parse(request.Nullifier)) // 49
+		publicSignal = append(publicSignal, bp.Parse(request.Fee))       // 50
+		publicSignal = append(publicSignal, sumCommit.X)                 // 51 SumTxCommit.X
+		publicSignal = append(publicSignal, sumCommit.Y)                 // 52 SumTxCommit.Y
+		publicSignal = append(publicSignal, sumTxVal)                    // 53 SumTxValuesWithFee
+		publicSignal = append(publicSignal, bp.Parse(request.DomainId))  // 54 DomainId (Fix L-01)
 
 		c.JSON(http.StatusOK, EnygmaFeeOutput{
 			Proof:        proofRemix,

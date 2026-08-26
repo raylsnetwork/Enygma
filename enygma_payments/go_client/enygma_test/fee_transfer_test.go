@@ -155,20 +155,42 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 	t.Logf("fee verifier: %s", feeVerifierAddr.Hex())
 
+	// Fix M-13: transferWithFee now enforces public_signal[50] (the fee)
+	// against this contract-side value exactly — a fee proof carrying any
+	// other value reverts InvalidFee(). Pre-fix, nothing on chain read or
+	// enforced the fee at all (this test's own header comment describing
+	// relayer-side enforcement was aspirational: RELAYER_PROTOCOL_FEE below
+	// is not read by the relayer binary — grep enygma_payments/relayer for
+	// it, there is no hit. The contract is now the actual enforcement
+	// point, which is what M-13 asked for).
+	if r := waitTx(enygmaInstance.SetProtocolFee(mkAuth(), big.NewInt(PROTOCOL_FEE))); r.Status != 1 {
+		t.Fatal("setProtocolFee failed")
+	}
+	t.Logf("protocolFee set to %d", PROTOCOL_FEE)
+
 	pks := make([]*big.Int, nBanks)
 	for i, sk := range bankSks {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
+	// directly) since it mints below too — senderRegR + senderMintR ==
+	// senderPrevR, used directly further down.
 	for i := 0; i < nBanks; i++ {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
 		if r := waitTx(enygmaInstance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
+			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
 	t.Logf("registered %d banks", nBanks)
 
-	if r := waitTx(enygmaInstance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(enygmaInstance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d tokens to bank 0 (accountId=1)", mintAmt)
@@ -272,9 +294,11 @@ func TestFeeTransferFlow(t *testing.T) {
 		big.NewInt(0),
 	}
 
+	// enygma_fee still uses the pre-H-01/H-02 BlockNumber-based formula —
+	// see legacyTagMessageGen/legacyGenCommitmentAndRandom's doc comment.
 	hashArray := hashArrayGen(secrets)
-	tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
-	txCommit, txRandom := genCommitmentAndRandom(
+	tagMessages := legacyTagMessageGen(secrets, new(big.Int).Set(blockHash))
+	txCommit, txRandom := legacyGenCommitmentAndRandom(
 		senderIdx, big.NewInt(int64(feeTotalSend)), txValues, new(big.Int).Set(blockHash), secrets)
 	nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
 
@@ -334,6 +358,7 @@ func TestFeeTransferFlow(t *testing.T) {
 		"tx_values":                    toStrs(txValues),
 		"tx_random_values":             toStrs(txRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", feeSendAmt),
+		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 	})
 
 	// ── Call gnark /proof/enygma_fee ──────────────────────────────────────────
@@ -367,11 +392,11 @@ func TestFeeTransferFlow(t *testing.T) {
 	if len(proofResp.Proof) != 8 {
 		t.Fatalf("expected 8 proof elements, got %d", len(proofResp.Proof))
 	}
-	// 51 base + 2 SumTxCommit(X,Y) + 1 SumTxValuesWithFee = 54
-	if len(proofResp.PublicSignal) != 54 {
-		t.Fatalf("expected 54 public signals, got %d", len(proofResp.PublicSignal))
+	// 51 base + 2 SumTxCommit(X,Y) + 1 SumTxValuesWithFee + 1 DomainId (Fix L-01) = 55
+	if len(proofResp.PublicSignal) != 55 {
+		t.Fatalf("expected 55 public signals, got %d", len(proofResp.PublicSignal))
 	}
-	t.Log("proof: 8 elements, public signal: 54 elements ✓")
+	t.Log("proof: 8 elements, public signal: 55 elements ✓")
 
 	// signal[50]: PROTOCOL_FEE constant — relayer verifies this before submitting.
 	if feeFromSignal := proofResp.PublicSignal[50]; feeFromSignal.Cmp(big.NewInt(PROTOCOL_FEE)) != 0 {
@@ -523,6 +548,38 @@ func TestFeeTransferFlow(t *testing.T) {
 		t.Errorf("Σ(TxCommit)+fee·G = (%s, %s), expected (0, 1)", sumWithFee.X, sumWithFee.Y)
 	} else {
 		t.Log("  Σ(TxCommit)+fee·G = (0, 1) ✓  privacy pool intact")
+	}
+
+	// ── Fix M-13: fee burned from totalSupply, check() invariant intact ───────
+	// Pre-fix: nothing on chain read the fee signal or accounted for where
+	// the value went, even though the circuit's own Pedersen equation
+	// already forces Σ(TxCommit) to be short by exactly fee·G — so
+	// Σ(balances) silently and permanently diverged from totalSupply on
+	// the very first fee transfer. totalSupply now decrements by the same
+	// fee, keeping the two in sync.
+	t.Log("")
+	t.Log("── Fee Accounting (Fix M-13) ───────────────────────────────────────────")
+
+	totalSupplyAfter, err := enygmaInstance.TotalSupply(&bind.CallOpts{})
+	if err != nil {
+		t.Fatalf("TotalSupply() after: %v", err)
+	}
+	wantSupply := new(big.Int).Sub(big.NewInt(mintAmt), big.NewInt(PROTOCOL_FEE))
+	if totalSupplyAfter.Cmp(wantSupply) != 0 {
+		t.Errorf("FAIL (M-13 regressed): totalSupply = %s, want %s (%d minted − %d fee)",
+			totalSupplyAfter, wantSupply, mintAmt, PROTOCOL_FEE)
+	} else {
+		t.Logf("  totalSupply correctly decremented by fee: %d → %s ✓", mintAmt, totalSupplyAfter)
+	}
+
+	checkOK, err := enygmaInstance.Check(&bind.CallOpts{})
+	if err != nil {
+		t.Fatalf("check(): %v", err)
+	}
+	if !checkOK {
+		t.Error("FAIL (M-13 regressed): check() invariant (Σ(balances)==totalSupply) is broken after a fee transfer")
+	} else {
+		t.Log("  check() PASSED after fee transfer — Σ(balances)==totalSupply invariant maintained ✓")
 	}
 
 	// ── Summary ───────────────────────────────────────────────────────────────

@@ -55,7 +55,9 @@ import (
 // gnarkProofBody builds the JSON request body for the gnark proof server.
 // blockHash is the on-chain lastBlockNum to embed in the proof.
 // prevBalances and onChainKeys are read from getPublicValues.
-func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEnygmaPoint, onChainKeys []*big.Int) []byte {
+// enygmaAddr computes the Fix L-01 domain separator the deployed contract
+// will check the proof against.
+func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEnygmaPoint, onChainKeys []*big.Int, enygmaAddr common.Address) []byte {
 	t.Helper()
 	sk := big.NewInt(senderSk)
 	prevR := big.NewInt(senderPrevR)
@@ -74,10 +76,11 @@ func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEny
 		big.NewInt(0), big.NewInt(0), big.NewInt(0),
 	}
 
-	bh := new(big.Int).Set(blockHash)
-	tagMessages := tagMessageGen(secrets, bh)
-	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, new(big.Int).Set(blockHash), secrets)
+	// nullifier computed before tagMessageGen/genCommitmentAndRandom: Fix
+	// H-01/H-02 use it (not blockHash) as the per-transaction value.
 	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
+	tagMessages := tagMessageGen(senderIdx, secrets, nullifier)
+	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, nullifier, secrets)
 
 	toStrs := func(vals []*big.Int) []string {
 		s := make([]string, len(vals))
@@ -119,6 +122,7 @@ func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEny
 		"tx_values":                    toStrs(txValues),
 		"tx_random_values":             toStrs(txRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", transferAmt),
+		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 	})
 	return body
 }
@@ -143,7 +147,7 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	if e := json.NewDecoder(httpResp.Body).Decode(&resp); e != nil {
 		t.Fatalf("decode proof: %v", e)
 	}
-	if len(resp.Proof) != 8 || len(resp.PublicSignal) != 80 {
+	if len(resp.Proof) != 8 || len(resp.PublicSignal) != 81 {
 		t.Fatalf("unexpected sizes: proof=%d publicSignal=%d", len(resp.Proof), len(resp.PublicSignal))
 	}
 	t.Log("proof received ✓")
@@ -152,7 +156,7 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	for i := 0; i < 8; i++ {
 		proof8[i] = resp.Proof[i].String()
 	}
-	pubSigStrs := make([]string, 80)
+	pubSigStrs := make([]string, 81)
 	for i, v := range resp.PublicSignal {
 		pubSigStrs[i] = v.String()
 	}
@@ -338,14 +342,23 @@ func TestEpochIntervalFlow(t *testing.T) {
 		}
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
+	// directly) since it mints below too — senderRegR + senderMintR ==
+	// senderPrevR, used directly by gnarkProofBody above.
 	for i := 0; i < nBanks; i++ {
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
+		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
 	t.Logf("registered %d banks (accountIds 1–%d)", nBanks, nBanks)
 
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	mcx0, mcy0 := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx0, mcy0)); r.Status != 1 {
 		t.Fatal("initial mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
@@ -393,7 +406,10 @@ func TestEpochIntervalFlow(t *testing.T) {
 	blockBeforeMint5 := currentBlock(t, ctx, client)
 	expectedSlot5 := epochStartFor(blockBeforeMint5, interval)
 	// Mint to bank 2 (accountId=2), NOT bank 0 (sender), so senderPrevV=500 stays correct for phase 7.
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(50), big.NewInt(2))); r.Status != 1 {
+	// Fix H-02 residual: this bank never sends/proves in this test, so the
+	// exact mint blinding factor doesn't need to match anything downstream.
+	mcx5, mcy5 := mintCommitPt(big.NewInt(50), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(50), big.NewInt(2), mcx5, mcy5)); r.Status != 1 {
 		t.Fatal("mintSupply (phase 5) failed")
 	}
 	blockAfterMint5 := currentBlock(t, ctx, client)
@@ -427,7 +443,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 	t.Logf("at boundary: block.number=%s, expectedNewEpochStart=%s", blockAtBoundary, expectedSlot6)
 
 	// Mint to bank 3 (accountId=3), not sender, to keep senderPrevV=500 intact.
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(10), big.NewInt(3))); r.Status != 1 {
+	mcx6, mcy6 := mintCommitPt(big.NewInt(10), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(10), big.NewInt(3), mcx6, mcy6)); r.Status != 1 {
 		t.Fatal("mintSupply at epoch boundary failed")
 	}
 
@@ -481,7 +498,7 @@ func TestEpochIntervalFlow(t *testing.T) {
 	onChainKeys7 := pubVals7.Keys[1:]
 
 	// Generate proof — saved, NOT submitted yet (will be the stale proof in phase 8).
-	proof8_7, pubSig7, deltas7 := callGnarkServer(t, gnarkProofBody(t, new(big.Int).Set(epochStart7), prevBalances7, onChainKeys7))
+	proof8_7, pubSig7, deltas7 := callGnarkServer(t, gnarkProofBody(t, new(big.Int).Set(epochStart7), prevBalances7, onChainKeys7, contractAddr))
 
 	// ── Phase 8: Advance to the next epoch WITHOUT changing balances ───────────
 	// mintSupply(0) adds the Baby Jubjub identity point — a no-op for commitments.
@@ -494,7 +511,18 @@ func TestEpochIntervalFlow(t *testing.T) {
 	t.Logf("mining %d blocks to next epoch boundary", toMine8)
 	mineBlocks(t, rpcClient, toMine8)
 
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(0), big.NewInt(3))); r.Status != 1 {
+	// Deliberately r=0 here, unlike every other mint in this suite: this
+	// call exists purely to trigger the epoch-boundary effect with zero
+	// value moved, and the assertion two blocks down requires every
+	// bank's commitment to be byte-for-byte unchanged — Com(0, r_mint)
+	// for any r_mint != 0 would change bank 3's commitment point even
+	// though the plaintext value moved is zero, which would fail that
+	// assertion for a reason unrelated to what it's actually testing.
+	// There is no amount to protect here (0 is 0), so this is not a
+	// privacy regression, just this one call intentionally kept at the
+	// pre-fix identity behavior.
+	ix, iy := mintCommitPt(big.NewInt(0), big.NewInt(0))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(0), big.NewInt(3), ix, iy)); r.Status != 1 {
 		t.Fatal("identity mint (phase 8) failed")
 	}
 
@@ -539,7 +567,7 @@ func TestEpochIntervalFlow(t *testing.T) {
 	// ── Phase 9: Fresh proof at new epoch — must succeed ──────────────────────
 	t.Log("=== Phase 9: fresh proof at new epoch — verify accepted ===")
 
-	proof8_9, pubSig9, deltas9 := callGnarkServer(t, gnarkProofBody(t, new(big.Int).Set(epochStart8), prevBalances8, onChainKeys7))
+	proof8_9, pubSig9, deltas9 := callGnarkServer(t, gnarkProofBody(t, new(big.Int).Set(epochStart8), prevBalances8, onChainKeys7, contractAddr))
 
 	blockBeforeTransfer9 := currentBlock(t, ctx, client)
 	expectedSlot9 := epochStartFor(blockBeforeTransfer9, interval)
@@ -667,12 +695,21 @@ func TestBlockNumberMismatch(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
+	// directly) since it mints below too — senderRegR + senderMintR ==
+	// senderPrevR, used directly by gnarkProofBody above.
 	for i := 0; i < nBanks; i++ {
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
+		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("setup complete: 6 banks registered, %d minted to bank 0", mintAmt)
@@ -692,7 +729,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 	}
 
 	proof8, pubSig, deltas := callGnarkServer(t,
-		gnarkProofBody(t, new(big.Int).Set(proofEpoch), pubVals.Balances[1:], pubVals.Keys[1:]))
+		gnarkProofBody(t, new(big.Int).Set(proofEpoch), pubVals.Balances[1:], pubVals.Keys[1:], contractAddr))
 
 	// ── Step 2: advance blockchain epoch without touching balances ────────────
 	// Mine to the next epoch boundary, then mintSupply(0) which adds the
@@ -703,7 +740,11 @@ func TestBlockNumberMismatch(t *testing.T) {
 	t.Logf("step 2: mining %d blocks to next epoch boundary...", toMine)
 	mineBlocks(t, rpcClient, toMine)
 
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(0), big.NewInt(2))); r.Status != 1 {
+	// Deliberately r=0 — see phase 8's identical comment in
+	// TestEpochIntervalFlow above; this call's whole purpose is a
+	// cryptographic no-op, and 0 has nothing to hide.
+	ix, iy := mintCommitPt(big.NewInt(0), big.NewInt(0))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(0), big.NewInt(2), ix, iy)); r.Status != 1 {
 		t.Fatal("identity mint to advance epoch failed")
 	}
 

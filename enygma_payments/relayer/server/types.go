@@ -5,7 +5,9 @@ package server
 // RelayTransferRequest is the JSON body accepted by POST /relay/transfer.
 //
 // Used for Enygma-to-Enygma confidential transfers (the enygma circuit).
-// The public signal array length is variable (up to 50 elements).
+// The public signal array must have exactly 81 elements (the last being
+// the Fix L-01 domain separator) — Fix L-05: this used to be silently
+// zero-padded up to 81 rather than rejected at any other length.
 type RelayTransferRequest struct {
 	Proof        [8]string  `json:"proof"        binding:"required"`
 	PublicSignal []string   `json:"publicSignal" binding:"required"`
@@ -16,8 +18,8 @@ type RelayTransferRequest struct {
 // RelayTransferFeeRequest is the JSON body accepted by POST /relay/transfer_fee.
 //
 // Used for Enygma-to-Enygma confidential transfers with a public relayer fee
-// (the enygma_fee circuit). The public signal must have exactly 51 elements
-// with the fee at index 50.
+// (the enygma_fee circuit). The public signal must have exactly 55 elements
+// with the fee at index 50 and the Fix L-01 domain separator at index 54.
 type RelayTransferFeeRequest struct {
 	Proof        [8]string  `json:"proof"        binding:"required"`
 	PublicSignal []string   `json:"publicSignal" binding:"required"`

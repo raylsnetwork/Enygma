@@ -13,6 +13,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -50,9 +51,15 @@ var bankHTML string
 // ── Config ─────────────────────────────────────────────────────────────────────
 
 const (
-	listenAddr = ":9090"
-	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
-	relayerURL = "http://127.0.0.1:8082"
+	// Fix H-05: was ":9090" — bound all interfaces, so any network-adjacent
+	// host (and, via CSRF, any web page an operator's browser visited)
+	// could reach the owner-privileged /run/* routes below. Default to
+	// loopback-only; DEMO_LISTEN_ADDR is the explicit opt-in for an
+	// operator who deliberately wants this reachable elsewhere (e.g. a
+	// remote demo box), not a default.
+	defaultListenAddr = "127.0.0.1:9090"
+	gnarkURL          = "http://127.0.0.1:8080/proof/enygma"
+	relayerURL        = "http://127.0.0.1:8082"
 
 	nBanks      = 6
 	mintAmount  = 500
@@ -61,13 +68,13 @@ const (
 	defaultOwnerKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 	defaultRelayKey = "enygma-test-secret"
 
-	senderSkVal    = 424242
-	senderPrevRVal = 0 // initial balance = Com(0,0) = (0,1) on BabyJubJub
+	senderSkVal = 424242
 )
 
 var (
-	rpcURL  = getEnv("RPC_URL", "http://127.0.0.1:8545")
-	chainID = getEnvInt64("CHAIN_ID", 1337)
+	listenAddr = getEnv("DEMO_LISTEN_ADDR", defaultListenAddr)
+	rpcURL     = getEnv("RPC_URL", "http://127.0.0.1:8545")
+	chainID    = getEnvInt64("CHAIN_ID", 1337)
 
 	// per-bank secret keys (index 0 = sender)
 	bankSks = [nBanks]*big.Int{
@@ -116,8 +123,10 @@ var (
 	// BN254 field prime — same Q used by Solidity's CurveBabyJubJub
 	curveQ, _ = new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
-	curveGx, _ = new(big.Int).SetString("16540640123574156134436876038791482806971768689494387082833631921987005038935", 10)
-	curveGy, _ = new(big.Int).SetString("20819045374670962167435360035096875258406992893633759881276124905556507972311", 10)
+	// curveG: NUMS hash-to-curve derivation, seed "2" (H-11 fix). Reproduce
+	// with: cd gnark-server && go run ./cmd/derive_generator
+	curveGx, _ = new(big.Int).SetString("12337812418750581066638756637363471856433191340622504180842886595232027947307", 10)
+	curveGy, _ = new(big.Int).SetString("15225366398330386329633463986700597127113326976080712967801565482915963669722", 10)
 	curveG     = &babyjub.Point{X: curveGx, Y: curveGy}
 
 	curveHx, _ = new(big.Int).SetString("10100005861917718053548237064487763771145251762383025193119768015180892676690", 10)
@@ -137,6 +146,26 @@ func pedersenCommit(v, r *big.Int) *babyjub.Point {
 	vG := babyjub.NewPoint().Mul(v, curveG)
 	rH := babyjub.NewPoint().Mul(r, curveH)
 	return babyjub.NewPoint().Projective().Add(vG.Projective(), rH.Projective()).Affine()
+}
+
+// randomBlinding returns a cryptographically random field element mod
+// curveP, for use as a Pedersen blinding factor.
+//
+// Fix H-02 residual: registerAccount and mintSupply used to take r=0 or a
+// plaintext-calldata r; both now take a pre-computed commitment built with
+// a real secret r generated here, never sent on chain.
+func randomBlinding() *big.Int {
+	for {
+		var buf [32]byte
+		if _, err := io.ReadFull(rand.Reader, buf[:]); err != nil {
+			panic(err) // crypto/rand failing is unrecoverable
+		}
+		r := new(big.Int).SetBytes(buf[:])
+		r.Mod(r, curveP)
+		if r.Sign() != 0 { // negligible probability, but a zero blinding defeats the whole point
+			return r
+		}
+	}
 }
 
 func addPoints(a, b *babyjub.Point) *babyjub.Point {
@@ -203,13 +232,30 @@ func negMod(x *big.Int) *big.Int {
 	return new(big.Int).Sub(curveP, new(big.Int).Mod(x, curveP))
 }
 
-func rValue(secret, blockHash *big.Int) *big.Int {
-	h, _ := poseidon.Hash([]*big.Int{hashRandom, secret, new(big.Int).Mod(blockHash, curveP)})
+// perSlotNonce folds nullifier (the per-transaction value — Fix H-01/H-02,
+// replaces the epoch-constant blockHash) and a direction tag
+// Poseidon(senderId, receiverId) into one value, matching
+// gnark-server/pkg/circuits/enygma/circuit.go's perSlotNonce exactly (two
+// chained 2-input Poseidon calls: the in-circuit Poseidon gadget's S-box
+// constant table tops out at 3 inputs per call).
+func perSlotNonce(nullifier *big.Int, senderId, receiverId int) *big.Int {
+	directionTag, _ := poseidon.Hash([]*big.Int{big.NewInt(int64(senderId)), big.NewInt(int64(receiverId))})
+	n, _ := poseidon.Hash([]*big.Int{nullifier, directionTag})
+	return n
+}
+
+// rValue and tagValue used to take blockHash (the epoch anchor) directly,
+// which is constant for every transaction in an epoch and identical
+// regardless of who sends — see circuit.go's H-01/H-02 comments for the
+// passive-observer attack that enabled. nullifier is guaranteed fresh per
+// transaction; senderId/receiverId make the derivation direction-asymmetric.
+func rValue(secret, nullifier *big.Int, senderId, receiverId int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandom, secret, perSlotNonce(nullifier, senderId, receiverId)})
 	return h.Mod(h, curveP)
 }
 
-func tagValue(secret, blockHash *big.Int) *big.Int {
-	h, _ := poseidon.Hash([]*big.Int{hashTag, secret, new(big.Int).Mod(blockHash, curveP)})
+func tagValue(secret, nullifier *big.Int, senderId, receiverId int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashTag, secret, perSlotNonce(nullifier, senderId, receiverId)})
 	return h.Mod(h, curveP)
 }
 
@@ -304,16 +350,36 @@ type Server struct {
 	broker  *Broker
 	runLock sync.Mutex
 	state   connState
+
+	// adminKey guards every /run/* route (Fix H-05). Set once in main().
+	adminKey string
+}
+
+// requireAdminKey wraps a /run/* handler so it 401s without the correct
+// X-Demo-Admin-Key header — closes both the network-exposure and CSRF halves
+// of H-05: binding to loopback alone stops other hosts, but a malicious page
+// the operator's own browser visits can still POST to localhost, and simple
+// (non-fetch, e.g. <form>) CSRF can't set custom headers or know this value,
+// which is generated per run and only ever handed to the page this same
+// server rendered.
+func (s *Server) requireAdminKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Demo-Admin-Key")), []byte(s.adminKey)) != 1 {
+			http.Error(w, "missing or invalid X-Demo-Admin-Key", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, indexHTML)
+	fmt.Fprint(w, strings.Replace(indexHTML, "%%DEMO_ADMIN_KEY%%", s.adminKey, 1))
 }
 
 func (s *Server) handleBank(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, bankHTML)
+	fmt.Fprint(w, strings.Replace(bankHTML, "%%DEMO_ADMIN_KEY%%", s.adminKey, 1))
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +391,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// Fix H-05: was Access-Control-Allow-Origin: "*", making the SSE log
+	// stream — which the spend-key log line below used to leak into
+	// unredacted — readable by any page in any browser tab, cross-origin.
+	// Dropped rather than restricted: this server now binds loopback only,
+	// so there is no legitimate cross-origin caller to allow.
 
 	ch := s.broker.subscribe()
 	defer s.broker.unsubscribe(ch)
@@ -740,19 +810,35 @@ func runRegisterBank(s *Server, bankIdx int, sk *big.Int) {
 	} else {
 		fc.participant(bankIdx, "view_ek", hex.EncodeToString(ek[:8])+"… (1184B)")
 	}
-	fc.log(fmt.Sprintf("Bank %d: pk = Poseidon(%s,%s) = %s", bankIdx, sk.String(), sk.String(), trunc(pk.String(), 30)))
+	// Fix H-05: was sk.String() twice, unredacted, into the SSE log stream —
+	// inconsistent with the truncated view_ek above and with emitBank's own
+	// trunc(sk.String(), 10) two lines up.
+	fc.log(fmt.Sprintf("Bank %d: pk = Poseidon(%s,%s) = %s", bankIdx, trunc(sk.String(), 10), trunc(sk.String(), 10), trunc(pk.String(), 30)))
 	pause(400 * time.Millisecond)
 
-	// Register on-chain
+	// Register on-chain. Fix H-02 residual: the initial balance commitment
+	// Com(0, regR) is now computed HERE, off-chain, with a fresh secret
+	// regR that never appears in calldata — registerAccount takes the
+	// resulting point, not a raw randomness scalar. (If this bank was
+	// already registered by an earlier demo process, "idempotent" below
+	// applies exactly as it did before this fix — a fresh demo process
+	// tracks spend keys and blinding factors purely in memory regardless,
+	// so a restart already implied fresh state.)
+	regR := randomBlinding()
+	regCommit := pedersenCommit(big.NewInt(0), regR)
 	fc.emitBank(bankIdx, stepKey+"_reg", "running",
 		fmt.Sprintf("Bank %d · RegisterAccount", bankIdx),
 		fmt.Sprintf("registerAccount(id=%d, spendPk=%s…, viewEk=%s)", bankIdx+1, trunc(pk.String(), 10), ekDesc))
 	raTx, raErr := s.state.inst.RegisterAccount(
 		fc.mkAuth(), s.state.owner,
-		big.NewInt(int64(bankIdx+1)), pk, big.NewInt(senderPrevRVal), ek)
+		big.NewInt(int64(bankIdx+1)), pk, regCommit.X, regCommit.Y, ek)
 	if raErr == nil {
 		if _, waitErr := fc.waitTx(fmt.Sprintf("RegisterAccount[%d]", bankIdx), raTx, raErr); waitErr != nil {
 			fc.log(fmt.Sprintf("Bank %d already registered (OK — idempotent)", bankIdx))
+		} else {
+			s.state.mu.Lock()
+			s.state.cumulativeR[bankIdx] = regR
+			s.state.mu.Unlock()
 		}
 	} else {
 		fc.log(fmt.Sprintf("RegisterAccount[%d] skipped: %s", bankIdx, raErr.Error()))
@@ -781,18 +867,33 @@ func runMintSupply(s *Server, amount int64, bankIdx int) {
 
 	accountId := int64(bankIdx + 1)
 	label := fmt.Sprintf("Mint %d → Bank %d", amount, bankIdx)
+
+	// Fix H-02 residual: mintCommit = Com(amount, mintR) is computed HERE,
+	// off-chain, with a fresh secret mintR — mintSupply used to add
+	// Com(amount, 0), openly readable via discrete log by any chain
+	// observer. mintR folds into the bank's running blinding factor
+	// (cumulativeR) exactly the way a transfer's txRandom already does
+	// below — the issuer (this demo, playing both roles) and the bank
+	// both need it to later prove the resulting balance's opening.
+	mintR := randomBlinding()
+	mintCommit := pedersenCommit(big.NewInt(amount), mintR)
 	fc.emit("mint_supply", "running", label, fmt.Sprintf("mintSupply(%d, accountId=%d)", amount, accountId))
-	tx, err := s.state.inst.MintSupply(fc.mkAuth(), big.NewInt(amount), big.NewInt(accountId))
+	tx, err := s.state.inst.MintSupply(fc.mkAuth(), big.NewInt(amount), big.NewInt(accountId), mintCommit.X, mintCommit.Y)
 	if _, err = fc.waitTx("MintSupply", tx, err); err != nil {
 		fc.emit("mint_supply", "error", label, err.Error())
 		fc.done(false, "MintSupply failed: "+err.Error())
 		return
 	}
 	fc.emit("mint_supply", "success", label,
-		fmt.Sprintf("balance[%d] = prevBalance + Com(%d, 0)", accountId, amount))
+		fmt.Sprintf("balance[%d] = prevBalance + Com(%d, r_mint)", accountId, amount))
 	fc.log(fmt.Sprintf("Minted %d tokens to accountId=%d (Bank %d)", amount, accountId, bankIdx))
 	s.state.mu.Lock()
 	s.state.mintedBalances[bankIdx] += amount
+	if s.state.cumulativeR[bankIdx] == nil {
+		s.state.cumulativeR[bankIdx] = new(big.Int)
+	}
+	s.state.cumulativeR[bankIdx].Add(s.state.cumulativeR[bankIdx], mintR)
+	s.state.cumulativeR[bankIdx].Mod(s.state.cumulativeR[bankIdx], curveP)
 	s.state.mu.Unlock()
 	fc.done(true, fmt.Sprintf("Minted %d tokens to Bank %d (accountId=%d) · total balance = %d", amount, bankIdx, accountId, s.state.mintedBalances[bankIdx]))
 }
@@ -846,9 +947,14 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	senderSk := s.state.registeredSks[senderIdx]
 	var prevSenderR *big.Int
 	if s.state.cumulativeR[senderIdx] != nil {
+		// Fix H-02 residual: registration and every mint now fold a real
+		// secret blinding factor into cumulativeR (see runRegisterBank /
+		// runMintSupply above), so by the time any transfer is possible
+		// this is already the account's true current R — not a
+		// transfer-only running sum starting from 0 the way it used to be.
 		prevSenderR = new(big.Int).Set(s.state.cumulativeR[senderIdx])
 	} else {
-		prevSenderR = new(big.Int) // 0 on first transfer for this bank
+		prevSenderR = new(big.Int) // defensive fallback only — should be unreachable once registered
 	}
 	kaSecretsSnap := s.state.kaSecrets // copy [nBanks]*big.Int array
 	s.state.mu.Unlock()
@@ -858,6 +964,19 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	fc.emit("derive_secrets", "running", "Derive shared secrets", "s₀ = Poseidon(prevR, sk) mod P")
 	senderSecret, _ := poseidon.Hash([]*big.Int{prevSenderR, senderSk})
 	senderSecret.Mod(senderSecret, curveP)
+
+	// Compute nullifier — uses senderSecret (= Poseidon(prevR, sk) mod P) directly.
+	// Moved up from its original position (after tags/randoms): Fix H-01/H-02
+	// reuse nullifier as the per-transaction value mixed into both the
+	// message-tag and blinding-factor derivations below, replacing the
+	// epoch-constant blockHash — see rValue/tagValue's comment.
+	fc.emit("compute_nullifier", "running", "Compute nullifier", "η = Poseidon(senderSecret, epochHash)")
+	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
+	fc.emit("compute_nullifier", "success", "Compute nullifier",
+		fmt.Sprintf("η = %s", trunc(nullifier.String(), 20)))
+	fc.log(fmt.Sprintf("Nullifier: %s", nullifier.String()))
+	pause(600 * time.Millisecond)
+
 	// Use ML-KEM derived secrets if key agreement has been run; fall back to demo defaults.
 	demoDefaults := [nBanks]int64{31415, 54142, 814712, 250912012, 12312512, 12312512}
 	var secrets [nBanks]*big.Int
@@ -879,12 +998,11 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	pause(1200 * time.Millisecond)
 
 	// Compute random factors
-	fc.emit("compute_randoms", "running", "Compute random factors", "r_i = Poseidon(H₂₁, s_i, epochHash)")
-	bh := new(big.Int).Set(blockHash)
+	fc.emit("compute_randoms", "running", "Compute random factors", "r_i = Poseidon(H₂₁, s_i, perSlotNonce)")
 	var rValues [nBanks]*big.Int
 	rSum := new(big.Int)
 	for i := 0; i < nBanks; i++ {
-		r := rValue(secrets[i], bh)
+		r := rValue(secrets[i], nullifier, senderIdx, i)
 		rValues[i] = r
 		if i != senderIdx {
 			rSum.Add(rSum, r)
@@ -954,25 +1072,16 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	pause(1200 * time.Millisecond)
 
 	// Compute message tags
-	fc.emit("compute_tags", "running", "Compute message tags", "t_i = Poseidon(H₁₂, s_i, epochHash)")
-	bhTag := new(big.Int).Set(blockHash)
+	fc.emit("compute_tags", "running", "Compute message tags", "t_i = Poseidon(H₁₂, s_i, perSlotNonce)")
 	var tagMessages [nBanks]*big.Int
 	for i := 0; i < nBanks; i++ {
-		tagMessages[i] = tagValue(secrets[i], bhTag)
+		tagMessages[i] = tagValue(secrets[i], nullifier, senderIdx, i)
 	}
 	fc.emit("compute_tags", "success", "Compute message tags",
 		fmt.Sprintf("tag[0] = %s", trunc(tagMessages[0].String(), 20)))
 	for i := 0; i < nBanks; i++ {
 		fc.participant(i, "tag", trunc(tagMessages[i].String(), 16)+"…")
 	}
-	pause(1200 * time.Millisecond)
-
-	// Compute nullifier — uses senderSecret (= Poseidon(prevR, sk) mod P) directly
-	fc.emit("compute_nullifier", "running", "Compute nullifier", "η = Poseidon(senderSecret, epochHash)")
-	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
-	fc.emit("compute_nullifier", "success", "Compute nullifier",
-		fmt.Sprintf("η = %s", trunc(nullifier.String(), 20)))
-	fc.log(fmt.Sprintf("Nullifier: %s", nullifier.String()))
 	pause(1200 * time.Millisecond)
 
 	// Build k×k FingerPrint matrix.
@@ -1738,18 +1847,35 @@ func tcpAvailable(addr string) bool {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// newAdminKey returns DEMO_ADMIN_KEY if set, otherwise a fresh random token.
+// Fix H-05: every /run/* route requires this value in an X-Demo-Admin-Key
+// header. Generating one automatically means the demo still runs with zero
+// setup for a legitimate local operator — handleIndex/handleBank hand it to
+// the page this same server renders — while a network-adjacent attacker or
+// a CSRF page from anywhere else has no way to learn it.
+func newAdminKey() string {
+	if v := os.Getenv("DEMO_ADMIN_KEY"); v != "" {
+		return v
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		log.Fatalf("generate admin key: %v", err)
+	}
+	return hex.EncodeToString(buf)
+}
+
 func main() {
-	srv := &Server{broker: newBroker()}
+	srv := &Server{broker: newBroker(), adminKey: newAdminKey()}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.handleIndex)
 	mux.HandleFunc("/events", srv.handleEvents)
-	mux.HandleFunc("/run/setup", srv.handleRunSetup)
-	mux.HandleFunc("/run/register-bank", srv.handleRunRegisterBank)
-	mux.HandleFunc("/run/mint", srv.handleRunMint)
-	mux.HandleFunc("/run/transfer", srv.handleRunTransfer)
-	mux.HandleFunc("/run/key-agreement", srv.handleRunKeyAgreement)
-	mux.HandleFunc("/run/bank-ka", srv.handleRunBankKA)
+	mux.HandleFunc("/run/setup", srv.requireAdminKey(srv.handleRunSetup))
+	mux.HandleFunc("/run/register-bank", srv.requireAdminKey(srv.handleRunRegisterBank))
+	mux.HandleFunc("/run/mint", srv.requireAdminKey(srv.handleRunMint))
+	mux.HandleFunc("/run/transfer", srv.requireAdminKey(srv.handleRunTransfer))
+	mux.HandleFunc("/run/key-agreement", srv.requireAdminKey(srv.handleRunKeyAgreement))
+	mux.HandleFunc("/run/bank-ka", srv.requireAdminKey(srv.handleRunBankKA))
 	mux.HandleFunc("/state/ka-status", srv.handleStateKAStatus)
 	mux.HandleFunc("/bank", srv.handleBank)
 	mux.HandleFunc("/calc/pedersen", srv.handleCalcPedersen)
@@ -1757,10 +1883,16 @@ func main() {
 	mux.HandleFunc("/state/last-transfer", srv.handleStateLastTransfer)
 	mux.HandleFunc("/state/cumulative-r", srv.handleStateCumulativeR)
 
-	log.Printf("Enygma Payments Demo → http://localhost%s", listenAddr)
+	log.Printf("Enygma Payments Demo → http://%s", listenAddr)
 	log.Printf("  RPC URL  : %s  (chainId=%d)", rpcURL, chainID)
 	log.Printf("  Gnark    : %s", gnarkURL)
 	log.Printf("  Relayer  : %s", relayerURL)
+	if os.Getenv("DEMO_ADMIN_KEY") == "" {
+		log.Printf("  Admin key: %s  (generated — set DEMO_ADMIN_KEY to pin it across restarts; only needed for direct API calls, the web UI already has it)", srv.adminKey)
+	}
+	if !strings.HasPrefix(listenAddr, "127.0.0.1:") && !strings.HasPrefix(listenAddr, "localhost:") {
+		log.Printf("  WARNING: DEMO_LISTEN_ADDR=%s is not loopback-only — the admin key is the only thing standing between this and C-06/H-05's owner-privileged routes. Make sure that's deliberate.", listenAddr)
+	}
 
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatalf("server: %v", err)

@@ -7,7 +7,6 @@ import (
 	utils "enygma-server/utils"
 
 	"github.com/consensys/gnark/frontend"
-	cmp "github.com/consensys/gnark/std/math/cmp"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 )
 
@@ -22,22 +21,24 @@ type EnygmaFeeCircuitConfig struct {
 // aggregate public outputs that expose the conservation sums to the verifier.
 //
 // Signal layout (54 public slots):
-//   0–5   HashedSharedSecrets (×6)
-//   6–11  PublicKey           (×6)
-//   12–23 PreviousCommit      (X,Y ×6)
-//   24–35 TxCommit            (X,Y ×6)
-//   36    BlockNumber
-//   37–42 AnonymitySet        (×6)
-//   43–48 MessageTags         (×6)
-//   49    Nullifier
-//   50    Fee                 (PROTOCOL_FEE constant)
-//   51–52 SumTxCommit         (X,Y of Σ TxCommit — neutral iff conservation holds)
-//   53    SumTxValuesWithFee  (Σ(TxValues)+fee mod P — equals fee iff Σ(TxValues)=0)
+//
+//	0–5   HashedSharedSecrets (×6)
+//	6–11  PublicKey           (×6)
+//	12–23 PreviousCommit      (X,Y ×6)
+//	24–35 TxCommit            (X,Y ×6)
+//	36    BlockNumber
+//	37–42 AnonymitySet        (×6)
+//	43–48 MessageTags         (×6)
+//	49    Nullifier
+//	50    Fee                 (PROTOCOL_FEE constant)
+//	51–52 SumTxCommit         (X,Y of Σ TxCommit — neutral iff conservation holds)
+//	53    SumTxValuesWithFee  (Σ(TxValues)+fee mod P — equals fee iff Σ(TxValues)=0)
 //
 // Conservation is NOT hard-asserted inside the circuit. Instead these public
 // outputs let the smart contract enforce whichever rule it needs:
-//   off-chain fee: SumTxCommit==(0,1) and SumTxValuesWithFee==PROTOCOL_FEE
-//   on-chain fee:  SumTxValuesWithFee==0 and SumTxCommit+fee·G==(0,1)
+//
+//	off-chain fee: SumTxCommit==(0,1) and SumTxValuesWithFee==PROTOCOL_FEE
+//	on-chain fee:  SumTxValuesWithFee==0 and SumTxCommit+fee·G==(0,1)
 type EnygmaFeeCircuit struct {
 	Config EnygmaFeeCircuitConfig
 
@@ -53,16 +54,20 @@ type EnygmaFeeCircuit struct {
 	Fee                 frontend.Variable      `gnark:",public"` // PROTOCOL_FEE constant (slot 50)
 	SumTxCommit         [2]frontend.Variable   `gnark:",public"` // Σ(TxCommit) point X,Y (slots 51–52)
 	SumTxValuesWithFee  frontend.Variable      `gnark:",public"` // (Σ(TxValues)+fee) mod P (slot 53)
+	// Fix L-01: chainId<<160 | contractAddress (slot 54) — see
+	// enygma/circuit.go's DomainId field doc comment for the full
+	// reasoning; identical here.
+	DomainId frontend.Variable `gnark:",public"`
 
 	// Private signals
-	SenderId                  frontend.Variable  // sender index
+	SenderId                  frontend.Variable   // sender index
 	SharedSecrets             []frontend.Variable // shared secrets per participant
-	SecretKey                 frontend.Variable  // sender's secret key
-	PreviousSenderBalance     frontend.Variable  // sender's previous balance
-	PreviousSenderRandomValue frontend.Variable  // sender's previous Pedersen blinding factor
+	SecretKey                 frontend.Variable   // sender's secret key
+	PreviousSenderBalance     frontend.Variable   // sender's previous balance
+	PreviousSenderRandomValue frontend.Variable   // sender's previous Pedersen blinding factor
 	TxValues                  []frontend.Variable // per-participant value deltas (sender negative)
 	TxRandomValues            []frontend.Variable // per-participant Pedersen blinding factors
-	SenderTxValue             frontend.Variable  // total amount sender spends (dest + change + fee)
+	SenderTxValue             frontend.Variable   // total amount sender spends (dest + change + fee)
 }
 
 func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
@@ -87,8 +92,21 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 		selected_v = api.Add(selected_v, api.Mul(eq, circuit.TxValues[i]))
 	}
 
+	// selectedVBits stays at 252 bits: it's the sender's TxValues slot, the
+	// mod-P NEGATIVE encoding (P - amount), which is legitimately close to
+	// P (~251 bits) for any nonzero amount — narrowing it would reject
+	// honest transfers. It needs no separate C-02 bound anyway: the
+	// AssertIsEqual below pins it to expectedTxValueMod, which
+	// ReduceModP (Fix C-01) already guarantees is < P.
 	selectedVBits := api.ToBinary(selected_v, 252)
-	vBits := api.ToBinary(circuit.SenderTxValue, 252)
+	// vBits: Fix C-02. SenderTxValue is a genuine monetary quantity (the
+	// spend amount, always small and positive) that both feeds a Pedersen
+	// scalar mult (via TxCommit, transitively) and was independently
+	// range-checked here at 252 bits — the mismatch C-02 exploits, since
+	// 252 bits admits values up to 2P and Com(b,r) == Com(b+kP,r). Bounded
+	// to 64 bits: ample for any realistic amount, and 2^64 << P leaves no
+	// room for a +P/+2P alias at all.
+	vBits := api.ToBinary(circuit.SenderTxValue, 64)
 	pDiffBits := api.ToBinary(JubJubPrimeSubGroup, 252)
 
 	selectedVConstrained := api.FromBinary(selectedVBits...)
@@ -97,12 +115,31 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 
 	// Sender absorbs fee: TxValues[sender] = (P - SenderTxValue - Fee) mod P
 	expectedTxValue := api.Sub(api.Sub(pDiffConstrained, vConstrained), circuit.Fee)
-	expectedTxValueInter, _ := api.NewHint(utils.ModHint, 2, expectedTxValue)
-	expectedTxValueMod := expectedTxValueInter[0]
-	expectedTxValueQ := expectedTxValueInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(expectedTxValueQ, JubJubPrimeSubGroup), expectedTxValueMod), expectedTxValue)
-	api.AssertIsEqual(cmp.IsLess(api, expectedTxValueMod, JubJubPrimeSubGroup), 1)
+	expectedTxValueMod := utils.ReduceModP(api, expectedTxValue) // Fix C-01
 	api.AssertIsEqual(selectedVConstrained, expectedTxValueMod)
+
+	///////////////////////////////////**///////////////////////////////////
+	// Fix C-03: only the sender's own slot (selected_v, just constrained
+	// above) had any bound on its magnitude. Every other TxValues[i] was
+	// unconstrained except for the aggregate conservation identity below —
+	// P − w (a debit of w) is a perfectly valid field element, so a prover
+	// could credit an accomplice honestly at one slot and hide P − w at
+	// another, debiting a victim who never consented. Range-check every
+	// non-sender slot to 64 bits (same bound C-02 uses for every other
+	// monetary quantity here) and assert the non-sender credits sum to
+	// SenderTxValue as INTEGERS. The Fee term cancels symmetrically in this
+	// circuit's conservation identity (sender's slot already absorbs it:
+	// TxValues[sender] = P - SenderTxValue - Fee), so the target is
+	// SenderTxValue here too, not SenderTxValue+Fee.
+	sumNonSenderValues := frontend.Variable(0)
+	for i := 0; i < k; i++ {
+		isSenderSlot := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
+		nonSenderValue := api.Select(isSenderSlot, frontend.Variable(0), circuit.TxValues[i])
+		nonSenderBits := api.ToBinary(nonSenderValue, 64)
+		nonSenderConstrained := api.FromBinary(nonSenderBits...)
+		sumNonSenderValues = api.Add(sumNonSenderValues, nonSenderConstrained)
+	}
+	api.AssertIsEqual(sumNonSenderValues, vConstrained)
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check all commits lie on the Baby JubJub curve
@@ -120,22 +157,14 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 	}
 
 	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
-	secretInter, _ := api.NewHint(utils.ModHint, 2, secretSenderCalculated)
-	secretRemain := secretInter[0]
-	secretQ := secretInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(secretQ, JubJubPrimeSubGroup), secretRemain), secretSenderCalculated)
-	api.AssertIsEqual(cmp.IsLess(api, secretRemain, JubJubPrimeSubGroup), 1)
+	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 	api.AssertIsEqual(secretRemain, selectedSecret)
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check hashed shared secrets are well-formed
 	for i := 0; i < k; i++ {
 		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i], circuit.SharedSecrets[i]})
-		hashInter, _ := api.NewHint(utils.ModHint, 2, calculatedHash)
-		hashMod := hashInter[0]
-		hashQ := hashInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(hashQ, JubJubPrimeSubGroup), hashMod), calculatedHash)
-		api.AssertIsEqual(cmp.IsLess(api, hashMod, JubJubPrimeSubGroup), 1)
+		hashMod := utils.ReduceModP(api, calculatedHash) // Fix C-01
 		api.AssertIsEqual(hashMod, circuit.HashedSharedSecrets[i])
 	}
 
@@ -148,11 +177,7 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 		selectedPK = api.Add(selectedPK, api.Mul(eq, circuit.PublicKey[i]))
 	}
 	pk := pos.Poseidon(api, []frontend.Variable{circuit.SecretKey, circuit.SecretKey})
-	pkInter, _ := api.NewHint(utils.ModHint, 2, pk)
-	pkMod := pkInter[0]
-	pkQ := pkInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(pkQ, JubJubPrimeSubGroup), pkMod), pk)
-	api.AssertIsEqual(cmp.IsLess(api, pkMod, JubJubPrimeSubGroup), 1)
+	pkMod := utils.ReduceModP(api, pk) // Fix C-01
 	api.AssertIsEqual(selectedPK, pkMod)
 
 	///////////////////////////////////**///////////////////////////////////
@@ -174,11 +199,7 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 	HashTag := pos.Poseidon(api, []frontend.Variable{12})
 	for i := 0; i < k; i++ {
 		calculatedMessageTag := pos.Poseidon(api, []frontend.Variable{HashTag, circuit.SharedSecrets[i], circuit.BlockNumber})
-		calculatedMessageTagInter, _ := api.NewHint(utils.ModHint, 2, calculatedMessageTag)
-		calculatedMessageTagMod := calculatedMessageTagInter[0]
-		calculatedMessageTagQ := calculatedMessageTagInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(calculatedMessageTagQ, JubJubPrimeSubGroup), calculatedMessageTagMod), calculatedMessageTag)
-		api.AssertIsEqual(cmp.IsLess(api, calculatedMessageTagMod, JubJubPrimeSubGroup), 1)
+		calculatedMessageTagMod := utils.ReduceModP(api, calculatedMessageTag) // Fix C-01
 		api.AssertIsEqual(circuit.MessageTags[i], calculatedMessageTagMod)
 	}
 
@@ -192,11 +213,7 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 		sumX = api.Add(sumX, circuit.TxValues[i])
 	}
 	sumXWithFee := api.Add(sumX, circuit.Fee)
-	sumXWithFeeInter, _ := api.NewHint(utils.ModHint, 2, sumXWithFee)
-	sumXWithFeeMod := sumXWithFeeInter[0]
-	sumXWithFeeQ   := sumXWithFeeInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(sumXWithFeeQ, JubJubPrimeSubGroup), sumXWithFeeMod), sumXWithFee)
-	api.AssertIsEqual(cmp.IsLess(api, sumXWithFeeMod, JubJubPrimeSubGroup), 1)
+	sumXWithFeeMod := utils.ReduceModP(api, sumXWithFee) // Fix C-01
 	api.AssertIsEqual(sumXWithFeeMod, circuit.SumTxValuesWithFee)
 
 	// Aggregate 2: compute Σ(TxCommit) + fee·G and hard-assert == (0,1).
@@ -224,15 +241,30 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 	///////////////////////////////////**///////////////////////////////////
 	// Range proof: previousBalance >= (senderTxValue + fee) >= 0.
 	// Sender deducts (amount + fee) from commitment — must have sufficient balance.
-	previousVBits := api.ToBinary(circuit.PreviousSenderBalance, 252)
+	// Fix C-02: PreviousSenderBalance is the exact case the audit
+	// demonstrated — it's passed directly into PedersenCommitment above
+	// (utils.PedersenCommitment(api, circuit.PreviousSenderBalance, ...)),
+	// the same wire, so a 252-bit bound here left claimed = real + P or
+	// real + 2P satisfying both that commitment (periodic mod P) and this
+	// solvency check with an inflated balance. 64 bits closes it the same
+	// way as SenderTxValue above.
+	previousVBits := api.ToBinary(circuit.PreviousSenderBalance, 64)
 	previousVConstrained := api.FromBinary(previousVBits...)
 
-	feeBits := api.ToBinary(circuit.Fee, 252)
+	// Fix C-02: Fee is the same shape again — the same wire feeds
+	// feeCommit := utils.ScalarMul(api, utils.G, circuit.Fee) above, so an
+	// unbounded-past-P Fee was the mechanism C-02 absorbed C-07 through
+	// (Fee = P - X flips a burn of Fee into a mint of X). Bounded to 64
+	// bits like the other monetary quantities here.
+	feeBits := api.ToBinary(circuit.Fee, 64)
 	feeConstrained := api.FromBinary(feeBits...)
 
-	// Total debit = transfer amount + protocol fee (both 252-bit constrained)
+	// Total debit = transfer amount + protocol fee, each now bounded to 64
+	// bits, so their sum fits in 65 without truncation — no need for the
+	// original's 253-bit width, which reopened exactly the gap the two
+	// operands were just closed against.
 	totalDebit := api.Add(vConstrained, feeConstrained)
-	totalDebitBits := api.ToBinary(totalDebit, 253)
+	totalDebitBits := api.ToBinary(totalDebit, 65)
 	totalDebitConstrained := api.FromBinary(totalDebitBits...)
 
 	// previousBalance >= totalDebit
@@ -272,12 +304,7 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 
 	for i := 0; i < k; i++ {
 		RandomFactor := pos.Poseidon(api, []frontend.Variable{HashRandom, circuit.SharedSecrets[i], circuit.BlockNumber})
-		randomInter, _ := api.NewHint(utils.ModHint, 2, RandomFactor)
-		hashModP := randomInter[0]
-		q := randomInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(q, JubJubPrimeSubGroup), hashModP), RandomFactor)
-		isValid := cmp.IsLess(api, hashModP, JubJubPrimeSubGroup)
-		api.AssertIsEqual(isValid, 1)
+		hashModP := utils.ReduceModP(api, RandomFactor) // Fix C-01
 		receiverHashesModP[i] = hashModP
 
 		isSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
@@ -285,12 +312,7 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 		sumOfReceiverHashes = api.Add(sumOfReceiverHashes, api.Mul(isReceiver, hashModP))
 	}
 
-	sumInter, _ := api.NewHint(utils.ModHint, 2, sumOfReceiverHashes)
-	senderRandomFactor := sumInter[0]
-	sumQ := sumInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(sumQ, JubJubPrimeSubGroup), senderRandomFactor), sumOfReceiverHashes)
-	isSumValid := cmp.IsLess(api, senderRandomFactor, JubJubPrimeSubGroup)
-	api.AssertIsEqual(isSumValid, 1)
+	senderRandomFactor := utils.ReduceModP(api, sumOfReceiverHashes) // Fix C-01
 
 	for i := 0; i < k; i++ {
 		isSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
@@ -301,34 +323,42 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 		api.AssertIsEqual(calculatedRandomFactor[i], circuit.TxRandomValues[i])
 	}
 
+	// Fix L-01: keep DomainId a genuinely constrained wire.
+	api.AssertIsEqual(circuit.DomainId, circuit.DomainId)
+
 	return nil
 }
 
 // EnygmaFeeRequest is the JSON body for POST /proof/enygma_fee.
 // Fee is a non-negative decimal string (e.g. "1000000000000000" for 0.001 native token).
+// Fix M-08 (remote panics): see the identical note on EnygmaRequest —
+// these tags used to allow 1-6 elements while the handler always indexes
+// [0..5]. len=6 (and dive,len=2 on the [2]string pairs) matches what the
+// handler actually requires.
 type EnygmaFeeRequest struct {
-	HashedSharedSecrets       []string    `json:"hashed_shared_secrets" binding:"required,min=1,max=6"`
-	PublicKey                 []string    `json:"public_keys" binding:"required,min=1,max=6"`
-	PreviousCommit            [][2]string `json:"previous_commits" binding:"required,min=1,max=6,dive,len=2"`
-	TxCommit                  [][2]string `json:"tx_commits" binding:"required,min=1,max=6,dive,len=2"`
-	BlockNumber               string      `json:"block_number" binding:"required"`
-	AnonymitySet              []string    `json:"anonymity_set" binding:"required,min=1,max=6"`
-	MessageTags               []string    `json:"message_tags" binding:"required,min=1,max=6"`
-	Nullifier                 string      `json:"nullifier" binding:"required"`
-	Fee                       string      `json:"fee" binding:"required"`
+	HashedSharedSecrets []string    `json:"hashed_shared_secrets" binding:"required,len=6"`
+	PublicKey           []string    `json:"public_keys" binding:"required,len=6"`
+	PreviousCommit      [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
+	TxCommit            [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
+	BlockNumber         string      `json:"block_number" binding:"required"`
+	AnonymitySet        []string    `json:"anonymity_set" binding:"required,len=6"`
+	MessageTags         []string    `json:"message_tags" binding:"required,len=6"`
+	Nullifier           string      `json:"nullifier" binding:"required"`
+	Fee                 string      `json:"fee" binding:"required"`
 
-	SenderID                  string      `json:"sender_id" binding:"required"`
-	SharedSecrets             []string    `json:"shared_secrets" binding:"required,min=1,max=6"`
-	SecretKey                 string      `json:"secret_key" binding:"required"`
-	PreviousSenderBalance     string      `json:"previous_sender_balance" binding:"required"`
-	PreviousSenderRandomValue string      `json:"previous_sender_random_value" binding:"required"`
-	TxValues                  []string    `json:"tx_values" binding:"required,min=1,max=6"`
-	TxRandomValues            []string    `json:"tx_random_values" binding:"required,min=1,max=6"`
-	SenderTxValue             string      `json:"sender_tx_value" binding:"required"`
+	SenderID                  string   `json:"sender_id" binding:"required"`
+	SharedSecrets             []string `json:"shared_secrets" binding:"required,len=6"`
+	SecretKey                 string   `json:"secret_key" binding:"required"`
+	PreviousSenderBalance     string   `json:"previous_sender_balance" binding:"required"`
+	PreviousSenderRandomValue string   `json:"previous_sender_random_value" binding:"required"`
+	TxValues                  []string `json:"tx_values" binding:"required,len=6"`
+	TxRandomValues            []string `json:"tx_random_values" binding:"required,len=6"`
+	SenderTxValue             string   `json:"sender_tx_value" binding:"required"`
+	// Fix L-01: caller-supplied chainId<<160|contractAddress.
+	DomainId string `json:"domain_id" binding:"required"`
 }
 
 type EnygmaFeeOutput struct {
 	Proof        []*big.Int `json:"proof"`
 	PublicSignal []*big.Int `json:"publicSignal"`
 }
-
