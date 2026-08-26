@@ -15,7 +15,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+      # gitleaks/gitleaks-action@v2 now requires a paid GITLEAKS_LICENSE for
+      # organization-owned repos (raylsnetwork is one) — it fails closed
+      # ("missing gitleaks license") before ever scanning anything, on every
+      # PR, regardless of content. The underlying gitleaks CLI itself is
+      # still free/open-source (MIT) and needs no license; run it directly
+      # instead of through the paid Action wrapper.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Install gitleaks
+        run: go install github.com/gitleaks/gitleaks/v8@latest
+      - name: Scan
+        run: gitleaks detect --source . --config .gitleaks.toml --redact -v

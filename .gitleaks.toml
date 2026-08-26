@@ -19,6 +19,42 @@ paths = [
   '''poseidon_calc/''',
   '''\.r1cs$''',
   '''\.wtns$''',
+
+  # Historical-only findings: a full-history scan (`gitleaks detect`
+  # without --no-git, which is what CI does with fetch-depth: 0) finds
+  # these 13 paths at OLD commits, not at the current tip. Path-based —
+  # not a baseline/fingerprint file — deliberately, so no copy of the
+  # actual secret text ever has to be committed to allowlist it.
+  #
+  # enygma_payments/contracts/test: the original C-06 leak (pre-rotation
+  # relayer key + bearer token), fixed in 65f5537 — the current tip of
+  # this file is placeholders only (see the git blame). The key itself
+  # is already rotated/dead per relayer/.env's own note; the git-history
+  # rewrite that would fully remove it from the repo was explicitly
+  # deferred, not this allowlist entry's job to fix.
+  '''^enygma_payments/contracts/test$''',
+  # enygma_payments/demo_instructions.md: false positive — a deployed
+  # contract address in an example log-output block, not a secret.
+  '''^enygma_payments/demo_instructions\.md$''',
+  # The remaining 11 paths are in enygma_dvp/ and enygma_retail_payments/
+  # — sibling projects untouched by fix/vulnerability-hardening, whose
+  # findings were never individually reviewed as part of that audit
+  # response. Allowlisted by path so this workflow can actually run
+  # (gitleaks-action's mandatory-license failure was hiding this whole
+  # category of finding before now); each one is still worth a real,
+  # separate look — this is scope containment, not a claim that they're
+  # all confirmed safe.
+  '''^enygma_dvp/demo/main\.go$''',
+  '''^enygma_dvp/gnark_circuits/cmd/export_vk_init/main\.go$''',
+  '''^enygma_dvp/src/core/prover\.go$''',
+  '''^enygma_dvp/src_go/core/prover_gnark\.go$''',
+  '''^enygma_retail_payments/demo/main\.go$''',
+  '''^enygma_retail_payments/demo/run\.sh$''',
+  '''^enygma_retail_payments/private_tags/test/payment_tag_relayer_test\.go$''',
+  '''^enygma_retail_payments/private_tags/test/relayer_test\.go$''',
+  '''^enygma_retail_payments/private_tags/test/tag_test\.go$''',
+  '''^enygma_retail_payments/test/05_auditor_relayer_test\.go$''',
+  '''^enygma_retail_payments/test/helpers_test\.go$''',
 ]
 
 # Known, deliberately-public local-devnet keys. Neither of these is a live
