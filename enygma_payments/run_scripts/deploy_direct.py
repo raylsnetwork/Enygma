@@ -113,7 +113,8 @@ def deploy_contract(w3, account, artifact, constructor_args=None):
     tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction if hasattr(signed, 'rawTransaction') else signed.raw_transaction)
     print(f"  tx: {tx_hash.hex()}")
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=600)
-    assert receipt.status == 1, f"deployment failed: {receipt}"
+    if receipt.status != 1:
+        raise RuntimeError(f"deployment failed: {receipt}")
     print(f"  deployed at: {receipt.contractAddress}")
     return receipt
 

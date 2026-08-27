@@ -2,15 +2,18 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	poseidonLib "github.com/iden3/go-iden3-crypto/poseidon"
@@ -166,9 +169,14 @@ type jsonRPCError struct {
 	Message string `json:"message"`
 }
 
-func doRPC(rpcURL string, req jsonRPCRequest) (jsonRPCResponse, error) {
+func doRPC(client *http.Client, rpcURL string, req jsonRPCRequest) (jsonRPCResponse, error) {
 	body, _ := json.Marshal(req)
-	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(body)) //nolint:gosec
+	// client is built by newSafeRPCClient — its DialContext is pinned to the
+	// already-validated IP for rpcURL's host, so this is not the SSRF sink
+	// gosec would otherwise flag: an attacker-supplied rpcURL can no longer
+	// resolve (at connection time) to a different, disallowed address than
+	// the one newSafeRPCClient checked.
+	resp, err := client.Post(rpcURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return jsonRPCResponse{}, err
 	}
@@ -184,8 +192,8 @@ func doRPC(rpcURL string, req jsonRPCRequest) (jsonRPCResponse, error) {
 }
 
 // ethCallUint256 calls a no-argument view function and returns the result as *big.Int.
-func ethCallUint256(rpcURL, contractAddr, selectorHex string) (*big.Int, error) {
-	resp, err := doRPC(rpcURL, jsonRPCRequest{
+func ethCallUint256(client *http.Client, rpcURL, contractAddr, selectorHex string) (*big.Int, error) {
+	resp, err := doRPC(client, rpcURL, jsonRPCRequest{
 		Jsonrpc: "2.0",
 		Method:  "eth_call",
 		Params: []interface{}{
@@ -214,9 +222,9 @@ func ethCallUint256(rpcURL, contractAddr, selectorHex string) (*big.Int, error) 
 
 // ethCallAddress calls a function that takes a single uint256 and returns an address.
 // selectorHex is 4 bytes (no 0x prefix); arg is ABI-encoded as a 32-byte big-endian word.
-func ethCallAddress(rpcURL, contractAddr, selectorHex string, arg uint64) (string, error) {
+func ethCallAddress(client *http.Client, rpcURL, contractAddr, selectorHex string, arg uint64) (string, error) {
 	data := "0x" + selectorHex + fmt.Sprintf("%064x", arg)
-	resp, err := doRPC(rpcURL, jsonRPCRequest{
+	resp, err := doRPC(client, rpcURL, jsonRPCRequest{
 		Jsonrpc: "2.0",
 		Method:  "eth_call",
 		Params: []interface{}{
@@ -246,8 +254,8 @@ type logEntry struct {
 }
 
 // ethGetLogs fetches all logs for the given contract matching topic0.
-func ethGetLogs(rpcURL, contractAddr, topic0 string) ([]logEntry, error) {
-	resp, err := doRPC(rpcURL, jsonRPCRequest{
+func ethGetLogs(client *http.Client, rpcURL, contractAddr, topic0 string) ([]logEntry, error) {
+	resp, err := doRPC(client, rpcURL, jsonRPCRequest{
 		Jsonrpc: "2.0",
 		Method:  "eth_getLogs",
 		Params: []interface{}{
@@ -296,17 +304,112 @@ func validateReceiptsPath(p string) error {
 	return nil
 }
 
-// validateRPCURL ensures the caller-supplied URL uses http or https so that
-// internal-only schemes (file://, gopher://, dict://) cannot be used for SSRF.
-func validateRPCURL(raw string) error {
+// newSafeRPCClient validates a caller-supplied rpcUrl and returns an
+// *http.Client whose outbound connection is pinned to the specific IP this
+// function already checked — closing the two gaps a bare scheme check
+// leaves open (this endpoint's own history: the scheme check alone shipped
+// first, with a //nolint:gosec on the http.Post call, before this was
+// fixed):
+//
+//  1. SSRF to internal/cloud-metadata targets. rpcUrl is taken directly from
+//     the request body and the RPC responses (on-chain data fetched FROM
+//     that address) are echoed back to the caller — the exact "attacker
+//     controls the URL, and the fetch result comes back" shape that turns
+//     an SSRF into a way to steal cloud credentials (e.g. a request for
+//     http://169.254.169.254/latest/meta-data/iam/security-credentials/...
+//     with the IMDS response reflected in the JSON response body). Resolves
+//     the hostname and rejects link-local (169.254.0.0/16 / fe80::/10 —
+//     covers every major cloud's metadata endpoint) and private-network
+//     (RFC1918 / fc00::/7) addresses. Loopback is deliberately still
+//     allowed: this handler is itself bound to 127.0.0.1 only (see
+//     main.go), so it grants an attacker no new reach beyond what they'd
+//     already need to have to call this endpoint at all, and 127.0.0.1 is
+//     this tool's own documented, primary use case (a local dev node).
+//  2. TOCTOU / DNS rebinding. Validating the hostname and then handing the
+//     same hostname to http.Client for a second, independent DNS lookup at
+//     connect time leaves a window where the attacker's DNS server answers
+//     safely for the check and unsafely for the real connection. The
+//     returned client's Transport.DialContext ignores the addr it's given
+//     and always dials the IP validated here — the connection cannot land
+//     anywhere else, no matter what a second lookup would have returned.
+//  3. Redirects. CheckRedirect refuses to follow any redirect, per this
+//     class of finding's own standard remediation — a same-URL response
+//     that then 302s to a disallowed target would otherwise bypass all of
+//     the above.
+func newSafeRPCClient(raw string) (*http.Client, error) {
 	u, err := url.ParseRequestURI(raw)
 	if err != nil {
-		return fmt.Errorf("invalid rpcUrl: %v", err)
+		return nil, fmt.Errorf("invalid rpcUrl: %v", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("rpcUrl must use http or https scheme, got %q", u.Scheme)
+		return nil, fmt.Errorf("rpcUrl must use http or https scheme, got %q", u.Scheme)
 	}
-	return nil
+	host := u.Hostname()
+	if host == "" {
+		return nil, fmt.Errorf("rpcUrl has no host")
+	}
+
+	safeIP, err := resolveToSafeIP(host)
+	if err != nil {
+		return nil, err
+	}
+
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	pinnedAddr := net.JoinHostPort(safeIP.String(), port)
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			// Ignore the addr http.Transport computed from the request URL
+			// (a second hostname resolution) and dial the pre-validated IP
+			// directly — this is what actually closes the rebinding gap,
+			// not just the check above on its own.
+			return dialer.DialContext(ctx, network, pinnedAddr)
+		},
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("refusing to follow redirect to %s", req.URL)
+		},
+	}, nil
+}
+
+// resolveToSafeIP resolves host (an IP literal or a DNS name) and returns
+// one address that is not link-local or private-use — see newSafeRPCClient
+// for why loopback is the one exception.
+func resolveToSafeIP(host string) (net.IP, error) {
+	var candidates []net.IP
+	if ip := net.ParseIP(host); ip != nil {
+		candidates = []net.IP{ip}
+	} else {
+		addrs, err := net.LookupIP(host)
+		if err != nil {
+			return nil, fmt.Errorf("resolve rpcUrl host %q: %v", host, err)
+		}
+		candidates = addrs
+	}
+
+	for _, ip := range candidates {
+		if ip.IsLoopback() {
+			return ip, nil
+		}
+		if ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsUnspecified() || ip.IsMulticast() {
+			continue
+		}
+		return ip, nil
+	}
+	return nil, fmt.Errorf("rpcUrl host %q resolves only to disallowed addresses (private, link-local, or unspecified) — cloud metadata and internal-network targets are blocked; point rpcUrl at a public or loopback RPC endpoint", host)
 }
 
 // ─── Receipts ─────────────────────────────────────────────────────────────────
@@ -402,7 +505,8 @@ func MerkleStatusHandler() gin.HandlerFunc {
 			req.ReceiptsPath = "../build/receipts.json"
 		}
 
-		if err := validateRPCURL(req.RpcUrl); err != nil {
+		rpcClient, err := newSafeRPCClient(req.RpcUrl)
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -419,7 +523,7 @@ func MerkleStatusHandler() gin.HandlerFunc {
 		}
 
 		// Cross-check vault addresses registered in EnygmaDvP vs receipts.json.
-		dvpCheck := checkEnygmaDvPRegistry(req.RpcUrl, req.ReceiptsPath, vaultAddrs, vaultByIDSel)
+		dvpCheck := checkEnygmaDvPRegistry(rpcClient, req.RpcUrl, req.ReceiptsPath, vaultAddrs, vaultByIDSel)
 
 		statuses := make([]VaultMerkleStatus, 0, len(vaultNames))
 		for _, name := range vaultNames {
@@ -431,7 +535,7 @@ func MerkleStatusHandler() gin.HandlerFunc {
 				})
 				continue
 			}
-			s := checkVault(req.RpcUrl, name, addr, treeDepth,
+			s := checkVault(rpcClient, req.RpcUrl, name, addr, treeDepth,
 				commitmentTopic, currentRootSel, treeNumberSel)
 			statuses = append(statuses, s)
 		}
@@ -449,7 +553,7 @@ var vaultIDByName = map[string]uint64{
 	"EnygmaErc20CoinVault":  3,
 }
 
-func checkEnygmaDvPRegistry(rpcURL, receiptsPath string, receiptsAddrs map[string]string, vaultByIDSel string) EnygmaDvPCheck {
+func checkEnygmaDvPRegistry(client *http.Client, rpcURL, receiptsPath string, receiptsAddrs map[string]string, vaultByIDSel string) EnygmaDvPCheck {
 	// Load EnygmaDvP address from receipts.
 	data, err := os.ReadFile(receiptsPath)
 	if err != nil {
@@ -470,7 +574,7 @@ func checkEnygmaDvPRegistry(rpcURL, receiptsPath string, receiptsAddrs map[strin
 
 	for _, name := range vaultNames {
 		id := vaultIDByName[name]
-		onChainAddr, err := ethCallAddress(rpcURL, dvpAddr, vaultByIDSel, id)
+		onChainAddr, err := ethCallAddress(client, rpcURL, dvpAddr, vaultByIDSel, id)
 		if err != nil {
 			entries = append(entries, VaultRegistryEntry{
 				VaultID: id,
@@ -503,13 +607,13 @@ func checkEnygmaDvPRegistry(rpcURL, receiptsPath string, receiptsAddrs map[strin
 	}
 }
 
-func checkVault(rpcURL, name, addr string, depth int,
+func checkVault(client *http.Client, rpcURL, name, addr string, depth int,
 	commitmentTopic, currentRootSel, treeNumberSel string,
 ) VaultMerkleStatus {
 	s := VaultMerkleStatus{Name: name, Address: addr}
 
 	// 1. On-chain current root
-	onChainRoot, err := ethCallUint256(rpcURL, addr, currentRootSel)
+	onChainRoot, err := ethCallUint256(client, rpcURL, addr, currentRootSel)
 	if err != nil {
 		s.Error = fmt.Sprintf("currentRoot(): %v", err)
 		return s
@@ -517,7 +621,7 @@ func checkVault(rpcURL, name, addr string, depth int,
 	s.OnChainRoot = onChainRoot.String()
 
 	// 2. On-chain tree number (how many times the tree has rolled over)
-	treeNum, err := ethCallUint256(rpcURL, addr, treeNumberSel)
+	treeNum, err := ethCallUint256(client, rpcURL, addr, treeNumberSel)
 	if err != nil {
 		s.Error = fmt.Sprintf("treeNumber(): %v", err)
 		return s
@@ -527,7 +631,7 @@ func checkVault(rpcURL, name, addr string, depth int,
 	// 3. Collect all Commitment events in order
 	//    event Commitment(uint256 indexed vaultId, uint256 indexed commitment)
 	//    topics[0] = event signature, topics[1] = vaultId, topics[2] = commitment
-	logs, err := ethGetLogs(rpcURL, addr, commitmentTopic)
+	logs, err := ethGetLogs(client, rpcURL, addr, commitmentTopic)
 	if err != nil {
 		s.Error = fmt.Sprintf("eth_getLogs: %v", err)
 		return s
@@ -603,7 +707,8 @@ func MerkleVaultHandler() gin.HandlerFunc {
 			req.ReceiptsPath = "../build/receipts.json"
 		}
 
-		if err := validateRPCURL(req.RpcUrl); err != nil {
+		rpcClient, err := newSafeRPCClient(req.RpcUrl)
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -664,7 +769,7 @@ func MerkleVaultHandler() gin.HandlerFunc {
 			return
 		}
 
-		status := checkVault(req.RpcUrl, vaultName, addr, treeDepth,
+		status := checkVault(rpcClient, req.RpcUrl, vaultName, addr, treeDepth,
 			commitmentTopic, currentRootSel, treeNumberSel)
 		c.JSON(http.StatusOK, status)
 	}
