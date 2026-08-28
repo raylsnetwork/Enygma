@@ -8,13 +8,13 @@ import (
 
 	utils "enygma-server/utils"
 
-	"github.com/gin-gonic/gin"
-	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
+	"github.com/consensys/gnark/constraint/solver"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/gin-gonic/gin"
 )
 
 func createDepositCircuitTemplate(config DepositEnygmaCircuitConfig) DepositEnygmaCircuit {
@@ -36,7 +36,7 @@ func createDepositCircuitTemplate(config DepositEnygmaCircuitConfig) DepositEnyg
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 	curve := ecc.BN254
-	pk, _ := utils.LoadProvingKey(curve, pkPath)
+	pk, vk := utils.MustLoadKeys(curve, pkPath, vkPath) // Fix L-04 part 1
 
 	config := DepositEnygmaCircuitConfig{NCommitment: 6}
 	circuitTemplate := createDepositCircuitTemplate(config)
@@ -58,50 +58,72 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		var publicSignal []*big.Int
 
+		// Fix M-08: bp.Parse accumulates the first parse failure instead
+		// of silently turning a malformed decimal into nil. bp.Err() is
+		// checked below, before frontend.NewWitness is ever called — see
+		// utils.ParseBigInt's doc for why that ordering closes the
+		// witness.Fill goroutine leak.
+		bp := &utils.BigIntParser{}
+
 		witness.SenderId = frontend.Variable(request.SenderID)
 		witness.Address = frontend.Variable(request.Address)
 
 		witness.Hash = frontend.Variable(request.Hash)
-		
 
 		witness.SenderTxValue = frontend.Variable(request.SenderTxValue)
 		witness.SecretKey = frontend.Variable(request.SecretKey)
 		witness.PkDeposit = frontend.Variable(request.PkDeposit)
-		
-		
+
 		for i := 0; i < config.NCommitment; i++ {
-			witness.SharedSecrets[i] = utils.ParseBigInt(request.SharedSecrets[i])
-			witness.HashedSharedSecrets[i] = utils.ParseBigInt(request.HashedSharedSecrets[i])
-			witness.PublicKey[i] = utils.ParseBigInt(request.PublicKey[i])
+			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])
+			witness.HashedSharedSecrets[i] = bp.Parse(request.HashedSharedSecrets[i])
+			witness.PublicKey[i] = bp.Parse(request.PublicKey[i])
 
-			witness.PreviousCommit[i][0] = utils.ParseBigInt(request.PreviousCommit[i][0])
-			witness.PreviousCommit[i][1] = utils.ParseBigInt(request.PreviousCommit[i][1])
+			witness.PreviousCommit[i][0] = bp.Parse(request.PreviousCommit[i][0])
+			witness.PreviousCommit[i][1] = bp.Parse(request.PreviousCommit[i][1])
 
-			witness.TxCommit[i][0] = utils.ParseBigInt(request.TxCommit[i][0])
-			witness.TxCommit[i][1] = utils.ParseBigInt(request.TxCommit[i][1])
-		
-		
-			witness.TxValues[i] = utils.ParseBigInt(request.TxValues[i])
-			witness.TxRandomValues[i] = utils.ParseBigInt(request.TxRandomValues[i])
-			witness.AnonymitySet[i] = utils.ParseBigInt(request.AnonymitySet[i])
-			witness.MessageTags[i] = utils.ParseBigInt(request.MessageTags[i])
-		}	
-		
-		witness.PreviousSenderBalance = utils.ParseBigInt(request.PreviousSenderBalance)
-		witness.PreviousSenderRandomValue = utils.ParseBigInt(request.PreviousSenderRandomValue)
-		witness.Nullifier = utils.ParseBigInt(request.Nullifier)
+			witness.TxCommit[i][0] = bp.Parse(request.TxCommit[i][0])
+			witness.TxCommit[i][1] = bp.Parse(request.TxCommit[i][1])
+
+			witness.TxValues[i] = bp.Parse(request.TxValues[i])
+			witness.TxRandomValues[i] = bp.Parse(request.TxRandomValues[i])
+			witness.AnonymitySet[i] = bp.Parse(request.AnonymitySet[i])
+			witness.MessageTags[i] = bp.Parse(request.MessageTags[i])
+		}
+
+		witness.PreviousSenderBalance = bp.Parse(request.PreviousSenderBalance)
+		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
+		witness.Nullifier = bp.Parse(request.Nullifier)
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
+		witness.DomainId = bp.Parse(request.DomainId) // Fix L-01
 
-		
+		if err := bp.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
+
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid witness: %v", err)})
 			return
 		}
 
+		// Fix M-08: bound how many groth16.Prove calls run concurrently —
+		// see utils.ProveLimiter's doc.
+		if !utils.ProveLimiter.Acquire() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "proving server is busy, try again shortly"})
+			return
+		}
 		proof, err := groth16.Prove(ccs, pk, witnessFull)
+		utils.ProveLimiter.Release()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof generation failed: %v", err)})
+			return
+		}
+
+		// Fix L-04 part 2: self-verify before returning.
+		if err := utils.SelfVerify(proof, vk, witnessFull); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("server-side %v", err)})
 			return
 		}
 		p := proof.(*groth16_bn254.Proof)
@@ -122,13 +144,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		p.Bs.X.A0.BigInt(BX01)
 
 		BX11 := new(big.Int)
-		p.Bs.X.A1.BigInt(BX11) 
+		p.Bs.X.A1.BigInt(BX11)
 
 		BY01 := new(big.Int)
-		p.Bs.Y.A0.BigInt(BY01) 
+		p.Bs.Y.A0.BigInt(BY01)
 
 		BY11 := new(big.Int)
-		p.Bs.Y.A1.BigInt(BY11) 
+		p.Bs.Y.A1.BigInt(BY11)
 
 		//Proof in Remix format (order matters!)
 		proofRemix := []*big.Int{
@@ -139,38 +161,36 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 
 		//Generate public signal
-		
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.HashedSharedSecrets[i]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.PublicKey[i]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.PreviousCommit[i][0]))
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.PreviousCommit[i][1]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.TxCommit[i][0]))
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.TxCommit[i][1]))
-		}
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.BlockNumber))
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.AnonymitySet[i]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.MessageTags[i]))
-		}
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.Nullifier))
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.Hash))
 
+		for i := 0; i < config.NCommitment; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.HashedSharedSecrets[i]))
+		}
+		for i := 0; i < config.NCommitment; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.PublicKey[i]))
+		}
+		for i := 0; i < config.NCommitment; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][0]))
+			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][1]))
+		}
+		for i := 0; i < config.NCommitment; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][0]))
+			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][1]))
+		}
+		publicSignal = append(publicSignal, bp.Parse(request.BlockNumber))
+		for i := 0; i < config.NCommitment; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.AnonymitySet[i]))
+		}
+		for i := 0; i < config.NCommitment; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.MessageTags[i]))
+		}
+		publicSignal = append(publicSignal, bp.Parse(request.Nullifier))
+		publicSignal = append(publicSignal, bp.Parse(request.Hash))
+		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
 
-		
 		c.JSON(http.StatusOK, DepositOutput{
-            Proof:  proofRemix,
-            PublicSignal:publicSignal,
-        })
-
+			Proof:        proofRemix,
+			PublicSignal: publicSignal,
+		})
 
 	}
-}	
+}

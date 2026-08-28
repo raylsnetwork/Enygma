@@ -1,0 +1,80 @@
+title = "Enygma gitleaks config"
+
+# Start from gitleaks' built-in rule set (private keys, API tokens, JWTs,
+# cloud-provider credentials, generic high-entropy secrets, ...) and layer
+# repo-specific exceptions on top.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths that are noisy but not secrets: vendored deps, build output, and generated cryptographic constants"
+paths = [
+  '''node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)artifacts/''',
+  '''(^|/)cache/''',
+  # gnark/circom Poseidon round constants and BN254/BabyJubJub curve
+  # parameters — long hex/decimal literals that are public math, not secrets.
+  '''gnark-server/poseidon/constants\.go$''',
+  '''poseidon_calc/''',
+  '''\.r1cs$''',
+  '''\.wtns$''',
+
+  # Historical-only findings: a full-history scan (`gitleaks detect`
+  # without --no-git, which is what CI does with fetch-depth: 0) finds
+  # these 13 paths at OLD commits, not at the current tip. Path-based —
+  # not a baseline/fingerprint file — deliberately, so no copy of the
+  # actual secret text ever has to be committed to allowlist it.
+  #
+  # enygma_payments/contracts/test: the original C-06 leak (pre-rotation
+  # relayer key + bearer token), fixed in 65f5537 — the current tip of
+  # this file is placeholders only (see the git blame). The key itself
+  # is already rotated/dead per relayer/.env's own note; the git-history
+  # rewrite that would fully remove it from the repo was explicitly
+  # deferred, not this allowlist entry's job to fix.
+  '''^enygma_payments/contracts/test$''',
+  # enygma_payments/demo_instructions.md: false positive — a deployed
+  # contract address in an example log-output block, not a secret.
+  '''^enygma_payments/demo_instructions\.md$''',
+  # The remaining 11 paths are in enygma_dvp/ and enygma_retail_payments/
+  # — sibling projects untouched by fix/vulnerability-hardening, whose
+  # findings were never individually reviewed as part of that audit
+  # response. Allowlisted by path so this workflow can actually run
+  # (gitleaks-action's mandatory-license failure was hiding this whole
+  # category of finding before now); each one is still worth a real,
+  # separate look — this is scope containment, not a claim that they're
+  # all confirmed safe.
+  '''^enygma_dvp/demo/main\.go$''',
+  '''^enygma_dvp/gnark_circuits/cmd/export_vk_init/main\.go$''',
+  '''^enygma_dvp/src/core/prover\.go$''',
+  '''^enygma_dvp/src_go/core/prover_gnark\.go$''',
+  '''^enygma_retail_payments/demo/main\.go$''',
+  '''^enygma_retail_payments/demo/run\.sh$''',
+  '''^enygma_retail_payments/private_tags/test/payment_tag_relayer_test\.go$''',
+  '''^enygma_retail_payments/private_tags/test/relayer_test\.go$''',
+  '''^enygma_retail_payments/private_tags/test/tag_test\.go$''',
+  '''^enygma_retail_payments/test/05_auditor_relayer_test\.go$''',
+  '''^enygma_retail_payments/test/helpers_test\.go$''',
+]
+
+# Known, deliberately-public local-devnet keys. Neither of these is a live
+# credential; both are only reachable from a local Hardhat/Anvil node.
+regexes = [
+  # Hardhat/Anvil's publicly documented default account #0 key (mnemonic:
+  # "test test test ... junk"). A universally known throwaway.
+  '''ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+  # enygma_payments' own committed local-Hardhat-only account key, wired
+  # into contracts/enygma/hardhat.config.js's "hardhat" network block and
+  # reused by go_client/enygma_test. Audit ENYGMA_PAYMENTS_AUDIT_2026-08-22.md
+  # finding H-08 confirmed nonce 0 / zero balance on the live chain as of
+  # 2026-08-22. Tracked as a follow-up to replace with the standard key
+  # above rather than re-flagged on every commit until then — see that
+  # finding before assuming this is fine to leave long-term.
+  '''34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154''',
+  # False positives, not secrets: gnark-server/pkg/circuits/withdraw/
+  # m03_repro_test.go builds a filepath.Join(...) to the withdraw circuit's
+  # own key filenames — high enough entropy to trip the generic-api-key
+  # rule, but they're literal ".key" filenames, not key material.
+  '''WithdrawPk6\.key''',
+  '''WithdrawVk6\.key''',
+]

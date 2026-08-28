@@ -6,9 +6,10 @@ import(
 	)
 
 var (
-	// Generator point of Baby Jub jub curve
-	gx, _ = new(big.Int).SetString("16540640123574156134436876038791482806971768689494387082833631921987005038935", 10)
-	gy, _ = new(big.Int).SetString("20819045374670962167435360035096875258406992893633759881276124905556507972311", 10)
+	// G: Pedersen value generator. NUMS hash-to-curve derivation, seed "2"
+	// (H-11 fix). Reproduce with: cd gnark-server && go run ./cmd/derive_generator
+	gx, _ = new(big.Int).SetString("12337812418750581066638756637363471856433191340622504180842886595232027947307", 10)
+	gy, _ = new(big.Int).SetString("15225366398330386329633463986700597127113326976080712967801565482915963669722", 10)
 	G     = &babyjub.Point{X: gx, Y: gy}
 	//Another Baby Jubjub point (randomnly generated)
 	hx, _ = new(big.Int).SetString("10100005861917718053548237064487763771145251762383025193119768015180892676690", 10)

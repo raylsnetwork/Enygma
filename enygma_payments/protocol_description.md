@@ -1,5 +1,32 @@
 # Protocol Description
 
+> **Implementation status (Fix M-12).** This document describes the
+> Enygma protocol **as designed**, written throughout in the present
+> tense ("the system supports...", "these ciphertexts are encrypted...").
+> That present tense does **not** mean every mechanism below is built in
+> `enygma_payments` today. Sections 6's ciphertext payload (AES-GCM-256
+> encryption, HKDF-based per-block key rotation) and all of Section 7
+> (**Auditing**, in its entirety — long-term view-key sharing, ephemeral
+> view-key sharing, and universal auditing) are **design, not
+> implemented**: there is no AES-GCM/HKDF code anywhere in this repository
+> outside this document, no "store encrypted payload" step, no
+> tag-scanning retrieval path, and no auditor role, address, escrow, or
+> event of any kind. Everything through Section 5 (**System Setup** —
+> **Key Generation** — **Key Registration** — **Key Agreement** — **Issuing
+> Tokens**) and the core of Section 6 (commitments, nullifiers, the ZK
+> proof, and on-chain verification) matches the shipped code. If your
+> institution has relied on this document to evaluate the system's privacy
+> or auditing properties, the mechanisms above are not properties you can
+> rely on today — treat them as a roadmap, not a shipped guarantee.
+> Separately (documented for completeness, not because it changes the
+> above): even if built, this specific construction could not deliver
+> *scoped* auditing as written — the value that opens a transaction is a
+> Pedersen blinding shared jointly by both parties, and the epoch anchor
+> means one disclosure opens every transaction between that pair for the
+> whole epoch window in both directions, so the only auditing mode this
+> design can actually support is permanent and universal, not
+> per-transaction and revocable.
+
 In this document, we describe the Enygma payments protocol, which is comprised of different sub-protocols. Concretely, we have an initial **System Setup** where the system parameters are defined. Subsequently, we have a **Key Generation** step where parties generate keypairs. A **Key Registration** step where parties register the public keys on the underlying blockchain, and a **Key Agreement** step where parties run a key agreement protocol to establish pairwise shared secrets. Once completed, parties can start transacting privately. This transfer stage has a **Send**, **Process**, and **Retrieve** step. Finally, if required, the system supports an **Auditing** step. 
 
 ```mermaid
@@ -270,7 +297,13 @@ The privacy node creates a ZK proof $$\pi$$ that proves the following:
 * The nullifier is well-formed. Therefore, it is derived from my secret key and the latest block number;
 * The private messaging tags are well-formed. Therefore, they use the shared secret I have obtained previously with each of the $$k-1$$ participants and the latest block number or the random factor that opens a commitment from the anonymity set for the index of the sender.
 
-#### Ciphertexts 
+#### Ciphertexts
+
+> **Design, not implemented (Fix M-12).** No AES-GCM-256 or HKDF code
+> exists anywhere in `enygma_payments`; no ciphertext is ever produced,
+> transmitted, or stored on chain today. See the notice at the top of
+> this document.
+
 A transaction payload includes a set of $$k$$ ciphertexts (encrypted using AES-GCM-256). These ciphertexts should contain additional information for the recipient to be able to quickly open the transaction details (i.e., the Pedersen commitments) and potentially get more information about the specific recipient (e.g., user Bob, who is a client of that specific receiving bank). **These ciphertexts are encrypted with an ephemeral symmetric key that is rotated in every new block**. This key rotation is useful and by design to allow specific auditors to potentially request for individual transactions without compromising the confidentiality of past/future ciphertexts. 
 
 The symmetric key $$K$$ for block $$n$$ between participants $$i$$ and $$j$$ is obtained the following way: 
@@ -313,6 +346,61 @@ flowchart LR
     pl_send -.-> getblock_send -.-> derivesendkey -.-> calc_r -.-> calc_tags -.-> tx_commits -.-> nullifier -.-> zk_proof -.-> encrypt_ad -.-> send_tx
 
 ```
+
+#### Implementation Note: the Relayer (`enygma_payments/relayer`)
+
+**This subsection describes the current reference implementation, not the
+protocol.** The steps above ("Send commits, nullifier, zk proof, and
+ciphertext") describe a privacy node submitting its own transaction
+directly to the blockchain, and nothing in the protocol as specified
+requires otherwise — a bank *could* hold its own signing key, be its own
+`msg.sender`, and submit `transfer()` itself.
+
+The shipped `enygma_payments/relayer` component does not do that. Every
+bank's `registerAccount` currently binds `addressToAccountId` to the
+*relayer's* address, not the bank's own, and the relayer holds the only
+private key that is ever used to call `transfer()` / `transferWithFee()` /
+`withdraw()` / `deposit()`. Concretely, this means:
+
+- **The relayer is a mandatory, single point of submission.** A bank
+  builds its own proof and commitments locally (nothing in that process
+  touches the relayer or reveals private inputs to it), then hands the
+  finished, already-valid request to the relayer over HTTP for on-chain
+  submission. The relayer cannot forge a transaction — it never sees a
+  bank's private witness data, and every value it *could* tamper with
+  (public signals, participant ids, commitments) is bound into the
+  Groth16 proof itself and independently checked on-chain — but it is the
+  only party that can make an otherwise-valid, already-built request
+  *reach* the chain at all.
+- **The relayer can censor.** Since it is the sole submitter, declining to
+  call `transfer()` for a given request leaves no on-chain trace — a
+  censored bank cannot distinguish "the relayer refused" from "the relayer
+  is down" or "the chain is congested," and has no independent path to
+  submit the same, already-valid request itself.
+- **The relayer totally orders submissions.** Because it is the only
+  signer, it necessarily decides the relative order of every transaction
+  it accepts; where two transactions conflict (e.g. would double-spend the
+  same commitment), the relayer's ordering deterministically decides which
+  one lands.
+- **The relayer's own on-chain identity is the only one visible.**
+  `msg.sender` on every `TransactionSuccessful` event is always the
+  relayer's address, never the submitting bank's — so the chain's own
+  audit trail carries no per-bank attribution. (The relayer's HTTP logs do
+  carry per-bank attribution as of the per-bank credentials described in
+  §3/§4 below, but that attribution exists only in the relayer's own logs,
+  not on-chain.)
+
+**What this does not affect.** The relayer cannot steal, redirect, or
+double-spend funds — every check that matters (proof validity, nullifier
+uniqueness, block-number freshness, commitment/public-key binding) is
+enforced on-chain, independent of anything the relayer does or doesn't do.
+A client that wants a stronger guarantee than "the relayer said 200 OK"
+should independently verify the resulting balance change against its own
+RPC connection after a relay call, exactly as `demo/main.go` already does
+(`inst.GetBalance` compared against `inst.AddPedComm` of the previous
+balance and the transaction's own commitment) — a relayer that returns
+success without actually submitting, or that gets front-run, produces a
+detectable mismatch rather than a silently accepted lie.
 
 #### Verifying a TX (Blockchain)
 The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. 
@@ -360,6 +448,11 @@ flowchart LR
 ```
 
 ### Retrieving a Transaction
+
+> **Design, not implemented (Fix M-12).** No tag-scanning or ciphertext-
+> decryption retrieval path exists in `enygma_payments` today. See the
+> notice at the top of this document.
+
 Privacy node derives the private messaging tags, symmetric keys, and random factors for all the entities in the anonymity set(s) of all the transactions in such a block. The privacy node is then going to brute-force try the symmetric decryption of each transaction. This work is paralellizable and extremely fast as it is simply performing $$k-1$$ hash operations for each received transaction. Once the sender is detected, the recipient can perform an AES-GCM decryption and obtain more information about the transfer details in the corresponding plaintext. In the event that the sender was malicious, the recipient now knows the sender associated with this transaction was malicious and is able to prove that the symmetric key for that specific block does not result in a successful AES-GCM decryption. 
 
 In order to open the balance from the transaction. Since the Pedersen commitments are well-formed (enforced by the ZK proof), the recipient, who knows the corresponding random factor $$r$$, can remove the randomness component and obtain $$vG$$.
@@ -402,6 +495,13 @@ Let us assume Bob is the sender of the first transaction and Charlie of the seco
 If $$v = 0$$, then Alice was part of the anonymity set and has not received any funds. We note that it may be the case that no entity in the anonymity set has received funds and it is a dummy transaction (i.e., sending $$0$$ to all participants to add additional noise to the system). 
 
 ## 7 - Auditing
+
+> **Design, not implemented (Fix M-12).** No auditor role, address,
+> escrow, key-sharing mechanism, or event exists anywhere in
+> `enygma_payments` today — this entire section describes design intent
+> only. Even if built, this construction could not deliver *scoped*
+> auditing as written; see the notice at the top of this document for why.
+
 There are multiple types of auditing supported by the protocol. Concretely, the auditor can have a 'universal view' and have the ability of seeing all the transactions that take place in the network. 
 
 #### Long-term (View) Key Sharing

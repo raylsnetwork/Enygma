@@ -57,7 +57,6 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/iden3/go-iden3-crypto/babyjub"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
@@ -252,15 +251,24 @@ func TestNullifierReuseProtection(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
+	// directly) since it mints below too — senderRegR + senderMintR ==
+	// senderPrevR, so PreviousSenderRandomValue below is unchanged.
 	for i := 0; i < nBanks; i++ {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
 		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
+			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
 	t.Logf("registered %d banks", nBanks)
 
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
@@ -289,15 +297,18 @@ func TestNullifierReuseProtection(t *testing.T) {
 	secrets[senderIdx] = senderSecret
 
 	fp := fingerPrintGen(secrets, senderIdx)
-	tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
+
+	// nullifier computed before tagMessageGen/genCommitmentAndRandom: Fix
+	// H-01/H-02 use it (not blockHash) as the per-transaction value.
+	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
+	tagMessages := tagMessageGen(senderIdx, secrets, nullifier)
 
 	txValues := []*big.Int{
 		negMod(big.NewInt(transferAmt)),
 		big.NewInt(60), big.NewInt(40),
 		big.NewInt(0), big.NewInt(0), big.NewInt(0),
 	}
-	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, new(big.Int).Set(blockHash), secrets)
-	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
+	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, nullifier, secrets)
 
 	toStrs := func(vals []*big.Int) []string {
 		s := make([]string, len(vals))
@@ -340,6 +351,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 		"tx_values":                    toStrs(txValues),
 		"tx_random_values":             toStrs(txRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", transferAmt),
+		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 	})
 
 	t.Log("requesting proof (may take ~30s)…")
@@ -359,18 +371,18 @@ func TestNullifierReuseProtection(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 80 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
 		t.Fatalf("unexpected proof sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")
 
 	// Build on-chain proof struct.
-	// NOTE: IEnygmaProof.PublicSignal must be [80]*big.Int after contract/binding regeneration.
+	// NOTE: IEnygmaProof.PublicSignal must be [81]*big.Int after contract/binding regeneration.
 	var proof8 [8]*big.Int
 	for i := 0; i < 8; i++ {
 		proof8[i] = proofResp.Proof[i]
 	}
-	var pubSig80 [80]*big.Int
+	var pubSig80 [81]*big.Int
 	for i := range pubSig80 {
 		pubSig80[i] = big.NewInt(0)
 	}
@@ -396,7 +408,8 @@ func TestNullifierReuseProtection(t *testing.T) {
 	}
 
 	// ── First submission: must succeed ────────────────────────────────────────
-	r1 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, participantIds))
+	// Fix H-09: no attribution for a direct test call.
+	r1 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, participantIds, ""))
 	if r1.Status != 1 {
 		t.Fatal("first Transfer reverted — setup problem, not a nullifier issue")
 	}
@@ -406,7 +419,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	// mkAuth sets an explicit GasLimit so go-ethereum skips eth_call simulation
 	// and sends the tx directly. The contract reverts on-chain (NullifierAlreadyUsed);
 	// we detect this by waiting for the receipt and checking Status == 0.
-	r2 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, participantIds))
+	r2 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, participantIds, ""))
 	if r2.Status != 0 {
 		t.Fatal("FAIL: second Transfer with the same proof succeeded — nullifier reuse NOT blocked")
 	}
@@ -417,14 +430,17 @@ func TestNullifierReuseProtection(t *testing.T) {
 // ── Shared fresh-contract setup ───────────────────────────────────────────────
 
 // freshSetup deploys Enygma + Verifier, initializes them, registers nBanks accounts
-// (all with senderPrevR as randomness), and returns the bound instance.
+// (all with senderPrevR as randomness), and returns the bound instance plus its
+// deployed address (Fix L-01: callers building a real public_signal array need
+// the address to compute expectedDomainId(enygmaAddr) for the domain slot —
+// see Enygma.sol's _expectedDomainId()).
 // It does NOT mint; callers mint as needed.
 func freshSetup(
 	t *testing.T,
 	client *ethclient.Client,
 	mkAuth func() *bind.TransactOpts,
 	waitTx func(*ethtypes.Transaction, error) *ethtypes.Receipt,
-) *enygma.Enygma {
+) (*enygma.Enygma, common.Address) {
 	t.Helper()
 
 	ownerAddr := crypto.PubkeyToAddress(*mustPrivKey(t).Public().(*ecdsa.PublicKey))
@@ -454,14 +470,24 @@ func freshSetup(
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR, not senderPrevR
+	// directly — callers that mint to bank 0 afterward must use
+	// senderMintR (senderRegR + senderMintR == senderPrevR) so every
+	// existing PreviousSenderRandomValue == senderPrevR assumption
+	// downstream keeps holding.
 	for i := 0; i < nBanks; i++ {
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
 		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
-			big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})); r.Status != 1 {
+			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
 	t.Logf("freshSetup: deployed at %s, registered %d banks", enygmaAddr.Hex(), nBanks)
-	return instance
+	return instance, enygmaAddr
 }
 
 // hardhatTestKey is the publicly committed key in contracts/enygma/hardhat.config.js.
@@ -538,15 +564,34 @@ func scenarioClient(t *testing.T) (*ethclient.Client, func() *bind.TransactOpts,
 // Run:
 //
 //	CC=/usr/bin/clang go test -run TestBurnBalanceUpdate -v -timeout 60s
+// TestBurnBalanceUpdate exercises the H-13 fix: burn() now requires a
+// zero-knowledge proof of solvency and the correct new commitment instead
+// of unverified plaintext point arithmetic. It uses MockBurnVerifier
+// (always "verifies") so the test is entirely about Enygma.burn()'s own
+// logic — public-signal binding, nullifier consumption, supply accounting,
+// invariant enforcement — independent of the real burn circuit's proving
+// pipeline, which needs a live gnark server and the batched trusted-setup
+// ceremony (H-12) neither of which this branch's other circuit-touching
+// fixes have run either. Pre-fix, this test documented burn() breaking the
+// Σ(balances)==totalSupply invariant and never touching TotalSupply(); the
+// fixed contract does both correctly, so both assertions flip.
 func TestBurnBalanceUpdate(t *testing.T) {
 	if !chainAvailable() {
 		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)
-	instance := freshSetup(t, client, mkAuth, waitTx)
+	instance, enygmaAddr := freshSetup(t, client, mkAuth, waitTx)
 
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	const artifactBase = "../../contracts/enygma/artifacts/contracts"
+	mockBurnVerifierAddr := deployFromArtifact(t, client, mkAuth(),
+		artifactBase+"/mocks/MockBurnVerifier.sol/MockBurnVerifier.json")
+	if r := waitTx(instance.AddBurnVerifier(mkAuth(), mockBurnVerifierAddr)); r.Status != 1 {
+		t.Fatal("addBurnVerifier failed")
+	}
+
+	mcx1, mcy1 := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx1, mcy1)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
@@ -561,9 +606,52 @@ func TestBurnBalanceUpdate(t *testing.T) {
 	prevSupplyScalar, _ := instance.TotalSupply(&bind.CallOpts{})
 	t.Logf("TotalSupply() scalar before burn: %s", prevSupplyScalar)
 
-	// Burn 200 from bank 0.
+	// Build a valid burn proof off-chain, exactly as
+	// gnark-server/pkg/circuits/burn/circuit.go's Define requires. Bank 0
+	// registered with prevR=senderPrevR and was minted mintAmt with
+	// blinding 0, so its actual opening is (mintAmt, senderPrevR).
 	const burnAmt = 200
-	if r := waitTx(instance.Burn(mkAuth(), big.NewInt(1), big.NewInt(burnAmt))); r.Status != 1 {
+	sk := big.NewInt(senderSk)
+	prevR := big.NewInt(senderPrevR)
+	previousBalance := big.NewInt(mintAmt)
+	amount := big.NewInt(burnAmt)
+	newBalance := new(big.Int).Sub(previousBalance, amount)
+
+	pkHash, _ := poseidon.Hash([]*big.Int{sk, sk})
+	publicKey := pkHash.Mod(pkHash, curveP)
+
+	// NewCommit reuses prevR as its blinding factor — required, not a
+	// simplification: see gnark-server/pkg/circuits/burn/circuit.go's
+	// comment on computedNewCommitment (Enygma.sol's totalSupply tracking
+	// only stays consistent with Σ(balances) if a burn leaves the
+	// account's blinding factor unchanged).
+	newCommit := pedersenCommitment(newBalance, prevR)
+
+	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
+	if err != nil {
+		t.Fatalf("getBlckHash: %v", err)
+	}
+	secretRemainHash, _ := poseidon.Hash([]*big.Int{prevR, sk})
+	secretRemain := secretRemainHash.Mod(secretRemainHash, curveP)
+	nullifier, _ := poseidon.Hash([]*big.Int{secretRemain, blockHash})
+
+	burnProof := enygma.IEnygmaBurnProof{
+		Proof: [8]*big.Int{
+			big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0),
+			big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0),
+		}, // MockBurnVerifier ignores proof content entirely
+		PublicSignal: [9]*big.Int{
+			publicKey,
+			prevBal.X, prevBal.Y,
+			newCommit.X, newCommit.Y,
+			amount,
+			blockHash,
+			nullifier,
+			expectedDomainId(enygmaAddr), // Fix L-01
+		},
+	}
+
+	if r := waitTx(instance.Burn(mkAuth(), big.NewInt(1), burnProof)); r.Status != 1 {
 		t.Fatal("burn() reverted unexpectedly")
 	}
 	t.Logf("burn(%d) from bank 0 succeeded", burnAmt)
@@ -577,35 +665,31 @@ func TestBurnBalanceUpdate(t *testing.T) {
 	if newBal.X.Cmp(prevBal.X) == 0 && newBal.Y.Cmp(prevBal.Y) == 0 {
 		t.Fatal("bank 0 commitment unchanged after burn — burn had no effect")
 	}
-
-	// Homomorphic check: newBal == prevBal + Com(P − burnAmt, 0)
-	//   Com(P − burnAmt, 0) = (P − burnAmt)·G  ≡  −burnAmt·G  on the curve.
-	negDelta := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(burnAmt)), big.NewInt(0))
-	prevPt := &babyjub.Point{X: prevBal.X, Y: prevBal.Y}
-	expectedNewBal := addBJPoints(prevPt, negDelta)
-	if newBal.X.Cmp(expectedNewBal.X) != 0 || newBal.Y.Cmp(expectedNewBal.Y) != 0 {
-		t.Errorf("homomorphic check FAILED:\n  got      (%s, %s)\n  expected (%s, %s)",
-			newBal.X, newBal.Y, expectedNewBal.X, expectedNewBal.Y)
+	if newBal.X.Cmp(newCommit.X) != 0 || newBal.Y.Cmp(newCommit.Y) != 0 {
+		t.Errorf("on-chain balance does not match the proof's NewCommit:\n  got      (%s, %s)\n  expected (%s, %s)",
+			newBal.X, newBal.Y, newCommit.X, newCommit.Y)
 	} else {
-		t.Log("homomorphic check PASSED: newBal == prevBal − burnAmt·G ✓")
+		t.Log("on-chain balance == proof's NewCommit ✓ (contract writes the proof's commitment directly, no on-chain arithmetic on the hidden value)")
 	}
 
-	// The scalar TotalSupply() is NOT decremented by burn.
+	// Fix H-13: TotalSupply() IS now decremented by burn.
 	afterSupplyScalar, _ := instance.TotalSupply(&bind.CallOpts{})
-	if afterSupplyScalar.Cmp(prevSupplyScalar) != 0 {
-		t.Errorf("TotalSupply() scalar changed after burn: %s → %s (unexpected)", prevSupplyScalar, afterSupplyScalar)
+	expectedSupply := new(big.Int).Sub(prevSupplyScalar, amount)
+	if afterSupplyScalar.Cmp(expectedSupply) != 0 {
+		t.Errorf("TotalSupply() scalar after burn = %s, want %s (prevSupply - burnAmt)", afterSupplyScalar, expectedSupply)
 	} else {
-		t.Logf("TotalSupply() scalar unchanged (%s) after burn — as expected (burn adjusts commitments only)", afterSupplyScalar)
+		t.Logf("TotalSupply() scalar correctly decremented: %s → %s", prevSupplyScalar, afterSupplyScalar)
 	}
 
-	// check() is expected to revert here: burn decrements the balance commitment but
-	// does not update totalSupplyX/totalSupplyY, so Σ(balances) ≠ totalSupply commitment.
-	_, checkErr := instance.Check(&bind.CallOpts{})
-	if checkErr != nil {
-		t.Logf("check() correctly reverts after burn (totalSupply commitment not decremented): %v", checkErr)
-		t.Log("DOCUMENTED: burn does not maintain the Σ(balances)==totalSupply commitment invariant")
+	// Fix H-13: check() now PASSES after burn — the invariant is
+	// maintained because burn updates totalSupplyX/Y homomorphically in
+	// the same call, and burn() itself calls _enforceInvariant() before
+	// returning, so a broken invariant would have already reverted the
+	// burn transaction above rather than surfacing here.
+	if _, checkErr := instance.Check(&bind.CallOpts{}); checkErr != nil {
+		t.Errorf("check() unexpectedly reverted after burn: %v", checkErr)
 	} else {
-		t.Error("check() unexpectedly passed after burn — totalSupplyX/Y may have been modified")
+		t.Log("check() PASSED after burn — Σ(balances)==totalSupply invariant maintained ✓")
 	}
 }
 
@@ -669,14 +753,19 @@ func TestMintAccumulation(t *testing.T) {
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)
-	instance := freshSetup(t, client, mkAuth, waitTx)
+	instance, _ := freshSetup(t, client, mkAuth, waitTx) // domain separator unused: no proof submitted
 
 	// Mint different amounts to banks 0, 1, 2 (accountIds 1, 2, 3).
 	mintAmounts := []*big.Int{big.NewInt(300), big.NewInt(150), big.NewInt(50)}
 	accountIds := []int64{1, 2, 3}
 
+	// Fix H-02 residual: none of these accounts build a proof in this test
+	// (it only checks TotalSupply()/check()), so the exact mint blinding
+	// factor doesn't need to match anything downstream — reusing
+	// senderMintR for all three is fine.
 	for i, id := range accountIds {
-		if r := waitTx(instance.MintSupply(mkAuth(), mintAmounts[i], big.NewInt(id))); r.Status != 1 {
+		mcx, mcy := mintCommitPt(mintAmounts[i], big.NewInt(senderMintR))
+		if r := waitTx(instance.MintSupply(mkAuth(), mintAmounts[i], big.NewInt(id), mcx, mcy)); r.Status != 1 {
 			t.Fatalf("mintSupply(%s, accountId=%d) failed", mintAmounts[i], id)
 		}
 		t.Logf("minted %s to accountId=%d", mintAmounts[i], id)
@@ -694,14 +783,21 @@ func TestMintAccumulation(t *testing.T) {
 		t.Logf("TotalSupply() = %s ✓ (300 + 150 + 50)", gotTotal)
 	}
 
-	// Each minted bank's commitment must differ from its registration value Com(0, senderPrevR).
-	regCommit := pedersenCommitment(big.NewInt(0), big.NewInt(senderPrevR))
+	// Each minted bank's commitment must differ from its registration
+	// value. accountId=1 (bank 0, senderIdx) registered with senderRegR
+	// (freshSetup); accountIds 2-3 registered with senderPrevR unchanged.
 	for _, id := range accountIds {
+		regR := big.NewInt(senderPrevR)
+		if id == senderIdx+1 {
+			regR = big.NewInt(senderRegR)
+		}
+		registrationCommit := pedersenCommitment(big.NewInt(0), regR)
+
 		bal, err := instance.GetBalance(&bind.CallOpts{}, big.NewInt(id))
 		if err != nil {
 			t.Fatalf("GetBalance(accountId=%d): %v", id, err)
 		}
-		if bal.X.Cmp(regCommit.X) == 0 && bal.Y.Cmp(regCommit.Y) == 0 {
+		if bal.X.Cmp(registrationCommit.X) == 0 && bal.Y.Cmp(registrationCommit.Y) == 0 {
 			t.Errorf("accountId=%d commitment unchanged after mint — mint had no effect", id)
 		} else {
 			t.Logf("accountId=%d commitment updated after mint ✓", id)
@@ -734,9 +830,10 @@ func TestInvalidProofRejection(t *testing.T) {
 	}
 
 	client, mkAuth, waitTx := scenarioClient(t)
-	instance := freshSetup(t, client, mkAuth, waitTx)
+	instance, _ := freshSetup(t, client, mkAuth, waitTx) // domain separator unused: no proof submitted
 
-	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))); r.Status != 1 {
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 
@@ -752,7 +849,7 @@ func TestInvalidProofRejection(t *testing.T) {
 	for i := range badProof {
 		badProof[i] = big.NewInt(0)
 	}
-	var badPubSig [80]*big.Int
+	var badPubSig [81]*big.Int
 	for i := range badPubSig {
 		badPubSig[i] = big.NewInt(0)
 	}
@@ -771,7 +868,8 @@ func TestInvalidProofRejection(t *testing.T) {
 
 	// mkAuth sets explicit GasLimit → tx is sent without eth_call simulation.
 	// Revert is detected via receipt Status == 0.
-	r := waitTx(instance.Transfer(mkAuth(), neutralDeltas, badTransferProof, participantIds))
+	// Fix H-09: no attribution for a direct test call.
+	r := waitTx(instance.Transfer(mkAuth(), neutralDeltas, badTransferProof, participantIds, ""))
 	if r.Status != 0 {
 		t.Fatal("FAIL: Transfer with invalid proof succeeded — proof verification not enforced")
 	}

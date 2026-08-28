@@ -14,6 +14,7 @@ import (
 	enygma_fee "enygma-server/pkg/circuits/enygma_fee"
 	deposit "enygma-server/pkg/circuits/deposit"
 	withdraw "enygma-server/pkg/circuits/withdraw"
+	burn "enygma-server/pkg/circuits/burn"
 	utils "enygma-server/utils"
 )
 
@@ -126,34 +127,61 @@ func generateKeysZkDvpDeposit() error {
 	)
 }
 
+// Fix M-16: this used to loop i := 1..splitSize, generating SIX
+// independent groth16.Setup trusted setups for the byte-for-byte
+// identical constraint system (the loop variable i was used only in the
+// three output filenames — config.NCommitment is hardcoded to 6
+// regardless of i, and "the split count" the naming implies exists only
+// as a commented-out `// const nSplit = 6` in the circuit itself). Two
+// consequences, both closed by generating exactly one key now:
+//  1. Enygma.sol's withdraw() selects its verifier by
+//     commitmentDeltas.length, which the function itself forces to equal
+//     DEFAULT_SIZE (6) — so _withdrawVerifiers[6] was already the ONLY
+//     slot ever reachable through the real call path; the other five
+//     keys were pure dead weight (and most of the audit's measured
+//     "~30s cold start" — five of the six withdraw setups being
+//     redundant).
+//  2. Six separate setups meant six independent trapdoors for one
+//     constraint system — anyone holding the toxic waste from any ONE of
+//     the five now-removed setups could have forged proofs accepted by
+//     that (dead but still deployed, if ever wired to a live slot other
+//     than 6) verifier. Down to exactly one setup means exactly one
+//     trapdoor, matching what's actually used.
 func generateKeysZkDvpWithdraw() error {
-	for i := 1; i <= splitSize; i++ {
-		config := withdraw.WithdrawEnygmaCircuitConfig{
-			NCommitment: 6,
-		}
-		
-		withdrawCircuit := withdraw.WithdrawEnygmaCircuit{
-			Config:              config,
-			HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-			PublicKey:           make([]frontend.Variable, config.NCommitment),
-			PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-			TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-			AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-			SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-			MessageTags:         make([]frontend.Variable, config.NCommitment),
-			TxValues:            make([]frontend.Variable, config.NCommitment),
-			TxRandomValues:      make([]frontend.Variable, config.NCommitment),
-		}
-		
-		pkPath := fmt.Sprintf("keys/zkdvp/WithdrawPk%d.key", i)
-		vkPath := fmt.Sprintf("keys/zkdvp/WithdrawVk%d.key", i)
-		solPath := fmt.Sprintf("keys/zkdvp/WithdrawVerifier%d.sol", i)
-
-		if err := generateKeys(&withdrawCircuit, pkPath, vkPath, solPath); err != nil {
-			return err
-		}
+	config := withdraw.WithdrawEnygmaCircuitConfig{
+		NCommitment: 6,
 	}
-	return nil
+
+	withdrawCircuit := withdraw.WithdrawEnygmaCircuit{
+		Config:              config,
+		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
+		PublicKey:           make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
+		MessageTags:         make([]frontend.Variable, config.NCommitment),
+		TxValues:            make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+	}
+
+	// splitSize (6) names the one reachable slot — matches DEFAULT_SIZE
+	// in Enygma.sol and _withdrawVerifiers[6]'s lookup key.
+	pkPath := fmt.Sprintf("keys/zkdvp/WithdrawPk%d.key", splitSize)
+	vkPath := fmt.Sprintf("keys/zkdvp/WithdrawVk%d.key", splitSize)
+	solPath := fmt.Sprintf("keys/zkdvp/WithdrawVerifier%d.sol", splitSize)
+
+	return generateKeys(&withdrawCircuit, pkPath, vkPath, solPath)
+}
+
+func generateKeysBurn() error {
+	circuit := burn.BurnCircuit{}
+	return generateKeys(
+		&circuit,
+		"keys/BurnPk.key",
+		"keys/BurnVk.key",
+		"keys/BurnVerifier.sol",
+	)
 }
 
 // main runs key generation.
@@ -164,10 +192,17 @@ func generateKeysZkDvpWithdraw() error {
 //	go run ./keygen/generate_keys.go              # regenerate ALL keys
 //	go run ./keygen/generate_keys.go -circuit enygma_fee  # only fee keys
 //
-// Available -circuit values: all, enygma, enygma_fee, deposit, withdraw
+// Available -circuit values: all, enygma, enygma_fee, deposit, withdraw, burn
+//
+// H-13: burn is a brand new circuit added by this fix, not a re-key of an
+// existing one — see gnark-server/pkg/circuits/burn. Like every other
+// circuit-touching fix on this branch (C-01/C-02/C-03/C-08/H-11/H-01/H-02),
+// this job exists so it can be included in the single batched trusted-setup
+// ceremony (H-12) rather than triggering its own one-off `groth16.Setup`
+// call — do not run this job in production ahead of that ceremony.
 func main() {
 	circuit := flag.String("circuit", "all",
-		"which circuit keys to generate: all | enygma | enygma_fee | deposit | withdraw")
+		"which circuit keys to generate: all | enygma | enygma_fee | deposit | withdraw | burn")
 	flag.Parse()
 
 	type job struct {
@@ -180,6 +215,7 @@ func main() {
 		{"enygma_fee", generateKeysEnygmaFee},
 		{"deposit", generateKeysZkDvpDeposit},
 		{"withdraw", generateKeysZkDvpWithdraw},
+		{"burn", generateKeysBurn},
 	}
 
 	var jobs []job
@@ -193,7 +229,7 @@ func main() {
 			}
 		}
 		if len(jobs) == 0 {
-			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, deposit, withdraw\n", *circuit)
+			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, deposit, withdraw, burn\n", *circuit)
 			os.Exit(1)
 		}
 	}

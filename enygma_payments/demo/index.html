@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>window.__DEMO_ADMIN_KEY__ = "%%DEMO_ADMIN_KEY%%";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Enygma Payments · Operator Console</title>
@@ -1375,7 +1376,7 @@ function enableBtns() {
 }
 function postRun(url, body) {
   setGlobal('running', 'Running…'); disableBtns();
-  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined })
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json', 'X-Demo-Admin-Key': window.__DEMO_ADMIN_KEY__}, body: body ? JSON.stringify(body) : undefined })
     .then(r => { if (!r.ok) r.text().then(t => { setGlobal('error','Error'); appendLog({msg:'Server: '+t}); enableBtns(); }); })
     .catch(err => { setGlobal('error','Error'); appendLog({msg:'Cannot reach server: '+err}); enableBtns(); });
 }

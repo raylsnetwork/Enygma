@@ -1,0 +1,36 @@
+name: gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # gitleaks/gitleaks-action@v2 now requires a paid GITLEAKS_LICENSE for
+      # organization-owned repos (raylsnetwork is one) — it fails closed
+      # ("missing gitleaks license") before ever scanning anything, on every
+      # PR, regardless of content. The underlying gitleaks CLI itself is
+      # still free/open-source (MIT) and needs no license; run it directly
+      # instead of through the paid Action wrapper.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Install gitleaks
+        # gitleaks' go.mod still declares its module path as
+        # github.com/zricethezav/gitleaks/v8 (its name before the project
+        # moved to the gitleaks GitHub org) — installing via the newer
+        # github.com/gitleaks/gitleaks/v8 import path fails Go's module
+        # identity check ("module declares its path as ... but was
+        # required as ..."), even though that's the current repo URL.
+        run: go install github.com/zricethezav/gitleaks/v8@latest
+      - name: Scan
+        run: gitleaks detect --source . --config .gitleaks.toml --redact -v

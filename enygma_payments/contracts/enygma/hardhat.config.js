@@ -1,6 +1,19 @@
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.27",
+  // Fix H-13: adding the burn circuit's on-chain proof verification pushed
+  // Enygma.sol past the EIP-170 24576-byte deployment size limit with the
+  // optimizer off (the prior default — this project compiled unoptimized
+  // until now). Enabled with a modest runs count to prioritize bytecode
+  // size, matching solc's own warning suggestion.
+  solidity: {
+    version: "0.8.27",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+      },
+    },
+  },
   networks: {
     hardhat: {
       chainId: 1337,

@@ -260,22 +260,32 @@ func TestCostReport(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
+	// directly) since it mints below too — senderRegR + senderMintR ==
+	// senderPrevR, used directly further down.
 	var regTotalGas uint64
 	for i := 0; i < nBanks; i++ {
-		tx, txErr := instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], big.NewInt(senderPrevR), []byte{})
-		r := record(fmt.Sprintf("registerAccount(bank %d)", i+1), tx, txErr)
-		addRec(r)
-		regTotalGas += r.gasUsed
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
+		tx, txErr := instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})
+		rec := record(fmt.Sprintf("registerAccount(bank %d)", i+1), tx, txErr)
+		addRec(rec)
+		regTotalGas += rec.gasUsed
 	}
 	t.Logf("  total gas for all 6 registerAccount calls: %d", regTotalGas)
 
 	// mintSupply() ────────────────────────────────────────────────────────────
-	// Adds Com(amount, 0) = amount·G to bank 0's balance commitment and to
+	// Fix H-02 residual: adds Com(amount, senderMintR) — a real, secret
+	// blinding factor, not r=0 — to bank 0's balance commitment and to
 	// (totalSupplyX, totalSupplyY). Does NOT reveal the amount on-chain; only
 	// the Pedersen commitment point is stored.
 	t.Log("[B4] mintSupply(500, accountId=1)…")
 	{
-		tx, txErr := instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1))
+		mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+		tx, txErr := instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)
 		addRec(record("mintSupply(500, 1)", tx, txErr))
 	}
 
@@ -318,9 +328,11 @@ func TestCostReport(t *testing.T) {
 		big.NewInt(60), big.NewInt(40),
 		big.NewInt(0), big.NewInt(0), big.NewInt(0),
 	}
-	tagMessages := tagMessageGen(secrets, new(big.Int).Set(blockHash))
-	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, new(big.Int).Set(blockHash), secrets)
+	// nullifier computed before tagMessageGen/genCommitmentAndRandom: Fix
+	// H-01/H-02 use it (not blockHash) as the per-transaction value.
 	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
+	tagMessages := tagMessageGen(senderIdx, secrets, nullifier)
+	txCommit, txRandom := genCommitmentAndRandom(senderIdx, big.NewInt(transferAmt), txValues, nullifier, secrets)
 
 	toStrs := func(vals []*big.Int) []string {
 		s := make([]string, len(vals))
@@ -363,6 +375,7 @@ func TestCostReport(t *testing.T) {
 		"tx_values":                    toStrs(txValues),
 		"tx_random_values":             toStrs(txRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", transferAmt),
+		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 	})
 
 	t.Log("  Sending proof request to gnark server (may take ~30s)…")
@@ -404,7 +417,7 @@ func TestCostReport(t *testing.T) {
 	t.Log("  3. Relayer holds a txMu mutex to prevent nonce races across concurrent requests.")
 	t.Log("     It also deduplicates identical in-flight requests via proof[0] as the key.")
 	t.Log("")
-	t.Log("  4. Relayer calls  instance.Transfer(auth, commitmentDeltas, proof, participantIds)")
+	t.Log("  4. Relayer calls  instance.Transfer(auth, commitmentDeltas, proof, participantIds, bankTag)") // Fix H-09
 	t.Log("     using its own private key (RELAYER_PRIVATE_KEY) and the gas limit from config.")
 	t.Log("     The go-ethereum bind layer fetches the current nonce and submits the raw tx.")
 	t.Log("")

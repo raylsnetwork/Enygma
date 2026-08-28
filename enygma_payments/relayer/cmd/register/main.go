@@ -104,10 +104,16 @@ func main() {
 	log.Printf("  AccountId:        %d", *accountID)
 	log.Printf("  Contract:         %s", contractAddrStr)
 
-	// publicKey and randomness are dummy values: the relayer is only the
-	// msg.sender for on-chain submissions and does not participate in ZK
-	// circuits as a bank. The contract only checks accountId != 0.
-	tx, err := instance.RegisterAccount(auth, relayerAddr, big.NewInt(*accountID), big.NewInt(1), big.NewInt(0), []byte{})
+	// publicKey and the initial commitment are dummy values: the relayer
+	// is only the msg.sender for on-chain submissions and does not
+	// participate in ZK circuits as a bank. The contract only checks
+	// accountId != 0. (0, 1) is Com(0, 0) — the group identity point —
+	// matching the old randomness=0 dummy exactly (Fix H-02 residual:
+	// registerAccount now takes a pre-computed commitment point instead
+	// of a raw randomness scalar; this relayer registration was never
+	// privacy-sensitive to begin with, so the identity point is the
+	// correct dummy value here, not a real secret commitment).
+	tx, err := instance.RegisterAccount(auth, relayerAddr, big.NewInt(*accountID), big.NewInt(1), big.NewInt(0), big.NewInt(1), []byte{})
 	if err != nil {
 		log.Fatalf("registerAccount(): %v", err)
 	}

@@ -3,6 +3,9 @@
 
 # Compiled binaries (rebuild locally with go build)
 relayer/relayer_bin
+# Compiled demo binary — embeds hardcoded owner/relayer/bank keys (see C-06);
+# rebuild locally with `cd demo && go build`, never commit the binary.
+demo/demo
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

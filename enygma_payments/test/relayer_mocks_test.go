@@ -19,23 +19,32 @@ import (
 // testAPIKey is the Bearer token used across all relayer tests.
 const testAPIKey = "test-bearer-token"
 
+// testAPIKeys is the Fix H-06 per-bank credential map used across all
+// relayer tests — testAPIKey is issued to a single bank, "bank-test".
+var testAPIKeys = map[string]string{testAPIKey: "bank-test"}
+
 // hardhat #0 — well-known deterministic test key; never use in production.
 const hardhatKey0 = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 // ── Mock Ethereum contract ────────────────────────────────────────────────────
 
 // mockContract implements server.EnygmaContract.
-// Transfer returns the configured tx/err pair.
+// Transfer returns the configured tx/err pair. gotBankTag captures
+// whatever bankTag the handler actually passed through (Fix H-09), so a
+// test can assert on it directly rather than only on the HTTP outcome.
 type mockContract struct {
-	tx  *types.Transaction
-	err error
+	tx         *types.Transaction
+	err        error
+	gotBankTag string
 }
 
-func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []*big.Int) (*types.Transaction, error) {
+func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
+	m.gotBankTag = bankTag
 	return m.tx, m.err
 }
 
-func (m *mockContract) TransferWithFee(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaFeeProof, _ []*big.Int) (*types.Transaction, error) {
+func (m *mockContract) TransferWithFee(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaFeeProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
+	m.gotBankTag = bankTag
 	return m.tx, m.err
 }
 
@@ -85,7 +94,7 @@ func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
 	privKey, _ := crypto.HexToECDSA(hardhatKey0)
 	auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(1337))
 	cfg := &config.Config{
-		APIKey:   testAPIKey,
+		APIKeys:  testAPIKeys,
 		ChainID:  big.NewInt(1337),
 		GasLimit: 300_000_000,
 	}
@@ -94,12 +103,19 @@ func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
 
 // ── Valid request body ────────────────────────────────────────────────────────
 
+// transferPublicSignalLen is the enygma circuit's exact public-signal
+// arity (FingerPrint 6×6 layout + the Fix L-01 domain separator).
+// Fix L-05: RelayTransfer now requires exactly this many elements —
+// no more, no less — rather than accepting anything up to it and
+// zero-padding the rest.
+const transferPublicSignalLen = 81
+
 func validTransferBody() server.RelayTransferRequest {
 	var proof [8]string
 	for i := range proof {
 		proof[i] = big.NewInt(int64(i + 1)).String()
 	}
-	pubSig := make([]string, 25)
+	pubSig := make([]string, transferPublicSignalLen)
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(int64(i + 100)).String()
 	}

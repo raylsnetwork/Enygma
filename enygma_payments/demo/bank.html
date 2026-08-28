@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>window.__DEMO_ADMIN_KEY__ = "%%DEMO_ADMIN_KEY%%";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bank Dashboard · Enygma Payments</title>
@@ -484,9 +485,9 @@ body.presentation-mode{zoom:1.3}
       <div class="lane-body">
         <div class="sc" id="sc-read_state"><div class="sc-top"><div class="sc-ic" id="si-read_state">○</div><div class="sc-lbl">Read On-Chain State</div></div><div class="sc-sub" id="ss-read_state">getPublicValues + getBlckHash</div><div class="sc-why">Fetch encrypted balances and block hash — amounts stay hidden from the chain</div></div>
         <div class="sc" id="sc-derive_secrets"><div class="sc-top"><div class="sc-ic" id="si-derive_secrets">○</div><div class="sc-lbl">Shared Secrets</div></div><div class="sc-sub" id="ss-derive_secrets">s₀ = Poseidon(prevR, sk)</div><div class="sc-why">Derive ML-KEM pairwise secrets — only the two banks sharing a key compute the same value</div></div>
-        <div class="sc" id="sc-compute_randoms"><div class="sc-top"><div class="sc-ic" id="si-compute_randoms">○</div><div class="sc-lbl">Privacy Randomizers</div></div><div class="sc-sub" id="ss-compute_randoms">r_i = Poseidon(H₂₁, s_i, epoch)</div><div class="sc-why">Blind each amount so the chain only ever sees elliptic curve points, never raw numbers</div></div>
+        <div class="sc" id="sc-compute_randoms"><div class="sc-top"><div class="sc-ic" id="si-compute_randoms">○</div><div class="sc-lbl">Privacy Randomizers</div></div><div class="sc-sub" id="ss-compute_randoms">r_i = Poseidon(H₂₁, s_i, nonce)</div><div class="sc-why">Blind each amount so the chain only ever sees elliptic curve points, never raw numbers</div></div>
         <div class="sc" id="sc-build_commits"><div class="sc-top"><div class="sc-ic" id="si-build_commits">○</div><div class="sc-lbl">Encrypt Amounts</div></div><div class="sc-sub" id="ss-build_commits">v·G + r·H (Pedersen)</div><div class="sc-why">Commit to each value with a Pedersen binding — hiding yet verifiable</div></div>
-        <div class="sc" id="sc-compute_tags"><div class="sc-top"><div class="sc-ic" id="si-compute_tags">○</div><div class="sc-lbl">Message Tags ×6</div></div><div class="sc-sub" id="ss-compute_tags">t_i = Poseidon(H₁₂, s_i, epoch)</div><div class="sc-why">Authenticate each bank's participation without revealing identity on-chain</div></div>
+        <div class="sc" id="sc-compute_tags"><div class="sc-top"><div class="sc-ic" id="si-compute_tags">○</div><div class="sc-lbl">Message Tags ×6</div></div><div class="sc-sub" id="ss-compute_tags">t_i = Poseidon(H₁₂, s_i, nonce)</div><div class="sc-why">Authenticate each bank's participation without revealing identity on-chain</div></div>
         <div class="sc" id="sc-compute_nullifier"><div class="sc-top"><div class="sc-ic" id="si-compute_nullifier">○</div><div class="sc-lbl">Spend Nullifier</div></div><div class="sc-sub" id="ss-compute_nullifier">η = Poseidon(H(s₀), epoch)</div><div class="sc-why">One-time token that lets the chain reject replays without revealing the sender</div></div>
       </div>
     </div>
@@ -829,9 +830,9 @@ document.getElementById('txSenderInput').addEventListener('input', updateTxAmoun
 const SDEFAULTS = {
   read_state: 'getPublicValues + getBlckHash',
   derive_secrets: 's₀ = Poseidon(prevR, sk)',
-  compute_randoms: 'r_i = Poseidon(H₂₁, s_i, epoch)',
+  compute_randoms: 'r_i = Poseidon(H₂₁, s_i, nonce)',
   build_commits: 'v·G + r·H (Pedersen)',
-  compute_tags: 't_i = Poseidon(H₁₂, s_i, epoch)',
+  compute_tags: 't_i = Poseidon(H₁₂, s_i, nonce)',
   compute_nullifier: 'η = Poseidon(H(s₀), epoch)',
   zk_proof: 'POST /proof/enygma · Groth16',
   relay_transfer: 'POST /relay/transfer → transfer()',
@@ -1105,7 +1106,7 @@ function enableBtn() { updateTxAmounts(); } // re-evaluate validation state
 function postRun(url, body) {
   setGlobal('running', 'Running…');
   disableBtn();
-  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Demo-Admin-Key': window.__DEMO_ADMIN_KEY__ }, body: body ? JSON.stringify(body) : undefined })
     .then(r => { if (!r.ok) r.text().then(t => { setGlobal('error', 'Error'); appendLog({ msg: 'Server: ' + t }); enableBtn(); }); })
     .catch(err => { setGlobal('error', 'Error'); appendLog({ msg: 'Cannot reach server: ' + err }); enableBtn(); });
 }
@@ -1439,7 +1440,7 @@ document.getElementById('kaBtn').addEventListener('click', () => {
   connectSSE();
   fetch('/run/bank-ka', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Demo-Admin-Key': window.__DEMO_ADMIN_KEY__ },
     body: JSON.stringify({ bankIdx: bankId })
   }).then(r => {
     if (!r.ok) r.text().then(t => {
