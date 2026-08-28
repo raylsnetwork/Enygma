@@ -1,4 +1,4 @@
-const { chromium, launchOpts, PAGE } = require('./_env.cjs');
+const { chromium, launchOpts, PAGE, enterProduct } = require('./_env.cjs');
 const w=(p,ms)=>p.waitForTimeout(ms);
 let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
 (async () => {
@@ -7,6 +7,7 @@ let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c
   const errs=[]; pg.on('pageerror',e=>errs.push('pageerror: '+e.message));
   pg.on('console',m=>{ if(m.type()==='error') errs.push(m.text()); });
   await pg.goto(PAGE); await w(pg,1800);
+  await enterProduct(pg, 'institutional');
 
   console.log('--- FAQ lives in the Protocol tab ---');
   pass(await pg.isHidden('#faqBlock'), 'FAQ hidden while the Key Setup tab is showing');
@@ -21,7 +22,7 @@ let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c
              groups: [...blk.querySelectorAll('.faq-gh')].map(g=>g.textContent.trim()),
              n: ds.length,
              anyOpen: ds.some(d=>d.open),
-             count: document.querySelector('#faqCount').textContent,
+             count: document.querySelector('#app-payment #faqCount').textContent,
              btn: document.querySelector('#faqAll').textContent,
              emptyA: ds.filter(d=>!d.querySelector('.faq-a') || d.querySelector('.faq-a').textContent.trim().length < 80).length,
              qs: ds.map(d=>d.querySelector('summary.faq-q').textContent.trim()),

@@ -6,9 +6,11 @@ At Rayls, we have created a new suite of privacy protocols, which we call Enygma
 * [Enygma Delivery-vs-Payment (DvP)](./enygma_dvp) (UTXO-based)
 * [Enygma Delivery-vs-Payment (DvP) Auctions](./enygma_dvp_auctions) (UTXO-based)
 
-There is also an [interactive demo](./enygma_demo) — a single HTML file, no build step — that walks
-through key setup, a confidential payment and a DvP swap, and lets you view the same ledger as a
-bank, as the chain, as the regulator and as the operator.
+There is also an [interactive demo](./enygma_demo) — one self-contained HTML file, no build step.
+You generate a keypair, choose which of the four protocols to run it through, and watch the
+cryptography happen: real commitments, real AEAD payloads, real trial decryption. Institutional
+Payments additionally lets you view the same ledger as a bank, as the chain, as the regulator and
+as the operator.
 
 ## System Architecture
 

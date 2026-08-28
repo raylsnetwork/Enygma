@@ -5,13 +5,15 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 
 const SUITES = [
+  ["keys-test.cjs",  "suite shell — one identity into all four protocols"],
   ["env-test.cjs",   "payment envelope + Retrieve (trial decryption)"],
   ["pk-test.cjs",    "settlement vs client-payment legs, padded payloads"],
   ["flow-test.cjs",  "tabs, guided walkthrough, manual payment derivation"],
   ["inv-test.cjs",   "identity balances and supply invariance"],
   ["aud-test.cjs",   "audit by decapsulation, mismatch handling"],
-  ["dvp-test.cjs",   "bridge, notes, atomic swap, revert path"],
+  ["bridge-test.cjs","bridge round trip, note binding, nullifier on spend"],
   ["nf-test.cjs",    "nullifier set — no per-leaf spend state is shown"],
+  ["swap-test.cjs",  "DvP network — atomic swap, salts, revert path"],
   ["frz-test.cjs",   "operator freeze"],
   ["frz-test2.cjs",  "freeze during the guided walkthrough"],
   ["faq-test.cjs",   "protocol explainer + technical FAQ"],

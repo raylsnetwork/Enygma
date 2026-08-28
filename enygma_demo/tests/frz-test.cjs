@@ -1,4 +1,4 @@
-const { chromium, launchOpts, PAGE, shot } = require('./_env.cjs');
+const { chromium, launchOpts, PAGE, shot, enterProduct } = require('./_env.cjs');
 const w=(p,ms)=>p.waitForTimeout(ms);
 let fails=0;
 const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
@@ -10,6 +10,7 @@ const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c) fails++; };
   pg.on('console',m=>{ if(m.type()==='error') errs.push(m.text()); });
   pg.on('pageerror',e=>errs.push('pageerror: '+e.message));
   await pg.goto(url); await w(pg,1800);
+  await enterProduct(pg, 'institutional');
 
   // switch persona helper
   async function persona(p){
