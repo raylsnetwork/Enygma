@@ -1,7 +1,7 @@
 {
   "name": "hardhat-project",
   "dependencies": {
-    "hardhat": "^2.22.14",
+    "hardhat": "^2.22.19",
     "solc-js": "^1.0.1"
   },
   "overrides": {
@@ -10,6 +10,8 @@
     "immutable": "4.3.9",
     "@fastify/busboy": "3.2.2",
     "undici": "7.24.1",
-    "uuid": "14.0.2"
+    "uuid": "14.0.2",
+    "brace-expansion": "2.1.4",
+    "minimatch": "5.1.8"
   }
 }
