@@ -12,6 +12,7 @@
     "undici": "7.24.1",
     "uuid": "14.0.2",
     "brace-expansion": "2.1.4",
-    "minimatch": "5.1.8"
+    "minimatch": "5.1.8",
+    "tmp": "0.2.7"
   }
 }
