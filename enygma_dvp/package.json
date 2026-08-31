@@ -21,6 +21,7 @@
     "uuid": "14.0.2",
     "brace-expansion": "2.1.4",
     "tmp": "0.2.7",
-    "serialize-javascript": "7.0.3"
+    "serialize-javascript": "7.0.3",
+    "adm-zip": "0.5.18"
   }
 }
