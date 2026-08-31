@@ -21,6 +21,9 @@
     "sha.js": "2.4.12",
     "mocha": {
       "minimatch": "5.1.8"
+    },
+    "hardhat": {
+      "ws": "7.5.11"
     }
   }
 }
