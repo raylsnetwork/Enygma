@@ -17,6 +17,7 @@
     "immutable": "4.3.9",
     "@fastify/busboy": "3.2.2",
     "undici": "7.24.1",
-    "uuid": "14.0.2"
+    "uuid": "14.0.2",
+    "brace-expansion": "2.1.4"
   }
 }
