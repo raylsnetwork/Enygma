@@ -12,9 +12,12 @@
     "undici": "7.29.0",
     "uuid": "14.0.2",
     "brace-expansion": "2.1.4",
-    "minimatch": "5.1.8",
     "tmp": "0.2.7",
     "serialize-javascript": "7.0.3",
-    "adm-zip": "0.5.18"
+    "adm-zip": "0.5.18",
+    "glob": "10.5.0",
+    "mocha": {
+      "minimatch": "5.1.8"
+    }
   }
 }
