@@ -39,5 +39,3 @@ require (
 // Both repos must be cloned side-by-side: enygma_dvp/ and enygma_retail_payments/
 // in the same parent directory.
 replace github.com/raylsnetwork/enygma_dvp/src => ../../enygma_dvp/src
-
-replace lattice_zk => ../lattice_zk

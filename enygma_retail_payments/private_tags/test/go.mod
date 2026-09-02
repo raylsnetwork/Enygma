@@ -42,5 +42,3 @@ replace github.com/raylsnetwork/enygma_retail_payments/private_tags/src => ../sr
 replace github.com/raylsnetwork/enygma_retail_payments/src => ../../src
 
 replace github.com/raylsnetwork/enygma_dvp/src => ../../../enygma_dvp/src
-
-replace lattice_zk => ../../lattice_zk

@@ -38,8 +38,6 @@ require (
 
 replace github.com/raylsnetwork/enygma_retail_payments/src => ../src
 
-replace lattice_zk => ../lattice_zk
-
 // Local replace — remove once enygma_dvp is published as a standalone Go module.
 // Both repos must be cloned side-by-side: enygma_dvp/ and enygma_retail_payments/
 // in the same parent directory.
