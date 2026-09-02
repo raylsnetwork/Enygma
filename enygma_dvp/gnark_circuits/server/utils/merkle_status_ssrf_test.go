@@ -9,9 +9,11 @@ package utils
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -112,16 +114,21 @@ func TestNewSafeRPCClient_RoundTripsToLoopback(t *testing.T) {
 	}
 }
 
-// TestNewSafeRPCClient_RefusesRedirects: a same-address response that then
-// redirects elsewhere must not be followed — otherwise the initial
-// validation is bypassable by a 302.
-func TestNewSafeRPCClient_RefusesRedirects(t *testing.T) {
+// TestNewSafeRPCClient_FollowsSameHostRedirect: a redirect that stays on
+// the same already-validated host (e.g. a same-host http->https upgrade
+// some RPC gateways perform) must be followed — CheckRedirect no longer
+// refuses every redirect outright, since the hostname is still never
+// re-resolved (only the pinned port can change), so this carries none of
+// the rebinding risk a cross-host redirect would.
+func TestNewSafeRPCClient_FollowsSameHostRedirect(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("FAIL: the redirect target was reached — CheckRedirect did not stop it")
+		fmt.Fprint(w, "reached target")
 	}))
 	defer target.Close()
 
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// httptest servers all bind to 127.0.0.1, so this redirect changes
+		// only the port — exactly the same-host case this fix restores.
 		http.Redirect(w, r, target.URL, http.StatusFound)
 	}))
 	defer redirector.Close()
@@ -131,11 +138,47 @@ func TestNewSafeRPCClient_RefusesRedirects(t *testing.T) {
 		t.Fatalf("newSafeRPCClient(%s): %v", redirector.URL, err)
 	}
 	resp, err := client.Get(redirector.URL)
-	// A refused redirect surfaces as a client error (net/http wraps the
-	// CheckRedirect error), not a followed 200 from the target.
+	if err != nil {
+		t.Fatalf("same-host redirect should be followed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "reached target" {
+		t.Fatalf("expected to reach the redirect target, got body %q", body)
+	}
+}
+
+// TestNewSafeRPCClient_RefusesCrossHostRedirect: a redirect to a different
+// host must still be refused — this is what actually prevents redirect-
+// based SSRF (a same-address response 302ing to a disallowed target).
+func TestNewSafeRPCClient_RefusesCrossHostRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// t.Error, not t.Fatal: this handler runs on httptest's own
+		// per-request goroutine, and FailNow (which Fatal calls) is
+		// documented as only safe to call from the goroutine running the
+		// test itself. Error/Fail have no such restriction.
+		t.Error("FAIL: the redirect target was reached — cross-host redirect was not refused")
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// "localhost" and "127.0.0.1" resolve to the same place but are
+		// different *hostnames* — CheckRedirect compares the literal
+		// hostname string (never re-resolving it), so this must be refused
+		// even though it isn't a rebinding attack in this particular case.
+		loc := strings.Replace(target.URL, "127.0.0.1", "localhost", 1)
+		http.Redirect(w, r, loc, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	client, err := newSafeRPCClient(redirector.URL)
+	if err != nil {
+		t.Fatalf("newSafeRPCClient(%s): %v", redirector.URL, err)
+	}
+	resp, err := client.Get(redirector.URL)
 	if err == nil {
 		defer resp.Body.Close()
-		t.Fatalf("FAIL: request succeeded with status %d — redirect was followed", resp.StatusCode)
+		t.Fatalf("FAIL: cross-host redirect succeeded with status %d", resp.StatusCode)
 	}
 }
 
