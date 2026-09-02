@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -177,40 +176,94 @@ type jsonRPCError struct {
 // force this process to hold in memory per request.
 const maxRPCResponseBytes = 64 << 20 // 64 MiB
 
+// doRPC posts req to rpcURL through client (built by newSafeRPCClient — see
+// its doc comment for the SSRF/rebinding protections that gives every dial
+// this function ends up making). Follows same-host redirects itself,
+// manually re-POSTing the same body each hop, instead of relying on Go's
+// automatic redirect-following: that rewrites a redirected POST to a
+// bodyless GET on 301/302/303 (only 307/308 preserve method+body), which
+// would silently break real JSON-RPC traffic through a gateway that
+// redirects with a 302 — the ordinary case, not the exception.
 func doRPC(client *http.Client, rpcURL string, req jsonRPCRequest) (jsonRPCResponse, error) {
 	body, _ := json.Marshal(req)
-	// client is built by newSafeRPCClient — its DialContext is pinned to the
-	// already-validated IP for rpcURL's host, so this is not the SSRF sink
-	// gosec would otherwise flag: an attacker-supplied rpcURL can no longer
-	// resolve (at connection time) to a different, disallowed address than
-	// the one newSafeRPCClient checked.
-	resp, err := client.Post(rpcURL, "application/json", bytes.NewReader(body))
+
+	origURL, err := url.Parse(rpcURL)
 	if err != nil {
-		return jsonRPCResponse{}, err
+		return jsonRPCResponse{}, fmt.Errorf("invalid rpcUrl: %v", err)
 	}
-	defer resp.Body.Close()
-	// newSafeRPCClient's job is blocking disallowed *targets*; it says
-	// nothing about how much an allowed-but-hostile target is permitted to
-	// send back. Without a cap here, decode buffers the entire body in
-	// memory regardless of size — bounded only by rpcClientTimeout, not by
-	// bytes. Read up to the limit +1 so an oversized body is detected
-	// (rather than silently truncated and fed to the JSON decoder).
-	limited := io.LimitReader(resp.Body, maxRPCResponseBytes+1)
-	data, err := io.ReadAll(limited)
-	if err != nil {
-		return jsonRPCResponse{}, err
+
+	// eth_getLogs (see ethGetLogs) always scans a contract's full event
+	// history — the only call shape here that can legitimately need
+	// anywhere near rpcClientTimeout. Every other call is a single cheap
+	// view-function read; giving all of them the same generous budget let
+	// a multi-call handler's worst-case latency scale as timeout × call
+	// count. Bound ordinary calls tighter via this request's own context;
+	// rpcClientTimeout (set on the client itself) still applies as the
+	// outer ceiling either way.
+	timeout := rpcCallTimeout
+	if req.Method == "eth_getLogs" {
+		timeout = rpcClientTimeout
 	}
-	if len(data) > maxRPCResponseBytes {
-		return jsonRPCResponse{}, fmt.Errorf("rpc response exceeds %d byte limit", maxRPCResponseBytes)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	currentURL := rpcURL
+	for hop := 0; ; hop++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, currentURL, bytes.NewReader(body))
+		if err != nil {
+			return jsonRPCResponse{}, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return jsonRPCResponse{}, err
+		}
+
+		if loc := resp.Header.Get("Location"); resp.StatusCode >= 300 && resp.StatusCode < 400 && loc != "" {
+			resp.Body.Close()
+			if hop >= maxRPCRedirects {
+				return jsonRPCResponse{}, fmt.Errorf("stopped after %d redirects", maxRPCRedirects)
+			}
+			curURL, err := url.Parse(currentURL)
+			if err != nil {
+				return jsonRPCResponse{}, err
+			}
+			target, err := curURL.Parse(loc) // resolves Location, absolute or relative, against curURL
+			if err != nil {
+				return jsonRPCResponse{}, fmt.Errorf("invalid redirect Location %q: %v", loc, err)
+			}
+			if err := validateSameHostRedirect(origURL, target); err != nil {
+				return jsonRPCResponse{}, err
+			}
+			currentURL = target.String()
+			continue
+		}
+
+		defer resp.Body.Close()
+		// newSafeRPCClient's job is blocking disallowed *targets*; it says
+		// nothing about how much an allowed-but-hostile target is permitted
+		// to send back. Without a cap here, decode buffers the entire body
+		// in memory regardless of size — bounded only by the timeout above,
+		// not by bytes. Read up to the limit +1 so an oversized body is
+		// detected (rather than silently truncated and fed to the decoder).
+		limited := io.LimitReader(resp.Body, maxRPCResponseBytes+1)
+		data, err := io.ReadAll(limited)
+		if err != nil {
+			return jsonRPCResponse{}, err
+		}
+		if len(data) > maxRPCResponseBytes {
+			return jsonRPCResponse{}, fmt.Errorf("rpc response exceeds %d byte limit", maxRPCResponseBytes)
+		}
+		var result jsonRPCResponse
+		if err := json.Unmarshal(data, &result); err != nil {
+			return jsonRPCResponse{}, err
+		}
+		if result.Error != nil {
+			return jsonRPCResponse{}, fmt.Errorf("rpc error %d: %s", result.Error.Code, result.Error.Message)
+		}
+		return result, nil
 	}
-	var result jsonRPCResponse
-	if err := json.Unmarshal(data, &result); err != nil {
-		return jsonRPCResponse{}, err
-	}
-	if result.Error != nil {
-		return jsonRPCResponse{}, fmt.Errorf("rpc error %d: %s", result.Error.Code, result.Error.Message)
-	}
-	return result, nil
 }
 
 // ethCallUint256 calls a no-argument view function and returns the result as *big.Int.
@@ -375,11 +428,10 @@ func rpcClientOrAbort(c *gin.Context, rpcUrl string) (*http.Client, bool) {
 }
 
 // newSafeRPCClient validates a caller-supplied rpcUrl and returns an
-// *http.Client whose outbound connection is pinned to the specific IP this
-// function already checked — closing the two gaps a bare scheme check
-// leaves open (this endpoint's own history: the scheme check alone shipped
-// first, with a //nolint:gosec on the http.Post call, before this was
-// fixed):
+// *http.Client that only ever connects to addresses it has itself just
+// validated — closing the gaps a bare scheme check leaves open (this
+// endpoint's own history: the scheme check alone shipped first, with a
+// //nolint:gosec on the http.Post call, before this was fixed):
 //
 //  1. SSRF to internal/cloud-metadata targets. rpcUrl is taken directly from
 //     the request body and the RPC responses (on-chain data fetched FROM
@@ -388,35 +440,44 @@ func rpcClientOrAbort(c *gin.Context, rpcUrl string) (*http.Client, bool) {
 //     an SSRF into a way to steal cloud credentials (e.g. a request for
 //     http://169.254.169.254/latest/meta-data/iam/security-credentials/...
 //     with the IMDS response reflected in the JSON response body). Resolves
-//     the hostname and rejects link-local (169.254.0.0/16 / fe80::/10 —
-//     covers every major cloud's metadata endpoint) and private-network
-//     (RFC1918 / fc00::/7) addresses. Loopback is deliberately still
-//     allowed: this handler is itself bound to 127.0.0.1 only, and
-//     RequireLoopbackBind (called from main.go at startup) turns a future
-//     change to that bind address into a startup panic instead of silently
-//     reopening loopback as an SSRF target — so it grants an attacker no
-//     new reach beyond what they'd already need to have to call this
-//     endpoint at all, and 127.0.0.1 is this tool's own documented,
-//     primary use case (a local dev node).
-//  2. TOCTOU / DNS rebinding. Validating the hostname and then handing the
-//     same hostname to http.Client for a second, independent DNS lookup at
-//     connect time leaves a window where the attacker's DNS server answers
-//     safely for the check and unsafely for the real connection. The
-//     returned client's Transport.DialContext ignores the addr it's given
-//     and always dials the IP validated here — the connection cannot land
-//     anywhere else, no matter what a second lookup would have returned.
-//  3. Redirects. CheckRedirect refuses any redirect to a different host
-//     (comparing the URL's hostname, not a re-resolution of it) — a
-//     same-address response that then 302s to a disallowed target is
-//     exactly the bypass this blocks. A redirect that stays on the same
-//     already-validated host (e.g. a same-host http->https upgrade some
-//     RPC gateways perform) is allowed and only updates the pinned port —
-//     the hostname is still never re-resolved, so this carries none of the
-//     rebinding risk (2) exists to close.
+//     the hostname and rejects link-local, private-network, CGNAT, and
+//     encapsulated-address forms — see resolveToSafeIP and
+//     embeddedIPv4Candidates. Loopback is deliberately still allowed: this
+//     handler is itself bound to 127.0.0.1 only, and RequireLoopbackBind
+//     (called from main.go at startup) turns a future change to that bind
+//     address into a startup panic instead of silently reopening loopback
+//     as an SSRF target — so it grants an attacker no new reach beyond what
+//     they'd already need to have to call this endpoint at all, and
+//     127.0.0.1 is this tool's own documented, primary use case (a local
+//     dev node).
+//  2. TOCTOU / DNS rebinding. DialContext (below) re-resolves and
+//     re-validates whatever host it's actually asked to dial, at the
+//     moment of dialing — not once up front, then trusted forever. There's
+//     no window where an unchecked resolution gets used: every dial is its
+//     own atomic resolve-then-validate-then-connect. This is also what
+//     lets a same-host redirect (3) be validated correctly without any
+//     shared, cross-call mutable state.
+//  3. Redirects. Go's client rewrites a redirected POST to a bodyless GET
+//     on 301/302/303 (only 307/308 preserve method+body), so this client
+//     disables automatic redirect-following entirely (CheckRedirect always
+//     returns http.ErrUseLastResponse) and doRPC follows redirects itself,
+//     manually re-POSTing the same body — see doRPC and
+//     validateSameHostRedirect for the host/scheme/port policy it applies
+//     to each hop. DialContext (2) independently re-validates the
+//     resulting target regardless, so a redirect to a disallowed host
+//     fails at connect time even if that policy were ever bypassed.
 //
-// rpcClientTimeout bounds newSafeRPCClient's http.Client.Timeout — see the
-// comment where it's used for why this can't just be the previous 15s.
+// rpcClientTimeout bounds newSafeRPCClient's http.Client.Timeout — a hard
+// ceiling covering the slowest call shape this file makes (eth_getLogs's
+// unbounded full-history scan, see ethGetLogs). Ordinary calls get a much
+// tighter budget via their own request context instead — see
+// rpcCallTimeout and doRPC — so a multi-call handler's worst-case latency
+// doesn't scale as this ceiling × call count.
 const rpcClientTimeout = 120 * time.Second
+
+// rpcCallTimeout bounds an individual non-eth_getLogs RPC call (a cheap
+// view-function read) via its own context — see doRPC.
+const rpcCallTimeout = 30 * time.Second
 
 // idleConnTimeout bounds how long this client's Transport keeps an idle
 // connection open. Each call to newSafeRPCClient builds a brand-new
@@ -426,9 +487,10 @@ const rpcClientTimeout = 120 * time.Second
 // anything once the handler that created this client returns.
 const idleConnTimeout = 30 * time.Second
 
-// maxRPCRedirects bounds the same-host redirect chain CheckRedirect allows
-// below — plain hygiene against a pathological or hostile redirect loop,
-// not itself a security boundary (host equality is what does that).
+// maxRPCRedirects bounds the same-host redirect chain doRPC manually
+// follows — plain hygiene against a pathological or hostile redirect loop,
+// not itself a security boundary (validateSameHostRedirect, plus
+// DialContext independently re-validating every dial, is what does that).
 const maxRPCRedirects = 3
 
 func newSafeRPCClient(raw string) (*http.Client, error) {
@@ -443,80 +505,102 @@ func newSafeRPCClient(raw string) (*http.Client, error) {
 	if host == "" {
 		return nil, fmt.Errorf("rpcUrl has no host")
 	}
-
-	safeIP, err := resolveToSafeIP(host)
-	if err != nil {
+	// Fail fast with a clear error before any HTTP work, rather than only
+	// discovering a bad host inside DialContext after a caller has already
+	// started using this client. DialContext re-validates independently
+	// regardless — this is purely a quicker, clearer error path.
+	if _, err := resolveToSafeIP(host); err != nil {
 		return nil, err
 	}
 
-	port := u.Port()
-	if port == "" {
-		if u.Scheme == "https" {
-			port = "443"
-		} else {
-			port = "80"
-		}
-	}
-
-	// pinned is the address DialContext always dials, regardless of what
-	// http.Transport computed from the request URL — this is what closes
-	// the rebinding gap (2) above. Its host half is fixed forever at the
-	// single resolution safeIP already did; only its port half can change,
-	// and only via the same-host redirect case in CheckRedirect below.
-	var pinnedMu sync.Mutex
-	pinned := net.JoinHostPort(safeIP.String(), port)
-
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			pinnedMu.Lock()
-			addr := pinned
-			pinnedMu.Unlock()
-			return dialer.DialContext(ctx, network, addr)
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Re-resolve and re-validate whatever host is actually being
+			// dialed for THIS specific connection — the original
+			// request's host, or (for a same-host redirect doRPC manually
+			// followed) the redirect target's host. Stateless and
+			// per-dial: closes the TOCTOU/rebinding gap generically (see
+			// (2) above), and can't leak state between unrelated calls
+			// sharing this client — MerkleStatusHandler reuses one client
+			// for many sequential doRPC calls, and a client-lifetime
+			// "pinned" value here previously let one call's redirect
+			// silently misroute a later, unrelated call.
+			dialHost, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			safeIP, err := resolveToSafeIP(dialHost)
+			if err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(safeIP.String(), port))
 		},
 		IdleConnTimeout: idleConnTimeout,
 	}
 
 	return &http.Client{
 		Transport: transport,
-		// checkVault's eth_getLogs call always scans fromBlock=0x0..latest
-		// (an unbounded full-history query, see ethGetLogs) — against a
-		// real/loaded RPC node backing a vault with a long Commitment-event
-		// history this can legitimately take well over 15s. The old
-		// http.DefaultClient this replaced had Timeout=0 (unlimited); pick
-		// a generous-but-bounded value instead of reintroducing "no cap at
-		// all" — bounded matters for the SSRF-adjacent goal of not letting
-		// an allowed-but-slow/hostile target hold a connection open
-		// forever, but it must not be so tight it turns legitimate slow
-		// scans into failures that worked before this fix shipped.
-		Timeout: rpcClientTimeout,
+		Timeout:   rpcClientTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRPCRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxRPCRedirects)
-			}
-			// Hostname equality only — never re-resolved, so a redirect
-			// can't be used to smuggle a rebound or disallowed address
-			// past the one resolution safeIP came from.
-			if req.URL.Hostname() != host {
-				return fmt.Errorf("refusing to follow redirect to a different host %q", req.URL.Hostname())
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return fmt.Errorf("refusing to follow redirect to scheme %q", req.URL.Scheme)
-			}
-			newPort := req.URL.Port()
-			if newPort == "" {
-				if req.URL.Scheme == "https" {
-					newPort = "443"
-				} else {
-					newPort = "80"
-				}
-			}
-			pinnedMu.Lock()
-			pinned = net.JoinHostPort(safeIP.String(), newPort)
-			pinnedMu.Unlock()
-			return nil
+			return http.ErrUseLastResponse
 		},
 	}, nil
+}
+
+// validateSameHostRedirect enforces doRPC's redirect policy when following
+// a same-host RPC redirect manually. This is policy, not the security
+// boundary — DialContext independently re-validates whatever host the
+// redirect target actually resolves to regardless — but a target that
+// merely has an SSRF-check-passing IP shouldn't be able to pivot the
+// connection to an arbitrary other service:
+//   - host: compared case-insensitively (DNS hostnames are), never
+//     re-resolved.
+//   - scheme: must stay http/https, and can only upgrade (http->https),
+//     never downgrade (https->http) silently.
+//   - port: the target may specify no explicit port (relying on its own
+//     scheme's default — the normal shape of a same-host upgrade) or the
+//     exact same port as the original; an explicit *different* port is
+//     refused, closing off a same-host redirect to an arbitrary co-located
+//     service (e.g. a cache or database) on a different port.
+func validateSameHostRedirect(orig, target *url.URL) error {
+	if !strings.EqualFold(target.Hostname(), orig.Hostname()) {
+		return fmt.Errorf("refusing to follow redirect to a different host %q", target.Hostname())
+	}
+	if target.Scheme != "http" && target.Scheme != "https" {
+		return fmt.Errorf("refusing to follow redirect to scheme %q", target.Scheme)
+	}
+	if orig.Scheme == "https" && target.Scheme == "http" {
+		return fmt.Errorf("refusing to follow redirect that downgrades from https to http")
+	}
+	if newPort := target.Port(); newPort != "" {
+		origPort := orig.Port()
+		if origPort == "" {
+			origPort = defaultPortFor(orig.Scheme)
+		}
+		if newPort != origPort {
+			return fmt.Errorf("refusing to follow redirect to a different port %q", newPort)
+		}
+	}
+	return nil
+}
+
+func defaultPortFor(scheme string) string {
+	if scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
+// mustParseCIDR parses a static CIDR literal, panicking on failure — only
+// ever called with constants below, so a parse failure would be a build-
+// time bug caught immediately, not a runtime possibility.
+func mustParseCIDR(s string) *net.IPNet {
+	_, block, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return block
 }
 
 // cgnatBlock is RFC 6598 shared address space (100.64.0.0/10), used for
@@ -525,13 +609,27 @@ func newSafeRPCClient(raw string) (*http.Client, error) {
 // service at 100.100.100.200). Go's net.IP.IsPrivate() only covers RFC1918
 // (and RFC4193 for IPv6) and does not include this range, so it has to be
 // checked separately or it slips through as "safe".
-var cgnatBlock = func() *net.IPNet {
-	_, block, err := net.ParseCIDR("100.64.0.0/10")
-	if err != nil {
-		panic(err) // static literal; cannot fail
-	}
-	return block
-}()
+var cgnatBlock = mustParseCIDR("100.64.0.0/10")
+
+// thisNetworkBlock is 0.0.0.0/8 ("this network", RFC 791/1122) — Go's
+// net.IP.IsUnspecified() only matches the exact address 0.0.0.0, not the
+// rest of the /8 (e.g. 0.1.2.3), which routes nowhere useful on a normal
+// stack but is still worth excluding explicitly for the same reason CGNAT
+// is: an unrecognized range otherwise slips through as "safe" by omission.
+var thisNetworkBlock = mustParseCIDR("0.0.0.0/8")
+
+// isDisallowedTarget reports whether ip itself falls in a range
+// resolveToSafeIP blocks. Doesn't handle loopback (its caller special-cases
+// that separately, since loopback is allowed) or embedded-IPv4 forms (see
+// embeddedIPv4Candidates) — those wrap this same check around each
+// embedded candidate address too.
+func isDisallowedTarget(ip net.IP) bool {
+	// IsMulticast() alone covers IsLinkLocalMulticast() too (the latter is
+	// a strict subset in net.IP) — listed once, not as two clauses that
+	// would otherwise look like distinct exclusions.
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() ||
+		ip.IsMulticast() || cgnatBlock.Contains(ip) || thisNetworkBlock.Contains(ip)
+}
 
 // dnsLookupTimeout bounds resolveToSafeIP's DNS lookup. net.LookupIP takes
 // no context/deadline of its own, so without this, an unresponsive
@@ -561,22 +659,28 @@ func resolveToSafeIP(host string) (net.IP, error) {
 	}
 
 	for _, ip := range candidates {
-		// Two IPv6 forms carry an IPv4 address in their low 32 bits without
-		// being unwrapped by To4() the way the modern IPv4-mapped form
-		// (::ffff:a.b.c.d) is, so none of the checks below would otherwise
-		// fire even when the embedded address is disallowed. Substitute the
-		// embedded IPv4 address before classifying — see embeddedIPv4.
-		if v4 := embeddedIPv4(ip); v4 != nil {
-			ip = v4
-		}
 		if ip.IsLoopback() {
 			return ip, nil
 		}
-		// IsMulticast() alone covers IsLinkLocalMulticast() too (the latter
-		// is a strict subset in net.IP) — listed once, not as two clauses
-		// that would otherwise look like distinct exclusions.
-		if ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-			ip.IsUnspecified() || ip.IsMulticast() || cgnatBlock.Contains(ip) {
+		if isDisallowedTarget(ip) {
+			continue
+		}
+		// Several IPv6 encapsulation schemes carry an IPv4 address in
+		// their bits without being unwrapped by To4() the way the modern
+		// IPv4-mapped form (::ffff:a.b.c.d) is, so isDisallowedTarget(ip)
+		// above wouldn't otherwise fire even when the embedded address is
+		// disallowed — check each embedded candidate too, but return the
+		// literal resolved ip (not a substitute) so a legitimately-safe
+		// encapsulated address still gets dialed as what it actually is;
+		// see embeddedIPv4Candidates.
+		embeddedDisallowed := false
+		for _, v4 := range embeddedIPv4Candidates(ip) {
+			if isDisallowedTarget(v4) {
+				embeddedDisallowed = true
+				break
+			}
+		}
+		if embeddedDisallowed {
 			continue
 		}
 		return ip, nil
@@ -591,21 +695,28 @@ func resolveToSafeIP(host string) (net.IP, error) {
 // check exists to block.
 var nat64WellKnownPrefix = [12]byte{0x00, 0x64, 0xff, 0x9b}
 
-// embeddedIPv4 returns the IPv4 address embedded in ip if ip is in one of
-// two IPv6 forms that carry an IPv4 address in their low 32 bits but, unlike
-// the modern IPv4-mapped form (::ffff:a.b.c.d), aren't unwrapped by
-// net.IP.To4() — so none of resolveToSafeIP's checks would otherwise fire
-// even when the embedded address is disallowed:
+// embeddedIPv4Candidates returns every IPv4 address embedded in ip by a
+// known IPv6 encapsulation scheme, so resolveToSafeIP can classify based on
+// what's actually reachable through ip, not just ip's own literal (often
+// innocuous-looking) form. None of these are unwrapped by net.IP.To4() the
+// way the modern IPv4-mapped form (::ffff:a.b.c.d) is:
 //
 //  1. The deprecated "IPv4-compatible" form (RFC 4291 §2.5.5.1, ::a.b.c.d).
 //  2. The NAT64 Well-Known Prefix (RFC 6052, 64:ff9b::/96) — see
 //     nat64WellKnownPrefix.
+//  3. 6to4 (RFC 3056, 2002::/16) — embeds the IPv4 address in the next 32
+//     bits, e.g. 2002:a9fe:a9fe:: embeds 169.254.169.254.
+//  4. Teredo (RFC 4380, 2001::/32) — embeds two IPv4 addresses: the
+//     relay/server's, literal, at bytes 4-7, and the client's, obfuscated
+//     by XOR-ing every bit with 1, at bytes 12-15. Either can be the
+//     address actually reached depending on Teredo's NAT-traversal role,
+//     so both are returned.
 //
-// Returns nil if ip is in neither form. ::1 (loopback) and :: (unspecified)
-// are excluded even though they share the same "12 zero bytes" prefix as
-// (1), since those are their own distinct, already-correctly-handled IPv6
-// addresses, not instances of this deprecated notation.
-func embeddedIPv4(ip net.IP) net.IP {
+// Returns nil if ip matches none of these. ::1 (loopback) and :: (unspec-
+// ified) are excluded even though they share the same "12 zero bytes"
+// prefix as (1), since those are their own distinct, already-correctly-
+// handled IPv6 addresses, not instances of that deprecated notation.
+func embeddedIPv4Candidates(ip net.IP) []net.IP {
 	if ip.To4() != nil || ip.IsLoopback() || ip.IsUnspecified() {
 		return nil
 	}
@@ -613,12 +724,21 @@ func embeddedIPv4(ip net.IP) net.IP {
 	if ip16 == nil {
 		return nil
 	}
-	var prefix [12]byte
-	copy(prefix[:], ip16[:12])
-	if prefix != ([12]byte{}) && prefix != nat64WellKnownPrefix {
-		return nil
+
+	var prefix12 [12]byte
+	copy(prefix12[:], ip16[:12])
+	if prefix12 == ([12]byte{}) || prefix12 == nat64WellKnownPrefix {
+		return []net.IP{net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])}
 	}
-	return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	if ip16[0] == 0x20 && ip16[1] == 0x02 { // 6to4, 2002::/16
+		return []net.IP{net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5])}
+	}
+	if ip16[0] == 0x20 && ip16[1] == 0x01 && ip16[2] == 0x00 && ip16[3] == 0x00 { // Teredo, 2001::/32
+		server := net.IPv4(ip16[4], ip16[5], ip16[6], ip16[7])
+		client := net.IPv4(ip16[12]^0xff, ip16[13]^0xff, ip16[14]^0xff, ip16[15]^0xff)
+		return []net.IP{server, client}
+	}
+	return nil
 }
 
 // ─── Receipts ─────────────────────────────────────────────────────────────────
@@ -832,6 +952,16 @@ func checkVault(client *http.Client, rpcURL, name, addr string, depth int,
 	treeNum, err := ethCallUint256(client, rpcURL, addr, treeNumberSel)
 	if err != nil {
 		s.Error = fmt.Sprintf("treeNumber(): %v", err)
+		return s
+	}
+	// ethCallUint256 only rejects negative results (its shared by
+	// onChainRoot too, a real field element that legitimately doesn't fit
+	// in 64 bits, so the overflow check belongs here, at the one call site
+	// that actually narrows to uint64). treeNum.Uint64() on a value that
+	// doesn't fit silently returns its low 64 bits instead of erroring —
+	// IsUint64() catches both that and the negative case in one check.
+	if !treeNum.IsUint64() {
+		s.Error = fmt.Sprintf("treeNumber(): result %s does not fit in a uint64", treeNum.String())
 		return s
 	}
 	s.TreeNumber = treeNum.Uint64()
