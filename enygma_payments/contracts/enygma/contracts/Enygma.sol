@@ -1002,6 +1002,15 @@ contract Enygma is IEnygma {
 
         // Fix M-14: was uint256[50] — the real (and, after Fix C-09,
         // still-real) circuit arity is 51.
+        //
+        // staticcall, not delegatecall: verifyProof is `view` on every
+        // verifier variant (checked across all of them) and reverts on an
+        // invalid proof rather than returning false, so behavior is
+        // identical either way — but staticcall gives an EVM-enforced
+        // guarantee that the verifier can't write to this contract's
+        // storage, where delegatecall would trust that guarantee is never
+        // violated (by a bug, or by a future verifier registered by a
+        // compromised or careless owner).
         (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof)
         );
@@ -1137,6 +1146,8 @@ contract Enygma is IEnygma {
         // Hash — the deposit note commitment — at 50); this contract
         // declaring 50 made every deposit() call revert InvalidProof
         // unconditionally, regardless of proof validity.
+        //
+        // staticcall, not delegatecall — see the matching comment in withdraw().
         (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof)
         );
@@ -1351,6 +1362,7 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
+        // staticcall, not delegatecall — see the matching comment in withdraw().
         (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature(
                 "verifyProof(uint256[8],uint256[81])",
@@ -1797,6 +1809,7 @@ contract Enygma is IEnygma {
         if (_feeVerifier == address(0)) revert VerifierNotFound();
         if (_feeVerifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
+        // staticcall, not delegatecall — see the matching comment in withdraw().
         (bool success, ) = _feeVerifier.staticcall(
             abi.encodeWithSignature(
                 "verifyProof(uint256[8],uint256[55])",

@@ -5,6 +5,7 @@ pragma solidity ^0.8.0;
 // pragma abicoder v2;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
@@ -13,6 +14,15 @@ import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
 
 contract Erc20CoinVault is AbstractCoinVault {
+    // SECURITY: transferFrom/transfer return a bool per the ERC20 standard,
+    // but several widely-used real tokens (most notably USDT on Ethereum
+    // mainnet) don't reliably follow that convention — some return false on
+    // failure instead of reverting, others don't return a value at all.
+    // Calling these unchecked let a failed transfer still be treated as a
+    // successful deposit/withdrawal (Slither: unchecked-transfer). SafeERC20
+    // reverts on any of those failure shapes instead of silently continuing.
+    using SafeERC20 for IERC20;
+
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
@@ -57,7 +67,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
-        IERC20(_assetContractAddress).transferFrom(
+        IERC20(_assetContractAddress).safeTransferFrom(
             msg.sender,
             address(this),
             amount
@@ -98,7 +108,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
-        IERC20(_assetContractAddress).transferFrom(
+        IERC20(_assetContractAddress).safeTransferFrom(
             msg.sender,
             address(this),
             amount
@@ -224,7 +234,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         }
 
         // Interaction: transfer tokens after all state changes
-        IERC20(_assetContractAddress).transfer(recipient, amount);
+        IERC20(_assetContractAddress).safeTransfer(recipient, amount);
 
         return true;
     }
@@ -279,7 +289,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         }
 
         // Interaction: transfer tokens after all state changes
-        IERC20(_assetContractAddress).transfer(recipient, amount);
+        IERC20(_assetContractAddress).safeTransfer(recipient, amount);
 
         return true;
     }
