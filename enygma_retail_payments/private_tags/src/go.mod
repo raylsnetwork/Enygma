@@ -1,6 +1,7 @@
 module github.com/raylsnetwork/enygma_retail_payments/private_tags/src
 
 go 1.25.0
+toolchain go1.25.13
 
 require (
 	github.com/ethereum/go-ethereum v1.16.8
