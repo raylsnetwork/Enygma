@@ -1,13 +1,12 @@
 module github.com/raylsnetwork/enygma_dvp/src
 
-go 1.25.0
-
-toolchain go1.25.13
+go 1.26.0
+toolchain go1.26.6
 
 require (
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/iden3/go-iden3-crypto v0.0.16
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (

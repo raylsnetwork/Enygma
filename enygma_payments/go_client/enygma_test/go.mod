@@ -1,8 +1,7 @@
 module enygma_test
 
-go 1.25.0
-
-toolchain go1.25.13
+go 1.26.0
+toolchain go1.26.6
 
 require (
 	enygma v0.0.0
@@ -38,7 +37,7 @@ require (
 	go.opentelemetry.io/otel v1.39.0 // indirect
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )

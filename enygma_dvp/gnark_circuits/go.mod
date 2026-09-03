@@ -1,32 +1,31 @@
 module gnark_server
 
-go 1.25.0
-
-toolchain go1.25.13
+go 1.26.0
+toolchain go1.26.6
 
 require (
-	github.com/consensys/gnark v0.13.0
-	github.com/consensys/gnark-crypto v0.18.1
+	github.com/consensys/gnark v0.14.0
+	github.com/consensys/gnark-crypto v0.19.2
 	github.com/gin-gonic/gin v1.10.1
 	github.com/iden3/go-iden3-crypto v0.0.17
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (
-	github.com/bits-and-blooms/bitset v1.22.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.1 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/fxamacker/cbor/v2 v2.8.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.20.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
-	github.com/google/pprof v0.0.0-20250607225305-033d6d78b36a // indirect
+	github.com/google/pprof v0.0.0-20250820193118-f64d9cf942d6 // indirect
 	github.com/ingonyama-zk/icicle-gnark/v3 v3.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
