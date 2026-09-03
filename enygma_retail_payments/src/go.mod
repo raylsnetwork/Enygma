@@ -1,13 +1,12 @@
 module github.com/raylsnetwork/enygma_retail_payments/src
 
-go 1.25.0
-
-toolchain go1.25.13
+go 1.26.0
+toolchain go1.26.6
 
 require (
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (
