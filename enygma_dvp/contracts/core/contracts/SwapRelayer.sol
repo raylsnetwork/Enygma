@@ -4,6 +4,7 @@
 pragma solidity ^0.8.0;
 
 import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// @title SwapRelayer
 /// @notice On-chain relayer that collects both parties' ProofReceipts and
@@ -25,7 +26,7 @@ import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
 /// swapId derivation (off-chain, both parties compute independently):
 ///   swapId = keccak256(abi.encode(commitmentB, C'))
 ///   where commitmentB and C' are the pre-computed cross-commitments from Step 3.
-contract SwapRelayer {
+contract SwapRelayer is ReentrancyGuard {
 
     struct PendingSwap {
         IEnygmaDvp.ProofReceipt paymentReceipt;
@@ -79,7 +80,7 @@ contract SwapRelayer {
         uint256                          expiry,
         bytes   calldata                 ctI,
         bytes   calldata                 ctII
-    ) external {
+    ) external nonReentrant {
         PendingSwap storage s = swaps[swapId];
 
         if (s.expiry != 0 && block.timestamp >= s.expiry) revert SwapExpired();
@@ -143,7 +144,7 @@ contract SwapRelayer {
     /// @notice Cancel a pending swap after expiry.
     ///         Unlocks the caller's nullifiers so their note can be used elsewhere.
     ///         Only callable by the party who submitted their leg, after expiry.
-    function cancelSwap(bytes32 swapId) external {
+    function cancelSwap(bytes32 swapId) external nonReentrant {
         PendingSwap storage s = swaps[swapId];
 
         if (block.timestamp < s.expiry) revert SwapNotExpiredYet();

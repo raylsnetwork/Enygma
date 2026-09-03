@@ -8,6 +8,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
@@ -17,7 +18,7 @@ import {IAssetGroup} from "../interfaces/vaults/IAssetGroup.sol";
 import {IPoseidonWrapper} from "../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../interfaces/IVerifier.sol";
 
-contract EnygmaAuction is IEnygmaAuction, AccessControl {
+contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
@@ -198,7 +199,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         uint256 bidGroupId,
         uint256 sellerFundCoinPublicKey,
         IEnygmaDvp.ProofReceipt memory auctionInitReceipt
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // TODO:: check proof conditions
         // if itemVaultId == ERC1155 then the last statement can not be zero
         // TODO:: check the size of the statement
@@ -285,7 +286,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     function submitBid(
         IEnygmaDvp.ProofReceipt memory bidReceipt,
         uint256 receivingPublicKey
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // order of receipt.statement
         // signal input st_beacon;
         // signal input st_auctionId;
@@ -486,7 +487,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         uint256 winningBid,
         uint256 winningRandom,
         IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // VERIFICATION
 
         // TODO:: check auctions[auctionId].state

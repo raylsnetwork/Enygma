@@ -125,6 +125,7 @@ contract Enygma is IEnygma {
     error ZkDvpOperationFailed();
     error InvalidBlockNumber();
     error NullifierAlreadyUsed();
+    error ReentrantCall();
 
     // ============================================
     // MODIFIERS
@@ -143,6 +144,30 @@ contract Enygma is IEnygma {
     modifier whenInitialized() {
         if (_status != STATUS_INITIALIZED) revert NotInitialized();
         _;
+    }
+
+    // deposit()/withdraw() call out to _zkDvpAddress (and, via
+    // _executeZkDvpDeposits, further external contracts) before their own
+    // balance state is fully committed. This contract has no other
+    // reentrancy protection (unlike the sibling EnygmaDvp contract, which
+    // has ReentrancyGuard, just not applied everywhere it should be either)
+    // — a minimal inline guard rather than an OpenZeppelin import, since
+    // this package deliberately has zero external dependencies.
+    bool private _reentrancyLock;
+
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        if (_reentrancyLock) revert ReentrantCall();
+        _reentrancyLock = true;
+    }
+
+    function _nonReentrantAfter() private {
+        _reentrancyLock = false;
     }
 
     // ============================================
@@ -449,12 +474,19 @@ contract Enygma is IEnygma {
         WithdrawProof calldata proof,
         DepositParams[] calldata depositParams,
         uint256[] calldata participantIds
-    ) external onlyRegistered whenInitialized returns (bool, uint256[] memory) {
+    ) external onlyRegistered whenInitialized nonReentrant returns (bool, uint256[] memory) {
         // Verify withdrawal proof
         address verifier = _withdrawVerifiers[depositParams.length];
         if (verifier == address(0)) revert VerifierNotFound();
 
-        (bool success, ) = verifier.delegatecall(
+        // staticcall, not delegatecall: verifyProof is `view` on every verifier
+        // variant (checked across all of them) and reverts on an invalid proof
+        // rather than returning false, so behavior is identical either way —
+        // but staticcall gives an EVM-enforced guarantee that the verifier
+        // can't write to this contract's storage, where delegatecall would
+        // trust that guarantee is never violated (by a bug, or by a future
+        // verifier registered by a compromised or careless owner).
+        (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature("verifyProof(uint256[8],uint256[50])", proof)
         );
         if (!success) revert InvalidProof();
@@ -491,12 +523,13 @@ contract Enygma is IEnygma {
         DepositProof calldata proof,
         WithdrawParams calldata withdrawParam,
         uint256[] calldata participantIds
-    ) external onlyRegistered whenInitialized returns (bool) {
+    ) external onlyRegistered whenInitialized nonReentrant returns (bool) {
         // Verify deposit proof
         address verifier = _depositVerifiers[commitmentDeltas.length];
         if (verifier == address(0)) revert VerifierNotFound();
 
-        (bool success, ) = verifier.delegatecall(
+        // staticcall, not delegatecall — see the matching comment in withdraw().
+        (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature("verifyProof(uint256[8],uint256[50])", proof)
         );
         if (!success) revert InvalidProof();
@@ -660,7 +693,8 @@ contract Enygma is IEnygma {
         address verifier = _transferVerifiers[participantCount];
         if (verifier == address(0)) revert VerifierNotFound();
 
-        (bool success, ) = verifier.delegatecall(
+        // staticcall, not delegatecall — see the matching comment in withdraw().
+        (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature(
                 "verifyProof(uint256[8],uint256[80])",
                 proof
@@ -970,7 +1004,8 @@ contract Enygma is IEnygma {
     function _verifyFeeTransferProof(FeeProof calldata proof) private {
         if (_feeVerifier == address(0)) revert VerifierNotFound();
 
-        (bool success, ) = _feeVerifier.delegatecall(
+        // staticcall, not delegatecall — see the matching comment in withdraw().
+        (bool success, ) = _feeVerifier.staticcall(
             abi.encodeWithSignature(
                 "verifyProof(uint256[8],uint256[54])",
                 proof

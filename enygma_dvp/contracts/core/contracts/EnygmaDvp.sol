@@ -214,7 +214,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         string memory assetGroupName,
         bool isAssetGroupFungible,
         uint256 treeDepth
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
         uint256 groupId = _assetGroupsCount;
         _assetGroups[groupId] = assetGroupContractAddress;
         IAssetGroup(assetGroupContractAddress).initializeAssetGroup(
@@ -233,7 +233,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         address assetContractAddress,
         uint256 vaultIdentifiersCount,
         uint256 treeDepth
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
         // registering the tree smart contract address and treeId
 
         uint256 vaultId = _coinVaultsCount;
@@ -560,7 +560,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId,
         uint256 groupId,
         uint256 deadline
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // uint256 prootType = _proofType(receipt);
         // uint inputSize = receipt.numberOfInputs;
         // uint treeNumbersIndex = 1;
@@ -672,7 +672,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   1. Spending (nullifying) Alice's input nullifiers — not just unlocking.
     //   2. Inserting revertCommitA into the vault — Alice can spend this note.
     // HIGH-10 fix: restrict to the swap initiator — prevents griefing by third parties.
-    function claimSwapTimeout(uint256 pendingReceiptId) public returns (bool) {
+    function claimSwapTimeout(uint256 pendingReceiptId) public nonReentrant returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 
         if (meta.deadline == 0) {
