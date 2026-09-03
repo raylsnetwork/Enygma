@@ -25,12 +25,7 @@ as the operator.
 * **Issuer**: Entity that issues and is the admin of a specific token. In specific settings, the issuer may also be the auditor (e.g., a government entity issues a token that must follow strict compliance rules). 
 
 ```mermaid
- ---
-config:
-  theme: normal
-  layout: elk
-  look: handDrawn
----
+
 flowchart LR
 a["User A"]
 pl_a["Privacy<br>Node A "]
