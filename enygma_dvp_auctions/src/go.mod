@@ -1,6 +1,7 @@
 module github.com/raylsnetwork/enygma_dvp_auctions/src
 
 go 1.25.0
+toolchain go1.25.13
 
 require github.com/raylsnetwork/enygma_dvp/src v0.0.0
 
