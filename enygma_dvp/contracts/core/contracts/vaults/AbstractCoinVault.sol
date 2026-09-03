@@ -167,6 +167,14 @@ abstract contract AbstractCoinVault is
                 }
             }
         }
+        // BUG FIX: falling off the end of a function declared `returns
+        // (bool)` implicitly returns the type's zero value — false — not an
+        // error, just an easy thing to miss. Every call site in this
+        // codebase currently ignores this return value (Slither:
+        // unused-return), so this was silently dormant, but the function's
+        // own declared contract says "true means success", and it could
+        // never actually return that.
+        return true;
     }
 
     function _unlockFromReceipt(
@@ -188,6 +196,7 @@ abstract contract AbstractCoinVault is
                 }
             }
         }
+        return true; // see the matching comment in _nullifyFromReceipt.
     }
 
     // public access is only allowed for ZkDvp
