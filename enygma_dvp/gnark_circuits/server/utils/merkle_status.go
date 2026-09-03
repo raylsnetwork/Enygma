@@ -284,12 +284,20 @@ func ethCallUint256(client *http.Client, rpcURL, contractAddr, selectorHex strin
 	if !ok {
 		return nil, fmt.Errorf("eth_call: unexpected result type %T", resp.Result)
 	}
+	return parseUnsignedHexUint256(hexStr)
+}
+
+// parseUnsignedHexUint256 parses an RPC-returned hex string (optionally
+// "0x"-prefixed) into a non-negative *big.Int. Split out of ethCallUint256
+// so this parsing logic — the exact place the negative-hex-truncation bug
+// lived — is directly fuzzable without needing a live RPC round-trip.
+func parseUnsignedHexUint256(hexStr string) (*big.Int, error) {
 	hexStr = strings.TrimPrefix(hexStr, "0x")
 	if hexStr == "" {
 		return big.NewInt(0), nil
 	}
-	v, ok2 := new(big.Int).SetString(hexStr, 16)
-	if !ok2 {
+	v, ok := new(big.Int).SetString(hexStr, 16)
+	if !ok {
 		return nil, fmt.Errorf("eth_call: cannot parse hex %q", hexStr)
 	}
 	// big.Int.SetString accepts a leading '-' even in base 16, so a
