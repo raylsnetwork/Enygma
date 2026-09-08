@@ -223,11 +223,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
         uint256 itemUniqueId = itemVault.generateUniqueId(uniqueIdParams);
 
-        IVerifier(_verifierContractAddress).verifyProof(
+        if (!IVerifier(_verifierContractAddress).verifyProof(
             VK_ID_AUCTION_INIT_AUDITOR,
             auctionInitReceipt.proof,
             auctionInitReceipt.statement
-        );
+        )) revert InvalidProof();
 
         itemVault.lockCoin(treeNumber, nullifier);
 
@@ -321,11 +321,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256 bidVaultId = _auctions[auctionId].bidVaultId;
 
         // verifying the proof
-        IVerifier(_verifierContractAddress).verifyProof(
+        if (!IVerifier(_verifierContractAddress).verifyProof(
             VK_ID_AUCTION_BID_AUDITOR,
             bidReceipt.proof,
             bidReceipt.statement
-        );
+        )) revert InvalidProof();
 
         IAbstractCoinVault bidVault = IAbstractCoinVault(
             IEnygmaDvp(_enygmaDvpContractAddress).vaultById(bidVaultId)
@@ -463,11 +463,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         // check the proof
 
         // verifies the validity of the proof
-        IVerifier(_verifierContractAddress).verifyProof(
+        if (!IVerifier(_verifierContractAddress).verifyProof(
             VK_ID_AUCTION_PRIVATE_OPENING,
             openingReceipt.proof,
             openingReceipt.statement
-        );
+        )) revert InvalidProof();
 
         // update the bid data
         _auctions[auctionId].bids[blindedBid].bidState = BidStateEnum
@@ -712,11 +712,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             }
 
             // verifies the validity of the notWinningProof\
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_AUCTION_NOT_WINNING_BID,
                 notWinningBidProofs[i].proof,
                 notWinningBidProofs[i].statement
-            );
+            )) revert InvalidProof();
         }
 
         return true;
