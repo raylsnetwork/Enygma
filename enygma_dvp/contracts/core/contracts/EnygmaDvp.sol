@@ -728,6 +728,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // BUGFIX: nonReentrant moved here from _settleOnGroupPair (see the matching
+    // comment there) — this is the actual external entry point for the
+    // swap/exchange call family that has no other guard on its call chain.
     function swapOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -735,7 +738,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) public onlyRelayer returns (bool) {
+    ) public onlyRelayer nonReentrant returns (bool) {
         // checking groupId1 and groupId2
         // to be in _swapGroupPairs
         if (!isValidSwapGroupPair(groupId1, groupId2)) {
@@ -774,6 +777,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // BUGFIX: nonReentrant moved here from _settleOnGroupPair (see the matching
+    // comment there) — this is the actual external entry point for the
+    // swap/exchange call family that has no other guard on its call chain.
     function exchangeOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -781,7 +787,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) public onlyRelayer returns (bool) {
+    ) public onlyRelayer nonReentrant returns (bool) {
         // checking groupId1 and groupId2
         // to be in _exchangeGroupPairs
         if (!isValidExchangeGroupPair(groupId1, groupId2)) {
@@ -799,9 +805,23 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             );
     }
 
-    // CRIT-5 fix: nonReentrant prevents reentrancy via vault callbacks.
+    // CRIT-5 fix: reentrancy protection via vault callbacks.
     // Settlement order: nullify inputs FIRST, then insert outputs — prevents
     // the double-spend window where commitments exist before nullifiers are spent.
+    //
+    // BUGFIX: nonReentrant was on THIS internal function, but it's called from
+    // three different places on this same contract: swapOnGroupPair(),
+    // exchangeOnGroupPair(), and submitPartialSettlement() (which is itself
+    // already nonReentrant). Since OpenZeppelin's ReentrancyGuard tracks one
+    // shared _status flag per contract (not per call site), having a guard
+    // here AND on submitPartialSettlement meant a legitimate call from
+    // submitPartialSettlement into this function tripped "ReentrancyGuard:
+    // reentrant call" on itself — a false positive that broke the DvP full-
+    // swap settlement path entirely (caught by TestV2DvP_WithDeadline/FullSwap).
+    // Moved the guard instead onto swapOnGroupPair()/exchangeOnGroupPair() —
+    // the two callers that had no guard elsewhere in their own call chain —
+    // so every actual external entry point still has exactly one guard, with
+    // no nested double-guard on the shared internal path.
     function _settleOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -809,7 +829,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) internal nonReentrant returns (bool) {
+    ) internal returns (bool) {
         //-----------------------
         // [[VERIFICATION]]
         //-----------------------
