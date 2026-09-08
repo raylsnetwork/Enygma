@@ -56,6 +56,12 @@ interface IAbstractCoinVault {
 
     error RottenChallenge();
     error InvalidOpening();
+    // SECURITY: IVerifier.verifyProof() returns false (rather than reverting)
+    // for a well-formed-but-invalid Groth16 proof. Every call site must check
+    // this return value and revert with InvalidProof() itself — silently
+    // discarding it would let a syntactically valid but unproven "proof"
+    // pass as if it were genuine.
+    error InvalidProof();
     error InvalidErc721Transfer();
     error InvalidErc20Transfer();
     error InvalidErc1155Transfer();

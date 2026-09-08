@@ -45,3 +45,8 @@ payment_protocol.md
 
 
 /src/bench_gas
+# Echidna fuzzing corpus/coverage (regenerable, not source)
+contracts/echidna/corpus/
+
+# crytic-compile build artifact (Slither/Echidna byproduct, regenerable)
+crytic-export/
