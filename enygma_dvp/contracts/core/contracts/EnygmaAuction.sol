@@ -481,13 +481,20 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         return true;
     }
 
-    // Called by auctioneer (EnygmaDvp owner)
+    // SECURITY FIX (Finding 2): this function settles an auction — it unlocks
+    // the winner's bid coins, nullifies the loser-excluded ones, and mints new
+    // commitments into the bid/item Merkle trees. It had no access-control
+    // modifier at all (only the comment below claimed it), so any address
+    // could call it. Restored to the documented intent: only the auctioneer
+    // (the EnygmaDvp owner, DEFAULT_OWNER_ROLE — the same role this contract
+    // already reserves for admin operations, see the constructor and the
+    // disabled unregisterAuctioneer() above) may declare a winner.
     function declareWinner(
         uint256 auctionId,
         uint256 winningBid,
         uint256 winningRandom,
         IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
-    ) public nonReentrant returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
         // VERIFICATION
 
         // TODO:: check auctions[auctionId].state
@@ -502,10 +509,15 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             .bids[winningBlindedBid]
             .bidState;
         // check winningBlindedBid is in auctions.blindedBids
-        // if(winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
-        //             winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
-        //     revert WinningBidOpeningMismatch();
-        // }
+        // SECURITY FIX (Finding 2): this check was commented out, so a
+        // winningBid/winningRandom pair whose bid was never actually opened
+        // (BID_SEALED or even BID_INACTIVE) would still be accepted as "the
+        // winner." Restored — the claimed winning bid must have gone through
+        // a real bid-opening step before it can be declared the winner.
+        if (winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
+                    winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
+            revert WinningBidOpeningMismatch();
+        }
 
         _verifyNotWinningProofs(
             auctionId,
@@ -673,17 +685,27 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             .bids[winningBlindedBid]
             .bidState;
         // check winningBlindedBid is in auctions.blindedBids
-        // if(winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
-        //             winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
-        //     revert WinningBidOpeningMismatch();
-        // }
+        // SECURITY FIX (Finding 2): restored — see the matching comment in
+        // declareWinner(). Kept here too since this is an internal function
+        // and shouldn't rely solely on its current caller re-checking this.
+        if (winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
+                    winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
+            revert WinningBidOpeningMismatch();
+        }
 
         // uint256 winningBlockNumber = _auctions[auctionId].bids[winningBlindedBid].bidBlockNumber;
         // The number of not winning proofs must be
         // the number of openedBids - 1
-        // if(_auctions[auctionId].numberOfOpenedBids != notWinningBidProofs.length + 1){
-        //     revert NotWinningBidsCountMismatch();
-        // }
+        // SECURITY FIX (Finding 2): this was the critical missing check.
+        // Without it, notWinningBidProofs could be a short (or empty) array —
+        // the for loop below only validates the proofs actually supplied, so
+        // a caller could omit proofs for real competing bids entirely,
+        // declare themselves winner, and those omitted bids would simply
+        // never be checked as losers. Requiring the count to match every
+        // opened bid except the winner closes that gap.
+        if (_auctions[auctionId].numberOfOpenedBids != notWinningBidProofs.length + 1){
+            revert NotWinningBidsCountMismatch();
+        }
 
         // uint256 auctionId;
         // uint256 blindedBidDifference;
