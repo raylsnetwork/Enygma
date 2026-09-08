@@ -371,49 +371,49 @@ contract Erc20CoinVault is AbstractCoinVault {
             // Fee payment circuit has 8 public signals (adds StFee at index 7).
             // Regular payment circuit has 7 public signals — dispatch by statement length.
             if (receipt.statement.length == 8) {
-                IVerifier(_verifierContractAddress).verifyProof(
+                if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC20_JOINSPLIT_FEE,
                     receipt.proof,
                     receipt.statement
-                );
+                )) revert InvalidProof();
             } else {
                 // Retail Payment circuit: 1-input/2-output, VK registered at slot 0.
-                IVerifier(_verifierContractAddress).verifyProof(
+                if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC20_JOINSPLIT,
                     receipt.proof,
                     receipt.statement
-                );
+                )) revert InvalidProof();
             }
         } else if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 3) {
             // PaymentRelayer circuit: 1-in/3-out, 8-element statement.
             // output[0]=Bob, output[1]=Alice change, output[2]=relayer fee note.
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_JOINSPLIT_RELAYER,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else if (receipt.numberOfInputs == 1) {
             // DvP Initiator: 1-input/3-output circuit with 7-element statement.
             // numberOfOutputs is reported as 1 on-chain so only statement[4]=commitB
             // is inserted into the vault; the full 7-element statement is used for VK verification.
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_DVP_INITIATOR,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else if (receipt.numberOfInputs == 2) {
             // 2-input/2-output circuit uses its own VK slot — VULN-2 fix.
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_JOINSPLIT_2INPUT,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else {
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_10INPUT,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         }
 
         return true;
