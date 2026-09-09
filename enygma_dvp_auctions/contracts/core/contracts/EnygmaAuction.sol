@@ -511,21 +511,54 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // Set conservatively above the ~200k–400k BN254 Groth16 pairing cost.
     uint256 private constant CHALLENGE_VERIFY_GAS = 600_000;
 
-    function challengeSettlement(uint256 auctionId) external nonReentrant returns (bool) {
-        if (_auctions[auctionId].state != AuctionState.PENDING_SETTLEMENT) revert NoPendingSettlement();
+    // BUGFIX: this used to be an `internal` helper (`_verifyFinalProof`) called
+    // directly from challengeSettlement(). That alone wasn't enough — the
+    // Solidity/Yul optimizer inlines small internal functions back into their
+    // caller, which re-merged this code's locals (the `inputs` memory array,
+    // the try/catch's `ok`) with everything else already live in
+    // challengeSettlement() (claim storage pointer, auctionId, the later
+    // finalStatement copy), reproducing the exact same "Variable ... is 1 too
+    // deep in the stack" error even after the split.
+    //
+    // Marking this `external` and calling it via `this.verifyFinalProof(...)`
+    // below forces a genuine EVM CALL rather than a Yul-level inline — the
+    // callee gets its own separate stack frame that cannot be merged with the
+    // caller's, which is what actually fixes the stack-too-deep (the same
+    // technique `_applySettlement`'s own helper split silently relied on
+    // working, but here the optimizer's inliner defeated a same-visibility
+    // internal split). `view` because verifyProof() itself is view — no state
+    // is touched, so this is safe as a self-call with no reentrancy exposure.
+    function verifyFinalProof(uint256 auctionId) external view returns (bool) {
         OptimisticClaim storage claim = _claims[auctionId];
-        if (block.timestamp >= claim.challengeDeadline) revert ChallengeWindowClosed();
-        require(gasleft() >= CHALLENGE_VERIFY_GAS, "EnygmaAuction: insufficient gas for verification");
-
         uint256[] memory inputs = new uint256[](38);
         for (uint256 i = 0; i < 38; i++) inputs[i] = claim.statement[i];
 
-        bool valid;
         try IVerifier(_verifier).verifyProof(VK_FINAL, _makeSnarkProof(claim.proof), inputs) returns (bool ok) {
-            valid = ok;
+            return ok;
         } catch {
-            valid = false;
+            return false;
         }
+    }
+
+    // BUGFIX: extracted out of challengeSettlement()'s "claim is valid" branch
+    // for the same stack-too-deep reason documented on verifyFinalProof() above
+    // — even after that first extraction, the finalStatement memory copy plus
+    // the _applySettlement() call, combined with the external call's own
+    // overhead, still pushed challengeSettlement() over the stack limit.
+    function finalizeChallengedSettlement(uint256 auctionId) external {
+        require(msg.sender == address(this), "EnygmaAuction: internal only");
+        OptimisticClaim storage claim = _claims[auctionId];
+        uint256[38] memory finalStatement = claim.statement;
+        delete _claims[auctionId];
+        _applySettlement(auctionId, finalStatement);
+    }
+
+    function challengeSettlement(uint256 auctionId) external nonReentrant returns (bool) {
+        if (_auctions[auctionId].state != AuctionState.PENDING_SETTLEMENT) revert NoPendingSettlement();
+        if (block.timestamp >= _claims[auctionId].challengeDeadline) revert ChallengeWindowClosed();
+        require(gasleft() >= CHALLENGE_VERIFY_GAS, "EnygmaAuction: insufficient gas for verification");
+
+        bool valid = this.verifyFinalProof(auctionId);
 
         if (!valid) {
             // Auctioneer's claim was fraudulent (or malformed) — void the claim
@@ -538,9 +571,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
         // Claim is valid — finalize settlement now that validity is proven.
         emit AuctionSettlementChallenged(auctionId, msg.sender, false);
-        uint256[38] memory finalStatement = claim.statement;
-        delete _claims[auctionId];
-        _applySettlement(auctionId, finalStatement);
+        this.finalizeChallengedSettlement(auctionId);
         return true;
     }
 
@@ -548,13 +579,13 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ///         has elapsed. Trusts the claim without ever invoking the verifier.
     function finalizeSettlement(uint256 auctionId) external nonReentrant returns (bool) {
         if (_auctions[auctionId].state != AuctionState.PENDING_SETTLEMENT) revert NoPendingSettlement();
-        OptimisticClaim storage claim = _claims[auctionId];
-        if (block.timestamp < claim.challengeDeadline) revert ChallengeWindowOpen();
+        if (block.timestamp < _claims[auctionId].challengeDeadline) revert ChallengeWindowOpen();
 
-        uint256[38] memory finalStatement = claim.statement;
-        delete _claims[auctionId];
-
-        _applySettlement(auctionId, finalStatement);
+        // Reuses finalizeChallengedSettlement() — identical logic to what
+        // challengeSettlement() does once a claim is proven valid; see the
+        // stack-too-deep comment there for why this is a real external call
+        // rather than duplicating the body inline here.
+        this.finalizeChallengedSettlement(auctionId);
         return true;
     }
 
