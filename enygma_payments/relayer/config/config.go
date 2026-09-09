@@ -50,6 +50,15 @@ type Config struct {
 	// GasLimit is the gas limit applied to every on-chain submission.
 	// Default: 300000000
 	GasLimit uint64
+
+	// GnarkServerURL is the base URL of this relayer's own gnark-server
+	// instance, used to independently re-verify the sender's transfer proof
+	// via POST {GnarkServerURL}/proof/relayer before submitting on-chain.
+	// This is a new runtime dependency: RelayTransfer fails if this service
+	// is unreachable. Default: http://127.0.0.1:8080 (matches the sender's
+	// own local gnark-server default port, but this MUST point at the
+	// relayer's own instance, not the sender's).
+	GnarkServerURL string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -69,6 +78,7 @@ func Load() (*Config, error) {
 		AddressJSONPath:      getenv("RELAYER_ADDRESS_JSON", "../go_client/address.json"),
 		ABIPath:              getenv("RELAYER_ABI_PATH", "../contracts/enygma/artifacts/contracts/Enygma.sol/Enygma.json"),
 		Port:                 getenv("RELAYER_PORT", "8082"),
+		GnarkServerURL:       strings.TrimSuffix(getenv("RELAYER_GNARK_SERVER_URL", "http://127.0.0.1:8080"), "/"),
 	}
 
 	// Parse chain ID.

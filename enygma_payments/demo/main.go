@@ -7,12 +7,12 @@
 package main
 
 import (
-	_ "embed"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -230,7 +230,7 @@ func pause(d time.Duration) {
 
 type Event struct {
 	Type    string `json:"type"`
-	Tab     string `json:"tab,omitempty"`     // "setup" | "onboarding" | "transfer"
+	Tab     string `json:"tab,omitempty"` // "setup" | "onboarding" | "transfer"
 	Step    string `json:"step,omitempty"`
 	BankIdx int    `json:"bankIdx,omitempty"` // for bank-specific step events
 	Status  string `json:"status,omitempty"`
@@ -279,23 +279,24 @@ func (b *Broker) publish(e Event) {
 // ── Persistent connection state ────────────────────────────────────────────────
 
 type connState struct {
-	mu            sync.Mutex
-	ready         bool
-	client        *ethclient.Client
-	priv          *ecdsa.PrivateKey
-	owner         common.Address
-	inst          *enygma.Enygma
-	tokenAddr     string
-	verifierAddr  string
-	totalGasUsed  uint64
-	mintedBalances [nBanks]int64      // cumulative plaintext balance per bank; updated after each mint/transfer
-	lastSenderIdx  int               // senderIdx from the most recent completed transfer
-	registeredSks  [nBanks]*big.Int  // sk used at registration time; nil until registered
-	lastRValues    [nBanks]*big.Int  // TxRandomValues from the last successful transfer; for verify tab
-	cumulativeR    [nBanks]*big.Int  // running sum of txRandom per bank across all transfers (mod P)
-	transferCount  int               // number of completed transfers
-	kaSecrets      [nBanks][nBanks]*big.Int  // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
-	kaEKs          [nBanks][]byte           // ML-KEM-768 encapsulation keys (1184B each, public_view_key)
+	mu                  sync.Mutex
+	ready               bool
+	client              *ethclient.Client
+	priv                *ecdsa.PrivateKey
+	owner               common.Address
+	inst                *enygma.Enygma
+	tokenAddr           string
+	verifierAddr        string
+	relayerVerifierAddr string
+	totalGasUsed        uint64
+	mintedBalances      [nBanks]int64            // cumulative plaintext balance per bank; updated after each mint/transfer
+	lastSenderIdx       int                      // senderIdx from the most recent completed transfer
+	registeredSks       [nBanks]*big.Int         // sk used at registration time; nil until registered
+	lastRValues         [nBanks]*big.Int         // TxRandomValues from the last successful transfer; for verify tab
+	cumulativeR         [nBanks]*big.Int         // running sum of txRandom per bank across all transfers (mod P)
+	transferCount       int                      // number of completed transfers
+	kaSecrets           [nBanks][nBanks]*big.Int // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
+	kaEKs               [nBanks][]byte           // ML-KEM-768 encapsulation keys (1184B each, public_view_key)
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -532,14 +533,22 @@ func (fc *flowCtx) waitTx(label string, tx *ethtypes.Transaction, txErr error) (
 // ── Contract address resolver ─────────────────────────────────────────────────
 
 type deployReceipts struct {
-	TOKEN    struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
-	VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	TOKEN struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"TOKEN"`
+	VERIFIER struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"VERIFIER"`
+	RELAYER_VERIFIER struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"RELAYER_VERIFIER"`
 }
 
-func resolveAddresses() (token, verifier string, err error) {
+func resolveAddresses() (token, verifier, relayerVerifier string, err error) {
 	token = os.Getenv("ENYGMA_TOKEN_ADDR")
 	verifier = os.Getenv("ENYGMA_VERIFIER_ADDR")
-	if token != "" && verifier != "" {
+	relayerVerifier = os.Getenv("ENYGMA_RELAYER_VERIFIER_ADDR")
+	if token != "" && verifier != "" && relayerVerifier != "" {
 		return
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -553,10 +562,13 @@ func resolveAddresses() (token, verifier string, err error) {
 			if verifier == "" {
 				verifier = rec.VERIFIER.ContractAddress
 			}
+			if relayerVerifier == "" {
+				relayerVerifier = rec.RELAYER_VERIFIER.ContractAddress
+			}
 		}
 	}
-	if token == "" || verifier == "" {
-		err = fmt.Errorf("contract addresses not found — set ENYGMA_TOKEN_ADDR / ENYGMA_VERIFIER_ADDR or run deploy scripts")
+	if token == "" || verifier == "" || relayerVerifier == "" {
+		err = fmt.Errorf("contract addresses not found — set ENYGMA_TOKEN_ADDR / ENYGMA_VERIFIER_ADDR / ENYGMA_RELAYER_VERIFIER_ADDR or run deploy scripts")
 	}
 	return
 }
@@ -568,9 +580,15 @@ func runSetup(s *Server) {
 
 	fc.emit("prerequisites", "running", "Check prerequisites", "Probing Hardhat · Gnark · Relayer…")
 	var missing []string
-	if !tcpAvailable(rpcHostPort())     { missing = append(missing, "Chain RPC ("+rpcHostPort()+")") }
-	if !tcpAvailable("127.0.0.1:8080") { missing = append(missing, "Gnark :8080") }
-	if !tcpAvailable("127.0.0.1:8082") { missing = append(missing, "Relayer :8082") }
+	if !tcpAvailable(rpcHostPort()) {
+		missing = append(missing, "Chain RPC ("+rpcHostPort()+")")
+	}
+	if !tcpAvailable("127.0.0.1:8080") {
+		missing = append(missing, "Gnark :8080")
+	}
+	if !tcpAvailable("127.0.0.1:8082") {
+		missing = append(missing, "Relayer :8082")
+	}
 	if len(missing) > 0 {
 		fc.emit("prerequisites", "error", "Check prerequisites", "Not reachable: "+strings.Join(missing, ", "))
 		fc.done(false, "Start "+strings.Join(missing, ", ")+" first")
@@ -580,7 +598,7 @@ func runSetup(s *Server) {
 	fc.log("✓ Chain RPC, Gnark server, and Relayer all reachable")
 	pause(800 * time.Millisecond)
 
-	tokenAddr, verifierAddr, err := resolveAddresses()
+	tokenAddr, verifierAddr, relayerVerifierAddr, err := resolveAddresses()
 	if err != nil {
 		fc.emit("dial_chain", "error", "Dial chain", err.Error())
 		fc.done(false, err.Error())
@@ -588,6 +606,7 @@ func runSetup(s *Server) {
 	}
 	fc.log(fmt.Sprintf("TOKEN    contract: %s", tokenAddr))
 	fc.log(fmt.Sprintf("VERIFIER contract: %s", verifierAddr))
+	fc.log(fmt.Sprintf("RELAYER_VERIFIER contract: %s", relayerVerifierAddr))
 
 	// Sync the relayer's address file so it picks up the freshly-deployed contract
 	// on its next restart (avoids the demo and relay pointing at different contracts).
@@ -599,6 +618,7 @@ func runSetup(s *Server) {
 	}
 	fc.proto("tokenAddr", tokenAddr)
 	fc.proto("verifierAddr", verifierAddr)
+	fc.proto("relayerVerifierAddr", relayerVerifierAddr)
 
 	fc.emit("dial_chain", "running", "Dial chain node", rpcURL)
 	client, err := ethclient.Dial(rpcURL)
@@ -641,6 +661,7 @@ func runSetup(s *Server) {
 	s.state.inst = inst
 	s.state.tokenAddr = tokenAddr
 	s.state.verifierAddr = verifierAddr
+	s.state.relayerVerifierAddr = relayerVerifierAddr
 	s.state.mu.Unlock()
 
 	fc.emit("init_contract", "running", "Initialize contract", "Enygma.initialize() — idempotent")
@@ -665,6 +686,17 @@ func runSetup(s *Server) {
 	}
 	fc.emit("add_verifier", "success", "Register verifier",
 		fmt.Sprintf("Groth16 verifier registered at %s", trunc(verifierAddr, 14)))
+
+	fc.emit("add_relayer_verifier", "running", "Register relayer verifier", fmt.Sprintf("addRelayerVerifier(%s)", trunc(relayerVerifierAddr, 14)))
+	if arvTx, arvErr := inst.AddRelayerVerifier(fc.mkAuth(), common.HexToAddress(relayerVerifierAddr)); arvErr == nil {
+		if _, waitErr := fc.waitTx("AddRelayerVerifier", arvTx, arvErr); waitErr != nil {
+			fc.log("Relayer verifier already registered (OK — idempotent)")
+		}
+	} else {
+		fc.log("AddRelayerVerifier skipped: " + arvErr.Error())
+	}
+	fc.emit("add_relayer_verifier", "success", "Register relayer verifier",
+		fmt.Sprintf("Relayer re-verification verifier registered at %s", trunc(relayerVerifierAddr, 14)))
 	pause(400 * time.Millisecond)
 
 	// Verify the relay is pointing at the same contract the demo just initialized.
@@ -827,7 +859,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		return
 	}
 	prevBalances := pubVals.Balances[1:]
-	onChainKeys  := pubVals.Keys[1:]
+	onChainKeys := pubVals.Keys[1:]
 	fc.emit("read_state", "success", "Read on-chain state",
 		fmt.Sprintf("epochBlockHash = %s · %d accounts", trunc(blockHash.String(), 12), nBanks))
 	fc.log(fmt.Sprintf("Epoch block hash: %s", blockHash.String()))

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -21,11 +23,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// gnarkClientTimeout bounds the wait for the relayer's own gnark-server to
+// produce the recursive re-verification proof. Step 0 of the design plan
+// measured this at ~20s on the reference machine for the real transfer
+// circuit's shape; this leaves real headroom above that.
+const gnarkClientTimeout = 60 * time.Second
+
 // EnygmaContract is the subset of *contracts.Enygma used by the Handler.
 // Exported so external test packages can inject a mock without importing the handler internals.
 // The concrete *enygma.Enygma satisfies this interface.
 type EnygmaContract interface {
-	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, participantIds []*big.Int) (*types.Transaction, error)
+	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, relayerProof enygma.IEnygmaRelayerProof, participantIds []*big.Int) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int) (*types.Transaction, error)
 }
 
@@ -173,6 +181,17 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		PublicSignal: pubSig80,
 	}
 
+	// Independently re-verify the sender's proof via the relayer's own
+	// gnark-server, BEFORE touching in-flight dedup or submitting on-chain.
+	// This is a new runtime dependency (see config.GnarkServerURL): if the
+	// gnark-server is unreachable or rejects the proof, the transfer never
+	// reaches h.instance.Transfer at all.
+	relayerProof, err := h.getRelayerProof(req.Proof, req.PublicSignal)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("relayer re-verification: %v", err)})
+		return
+	}
+
 	dedupKey := "transfer:" + req.Proof[0]
 	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
@@ -183,7 +202,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	h.txMu.Lock()
 	defer h.txMu.Unlock()
 
-	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, kIndex)
+	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, relayerProof, kIndex)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transfer(): %v", err)})
 		return
@@ -337,6 +356,69 @@ func int64sToBI(ids []int64) []*big.Int {
 		out[i] = big.NewInt(id)
 	}
 	return out
+}
+
+// ── Relayer recursive re-verification (gnark-server client) ────────────────────
+
+// gnarkRelayerRequest/gnarkRelayerResponse mirror gnark-server's
+// pkg/circuits/relayer.RelayerRequest/RelayerOutput exactly.
+type gnarkRelayerRequest struct {
+	Proof        [8]string `json:"proof"`
+	PublicSignal []string  `json:"publicSignal"`
+}
+
+type gnarkRelayerResponse struct {
+	Proof        []*big.Int `json:"proof"`
+	PublicSignal []*big.Int `json:"publicSignal"`
+}
+
+// getRelayerProof calls this relayer's own gnark-server (config.GnarkServerURL)
+// to independently re-verify the sender's transfer proof, and converts the
+// 12-element response proof ([Ax,Ay,BX11,BX01,BY11,BY01,Cx,Cy,CommitX,
+// CommitY,PokX,PokY] — see gnark-server/pkg/circuits/relayer/handler.go's
+// RelayerOutput doc) into the on-chain IEnygmaRelayerProof shape.
+func (h *Handler) getRelayerProof(proof [8]string, publicSignal []string) (enygma.IEnygmaRelayerProof, error) {
+	var out enygma.IEnygmaRelayerProof
+
+	reqBody, err := json.Marshal(gnarkRelayerRequest{Proof: proof, PublicSignal: publicSignal})
+	if err != nil {
+		return out, fmt.Errorf("marshal request: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), gnarkClientTimeout)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, h.cfg.GnarkServerURL+"/proof/relayer", bytes.NewReader(reqBody))
+	if err != nil {
+		return out, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return out, fmt.Errorf("gnark-server unreachable at %s: %w", h.cfg.GnarkServerURL, err)
+	}
+	defer httpResp.Body.Close()
+	body, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("gnark-server returned %d: %s", httpResp.StatusCode, string(body))
+	}
+
+	var resp gnarkRelayerResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return out, fmt.Errorf("parse gnark-server response: %w", err)
+	}
+	if len(resp.Proof) != 12 {
+		return out, fmt.Errorf("gnark-server returned %d proof elements, expected 12", len(resp.Proof))
+	}
+	if len(resp.PublicSignal) != 80 {
+		return out, fmt.Errorf("gnark-server returned %d public signal elements, expected 80", len(resp.PublicSignal))
+	}
+
+	copy(out.Proof[:], resp.Proof[0:8])
+	copy(out.Commitments[:], resp.Proof[8:10])
+	copy(out.CommitmentPok[:], resp.Proof[10:12])
+	copy(out.PublicSignal[:], resp.PublicSignal)
+	return out, nil
 }
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────

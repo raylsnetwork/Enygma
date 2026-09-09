@@ -28,6 +28,9 @@ CONTRACTS_DIR = os.path.join(ROOT, "..", "contracts", "enygma", "artifacts", "co
 
 ENYGMA_ARTIFACT = os.path.join(CONTRACTS_DIR, "Enygma.sol", "Enygma.json")
 VERIFIER_ARTIFACT = os.path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json")
+# Verifies the relayer's own recursive proof (independent re-verification of
+# the transfer proof above) — see enygma_payments/gnark-server/pkg/circuits/relayer.
+RELAYER_VERIFIER_ARTIFACT = os.path.join(CONTRACTS_DIR, "RelayerVerifier.sol", "Verifier.json")
 
 RECEIPTS_DIR = os.path.join(ROOT, "build", "enygma", "web3")
 RECEIPTS_PATH = os.path.join(RECEIPTS_DIR, "deploy_receipts.json")
@@ -73,9 +76,14 @@ def main():
     verifier_artifact = load_artifact(VERIFIER_ARTIFACT)
     verifier_receipt = deploy_contract(w3, account, verifier_artifact)
 
+    print("\nDeploying RelayerVerifier...")
+    relayer_verifier_artifact = load_artifact(RELAYER_VERIFIER_ARTIFACT)
+    relayer_verifier_receipt = deploy_contract(w3, account, relayer_verifier_artifact)
+
     receipts = {
         "TOKEN": {"contractAddress": enygma_receipt.contractAddress},
         "VERIFIER": {"contractAddress": verifier_receipt.contractAddress},
+        "RELAYER_VERIFIER": {"contractAddress": relayer_verifier_receipt.contractAddress},
     }
 
     os.makedirs(RECEIPTS_DIR, exist_ok=True)
