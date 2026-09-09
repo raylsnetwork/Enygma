@@ -36,8 +36,8 @@ import (
 	"testing"
 	"time"
 
-	enygma "enygma/contracts"
 	"enygma/agreement"
+	enygma "enygma/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -220,9 +220,10 @@ var (
 )
 
 const (
-	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
-	relayerURL = "http://127.0.0.1:8082"
-	relayerKey = "enygma-test-secret" // must match RELAYER_API_KEY
+	gnarkURL        = "http://127.0.0.1:8080/proof/enygma"
+	gnarkRelayerURL = "http://127.0.0.1:8080/proof/relayer"
+	relayerURL      = "http://127.0.0.1:8082"
+	relayerKey      = "enygma-test-secret" // must match RELAYER_API_KEY
 
 	nBanks      = 6
 	senderIdx   = 0
@@ -247,8 +248,12 @@ var ownerPrivKey = func() string {
 
 // receipts holds contract addresses read from deploy_receipts.json.
 type receipts struct {
-	TOKEN    struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
-	VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	TOKEN struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"TOKEN"`
+	VERIFIER struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"VERIFIER"`
 }
 
 // readReceipts reads deploy_receipts.json from run_scripts/build/enygma/web3/.
@@ -422,7 +427,7 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Fatalf("getPublicValues: %v", err)
 	}
 	prevBalances := pubVals.Balances[1:] // accounts 1-6 → circuit banks 0-5
-	onChainKeys := pubVals.Keys[1:]       // registered pks for accounts 1-6
+	onChainKeys := pubVals.Keys[1:]      // registered pks for accounts 1-6
 
 	t.Logf("bank 0 initial commitment: (%s, %s)", prevBalances[0].C1, prevBalances[0].C2)
 

@@ -3,9 +3,21 @@ package enygma_test
 // Additional scenario tests not covered by TestFullTransactionFlow:
 //
 //   TestCheckInvariant            — verifies Σ(bank balances) == totalSupply after a transfer.
-//   TestNullifierReuseProtection  — deploys fresh contracts, submits a valid proof once
-//                                   (success), then replays the same proof (must be rejected
-//                                   with NullifierAlreadyUsed — replay-attack protection).
+//   TestNullifierReuseProtection  — deploys fresh contracts (including the relayer's
+//                                   recursive-verification verifier), builds a real transfer
+//                                   proof + real relayer re-verification proof, and checks: a
+//                                   proof/relayer-proof pairing with a mismatched public_signal
+//                                   reverts (rejected by _verifyRelayerProof's own cryptographic
+//                                   check before _verifyRelayerBinding is ever reached — both
+//                                   still correctly block it), a garbage relayer proof reverts
+//                                   (InvalidProof), a genuine submission succeeds (logging gas
+//                                   used), and replaying the same proof afterward is rejected
+//                                   (in practice via InvalidPublicInputs, since round 1 already
+//                                   advanced the balance the stale proof's previous-commitment
+//                                   no longer matches — _verifyPublicInputsFP runs before
+//                                   _consumeNullifierFP, so NullifierAlreadyUsed is never
+//                                   reached on a naive full-proof replay; either way the replay
+//                                   is blocked, which is the property that matters).
 //   TestBurnBalanceUpdate         — burn() decrements a bank's Pedersen commitment by amount*G
 //                                   (homomorphic subtraction); also documents that check()
 //                                   breaks after burn because totalSupplyX/Y is not updated.
@@ -50,6 +62,8 @@ import (
 	"testing"
 
 	enygma "enygma/contracts"
+	enygmaverifier "enygma/contracts/enygmaverifier"
+	relayerverifier "enygma/contracts/relayerverifier"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -175,11 +189,18 @@ func TestCheckInvariant(t *testing.T) {
 
 // ── TestNullifierReuseProtection ──────────────────────────────────────────────
 
-// TestNullifierReuseProtection deploys a fresh Enygma + Verifier contract pair,
-// performs the standard setup and ZK transfer, then submits the identical proof a
-// second time.  The contract must reject the replay with NullifierAlreadyUsed.
+// TestNullifierReuseProtection deploys a fresh Enygma + Verifier + RelayerVerifier
+// contract set, performs the standard setup, and builds one real transfer proof plus
+// one real relayer recursive re-verification proof (both via the local gnark-server).
+// It then submits, in order: a tampered-public-signal relayer proof (must revert —
+// _verifyRelayerProof's own check fails since Groth16 proofs bind their public inputs,
+// so this never even reaches _verifyRelayerBinding), a garbage-relayer-proof variant
+// (must revert InvalidProof — reverted calls consume no nullifier, so the real proof
+// stays valid for what follows), the genuine transfer (must succeed — gas usage is
+// logged), and finally a replay of the identical proof (must be rejected — in practice
+// via InvalidPublicInputs, see the file-level doc comment above).
 //
-// Transfer() is called directly on the contract binding — no relayer needed.
+// Transfer() is called directly on the contract binding — no relayer service needed.
 // This makes the test independent of which contract address the relayer is pointed at.
 func TestNullifierReuseProtection(t *testing.T) {
 	if !chainAvailable() {
@@ -232,6 +253,9 @@ func TestNullifierReuseProtection(t *testing.T) {
 	verifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/EnygmaVerifier.sol/Verifier.json",
 	)
+	relayerVerifierAddr := deployFromArtifact(t, client, mkAuth(),
+		artifactBase+"/RelayerVerifier.sol/Verifier.json",
+	)
 
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
 	if err != nil {
@@ -246,6 +270,11 @@ func TestNullifierReuseProtection(t *testing.T) {
 		t.Fatal("addVerifier failed")
 	}
 	t.Log("verifier registered")
+
+	if r := waitTx(instance.AddRelayerVerifier(mkAuth(), relayerVerifierAddr)); r.Status != 1 {
+		t.Fatal("addRelayerVerifier failed")
+	}
+	t.Log("relayer verifier registered")
 
 	pks := make([]*big.Int, nBanks)
 	for i, sk := range bankSks {
@@ -378,6 +407,18 @@ func TestNullifierReuseProtection(t *testing.T) {
 		pubSig80[i] = v
 	}
 
+	// Sanity check: EnygmaVerifier.verifyProof() must accept this proof on
+	// its own, decoupled from anything Enygma.sol/transfer() does — isolates
+	// a bad sender proof/verifier pairing from the relayer logic below.
+	ev, evErr := enygmaverifier.NewEnygmaVerifier(verifierAddr, client)
+	if evErr != nil {
+		t.Fatalf("bind EnygmaVerifier: %v", evErr)
+	}
+	if err := ev.VerifyProof(&bind.CallOpts{}, proof8, pubSig80); err != nil {
+		t.Fatalf("EnygmaVerifier.verifyProof() rejected the sender's own transfer proof: %v", err)
+	}
+	t.Log("EnygmaVerifier.verifyProof() accepted the transfer proof directly ✓")
+
 	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
 	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
@@ -390,28 +431,118 @@ func TestNullifierReuseProtection(t *testing.T) {
 
 	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig80}
 
+	// ── Relayer's independent recursive re-verification proof ─────────────────
+	// Same gnark-server, /proof/relayer endpoint: independently re-verifies
+	// transferProof against the same transfer-circuit VK, over the exact same
+	// public signal — see enygma_payments/gnark-server/pkg/circuits/relayer.
+	relayerReqBody, _ := json.Marshal(map[string]interface{}{
+		"proof":        toStrs(proof8[:]),
+		"publicSignal": toStrs(pubSig80[:]),
+	})
+	relayerHTTPResp, err := http.Post(gnarkRelayerURL, "application/json", bytes.NewReader(relayerReqBody))
+	if err != nil {
+		t.Fatalf("gnark relayer POST: %v", err)
+	}
+	defer relayerHTTPResp.Body.Close()
+	if relayerHTTPResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(relayerHTTPResp.Body)
+		t.Fatalf("gnark relayer %d: %s", relayerHTTPResp.StatusCode, body)
+	}
+	var relayerProofResp struct {
+		Proof        []*big.Int `json:"proof"`
+		PublicSignal []*big.Int `json:"publicSignal"`
+	}
+	if err := json.NewDecoder(relayerHTTPResp.Body).Decode(&relayerProofResp); err != nil {
+		t.Fatalf("decode relayer proof: %v", err)
+	}
+	if len(relayerProofResp.Proof) != 12 || len(relayerProofResp.PublicSignal) != 80 {
+		t.Fatalf("unexpected relayer proof sizes: proof=%d publicSignal=%d", len(relayerProofResp.Proof), len(relayerProofResp.PublicSignal))
+	}
+	t.Log("relayer proof received")
+
+	var relayerProof enygma.IEnygmaRelayerProof
+	copy(relayerProof.Proof[:], relayerProofResp.Proof[0:8])
+	copy(relayerProof.Commitments[:], relayerProofResp.Proof[8:10])
+	copy(relayerProof.CommitmentPok[:], relayerProofResp.Proof[10:12])
+	copy(relayerProof.PublicSignal[:], relayerProofResp.PublicSignal)
+
+	// Sanity check: RelayerVerifier.verifyProof() must accept this proof on
+	// its own, decoupled from anything Enygma.sol/transfer() does — isolates
+	// a bad relayer proof/verifier pairing from Enygma.sol's own wiring.
+	rv, rvErr := relayerverifier.NewRelayerVerifier(relayerVerifierAddr, client)
+	if rvErr != nil {
+		t.Fatalf("bind RelayerVerifier: %v", rvErr)
+	}
+	if err := rv.VerifyProof(&bind.CallOpts{}, relayerProof.Proof, relayerProof.Commitments, relayerProof.CommitmentPok, relayerProof.PublicSignal); err != nil {
+		t.Fatalf("RelayerVerifier.verifyProof() rejected the relayer's own proof: %v", err)
+	}
+	t.Log("RelayerVerifier.verifyProof() accepted the relayer proof directly ✓")
+
 	participantIds := make([]*big.Int, nBanks)
 	for i := range participantIds {
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
 
-	// ── First submission: must succeed ────────────────────────────────────────
-	r1 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, participantIds))
+	// expectRelayerRejection submits a Transfer with a bad relayerProof and
+	// asserts it never succeeds. Hardhat Network simulates transactions as
+	// part of accepting them, so a revert can surface either as an error
+	// from the send itself or (less often here) as a mined Status=0
+	// receipt — both mean the same thing on-chain: nothing happened, no
+	// nullifier was consumed, so transferProof/relayerProof stay valid for
+	// the real submission below.
+	expectRelayerRejection := func(label string, badProof enygma.IEnygmaRelayerProof) {
+		t.Helper()
+		tx, txErr := instance.Transfer(mkAuth(), commitmentDeltas, transferProof, badProof, participantIds)
+		if txErr != nil {
+			t.Logf("%s correctly rejected at send (%v) ✓", label, txErr)
+			return
+		}
+		r, err := bind.WaitMined(context.Background(), client, tx)
+		if err != nil {
+			t.Fatalf("%s: wait mined: %v", label, err)
+		}
+		if r.Status != 0 {
+			t.Fatalf("FAIL: Transfer succeeded with %s — not enforced", label)
+		}
+		t.Logf("%s correctly rejected on-chain (Status=0, tx=%s) ✓", label, r.TxHash.Hex())
+	}
+
+	// ── Tampered relayer binding: must be rejected, nullifier untouched ───────
+	// Note: since a Groth16 proof cryptographically binds its own public
+	// inputs, tampering PublicSignal without regenerating the proof also
+	// breaks the relayer proof's own validity (_verifyRelayerProof rejects
+	// it before _verifyRelayerBinding is even reached) — this still proves
+	// the security property that matters (a sender/relayer mismatch here
+	// gets rejected), just via InvalidProof rather than
+	// RelayerBindingMismatch specifically.
+	tamperedRelayerProof := relayerProof
+	tamperedRelayerProof.PublicSignal[0] = new(big.Int).Add(relayerProof.PublicSignal[0], big.NewInt(1))
+	expectRelayerRejection("tampered relayer public_signal", tamperedRelayerProof)
+
+	// ── Garbage relayer proof (correct binding, invalid proof bytes) ──────────
+	garbageRelayerProof := relayerProof
+	for i := range garbageRelayerProof.Proof {
+		garbageRelayerProof.Proof[i] = big.NewInt(0)
+	}
+	expectRelayerRejection("garbage relayer proof", garbageRelayerProof)
+
+	// ── First (real) submission: must succeed ─────────────────────────────────
+	r1 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, relayerProof, participantIds))
 	if r1.Status != 1 {
 		t.Fatal("first Transfer reverted — setup problem, not a nullifier issue")
 	}
 	t.Logf("first Transfer PASSED  tx=%s  gas=%d", r1.TxHash.Hex(), r1.GasUsed)
 
 	// ── Second submission with identical proof: must be rejected ──────────────
-	// mkAuth sets an explicit GasLimit so go-ethereum skips eth_call simulation
-	// and sends the tx directly. The contract reverts on-chain (NullifierAlreadyUsed);
-	// we detect this by waiting for the receipt and checking Status == 0.
-	r2 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, participantIds))
-	if r2.Status != 0 {
-		t.Fatal("FAIL: second Transfer with the same proof succeeded — nullifier reuse NOT blocked")
-	}
-	t.Logf("second Transfer reverted on-chain (Status=0, tx=%s) — nullifier reuse correctly blocked", r2.TxHash.Hex())
-	t.Log("PASSED: NullifierAlreadyUsed enforced — replay attack blocked at the contract level")
+	// Note: transfer() checks _verifyPublicInputsFP (proof's embedded
+	// "previous commitment" matches current on-chain balance) BEFORE
+	// _consumeNullifierFP — and round 1 already advanced bank 0's balance,
+	// so the identical proof's now-stale previous-commitment trips
+	// InvalidPublicInputs before the nullifier check is ever reached. Either
+	// way the outcome that matters holds: the replay is rejected and no
+	// second balance update happens.
+	expectRelayerRejection("replayed proof (stale previous-commitment / nullifier reuse)", relayerProof)
+	t.Log("PASSED: replay attack blocked at the contract level")
 }
 
 // ── Shared fresh-contract setup ───────────────────────────────────────────────
@@ -769,9 +900,24 @@ func TestInvalidProofRejection(t *testing.T) {
 
 	badTransferProof := enygma.IEnygmaProof{Proof: badProof, PublicSignal: badPubSig}
 
+	// The relayer proof here is also garbage — irrelevant, since
+	// _verifyTransferProof (checked first in transfer()) already rejects
+	// badTransferProof before the relayer proof is ever examined.
+	var badRelayerProof enygma.IEnygmaRelayerProof
+	for i := range badRelayerProof.Proof {
+		badRelayerProof.Proof[i] = big.NewInt(0)
+	}
+	for i := range badRelayerProof.Commitments {
+		badRelayerProof.Commitments[i] = big.NewInt(0)
+	}
+	for i := range badRelayerProof.CommitmentPok {
+		badRelayerProof.CommitmentPok[i] = big.NewInt(0)
+	}
+	copy(badRelayerProof.PublicSignal[:], badPubSig[:])
+
 	// mkAuth sets explicit GasLimit → tx is sent without eth_call simulation.
 	// Revert is detected via receipt Status == 0.
-	r := waitTx(instance.Transfer(mkAuth(), neutralDeltas, badTransferProof, participantIds))
+	r := waitTx(instance.Transfer(mkAuth(), neutralDeltas, badTransferProof, badRelayerProof, participantIds))
 	if r.Status != 0 {
 		t.Fatal("FAIL: Transfer with invalid proof succeeded — proof verification not enforced")
 	}

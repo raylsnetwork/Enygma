@@ -4,7 +4,10 @@ package enygma_test
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 
 	"enygma_payments_relayer/config"
 	contracts "enygma_payments_relayer/contracts"
@@ -25,13 +28,18 @@ const hardhatKey0 = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f
 // ── Mock Ethereum contract ────────────────────────────────────────────────────
 
 // mockContract implements server.EnygmaContract.
-// Transfer returns the configured tx/err pair.
+// Transfer returns the configured tx/err pair. transferCalls counts how many
+// times Transfer was actually invoked — used to assert it's never called
+// when an earlier step (e.g. relayer re-verification) should have failed
+// first.
 type mockContract struct {
-	tx  *types.Transaction
-	err error
+	tx            *types.Transaction
+	err           error
+	transferCalls int
 }
 
-func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []*big.Int) (*types.Transaction, error) {
+func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ contracts.IEnygmaRelayerProof, _ []*big.Int) (*types.Transaction, error) {
+	m.transferCalls++
 	return m.tx, m.err
 }
 
@@ -78,16 +86,50 @@ func successReceipt(tx *types.Transaction) *types.Receipt {
 	}
 }
 
+// ── Mock gnark-server (relayer recursive re-verification) ───────────────────
+
+// gnarkMockServer is a single shared fake gnark-server that always returns a
+// well-shaped (but not cryptographically real) relayer proof: 12 proof
+// elements, 80 public signal elements. It never validates the request body
+// beyond that — the crypto is exercised in gnark-server's own tests
+// (pkg/circuits/relayer/circuit_test.go), not here; this package tests the
+// relayer service's plumbing only. Started once for the whole test binary.
+var gnarkMockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// *big.Int marshals as a bare JSON number (matching the real
+	// gnark-server's RelayerOutput{Proof, PublicSignal []*big.Int}) —
+	// NOT a quoted string, which is why this uses []*big.Int rather than
+	// []string.
+	proof := make([]*big.Int, 12)
+	for i := range proof {
+		proof[i] = big.NewInt(int64(i + 1))
+	}
+	pubSig := make([]*big.Int, 80)
+	for i := range pubSig {
+		pubSig[i] = big.NewInt(int64(i + 100))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"proof":        proof,
+		"publicSignal": pubSig,
+	})
+}))
+
 // ── Handler factory ──────────────────────────────────────────────────────────
 
-// newTestHandler creates a Handler backed by mock contract + mock miner.
+// newTestHandler creates a Handler backed by mock contract + mock miner,
+// with GnarkServerURL pointed at the shared gnarkMockServer above so
+// RelayTransfer's relayer re-verification step succeeds by default. Tests
+// that specifically exercise gnark-server failure build their own Handler
+// via server.NewHandlerWithDeps with a different GnarkServerURL instead of
+// using this factory.
 func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
 	privKey, _ := crypto.HexToECDSA(hardhatKey0)
 	auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(1337))
 	cfg := &config.Config{
-		APIKey:   testAPIKey,
-		ChainID:  big.NewInt(1337),
-		GasLimit: 300_000_000,
+		APIKey:         testAPIKey,
+		ChainID:        big.NewInt(1337),
+		GasLimit:       300_000_000,
+		GnarkServerURL: gnarkMockServer.URL,
 	}
 	return server.NewHandlerWithDeps(cfg, "0x1234567890123456789012345678901234567890", auth, m, c)
 }

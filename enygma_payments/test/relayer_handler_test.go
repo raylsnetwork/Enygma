@@ -17,9 +17,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"enygma_payments_relayer/config"
 	"enygma_payments_relayer/server"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // ── bearerAuth middleware ─────────────────────────────────────────────────────
@@ -221,6 +224,82 @@ func TestRelayHandler_Transfer_TxReverted(t *testing.T) {
 	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, validTransferBody())
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("got %d, want 400 (reverted)", w.Code)
+	}
+}
+
+// ── Relayer re-verification (gnark-server) ───────────────────────────────────
+
+func TestRelayHandler_Transfer_GnarkServerUnreachable(t *testing.T) {
+	privKey, _ := crypto.HexToECDSA(hardhatKey0)
+	auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(1337))
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	dead.Close() // guarantees connection-refused, not just a slow/odd response
+
+	contract := &mockContract{tx: dummyTx()}
+	cfg := &config.Config{
+		APIKey:         testAPIKey,
+		ChainID:        big.NewInt(1337),
+		GasLimit:       300_000_000,
+		GnarkServerURL: dead.URL,
+	}
+	h := server.NewHandlerWithDeps(cfg, "0x1234567890123456789012345678901234567890", auth, &mockMiner{receipt: successReceipt(dummyTx())}, contract)
+	r := server.NewWithHandler(testAPIKey, h)
+
+	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, validTransferBody())
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("got %d, want 502 (bad gateway)", w.Code)
+	}
+	if contract.transferCalls != 0 {
+		t.Errorf("Transfer() was called %d times, want 0 — should never be reached when gnark-server re-verification fails", contract.transferCalls)
+	}
+}
+
+func TestRelayHandler_Transfer_GnarkServerBadResponse(t *testing.T) {
+	privKey, _ := crypto.HexToECDSA(hardhatKey0)
+	auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(1337))
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Wrong shape: only 8 proof elements instead of the required 12.
+		pubSig := make([]*big.Int, 80)
+		for i := range pubSig {
+			pubSig[i] = big.NewInt(0)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"proof":        []*big.Int{big.NewInt(1), big.NewInt(2), big.NewInt(3), big.NewInt(4), big.NewInt(5), big.NewInt(6), big.NewInt(7), big.NewInt(8)},
+			"publicSignal": pubSig,
+		})
+	}))
+	defer bad.Close()
+
+	contract := &mockContract{tx: dummyTx()}
+	cfg := &config.Config{
+		APIKey:         testAPIKey,
+		ChainID:        big.NewInt(1337),
+		GasLimit:       300_000_000,
+		GnarkServerURL: bad.URL,
+	}
+	h := server.NewHandlerWithDeps(cfg, "0x1234567890123456789012345678901234567890", auth, &mockMiner{receipt: successReceipt(dummyTx())}, contract)
+	r := server.NewWithHandler(testAPIKey, h)
+
+	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, validTransferBody())
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("got %d, want 502 (bad gateway)", w.Code)
+	}
+	if contract.transferCalls != 0 {
+		t.Errorf("Transfer() was called %d times, want 0", contract.transferCalls)
+	}
+}
+
+func TestRelayHandler_Transfer_UsesRelayerProof(t *testing.T) {
+	tx := dummyTx()
+	contract := &mockContract{tx: tx}
+	r := server.NewWithHandler(testAPIKey, newTestHandler(contract, &mockMiner{receipt: successReceipt(tx)}))
+	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, validTransferBody())
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if contract.transferCalls != 1 {
+		t.Errorf("Transfer() called %d times, want exactly 1", contract.transferCalls)
 	}
 }
 
