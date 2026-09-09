@@ -13,8 +13,12 @@ import (
 	enygma "enygma-server/pkg/circuits/enygma"
 	enygma_fee "enygma-server/pkg/circuits/enygma_fee"
 	deposit "enygma-server/pkg/circuits/deposit"
+	relayer "enygma-server/pkg/circuits/relayer"
 	withdraw "enygma-server/pkg/circuits/withdraw"
 	utils "enygma-server/utils"
+
+	"github.com/consensys/gnark/std/algebra/emulated/sw_bn254"
+	stdgroth16 "github.com/consensys/gnark/std/recursion/groth16"
 )
 
 const splitSize = 6
@@ -77,6 +81,59 @@ func generateKeysEnygma() error {
 		"keys/EnygmaPk.key",
 		"keys/EnygmaVk.key",
 		"keys/EnygmaVerifier.sol",
+	)
+}
+
+// generateKeysRelayer builds the relayer's recursive-verification circuit
+// keys. It requires keys/EnygmaVk.key to already exist — the relayer
+// circuit embeds the transfer circuit's verifying key as a compile-time
+// constant, so "enygma" must be generated before "relayer" (enforced by job
+// ordering in main(), below).
+func generateKeysRelayer() error {
+	enygmaVk, err := utils.LoadVerifyingKey(ecc.BN254, "keys/EnygmaVk.key")
+	if err != nil {
+		return fmt.Errorf("generateKeysRelayer: failed to load keys/EnygmaVk.key (generate the enygma circuit's keys first): %w", err)
+	}
+
+	// Recompile the transfer circuit only to learn its exact public-input
+	// count, needed to correctly size the placeholder inner witness below
+	// (stdgroth16.PlaceholderWitness sizes off ccs.GetNbPublicVariables()).
+	// This does not touch or regenerate the enygma circuit's own keys.
+	config := enygma.EnygmaCircuitConfig{NCommitment: splitSize}
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
+	enygmaTemplate := &enygma.EnygmaCircuit{
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
+	}
+	enygmaCcs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, enygmaTemplate)
+	if err != nil {
+		return fmt.Errorf("generateKeysRelayer: failed to compile enygma circuit: %w", err)
+	}
+
+	fixedVk, err := stdgroth16.ValueOfVerifyingKeyFixed[sw_bn254.G1Affine, sw_bn254.G2Affine, sw_bn254.GTEl](enygmaVk)
+	if err != nil {
+		return fmt.Errorf("generateKeysRelayer: failed to build fixed verifying key: %w", err)
+	}
+
+	relayerCircuit := relayer.NewCircuit(fixedVk)
+	relayerCircuit.InnerWitness = stdgroth16.PlaceholderWitness[sw_bn254.ScalarField](enygmaCcs)
+
+	return generateKeys(
+		relayerCircuit,
+		"keys/RelayerPk.key",
+		"keys/RelayerVk.key",
+		"keys/RelayerVerifier.sol",
 	)
 }
 
@@ -164,10 +221,16 @@ func generateKeysZkDvpWithdraw() error {
 //	go run ./keygen/generate_keys.go              # regenerate ALL keys
 //	go run ./keygen/generate_keys.go -circuit enygma_fee  # only fee keys
 //
-// Available -circuit values: all, enygma, enygma_fee, deposit, withdraw
+// Available -circuit values: all, enygma, relayer, enygma_fee, deposit, withdraw
+//
+// NOTE: "relayer" embeds the "enygma" circuit's verifying key as a
+// compile-time constant, so it must be generated after "enygma" — the job
+// ordering below (relayer immediately follows enygma) enforces this for
+// -circuit all; regenerating just "relayer" on its own requires
+// keys/EnygmaVk.key to already exist from a prior run.
 func main() {
 	circuit := flag.String("circuit", "all",
-		"which circuit keys to generate: all | enygma | enygma_fee | deposit | withdraw")
+		"which circuit keys to generate: all | enygma | relayer | enygma_fee | deposit | withdraw")
 	flag.Parse()
 
 	type job struct {
@@ -177,6 +240,7 @@ func main() {
 
 	all := []job{
 		{"enygma", generateKeysEnygma},
+		{"relayer", generateKeysRelayer},
 		{"enygma_fee", generateKeysEnygmaFee},
 		{"deposit", generateKeysZkDvpDeposit},
 		{"withdraw", generateKeysZkDvpWithdraw},
@@ -193,7 +257,7 @@ func main() {
 			}
 		}
 		if len(jobs) == 0 {
-			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, deposit, withdraw\n", *circuit)
+			fmt.Printf("unknown -circuit %q — valid values: all, enygma, relayer, enygma_fee, deposit, withdraw\n", *circuit)
 			os.Exit(1)
 		}
 	}

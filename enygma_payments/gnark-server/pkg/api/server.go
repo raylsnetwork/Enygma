@@ -6,16 +6,18 @@ import (
     "enygma-server/config"
     "enygma-server/pkg/circuits/enygma"
     "enygma-server/pkg/circuits/enygma_fee"
+    "enygma-server/pkg/circuits/relayer"
     "enygma-server/pkg/circuits/withdraw"
     "enygma-server/pkg/circuits/deposit"
-    
+
 )
 
 
 func NewServer(cfg *config.Config) *gin.Engine {
     r := gin.Default()
- 
+
     r.POST("/proof/enygma", enygma.NewHandler(cfg.EnygmaPk, cfg.EnygmaVk))
+    r.POST("/proof/relayer", relayer.NewHandler(cfg.RelayerPk, cfg.RelayerVk, cfg.EnygmaVk))
     r.POST("/proof/enygma_fee", enygma_fee.NewHandler(cfg.EnygmaFeePk, cfg.EnygmaFeeVk))
     r.POST("/proof/withdraw/1",  withdraw.NewHandler(cfg.WithdrawPk1,  cfg.WithdrawVk1))
     r.POST("/proof/withdraw/2",  withdraw.NewHandler(cfg.WithdrawPk2,  cfg.WithdrawVk2))

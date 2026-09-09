@@ -59,6 +59,14 @@ gnark-server/proving.key
 gnark-server/verifying.key
 gnark-server/cmd/poseidon_hash/
 
+# Relayer recursive-verification circuit's proving/verifying keys: not
+# pushed (RelayerPk.key alone is >1GB, well past GitHub's 100MB limit,
+# and proving-key material generally shouldn't be committed anyway).
+# Regenerate locally: cd gnark-server && go run ./keygen/generate_keys.go -circuit relayer
+# (requires keys/EnygmaVk.key to already exist).
+gnark-server/keys/RelayerPk.key
+gnark-server/keys/RelayerVk.key
+
 # Poseidon scratch tools
 poseidon_calc/
 

@@ -5,6 +5,8 @@ type Config struct {
     Port         string
     EnygmaPk     string
     EnygmaVk     string
+    RelayerPk    string
+    RelayerVk    string
     EnygmaFeePk  string
     EnygmaFeeVk  string
 	WithdrawPk1 string
@@ -29,6 +31,8 @@ func Load() *Config {
         Port:    	   "8080",
         EnygmaPk:     "./keys/EnygmaPk.key",
         EnygmaVk:     "./keys/EnygmaVk.key",
+        RelayerPk:    "./keys/RelayerPk.key",
+        RelayerVk:    "./keys/RelayerVk.key",
         EnygmaFeePk:  "./keys/EnygmaFeePk.key",
         EnygmaFeeVk:  "./keys/EnygmaFeeVk.key",
         WithdrawPk1:    "./keys/zkdvp/WithdrawPk1.key",
