@@ -14,6 +14,20 @@ interface IEnygma {
         uint256[80] public_signal;
     }
 
+    // The relayer's own recursive proof, independently re-verifying the
+    // sender's Proof above against the same transfer-circuit verifying key
+    // and the same 80-signal public_signal. Its proof/commitments/
+    // commitmentPok are 12 uint256s, not 8: gnark's field-emulation library
+    // internally batches this large recursive-verification circuit's
+    // range-checks via one BSB22 Pedersen commitment (commitments +
+    // commitmentPok), independent of anything the circuit does explicitly.
+    struct RelayerProof {
+        uint256[8] proof;
+        uint256[2] commitments;
+        uint256[2] commitmentPok;
+        uint256[80] public_signal;
+    }
+
     struct WithdrawProof {
         uint256[8] proof;
         uint256[50] public_signal;
@@ -95,12 +109,15 @@ interface IEnygma {
     function transfer(
         Point[] memory commitments,
         Proof memory proof,
+        RelayerProof memory relayerProof,
         uint256[] memory k
     ) external returns (bool);
 
     function burn(uint256 bankIndex, uint256 burnValue) external returns (bool);
 
     function addFeeVerifier(address verifier) external returns (bool);
+
+    function addRelayerVerifier(address verifier) external returns (bool);
 
     function transferWithFee(
         Point[] memory commitments,

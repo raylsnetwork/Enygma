@@ -91,6 +91,10 @@ contract Enygma is IEnygma {
     /// @notice Transfer verifier contracts by participant count
     mapping(uint256 => address) private _transferVerifiers;
 
+    /// @notice Relayer recursive-verification contracts by participant count
+    /// (independently re-verifies the transfer proof above — see transfer())
+    mapping(uint256 => address) private _relayerVerifiers;
+
     /// @notice Withdraw verifier contracts by split count
     mapping(uint256 => address) private _withdrawVerifiers;
 
@@ -126,6 +130,10 @@ contract Enygma is IEnygma {
     error InvalidBlockNumber();
     error NullifierAlreadyUsed();
     error ReentrantCall();
+    /// @notice The relayer's independently-computed public_signal doesn't
+    /// match the sender's — the relayer attested to different values
+    /// internally than it published on-chain.
+    error RelayerBindingMismatch();
 
     // ============================================
     // MODIFIERS
@@ -349,6 +357,20 @@ contract Enygma is IEnygma {
         return true;
     }
     /**
+     * @notice Register relayer recursive-verification verifier contract
+     * @param verifier Address of verifier contract (verifies the relayer's
+     * own proof that it independently re-checked the sender's transfer proof)
+     */
+    function addRelayerVerifier(address verifier) external onlyOwner returns (bool) {
+        if (verifier == address(0)) revert ZeroAddress();
+
+        _relayerVerifiers[DEFAULT_SIZE] = verifier;
+
+        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        return true;
+    }
+
+    /**
      * @notice Register withdraw verifier contract
      * @param verifier Address of verifier contract
      * @param splitCount Number of splits this verifier handles
@@ -416,15 +438,28 @@ contract Enygma is IEnygma {
      * @notice Execute confidential transfer
      * @param commitmentDeltas Balance changes for each participant
      * @param proof Zero-knowledge proof
+     * @param relayerProof The relayer's own recursive proof, independently
+     * re-verifying `proof` against the same transfer-circuit verifying key
+     * and the same public_signal — so the on-chain outcome no longer rests
+     * on trusting the relayer to have forwarded the sender's data honestly.
      * @param participantIds Account IDs involved in transfer
      */
     function transfer(
         Point[] calldata commitmentDeltas,
         Proof calldata proof,
+        RelayerProof calldata relayerProof,
         uint256[] calldata participantIds
     ) external onlyRegistered whenInitialized returns (bool) {
         // Verify zero-knowledge proof
         _verifyTransferProof(proof, commitmentDeltas.length);
+
+        // Independently re-verify the same statement via the relayer's own
+        // recursive proof, and bind it to the exact same public_signal the
+        // sender's proof above uses — this is what actually prevents a
+        // relayer from attesting to one set of public inputs internally
+        // while publishing a different set here.
+        _verifyRelayerProof(relayerProof, commitmentDeltas.length);
+        _verifyRelayerBinding(proof.public_signal, relayerProof.public_signal);
 
         // Verify public inputs match current state and commitment deltas match proof
         _verifyPublicInputsFP(proof.public_signal, participantIds, commitmentDeltas);
@@ -701,6 +736,52 @@ contract Enygma is IEnygma {
             )
         );
         if (!success) revert InvalidProof();
+    }
+
+    /**
+     * @notice Verify the relayer's own recursive proof — that it
+     * independently re-checked the sender's transfer proof against the same
+     * verifying key. Signature has 4 array args, not 2: gnark's
+     * field-emulation library batches this recursive circuit's range-checks
+     * via one BSB22 Pedersen commitment internally, so its generated
+     * verifier takes (proof, commitments, commitmentPok, public_signal)
+     * rather than the plain (proof, public_signal) every other verifier
+     * here uses.
+     */
+    function _verifyRelayerProof(
+        RelayerProof calldata proof,
+        uint256 participantCount
+    ) private {
+        address verifier = _relayerVerifiers[participantCount];
+        if (verifier == address(0)) revert VerifierNotFound();
+
+        (bool success, ) = verifier.staticcall(
+            abi.encodeWithSignature(
+                "verifyProof(uint256[8],uint256[2],uint256[2],uint256[80])",
+                proof
+            )
+        );
+        if (!success) revert InvalidProof();
+    }
+
+    /**
+     * @notice Bind the relayer's recursive proof to the sender's transfer
+     * proof: both must attest to the exact same 80-signal public_signal.
+     * Without this, the two proofs verifying independently proves nothing
+     * about them referring to the same transaction.
+     */
+    function _verifyRelayerBinding(
+        uint256[80] calldata senderSignal,
+        uint256[80] calldata relayerSignal
+    ) private pure {
+        for (uint256 i; i < 80; ) {
+            if (senderSignal[i] != relayerSignal[i]) {
+                revert RelayerBindingMismatch();
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /**
