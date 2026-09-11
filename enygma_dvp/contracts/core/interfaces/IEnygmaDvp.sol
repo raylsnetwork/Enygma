@@ -149,6 +149,9 @@ interface IEnygmaDvp {
     error InvalidSalt();
     error PrivateMintVerifierNotRegistered();
     error PublicSignalMismatch();
+    // paymentWithRelayerFee: the proof's public StFee signal does not match
+    // the contract-configured relayerFixedFeeAmount.
+    error InvalidRelayerFee();
 
     error AuditorAlreadyRegistered(uint256, uint256);
     error AuditorNotRegistered(uint256);
@@ -456,6 +459,25 @@ interface IEnygmaDvp {
         bytes calldata ctxt,
         bytes calldata encTxData
     ) external returns (bool);
+
+    // paymentWithRelayerFee is the 3-output variant of payment(): Alice pays
+    // Bob (output 0), keeps change (output 1), and the relayer earns a
+    // spendable fee note (output 2) whose amount is bound in-circuit to the
+    // public StFee signal and enforced on-chain against relayerFixedFeeAmount.
+    function paymentWithRelayerFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        bytes calldata ctxt,
+        bytes calldata encTxData
+    ) external returns (bool);
+
+    // setRelayerFixedFee (owner-only) configures the fee amount that every
+    // paymentWithRelayerFee() proof's public StFee signal must equal.
+    function setRelayerFixedFee(uint256 amount) external returns (bool);
+
+    // relayerFixedFeeAmount is the current governance-configured fixed fee —
+    // see setRelayerFixedFee.
+    function relayerFixedFeeAmount() external view returns (uint256);
 
     // lockReceiptNullifiers / unlockReceiptNullifiers are used by SwapRelayer
     // to hold nullifiers while awaiting the counterparty's leg.
