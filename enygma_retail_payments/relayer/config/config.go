@@ -26,6 +26,11 @@ type Config struct {
 	// Erc20VaultAddr — address of the deployed Erc20CoinVault contract.
 	// Used to check nullifier and root state before relaying.
 	Erc20VaultAddr string
+	// UsdrVaultAddr — address of the deployed USDr Erc20CoinVault contract
+	// (a second, independent vault registered on the same EnygmaDvp — see
+	// EnygmaDvp.paymentWithUsdrFee). Used the same way as Erc20VaultAddr,
+	// but for the USDr leg of POST /relay/payment_usdr_fee.
+	UsdrVaultAddr string
 	// TagRegistryAddr — address of the deployed TagRegistry contract.
 	// Used by POST /relay/tag to publish private messaging tags on-chain.
 	TagRegistryAddr string
@@ -59,6 +64,7 @@ func Load() (*Config, error) {
 		APIKey:               getenv("RELAYER_API_KEY", ""),
 		EnygmaDvpAddr:        getenv("RELAYER_DVP_ADDR", ""),
 		Erc20VaultAddr:       getenv("RELAYER_ERC20_VAULT_ADDR", ""),
+		UsdrVaultAddr:        getenv("RELAYER_USDR_VAULT_ADDR", ""),
 		TagRegistryAddr:        getenv("RELAYER_TAG_REGISTRY_ADDR", ""),
 		TagChannelRegistryAddr: getenv("RELAYER_TAG_CHANNEL_REGISTRY_ADDR", ""),
 		ReceiptsPath:         getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),

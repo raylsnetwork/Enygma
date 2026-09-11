@@ -152,6 +152,9 @@ interface IEnygmaDvp {
     // paymentWithRelayerFee: the proof's public StFee signal does not match
     // the contract-configured relayerFixedFeeAmount.
     error InvalidRelayerFee();
+    // paymentWithUsdrFee: the USDr leg's public StFee or StTokenId signal
+    // does not match usdrFixedFeeAmount / usdrTokenId.
+    error InvalidUsdrFee();
 
     error AuditorAlreadyRegistered(uint256, uint256);
     error AuditorNotRegistered(uint256);
@@ -478,6 +481,29 @@ interface IEnygmaDvp {
     // relayerFixedFeeAmount is the current governance-configured fixed fee —
     // see setRelayerFixedFee.
     function relayerFixedFeeAmount() external view returns (uint256);
+
+    // paymentWithUsdrFee settles a normal payment (against vaultId) and a
+    // UsdrFeeCircuit proof (against usdrVaultId, a second, independent
+    // relayer-fee asset — its own token/vault/circuit) atomically in one
+    // call. The USDr leg's public StFee/StTokenId signals are checked
+    // against usdrFixedFeeAmount/usdrTokenId.
+    function paymentWithUsdrFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        bytes calldata ctxt,
+        bytes calldata encTxData,
+        ProofReceipt memory usdrReceipt,
+        uint256 usdrVaultId,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
+    ) external returns (bool);
+
+    // setUsdrFixedFee / setUsdrTokenId (owner-only) configure the two values
+    // paymentWithUsdrFee() checks the USDr proof's public signals against.
+    function setUsdrFixedFee(uint256 amount) external returns (bool);
+    function setUsdrTokenId(uint256 tokenId) external returns (bool);
+    function usdrFixedFeeAmount() external view returns (uint256);
+    function usdrTokenId() external view returns (uint256);
 
     // lockReceiptNullifiers / unlockReceiptNullifiers are used by SwapRelayer
     // to hold nullifiers while awaiting the counterparty's leg.

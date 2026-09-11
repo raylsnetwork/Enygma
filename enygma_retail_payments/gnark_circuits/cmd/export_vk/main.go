@@ -142,6 +142,7 @@ func main() {
 		{"scripts/keys/Payment2inVK.key", "Payment2in.json"},
 		{"scripts/keys/PaymentFeeVK.key", "PaymentFee.json"},
 		{"scripts/keys/PaymentRelayerFeePublicVK.key", "PaymentRelayerFeePublic.json"},
+		{"scripts/keys/UsdrFeeVK.key", "UsdrFee.json"},
 	}
 	for _, e := range exports {
 		outPath := filepath.Join(buildDir, e.outName)

@@ -102,6 +102,17 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
     // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
     uint256 public relayerFixedFeeAmount;
+
+    // USDr — a second, independent relayer-fee asset (its own vault/token,
+    // its own circuit — see UsdrFeeCircuit / paymentWithUsdrFee).
+    // usdrFixedFeeAmount is the governance-configured fee amount every
+    // UsdrFee proof's public StFee signal must equal. usdrTokenId is the
+    // fixed convention value (0, matching every other circuit's WtTokenId
+    // convention in this codebase) the USDr circuit's public StTokenId
+    // signal must equal — config hygiene, not a security-critical check,
+    // since each vault already has its own independent tree/nullifier space.
+    uint256 public usdrFixedFeeAmount;
+    uint256 public usdrTokenId;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -268,6 +279,23 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 amount
     ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         relayerFixedFeeAmount = amount;
+        return true;
+    }
+
+    // setUsdrFixedFee / setUsdrTokenId configure paymentWithUsdrFee()'s two
+    // on-chain checks against the USDr proof's public StFee/StTokenId
+    // signals — see that function below.
+    function setUsdrFixedFee(
+        uint256 amount
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        usdrFixedFeeAmount = amount;
+        return true;
+    }
+
+    function setUsdrTokenId(
+        uint256 tokenId_
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        usdrTokenId = tokenId_;
         return true;
     }
 
@@ -1102,6 +1130,78 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
         uint256 commitmentBob = receipt.statement[commitmentsIndex];
         emit Payment(vaultId, commitmentBob, ctxt, encTxData);
+
+        return true;
+    }
+
+    // paymentWithUsdrFee settles two independent proofs atomically in one
+    // call: a normal payment (any of the 1-in/2-out shapes payment()
+    // accepts) against `vaultId`, and a UsdrFeeCircuit proof — a second,
+    // independent relayer-fee asset with its own vault/token — against
+    // `usdrVaultId`. Both settle or neither does.
+    //
+    // Unlike paymentWithRelayerFee (fee note is a 3rd output of the SAME
+    // proof, same token), USDr is a genuinely separate asset: its own ERC20,
+    // its own Erc20CoinVault, its own circuit. The two proofs are otherwise
+    // unrelated — there is no cross-proof binding the way enygma_payments'
+    // dual-proof transfer() needs, because each proof already nullifies
+    // against its own vault's own tree; nothing here lets one proof be
+    // replayed via the other.
+    //
+    // usdrReceipt statement layout (1-in/2-out UsdrFee circuit, 9 elements):
+    //   [0] StMessage = 0
+    //   [1] StTreeNumbers[0]
+    //   [2] StMerkleRoots[0]
+    //   [3] StNullifiers[0]
+    //   [4] StCommitmentsOut[0] = relayer's fee commitment
+    //   [5] StCommitmentsOut[1] = sender's change commitment
+    //   [6] StContractAddress   = usdr vault address
+    //   [7] StFee               = relayer fee amount — checked against usdrFixedFeeAmount
+    //   [8] StTokenId           = checked against usdrTokenId (config hygiene, see that
+    //                             state var's doc comment — not security-critical)
+    //
+    // ctxt/encTxData are the main payment's Bob note-discovery data;
+    // usdrCtxt/usdrEncTxData are the USDr fee note's (typically the relayer's
+    // own — it built the proof and already knows its own note's contents,
+    // but the data is threaded through uniformly with the main leg anyway).
+    function paymentWithUsdrFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        bytes calldata ctxt,
+        bytes calldata encTxData,
+        ProofReceipt memory usdrReceipt,
+        uint256 usdrVaultId,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
+    ) external returns (bool) {
+        // ── main leg — identical checks/settlement to payment() ──
+        if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
+        vault.checkReceiptConditions(receipt);
+        vault.nullifyFromReceipt(receipt);
+        vault.insertCommitmentsFromReceipt(receipt);
+
+        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
+        emit Payment(vaultId, receipt.statement[commitmentsIndex], ctxt, encTxData);
+
+        // ── USDr leg — checked against relayerFixedFeeAmount's USDr counterpart ──
+        if (usdrReceipt.numberOfOutputs != 2) revert InvalidNumberOfOutputs();
+        if (_coinVaults[usdrVaultId] == address(0)) revert InvalidVaultId();
+        if (usdrReceipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        if (usdrReceipt.statement[7] != usdrFixedFeeAmount) revert InvalidUsdrFee();
+        if (usdrReceipt.statement[8] != usdrTokenId) revert InvalidUsdrFee();
+
+        IAbstractCoinVault usdrVault = IAbstractCoinVault(_coinVaults[usdrVaultId]);
+        usdrVault.checkReceiptConditions(usdrReceipt);
+        usdrVault.nullifyFromReceipt(usdrReceipt);
+        usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
+
+        uint256 usdrCommitmentsIndex = 1 + 3 * usdrReceipt.numberOfInputs;
+        emit Payment(usdrVaultId, usdrReceipt.statement[usdrCommitmentsIndex], usdrCtxt, usdrEncTxData);
 
         return true;
     }
