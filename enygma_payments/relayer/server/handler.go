@@ -34,7 +34,7 @@ type EnygmaContract interface {
 	// RelayAttribution event can attribute this specific transaction —
 	// previously only the relayer's own logs knew which bank asked for
 	// a given submission.
-	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
+	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, usdrCommitmentDeltas []enygma.IEnygmaPoint, usdrProof enygma.IEnygmaUsdrProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 }
 
@@ -259,13 +259,19 @@ func (h *Handler) Info(c *gin.Context) {
 
 // RelayTransfer handles POST /relay/transfer.
 //
-// Calls Enygma.transfer(commitmentDeltas, proof, participantIds).
-// Used for confidential Enygma-to-Enygma balance updates (the enygma circuit).
-// The public signal array must have exactly 81 elements (FingerPrint 6×6
-// layout plus the Fix L-01 domain separator in the last slot). The domain
-// separator itself is supplied by the caller (part of req.PublicSignal,
-// like every other signal) — the relayer does not compute or validate it; the
+// Calls Enygma.transfer(commitmentDeltas, proof, usdrCommitmentDeltas,
+// usdrProof, participantIds, bankTag). Used for confidential
+// Enygma-to-Enygma balance updates (the enygma circuit), plus a second,
+// independent USDr proof paying the relayer a fee, settled atomically in
+// the same call. The main proof's public signal array must have exactly
+// 81 elements (FingerPrint 6×6 layout plus the Fix L-01 domain separator
+// in the last slot); the USDr proof's is zero-padded up to its own
+// 81-element shape (one more than the main proof's 80 pre-L-01 count —
+// its public FeeAmount signal, appended last). The domain separator
+// itself is supplied by the caller (part of req.PublicSignal, like every
+// other signal) — the relayer does not compute or validate it; the
 // contract's own _expectedDomainId() check is what actually enforces it.
+// Both proofs share KIndex (the same k=6 anonymity-set participantIds).
 //
 // Fix L-05: a short publicSignal used to be silently zero-padded up to
 // 81, rather than rejected. Groth16 verification over the full 81-element
@@ -277,7 +283,8 @@ func (h *Handler) Info(c *gin.Context) {
 // specific class of guaranteed-revert payload wasn't caught by that
 // safeguard either), paying real gas for a transaction that could only
 // ever revert. Requiring the exact length here is a free, local rejection
-// of exactly that payload shape.
+// of exactly that payload shape. Not yet extended to the newer USDr leg
+// below, which still pads rather than rejects a short publicSignal.
 func (h *Handler) RelayTransfer(c *gin.Context) {
 	var req RelayTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -306,6 +313,17 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		pubSig80[i] = n
 	}
 
+	usdrProof8, err := parseProof8(req.UsdrProof)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrProof: %v", err)})
+		return
+	}
+	usdrPubSig81, err := padPublicSignal81(req.UsdrPublicSignal)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: %v", err)})
+		return
+	}
+
 	commitments, err := parseCommitments(req.Commitments)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("commitments: %v", err)})
@@ -320,10 +338,23 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	usdrCommitments, err := parseCommitments(req.UsdrCommitments)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrCommitments: %v", err)})
+		return
+	}
+	if err := checkParticipantCount(len(usdrCommitments), len(kIndex)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	transferProof := enygma.IEnygmaProof{
 		Proof:        proof8,
 		PublicSignal: pubSig80,
+	}
+	usdrTransferProof := enygma.IEnygmaUsdrProof{
+		Proof:        usdrProof8,
+		PublicSignal: usdrPubSig81,
 	}
 
 	dedupKey, err := requestDedupKey("transfer", req)
@@ -347,7 +378,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	// WaitMined, so one slow-to-mine transaction can no longer hold every
 	// other bank's request queued behind it for up to txTimeout.
 	h.txMu.Lock()
-	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, kIndex, bankID) // Fix H-09
+	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, usdrCommitments, usdrTransferProof, kIndex, bankID) // Fix H-09
 	h.txMu.Unlock()
 	if err != nil {
 		log.Printf("[relay] bank=%s transfer: submit failed: %v", bankID, err)
@@ -559,6 +590,30 @@ func checkParticipantCount(nCommitments, nKIndex int) error {
 		return fmt.Errorf("commitments/kIndex must contain exactly %d elements (Enygma's fixed participant count), got %d", maxParticipants, nCommitments)
 	}
 	return nil
+}
+
+// padPublicSignal81 is the USDr proof's counterpart to the main proof's
+// strict-length check above: it carries one extra public signal
+// (FeeAmount, appended last — see USDrCircuit.Define / IEnygma.UsdrProof)
+// beyond the main proof's 80, and — unlike the main proof — has no Fix
+// L-05 equivalent yet, so a short publicSignal here is still silently
+// zero-padded rather than rejected.
+func padPublicSignal81(signal []string) ([81]*big.Int, error) {
+	var out [81]*big.Int
+	if len(signal) > 81 {
+		return out, fmt.Errorf("%d elements exceeds maximum of 81", len(signal))
+	}
+	for i := range out {
+		out[i] = big.NewInt(0)
+	}
+	for i, s := range signal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return out, fmt.Errorf("[%d]: invalid decimal %q", i, s)
+		}
+		out[i] = n
+	}
+	return out, nil
 }
 
 // parseProof8 converts an 8-element decimal string array into [8]*big.Int.

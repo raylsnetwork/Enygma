@@ -30,6 +30,8 @@ type Config struct {
 	EnygmaVk    string
 	EnygmaFeePk string
 	EnygmaFeeVk string
+	UsdrPk      string
+	UsdrVk      string
 	// Fix M-16: was six independent WithdrawPk1..6/WithdrawVk1..6 pairs —
 	// one per constraint-system-identical, redundantly-set-up "split"
 	// verifier that never actually varied by split count (see
@@ -53,6 +55,8 @@ func Load() *Config {
 		EnygmaVk:    "./keys/EnygmaVk.key",
 		EnygmaFeePk: "./keys/EnygmaFeePk.key",
 		EnygmaFeeVk: "./keys/EnygmaFeeVk.key",
+		UsdrPk:      "./keys/UsdrPk.key",
+		UsdrVk:      "./keys/UsdrVk.key",
 		WithdrawPk6: "./keys/zkdvp/WithdrawPk6.key",
 		WithdrawVk6: "./keys/zkdvp/WithdrawVk6.key",
 

@@ -9,6 +9,7 @@ import (
 	"enygma-server/pkg/circuits/deposit"
 	"enygma-server/pkg/circuits/enygma"
 	"enygma-server/pkg/circuits/enygma_fee"
+	"enygma-server/pkg/circuits/usdr"
 	"enygma-server/pkg/circuits/withdraw"
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +30,7 @@ func NewServer(cfg *config.Config) *gin.Engine {
 
 	r.POST("/proof/enygma", enygma.NewHandler(cfg.EnygmaPk, cfg.EnygmaVk))
 	r.POST("/proof/enygma_fee", enygma_fee.NewHandler(cfg.EnygmaFeePk, cfg.EnygmaFeeVk))
+	r.POST("/proof/usdr", usdr.NewHandler(cfg.UsdrPk, cfg.UsdrVk))
 	// Fix M-16: was six routes (/proof/withdraw/1..6) for one constraint
 	// system — see config.Config.WithdrawPk6's doc comment. Only /6 was
 	// ever reachable through Enygma.sol's withdraw() (which forces

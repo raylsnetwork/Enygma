@@ -38,7 +38,7 @@ type mockContract struct {
 	gotBankTag string
 }
 
-func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
+func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaUsdrProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
 	m.gotBankTag = bankTag
 	return m.tx, m.err
 }
