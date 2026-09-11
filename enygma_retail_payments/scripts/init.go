@@ -206,6 +206,30 @@ func initializePayment() error {
 		return fmt.Errorf("failed to register Erc20CoinVault: %w", err)
 	}
 
+	// USDr — a second, independent relayer-fee asset. registerVault assigns
+	// vaultId=1 automatically (it's the 2nd vault registered on this
+	// EnygmaDvp instance). See EnygmaDvp.paymentWithUsdrFee.
+	fmt.Println("Registering UsdrCoinVault...")
+	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
+		common.HexToAddress(receipts["UsdrCoinVault"].ContractAddress),
+		common.HexToAddress(receipts["UsdrERC20"].ContractAddress),
+		big.NewInt(1),
+		treeDepth,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register UsdrCoinVault: %w", err)
+	}
+
+	// usdrTokenId defaults to 0 — the same fixed convention value every other
+	// circuit in this codebase uses (see EnygmaDvp.sol's usdrTokenId doc
+	// comment). Setting it explicitly here documents the intent even though
+	// it matches the zero-value default.
+	fmt.Println("Setting usdrTokenId = 0...")
+	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "setUsdrTokenId", big.NewInt(0))
+	if err != nil {
+		return fmt.Errorf("failed to set usdrTokenId: %w", err)
+	}
+
 	fmt.Println("EnygmaDvp initialized for retail payments.")
 	return nil
 }

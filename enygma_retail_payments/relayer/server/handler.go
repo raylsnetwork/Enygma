@@ -56,6 +56,7 @@ type Handler struct {
 	tagChannelRegistryABI  abi.ABI
 	dvpAddr                common.Address
 	vaultAddr              common.Address
+	usdrVaultAddr          common.Address // zero address unless configured — POST /relay/payment_usdr_fee 503s without it
 	tagRegistryAddr        common.Address
 	tagChannelRegistryAddr common.Address
 	auth                   *bind.TransactOpts
@@ -102,6 +103,16 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 	}
 	if dvpAddrStr == "" || vaultAddrStr == "" {
 		return nil, fmt.Errorf("EnygmaDvp and Erc20CoinVault addresses must be set via env or receipts.json")
+	}
+
+	// Resolve UsdrCoinVault address — optional, mirrors TagRegistry's pattern:
+	// POST /relay/payment_usdr_fee returns 503 if it's never configured.
+	usdrVaultAddrStr := cfg.UsdrVaultAddr
+	if usdrVaultAddrStr == "" {
+		receipts, err := loadReceipts(cfg.ReceiptsPath)
+		if err == nil {
+			usdrVaultAddrStr = receipts["UsdrCoinVault"].ContractAddress
+		}
 	}
 
 	// Resolve TagRegistry address.
@@ -163,6 +174,7 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		tagChannelRegistryABI:  tagChannelRegistryABI,
 		dvpAddr:                common.HexToAddress(dvpAddrStr),
 		vaultAddr:              common.HexToAddress(vaultAddrStr),
+		usdrVaultAddr:          common.HexToAddress(usdrVaultAddrStr),
 		tagRegistryAddr:        common.HexToAddress(tagRegistryAddrStr),
 		tagChannelRegistryAddr: common.HexToAddress(tagChannelRegistryAddrStr),
 		auth:                   auth,
@@ -418,6 +430,166 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
+}
+
+// RelayPaymentUsdrFee is the gin handler for POST /relay/payment_usdr_fee.
+//
+// Settles two independent proofs atomically in one call
+// (EnygmaDvp.paymentWithUsdrFee): a normal payment against the main vault,
+// and a UsdrFeeCircuit proof — a second, independent relayer-fee asset with
+// its own token/vault/circuit — against the USDr vault.
+//
+// Validation steps:
+//  1. Confirm the USDr vault is configured (503 if not).
+//  2. Parse and decode both legs' fields from the request body.
+//  3. Check both legs' Merkle roots are known and nullifiers unspent.
+//  4. Enforce the configured minimum fee (RELAYER_MIN_FEE) against the USDr
+//     leg's public StFee (usdrSignal[7]).
+//  5. Confirm the USDr fee note is addressed to this relayer: recompute
+//     Poseidon(feeSpendPubKey, feeSalt, StFee, StTokenId) — both StFee and
+//     StTokenId read straight from the USDr leg's own public signal — and
+//     compare against usdrSignal[4] (the fee note's commitment, output 0 of
+//     the UsdrFeeCircuit).
+//  6. Sign and submit both receipts to EnygmaDvp.paymentWithUsdrFee().
+func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
+	if (h.usdrVaultAddr == common.Address{}) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "USDr vault not configured — set RELAYER_USDR_VAULT_ADDR",
+		})
+		return
+	}
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+
+	var req RelayPaymentUsdrFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	p, err := parseUsdrFeeRequest(&req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+
+	// Main leg: [msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, contractAddr]
+	treeNum := p.publicSignal[1]
+	root := p.publicSignal[2]
+	nullifier := p.publicSignal[3]
+
+	// USDr leg: [msg, treeNum0, root0, nullifier0, cmtFee, cmtChange, contractAddr, fee, tokenId]
+	usdrTreeNum := p.usdrPublicSignal[1]
+	usdrRoot := p.usdrPublicSignal[2]
+	usdrNullifier := p.usdrPublicSignal[3]
+	cmtFee := p.usdrPublicSignal[4]
+	fee := p.usdrPublicSignal[7]
+	tokenId := p.usdrPublicSignal[8]
+
+	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
+	usdrVault := bind.NewBoundContract(h.usdrVaultAddr, h.vaultABI, h.client, h.client, h.client)
+
+	// Step 3 — root/nullifier checks, both legs.
+	for _, leg := range []struct {
+		name      string
+		vault     *bind.BoundContract
+		treeNum   *big.Int
+		root      *big.Int
+		nullifier *big.Int
+	}{
+		{"main", vault, treeNum, root, nullifier},
+		{"usdr", usdrVault, usdrTreeNum, usdrRoot, usdrNullifier},
+	} {
+		var rootResult []interface{}
+		if err := leg.vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", leg.treeNum, leg.root); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s rootHistory check: %s", leg.name, err)})
+			return
+		}
+		if rootKnown, ok := rootResult[0].(bool); !ok || !rootKnown {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s: merkle root is not a known vault root", leg.name)})
+			return
+		}
+
+		var nfResult []interface{}
+		if err := leg.vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", leg.treeNum, leg.nullifier); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s nullifiers check: %s", leg.name, err)})
+			return
+		}
+		nfSpent, ok := nfResult[0].(bool)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s: unexpected type from nullifiers()", leg.name)})
+			return
+		}
+		if nfSpent {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s: nullifier already spent", leg.name)})
+			return
+		}
+	}
+
+	// Step 4 — minimum fee floor.
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
+		})
+		return
+	}
+
+	// Step 5 — the USDr fee note must actually be addressed to this relayer's key.
+	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, p.usdrFeeSalt, fee, tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
+		return
+	}
+	if expectedFeeCmt.Cmp(cmtFee) != 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "USDr fee note is not addressed to this relayer's published spend key " +
+				"(GET /relay/info) — usdrPublicSignal[4] does not match " +
+				"Poseidon(relayerFeeSpendPubKey, usdrFeeSalt, StFee, StTokenId)",
+		})
+		return
+	}
+
+	// Step (dedup) — claim both nullifiers as in-flight.
+	nfKey := "usdrFee:" + treeNum.String() + ":" + nullifier.String() + ":" + usdrNullifier.String()
+	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
+		return
+	}
+	defer h.inFlight.Delete(nfKey)
+
+	h.txMu.Lock()
+	defer h.txMu.Unlock()
+
+	// Step 6 — build both ProofReceipts and submit atomically.
+	receipt, usdrReceipt := buildUsdrFeeProofReceipts(p)
+
+	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
+	tx, err := dvp.Transact(h.auth, "paymentWithUsdrFee",
+		receipt, p.vaultId, p.cipherText, p.encTxData,
+		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
+		return
+	}
+	txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+		return
+	}
+	if txReceipt.Status == types.ReceiptStatusFailed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
+		return
+	}
+
+	c.JSON(http.StatusOK, RelayPaymentUsdrFeeResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
 		BlockNumber: txReceipt.BlockNumber.Uint64(),
 		GasUsed:     txReceipt.GasUsed,
@@ -827,6 +999,87 @@ func parseRelayerFeeRequest(req *RelayPaymentRelayerFeeRequest) (*parsedRelayerF
 	}, nil
 }
 
+func parseUsdrFeeRequest(req *RelayPaymentUsdrFeeRequest) (*parsedUsdrFee, error) {
+	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid vaultId: %q", req.VaultId)
+	}
+	usdrVaultId, ok := new(big.Int).SetString(req.UsdrVaultId, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid usdrVaultId: %q", req.UsdrVaultId)
+	}
+
+	var proof [8]*big.Int
+	for i, s := range req.Proof {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid proof[%d]: %q", i, s)
+		}
+		proof[i] = n
+	}
+	var usdrProof [8]*big.Int
+	for i, s := range req.UsdrProof {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid usdrProof[%d]: %q", i, s)
+		}
+		usdrProof[i] = n
+	}
+
+	var sig [7]*big.Int
+	for i, s := range req.PublicSignal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid publicSignal[%d]: %q", i, s)
+		}
+		sig[i] = n
+	}
+	var usdrSig [9]*big.Int
+	for i, s := range req.UsdrPublicSignal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid usdrPublicSignal[%d]: %q", i, s)
+		}
+		usdrSig[i] = n
+	}
+
+	usdrFeeSalt, ok := new(big.Int).SetString(req.UsdrFeeSalt, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid usdrFeeSalt: %q", req.UsdrFeeSalt)
+	}
+
+	ctBytes, err := decodeHexField(req.CipherText, "cipherText")
+	if err != nil {
+		return nil, err
+	}
+	encBytes, err := decodeHexField(req.EncTxData, "encTxData")
+	if err != nil {
+		return nil, err
+	}
+	usdrCtBytes, err := decodeHexField(req.UsdrCipherText, "usdrCipherText")
+	if err != nil {
+		return nil, err
+	}
+	usdrEncBytes, err := decodeHexField(req.UsdrEncTxData, "usdrEncTxData")
+	if err != nil {
+		return nil, err
+	}
+
+	return &parsedUsdrFee{
+		vaultId:          vaultId,
+		proof:            proof,
+		publicSignal:     sig,
+		cipherText:       ctBytes,
+		encTxData:        encBytes,
+		usdrVaultId:      usdrVaultId,
+		usdrProof:        usdrProof,
+		usdrPublicSignal: usdrSig,
+		usdrCipherText:   usdrCtBytes,
+		usdrEncTxData:    usdrEncBytes,
+		usdrFeeSalt:      usdrFeeSalt,
+	}, nil
+}
+
 func decodeHexField(s, fieldName string) ([]byte, error) {
 	s = strings.TrimPrefix(s, "0x")
 	b, err := hex.DecodeString(s)
@@ -897,6 +1150,52 @@ func buildRelayerFeeProofReceipt(p *parsedRelayerFee) proofReceipt {
 		NumberOfInputs:  big.NewInt(1),
 		NumberOfOutputs: big.NewInt(3),
 	}
+}
+
+// buildUsdrFeeProofReceipts maps a parsedUsdrFee into the two ProofReceipt
+// structs EnygmaDvp.paymentWithUsdrFee() expects — the main leg (identical
+// shape to buildProofReceipt's, NumberOfOutputs=2) and the USDr leg
+// (UsdrFeeCircuit: NumberOfInputs=1, NumberOfOutputs=2, 9-element statement).
+func buildUsdrFeeProofReceipts(p *parsedUsdrFee) (receipt, usdrReceipt proofReceipt) {
+	sp := snarkProof{
+		A: g1Point{X: p.proof[0], Y: p.proof[1]},
+		B: g2Point{
+			X: [2]*big.Int{p.proof[2], p.proof[3]},
+			Y: [2]*big.Int{p.proof[4], p.proof[5]},
+		},
+		C: g1Point{X: p.proof[6], Y: p.proof[7]},
+	}
+	statement := make([]*big.Int, 7)
+	for i := range p.publicSignal {
+		statement[i] = p.publicSignal[i]
+	}
+	receipt = proofReceipt{
+		Proof:           sp,
+		Statement:       statement,
+		NumberOfInputs:  big.NewInt(1),
+		NumberOfOutputs: big.NewInt(2),
+	}
+
+	usdrSp := snarkProof{
+		A: g1Point{X: p.usdrProof[0], Y: p.usdrProof[1]},
+		B: g2Point{
+			X: [2]*big.Int{p.usdrProof[2], p.usdrProof[3]},
+			Y: [2]*big.Int{p.usdrProof[4], p.usdrProof[5]},
+		},
+		C: g1Point{X: p.usdrProof[6], Y: p.usdrProof[7]},
+	}
+	usdrStatement := make([]*big.Int, 9)
+	for i := range p.usdrPublicSignal {
+		usdrStatement[i] = p.usdrPublicSignal[i]
+	}
+	usdrReceipt = proofReceipt{
+		Proof:           usdrSp,
+		Statement:       usdrStatement,
+		NumberOfInputs:  big.NewInt(1),
+		NumberOfOutputs: big.NewInt(2),
+	}
+
+	return receipt, usdrReceipt
 }
 
 // ── file helpers ──────────────────────────────────────────────────────────────
