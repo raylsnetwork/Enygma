@@ -1,11 +1,13 @@
 module enygma_relayer
 
 go 1.26.0
+
 toolchain go1.26.6
 
 require (
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/gin-gonic/gin v1.10.1
+	github.com/iden3/go-iden3-crypto v0.0.17
 	golang.org/x/time v0.15.0
 )
 

@@ -98,6 +98,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     // authorized on-chain relayer contracts (set by owner)
     mapping(address => bool) public authorizedRelayers;
+
+    // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
+    // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
+    uint256 public relayerFixedFeeAmount;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -252,6 +256,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         _coinVaultsCount++;
 
+        return true;
+    }
+
+    // setRelayerFixedFee configures the fixed fee every paymentWithRelayerFee()
+    // proof's public StFee signal is checked against on-chain (see that
+    // function below). Without this, any fee amount the prover claims in the
+    // proof passes verification — the circuit only proves internal consistency
+    // (WtValuesOut[2] == StFee), not that the amount matches any protocol value.
+    function setRelayerFixedFee(
+        uint256 amount
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        relayerFixedFeeAmount = amount;
         return true;
     }
 
@@ -1041,7 +1057,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]   (no value burned)
     // Only output[1] is constrained to Alice's senderPk in-circuit.
     //
-    // Statement layout (1-in/3-out, 8 elements):
+    // Statement layout (1-in/3-out, 9 elements — corrected from an earlier,
+    // stale 8-element comment; the PaymentRelayerFeePublic circuit's VK/wire
+    // format has always carried StFee as its 9th public signal):
     //   [0] StMessage          = 0
     //   [1] StTreeNumbers[0]
     //   [2] StMerkleRoots[0]
@@ -1051,6 +1069,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   [6] StCommitmentsOut[2] = Relayer fee commitment
     //   [7] StContractAddress   = vault address (carried for wire-format compatibility;
     //                             not bound into the nullifier — nf = Poseidon(sk, leafIndex))
+    //   [8] StFee               = relayer fee amount — bound in-circuit to valOut[2],
+    //                             and checked here against relayerFixedFeeAmount so the
+    //                             contract (not just the circuit's internal consistency)
+    //                             enforces the exact fee amount.
     //
     // ctxt / encTxData are Bob's note discovery data (ML-KEM capsule / AEAD ciphertext).
     function paymentWithRelayerFee(
@@ -1062,6 +1084,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (receipt.numberOfOutputs != 3) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        // feeIdx = 1 + 3*nIn + nOut + 1 (contractAddr is at nIn+nOut, fee follows it) —
+        // same formula paymentWithFee() uses above; evaluates to 8 for this circuit's
+        // 1-in/3-out shape. Without this check any StFee the prover claims in the proof
+        // would pass verification — the circuit only proves valOut[2] == StFee, not that
+        // StFee matches any protocol-configured value.
+        uint256 feeIdx = 1 + 3 * receipt.numberOfInputs + receipt.numberOfOutputs + 1;
+        if (receipt.statement[feeIdx] != relayerFixedFeeAmount) revert InvalidRelayerFee();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
