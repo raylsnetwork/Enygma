@@ -36,8 +36,8 @@ import (
 	"testing"
 	"time"
 
-	enygma "enygma/contracts"
 	"enygma/agreement"
+	enygma "enygma/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -85,9 +85,19 @@ func negMod(x *big.Int) *big.Int {
 var hashRandom *big.Int // Poseidon(21) — computed once
 var hashTag *big.Int    // Poseidon(12) — computed once
 
+// hashRandomUsdr/hashTagUsdr are the USDr circuit's domain-separation
+// constants — Poseidon(210)/Poseidon(120), matching USDrCircuit.Define in
+// gnark-server/pkg/circuits/usdr/circuit.go (deliberately different from
+// hashRandom/hashTag above so MessageTags/TxRandomValues don't collide
+// between the main and USDr proofs for the same transaction).
+var hashRandomUsdr *big.Int
+var hashTagUsdr *big.Int
+
 func init() {
 	hashRandom, _ = poseidon.Hash([]*big.Int{big.NewInt(21)})
 	hashTag, _ = poseidon.Hash([]*big.Int{big.NewInt(12)})
+	hashRandomUsdr, _ = poseidon.Hash([]*big.Int{big.NewInt(210)})
+	hashTagUsdr, _ = poseidon.Hash([]*big.Int{big.NewInt(120)})
 }
 
 // hashArrayGen computes Poseidon(s, s) mod P for each secret s.
@@ -188,6 +198,59 @@ func genCommitmentAndRandom(senderId int, transferValue *big.Int, txValues []*bi
 	return commits, txRandom
 }
 
+// tagMessageGenUsdr/rValueUsdr/genCommitmentAndRandomUsdr mirror
+// tagMessageGen/rValue/genCommitmentAndRandom above but use the USDr
+// circuit's domain-separation constants (hashTagUsdr/hashRandomUsdr)
+// instead of hashTag/hashRandom, so the off-circuit MessageTags/
+// TxRandomValues match what USDrCircuit.Define computes in-circuit.
+// fingerPrintGen is NOT duplicated — the FingerPrint matrix doesn't use
+// either domain constant, so it's identical between the two circuits.
+func tagMessageGenUsdr(secrets []*big.Int, blockHash *big.Int) []*big.Int {
+	bh := new(big.Int).Mod(blockHash, curveP)
+	out := make([]*big.Int, len(secrets))
+	for i, s := range secrets {
+		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, bh})
+		out[i] = h.Mod(h, curveP)
+	}
+	return out
+}
+
+func rValueUsdr(s, blockHash *big.Int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, blockHash})
+	return h.Mod(h, curveP)
+}
+
+func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, blockHash *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
+	n := len(secrets)
+	rValues := make([]*big.Int, n)
+	rSum := new(big.Int)
+
+	for i := 0; i < n; i++ {
+		r := rValueUsdr(secrets[i], blockHash)
+		rValues[i] = r
+		if i != senderId {
+			rSum.Add(rSum, r)
+			rSum.Mod(rSum, curveP)
+		}
+	}
+	rValues[senderId] = rSum
+
+	commits := make([]enygma.IEnygmaPoint, n)
+	txRandom := make([]*big.Int, n)
+	for i := 0; i < n; i++ {
+		var pt *babyjub.Point
+		if i == senderId {
+			pt = pedersenCommitment(negMod(transferValue), rSum)
+			txRandom[i] = rSum
+		} else {
+			pt = pedersenCommitment(txValues[i], negMod(rValues[i]))
+			txRandom[i] = negMod(rValues[i])
+		}
+		commits[i] = enygma.IEnygmaPoint{C1: pt.X, C2: pt.Y}
+	}
+	return commits, txRandom
+}
+
 // ── Test constants ─────────────────────────────────────────────────────────────
 
 // chainURL and chainID are configurable via environment variables so the same
@@ -220,9 +283,10 @@ var (
 )
 
 const (
-	gnarkURL   = "http://127.0.0.1:8080/proof/enygma"
-	relayerURL = "http://127.0.0.1:8082"
-	relayerKey = "enygma-test-secret" // must match RELAYER_API_KEY
+	gnarkURL     = "http://127.0.0.1:8080/proof/enygma"
+	gnarkUsdrURL = "http://127.0.0.1:8080/proof/usdr"
+	relayerURL   = "http://127.0.0.1:8082"
+	relayerKey   = "enygma-test-secret" // must match RELAYER_API_KEY
 
 	nBanks      = 6
 	senderIdx   = 0
@@ -234,6 +298,19 @@ const (
 	senderSk    = 424242
 	senderPrevR = 67890
 	senderPrevV = mintAmt
+
+	// USDr fee amounts/credentials — a second, independent balance ledger
+	// for paying the relayer, unrelated to the main asset's mint/registration
+	// randomness above. usdrPrevR MUST differ from senderPrevR (and from
+	// every other bank's own usdrPrevR) — the nullifier derives from
+	// PreviousSenderRandomValue+SecretKey only (see USDrCircuit.Define),
+	// with no domain-separation constant protecting it, so reusing
+	// senderPrevR here would make the USDr proof's nullifier collide with
+	// the main proof's.
+	usdrMintAmt = 200
+	usdrFeeAmt  = 10
+	usdrPrevR   = 13579
+	usdrPrevV   = usdrMintAmt
 )
 
 // ownerPrivKey is loaded from the MY_KEY environment variable at test startup.
@@ -247,8 +324,12 @@ var ownerPrivKey = func() string {
 
 // receipts holds contract addresses read from deploy_receipts.json.
 type receipts struct {
-	TOKEN    struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
-	VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	TOKEN struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"TOKEN"`
+	VERIFIER struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"VERIFIER"`
 }
 
 // readReceipts reads deploy_receipts.json from run_scripts/build/enygma/web3/.
@@ -422,7 +503,7 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Fatalf("getPublicValues: %v", err)
 	}
 	prevBalances := pubVals.Balances[1:] // accounts 1-6 → circuit banks 0-5
-	onChainKeys := pubVals.Keys[1:]       // registered pks for accounts 1-6
+	onChainKeys := pubVals.Keys[1:]      // registered pks for accounts 1-6
 
 	t.Logf("bank 0 initial commitment: (%s, %s)", prevBalances[0].C1, prevBalances[0].C2)
 

@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
+	deposit "enygma-server/pkg/circuits/deposit"
 	enygma "enygma-server/pkg/circuits/enygma"
 	enygma_fee "enygma-server/pkg/circuits/enygma_fee"
-	deposit "enygma-server/pkg/circuits/deposit"
+	usdr "enygma-server/pkg/circuits/usdr"
 	withdraw "enygma-server/pkg/circuits/withdraw"
 	utils "enygma-server/utils"
 )
@@ -80,6 +81,36 @@ func generateKeysEnygma() error {
 	)
 }
 
+func generateKeysUsdr() error {
+	config := usdr.USDrCircuitConfig{
+		NCommitment: 6,
+	}
+
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
+	usdrCircuit := usdr.USDrCircuit{
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
+	}
+
+	return generateKeys(
+		&usdrCircuit,
+		"keys/UsdrPk.key",
+		"keys/UsdrVk.key",
+		"keys/UsdrVerifier.sol",
+	)
+}
+
 func generateKeysEnygmaFee() error {
 	config := enygma_fee.EnygmaFeeCircuitConfig{NCommitment: 6}
 	circuit := enygma_fee.EnygmaFeeCircuit{
@@ -131,7 +162,7 @@ func generateKeysZkDvpWithdraw() error {
 		config := withdraw.WithdrawEnygmaCircuitConfig{
 			NCommitment: 6,
 		}
-		
+
 		withdrawCircuit := withdraw.WithdrawEnygmaCircuit{
 			Config:              config,
 			HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
@@ -144,7 +175,7 @@ func generateKeysZkDvpWithdraw() error {
 			TxValues:            make([]frontend.Variable, config.NCommitment),
 			TxRandomValues:      make([]frontend.Variable, config.NCommitment),
 		}
-		
+
 		pkPath := fmt.Sprintf("keys/zkdvp/WithdrawPk%d.key", i)
 		vkPath := fmt.Sprintf("keys/zkdvp/WithdrawVk%d.key", i)
 		solPath := fmt.Sprintf("keys/zkdvp/WithdrawVerifier%d.sol", i)
@@ -164,10 +195,14 @@ func generateKeysZkDvpWithdraw() error {
 //	go run ./keygen/generate_keys.go              # regenerate ALL keys
 //	go run ./keygen/generate_keys.go -circuit enygma_fee  # only fee keys
 //
-// Available -circuit values: all, enygma, enygma_fee, deposit, withdraw
+// Available -circuit values: all, enygma, enygma_fee, usdr, deposit, withdraw
+//
+// NOTE: "usdr" has no dependency on "enygma" (unlike the earlier relayer
+// re-verification design) — it's an independent circuit, safe to generate
+// on its own or before/after "enygma".
 func main() {
 	circuit := flag.String("circuit", "all",
-		"which circuit keys to generate: all | enygma | enygma_fee | deposit | withdraw")
+		"which circuit keys to generate: all | enygma | enygma_fee | usdr | deposit | withdraw")
 	flag.Parse()
 
 	type job struct {
@@ -178,6 +213,7 @@ func main() {
 	all := []job{
 		{"enygma", generateKeysEnygma},
 		{"enygma_fee", generateKeysEnygmaFee},
+		{"usdr", generateKeysUsdr},
 		{"deposit", generateKeysZkDvpDeposit},
 		{"withdraw", generateKeysZkDvpWithdraw},
 	}
@@ -193,7 +229,7 @@ func main() {
 			}
 		}
 		if len(jobs) == 0 {
-			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, deposit, withdraw\n", *circuit)
+			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, usdr, deposit, withdraw\n", *circuit)
 			os.Exit(1)
 		}
 	}

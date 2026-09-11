@@ -45,6 +45,12 @@ contract Enygma is IEnygma {
     uint256 private constant FP_MESSAGE_TAGS_OFFSET = 73;
     uint256 private constant FP_NULLIFIER_OFFSET = 79;
 
+    // USDr proofs carry one extra signal beyond the 80-signal FP layout
+    // above: FeeAmount, appended last (index 80) — public because the fee
+    // is a fixed, protocol-known amount, not something the sender needs to
+    // hide. Every other USDr offset is identical to the FP_* constants above.
+    uint256 private constant USDR_FEE_AMOUNT_OFFSET = 80;
+
     // ============================================
     // STATE VARIABLES
     // ============================================
@@ -65,6 +71,19 @@ contract Enygma is IEnygma {
     uint256 public totalSupplyY;
     uint256 public totalSupplyAmount;
 
+    // USDr total supply as Pedersen commitment point (x, y) — independent
+    // accumulator from totalSupplyX/Y above; mixing the two assets' points
+    // into one sum would break both check() and checkUsdr().
+    uint256 public usdrTotalSupplyX;
+    uint256 public usdrTotalSupplyY;
+    uint256 public usdrTotalSupplyAmount;
+
+    // Fixed relayer fee, enforced on-chain against every usdrProof's public
+    // FeeAmount signal (USDR_FEE_AMOUNT_OFFSET). A public input rather than
+    // a circuit constant, so changing it needs no new proving/verifying
+    // keys — see setUsdrFixedFee().
+    uint256 public usdrFixedFeeAmount;
+
     // Verifier addresses
     address private _transferVerifier;
     address private _withdrawVerifier;
@@ -79,6 +98,13 @@ contract Enygma is IEnygma {
     /// @notice Balance commitments per block per account
     mapping(uint256 => mapping(uint256 => Point)) public balanceCommitments;
 
+    /// @notice USDr balance commitments per block per account — a second,
+    /// independent balance ledger alongside balanceCommitments above, used
+    /// to pay the relayer a fee via a second proof submitted in the same
+    /// transfer() call. Same shape/semantics as balanceCommitments, just a
+    /// different asset.
+    mapping(uint256 => mapping(uint256 => Point)) public usdrBalanceCommitments;
+
     /// @notice Public spend keys for each account (Poseidon(sk,sk) mod P)
     mapping(uint256 => uint256) public publicKeys;
 
@@ -90,6 +116,12 @@ contract Enygma is IEnygma {
 
     /// @notice Transfer verifier contracts by participant count
     mapping(uint256 => address) private _transferVerifiers;
+
+    /// @notice USDr transfer verifier contracts by participant count — a
+    /// separate slot from _transferVerifiers (which is already keyed by
+    /// DEFAULT_SIZE for the main-asset verifier; participant count alone
+    /// can't disambiguate the two proof types).
+    mapping(uint256 => address) private _usdrVerifiers;
 
     /// @notice Withdraw verifier contracts by split count
     mapping(uint256 => address) private _withdrawVerifiers;
@@ -126,6 +158,14 @@ contract Enygma is IEnygma {
     error InvalidBlockNumber();
     error NullifierAlreadyUsed();
     error ReentrantCall();
+    /// @notice The USDr proof's public_signal doesn't match the main
+    /// transfer proof's on the slots that must agree (public keys,
+    /// anonymity set, block number) — the two proofs must be about the
+    /// same transaction, not just independently valid.
+    error UsdrBindingMismatch();
+    /// @notice The USDr proof's public FeeAmount signal doesn't equal
+    /// usdrFixedFeeAmount — a validly-formed proof for the wrong fee.
+    error InvalidFeeAmount();
 
     // ============================================
     // MODIFIERS
@@ -196,6 +236,8 @@ contract Enygma is IEnygma {
         _status = STATUS_INITIALIZED;
         totalSupplyX = 0;
         totalSupplyY = 1; // Neutral element on Baby Jubjub
+        usdrTotalSupplyX = 0;
+        usdrTotalSupplyY = 1; // Neutral element on Baby Jubjub
 
         return true;
     }
@@ -243,6 +285,34 @@ contract Enygma is IEnygma {
         return true;
     }
 
+    /**
+     * @notice Create an account's initial USDr balance commitment.
+     * @dev Separate from registerAccount() rather than an added parameter
+     * there — bootstrapping a second asset is conceptually independent of
+     * identity registration, and this keeps registerAccount()'s signature
+     * (and every existing call site: abigen bindings, relayer/cmd/register,
+     * demo/test registration flows) untouched. Trade-off: must be called
+     * once per already-registered account (including ones registered
+     * before this feature shipped) or checkUsdr() reverts for them until it is.
+     * @param accountId Account to initialize (must already be registered)
+     * @param randomness Randomness for the initial USDr commitment
+     */
+    function initializeUsdrBalance(
+        uint256 accountId,
+        uint256 randomness
+    ) external onlyOwner returns (bool) {
+        // Create initial balance commitment: Com(0, randomness) = randomness*H
+        (uint256 commitX, uint256 commitY) = pedCom(0, randomness);
+        usdrBalanceCommitments[lastBlockNum][accountId] = Point(commitX, commitY);
+
+        (usdrTotalSupplyX, usdrTotalSupplyY) = CurveBabyJubJub.pointAdd(
+            usdrTotalSupplyX, usdrTotalSupplyY,
+            commitX, commitY
+        );
+
+        return true;
+    }
+
     // ============================================
     // SUPPLY MANAGEMENT
     // ============================================
@@ -274,6 +344,15 @@ contract Enygma is IEnygma {
         // Propagate balances to current epoch start
         _propagateBalancesExcept(recipientId);
 
+        // lastBlockNum is a single clock shared by both ledgers (see
+        // transfer()'s comment). This call touches only the main ledger,
+        // but if the epoch is about to advance below, the USDr ledger's
+        // new-epoch slot must be populated too — otherwise the next read
+        // of usdrBalanceCommitments[lastBlockNum][...] (by mintUsdrSupply,
+        // transfer, getUsdrBalance, ...) would silently see the neutral
+        // element instead of every account's real propagated balance.
+        _propagateUsdrBalancesExcept(0);
+
         // Update recipient's balance
         Point storage recipientBalance = balanceCommitments[lastBlockNum][
             recipientId
@@ -287,6 +366,56 @@ contract Enygma is IEnygma {
 
         uint256 epochStart = _currentEpochStart();
         balanceCommitments[epochStart][recipientId] = Point(newX, newY);
+        lastBlockNum = epochStart;
+
+        emit SupplyMinted(lastBlockNum, amount, recipientId);
+        return true;
+    }
+
+    /**
+     * @notice Mint USDr to a specific account — analog of mintSupply() for
+     * the USDr ledger. Needed because initializeUsdrBalance() only ever
+     * creates a zero-balance commitment; this is the only way anyone
+     * acquires USDr to pay relayer fees with.
+     * @param amount Amount to mint
+     * @param recipientId Account ID to receive USDr
+     */
+    function mintUsdrSupply(
+        uint256 amount,
+        uint256 recipientId
+    ) external onlyOwner whenInitialized returns (bool) {
+        (uint256 amountX, uint256 amountY) = derivePk(amount);
+
+        (usdrTotalSupplyX, usdrTotalSupplyY) = CurveBabyJubJub.pointAdd(
+            usdrTotalSupplyX,
+            usdrTotalSupplyY,
+            amountX,
+            amountY
+        );
+
+        unchecked {
+            usdrTotalSupplyAmount += amount;
+        }
+
+        _propagateUsdrBalancesExcept(recipientId);
+
+        // Mirror image of mintSupply()'s sync call above — this op touches
+        // only the USDr ledger, so the main ledger's new-epoch slot must be
+        // populated too before the shared clock advances below.
+        _propagateBalancesExcept(0);
+
+        Point storage recipientBalance = usdrBalanceCommitments[lastBlockNum][
+            recipientId
+        ];
+        (uint256 newX, uint256 newY) = CurveBabyJubJub.pointAdd(
+            recipientBalance.c1,
+            recipientBalance.c2,
+            amountX,
+            amountY
+        );
+
+        uint256 epochStart = _currentEpochStart();
+        usdrBalanceCommitments[epochStart][recipientId] = Point(newX, newY);
         lastBlockNum = epochStart;
 
         emit SupplyMinted(lastBlockNum, amount, recipientId);
@@ -312,6 +441,10 @@ contract Enygma is IEnygma {
 
         // Propagate balances for all other accounts
         _propagateBalancesExcept(accountId);
+
+        // Keep the USDr ledger's epoch slot in sync with the shared clock
+        // — see the matching comment in mintSupply().
+        _propagateUsdrBalancesExcept(0);
 
         // Update burned account's balance
         Point storage accountBalance = balanceCommitments[lastBlockNum][
@@ -395,6 +528,32 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Register USDr transfer verifier contract (verifies 81-signal
+     * proofs — one more than the main transfer verifier's 80, since the
+     * fee amount is a public signal here — different key)
+     * @param verifier Address of USDr verifier contract
+     */
+    function addUsdrVerifier(address verifier) external onlyOwner returns (bool) {
+        if (verifier == address(0)) revert ZeroAddress();
+
+        _usdrVerifiers[DEFAULT_SIZE] = verifier;
+
+        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        return true;
+    }
+
+    /**
+     * @notice Set the fixed USDr relayer fee. Every transfer()'s usdrProof
+     * must carry exactly this amount as its public FeeAmount signal
+     * (index 80) or the call reverts InvalidFeeAmount().
+     * @param amount The fixed fee, in USDr's plaintext unit.
+     */
+    function setUsdrFixedFee(uint256 amount) external onlyOwner returns (bool) {
+        usdrFixedFeeAmount = amount;
+        return true;
+    }
+
+    /**
      * @notice Register ZkDvp contract
      * @param zkDvp Address of ZkDvp contract
      */
@@ -413,30 +572,59 @@ contract Enygma is IEnygma {
     // ============================================
 
     /**
-     * @notice Execute confidential transfer
-     * @param commitmentDeltas Balance changes for each participant
-     * @param proof Zero-knowledge proof
-     * @param participantIds Account IDs involved in transfer
+     * @notice Execute confidential transfer, plus a USDr fee payment to the
+     * relayer settled atomically in the same call.
+     * @param commitmentDeltas Balance changes for each participant (main asset)
+     * @param proof Zero-knowledge proof (main asset)
+     * @param usdrCommitmentDeltas Balance changes for each participant (USDr)
+     * @param usdrProof Zero-knowledge proof (USDr) — independently proves a
+     * USDr balance update for the same participantIds/anonymity set/block
+     * number as `proof`, typically crediting the relayer's slot. Its public
+     * FeeAmount signal (index 80) must equal usdrFixedFeeAmount.
+     * @param participantIds Account IDs involved in transfer — shared by
+     * both proofs (same k=6 anonymity set for both)
      */
     function transfer(
         Point[] calldata commitmentDeltas,
         Proof calldata proof,
+        Point[] calldata usdrCommitmentDeltas,
+        UsdrProof calldata usdrProof,
         uint256[] calldata participantIds
     ) external onlyRegistered whenInitialized returns (bool) {
-        // Verify zero-knowledge proof
+        // Verify both zero-knowledge proofs
         _verifyTransferProof(proof, commitmentDeltas.length);
+        _verifyUsdrTransferProof(usdrProof, usdrCommitmentDeltas.length);
+
+        // Verify the two proofs are about the same transaction (same
+        // public keys, same anonymity set, same block number) — otherwise
+        // a valid-but-unrelated USDr proof could be paired with any
+        // transfer proof.
+        _verifyUsdrMainBinding(proof.public_signal, usdrProof.public_signal);
 
         // Verify public inputs match current state and commitment deltas match proof
         _verifyPublicInputsFP(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyPublicInputsUsdr(usdrProof.public_signal, participantIds, usdrCommitmentDeltas);
 
         // Verify block number freshness
         _verifyBlockNumberFP(proof.public_signal);
+        _verifyBlockNumberUsdr(usdrProof.public_signal);
 
-        // Record nullifier before state changes (Fix C-2)
+        // Record nullifiers before state changes (Fix C-2) — shared
+        // _nullifiers mapping, safe: the two circuits' domain-separation
+        // constants (see USDrCircuit) make the two nullifiers independent
+        // even for the same sender/block.
         _consumeNullifierFP(proof.public_signal);
+        _consumeNullifierUsdr(usdrProof.public_signal);
 
-        // Update balances
-        _updateBalancesForTransfer(commitmentDeltas, participantIds);
+        // Update both balances under one shared epoch clock — epochStart
+        // must be computed once and applied to lastBlockNum only after
+        // BOTH updates run, or the second update would read the first
+        // update's freshly-written (mostly empty) epoch slot as its "old
+        // balance" instead of the true previous one.
+        uint256 epochStart = _currentEpochStart();
+        _updateBalancesForTransfer(epochStart, commitmentDeltas, participantIds);
+        _updateUsdrBalancesForTransfer(epochStart, usdrCommitmentDeltas, participantIds);
+        lastBlockNum = epochStart;
 
         emit TransactionSuccessful(msg.sender);
         return true;
@@ -457,7 +645,13 @@ contract Enygma is IEnygma {
         _verifyFeePublicInputs(proof.public_signal, participantIds, commitmentDeltas);
         _verifyFeeBlockNumber(proof.public_signal);
         _consumeFeeNullifier(proof.public_signal);
-        _updateBalancesForTransfer(commitmentDeltas, participantIds);
+        uint256 epochStart = _currentEpochStart();
+        _updateBalancesForTransfer(epochStart, commitmentDeltas, participantIds);
+        // Keep the USDr ledger's epoch slot in sync with the shared clock
+        // — this call touches only the main ledger — see the matching
+        // comment in mintSupply().
+        _propagateUsdrBalancesExcept(0);
+        lastBlockNum = epochStart;
         emit TransactionSuccessful(msg.sender);
         return true;
     }
@@ -626,6 +820,68 @@ contract Enygma is IEnygma {
         return true;
     }
 
+    /**
+     * @notice Get USDr balance commitment for account — analog of
+     * getBalance() for the USDr ledger.
+     */
+    function getUsdrBalance(
+        uint256 accountId
+    ) public view returns (uint256 x, uint256 y) {
+        Point storage balance = usdrBalanceCommitments[lastBlockNum][accountId];
+
+        if (balance.c1 == 0 && balance.c2 == 0) {
+            return (0, 1);
+        }
+
+        return (balance.c1, balance.c2);
+    }
+
+    /**
+     * @notice Get USDr public values for all accounts — analog of
+     * getPublicValues(). Public keys are shared with the main asset
+     * (one spend key per account, not per asset).
+     */
+    function getUsdrPublicValues(
+        uint256 count
+    ) public view returns (Point[] memory balances, uint256[] memory keys) {
+        balances = new Point[](count);
+        keys = new uint256[](count);
+
+        for (uint256 i; i < count; ) {
+            (balances[i].c1, balances[i].c2) = getUsdrBalance(i);
+            keys[i] = publicKeys[i];
+
+            unchecked {
+                ++i;
+            }
+        }
+        return (balances, keys);
+    }
+
+    /**
+     * @notice Verify all USDr balances sum to USDr total supply — analog
+     * of check() for the USDr ledger.
+     */
+    function checkUsdr() external view returns (bool) {
+        uint256 sumX;
+        uint256 sumY = 1; // Start with neutral element
+
+        for (uint256 i = 1; i <= _totalRegisteredParties; ) {
+            (uint256 balX, uint256 balY) = getUsdrBalance(i);
+            (sumX, sumY) = CurveBabyJubJub.pointAdd(sumX, sumY, balX, balY);
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        if (usdrTotalSupplyX != sumX || usdrTotalSupplyY != sumY) {
+            revert BalanceMismatch();
+        }
+
+        return true;
+    }
+
     // Getter functions
     function Name() external pure returns (string memory) {
         return TOKEN_NAME;
@@ -701,6 +957,55 @@ contract Enygma is IEnygma {
             )
         );
         if (!success) revert InvalidProof();
+    }
+
+    /**
+     * @notice Verify zero-knowledge proof for the USDr transfer (81-signal
+     * shape — the fee amount is a public signal here, unlike the main
+     * transfer proof's 80 — different verifying key)
+     */
+    function _verifyUsdrTransferProof(
+        UsdrProof calldata proof,
+        uint256 participantCount
+    ) private {
+        address verifier = _usdrVerifiers[participantCount];
+        if (verifier == address(0)) revert VerifierNotFound();
+
+        (bool success, ) = verifier.staticcall(
+            abi.encodeWithSignature(
+                "verifyProof(uint256[8],uint256[81])",
+                proof
+            )
+        );
+        if (!success) revert InvalidProof();
+    }
+
+    /**
+     * @notice Assert the main and USDr proofs are about the same
+     * transaction: same public keys, same anonymity set, same block
+     * number. PreviousCommit/TxCommit legitimately differ (different
+     * balance); MessageTags/Nullifier legitimately differ too (USDrCircuit
+     * uses different domain-separation constants).
+     */
+    function _verifyUsdrMainBinding(
+        uint256[80] calldata mainSignal,
+        uint256[81] calldata usdrSignal
+    ) private pure {
+        for (uint256 i = FP_PUBLIC_KEY_OFFSET; i < FP_PUBLIC_KEY_OFFSET + FP_PUBLIC_KEY_SIZE; ) {
+            if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint256 i = FP_K_INDEX_OFFSET; i < FP_K_INDEX_OFFSET + FP_K_INDEX_SIZE; ) {
+            if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
+            unchecked {
+                ++i;
+            }
+        }
+        if (mainSignal[FP_BLOCK_NUMBER_OFFSET] != usdrSignal[FP_BLOCK_NUMBER_OFFSET]) {
+            revert UsdrBindingMismatch();
+        }
     }
 
     /**
@@ -805,6 +1110,58 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Verify public inputs for the USDr proof — same shape as
+     * _verifyPublicInputsFP but checks PreviousCommit against
+     * usdrBalanceCommitments instead of balanceCommitments. PublicKey
+     * binding stays against the same global publicKeys mapping (spend
+     * keys are shared across both assets). Also enforces the proof's
+     * public FeeAmount signal equals usdrFixedFeeAmount — a validly-formed
+     * proof for a different (attacker-chosen) fee is rejected here.
+     */
+    function _verifyPublicInputsUsdr(
+        uint256[81] calldata public_signal,
+        uint256[] calldata participantIds,
+        Point[] calldata commitmentDeltas
+    ) private view {
+        if (public_signal[USDR_FEE_AMOUNT_OFFSET] != usdrFixedFeeAmount) {
+            revert InvalidFeeAmount();
+        }
+
+        (Point[] memory balances, uint256[] memory keys) = getUsdrPublicValues(
+            _totalRegisteredParties + 1
+        );
+
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 accountId = participantIds[i];
+
+            if (uint256(public_signal[FP_PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 commitOffset = FP_PREVIOUS_COMMIT_OFFSET + (i << 1);
+            if (
+                uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
+                uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            uint256 txOffset = FP_TX_COMMIT_OFFSET + (i << 1);
+            if (
+                commitmentDeltas[i].c1 != public_signal[txOffset] ||
+                commitmentDeltas[i].c2 != public_signal[txOffset + 1]
+            ) {
+                revert InvalidPublicInputs();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
      * @notice Verify block number freshness for the 80-signal FingerPrint transfer circuit
      */
     function _verifyBlockNumberFP(uint256[80] calldata public_signal) private view {
@@ -823,14 +1180,41 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Update balances for transfer participants
+     * @notice Verify block number freshness for the 81-signal USDr proof.
+     * Offset is identical to FP_BLOCK_NUMBER_OFFSET — only the array
+     * length differs (81 vs 80), which calldata typing requires a
+     * separate function signature for.
+     */
+    function _verifyBlockNumberUsdr(uint256[81] calldata public_signal) private view {
+        if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+            revert InvalidBlockNumber();
+        }
+    }
+
+    /**
+     * @notice Record nullifier as spent for the 81-signal USDr proof.
+     */
+    function _consumeNullifierUsdr(uint256[81] calldata public_signal) private {
+        uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
+        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _nullifiers[nullifier] = true;
+    }
+
+    /**
+     * @notice Update balances for transfer participants.
+     * @dev Takes epochStart as a parameter and does NOT set lastBlockNum
+     * itself (callers do, once, after every balance update for the
+     * transaction has run) — required so transfer()'s USDr update (which
+     * shares this same epoch) still reads the true previous epoch's
+     * balances rather than this update's freshly-written slot. Two
+     * callers: transfer() (this update + _updateUsdrBalancesForTransfer,
+     * same epochStart) and transferWithFee() (this update alone).
      */
     function _updateBalancesForTransfer(
+        uint256 epochStart,
         Point[] calldata commitmentDeltas,
         uint256[] calldata participantIds
     ) private {
-        uint256 epochStart = _currentEpochStart();
-
         // Copy balances for non-participants to the current epoch slot
         uint256 totalParties = _totalRegisteredParties;
         for (uint256 i; i < totalParties; ) {
@@ -868,8 +1252,68 @@ contract Enygma is IEnygma {
                 ++i;
             }
         }
+    }
 
-        lastBlockNum = epochStart;
+    /**
+     * @notice Update USDr balances for transfer participants — analog of
+     * _updateBalancesForTransfer for the USDr ledger. Non-participant
+     * propagation is 1-based (accountId 1.._totalRegisteredParties),
+     * matching _propagateBalancesExcept — unlike
+     * _updateBalancesForTransfer's own loop, which is 0-based and (a
+     * pre-existing, separate issue, not introduced here) appears to miss
+     * the last registered account as a result.
+     */
+    function _updateUsdrBalancesForTransfer(
+        uint256 epochStart,
+        Point[] calldata commitmentDeltas,
+        uint256[] calldata participantIds
+    ) private {
+        uint256 totalParties = _totalRegisteredParties;
+        for (uint256 i = 1; i <= totalParties; ) {
+            _initializeUsdrBalanceIfNeeded(i);
+
+            if (!_isParticipant(participantIds, i)) {
+                usdrBalanceCommitments[epochStart][i] = usdrBalanceCommitments[
+                    lastBlockNum
+                ][i];
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        uint256 len = commitmentDeltas.length;
+        for (uint256 i; i < len; ) {
+            uint256 accountId = participantIds[i];
+            Point storage oldBalance = usdrBalanceCommitments[lastBlockNum][
+                accountId
+            ];
+
+            (uint256 newX, uint256 newY) = CurveBabyJubJub.pointAdd(
+                oldBalance.c1,
+                oldBalance.c2,
+                commitmentDeltas[i].c1,
+                commitmentDeltas[i].c2
+            );
+
+            usdrBalanceCommitments[epochStart][accountId] = Point(newX, newY);
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Initialize USDr balance to neutral element if unset — analog
+     * of _initializeBalanceIfNeeded for the USDr ledger.
+     */
+    function _initializeUsdrBalanceIfNeeded(uint256 accountId) private {
+        Point storage balance = usdrBalanceCommitments[lastBlockNum][accountId];
+        if (balance.c1 == 0 && balance.c2 == 0) {
+            balance.c2 = 1;
+        }
     }
 
     /**
@@ -900,6 +1344,11 @@ contract Enygma is IEnygma {
                 ++i;
             }
         }
+
+        // Keep the USDr ledger's epoch slot in sync with the shared clock
+        // — this function (used by withdraw/deposit) touches only the main
+        // ledger — see the matching comment in mintSupply().
+        _propagateUsdrBalancesExcept(0);
 
         lastBlockNum = epochStart;
     }
@@ -947,6 +1396,28 @@ contract Enygma is IEnygma {
 
             if (i != excludeId) {
                 balanceCommitments[epochStart][i] = balanceCommitments[
+                    lastBlockNum
+                ][i];
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Propagate USDr balances to new block except one account —
+     * analog of _propagateBalancesExcept for the USDr ledger.
+     */
+    function _propagateUsdrBalancesExcept(uint256 excludeId) private {
+        uint256 epochStart = _currentEpochStart();
+        uint256 totalParties = _totalRegisteredParties;
+        for (uint256 i = 1; i <= totalParties; ) {
+            _initializeUsdrBalanceIfNeeded(i);
+
+            if (i != excludeId) {
+                usdrBalanceCommitments[epochStart][i] = usdrBalanceCommitments[
                     lastBlockNum
                 ][i];
             }

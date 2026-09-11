@@ -1,6 +1,19 @@
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.27",
+  solidity: {
+    version: "0.8.27",
+    settings: {
+      // Enabled specifically to bring Enygma.sol back under EIP-170's
+      // 24576-byte deployment limit after the USDr fee-proof feature
+      // pushed it over (26515 bytes unoptimized). Low "runs" value
+      // prioritizes bytecode size over runtime gas efficiency, per the
+      // compiler's own suggestion in the oversized-contract warning.
+      optimizer: {
+        enabled: true,
+        runs: 1,
+      },
+    },
+  },
   networks: {
     hardhat: {
       chainId: 1337,

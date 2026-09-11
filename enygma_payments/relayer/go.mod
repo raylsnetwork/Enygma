@@ -1,11 +1,13 @@
 module enygma_payments_relayer
 
 go 1.26.0
+
 toolchain go1.26.6
 
 require (
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/gin-gonic/gin v1.10.0
+	github.com/iden3/go-iden3-crypto v0.0.16
 )
 
 require (

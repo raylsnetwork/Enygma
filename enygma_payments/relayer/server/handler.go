@@ -25,7 +25,7 @@ import (
 // Exported so external test packages can inject a mock without importing the handler internals.
 // The concrete *enygma.Enygma satisfies this interface.
 type EnygmaContract interface {
-	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, participantIds []*big.Int) (*types.Transaction, error)
+	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, usdrCommitmentDeltas []enygma.IEnygmaPoint, usdrProof enygma.IEnygmaUsdrProof, participantIds []*big.Int) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int) (*types.Transaction, error)
 }
 
@@ -126,10 +126,15 @@ func (h *Handler) Info(c *gin.Context) {
 
 // RelayTransfer handles POST /relay/transfer.
 //
-// Calls Enygma.transfer(commitmentDeltas, proof, participantIds).
-// Used for confidential Enygma-to-Enygma balance updates (the enygma circuit).
-// The public signal array supports up to 80 elements (FingerPrint 6×6 layout);
-// unused slots are zero-padded to fill the fixed [80]*big.Int expected by the contract.
+// Calls Enygma.transfer(commitmentDeltas, proof, usdrCommitmentDeltas,
+// usdrProof, participantIds). Used for confidential Enygma-to-Enygma
+// balance updates (the enygma circuit), plus a second, independent USDr
+// proof paying the relayer a fee, settled atomically in the same call.
+// The main proof's public signal supports up to 80 elements (FingerPrint
+// 6×6 layout); the USDr proof's supports up to 81 (one more — its public
+// FeeAmount signal, appended last). Unused slots are zero-padded to fill
+// the fixed-size arrays the contract expects. Both proofs share KIndex
+// (the same k=6 anonymity-set participantIds).
 func (h *Handler) RelayTransfer(c *gin.Context) {
 	var req RelayTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -142,28 +147,31 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
 		return
 	}
-	if len(req.PublicSignal) > 80 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: %d elements exceeds maximum of 80", len(req.PublicSignal))})
+	pubSig80, err := padPublicSignal80(req.PublicSignal)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: %v", err)})
 		return
 	}
 
-	// Zero-pad to [80]*big.Int; the circuit only uses the first N slots.
-	var pubSig80 [80]*big.Int
-	for i := range pubSig80 {
-		pubSig80[i] = big.NewInt(0)
+	usdrProof8, err := parseProof8(req.UsdrProof)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrProof: %v", err)})
+		return
 	}
-	for i, s := range req.PublicSignal {
-		n, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[%d]: invalid decimal %q", i, s)})
-			return
-		}
-		pubSig80[i] = n
+	usdrPubSig81, err := padPublicSignal81(req.UsdrPublicSignal)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: %v", err)})
+		return
 	}
 
 	commitments, err := parseCommitments(req.Commitments)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("commitments: %v", err)})
+		return
+	}
+	usdrCommitments, err := parseCommitments(req.UsdrCommitments)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrCommitments: %v", err)})
 		return
 	}
 	kIndex := int64sToBI(req.KIndex)
@@ -172,8 +180,15 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		Proof:        proof8,
 		PublicSignal: pubSig80,
 	}
+	usdrTransferProof := enygma.IEnygmaUsdrProof{
+		Proof:        usdrProof8,
+		PublicSignal: usdrPubSig81,
+	}
 
-	dedupKey := "transfer:" + req.Proof[0]
+	// Both proofs' first element in the dedup key — a resubmission of only
+	// one leg (e.g. same main proof, different usdrProof) must not be
+	// treated as identical to an in-flight submission of the pair.
+	dedupKey := "transfer:" + req.Proof[0] + ":" + req.UsdrProof[0]
 	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
 		return
@@ -183,7 +198,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	h.txMu.Lock()
 	defer h.txMu.Unlock()
 
-	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, kIndex)
+	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, usdrCommitments, usdrTransferProof, kIndex)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transfer(): %v", err)})
 		return
@@ -295,6 +310,48 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
+
+// padPublicSignal80 zero-pads a variable-length decimal-string public
+// signal (up to 80 elements) into the fixed [80]*big.Int the contract
+// expects; the circuit only uses the first N slots.
+func padPublicSignal80(signal []string) ([80]*big.Int, error) {
+	var out [80]*big.Int
+	if len(signal) > 80 {
+		return out, fmt.Errorf("%d elements exceeds maximum of 80", len(signal))
+	}
+	for i := range out {
+		out[i] = big.NewInt(0)
+	}
+	for i, s := range signal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return out, fmt.Errorf("[%d]: invalid decimal %q", i, s)
+		}
+		out[i] = n
+	}
+	return out, nil
+}
+
+// padPublicSignal81 is padPublicSignal80's counterpart for USDr proofs,
+// which carry one extra public signal (FeeAmount, appended last — see
+// USDrCircuit.Define / IEnygma.UsdrProof) beyond the main proof's 80.
+func padPublicSignal81(signal []string) ([81]*big.Int, error) {
+	var out [81]*big.Int
+	if len(signal) > 81 {
+		return out, fmt.Errorf("%d elements exceeds maximum of 81", len(signal))
+	}
+	for i := range out {
+		out[i] = big.NewInt(0)
+	}
+	for i, s := range signal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return out, fmt.Errorf("[%d]: invalid decimal %q", i, s)
+		}
+		out[i] = n
+	}
+	return out, nil
+}
 
 // parseProof8 converts an 8-element decimal string array into [8]*big.Int.
 // Element order from gnark: [Ax, Ay, B00, B01, B10, B11, Cx, Cy].

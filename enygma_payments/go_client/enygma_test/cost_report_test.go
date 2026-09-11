@@ -429,6 +429,11 @@ func TestCostReport(t *testing.T) {
 	if _, statErr := os.Stat(relayerBin); os.IsNotExist(statErr) {
 		t.Fatalf("relayer binary not found at %s\nBuild it first:\n  cd enygma_payments/relayer && ./run.sh", relayerBin)
 	}
+	// macOS 25.x (Tahoe) enforces code signing — ad-hoc sign so the binary can run
+	// (same workaround as fee_transfer_test.go).
+	if out, signErr := exec.Command("codesign", "--force", "--deep", "--sign", "-", relayerBin).CombinedOutput(); signErr != nil {
+		t.Logf("codesign warning (non-fatal): %v — %s", signErr, out)
+	}
 
 	const testRelayerPort = "8083"
 	testRelayerURL := "http://127.0.0.1:" + testRelayerPort
