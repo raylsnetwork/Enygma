@@ -427,8 +427,18 @@ func sendTransferDirect(client *ethclient.Client, instance *enygma.Enygma, chain
 	auth.GasLimit = 16_000_000
 	auth.GasPrice = gasPrice
 
+	// USDr proof is a zero-value placeholder: this direct-submit path
+	// predates the USDr fee-proof feature and was never extended to build
+	// a real second (USDr) proof — Enygma.sol's transfer() now requires
+	// one unconditionally, so this call reverts on-chain (InvalidProof)
+	// until that's done. Left broken rather than faked, matching this
+	// branch's own precedent for other pre-USDr callers (see
+	// go_client/enygma_test's *_repro_test.go files).
+	var usdrProof enygma.IEnygmaUsdrProof
+	var usdrCommitments []enygma.IEnygmaPoint
+
 	log.Printf("submitting Transfer directly as %s (no relayer)...", bankAddr.Hex())
-	tx, err := instance.Transfer(auth, commitments, transferProof, participantIds, "")
+	tx, err := instance.Transfer(auth, commitments, transferProof, usdrCommitments, usdrProof, participantIds, "")
 	if err != nil {
 		return fmt.Errorf("Transfer(): %w", err)
 	}

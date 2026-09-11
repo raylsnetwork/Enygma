@@ -5,14 +5,25 @@ package server
 // RelayTransferRequest is the JSON body accepted by POST /relay/transfer.
 //
 // Used for Enygma-to-Enygma confidential transfers (the enygma circuit).
-// The public signal array must have exactly 81 elements (the last being
-// the Fix L-01 domain separator) — Fix L-05: this used to be silently
-// zero-padded up to 81 rather than rejected at any other length.
+// PublicSignal must have exactly 81 elements (the last being the Fix L-01
+// domain separator) — Fix L-05: this used to be silently zero-padded up to
+// 81 rather than rejected at any other length.
+//
+// Plus a second, independent USDr proof that pays the relayer a fixed fee,
+// settled atomically in the same on-chain transfer() call. UsdrPublicSignal
+// carries 81 elements too (the fee amount is a public signal there, checked
+// on-chain against usdrFixedFeeAmount). Both proofs share KIndex (the same
+// k=6 anonymity-set participantIds).
 type RelayTransferRequest struct {
 	Proof        [8]string  `json:"proof"        binding:"required"`
 	PublicSignal []string   `json:"publicSignal" binding:"required"`
 	Commitments  [][]string `json:"commitments"  binding:"required"`
-	KIndex       []int64    `json:"kIndex"       binding:"required"`
+
+	UsdrProof        [8]string  `json:"usdrProof"        binding:"required"`
+	UsdrPublicSignal []string   `json:"usdrPublicSignal" binding:"required"`
+	UsdrCommitments  [][]string `json:"usdrCommitments"  binding:"required"`
+
+	KIndex []int64 `json:"kIndex" binding:"required"` // shared by both proofs
 }
 
 // RelayTransferFeeRequest is the JSON body accepted by POST /relay/transfer_fee.
