@@ -39,6 +39,13 @@ contract Erc20CoinVault is AbstractCoinVault {
     // 1-input / 3-output relayer fee payment circuit (VK slot 3).
     // Alice pays Bob (output 0), keeps change (output 1), relayer earns spendable note (output 2).
     uint256 public constant VK_ID_ERC20_JOINSPLIT_RELAYER = 3;
+    // 1-input / 2-output USDr circuit (VK slot 4) — a second, independent
+    // relayer-fee asset. Same topology as JOINSPLIT_FEE but StTokenId is a
+    // PUBLIC signal here (private everywhere else), giving it a 9-element
+    // statement — distinct from JOINSPLIT's 7 and JOINSPLIT_FEE's 8, so it
+    // gets its own dispatch case below rather than colliding with either.
+    // Fee is paid (output[0], a real spendable note), not burned like FEE's.
+    uint256 public constant VK_ID_ERC20_USDR = 4;
     uint256 public constant VK_ID_ERC20_10INPUT = 6;
     // DvP Initiator circuit: circuit id=24 in enygmadvp.config.json → VK slot 23 (0-indexed)
     uint256 public constant VK_ID_DVP_INITIATOR = 23;
@@ -369,10 +376,17 @@ contract Erc20CoinVault is AbstractCoinVault {
         }
         if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
             // Fee payment circuit has 8 public signals (adds StFee at index 7).
+            // USDr circuit has 9 (adds StFee AND a public StTokenId at index 8).
             // Regular payment circuit has 7 public signals — dispatch by statement length.
             if (receipt.statement.length == 8) {
                 if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC20_JOINSPLIT_FEE,
+                    receipt.proof,
+                    receipt.statement
+                )) revert InvalidProof();
+            } else if (receipt.statement.length == 9) {
+                if (!IVerifier(_verifierContractAddress).verifyProof(
+                    VK_ID_ERC20_USDR,
                     receipt.proof,
                     receipt.statement
                 )) revert InvalidProof();

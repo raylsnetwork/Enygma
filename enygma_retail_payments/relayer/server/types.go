@@ -130,6 +130,66 @@ type parsedRelayerFee struct {
 	tokenId      *big.Int
 }
 
+// ── USDr fee payment (second, independent asset) ──────────────────────────────
+
+// RelayPaymentUsdrFeeRequest is the JSON body accepted by
+// POST /relay/payment_usdr_fee.
+//
+// Settles two independent proofs atomically in one on-chain call
+// (EnygmaDvp.paymentWithUsdrFee): a normal payment (7-element PublicSignal,
+// same shape as POST /relay/payment) and a UsdrFeeCircuit proof — a second,
+// independent relayer-fee asset with its own token/vault/circuit.
+//
+// UsdrPublicSignal layout (9 elements):
+//
+//	[msg, treeNum0, root0, nullifier0, cmtFee, cmtChange, contractAddress, fee, tokenId]
+//
+// UsdrFeeSalt is supplied so the relayer can independently recompute the
+// USDr fee note's commitment (Poseidon(feeSpendPubKey, feeSalt, fee,
+// tokenId) — fee and tokenId are read straight from UsdrPublicSignal[7]/[8]
+// since both are public there, unlike the same-asset relayer-fee mechanism
+// where TokenId had to be supplied separately because it was never public).
+type RelayPaymentUsdrFeeRequest struct {
+	// Main leg — identical shape to RelayPaymentRequest.
+	VaultId      string    `json:"vaultId"      binding:"required"`
+	Proof        [8]string `json:"proof"        binding:"required"`
+	PublicSignal [7]string `json:"publicSignal" binding:"required"`
+	CipherText   string    `json:"cipherText"   binding:"required"`
+	EncTxData    string    `json:"encTxData"    binding:"required"`
+
+	// USDr leg.
+	UsdrVaultId      string    `json:"usdrVaultId"      binding:"required"`
+	UsdrProof        [8]string `json:"usdrProof"        binding:"required"`
+	UsdrPublicSignal [9]string `json:"usdrPublicSignal" binding:"required"`
+	UsdrCipherText   string    `json:"usdrCipherText"   binding:"required"`
+	UsdrEncTxData    string    `json:"usdrEncTxData"    binding:"required"`
+	UsdrFeeSalt      string    `json:"usdrFeeSalt"      binding:"required"`
+}
+
+// RelayPaymentUsdrFeeResponse is returned on success.
+type RelayPaymentUsdrFeeResponse struct {
+	TxHash      string `json:"txHash"`
+	BlockNumber uint64 `json:"blockNumber"`
+	GasUsed     uint64 `json:"gasUsed"`
+}
+
+// parsedUsdrFee holds the decoded form of a RelayPaymentUsdrFeeRequest ready
+// for validation and on-chain submission.
+type parsedUsdrFee struct {
+	vaultId      *big.Int
+	proof        [8]*big.Int
+	publicSignal [7]*big.Int
+	cipherText   []byte
+	encTxData    []byte
+
+	usdrVaultId      *big.Int
+	usdrProof        [8]*big.Int
+	usdrPublicSignal [9]*big.Int
+	usdrCipherText   []byte
+	usdrEncTxData    []byte
+	usdrFeeSalt      *big.Int
+}
+
 // ── Tag relay ─────────────────────────────────────────────────────────────────
 
 // RelayTagRequest is the JSON body accepted by POST /relay/tag.

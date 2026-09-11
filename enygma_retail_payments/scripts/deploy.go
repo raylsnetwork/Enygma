@@ -197,6 +197,32 @@ func deploy() error {
 	fmt.Printf("Erc20CoinVault → %s\n", erc20CoinVaultAddress.Hex())
 	receipts["Erc20CoinVault"] = receiptToData(receipt, erc20CoinVaultAddress)
 
+	// USDr — a second, independent relayer-fee asset: its own token and vault,
+	// registered on the same EnygmaDvp instance (vaultId=1, assigned
+	// automatically by registerVault in init.go). See UsdrFeeCircuit /
+	// EnygmaDvp.paymentWithUsdrFee.
+	fmt.Println("Deploying UsdrERC20...")
+	usdrErc20Address, receipt, err := deployContractWithArgs(
+		client, owner, "RaylsERC20",
+		"USDr", "USDR",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to deploy UsdrERC20: %w", err)
+	}
+	fmt.Printf("UsdrERC20 → %s\n", usdrErc20Address.Hex())
+	receipts["UsdrERC20"] = receiptToData(receipt, usdrErc20Address)
+
+	fmt.Println("Deploying UsdrCoinVault...")
+	usdrCoinVaultAddress, receipt, err := deployContractWithArgs(
+		client, owner, "Erc20CoinVault",
+		enygmaDvpAddress,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to deploy UsdrCoinVault: %w", err)
+	}
+	fmt.Printf("UsdrCoinVault → %s\n", usdrCoinVaultAddress.Hex())
+	receipts["UsdrCoinVault"] = receiptToData(receipt, usdrCoinVaultAddress)
+
 	fmt.Println("Deploying UserRegistry...")
 	userRegistryAddress, receipt, err := deployContractFromPath(
 		client, owner,
