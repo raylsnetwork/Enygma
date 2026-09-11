@@ -69,9 +69,10 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 	// All /relay/* routes require a valid Bearer token and are rate-limited.
 	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rateLimitMiddleware())
 	{
-		relay.POST("/payment", h.RelayPayment)
-		relay.POST("/tag",     h.RelayTag)
-		relay.POST("/channel", h.RelayChannel)
+		relay.POST("/payment",             h.RelayPayment)
+		relay.POST("/payment_relayer_fee", h.RelayPaymentRelayerFee)
+		relay.POST("/tag",                 h.RelayTag)
+		relay.POST("/channel",             h.RelayChannel)
 	}
 
 	return r, nil

@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
 // ── Solidity struct mirrors (must match IEnygmaDvp ABI exactly) ──────────────
@@ -61,6 +62,7 @@ type Handler struct {
 	client                 *ethclient.Client
 	txMu                   sync.Mutex // serializes on-chain submissions — prevents nonce races
 	inFlight               sync.Map   // prevents concurrent duplicate submissions
+	feeSpendPubKey         *big.Int   // nil unless RELAYER_FEE_SPEND_PRIVATE_KEY is configured
 }
 
 // NewHandler wires up the handler from config.
@@ -142,6 +144,17 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		}
 	}
 
+	// RELAYER_FEE_SPEND_PRIVATE_KEY is optional — derive the relayer's fee-note
+	// spend pubkey once at startup if it's set. Same scheme as a user's
+	// SpendKeyPair: PublicKey = Poseidon(PrivateKey).
+	var feeSpendPubKey *big.Int
+	if cfg.RelayerFeeSpendPrivateKey != nil {
+		feeSpendPubKey, err = poseidon.Hash([]*big.Int{cfg.RelayerFeeSpendPrivateKey})
+		if err != nil {
+			return nil, fmt.Errorf("derive relayer fee spend pubkey: %w", err)
+		}
+	}
+
 	return &Handler{
 		cfg:                    cfg,
 		dvpABI:                 dvpABI,
@@ -154,6 +167,7 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		tagChannelRegistryAddr: common.HexToAddress(tagChannelRegistryAddrStr),
 		auth:                   auth,
 		client:                 client,
+		feeSpendPubKey:         feeSpendPubKey,
 	}, nil
 }
 
@@ -162,11 +176,16 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 // This endpoint is public (no auth) so clients can discover addresses
 // without needing them pre-configured out-of-band.
 func (h *Handler) Info(c *gin.Context) {
+	feeSpendPubKey := ""
+	if h.feeSpendPubKey != nil {
+		feeSpendPubKey = h.feeSpendPubKey.String()
+	}
 	c.JSON(http.StatusOK, InfoResponse{
 		RelayerAddr:            h.auth.From.Hex(),
 		TagRegistryAddr:        h.tagRegistryAddr.Hex(),
 		TagChannelRegistryAddr: h.tagChannelRegistryAddr.Hex(),
 		ChainID:                h.cfg.ChainID.Int64(),
+		FeeSpendPubKey:         feeSpendPubKey,
 	})
 }
 
@@ -258,6 +277,147 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, RelayPaymentResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
+}
+
+// RelayPaymentRelayerFee is the gin handler for POST /relay/payment_relayer_fee.
+//
+// Submits a PaymentRelayerFeePublic proof (1 input / 3 outputs): Alice pays
+// Bob (output 0), keeps change (output 1), and leaves a spendable fee note
+// for the relayer (output 2) whose amount is the public StFee signal,
+// enforced on-chain in EnygmaDvp.paymentWithRelayerFee() against
+// relayerFixedFeeAmount.
+//
+// Validation steps:
+//  1. Parse and decode all fields from the request body.
+//  2. Confirm relayer-fee relaying is configured (RELAYER_FEE_SPEND_PRIVATE_KEY).
+//  3. Check the Merkle root is known to the vault (rootHistory).
+//  4. Check the nullifier has not been spent (nullifiers mapping).
+//  5. Enforce the configured minimum fee (RELAYER_MIN_FEE) against publicSignal[8].
+//  6. Confirm the fee note is actually addressed to this relayer: recompute
+//     Erc20CommitmentV2(feeSpendPubKey, feeSalt, fee, tokenId) and compare
+//     against publicSignal[6]. This is an off-chain sanity check for the
+//     relayer's own benefit — the fee AMOUNT is enforced on-chain by the
+//     contract (relayerFixedFeeAmount); this step only confirms the relayer
+//     can actually spend the note it's about to pay gas to help create.
+//  7. Sign and submit to EnygmaDvp.paymentWithRelayerFee().
+func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
+	// Step 2 — relayer-fee relaying must be configured.
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+
+	var req RelayPaymentRelayerFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Step 1 — decode all big.Int fields.
+	p, err := parseRelayerFeeRequest(&req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+
+	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee]
+	treeNum := p.publicSignal[1]
+	root := p.publicSignal[2]
+	nullifier := p.publicSignal[3]
+	cmtRelayer := p.publicSignal[6]
+	fee := p.publicSignal[8]
+
+	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
+
+	// Step 3 — Merkle root must be in the vault's rootHistory.
+	var rootResult []interface{}
+	if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("rootHistory check: %s", err)})
+		return
+	}
+	rootKnown, ok := rootResult[0].(bool)
+	if !ok || !rootKnown {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "merkle root is not a known vault root"})
+		return
+	}
+
+	// Step 4 — Nullifier must not already be spent.
+	var nfResult []interface{}
+	if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("nullifiers check: %s", err)})
+		return
+	}
+	nfSpent, ok := nfResult[0].(bool)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected type from nullifiers()"})
+		return
+	}
+	if nfSpent {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "nullifier already spent"})
+		return
+	}
+
+	// Step 5 — minimum fee floor.
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
+		})
+		return
+	}
+
+	// Step 6 — the fee note must actually be addressed to this relayer's key.
+	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, p.feeSalt, fee, p.tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
+		return
+	}
+	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "fee note is not addressed to this relayer's published spend key " +
+				"(GET /relay/info) — publicSignal[6] does not match " +
+				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
+		})
+		return
+	}
+
+	// Step 7 — claim nullifier as in-flight to block concurrent duplicate submissions.
+	nfKey := "relayerFee:" + p.publicSignal[1].String() + ":" + p.publicSignal[3].String()
+	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
+		return
+	}
+	defer h.inFlight.Delete(nfKey)
+
+	// Step 8 — serialize submission to prevent nonce races under concurrency.
+	h.txMu.Lock()
+	defer h.txMu.Unlock()
+
+	// Step 9 — build ProofReceipt and submit.
+	receipt := buildRelayerFeeProofReceipt(p)
+
+	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
+	tx, err := dvp.Transact(h.auth, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
+		return
+	}
+	txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+		return
+	}
+	if txReceipt.Status == types.ReceiptStatusFailed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
+		return
+	}
+
+	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
 		BlockNumber: txReceipt.BlockNumber.Uint64(),
 		GasUsed:     txReceipt.GasUsed,
@@ -614,6 +774,59 @@ func parseRequest(req *RelayPaymentRequest) (*parsed, error) {
 	}, nil
 }
 
+func parseRelayerFeeRequest(req *RelayPaymentRelayerFeeRequest) (*parsedRelayerFee, error) {
+	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid vaultId: %q", req.VaultId)
+	}
+
+	var proof [8]*big.Int
+	for i, s := range req.Proof {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid proof[%d]: %q", i, s)
+		}
+		proof[i] = n
+	}
+
+	var sig [9]*big.Int
+	for i, s := range req.PublicSignal {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid publicSignal[%d]: %q", i, s)
+		}
+		sig[i] = n
+	}
+
+	feeSalt, ok := new(big.Int).SetString(req.FeeSalt, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid feeSalt: %q", req.FeeSalt)
+	}
+	tokenId, ok := new(big.Int).SetString(req.TokenId, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid tokenId: %q", req.TokenId)
+	}
+
+	ctBytes, err := decodeHexField(req.CipherText, "cipherText")
+	if err != nil {
+		return nil, err
+	}
+	encBytes, err := decodeHexField(req.EncTxData, "encTxData")
+	if err != nil {
+		return nil, err
+	}
+
+	return &parsedRelayerFee{
+		vaultId:      vaultId,
+		proof:        proof,
+		publicSignal: sig,
+		cipherText:   ctBytes,
+		encTxData:    encBytes,
+		feeSalt:      feeSalt,
+		tokenId:      tokenId,
+	}, nil
+}
+
 func decodeHexField(s, fieldName string) ([]byte, error) {
 	s = strings.TrimPrefix(s, "0x")
 	b, err := hex.DecodeString(s)
@@ -654,6 +867,35 @@ func buildProofReceipt(p *parsed) proofReceipt {
 		Statement:       statement,
 		NumberOfInputs:  big.NewInt(1),
 		NumberOfOutputs: big.NewInt(2),
+	}
+}
+
+// buildRelayerFeeProofReceipt maps the parsed proof + public signal into the
+// ProofReceipt struct that EnygmaDvp.paymentWithRelayerFee() expects.
+//
+// PaymentRelayerFeePublic circuit (1 input / 3 outputs) public signal layout:
+//
+//	[msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddress, fee]
+//
+// NumberOfInputs=1, NumberOfOutputs=3.
+func buildRelayerFeeProofReceipt(p *parsedRelayerFee) proofReceipt {
+	sp := snarkProof{
+		A: g1Point{X: p.proof[0], Y: p.proof[1]},
+		B: g2Point{
+			X: [2]*big.Int{p.proof[2], p.proof[3]},
+			Y: [2]*big.Int{p.proof[4], p.proof[5]},
+		},
+		C: g1Point{X: p.proof[6], Y: p.proof[7]},
+	}
+	statement := make([]*big.Int, 9)
+	for i := range p.publicSignal {
+		statement[i] = p.publicSignal[i]
+	}
+	return proofReceipt{
+		Proof:           sp,
+		Statement:       statement,
+		NumberOfInputs:  big.NewInt(1),
+		NumberOfOutputs: big.NewInt(3),
 	}
 }
 
