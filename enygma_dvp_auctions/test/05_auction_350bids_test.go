@@ -172,8 +172,12 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 		checkErr(t, fmt.Sprintf("GenerateProof(usdc %d)", i), err)
 	}
 
-	if usdcProofs[0].Root.Cmp(usdcRoot) != 0 {
-		t.Fatalf("USDC local tree root %s ≠ vault root %s", usdcProofs[0].Root, usdcRoot)
+	// Sanity check against the CURRENT tree's root (usdcTree.Root()), not any
+	// individual bidder's proof root — 350 bids crosses the 256-leaf-per-tree
+	// capacity, so early bidders' proofs are rooted in a now-superseded
+	// sub-tree (see MerkleProof.TreeNumber) and won't match the latest root.
+	if usdcTree.Root().Cmp(usdcRoot) != 0 {
+		t.Fatalf("USDC local tree root %s ≠ vault root %s", usdcTree.Root(), usdcRoot)
 	}
 
 	// ─── Phase 0a: initAuction ────────────────────────────────────────────────
@@ -197,7 +201,8 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
 	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
-	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(7200))
+	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
+	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		toBigArr8(lockResult.Proof), toBigArr7(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
@@ -232,7 +237,7 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 			BidAmount:   amounts[i],
 			TokenId:     usdcTokenId,
 			SaltIn:      saltsIn[i],
-			TreeNumber:  big.NewInt(0),
+			TreeNumber:  big.NewInt(int64(usdcProofs[i].TreeNumber)),
 			MerkleProof: usdcProofs[i],
 			BobPk:       bob.PublicKey,
 			SaltA:       saltA,

@@ -190,11 +190,12 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("auctionId = %s", auctionId)
 
 	// deadline = current block timestamp + 3600 seconds
-	// settlementDeadline = deadline + 7200 seconds (auctioneer has 2 hours to settle after bidding closes)
+	// settlementDeadline = deadline + 2 days + 3600 seconds (EnygmaAuction.initAuction requires
+	// settlementDeadline >= deadline + 2 days; the extra hour is just headroom past that minimum)
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
 	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
-	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(7200))
+	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
 	proof8Lock  := toBigArr8(lockResult.Proof)
 	signal7Lock := toBigArr7(lockResult.PublicSignal)
