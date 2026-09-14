@@ -26,6 +26,19 @@ type Config struct {
 	ReceiptsPath string
 	// Port — HTTP listen port. Defaults to 8091.
 	Port string
+	// RelayerFeeSpendPrivateKey — the relayer's own BabyJubJub spend private key
+	// (decimal, positive), used ONLY to verify off-chain that a relayer-fee note
+	// (PaymentRelayerFeePublic or UsdrFee circuit) is actually addressed to this
+	// relayer before it's submitted on-chain. Independent of RelayerPrivateKeyHex
+	// (which signs Ethereum transactions) — this is a Poseidon-scheme key,
+	// matching the scheme SpendKeyPair uses for regular payment notes.
+	// Optional: stays nil if unset, in which case the fee-relay routes always
+	// return 503.
+	RelayerFeeSpendPrivateKey *big.Int
+	// MinFee — minimum acceptable relayer fee (StFee), in token base units.
+	// The fee-relay routes reject proofs whose fee is below this floor.
+	// Defaults to 0 (no floor).
+	MinFee *big.Int
 }
 
 func Load() (*Config, error) {
@@ -51,6 +64,24 @@ func Load() (*Config, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("RELAYER_API_KEY must be set")
 	}
+
+	// RELAYER_FEE_SPEND_PRIVATE_KEY is optional — the fee-relay routes are
+	// simply unavailable (503) if it's not configured.
+	if feeKeyStr := getenv("RELAYER_FEE_SPEND_PRIVATE_KEY", ""); feeKeyStr != "" {
+		feeKey, ok := new(big.Int).SetString(feeKeyStr, 10)
+		if !ok || feeKey.Sign() <= 0 {
+			return nil, fmt.Errorf("invalid RELAYER_FEE_SPEND_PRIVATE_KEY: must be a positive decimal integer")
+		}
+		cfg.RelayerFeeSpendPrivateKey = feeKey
+	}
+
+	minFeeStr := getenv("RELAYER_MIN_FEE", "0")
+	minFee, ok := new(big.Int).SetString(minFeeStr, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid RELAYER_MIN_FEE: %q", minFeeStr)
+	}
+	cfg.MinFee = minFee
+
 	return cfg, nil
 }
 

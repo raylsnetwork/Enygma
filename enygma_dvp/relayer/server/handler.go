@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
 // ── Solidity struct mirrors (must match IEnygmaDvp ABI exactly) ──────────────
@@ -56,6 +57,8 @@ type Handler struct {
 	client   *ethclient.Client
 	txMu     sync.Mutex // serializes on-chain submissions — prevents nonce races
 	inFlight sync.Map   // key: "treeNum:nullifier" — prevents concurrent double-spend
+
+	feeSpendPubKey *big.Int // nil unless RELAYER_FEE_SPEND_PRIVATE_KEY is configured
 }
 
 // NewHandler wires up the handler from config.
@@ -96,14 +99,38 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		return nil, fmt.Errorf("load AbstractCoinVault ABI: %w", err)
 	}
 
+	// RELAYER_FEE_SPEND_PRIVATE_KEY is optional — derive the relayer's fee-note
+	// spend pubkey once at startup if it's set. Same scheme as a user's
+	// SpendKeyPair: PublicKey = Poseidon(PrivateKey).
+	var feeSpendPubKey *big.Int
+	if cfg.RelayerFeeSpendPrivateKey != nil {
+		feeSpendPubKey, err = poseidon.Hash([]*big.Int{cfg.RelayerFeeSpendPrivateKey})
+		if err != nil {
+			return nil, fmt.Errorf("derive relayer fee spend pubkey: %w", err)
+		}
+	}
+
 	return &Handler{
-		cfg:      cfg,
-		dvpABI:   dvpABI,
-		vaultABI: vaultABI,
-		dvpAddr:  common.HexToAddress(dvpAddrStr),
-		auth:     auth,
-		client:   client,
+		cfg:            cfg,
+		dvpABI:         dvpABI,
+		vaultABI:       vaultABI,
+		dvpAddr:        common.HexToAddress(dvpAddrStr),
+		auth:           auth,
+		client:         client,
+		feeSpendPubKey: feeSpendPubKey,
 	}, nil
+}
+
+// Info handles GET /relay/info — public, no auth required.
+func (h *Handler) Info(c *gin.Context) {
+	feeSpendPubKey := ""
+	if h.feeSpendPubKey != nil {
+		feeSpendPubKey = h.feeSpendPubKey.String()
+	}
+	c.JSON(http.StatusOK, InfoResponse{
+		RelayerAddr:    h.auth.From.Hex(),
+		FeeSpendPubKey: feeSpendPubKey,
+	})
 }
 
 // ── endpoint handlers ─────────────────────────────────────────────────────────
@@ -158,6 +185,273 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	txReceipt, err := h.transact("payment", receipt, vaultId, ctBytes, encBytes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
+		return
+	}
+	c.JSON(http.StatusOK, RelayResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
+}
+
+// RelayPaymentRelayerFee handles POST /relay/payment_relayer_fee.
+//
+// Same-token relayer fee (PaymentRelayerFeePublic circuit): Alice pays Bob
+// (output 0), keeps change (output 1), and leaves a spendable fee note for
+// the relayer (output 2) whose amount is the public StFee signal
+// (statement[8]), enforced on-chain by EnygmaDvp.paymentWithRelayerFee()
+// against relayerFixedFeeAmount.
+//
+// Validation steps:
+//  1. Confirm relayer-fee relaying is configured (RELAYER_FEE_SPEND_PRIVATE_KEY).
+//  2. Parse and validate the receipt exactly like RelayPayment (root/nullifier).
+//  3. Enforce the configured minimum fee (RELAYER_MIN_FEE) against statement[8].
+//  4. Confirm the fee note is actually addressed to this relayer: recompute
+//     Poseidon(feeSpendPubKey, feeSalt, StFee, tokenId) and compare against
+//     statement[6] (the fee note's commitment, output 2).
+//  5. Sign and submit to EnygmaDvp.paymentWithRelayerFee().
+func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+
+	var req RelayPaymentRelayerFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	parsed, err := parseReceipt(&req.Receipt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
+		return
+	}
+	if parsed.nIn != 1 || parsed.nOut != 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/3-output PaymentRelayerFeePublic receipt"})
+		return
+	}
+	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid vaultId: %q", req.VaultId)})
+		return
+	}
+	feeSalt, ok := new(big.Int).SetString(req.FeeSalt, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid feeSalt: %q", req.FeeSalt)})
+		return
+	}
+	tokenId, ok := new(big.Int).SetString(req.TokenId, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid tokenId: %q", req.TokenId)})
+		return
+	}
+	ctBytes, err := decodeHex(req.CipherText, "cipherText")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	encBytes, err := decodeHex(req.EncTxData, "encTxData")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	vaultAddr, err := h.resolveVault(vaultId)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.validateReceipt(vaultAddr, parsed); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Statement: [msg, treeNum0, root0, nf0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee]
+	fee := parsed.signal[8]
+	cmtRelayer := parsed.signal[6]
+
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
+		})
+		return
+	}
+	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, feeSalt, fee, tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
+		return
+	}
+	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "fee note is not addressed to this relayer's published spend key " +
+				"(GET /relay/info) — statement[6] does not match " +
+				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
+		})
+		return
+	}
+
+	nfKeys, err := h.claimNullifiers(parsed)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	defer h.releaseNullifiers(nfKeys)
+
+	receipt := buildProofReceipt(parsed)
+	txReceipt, err := h.transact("paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
+		return
+	}
+	c.JSON(http.StatusOK, RelayResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
+}
+
+// RelayPaymentUsdrFee handles POST /relay/payment_usdr_fee.
+//
+// Settles two independent proofs atomically in one call
+// (EnygmaDvp.paymentWithUsdrFee): a normal payment against VaultId, and a
+// UsdrFeeCircuit proof — a second, independent relayer-fee asset with its
+// own token/vault/circuit — against UsdrVaultId.
+//
+// Validation steps mirror RelayPaymentRelayerFee, applied to the USDr leg,
+// plus validating and settling the main leg in the same call:
+//  1. Confirm relayer-fee relaying is configured.
+//  2. Parse and validate BOTH receipts (root/nullifier, each against its own vault).
+//  3. Enforce RELAYER_MIN_FEE against the USDr leg's public StFee (statement[7]).
+//  4. Confirm the USDr fee note is addressed to this relayer: recompute
+//     Poseidon(feeSpendPubKey, feeSalt, StFee, StTokenId) — StFee and
+//     StTokenId read straight from the USDr leg's own public signal, both
+//     public there — and compare against statement[4] (output 0).
+//  5. Sign and submit both receipts to EnygmaDvp.paymentWithUsdrFee().
+func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+
+	var req RelayPaymentUsdrFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	parsed, err := parseReceipt(&req.Receipt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
+		return
+	}
+	usdrParsed, err := parseReceipt(&req.UsdrReceipt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse usdrReceipt: %s", err)})
+		return
+	}
+	if usdrParsed.nIn != 1 || usdrParsed.nOut != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/2-output UsdrFee receipt"})
+		return
+	}
+	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid vaultId: %q", req.VaultId)})
+		return
+	}
+	usdrVaultId, ok := new(big.Int).SetString(req.UsdrVaultId, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid usdrVaultId: %q", req.UsdrVaultId)})
+		return
+	}
+	usdrFeeSalt, ok := new(big.Int).SetString(req.UsdrFeeSalt, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid usdrFeeSalt: %q", req.UsdrFeeSalt)})
+		return
+	}
+	ctBytes, err := decodeHex(req.CipherText, "cipherText")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	encBytes, err := decodeHex(req.EncTxData, "encTxData")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	usdrCtBytes, err := decodeHex(req.UsdrCipherText, "usdrCipherText")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	usdrEncBytes, err := decodeHex(req.UsdrEncTxData, "usdrEncTxData")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	vaultAddr, err := h.resolveVault(vaultId)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("resolve vault: %s", err)})
+		return
+	}
+	usdrVaultAddr, err := h.resolveVault(usdrVaultId)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("resolve usdrVault: %s", err)})
+		return
+	}
+	if err := h.validateReceipt(vaultAddr, parsed); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("main receipt: %s", err)})
+		return
+	}
+	if err := h.validateReceipt(usdrVaultAddr, usdrParsed); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdr receipt: %s", err)})
+		return
+	}
+
+	// USDr statement: [msg, treeNum0, root0, nf0, cmtFee, cmtChange, contractAddr, fee, tokenId]
+	fee := usdrParsed.signal[7]
+	tokenId := usdrParsed.signal[8]
+	cmtFee := usdrParsed.signal[4]
+
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
+		})
+		return
+	}
+	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, usdrFeeSalt, fee, tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
+		return
+	}
+	if expectedFeeCmt.Cmp(cmtFee) != 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "USDr fee note is not addressed to this relayer's published spend key " +
+				"(GET /relay/info) — usdrReceipt.publicSignal[4] does not match " +
+				"Poseidon(relayerFeeSpendPubKey, usdrFeeSalt, StFee, StTokenId)",
+		})
+		return
+	}
+
+	nfKeys, err := h.claimNullifiers(parsed, usdrParsed)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	defer h.releaseNullifiers(nfKeys)
+
+	receipt := buildProofReceipt(parsed)
+	usdrReceipt := buildProofReceipt(usdrParsed)
+	txReceipt, err := h.transact("paymentWithUsdrFee",
+		receipt, vaultId, ctBytes, encBytes,
+		usdrReceipt, usdrVaultId, usdrCtBytes, usdrEncBytes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
