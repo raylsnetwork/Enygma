@@ -120,7 +120,6 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 		)
 		api.AssertIsEqual(commitment, circuit.StCommitmentsOut[j])
 
-		// VULN: vulnerability detected by claude
 		// Output 0 is the payment to the recipient — no ownership constraint.
 		if j >= 1 {
 			api.AssertIsEqual(circuit.WtSpendPublicKeysOut[j], senderPk)
