@@ -56,7 +56,7 @@ type Handler struct {
 	auth     *bind.TransactOpts
 	client   *ethclient.Client
 	txMu     sync.Mutex // serializes on-chain submissions — prevents nonce races
-	inFlight sync.Map   // key: "treeNum:nullifier" — prevents concurrent double-spend
+	inFlight sync.Map   // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
 
 	feeSpendPubKey *big.Int // nil unless RELAYER_FEE_SPEND_PRIVATE_KEY is configured
 }
@@ -174,7 +174,7 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	nfKeys, err := h.claimNullifiers(parsed)
+	nfKeys, err := h.claimNullifiers(nullifierClaim{vaultAddr, parsed})
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -231,6 +231,16 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	}
 	if parsed.nIn != 1 || parsed.nOut != 3 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/3-output PaymentRelayerFeePublic receipt"})
+		return
+	}
+	// parseReceipt's generic minExpected (1+3*nIn+nOut = 7 for nIn=1/nOut=3)
+	// doesn't account for this circuit's extra StContractAddress/StFee
+	// signals (9 elements total: [msg, treeNum0, root0, nf0, cmtBob,
+	// cmtChange, cmtRelayer, contractAddr, fee]) — check explicitly before
+	// indexing signal[6]/[8] below, or a short-but->=7 signal panics instead
+	// of returning a clean 400.
+	if len(parsed.signal) < 9 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal too short for PaymentRelayerFeePublic: got %d, need 9", len(parsed.signal))})
 		return
 	}
 	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
@@ -293,7 +303,7 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	nfKeys, err := h.claimNullifiers(parsed)
+	nfKeys, err := h.claimNullifiers(nullifierClaim{vaultAddr, parsed})
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -349,6 +359,18 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
 		return
 	}
+	// Every plain-payment circuit in this family (Payment, Payment2in) has
+	// exactly 2 outputs (recipient + change); nIn (1 or 2) is left
+	// unconstrained here since either is a valid main leg. Unlike
+	// RelayPaymentRelayerFee's/UsdrFee's shape check below, this isn't
+	// guarding an out-of-range signal index (the plain-payment wire shape
+	// has no extra elements beyond parseReceipt's generic length check) —
+	// it's defense-in-depth against a receipt built for a differently-shaped
+	// circuit being submitted as this route's main leg.
+	if parsed.nOut != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 2-output payment receipt for the main leg"})
+		return
+	}
 	usdrParsed, err := parseReceipt(&req.UsdrReceipt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse usdrReceipt: %s", err)})
@@ -356,6 +378,16 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	}
 	if usdrParsed.nIn != 1 || usdrParsed.nOut != 2 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/2-output UsdrFee receipt"})
+		return
+	}
+	// parseReceipt's generic minExpected (1+3*nIn+nOut = 6 for nIn=1/nOut=2)
+	// doesn't account for UsdrFee's extra StContractAddress/StFee/StTokenId
+	// signals (9 elements total: [msg, treeNum0, root0, nf0, cmtFee,
+	// cmtChange, contractAddr, fee, tokenId]) — check explicitly before
+	// indexing signal[4]/[7]/[8] below, or a short-but->=6 signal panics
+	// instead of returning a clean 400.
+	if len(usdrParsed.signal) < 9 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal too short for UsdrFee: got %d, need 9", len(usdrParsed.signal))})
 		return
 	}
 	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
@@ -438,7 +470,7 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	nfKeys, err := h.claimNullifiers(parsed, usdrParsed)
+	nfKeys, err := h.claimNullifiers(nullifierClaim{vaultAddr, parsed}, nullifierClaim{usdrVaultAddr, usdrParsed})
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -509,7 +541,7 @@ func (h *Handler) RelaySwap(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("delivery side: %s", err)})
 		return
 	}
-	nfKeys, err := h.claimNullifiers(payParsed, delParsed)
+	nfKeys, err := h.claimNullifiers(nullifierClaim{payVaultAddr, payParsed}, nullifierClaim{delVaultAddr, delParsed})
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -578,7 +610,7 @@ func (h *Handler) RelayExchange(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("receipt2: %s", err)})
 		return
 	}
-	nfKeys, err := h.claimNullifiers(parsed1, parsed2)
+	nfKeys, err := h.claimNullifiers(nullifierClaim{vaultAddr1, parsed1}, nullifierClaim{vaultAddr2, parsed2})
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -732,19 +764,36 @@ func buildProofReceipt(p *parsedReceipt) proofReceipt {
 
 // ── nullifier in-flight tracking ──────────────────────────────────────────────
 
-// claimNullifiers atomically marks all nullifiers across the given receipts as
-// in-flight. Returns the claimed keys so the caller can release them with defer.
-// Returns an error (HTTP 409) if any nullifier is already in-flight.
-func (h *Handler) claimNullifiers(receipts ...*parsedReceipt) ([]string, error) {
+// nullifierClaim pairs a parsed receipt with the vault it's being submitted
+// against, so claimNullifiers can scope its dedup key per-vault.
+type nullifierClaim struct {
+	vault   common.Address
+	receipt *parsedReceipt
+}
+
+// claimNullifiers atomically marks all nullifiers across the given
+// (vault, receipt) pairs as in-flight. Returns the claimed keys so the
+// caller can release them with defer. Returns an error (HTTP 409) if any
+// nullifier is already in-flight.
+//
+// The dedup key includes the vault address because GetNullifier(WithTree)
+// deliberately has no vault component (nullifiers are scoped per-vault
+// on-chain, in each vault's own nullifiers mapping) — the SAME spend key's
+// first note in two DIFFERENT vaults can land at the same (treeNumber,
+// pathIndex) and so produce the identical nullifier value in both. Without
+// the vault in the key, two legitimate, unrelated concurrent relay calls
+// against different vaults could spuriously reject each other with 409.
+func (h *Handler) claimNullifiers(claims ...nullifierClaim) ([]string, error) {
 	var claimed []string
-	for _, r := range receipts {
+	for _, c := range claims {
+		r := c.receipt
 		for i := 0; i < r.nIn; i++ {
 			nullifier := r.signal[1+2*r.nIn+i]
 			if nullifier.Sign() == 0 {
 				continue
 			}
 			treeNum := r.signal[1+i]
-			key := treeNum.String() + ":" + nullifier.String()
+			key := c.vault.Hex() + ":" + treeNum.String() + ":" + nullifier.String()
 			if _, loaded := h.inFlight.LoadOrStore(key, struct{}{}); loaded {
 				h.releaseNullifiers(claimed)
 				return nil, fmt.Errorf("nullifier already in-flight: %s", key)
