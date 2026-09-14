@@ -64,7 +64,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	}
 
 	circuit := newCircuit()
-	witness := newCircuit()
 
 	solver.RegisterHint(primitives.ModHint)
 	solver.RegisterHint(primitives.PoseidonNative)
@@ -82,7 +81,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
-		witness = newCircuit()
+		witness := newCircuit()
 
 		witness.StMessage = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
