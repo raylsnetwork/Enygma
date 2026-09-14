@@ -21,6 +21,13 @@ type MerkleProof struct {
 	Elements []*big.Int
 	Indices  *big.Int
 	Root     *big.Int
+	// TreeNumber is the sub-tree the element was found in: 0 for the first
+	// tree, incrementing once per rollover (see newTree/StTreeNumber) —
+	// matches the numbering used on-chain for AuctionCoinVault.rootHistory
+	// and similar per-vault root-history maps. Callers that submit a proof
+	// on-chain for a tree that has since rolled over must pass this value,
+	// not always 0.
+	TreeNumber int
 }
 
 // MerkleTreeState represents the serializable state of a Merkle tree
@@ -205,9 +212,14 @@ func (mt *MerkleTree) rebuildSparseTree() {
 
 // InsertLeaves inserts multiple leaves into the tree
 func (mt *MerkleTree) InsertLeaves(leaves []*big.Int) {
-	// Check if tree is full
+	// Check if tree is full. Strictly-greater, matching AuctionCoinVault._insertLeaves'
+	// on-chain rollover condition `(_nextLeafIndex + count) > (2 ** _treeDepth)` — a
+	// tree holding exactly maxLeaves leaves does NOT roll until the next insert would
+	// exceed capacity. Using >= here rolled one leaf early, so any local tree tracking
+	// (e.g. for building Merkle proofs for a >=maxLeaves-leaf vault) diverged from the
+	// on-chain root as soon as the tree passed maxLeaves-1 leaves.
 	maxLeaves := 1 << mt.depth
-	if len(mt.tree[0])+len(leaves) >= maxLeaves {
+	if len(mt.tree[0])+len(leaves) > maxLeaves {
 		mt.newTree()
 	}
 
@@ -259,11 +271,12 @@ func (mt *MerkleTree) LastTreeNumber() int {
 	return len(mt.prevTrees)
 }
 
-// RootOfPrevTree returns the root of a previous tree
+// RootOfPrevTree returns the root of a previous tree. treeNum is the 0-based
+// index into prevTrees (0 = the first/oldest tree) — the same numbering
+// GenerateProof uses when it falls back into prevTrees, and the numbering
+// on-chain rootHistory maps use. treeNum=0 here means the first previous
+// tree, not "the current tree" — the current tree's root is mt.Root().
 func (mt *MerkleTree) RootOfPrevTree(treeNum int) *big.Int {
-	if treeNum == 0 {
-		return mt.Root()
-	}
 	return mt.prevTrees[treeNum][mt.depth][0]
 }
 
@@ -305,9 +318,11 @@ func (mt *MerkleTree) GenerateProof(element *big.Int) (*MerkleProof, error) {
 
 	activeTree := mt.tree
 	activeRoot := mt.Root()
+	foundTreeNumber := mt.treeNumber
 	if treeNum != -1 {
 		activeTree = mt.prevTrees[treeNum]
 		activeRoot = mt.RootOfPrevTree(treeNum)
+		foundTreeNumber = treeNum
 	}
 
 	// Loop through each level
@@ -342,10 +357,11 @@ func (mt *MerkleTree) GenerateProof(element *big.Int) (*MerkleProof, error) {
 	}
 
 	return &MerkleProof{
-		Element:  element,
-		Elements: elements,
-		Indices:  indicesBigInt,
-		Root:     activeRoot,
+		Element:    element,
+		Elements:   elements,
+		Indices:    indicesBigInt,
+		Root:       activeRoot,
+		TreeNumber: foundTreeNumber,
 	}, nil
 }
 
