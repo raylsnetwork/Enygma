@@ -19,9 +19,15 @@ type (
 )
 
 var (
-	NewSpendKeyPair   = dvpcore.NewSpendKeyPair
-	NewMerkleTree     = dvpcore.NewMerkleTree
-	GetNullifier      = dvpcore.GetNullifier
+	NewSpendKeyPair = dvpcore.NewSpendKeyPair
+	// NewMerkleTree here always uses the "strict" rollover boundary
+	// (dvpcore.NewMerkleTreeStrict), matching AuctionCoinVault.sol's
+	// `(nextLeafIndex+count) > 2**treeDepth` rollover condition — every tree
+	// built through this package tracks an AuctionCoinVault (NftVault or
+	// UsdcVault), never enygma_dvp's own Merkle.sol-based vaults, which use
+	// a different (non-strict) boundary. See dvpcore.MerkleTree.exclusiveCapacity.
+	NewMerkleTree = dvpcore.NewMerkleTreeStrict
+	GetNullifier  = dvpcore.GetNullifier
 	GetAuctionId      = dvpcore.GetAuctionId
 	Erc721Commitment  = dvpcore.Erc721Commitment
 	Erc20CommitmentV2 = dvpcore.Erc20CommitmentV2

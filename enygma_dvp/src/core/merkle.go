@@ -45,14 +45,50 @@ type MerkleTree struct {
 	treeNumber int
 	prevTrees  [][][]*big.Int
 	savePath   string
+	// exclusiveCapacity selects the rollover-trigger convention this tree's
+	// InsertLeaves uses, which MUST match whichever on-chain vault contract
+	// this tree is tracking — the two vault contract families in this
+	// monorepo disagree:
+	//   - false (default, NewMerkleTree): matches enygma_dvp's own
+	//     Merkle.sol (`(nextLeafIndex+count) >= 2**treeDepth` triggers
+	//     roll) — used by Erc20CoinVault/Erc721CoinVault/Erc1155CoinVault/
+	//     EnygmaErc20CoinVault and everything built on them (including the
+	//     Payment/USDr vaults), in both enygma_dvp and enygma_retail_payments
+	//     (which deploys enygma_dvp's exact compiled bytecode).
+	//   - true (NewMerkleTreeStrict): matches enygma_dvp_auctions'
+	//     AuctionCoinVault.sol (`(nextLeafIndex+count) > 2**treeDepth`
+	//     triggers roll — the mathematically tight boundary, filling a
+	//     tree completely before rolling instead of one leaf early).
+	// Using the wrong one produces a local root/TreeNumber that silently
+	// diverges from the on-chain vault as soon as a tree crosses depth-1
+	// leaves — see the MerkleTree off-by-one bug fixed 2026-09-14.
+	exclusiveCapacity bool
 }
 
-// NewMerkleTree creates a new Merkle tree with the given depth
+// NewMerkleTree creates a new Merkle tree with the given depth, using the
+// rollover convention that matches enygma_dvp's own Merkle.sol (and every
+// vault built on it, in both enygma_dvp and enygma_retail_payments). For a
+// tree tracking an enygma_dvp_auctions AuctionCoinVault, use
+// NewMerkleTreeStrict instead — see MerkleTree.exclusiveCapacity.
 func NewMerkleTree(depth int) *MerkleTree {
+	return newMerkleTree(depth, false)
+}
+
+// NewMerkleTreeStrict creates a new Merkle tree using the tight rollover
+// boundary that matches enygma_dvp_auctions' AuctionCoinVault.sol (rolls
+// only once a tree is completely full, not one leaf early). See
+// MerkleTree.exclusiveCapacity for why this must match the specific vault
+// contract the tree is tracking.
+func NewMerkleTreeStrict(depth int) *MerkleTree {
+	return newMerkleTree(depth, true)
+}
+
+func newMerkleTree(depth int, exclusiveCapacity bool) *MerkleTree {
 	mt := &MerkleTree{
-		depth:      depth,
-		treeNumber: 0,
-		prevTrees:  make([][][]*big.Int, 0),
+		depth:             depth,
+		treeNumber:        0,
+		prevTrees:         make([][][]*big.Int, 0),
+		exclusiveCapacity: exclusiveCapacity,
 	}
 
 	mt.zeros = getZeroValueLevels(depth)
@@ -212,14 +248,21 @@ func (mt *MerkleTree) rebuildSparseTree() {
 
 // InsertLeaves inserts multiple leaves into the tree
 func (mt *MerkleTree) InsertLeaves(leaves []*big.Int) {
-	// Check if tree is full. Strictly-greater, matching AuctionCoinVault._insertLeaves'
-	// on-chain rollover condition `(_nextLeafIndex + count) > (2 ** _treeDepth)` — a
-	// tree holding exactly maxLeaves leaves does NOT roll until the next insert would
-	// exceed capacity. Using >= here rolled one leaf early, so any local tree tracking
-	// (e.g. for building Merkle proofs for a >=maxLeaves-leaf vault) diverged from the
-	// on-chain root as soon as the tree passed maxLeaves-1 leaves.
+	// Check if tree is full — see MerkleTree.exclusiveCapacity for why this
+	// must match the on-chain vault contract this tree is tracking:
+	//   - exclusiveCapacity=false (default): rolls at `(count+count) >= maxLeaves`,
+	//     matching Merkle.sol (enygma_dvp's own vaults).
+	//   - exclusiveCapacity=true (NewMerkleTreeStrict): rolls at
+	//     `(count+count) > maxLeaves`, matching AuctionCoinVault.sol — a tree
+	//     holding exactly maxLeaves leaves does not roll until the next
+	//     insert would actually exceed capacity.
 	maxLeaves := 1 << mt.depth
-	if len(mt.tree[0])+len(leaves) > maxLeaves {
+	full := len(mt.tree[0]) + len(leaves)
+	rolls := full > maxLeaves
+	if !mt.exclusiveCapacity {
+		rolls = full >= maxLeaves
+	}
+	if rolls {
 		mt.newTree()
 	}
 
