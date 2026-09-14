@@ -170,6 +170,23 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 	for i := 0; i < numBids350; i++ {
 		usdcProofs[i], err = usdcTree.GenerateProof(usdcCommits[i])
 		checkErr(t, fmt.Sprintf("GenerateProof(usdc %d)", i), err)
+
+		// Per-bidder self-consistency check: does this proof's own claimed
+		// root actually match the tree's bookkeeping for its own reported
+		// TreeNumber? Catches a bad proof (e.g. a Root/TreeNumber mismatch
+		// from GenerateProof's prevTrees fallback) right here, rather than
+		// as a generic submitBid revert buried among 349 other bids later.
+		// RootOfPrevTree only indexes prevTrees (0..LastTreeNumber()-1), so
+		// a proof whose TreeNumber is the CURRENT tree must compare against
+		// Root() instead.
+		wantRoot := usdcTree.Root()
+		if usdcProofs[i].TreeNumber != usdcTree.TreeNumber() {
+			wantRoot = usdcTree.RootOfPrevTree(usdcProofs[i].TreeNumber)
+		}
+		if usdcProofs[i].Root.Cmp(wantRoot) != 0 {
+			t.Fatalf("usdcProofs[%d]: Root %s doesn't match tree %d's own root %s",
+				i, usdcProofs[i].Root, usdcProofs[i].TreeNumber, wantRoot)
+		}
 	}
 
 	// Sanity check against the CURRENT tree's root (usdcTree.Root()), not any
