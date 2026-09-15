@@ -99,25 +99,9 @@ func GenerationVkPk (){
 	// }
 
 	// NOT covered by integration tests (test/01–04)
-	// erc20_join_split := templates.Erc20CircuitConfig{
-	// 	TmNInputs: 2,
-	// 	TmMOutputs:  2,
-	// 	TmMerkleTreeDepth:8,
-	// 	TmRange: frontend.Variable("1000000000000000000000000000000000000"),
-	// }
-
-	// NOT covered by integration tests (test/01–04)
 	// erc20Auditor_join_split_10_2 := templates.Erc20WithAuditorConfig{
 	// 	TmNInputs: 10,
 	// 	TmMOutputs: 2,
-	// 	TmMerkleTreeDepth:8,
-	// 	TmRange: frontend.Variable("1000000000000000000000000000000000000"),
-	// }
-
-	// NOT covered by integration tests (test/01–04)
-	// erc20_join_split_10_2 := templates.Erc20CircuitConfig{
-	// 	TmNInputs: 10,
-	// 	TmMOutputs:  2,
 	// 	TmMerkleTreeDepth:8,
 	// 	TmRange: frontend.Variable("1000000000000000000000000000000000000"),
 	// }
