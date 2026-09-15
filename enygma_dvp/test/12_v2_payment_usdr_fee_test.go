@@ -379,9 +379,12 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		d := depositIntoVault(t, ctx, client, vault, erc20, vaultAddr, owner, depositAmt, tokenId, merkleDepth)
 
-		nullifier, err := core.GetNullifier(d.spend.PrivateKey, d.merkleProof.Indices)
+		// GetNullifierBound (not GetNullifier) — binds the proof to this vault,
+		// matching the circuit-side NullifierBound fix (StContractAddress was
+		// previously unconstrained).
+		nullifier, err := core.GetNullifierBound(d.spend.PrivateKey, d.merkleProof.Indices, new(big.Int).SetBytes(vaultAddr.Bytes()))
 		if err != nil {
-			t.Fatalf("GetNullifier: %v", err)
+			t.Fatalf("GetNullifierBound: %v", err)
 		}
 
 		ssBob, ctxtBob, err := core.Encapsulate(bobView.EncapsKey)
@@ -507,9 +510,11 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		d := depositIntoVault(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, owner, depositAmt, usdrTokenId, merkleDepth)
 
-		nullifier, err := core.GetNullifier(d.spend.PrivateKey, d.merkleProof.Indices)
+		// GetNullifierBound (not GetNullifier) — binds the proof to this vault,
+		// matching the circuit-side NullifierBound fix.
+		nullifier, err := core.GetNullifierBound(d.spend.PrivateKey, d.merkleProof.Indices, new(big.Int).SetBytes(usdrVaultAddr.Bytes()))
 		if err != nil {
-			t.Fatalf("GetNullifier (usdr): %v", err)
+			t.Fatalf("GetNullifierBound (usdr): %v", err)
 		}
 
 		fSalt, err := core.RandomInField()
