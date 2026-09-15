@@ -10,9 +10,11 @@ func Nullifier(api frontend.API, privateKey frontend.Variable, pathIndex fronten
 }
 
 // NullifierBound computes a nullifier bound to a specific contract deployment.
-// Not currently used by any template — Payment.go, PaymentFee.go and
-// PaymentRelayerFeePublic.go all constrain their nullifier with the plain
-// Nullifier() above instead.
+// Used by Payment.go, PaymentFee.go, PaymentRelayerFeePublic.go and
+// UsdrFee.go — their StContractAddress public input was previously
+// completely unconstrained (same bug class as PrivateMintCircuit's pre-fix
+// ContractAddress, "Vuln 11") since they constrained their nullifier with
+// the plain Nullifier() above instead of this one.
 //
 //	nf = Poseidon(sk, leafIndex, contractAddress)
 //

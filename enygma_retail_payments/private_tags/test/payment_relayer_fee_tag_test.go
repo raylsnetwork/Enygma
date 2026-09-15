@@ -233,9 +233,11 @@ func depositAndBuildRelayerFeeWitness(
 		t.Fatalf("GenerateProof: %v", err)
 	}
 
-	nullifier, err := dvpcore.GetNullifier(aliceSpend.PrivateKey, aliceProof.Indices)
+	// GetNullifierBound (not GetNullifier) — binds the proof to this vault,
+	// matching the circuit-side NullifierBound fix.
+	nullifier, err := dvpcore.GetNullifierBound(aliceSpend.PrivateKey, aliceProof.Indices, new(big.Int).SetBytes(vaultAddr.Bytes()))
 	if err != nil {
-		t.Fatalf("GetNullifier: %v", err)
+		t.Fatalf("GetNullifierBound: %v", err)
 	}
 
 	ssBob, ctxtBob, err := rpcore.Encapsulate(bobViewEncapsKey)

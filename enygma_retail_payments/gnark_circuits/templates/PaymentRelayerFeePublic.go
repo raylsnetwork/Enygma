@@ -85,7 +85,8 @@ func (circuit *PaymentRelayerFeePublicCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		nullifier := primitives.Nullifier(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i])
+		// StContractAddress fix — see Payment.go for the full rationale.
+		nullifier := primitives.NullifierBound(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i], circuit.StContractAddress)
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
