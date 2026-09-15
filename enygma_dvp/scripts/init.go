@@ -362,6 +362,23 @@ func initializeDvp() error {
 	}
 	fmt.Println("enygma was added into EnygmaErc20CoinVault")
 
+	// Register the relayer account (accounts[2] — same address every relayer in this
+	// repo is started with, e.g. RELAYER_PRIVATE_KEY in relayer/README examples and
+	// test/10_v2_dvp_relayer_test.go's prerequisites) as an authorized EnygmaDvp
+	// relayer. swap()/exchange() are gated by the onlyRelayer modifier
+	// (authorizedRelayers[msg.sender]); without this, TestDvP_SwapViaRelayer and
+	// TestDvP_ExchangeViaRelayer fail with "caller is not an authorized relayer" on
+	// any fresh deployment until someone calls this manually.
+	if len(config.Network.Accounts) > 2 {
+		relayerAddress := common.HexToAddress(config.Network.Accounts[2].Address)
+		fmt.Printf("Registering relayer account %s...\n", relayerAddress.Hex())
+		_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerRelayer", relayerAddress)
+		if err != nil {
+			return fmt.Errorf("failed to register relayer: %w", err)
+		}
+		fmt.Println("... Registered relayer")
+	}
+
 	fmt.Println("EnygmaDvp has been initialized.")
 	return nil
 }
