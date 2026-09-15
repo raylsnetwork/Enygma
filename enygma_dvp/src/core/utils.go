@@ -165,10 +165,13 @@ func GetNullifierWithTree(sk, treeNumber, pathIndex *big.Int, treeDepth int) (*b
 }
 
 // GetNullifierBound computes a contract-address-bound nullifier.
-// Not currently used by any circuit — the retail payments Payment/PaymentFee/
-// PaymentRelayerFeePublic circuits use the plain GetNullifier(sk, leafIndex)
-// instead. Kept available for callers that want cross-deployment replay
-// protection (the property this formula was originally added for).
+// Used by the Payment/PaymentFee/PaymentRelayerFeePublic/UsdrFee circuits
+// (both enygma_dvp and enygma_retail_payments, which share this package) via
+// their circuit-side NullifierBound primitive — previously those circuits'
+// StContractAddress public input was completely unconstrained (same bug
+// class as PrivateMintCircuit's pre-fix ContractAddress, "Vuln 11"); this is
+// the fix, providing the cross-deployment replay protection this formula was
+// originally added for.
 //
 //	nf = Poseidon3(sk, leafIndex, contractAddress)
 func GetNullifierBound(privateKey, pathIndices, contractAddress *big.Int) (*big.Int, error) {

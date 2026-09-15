@@ -75,7 +75,14 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		nullifier := primitives.Nullifier(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i])
+		// StContractAddress fix: switch to NullifierBound (Poseidon(sk,
+		// pathIndex, contractAddress) — was already defined but unused, see
+		// Nullifier.go) so StContractAddress is no longer a completely
+		// unconstrained public input — a prover could otherwise pick any vault
+		// address at proof-generation time (same bug class as
+		// PrivateMintCircuit's pre-fix ContractAddress, "Vuln 11"). Does not
+		// change statement shape/length.
+		nullifier := primitives.NullifierBound(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i], circuit.StContractAddress)
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)

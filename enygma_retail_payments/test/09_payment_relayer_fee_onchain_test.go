@@ -222,9 +222,12 @@ func runRelayerFeeFlow(
 		t.Fatalf("[%s] GenerateProof: %v", p.label, err)
 	}
 
-	nullifier, err := dvpcore.GetNullifier(aliceSpend.PrivateKey, aliceProof.Indices)
+	// GetNullifierBound (not GetNullifier) — binds the proof to this vault,
+	// matching the circuit-side NullifierBound fix (StContractAddress was
+	// previously unconstrained).
+	nullifier, err := dvpcore.GetNullifierBound(aliceSpend.PrivateKey, aliceProof.Indices, new(big.Int).SetBytes(vaultAddr.Bytes()))
 	if err != nil {
-		t.Fatalf("[%s] GetNullifier: %v", p.label, err)
+		t.Fatalf("[%s] GetNullifierBound: %v", p.label, err)
 	}
 
 	// Output 0: Bob's payment.
