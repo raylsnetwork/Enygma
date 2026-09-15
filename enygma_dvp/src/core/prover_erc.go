@@ -1825,12 +1825,13 @@ func (c *GnarkClient) BoundPaymentProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			// nullifier: Poseidon(sk, leafIndex, contractAddress) — GetNullifierBound,
-			// not the plain GetNullifier, so the proof is bound to this specific
-			// vault contract (matches the circuit-side NullifierBound fix).
-			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+			// nullifier: Poseidon(sk, treeNumber*2^treeDepth+leafIndex, contractAddress)
+			// — GetNullifierBoundTree, not the plain GetNullifier, so the proof
+			// is bound to this specific vault contract AND tree (matches the
+			// circuit-side NullifierBoundTree fix).
+			nf, err := GetNullifierBoundTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth, contractAddress)
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifierBoundTree input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}
@@ -1991,11 +1992,12 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			// GetNullifierBound (not the plain GetNullifier), matching the
-			// circuit-side NullifierBound fix — binds the proof to this vault.
-			nf, err := GetNullifierBound(keysIn[i].PrivateKey, wtPathIndices[i], contractAddress)
+			// GetNullifierBoundTree (not the plain GetNullifier), matching the
+			// circuit-side NullifierBoundTree fix — binds the proof to this
+			// vault AND tree.
+			nf, err := GetNullifierBoundTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth, contractAddress)
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBound input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifierBoundTree input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}

@@ -243,9 +243,10 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	t.Logf("Step 4 — building PaymentRelayerFeePublic proof request (pay=%d to Bob, change=%d to Alice, fee=%d to relayer, fee is PUBLIC)",
 		rfpPayAmt, rfpChangeAmt, rfpRelayerAmt)
 
-	// Compute nullifier: Poseidon(sk, pathIndices, contractAddress) —
-	// GetNullifierBound, matching the circuit-side NullifierBound fix.
-	nullifier, err := dvpcore.GetNullifierBound(aliceSpend.PrivateKey, aliceProof.Indices, new(big.Int).SetBytes(vaultAddr.Bytes()))
+	// Compute nullifier: Poseidon(sk, treeNumber*2^treeDepth+pathIndices,
+	// contractAddress) — GetNullifierBoundTree, matching the circuit-side
+	// NullifierBoundTree fix.
+	nullifier, err := dvpcore.GetNullifierBoundTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
 	if err != nil {
 		t.Fatalf("GetNullifierBound: %v", err)
 	}
