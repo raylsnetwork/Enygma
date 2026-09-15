@@ -222,10 +222,11 @@ func runRelayerFeeFlow(
 		t.Fatalf("[%s] GenerateProof: %v", p.label, err)
 	}
 
-	// GetNullifierBound (not GetNullifier) — binds the proof to this vault,
-	// matching the circuit-side NullifierBound fix (StContractAddress was
-	// previously unconstrained).
-	nullifier, err := dvpcore.GetNullifierBound(aliceSpend.PrivateKey, aliceProof.Indices, new(big.Int).SetBytes(vaultAddr.Bytes()))
+	// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
+	// vault AND tree, matching the circuit-side NullifierBoundTree fix
+	// (StContractAddress and StTreeNumbers were both previously
+	// unconstrained).
+	nullifier, err := dvpcore.GetNullifierBoundTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
 	if err != nil {
 		t.Fatalf("[%s] GetNullifierBound: %v", p.label, err)
 	}
