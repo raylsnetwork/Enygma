@@ -170,10 +170,31 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 	for i := 0; i < numBids350; i++ {
 		usdcProofs[i], err = usdcTree.GenerateProof(usdcCommits[i])
 		checkErr(t, fmt.Sprintf("GenerateProof(usdc %d)", i), err)
+
+		// Per-bidder self-consistency check: does this proof's own claimed
+		// root actually match the tree's bookkeeping for its own reported
+		// TreeNumber? Catches a bad proof (e.g. a Root/TreeNumber mismatch
+		// from GenerateProof's prevTrees fallback) right here, rather than
+		// as a generic submitBid revert buried among 349 other bids later.
+		// RootOfPrevTree only indexes prevTrees (0..LastTreeNumber()-1), so
+		// a proof whose TreeNumber is the CURRENT tree must compare against
+		// Root() instead.
+		wantRoot := usdcTree.Root()
+		if usdcProofs[i].TreeNumber != usdcTree.TreeNumber() {
+			wantRoot = usdcTree.RootOfPrevTree(usdcProofs[i].TreeNumber)
+		}
+		if usdcProofs[i].Root.Cmp(wantRoot) != 0 {
+			t.Fatalf("usdcProofs[%d]: Root %s doesn't match tree %d's own root %s",
+				i, usdcProofs[i].Root, usdcProofs[i].TreeNumber, wantRoot)
+		}
 	}
 
-	if usdcProofs[0].Root.Cmp(usdcRoot) != 0 {
-		t.Fatalf("USDC local tree root %s ≠ vault root %s", usdcProofs[0].Root, usdcRoot)
+	// Sanity check against the CURRENT tree's root (usdcTree.Root()), not any
+	// individual bidder's proof root — 350 bids crosses the 256-leaf-per-tree
+	// capacity, so early bidders' proofs are rooted in a now-superseded
+	// sub-tree (see MerkleProof.TreeNumber) and won't match the latest root.
+	if usdcTree.Root().Cmp(usdcRoot) != 0 {
+		t.Fatalf("USDC local tree root %s ≠ vault root %s", usdcTree.Root(), usdcRoot)
 	}
 
 	// ─── Phase 0a: initAuction ────────────────────────────────────────────────
@@ -197,7 +218,8 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
 	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
-	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(7200))
+	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
+	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		toBigArr8(lockResult.Proof), toBigArr7(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
@@ -232,7 +254,7 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 			BidAmount:   amounts[i],
 			TokenId:     usdcTokenId,
 			SaltIn:      saltsIn[i],
-			TreeNumber:  big.NewInt(0),
+			TreeNumber:  big.NewInt(int64(usdcProofs[i].TreeNumber)),
 			MerkleProof: usdcProofs[i],
 			BobPk:       bob.PublicKey,
 			SaltA:       saltA,

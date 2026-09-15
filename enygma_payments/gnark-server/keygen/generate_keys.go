@@ -5,16 +5,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
+	burn "enygma-server/pkg/circuits/burn"
+	deposit "enygma-server/pkg/circuits/deposit"
 	enygma "enygma-server/pkg/circuits/enygma"
 	enygma_fee "enygma-server/pkg/circuits/enygma_fee"
-	deposit "enygma-server/pkg/circuits/deposit"
+	usdr "enygma-server/pkg/circuits/usdr"
 	withdraw "enygma-server/pkg/circuits/withdraw"
-	burn "enygma-server/pkg/circuits/burn"
 	utils "enygma-server/utils"
 )
 
@@ -78,6 +79,36 @@ func generateKeysEnygma() error {
 		"keys/EnygmaPk.key",
 		"keys/EnygmaVk.key",
 		"keys/EnygmaVerifier.sol",
+	)
+}
+
+func generateKeysUsdr() error {
+	config := usdr.USDrCircuitConfig{
+		NCommitment: 6,
+	}
+
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
+	usdrCircuit := usdr.USDrCircuit{
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
+	}
+
+	return generateKeys(
+		&usdrCircuit,
+		"keys/UsdrPk.key",
+		"keys/UsdrVk.key",
+		"keys/UsdrVerifier.sol",
 	)
 }
 
@@ -192,7 +223,7 @@ func generateKeysBurn() error {
 //	go run ./keygen/generate_keys.go              # regenerate ALL keys
 //	go run ./keygen/generate_keys.go -circuit enygma_fee  # only fee keys
 //
-// Available -circuit values: all, enygma, enygma_fee, deposit, withdraw, burn
+// Available -circuit values: all, enygma, enygma_fee, usdr, deposit, withdraw, burn
 //
 // H-13: burn is a brand new circuit added by this fix, not a re-key of an
 // existing one — see gnark-server/pkg/circuits/burn. Like every other
@@ -200,9 +231,13 @@ func generateKeysBurn() error {
 // this job exists so it can be included in the single batched trusted-setup
 // ceremony (H-12) rather than triggering its own one-off `groth16.Setup`
 // call — do not run this job in production ahead of that ceremony.
+//
+// NOTE: "usdr" has no dependency on "enygma" (unlike the earlier relayer
+// re-verification design) — it's an independent circuit, safe to generate
+// on its own or before/after "enygma".
 func main() {
 	circuit := flag.String("circuit", "all",
-		"which circuit keys to generate: all | enygma | enygma_fee | deposit | withdraw | burn")
+		"which circuit keys to generate: all | enygma | enygma_fee | usdr | deposit | withdraw | burn")
 	flag.Parse()
 
 	type job struct {
@@ -213,6 +248,7 @@ func main() {
 	all := []job{
 		{"enygma", generateKeysEnygma},
 		{"enygma_fee", generateKeysEnygmaFee},
+		{"usdr", generateKeysUsdr},
 		{"deposit", generateKeysZkDvpDeposit},
 		{"withdraw", generateKeysZkDvpWithdraw},
 		{"burn", generateKeysBurn},
@@ -229,7 +265,7 @@ func main() {
 			}
 		}
 		if len(jobs) == 0 {
-			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, deposit, withdraw, burn\n", *circuit)
+			fmt.Printf("unknown -circuit %q — valid values: all, enygma, enygma_fee, usdr, deposit, withdraw, burn\n", *circuit)
 			os.Exit(1)
 		}
 	}

@@ -330,7 +330,7 @@ func TestErc721OwnershipProof_Success(t *testing.T) {
 		makeKeyPair(10, 20),           // keyIn
 		big.NewInt(77),                // wtSaltIn
 		makeKeyPair(50, 60),           // keyOut
-		nil,                           // recipientViewEncapKey (nil → random salt fallback)
+		makeViewEncapKey(t),           // recipientViewEncapKey
 		merkleDepth,
 		makeMerkleProof(merkleDepth),
 		big.NewInt(0),                 // stTreeNumber
@@ -397,7 +397,7 @@ func TestErc1155FungibleJoinSplitProof_Success(t *testing.T) {
 		[]*big.Int{big.NewInt(50), big.NewInt(50)},       // wtSaltsIn
 		[]*big.Int{big.NewInt(150), big.NewInt(150)},     // wtValuesOut
 		keysOut,
-		[][]byte{nil, nil},                                // recipientViewEncapKeys (nil → random salt fallback)
+		[][]byte{makeViewEncapKey(t), makeViewEncapKey(t)}, // recipientViewEncapKeys
 		merkleDepth,
 		MerkleProofPair(merkleDepth, 2),
 		[]*big.Int{big.NewInt(0), big.NewInt(1)},         // stTreeNumbers
@@ -468,7 +468,7 @@ func TestErc1155NonFungibleOwnershipProof_Success(t *testing.T) {
 		makeKeyPair(10, 20),           // keyIn
 		big.NewInt(77),                // wtSaltIn
 		makeKeyPair(50, 60),           // keyOut
-		nil,                           // recipientViewEncapKey (nil → random salt fallback)
+		makeViewEncapKey(t),           // recipientViewEncapKey
 		merkleDepth,
 		makeMerkleProof(merkleDepth),
 		big.NewInt(0),                 // stTreeNumber

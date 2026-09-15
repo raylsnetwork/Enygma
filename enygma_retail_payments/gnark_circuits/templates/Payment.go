@@ -75,7 +75,13 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		nullifier := primitives.Nullifier(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i])
+		// StContractAddress/StTreeNumbers fix: switch to NullifierBoundTree so
+		// neither is a completely unconstrained public input anymore — a
+		// prover could otherwise pick any vault address AND any tree number at
+		// proof-generation time (same bug class as PrivateMintCircuit's
+		// pre-fix ContractAddress, "Vuln 11"). Does not change statement
+		// shape/length.
+		nullifier := primitives.NullifierBoundTree(api, circuit.WtPrivateKeysIn[i], circuit.StTreeNumbers[i], circuit.WtPathIndices[i], circuit.Config.TmMerkleTreeDepth, circuit.StContractAddress)
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
@@ -120,7 +126,6 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 		)
 		api.AssertIsEqual(commitment, circuit.StCommitmentsOut[j])
 
-		// VULN: vulnerability detected by claude
 		// Output 0 is the payment to the recipient — no ownership constraint.
 		if j >= 1 {
 			api.AssertIsEqual(circuit.WtSpendPublicKeysOut[j], senderPk)

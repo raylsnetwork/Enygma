@@ -1,17 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math/big"
-	"net/http"
 	"os"
 	"strconv"
-	"strings"
 
 	"enygma/agreement"
 	"enygma/config"
@@ -23,7 +18,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
@@ -38,7 +32,20 @@ type relayTransferRequest struct {
 	Proof        [8]string  `json:"proof"`
 	PublicSignal []string   `json:"publicSignal"`
 	Commitments  [][]string `json:"commitments"`
-	KIndex       []int64    `json:"kIndex"`
+
+	// UsdrProof/UsdrPublicSignal/UsdrCommitments are required by the relayer's
+	// /relay/transfer endpoint (Enygma.transfer() now mandates a second,
+	// independent USDr fee proof settled atomically with every transfer —
+	// see IEnygma.UsdrProof) but this CLI tool has no USDr witness-building
+	// logic wired up (no USDr SecretKey/PreviousCommit sourcing). Left as
+	// zero-value placeholders; sendTransferDirect/sendTransferViaRelayer
+	// both refuse to send until this is implemented, rather than submitting
+	// a request guaranteed to fail proof verification or relayer validation.
+	UsdrProof        [8]string  `json:"usdrProof"`
+	UsdrPublicSignal []string   `json:"usdrPublicSignal"`
+	UsdrCommitments  [][]string `json:"usdrCommitments"`
+
+	KIndex []int64 `json:"kIndex"`
 }
 
 type relayTxResponse struct {
@@ -303,145 +310,24 @@ func computeDomainId(chainID *big.Int, contractAddr common.Address) *big.Int {
 
 // sendTransferViaRelayer serialises the proof and commitments and POSTs them to
 // the relayer's /relay/transfer endpoint. The relayer signs and submits on-chain.
+//
+// NOTE: does not yet build the USDr fee proof Enygma.transfer() now requires
+// on every call (see relayTransferRequest's doc comment) — refuses to send
+// rather than submit a request guaranteed to fail relayer-side validation.
 func sendTransferViaRelayer(relayerURL string, commitments []enygma.IEnygmaPoint, resp *types.Response, kIndex []*big.Int) error {
-	commFinal := make([][]string, len(commitments))
-	for i, c := range commitments {
-		commFinal[i] = []string{c.C1.String(), c.C2.String()}
-	}
-
-	var proof8 [8]string
-	for i := 0; i < 8 && i < len(resp.Proof); i++ {
-		proof8[i] = resp.Proof[i].String()
-	}
-
-	pubSig := make([]string, len(resp.PublicSignal))
-	for i, v := range resp.PublicSignal {
-		pubSig[i] = v.String()
-	}
-
-	// Fix L-10: kIndex holds the circuit's internal 0-based slot values
-	// (also the AnonymitySet signal baked into the proof); the on-chain
-	// participantIds this relay request's "kIndex" field actually becomes
-	// (Enygma.transfer's third argument) are real 1-based accountIds. The
-	// contract would have happily accepted the unmapped 0-based array —
-	// H-07 rejects accountId 0 as unregistered, but nothing on chain
-	// would have stopped positions 1-5 silently crediting/debiting
-	// accounts 1-5 while the real intended participants (accounts 2-6,
-	// since accountId = position+1) never moved — the old code's fetch
-	// bug above happened to make that internally consistent instead of a
-	// revert, which is why it never surfaced as an error.
-	kIdx64 := make([]int64, len(kIndex))
-	for i, k := range kIndex {
-		kIdx64[i] = k.Int64() + 1
-	}
-
-	reqBody := relayTransferRequest{
-		Proof:        proof8,
-		PublicSignal: pubSig,
-		Commitments:  commFinal,
-		KIndex:       kIdx64,
-	}
-
-	data, _ := json.Marshal(reqBody)
-
-	apiKey := os.Getenv("RELAYER_API_KEY")
-	if apiKey == "" {
-		apiKey = "change-me"
-	}
-
-	req, err := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer", bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	httpResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("contact relayer: %w", err)
-	}
-	defer httpResp.Body.Close()
-
-	body, _ := io.ReadAll(httpResp.Body)
-	if httpResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("relayer returned %d: %s", httpResp.StatusCode, body)
-	}
-
-	var relayResp relayTxResponse
-	if err := json.Unmarshal(body, &relayResp); err != nil {
-		return fmt.Errorf("parse relay response: %w", err)
-	}
-
-	log.Printf("Transfer successful: tx=%s block=%d gas=%d",
-		relayResp.TxHash, relayResp.BlockNumber, relayResp.GasUsed)
-	return nil
+	return fmt.Errorf("sendTransferViaRelayer: USDr fee proof support not implemented in this CLI tool — Enygma.transfer() now requires one on every call (see relayTransferRequest's doc comment)")
 }
 
 // sendTransferDirect submits transfer() on chain directly, signed by the
 // bank's own key (BANK_ETH_PRIVATE_KEY), with no relayer involved at all
 // (Fix H-09, item 2). bankTag is "" — there is no relayer credential to
 // attribute when the bank is submitting for itself.
+//
+// NOTE: does not yet build the USDr fee proof Enygma.transfer() now requires
+// on every call (see relayTransferRequest's doc comment) — refuses to send
+// rather than submit a call guaranteed to revert on proof verification.
 func sendTransferDirect(client *ethclient.Client, instance *enygma.Enygma, chainID *big.Int, kIndex []*big.Int, commitments []enygma.IEnygmaPoint, resp *types.Response) error {
-	bankKeyHex := strings.TrimPrefix(os.Getenv("BANK_ETH_PRIVATE_KEY"), "0x")
-	if bankKeyHex == "" {
-		return fmt.Errorf("ENYGMA_SUBMIT_MODE=direct requires BANK_ETH_PRIVATE_KEY (the bank's own registered signing key — see cmd/register_bank)")
-	}
-	bankKey, err := crypto.HexToECDSA(bankKeyHex)
-	if err != nil {
-		return fmt.Errorf("parse BANK_ETH_PRIVATE_KEY: %w", err)
-	}
-	bankAddr := crypto.PubkeyToAddress(bankKey.PublicKey)
-
-	var proof8 [8]*big.Int
-	for i := 0; i < 8 && i < len(resp.Proof); i++ {
-		proof8[i] = resp.Proof[i]
-	}
-	var pubSig81 [81]*big.Int
-	for i, v := range resp.PublicSignal {
-		pubSig81[i] = v
-	}
-	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig81}
-
-	// Fix L-10: same slot->accountId mapping sendTransferViaRelayer uses
-	// — kIndex holds the circuit's internal 0-based AnonymitySet values;
-	// the on-chain participantIds are the real 1-based accountIds.
-	participantIds := make([]*big.Int, len(kIndex))
-	for i, k := range kIndex {
-		participantIds[i] = new(big.Int).Add(k, big.NewInt(1))
-	}
-
-	ctx := context.Background()
-	nonce, err := client.PendingNonceAt(ctx, bankAddr)
-	if err != nil {
-		return fmt.Errorf("nonce for %s: %w", bankAddr, err)
-	}
-	gasPrice, err := client.SuggestGasPrice(ctx)
-	if err != nil {
-		return fmt.Errorf("suggest gas price: %w", err)
-	}
-	auth, err := bind.NewKeyedTransactorWithChainID(bankKey, chainID)
-	if err != nil {
-		return fmt.Errorf("build transactor: %w", err)
-	}
-	auth.Nonce = big.NewInt(int64(nonce))
-	auth.GasLimit = 16_000_000
-	auth.GasPrice = gasPrice
-
-	log.Printf("submitting Transfer directly as %s (no relayer)...", bankAddr.Hex())
-	tx, err := instance.Transfer(auth, commitments, transferProof, participantIds, "")
-	if err != nil {
-		return fmt.Errorf("Transfer(): %w", err)
-	}
-	receipt, err := bind.WaitMined(ctx, client, tx)
-	if err != nil {
-		return fmt.Errorf("wait mined: %w", err)
-	}
-	if receipt.Status != 1 {
-		return fmt.Errorf("transfer transaction reverted on-chain (tx=%s)", tx.Hash().Hex())
-	}
-	log.Printf("Transfer successful (direct, no relayer): tx=%s block=%d gas=%d",
-		tx.Hash().Hex(), receipt.BlockNumber.Uint64(), receipt.GasUsed)
-	return nil
+	return fmt.Errorf("sendTransferDirect: USDr fee proof support not implemented in this CLI tool — Enygma.transfer() now requires one on every call (see relayTransferRequest's doc comment)")
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

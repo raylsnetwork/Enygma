@@ -197,17 +197,17 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
             revert InvalidNumberOfInputs();
         }
         if (receipt.numberOfInputs == 2) {
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_JOINSPLIT,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else {
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_10INPUT,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         }
 
         return true;

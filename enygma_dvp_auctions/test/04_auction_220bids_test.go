@@ -195,7 +195,8 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
 	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
-	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(7200))
+	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
+	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		toBigArr8(lockResult.Proof), toBigArr7(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,

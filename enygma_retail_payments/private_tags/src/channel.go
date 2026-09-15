@@ -93,17 +93,28 @@ func decodeChannelPayload(data []byte) (ChannelPayload, error) {
 	if len(data) < 4 {
 		return ChannelPayload{}, fmt.Errorf("payload too short (%d bytes)", len(data))
 	}
-	msgLen := binary.BigEndian.Uint32(data[0:4])
-	if uint32(len(data)) < 4+msgLen+4 {
+	// SECURITY: msgLen/senderIdLen are 32-bit length fields read straight from
+	// (decrypted, but otherwise attacker-chosen) wire data. The original bounds
+	// checks did the "4+len+4" arithmetic in uint32, so a length near
+	// math.MaxUint32 wrapped the sum back around to a small value and slipped
+	// past the check — the subsequent data[4:4+msgLen] slice then had
+	// high < low (since 4+msgLen also wrapped) and panicked (CWE-190,
+	// integer overflow leading to an out-of-bounds slice). Doing the
+	// arithmetic in uint64 instead means it can never wrap: len(data) is
+	// bounded by real memory, nowhere near 2^64, so a too-large length field
+	// is now always correctly rejected before any slicing/allocation happens.
+	dataLen := uint64(len(data))
+	msgLen := uint64(binary.BigEndian.Uint32(data[0:4]))
+	if dataLen < 4+msgLen+4 {
 		return ChannelPayload{}, fmt.Errorf("payload truncated at message")
 	}
 	msg := make([]byte, msgLen)
 	copy(msg, data[4:4+msgLen])
 
 	offset := 4 + msgLen
-	senderIdLen := binary.BigEndian.Uint32(data[offset : offset+4])
+	senderIdLen := uint64(binary.BigEndian.Uint32(data[offset : offset+4]))
 	offset += 4
-	if uint32(len(data)) < offset+senderIdLen {
+	if dataLen < offset+senderIdLen {
 		return ChannelPayload{}, fmt.Errorf("payload truncated at senderId")
 	}
 	var senderId []byte

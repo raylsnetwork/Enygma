@@ -61,17 +61,20 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 
 	r := gin.Default()
 
-	// /health is public — no auth required.
+	// /health and /relay/info are public — no auth required.
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/relay/info", h.Info)
 
 	// All /relay/* routes require a valid Bearer token and are rate-limited.
 	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rateLimitMiddleware())
 	{
-		relay.POST("/payment",  h.RelayPayment)
-		relay.POST("/swap",     h.RelaySwap)
-		relay.POST("/exchange", h.RelayExchange)
+		relay.POST("/payment",             h.RelayPayment)
+		relay.POST("/payment_relayer_fee", h.RelayPaymentRelayerFee)
+		relay.POST("/payment_usdr_fee",    h.RelayPaymentUsdrFee)
+		relay.POST("/swap",                h.RelaySwap)
+		relay.POST("/exchange",            h.RelayExchange)
 	}
 
 	return r, nil

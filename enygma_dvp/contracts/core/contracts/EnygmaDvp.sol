@@ -98,6 +98,21 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     // authorized on-chain relayer contracts (set by owner)
     mapping(address => bool) public authorizedRelayers;
+
+    // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
+    // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
+    uint256 public relayerFixedFeeAmount;
+
+    // USDr — a second, independent relayer-fee asset (its own vault/token,
+    // its own circuit — see UsdrFeeCircuit / paymentWithUsdrFee).
+    // usdrFixedFeeAmount is the governance-configured fee amount every
+    // UsdrFee proof's public StFee signal must equal. usdrTokenId is the
+    // fixed convention value (0, matching every other circuit's WtTokenId
+    // convention in this codebase) the USDr circuit's public StTokenId
+    // signal must equal — config hygiene, not a security-critical check,
+    // since each vault already has its own independent tree/nullifier space.
+    uint256 public usdrFixedFeeAmount;
+    uint256 public usdrTokenId;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -214,7 +229,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         string memory assetGroupName,
         bool isAssetGroupFungible,
         uint256 treeDepth
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
         uint256 groupId = _assetGroupsCount;
         _assetGroups[groupId] = assetGroupContractAddress;
         IAssetGroup(assetGroupContractAddress).initializeAssetGroup(
@@ -233,7 +248,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         address assetContractAddress,
         uint256 vaultIdentifiersCount,
         uint256 treeDepth
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
         // registering the tree smart contract address and treeId
 
         uint256 vaultId = _coinVaultsCount;
@@ -252,6 +267,35 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         _coinVaultsCount++;
 
+        return true;
+    }
+
+    // setRelayerFixedFee configures the fixed fee every paymentWithRelayerFee()
+    // proof's public StFee signal is checked against on-chain (see that
+    // function below). Without this, any fee amount the prover claims in the
+    // proof passes verification — the circuit only proves internal consistency
+    // (WtValuesOut[2] == StFee), not that the amount matches any protocol value.
+    function setRelayerFixedFee(
+        uint256 amount
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        relayerFixedFeeAmount = amount;
+        return true;
+    }
+
+    // setUsdrFixedFee / setUsdrTokenId configure paymentWithUsdrFee()'s two
+    // on-chain checks against the USDr proof's public StFee/StTokenId
+    // signals — see that function below.
+    function setUsdrFixedFee(
+        uint256 amount
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        usdrFixedFeeAmount = amount;
+        return true;
+    }
+
+    function setUsdrTokenId(
+        uint256 tokenId_
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        usdrTokenId = tokenId_;
         return true;
     }
 
@@ -560,7 +604,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId,
         uint256 groupId,
         uint256 deadline
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // uint256 prootType = _proofType(receipt);
         // uint inputSize = receipt.numberOfInputs;
         // uint treeNumbersIndex = 1;
@@ -672,7 +716,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   1. Spending (nullifying) Alice's input nullifiers — not just unlocking.
     //   2. Inserting revertCommitA into the vault — Alice can spend this note.
     // HIGH-10 fix: restrict to the swap initiator — prevents griefing by third parties.
-    function claimSwapTimeout(uint256 pendingReceiptId) public returns (bool) {
+    function claimSwapTimeout(uint256 pendingReceiptId) public nonReentrant returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 
         if (meta.deadline == 0) {
@@ -728,6 +772,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // BUGFIX: nonReentrant moved here from _settleOnGroupPair (see the matching
+    // comment there) — this is the actual external entry point for the
+    // swap/exchange call family that has no other guard on its call chain.
     function swapOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -735,7 +782,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) public onlyRelayer returns (bool) {
+    ) public onlyRelayer nonReentrant returns (bool) {
         // checking groupId1 and groupId2
         // to be in _swapGroupPairs
         if (!isValidSwapGroupPair(groupId1, groupId2)) {
@@ -774,6 +821,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // BUGFIX: nonReentrant moved here from _settleOnGroupPair (see the matching
+    // comment there) — this is the actual external entry point for the
+    // swap/exchange call family that has no other guard on its call chain.
     function exchangeOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -781,7 +831,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) public onlyRelayer returns (bool) {
+    ) public onlyRelayer nonReentrant returns (bool) {
         // checking groupId1 and groupId2
         // to be in _exchangeGroupPairs
         if (!isValidExchangeGroupPair(groupId1, groupId2)) {
@@ -799,9 +849,23 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             );
     }
 
-    // CRIT-5 fix: nonReentrant prevents reentrancy via vault callbacks.
+    // CRIT-5 fix: reentrancy protection via vault callbacks.
     // Settlement order: nullify inputs FIRST, then insert outputs — prevents
     // the double-spend window where commitments exist before nullifiers are spent.
+    //
+    // BUGFIX: nonReentrant was on THIS internal function, but it's called from
+    // three different places on this same contract: swapOnGroupPair(),
+    // exchangeOnGroupPair(), and submitPartialSettlement() (which is itself
+    // already nonReentrant). Since OpenZeppelin's ReentrancyGuard tracks one
+    // shared _status flag per contract (not per call site), having a guard
+    // here AND on submitPartialSettlement meant a legitimate call from
+    // submitPartialSettlement into this function tripped "ReentrancyGuard:
+    // reentrant call" on itself — a false positive that broke the DvP full-
+    // swap settlement path entirely (caught by TestV2DvP_WithDeadline/FullSwap).
+    // Moved the guard instead onto swapOnGroupPair()/exchangeOnGroupPair() —
+    // the two callers that had no guard elsewhere in their own call chain —
+    // so every actual external entry point still has exactly one guard, with
+    // no nested double-guard on the shared internal path.
     function _settleOnGroupPair(
         ProofReceipt memory receipt1,
         ProofReceipt memory receipt2,
@@ -809,7 +873,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId2,
         uint256 groupId1,
         uint256 groupId2
-    ) internal nonReentrant returns (bool) {
+    ) internal returns (bool) {
         //-----------------------
         // [[VERIFICATION]]
         //-----------------------
@@ -1021,7 +1085,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]   (no value burned)
     // Only output[1] is constrained to Alice's senderPk in-circuit.
     //
-    // Statement layout (1-in/3-out, 8 elements):
+    // Statement layout (1-in/3-out, 9 elements — corrected from an earlier,
+    // stale 8-element comment; the PaymentRelayerFeePublic circuit's VK/wire
+    // format has always carried StFee as its 9th public signal):
     //   [0] StMessage          = 0
     //   [1] StTreeNumbers[0]
     //   [2] StMerkleRoots[0]
@@ -1031,6 +1097,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   [6] StCommitmentsOut[2] = Relayer fee commitment
     //   [7] StContractAddress   = vault address (carried for wire-format compatibility;
     //                             not bound into the nullifier — nf = Poseidon(sk, leafIndex))
+    //   [8] StFee               = relayer fee amount — bound in-circuit to valOut[2],
+    //                             and checked here against relayerFixedFeeAmount so the
+    //                             contract (not just the circuit's internal consistency)
+    //                             enforces the exact fee amount.
     //
     // ctxt / encTxData are Bob's note discovery data (ML-KEM capsule / AEAD ciphertext).
     function paymentWithRelayerFee(
@@ -1043,6 +1113,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
 
+        // feeIdx = 1 + 3*nIn + nOut + 1 (contractAddr is at nIn+nOut, fee follows it) —
+        // same formula paymentWithFee() uses above; evaluates to 8 for this circuit's
+        // 1-in/3-out shape. Without this check any StFee the prover claims in the proof
+        // would pass verification — the circuit only proves valOut[2] == StFee, not that
+        // StFee matches any protocol-configured value.
+        uint256 feeIdx = 1 + 3 * receipt.numberOfInputs + receipt.numberOfOutputs + 1;
+        if (receipt.statement[feeIdx] != relayerFixedFeeAmount) revert InvalidRelayerFee();
+
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
         vault.checkReceiptConditions(receipt);
@@ -1052,6 +1130,78 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
         uint256 commitmentBob = receipt.statement[commitmentsIndex];
         emit Payment(vaultId, commitmentBob, ctxt, encTxData);
+
+        return true;
+    }
+
+    // paymentWithUsdrFee settles two independent proofs atomically in one
+    // call: a normal payment (any of the 1-in/2-out shapes payment()
+    // accepts) against `vaultId`, and a UsdrFeeCircuit proof — a second,
+    // independent relayer-fee asset with its own vault/token — against
+    // `usdrVaultId`. Both settle or neither does.
+    //
+    // Unlike paymentWithRelayerFee (fee note is a 3rd output of the SAME
+    // proof, same token), USDr is a genuinely separate asset: its own ERC20,
+    // its own Erc20CoinVault, its own circuit. The two proofs are otherwise
+    // unrelated — there is no cross-proof binding the way enygma_payments'
+    // dual-proof transfer() needs, because each proof already nullifies
+    // against its own vault's own tree; nothing here lets one proof be
+    // replayed via the other.
+    //
+    // usdrReceipt statement layout (1-in/2-out UsdrFee circuit, 9 elements):
+    //   [0] StMessage = 0
+    //   [1] StTreeNumbers[0]
+    //   [2] StMerkleRoots[0]
+    //   [3] StNullifiers[0]
+    //   [4] StCommitmentsOut[0] = relayer's fee commitment
+    //   [5] StCommitmentsOut[1] = sender's change commitment
+    //   [6] StContractAddress   = usdr vault address
+    //   [7] StFee               = relayer fee amount — checked against usdrFixedFeeAmount
+    //   [8] StTokenId           = checked against usdrTokenId (config hygiene, see that
+    //                             state var's doc comment — not security-critical)
+    //
+    // ctxt/encTxData are the main payment's Bob note-discovery data;
+    // usdrCtxt/usdrEncTxData are the USDr fee note's (typically the relayer's
+    // own — it built the proof and already knows its own note's contents,
+    // but the data is threaded through uniformly with the main leg anyway).
+    function paymentWithUsdrFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        bytes calldata ctxt,
+        bytes calldata encTxData,
+        ProofReceipt memory usdrReceipt,
+        uint256 usdrVaultId,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
+    ) external returns (bool) {
+        // ── main leg — identical checks/settlement to payment() ──
+        if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
+        vault.checkReceiptConditions(receipt);
+        vault.nullifyFromReceipt(receipt);
+        vault.insertCommitmentsFromReceipt(receipt);
+
+        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
+        emit Payment(vaultId, receipt.statement[commitmentsIndex], ctxt, encTxData);
+
+        // ── USDr leg — checked against relayerFixedFeeAmount's USDr counterpart ──
+        if (usdrReceipt.numberOfOutputs != 2) revert InvalidNumberOfOutputs();
+        if (_coinVaults[usdrVaultId] == address(0)) revert InvalidVaultId();
+        if (usdrReceipt.statement[0] != 0) revert InvalidPaymentMessage();
+
+        if (usdrReceipt.statement[7] != usdrFixedFeeAmount) revert InvalidUsdrFee();
+        if (usdrReceipt.statement[8] != usdrTokenId) revert InvalidUsdrFee();
+
+        IAbstractCoinVault usdrVault = IAbstractCoinVault(_coinVaults[usdrVaultId]);
+        usdrVault.checkReceiptConditions(usdrReceipt);
+        usdrVault.nullifyFromReceipt(usdrReceipt);
+        usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
+
+        uint256 usdrCommitmentsIndex = 1 + 3 * usdrReceipt.numberOfInputs;
+        emit Payment(usdrVaultId, usdrReceipt.statement[usdrCommitmentsIndex], usdrCtxt, usdrEncTxData);
 
         return true;
     }

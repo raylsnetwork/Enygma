@@ -222,17 +222,17 @@ contract Erc721CoinVault is AbstractCoinVault {
         // proof that failed VK_ID_ERC721_1 would be re-verified against VK_ID_DVP_DESTINATION,
         // allowing semantic confusion between the two circuit types.
         if (receipt.statement[0] == 0) {
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC721_1,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else {
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_DVP_DESTINATION,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         }
         return true;
     }

@@ -10,6 +10,8 @@ type Config struct {
 	PaymentFeeVk              string
 	PaymentRelayerFeePublicPk string
 	PaymentRelayerFeePublicVk string
+	UsdrFeePk                 string
+	UsdrFeeVk                 string
 	PrivateMintPk             string
 	PrivateMintVk             string
 }
@@ -25,6 +27,8 @@ func Load() *Config {
 		PaymentFeeVk:              "./scripts/keys/PaymentFeeVK.key",
 		PaymentRelayerFeePublicPk: "./scripts/keys/PaymentRelayerFeePublicPK.key", // 1 input / 3 outputs (relayer fee note, public fee)
 		PaymentRelayerFeePublicVk: "./scripts/keys/PaymentRelayerFeePublicVK.key",
+		UsdrFeePk:                 "./scripts/keys/UsdrFeePK.key", // 1 input / 2 outputs, second asset, public token id
+		UsdrFeeVk:                 "./scripts/keys/UsdrFeeVK.key",
 		PrivateMintPk:             "./scripts/keys/PrivateMintPK.key",
 		PrivateMintVk:             "./scripts/keys/PrivateMintVK.key",
 	}

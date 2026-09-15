@@ -55,6 +55,18 @@ func GenerationVkPk() {
 	}
 	script.SetupPaymentRelayerFeePublic(paymentRelayerFeePublicConfig, "PaymentRelayerFeePublic")
 
+	// 1-input/2-output USDr circuit: a second, independent relayer-fee asset.
+	// StTokenId is public here (private everywhere else), which is what gives
+	// this circuit's 9-element statement a shape distinct from every other
+	// 1-in/2-out circuit's (7 or 8) — new VK slot (VK_ID_ERC20_USDR = 4).
+	usdrFeeConfig := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupUsdrFee(usdrFeeConfig, "UsdrFee")
+
 	script.SetupPrivateMint("PrivateMint")
 }
 

@@ -8,6 +8,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
@@ -17,7 +18,7 @@ import {IAssetGroup} from "../interfaces/vaults/IAssetGroup.sol";
 import {IPoseidonWrapper} from "../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../interfaces/IVerifier.sol";
 
-contract EnygmaAuction is IEnygmaAuction, AccessControl {
+contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ///////////////////////////////////////////////
     //              Constants
     //////////////////////////////////////////////
@@ -198,7 +199,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         uint256 bidGroupId,
         uint256 sellerFundCoinPublicKey,
         IEnygmaDvp.ProofReceipt memory auctionInitReceipt
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // TODO:: check proof conditions
         // if itemVaultId == ERC1155 then the last statement can not be zero
         // TODO:: check the size of the statement
@@ -222,11 +223,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
 
         uint256 itemUniqueId = itemVault.generateUniqueId(uniqueIdParams);
 
-        IVerifier(_verifierContractAddress).verifyProof(
+        if (!IVerifier(_verifierContractAddress).verifyProof(
             VK_ID_AUCTION_INIT_AUDITOR,
             auctionInitReceipt.proof,
             auctionInitReceipt.statement
-        );
+        )) revert InvalidProof();
 
         itemVault.lockCoin(treeNumber, nullifier);
 
@@ -285,7 +286,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
     function submitBid(
         IEnygmaDvp.ProofReceipt memory bidReceipt,
         uint256 receivingPublicKey
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         // order of receipt.statement
         // signal input st_beacon;
         // signal input st_auctionId;
@@ -320,11 +321,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         uint256 bidVaultId = _auctions[auctionId].bidVaultId;
 
         // verifying the proof
-        IVerifier(_verifierContractAddress).verifyProof(
+        if (!IVerifier(_verifierContractAddress).verifyProof(
             VK_ID_AUCTION_BID_AUDITOR,
             bidReceipt.proof,
             bidReceipt.statement
-        );
+        )) revert InvalidProof();
 
         IAbstractCoinVault bidVault = IAbstractCoinVault(
             IEnygmaDvp(_enygmaDvpContractAddress).vaultById(bidVaultId)
@@ -462,11 +463,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         // check the proof
 
         // verifies the validity of the proof
-        IVerifier(_verifierContractAddress).verifyProof(
+        if (!IVerifier(_verifierContractAddress).verifyProof(
             VK_ID_AUCTION_PRIVATE_OPENING,
             openingReceipt.proof,
             openingReceipt.statement
-        );
+        )) revert InvalidProof();
 
         // update the bid data
         _auctions[auctionId].bids[blindedBid].bidState = BidStateEnum
@@ -480,13 +481,20 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
         return true;
     }
 
-    // Called by auctioneer (EnygmaDvp owner)
+    // SECURITY FIX (Finding 2): this function settles an auction — it unlocks
+    // the winner's bid coins, nullifies the loser-excluded ones, and mints new
+    // commitments into the bid/item Merkle trees. It had no access-control
+    // modifier at all (only the comment below claimed it), so any address
+    // could call it. Restored to the documented intent: only the auctioneer
+    // (the EnygmaDvp owner, DEFAULT_OWNER_ROLE — the same role this contract
+    // already reserves for admin operations, see the constructor and the
+    // disabled unregisterAuctioneer() above) may declare a winner.
     function declareWinner(
         uint256 auctionId,
         uint256 winningBid,
         uint256 winningRandom,
         IEnygmaDvp.ProofReceipt[] memory notWinningBidProofs
-    ) public returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
         // VERIFICATION
 
         // TODO:: check auctions[auctionId].state
@@ -501,10 +509,15 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
             .bids[winningBlindedBid]
             .bidState;
         // check winningBlindedBid is in auctions.blindedBids
-        // if(winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
-        //             winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
-        //     revert WinningBidOpeningMismatch();
-        // }
+        // SECURITY FIX (Finding 2): this check was commented out, so a
+        // winningBid/winningRandom pair whose bid was never actually opened
+        // (BID_SEALED or even BID_INACTIVE) would still be accepted as "the
+        // winner." Restored — the claimed winning bid must have gone through
+        // a real bid-opening step before it can be declared the winner.
+        if (winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
+                    winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
+            revert WinningBidOpeningMismatch();
+        }
 
         _verifyNotWinningProofs(
             auctionId,
@@ -672,17 +685,27 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
             .bids[winningBlindedBid]
             .bidState;
         // check winningBlindedBid is in auctions.blindedBids
-        // if(winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
-        //             winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
-        //     revert WinningBidOpeningMismatch();
-        // }
+        // SECURITY FIX (Finding 2): restored — see the matching comment in
+        // declareWinner(). Kept here too since this is an internal function
+        // and shouldn't rely solely on its current caller re-checking this.
+        if (winningBidState != BidStateEnum.BID_OPENED_PUBLICLY &&
+                    winningBidState != BidStateEnum.BID_OPENED_PRIVATELY){
+            revert WinningBidOpeningMismatch();
+        }
 
         // uint256 winningBlockNumber = _auctions[auctionId].bids[winningBlindedBid].bidBlockNumber;
         // The number of not winning proofs must be
         // the number of openedBids - 1
-        // if(_auctions[auctionId].numberOfOpenedBids != notWinningBidProofs.length + 1){
-        //     revert NotWinningBidsCountMismatch();
-        // }
+        // SECURITY FIX (Finding 2): this was the critical missing check.
+        // Without it, notWinningBidProofs could be a short (or empty) array —
+        // the for loop below only validates the proofs actually supplied, so
+        // a caller could omit proofs for real competing bids entirely,
+        // declare themselves winner, and those omitted bids would simply
+        // never be checked as losers. Requiring the count to match every
+        // opened bid except the winner closes that gap.
+        if (_auctions[auctionId].numberOfOpenedBids != notWinningBidProofs.length + 1){
+            revert NotWinningBidsCountMismatch();
+        }
 
         // uint256 auctionId;
         // uint256 blindedBidDifference;
@@ -711,11 +734,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl {
             }
 
             // verifies the validity of the notWinningProof\
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_AUCTION_NOT_WINNING_BID,
                 notWinningBidProofs[i].proof,
                 notWinningBidProofs[i].statement
-            );
+            )) revert InvalidProof();
         }
 
         return true;
