@@ -162,9 +162,7 @@ func postToPaymentRelayer(t *testing.T, path string, body interface{}) (*relayGe
 }
 
 // ── gnark proof response (raw JSON — no bound-client wrapper exists for
-// PaymentRelayerFeePublic/UsdrFee; the repo's own BoundPaymentRelayerProof is
-// dead code from an earlier, non-public-fee circuit design posting to a
-// different, nonexistent route) ────────────────────────────────────────────
+// PaymentRelayerFeePublic/UsdrFee) ──────────────────────────────────────────
 
 type paymentGnarkProofResp struct {
 	Proof        []*big.Int `json:"proof"`
