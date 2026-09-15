@@ -87,8 +87,14 @@ func (circuit *DvPInitiatorCircuit) Define(api frontend.API) error {
 	// 1. Derive Alice's spend public key from her secret key.
 	pkAlice := primitives.PublicKey(api, circuit.WtSpendKeyIn)
 
-	// 2. Nullifier: nf_A = Poseidon(sk_A, leafIndex).
-	nullifier := primitives.Nullifier(api, circuit.WtSpendKeyIn, circuit.WtPathIndex)
+	// 2. Nullifier: nf_A = Poseidon(sk_A, treeNumber*2^treeDepth + leafIndex).
+	// StTreeNumber fix: the plain Nullifier(sk, pathIndex) formula left
+	// StTreeNumber completely unconstrained (a prover could pick any tree
+	// number at proof-generation time) — NullifierTree matches what
+	// DvPInitiatorProof/DvPInitiatorProofFromSalts already compute Go-side
+	// via core.GetNullifierWithTree ("HIGH-1 fix"), which this circuit had
+	// never actually enforced.
+	nullifier := primitives.NullifierTree(api, circuit.WtSpendKeyIn, circuit.StTreeNumber, circuit.WtPathIndex, circuit.Config.TmMerkleTreeDepth)
 	api.AssertIsEqual(nullifier, circuit.StNullifier)
 
 	// 3. Input commitment: Poseidon4(pk_A, saltIn, valueIn, tokenIdIn).

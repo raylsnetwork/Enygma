@@ -233,9 +233,9 @@ func depositAndBuildRelayerFeeWitness(
 		t.Fatalf("GenerateProof: %v", err)
 	}
 
-	// GetNullifierBound (not GetNullifier) — binds the proof to this vault,
-	// matching the circuit-side NullifierBound fix.
-	nullifier, err := dvpcore.GetNullifierBound(aliceSpend.PrivateKey, aliceProof.Indices, new(big.Int).SetBytes(vaultAddr.Bytes()))
+	// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
+	// vault AND tree, matching the circuit-side NullifierBoundTree fix.
+	nullifier, err := dvpcore.GetNullifierBoundTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
 	if err != nil {
 		t.Fatalf("GetNullifierBound: %v", err)
 	}

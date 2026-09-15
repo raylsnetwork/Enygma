@@ -82,8 +82,15 @@ func (circuit *DvPDestinationCircuit) Define(api frontend.API) error {
 	// 1. Derive Bob's spend public key from his secret key.
 	pkBob := primitives.PublicKey(api, circuit.WtSpendKeyIn)
 
-	// 2. Nullifier: nf_B = Poseidon(sk_B, leafIndex).
-	nullifier := primitives.Nullifier(api, circuit.WtSpendKeyIn, circuit.WtPathIndex)
+	// 2. Nullifier: nf_B = Poseidon(sk_B, treeNumber*2^treeDepth + leafIndex).
+	// StTreeNumber fix: the plain Nullifier(sk, pathIndex) formula left
+	// StTreeNumber completely unconstrained — NullifierTree matches what
+	// DvPDestinationProof already computes Go-side via
+	// core.GetNullifierWithTree ("HIGH-1 fix"), which this circuit had
+	// never actually enforced (this comment previously said
+	// "NullifierWithTree" but the code called the plain, non-tree-aware
+	// primitive — a stale doc/code mismatch, now fixed for real).
+	nullifier := primitives.NullifierTree(api, circuit.WtSpendKeyIn, circuit.StTreeNumber, circuit.WtPathIndex, circuit.Config.TmMerkleTreeDepth)
 	api.AssertIsEqual(nullifier, circuit.StNullifier)
 
 	// 3. Input commitment: Poseidon4(pk_B, saltIn, valueIn, tokenIdIn).

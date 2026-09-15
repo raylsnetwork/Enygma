@@ -178,6 +178,21 @@ func GetNullifierBound(privateKey, pathIndices, contractAddress *big.Int) (*big.
 	return poseidon.Hash([]*big.Int{privateKey, pathIndices, contractAddress})
 }
 
+// GetNullifierBoundTree combines GetNullifierWithTree and GetNullifierBound:
+// the Payment-family circuits had BOTH StContractAddress and StTreeNumbers
+// completely unconstrained, so their fix needs both bindings at once.
+//
+//	globalIdx = treeNumber * 2^treeDepth + pathIndex
+//	nf        = Poseidon(sk, globalIdx, contractAddress)
+func GetNullifierBoundTree(privateKey, treeNumber, pathIndex *big.Int, treeDepth int, contractAddress *big.Int) (*big.Int, error) {
+	capacity := new(big.Int).Lsh(big.NewInt(1), uint(treeDepth))
+	globalIdx := new(big.Int).Add(
+		new(big.Int).Mul(treeNumber, capacity),
+		pathIndex,
+	)
+	return poseidon.Hash([]*big.Int{privateKey, globalIdx, contractAddress})
+}
+
 // GetCommitment computes a commitment from a unique ID and public key
 func GetCommitment(uniqueId, publicKey *big.Int) (*big.Int, error) {
 	return poseidon.Hash([]*big.Int{uniqueId, publicKey})

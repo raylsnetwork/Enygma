@@ -75,13 +75,13 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		// StContractAddress fix: NullifierBound (Poseidon(sk, pathIndex,
-		// contractAddress), matching core.GetNullifierBound) binds the
-		// previously-unconstrained StContractAddress into the nullifier —
-		// without it, a prover could pick any vault address at proof-generation
-		// time (same bug class as PrivateMintCircuit's unconstrained
-		// ContractAddress, "Vuln 11"). Does not change statement shape/length.
-		nullifier := primitives.NullifierBound(api, circuit.WtPrivateKeysIn[i], circuit.WtPathIndices[i], circuit.StContractAddress)
+		// StContractAddress/StTreeNumbers fix: NullifierBoundTree binds both
+		// previously-unconstrained public inputs into the nullifier — without
+		// this, a prover could pick any vault address AND any tree number at
+		// proof-generation time (same bug class as PrivateMintCircuit's
+		// unconstrained ContractAddress, "Vuln 11"). Does not change statement
+		// shape/length.
+		nullifier := primitives.NullifierBoundTree(api, circuit.WtPrivateKeysIn[i], circuit.StTreeNumbers[i], circuit.WtPathIndices[i], circuit.Config.TmMerkleTreeDepth, circuit.StContractAddress)
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
