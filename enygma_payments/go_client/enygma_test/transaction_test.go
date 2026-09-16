@@ -144,7 +144,17 @@ func fingerPrintGen(secrets []*big.Int, senderCol int) [][]*big.Int {
 			continue
 		}
 		h, _ := poseidon.Hash([]*big.Int{secrets[i]})
-		fp[i][senderCol] = h.Mod(h, curveP)
+		hMod := h.Mod(h, curveP)
+		// The circuit only constrains column senderCol (FingerPrintofSharedSecrets[i][senderCol]
+		// for i != senderCol) — row senderCol (fp[senderCol][i]) is a free witness. But
+		// Enygma.sol's _verifyFingerprints checks BOTH (i,senderCol) and (senderCol,i) against
+		// confirmedFingerprint, which registerFingerprint() stores symmetrically (mutual
+		// confirmation sets confirmedFingerprint[a][b] == confirmedFingerprint[b][a]) — so the
+		// row entry must equal the column entry, not stay zero, or the two on-chain checks for
+		// the same underlying pair become mutually unsatisfiable for any transfer with more
+		// than 2 participants.
+		fp[i][senderCol] = hMod
+		fp[senderCol][i] = hMod
 	}
 	return fp
 }
