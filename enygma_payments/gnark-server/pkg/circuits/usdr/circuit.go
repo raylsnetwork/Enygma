@@ -27,7 +27,6 @@ import (
 
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
-	cmp "github.com/consensys/gnark/std/math/cmp"
 )
 
 // JubJubPrimeSubGroupStr is the same subgroup order EnygmaCircuit uses —
@@ -55,9 +54,16 @@ type USDrCircuit struct {
 	// something the sender needs to hide. Making it public lets
 	// Enygma.sol read this signal directly and assert it equals the
 	// contract's configured fixed fee, rejecting a proof for any other
-	// amount. Appended last so every other public signal's offset
-	// (0-79) is unchanged; this is the new 81st slot (index 80).
+	// amount. Appended after the shared 80-signal layout; this is slot 80.
 	FeeAmount frontend.Variable `gnark:",public"`
+	// Fix L-01: same rationale and same trivial self-equality pattern as
+	// EnygmaCircuit.DomainId (see that field's doc comment) — this circuit
+	// previously had no domain-separator signal at all, so a USDr proof
+	// generated for one Enygma deployment could be paired with a valid
+	// main proof for a different deployment sharing the same pre-state
+	// (same registered keys/anonymity set/block number). Appended last —
+	// this is the new 82nd slot (index 81).
+	DomainId frontend.Variable `gnark:",public"`
 
 	// Private signals
 	SenderId                  frontend.Variable   // Identifier of the sender
@@ -102,11 +108,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 
 	// Compute (p - sender_tx_value) mod p
 	expectedTxValue := api.Sub(pDiffConstrained, vConstrained)
-	expectedTxValueInter, _ := api.NewHint(utils.ModHint, 2, expectedTxValue)
-	expectedTxValueMod := expectedTxValueInter[0]
-	expectedTxValueQ := expectedTxValueInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(expectedTxValueQ, JubJubPrimeSubGroup), expectedTxValueMod), expectedTxValue)
-	api.AssertIsEqual(cmp.IsLess(api, expectedTxValueMod, JubJubPrimeSubGroup), 1)
+	expectedTxValueMod := utils.ReduceModP(api, expectedTxValue) // Fix C-01
 
 	api.AssertIsEqual(selectedVConstrained, expectedTxValueMod)
 
@@ -126,11 +128,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	}
 
 	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
-	secretInter, _ := api.NewHint(utils.ModHint, 2, secretSenderCalculated)
-	secretRemain := secretInter[0]
-	secretQ := secretInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(secretQ, JubJubPrimeSubGroup), secretRemain), secretSenderCalculated)
-	api.AssertIsEqual(cmp.IsLess(api, secretRemain, JubJubPrimeSubGroup), 1)
+	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 
 	api.AssertIsEqual(secretRemain, selectedSecret)
 
@@ -142,11 +140,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 
 	for i := 0; i < k; i++ {
 		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i]})
-		hashInter, _ := api.NewHint(utils.ModHint, 2, calculatedHash)
-		hashMod := hashInter[0]
-		hashQ := hashInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(hashQ, JubJubPrimeSubGroup), hashMod), calculatedHash)
-		api.AssertIsEqual(cmp.IsLess(api, hashMod, JubJubPrimeSubGroup), 1)
+		hashMod := utils.ReduceModP(api, calculatedHash) // Fix C-01
 
 		isRowSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
 
@@ -171,11 +165,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 		selectedPK = api.Add(selectedPK, api.Mul(eq, circuit.PublicKey[i]))
 	}
 	pk := pos.Poseidon(api, []frontend.Variable{circuit.SecretKey, circuit.SecretKey})
-	pkInter, _ := api.NewHint(utils.ModHint, 2, pk)
-	pkMod := pkInter[0]
-	pkQ := pkInter[1]
-	api.AssertIsEqual(api.Add(api.Mul(pkQ, JubJubPrimeSubGroup), pkMod), pk)
-	api.AssertIsEqual(cmp.IsLess(api, pkMod, JubJubPrimeSubGroup), 1)
+	pkMod := utils.ReduceModP(api, pk) // Fix C-01
 
 	api.AssertIsEqual(selectedPK, pkMod)
 
@@ -209,11 +199,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	HashTag := pos.Poseidon(api, []frontend.Variable{120})
 	for i := 0; i < k; i++ {
 		calculatedMessageTag := pos.Poseidon(api, []frontend.Variable{HashTag, circuit.SharedSecrets[i], circuit.BlockNumber})
-		calculatedMessageTagInter, _ := api.NewHint(utils.ModHint, 2, calculatedMessageTag)
-		calculatedMessageTagMod := calculatedMessageTagInter[0]
-		calculatedMessageTagQ := calculatedMessageTagInter[1]
-		api.AssertIsEqual(api.Add(api.Mul(calculatedMessageTagQ, JubJubPrimeSubGroup), calculatedMessageTagMod), calculatedMessageTag)
-		api.AssertIsEqual(cmp.IsLess(api, calculatedMessageTagMod, JubJubPrimeSubGroup), 1)
+		calculatedMessageTagMod := utils.ReduceModP(api, calculatedMessageTag) // Fix C-01
 
 		api.AssertIsEqual(circuit.MessageTags[i], calculatedMessageTagMod)
 	}
@@ -301,13 +287,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	for i := 0; i < k; i++ {
 		RandomFactor := pos.Poseidon(api, []frontend.Variable{HashRandom, circuit.SharedSecrets[i], circuit.BlockNumber})
 		// Reduce RandomFactor modulo JubJubPrimeSubGroup
-		randomInter, _ := api.NewHint(utils.ModHint, 2, RandomFactor)
-		hashModP := randomInter[0]
-		q := randomInter[1]
-
-		api.AssertIsEqual(api.Add(api.Mul(q, JubJubPrimeSubGroup), hashModP), RandomFactor)
-		isValid := cmp.IsLess(api, hashModP, JubJubPrimeSubGroup)
-		api.AssertIsEqual(isValid, 1)
+		hashModP := utils.ReduceModP(api, RandomFactor) // Fix C-01
 
 		receiverHashesModP[i] = hashModP
 
@@ -319,13 +299,7 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 		sumOfReceiverHashes = api.Add(sumOfReceiverHashes, api.Mul(isReceiver, hashModP))
 	}
 	// Reduce the sum modulo JubJubPrimeSubGroup
-	sumInter, _ := api.NewHint(utils.ModHint, 2, sumOfReceiverHashes)
-	senderRandomFactor := sumInter[0]
-	sumQ := sumInter[1]
-
-	api.AssertIsEqual(api.Add(api.Mul(sumQ, JubJubPrimeSubGroup), senderRandomFactor), sumOfReceiverHashes)
-	isSumValid := cmp.IsLess(api, senderRandomFactor, JubJubPrimeSubGroup)
-	api.AssertIsEqual(isSumValid, 1)
+	senderRandomFactor := utils.ReduceModP(api, sumOfReceiverHashes) // Fix C-01
 
 	// Second pass: assign the correct random factors based on role
 	for i := 0; i < k; i++ {
@@ -340,28 +314,39 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 		api.AssertIsEqual(calculatedRandomFactor[i], circuit.TxRandomValues[i])
 	}
 
+	// Fix L-01: a trivial self-equality keeps DomainId a genuinely
+	// constrained (not compiler-prunable) wire — see the field's doc
+	// comment for why no stronger constraint is needed.
+	api.AssertIsEqual(circuit.DomainId, circuit.DomainId)
+
 	return nil
 
 }
 
 type USDrRequest struct {
-	FingerPrintofSharedSecrets [][]string  `json:"fingerprint_shared_secrets" binding:"required,min=1,max=6"`
-	PublicKey                  []string    `json:"public_keys" binding:"required,min=1,max=6"`
-	PreviousCommit             [][2]string `json:"previous_commits" binding:"required,min=1,max=6,dive,len=2"`
-	TxCommit                   [][2]string `json:"tx_commits" binding:"required,min=1,max=6,dive,len=2"`
+	// Fix M-08: these were min=1,max=6 — the handler unconditionally
+	// indexes [0..NCommitment-1] (NCommitment=6), so a request with fewer
+	// elements passed binding validation and then panicked on the first
+	// out-of-range index (a cheap, repeatable remote DoS). len=6 (matching
+	// the sibling enygma/circuit.go's own M-08 fix) requires exactly 6.
+	FingerPrintofSharedSecrets [][]string  `json:"fingerprint_shared_secrets" binding:"required,len=6,dive,len=6"`
+	PublicKey                  []string    `json:"public_keys" binding:"required,len=6"`
+	PreviousCommit             [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
+	TxCommit                   [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
 	BlockNumber                string      `json:"block_number" binding:"required"`
-	AnonymitySet               []string    `json:"anonymity_set" binding:"required,min=1,max=6"`
-	MessageTags                []string    `json:"message_tags" binding:"required,min=1,max=6"`
+	AnonymitySet               []string    `json:"anonymity_set" binding:"required,len=6"`
+	MessageTags                []string    `json:"message_tags" binding:"required,len=6"`
 	Nullifier                  string      `json:"nullifier" binding:"required"`
 
 	SenderID                  string   `json:"sender_id" binding:"required"`
-	SharedSecrets             []string `json:"shared_secrets" binding:"required,min=1,max=6"`
+	SharedSecrets             []string `json:"shared_secrets" binding:"required,len=6"`
 	SecretKey                 string   `json:"secret_key" binding:"required"`
 	PreviousSenderBalance     string   `json:"previous_sender_balance" binding:"required"`
 	PreviousSenderRandomValue string   `json:"previous_sender_random_value" binding:"required"`
-	TxValues                  []string `json:"tx_values" binding:"required,min=1,max=6"`
-	TxRandomValues            []string `json:"tx_random_values" binding:"required,min=1,max=6"`
+	TxValues                  []string `json:"tx_values" binding:"required,len=6"`
+	TxRandomValues            []string `json:"tx_random_values" binding:"required,len=6"`
 	SenderTxValue             string   `json:"sender_tx_value" binding:"required"`
+	DomainId                  string   `json:"domain_id" binding:"required"`
 }
 
 type USDrOutput struct {

@@ -263,10 +263,11 @@ func (h *Handler) Info(c *gin.Context) {
 // usdrProof, participantIds, bankTag). Used for confidential
 // Enygma-to-Enygma balance updates (the enygma circuit), plus a second,
 // independent USDr proof paying the relayer a fee, settled atomically in
-// the same call. Both public signal arrays must have exactly 81 elements
-// (FingerPrint 6×6 layout plus the Fix L-01 domain separator in the last
-// slot — the USDr proof's slot 80 doubles as its FeeAmount signal). The
-// domain separator itself is supplied by the caller (part of
+// the same call. PublicSignal must have exactly 81 elements (FingerPrint
+// 6×6 layout plus the Fix L-01 domain separator in the last slot);
+// UsdrPublicSignal must have exactly 82 (the same 80-signal layout, plus
+// FeeAmount at slot 80, plus its own Fix L-01 domain separator at slot
+// 81). The domain separator itself is supplied by the caller (part of
 // req.PublicSignal/req.UsdrPublicSignal, like every other signal) — the
 // relayer does not compute or validate it; the contract's own
 // _expectedDomainId() check is what actually enforces it. Both proofs
@@ -315,18 +316,18 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrProof: %v", err)})
 		return
 	}
-	if len(req.UsdrPublicSignal) != 81 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: usdr circuit requires exactly 81 elements, got %d", len(req.UsdrPublicSignal))})
+	if len(req.UsdrPublicSignal) != 82 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: usdr circuit requires exactly 82 elements, got %d", len(req.UsdrPublicSignal))})
 		return
 	}
-	var usdrPubSig81 [81]*big.Int
+	var usdrPubSig82 [82]*big.Int
 	for i, s := range req.UsdrPublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("usdrPublicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		usdrPubSig81[i] = n
+		usdrPubSig82[i] = n
 	}
 
 	commitments, err := parseCommitments(req.Commitments)
@@ -359,7 +360,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	}
 	usdrTransferProof := enygma.IEnygmaUsdrProof{
 		Proof:        usdrProof8,
-		PublicSignal: usdrPubSig81,
+		PublicSignal: usdrPubSig82,
 	}
 
 	dedupKey, err := requestDedupKey("transfer", req)

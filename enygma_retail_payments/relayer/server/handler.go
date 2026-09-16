@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"enygma_relayer/config"
 
@@ -46,6 +47,13 @@ type proofReceipt struct {
 }
 
 // ── handler ──────────────────────────────────────────────────────────────────
+
+// txTimeout is the maximum time to wait for a transaction to be mined.
+// txMu must never be held across this wait (see each handler's submission
+// step below) — holding it would let one slow-to-mine transaction block
+// every other request across all /relay/* endpoints indefinitely, since
+// txMu is shared process-wide.
+const txTimeout = 45 * time.Second
 
 // Handler holds all dependencies for the relay endpoints.
 type Handler struct {
@@ -266,19 +274,23 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	defer h.inFlight.Delete(nfKey)
 
 	// Step 5 — serialize submission to prevent nonce races under concurrency.
+	// txMu guards only the submission itself, not the wait below — see
+	// txTimeout's doc comment.
 	h.txMu.Lock()
-	defer h.txMu.Unlock()
 
 	// Step 6 — build ProofReceipt and submit.
 	receipt := buildProofReceipt(p)
 
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, "payment", receipt, p.vaultId, p.cipherText, p.encTxData)
+	h.txMu.Unlock()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
 		return
 	}
-	txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
 		return
@@ -407,19 +419,23 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	defer h.inFlight.Delete(nfKey)
 
 	// Step 8 — serialize submission to prevent nonce races under concurrency.
+	// txMu guards only the submission itself, not the wait below — see
+	// txTimeout's doc comment.
 	h.txMu.Lock()
-	defer h.txMu.Unlock()
 
 	// Step 9 — build ProofReceipt and submit.
 	receipt := buildRelayerFeeProofReceipt(p)
 
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData)
+	h.txMu.Unlock()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
 		return
 	}
-	txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
 		return
@@ -557,16 +573,21 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// Step (dedup) — claim both nullifiers as in-flight.
-	nfKey := "usdrFee:" + treeNum.String() + ":" + nullifier.String() + ":" + usdrNullifier.String()
+	// Step (dedup) — claim both nullifiers as in-flight. Includes
+	// usdrTreeNum alongside the main-leg treeNum/nullifier and the USDr
+	// nullifier — omitting it let two legitimately distinct requests whose
+	// USDr legs live in different trees collide if their main-leg
+	// treeNum/nullifier and numeric usdrNullifier happened to match.
+	nfKey := "usdrFee:" + treeNum.String() + ":" + nullifier.String() + ":" + usdrTreeNum.String() + ":" + usdrNullifier.String()
 	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
 	defer h.inFlight.Delete(nfKey)
 
+	// txMu guards only the submission itself, not the wait below — see
+	// txTimeout's doc comment.
 	h.txMu.Lock()
-	defer h.txMu.Unlock()
 
 	// Step 6 — build both ProofReceipts and submit atomically.
 	receipt, usdrReceipt := buildUsdrFeeProofReceipts(p)
@@ -575,11 +596,14 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	tx, err := dvp.Transact(h.auth, "paymentWithUsdrFee",
 		receipt, p.vaultId, p.cipherText, p.encTxData,
 		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData)
+	h.txMu.Unlock()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
 		return
 	}
-	txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
 		return
@@ -672,11 +696,11 @@ func (h *Handler) RelayTag(c *gin.Context) {
 	}
 	defer h.inFlight.Delete(inFlightKey)
 
-	// Step 4 — serialize submission.
-	h.txMu.Lock()
-	defer h.txMu.Unlock()
-
 	// Step 5 — submit. Window mode retries up to 3 times on block drift.
+	// txMu is locked/unlocked per attempt below, around the submission
+	// only — not held across WaitMined (see txTimeout's doc comment) and
+	// not held across the whole retry loop, so one slow-to-mine attempt
+	// can't block every other request while this handler retries.
 	registry := bind.NewBoundContract(h.tagRegistryAddr, h.tagRegistryABI, h.client, h.client, h.client)
 	const maxAttempts = 3
 
@@ -713,12 +737,16 @@ func (h *Handler) RelayTag(c *gin.Context) {
 			tag = singleTag
 		}
 
+		h.txMu.Lock()
 		tx, err := registry.Transact(h.auth, "publishTag", tag, ctxt)
+		h.txMu.Unlock()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("publishTag(): %s", err)})
 			return
 		}
-		txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+		waitCtx, cancel := context.WithTimeout(context.Background(), txTimeout)
+		txReceipt, err := bind.WaitMined(waitCtx, h.client, tx)
+		cancel()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
 			return
@@ -856,18 +884,22 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 	}
 	defer h.inFlight.Delete(c1Key)
 
-	// Step 4 — serialize submission to prevent nonce races.
+	// Step 4 — serialize submission to prevent nonce races. txMu guards
+	// only the submission itself, not the wait below — see txTimeout's
+	// doc comment.
 	h.txMu.Lock()
-	defer h.txMu.Unlock()
 
 	// Step 5 — submit openChannel(c1, c2, bitmap).
 	registry := bind.NewBoundContract(h.tagChannelRegistryAddr, h.tagChannelRegistryABI, h.client, h.client, h.client)
 	tx, err := registry.Transact(h.auth, "openChannel", c1, c2, bitmap)
+	h.txMu.Unlock()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("openChannel(): %s", err)})
 		return
 	}
-	txReceipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
 		return

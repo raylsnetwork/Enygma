@@ -91,11 +91,14 @@ contract Enygma is IEnygma {
     uint256 private constant BURN_NULLIFIER_OFFSET = 7;
     uint256 private constant BURN_DOMAIN_OFFSET = 8; // Fix L-01
 
-    // USDr proofs carry one extra signal beyond the 80-signal FP layout
-    // above: FeeAmount, appended last (index 80) — public because the fee
-    // is a fixed, protocol-known amount, not something the sender needs to
-    // hide. Every other USDr offset is identical to the FP_* constants above.
+    // USDr proofs carry two extra signals beyond the 80-signal FP layout
+    // above: FeeAmount (index 80) — public because the fee is a fixed,
+    // protocol-known amount, not something the sender needs to hide — and
+    // Fix L-01's DomainId (index 81), binding the USDr leg to this specific
+    // deployment. Every other USDr offset is identical to the FP_*
+    // constants above.
     uint256 private constant USDR_FEE_AMOUNT_OFFSET = 80;
+    uint256 private constant USDR_DOMAIN_OFFSET = 81; // Fix L-01
 
     // ============================================
     // STATE VARIABLES
@@ -959,9 +962,10 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Register USDr transfer verifier contract (verifies 81-signal
-     * proofs — one more than the main transfer verifier's 80, since the
-     * fee amount is a public signal here — different key)
+     * @notice Register USDr transfer verifier contract (verifies 82-signal
+     * proofs — two more than the main transfer verifier's 80, since the
+     * fee amount and DomainId (Fix L-01) are both public signals here —
+     * different key)
      * @param verifier Address of USDr verifier contract
      */
     function addUsdrVerifier(address verifier) external onlyOwner returns (bool) {
@@ -1630,9 +1634,10 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify zero-knowledge proof for the USDr transfer (81-signal
-     * shape — the fee amount is a public signal here, unlike the main
-     * transfer proof's 80 — different verifying key)
+     * @notice Verify zero-knowledge proof for the USDr transfer (82-signal
+     * shape — the fee amount and DomainId (Fix L-01) are both public
+     * signals here, unlike the main transfer proof's 80 — different
+     * verifying key)
      */
     function _verifyUsdrTransferProof(
         UsdrProof calldata proof,
@@ -1640,10 +1645,11 @@ contract Enygma is IEnygma {
     ) private {
         address verifier = _usdrVerifiers[participantCount];
         if (verifier == address(0)) revert VerifierNotFound();
+        if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
         (bool success, ) = verifier.staticcall(
             abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[81])",
+                "verifyProof(uint256[8],uint256[82])",
                 proof
             )
         );
@@ -1659,7 +1665,7 @@ contract Enygma is IEnygma {
      */
     function _verifyUsdrMainBinding(
         uint256[81] calldata mainSignal,
-        uint256[81] calldata usdrSignal
+        uint256[82] calldata usdrSignal
     ) private pure {
         for (uint256 i = FP_PUBLIC_KEY_OFFSET; i < FP_PUBLIC_KEY_OFFSET + FP_PUBLIC_KEY_SIZE; ) {
             if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
@@ -1909,13 +1915,22 @@ contract Enygma is IEnygma {
      * binding stays against the same global publicKeys mapping (spend
      * keys are shared across both assets). Also enforces the proof's
      * public FeeAmount signal equals usdrFixedFeeAmount — a validly-formed
-     * proof for a different (attacker-chosen) fee is rejected here.
+     * proof for a different (attacker-chosen) fee is rejected here — and,
+     * per Fix L-01, that its DomainId signal matches this deployment,
+     * exactly like _verifyPublicInputsFP's own domain check. Before this
+     * check existed, a USDr proof generated for one Enygma deployment
+     * could be paired with a valid main proof for a different deployment
+     * sharing the same pre-state.
      */
     function _verifyPublicInputsUsdr(
-        uint256[81] calldata public_signal,
+        uint256[82] calldata public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
+        if (public_signal[USDR_DOMAIN_OFFSET] != _expectedDomainId()) { // Fix L-01
+            revert InvalidDomain();
+        }
+
         if (public_signal[USDR_FEE_AMOUNT_OFFSET] != usdrFixedFeeAmount) {
             revert InvalidFeeAmount();
         }
@@ -1927,6 +1942,8 @@ contract Enygma is IEnygma {
         uint256 len = participantIds.length;
         for (uint256 i; i < len; ) {
             uint256 accountId = participantIds[i];
+
+            if (keys[accountId] == 0) revert UnregisteredParticipant(); // Fix H-07
 
             if (uint256(public_signal[FP_PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
                 revert InvalidPublicInputs();
@@ -1973,21 +1990,21 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify block number freshness for the 81-signal USDr proof.
+     * @notice Verify block number freshness for the 82-signal USDr proof.
      * Offset is identical to FP_BLOCK_NUMBER_OFFSET — only the array
      * length differs (81 vs 80), which calldata typing requires a
      * separate function signature for.
      */
-    function _verifyBlockNumberUsdr(uint256[81] calldata public_signal) private view {
+    function _verifyBlockNumberUsdr(uint256[82] calldata public_signal) private view {
         if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
 
     /**
-     * @notice Record nullifier as spent for the 81-signal USDr proof.
+     * @notice Record nullifier as spent for the 82-signal USDr proof.
      */
-    function _consumeNullifierUsdr(uint256[81] calldata public_signal) private {
+    function _consumeNullifierUsdr(uint256[82] calldata public_signal) private {
         uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;

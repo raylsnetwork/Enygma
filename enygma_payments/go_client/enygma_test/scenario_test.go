@@ -492,6 +492,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 		"tx_values":                    toStrs(usdrTxValues),
 		"tx_random_values":             toStrs(usdrTxRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", usdrFeeAmt),
+		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 	})
 
 	t.Log("requesting USDr fee proof (may take ~30s)…")
@@ -511,9 +512,10 @@ func TestNullifierReuseProtection(t *testing.T) {
 	if err := json.NewDecoder(usdrHTTPResp.Body).Decode(&usdrProofResp); err != nil {
 		t.Fatalf("decode usdr proof: %v", err)
 	}
-	// 81 = the main proof's 80-signal layout + FeeAmount (public, appended
-	// last — see USDrCircuit.Define / IEnygma.UsdrProof).
-	if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 81 {
+	// 82 = the main proof's 80-signal layout + FeeAmount + DomainId (Fix
+	// L-01), both public, appended last — see USDrCircuit.Define /
+	// IEnygma.UsdrProof.
+	if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 82 {
 		t.Fatalf("unexpected usdr proof sizes: proof=%d publicSignal=%d", len(usdrProofResp.Proof), len(usdrProofResp.PublicSignal))
 	}
 	t.Log("USDr fee proof received")
@@ -522,12 +524,12 @@ func TestNullifierReuseProtection(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		usdrProof8[i] = usdrProofResp.Proof[i]
 	}
-	var usdrPubSig81 [81]*big.Int
-	for i := range usdrPubSig81 {
-		usdrPubSig81[i] = big.NewInt(0)
+	var usdrPubSig82 [82]*big.Int
+	for i := range usdrPubSig82 {
+		usdrPubSig82[i] = big.NewInt(0)
 	}
 	for i, v := range usdrProofResp.PublicSignal {
-		usdrPubSig81[i] = v
+		usdrPubSig82[i] = v
 	}
 
 	usdrCommitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
@@ -537,7 +539,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 			C2: usdrProofResp.PublicSignal[txCommitOffset+2*i+1],
 		}
 	}
-	usdrTransferProof := enygma.IEnygmaUsdrProof{Proof: usdrProof8, PublicSignal: usdrPubSig81}
+	usdrTransferProof := enygma.IEnygmaUsdrProof{Proof: usdrProof8, PublicSignal: usdrPubSig82}
 
 	participantIds := make([]*big.Int, nBanks)
 	for i := range participantIds {
@@ -1040,10 +1042,10 @@ func TestInvalidProofRejection(t *testing.T) {
 	for i := range badPubSig {
 		badPubSig[i] = big.NewInt(0)
 	}
-	// USDr proofs carry an extra public signal (FeeAmount) — see
-	// IEnygma.UsdrProof — so the garbage USDr leg needs its own 81-length
-	// array; it can't reuse badTransferProof's 80-length type.
-	var badUsdrPubSig [81]*big.Int
+	// USDr proofs carry two extra public signals (FeeAmount, DomainId) —
+	// see IEnygma.UsdrProof — so the garbage USDr leg needs its own
+	// 82-length array; it can't reuse badTransferProof's 81-length type.
+	var badUsdrPubSig [82]*big.Int
 	for i := range badUsdrPubSig {
 		badUsdrPubSig[i] = big.NewInt(0)
 	}

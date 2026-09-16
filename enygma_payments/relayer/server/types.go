@@ -6,13 +6,14 @@ package server
 //
 // Used for Enygma-to-Enygma confidential transfers (the enygma circuit),
 // plus a second, independent USDr proof that pays the relayer a fixed fee,
-// settled atomically in the same on-chain transfer() call. Both PublicSignal
-// and UsdrPublicSignal must have exactly 81 elements (the last being the
-// Fix L-01 domain separator on both circuits) — Fix L-05: this used to be
-// silently zero-padded up to 81 rather than rejected at any other length.
-// UsdrPublicSignal additionally carries the fee amount as a public signal,
-// checked on-chain against usdrFixedFeeAmount. Both proofs share KIndex
-// (the same k=6 anonymity-set participantIds).
+// settled atomically in the same on-chain transfer() call. PublicSignal
+// must have exactly 81 elements and UsdrPublicSignal exactly 82 (the last
+// element of each being the Fix L-01 domain separator on both circuits —
+// UsdrPublicSignal has one further element, FeeAmount, ahead of it) — Fix
+// L-05: this used to be silently zero-padded up to the expected length
+// rather than rejected at any other length. UsdrPublicSignal's FeeAmount
+// signal is checked on-chain against usdrFixedFeeAmount. Both proofs share
+// KIndex (the same k=6 anonymity-set participantIds).
 type RelayTransferRequest struct {
 	Proof        [8]string  `json:"proof"        binding:"required"`
 	PublicSignal []string   `json:"publicSignal" binding:"required"`
