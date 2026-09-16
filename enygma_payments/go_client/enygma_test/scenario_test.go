@@ -266,6 +266,62 @@ func TestNullifierReuseProtection(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Banks 1-5 (non-sender) are registered under their own distinct,
+	// freshly-generated and funded addresses — not ownerAddr — because
+	// C-04's fingerprint check resolves identity via
+	// addressToAccountId[msg.sender], which collapses to one identity if
+	// every bank shares an address, making it impossible for them to
+	// independently confirm pairwise fingerprints below (mirrors
+	// c04Setup's own doc comment on why it does the same). Bank 0 (the
+	// sender, accountId 1) stays registered under ownerAddr, since every
+	// Transfer() call below signs with mkAuth() (ownerAddr).
+	bankAddrs := make([]common.Address, nBanks)
+	bankKeys := make([]*ecdsa.PrivateKey, nBanks)
+	bankAddrs[senderIdx] = ownerAddr
+	for i := 0; i < nBanks; i++ {
+		if i == senderIdx {
+			continue
+		}
+		key, genErr := crypto.GenerateKey()
+		if genErr != nil {
+			t.Fatalf("generate bank %d key: %v", i, genErr)
+		}
+		bankKeys[i] = key
+		bankAddrs[i] = crypto.PubkeyToAddress(key.PublicKey)
+
+		gasPrice, _ := client.SuggestGasPrice(context.Background())
+		nonce, _ := client.PendingNonceAt(context.Background(), ownerAddr)
+		fundTx := ethtypes.NewTx(&ethtypes.LegacyTx{
+			Nonce:    nonce,
+			To:       &bankAddrs[i],
+			Value:    new(big.Int).SetUint64(50_000_000_000_000_000), // 0.05 ETH
+			Gas:      21000,
+			GasPrice: gasPrice,
+		})
+		signedFundTx, signErr := ethtypes.SignTx(fundTx, ethtypes.NewEIP155Signer(big.NewInt(chainID)), privKey)
+		if signErr != nil {
+			t.Fatalf("sign funding tx: %v", signErr)
+		}
+		if sendErr := client.SendTransaction(context.Background(), signedFundTx); sendErr != nil {
+			t.Fatalf("fund bank %d: %v", i, sendErr)
+		}
+		if _, waitErr := bind.WaitMined(context.Background(), client, signedFundTx); waitErr != nil {
+			t.Fatalf("wait funding mined: %v", waitErr)
+		}
+	}
+	bankAuthFor := func(i int) *bind.TransactOpts {
+		if i == senderIdx {
+			return mkAuth()
+		}
+		nonce, _ := client.PendingNonceAt(context.Background(), bankAddrs[i])
+		gasPrice, _ := client.SuggestGasPrice(context.Background())
+		auth, _ := bind.NewKeyedTransactorWithChainID(bankKeys[i], big.NewInt(chainID))
+		auth.Nonce = big.NewInt(int64(nonce))
+		auth.Value = big.NewInt(0)
+		auth.GasLimit = 16_000_000
+		auth.GasPrice = gasPrice
+		return auth
+	}
 	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
 	// directly) since it mints below too — senderRegR + senderMintR ==
 	// senderPrevR, so PreviousSenderRandomValue below is unchanged.
@@ -275,7 +331,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
+		if r := waitTx(instance.RegisterAccount(mkAuth(), bankAddrs[i],
 			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
@@ -288,6 +344,33 @@ func TestNullifierReuseProtection(t *testing.T) {
 		}
 	}
 	t.Logf("registered %d banks (main + USDr balances)", nBanks)
+
+	// Confirm every pairwise fingerprint _verifyFingerprints will check —
+	// ALL i≠j pairs, not just ones touching the sender (the contract can't
+	// tell which slot is the sender without breaking the anonymity set).
+	// fp is filled below (fingerPrintGen); most pairs are an explicit zero.
+	confirmFingerprints := func(fp [][]*big.Int) {
+		t.Helper()
+		for i := 0; i < nBanks; i++ {
+			for j := 0; j < nBanks; j++ {
+				if i == j {
+					continue
+				}
+				tx, err := instance.RegisterFingerprint(bankAuthFor(i), big.NewInt(int64(j+1)), fp[i][j])
+				if err != nil {
+					t.Fatalf("register fingerprint (%d,%d): %v", i, j, err)
+				}
+				r, err := bind.WaitMined(context.Background(), client, tx)
+				if err != nil {
+					t.Fatalf("wait register fingerprint (%d,%d): %v", i, j, err)
+				}
+				if r.Status != 1 {
+					t.Fatalf("register fingerprint (%d,%d) reverted", i, j)
+				}
+			}
+		}
+		t.Log("  all 30 directed pairwise fingerprints confirmed among the 6 banks")
+	}
 
 	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
 	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
@@ -324,6 +407,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	secrets[senderIdx] = senderSecret
 
 	fp := fingerPrintGen(secrets, senderIdx)
+	confirmFingerprints(fp)
 
 	// nullifier computed before tagMessageGen/genCommitmentAndRandom: Fix
 	// H-01/H-02 use it (not blockHash) as the per-transaction value.
@@ -914,14 +998,19 @@ func TestDoubleInitializeReverts(t *testing.T) {
 	}
 	t.Logf("first initialize() succeeded (tx=%s) ✓", r1.TxHash.Hex())
 
-	// Second call must revert with AlreadyInitialized.
-	// mkAuth sets GasLimit explicitly → go-ethereum skips eth_call simulation and
-	// sends the tx; revert is detected via receipt Status == 0.
-	r2 := waitTx(instance.Initialize(mkAuth()))
-	if r2.Status != 0 {
+	// Second call must revert with AlreadyInitialized. Hardhat preflights the
+	// call before broadcasting, so a revert surfaces as a send error here
+	// (not a mined Status=0 receipt, contrary to this test's original
+	// comment) — assert on the error directly, matching c04/c05's own
+	// established pattern for an expected-revert call.
+	_, sendErr := instance.Initialize(mkAuth())
+	if sendErr == nil {
 		t.Fatal("FAIL: second initialize() succeeded — AlreadyInitialized guard not enforced")
 	}
-	t.Logf("second initialize() correctly reverted (Status=0, tx=%s) — AlreadyInitialized ✓", r2.TxHash.Hex())
+	if !strings.Contains(sendErr.Error(), "AlreadyInitialized") {
+		t.Fatalf("second initialize() reverted, but not with AlreadyInitialized: %v", sendErr)
+	}
+	t.Logf("second initialize() correctly reverted — AlreadyInitialized ✓: %v", sendErr)
 }
 
 // ── TestMintAccumulation ──────────────────────────────────────────────────────

@@ -143,13 +143,16 @@ func TestH14EmptyParticipantArraysRejected(t *testing.T) {
 		t.Fatal("FAIL (H-14 regressed): withdraw() with empty participant arrays SUCCEEDED — " +
 			"the verifier-selection/length gap is back")
 	}
+	// Matched by error name, not the raw 4-byte selector — this Hardhat
+	// node's VM error formatting reports custom errors by name, not
+	// selector (see c04_repro_test.go's identical fix and h07's own
+	// working pattern).
 	// InvalidParticipantCount() = 0x54fb3045 (commitmentDeltas.length(0) !=
 	// DEFAULT_SIZE(6)) — the specific new guard, not just VerifierNotFound
 	// (0xe25b142c) or the pre-existing ParticipantIdsLengthMismatch
 	// (0x8fe655c0, which wouldn't even fire here since 0 == 0).
-	const wantSelector = "0x54fb3045" // InvalidParticipantCount()
-	if !strings.Contains(sendErr.Error(), wantSelector) {
-		t.Fatalf("withdraw() reverted, but not with InvalidParticipantCount (%s): %v", wantSelector, sendErr)
+	if !strings.Contains(sendErr.Error(), "InvalidParticipantCount") {
+		t.Fatalf("withdraw() reverted, but not with InvalidParticipantCount: %v", sendErr)
 	}
 	t.Logf("withdraw() with empty participant arrays reverted with InvalidParticipantCount() — H-14 correctly rejected: %v", sendErr)
 

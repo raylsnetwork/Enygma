@@ -221,10 +221,26 @@ contract Enygma is IEnygma {
     // never read them).
 
     /// @notice What `caller` claims Poseidon(shared_secret) is with `other`.
-    /// Indexed [callerId][otherId]; 0 means "not yet submitted" (a real
-    /// Poseidon output landing on exactly 0 is negligible-probability,
-    /// same convention balanceCommitments already relies on).
+    /// Indexed [callerId][otherId].
     mapping(uint256 => mapping(uint256 => uint256)) public pendingFingerprint;
+
+    /// @notice Whether [callerId][otherId] has ever been submitted at all —
+    /// distinct from pendingFingerprint's own value, which cannot double as
+    /// its own "not yet submitted" sentinel here the way balanceCommitments'
+    /// analogous convention works: EnygmaCircuit.Define deliberately leaves
+    /// every FingerPrintofSharedSecrets[i][j] with j != the sender's column
+    /// as a free (unconstrained) witness, and every test/production caller
+    /// fills those cells with literal 0 (see fingerPrintGen's Go-side
+    /// convention) — not a pseudo-random Poseidon output that merely has a
+    /// negligible chance of landing on 0. A genuinely unset claim and an
+    /// explicit claim of exactly 0 were indistinguishable via
+    /// `pendingFingerprint != 0` alone, so a pair whose true shared
+    /// fingerprint is 0 (any transfer with more than 2 participants has
+    /// several such pairs — every one not touching the sender's own
+    /// identity) could never become mutually confirmed, permanently
+    /// blocking transfer() for that anonymity set. This bool closes that
+    /// gap without changing pendingFingerprint's own semantics.
+    mapping(uint256 => mapping(uint256 => bool)) public pendingFingerprintSet;
 
     /// @notice The confirmed, symmetric fingerprint for a pair once both
     /// sides' submissions have matched. confirmedFingerprint[i][j] ==
@@ -581,10 +597,14 @@ contract Enygma is IEnygma {
         }
 
         pendingFingerprint[callerId][otherPartyId] = fingerprint;
+        pendingFingerprintSet[callerId][otherPartyId] = true;
         emit FingerprintPending(callerId, otherPartyId, fingerprint);
 
         uint256 counterpartClaim = pendingFingerprint[otherPartyId][callerId];
-        if (counterpartClaim != 0 && counterpartClaim == fingerprint) {
+        if (
+            pendingFingerprintSet[otherPartyId][callerId] &&
+            counterpartClaim == fingerprint
+        ) {
             confirmedFingerprint[callerId][otherPartyId] = fingerprint;
             confirmedFingerprint[otherPartyId][callerId] = fingerprint;
             fingerprintConfirmed[callerId][otherPartyId] = true;
