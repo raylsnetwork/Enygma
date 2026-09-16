@@ -18,13 +18,16 @@ interface IEnygma {
         uint256[81] public_signal;
     }
 
-    /// @notice USDr proofs carry one extra public signal (81, not 80): the
-    /// fee amount is public (not hidden like the main asset's transfer
-    /// amount) so the contract can enforce it equals usdrFixedFeeAmount —
-    /// see USDrCircuit.Define's FeeAmount field.
+    /// @notice USDr proofs carry two extra public signals versus the main
+    /// 80-signal FingerPrint layout (82, not 80): the fee amount is public
+    /// (not hidden like the main asset's transfer amount) so the contract
+    /// can enforce it equals usdrFixedFeeAmount — see USDrCircuit.Define's
+    /// FeeAmount field — and Fix L-01's DomainId, appended last, binding
+    /// the USDr leg to this specific deployment the same way the main
+    /// proof's own DomainId does.
     struct UsdrProof {
         uint256[8] proof;
-        uint256[81] public_signal;
+        uint256[82] public_signal;
     }
 
     // Fix M-14/C-09/L-01: withdraw/deposit are genuinely [52]-signal —
