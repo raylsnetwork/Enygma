@@ -99,6 +99,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
 		witness.Nullifier = bp.Parse(request.Nullifier)
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
+		witness.DomainId = bp.Parse(request.DomainId) // Fix L-01
 
 		if err := bp.Err(); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
@@ -180,10 +181,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			publicSignal = append(publicSignal, bp.Parse(request.MessageTags[i]))
 		}
 		publicSignal = append(publicSignal, bp.Parse(request.Nullifier))
-		// FeeAmount is the new 81st public slot (index 80) — see circuit.go's
-		// comment on why it's public. Must be appended last to keep every
-		// other offset (0-79) unchanged.
+		// FeeAmount is public slot 80 — see circuit.go's comment on why
+		// it's public. Must stay before DomainId to keep every earlier
+		// offset (0-79) unchanged.
 		publicSignal = append(publicSignal, bp.Parse(request.SenderTxValue))
+		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
 
 		c.JSON(http.StatusOK, USDrOutput{
 			Proof:        proofRemix,

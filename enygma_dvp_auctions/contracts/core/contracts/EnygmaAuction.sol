@@ -508,8 +508,18 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // to reach the try block but not enough for verifyProof to complete: Solidity
     // try/catch catches OOG the same as an explicit false return, so an OOG would
     // void a valid optimistic claim and reopen bidding.
-    // Set conservatively above the ~200k–400k BN254 Groth16 pairing cost.
-    uint256 private constant CHALLENGE_VERIFY_GAS = 600_000;
+    //
+    // gasleft() is measured at challengeSettlement(), but the actual pairing
+    // check happens two external CALLs deeper: challengeSettlement ->
+    // this.verifyFinalProof (a real CALL, per the BUGFIX comment below) ->
+    // IVerifier.verifyProof. EIP-150's 63/64 rule retains 1/64 of the gas at
+    // the caller on each CALL boundary, so only roughly (63/64)^2 ≈ 96.9% of
+    // gasleft() at this check actually reaches verifyProof. To still
+    // guarantee the same ~600k margin above the ~200k-400k BN254 Groth16
+    // pairing cost AT the pairing call itself (600_000 / (63/64)^2 ≈
+    // 618,865), plus headroom for the two CALL opcodes' own base/calldata
+    // overhead, this is set well above that recalculated floor.
+    uint256 private constant CHALLENGE_VERIFY_GAS = 750_000;
 
     // BUGFIX: this used to be an `internal` helper (`_verifyFinalProof`) called
     // directly from challengeSettlement(). That alone wasn't enough — the
