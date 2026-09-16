@@ -62,13 +62,13 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 	}
 	defer client.Close()
 
-	privKey := mustPrivKey(t)
-	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
+	ownerKey := mustPrivKey(t)
+	ownerAddr := crypto.PubkeyToAddress(*ownerKey.Public().(*ecdsa.PublicKey))
 
 	mkAuth := func() *bind.TransactOpts {
 		nonce, _ := client.PendingNonceAt(context.Background(), ownerAddr)
 		gasPrice, _ := client.SuggestGasPrice(context.Background())
-		auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(chainID))
+		auth, _ := bind.NewKeyedTransactorWithChainID(ownerKey, big.NewInt(chainID))
 		auth.Nonce = big.NewInt(int64(nonce))
 		auth.Value = big.NewInt(0)
 		auth.GasLimit = 16_000_000
@@ -87,14 +87,85 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 		return r
 	}
 
-	instance, enygmaAddr := freshSetup(t, client, mkAuth, waitTx)
-	// Fix H-02 residual: senderMintR, not r=0 — senderRegR + senderMintR
-	// == senderPrevR (used directly below), see freshSetup's comment.
+	// ── Deploy fresh Enygma + REAL Verifier, register 6 DISTINCT-address
+	// banks (not freshSetup's single shared owner address) ─────────────────
+	// C-04's _verifyFingerprints requires every pairwise fingerprint among
+	// a transfer's participants to be mutually confirmed on-chain, and
+	// registerFingerprint resolves the caller via
+	// addressToAccountId[msg.sender] — which collapses to one identity if
+	// every bank shares freshSetup's single owner address. Mirrors
+	// c04Setup's own distinct-address registration (see that function's
+	// doc comment) but with the real Verifier instead of
+	// MockTransferVerifier, since this test needs an actual circuit-
+	// generated attack proof, not just contract-side logic in isolation.
+	const artifactBase = "../../contracts/enygma/artifacts/contracts"
+	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	verifierAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/EnygmaVerifier.sol/Verifier.json")
+
+	instance, err := enygma.NewEnygma(enygmaAddr, client)
+	if err != nil {
+		t.Fatalf("bind contract: %v", err)
+	}
+	waitTx(instance.Initialize(mkAuth()))
+	waitTx(instance.AddVerifier(mkAuth(), verifierAddr))
+
+	banks := make([]c04Bank, nBanks)
+	for i := 0; i < nBanks; i++ {
+		key, genErr := crypto.GenerateKey()
+		if genErr != nil {
+			t.Fatalf("generate bank %d key: %v", i, genErr)
+		}
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		banks[i] = c04Bank{key: key, addr: addr, accountID: int64(i + 1)}
+
+		gasPrice, _ := client.SuggestGasPrice(context.Background())
+		nonce, _ := client.PendingNonceAt(context.Background(), ownerAddr)
+		fundTx := ethtypes.NewTx(&ethtypes.LegacyTx{
+			Nonce:    nonce,
+			To:       &addr,
+			Value:    new(big.Int).SetUint64(50_000_000_000_000_000), // 0.05 ETH
+			Gas:      21000,
+			GasPrice: gasPrice,
+		})
+		signedFundTx, signErr := ethtypes.SignTx(fundTx, ethtypes.NewEIP155Signer(big.NewInt(chainID)), ownerKey)
+		if signErr != nil {
+			t.Fatalf("sign funding tx: %v", signErr)
+		}
+		if sendErr := client.SendTransaction(context.Background(), signedFundTx); sendErr != nil {
+			t.Fatalf("fund bank %d: %v", i, sendErr)
+		}
+		if _, waitErr := bind.WaitMined(context.Background(), client, signedFundTx); waitErr != nil {
+			t.Fatalf("wait funding mined: %v", waitErr)
+		}
+
+		pk, pkErr := poseidon.Hash([]*big.Int{bankSks[i], bankSks[i]})
+		if pkErr != nil {
+			t.Fatalf("pk[%d]: %v", i, pkErr)
+		}
+		pk.Mod(pk, curveP)
+		// Fix H-02 residual: bank 0 registers with senderRegR (not
+		// senderPrevR directly) since it mints below too — senderRegR +
+		// senderMintR == senderPrevR.
+		r := big.NewInt(senderPrevR)
+		if i == senderIdx {
+			r = big.NewInt(senderRegR)
+		}
+		cx, cy := regCommit(r)
+		waitTx(instance.RegisterAccount(mkAuth(), addr, big.NewInt(banks[i].accountID), pk, cx, cy, []byte{}))
+	}
+	t.Logf("registered %d banks, each under its OWN distinct address", nBanks)
+
 	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
 	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
+
+	allAccountIds := make([]int64, nBanks)
+	for i := range allAccountIds {
+		allAccountIds[i] = int64(i + 1)
+	}
+	setupMockUsdr(t, client, mkAuth, waitTx, instance, allAccountIds)
 
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
@@ -235,20 +306,37 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 	attackParticipantIds := []*big.Int{
 		big.NewInt(1), big.NewInt(1), big.NewInt(3), big.NewInt(4), big.NewInt(5), big.NewInt(6),
 	}
+	attackAccountIds := []int64{1, 1, 3, 4, 5, 6}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig80, attackAccountIds)
 
-	// Hardhat preflights the call before broadcasting, so a revert surfaces
-	// as a send error here (not a mined Status=0 receipt) — assert on the
-	// custom error selector directly. ParticipantIdsNotSorted() = 0xf170f72d.
-	_, sendErr := instance.Transfer(mkAuth(), commitmentDeltas, attackProof, attackParticipantIds, "") // Fix H-09: no attribution for a direct test call
+	// bankAuth(banks[0]), not mkAuth() — onlyRegistered requires
+	// addressToAccountId[msg.sender] != 0, and only the 6 banks' own
+	// distinct addresses are registered under this setup (see the
+	// registration loop above), not the deployer/owner address mkAuth()
+	// signs with.
+	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), commitmentDeltas, attackProof, usdrDeltas, usdrProof, attackParticipantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr == nil {
 		t.Fatal("FAIL (C-05 regressed): Transfer with a duplicated participantId SUCCEEDED — " +
 			"the epoch read/write aliasing or the missing duplicate-id check is back")
 	}
-	const wantSelector = "0xf170f72d" // ParticipantIdsNotSorted()
-	if !strings.Contains(sendErr.Error(), wantSelector) {
-		t.Fatalf("Transfer reverted, but not with ParticipantIdsNotSorted (%s): %v", wantSelector, sendErr)
+	// Expected rejection reason changed since this test was written: back
+	// then, _updateBalancesForTransfer's ParticipantIdsNotSorted() was the
+	// only defense against a duplicated id, so that's what fired. The C-04
+	// fingerprint requirement added later now catches it first and more
+	// fundamentally — _verifyFingerprints requires fingerprintConfirmed
+	// between every pair of DISTINCT array positions in participantIds,
+	// including position (0,1) here (both value 1, i.e. accountId 1 with
+	// itself); registerFingerprint() explicitly reverts InvalidFingerprintParty
+	// on otherPartyId == callerId, so a self-fingerprint can never be
+	// confirmed — any duplicated id is therefore structurally rejected by
+	// C-04 before ParticipantIdsNotSorted's own check is ever reached. The
+	// underlying security property this test exists to confirm — a
+	// duplicated participantId is rejected — still holds, now via a
+	// stronger, earlier check.
+	if !strings.Contains(sendErr.Error(), "FingerprintNotConfirmed") {
+		t.Fatalf("Transfer reverted, but not with FingerprintNotConfirmed: %v", sendErr)
 	}
-	t.Logf("attack Transfer reverted with ParticipantIdsNotSorted() — duplicate participantId correctly rejected: %v", sendErr)
+	t.Logf("attack Transfer reverted with FingerprintNotConfirmed() — duplicate participantId correctly rejected (now caught by C-04's fingerprint uniqueness requirement before reaching C-05's own check): %v", sendErr)
 
 	// ── Control: the contract still works normally afterwards ─────────────
 	// The attack tx reverted in full (no nullifier consumed, no storage
