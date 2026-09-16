@@ -213,9 +213,10 @@ interface IEnygma {
 
     // Fix H-09: see transfer()'s identical bankTag doc comment above.
 
-    /// @notice Register the verifier for USDr transfer proofs (81-signal
-    /// shape — one more than the main transfer proof's 80, since the fee
-    /// amount is a public signal here — different verifying key).
+    /// @notice Register the verifier for USDr transfer proofs (82-signal
+    /// shape — two more than the main transfer proof's 80, since the fee
+    /// amount and DomainId (Fix L-01) are both public signals here —
+    /// different verifying key).
     function addUsdrVerifier(address verifier) external returns (bool);
 
     /// @notice Set the fixed USDr relayer fee. Every transfer()'s usdrProof
