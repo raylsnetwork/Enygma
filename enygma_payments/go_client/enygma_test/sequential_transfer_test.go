@@ -48,6 +48,7 @@ import (
 	enygma "enygma/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -126,6 +127,65 @@ func TestSequentialTransfers(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Banks 1-5 (non-sender) are registered under their own distinct,
+	// freshly-generated and funded addresses — not ownerAddr — because
+	// C-04's fingerprint check resolves identity via
+	// addressToAccountId[msg.sender], which collapses to one identity if
+	// every bank shares an address, making it impossible for them to
+	// independently confirm pairwise fingerprints below (mirrors
+	// c04Setup's own doc comment on why it does the same). Bank 0 (the
+	// sender, accountId 1) stays registered under ownerAddr — the relayer
+	// subprocess below signs with a key that falls back to ownerAddr's own
+	// hardhatTestKey, so onlyRegistered stays satisfied without further
+	// changes.
+	bankAddrs := make([]common.Address, nBanks)
+	bankKeys := make([]*ecdsa.PrivateKey, nBanks)
+	bankAddrs[senderIdx] = ownerAddr
+	for i := 0; i < nBanks; i++ {
+		if i == senderIdx {
+			continue
+		}
+		key, genErr := crypto.GenerateKey()
+		if genErr != nil {
+			t.Fatalf("generate bank %d key: %v", i, genErr)
+		}
+		bankKeys[i] = key
+		bankAddrs[i] = crypto.PubkeyToAddress(key.PublicKey)
+
+		gasPrice, _ := client.SuggestGasPrice(ctx)
+		nonce, _ := client.PendingNonceAt(ctx, ownerAddr)
+		fundTx := ethtypes.NewTx(&ethtypes.LegacyTx{
+			Nonce:    nonce,
+			To:       &bankAddrs[i],
+			Value:    new(big.Int).SetUint64(50_000_000_000_000_000), // 0.05 ETH
+			Gas:      21000,
+			GasPrice: gasPrice,
+		})
+		signedFundTx, signErr := ethtypes.SignTx(fundTx, ethtypes.NewEIP155Signer(big.NewInt(chainID)), privKey)
+		if signErr != nil {
+			t.Fatalf("sign funding tx: %v", signErr)
+		}
+		if sendErr := client.SendTransaction(ctx, signedFundTx); sendErr != nil {
+			t.Fatalf("fund bank %d: %v", i, sendErr)
+		}
+		if _, waitErr := bind.WaitMined(ctx, client, signedFundTx); waitErr != nil {
+			t.Fatalf("wait funding mined: %v", waitErr)
+		}
+	}
+	bankAuthFor := func(i int) *bind.TransactOpts {
+		if i == senderIdx {
+			return mkAuth()
+		}
+		nonce, _ := client.PendingNonceAt(ctx, bankAddrs[i])
+		gasPrice, _ := client.SuggestGasPrice(ctx)
+		auth, _ := bind.NewKeyedTransactorWithChainID(bankKeys[i], big.NewInt(chainID))
+		auth.Nonce = big.NewInt(int64(nonce))
+		auth.Value = big.NewInt(0)
+		auth.GasLimit = 16_000_000
+		auth.GasPrice = gasPrice
+		return auth
+	}
+
 	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
 	// directly) since it mints below too — senderRegR + senderMintR ==
 	// senderPrevR, used as prevR1 further down.
@@ -135,12 +195,28 @@ func TestSequentialTransfers(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		waitTxOK(instance.RegisterAccount(mkAuth(), ownerAddr,
+		waitTxOK(instance.RegisterAccount(mkAuth(), bankAddrs[i],
 			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
 	}
 	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
 	waitTxOK(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy))
 	t.Logf("setup: %d banks registered, %d tokens minted to bank 0 (accountId=1)", nBanks, mintAmt)
+
+	// Confirm every pairwise fingerprint _verifyFingerprints will check —
+	// ALL i≠j pairs, not just ones touching the sender (the contract can't
+	// tell which slot is the sender without breaking the anonymity set).
+	confirmFingerprints := func(fp [][]*big.Int) {
+		t.Helper()
+		for i := 0; i < nBanks; i++ {
+			for j := 0; j < nBanks; j++ {
+				if i == j {
+					continue
+				}
+				waitTxOK(instance.RegisterFingerprint(bankAuthFor(i), big.NewInt(int64(j+1)), fp[i][j]))
+			}
+		}
+		t.Log("  all 30 directed pairwise fingerprints confirmed among the 6 banks")
+	}
 
 	// ── USDr setup: every transfer() call now also settles a second,
 	// independent USDr fee proof in the same atomic call (see
@@ -181,21 +257,45 @@ func TestSequentialTransfers(t *testing.T) {
 	const seqRelayerPort = "8084"
 	seqRelayerURL := "http://127.0.0.1:" + seqRelayerPort
 
+	// ownerPrivKey is only non-empty when MY_KEY is set; fall back to the
+	// committed Hardhat test key for local runs, matching mustPrivKey's own
+	// fallback (and fee_transfer_test.go's identical pattern for its own
+	// relayer subprocess) — without this, the relayer subprocess starts
+	// with an empty RELAYER_PRIVATE_KEY and exits immediately.
+	relayerPrivKey := ownerPrivKey
+	if relayerPrivKey == "" {
+		relayerPrivKey = hardhatTestKey
+	}
+
 	relayerCmd := exec.Command(relayerBin)
 	relayerCmd.Dir = relayerDir
 	relayerCmd.Env = append(os.Environ(),
 		"RELAYER_RPC_URL="+chainURL,
 		fmt.Sprintf("RELAYER_CHAIN_ID=%d", chainID),
-		"RELAYER_PRIVATE_KEY="+ownerPrivKey,
+		"RELAYER_PRIVATE_KEY="+relayerPrivKey,
 		"RELAYER_API_KEY="+relayerKey,
 		"RELAYER_GAS_LIMIT=10000000",
 		"RELAYER_CONTRACT_ADDR="+enygmaAddr.Hex(),
 		"RELAYER_PORT="+seqRelayerPort,
 	)
+	// Capture stdout/stderr so a startup crash is diagnosable instead of
+	// silently manifesting as "did not start" — same pattern
+	// fee_transfer_test.go's own relayer spawn already uses.
+	relayerStderr, _ := os.CreateTemp("", "relayer-stderr-*.txt")
+	relayerCmd.Stdout = relayerStderr
+	relayerCmd.Stderr = relayerStderr
 	if err := relayerCmd.Start(); err != nil {
 		t.Fatalf("start relayer subprocess: %v", err)
 	}
-	t.Cleanup(func() { relayerCmd.Process.Kill() })
+	t.Cleanup(func() {
+		relayerCmd.Process.Kill()
+		if name := relayerStderr.Name(); name != "" {
+			if data, rerr := os.ReadFile(name); rerr == nil && len(data) > 0 {
+				t.Logf("relayer output:\n%s", data)
+			}
+			os.Remove(name)
+		}
+	})
 
 	for i := 0; i < 20; i++ {
 		if tcpAvailable("127.0.0.1:" + seqRelayerPort) {
@@ -230,6 +330,7 @@ func TestSequentialTransfers(t *testing.T) {
 
 		sk := big.NewInt(senderSk)
 		fp := fingerPrintGen(secrets, senderIdx)
+		confirmFingerprints(fp)
 		// nullifier computed before tagMessageGen/genCommitmentAndRandom:
 		// Fix H-01/H-02 use it (not blockHash) as the per-transaction value.
 		nullifier, _ := poseidon.Hash([]*big.Int{secrets[senderIdx], blockHash})

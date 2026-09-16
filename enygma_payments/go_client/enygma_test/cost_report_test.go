@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -254,11 +255,58 @@ func TestCostReport(t *testing.T) {
 	// commitment Com(0, randomness) = randomness·H for that bank.
 	// With the totalSupply fix, each call also adds this commitment to
 	// (totalSupplyX, totalSupplyY) so check() stays valid.
+	//
+	// Each bank is registered under its OWN distinct, freshly-generated and
+	// funded address (not the shared ownerAddr) — C-04's fingerprint check
+	// resolves identity via addressToAccountId[msg.sender], which collapses
+	// to a single accountId if every bank shares one address, making it
+	// impossible to confirm pairwise fingerprints below (mirrors c04Setup's
+	// own doc comment on why it does the same).
 	t.Log("[B3] registerAccount() × 6…")
 	pks := make([]*big.Int, nBanks)
 	for i, sk := range bankSks {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
+	}
+	bankKeys := make([]*ecdsa.PrivateKey, nBanks)
+	bankAddrs := make([]common.Address, nBanks)
+	for i := 0; i < nBanks; i++ {
+		key, genErr := crypto.GenerateKey()
+		if genErr != nil {
+			t.Fatalf("generate bank %d key: %v", i, genErr)
+		}
+		bankKeys[i] = key
+		bankAddrs[i] = crypto.PubkeyToAddress(key.PublicKey)
+
+		gasPrice, _ := client.SuggestGasPrice(ctx)
+		nonce, _ := client.PendingNonceAt(ctx, ownerAddr)
+		fundTx := ethtypes.NewTx(&ethtypes.LegacyTx{
+			Nonce:    nonce,
+			To:       &bankAddrs[i],
+			Value:    new(big.Int).SetUint64(50_000_000_000_000_000), // 0.05 ETH
+			Gas:      21000,
+			GasPrice: gasPrice,
+		})
+		signedFundTx, signErr := ethtypes.SignTx(fundTx, ethtypes.NewEIP155Signer(big.NewInt(chainID)), privKey)
+		if signErr != nil {
+			t.Fatalf("sign funding tx: %v", signErr)
+		}
+		if sendErr := client.SendTransaction(ctx, signedFundTx); sendErr != nil {
+			t.Fatalf("fund bank %d: %v", i, sendErr)
+		}
+		if _, waitErr := bind.WaitMined(ctx, client, signedFundTx); waitErr != nil {
+			t.Fatalf("wait funding mined: %v", waitErr)
+		}
+	}
+	bankAuthFor := func(i int) *bind.TransactOpts {
+		nonce, _ := client.PendingNonceAt(ctx, bankAddrs[i])
+		gasPrice, _ := client.SuggestGasPrice(ctx)
+		auth, _ := bind.NewKeyedTransactorWithChainID(bankKeys[i], big.NewInt(chainID))
+		auth.Nonce = big.NewInt(int64(nonce))
+		auth.Value = big.NewInt(0)
+		auth.GasLimit = 16_000_000
+		auth.GasPrice = gasPrice
+		return auth
 	}
 	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
 	// directly) since it mints below too — senderRegR + senderMintR ==
@@ -270,7 +318,7 @@ func TestCostReport(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		tx, txErr := instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})
+		tx, txErr := instance.RegisterAccount(mkAuth(), bankAddrs[i], big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})
 		rec := record(fmt.Sprintf("registerAccount(bank %d)", i+1), tx, txErr)
 		addRec(rec)
 		regTotalGas += rec.gasUsed
@@ -323,6 +371,55 @@ func TestCostReport(t *testing.T) {
 	secrets[senderIdx] = senderSecret
 
 	fp := fingerPrintGen(secrets, senderIdx)
+
+	// Confirm on-chain every pairwise fingerprint _verifyFingerprints will
+	// check — ALL i≠j pairs, not just ones touching the sender (the
+	// contract can't tell which slot is the sender without breaking the
+	// anonymity set, so it requires the full matrix). fp itself is zero
+	// everywhere except the sender's column (fingerPrintGen's own doc:
+	// "FingerPrint[i][j] = Poseidon(secret[i][j]); diagonal skipped"),
+	// so most pairs are confirmed as an explicit zero.
+	for i := 0; i < nBanks; i++ {
+		for j := 0; j < nBanks; j++ {
+			if i == j {
+				continue
+			}
+			tx, err := instance.RegisterFingerprint(bankAuthFor(i), big.NewInt(int64(j+1)), fp[i][j])
+			if err != nil {
+				t.Fatalf("register fingerprint (%d,%d): %v", i, j, err)
+			}
+			r, err := bind.WaitMined(ctx, client, tx)
+			if err != nil {
+				t.Fatalf("wait register fingerprint (%d,%d): %v", i, j, err)
+			}
+			if r.Status != 1 {
+				t.Fatalf("register fingerprint (%d,%d) reverted (Status=0, tx=%s)", i, j, r.TxHash.Hex())
+			}
+		}
+	}
+	t.Log("  all 30 directed pairwise fingerprints confirmed among the 6 banks")
+	for i := 0; i < nBanks; i++ {
+		for j := 0; j < nBanks; j++ {
+			if i == j {
+				continue
+			}
+			ok, cErr := instance.FingerprintConfirmed(&bind.CallOpts{}, big.NewInt(int64(i+1)), big.NewInt(int64(j+1)))
+			if cErr != nil {
+				t.Fatalf("FingerprintConfirmed(%d,%d): %v", i+1, j+1, cErr)
+			}
+			if !ok {
+				t.Fatalf("FingerprintConfirmed(%d,%d) is false after registration", i+1, j+1)
+			}
+			v, vErr := instance.ConfirmedFingerprint(&bind.CallOpts{}, big.NewInt(int64(i+1)), big.NewInt(int64(j+1)))
+			if vErr != nil {
+				t.Fatalf("ConfirmedFingerprint(%d,%d): %v", i+1, j+1, vErr)
+			}
+			if v.Cmp(fp[i][j]) != 0 {
+				t.Fatalf("ConfirmedFingerprint(%d,%d)=%s, want %s (matching fp[%d][%d])", i+1, j+1, v, fp[i][j], i, j)
+			}
+		}
+	}
+	t.Log("  on-chain fingerprint state independently verified to match fp[][] exactly")
 	txValues := []*big.Int{
 		negMod(big.NewInt(transferAmt)),
 		big.NewInt(60), big.NewInt(40),
@@ -451,21 +548,48 @@ func TestCostReport(t *testing.T) {
 	const testRelayerPort = "8083"
 	testRelayerURL := "http://127.0.0.1:" + testRelayerPort
 
+	// ownerPrivKey is only non-empty when MY_KEY is set; fall back to the
+	// committed Hardhat test key for local runs, matching mustPrivKey's own
+	// fallback (and fee_transfer_test.go's identical pattern for its own
+	// relayer subprocess) — without this, the relayer subprocess starts
+	// with an empty RELAYER_PRIVATE_KEY and exits immediately.
+	//
+	// Must be bank 0's own key, not ownerAddr's — onlyRegistered requires
+	// addressToAccountId[msg.sender] != 0, and since Section B3 registers
+	// each bank under its own distinct address (not the shared ownerAddr,
+	// needed for C-04's fingerprint confirmation above), ownerAddr itself
+	// is no longer registered as any account.
+	relayerPrivKey := hex.EncodeToString(crypto.FromECDSA(bankKeys[0]))
+
 	relayerCmd := exec.Command(relayerBin)
 	relayerCmd.Dir = relayerDir // so relative ABI/address paths resolve correctly
 	relayerCmd.Env = append(os.Environ(),
 		"RELAYER_RPC_URL="+chainURL,
 		fmt.Sprintf("RELAYER_CHAIN_ID=%d", chainID),
-		"RELAYER_PRIVATE_KEY="+ownerPrivKey,
+		"RELAYER_PRIVATE_KEY="+relayerPrivKey,
 		"RELAYER_API_KEY="+relayerKey,
 		"RELAYER_GAS_LIMIT=10000000",
 		"RELAYER_CONTRACT_ADDR="+enygmaAddr.Hex(),
 		"RELAYER_PORT="+testRelayerPort,
 	)
+	// Capture stdout/stderr so a startup crash is diagnosable instead of
+	// silently manifesting as "did not become ready" — same pattern
+	// fee_transfer_test.go's own relayer spawn already uses.
+	relayerStderr, _ := os.CreateTemp("", "relayer-stderr-*.txt")
+	relayerCmd.Stdout = relayerStderr
+	relayerCmd.Stderr = relayerStderr
 	if err := relayerCmd.Start(); err != nil {
 		t.Fatalf("start relayer subprocess: %v", err)
 	}
-	t.Cleanup(func() { relayerCmd.Process.Kill() })
+	t.Cleanup(func() {
+		relayerCmd.Process.Kill()
+		if name := relayerStderr.Name(); name != "" {
+			if data, rerr := os.ReadFile(name); rerr == nil && len(data) > 0 {
+				t.Logf("relayer output:\n%s", data)
+			}
+			os.Remove(name)
+		}
+	})
 	t.Logf("  started test-local relayer pid=%d on :%s → %s",
 		relayerCmd.Process.Pid, testRelayerPort, enygmaAddr.Hex())
 
@@ -503,12 +627,55 @@ func TestCostReport(t *testing.T) {
 	for i := range kIdx64 {
 		kIdx64[i] = int64(i + 1)
 	}
+
+	// transfer() now unconditionally requires a second, independent USDr
+	// proof settled atomically alongside the main one — this test measures
+	// the main transfer's gas cost, not USDr's, so it uses the same
+	// MockUsdrVerifier + structurally-valid (not cryptographically real)
+	// leg the *_repro_test.go files use (see usdr_helper_test.go).
+	var mainSignal81 [81]*big.Int
+	copy(mainSignal81[:], proofResp.PublicSignal)
+	accountIds := make([]int64, nBanks)
+	for i := range accountIds {
+		accountIds[i] = int64(i + 1)
+	}
+	waitTx := func(tx *ethtypes.Transaction, txErr error) *ethtypes.Receipt {
+		t.Helper()
+		if txErr != nil {
+			t.Fatalf("send tx: %v", txErr)
+		}
+		r, err := bind.WaitMined(ctx, client, tx)
+		if err != nil {
+			t.Fatalf("wait mined: %v", err)
+		}
+		return r
+	}
+	setupMockUsdr(t, client, mkAuth, waitTx, instance, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal81, accountIds)
+	usdrCommitmentStrs := make([][]string, len(usdrDeltas))
+	for i, pt := range usdrDeltas {
+		usdrCommitmentStrs[i] = []string{pt.C1.String(), pt.C2.String()}
+	}
+	var usdrProof8Strs [8]string
+	for i := 0; i < 8; i++ {
+		usdrProof8Strs[i] = usdrProof.Proof[i].String()
+	}
+	usdrPubSigStrs := make([]string, len(usdrProof.PublicSignal))
+	for i, v := range usdrProof.PublicSignal {
+		usdrPubSigStrs[i] = v.String()
+	}
+
 	relayReq := struct {
 		Proof        [8]string  `json:"proof"`
 		PublicSignal []string   `json:"publicSignal"`
 		Commitments  [][]string `json:"commitments"`
-		KIndex       []int64    `json:"kIndex"`
-	}{proof8Strs, pubSigStrs, commitmentDeltas, kIdx64}
+
+		UsdrProof        [8]string  `json:"usdrProof"`
+		UsdrPublicSignal []string   `json:"usdrPublicSignal"`
+		UsdrCommitments  [][]string `json:"usdrCommitments"`
+
+		KIndex []int64 `json:"kIndex"`
+	}{proof8Strs, pubSigStrs, commitmentDeltas, usdrProof8Strs, usdrPubSigStrs, usdrCommitmentStrs, kIdx64}
 	relayBody, _ := json.Marshal(relayReq)
 
 	t.Logf("  POST %s/relay/transfer", testRelayerURL)
