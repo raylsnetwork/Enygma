@@ -171,6 +171,12 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(0))
 	waitTx(instance.MintSupply(ownerAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy))
 
+	usdrAccountIds := make([]int64, nBanks)
+	for i := range usdrAccountIds {
+		usdrAccountIds[i] = int64(i + 1)
+	}
+	setupMockUsdr(t, client, ownerAuth, waitTx, instance, usdrAccountIds)
+
 	bankAuth := func(b selfBank) *bind.TransactOpts {
 		nonce, _ := client.PendingNonceAt(context.Background(), b.addr)
 		gasPrice, _ := client.SuggestGasPrice(context.Background())
@@ -310,6 +316,7 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 	for i := range participantIds {
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig81, usdrAccountIds)
 
 	balBefore, err := instance.GetBalance(&bind.CallOpts{}, big.NewInt(1))
 	if err != nil {
@@ -318,7 +325,7 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 
 	// ── The actual H-09 item 2 assertion: submit DIRECTLY, no relayer ──────
 	t.Log("submitting Transfer directly as bank 0's own key — no relayer process was ever started in this test")
-	tx, sendErr := instance.Transfer(bankAuth(banks[senderIdx]), txCommit, transferProof, participantIds, "")
+	tx, sendErr := instance.Transfer(bankAuth(banks[senderIdx]), txCommit, transferProof, usdrDeltas, usdrProof, participantIds, "")
 	if sendErr != nil {
 		t.Fatalf("FAIL (H-09 item 2 regressed): direct self-submission reverted: %v", sendErr)
 	}

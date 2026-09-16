@@ -140,6 +140,13 @@ func c04Setup(t *testing.T, client *ethclient.Client) (*enygma.Enygma, []c04Bank
 
 	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
 	waitTx(instance.MintSupply(ownerAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy))
+
+	accountIds := make([]int64, nBanks)
+	for i := range banks {
+		accountIds[i] = banks[i].accountID
+	}
+	setupMockUsdr(t, client, ownerAuth, waitTx, instance, accountIds)
+
 	return instance, banks, enygmaAddr
 }
 
@@ -310,21 +317,27 @@ func TestC04_TransferRejectsUnconfirmedFingerprint(t *testing.T) {
 	pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fingerprints, 111)
 
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	for i := 0; i < nBanks; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
-	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, participantIds, "") // Fix H-09: no attribution for a direct test call
+	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr == nil {
 		t.Fatal("FAIL (C-04 regressed): transfer() succeeded with zero confirmed fingerprints")
 	}
-	const wantSelector = "0x4364d19c" // FingerprintNotConfirmed()
-	if !strings.Contains(sendErr.Error(), wantSelector) {
-		t.Fatalf("transfer() reverted, but not with FingerprintNotConfirmed (%s): %v", wantSelector, sendErr)
+	// Matched by error name, not the raw 4-byte selector (0x4364d19c) — this
+	// Hardhat node's VM error formatting reports custom errors by name (see
+	// h07_repro_test.go's identical convention for UnregisteredParticipant),
+	// not by selector, so a hex-substring check here would never match.
+	if !strings.Contains(sendErr.Error(), "FingerprintNotConfirmed") {
+		t.Fatalf("transfer() reverted, but not with FingerprintNotConfirmed: %v", sendErr)
 	}
 	t.Logf("transfer() with zero confirmed fingerprints correctly reverted with FingerprintNotConfirmed: %v", sendErr)
 }
@@ -376,15 +389,18 @@ func TestC04_HonestTransferSucceedsWithConfirmedFingerprints(t *testing.T) {
 
 	pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fingerprints, 222)
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	for i := 0; i < nBanks; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
-	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, participantIds, "") // Fix H-09: no attribution for a direct test call
+	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr != nil {
 		t.Fatalf("FAIL: honest transfer with all 15 pairs confirmed was rejected: %v", sendErr)
 	}

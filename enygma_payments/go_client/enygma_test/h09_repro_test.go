@@ -87,17 +87,20 @@ func TestH09_RelayAttribution(t *testing.T) {
 
 	pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fingerprints, 333)
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	for i := 0; i < nBanks; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
 	const wantBankTag = "acme-bank-01" // stands in for the relayer's Fix H-06 per-bank credential id
 	auth := bankAuth(t, client, banks[0])
-	tx, sendErr := instance.Transfer(auth, deltas, proof, participantIds, wantBankTag)
+	tx, sendErr := instance.Transfer(auth, deltas, proof, usdrDeltas, usdrProof, participantIds, wantBankTag)
 	if sendErr != nil {
 		t.Fatalf("transfer with bankTag=%q reverted: %v", wantBankTag, sendErr)
 	}
@@ -173,15 +176,18 @@ func TestH09_RelayAttribution_EmptyTagAllowed(t *testing.T) {
 
 	pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fingerprints, 444)
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	for i := 0; i < nBanks; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
-	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, participantIds, "")
+	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "")
 	if sendErr != nil {
 		t.Fatalf("transfer with empty bankTag reverted: %v", sendErr)
 	}
