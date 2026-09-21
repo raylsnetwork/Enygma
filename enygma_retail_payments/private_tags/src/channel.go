@@ -49,14 +49,6 @@ const (
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-// ChannelRecord mirrors the on-chain TagChannelRegistry.ChannelRecord struct.
-type ChannelRecord struct {
-	Sender common.Address
-	C1     []byte // ML-KEM-768 ciphertext (1088 bytes) — paper §3 step 3
-	C2     []byte // AEAD.Encrypt(k, message, c1)       — paper §3 step 5
-	Bitmap []byte // privacy bitmap over registered users
-}
-
 
 type ChannelPayload struct {
 	Message  []byte // initial message from sender to recipient

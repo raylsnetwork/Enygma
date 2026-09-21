@@ -26,8 +26,6 @@ const (
 	hardhatChainID      = 1337
 	// Account[0] from enygmadvp.config.json — the deployer and ERC20 owner
 	hardhatPrivKeyHex   = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
-	// Account[1] from enygmadvp.config.json — withdrawal recipient
-	hardhatRecipientHex = "0xD2C3b34Abae5664986C8cf0F14d1D434Ac894768"
 )
 
 // ── ABI struct types mirroring IEnygmaDvp.sol ──────────────────────────────────
@@ -160,16 +158,6 @@ func proofStringsToOnchain(t *testing.T, proof []string) onchainSnarkProof {
 	}
 }
 
-// buildReceipt converts a ProofResult into an onchainProofReceipt using the
-// non-interleaved ContractStatement layout expected by the vault contracts.
-func buildReceipt(result *core.ProofResult) onchainProofReceipt {
-	return onchainProofReceipt{
-		Statement:       result.ContractStatement(),
-		NumberOfInputs:  big.NewInt(int64(result.NumberOfInputs)),
-		NumberOfOutputs: big.NewInt(int64(result.NumberOfOutputs)),
-	}
-}
-
 // ── Merkle tree helpers ────────────────────────────────────────────────────────
 
 // loadVaultMerkleTree queries all historical Commitment events emitted by the
@@ -194,18 +182,4 @@ func loadVaultMerkleTree(t *testing.T, client *ethclient.Client, vaultAddr commo
 	}
 	t.Logf("loadVaultMerkleTree: loaded %d commitment leaves from vault %s", len(logs), vaultAddr.Hex())
 	return mt
-}
-
-// makeDummyProof returns a zero-valued MerkleProof used as a dummy (zero-value) input.
-func makeDummyProof(depth int) *core.MerkleProof {
-	p := &core.MerkleProof{
-		Element:  big.NewInt(0),
-		Elements: make([]*big.Int, depth),
-		Indices:  big.NewInt(0),
-		Root:     big.NewInt(0),
-	}
-	for i := range p.Elements {
-		p.Elements[i] = big.NewInt(0)
-	}
-	return p
 }
