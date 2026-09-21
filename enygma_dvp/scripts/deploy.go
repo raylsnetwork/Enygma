@@ -470,54 +470,6 @@ func deployContractWithLibraries(client *ethclient.Client, auth *bind.TransactOp
 	return address, receipt, nil
 }
 
-func deployContractWithLibrary(client *ethclient.Client, auth *bind.TransactOpts, contractPath string, libName string, libAddress common.Address) (common.Address, *types.Receipt, error) {
-	artifact, err := loadArtifact(contractPath)
-	if err != nil {
-		return common.Address{}, nil, fmt.Errorf("failed to load artifact: %w", err)
-	}
-
-	parsedABI, err := abi.JSON(strings.NewReader(string(artifact.ABI)))
-	if err != nil {
-		return common.Address{}, nil, fmt.Errorf("failed to parse ABI: %w", err)
-	}
-
-	// Link library in bytecode
-	// Hardhat uses placeholder format: __$<hash>$__
-	// We need to replace it with the actual library address
-	bytecodeHex := artifact.Bytecode
-	libAddressHex := strings.ToLower(strings.TrimPrefix(libAddress.Hex(), "0x"))
-
-	// Find and replace library placeholder
-	// The placeholder is typically __$<34-char-hash>$__ (total 40 chars)
-	// We'll search for any placeholder pattern and replace it
-	for {
-		startIdx := strings.Index(bytecodeHex, "__$")
-		if startIdx == -1 {
-			break
-		}
-		endIdx := strings.Index(bytecodeHex[startIdx+3:], "$__")
-		if endIdx == -1 {
-			break
-		}
-		endIdx = startIdx + 3 + endIdx + 3
-		bytecodeHex = bytecodeHex[:startIdx] + libAddressHex + bytecodeHex[endIdx:]
-	}
-
-	bytecode := common.FromHex(bytecodeHex)
-
-	address, tx, _, err := bind.DeployContract(auth, parsedABI, bytecode, client)
-	if err != nil {
-		return common.Address{}, nil, fmt.Errorf("failed to deploy contract: %w", err)
-	}
-
-	receipt, err := bind.WaitMined(context.Background(), client, tx)
-	if err != nil {
-		return common.Address{}, nil, fmt.Errorf("failed to wait for deployment: %w", err)
-	}
-
-	return address, receipt, nil
-}
-
 func receiptToData(receipt *types.Receipt, contractAddress common.Address) ReceiptData {
 	return ReceiptData{
 		ContractAddress: contractAddress.Hex(),

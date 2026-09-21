@@ -32,7 +32,6 @@ const (
 	hardhatBobAddr         = "0xD2C3b34Abae5664986C8cf0F14d1D434Ac894768"
 	// account[2] — Carol / relayer signing key (demo only)
 	hardhatCarolPrivKeyHex = "9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda"
-	hardhatCarolAddr       = "0x9E0B331577BB37420231DAc6D199FCb4c7092B87"
 )
 
 // ── ABI struct types mirroring IEnygmaDvp.sol ──────────────────────────────────
@@ -185,19 +184,6 @@ type onchainProofReceipt struct {
 	Statement       []*big.Int        `abi:"statement"`
 	NumberOfInputs  *big.Int          `abi:"numberOfInputs"`
 	NumberOfOutputs *big.Int          `abi:"numberOfOutputs"`
-}
-
-// paymentResultToReceipt converts a PaymentResult to an onchainProofReceipt.
-// It uses ContractStatement() to get the de-interleaved statement.
-func paymentResultToReceipt(t *testing.T, result *rpcore.PaymentResult) onchainProofReceipt {
-	t.Helper()
-	snarkProof := proofStringsToOnchain(t, result.Proof)
-	return onchainProofReceipt{
-		Proof:           snarkProof,
-		Statement:       result.ContractStatement(),
-		NumberOfInputs:  big.NewInt(int64(result.NumberOfInputs)),
-		NumberOfOutputs: big.NewInt(int64(result.NumberOfOutputs)),
-	}
 }
 
 // ── Merkle tree helpers ────────────────────────────────────────────────────────
