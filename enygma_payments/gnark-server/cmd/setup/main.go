@@ -1,10 +1,9 @@
 package main
 
 import (
-
 	"fmt"
 	"math/big"
-	
+
 	utils "enygma-server/utils"
 	"github.com/consensys/gnark/frontend"
 
@@ -13,10 +12,8 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
 	"crypto/sha256"
-
-
-	
 )
+
 var (
 	a, _ = new(big.Int).SetString("168700", 10)
 	d, _ = new(big.Int).SetString("168696", 10)
@@ -29,11 +26,12 @@ type Point struct{ X, Y *big.Int }
 
 type HSetupCircuit struct {
 	// X and Y can be marked as secret (or public) depending on your use case
-	X  frontend.Variable 
-	Y  frontend.Variable 
+	X frontend.Variable
+	Y frontend.Variable
 }
+
 func add(P, Q Point) Point {
-// t = d*x1*x2*y1*y2
+	// t = d*x1*x2*y1*y2
 	x1x2 := new(big.Int).Mul(P.X, Q.X)
 	x1x2.Mod(x1x2, p)
 	y1y2 := new(big.Int).Mul(P.Y, Q.Y)
@@ -78,11 +76,9 @@ func ClearCofactor(P Point) Point {
 	return Q
 }
 
-
 func (circuit *HSetupCircuit) Define(api frontend.API) error {
 
-
-	utils.AssertPointsIsOnCurve(api,circuit.X,circuit.Y)
+	utils.AssertPointsIsOnCurve(api, circuit.X, circuit.Y)
 
 	return nil
 }
@@ -109,10 +105,9 @@ func isValidBabyJubX(x *big.Int) bool {
 	return ls.Cmp(big.NewInt(1)) == 0
 }
 
+func hash256(number *big.Int) *big.Int {
 
-func hash256(number *big.Int)*big.Int{
-
-		buf := number.Bytes()
+	buf := number.Bytes()
 
 	// Compute SHA256 hash
 	hash := sha256.Sum256(buf)
@@ -206,7 +201,6 @@ func tonelliShanks(n *big.Int) (*big.Int, bool) {
 	}
 }
 
-
 func BabyJubYFromX(xIn *big.Int) (*big.Int, bool) {
 	x := mod(new(big.Int).Set(xIn))
 	// x2 = x^2
@@ -248,35 +242,33 @@ func BabyJubYFromX(xIn *big.Int) (*big.Int, bool) {
 	return y, true
 }
 
-func main(){
+func main() {
 
-	found:= false
+	found := false
 
-	// Random seed 
-	seed,_:= new(big.Int).SetString("1", 10)
+	// Random seed
+	seed, _ := new(big.Int).SetString("1", 10)
 	var HashNumber *big.Int
-	for !found{
+	for !found {
 		// Hash of Seed
-		Hash:= hash256(seed)
+		Hash := hash256(seed)
 		// Check if Hash is a valid X coordinate in Baby Jubjub curve
 		isValid := isValidBabyJubX(Hash)
-		
-		if isValid==true{
-			found =true
+
+		if isValid == true {
+			found = true
 			HashNumber = Hash
 		}
-		seed =Hash
+		seed = Hash
 	}
 	//From X coordinate generate corresponding y coordinate
-	y,_:=BabyJubYFromX(HashNumber)
+	y, _ := BabyJubYFromX(HashNumber)
 
 	P := Point{X: HashNumber, Y: y}
-	
 
 	// Mod subgroup order r
 	Q := ClearCofactor(P)
 	var circuit HSetupCircuit
-
 
 	//Using Gnark Circuit to double check if point is indeed a point in the Baby Jub Jub point
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
@@ -291,17 +283,15 @@ func main(){
 		panic(err)
 	}
 
-
 	witness := HSetupCircuit{
 
-		X:  frontend.Variable(Q.X.String()),
+		X: frontend.Variable(Q.X.String()),
 		Y: frontend.Variable(Q.Y.String()),
 	}
 	witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 	proof, err := groth16.Prove(ccs, pk, witnessFull)
 
 	witnessPublic, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField(), frontend.PublicOnly())
-
 
 	err = groth16.Verify(proof, vk, witnessPublic)
 	if err != nil {
@@ -312,5 +302,4 @@ func main(){
 
 	println("Proof verified successfully!")
 
-	
 }

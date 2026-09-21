@@ -40,7 +40,7 @@ const AuctionFinalBatches = 10
 //	 StWinnerNftCommit, StNftTokenId, StWinningAmount, StFloorPrice]
 type AuctionFinalCircuit struct {
 	// --- public inputs: Phase-1 batch outputs ---
-	StAuctionId         frontend.Variable  `gnark:",public"`
+	StAuctionId         frontend.Variable   `gnark:",public"`
 	StBatchWinnerCommit []frontend.Variable `gnark:",public"` // commitA per batch; 0 = inactive
 	StBatchWinnerPk     []frontend.Variable `gnark:",public"` // winner spend pk per batch
 	StBatchWinnerAmount []frontend.Variable `gnark:",public"` // winner amount per batch
@@ -130,7 +130,6 @@ func (circuit *AuctionFinalCircuit) Define(api frontend.API) error {
 	isPositive := cmp.IsLess(api, 0, circuit.StWinningAmount)
 	api.AssertIsEqual(isPositive, 1)
 
-	
 	// Check that StWinningAmount > StFloorPrice!
 	belowFloor := cmp.IsLess(api, circuit.StWinningAmount, circuit.StFloorPrice)
 	api.AssertIsEqual(belowFloor, 0)

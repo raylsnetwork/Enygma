@@ -1,6 +1,5 @@
 package tags
 
-
 import (
 	"context"
 	"crypto/aes"
@@ -21,7 +20,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-
 )
 
 // ── Privacy modes (paper §3 step 6, Table 2) ─────────────────────────────────
@@ -49,7 +47,6 @@ const (
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-
 type ChannelPayload struct {
 	Message  []byte // initial message from sender to recipient
 	SenderId []byte // optional sender identity; nil = anonymous
@@ -70,7 +67,7 @@ type FoundChannel struct {
 // encodeChannelPayload serialises a ChannelPayload to bytes.
 // Wire format: [4B msgLen BE][msg][4B senderIdLen BE][senderId]
 func encodeChannelPayload(p ChannelPayload) []byte {
-	msgLen      := uint32(len(p.Message))
+	msgLen := uint32(len(p.Message))
 	senderIdLen := uint32(len(p.SenderId))
 	out := make([]byte, 4+msgLen+4+senderIdLen)
 	binary.BigEndian.PutUint32(out[0:4], msgLen)
@@ -154,7 +151,6 @@ func PrepareChannelSetup(
 
 // ── Setup Phase — Recipient  ─────────────────────────────────────
 
-
 func ScanChannels(
 	client *ethclient.Client,
 	channelRegistryAddr common.Address,
@@ -189,8 +185,8 @@ func ScanChannels(
 		}
 
 		sender, _ := recOut[0].(common.Address)
-		c1, _     := recOut[1].([]byte)
-		c2, _     := recOut[2].([]byte)
+		c1, _ := recOut[1].([]byte)
+		c2, _ := recOut[2].([]byte)
 
 		if len(c1) == 0 {
 			continue
@@ -293,9 +289,9 @@ func buildBitmap(mode PrivacyMode, totalUsers int, recipientIdx int, excludedInd
 	byteLen := (totalUsers + 7) / 8
 	bits := make([]byte, byteLen)
 
-	set   := func(idx int) { bits[idx/8] |= 1 << (uint(idx) % 8) }
+	set := func(idx int) { bits[idx/8] |= 1 << (uint(idx) % 8) }
 	clear := func(idx int) { bits[idx/8] &^= 1 << (uint(idx) % 8) }
-	get   := func(idx int) bool { return bits[idx/8]&(1<<(uint(idx)%8)) != 0 }
+	get := func(idx int) bool { return bits[idx/8]&(1<<(uint(idx)%8)) != 0 }
 
 	switch mode {
 	case PrivacyNone:

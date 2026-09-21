@@ -21,7 +21,6 @@ import (
 
 func main() {
 	solver.RegisterHint(primitives.ModHint)
-	
 
 	circuit := templates.PrivateMintCircuit{}
 

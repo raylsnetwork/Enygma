@@ -16,16 +16,16 @@
 //
 // Prerequisites (all must be running before clicking Run):
 //
-//	1. Hardhat node  :  cd ../enygma_dvp && npx hardhat node
-//	2. Deploy+init   :  bash setup.sh    (from enygma_retail_payments/)
-//	3. Gnark server  :  cd gnark_circuits && go run ./cmd/server
-//	4. Relayer       :  cd relayer && RELAYER_PRIVATE_KEY=... RELAYER_API_KEY=test-api-key-dev-only go run main.go
+//  1. Hardhat node  :  cd ../enygma_dvp && npx hardhat node
+//  2. Deploy+init   :  bash setup.sh    (from enygma_retail_payments/)
+//  3. Gnark server  :  cd gnark_circuits && go run ./cmd/server
+//  4. Relayer       :  cd relayer && RELAYER_PRIVATE_KEY=... RELAYER_API_KEY=test-api-key-dev-only go run main.go
 package main
 
 import (
-	_ "embed"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -43,15 +43,15 @@ import (
 	"time"
 
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
-	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
+	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
@@ -458,14 +458,20 @@ func runFlow(b *Broker, withTag bool) {
 	emit("prereqs", "running", "Check prerequisites", "Probing chain · gnark server · relayer…")
 	pause(1400 * time.Millisecond)
 
-	chainOK   := tcpAvailable("127.0.0.1:8545")
-	gnarkOK   := tcpAvailable("localhost:8082")
+	chainOK := tcpAvailable("127.0.0.1:8545")
+	gnarkOK := tcpAvailable("localhost:8082")
 	relayerOK := tcpAvailable("localhost:8090")
 
 	var missing []string
-	if !chainOK   { missing = append(missing, "Hardhat (8545)") }
-	if !gnarkOK   { missing = append(missing, "gnark server (8082)") }
-	if !relayerOK { missing = append(missing, "relayer (8090)") }
+	if !chainOK {
+		missing = append(missing, "Hardhat (8545)")
+	}
+	if !gnarkOK {
+		missing = append(missing, "gnark server (8082)")
+	}
+	if !relayerOK {
+		missing = append(missing, "relayer (8090)")
+	}
 	if len(missing) > 0 {
 		fail("prereqs", "Check prerequisites", fmt.Errorf("services not running: %s", strings.Join(missing, ", ")))
 		return
@@ -491,7 +497,7 @@ func runFlow(b *Broker, withTag bool) {
 						"relayer TagRegistry/TagChannelRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR and RELAYER_TAG_CHANNEL_REGISTRY_ADDR"))
 					return
 				}
-				tagRegistryAddr     = common.HexToAddress(info.TagRegistryAddr)
+				tagRegistryAddr = common.HexToAddress(info.TagRegistryAddr)
 				channelRegistryAddr = common.HexToAddress(info.TagChannelRegistryAddr)
 				proto("tagRegistryAddr", info.TagRegistryAddr)
 				proto("tagChannelAddr", info.TagChannelRegistryAddr)
@@ -513,8 +519,8 @@ func runFlow(b *Broker, withTag bool) {
 		fail("prereqs", "Check prerequisites", err)
 		return
 	}
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 	proto("vaultAddr", vaultAddr.Hex())
 	proto("registryAddr", registryAddr.Hex())
@@ -559,20 +565,32 @@ func runFlow(b *Broker, withTag bool) {
 	panel(1, "ethAddr", bobAuth.From.Hex())
 
 	gnarkClient := rpcore.NewPaymentClient("")
-	tokenId     := big.NewInt(0)
+	tokenId := big.NewInt(0)
 
 	// ── Step: Key generation ──────────────────────────────────────────────────
 	emit("keygen", "running", "Generate key pairs", "Alice & Bob each generate spend+view keypairs…")
 	pause(2000 * time.Millisecond)
 
 	aliceSpend, err := rpcore.NewSpendKeyPair()
-	if err != nil { fail("keygen", "Generate key pairs", err); return }
-	aliceView, err  := rpcore.NewViewKeyPair()
-	if err != nil { fail("keygen", "Generate key pairs", err); return }
-	bobSpend, err   := rpcore.NewSpendKeyPair()
-	if err != nil { fail("keygen", "Generate key pairs", err); return }
-	bobView, err    := rpcore.NewViewKeyPair()
-	if err != nil { fail("keygen", "Generate key pairs", err); return }
+	if err != nil {
+		fail("keygen", "Generate key pairs", err)
+		return
+	}
+	aliceView, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		fail("keygen", "Generate key pairs", err)
+		return
+	}
+	bobSpend, err := rpcore.NewSpendKeyPair()
+	if err != nil {
+		fail("keygen", "Generate key pairs", err)
+		return
+	}
+	bobView, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		fail("keygen", "Generate key pairs", err)
+		return
+	}
 
 	panel(0, "pkSpend", "0x"+aliceSpend.PublicKey.Text(16))
 	panel(1, "pkSpend", "0x"+bobSpend.PublicKey.Text(16))
@@ -590,7 +608,7 @@ func runFlow(b *Broker, withTag bool) {
 
 	// Use empty audit ciphertexts (demo doesn't exercise the auditor path).
 	stubMlKemCt := make([]byte, 1088)
-	stubAesCt   := make([]byte, 92)
+	stubAesCt := make([]byte, 92)
 
 	if err := rpcore.Register(client, aliceAuth, registryAddr,
 		aliceSpend.PublicKey, aliceView.EncapsKey, stubMlKemCt, stubAesCt); err != nil {
@@ -624,9 +642,15 @@ func runFlow(b *Broker, withTag bool) {
 		emit("channel", "running", "Channel Setup", "Alice establishes ML-KEM channel with Bob via relayer…")
 
 		totalUsers, err := tags.GetUserCount(client, registryAddr)
-		if err != nil { fail("channel", "Channel Setup", fmt.Errorf("GetUserCount: %w", err)); return }
+		if err != nil {
+			fail("channel", "Channel Setup", fmt.Errorf("GetUserCount: %w", err))
+			return
+		}
 		bobIdx, err := tags.GetRecipientIndex(client, registryAddr, bobAuth.From)
-		if err != nil { fail("channel", "Channel Setup", fmt.Errorf("GetRecipientIndex: %w", err)); return }
+		if err != nil {
+			fail("channel", "Channel Setup", fmt.Errorf("GetRecipientIndex: %w", err))
+			return
+		}
 		logMsg("tag", fmt.Sprintf("UserRegistry: %d users registered, Bob index: %d", totalUsers, bobIdx))
 
 		var c1, c2, bitmap []byte
@@ -637,7 +661,10 @@ func runFlow(b *Broker, withTag bool) {
 			tags.PrivacyFull,
 			totalUsers, bobIdx, nil,
 		)
-		if err != nil { fail("channel", "Channel Setup", fmt.Errorf("PrepareChannelSetup: %w", err)); return }
+		if err != nil {
+			fail("channel", "Channel Setup", fmt.Errorf("PrepareChannelSetup: %w", err))
+			return
+		}
 		logMsg("tag", fmt.Sprintf("ML-KEM-768 encapsulation → c1=%dB  c2=%dB  bitmap=%dB (%s)", len(c1), len(c2), len(bitmap), toHex(bitmap)))
 
 		var chResp relayChannelResponse
@@ -646,7 +673,10 @@ func runFlow(b *Broker, withTag bool) {
 			C2:     toHex(c2),
 			Bitmap: toHex(bitmap),
 		}, &chResp)
-		if err != nil { fail("channel", "Channel Setup", err); return }
+		if err != nil {
+			fail("channel", "Channel Setup", err)
+			return
+		}
 		if status != http.StatusOK {
 			fail("channel", "Channel Setup", fmt.Errorf("POST /relay/channel %d: %s", status, chResp.Error))
 			return
@@ -660,7 +690,10 @@ func runFlow(b *Broker, withTag bool) {
 
 		// Bob scans to recover the shared secret.
 		bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, chResp.ChannelIdx, 1)
-		if err != nil { fail("channel", "Channel Setup", fmt.Errorf("ScanChannels (Bob): %w", err)); return }
+		if err != nil {
+			fail("channel", "Channel Setup", fmt.Errorf("ScanChannels (Bob): %w", err))
+			return
+		}
 		if len(bobFound) != 1 {
 			fail("channel", "Channel Setup", fmt.Errorf("Bob found %d channels, want 1", len(bobFound)))
 			return
@@ -676,39 +709,68 @@ func runFlow(b *Broker, withTag bool) {
 
 	// Mint tokens to Alice.
 	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From, big.NewInt(depositAmt*10))
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("ERC20.mint: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("ERC20.mint: %w", err))
+		return
+	}
 	if _, err := waitMined(ctx, client, mintTx); err != nil {
-		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait mint: %w", err)); return
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait mint: %w", err))
+		return
 	}
 	logMsg("chain", fmt.Sprintf("ERC20.mint(%d tokens) → Alice", depositAmt*10))
 
 	approveTx, err := erc20.Transact(aliceAuth, "approve", vaultAddr, big.NewInt(depositAmt))
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("ERC20.approve: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("ERC20.approve: %w", err))
+		return
+	}
 	if _, err := waitMined(ctx, client, approveTx); err != nil {
-		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait approve: %w", err)); return
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait approve: %w", err))
+		return
 	}
 
 	// Encapsulate to derive deposit salt and encryption key.
 	ss, capsule, err := rpcore.Encapsulate(aliceView.EncapsKey)
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("Encapsulate: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("Encapsulate: %w", err))
+		return
+	}
 	aliceSaltB, err := rpcore.DerivePaymentSalt(ss)
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("DerivePaymentSalt: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("DerivePaymentSalt: %w", err))
+		return
+	}
 	aliceEncKey, err := rpcore.DerivePaymentKey(ss)
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("DerivePaymentKey: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("DerivePaymentKey: %w", err))
+		return
+	}
 	aliceSaltBField := rpcore.SaltBToField(aliceSaltB)
 
 	aliceCommitment, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, aliceSaltBField, big.NewInt(depositAmt), tokenId)
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("Erc20CommitmentV2: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("Erc20CommitmentV2: %w", err))
+		return
+	}
 
 	depositCtxt, err := rpcore.EncryptPayload(aliceEncKey, tokenId, big.NewInt(depositAmt))
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("EncryptPayload: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("EncryptPayload: %w", err))
+		return
+	}
 
 	depositTx, err := vault.Transact(aliceAuth, "depositV2",
 		[]*big.Int{big.NewInt(depositAmt), aliceSpend.PublicKey, aliceSaltBField, tokenId},
 		capsule, depositCtxt)
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("depositV2: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("depositV2: %w", err))
+		return
+	}
 	depositReceipt, err := waitMined(ctx, client, depositTx)
-	if err != nil { fail("deposit", "Deposit ERC-20", fmt.Errorf("wait depositV2: %w", err)); return }
+	if err != nil {
+		fail("deposit", "Deposit ERC-20", fmt.Errorf("wait depositV2: %w", err))
+		return
+	}
 
 	totalGasUsed += depositReceipt.GasUsed
 	logMsg("chain", fmt.Sprintf("Erc20CoinVault.depositV2() → block %d  gas %s",
@@ -725,9 +787,15 @@ func runFlow(b *Broker, withTag bool) {
 	emit("merkle", "running", "Build Merkle Proof", "Scanning vault Commitment events to reconstruct the Merkle tree…")
 
 	mt, err := buildVaultMerkleTree(ctx, client, vaultAddr)
-	if err != nil { fail("merkle", "Build Merkle Proof", err); return }
+	if err != nil {
+		fail("merkle", "Build Merkle Proof", err)
+		return
+	}
 	aliceProof, err := mt.GenerateProof(aliceCommitment)
-	if err != nil { fail("merkle", "Build Merkle Proof", fmt.Errorf("GenerateProof: %w", err)); return }
+	if err != nil {
+		fail("merkle", "Build Merkle Proof", fmt.Errorf("GenerateProof: %w", err))
+		return
+	}
 
 	logMsg("key", fmt.Sprintf("Merkle root: 0x%s…", aliceProof.Root.Text(16)[:16]))
 	panel(0, "merkleRoot", "0x"+aliceProof.Root.Text(16))
@@ -755,7 +823,10 @@ func runFlow(b *Broker, withTag bool) {
 		tokenId,
 	)
 	proofGenMs = time.Since(proofGenStart).Milliseconds()
-	if err != nil { fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundPaymentProof: %w", err)); return }
+	if err != nil {
+		fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundPaymentProof: %w", err))
+		return
+	}
 
 	stmt := paymentResult.ContractStatement()
 	logMsg("zk", fmt.Sprintf("proof generation: %d ms  size: 256 bytes (Groth16: 8 × 32-byte field elements)", proofGenMs))
@@ -779,7 +850,10 @@ func runFlow(b *Broker, withTag bool) {
 	relayCallStart := time.Now()
 	status, err := postRelayer("/relay/payment", relayReq, &payResp)
 	relayRTTms = time.Since(relayCallStart).Milliseconds()
-	if err != nil { fail("relay", "Relay Payment", err); return }
+	if err != nil {
+		fail("relay", "Relay Payment", err)
+		return
+	}
 	if status != http.StatusOK {
 		fail("relay", "Relay Payment", fmt.Errorf("relayer %d: %s", status, payResp.Error))
 		return
@@ -808,7 +882,10 @@ func runFlow(b *Broker, withTag bool) {
 			channelSS,
 			big.NewInt(paymentAmt), tokenId, paymentResult.SaltB,
 		)
-		if err != nil { fail("tag", "Publish Tag", fmt.Errorf("PreparePaymentTag: %w", err)); return }
+		if err != nil {
+			fail("tag", "Publish Tag", fmt.Errorf("PreparePaymentTag: %w", err))
+			return
+		}
 
 		hexTags := make([]string, len(windowTags))
 		for i, wt := range windowTags {
@@ -822,7 +899,10 @@ func runFlow(b *Broker, withTag bool) {
 			StartBlock: startBlock,
 			Ctxt:       toHex(noteCtxt),
 		}, &tagResp)
-		if err != nil { fail("tag", "Publish Tag", err); return }
+		if err != nil {
+			fail("tag", "Publish Tag", err)
+			return
+		}
 		if status != http.StatusOK {
 			fail("tag", "Publish Tag", fmt.Errorf("relayer %d: %s", status, tagResp.Error))
 			return
@@ -843,13 +923,19 @@ func runFlow(b *Broker, withTag bool) {
 		bobChannels := []tags.Channel{{SharedSecret: channelSS, PkSpend: bobSpend.PublicKey}}
 		cursor := tags.NewScanCursor()
 		matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
-		if err != nil { fail("scan_tag", "Bob Scans Tag", fmt.Errorf("ScanBlocksFromCursor: %w", err)); return }
+		if err != nil {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("ScanBlocksFromCursor: %w", err))
+			return
+		}
 		if len(matches) == 0 {
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found 0 tags in registry"))
 			return
 		}
 		note, err := tags.DecryptPaymentNote(channelSS, matches[0].Entry.Ctxt)
-		if err != nil { fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err)); return }
+		if err != nil {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err))
+			return
+		}
 
 		logMsg("tag", fmt.Sprintf("Bob found tag in TagRegistry → decrypting note"))
 		logMsg("tag", fmt.Sprintf("note.amount=%s  note.tokenId=%s  note.salt=0x%s…",
@@ -857,7 +943,10 @@ func runFlow(b *Broker, withTag bool) {
 
 		// Verify Bob's commitment matches the on-chain output.
 		bobCmt, err := rpcore.Erc20CommitmentV2(bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-		if err != nil { fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Erc20CommitmentV2 (verify): %w", err)); return }
+		if err != nil {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Erc20CommitmentV2 (verify): %w", err))
+			return
+		}
 		if bobCmt.Cmp(stmt[4]) != 0 {
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("commitment mismatch: got %s want %s", bobCmt.Text(10)[:12], stmt[4].Text(10)[:12]))
 			return
@@ -873,7 +962,10 @@ func runFlow(b *Broker, withTag bool) {
 		pause(1200 * time.Millisecond)
 
 		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
-		if err != nil { fail("verify", "Verify Commitment", err); return }
+		if err != nil {
+			fail("verify", "Verify Commitment", err)
+			return
+		}
 		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
 			fail("verify", "Verify Commitment", fmt.Errorf("Alice change commitment mismatch"))
 			return
@@ -894,7 +986,10 @@ func runFlow(b *Broker, withTag bool) {
 			EncTxData:  paymentResult.EncTxData,
 		}}
 		bobNotes, err := dvpcore.ScanForErc20Notes(bobView.DecapsKey, bobSpend.PublicKey, bobEvents)
-		if err != nil { fail("scan", "Bob Scans Note", fmt.Errorf("ScanForErc20Notes: %w", err)); return }
+		if err != nil {
+			fail("scan", "Bob Scans Note", fmt.Errorf("ScanForErc20Notes: %w", err))
+			return
+		}
 		if len(bobNotes) == 0 {
 			fail("scan", "Bob Scans Note", fmt.Errorf("Bob found 0 notes"))
 			return
@@ -907,7 +1002,10 @@ func runFlow(b *Broker, withTag bool) {
 
 		// Verify Alice's change commitment locally.
 		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
-		if err != nil { fail("scan", "Bob Scans Note", err); return }
+		if err != nil {
+			fail("scan", "Bob Scans Note", err)
+			return
+		}
 		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
 			fail("scan", "Bob Scans Note", fmt.Errorf("Alice change commitment mismatch"))
 			return
@@ -927,7 +1025,9 @@ func runFlow(b *Broker, withTag bool) {
 	proto("flowTimeMs", fmt.Sprintf("%d", flowMs))
 	logMsg("", fmt.Sprintf("✓ Total flow: %d ms  total protocol gas: %s", flowMs, formatNum(totalGasUsed)))
 	mode := "plain"
-	if withTag { mode = "with private tag" }
+	if withTag {
+		mode = "with private tag"
+	}
 	b.publish(Event{
 		Type:   "done",
 		Status: "success",
@@ -952,5 +1052,3 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-

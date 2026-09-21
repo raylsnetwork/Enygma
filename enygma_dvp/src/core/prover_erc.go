@@ -180,8 +180,8 @@ func (c *GnarkClient) Erc20JoinSplitProof(
 		Statement:       statement,
 		NumberOfInputs:  nIn,
 		NumberOfOutputs: nOut,
-		CipherText:     cipherText,
-		EncTxData:    encTxData,
+		CipherText:      cipherText,
+		EncTxData:       encTxData,
 	}, nil
 }
 
@@ -390,8 +390,8 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		AliceNullifier: nullifier,
 		CommitmentB:    commitmentB,
 		CommitmentA:    commitmentA,
-		CipherText:    cipherText,
-		EncTxData:   encTxData,
+		CipherText:     cipherText,
+		EncTxData:      encTxData,
 		SaltStar:       saltStar,
 		SaltStarField:  saltStarField,
 		Proof:          proofStrs,
@@ -635,8 +635,8 @@ func (c *GnarkClient) Erc721OwnershipProof(
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 		SaltsOut:        []*big.Int{wtSaltOut},
-		CipherText:     [][]byte{ctI},
-		EncTxData:    [][]byte{ctII},
+		CipherText:      [][]byte{ctI},
+		EncTxData:       [][]byte{ctII},
 	}, nil
 }
 
@@ -715,8 +715,8 @@ func (c *GnarkClient) Erc721OwnershipProofFromSalt(
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 		SaltsOut:        []*big.Int{wtSaltOut},
-		CipherText:     [][]byte{ctI},
-		EncTxData:    [][]byte{ctII},
+		CipherText:      [][]byte{ctI},
+		EncTxData:       [][]byte{ctII},
 	}, nil
 }
 
@@ -838,8 +838,8 @@ func (c *GnarkClient) Erc20JoinSplitProofFromSalts(
 		Statement:       statement,
 		NumberOfInputs:  nIn,
 		NumberOfOutputs: nOut,
-		CipherText:     cipherText,
-		EncTxData:    encTxData,
+		CipherText:      cipherText,
+		EncTxData:       encTxData,
 	}, nil
 }
 
@@ -930,8 +930,8 @@ func (c *GnarkClient) Erc1155FungibleJoinSplitProof(
 		NumberOfInputs:  len(wtValuesIn),
 		NumberOfOutputs: len(wtValuesOut),
 		SaltsOut:        wtSaltsOut,
-		CipherText:     ctI,
-		EncTxData:    ctII,
+		CipherText:      ctI,
+		EncTxData:       ctII,
 	}, nil
 }
 
@@ -1037,8 +1037,8 @@ func (c *GnarkClient) Erc1155NonFungibleOwnershipProof(
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 		SaltsOut:        []*big.Int{wtSaltOut},
-		CipherText:     [][]byte{ctI},
-		EncTxData:    [][]byte{ctII},
+		CipherText:      [][]byte{ctI},
+		EncTxData:       [][]byte{ctII},
 	}, nil
 }
 
@@ -1123,8 +1123,8 @@ func (c *GnarkClient) Erc1155NonFungibleOwnershipProofFromSalt(
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 		SaltsOut:        []*big.Int{wtSaltOut},
-		CipherText:     [][]byte{ctI},
-		EncTxData:    [][]byte{ctII},
+		CipherText:      [][]byte{ctI},
+		EncTxData:       [][]byte{ctII},
 	}, nil
 }
 
@@ -1321,8 +1321,8 @@ func (c *GnarkClient) Erc1155FungibleAuditorProof(
 		NumberOfInputs:  len(wtValuesIn),
 		NumberOfOutputs: len(wtValuesOut),
 		SaltsOut:        wtSaltsOut,
-		CipherText:     ctI,
-		EncTxData:    ctII,
+		CipherText:      ctI,
+		EncTxData:       ctII,
 		AuditData: &AuditEncryptionData{
 			AuthKeyX:   authKeyX,
 			AuthKeyY:   authKeyY,
@@ -1458,8 +1458,8 @@ func (c *GnarkClient) Erc1155NonFungibleAuditorProof(
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 		SaltsOut:        []*big.Int{wtSaltOut},
-		CipherText:     [][]byte{ctI},
-		EncTxData:    [][]byte{ctII},
+		CipherText:      [][]byte{ctI},
+		EncTxData:       [][]byte{ctII},
 		AuditData: &AuditEncryptionData{
 			AuthKeyX:   authKeyX,
 			AuthKeyY:   authKeyY,
@@ -1547,8 +1547,8 @@ func (c *GnarkClient) Erc20PrivateMintProof(
 // everything Alice needs to submit the transaction on-chain and that each
 // recipient needs to scan their note.
 type PaymentResult struct {
-	Proof           []string    // 8-element Groth16 proof
-	Statement       []*big.Int  // interleaved: [msg, tree0, root0, null0, ..., cmt0, cmt1, contractAddr?]
+	Proof           []string   // 8-element Groth16 proof
+	Statement       []*big.Int // interleaved: [msg, tree0, root0, null0, ..., cmt0, cmt1, contractAddr?]
 	NumberOfInputs  int
 	NumberOfOutputs int
 	// Bob's note discovery data (output 0 only — published on-chain).
@@ -1584,8 +1584,8 @@ func (r *PaymentResult) ContractStatement() []*big.Int {
 	out[0] = r.Statement[0]
 	for i := 0; i < nIn; i++ {
 		base := 1 + i*3
-		out[1+i]       = r.Statement[base]
-		out[1+nIn+i]   = r.Statement[base+1]
+		out[1+i] = r.Statement[base]
+		out[1+nIn+i] = r.Statement[base+1]
 		out[1+2*nIn+i] = r.Statement[base+2]
 	}
 	for i := 0; i < nOut; i++ {
@@ -1619,6 +1619,7 @@ func (r *PaymentResult) ContractStatement() []*big.Int {
 //     so Bob can recover it by decapsulating the ML-KEM ciphertext.
 //   - Output 1+ (change): salt is random (protocol §"Deriving a change salt");
 //     the caller must store PaymentResult.SaltA locally to later open the commitment.
+//
 // The caller submits the resulting ctxts/encTxDatas alongside the proof on-chain.
 func (c *GnarkClient) BoundPaymentProof(
 	contractAddress *big.Int,
@@ -1970,7 +1971,8 @@ type DvPInitiatorResult struct {
 //
 // stMessage is automatically set to commitA (Alice's expected output from Bob) so that
 // the on-chain submitPartialSettlement cross-reference check works:
-//   _pendingTransactions[commitB].targetReceiptId = commitA = statement[0]
+//
+//	_pendingTransactions[commitB].targetReceiptId = commitA = statement[0]
 //
 // On-chain receipt should use NumberOfOutputs=1 so only commitB (statement[4])
 // is inserted into the ERC20 vault. commitA goes into the ERC721 vault via
@@ -2236,8 +2238,8 @@ func (c *GnarkClient) DvPDestinationProof(
 	tokenIdIn *big.Int,
 	aliceSpendPk *big.Int,
 	saltA *big.Int,
-	saltB *big.Int,     // HKDF(ss_B, "note salt") — used by Alice to build commitB for Bob
-	valueAlice *big.Int,  // Alice's delivered amount (from ENC_TX_DATA decryption)
+	saltB *big.Int, // HKDF(ss_B, "note salt") — used by Alice to build commitB for Bob
+	valueAlice *big.Int, // Alice's delivered amount (from ENC_TX_DATA decryption)
 	tokenIdAlice *big.Int, // Alice's delivered tokenId (from ENC_TX_DATA decryption)
 	commitA *big.Int,
 	stTreeNumber *big.Int,
@@ -2261,22 +2263,22 @@ func (c *GnarkClient) DvPDestinationProof(
 	copy(pathElems, merkleProof.Elements[:merkleDepth])
 
 	payload := map[string]interface{}{
-		"stMessage":       commitB.String(), // HIGH-3: stMessage == commitB (circuit-enforced)
-		"stTreeNumber":    stTreeNumber.String(),
-		"stMerkleRoot":    merkleProof.Root.String(),
-		"stNullifier":     nf.String(),
-		"stCommitA":       commitA.String(),
-		"wtSpendKeyIn":    bobKey.PrivateKey.String(),
-		"wtValueIn":       valueIn.String(),
-		"wtSaltIn":        bobSaltIn.String(),
-		"wtTokenIdIn":     tokenIdIn.String(),
-		"wtPathElements":  bigIntSliceToStrings(pathElems),
-		"wtPathIndex":     pathIndex.String(),
-		"wtSpendPkAlice":  aliceSpendPk.String(),
-		"wtSaltA":         saltA.String(),
-		"wtSaltB":         saltB.String(),
-		"wtValueAlice":    valueAlice.String(),
-		"wtTokenIdAlice":  tokenIdAlice.String(),
+		"stMessage":      commitB.String(), // HIGH-3: stMessage == commitB (circuit-enforced)
+		"stTreeNumber":   stTreeNumber.String(),
+		"stMerkleRoot":   merkleProof.Root.String(),
+		"stNullifier":    nf.String(),
+		"stCommitA":      commitA.String(),
+		"wtSpendKeyIn":   bobKey.PrivateKey.String(),
+		"wtValueIn":      valueIn.String(),
+		"wtSaltIn":       bobSaltIn.String(),
+		"wtTokenIdIn":    tokenIdIn.String(),
+		"wtPathElements": bigIntSliceToStrings(pathElems),
+		"wtPathIndex":    pathIndex.String(),
+		"wtSpendPkAlice": aliceSpendPk.String(),
+		"wtSaltA":        saltA.String(),
+		"wtSaltB":        saltB.String(),
+		"wtValueAlice":   valueAlice.String(),
+		"wtTokenIdAlice": tokenIdAlice.String(),
 	}
 
 	body, err := c.PostProof("/proof/dvpDestination", payload)

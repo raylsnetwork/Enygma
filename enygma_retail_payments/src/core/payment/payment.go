@@ -27,20 +27,20 @@ type (
 // ── DVP function re-exports ────────────────────────────────────────────────────
 
 var (
-	NewSpendKeyPair     = dvpcore.NewSpendKeyPair
-	NewViewKeyPair      = dvpcore.NewViewKeyPair
-	NewMerkleTree       = dvpcore.NewMerkleTree
-	GetNullifier        = dvpcore.GetNullifier
-	GetNullifierBound   = dvpcore.GetNullifierBound
-	Erc20CommitmentV2   = dvpcore.Erc20CommitmentV2
-	Encapsulate         = dvpcore.Encapsulate
-	Decapsulate         = dvpcore.Decapsulate
-	DerivePaymentSalt   = dvpcore.DerivePaymentSalt
-	DerivePaymentKey    = dvpcore.DerivePaymentKey
-	SaltBToField        = dvpcore.SaltBToField
-	EncryptPayload      = dvpcore.EncryptPayload
-	DecryptPayload      = dvpcore.DecryptPayload
-	RandomInField       = dvpcore.RandomInField
+	NewSpendKeyPair   = dvpcore.NewSpendKeyPair
+	NewViewKeyPair    = dvpcore.NewViewKeyPair
+	NewMerkleTree     = dvpcore.NewMerkleTree
+	GetNullifier      = dvpcore.GetNullifier
+	GetNullifierBound = dvpcore.GetNullifierBound
+	Erc20CommitmentV2 = dvpcore.Erc20CommitmentV2
+	Encapsulate       = dvpcore.Encapsulate
+	Decapsulate       = dvpcore.Decapsulate
+	DerivePaymentSalt = dvpcore.DerivePaymentSalt
+	DerivePaymentKey  = dvpcore.DerivePaymentKey
+	SaltBToField      = dvpcore.SaltBToField
+	EncryptPayload    = dvpcore.EncryptPayload
+	DecryptPayload    = dvpcore.DecryptPayload
+	RandomInField     = dvpcore.RandomInField
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.

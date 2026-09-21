@@ -1,15 +1,15 @@
 package utils
 
-import(
+import (
 	"math/big"
 
-	"github.com/consensys/gnark/std/algebra/native/twistededwards"	
 	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 )
 
-var(
-	A = big.NewInt(168700) 
-	D =  big.NewInt(168696)
+var (
+	A = big.NewInt(168700)
+	D = big.NewInt(168696)
 )
 
 func AssertPointsIsOnCurve(api frontend.API, X, Y frontend.Variable) {
@@ -29,7 +29,6 @@ func AssertPointsIsOnCurve(api frontend.API, X, Y frontend.Variable) {
 	// Assert equality of both sides
 	api.AssertIsEqual(lhs, rhs)
 }
-
 
 func PointAdd(api frontend.API, p1, p2 twistededwards.Point) twistededwards.Point {
 	x1y2 := api.Mul(p1.X, p2.Y)

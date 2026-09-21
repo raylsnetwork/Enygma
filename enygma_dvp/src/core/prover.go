@@ -82,8 +82,8 @@ func (r *ProofResult) ContractStatement() []*big.Int {
 	// de-interleave: statement[1 + i*3 .. 1 + i*3 + 2] = (tree[i], root[i], null[i])
 	for i := 0; i < nIn; i++ {
 		base := 1 + i*3
-		out[1+i]       = r.Statement[base]   // treeNumbers[i]
-		out[1+nIn+i]   = r.Statement[base+1] // merkleRoots[i]
+		out[1+i] = r.Statement[base]         // treeNumbers[i]
+		out[1+nIn+i] = r.Statement[base+1]   // merkleRoots[i]
 		out[1+2*nIn+i] = r.Statement[base+2] // nullifiers[i]
 	}
 
