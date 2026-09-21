@@ -48,12 +48,6 @@ type relayTransferRequest struct {
 	KIndex []int64 `json:"kIndex"`
 }
 
-type relayTxResponse struct {
-	TxHash      string `json:"txHash"`
-	BlockNumber uint64 `json:"blockNumber"`
-	GasUsed     uint64 `json:"gasUsed"`
-}
-
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 type Address struct {
