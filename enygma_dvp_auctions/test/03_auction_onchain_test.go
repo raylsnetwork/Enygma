@@ -4,8 +4,8 @@ package tests
 //
 // This test mirrors the structure of enygma_dvp's integration tests:
 //   1. Running Hardhat node  (npx hardhat node, from enygma_dvp_auctions/)
-//   2. Deployed contracts    (scripts/deploy.go → build/receipts.json)
-//   3. Initialised VKs/roles (scripts/init.go)
+//   2. Deployed contracts    (scripts/cmd/deploy → build/receipts.json)
+//   3. Initialised VKs/roles (scripts/cmd/init)
 //   4. Auction gnark server  (gnark_circuits/main.go on :8083)
 //
 // Scenario (single bidder, 1 batch, direct settle):
@@ -17,10 +17,10 @@ package tests
 //
 // Run:
 //   npx hardhat node &
-//   cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy deploy.go init.go && cd .. && /tmp/deploy
+//   cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy ./cmd/deploy && cd .. && /tmp/deploy
 //   cd gnark_circuits && go run ./cmd/export_vk_init_auction/ ../build
-//   cd scripts && CC=/usr/bin/clang go build -o /tmp/init deploy.go init.go && cd .. && /tmp/init
-//   cd gnark_circuits && go run main.go &
+//   cd scripts && CC=/usr/bin/clang go build -o /tmp/init ./cmd/init && cd .. && /tmp/init
+//   cd gnark_circuits && go run ./cmd/server &
 //   cd test && CC=/usr/bin/clang go test -run TestAuction_OnChain -v -timeout 600s
 
 import (
@@ -471,7 +471,7 @@ func loadOnChainReceipts(t *testing.T, projectRoot string) map[string]string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(projectRoot, "build", "receipts.json"))
 	if err != nil {
-		t.Skipf("build/receipts.json not found — run scripts/deploy.go first: %v", err)
+		t.Skipf("build/receipts.json not found — run scripts/cmd/deploy first: %v", err)
 	}
 	var raw map[string]struct {
 		ContractAddress string `json:"contractAddress"`

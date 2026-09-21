@@ -21,7 +21,7 @@ npx hardhat node
 
 ```bash
 # Build and run the deploy script (from repo root)
-cd scripts && go build -o /tmp/deploy_contracts deploy.go enygma.go
+cd scripts && go build -o /tmp/deploy_contracts ./cmd/deploy
 cd .. && /tmp/deploy_contracts
 # → writes build/receipts.json
 
@@ -29,7 +29,7 @@ cd .. && /tmp/deploy_contracts
 cd gnark_circuits && go run ./cmd/export_vk_init/ ../build
 
 # Build and run the init script (from repo root)
-cd scripts && go build -o /tmp/init_contracts init.go enygma.go
+cd scripts && go build -o /tmp/init_contracts ./cmd/init
 cd .. && /tmp/init_contracts
 ```
 

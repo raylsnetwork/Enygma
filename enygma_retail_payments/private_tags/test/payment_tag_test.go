@@ -35,7 +35,7 @@ package tags_test
 //
 //	Terminal 1: cd enygma_dvp && npx hardhat node          (fresh node)
 //	Terminal 2: bash setup.sh                               (deploy + init contracts)
-//	Terminal 3: cd gnark_circuits && go run main.go         (gnark server on :8082)
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server         (gnark server on :8082)
 //
 // Run:
 //
@@ -184,7 +184,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		t.Skip("Hardhat node not running on localhost:8545 — skipping")
 	}
 	if !gnarkAvailable() {
-		t.Skip("gnark server not running on localhost:8082 — run: cd gnark_circuits && go run main.go")
+		t.Skip("gnark server not running on localhost:8082 — run: cd gnark_circuits && go run ./cmd/server")
 	}
 
 	ctx := context.Background()

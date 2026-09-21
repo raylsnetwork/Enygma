@@ -8,12 +8,12 @@
 #
 #   2. Deploy + init contracts (writes build/receipts.json)
 #        cd enygma_dvp/scripts
-#        go build -o /tmp/deploy_contracts deploy.go enygma.go && cd .. && /tmp/deploy_contracts
+#        go build -o /tmp/deploy_contracts ./cmd/deploy && cd .. && /tmp/deploy_contracts
 #        cd gnark_circuits && go run ./cmd/export_vk_init/ ../build && cd ..
-#        cd scripts && go build -o /tmp/init_contracts init.go enygma.go && cd .. && /tmp/init_contracts
+#        cd scripts && go build -o /tmp/init_contracts ./cmd/init && cd .. && /tmp/init_contracts
 #
 #   3. Gnark server (port 8081) — must include DvP Initiator/Destination keys
-#        cd enygma_dvp/gnark_circuits && go run main.go
+#        cd enygma_dvp/gnark_circuits && go run ./cmd/server
 #
 # Usage:
 #   cd demo && bash run.sh

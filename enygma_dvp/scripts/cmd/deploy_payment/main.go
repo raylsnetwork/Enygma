@@ -1,15 +1,14 @@
-// deploy_payment.go — self-contained deployment for a dedicated "Payment"
+// cmd/deploy_payment — self-contained deployment for a dedicated "Payment"
 // deployment (own Verifier/EnygmaDvp/vaults, separate from the main
 // deployment's 25-circuit Verifier). Ported from enygma_retail_payments'
 // Payment-family circuits, plus a genuine second-asset USDr pair.
 //
-// Deliberately does not share deploy.go's helpers (own package main, own
-// config/receipt types) — matches this repo's own enygma.go-is-the-only-
-// shared-file convention.
+// Deliberately does not share cmd/deploy's helpers (own package main, own
+// config/receipt types) — each command under cmd/ is self-contained.
 //
 // Build & run (from enygma_dvp/):
 //
-//	CC=/usr/bin/clang go build -o /tmp/deploy_payment scripts/deploy_payment.go
+//	CC=/usr/bin/clang go build -C scripts -o /tmp/deploy_payment ./cmd/deploy_payment
 //	/tmp/deploy_payment
 package main
 
@@ -207,7 +206,7 @@ func deployPayment() error {
 
 	// USDr — a second, independent relayer-fee asset: its own token and vault,
 	// registered on the same EnygmaDvp instance (vaultId=1, auto-assigned by
-	// registerVault in init_payment.go). See UsdrFeeCircuit /
+	// registerVault in cmd/init_payment). See UsdrFeeCircuit /
 	// EnygmaDvp.paymentWithUsdrFee.
 	fmt.Println("Deploying UsdrERC20...")
 	usdrErc20Address, receipt, err := paymentDeployContractWithArgs(

@@ -1,5 +1,5 @@
 // export_vk exports the Payment gnark BN254 Groth16 verifying key to a
-// circom-format JSON file that scripts/init.go reads via getVerificationKeys().
+// circom-format JSON file that scripts/cmd/init/main.go reads via getVerificationKeys().
 //
 // Usage (run from gnark_circuits/ directory):
 //
