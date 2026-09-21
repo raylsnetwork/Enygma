@@ -29,16 +29,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# lattice_zk is a ghost dependency listed in src/go.mod but never imported.
-# Go 1.17+ lazy loading adds it to the transitive require list; create a
-# placeholder go.mod so `go mod tidy` can resolve it without the source.
-LATTICE_DIR="$(pwd)/../lattice_zk"
-if [ ! -d "$LATTICE_DIR" ]; then
-    mkdir -p "$LATTICE_DIR"
-    printf 'module lattice_zk\n\ngo 1.24.0\n' > "$LATTICE_DIR/go.mod"
-    echo "[run.sh] created lattice_zk placeholder at $LATTICE_DIR"
-fi
-
 # Use the system clang (not Homebrew) because go-ethereum requires CGo and
 # Homebrew clang has a hardcoded MacOSX26.sdk path that does not exist.
 export CC=/usr/bin/clang
