@@ -75,5 +75,5 @@ without revealing which commitment it corresponds to.
 | `src/core/utils.go` | Key derivation, ML-KEM, Poseidon, Merkle helpers |
 | `gnark_circuits/server/circuits/` | gnark circuit definitions and HTTP handlers |
 | `contracts/core/contracts/` | Solidity: `EnygmaDvp.sol`, `PrivateMintVerifier.sol`, vaults |
-| `scripts/deploy.go` | Deploy all contracts; writes `build/receipts.json` |
-| `scripts/init.go` | Register VKs, coin vaults, asset groups |
+| `scripts/cmd/deploy` | Deploy all contracts; writes `build/receipts.json` |
+| `scripts/cmd/init` | Register VKs, coin vaults, asset groups |

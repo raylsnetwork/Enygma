@@ -199,7 +199,7 @@ func deploy() error {
 
 	// USDr — a second, independent relayer-fee asset: its own token and vault,
 	// registered on the same EnygmaDvp instance (vaultId=1, assigned
-	// automatically by registerVault in init.go). See UsdrFeeCircuit /
+	// automatically by registerVault in cmd/init). See UsdrFeeCircuit /
 	// EnygmaDvp.paymentWithUsdrFee.
 	fmt.Println("Deploying UsdrERC20...")
 	usdrErc20Address, receipt, err := deployContractWithArgs(

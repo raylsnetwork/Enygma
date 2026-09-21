@@ -47,7 +47,7 @@ Poseidon artifacts regenerated
 ### Step 2 — Deploy contracts
 
 ```bash
-cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy_contracts deploy.go enygma.go
+cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy_contracts ./cmd/deploy
 cd .. && /tmp/deploy_contracts
 ```
 
@@ -74,7 +74,7 @@ Done: 25/25 VKs exported to ../build
 ### Step 4 — Initialise contracts (register VKs, vaults, tokens)
 
 ```bash
-cd ../scripts && CC=/usr/bin/clang go build -o /tmp/init_contracts init.go enygma.go
+cd ../scripts && CC=/usr/bin/clang go build -o /tmp/init_contracts ./cmd/init
 cd .. && /tmp/init_contracts
 ```
 
@@ -88,7 +88,7 @@ Initialisation complete.
 ## Terminal 3 — Start the gnark proof server
 
 ```bash
-cd gnark_circuits && go run main.go
+cd gnark_circuits && go run ./cmd/server
 ```
 
 Expected output:
@@ -170,7 +170,7 @@ All vaults must show `"match": true`.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `connect: connection refused` on port 8081 | gnark server not running | Start `go run main.go` in Terminal 3 |
+| `connect: connection refused` on port 8081 | gnark server not running | Start `go run ./cmd/server` in Terminal 3 |
 | `connect: connection refused` on port 8545 | Hardhat node not running | Start `npx hardhat node` in Terminal 1 |
 | Merkle root mismatch (`match: false`) | Poseidon artifacts were overwritten | Re-run `node scripts/regen_poseidon.js` and redeploy |
 | `already minted` error in ERC-721 test | Stale Hardhat state from a previous run | Restart Hardhat node and redeploy from Step 1 |

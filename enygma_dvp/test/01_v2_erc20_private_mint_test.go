@@ -5,10 +5,10 @@ package tests
 // Prerequisites (all must be running/completed before this test):
 //
 //	1. Hardhat node:      npx hardhat node
-//	2. Deploy contracts:  cd scripts &&  go build -o /tmp/deploy deploy.go enygma.go && cd .. && /tmp/deploy
+//	2. Deploy contracts:  cd scripts &&  go build -o /tmp/deploy ./cmd/deploy && cd .. && /tmp/deploy
 //	3. Export VKs:        cd gnark_circuits && go run ./cmd/export_vk_init/ ../build
-//	4. Init contracts:    cd scripts &&  go build -o /tmp/init init.go enygma.go && cd .. && /tmp/init
-//	5. Gnark server:      cd gnark_circuits && go run main.go
+//	4. Init contracts:    cd scripts &&  go build -o /tmp/init ./cmd/init && cd .. && /tmp/init
+//	5. Gnark server:      cd gnark_circuits && go run ./cmd/server
 //
 // Run with:
 //
@@ -101,7 +101,7 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	gnarkClient := core.NewGnarkClient("http://localhost:8081")
 	tokenId      := big.NewInt(0)  // ERC20: tokenId=0
 	mintAmount   := big.NewInt(100)
-	// Erc20CoinVault is registered first in init.go → vaultId=0
+	// Erc20CoinVault is registered first in scripts/cmd/init → vaultId=0
 	vaultId := big.NewInt(0)
 	// contractAddress in the ZK public signal must be the EnygmaDvp address as uint256
 	contractAddressBig := new(big.Int).SetBytes(dvpAddr.Bytes())

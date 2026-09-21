@@ -1,6 +1,4 @@
-// Key generation entry point. Run with: go run generation.go
-// Note: main.go also declares func main (the gnark server). Both files share
-// package main intentionally — run them individually, never with go build ./...
+// Key generation entry point. Run from gnark_circuits/ with: go run ./cmd/keygen
 package main
 
 import (
