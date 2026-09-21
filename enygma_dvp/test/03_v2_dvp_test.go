@@ -23,8 +23,8 @@ package tests
 // Prerequisites (all must be running/completed before this test):
 //   1. Hardhat node:      npx hardhat node
 //   2. Deploy + init:     see MEMORY.md or 10_v2_erc20_payment_test.go header
-//   3. Generate DvP keys: cd gnark_circuits && go run generation.go
-//   4. Gnark server:      cd gnark_circuits && go run main.go
+//   3. Generate DvP keys: cd gnark_circuits && go run ./cmd/keygen
+//   4. Gnark server:      cd gnark_circuits && go run ./cmd/server
 //
 // Run with:
 //   cd test && CC=/usr/bin/clang go test -run TestV2DvP -v -timeout 600s

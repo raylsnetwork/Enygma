@@ -19,7 +19,7 @@ cd "$PROJECT_ROOT"
 
 echo "==> [2/3] Building init binary..."
 cd scripts
-CC=/usr/bin/clang go build -o /tmp/init_contracts init.go enygma.go
+CC=/usr/bin/clang go build -o /tmp/init_contracts ./cmd/init
 cd "$PROJECT_ROOT"
 
 echo "==> [3/3] Registering VKs on-chain..."

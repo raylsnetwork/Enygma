@@ -1,5 +1,5 @@
 // export_vk_init exports all gnark BN254 Groth16 verifying keys to circom-format
-// JSON files that scripts/init.go can read via getVerificationKeys().
+// JSON files that scripts/cmd/init/main.go can read via getVerificationKeys().
 //
 // Usage (run from gnark_circuits/ directory):
 //
@@ -10,7 +10,7 @@
 //	go run ./cmd/export_vk_init/ ../build
 //
 // Output: one <CircuitName>.json per circuit in <build_dir>, matching the
-// VerificationKeyJSON struct used by scripts/init.go:
+// VerificationKeyJSON struct used by scripts/cmd/init/main.go:
 //
 //	{
 //	  "protocol": "groth16",
@@ -40,7 +40,7 @@ import (
 	groth16bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 )
 
-// circomVK mirrors the VerificationKeyJSON struct in scripts/init.go.
+// circomVK mirrors the VerificationKeyJSON struct in scripts/cmd/init/main.go.
 type circomVK struct {
 	Protocol    string       `json:"protocol"`
 	Curve       string       `json:"curve"`

@@ -47,7 +47,7 @@ type VerifyingKey struct {
 }
 
 // AuctionConfig mirrors the enygma_auction.config.json structure.
-// Defined here so init.go can be compiled standalone (without deploy.go).
+// Defined here so cmd/init is self-contained (shares no code with cmd/deploy).
 type AuctionConfig struct {
 	Network struct {
 		Host    string `json:"host"`
@@ -262,7 +262,7 @@ func formatVK(vkJSON VerificationKeyJSON) VerifyingKey {
 	}
 
 	// G2 coordinate convention: vk_beta_2[0] = [imaginary(A1), real(A0)],
-	// vk_beta_2[1] = [imaginary(A1), real(A0)] — same as init.go in enygma_dvp.
+	// vk_beta_2[1] = [imaginary(A1), real(A0)] — same as scripts/cmd/init in enygma_dvp.
 	// EIP-197 expects x[0]=imaginary, x[1]=real, which is how they arrive in the JSON.
 	return VerifyingKey{
 		Alpha1: G1Point{X: parseBI(vkJSON.VkAlpha1[0]), Y: parseBI(vkJSON.VkAlpha1[1])},

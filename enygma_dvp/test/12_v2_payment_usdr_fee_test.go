@@ -1,7 +1,7 @@
 package tests
 
 // TestV2Payment_RelayerFeeAndUsdrFee exercises the dedicated Payment
-// deployment (see scripts/deploy_payment.go / scripts/init_payment.go) —
+// deployment (see scripts/cmd/deploy_payment / scripts/cmd/init_payment) —
 // ported from enygma_retail_payments — against this repo's own relayer,
 // which gained two new routes for this pass:
 //
@@ -16,11 +16,11 @@ package tests
 // Prerequisites:
 //
 //	Terminal 1: cd .. && npx hardhat node
-//	Terminal 2 (once): CC=/usr/bin/clang go build -o /tmp/deploy_payment scripts/deploy_payment.go && /tmp/deploy_payment
-//	Terminal 2 (once): cd gnark_circuits && go run generation.go
+//	Terminal 2 (once): CC=/usr/bin/clang go build -C scripts -o /tmp/deploy_payment ./cmd/deploy_payment && /tmp/deploy_payment
+//	Terminal 2 (once): cd gnark_circuits && go run ./cmd/keygen
 //	Terminal 2 (once): cd gnark_circuits && go run ./cmd/export_vk_payment ../build
-//	Terminal 2 (once): CC=/usr/bin/clang go build -o /tmp/init_payment scripts/init_payment.go && /tmp/init_payment
-//	Terminal 3: cd gnark_circuits && go run main.go
+//	Terminal 2 (once): CC=/usr/bin/clang go build -C scripts -o /tmp/init_payment ./cmd/init_payment && /tmp/init_payment
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server
 //	Terminal 4: cd relayer && \
 //	              RELAYER_PRIVATE_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda \ // gitleaks:allow (public Hardhat demo account, see enygmadvp.config.json)
 //	              RELAYER_API_KEY=test-api-key-dev-only \

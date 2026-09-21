@@ -91,11 +91,11 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which
 enygma_dvp/
 ├── contracts/          Solidity smart contracts (Hardhat project)
 ├── artifacts/          Hardhat compilation outputs — DO NOT overwrite PoseidonT3/T5 (see Poseidon.sol)
-├── build/              Deployment receipts (receipts.json) + gnark VK exports consumed by init.go
+├── build/              Deployment receipts (receipts.json) + gnark VK exports consumed by scripts/cmd/init
 ├── src/                Go core library (provers, crypto, Merkle tree, scan helpers)
 ├── gnark_circuits/     ZK proof server — REST API wrapping gnark Groth16 circuits
 ├── relayer/             Off-chain relayer service — collects proofs from both parties  and submits them to SwapRelayer.sol
-├── scripts/            Go deployment and initialization scripts (deploy.go, init.go)
+├── scripts/            Go deployment and initialization scripts (cmd/deploy, cmd/init)
 ├── test/               Go integration tests (requires Hardhat node + gnark server)
 ├── docs/               Flow documentation and Mermaid diagrams
 └── hardhat.config.js   Hardhat configuration (network, compiler settings)
@@ -124,7 +124,7 @@ Prerequisites
 
 ```bash
 cd gnark_circuits
-go run main.go # starts on :8081, keys loaded from ./scripts/keys/
+go run ./cmd/server # starts on :8081, keys loaded from ./scripts/keys/
 ```
 
 2. Deploy contracts
@@ -137,7 +137,7 @@ npx hardhat node
 node scripts/regen_poseidon.js
 
 # Build and deploy
-cd scripts && go build -o /tmp/deploy_contracts deploy.go enygma.go
+cd scripts && go build -o /tmp/deploy_contracts ./cmd/deploy
 cd .. && /tmp/deploy_contracts
 # → saves contract addresses to build/receipts.json
 ```
@@ -149,7 +149,7 @@ cd .. && /tmp/deploy_contracts
 cd gnark_circuits && go run ./cmd/export_vk_init/ ../build
 
 # Register VKs on-chain
-cd scripts && go build -o /tmp/init_contracts init.go enygma.go
+cd scripts && go build -o /tmp/init_contracts ./cmd/init
 cd .. && /tmp/init_contracts
 ```
 

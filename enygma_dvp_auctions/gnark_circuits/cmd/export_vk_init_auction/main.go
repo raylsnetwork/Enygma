@@ -1,5 +1,5 @@
 // export_vk_init_auction exports all six auction gnark BN254 Groth16 VKs to
-// circom-format JSON files that scripts/init.go reads via getVerificationKeys().
+// circom-format JSON files that scripts/cmd/init/main.go reads via getVerificationKeys().
 //
 // Usage (run from gnark_circuits/ directory):
 //

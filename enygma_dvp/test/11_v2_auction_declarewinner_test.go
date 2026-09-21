@@ -10,7 +10,7 @@ package tests
 // generation at all (only /proof/privateMint, /proof/dvpInitiator,
 // /proof/dvpDestination exist) — so a real proof-driven test isn't
 // currently possible here. EnygmaAuction also isn't part of the standard
-// deploy.go/init.go pipeline (it's a separate, not-yet-wired-in contract),
+// scripts/cmd/deploy + cmd/init pipeline (it's a separate, not-yet-wired-in contract),
 // so these tests deploy and wire up a standalone instance themselves.
 //
 // What IS directly testable without any proof: the two checks fixed here

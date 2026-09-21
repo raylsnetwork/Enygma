@@ -18,7 +18,7 @@
 //
 //	1. Hardhat node  :  cd ../enygma_dvp && npx hardhat node
 //	2. Deploy+init   :  bash setup.sh    (from enygma_retail_payments/)
-//	3. Gnark server  :  cd gnark_circuits && go run main.go
+//	3. Gnark server  :  cd gnark_circuits && go run ./cmd/server
 //	4. Relayer       :  cd relayer && RELAYER_PRIVATE_KEY=... RELAYER_API_KEY=test-api-key-dev-only go run main.go
 package main
 

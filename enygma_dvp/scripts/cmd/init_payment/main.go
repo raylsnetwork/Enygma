@@ -1,16 +1,16 @@
-// init_payment.go — self-contained initializer for the dedicated Payment
-// deployment (see deploy_payment.go). Registers the 5 Payment-family VKs
+// cmd/init_payment — self-contained initializer for the dedicated Payment
+// deployment (see cmd/deploy_payment). Registers the 5 Payment-family VKs
 // (Payment/Payment2in/PaymentFee/PaymentRelayerFeePublic/UsdrFee) and both
 // vaults (main payment token + USDr) on the freshly deployed EnygmaDvp.
 //
-// Deliberately does not share init.go's helpers (own package main, own
+// Deliberately does not share cmd/init's helpers (own package main, own
 // copies of the VK-parsing types/functions) — same convention as
-// deploy_payment.go.
+// cmd/deploy_payment.
 //
-// Build & run (from enygma_dvp/, after deploy_payment.go and
+// Build & run (from enygma_dvp/, after cmd/deploy_payment and
 // `go run ./gnark_circuits/cmd/export_vk_payment ./build`):
 //
-//	CC=/usr/bin/clang go build -o /tmp/init_payment scripts/init_payment.go
+//	CC=/usr/bin/clang go build -C scripts -o /tmp/init_payment ./cmd/init_payment
 //	/tmp/init_payment
 package main
 
@@ -63,7 +63,7 @@ type initPaymentReceiptData struct {
 type initPaymentReceipts map[string]initPaymentReceiptData
 
 // VerificationKeyJSON / G1Point / G2Point / VerifyingKey / formatVKey /
-// mustParseBigInt are copied verbatim from scripts/init.go — same circom-
+// mustParseBigInt are copied verbatim from scripts/cmd/init — same circom-
 // export shape produced by cmd/export_vk_payment, same on-chain struct
 // layout expected by IEnygmaDvp.VerifyingKey.
 

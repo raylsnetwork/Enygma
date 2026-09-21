@@ -18,7 +18,7 @@ package tags_test
 // Prerequisites:
 //   Terminal 1: cd enygma_dvp && npx hardhat node
 //   Terminal 2: bash setup.sh                         (deploy + init with PaymentFee VK at slot 2)
-//   Terminal 3: cd gnark_circuits && go run main.go   (gnark server on :8082)
+//   Terminal 3: cd gnark_circuits && go run ./cmd/server   (gnark server on :8082)
 //
 // Run:
 //   cd private_tags/test && CC=/usr/bin/clang go test -run TestPaymentFeeWithTagNotification -v -timeout 300s
@@ -49,7 +49,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 		t.Skip("Hardhat node not running on localhost:8545 — skipping")
 	}
 	if !gnarkAvailable() {
-		t.Skip("gnark server not running on localhost:8082 — run: cd gnark_circuits && go run main.go")
+		t.Skip("gnark server not running on localhost:8082 — run: cd gnark_circuits && go run ./cmd/server")
 	}
 
 	ctx := context.Background()
