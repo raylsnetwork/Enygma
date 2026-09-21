@@ -50,7 +50,7 @@ import (
 	"strings"
 	"testing"
 
-	tags   "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
@@ -193,7 +193,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 
 	// ── Step 1: Deploy fresh TagRegistry and TagChannelRegistry ──────────────
 	t.Log("Step 1 — deploying fresh TagRegistry and TagChannelRegistry")
@@ -212,38 +212,46 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	// ── Step 2: Load payment contract addresses ───────────────────────────────
 	t.Log("Step 2 — loading payment contract addresses")
 
-	receipts     := loadPaymentReceipts(t)
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
-	dvpAddr      := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+	receipts := loadPaymentReceipts(t)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	vaultABI := loadPaymentABI(t, "Erc20CoinVault")
 	erc20ABI := loadPaymentABI(t, "RaylsERC20")
-	dvpABI   := loadPaymentABI(t, "EnygmaDvp")
+	dvpABI := loadPaymentABI(t, "EnygmaDvp")
 
 	vault := bindPayContract(t, client, vaultAddr, vaultABI)
 	erc20 := bindPayContract(t, client, erc20Addr, erc20ABI)
-	dvp   := bindPayContract(t, client, dvpAddr, dvpABI)
+	dvp := bindPayContract(t, client, dvpAddr, dvpABI)
 
 	gnarkClient := rpcore.NewPaymentClient("")
 	merkleDepth := 8
-	tokenId     := big.NewInt(0)
-	depositAmt  := big.NewInt(40)
-	paymentAmt  := big.NewInt(30)
-	changeAmt   := big.NewInt(10)
+	tokenId := big.NewInt(0)
+	depositAmt := big.NewInt(40)
+	paymentAmt := big.NewInt(30)
+	changeAmt := big.NewInt(10)
 
 	// ── Step 3: Generate ZK key pairs ────────────────────────────────────────
 	t.Log("Step 3 — generating ZK key pairs (spend + view) for Alice and Bob")
 
 	aliceSpend, err := rpcore.NewSpendKeyPair()
-	if err != nil { t.Fatalf("Alice NewSpendKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Alice NewSpendKeyPair: %v", err)
+	}
 	aliceView, err := rpcore.NewViewKeyPair()
-	if err != nil { t.Fatalf("Alice NewViewKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Alice NewViewKeyPair: %v", err)
+	}
 	bobSpend, err := rpcore.NewSpendKeyPair()
-	if err != nil { t.Fatalf("Bob NewSpendKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Bob NewSpendKeyPair: %v", err)
+	}
 	bobView, err := rpcore.NewViewKeyPair()
-	if err != nil { t.Fatalf("Bob NewViewKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Bob NewViewKeyPair: %v", err)
+	}
 
 	t.Logf("  Alice pk_spend: %s", aliceSpend.PublicKey)
 	t.Logf("  Bob   pk_spend: %s", bobSpend.PublicKey)
@@ -282,8 +290,8 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		initialMsg,
 		aliceSenderId,
 		tags.PrivacyFull,
-		2,   // totalUsers
-		1,   // recipientIdx: Bob is user 1
+		2, // totalUsers
+		1, // recipientIdx: Bob is user 1
 		nil,
 	)
 	if err != nil {
@@ -317,33 +325,55 @@ func TestPaymentWithTagNotification(t *testing.T) {
 
 	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From,
 		new(big.Int).Mul(depositAmt, big.NewInt(10)))
-	if err != nil { t.Fatalf("ERC20.mint: %v", err) }
-	if _, err := bind.WaitMined(ctx, client, mintTx); err != nil { t.Fatalf("wait mint: %v", err) }
+	if err != nil {
+		t.Fatalf("ERC20.mint: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, mintTx); err != nil {
+		t.Fatalf("wait mint: %v", err)
+	}
 
 	approveTx, err := erc20.Transact(aliceAuth, "approve", vaultAddr, depositAmt)
-	if err != nil { t.Fatalf("ERC20.approve: %v", err) }
-	if _, err := bind.WaitMined(ctx, client, approveTx); err != nil { t.Fatalf("wait approve: %v", err) }
+	if err != nil {
+		t.Fatalf("ERC20.approve: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, approveTx); err != nil {
+		t.Fatalf("wait approve: %v", err)
+	}
 
 	// Alice encapsulates her own view key to create her deposit note.
 	ss, capsule, err := rpcore.Encapsulate(aliceView.EncapsKey)
-	if err != nil { t.Fatalf("Encapsulate (deposit): %v", err) }
+	if err != nil {
+		t.Fatalf("Encapsulate (deposit): %v", err)
+	}
 	aliceSaltB, err := rpcore.DerivePaymentSalt(ss)
-	if err != nil { t.Fatalf("DerivePaymentSalt: %v", err) }
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt: %v", err)
+	}
 	aliceEncKey, err := rpcore.DerivePaymentKey(ss)
-	if err != nil { t.Fatalf("DerivePaymentKey: %v", err) }
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
+	}
 	aliceSaltBField := rpcore.SaltBToField(aliceSaltB)
 
 	aliceCommitment, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, aliceSaltBField, depositAmt, tokenId)
-	if err != nil { t.Fatalf("Erc20CommitmentV2 (deposit): %v", err) }
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (deposit): %v", err)
+	}
 
 	depositCtxt, err := rpcore.EncryptPayload(aliceEncKey, tokenId, depositAmt)
-	if err != nil { t.Fatalf("EncryptPayload (deposit): %v", err) }
+	if err != nil {
+		t.Fatalf("EncryptPayload (deposit): %v", err)
+	}
 
 	depositTx, err := vault.Transact(aliceAuth, "depositV2",
 		[]*big.Int{depositAmt, aliceSpend.PublicKey, aliceSaltBField, tokenId}, capsule, depositCtxt)
-	if err != nil { t.Fatalf("vault.depositV2: %v", err) }
+	if err != nil {
+		t.Fatalf("vault.depositV2: %v", err)
+	}
 	depositReceipt, err := bind.WaitMined(ctx, client, depositTx)
-	if err != nil { t.Fatalf("wait depositV2: %v", err) }
+	if err != nil {
+		t.Fatalf("wait depositV2: %v", err)
+	}
 	t.Logf("  deposit mined (block %d, commitment %s)", depositReceipt.BlockNumber, aliceCommitment)
 
 	// ── Step 8: Build Merkle proof for Alice's input note ────────────────────
@@ -351,7 +381,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 
 	mt := loadPaymentMerkleTree(t, client, vaultAddr, merkleDepth)
 	aliceProof, err := mt.GenerateProof(aliceCommitment)
-	if err != nil { t.Fatalf("GenerateProof (Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("GenerateProof (Alice): %v", err)
+	}
 	t.Logf("  Merkle root: %s", aliceProof.Root)
 
 	// ── Step 9: Generate ZK payment proof ────────────────────────────────────
@@ -372,7 +404,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		[]*big.Int{big.NewInt(0)},
 		tokenId,
 	)
-	if err != nil { t.Fatalf("BoundPaymentProof: %v", err) }
+	if err != nil {
+		t.Fatalf("BoundPaymentProof: %v", err)
+	}
 	t.Logf("  proof generated")
 	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[4])
 	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
@@ -384,13 +418,17 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	receipt := buildPayProofReceipt(paymentResult)
 	payTx, err := dvp.Transact(aliceAuth, "payment",
 		receipt, big.NewInt(0), paymentResult.CipherText, paymentResult.EncTxData)
-	if err != nil { t.Fatalf("EnygmaDvp.payment: %v", err) }
+	if err != nil {
+		t.Fatalf("EnygmaDvp.payment: %v", err)
+	}
 	payReceipt, err := bind.WaitMined(ctx, client, payTx)
-	if err != nil { t.Fatalf("wait payment: %v", err) }
+	if err != nil {
+		t.Fatalf("wait payment: %v", err)
+	}
 	t.Logf("  payment mined (block %d, gas %d)", payReceipt.BlockNumber, payReceipt.GasUsed)
 
 	// Verify on-chain events.
-	paymentSig  := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
 	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	var payEvents, nfEvents int
 	for _, log := range payReceipt.Logs {
@@ -403,8 +441,12 @@ func TestPaymentWithTagNotification(t *testing.T) {
 			t.Logf("  Nullifier event: nullifier=%s", log.Topics[3].Big())
 		}
 	}
-	if payEvents != 1 { t.Errorf("expected 1 Payment event, got %d", payEvents) }
-	if nfEvents != 1  { t.Errorf("expected 1 Nullifier event, got %d", nfEvents) }
+	if payEvents != 1 {
+		t.Errorf("expected 1 Payment event, got %d", payEvents)
+	}
+	if nfEvents != 1 {
+		t.Errorf("expected 1 Nullifier event, got %d", nfEvents)
+	}
 
 	// ── Step 11: Alice prepares tag notification for Bob ─────────────────────
 	t.Log("Step 11 — Alice prepares payment tag notification")
@@ -417,7 +459,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		channelSS,
 		paymentAmt, tokenId, paymentResult.SaltB,
 	)
-	if err != nil { t.Fatalf("PreparePaymentTag: %v", err) }
+	if err != nil {
+		t.Fatalf("PreparePaymentTag: %v", err)
+	}
 	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes", startBlock, startBlock+3, len(noteCtxt))
 
 	// Publish using windowTags[0] (expected to land in startBlock).
@@ -441,7 +485,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	bobChannels := []tags.Channel{{SharedSecret: bobChannelSS, PkSpend: bobSpend.PublicKey}}
 	cursor := tags.NewScanCursor()
 	matches, _, err := tags.ScanBlocksFromCursor(client, tagRegAddr, bobChannels, cursor, tagBlock)
-	if err != nil { t.Fatalf("ScanBlocksFromCursor (Bob): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanBlocksFromCursor (Bob): %v", err)
+	}
 	if len(matches) != 1 {
 		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
 	}
@@ -451,7 +497,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	t.Log("Step 13 — Bob decrypts tag and verifies his payment note")
 
 	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].Entry.Ctxt)
-	if err != nil { t.Fatalf("DecryptPaymentNote: %v", err) }
+	if err != nil {
+		t.Fatalf("DecryptPaymentNote: %v", err)
+	}
 
 	t.Logf("  note.Amount:  %s  (want %s)", note.Amount, paymentAmt)
 	t.Logf("  note.TokenId: %s  (want %s)", note.TokenId, tokenId)
@@ -471,7 +519,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	// Bob recomputes his commitment from the decrypted note.
 	bobRecomputedCmt, err := rpcore.Erc20CommitmentV2(
 		bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-	if err != nil { t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err) }
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
+	}
 
 	expectedBobCmt := paymentResult.Statement[4] // on-chain commitment for output 0
 	if bobRecomputedCmt.Cmp(expectedBobCmt) != 0 {
@@ -485,7 +535,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 
 	aliceChangeCmt, err := rpcore.Erc20CommitmentV2(
 		aliceSpend.PublicKey, paymentResult.SaltA, changeAmt, tokenId)
-	if err != nil { t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err) }
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err)
+	}
 
 	if aliceChangeCmt.Cmp(paymentResult.Statement[5]) != 0 {
 		t.Errorf("Alice's change commitment mismatch:\n  got:  %s\n  want: %s",

@@ -46,14 +46,14 @@ func Load(path string) (*Config, error) {
 
 func defaults() *Config {
 	return &Config{
-		AuctionLockPk:  "./scripts/keys/AuctionLock.pk",
-		AuctionLockVk:  "./scripts/keys/AuctionLock.vk",
-		AuctionBidPk:   "./scripts/keys/AuctionBid.pk",
-		AuctionBidVk:   "./scripts/keys/AuctionBid.vk",
-		AuctionBatchPk: "./scripts/keys/AuctionBatch.pk",
-		AuctionBatchVk: "./scripts/keys/AuctionBatch.vk",
-		AuctionFinalPk:  "./scripts/keys/AuctionFinal.pk",
-		AuctionFinalVk:  "./scripts/keys/AuctionFinal.vk",
+		AuctionLockPk:     "./scripts/keys/AuctionLock.pk",
+		AuctionLockVk:     "./scripts/keys/AuctionLock.vk",
+		AuctionBidPk:      "./scripts/keys/AuctionBid.pk",
+		AuctionBidVk:      "./scripts/keys/AuctionBid.vk",
+		AuctionBatchPk:    "./scripts/keys/AuctionBatch.pk",
+		AuctionBatchVk:    "./scripts/keys/AuctionBatch.vk",
+		AuctionFinalPk:    "./scripts/keys/AuctionFinal.pk",
+		AuctionFinalVk:    "./scripts/keys/AuctionFinal.vk",
 		AuctionRevertPk:   "./scripts/keys/AuctionRevert.pk",
 		AuctionRevertVk:   "./scripts/keys/AuctionRevert.vk",
 		AuctionWithdrawPk: "./scripts/keys/AuctionWithdraw.pk",

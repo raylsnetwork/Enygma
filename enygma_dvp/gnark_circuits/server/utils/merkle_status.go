@@ -796,11 +796,11 @@ type VaultMerkleStatus struct {
 
 // VaultRegistryEntry is one row of the EnygmaDvP registry cross-check.
 type VaultRegistryEntry struct {
-	VaultID         uint64 `json:"vaultId"`
-	Name            string `json:"name"`
-	AddressInDvP    string `json:"addressInDvP"`    // from vaultById(id) on EnygmaDvP
+	VaultID           uint64 `json:"vaultId"`
+	Name              string `json:"name"`
+	AddressInDvP      string `json:"addressInDvP"`      // from vaultById(id) on EnygmaDvP
 	AddressInReceipts string `json:"addressInReceipts"` // from receipts.json
-	Match           bool   `json:"match"`
+	Match             bool   `json:"match"`
 }
 
 // EnygmaDvPCheck holds the result of comparing receipts.json vault addresses
@@ -829,8 +829,8 @@ func MerkleStatusHandler() gin.HandlerFunc {
 
 	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
-	treeNumberSel  := keccak4("treeNumber()")
-	vaultByIDSel   := keccak4("vaultById(uint256)")
+	treeNumberSel := keccak4("treeNumber()")
+	vaultByIDSel := keccak4("vaultById(uint256)")
 
 	return func(c *gin.Context) {
 		var req MerkleStatusRequest
@@ -883,10 +883,10 @@ func MerkleStatusHandler() gin.HandlerFunc {
 // vaultIDByName maps each vault contract name to its on-chain vaultId (position
 // in EnygmaDvP._coinVaults[], assigned in registration order by deploy/init).
 var vaultIDByName = map[string]uint64{
-	"Erc20CoinVault":        0,
-	"Erc721CoinVault":       1,
-	"Erc1155CoinVault":      2,
-	"EnygmaErc20CoinVault":  3,
+	"Erc20CoinVault":       0,
+	"Erc721CoinVault":      1,
+	"Erc1155CoinVault":     2,
+	"EnygmaErc20CoinVault": 3,
 }
 
 func checkEnygmaDvPRegistry(client *http.Client, rpcURL, receiptsPath string, receiptsAddrs map[string]string, vaultByIDSel string) EnygmaDvPCheck {
@@ -913,11 +913,11 @@ func checkEnygmaDvPRegistry(client *http.Client, rpcURL, receiptsPath string, re
 		onChainAddr, err := ethCallAddress(client, rpcURL, dvpAddr, vaultByIDSel, id)
 		if err != nil {
 			entries = append(entries, VaultRegistryEntry{
-				VaultID: id,
-				Name:    name,
+				VaultID:           id,
+				Name:              name,
 				AddressInDvP:      fmt.Sprintf("error: %v", err),
 				AddressInReceipts: strings.ToLower(receiptsAddrs[name]),
-				Match: false,
+				Match:             false,
 			})
 			allMatch = false
 			continue
@@ -1019,8 +1019,8 @@ var vaultNameByID = func() map[uint64]string {
 
 type MerkleVaultRequest struct {
 	// Identify the vault by name OR by id — one is required.
-	Vault        string `json:"vault"`        // e.g. "Erc20CoinVault"
-	VaultID      *uint64 `json:"vaultId"`     // e.g. 0  (pointer so 0 is distinguishable from absent)
+	Vault        string  `json:"vault"`   // e.g. "Erc20CoinVault"
+	VaultID      *uint64 `json:"vaultId"` // e.g. 0  (pointer so 0 is distinguishable from absent)
 	RpcUrl       string  `json:"rpcUrl"`
 	ReceiptsPath string  `json:"receiptsPath"`
 }
@@ -1038,7 +1038,7 @@ func MerkleVaultHandler() gin.HandlerFunc {
 
 	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
-	treeNumberSel  := keccak4("treeNumber()")
+	treeNumberSel := keccak4("treeNumber()")
 
 	return func(c *gin.Context) {
 		var req MerkleVaultRequest

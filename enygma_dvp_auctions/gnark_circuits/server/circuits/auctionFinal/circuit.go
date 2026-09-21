@@ -17,10 +17,10 @@ import "math/big"
 //	 StWinnerNftCommit, StNftTokenId, StWinningAmount, StFloorPrice]
 type AuctionFinalRequest struct {
 	// public inputs — Phase-1 batch outputs
-	StAuctionId         string      `json:"stAuctionId"         binding:"required"`
-	StBatchWinnerCommit [10]string  `json:"stBatchWinnerCommit" binding:"required"` // 0 = inactive batch
-	StBatchWinnerPk     [10]string  `json:"stBatchWinnerPk"     binding:"required"`
-	StBatchWinnerAmount [10]string  `json:"stBatchWinnerAmount" binding:"required"`
+	StAuctionId         string     `json:"stAuctionId"         binding:"required"`
+	StBatchWinnerCommit [10]string `json:"stBatchWinnerCommit" binding:"required"` // 0 = inactive batch
+	StBatchWinnerPk     [10]string `json:"stBatchWinnerPk"     binding:"required"`
+	StBatchWinnerAmount [10]string `json:"stBatchWinnerAmount" binding:"required"`
 
 	// public outputs — settlement
 	StOverallWinnerCommit string `json:"stOverallWinnerCommit" binding:"required"` // overall winner's commitA

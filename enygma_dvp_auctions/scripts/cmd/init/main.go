@@ -50,9 +50,9 @@ type VerifyingKey struct {
 // Defined here so cmd/init is self-contained (shares no code with cmd/deploy).
 type AuctionConfig struct {
 	Network struct {
-		Host    string `json:"host"`
-		Port    string `json:"port"`
-		ChainID string `json:"chain-id"`
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		ChainID  string `json:"chain-id"`
 		Accounts []struct {
 			Address string `json:"address"`
 			Private string `json:"private"`
@@ -123,7 +123,7 @@ func initContracts() error {
 		return fmt.Errorf("load Verifier ABI: %w", err)
 	}
 	verifierAddr := common.HexToAddress(receipts["Verifier"])
-	g16Addr      := common.HexToAddress(receipts["G16Verifier"])
+	g16Addr := common.HexToAddress(receipts["G16Verifier"])
 
 	// Step 1: wire Verifier → GenericGroth16Verifier
 	fmt.Println("Initializing Verifier with GenericGroth16Verifier...")
@@ -150,8 +150,8 @@ func initContracts() error {
 	if err != nil {
 		return fmt.Errorf("load AuctionCoinVault ABI: %w", err)
 	}
-	auctionAddr  := common.HexToAddress(receipts["EnygmaAuction"])
-	nftVaultAddr  := common.HexToAddress(receipts["NftVault"])
+	auctionAddr := common.HexToAddress(receipts["EnygmaAuction"])
+	nftVaultAddr := common.HexToAddress(receipts["NftVault"])
 	usdcVaultAddr := common.HexToAddress(receipts["UsdcVault"])
 
 	fmt.Println("Granting AUCTION_ROLE to EnygmaAuction on NftVault...")

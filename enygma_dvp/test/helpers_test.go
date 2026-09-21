@@ -22,10 +22,10 @@ import (
 // ── Hardhat constants ──────────────────────────────────────────────────────────
 
 const (
-	hardhatRPC          = "http://localhost:8545"
-	hardhatChainID      = 1337
+	hardhatRPC     = "http://localhost:8545"
+	hardhatChainID = 1337
 	// Account[0] from enygmadvp.config.json — the deployer and ERC20 owner
-	hardhatPrivKeyHex   = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
+	hardhatPrivKeyHex = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 )
 
 // ── ABI struct types mirroring IEnygmaDvp.sol ──────────────────────────────────

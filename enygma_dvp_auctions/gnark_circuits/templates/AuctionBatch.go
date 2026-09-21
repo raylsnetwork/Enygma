@@ -21,14 +21,14 @@ const AuctionBatchSize = 100
 //	[StAuctionId, StBidCommitA[0..99], StBatchWinnerCommit, StBatchWinnerPk, StBatchWinnerAmount]
 type AuctionBatchCircuit struct {
 	// --- public inputs ---
-	StAuctionId         frontend.Variable  `gnark:",public"` // identifies the auction
+	StAuctionId         frontend.Variable   `gnark:",public"` // identifies the auction
 	StBidCommitA        []frontend.Variable `gnark:",public"` // on-chain commitA values; 0 = inactive slot
-	StBatchWinnerCommit frontend.Variable  `gnark:",public"` // commitA of the batch winner
-	StBatchWinnerPk     frontend.Variable  `gnark:",public"` // spend public key of the batch winner
-	StBatchWinnerAmount frontend.Variable  `gnark:",public"` // bid amount of the batch winner
+	StBatchWinnerCommit frontend.Variable   `gnark:",public"` // commitA of the batch winner
+	StBatchWinnerPk     frontend.Variable   `gnark:",public"` // spend public key of the batch winner
+	StBatchWinnerAmount frontend.Variable   `gnark:",public"` // bid amount of the batch winner
 
 	// --- private witnesses ---
-	WtAuctionId frontend.Variable   // must equal StAuctionId; binds proof to one auction
+	WtAuctionId frontend.Variable // must equal StAuctionId; binds proof to one auction
 
 	// --- private witnesses (auctioneer's ML-KEM decryptions) ---
 	WtActive    []frontend.Variable // boolean 0/1 per slot; length AuctionBatchSize

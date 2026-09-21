@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"net/http"
 
-	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -55,26 +55,26 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// populate public inputs
-		witness.StAuctionId    = frontend.Variable(req.StAuctionId)
-		witness.StTreeNumber   = frontend.Variable(req.StTreeNumber)
-		witness.StMerkleRoot   = frontend.Variable(req.StMerkleRoot)
-		witness.StNullifier    = frontend.Variable(req.StNullifier)
-		witness.StCommitA      = frontend.Variable(req.StCommitA)
-		witness.StCommitB      = frontend.Variable(req.StCommitB)
+		witness.StAuctionId = frontend.Variable(req.StAuctionId)
+		witness.StTreeNumber = frontend.Variable(req.StTreeNumber)
+		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
+		witness.StNullifier = frontend.Variable(req.StNullifier)
+		witness.StCommitA = frontend.Variable(req.StCommitA)
+		witness.StCommitB = frontend.Variable(req.StCommitB)
 		witness.StRevertCommit = frontend.Variable(req.StRevertCommit)
 
 		// populate private witnesses
-		witness.WtAuctionId  = frontend.Variable(req.WtAuctionId)
+		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
 		witness.WtTreeNumber = frontend.Variable(req.WtTreeNumber)
-		witness.WtSpendKey   = frontend.Variable(req.WtSpendKey)
-		witness.WtAmount     = frontend.Variable(req.WtAmount)
-		witness.WtTokenId    = frontend.Variable(req.WtTokenId)
-		witness.WtSaltIn     = frontend.Variable(req.WtSaltIn)
-		witness.WtPathIndex  = frontend.Variable(req.WtPathIndex)
+		witness.WtSpendKey = frontend.Variable(req.WtSpendKey)
+		witness.WtAmount = frontend.Variable(req.WtAmount)
+		witness.WtTokenId = frontend.Variable(req.WtTokenId)
+		witness.WtSaltIn = frontend.Variable(req.WtSaltIn)
+		witness.WtPathIndex = frontend.Variable(req.WtPathIndex)
 		witness.WtSpendPkBob = frontend.Variable(req.WtSpendPkBob)
-		witness.WtSaltA      = frontend.Variable(req.WtSaltA)
-		witness.WtSaltB      = frontend.Variable(req.WtSaltB)
-		witness.WtBidAmount  = frontend.Variable(req.WtBidAmount)
+		witness.WtSaltA = frontend.Variable(req.WtSaltA)
+		witness.WtSaltB = frontend.Variable(req.WtSaltB)
+		witness.WtBidAmount = frontend.Variable(req.WtBidAmount)
 		witness.WtSaltRevert = frontend.Variable(req.WtSaltRevert)
 		for j := 0; j < bidMerkleDepth; j++ {
 			witness.WtPathElements[j] = frontend.Variable(req.WtPathElements[j])
@@ -114,13 +114,17 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		p := proof.(*groth16_bn254.Proof)
 		ax, ay := new(big.Int), new(big.Int)
-		p.Ar.X.BigInt(ax); p.Ar.Y.BigInt(ay)
+		p.Ar.X.BigInt(ax)
+		p.Ar.Y.BigInt(ay)
 		cx, cy := new(big.Int), new(big.Int)
-		p.Krs.X.BigInt(cx); p.Krs.Y.BigInt(cy)
+		p.Krs.X.BigInt(cx)
+		p.Krs.Y.BigInt(cy)
 		bx0, bx1 := new(big.Int), new(big.Int)
-		p.Bs.X.A0.BigInt(bx0); p.Bs.X.A1.BigInt(bx1)
+		p.Bs.X.A0.BigInt(bx0)
+		p.Bs.X.A1.BigInt(bx1)
 		by0, by1 := new(big.Int), new(big.Int)
-		p.Bs.Y.A0.BigInt(by0); p.Bs.Y.A1.BigInt(by1)
+		p.Bs.Y.A0.BigInt(by0)
+		p.Bs.Y.A1.BigInt(by1)
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 

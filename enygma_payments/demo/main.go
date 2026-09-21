@@ -7,13 +7,13 @@
 package main
 
 import (
-	_ "embed"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -214,7 +214,7 @@ func pause(d time.Duration) {
 
 type Event struct {
 	Type    string `json:"type"`
-	Tab     string `json:"tab,omitempty"`     // "setup" | "onboarding" | "transfer"
+	Tab     string `json:"tab,omitempty"` // "setup" | "onboarding" | "transfer"
 	Step    string `json:"step,omitempty"`
 	BankIdx int    `json:"bankIdx,omitempty"` // for bank-specific step events
 	Status  string `json:"status,omitempty"`
@@ -263,22 +263,22 @@ func (b *Broker) publish(e Event) {
 // ── Persistent connection state ────────────────────────────────────────────────
 
 type connState struct {
-	mu            sync.Mutex
-	ready         bool
-	client        *ethclient.Client
-	priv          *ecdsa.PrivateKey
-	owner         common.Address
-	inst          *enygma.Enygma
-	tokenAddr     string
-	verifierAddr  string
-	totalGasUsed  uint64
-	mintedBalances [nBanks]int64      // cumulative plaintext balance per bank; updated after each mint/transfer
-	lastSenderIdx  int               // senderIdx from the most recent completed transfer
-	registeredSks  [nBanks]*big.Int  // sk used at registration time; nil until registered
-	lastRValues    [nBanks]*big.Int  // TxRandomValues from the last successful transfer; for verify tab
-	cumulativeR    [nBanks]*big.Int  // running sum of txRandom per bank across all transfers (mod P)
-	transferCount  int               // number of completed transfers
-	kaSecrets      [nBanks][nBanks]*big.Int  // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
+	mu             sync.Mutex
+	ready          bool
+	client         *ethclient.Client
+	priv           *ecdsa.PrivateKey
+	owner          common.Address
+	inst           *enygma.Enygma
+	tokenAddr      string
+	verifierAddr   string
+	totalGasUsed   uint64
+	mintedBalances [nBanks]int64            // cumulative plaintext balance per bank; updated after each mint/transfer
+	lastSenderIdx  int                      // senderIdx from the most recent completed transfer
+	registeredSks  [nBanks]*big.Int         // sk used at registration time; nil until registered
+	lastRValues    [nBanks]*big.Int         // TxRandomValues from the last successful transfer; for verify tab
+	cumulativeR    [nBanks]*big.Int         // running sum of txRandom per bank across all transfers (mod P)
+	transferCount  int                      // number of completed transfers
+	kaSecrets      [nBanks][nBanks]*big.Int // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
 	kaEKs          [nBanks][]byte           // ML-KEM-768 encapsulation keys (1184B each, public_view_key)
 }
 
@@ -540,8 +540,12 @@ func (fc *flowCtx) waitTx(label string, tx *ethtypes.Transaction, txErr error) (
 // ── Contract address resolver ─────────────────────────────────────────────────
 
 type deployReceipts struct {
-	TOKEN    struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
-	VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	TOKEN struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"TOKEN"`
+	VERIFIER struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"VERIFIER"`
 }
 
 func resolveAddresses() (token, verifier string, err error) {
@@ -576,9 +580,15 @@ func runSetup(s *Server) {
 
 	fc.emit("prerequisites", "running", "Check prerequisites", "Probing Hardhat · Gnark · Relayer…")
 	var missing []string
-	if !tcpAvailable(rpcHostPort())     { missing = append(missing, "Chain RPC ("+rpcHostPort()+")") }
-	if !tcpAvailable("127.0.0.1:8080") { missing = append(missing, "Gnark :8080") }
-	if !tcpAvailable("127.0.0.1:8082") { missing = append(missing, "Relayer :8082") }
+	if !tcpAvailable(rpcHostPort()) {
+		missing = append(missing, "Chain RPC ("+rpcHostPort()+")")
+	}
+	if !tcpAvailable("127.0.0.1:8080") {
+		missing = append(missing, "Gnark :8080")
+	}
+	if !tcpAvailable("127.0.0.1:8082") {
+		missing = append(missing, "Relayer :8082")
+	}
 	if len(missing) > 0 {
 		fc.emit("prerequisites", "error", "Check prerequisites", "Not reachable: "+strings.Join(missing, ", "))
 		fc.done(false, "Start "+strings.Join(missing, ", ")+" first")
@@ -866,7 +876,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		return
 	}
 	prevBalances := pubVals.Balances[1:]
-	onChainKeys  := pubVals.Keys[1:]
+	onChainKeys := pubVals.Keys[1:]
 	fc.emit("read_state", "success", "Read on-chain state",
 		fmt.Sprintf("epochBlockHash = %s · %d accounts", trunc(blockHash.String(), 12), nBanks))
 	fc.log(fmt.Sprintf("Epoch block hash: %s", blockHash.String()))

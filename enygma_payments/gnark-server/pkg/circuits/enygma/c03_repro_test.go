@@ -24,9 +24,9 @@ import (
 	utils "enygma-server/utils"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
-	"github.com/consensys/gnark/constraint/solver"
 )
 
 const c03NCommitment = 6

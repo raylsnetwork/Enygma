@@ -18,10 +18,10 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port:             "8082",
-		PaymentPk:                 "./scripts/keys/PaymentPK.key",                 // 1 input / 2 outputs
+		Port:                      "8082",
+		PaymentPk:                 "./scripts/keys/PaymentPK.key", // 1 input / 2 outputs
 		PaymentVk:                 "./scripts/keys/PaymentVK.key",
-		Payment2inPk:              "./scripts/keys/Payment2inPK.key",              // 2 inputs / 2 outputs
+		Payment2inPk:              "./scripts/keys/Payment2inPK.key", // 2 inputs / 2 outputs
 		Payment2inVk:              "./scripts/keys/Payment2inVK.key",
 		PaymentFeePk:              "./scripts/keys/PaymentFeePK.key", // 1 input / 2 outputs, fee absorbed into sender's input
 		PaymentFeeVk:              "./scripts/keys/PaymentFeeVK.key",

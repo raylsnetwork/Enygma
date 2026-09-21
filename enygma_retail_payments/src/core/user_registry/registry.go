@@ -18,10 +18,10 @@ import (
 // UserKeys holds the public keys a sender needs to pay a recipient, plus the
 // audit ciphertexts published at registration for the auditor to recover sk_view.
 type UserKeys struct {
-	SpendKey    *big.Int // pk_spend    — Poseidon(sk_spend)
-	ViewKey     []byte   // pk_view     — ML-KEM-768 encapsulation key (1184 bytes)
-	MlKemAuditCt []byte // mlKemAuditCt — ML-KEM capsule for auditor (1088 bytes)
-	AesAuditCt   []byte // aesAuditCt   — AES-GCM encrypted sk_view seed (92 bytes)
+	SpendKey     *big.Int // pk_spend    — Poseidon(sk_spend)
+	ViewKey      []byte   // pk_view     — ML-KEM-768 encapsulation key (1184 bytes)
+	MlKemAuditCt []byte   // mlKemAuditCt — ML-KEM capsule for auditor (1088 bytes)
+	AesAuditCt   []byte   // aesAuditCt   — AES-GCM encrypted sk_view seed (92 bytes)
 }
 
 // Register calls UserRegistry.register(pkSpend, pkView, mlKemAuditCt, aesAuditCt) on-chain.

@@ -14,7 +14,6 @@ package tests
 //
 //	 go test -run TestV2Erc20OnChain_PrivateMint -v -timeout 300s
 
-
 import (
 	"context"
 	"math/big"
@@ -27,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
-
 
 type onchainPrivateMintProof struct {
 	Proof        [8]*big.Int `abi:"proof"`
@@ -99,8 +97,8 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 
 	// ── Test parameters ───────────────────────────────────────────────────────
 	gnarkClient := core.NewGnarkClient("http://localhost:8081")
-	tokenId      := big.NewInt(0)  // ERC20: tokenId=0
-	mintAmount   := big.NewInt(100)
+	tokenId := big.NewInt(0) // ERC20: tokenId=0
+	mintAmount := big.NewInt(100)
 	// Erc20CoinVault is registered first in scripts/cmd/init → vaultId=0
 	vaultId := big.NewInt(0)
 	// contractAddress in the ZK public signal must be the EnygmaDvp address as uint256

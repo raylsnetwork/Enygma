@@ -1,9 +1,9 @@
 package curve
 
-import(
-	"math/big"
+import (
 	"github.com/iden3/go-iden3-crypto/babyjub"
-	)
+	"math/big"
+)
 
 var (
 	// G: Pedersen value generator. NUMS hash-to-curve derivation, seed "2"
@@ -17,8 +17,7 @@ var (
 	H     = &babyjub.Point{X: hx, Y: hy}
 
 	//subgroup order of BabyJubJub Eliptic curve
-	P, _  = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
-	
+	P, _ = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
 )
 
 func GetPK(v *big.Int) *babyjub.Point {

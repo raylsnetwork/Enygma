@@ -89,25 +89,25 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	defer client.Close()
 
 	receipts := loadOnchainReceipts(t)
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	erc20ABI := loadOnchainABI(t, "RaylsERC20")
-	vaultABI  := loadOnchainABI(t, "Erc20CoinVault")
+	vaultABI := loadOnchainABI(t, "Erc20CoinVault")
 
 	vault := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	erc20 := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
 
 	aliceAuth := hardhatAuth(t, client)
-	bobAuth   := hardhatBobAuth(t, client)
+	bobAuth := hardhatBobAuth(t, client)
 
 	merkleDepth := 8
-	tokenId     := big.NewInt(0)
-	depositAmt  := big.NewInt(int64(rfpDeposit))
-	paymentAmt  := big.NewInt(int64(rfpPayAmt))
-	changeAmt   := big.NewInt(int64(rfpChangeAmt))
-	relayerAmt  := big.NewInt(int64(rfpRelayerAmt))
+	tokenId := big.NewInt(0)
+	depositAmt := big.NewInt(int64(rfpDeposit))
+	paymentAmt := big.NewInt(int64(rfpPayAmt))
+	changeAmt := big.NewInt(int64(rfpChangeAmt))
+	relayerAmt := big.NewInt(int64(rfpRelayerAmt))
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
 
 	// ── Step 1: Key generation ────────────────────────────────────────────────
@@ -359,12 +359,12 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	}
 
 	checkBig("signal[2] merkle root", sig[2], aliceProof.Root)
-	checkBig("signal[3] nullifier",   sig[3], nullifier)
-	checkBig("signal[4] cmt_bob",     sig[4], cmtBob)
-	checkBig("signal[5] cmt_change",  sig[5], cmtChange)
+	checkBig("signal[3] nullifier", sig[3], nullifier)
+	checkBig("signal[4] cmt_bob", sig[4], cmtBob)
+	checkBig("signal[5] cmt_change", sig[5], cmtChange)
 	checkBig("signal[6] cmt_relayer", sig[6], cmtRelayer)
-	checkBig("signal[7] contractAddr",sig[7], vaultAddrBig)
-	checkBig("signal[8] StFee",       sig[8], relayerAmt)
+	checkBig("signal[7] contractAddr", sig[7], vaultAddrBig)
+	checkBig("signal[8] StFee", sig[8], relayerAmt)
 
 	// ── Step 7: Bob scans his note via ML-KEM ────────────────────────────────
 	t.Log("Step 7 — Bob scans his note via ML-KEM")

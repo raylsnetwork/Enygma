@@ -6,7 +6,6 @@ import (
 
 var N_ROUNDS_P = []int{56, 57, 56, 60, 60, 63, 64, 63, 60, 66, 60, 65, 70, 60, 64, 68}
 
-
 func sigma(api frontend.API, in frontend.Variable) frontend.Variable {
 	in2 := api.Mul(in, in)
 	in4 := api.Mul(in2, in2)
@@ -20,7 +19,6 @@ func ark(api frontend.API, t int, C []frontend.Variable, r int, in []frontend.Va
 	}
 	return out
 }
-
 
 func mix(api frontend.API, t int, M [][]frontend.Variable, in []frontend.Variable) []frontend.Variable {
 	out := make([]frontend.Variable, t)
@@ -44,7 +42,6 @@ func mixLast(api frontend.API, t int, M [][]frontend.Variable, s int, in []front
 	return sum
 }
 
-
 func mixS(api frontend.API, t int, S []frontend.Variable, r int, in []frontend.Variable) []frontend.Variable {
 	out := make([]frontend.Variable, t)
 	baseIndex := (t*2 - 1) * r
@@ -61,13 +58,12 @@ func mixS(api frontend.API, t int, S []frontend.Variable, r int, in []frontend.V
 
 // --- Main Poseidon Functions ---
 
-
 func PoseidonEx(api frontend.API, inputs []frontend.Variable, initialState frontend.Variable, nOuts int) []frontend.Variable {
-	
+
 	t := len(inputs) + 1 // state length = number of inputs + 1
 	nRoundsF := 8
 	nRoundsP := N_ROUNDS_P[t-2]
-	
+
 	C := GetPoseidonC(t)
 	S := GetPoseidonS(t)
 	M := GetPoseidonM(t)

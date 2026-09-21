@@ -28,9 +28,9 @@ type ContractArtifact struct {
 // Config is the enygma_auction.config.json structure.
 type Config struct {
 	Network struct {
-		Host    string `json:"host"`
-		Port    string `json:"port"`
-		ChainID string `json:"chain-id"`
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		ChainID  string `json:"chain-id"`
 		Accounts []struct {
 			Address string `json:"address"`
 			Private string `json:"private"`
@@ -285,8 +285,8 @@ func deployContractWithLibraries(client *ethclient.Client, auth *bind.TransactOp
 	}
 
 	var fullArtifact struct {
-		ABI            json.RawMessage                                `json:"abi"`
-		Bytecode       string                                         `json:"bytecode"`
+		ABI            json.RawMessage `json:"abi"`
+		Bytecode       string          `json:"bytecode"`
 		LinkReferences map[string]map[string][]struct {
 			Start  int `json:"start"`
 			Length int `json:"length"`

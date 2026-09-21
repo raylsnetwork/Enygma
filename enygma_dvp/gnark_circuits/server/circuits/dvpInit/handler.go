@@ -54,33 +54,32 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// --- populate witness ---
-		witness.StMessage       = frontend.Variable(req.StMessage)
-		witness.StTreeNumber    = frontend.Variable(req.StTreeNumber)
-		witness.StMerkleRoot    = frontend.Variable(req.StMerkleRoot)
-		witness.StNullifier     = frontend.Variable(req.StNullifier)
-		witness.StCommitB       = frontend.Variable(req.StCommitB)
-		witness.StCommitA       = frontend.Variable(req.StCommitA)
+		witness.StMessage = frontend.Variable(req.StMessage)
+		witness.StTreeNumber = frontend.Variable(req.StTreeNumber)
+		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
+		witness.StNullifier = frontend.Variable(req.StNullifier)
+		witness.StCommitB = frontend.Variable(req.StCommitB)
+		witness.StCommitA = frontend.Variable(req.StCommitA)
 		witness.StRevertCommitA = frontend.Variable(req.StRevertCommitA)
 
 		witness.WtSpendKeyIn = frontend.Variable(req.WtSpendKeyIn)
-		witness.WtValueIn    = frontend.Variable(req.WtValueIn)
-		witness.WtSaltIn     = frontend.Variable(req.WtSaltIn)
-		witness.WtTokenIdIn  = frontend.Variable(req.WtTokenIdIn)
-		witness.WtPathIndex  = frontend.Variable(req.WtPathIndex)
+		witness.WtValueIn = frontend.Variable(req.WtValueIn)
+		witness.WtSaltIn = frontend.Variable(req.WtSaltIn)
+		witness.WtTokenIdIn = frontend.Variable(req.WtTokenIdIn)
+		witness.WtPathIndex = frontend.Variable(req.WtPathIndex)
 		for j := 0; j < merkleDepth; j++ {
 			witness.WtPathElements[j] = frontend.Variable(req.WtPathElements[j])
 		}
 
 		witness.WtSpendPkBob = frontend.Variable(req.WtSpendPkBob)
-		witness.WtSaltB      = frontend.Variable(req.WtSaltB)
-		witness.WtValueBob   = frontend.Variable(req.WtValueBob)
+		witness.WtSaltB = frontend.Variable(req.WtSaltB)
+		witness.WtValueBob = frontend.Variable(req.WtValueBob)
 		witness.WtTokenIdBob = frontend.Variable(req.WtTokenIdBob)
-		witness.WtSaltA      = frontend.Variable(req.WtSaltA)
+		witness.WtSaltA = frontend.Variable(req.WtSaltA)
 		witness.WtRevertSalt = frontend.Variable(req.WtRevertSalt)
 
 		// --- compile, prove, verify ---
 		solver.RegisterHint(primitives.ModHint)
-		
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

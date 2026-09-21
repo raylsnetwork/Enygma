@@ -74,7 +74,7 @@ var circuitMapping = map[string]string{
 	"AuctionBid":                             "scripts/keys/AuctionBidVK.key",
 	"AuctionNotWinningBid":                   "scripts/keys/AuctionNotWinningVK.key",
 	"AuctionPrivateOpening":                  "scripts/keys/AuctionPrivateOpeningVK.key",
-"JoinSplitErc1155WithAuditor":            "scripts/keys/JoinSplitERC1155AuditorVK.key",
+	"JoinSplitErc1155WithAuditor":            "scripts/keys/JoinSplitERC1155AuditorVK.key",
 	"OwnershipErc1155NonFungibleWithAuditor": "scripts/keys/OwnershipERC1155NonFungibleAuditorVK.key",
 	"BatchErc1155NonFungibleWithAuditor":     "scripts/keys/ERC1155BatchAuditorVK.key",
 	"OwnershipErc721WithAuditor":             "scripts/keys/OwnershipERC721AuditorVK.key",

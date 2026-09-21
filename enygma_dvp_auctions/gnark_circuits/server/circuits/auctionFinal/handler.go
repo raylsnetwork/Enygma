@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"net/http"
 
-	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -51,27 +51,27 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.StAuctionId = frontend.Variable(req.StAuctionId)
 		for i := 0; i < k; i++ {
 			witness.StBatchWinnerCommit[i] = frontend.Variable(req.StBatchWinnerCommit[i])
-			witness.StBatchWinnerPk[i]     = frontend.Variable(req.StBatchWinnerPk[i])
+			witness.StBatchWinnerPk[i] = frontend.Variable(req.StBatchWinnerPk[i])
 			witness.StBatchWinnerAmount[i] = frontend.Variable(req.StBatchWinnerAmount[i])
 		}
 
 		// public outputs — settlement
 		witness.StOverallWinnerCommit = frontend.Variable(req.StOverallWinnerCommit)
-		witness.StWinnerPk            = frontend.Variable(req.StWinnerPk)
-		witness.StWinnerCommitB       = frontend.Variable(req.StWinnerCommitB)
-		witness.StWinnerNftCommit     = frontend.Variable(req.StWinnerNftCommit)
-		witness.StNftTokenId          = frontend.Variable(req.StNftTokenId)
-		witness.StWinningAmount       = frontend.Variable(req.StWinningAmount)
-		witness.StFloorPrice          = frontend.Variable(req.StFloorPrice)
+		witness.StWinnerPk = frontend.Variable(req.StWinnerPk)
+		witness.StWinnerCommitB = frontend.Variable(req.StWinnerCommitB)
+		witness.StWinnerNftCommit = frontend.Variable(req.StWinnerNftCommit)
+		witness.StNftTokenId = frontend.Variable(req.StNftTokenId)
+		witness.StWinningAmount = frontend.Variable(req.StWinningAmount)
+		witness.StFloorPrice = frontend.Variable(req.StFloorPrice)
 
 		// private witnesses
-		witness.WtAuctionId      = frontend.Variable(req.WtAuctionId)
+		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
 		witness.WtWinnerBatchIdx = frontend.Variable(req.WtWinnerBatchIdx)
-		witness.WtPkBob          = frontend.Variable(req.WtPkBob)
-		witness.WtSaltB          = frontend.Variable(req.WtSaltB)
-		witness.WtUsdcTokenId    = frontend.Variable(req.WtUsdcTokenId)
-		witness.WtSaltAlice      = frontend.Variable(req.WtSaltAlice)
-		witness.WtNftTokenId     = frontend.Variable(req.WtNftTokenId)
+		witness.WtPkBob = frontend.Variable(req.WtPkBob)
+		witness.WtSaltB = frontend.Variable(req.WtSaltB)
+		witness.WtUsdcTokenId = frontend.Variable(req.WtUsdcTokenId)
+		witness.WtSaltAlice = frontend.Variable(req.WtSaltAlice)
+		witness.WtNftTokenId = frontend.Variable(req.WtNftTokenId)
 		for i := 0; i < k; i++ {
 			witness.WtBatchActive[i] = frontend.Variable(req.WtBatchActive[i])
 		}
@@ -110,13 +110,17 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		p := proof.(*groth16_bn254.Proof)
 		ax, ay := new(big.Int), new(big.Int)
-		p.Ar.X.BigInt(ax); p.Ar.Y.BigInt(ay)
+		p.Ar.X.BigInt(ax)
+		p.Ar.Y.BigInt(ay)
 		cx, cy := new(big.Int), new(big.Int)
-		p.Krs.X.BigInt(cx); p.Krs.Y.BigInt(cy)
+		p.Krs.X.BigInt(cx)
+		p.Krs.Y.BigInt(cy)
 		bx0, bx1 := new(big.Int), new(big.Int)
-		p.Bs.X.A0.BigInt(bx0); p.Bs.X.A1.BigInt(bx1)
+		p.Bs.X.A0.BigInt(bx0)
+		p.Bs.X.A1.BigInt(bx1)
 		by0, by1 := new(big.Int), new(big.Int)
-		p.Bs.Y.A0.BigInt(by0); p.Bs.Y.A1.BigInt(by1)
+		p.Bs.Y.A0.BigInt(by0)
+		p.Bs.Y.A1.BigInt(by1)
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 

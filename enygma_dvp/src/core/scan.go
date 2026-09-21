@@ -115,9 +115,9 @@ func ScanForErc20Notes(
 // OnChainErc721Event represents a single on-chain note-creation event published
 // by the ERC721 vault after a successful ownership proof.
 type OnChainErc721Event struct {
-	Commitment   *big.Int
-	CipherText  []byte
-	EncTxData []byte
+	Commitment *big.Int
+	CipherText []byte
+	EncTxData  []byte
 }
 
 // OwnedErc721Note is a note confirmed to belong to the scanning key pair.
@@ -317,8 +317,8 @@ func ScanForZkDvpSwap(
 type OnChainErc1155Event struct {
 	Commitment      *big.Int
 	ContractAddress *big.Int // public info from on-chain event
-	CipherText     []byte
-	EncTxData    []byte
+	CipherText      []byte
+	EncTxData       []byte
 }
 
 // OwnedErc1155Note is an ERC1155 note confirmed to belong to the scanning key pair.
