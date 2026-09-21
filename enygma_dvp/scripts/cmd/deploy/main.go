@@ -424,8 +424,8 @@ func deployContractWithLibraries(client *ethclient.Client, auth *bind.TransactOp
 	}
 
 	var fullArtifact struct {
-		ABI            json.RawMessage                       `json:"abi"`
-		Bytecode       string                                `json:"bytecode"`
+		ABI            json.RawMessage `json:"abi"`
+		Bytecode       string          `json:"bytecode"`
 		LinkReferences map[string]map[string][]struct {
 			Start  int `json:"start"`
 			Length int `json:"length"`

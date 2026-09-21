@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"net/http"
 
-	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -50,9 +50,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// public inputs
-		witness.StAuctionId         = frontend.Variable(req.StAuctionId)
+		witness.StAuctionId = frontend.Variable(req.StAuctionId)
 		witness.StBatchWinnerCommit = frontend.Variable(req.StBatchWinnerCommit)
-		witness.StBatchWinnerPk     = frontend.Variable(req.StBatchWinnerPk)
+		witness.StBatchWinnerPk = frontend.Variable(req.StBatchWinnerPk)
 		witness.StBatchWinnerAmount = frontend.Variable(req.StBatchWinnerAmount)
 		for i := 0; i < n; i++ {
 			witness.StBidCommitA[i] = frontend.Variable(req.StBidCommitA[i])
@@ -62,11 +62,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
 		witness.WtWinnerIdx = frontend.Variable(req.WtWinnerIdx)
 		for i := 0; i < n; i++ {
-			witness.WtActive[i]   = frontend.Variable(req.WtActive[i])
+			witness.WtActive[i] = frontend.Variable(req.WtActive[i])
 			witness.WtPkBidder[i] = frontend.Variable(req.WtPkBidder[i])
-			witness.WtSaltA[i]    = frontend.Variable(req.WtSaltA[i])
-			witness.WtAmount[i]   = frontend.Variable(req.WtAmount[i])
-			witness.WtTokenId[i]  = frontend.Variable(req.WtTokenId[i])
+			witness.WtSaltA[i] = frontend.Variable(req.WtSaltA[i])
+			witness.WtAmount[i] = frontend.Variable(req.WtAmount[i])
+			witness.WtTokenId[i] = frontend.Variable(req.WtTokenId[i])
 		}
 
 		solver.RegisterHint(primitives.PoseidonNative)
@@ -103,13 +103,17 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		p := proof.(*groth16_bn254.Proof)
 		ax, ay := new(big.Int), new(big.Int)
-		p.Ar.X.BigInt(ax); p.Ar.Y.BigInt(ay)
+		p.Ar.X.BigInt(ax)
+		p.Ar.Y.BigInt(ay)
 		cx, cy := new(big.Int), new(big.Int)
-		p.Krs.X.BigInt(cx); p.Krs.Y.BigInt(cy)
+		p.Krs.X.BigInt(cx)
+		p.Krs.Y.BigInt(cy)
 		bx0, bx1 := new(big.Int), new(big.Int)
-		p.Bs.X.A0.BigInt(bx0); p.Bs.X.A1.BigInt(bx1)
+		p.Bs.X.A0.BigInt(bx0)
+		p.Bs.X.A1.BigInt(bx1)
 		by0, by1 := new(big.Int), new(big.Int)
-		p.Bs.Y.A0.BigInt(by0); p.Bs.Y.A1.BigInt(by1)
+		p.Bs.Y.A0.BigInt(by0)
+		p.Bs.Y.A1.BigInt(by1)
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 

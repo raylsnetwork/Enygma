@@ -19,10 +19,10 @@ type ReceiptPayload struct {
 //
 //	[msg, treeNum0, root0, nullifier0, commitment_bob, commitment_change]
 type RelayPaymentRequest struct {
-	VaultId    string  `json:"vaultId"    binding:"required"`
+	VaultId    string         `json:"vaultId"    binding:"required"`
 	Receipt    ReceiptPayload `json:"receipt"    binding:"required"`
-	CipherText string  `json:"cipherText" binding:"required"` // Bob's ML-KEM capsule (hex)
-	EncTxData  string  `json:"encTxData"  binding:"required"` // Bob's AES-GCM payload (hex)
+	CipherText string         `json:"cipherText" binding:"required"` // Bob's ML-KEM capsule (hex)
+	EncTxData  string         `json:"encTxData"  binding:"required"` // Bob's AES-GCM payload (hex)
 }
 
 // ── relayer fee (same token — PaymentRelayerFeePublic circuit) ────────────────

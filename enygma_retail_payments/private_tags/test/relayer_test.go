@@ -210,12 +210,12 @@ func TestFullFlowViaRelayer(t *testing.T) {
 		t.Skip("relayer not running on localhost:8090")
 	}
 
-	bg     := context.Background()
+	bg := context.Background()
 	client := mustDial(t)
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 	_ = bobAuth
 
 	// ── Gap 6: Discover registry addresses from /relay/info ───────────────────
@@ -233,9 +233,13 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	if info.TagChannelRegistryAddr == zeroAddr {
 		// Relayer not configured — deploy and print instructions.
 		chAddr, err := tags.DeployTagChannelRegistry(client, aliceAuth, "../contracts/TagChannelRegistry.json")
-		if err != nil { t.Fatalf("deploy TagChannelRegistry: %v", err) }
+		if err != nil {
+			t.Fatalf("deploy TagChannelRegistry: %v", err)
+		}
 		trAddr, err := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-		if err != nil { t.Fatalf("deploy TagRegistry: %v", err) }
+		if err != nil {
+			t.Fatalf("deploy TagRegistry: %v", err)
+		}
 		t.Skipf("TagChannelRegistry/TagRegistry not configured.\n"+
 			"Restart relayer with:\n"+
 			"  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s\n"+
@@ -243,7 +247,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 			chAddr.Hex(), trAddr.Hex())
 	}
 	channelRegistryAddr := common.HexToAddress(info.TagChannelRegistryAddr)
-	tagRegistryAddr     := common.HexToAddress(info.TagRegistryAddr)
+	tagRegistryAddr := common.HexToAddress(info.TagRegistryAddr)
 
 	// ═════════════════════════════════════════════════════════════════════════
 	// PHASE 1 — Channel Setup via POST /relay/channel (paper §3)
@@ -262,7 +266,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	bobPkSpend := big.NewInt(0xB0B)
 
 	// Bob prepares channel setup locally (paper §3 steps 3–6, no on-chain call).
-	initialMsg  := []byte("Hello Alice — channel ready")
+	initialMsg := []byte("Hello Alice — channel ready")
 	bobSenderId := []byte(bobAddr) // Bob identifies himself inside c2
 	t.Logf("  privacy mode: %s", tags.BitmapDescription(tags.PrivacySubset))
 
@@ -410,7 +414,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	if tags.IsDummyPayload(decrypted) {
 		t.Error("real tag payload incorrectly identified as dummy")
 	}
-	amount  := new(big.Int).SetBytes(decrypted[0:32])
+	amount := new(big.Int).SetBytes(decrypted[0:32])
 	tokenId := new(big.Int).SetBytes(decrypted[32:64])
 	t.Logf("  Bob decrypted: amount=%s tokenId=%s ✓", amount, tokenId)
 	if amount.Cmp(big.NewInt(30)) != 0 {
@@ -494,7 +498,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 
 	// Verify sender privacy claim: all msg.sender values must equal the relayer.
 	relayerEthAddr := common.HexToAddress(relayerAddr)
-	_ = relayerEthAddr // address used for logging above; exact value depends on deployment
+	_ = relayerEthAddr   // address used for logging above; exact value depends on deployment
 	_ = crypto.Keccak256 // keep import used
 }
 
@@ -608,7 +612,7 @@ func TestScanCursor(t *testing.T) {
 		t.Skip("hardhat node not running on localhost:8545 — skipping")
 	}
 
-	bg     := context.Background()
+	bg := context.Background()
 	client := mustDial(t)
 	defer client.Close()
 
@@ -616,18 +620,24 @@ func TestScanCursor(t *testing.T) {
 
 	// Deploy fresh registries.
 	tagRegAddr, err := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-	if err != nil { t.Fatalf("DeployTagRegistry: %v", err) }
+	if err != nil {
+		t.Fatalf("DeployTagRegistry: %v", err)
+	}
 	chRegAddr, err := tags.DeployTagChannelRegistry(client, aliceAuth, "../contracts/TagChannelRegistry.json")
-	if err != nil { t.Fatalf("DeployTagChannelRegistry: %v", err) }
+	if err != nil {
+		t.Fatalf("DeployTagChannelRegistry: %v", err)
+	}
 	t.Logf("TagRegistry at %s", tagRegAddr.Hex())
 	t.Logf("TagChannelRegistry at %s", chRegAddr.Hex())
 
 	// Shared secret + channel participants.
 	ss := make([]byte, 32)
-	for i := range ss { ss[i] = 0xCC }
+	for i := range ss {
+		ss[i] = 0xCC
+	}
 	bobPkSpend := big.NewInt(0xB0B)
 	channelKey := tags.DeriveChannelKey(ss)
-	channels   := []tags.Channel{{SharedSecret: ss, PkSpend: bobPkSpend}}
+	channels := []tags.Channel{{SharedSecret: ss, PkSpend: bobPkSpend}}
 
 	aliceDK, _ := mlkem.GenerateKey768()
 	alicePkView := aliceDK.EncapsulationKey().Bytes()
@@ -660,7 +670,9 @@ func TestScanCursor(t *testing.T) {
 	cursor := tags.NewScanCursor()
 
 	tagMatches, cursor, err := tags.ScanBlocksFromCursor(client, tagRegAddr, channels, cursor, block2)
-	if err != nil { t.Fatalf("ScanBlocksFromCursor: %v", err) }
+	if err != nil {
+		t.Fatalf("ScanBlocksFromCursor: %v", err)
+	}
 	if len(tagMatches) != 2 {
 		t.Errorf("expected 2 tag matches, got %d", len(tagMatches))
 	}
@@ -670,7 +682,9 @@ func TestScanCursor(t *testing.T) {
 	t.Logf("  found %d tags, cursor.LastTagBlock=%d ✓", len(tagMatches), cursor.LastTagBlock)
 
 	chMatches, cursor, err := tags.ScanChannelsFromCursor(client, chRegAddr, aliceDK, cursor, 100)
-	if err != nil { t.Fatalf("ScanChannelsFromCursor: %v", err) }
+	if err != nil {
+		t.Fatalf("ScanChannelsFromCursor: %v", err)
+	}
 	if len(chMatches) != 2 {
 		t.Errorf("expected 2 channel matches, got %d", len(chMatches))
 	}
@@ -683,12 +697,16 @@ func TestScanCursor(t *testing.T) {
 	t.Log("Re-scanning from cursor — expecting 0 new items")
 	currentBlock, _ = client.BlockNumber(bg)
 	tagMatches2, cursor2, err := tags.ScanBlocksFromCursor(client, tagRegAddr, channels, cursor, currentBlock)
-	if err != nil { t.Fatalf("ScanBlocksFromCursor (2nd): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanBlocksFromCursor (2nd): %v", err)
+	}
 	if len(tagMatches2) != 0 {
 		t.Errorf("expected 0 new tags, got %d", len(tagMatches2))
 	}
 	chMatches2, cursor2, err := tags.ScanChannelsFromCursor(client, chRegAddr, aliceDK, cursor2, 100)
-	if err != nil { t.Fatalf("ScanChannelsFromCursor (2nd): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanChannelsFromCursor (2nd): %v", err)
+	}
 	if len(chMatches2) != 0 {
 		t.Errorf("expected 0 new channels, got %d", len(chMatches2))
 	}
@@ -698,10 +716,14 @@ func TestScanCursor(t *testing.T) {
 	// ── Step 5: Save and Load cursor ──────────────────────────────────────────
 	t.Log("Testing cursor persistence (Save/Load)")
 	tmpFile := t.TempDir() + "/scan.cursor"
-	if err := cursor.Save(tmpFile); err != nil { t.Fatalf("Save: %v", err) }
+	if err := cursor.Save(tmpFile); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 
 	loaded, err := tags.LoadScanCursor(tmpFile)
-	if err != nil { t.Fatalf("LoadScanCursor: %v", err) }
+	if err != nil {
+		t.Fatalf("LoadScanCursor: %v", err)
+	}
 	if loaded.LastTagBlock != cursor.LastTagBlock {
 		t.Errorf("LastTagBlock: got %d, want %d", loaded.LastTagBlock, cursor.LastTagBlock)
 	}
@@ -713,7 +735,9 @@ func TestScanCursor(t *testing.T) {
 
 	// ── Step 6: LoadScanCursor on missing file returns zero cursor ─────────────
 	missing, err := tags.LoadScanCursor(t.TempDir() + "/nonexistent.cursor")
-	if err != nil { t.Fatalf("LoadScanCursor (missing): %v", err) }
+	if err != nil {
+		t.Fatalf("LoadScanCursor (missing): %v", err)
+	}
 	if missing.LastTagBlock != 0 || missing.LastChannelIdx != 0 {
 		t.Error("missing cursor should return zero cursor")
 	}

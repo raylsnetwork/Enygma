@@ -53,4 +53,3 @@ func NewServer(cfg *config.Config) *gin.Engine {
 
 	return r
 }
-

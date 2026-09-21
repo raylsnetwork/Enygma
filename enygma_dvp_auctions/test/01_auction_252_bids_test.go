@@ -44,13 +44,13 @@ const (
 )
 
 type bidderState struct {
-	sk      *core.SpendKeyPair
-	saltIn  *big.Int
-	amount  *big.Int
-	saltA   *big.Int
-	saltB   *big.Int
-	commitA *big.Int
-	commitB *big.Int
+	sk       *core.SpendKeyPair
+	saltIn   *big.Int
+	amount   *big.Int
+	saltA    *big.Int
+	saltB    *big.Int
+	commitA  *big.Int
+	commitB  *big.Int
 	commitIn *big.Int
 }
 

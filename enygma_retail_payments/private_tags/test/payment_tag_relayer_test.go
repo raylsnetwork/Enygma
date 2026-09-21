@@ -63,7 +63,7 @@ import (
 	"strings"
 	"testing"
 
-	tags   "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -133,7 +133,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 
 	// ── If relayer not running: deploy contracts and print start command ───────
 	if !relayerAvailable() {
@@ -179,13 +179,13 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	}
 
 	channelRegistryAddr := common.HexToAddress(info.TagChannelRegistryAddr)
-	tagRegistryAddr     := common.HexToAddress(info.TagRegistryAddr)
-	relayerEthAddr      := common.HexToAddress(info.RelayerAddr)
+	tagRegistryAddr := common.HexToAddress(info.TagRegistryAddr)
+	relayerEthAddr := common.HexToAddress(info.RelayerAddr)
 
 	// ── Load payment contracts from receipts.json ─────────────────────────────
-	receipts     := loadPaymentReceipts(t)
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	receipts := loadPaymentReceipts(t)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	vaultABI := loadPaymentABI(t, "Erc20CoinVault")
@@ -196,10 +196,10 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 
 	gnarkClient := rpcore.NewPaymentClient("")
 	merkleDepth := 8
-	tokenId     := big.NewInt(0)
-	depositAmt  := big.NewInt(40)
-	paymentAmt  := big.NewInt(30)
-	changeAmt   := big.NewInt(10)
+	tokenId := big.NewInt(0)
+	depositAmt := big.NewInt(40)
+	paymentAmt := big.NewInt(30)
+	changeAmt := big.NewInt(10)
 
 	// ═════════════════════════════════════════════════════════════════════════
 	// PHASE 1 — Key Generation and Registration
@@ -207,13 +207,21 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Log("── Phase 1: Key Generation and Registration ──")
 
 	aliceSpend, err := rpcore.NewSpendKeyPair()
-	if err != nil { t.Fatalf("Alice NewSpendKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Alice NewSpendKeyPair: %v", err)
+	}
 	aliceView, err := rpcore.NewViewKeyPair()
-	if err != nil { t.Fatalf("Alice NewViewKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Alice NewViewKeyPair: %v", err)
+	}
 	bobSpend, err := rpcore.NewSpendKeyPair()
-	if err != nil { t.Fatalf("Bob NewSpendKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Bob NewSpendKeyPair: %v", err)
+	}
 	bobView, err := rpcore.NewViewKeyPair()
-	if err != nil { t.Fatalf("Bob NewViewKeyPair: %v", err) }
+	if err != nil {
+		t.Fatalf("Bob NewViewKeyPair: %v", err)
+	}
 
 	t.Logf("  Alice pk_spend: %s", aliceSpend.PublicKey)
 	t.Logf("  Bob   pk_spend: %s", bobSpend.PublicKey)
@@ -244,22 +252,28 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 
 	// Alice looks up total users and Bob's index for the privacy bitmap.
 	totalUsers, err := tags.GetUserCount(client, registryAddr)
-	if err != nil { t.Fatalf("GetUserCount: %v", err) }
+	if err != nil {
+		t.Fatalf("GetUserCount: %v", err)
+	}
 	bobIdx, err := tags.GetRecipientIndex(client, registryAddr, bobAuth.From)
-	if err != nil { t.Fatalf("GetRecipientIndex (Bob): %v", err) }
+	if err != nil {
+		t.Fatalf("GetRecipientIndex (Bob): %v", err)
+	}
 	t.Logf("  total users: %d  Bob index: %d", totalUsers, bobIdx)
 
 	// Alice prepares (c1, c2, bitmap) locally — no on-chain call yet.
 	channelSS, c1, c2, bitmap, err := tags.PrepareChannelSetup(
 		bobView.EncapsKey,
 		[]byte("Payment channel ready"),
-		[]byte(aliceAddr),        // Alice identifies herself inside c2
+		[]byte(aliceAddr), // Alice identifies herself inside c2
 		tags.PrivacyFull,
 		totalUsers,
 		bobIdx,
 		nil,
 	)
-	if err != nil { t.Fatalf("PrepareChannelSetup: %v", err) }
+	if err != nil {
+		t.Fatalf("PrepareChannelSetup: %v", err)
+	}
 	t.Logf("  ss_channel: %x...  c1=%dB  c2=%dB  bitmap=%dB",
 		channelSS[:8], len(c1), len(c2), len(bitmap))
 
@@ -289,7 +303,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 
 	// Bob scans TagChannelRegistry — scan only the channel just published.
 	bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, chResp.ChannelIdx, 1)
-	if err != nil { t.Fatalf("ScanChannels (Bob): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanChannels (Bob): %v", err)
+	}
 	if len(bobFound) != 1 {
 		t.Fatalf("Bob expected 1 channel, found %d", len(bobFound))
 	}
@@ -312,32 +328,54 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 
 	mintTx, err := erc20.Transact(aliceAuth, "mint", aliceAuth.From,
 		new(big.Int).Mul(depositAmt, big.NewInt(10)))
-	if err != nil { t.Fatalf("ERC20.mint: %v", err) }
-	if _, err := bind.WaitMined(ctx, client, mintTx); err != nil { t.Fatalf("wait mint: %v", err) }
+	if err != nil {
+		t.Fatalf("ERC20.mint: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, mintTx); err != nil {
+		t.Fatalf("wait mint: %v", err)
+	}
 
 	approveTx, err := erc20.Transact(aliceAuth, "approve", vaultAddr, depositAmt)
-	if err != nil { t.Fatalf("ERC20.approve: %v", err) }
-	if _, err := bind.WaitMined(ctx, client, approveTx); err != nil { t.Fatalf("wait approve: %v", err) }
+	if err != nil {
+		t.Fatalf("ERC20.approve: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, approveTx); err != nil {
+		t.Fatalf("wait approve: %v", err)
+	}
 
 	ss, capsule, err := rpcore.Encapsulate(aliceView.EncapsKey)
-	if err != nil { t.Fatalf("Encapsulate (deposit): %v", err) }
+	if err != nil {
+		t.Fatalf("Encapsulate (deposit): %v", err)
+	}
 	aliceSaltB, err := rpcore.DerivePaymentSalt(ss)
-	if err != nil { t.Fatalf("DerivePaymentSalt: %v", err) }
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt: %v", err)
+	}
 	aliceEncKey, err := rpcore.DerivePaymentKey(ss)
-	if err != nil { t.Fatalf("DerivePaymentKey: %v", err) }
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
+	}
 	aliceSaltBField := rpcore.SaltBToField(aliceSaltB)
 
 	aliceCommitment, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, aliceSaltBField, depositAmt, tokenId)
-	if err != nil { t.Fatalf("Erc20CommitmentV2 (deposit): %v", err) }
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (deposit): %v", err)
+	}
 
 	depositCtxt, err := rpcore.EncryptPayload(aliceEncKey, tokenId, depositAmt)
-	if err != nil { t.Fatalf("EncryptPayload (deposit): %v", err) }
+	if err != nil {
+		t.Fatalf("EncryptPayload (deposit): %v", err)
+	}
 
 	depositTx, err := vault.Transact(aliceAuth, "depositV2",
 		[]*big.Int{depositAmt, aliceSpend.PublicKey, aliceSaltBField, tokenId}, capsule, depositCtxt)
-	if err != nil { t.Fatalf("vault.depositV2: %v", err) }
+	if err != nil {
+		t.Fatalf("vault.depositV2: %v", err)
+	}
 	depositReceipt, err := bind.WaitMined(ctx, client, depositTx)
-	if err != nil { t.Fatalf("wait depositV2: %v", err) }
+	if err != nil {
+		t.Fatalf("wait depositV2: %v", err)
+	}
 	t.Logf("  deposit mined (block %d, commitment %s)", depositReceipt.BlockNumber, aliceCommitment)
 
 	// ═════════════════════════════════════════════════════════════════════════
@@ -347,7 +385,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 
 	mt := loadPaymentMerkleTree(t, client, vaultAddr, merkleDepth)
 	aliceProof, err := mt.GenerateProof(aliceCommitment)
-	if err != nil { t.Fatalf("GenerateProof (Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("GenerateProof (Alice): %v", err)
+	}
 	t.Logf("  Merkle root: %s", aliceProof.Root)
 
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
@@ -365,7 +405,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		[]*big.Int{big.NewInt(0)},
 		tokenId,
 	)
-	if err != nil { t.Fatalf("BoundPaymentProof: %v", err) }
+	if err != nil {
+		t.Fatalf("BoundPaymentProof: %v", err)
+	}
 	t.Logf("  proof generated")
 	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[4])
 	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
@@ -394,10 +436,12 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  payment tx.from = %s (relayer, not Alice) ✓", paySender.Hex())
 
 	// Verify on-chain events.
-	paymentSig  := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
 	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	txReceipt, err := client.TransactionReceipt(ctx, common.HexToHash(payResp.TxHash))
-	if err != nil { t.Fatalf("TransactionReceipt: %v", err) }
+	if err != nil {
+		t.Fatalf("TransactionReceipt: %v", err)
+	}
 	var payEvents, nfEvents int
 	for _, log := range txReceipt.Logs {
 		switch log.Topics[0] {
@@ -409,8 +453,12 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 			t.Logf("  Nullifier event: nullifier=%s", log.Topics[3].Big())
 		}
 	}
-	if payEvents != 1 { t.Errorf("expected 1 Payment event, got %d", payEvents) }
-	if nfEvents != 1  { t.Errorf("expected 1 Nullifier event, got %d", nfEvents) }
+	if payEvents != 1 {
+		t.Errorf("expected 1 Payment event, got %d", payEvents)
+	}
+	if nfEvents != 1 {
+		t.Errorf("expected 1 Nullifier event, got %d", nfEvents)
+	}
 
 	// ═════════════════════════════════════════════════════════════════════════
 	// PHASE 6 — Tag Notification via POST /relay/tag
@@ -425,7 +473,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		channelSS,
 		paymentAmt, tokenId, paymentResult.SaltB,
 	)
-	if err != nil { t.Fatalf("PreparePaymentTag: %v", err) }
+	if err != nil {
+		t.Fatalf("PreparePaymentTag: %v", err)
+	}
 	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes", startBlock, startBlock+3, len(noteCtxt))
 
 	hexTags := make([]string, len(windowTags))
@@ -466,7 +516,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	bobChannels := []tags.Channel{{SharedSecret: bobChannelSS, PkSpend: bobSpend.PublicKey}}
 	cursor := tags.NewScanCursor()
 	matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
-	if err != nil { t.Fatalf("ScanBlocksFromCursor (Bob): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanBlocksFromCursor (Bob): %v", err)
+	}
 	if len(matches) != 1 {
 		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
 	}
@@ -474,7 +526,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 
 	// Bob decrypts the tag payload to recover the note.
 	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].Entry.Ctxt)
-	if err != nil { t.Fatalf("DecryptPaymentNote: %v", err) }
+	if err != nil {
+		t.Fatalf("DecryptPaymentNote: %v", err)
+	}
 
 	t.Logf("  note.Amount:  %s  (want %s)", note.Amount, paymentAmt)
 	t.Logf("  note.TokenId: %s  (want %s)", note.TokenId, tokenId)
@@ -494,7 +548,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	// Bob recomputes his commitment and verifies it matches what is on-chain.
 	bobRecomputedCmt, err := rpcore.Erc20CommitmentV2(
 		bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-	if err != nil { t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err) }
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
+	}
 
 	if bobRecomputedCmt.Cmp(paymentResult.Statement[4]) != 0 {
 		t.Errorf("Bob's recomputed commitment mismatch:\n  got:  %s\n  want: %s",
@@ -506,7 +562,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	// Alice verifies her change note.
 	aliceChangeCmt, err := rpcore.Erc20CommitmentV2(
 		aliceSpend.PublicKey, paymentResult.SaltA, changeAmt, tokenId)
-	if err != nil { t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err) }
+	if err != nil {
+		t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err)
+	}
 	if aliceChangeCmt.Cmp(paymentResult.Statement[5]) != 0 {
 		t.Errorf("Alice's change commitment mismatch")
 	}
@@ -519,15 +577,15 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Log("── Phase 8: Sender Privacy Verification ──")
 
 	aliceEthAddr := common.HexToAddress(aliceAddr)
-	bobEthAddr   := common.HexToAddress(bobAddr)
+	bobEthAddr := common.HexToAddress(bobAddr)
 
 	for _, check := range []struct {
 		name   string
 		sender common.Address
 	}{
 		{"channel setup", chSender},
-		{"payment",       paySender},
-		{"tag",           tagSender},
+		{"payment", paySender},
+		{"tag", tagSender},
 	} {
 		if check.sender == aliceEthAddr {
 			t.Errorf("%s: tx.from == Alice — sender privacy violated", check.name)
@@ -601,7 +659,7 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 	_ = bobAuth // Bob initiates channel but sends via relayer — auth not needed for tx
 
 	// ── Discover registry addresses ───────────────────────────────────────────
@@ -614,22 +672,28 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 		t.Skip("relayer TagChannelRegistry not configured — restart with RELAYER_TAG_CHANNEL_REGISTRY_ADDR=<addr>")
 	}
 	channelRegistryAddr := common.HexToAddress(info.TagChannelRegistryAddr)
-	relayerEthAddr      := common.HexToAddress(info.RelayerAddr)
+	relayerEthAddr := common.HexToAddress(info.RelayerAddr)
 
 	// ── Load UserRegistry for bitmap parameters ───────────────────────────────
-	receipts     := loadPaymentReceipts(t)
+	receipts := loadPaymentReceipts(t)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	// Alice and Carol generate ML-KEM keypairs.
 	// Alice is the recipient in all modes; Carol has a completely different key.
 	aliceDK, err := rpcore.NewViewKeyPair()
-	if err != nil { t.Fatalf("NewViewKeyPair (Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("NewViewKeyPair (Alice): %v", err)
+	}
 	carolDK, err := rpcore.NewViewKeyPair()
-	if err != nil { t.Fatalf("NewViewKeyPair (Carol): %v", err) }
+	if err != nil {
+		t.Fatalf("NewViewKeyPair (Carol): %v", err)
+	}
 
 	// Register Alice so she has an index in UserRegistry for the bitmap.
 	aliceSpend, err := rpcore.NewSpendKeyPair()
-	if err != nil { t.Fatalf("NewSpendKeyPair (Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("NewSpendKeyPair (Alice): %v", err)
+	}
 	if err := rpcore.Register(client, aliceAuth, registryAddr,
 		aliceSpend.PublicKey, aliceDK.EncapsKey, make([]byte, 1088), make([]byte, 92)); err != nil {
 		if !strings.Contains(err.Error(), "AlreadyRegistered") &&
@@ -640,9 +704,13 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 
 	// Look up Alice's registration index and total users for the bitmap.
 	totalUsers, err := tags.GetUserCount(client, registryAddr)
-	if err != nil { t.Fatalf("GetUserCount: %v", err) }
+	if err != nil {
+		t.Fatalf("GetUserCount: %v", err)
+	}
 	aliceIdx, err := tags.GetRecipientIndex(client, registryAddr, aliceAuth.From)
-	if err != nil { t.Fatalf("GetRecipientIndex (Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("GetRecipientIndex (Alice): %v", err)
+	}
 	t.Logf("UserRegistry: totalUsers=%d  aliceIdx=%d", totalUsers, aliceIdx)
 
 	// Excluded indices for PrivacyRift — all users except Alice and index 0.
@@ -656,11 +724,11 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 	// ── Define the four test cases ────────────────────────────────────────────
 
 	type modeCase struct {
-		mode        tags.PrivacyMode
-		message     string
-		senderId    string
-		wantMinBits int
-		wantMaxBits int // -1 = exact totalUsers
+		mode             tags.PrivacyMode
+		message          string
+		senderId         string
+		wantMinBits      int
+		wantMaxBits      int // -1 = exact totalUsers
 		wantRecipientSet bool
 	}
 
@@ -721,7 +789,9 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 				aliceIdx,
 				excluded,
 			)
-			if err != nil { t.Fatalf("PrepareChannelSetup: %v", err) }
+			if err != nil {
+				t.Fatalf("PrepareChannelSetup: %v", err)
+			}
 			t.Logf("  c1=%dB  c2=%dB  bitmap=%dB", len(c1), len(c2), len(bitmap))
 
 			// ── Verify bitmap structure before publishing ────────────────────
@@ -781,7 +851,9 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 				client, channelRegistryAddr, aliceDK.DecapsKey,
 				channelCursor, 10,
 			)
-			if err != nil { t.Fatalf("ScanChannels (Alice): %v", err) }
+			if err != nil {
+				t.Fatalf("ScanChannels (Alice): %v", err)
+			}
 			if len(aliceFound) != 1 {
 				t.Fatalf("Alice expected 1 channel, found %d", len(aliceFound))
 			}
@@ -810,7 +882,9 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 				client, channelRegistryAddr, carolDK.DecapsKey,
 				channelCursor, 10,
 			)
-			if err != nil { t.Fatalf("ScanChannels (Carol): %v", err) }
+			if err != nil {
+				t.Fatalf("ScanChannels (Carol): %v", err)
+			}
 			if len(carolFound) != 0 {
 				t.Errorf("Carol should find 0 channels, found %d", len(carolFound))
 			}
