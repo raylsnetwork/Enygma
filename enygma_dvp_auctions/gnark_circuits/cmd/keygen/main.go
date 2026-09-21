@@ -4,7 +4,7 @@ package main
 //
 // Run with:
 //
-//	go run generation.go
+//	go run ./cmd/keygen
 //
 // Keys are written to ./scripts/keys/.
 

@@ -30,8 +30,8 @@ package tests
 //
 //	cd ../enygma_dvp && npx hardhat node
 //	bash setup.sh                                              (from enygma_retail_payments/)
-//	cd gnark_circuits && go run generation.go                  (regenerate keys incl. PaymentRelayerFeePublic)
-//	cd gnark_circuits && go run main.go                        (start gnark server :8082)
+//	cd gnark_circuits && go run ./cmd/keygen                  (regenerate keys incl. PaymentRelayerFeePublic)
+//	cd gnark_circuits && go run ./cmd/server                        (start gnark server :8082)
 //
 // Run:
 //

@@ -23,7 +23,7 @@ package tests
 //
 //	Terminal 1: cd enygma_dvp && npx hardhat node
 //	Terminal 2: /tmp/deploy_contracts && /tmp/init_contracts  (from enygma_dvp/)
-//	Terminal 3: cd gnark_circuits && go run main.go
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server
 //	Terminal 4: RELAYER_PRIVATE_KEY=<key> RELAYER_API_KEY=test-api-key-dev-only \
 //	            RELAYER_DVP_ADDR=<EnygmaDvp addr> CC=/usr/bin/clang go run main.go \
 //	            (from enygma_dvp/relayer/)
@@ -56,7 +56,7 @@ const (
 	dvpRelayerURL    = "http://localhost:8091"
 	dvpRelayerAPIKey = "test-api-key-dev-only"
 
-	// Vault IDs as registered by init.go: ERC-20 first (0), ERC-721 second (1).
+	// Vault IDs as registered by scripts/cmd/init: ERC-20 first (0), ERC-721 second (1).
 	vaultIdErc20  = "0"
 	vaultIdErc721 = "1"
 )

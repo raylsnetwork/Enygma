@@ -33,7 +33,7 @@ package tags_test
 //
 //	Terminal 1: cd enygma_dvp && npx hardhat node
 //	Terminal 2: bash setup.sh
-//	Terminal 3: cd gnark_circuits && go run main.go
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server
 //	Terminal 4: cd relayer && \
 //	              RELAYER_PRIVATE_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda \
 //	              RELAYER_API_KEY=test-api-key-dev-only \
@@ -348,7 +348,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 		t.Skip("Hardhat node not running on localhost:8545 — skipping")
 	}
 	if !gnarkAvailable() {
-		t.Skip("gnark server not running on localhost:8082 — run: cd gnark_circuits && go run main.go")
+		t.Skip("gnark server not running on localhost:8082 — run: cd gnark_circuits && go run ./cmd/server")
 	}
 
 	ctx := context.Background()

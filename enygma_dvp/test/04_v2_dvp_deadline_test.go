@@ -33,7 +33,7 @@ package tests
 // Prerequisites:
 //   1. npx hardhat node
 //   2. deploy + init (see MEMORY.md)
-//   3. cd gnark_circuits && go run main.go   (keys must include DvP circuits)
+//   3. cd gnark_circuits && go run ./cmd/server   (keys must include DvP circuits)
 //
 // Run:
 //   cd test && CC=/usr/bin/clang go test -run TestV2DvP_WithDeadline -v -timeout 600s

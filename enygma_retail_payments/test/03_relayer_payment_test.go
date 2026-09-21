@@ -17,7 +17,7 @@ package tests
 //
 //	Terminal 1: cd ../enygma_dvp && npx hardhat node
 //	Terminal 2: bash setup.sh          (from enygma_retail_payments/)
-//	Terminal 3: cd gnark_circuits && go run main.go
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server
 //	Terminal 4: cd relayer && RELAYER_PRIVATE_KEY=<key> RELAYER_API_KEY=<token> go run main.go
 //
 // Run:

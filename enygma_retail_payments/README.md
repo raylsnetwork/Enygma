@@ -77,8 +77,8 @@ enygma_retail_payments/
 ├── src/                # Core Go library (module: enygma_retail_payments/src)
 ├── test/               # Integration tests (module: enygma_retail_payments/test)
 ├── scripts/            # Deployment and initialization scripts
-│   ├── deploy.go       # Deploys all contracts; writes build/receipts.json
-│   └── init.go         # Initializes EnygmaDvp on-chain with VKs and vault
+│   ├── cmd/deploy      # Deploys all contracts; writes build/receipts.json
+│   └── cmd/init        # Initializes EnygmaDvp on-chain with VKs and vault
 ├── contracts/          # Solidity contracts
 │   └── abis/           # Compiled contract ABIs (flat JSON files)
 └── build/              # Deployment receipts + exported VK JSONs (gitignored)
@@ -144,10 +144,10 @@ go run ./cmd/export_vk/ ../build
 
 # Deploy contracts (writes build/receipts.json)
 cd ../enygma_retail_payments
-go build -C scripts -o /tmp/rp_deploy deploy.go && /tmp/rp_deploy
+go build -C scripts -o /tmp/rp_deploy ./cmd/deploy && /tmp/rp_deploy
 
 # Initialize contracts on-chain (registers VK and vault)
-go build -C scripts -o /tmp/rp_init init.go && /tmp/rp_init
+go build -C scripts -o /tmp/rp_init ./cmd/init && /tmp/rp_init
 ```
 
 </details>
@@ -156,7 +156,7 @@ go build -C scripts -o /tmp/rp_init init.go && /tmp/rp_init
 
 ```bash
 cd gnark_circuits
-go run main.go
+go run ./cmd/server
 ```
 
 The server loads proving/verifying keys from `./scripts/keys/` at startup. Pre-generated
@@ -180,7 +180,7 @@ gnark server (step 3).
 
 ```bash
 cd gnark_circuits
-go run generation.go
+go run ./cmd/keygen
 ```
 
 After regenerating, re-run `setup.sh` (or the manual steps 2c–2e above) to export the
