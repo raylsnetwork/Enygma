@@ -20,7 +20,7 @@ type AuctionBatchRequest struct {
 	StBatchWinnerAmount string      `json:"stBatchWinnerAmount" binding:"required"`
 
 	// private witnesses
-	WtAuctionId string      `json:"wtAuctionId" binding:"required"` // must equal StAuctionId
+	WtAuctionId string `json:"wtAuctionId" binding:"required"` // must equal StAuctionId
 
 	// private witnesses — auctioneer's decrypted bid data
 	WtActive    [100]string `json:"wtActive"    binding:"required"` // "0" or "1" per slot

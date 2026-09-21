@@ -103,7 +103,7 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 	}
 	pubSig[36] = blockHash
 	pubSig[49] = deterministicNullifier(t, "m14-arity")
-	pubSig[50] = big.NewInt(424242) // Hash — unbound by the contract (documented C-09 deposit-side gap), any value accepted
+	pubSig[50] = big.NewInt(424242)           // Hash — unbound by the contract (documented C-09 deposit-side gap), any value accepted
 	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaDepositProof{
@@ -185,7 +185,7 @@ func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
 	}
 	pubSig[36] = blockHash
 	pubSig[49] = deterministicNullifier(t, "m15-deposit-credit")
-	pubSig[50] = big.NewInt(1) // Hash — unbound (documented C-09 deposit-side gap)
+	pubSig[50] = big.NewInt(1)                // Hash — unbound (documented C-09 deposit-side gap)
 	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaDepositProof{
@@ -297,7 +297,7 @@ func TestC09_WithdrawRejectsMismatchedDepositValue(t *testing.T) {
 	}
 	pubSig[36] = blockHash
 	pubSig[49] = deterministicNullifier(t, "c09-mismatch")
-	pubSig[50] = big.NewInt(claimedDebit) // TotalDepositValue: proof claims only 1
+	pubSig[50] = big.NewInt(claimedDebit)     // TotalDepositValue: proof claims only 1
 	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaWithdrawProof{
@@ -391,7 +391,7 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 	}
 	pubSig[36] = blockHash
 	pubSig[49] = deterministicNullifier(t, "m15-withdraw-debit")
-	pubSig[50] = big.NewInt(withdrawAmount) // TotalDepositValue: matches Σ depositParams below (Fix C-09)
+	pubSig[50] = big.NewInt(withdrawAmount)   // TotalDepositValue: matches Σ depositParams below (Fix C-09)
 	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaWithdrawProof{

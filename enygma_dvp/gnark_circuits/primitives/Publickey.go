@@ -1,10 +1,9 @@
-package primitives 
+package primitives
 
-import(
+import (
 	"github.com/consensys/gnark/frontend"
-	 pos "gnark_server/poseidon"
+	pos "gnark_server/poseidon"
 )
-
 
 func PublicKey(api frontend.API, privateKey frontend.Variable) frontend.Variable {
 	return pos.Poseidon(api, []frontend.Variable{privateKey})

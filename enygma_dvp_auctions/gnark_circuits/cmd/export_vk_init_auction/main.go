@@ -54,11 +54,11 @@ var circuits = []struct {
 	name   string
 	vkPath string
 }{
-	{name: "AuctionLock",     vkPath: "scripts/keys/AuctionLock.vk"},
-	{name: "AuctionBid",      vkPath: "scripts/keys/AuctionBid.vk"},
-	{name: "AuctionBatch",    vkPath: "scripts/keys/AuctionBatch.vk"},
-	{name: "AuctionFinal",    vkPath: "scripts/keys/AuctionFinal.vk"},
-	{name: "AuctionRevert",   vkPath: "scripts/keys/AuctionRevert.vk"},
+	{name: "AuctionLock", vkPath: "scripts/keys/AuctionLock.vk"},
+	{name: "AuctionBid", vkPath: "scripts/keys/AuctionBid.vk"},
+	{name: "AuctionBatch", vkPath: "scripts/keys/AuctionBatch.vk"},
+	{name: "AuctionFinal", vkPath: "scripts/keys/AuctionFinal.vk"},
+	{name: "AuctionRevert", vkPath: "scripts/keys/AuctionRevert.vk"},
 	{name: "AuctionWithdraw", vkPath: "scripts/keys/AuctionWithdraw.vk"},
 }
 
@@ -97,21 +97,28 @@ func exportVK(vkPath, outPath string) error {
 	vk.G1.Alpha.Y.BigInt(&ay)
 
 	var bxA0, bxA1, byA0, byA1 big.Int
-	vk.G2.Beta.X.A0.BigInt(&bxA0); vk.G2.Beta.X.A1.BigInt(&bxA1)
-	vk.G2.Beta.Y.A0.BigInt(&byA0); vk.G2.Beta.Y.A1.BigInt(&byA1)
+	vk.G2.Beta.X.A0.BigInt(&bxA0)
+	vk.G2.Beta.X.A1.BigInt(&bxA1)
+	vk.G2.Beta.Y.A0.BigInt(&byA0)
+	vk.G2.Beta.Y.A1.BigInt(&byA1)
 
 	var gxA0, gxA1, gyA0, gyA1 big.Int
-	vk.G2.Gamma.X.A0.BigInt(&gxA0); vk.G2.Gamma.X.A1.BigInt(&gxA1)
-	vk.G2.Gamma.Y.A0.BigInt(&gyA0); vk.G2.Gamma.Y.A1.BigInt(&gyA1)
+	vk.G2.Gamma.X.A0.BigInt(&gxA0)
+	vk.G2.Gamma.X.A1.BigInt(&gxA1)
+	vk.G2.Gamma.Y.A0.BigInt(&gyA0)
+	vk.G2.Gamma.Y.A1.BigInt(&gyA1)
 
 	var dxA0, dxA1, dyA0, dyA1 big.Int
-	vk.G2.Delta.X.A0.BigInt(&dxA0); vk.G2.Delta.X.A1.BigInt(&dxA1)
-	vk.G2.Delta.Y.A0.BigInt(&dyA0); vk.G2.Delta.Y.A1.BigInt(&dyA1)
+	vk.G2.Delta.X.A0.BigInt(&dxA0)
+	vk.G2.Delta.X.A1.BigInt(&dxA1)
+	vk.G2.Delta.Y.A0.BigInt(&dyA0)
+	vk.G2.Delta.Y.A1.BigInt(&dyA1)
 
 	ic := make([][]string, len(vk.G1.K))
 	for i, pt := range vk.G1.K {
 		var kx, ky big.Int
-		pt.X.BigInt(&kx); pt.Y.BigInt(&ky)
+		pt.X.BigInt(&kx)
+		pt.Y.BigInt(&ky)
 		ic[i] = g1Fields(&kx, &ky)
 	}
 

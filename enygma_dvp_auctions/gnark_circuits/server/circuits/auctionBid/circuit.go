@@ -8,13 +8,13 @@ import "math/big"
 //
 // Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit]
 type AuctionBidRequest struct {
-	StAuctionId    string    `json:"stAuctionId"    binding:"required"`
-	StTreeNumber   string    `json:"stTreeNumber"   binding:"required"`
-	StMerkleRoot   string    `json:"stMerkleRoot"   binding:"required"`
-	StNullifier    string    `json:"stNullifier"    binding:"required"`
-	StCommitA      string    `json:"stCommitA"      binding:"required"` // Alice's locked bid
-	StCommitB      string    `json:"stCommitB"      binding:"required"` // Bob's USDC payout destination
-	StRevertCommit string    `json:"stRevertCommit" binding:"required"` // Alice's pre-committed recovery destination
+	StAuctionId    string `json:"stAuctionId"    binding:"required"`
+	StTreeNumber   string `json:"stTreeNumber"   binding:"required"`
+	StMerkleRoot   string `json:"stMerkleRoot"   binding:"required"`
+	StNullifier    string `json:"stNullifier"    binding:"required"`
+	StCommitA      string `json:"stCommitA"      binding:"required"` // Alice's locked bid
+	StCommitB      string `json:"stCommitB"      binding:"required"` // Bob's USDC payout destination
+	StRevertCommit string `json:"stRevertCommit" binding:"required"` // Alice's pre-committed recovery destination
 
 	WtAuctionId    string    `json:"wtAuctionId"    binding:"required"` // must equal StAuctionId
 	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber

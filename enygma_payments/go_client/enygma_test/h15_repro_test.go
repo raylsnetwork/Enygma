@@ -145,7 +145,7 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getPublicValues: %v", err)
 	}
-	keys6 := pubVals.Keys[1:]       // accountIds 1..6
+	keys6 := pubVals.Keys[1:]         // accountIds 1..6
 	balances6 := pubVals.Balances[1:] // accountIds 1..6
 
 	// Mine past the epoch boundary (epochInterval=30, per freshSetup) so the

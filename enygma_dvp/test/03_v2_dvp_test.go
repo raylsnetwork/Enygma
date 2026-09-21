@@ -61,20 +61,20 @@ func TestV2DvP(t *testing.T) {
 	// ── Load contract addresses ───────────────────────────────────────────────
 	receipts := loadOnchainReceipts(t)
 	erc20VaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr      := common.HexToAddress(receipts["ERC20"].ContractAddress)
-	nftVaultAddr   := common.HexToAddress(receipts["Erc721CoinVault"].ContractAddress)
-	erc721Addr     := common.HexToAddress(receipts["ERC721"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	nftVaultAddr := common.HexToAddress(receipts["Erc721CoinVault"].ContractAddress)
+	erc721Addr := common.HexToAddress(receipts["ERC721"].ContractAddress)
 
 	// ── ABIs ──────────────────────────────────────────────────────────────────
 	erc20VaultABI := loadOnchainABI(t, "core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
-	erc20ABI      := loadOnchainABI(t, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json")
-	nftVaultABI   := loadOnchainABI(t, "core/contracts/vaults/Erc721CoinVault.sol/Erc721CoinVault.json")
-	erc721ABI     := loadOnchainABI(t, "erc721/contracts/RaylsERC721.sol/RaylsERC721.json")
+	erc20ABI := loadOnchainABI(t, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json")
+	nftVaultABI := loadOnchainABI(t, "core/contracts/vaults/Erc721CoinVault.sol/Erc721CoinVault.json")
+	erc721ABI := loadOnchainABI(t, "erc721/contracts/RaylsERC721.sol/RaylsERC721.json")
 
 	erc20Vault := bind.NewBoundContract(erc20VaultAddr, erc20VaultABI, client, client, client)
-	erc20      := bind.NewBoundContract(erc20Addr,      erc20ABI,      client, client, client)
-	nftVault   := bind.NewBoundContract(nftVaultAddr,   nftVaultABI,   client, client, client)
-	erc721     := bind.NewBoundContract(erc721Addr,     erc721ABI,     client, client, client)
+	erc20 := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
+	nftVault := bind.NewBoundContract(nftVaultAddr, nftVaultABI, client, client, client)
+	erc721 := bind.NewBoundContract(erc721Addr, erc721ABI, client, client, client)
 
 	auth := hardhatAuth(t, client)
 	addr := auth.From
@@ -83,12 +83,12 @@ func TestV2DvP(t *testing.T) {
 	merkleDepth := 8
 
 	// Alice delivers: 30 USDT (ERC20), tokenId=0
-	erc20Amount  := big.NewInt(30)
+	erc20Amount := big.NewInt(30)
 	erc20TokenId := big.NewInt(0)
 
 	// Bob delivers: ERC721 ticket tokenId=42, amount=1
 	nftTokenId := big.NewInt(42)
-	nftAmount  := big.NewInt(1)
+	nftAmount := big.NewInt(1)
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Step 1 — Alice deposits 30 USDT into the ERC20 vault
@@ -201,7 +201,7 @@ func TestV2DvP(t *testing.T) {
 
 	// Build separate Merkle trees — one per vault.
 	erc20Mt := loadVaultMerkleTree(t, client, erc20VaultAddr, merkleDepth)
-	nftMt   := loadVaultMerkleTree(t, client, nftVaultAddr,   merkleDepth)
+	nftMt := loadVaultMerkleTree(t, client, nftVaultAddr, merkleDepth)
 
 	aliceProof, err := erc20Mt.GenerateProof(aliceCommitment)
 	if err != nil {
@@ -222,13 +222,13 @@ func TestV2DvP(t *testing.T) {
 	// ─────────────────────────────────────────────────────────────────────────
 	initiatorResult, err := gnarkClient.DvPInitiatorProof(
 		core.KeyPair{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey},
-		aliceSaltField,  // Alice's ERC20 deposit salt
-		erc20Amount,     // Alice delivers amount=30
-		erc20TokenId,    // Alice delivers tokenId=0
+		aliceSaltField, // Alice's ERC20 deposit salt
+		erc20Amount,    // Alice delivers amount=30
+		erc20TokenId,   // Alice delivers tokenId=0
 		bobSpend.PublicKey,
 		bobView.EncapsKey,
-		nftAmount,   // Alice expects amount=1
-		nftTokenId,  // Alice expects tokenId=42
+		nftAmount,  // Alice expects amount=1
+		nftTokenId, // Alice expects tokenId=42
 		big.NewInt(0),
 		aliceProof,
 		merkleDepth,
@@ -304,9 +304,9 @@ func TestV2DvP(t *testing.T) {
 	// ─────────────────────────────────────────────────────────────────────────
 	destinationResult, err := gnarkClient.DvPDestinationProof(
 		core.KeyPair{PrivateKey: bobSpend.PrivateKey, PublicKey: bobSpend.PublicKey},
-		bobNftSalt,    // Bob's NFT deposit salt (plain random)
-		nftAmount,     // Bob delivers amount=1
-		nftTokenId,    // Bob delivers tokenId=42
+		bobNftSalt, // Bob's NFT deposit salt (plain random)
+		nftAmount,  // Bob delivers amount=1
+		nftTokenId, // Bob delivers tokenId=42
 		aliceSpend.PublicKey,
 		saltADerivedField,       // HKDF(ss_B, "Init Salt") — salt for Alice's output (she receives NFT)
 		saltBDerivedField,       // HKDF(ss_B, "note salt") — salt for Bob's output (he receives USDT)
