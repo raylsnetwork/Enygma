@@ -67,9 +67,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		circuit := newCircuit()
 		witness := newCircuit()
 
-		witness.StMessage         = frontend.Variable(request.StMessage)
+		witness.StMessage = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
-		witness.WtTokenId         = frontend.Variable(request.WtTokenId)
+		witness.WtTokenId = frontend.Variable(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {
 			witness.StTreeNumbers[i] = frontend.Variable(request.StTreeNumbers[i])

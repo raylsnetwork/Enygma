@@ -9,13 +9,13 @@ import "math/big"
 //   - Output 0 : Payment to Bob.
 //   - Output 1 : Change back to Alice.
 type PaymentRequest struct {
-	StMessage        string       `json:"stMessage"        binding:"required"`
-	StTreeNumbers    [1]string    `json:"stTreeNumbers"    binding:"required"`
-	StMerkleRoots    [1]string    `json:"stMerkleRoots"    binding:"required"`
-	StNullifiers     [1]string    `json:"stNullifiers"     binding:"required"`
-	StCommitmentsOut [2]string    `json:"stCommitmentsOut" binding:"required"`
+	StMessage        string    `json:"stMessage"        binding:"required"`
+	StTreeNumbers    [1]string `json:"stTreeNumbers"    binding:"required"`
+	StMerkleRoots    [1]string `json:"stMerkleRoots"    binding:"required"`
+	StNullifiers     [1]string `json:"stNullifiers"     binding:"required"`
+	StCommitmentsOut [2]string `json:"stCommitmentsOut" binding:"required"`
 	// VULN-5: vault contract address bound into the proof to prevent cross-deployment replay.
-	StContractAddress string      `json:"stContractAddress" binding:"required"`
+	StContractAddress string `json:"stContractAddress" binding:"required"`
 
 	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`
 	WtValuesIn           [1]string    `json:"wtValuesIn"           binding:"required"`

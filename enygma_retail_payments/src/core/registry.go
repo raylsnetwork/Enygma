@@ -15,18 +15,18 @@ type AuditorKeyPair = auditor.AuditorKeyPair
 
 var (
 	// User registry
-	Register                = ur.Register
-	LookupKeys              = ur.LookupKeys
-	LookupAuditCiphertexts  = ur.LookupAuditCiphertexts
-	GetUserCount            = ur.GetUserCount
-	GetUserIndex            = ur.GetUserIndex
-	GetUserAt               = ur.GetUserAt
-	GetRegistrationFee      = ur.GetRegistrationFee
-	SetRegistrationFee      = ur.SetRegistrationFee
-	WithdrawFees            = ur.WithdrawFees
+	Register               = ur.Register
+	LookupKeys             = ur.LookupKeys
+	LookupAuditCiphertexts = ur.LookupAuditCiphertexts
+	GetUserCount           = ur.GetUserCount
+	GetUserIndex           = ur.GetUserIndex
+	GetUserAt              = ur.GetUserAt
+	GetRegistrationFee     = ur.GetRegistrationFee
+	SetRegistrationFee     = ur.SetRegistrationFee
+	WithdrawFees           = ur.WithdrawFees
 
 	// Auditor
-	NewAuditorKeyPair         = auditor.NewAuditorKeyPair
-	EncryptViewKeyForAuditor  = auditor.EncryptViewKeyForAuditor
-	AuditorDecryptViewKey     = auditor.AuditorDecryptViewKey
+	NewAuditorKeyPair        = auditor.NewAuditorKeyPair
+	EncryptViewKeyForAuditor = auditor.EncryptViewKeyForAuditor
+	AuditorDecryptViewKey    = auditor.AuditorDecryptViewKey
 )

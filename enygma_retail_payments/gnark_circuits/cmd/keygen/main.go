@@ -2,12 +2,12 @@
 package main
 
 import (
-	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/constraint/solver"
+	"github.com/consensys/gnark/frontend"
 
-	"gnark_server/templates"
 	"gnark_server/primitives"
 	script "gnark_server/scripts"
+	"gnark_server/templates"
 )
 
 func GenerationVkPk() {

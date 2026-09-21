@@ -4,11 +4,10 @@ import (
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 
-	"gnark_server/templates"
 	"gnark_server/primitives"
 	script "gnark_server/scripts"
+	"gnark_server/templates"
 )
-
 
 // GenerationVkPk generates proving keys (PK) and verification keys (VK) for all
 // active circuits and writes them to scripts/keys/.
@@ -34,11 +33,9 @@ import (
 //   - ERC1155 NonFungible with Auditor
 //   - Auction Init, Auction Bid, Auction Private Opening, Auction Not Winning
 //   - Auction Init with Auditor, Auction Bid with Auditor
-func GenerationVkPk (){
+func GenerationVkPk() {
 
 	solver.RegisterHint(primitives.ModHint)
-	
-	
 
 	// NOT covered by integration tests (test/01–04)
 	// auctionbidConfig := templates.AuctionBidCircuitConfig{
@@ -242,6 +239,6 @@ func GenerationVkPk (){
 	script.SetupUsdrFee(usdr_fee_config, "UsdrFee")
 }
 
-func main(){
+func main() {
 	GenerationVkPk()
 }

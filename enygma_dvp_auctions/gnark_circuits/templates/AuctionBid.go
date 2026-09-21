@@ -44,8 +44,8 @@ type AuctionBidCircuit struct {
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
 
 	// --- private witnesses ---
-	WtAuctionId    frontend.Variable   // must equal StAuctionId; binds proof to one auction
-	WtTreeNumber   frontend.Variable   // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
+	WtAuctionId  frontend.Variable // must equal StAuctionId; binds proof to one auction
+	WtTreeNumber frontend.Variable // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
 
 	// --- private witnesses: Alice's input USDC note ---
 	WtSpendKey     frontend.Variable   // Alice's spend secret key

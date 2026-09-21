@@ -91,12 +91,12 @@ func GetNullifierWithTree(sk, treeNumber, pathIndex *big.Int) (*big.Int, error) 
 // NFT note and locks it for auction.
 type AuctionLockParams struct {
 	Bob         *SpendKeyPair // Bob's spend key pair
-	TokenId     *big.Int     // NFT token ID
-	SaltIn      *big.Int     // salt of Bob's existing NFT note being spent
-	TreeNumber  *big.Int     // NFT Merkle sub-tree index
-	MerkleProof *MerkleProof // inclusion proof for Bob's existing NFT note
-	SaltLocked  *big.Int     // fresh random salt for the locked commitment
-	SaltRevert  *big.Int     // fresh random salt for the revert commitment (≠ SaltLocked)
+	TokenId     *big.Int      // NFT token ID
+	SaltIn      *big.Int      // salt of Bob's existing NFT note being spent
+	TreeNumber  *big.Int      // NFT Merkle sub-tree index
+	MerkleProof *MerkleProof  // inclusion proof for Bob's existing NFT note
+	SaltLocked  *big.Int      // fresh random salt for the locked commitment
+	SaltRevert  *big.Int      // fresh random salt for the revert commitment (≠ SaltLocked)
 }
 
 // AuctionLockProof generates a proof for the AuctionLock circuit.
@@ -150,17 +150,17 @@ func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResu
 
 // AuctionBidParams holds the inputs needed to prove a sealed all-in USDC bid.
 type AuctionBidParams struct {
-	AuctionId   *big.Int     // target auction
+	AuctionId   *big.Int      // target auction
 	Bidder      *SpendKeyPair // bidder's spend key pair
-	BidAmount   *big.Int     // bid amount — must equal the input note's full amount (all-in)
-	TokenId     *big.Int     // USDC token ID
-	SaltIn      *big.Int     // salt of the bidder's existing USDC note being spent
-	TreeNumber  *big.Int     // USDC Merkle sub-tree index
-	MerkleProof *MerkleProof // inclusion proof for the bidder's existing USDC note
-	BobPk       *big.Int     // seller's spend public key (commitB's owner)
-	SaltA       *big.Int     // fresh random salt for the locked bid commitment (commitA)
-	SaltB       *big.Int     // salt for the seller's payout commitment (commitB) — HKDF(ss, "note salt")
-	SaltRevert  *big.Int     // fresh random salt for the revert commitment (≠ SaltA)
+	BidAmount   *big.Int      // bid amount — must equal the input note's full amount (all-in)
+	TokenId     *big.Int      // USDC token ID
+	SaltIn      *big.Int      // salt of the bidder's existing USDC note being spent
+	TreeNumber  *big.Int      // USDC Merkle sub-tree index
+	MerkleProof *MerkleProof  // inclusion proof for the bidder's existing USDC note
+	BobPk       *big.Int      // seller's spend public key (commitB's owner)
+	SaltA       *big.Int      // fresh random salt for the locked bid commitment (commitA)
+	SaltB       *big.Int      // salt for the seller's payout commitment (commitB) — HKDF(ss, "note salt")
+	SaltRevert  *big.Int      // fresh random salt for the revert commitment (≠ SaltA)
 }
 
 // AuctionBidProof generates a proof for the AuctionBid circuit.
@@ -463,9 +463,9 @@ func (c *AuctionClient) AuctionRevertProof(p AuctionRevertParams) (*AuctionProof
 type AuctionWithdrawParams struct {
 	AuctionId *big.Int
 	Bidder    *SpendKeyPair // bidder's spend key pair
-	SaltA     *big.Int     // salt used when forming commitA at submitBid() time
-	Amount    *big.Int     // USDC amount committed in commitA
-	TokenId   *big.Int     // USDC token ID
+	SaltA     *big.Int      // salt used when forming commitA at submitBid() time
+	Amount    *big.Int      // USDC amount committed in commitA
+	TokenId   *big.Int      // USDC token ID
 }
 
 // AuctionWithdrawProof generates a proof for the AuctionWithdraw circuit.

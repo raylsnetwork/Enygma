@@ -36,7 +36,7 @@ type AuctionLockCircuit struct {
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltRevert) — pre-committed recovery destination
 
 	// --- private witnesses ---
-	WtTreeNumber   frontend.Variable   // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
+	WtTreeNumber frontend.Variable // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
 
 	// --- private witnesses: Bob's input NFT note ---
 	WtSpendKey     frontend.Variable   // Bob's spend secret key

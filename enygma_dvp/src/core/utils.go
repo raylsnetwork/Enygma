@@ -609,11 +609,11 @@ func AuditorEncKey(pubKeyX, pubKeyY, random *big.Int) (*big.Int, *big.Int) {
 
 // PoseidonEncryptResult holds the result of Poseidon encryption
 type PoseidonEncryptResult struct {
-	Encrypted  []*big.Int
-	Nonce      *big.Int
-	RandomVal  *big.Int
-	SharedKey  *babyjub.Point
-	AuthKey    *babyjub.Point
+	Encrypted []*big.Int
+	Nonce     *big.Int
+	RandomVal *big.Int
+	SharedKey *babyjub.Point
+	AuthKey   *babyjub.Point
 }
 
 // PoseidonEncryptWrapper encrypts inputs using Poseidon sponge encryption

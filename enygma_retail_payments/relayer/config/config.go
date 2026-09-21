@@ -59,16 +59,16 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		RPCURL:               getenv("RELAYER_RPC_URL", "http://localhost:8545"),
-		RelayerPrivateKeyHex: strings.TrimPrefix(getenv("RELAYER_PRIVATE_KEY", ""), "0x"),
-		APIKey:               getenv("RELAYER_API_KEY", ""),
-		EnygmaDvpAddr:        getenv("RELAYER_DVP_ADDR", ""),
-		Erc20VaultAddr:       getenv("RELAYER_ERC20_VAULT_ADDR", ""),
-		UsdrVaultAddr:        getenv("RELAYER_USDR_VAULT_ADDR", ""),
+		RPCURL:                 getenv("RELAYER_RPC_URL", "http://localhost:8545"),
+		RelayerPrivateKeyHex:   strings.TrimPrefix(getenv("RELAYER_PRIVATE_KEY", ""), "0x"),
+		APIKey:                 getenv("RELAYER_API_KEY", ""),
+		EnygmaDvpAddr:          getenv("RELAYER_DVP_ADDR", ""),
+		Erc20VaultAddr:         getenv("RELAYER_ERC20_VAULT_ADDR", ""),
+		UsdrVaultAddr:          getenv("RELAYER_USDR_VAULT_ADDR", ""),
 		TagRegistryAddr:        getenv("RELAYER_TAG_REGISTRY_ADDR", ""),
 		TagChannelRegistryAddr: getenv("RELAYER_TAG_CHANNEL_REGISTRY_ADDR", ""),
-		ReceiptsPath:         getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),
-		Port:                 getenv("RELAYER_PORT", "8090"),
+		ReceiptsPath:           getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),
+		Port:                   getenv("RELAYER_PORT", "8090"),
 	}
 
 	chainIDStr := getenv("RELAYER_CHAIN_ID", "1337")
@@ -111,5 +111,3 @@ func getenv(key, fallback string) string {
 	}
 	return fallback
 }
-
-

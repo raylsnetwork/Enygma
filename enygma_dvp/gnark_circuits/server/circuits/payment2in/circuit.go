@@ -9,12 +9,12 @@ import "math/big"
 //   - Output 0   : Payment to Bob (or merged note).
 //   - Output 1   : Change back to Alice.
 type PaymentRequest2in struct {
-	StMessage        string       `json:"stMessage"        binding:"required"`
-	StTreeNumbers    [2]string    `json:"stTreeNumbers"    binding:"required"`
-	StMerkleRoots    [2]string    `json:"stMerkleRoots"    binding:"required"`
-	StNullifiers     [2]string    `json:"stNullifiers"     binding:"required"`
-	StCommitmentsOut [2]string    `json:"stCommitmentsOut" binding:"required"`
-	StContractAddress string      `json:"stContractAddress" binding:"required"`
+	StMessage         string    `json:"stMessage"        binding:"required"`
+	StTreeNumbers     [2]string `json:"stTreeNumbers"    binding:"required"`
+	StMerkleRoots     [2]string `json:"stMerkleRoots"    binding:"required"`
+	StNullifiers      [2]string `json:"stNullifiers"     binding:"required"`
+	StCommitmentsOut  [2]string `json:"stCommitmentsOut" binding:"required"`
+	StContractAddress string    `json:"stContractAddress" binding:"required"`
 
 	WtPrivateKeysIn      [2]string    `json:"wtPrivateKeysIn"      binding:"required"`
 	WtValuesIn           [2]string    `json:"wtValuesIn"           binding:"required"`

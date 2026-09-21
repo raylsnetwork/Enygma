@@ -1,14 +1,12 @@
 package utils
 
 import (
-
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 	cmp "github.com/consensys/gnark/std/math/cmp"
-
 )
 
-var(
+var (
 	// G: NUMS hash-to-curve derivation, seed "2" (H-11 fix — must match
 	// utils/utils.go CircuitGBabyJub). Reproduce with:
 	// go run ./cmd/derive_generator
@@ -17,12 +15,11 @@ var(
 		Y: "15225366398330386329633463986700597127113326976080712967801565482915963669722",
 	}
 
-	H= twistededwards.Point{
-		X:"10100005861917718053548237064487763771145251762383025193119768015180892676690",
-		Y:"7512830269827713629724023825249861327768672768516116945507944076335453576011",
+	H = twistededwards.Point{
+		X: "10100005861917718053548237064487763771145251762383025193119768015180892676690",
+		Y: "7512830269827713629724023825249861327768672768516116945507944076335453576011",
 	}
 )
-
 
 func PointAdd(api frontend.API, p1, p2 twistededwards.Point) twistededwards.Point {
 	x1y2 := api.Mul(p1.X, p2.Y)
@@ -85,8 +82,6 @@ func ScalarMul(api frontend.API, p twistededwards.Point, scalar frontend.Variabl
 	return result
 }
 
-
-
 // ReduceModP performs a fully-constrained reduction of value modulo the Baby
 // Jubjub prime subgroup order P. Fixes C-01: the raw two-constraint hint
 // gadget this replaces (q·P + r == value, r < P, copy-pasted at all 28 call
@@ -134,14 +129,12 @@ func AssertPointsIsOnCurve(api frontend.API, X, Y frontend.Variable) {
 	api.AssertIsEqual(lhs, rhs)
 }
 
+func PedersenCommitment(api frontend.API, X, Y frontend.Variable) twistededwards.Point {
 
-func PedersenCommitment(api frontend.API,X,Y frontend.Variable)twistededwards.Point{
-	
+	vG := ScalarMul(api, G, X)
+	rH := ScalarMul(api, H, Y)
 
-	vG := ScalarMul(api, G, X)             
-	rH := ScalarMul(api, H, Y) 
-
-	commitOutput := PointAdd(api, vG, rH) 
+	commitOutput := PointAdd(api, vG, rH)
 
 	return commitOutput
 

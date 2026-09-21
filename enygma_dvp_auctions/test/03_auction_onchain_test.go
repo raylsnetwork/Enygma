@@ -45,9 +45,9 @@ import (
 )
 
 const (
-	hardhatRPC    = "http://localhost:8545"
-	onchainChain  = "31337"
-	ownerPrivKey  = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+	hardhatRPC   = "http://localhost:8545"
+	onchainChain = "31337"
+	ownerPrivKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 	onchainNftTokenId  = 42
 	onchainUsdcTokenId = 0
@@ -76,7 +76,7 @@ func TestAuction_OnChain(t *testing.T) {
 	ownerAuth := makeAuth(t, ownerPrivKey, chainID)
 
 	auctionABI := loadABI(t, projectRoot, "core/contracts/EnygmaAuction.sol/EnygmaAuction")
-	vaultABI   := loadABI(t, projectRoot, "core/contracts/AuctionCoinVault.sol/AuctionCoinVault")
+	vaultABI := loadABI(t, projectRoot, "core/contracts/AuctionCoinVault.sol/AuctionCoinVault")
 
 	auctionContract := bind.NewBoundContract(
 		common.HexToAddress(receipts["EnygmaAuction"]),
@@ -93,10 +93,10 @@ func TestAuction_OnChain(t *testing.T) {
 
 	gnarkClient := core.NewAuctionClient("") // defaults to :8083
 
-	nftTokenId  := big.NewInt(onchainNftTokenId)
+	nftTokenId := big.NewInt(onchainNftTokenId)
 	usdcTokenId := big.NewInt(onchainUsdcTokenId)
-	floorPrice  := big.NewInt(onchainFloorPrice)
-	bidAmount   := big.NewInt(onchainBidAmount)
+	floorPrice := big.NewInt(onchainFloorPrice)
+	bidAmount := big.NewInt(onchainBidAmount)
 
 	// ─── Key pairs ────────────────────────────────────────────────────────────
 
@@ -194,10 +194,10 @@ func TestAuction_OnChain(t *testing.T) {
 	// settlementDeadline >= deadline + 2 days; the extra hour is just headroom past that minimum)
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
-	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
+	deadline := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
-	proof8Lock  := toBigArr8(lockResult.Proof)
+	proof8Lock := toBigArr8(lockResult.Proof)
 	signal7Lock := toBigArr7(lockResult.PublicSignal)
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
@@ -238,7 +238,7 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("Alice commitA = %s", aliceCommitA)
 	t.Logf("Alice commitB = %s", aliceCommitB)
 
-	proof8Bid  := toBigArr8(bidResult.Proof)
+	proof8Bid := toBigArr8(bidResult.Proof)
 	signal7Bid := toBigArr7(bidResult.PublicSignal)
 
 	// Dummy ML-KEM ciphertext (content not verified on-chain, only stored for auctioneer)
@@ -287,13 +287,13 @@ func TestAuction_OnChain(t *testing.T) {
 	checkErr(t, "AuctionBatchProof", err)
 
 	batchWinnerCommit := batchResult.PublicSignal[101]
-	batchWinnerPk     := batchResult.PublicSignal[102]
+	batchWinnerPk := batchResult.PublicSignal[102]
 	batchWinnerAmount := batchResult.PublicSignal[103]
 	t.Logf("Batch winner commitA=%s amount=%s", batchWinnerCommit, batchWinnerAmount)
 
-	batchId      := big.NewInt(1)
-	proof8Batch  := toBigArr8(batchResult.Proof)
-	signal104    := toBigArr104(batchResult.PublicSignal)
+	batchId := big.NewInt(1)
+	proof8Batch := toBigArr8(batchResult.Proof)
+	signal104 := toBigArr104(batchResult.PublicSignal)
 
 	batchTx, err := auctionContract.Transact(ownerAuth, "submitBatch",
 		batchId, proof8Batch, signal104,
@@ -334,8 +334,8 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("  overallWinnerCommit = %s", finalResult.PublicSignal[31])
 	t.Logf("  winningAmount       = %s", finalResult.PublicSignal[36])
 
-	proof8Final  := toBigArr8(finalResult.Proof)
-	signal38     := toBigArr38(finalResult.PublicSignal)
+	proof8Final := toBigArr8(finalResult.Proof)
+	signal38 := toBigArr38(finalResult.PublicSignal)
 
 	// batchIds[i] maps statement slot i to the on-chain batchId submitted by submitBatch.
 	var batchIds [10]*big.Int
@@ -387,7 +387,7 @@ func TestAuction_OnChain(t *testing.T) {
 	// Return order: state, nftTokenId, commitLocked, revertCommit, overallWinnerCommit,
 	//               batchCount, deadline, settlementDeadline, floorPrice, bidCount
 	overallWinnerCommit := coreResults[4].(*big.Int)
-	bidCount            := coreResults[9].(*big.Int)
+	bidCount := coreResults[9].(*big.Int)
 	t.Logf("  overallWinnerCommit = %s", overallWinnerCommit)
 	t.Logf("  bidCount            = %s", bidCount)
 
