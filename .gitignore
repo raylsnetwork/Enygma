@@ -1,0 +1,14 @@
+# SSH / TLS private keys
+*.pem
+
+# Compiled binaries
+enygma_dvp/demo/demo
+enygma_retail_payments/demo/demo
+enygma_payments/gnark-server/enygma-server
+
+# Runtime state
+enygma_retail_payments/relayer/relayer_state.db
+
+# Generated gnark Burn/Relayer keys and verifier (regenerate locally)
+enygma_payments/gnark-server/keys/Burn*
+enygma_payments/gnark-server/keys/Relayer*
