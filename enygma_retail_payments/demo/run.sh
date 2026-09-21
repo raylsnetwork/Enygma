@@ -10,7 +10,7 @@
 #        cd enygma_retail_payments && bash setup.sh
 #
 #   3. Gnark server (port 8082)
-#        cd gnark_circuits && go run main.go
+#        cd gnark_circuits && go run ./cmd/server
 #
 #   4. Relayer (port 8090) — plain mode only:
 #        cd relayer

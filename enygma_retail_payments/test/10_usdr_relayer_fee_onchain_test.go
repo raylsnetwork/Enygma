@@ -28,7 +28,7 @@ package tests
 //
 //	Terminal 1: cd ../enygma_dvp && npx hardhat node
 //	Terminal 2: bash setup.sh
-//	Terminal 3: cd gnark_circuits && go run main.go
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server
 //	Terminal 4: cd relayer && RELAYER_PRIVATE_KEY=<key> RELAYER_API_KEY=<token> \
 //	              RELAYER_FEE_SPEND_PRIVATE_KEY=<positive decimal> go run main.go
 //
@@ -311,7 +311,7 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 	tokenId := big.NewInt(0) // fixed convention value — see EnygmaDvp.sol's usdrTokenId doc comment
 	fixedFee := big.NewInt(7)
 
-	t.Logf("Setup — owner sets usdrFixedFeeAmount = %s (usdrTokenId already 0 from init.go)", fixedFee)
+	t.Logf("Setup — owner sets usdrFixedFeeAmount = %s (usdrTokenId already 0 from scripts/cmd/init)", fixedFee)
 	setFeeTx, err := dvp.Transact(ownerAuth, "setUsdrFixedFee", fixedFee)
 	if err != nil {
 		t.Fatalf("setUsdrFixedFee: %v", err)

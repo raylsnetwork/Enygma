@@ -14,7 +14,7 @@ package tests
 // Prerequisites:
 //   1. Hardhat node (keep running):     cd ../enygma_dvp && npx hardhat node
 //   2. Deploy + init contracts:         bash setup.sh   (from enygma_retail_payments/ root)
-//   3. Gnark server (port 8082, keep running): cd gnark_circuits && go run main.go
+//   3. Gnark server (port 8082, keep running): cd gnark_circuits && go run ./cmd/server
 //
 // Run with:
 //   cd test && go test ./... -v -timeout 600s

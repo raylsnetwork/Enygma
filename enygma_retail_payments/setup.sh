@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # setup.sh — run from enygma_retail_payments/ root after:
 #   1. npx hardhat node          (Terminal 1, keep running — run from enygma_dvp/)
-#   2. cd gnark_circuits && go run generation.go   (run once when circuit changes)
+#   2. cd gnark_circuits && go run ./cmd/keygen   (run once when circuit changes)
 #   3. bash setup.sh             (this script)
 # Then separately:
-#   4. cd gnark_circuits && go run main.go         (Terminal 2, keep running)
+#   4. cd gnark_circuits && go run ./cmd/server         (Terminal 2, keep running)
 #   5. cd test && CC=/usr/bin/clang go test ./... -v -timeout 600s
 
 set -e
@@ -33,7 +33,7 @@ go run ./cmd/export_vk/ ../build
 
 # Re-export the PrivateMint Solidity verifier from the current VK key,
 # then recompile and update contracts/abis/PrivateMintVerifier.json.
-# This must run every time after go run generation.go because Groth16
+# This must run every time after go run ./cmd/keygen because Groth16
 # Setup() produces fresh random keys — the on-chain verifier bytecode
 # must always match the keys the server is using.
 go run ./cmd/export_verifier/ /tmp/PrivateMintVerifier.sol
@@ -61,12 +61,12 @@ PYEOF
 cd "$ROOT"
 
 echo "==> [5/5] Deploying and initialising contracts..."
-CC=/usr/bin/clang go build -C scripts -o /tmp/rp_deploy deploy.go && /tmp/rp_deploy
-CC=/usr/bin/clang go build -C scripts -o /tmp/rp_init init.go   && /tmp/rp_init
+CC=/usr/bin/clang go build -C scripts -o /tmp/rp_deploy ./cmd/deploy && /tmp/rp_deploy
+CC=/usr/bin/clang go build -C scripts -o /tmp/rp_init ./cmd/init   && /tmp/rp_init
 
 echo ""
 echo "Setup complete."
 echo ""
 echo "Next steps:"
-echo "  Terminal A: cd gnark_circuits && go run main.go"
+echo "  Terminal A: cd gnark_circuits && go run ./cmd/server"
 echo "  Terminal B: cd test && CC=/usr/bin/clang go test ./... -v -timeout 600s"
