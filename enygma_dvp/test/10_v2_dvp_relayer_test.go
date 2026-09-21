@@ -35,7 +35,6 @@ package tests
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"math/big"
@@ -132,50 +131,6 @@ func dvpPost(t *testing.T, path, apiKey string, body interface{}) (*dvpRelayResp
 
 // ── proof payload builders ────────────────────────────────────────────────────
 
-// paymentResultToPayload converts a PaymentResult to a dvpReceiptPayload for /relay/payment.
-// ContractStatement() de-interleaves the statement for on-chain submission.
-func paymentResultToPayload(t *testing.T, r *core.PaymentResult) dvpReceiptPayload {
-	t.Helper()
-	stmt := r.ContractStatement()
-	sig := make([]string, len(stmt))
-	for i, v := range stmt {
-		sig[i] = v.String()
-	}
-	if len(r.Proof) != 8 {
-		t.Fatalf("expected 8 proof elements, got %d", len(r.Proof))
-	}
-	var proof [8]string
-	copy(proof[:], r.Proof)
-	return dvpReceiptPayload{
-		Proof:           proof,
-		PublicSignal:    sig,
-		NumberOfInputs:  r.NumberOfInputs,
-		NumberOfOutputs: r.NumberOfOutputs,
-	}
-}
-
-// proofResultToPayload converts a ProofResult to a dvpReceiptPayload.
-// Uses ContractStatement() to de-interleave.
-func proofResultToPayload(t *testing.T, r *core.ProofResult) dvpReceiptPayload {
-	t.Helper()
-	stmt := r.ContractStatement()
-	sig := make([]string, len(stmt))
-	for i, v := range stmt {
-		sig[i] = v.String()
-	}
-	if len(r.Proof) != 8 {
-		t.Fatalf("expected 8 proof elements, got %d", len(r.Proof))
-	}
-	var proof [8]string
-	copy(proof[:], r.Proof)
-	return dvpReceiptPayload{
-		Proof:           proof,
-		PublicSignal:    sig,
-		NumberOfInputs:  r.NumberOfInputs,
-		NumberOfOutputs: r.NumberOfOutputs,
-	}
-}
-
 // dvpInitiatorToPayload converts a DvPInitiatorResult to a dvpReceiptPayload.
 // Statement is already in non-interleaved form (nIn=1, so interleaved == non-interleaved).
 func dvpInitiatorToPayload(t *testing.T, r *core.DvPInitiatorResult) dvpReceiptPayload {
@@ -215,11 +170,6 @@ func dvpDestinationToPayload(t *testing.T, r *core.DvPDestinationResult) dvpRece
 		NumberOfInputs:  r.NumberOfInputs,
 		NumberOfOutputs: r.NumberOfOutputs,
 	}
-}
-
-// hexBytes encodes bytes with 0x prefix.
-func hexBytes(b []byte) string {
-	return "0x" + hex.EncodeToString(b)
 }
 
 

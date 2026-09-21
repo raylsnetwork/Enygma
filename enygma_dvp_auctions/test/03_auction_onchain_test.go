@@ -569,17 +569,6 @@ func toBigArr8(slice []*big.Int) [8]*big.Int {
 	return arr
 }
 
-func toBigArr6(slice []*big.Int) [6]*big.Int {
-	var arr [6]*big.Int
-	for i := 0; i < 6 && i < len(slice); i++ {
-		arr[i] = slice[i]
-	}
-	for i := len(slice); i < 6; i++ {
-		arr[i] = big.NewInt(0)
-	}
-	return arr
-}
-
 func toBigArr7(slice []*big.Int) [7]*big.Int {
 	var arr [7]*big.Int
 	for i := 0; i < 7 && i < len(slice); i++ {
@@ -611,25 +600,6 @@ func toBigArr104(slice []*big.Int) [104]*big.Int {
 		arr[i] = big.NewInt(0)
 	}
 	return arr
-}
-
-func toBigArr10(slice []*big.Int) [10]*big.Int {
-	var arr [10]*big.Int
-	for i := 0; i < 10 && i < len(slice); i++ {
-		arr[i] = slice[i]
-	}
-	for i := len(slice); i < 10; i++ {
-		arr[i] = big.NewInt(0)
-	}
-	return arr
-}
-
-// formatAddr converts a hex string to a log-friendly short form.
-func formatAddr(hex string) string {
-	if len(hex) > 10 {
-		return hex[:6] + "…" + hex[len(hex)-4:]
-	}
-	return hex
 }
 
 var _ = fmt.Sprintf // suppress "imported and not used"

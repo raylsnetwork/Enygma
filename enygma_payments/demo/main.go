@@ -120,8 +120,6 @@ func rpcHostPort() string {
 
 var (
 	curveP, _ = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
-	// BN254 field prime — same Q used by Solidity's CurveBabyJubJub
-	curveQ, _ = new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
 	// curveG: NUMS hash-to-curve derivation, seed "2" (H-11 fix). Reproduce
 	// with: cd gnark-server && go run ./cmd/derive_generator
@@ -166,66 +164,6 @@ func randomBlinding() *big.Int {
 			return r
 		}
 	}
-}
-
-func addPoints(a, b *babyjub.Point) *babyjub.Point {
-	return babyjub.NewPoint().Projective().Add(a.Projective(), b.Projective()).Affine()
-}
-
-// addPointsAffine mirrors CurveBabyJubJub.pointAdd exactly:
-//
-//	x3 = (x1*y2 + y1*x2) / (1 + D*x1*x2*y1*y2)
-//	y3 = (y1*y2 - A*x1*x2) / (1 - D*x1*x2*y1*y2)
-//
-// Uses the same Q, A=168700, D=168696 constants as the Solidity contract.
-func addPointsAffine(ax, ay, bx, by *big.Int) (x3, y3 *big.Int) {
-	Q := curveQ
-	D := big.NewInt(168696)
-	A := big.NewInt(168700)
-
-	one := big.NewInt(1)
-
-	// neutral-element fast paths (match Solidity's early returns)
-	if ax.Sign() == 0 && ay.Cmp(one) == 0 {
-		return new(big.Int).Set(bx), new(big.Int).Set(by)
-	}
-	if bx.Sign() == 0 && by.Cmp(one) == 0 {
-		return new(big.Int).Set(ax), new(big.Int).Set(ay)
-	}
-
-	x1x2 := new(big.Int).Mul(ax, bx)
-	x1x2.Mod(x1x2, Q)
-
-	y1y2 := new(big.Int).Mul(ay, by)
-	y1y2.Mod(y1y2, Q)
-
-	dx1x2y1y2 := new(big.Int).Mul(D, x1x2)
-	dx1x2y1y2.Mul(dx1x2y1y2, y1y2)
-	dx1x2y1y2.Mod(dx1x2y1y2, Q)
-
-	x3Num := new(big.Int).Add(
-		new(big.Int).Mul(ax, by),
-		new(big.Int).Mul(ay, bx),
-	)
-	x3Num.Mod(x3Num, Q)
-
-	y3Num := new(big.Int).Sub(y1y2, new(big.Int).Mul(A, x1x2))
-	y3Num.Mod(y3Num, Q)
-
-	x3Den := new(big.Int).Add(one, dx1x2y1y2)
-	x3Den.Mod(x3Den, Q)
-
-	y3Den := new(big.Int).Sub(new(big.Int).Set(Q), dx1x2y1y2)
-	y3Den.Add(y3Den, one)
-	y3Den.Mod(y3Den, Q)
-
-	x3 = new(big.Int).Mul(x3Num, new(big.Int).ModInverse(x3Den, Q))
-	x3.Mod(x3, Q)
-
-	y3 = new(big.Int).Mul(y3Num, new(big.Int).ModInverse(y3Den, Q))
-	y3.Mod(y3, Q)
-
-	return x3, y3
 }
 
 func negMod(x *big.Int) *big.Int {
