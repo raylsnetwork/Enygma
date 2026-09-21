@@ -27,7 +27,6 @@ import (
 
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
-	endpoints "github.com/raylsnetwork/enygma_dvp/src/core/endpoints"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -393,11 +392,11 @@ func TestRetailErc20_Payment(t *testing.T) {
 	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
 
 	snarkProof := proofStringsToOnchain(t, paymentResult.Proof)
-	onchainReceipt := endpoints.ProofReceipt{
-		Proof: endpoints.SnarkProof{
-			A: endpoints.G1Point{X: snarkProof.A.X, Y: snarkProof.A.Y},
-			B: endpoints.G2Point{X: snarkProof.B.X, Y: snarkProof.B.Y},
-			C: endpoints.G1Point{X: snarkProof.C.X, Y: snarkProof.C.Y},
+	onchainReceipt := ProofReceipt{
+		Proof: SnarkProof{
+			A: G1Point{X: snarkProof.A.X, Y: snarkProof.A.Y},
+			B: G2Point{X: snarkProof.B.X, Y: snarkProof.B.Y},
+			C: G1Point{X: snarkProof.C.X, Y: snarkProof.C.Y},
 		},
 		Statement:       paymentResult.ContractStatement(),
 		NumberOfInputs:  big.NewInt(int64(paymentResult.NumberOfInputs)),
@@ -405,7 +404,7 @@ func TestRetailErc20_Payment(t *testing.T) {
 	}
 
 	vaultId := big.NewInt(0)
-	onchainTx, err := endpoints.SubmitPayment(
+	onchainTx, err := submitPayment(
 		client, aliceAuth, dvpABI, dvpAddr,
 		onchainReceipt,
 		vaultId,
