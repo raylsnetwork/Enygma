@@ -3,7 +3,7 @@ package primitives
 import (
 	"math/big"
 
-	pos "enygma_retail_payments/gnark_circuits/poseidon"
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
 )
 
