@@ -3,3 +3,11 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        # Fails (and lists the files) instead of silently rewriting them.
+        entry: bash -c 'bad=$(gofmt -l "$@"); if [ -n "$bad" ]; then echo "Not gofmt-clean (run gofmt -w on):"; echo "$bad"; exit 1; fi' --
+        language: system
+        files: '\.go$'
