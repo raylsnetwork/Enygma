@@ -65,6 +65,9 @@ const (
 	mintAmount  = 500
 	transferAmt = 100
 
+	// Hardhat account[0] — well-known default dev key, public, never a
+	// security boundary (see .gitleaks.toml, which allowlists it by
+	// exact value for that reason).
 	defaultOwnerKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 	defaultRelayKey = "enygma-test-secret"
 
