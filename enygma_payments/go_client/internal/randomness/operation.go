@@ -6,9 +6,9 @@ import (
 	"github.com/iden3/go-iden3-crypto/babyjub"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
-	"enygma/internal/curve"
+	"enygma_payments/go_client/internal/curve"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 )
 
 // perSlotNonce folds nullifier (a per-transaction value — see the Fix

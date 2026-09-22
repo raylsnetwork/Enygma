@@ -1,4 +1,4 @@
-module gnark_server
+module enygma_dvp_auctions/gnark_circuits
 
 go 1.26.0
 toolchain go1.26.6

@@ -3,8 +3,8 @@
 package main
 
 import (
-	"gnark_server/server/api"
-	"gnark_server/server/config"
+	"enygma_retail_payments/gnark_circuits/server/api"
+	"enygma_retail_payments/gnark_circuits/server/config"
 )
 
 func main() {

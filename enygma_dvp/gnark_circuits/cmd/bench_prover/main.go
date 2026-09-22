@@ -18,9 +18,9 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	"gnark_server/utils"
+	"enygma_dvp/gnark_circuits/primitives"
+	"enygma_dvp/gnark_circuits/templates"
+	"enygma_dvp/gnark_circuits/utils"
 )
 
 var BN254Order, _ = new(big.Int).SetString(

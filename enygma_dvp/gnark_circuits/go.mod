@@ -1,4 +1,4 @@
-module gnark_server
+module enygma_dvp/gnark_circuits
 
 go 1.26.0
 

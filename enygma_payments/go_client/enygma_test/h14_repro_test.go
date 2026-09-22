@@ -36,7 +36,7 @@ import (
 	"strings"
 	"testing"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"

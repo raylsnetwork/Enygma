@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"enygma-server/utils"
+	"enygma_payments/gnark-server/utils"
 )
 
 func derive(label string, seed *big.Int) (*big.Int, *big.Int) {

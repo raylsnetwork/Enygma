@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"enygma_payments_relayer/config"
+	"enygma_payments/relayer/config"
 
 	"github.com/gin-gonic/gin"
 )

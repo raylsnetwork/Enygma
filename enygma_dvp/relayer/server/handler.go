@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"enygma_dvp_relayer/config"
+	"enygma_dvp/relayer/config"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"

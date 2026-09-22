@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -558,7 +558,7 @@ func resolveAddresses() (token, verifier string, err error) {
 		return
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
-	receiptsPath := filepath.Join(filepath.Dir(thisFile), "..", "run_scripts", "build", "enygma", "web3", "deploy_receipts.json")
+	receiptsPath := filepath.Join(filepath.Dir(thisFile), "..", "run_scripts", "build", "enygma_payments/go_client", "web3", "deploy_receipts.json")
 	if data, readErr := os.ReadFile(receiptsPath); readErr == nil {
 		var rec deployReceipts
 		if json.Unmarshal(data, &rec) == nil {
