@@ -85,8 +85,15 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         if (metadata.tType == TokenType.NORMAL) {
             return metadata.offchainId;
         } else {
-            // adding name, symbol and offchainId to unique tokenId generation process
-            bytes memory idBytes = abi.encodePacked(
+            // adding name, symbol and offchainId to unique tokenId generation process.
+            // abi.encode (not encodePacked) here: name and symbol are both
+            // dynamic strings, and encodePacked concatenates dynamic types
+            // with no length delimiter between them, so e.g. ("ab","cd") and
+            // ("a","bcd") would pack to the same bytes and collide to the
+            // same tokenId. encode's length-prefixed layout is unambiguous;
+            // the uint256 appends below stay packed since fixed-size (always
+            // 32-byte) values don't have that ambiguity.
+            bytes memory idBytes = abi.encode(
                 metadata.name,
                 metadata.symbol,
                 metadata.offchainId
