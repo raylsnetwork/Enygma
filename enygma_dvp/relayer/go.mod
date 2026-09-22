@@ -1,4 +1,4 @@
-module enygma_dvp_relayer
+module enygma_dvp/relayer
 
 go 1.26.0
 

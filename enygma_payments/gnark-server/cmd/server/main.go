@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"enygma-server/config"
-	"enygma-server/pkg/api"
+	"enygma_payments/gnark-server/config"
+	"enygma_payments/gnark-server/pkg/api"
 )
 
 func main() {

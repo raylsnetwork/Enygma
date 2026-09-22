@@ -1,9 +1,9 @@
 package templates
 
 import (
+	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 // AuctionFinalBatches is the maximum number of Phase-1 batch results that the

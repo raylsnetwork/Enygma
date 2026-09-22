@@ -10,13 +10,13 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
-	burn "enygma-server/pkg/circuits/burn"
-	deposit "enygma-server/pkg/circuits/deposit"
-	enygma "enygma-server/pkg/circuits/enygma"
-	enygma_fee "enygma-server/pkg/circuits/enygma_fee"
-	usdr "enygma-server/pkg/circuits/usdr"
-	withdraw "enygma-server/pkg/circuits/withdraw"
-	utils "enygma-server/utils"
+	burn "enygma_payments/gnark-server/pkg/circuits/burn"
+	deposit "enygma_payments/gnark-server/pkg/circuits/deposit"
+	enygma "enygma_payments/gnark-server/pkg/circuits/enygma"
+	enygma_fee "enygma_payments/gnark-server/pkg/circuits/enygma_fee"
+	usdr "enygma_payments/gnark-server/pkg/circuits/usdr"
+	withdraw "enygma_payments/gnark-server/pkg/circuits/withdraw"
+	utils "enygma_payments/gnark-server/utils"
 )
 
 const splitSize = 6

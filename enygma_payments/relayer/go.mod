@@ -1,4 +1,4 @@
-module enygma_payments_relayer
+module enygma_payments/relayer
 
 go 1.26.0
 

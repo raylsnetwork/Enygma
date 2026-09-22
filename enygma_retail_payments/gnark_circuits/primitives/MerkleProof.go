@@ -1,9 +1,9 @@
 package primitives
 
 import (
+	pos "enygma_retail_payments/gnark_circuits/poseidon"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/bits"
-	pos "gnark_server/poseidon"
 )
 
 func MerkleProof(api frontend.API, leaf frontend.Variable, pathIndices frontend.Variable, pathElements []frontend.Variable) frontend.Variable {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"enygma_dvp_relayer/config"
+	"enygma_dvp/relayer/config"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"

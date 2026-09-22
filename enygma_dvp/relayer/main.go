@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"enygma_dvp_relayer/config"
-	"enygma_dvp_relayer/server"
+	"enygma_dvp/relayer/config"
+	"enygma_dvp/relayer/server"
 )
 
 func main() {
