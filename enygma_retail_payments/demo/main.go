@@ -421,6 +421,175 @@ func formatNum(n uint64) string {
 
 // ── Main flow ─────────────────────────────────────────────────────────────────
 
+// flowIO bundles runFlow's event-emitting closures so runFlowScanAndVerify
+// can use the exact same implementations without redefining them.
+type flowIO struct {
+	emit  func(step, status, label, msg string)
+	log   func(cat, msg string)
+	panel func(pid int, field, value string)
+	proto func(field, value string)
+	fail  func(step, label string, err error)
+}
+
+// runFlowScanAndVerify is Bob's side of the demo: discover the payment
+// (via the private tag channel in with-tag mode, or by ML-KEM-decrypting
+// the on-chain note in plain mode) and verify both his and Alice's change
+// commitments match what the proof committed to on-chain. Returns false
+// only after io.fail has already been called with the failure reason.
+func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tagRegistryAddr common.Address, channelSS []byte, aliceSpend, bobSpend *rpcore.SpendKeyPair, bobView *rpcore.ViewKeyPair, paymentResult *rpcore.PaymentResult, stmt []*big.Int, tokenId *big.Int, totalGasUsed *uint64) bool {
+	emit, logMsg, panel, proto, fail := io.emit, io.log, io.panel, io.proto, io.fail
+
+	// ── Step: Tag notification (with-tag mode) ────────────────────────────────
+	var tagBlock uint64
+	if withTag {
+		emit("tag", "running", "Publish Tag", "Alice notifies Bob via private tag (POST /relay/tag)…")
+
+		startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
+			client, 3,
+			bobSpend.PublicKey,
+			channelSS,
+			big.NewInt(paymentAmt), tokenId, paymentResult.SaltB,
+		)
+		if err != nil {
+			fail("tag", "Publish Tag", fmt.Errorf("PreparePaymentTag: %w", err))
+			return false
+		}
+
+		hexTags := make([]string, len(windowTags))
+		for i, wt := range windowTags {
+			wt := wt
+			hexTags[i] = toHex(wt[:])
+		}
+
+		var tagResp relayTagResponse
+		status, err := postRelayer("/relay/tag", relayTagRequest{
+			Tags:       hexTags,
+			StartBlock: startBlock,
+			Ctxt:       toHex(noteCtxt),
+		}, &tagResp)
+		if err != nil {
+			fail("tag", "Publish Tag", err)
+			return false
+		}
+		if status != http.StatusOK {
+			fail("tag", "Publish Tag", fmt.Errorf("relayer %d: %s", status, tagResp.Error))
+			return false
+		}
+		*totalGasUsed += tagResp.GasUsed
+		tagBlock = tagResp.BlockNumber
+		proto("tagTxHash", tagResp.TxHash)
+		proto("tagBlock", fmt.Sprintf("%d", tagBlock))
+		proto("tagGas", fmt.Sprintf("%d", tagResp.GasUsed))
+		logMsg("chain", fmt.Sprintf("TagRegistry.publishTag() → block %d  gas %s  tx %s…",
+			tagBlock, formatNum(tagResp.GasUsed), shortHex(tagResp.TxHash, 18)))
+		emit("tag", "success", "Publish Tag", fmt.Sprintf("Encrypted payment note published to TagRegistry (block %d)", tagBlock))
+		pause(2000 * time.Millisecond)
+
+		// ── Step: Bob scans TagRegistry ───────────────────────────────────────
+		emit("scan_tag", "running", "Bob Scans Tag", "Bob scans TagRegistry and decrypts payment note…")
+
+		bobChannels := []tags.Channel{{SharedSecret: channelSS, PkSpend: bobSpend.PublicKey}}
+		cursor := tags.NewScanCursor()
+		matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
+		if err != nil {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("ScanBlocksFromCursor: %w", err))
+			return false
+		}
+		if len(matches) == 0 {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found 0 tags in registry"))
+			return false
+		}
+		note, err := tags.DecryptPaymentNote(channelSS, matches[0].Entry.Ctxt)
+		if err != nil {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err))
+			return false
+		}
+
+		logMsg("tag", fmt.Sprintf("Bob found tag in TagRegistry → decrypting note"))
+		logMsg("tag", fmt.Sprintf("note.amount=%s  note.tokenId=%s  note.salt=0x%s…",
+			note.Amount, note.TokenId, note.Salt.Text(16)[:16]))
+
+		// Verify Bob's commitment matches the on-chain output.
+		bobCmt, err := rpcore.Erc20CommitmentV2(bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
+		if err != nil {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Erc20CommitmentV2 (verify): %w", err))
+			return false
+		}
+		if bobCmt.Cmp(stmt[4]) != 0 {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("commitment mismatch: got %s want %s", bobCmt.Text(10)[:12], stmt[4].Text(10)[:12]))
+			return false
+		}
+		logMsg("key", fmt.Sprintf("Bob commitment: 0x%s… ✓ matches on-chain", bobCmt.Text(16)[:16]))
+		panel(1, "balance", fmt.Sprintf("%d tokens (discovered via tag)", note.Amount))
+		panel(1, "salt", "0x"+note.Salt.Text(16))
+		emit("scan_tag", "success", "Bob Scans Tag", fmt.Sprintf("Bob decrypted note from TagRegistry: %s tokens", note.Amount))
+		pause(1600 * time.Millisecond)
+
+		// ── Step: Verify ─────────────────────────────────────────────────────
+		emit("verify", "running", "Verify Commitment", "Checking Bob and Alice commitments match on-chain state…")
+		pause(1200 * time.Millisecond)
+
+		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
+		if err != nil {
+			fail("verify", "Verify Commitment", err)
+			return false
+		}
+		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
+			fail("verify", "Verify Commitment", fmt.Errorf("Alice change commitment mismatch"))
+			return false
+		}
+		logMsg("key", fmt.Sprintf("Alice change commitment: 0x%s… ✓ matches on-chain", aliceChangeCmt.Text(16)[:16]))
+		panel(0, "balance", fmt.Sprintf("%d tokens change (spendable)", changeAmt))
+		emit("verify", "success", "Verify Commitment",
+			fmt.Sprintf("All commitments verified on-chain: Bob received %d tokens, Alice holds %d tokens change", paymentAmt, changeAmt))
+
+	} else {
+		// ── Step: Bob scans (plain mode) ──────────────────────────────────────
+		emit("scan", "running", "Bob Scans Note", "Bob decrypts his note from the ML-KEM ciphertext in the Payment event…")
+		pause(1800 * time.Millisecond)
+
+		bobEvents := []dvpcore.OnChainErc20Event{{
+			Commitment: stmt[4],
+			CipherText: paymentResult.CipherText,
+			EncTxData:  paymentResult.EncTxData,
+		}}
+		bobNotes, err := dvpcore.ScanForErc20Notes(bobView.DecapsKey, bobSpend.PublicKey, bobEvents)
+		if err != nil {
+			fail("scan", "Bob Scans Note", fmt.Errorf("ScanForErc20Notes: %w", err))
+			return false
+		}
+		if len(bobNotes) == 0 {
+			fail("scan", "Bob Scans Note", fmt.Errorf("Bob found 0 notes"))
+			return false
+		}
+		bobNote := bobNotes[0]
+		if bobNote.Amount.Cmp(big.NewInt(paymentAmt)) != 0 {
+			fail("scan", "Bob Scans Note", fmt.Errorf("amount mismatch: got %s want %d", bobNote.Amount, paymentAmt))
+			return false
+		}
+
+		// Verify Alice's change commitment locally.
+		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
+		if err != nil {
+			fail("scan", "Bob Scans Note", err)
+			return false
+		}
+		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
+			fail("scan", "Bob Scans Note", fmt.Errorf("Alice change commitment mismatch"))
+			return false
+		}
+		logMsg("key", fmt.Sprintf("Bob decrypted note via ML-KEM: amount=%s tokenId=%s", bobNote.Amount, bobNote.TokenId))
+		logMsg("key", fmt.Sprintf("Alice change commitment: 0x%s… ✓", aliceChangeCmt.Text(16)[:16]))
+		panel(1, "balance", fmt.Sprintf("%d tokens (received)", bobNote.Amount))
+		panel(1, "salt", "0x"+paymentResult.SaltB.Text(16))
+		panel(0, "balance", fmt.Sprintf("%d tokens change (spendable)", changeAmt))
+		emit("scan", "success", "Bob Scans Note",
+			fmt.Sprintf("Bob decrypted note via ML-KEM view key: %d tokens received", paymentAmt))
+	}
+
+	return true
+}
+
 func runFlow(b *Broker, withTag bool) {
 	b.publish(Event{Type: "reset"})
 	time.Sleep(80 * time.Millisecond)
@@ -444,6 +613,7 @@ func runFlow(b *Broker, withTag bool) {
 		emit(step, "error", label, err.Error())
 		b.publish(Event{Type: "done", Status: "error", Msg: err.Error()})
 	}
+	io := flowIO{emit: emit, log: logMsg, panel: panel, proto: proto, fail: fail}
 
 	// Metric accumulators — emitted as proto events at flow completion.
 	var totalGasUsed uint64
@@ -871,152 +1041,8 @@ func runFlow(b *Broker, withTag bool) {
 	emit("relay", "success", "Relay Payment", fmt.Sprintf("Relayer submitted payment() on-chain (block %d, gas %s)", payResp.BlockNumber, formatNum(payResp.GasUsed)))
 	pause(2000 * time.Millisecond)
 
-	// ── Step: Tag notification (with-tag mode) ────────────────────────────────
-	var tagBlock uint64
-	if withTag {
-		emit("tag", "running", "Publish Tag", "Alice notifies Bob via private tag (POST /relay/tag)…")
-
-		startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
-			client, 3,
-			bobSpend.PublicKey,
-			channelSS,
-			big.NewInt(paymentAmt), tokenId, paymentResult.SaltB,
-		)
-		if err != nil {
-			fail("tag", "Publish Tag", fmt.Errorf("PreparePaymentTag: %w", err))
-			return
-		}
-
-		hexTags := make([]string, len(windowTags))
-		for i, wt := range windowTags {
-			wt := wt
-			hexTags[i] = toHex(wt[:])
-		}
-
-		var tagResp relayTagResponse
-		status, err := postRelayer("/relay/tag", relayTagRequest{
-			Tags:       hexTags,
-			StartBlock: startBlock,
-			Ctxt:       toHex(noteCtxt),
-		}, &tagResp)
-		if err != nil {
-			fail("tag", "Publish Tag", err)
-			return
-		}
-		if status != http.StatusOK {
-			fail("tag", "Publish Tag", fmt.Errorf("relayer %d: %s", status, tagResp.Error))
-			return
-		}
-		totalGasUsed += tagResp.GasUsed
-		tagBlock = tagResp.BlockNumber
-		proto("tagTxHash", tagResp.TxHash)
-		proto("tagBlock", fmt.Sprintf("%d", tagBlock))
-		proto("tagGas", fmt.Sprintf("%d", tagResp.GasUsed))
-		logMsg("chain", fmt.Sprintf("TagRegistry.publishTag() → block %d  gas %s  tx %s…",
-			tagBlock, formatNum(tagResp.GasUsed), shortHex(tagResp.TxHash, 18)))
-		emit("tag", "success", "Publish Tag", fmt.Sprintf("Encrypted payment note published to TagRegistry (block %d)", tagBlock))
-		pause(2000 * time.Millisecond)
-
-		// ── Step: Bob scans TagRegistry ───────────────────────────────────────
-		emit("scan_tag", "running", "Bob Scans Tag", "Bob scans TagRegistry and decrypts payment note…")
-
-		bobChannels := []tags.Channel{{SharedSecret: channelSS, PkSpend: bobSpend.PublicKey}}
-		cursor := tags.NewScanCursor()
-		matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
-		if err != nil {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("ScanBlocksFromCursor: %w", err))
-			return
-		}
-		if len(matches) == 0 {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found 0 tags in registry"))
-			return
-		}
-		note, err := tags.DecryptPaymentNote(channelSS, matches[0].Entry.Ctxt)
-		if err != nil {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err))
-			return
-		}
-
-		logMsg("tag", fmt.Sprintf("Bob found tag in TagRegistry → decrypting note"))
-		logMsg("tag", fmt.Sprintf("note.amount=%s  note.tokenId=%s  note.salt=0x%s…",
-			note.Amount, note.TokenId, note.Salt.Text(16)[:16]))
-
-		// Verify Bob's commitment matches the on-chain output.
-		bobCmt, err := rpcore.Erc20CommitmentV2(bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-		if err != nil {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Erc20CommitmentV2 (verify): %w", err))
-			return
-		}
-		if bobCmt.Cmp(stmt[4]) != 0 {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("commitment mismatch: got %s want %s", bobCmt.Text(10)[:12], stmt[4].Text(10)[:12]))
-			return
-		}
-		logMsg("key", fmt.Sprintf("Bob commitment: 0x%s… ✓ matches on-chain", bobCmt.Text(16)[:16]))
-		panel(1, "balance", fmt.Sprintf("%d tokens (discovered via tag)", note.Amount))
-		panel(1, "salt", "0x"+note.Salt.Text(16))
-		emit("scan_tag", "success", "Bob Scans Tag", fmt.Sprintf("Bob decrypted note from TagRegistry: %s tokens", note.Amount))
-		pause(1600 * time.Millisecond)
-
-		// ── Step: Verify ─────────────────────────────────────────────────────
-		emit("verify", "running", "Verify Commitment", "Checking Bob and Alice commitments match on-chain state…")
-		pause(1200 * time.Millisecond)
-
-		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
-		if err != nil {
-			fail("verify", "Verify Commitment", err)
-			return
-		}
-		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
-			fail("verify", "Verify Commitment", fmt.Errorf("Alice change commitment mismatch"))
-			return
-		}
-		logMsg("key", fmt.Sprintf("Alice change commitment: 0x%s… ✓ matches on-chain", aliceChangeCmt.Text(16)[:16]))
-		panel(0, "balance", fmt.Sprintf("%d tokens change (spendable)", changeAmt))
-		emit("verify", "success", "Verify Commitment",
-			fmt.Sprintf("All commitments verified on-chain: Bob received %d tokens, Alice holds %d tokens change", paymentAmt, changeAmt))
-
-	} else {
-		// ── Step: Bob scans (plain mode) ──────────────────────────────────────
-		emit("scan", "running", "Bob Scans Note", "Bob decrypts his note from the ML-KEM ciphertext in the Payment event…")
-		pause(1800 * time.Millisecond)
-
-		bobEvents := []dvpcore.OnChainErc20Event{{
-			Commitment: stmt[4],
-			CipherText: paymentResult.CipherText,
-			EncTxData:  paymentResult.EncTxData,
-		}}
-		bobNotes, err := dvpcore.ScanForErc20Notes(bobView.DecapsKey, bobSpend.PublicKey, bobEvents)
-		if err != nil {
-			fail("scan", "Bob Scans Note", fmt.Errorf("ScanForErc20Notes: %w", err))
-			return
-		}
-		if len(bobNotes) == 0 {
-			fail("scan", "Bob Scans Note", fmt.Errorf("Bob found 0 notes"))
-			return
-		}
-		bobNote := bobNotes[0]
-		if bobNote.Amount.Cmp(big.NewInt(paymentAmt)) != 0 {
-			fail("scan", "Bob Scans Note", fmt.Errorf("amount mismatch: got %s want %d", bobNote.Amount, paymentAmt))
-			return
-		}
-
-		// Verify Alice's change commitment locally.
-		aliceChangeCmt, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, paymentResult.SaltA, big.NewInt(changeAmt), tokenId)
-		if err != nil {
-			fail("scan", "Bob Scans Note", err)
-			return
-		}
-		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
-			fail("scan", "Bob Scans Note", fmt.Errorf("Alice change commitment mismatch"))
-			return
-		}
-		logMsg("key", fmt.Sprintf("Bob decrypted note via ML-KEM: amount=%s tokenId=%s", bobNote.Amount, bobNote.TokenId))
-		logMsg("key", fmt.Sprintf("Alice change commitment: 0x%s… ✓", aliceChangeCmt.Text(16)[:16]))
-		panel(1, "balance", fmt.Sprintf("%d tokens (received)", bobNote.Amount))
-		panel(1, "salt", "0x"+paymentResult.SaltB.Text(16))
-		panel(0, "balance", fmt.Sprintf("%d tokens change (spendable)", changeAmt))
-		emit("scan", "success", "Bob Scans Note",
-			fmt.Sprintf("Bob decrypted note via ML-KEM view key: %d tokens received", paymentAmt))
+	if !runFlowScanAndVerify(io, withTag, client, tagRegistryAddr, channelSS, aliceSpend, bobSpend, bobView, paymentResult, stmt, tokenId, &totalGasUsed) {
+		return
 	}
 
 	// ── Done ──────────────────────────────────────────────────────────────────
