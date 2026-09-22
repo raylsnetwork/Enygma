@@ -114,6 +114,19 @@ func main() {
 	}
 }
 
+// dvpInitializer holds the state every initializeDvp phase below needs —
+// the chain connection, signer, contract ABI/address and deployment
+// receipts — so each phase can be its own short method instead of one long
+// function threading the same half-dozen values through by hand.
+type dvpInitializer struct {
+	client           *ethclient.Client
+	auth             *bind.TransactOpts
+	enygmaDvpABI     abi.ABI
+	enygmaDvpAddress common.Address
+	receipts         InitReceipts
+	treeDepth        *big.Int
+}
+
 func initializeDvp() error {
 	// Load config
 	config, err := loadInitConfig()
@@ -163,10 +176,53 @@ func initializeDvp() error {
 		return fmt.Errorf("failed to load EnygmaDvp ABI: %w", err)
 	}
 
-	enygmaDvpAddress := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+	d := &dvpInitializer{
+		client:           client,
+		auth:             auth,
+		enygmaDvpABI:     enygmaDvpABI,
+		enygmaDvpAddress: common.HexToAddress(receipts["EnygmaDvp"].ContractAddress),
+		receipts:         receipts,
+		treeDepth:        treeDepth,
+	}
+
+	if err := d.initVerifierAndDvp(receipts); err != nil {
+		return err
+	}
+	if err := d.registerVerificationKeys(vkeys); err != nil {
+		return err
+	}
+	if err := d.registerPrivateMintVerifier(); err != nil {
+		return err
+	}
+	if err := d.registerVaults(); err != nil {
+		return err
+	}
+	if err := d.registerAssetGroups(); err != nil {
+		return err
+	}
+	if err := d.registerGroupPairs(); err != nil {
+		return err
+	}
+	if err := d.addVaultsToGroups(); err != nil {
+		return err
+	}
+	if err := d.addEnygmaToVault(); err != nil {
+		return err
+	}
+	if err := d.registerRelayerIfConfigured(config.Network.Accounts); err != nil {
+		return err
+	}
+
+	fmt.Println("EnygmaDvp has been initialized.")
+	return nil
+}
+
+// initVerifierAndDvp initializes the Verifier with the G16 verifier address,
+// grants EnygmaDvp the role it needs to register VKs on the Verifier, and
+// initializes EnygmaDvp itself.
+func (d *dvpInitializer) initVerifierAndDvp(receipts InitReceipts) error {
 	verifierAddress := common.HexToAddress(receipts["Verifier"].ContractAddress)
 	g16VerifierAddress := common.HexToAddress(receipts["G16Verifier"].ContractAddress)
-
 	fmt.Printf("Verifier Address: %s\n", verifierAddress.Hex())
 
 	// DVP-1 fix: Verifier is now initialized directly by the deployer rather than
@@ -179,7 +235,7 @@ func initializeDvp() error {
 	}
 
 	fmt.Println("Initializing Verifier with G16 verifier address...")
-	_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "initializeVerifier", g16VerifierAddress)
+	_, err = callContractMethod(d.client, d.auth, verifierABI, verifierAddress, "initializeVerifier", g16VerifierAddress)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
@@ -189,47 +245,55 @@ func initializeDvp() error {
 	// DEFAULT_OWNER_ROLE = keccak256(abi.encodePacked("ownerRole"))
 	dvpOwnerRole := crypto.Keccak256Hash([]byte("ownerRole"))
 	fmt.Println("Granting DEFAULT_OWNER_ROLE on Verifier to EnygmaDvp...")
-	_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "grantRole", dvpOwnerRole, enygmaDvpAddress)
+	_, err = callContractMethod(d.client, d.auth, verifierABI, verifierAddress, "grantRole", dvpOwnerRole, d.enygmaDvpAddress)
 	if err != nil {
 		return fmt.Errorf("failed to grant Verifier owner role to EnygmaDvp: %w", err)
 	}
 
 	// Initialize EnygmaDvp
 	fmt.Println("initializing EnygmaDvp smart contract...")
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "initializeDvp", verifierAddress)
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "initializeDvp", verifierAddress)
 	if err != nil {
 		return fmt.Errorf("failed to initialize EnygmaDvp: %w", err)
 	}
+	return nil
+}
 
-	// Register verification keys
+// registerVerificationKeys registers each circuit's VK with EnygmaDvp, in order.
+func (d *dvpInitializer) registerVerificationKeys(vkeys []VerifyingKey) error {
 	for i, vkey := range vkeys {
 		fmt.Printf("registering VerificationKey no %d\n", i)
-		_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerNewVerificationKey", vkey)
+		_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerNewVerificationKey", vkey)
 		if err != nil {
 			return fmt.Errorf("failed to register verification key %d: %w", i, err)
 		}
 	}
+	return nil
+}
 
-	// Register PrivateMintVerifier
+func (d *dvpInitializer) registerPrivateMintVerifier() error {
 	fmt.Println("Registering PrivateMintVerifier...")
-	privateMintVerifierAddress := common.HexToAddress(receipts["PrivateMintVerifier"].ContractAddress)
+	privateMintVerifierAddress := common.HexToAddress(d.receipts["PrivateMintVerifier"].ContractAddress)
 	fmt.Printf("PrivateMintVerifier Address: %s\n", privateMintVerifierAddress.Hex())
 
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerPrivateMintVerifier", privateMintVerifierAddress)
+	_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerPrivateMintVerifier", privateMintVerifierAddress)
 	if err != nil {
 		return fmt.Errorf("failed to register PrivateMintVerifier: %w", err)
 	}
 	fmt.Println("... Registered PrivateMintVerifier")
+	return nil
+}
 
-	// Register CoinVaults
+// registerVaults registers the Erc20/Erc721/Erc1155/EnygmaErc20 coin vaults.
+func (d *dvpInitializer) registerVaults() error {
 	fmt.Println("Registering CoinVaults to EnygmaDvp smart contract address.")
 
 	// Erc20CoinVault
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
-		common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress),
-		common.HexToAddress(receipts["ERC20"].ContractAddress),
+	_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerVault",
+		common.HexToAddress(d.receipts["Erc20CoinVault"].ContractAddress),
+		common.HexToAddress(d.receipts["ERC20"].ContractAddress),
 		big.NewInt(1),
-		treeDepth,
+		d.treeDepth,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register Erc20CoinVault: %w", err)
@@ -237,11 +301,11 @@ func initializeDvp() error {
 	fmt.Println("... Registered Erc20CoinVault")
 
 	// Erc721CoinVault
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
-		common.HexToAddress(receipts["Erc721CoinVault"].ContractAddress),
-		common.HexToAddress(receipts["ERC721"].ContractAddress),
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerVault",
+		common.HexToAddress(d.receipts["Erc721CoinVault"].ContractAddress),
+		common.HexToAddress(d.receipts["ERC721"].ContractAddress),
 		big.NewInt(1),
-		treeDepth,
+		d.treeDepth,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register Erc721CoinVault: %w", err)
@@ -249,11 +313,11 @@ func initializeDvp() error {
 	fmt.Println("... Registered Erc721CoinVault")
 
 	// Erc1155CoinVault
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
-		common.HexToAddress(receipts["Erc1155CoinVault"].ContractAddress),
-		common.HexToAddress(receipts["ERC1155"].ContractAddress),
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerVault",
+		common.HexToAddress(d.receipts["Erc1155CoinVault"].ContractAddress),
+		common.HexToAddress(d.receipts["ERC1155"].ContractAddress),
 		big.NewInt(2),
-		treeDepth,
+		d.treeDepth,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register Erc1155CoinVault: %w", err)
@@ -261,26 +325,29 @@ func initializeDvp() error {
 	fmt.Println("... Registered Erc1155CoinVault")
 
 	// EnygmaErc20CoinVault
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
-		common.HexToAddress(receipts["EnygmaErc20CoinVault"].ContractAddress),
-		common.HexToAddress(receipts["ERC20"].ContractAddress),
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerVault",
+		common.HexToAddress(d.receipts["EnygmaErc20CoinVault"].ContractAddress),
+		common.HexToAddress(d.receipts["ERC20"].ContractAddress),
 		big.NewInt(1),
-		treeDepth,
+		d.treeDepth,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register EnygmaErc20CoinVault: %w", err)
 	}
 	fmt.Println("... Registered EnygmaErc20CoinVault")
+	return nil
+}
 
-	// Register AssetGroups
+// registerAssetGroups registers the Fungible/NonFungible asset groups.
+func (d *dvpInitializer) registerAssetGroups() error {
 	fmt.Println("Registering AssetGroups to EnygmaDvp smart contract.")
 
 	// FungibleAssetGroup
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerAssetGroup",
-		common.HexToAddress(receipts["FungibleAssetGroup"].ContractAddress),
+	_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerAssetGroup",
+		common.HexToAddress(d.receipts["FungibleAssetGroup"].ContractAddress),
 		"Fungibles",
 		true,
-		treeDepth,
+		d.treeDepth,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register FungibleAssetGroup: %w", err)
@@ -288,20 +355,23 @@ func initializeDvp() error {
 	fmt.Println("... Registered FungibleAssetGroup")
 
 	// NonFungibleAssetGroup
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerAssetGroup",
-		common.HexToAddress(receipts["NonFungibleAssetGroup"].ContractAddress),
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerAssetGroup",
+		common.HexToAddress(d.receipts["NonFungibleAssetGroup"].ContractAddress),
 		"NonFungibles",
 		false,
-		treeDepth,
+		d.treeDepth,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register NonFungibleAssetGroup: %w", err)
 	}
 	fmt.Println("... Registered NonFungibleAssetGroup")
+	return nil
+}
 
-	// Register Exchange Group Pair
+// registerGroupPairs registers the valid exchange and swap group pairs.
+func (d *dvpInitializer) registerGroupPairs() error {
 	fmt.Println("Registering Fungible-Fungible groupPair to valid exchange groupPairs.")
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerExchangeGroupPair",
+	_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerExchangeGroupPair",
 		big.NewInt(0),
 		big.NewInt(0),
 	)
@@ -309,19 +379,21 @@ func initializeDvp() error {
 		return fmt.Errorf("failed to register exchange group pair: %w", err)
 	}
 
-	// Register Swap Group Pair
 	fmt.Println("Registering Fungible-nonFungible groupPair to valid swap groupPairs.")
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerSwapGroupPair",
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerSwapGroupPair",
 		big.NewInt(0),
 		big.NewInt(1),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register swap group pair: %w", err)
 	}
+	return nil
+}
 
-	// Add vaults to groups
+// addVaultsToGroups adds each registered vault to its asset group.
+func (d *dvpInitializer) addVaultsToGroups() error {
 	fmt.Println("Registering Erc20 vaultId in Fungibles assetGroup")
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "addVaultToGroup",
+	_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "addVaultToGroup",
 		big.NewInt(0),
 		big.NewInt(0),
 	)
@@ -330,7 +402,7 @@ func initializeDvp() error {
 	}
 
 	fmt.Println("Registering Erc721 vaultId in NonFungibles assetGroup")
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "addVaultToGroup",
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "addVaultToGroup",
 		big.NewInt(1),
 		big.NewInt(1),
 	)
@@ -339,47 +411,57 @@ func initializeDvp() error {
 	}
 
 	fmt.Println("Registering Enygma ERC20 vaultId in Fungibles assetGroup")
-	_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "addVaultToGroup",
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "addVaultToGroup",
 		big.NewInt(3),
 		big.NewInt(0),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to add vault to group: %w", err)
 	}
+	return nil
+}
 
-	// Add Enygma address to EnygmaErc20CoinVault
+// addEnygmaToVault points EnygmaErc20CoinVault at the Enygma (institutional
+// payments) contract address.
+func (d *dvpInitializer) addEnygmaToVault() error {
 	enygmaVaultABI, err := loadContractABI("core/contracts/vaults/EnygmaErc20CoinVault.sol/EnygmaErc20CoinVault")
 	if err != nil {
 		return fmt.Errorf("failed to load EnygmaErc20CoinVault ABI: %w", err)
 	}
 
-	enygmaVaultAddress := common.HexToAddress(receipts["EnygmaErc20CoinVault"].ContractAddress)
+	enygmaVaultAddress := common.HexToAddress(d.receipts["EnygmaErc20CoinVault"].ContractAddress)
 	enygmaAddress := EnygmaAddress()
 
-	_, err = callContractMethod(client, auth, enygmaVaultABI, enygmaVaultAddress, "addEnygma", enygmaAddress)
+	_, err = callContractMethod(d.client, d.auth, enygmaVaultABI, enygmaVaultAddress, "addEnygma", enygmaAddress)
 	if err != nil {
 		return fmt.Errorf("failed to add Enygma to vault: %w", err)
 	}
 	fmt.Println("enygma was added into EnygmaErc20CoinVault")
+	return nil
+}
 
-	// Register the relayer account (accounts[2] — same address every relayer in this
-	// repo is started with, e.g. RELAYER_PRIVATE_KEY in relayer/README examples and
-	// test/10_v2_dvp_relayer_test.go's prerequisites) as an authorized EnygmaDvp
-	// relayer. swap()/exchange() are gated by the onlyRelayer modifier
-	// (authorizedRelayers[msg.sender]); without this, TestDvP_SwapViaRelayer and
-	// TestDvP_ExchangeViaRelayer fail with "caller is not an authorized relayer" on
-	// any fresh deployment until someone calls this manually.
-	if len(config.Network.Accounts) > 2 {
-		relayerAddress := common.HexToAddress(config.Network.Accounts[2].Address)
-		fmt.Printf("Registering relayer account %s...\n", relayerAddress.Hex())
-		_, err = callContractMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerRelayer", relayerAddress)
-		if err != nil {
-			return fmt.Errorf("failed to register relayer: %w", err)
-		}
-		fmt.Println("... Registered relayer")
+// registerRelayerIfConfigured registers the relayer account (accounts[2] —
+// same address every relayer in this repo is started with, e.g.
+// RELAYER_PRIVATE_KEY in relayer/README examples and
+// test/10_v2_dvp_relayer_test.go's prerequisites) as an authorized EnygmaDvp
+// relayer. swap()/exchange() are gated by the onlyRelayer modifier
+// (authorizedRelayers[msg.sender]); without this, TestDvP_SwapViaRelayer and
+// TestDvP_ExchangeViaRelayer fail with "caller is not an authorized relayer" on
+// any fresh deployment until someone calls this manually.
+func (d *dvpInitializer) registerRelayerIfConfigured(accounts []struct {
+	Address string `json:"address"`
+	Private string `json:"private"`
+}) error {
+	if len(accounts) <= 2 {
+		return nil
 	}
-
-	fmt.Println("EnygmaDvp has been initialized.")
+	relayerAddress := common.HexToAddress(accounts[2].Address)
+	fmt.Printf("Registering relayer account %s...\n", relayerAddress.Hex())
+	_, err := callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerRelayer", relayerAddress)
+	if err != nil {
+		return fmt.Errorf("failed to register relayer: %w", err)
+	}
+	fmt.Println("... Registered relayer")
 	return nil
 }
 
