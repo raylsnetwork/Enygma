@@ -1,7 +1,7 @@
 package templates
 
 import (
-	pos "enygma_retail_payments/gnark_circuits/poseidon"
+	pos "enygma_gnark_shared/poseidon"
 	"enygma_retail_payments/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
