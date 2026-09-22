@@ -10,6 +10,43 @@ There is also an [interactive demo](./enygma_demo) — a single HTML file, no bu
 through key setup, a confidential payment and a DvP swap, and lets you view the same ledger as a
 bank, as the chain, as the regulator and as the operator.
 
+## Repository layout
+
+Each variant is a self-contained set of Go modules plus Solidity contracts; nothing outside
+`enygma_dvp/src` is imported across variants. See each project's own README for its full layout
+and manual run steps.
+
+| Project | Model | Contains |
+|---|---|---|
+| [`enygma_payments`](./enygma_payments) | Account-based | contracts, gnark proof server, relayer, Go client/CLI |
+| [`enygma_retail_payments`](./enygma_retail_payments) | UTXO-based | contracts, gnark proof server, relayer, private tags, demo |
+| [`enygma_dvp`](./enygma_dvp) | UTXO-based | contracts, gnark proof server, relayer, deploy/init scripts, demo |
+| [`enygma_dvp_auctions`](./enygma_dvp_auctions) | UTXO-based | contracts, gnark proof server, deploy/init scripts |
+| [`enygma_demo`](./enygma_demo) | — | single-file interactive HTML demo (no build step) |
+
+Root-level docs: [`source_of_true.md`](./source_of_true.md) (design rationale, shared across
+projects) and each project's own `protocol_description.md` / `dvp_protocol.md` (per-protocol detail).
+
+## Development
+
+The repo is ~25 independent Go modules (`git ls-files '*go.mod'` lists them) — there is no single
+`go build ./...` at the root. The [`Makefile`](./Makefile) loops over all of them:
+
+```bash
+make help       # list every target
+make ci         # what CI runs: gofmt check + build + vet + unit tests, every module
+make ci MODULE=enygma_dvp/src   # the same, scoped to one module
+```
+
+CI (`.github/workflows/ci.yml`) runs `make ci` per module on every push and pull request against
+`main`. Dependency updates are managed by [Dependabot](./.github/dependabot.yml); every Go module
+must be listed there, and CI fails if a new one is added without a matching entry.
+
+`make ci` does not include integration tests — those need a running chain and gnark proof server,
+and skip themselves when those aren't reachable. `make dvp-chain`, `make dvp-gnark`, etc. give the
+DvP local dev loop (`make help` lists the retail and auctions equivalents); `enygma_payments` isn't
+wired into the Makefile yet — see its `demo_instructions.md` and `gnark-server/README.md`.
+
 ## System Architecture
 
 * **Users**: Traditional users of the system who want to transact with other users. 
