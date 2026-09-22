@@ -1,13 +1,13 @@
 package test
 
 import (
+	"enygma_dvp/gnark_circuits/primitives"
 	"github.com/consensys/gnark-crypto/ecc"
 	fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/iden3/go-iden3-crypto/poseidon"
-	"gnark_server/primitives"
 	"math/big"
 	"testing"
 )

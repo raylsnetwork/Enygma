@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"enygma_relayer/config"
+	"enygma_retail_payments/relayer/config"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"

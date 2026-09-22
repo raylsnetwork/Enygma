@@ -1,10 +1,10 @@
-module demo
+module enygma_payments/demo
 
 go 1.26.0
 toolchain go1.26.6
 
 require (
-	enygma v0.0.0
+	enygma_payments/go_client v0.0.0
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/iden3/go-iden3-crypto v0.0.16
 )
@@ -41,4 +41,4 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 )
 
-replace enygma => ../go_client
+replace enygma_payments/go_client => ../go_client

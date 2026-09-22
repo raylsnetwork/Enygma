@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"net/http"
 
-	utils "gnark_server/utils"
+	utils "enygma_retail_payments/gnark_circuits/utils"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
@@ -16,8 +16,8 @@ import (
 
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
+	"enygma_retail_payments/gnark_circuits/primitives"
+	"enygma_retail_payments/gnark_circuits/templates"
 )
 
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {

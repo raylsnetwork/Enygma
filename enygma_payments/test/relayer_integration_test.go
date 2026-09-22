@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"enygma_payments_relayer/server"
+	"enygma_payments/relayer/server"
 )
 
 // newIntegrationServer starts a real TCP server backed by mock contract + miner.

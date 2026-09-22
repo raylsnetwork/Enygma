@@ -1,8 +1,8 @@
 package primitives
 
 import (
+	pos "enygma_dvp_auctions/gnark_circuits/poseidon"
 	"github.com/consensys/gnark/frontend"
-	pos "gnark_server/poseidon"
 )
 
 func PublicKey(api frontend.API, privateKey frontend.Variable) frontend.Variable {

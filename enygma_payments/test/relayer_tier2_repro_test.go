@@ -35,8 +35,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"enygma_payments_relayer/config"
-	"enygma_payments_relayer/server"
+	"enygma_payments/relayer/config"
+	"enygma_payments/relayer/server"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/crypto"

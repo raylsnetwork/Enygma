@@ -16,7 +16,7 @@ import (
 	"math/big"
 	"testing"
 
-	utils "enygma-server/utils"
+	utils "enygma_payments/gnark-server/utils"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
