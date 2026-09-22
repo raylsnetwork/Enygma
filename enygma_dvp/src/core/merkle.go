@@ -2,7 +2,6 @@ package core
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -118,12 +117,10 @@ func NewMerkleTreeWithPath(depth int, prefix string, clientPath string) (*Merkle
 
 	// Try to load from file
 	if _, err := os.Stat(mt.savePath); err == nil {
-		fmt.Printf("Tree file found at %s, loading...\n", mt.savePath)
 		if err := mt.loadFromFile(); err != nil {
 			return nil, err
 		}
 	} else {
-		fmt.Println("No tree file found. Creating zero merkleTree")
 		mt.zeros = getZeroValueLevels(depth)
 		mt.tree = make([][]*big.Int, depth+1)
 		for i := 0; i <= depth; i++ {
@@ -203,7 +200,6 @@ func (mt *MerkleTree) SaveToFile() error {
 		return err
 	}
 
-	fmt.Printf("Tree has been saved to %s.\n", mt.savePath)
 	return nil
 }
 
@@ -279,8 +275,6 @@ func (mt *MerkleTree) InsertLeaf(leaf *big.Int) {
 
 // newTree creates a new tree when the current one is full
 func (mt *MerkleTree) newTree() {
-	fmt.Println("MerkleTree is full. Going to the next tree.")
-
 	// Save current tree to prevTrees
 	treeCopy := make([][]*big.Int, len(mt.tree))
 	for i, subtree := range mt.tree {
@@ -340,13 +334,11 @@ func (mt *MerkleTree) GenerateProof(element *big.Int) (*MerkleProof, error) {
 
 	treeNum := -1
 	if index == -1 {
-		fmt.Println("merkle.GenerateProof: can not find in the current tree, looking into previous trees.")
 		for i, prevTree := range mt.prevTrees {
 			for j, leaf := range prevTree[0] {
 				if leaf.Cmp(element) == 0 {
 					index = j
 					treeNum = i
-					fmt.Printf("merkle.GenerateProof: found it in tree no %d\n", i)
 					break
 				}
 			}
@@ -355,7 +347,7 @@ func (mt *MerkleTree) GenerateProof(element *big.Int) (*MerkleProof, error) {
 			}
 		}
 		if index == -1 {
-			return nil, errors.New(fmt.Sprintf("Couldn't find %s in the MerkleTree number: %d", element.String(), mt.treeNumber))
+			return nil, fmt.Errorf("couldn't find %s in the MerkleTree number: %d", element.String(), mt.treeNumber)
 		}
 	}
 
