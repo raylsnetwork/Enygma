@@ -10,6 +10,8 @@ const { ethers } = require("../contracts/enygma/node_modules/ethers");
 const fs   = require("fs");
 const path = require("path");
 
+// Hardhat account[0] — well-known default dev key, public, never a security
+// boundary (see .gitleaks.toml, which allowlists it by exact value).
 const OWNER_KEY      = process.env.OWNER_KEY || "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154";
 const CHAIN_ID       = parseInt(process.env.CHAIN_ID || "1337");
 const RPC_URL        = process.env.RPC_URL    || "http://127.0.0.1:8545";
