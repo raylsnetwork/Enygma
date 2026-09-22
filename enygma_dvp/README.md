@@ -105,13 +105,13 @@ enygma_dvp/
 
 Four independent Go modules — no shared `go.work`, each must be built from its own directory.
 
-| Directory         | Module name          | Depends on                                    |
-| ----------------- | -------------------- | --------------------------------------------- |
-| `src/`            | `enygma_dvp/src_go`  | external only                                 |
-| `test/`           | `enygma_dvp/test`    | `enygma_dvp/src_go` (via `replace => ../src`) |
-| `scripts/`        | `enygma_dvp`         | `enygma_dvp/src_go` (via `replace => ../src`) |
-| `gnark_circuits/` | `gnark_server`       | external only (gnark, no dependency on src/)  |
-| `relayer/`        | `enygma_dvp_relayer` | external only                                 |
+| Directory         | Module name                              | Depends on                            |
+| ----------------- | ----------------------------------------- | -------------------------------------- |
+| `src/`            | `github.com/raylsnetwork/enygma_dvp/src` | external only                          |
+| `test/`           | `enygma_dvp/test`                        | `.../src` (via `replace => ../src`)    |
+| `scripts/`        | `enygma_dvp/scripts`                     | `.../src` (via `replace => ../src`)    |
+| `gnark_circuits/` | `enygma_dvp/gnark_circuits`              | external only (gnark, no dependency on src/) |
+| `relayer/`        | `enygma_dvp/relayer`                     | external only                          |
 
 ### Running the System
 

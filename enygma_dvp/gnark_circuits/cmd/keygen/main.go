@@ -4,9 +4,9 @@ import (
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 
-	"gnark_server/primitives"
-	script "gnark_server/scripts"
-	"gnark_server/templates"
+	"enygma_dvp/gnark_circuits/primitives"
+	script "enygma_dvp/gnark_circuits/scripts"
+	"enygma_dvp/gnark_circuits/templates"
 )
 
 // GenerationVkPk generates proving keys (PK) and verification keys (VK) for all

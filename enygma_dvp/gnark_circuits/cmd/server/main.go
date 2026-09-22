@@ -1,9 +1,9 @@
 package main
 
 import (
-	"gnark_server/server/api"
-	"gnark_server/server/config"
-	serverutils "gnark_server/server/utils"
+	"enygma_dvp/gnark_circuits/server/api"
+	"enygma_dvp/gnark_circuits/server/config"
+	serverutils "enygma_dvp/gnark_circuits/server/utils"
 )
 
 func main() {

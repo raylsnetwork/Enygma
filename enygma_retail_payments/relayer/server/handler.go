@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"enygma_relayer/config"
+	"enygma_retail_payments/relayer/config"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"

@@ -8,7 +8,7 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"os"
 
-	"gnark_server/templates"
+	"enygma_dvp/gnark_circuits/templates"
 )
 
 func SetupPrivateMint(config templates.PrivateMintConfig, circuitName string) {

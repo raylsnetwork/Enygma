@@ -3,24 +3,24 @@ package api
 import (
 	"net/http"
 
+	"enygma_dvp/gnark_circuits/server/config"
 	"github.com/gin-gonic/gin"
-	"gnark_server/server/config"
 
-	serverutils "gnark_server/server/utils"
+	serverutils "enygma_dvp/gnark_circuits/server/utils"
 
 	// covered by test/01–04
-	"gnark_server/server/circuits/privateMint"
+	"enygma_dvp/gnark_circuits/server/circuits/privateMint"
 
-	"gnark_server/server/circuits/dvpDestination"
-	"gnark_server/server/circuits/dvpInit"
+	"enygma_dvp/gnark_circuits/server/circuits/dvpDestination"
+	"enygma_dvp/gnark_circuits/server/circuits/dvpInit"
 
 	// Payment-family circuits — dedicated Payment deployment, ported from
 	// enygma_retail_payments. Covered by test/12.
-	"gnark_server/server/circuits/payment"
-	"gnark_server/server/circuits/payment2in"
-	"gnark_server/server/circuits/paymentFee"
-	"gnark_server/server/circuits/paymentRelayerFeePublic"
-	"gnark_server/server/circuits/usdrFee"
+	"enygma_dvp/gnark_circuits/server/circuits/payment"
+	"enygma_dvp/gnark_circuits/server/circuits/payment2in"
+	"enygma_dvp/gnark_circuits/server/circuits/paymentFee"
+	"enygma_dvp/gnark_circuits/server/circuits/paymentRelayerFeePublic"
+	"enygma_dvp/gnark_circuits/server/circuits/usdrFee"
 )
 
 func NewServer(cfg *config.Config) *gin.Engine {

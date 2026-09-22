@@ -37,7 +37,7 @@ import (
 	"math/big"
 	"testing"
 
-	utils "enygma-server/utils"
+	utils "enygma_payments/gnark-server/utils"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/constraint/solver"
@@ -47,7 +47,7 @@ import (
 	"github.com/iden3/go-iden3-crypto/constants"
 	iden3poseidon "github.com/iden3/go-iden3-crypto/poseidon"
 
-	pos "enygma-server/poseidon"
+	pos "enygma_payments/gnark-server/poseidon"
 )
 
 // tagCollisionCircuit computes Poseidon(domain, secret, X, [senderId,

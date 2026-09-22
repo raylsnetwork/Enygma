@@ -15,8 +15,8 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
+	"enygma_dvp/gnark_circuits/primitives"
+	"enygma_dvp/gnark_circuits/templates"
 )
 
 func main() {

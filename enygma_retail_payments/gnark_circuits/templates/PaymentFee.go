@@ -1,9 +1,9 @@
 package templates
 
 import (
+	"enygma_retail_payments/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 // PaymentFeeCircuit is the fee-absorbed variant of the plain 1-in/2-out payment

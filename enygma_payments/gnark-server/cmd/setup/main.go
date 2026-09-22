@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
-	utils "enygma-server/utils"
+	utils "enygma_payments/gnark-server/utils"
 	"github.com/consensys/gnark/frontend"
 
 	"github.com/consensys/gnark-crypto/ecc"

@@ -1,9 +1,9 @@
 package templates
 
 import (
+	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 // AuctionBatchSize is the maximum number of bids processed in one Phase-1 proof.

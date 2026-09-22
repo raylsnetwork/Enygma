@@ -3,13 +3,13 @@ package api
 import (
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/server/circuits/payment"
-	"gnark_server/server/circuits/payment2in"
-	"gnark_server/server/circuits/paymentFee"
-	"gnark_server/server/circuits/paymentRelayerFeePublic"
-	"gnark_server/server/circuits/privateMint"
-	"gnark_server/server/circuits/usdrFee"
-	"gnark_server/server/config"
+	"enygma_retail_payments/gnark_circuits/server/circuits/payment"
+	"enygma_retail_payments/gnark_circuits/server/circuits/payment2in"
+	"enygma_retail_payments/gnark_circuits/server/circuits/paymentFee"
+	"enygma_retail_payments/gnark_circuits/server/circuits/paymentRelayerFeePublic"
+	"enygma_retail_payments/gnark_circuits/server/circuits/privateMint"
+	"enygma_retail_payments/gnark_circuits/server/circuits/usdrFee"
+	"enygma_retail_payments/gnark_circuits/server/config"
 )
 
 func NewServer(cfg *config.Config) *gin.Engine {

@@ -13,9 +13,9 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	utils "gnark_server/utils"
+	"enygma_dvp/gnark_circuits/primitives"
+	"enygma_dvp/gnark_circuits/templates"
+	utils "enygma_dvp/gnark_circuits/utils"
 )
 
 // NewHandler returns a gin.HandlerFunc for POST /proof/usdrFee.

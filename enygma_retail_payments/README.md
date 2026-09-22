@@ -71,7 +71,7 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme once t
 
 ```
 enygma_retail_payments/
-├── gnark_circuits/     # Gnark ZK server (Go module: gnark_server, port 8082)
+├── gnark_circuits/     # Gnark ZK server (Go module: enygma_retail_payments/gnark_circuits, port 8082)
 │   ├── scripts/keys/   # Proving/verifying keys (PaymentPK/VK, PrivateMintPK/VK)
 │   └── cmd/export_vk/  # Exports VK to circom JSON format for on-chain init
 ├── src/                # Core Go library (module: enygma_retail_payments/src)
