@@ -1,4 +1,5 @@
 {
+  "_warning": "DEMO ONLY — the private keys below are well-known Hardhat default accounts. They are publicly visible on the internet. Never use them on any real network or with real funds.",
   "network": {
     "host": "localhost",
     "port": "8545",
