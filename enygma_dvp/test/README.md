@@ -41,7 +41,7 @@ cd .. && /tmp/init_contracts
 
 ```bash
 cd gnark_circuits
-go run main.go
+go run ./cmd/server
 # Starts on :8081 — keep this running in a separate terminal
 ```
 
