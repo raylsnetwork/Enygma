@@ -41,6 +41,17 @@ type EnygmaContract interface {
 // txTimeout is the maximum time to wait for a transaction to be mined.
 const txTimeout = 45 * time.Second
 
+// Exact public-signal arities this relayer accepts, one per circuit.
+// Exported so external test packages (e.g. relayer_mocks_test.go) can
+// reference the same values instead of duplicating the literals — see the
+// Fix L-05 comment below for why exact (not "up to N") length is enforced,
+// and each handler's own doc comment for the signal layout.
+const (
+	TransferPublicSignalLen    = 81 // enygma circuit: FingerPrint 6x6 + Fix L-01 domain separator
+	TransferFeePublicSignalLen = 55 // enygma_fee circuit: 54 signals + domain separator
+	UsdrFeePublicSignalLen     = 82 // usdr circuit: same 80-signal layout + FeeAmount + domain separator
+)
+
 // maxParticipants is the exact commitmentDeltas/participantIds length every
 // Enygma transfer path requires on-chain (Enygma.sol's DEFAULT_SIZE — see
 // _updateBalancesForTransfer's callers, which all revert InvalidParticipantCount
@@ -297,11 +308,11 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
 		return
 	}
-	if len(req.PublicSignal) != 81 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: enygma circuit requires exactly 81 elements, got %d", len(req.PublicSignal))})
+	if len(req.PublicSignal) != TransferPublicSignalLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: enygma circuit requires exactly %d elements, got %d", TransferPublicSignalLen, len(req.PublicSignal))})
 		return
 	}
-	var pubSig80 [81]*big.Int
+	var pubSig80 [TransferPublicSignalLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("publicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
@@ -316,11 +327,11 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrProof: %v", err)})
 		return
 	}
-	if len(req.UsdrPublicSignal) != 82 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: usdr circuit requires exactly 82 elements, got %d", len(req.UsdrPublicSignal))})
+	if len(req.UsdrPublicSignal) != UsdrFeePublicSignalLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: usdr circuit requires exactly %d elements, got %d", UsdrFeePublicSignalLen, len(req.UsdrPublicSignal))})
 		return
 	}
-	var usdrPubSig82 [82]*big.Int
+	var usdrPubSig82 [UsdrFeePublicSignalLen]*big.Int
 	for i, s := range req.UsdrPublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("usdrPublicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
@@ -443,12 +454,12 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
 		return
 	}
-	if len(req.PublicSignal) != 55 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: fee circuit requires exactly 55 elements, got %d", len(req.PublicSignal))})
+	if len(req.PublicSignal) != TransferFeePublicSignalLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: fee circuit requires exactly %d elements, got %d", TransferFeePublicSignalLen, len(req.PublicSignal))})
 		return
 	}
 
-	var pubSig54 [55]*big.Int
+	var pubSig54 [TransferFeePublicSignalLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("publicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
