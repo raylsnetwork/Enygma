@@ -1,8 +1,8 @@
 package templates
 
 import (
-	pos "enygma_dvp/gnark_circuits/poseidon"
 	"enygma_dvp/gnark_circuits/primitives"
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
 )

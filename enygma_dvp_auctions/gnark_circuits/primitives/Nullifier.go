@@ -1,7 +1,7 @@
 package primitives
 
 import (
-	pos "enygma_dvp_auctions/gnark_circuits/poseidon"
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
 )
 
