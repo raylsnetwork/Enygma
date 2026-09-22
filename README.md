@@ -24,8 +24,19 @@ and manual run steps.
 | [`enygma_dvp_auctions`](./enygma_dvp_auctions) | UTXO-based | contracts, gnark proof server, deploy/init scripts |
 | [`enygma_demo`](./enygma_demo) | — | single-file interactive HTML demo (no build step) |
 
-Root-level docs: [`source_of_true.md`](./source_of_true.md) (design rationale, shared across
-projects) and each project's own `protocol_description.md` / `dvp_protocol.md` (per-protocol detail).
+### Protocol docs index
+
+| Doc | Covers |
+|---|---|
+| [`source_of_true.md`](./source_of_true.md) | Design rationale shared across all four variants — why Poseidon, why Groth16, why BN254, and where each primitive appears in code. |
+| [`enygma_dvp/protocol_description.md`](./enygma_dvp/protocol_description.md) | DvP protocol overview (deposit/transfer/withdraw/swap flows); points to `dvp_protocol.md` for the formal definitions. |
+| [`enygma_dvp/dvp_protocol.md`](./enygma_dvp/dvp_protocol.md) | DvP's formal definitions: commitment structure, nullifiers, key generation, ZK proof statements, security goals. |
+| [`enygma_dvp/docs/`](./enygma_dvp/docs/) | DvP's own doc set: gnark proof API, Merkle API, per-flow walkthroughs — see its own [README](./enygma_dvp/docs/README.md). |
+| [`enygma_payments/protocol_description.md`](./enygma_payments/protocol_description.md) | Institutional (account-based) payments protocol. |
+| [`enygma_retail_payments/protocol_description.md`](./enygma_retail_payments/protocol_description.md) | Retail (UTXO-based) payments protocol. |
+| [`enygma_dvp_auctions/docs/protocol_description.md`](./enygma_dvp_auctions/docs/protocol_description.md) | Auction protocol overview. |
+| [`enygma_dvp_auctions/docs/auction_protocol_v2.md`](./enygma_dvp_auctions/docs/auction_protocol_v2.md) | Changes from the v1 auction protocol. |
+| [`enygma_dvp_auctions/docs/docs.md`](./enygma_dvp_auctions/docs/docs.md) | Auction technical reference (contract/circuit-level). |
 
 ## Development
 
