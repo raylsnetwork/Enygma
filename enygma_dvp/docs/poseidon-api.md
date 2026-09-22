@@ -2,7 +2,13 @@
 
 Base URL: `http://localhost:8081`
 
-> **Note:** These endpoints are currently commented out in `server/api/server.go`. Uncomment the `serverutils` import and the two routes to enable them.
+> **Note:** These endpoints do not currently exist in the codebase — the handler
+> files (`server/utils/poseidon_encrypt.go`, `poseidon_decrypt.go`) were removed
+> 2026-09-21, since their routes were already unregistered and nothing called
+> them. This doc is kept as a spec for re-adding them, not a description of
+> current behavior. The underlying native functions they would have wrapped
+> (see the bottom of this doc) are unaffected and still used internally by the
+> auditor circuits.
 
 All numeric values are **decimal strings** (big integers over the BN254 scalar field).
 
