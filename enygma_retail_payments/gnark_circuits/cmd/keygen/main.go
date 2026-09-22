@@ -5,9 +5,9 @@ import (
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 
-	"gnark_server/primitives"
-	script "gnark_server/scripts"
-	"gnark_server/templates"
+	"enygma_retail_payments/gnark_circuits/primitives"
+	script "enygma_retail_payments/gnark_circuits/scripts"
+	"enygma_retail_payments/gnark_circuits/templates"
 )
 
 func GenerationVkPk() {

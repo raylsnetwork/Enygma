@@ -5,13 +5,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/server/circuits/auctionBatch"
-	"gnark_server/server/circuits/auctionBid"
-	"gnark_server/server/circuits/auctionFinal"
-	"gnark_server/server/circuits/auctionLock"
-	"gnark_server/server/circuits/auctionRevert"
-	"gnark_server/server/circuits/auctionWithdraw"
-	"gnark_server/server/config"
+	"enygma_dvp_auctions/gnark_circuits/server/circuits/auctionBatch"
+	"enygma_dvp_auctions/gnark_circuits/server/circuits/auctionBid"
+	"enygma_dvp_auctions/gnark_circuits/server/circuits/auctionFinal"
+	"enygma_dvp_auctions/gnark_circuits/server/circuits/auctionLock"
+	"enygma_dvp_auctions/gnark_circuits/server/circuits/auctionRevert"
+	"enygma_dvp_auctions/gnark_circuits/server/circuits/auctionWithdraw"
+	"enygma_dvp_auctions/gnark_circuits/server/config"
 )
 
 // NewServer wires the six auction proof endpoints.

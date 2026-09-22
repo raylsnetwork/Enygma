@@ -1,10 +1,10 @@
 package templates
 
 import (
+	pos "enygma_dvp/gnark_circuits/poseidon"
+	"enygma_dvp/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	pos "gnark_server/poseidon"
-	"gnark_server/primitives"
 )
 
 type PrivateMintConfig struct {

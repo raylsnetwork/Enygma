@@ -13,9 +13,9 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	"gnark_server/utils"
+	"enygma_dvp_auctions/gnark_circuits/primitives"
+	"enygma_dvp_auctions/gnark_circuits/templates"
+	"enygma_dvp_auctions/gnark_circuits/utils"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the

@@ -7,7 +7,7 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
-	"gnark_server/templates"
+	"enygma_retail_payments/gnark_circuits/templates"
 )
 
 func SetupPayment(config templates.PaymentCircuitConfig, circuitName string) {

@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"net/http"
 
-	utils "enygma-server/utils"
+	utils "enygma_payments/gnark-server/utils"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"

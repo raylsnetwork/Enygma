@@ -15,7 +15,7 @@ import (
 	"github.com/consensys/gnark/test"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
-	"gnark_server/templates"
+	"enygma_retail_payments/gnark_circuits/templates"
 )
 
 const feeFamilyTestDepth = 2

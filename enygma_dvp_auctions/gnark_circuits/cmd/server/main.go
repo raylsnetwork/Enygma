@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 
-	"gnark_server/server/api"
-	"gnark_server/server/config"
+	"enygma_dvp_auctions/gnark_circuits/server/api"
+	"enygma_dvp_auctions/gnark_circuits/server/config"
 )
 
 func main() {

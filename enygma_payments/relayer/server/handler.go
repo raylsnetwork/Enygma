@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"enygma_payments_relayer/config"
-	enygma "enygma_payments_relayer/contracts"
+	"enygma_payments/relayer/config"
+	enygma "enygma_payments/relayer/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"

@@ -6,9 +6,9 @@ import (
 	"context"
 	"math/big"
 
-	"enygma_payments_relayer/config"
-	contracts "enygma_payments_relayer/contracts"
-	"enygma_payments_relayer/server"
+	"enygma_payments/relayer/config"
+	contracts "enygma_payments/relayer/contracts"
+	"enygma_payments/relayer/server"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"

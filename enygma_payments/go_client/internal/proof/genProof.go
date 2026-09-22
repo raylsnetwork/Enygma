@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"enygma/config"
-	enygma "enygma/contracts"
-	"enygma/internal/types"
+	"enygma_payments/go_client/config"
+	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/go_client/internal/types"
 )
 
 // GenerateProof POSTs a transfer request to the gnark proving server and

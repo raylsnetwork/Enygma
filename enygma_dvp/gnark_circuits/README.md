@@ -1,7 +1,7 @@
 # gnark_circuits
 
 REST API server (port **8081**) that generates Groth16 proofs using [gnark](https://github.com/ConsenSys/gnark).
-Go module name: `gnark_server`.
+Go module name: `enygma_dvp/gnark_circuits`.
 
 ---
 

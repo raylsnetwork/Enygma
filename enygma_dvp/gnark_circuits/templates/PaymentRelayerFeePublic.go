@@ -1,9 +1,9 @@
 package templates
 
 import (
+	"enygma_dvp/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 // PaymentRelayerFeePublicCircuit combines PaymentRelayerCircuit and PaymentFeeCircuit:
