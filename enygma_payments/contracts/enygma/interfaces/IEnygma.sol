@@ -231,7 +231,8 @@ interface IEnygma {
     /// a transfer() that carries a USDr proof, or checkUsdr() reverts for it.
     function initializeUsdrBalance(
         uint256 accountId,
-        uint256 randomness
+        uint256 initialUsdrCommitX,
+        uint256 initialUsdrCommitY
     ) external returns (bool);
 
     function getUsdrBalance(

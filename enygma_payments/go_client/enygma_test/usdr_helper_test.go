@@ -88,8 +88,9 @@ func setupMockUsdr(
 	if r := waitTx(instance.SetUsdrFixedFee(mkAuth(), big.NewInt(usdrFeeAmt))); r.Status != 1 {
 		t.Fatal("setUsdrFixedFee failed")
 	}
+	usdrCx, usdrCy := regCommit(big.NewInt(usdrPrevR))
 	for _, id := range participantAccountIds {
-		if r := waitTx(instance.InitializeUsdrBalance(mkAuth(), big.NewInt(id), big.NewInt(usdrPrevR))); r.Status != 1 {
+		if r := waitTx(instance.InitializeUsdrBalance(mkAuth(), big.NewInt(id), usdrCx, usdrCy)); r.Status != 1 {
 			t.Fatalf("initializeUsdrBalance(accountId=%d) failed", id)
 		}
 	}

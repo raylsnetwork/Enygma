@@ -169,6 +169,13 @@ contract Enygma is IEnygma {
     /// different asset.
     mapping(uint256 => mapping(uint256 => Point)) public usdrBalanceCommitments;
 
+    /// @notice Tracks whether initializeUsdrBalance() has already run for an
+    /// account — usdrBalanceCommitments is keyed by epoch (lastBlockNum) and
+    /// lazily migrated forward, so a zero entry at the *current* epoch does
+    /// not by itself mean "never initialized"; this flag is the actual
+    /// source of truth, mirroring registerAccount()'s own idempotency guard.
+    mapping(uint256 => bool) public usdrInitialized;
+
     /// @notice Public spend keys for each account (Poseidon(sk,sk) mod P)
     mapping(uint256 => uint256) public publicKeys;
 
@@ -623,20 +630,35 @@ contract Enygma is IEnygma {
      * demo/test registration flows) untouched. Trade-off: must be called
      * once per already-registered account (including ones registered
      * before this feature shipped) or checkUsdr() reverts for them until it is.
+     *
+     * Takes a caller-precomputed commitment point rather than raw
+     * randomness, matching registerAccount()'s own pattern: computing
+     * Com(0, randomness) on chain from a plaintext randomness argument
+     * would expose the account's USDr blinding factor to any chain
+     * observer via calldata, exactly the leak registerAccount() was
+     * hardened to avoid (see its own doc comment). The caller computes the
+     * commitment off chain (e.g. via a pedCom eth_call, never a tx) and
+     * submits only the resulting point.
      * @param accountId Account to initialize (must already be registered)
-     * @param randomness Randomness for the initial USDr commitment
+     * @param initialUsdrCommitX X coordinate of Com(0, randomness)
+     * @param initialUsdrCommitY Y coordinate of Com(0, randomness)
      */
     function initializeUsdrBalance(
         uint256 accountId,
-        uint256 randomness
+        uint256 initialUsdrCommitX,
+        uint256 initialUsdrCommitY
     ) external onlyOwner returns (bool) {
-        // Create initial balance commitment: Com(0, randomness) = randomness*H
-        (uint256 commitX, uint256 commitY) = pedCom(0, randomness);
-        usdrBalanceCommitments[lastBlockNum][accountId] = Point(commitX, commitY);
+        if (usdrInitialized[accountId]) revert AlreadyRegistered();
+        if (!CurveBabyJubJub.isOnCurve(initialUsdrCommitX, initialUsdrCommitY)) {
+            revert InvalidCommitmentPoint();
+        }
+
+        usdrInitialized[accountId] = true;
+        usdrBalanceCommitments[lastBlockNum][accountId] = Point(initialUsdrCommitX, initialUsdrCommitY);
 
         (usdrTotalSupplyX, usdrTotalSupplyY) = CurveBabyJubJub.pointAdd(
             usdrTotalSupplyX, usdrTotalSupplyY,
-            commitX, commitY
+            initialUsdrCommitX, initialUsdrCommitY
         );
 
         return true;

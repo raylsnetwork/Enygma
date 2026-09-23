@@ -338,8 +338,9 @@ func TestNullifierReuseProtection(t *testing.T) {
 		// initializeUsdrBalance() is required per account before any USDr
 		// proof involving it will pass checkUsdr()/the contract's balance
 		// checks — see IEnygma.sol's doc comment.
+		usdrCx, usdrCy := regCommit(big.NewInt(usdrPrevR))
 		if r := waitTx(instance.InitializeUsdrBalance(mkAuth(),
-			big.NewInt(int64(i+1)), big.NewInt(usdrPrevR))); r.Status != 1 {
+			big.NewInt(int64(i+1)), usdrCx, usdrCy)); r.Status != 1 {
 			t.Fatalf("initializeUsdrBalance bank %d failed", i)
 		}
 	}
@@ -534,7 +535,8 @@ func TestNullifierReuseProtection(t *testing.T) {
 	usdrSecrets[senderIdx] = usdrSenderSecret
 
 	usdrFp := fingerPrintGen(usdrSecrets, senderIdx)
-	usdrTagMessages := tagMessageGenUsdr(usdrSecrets, new(big.Int).Set(blockHash))
+	usdrNullifier, _ := poseidon.Hash([]*big.Int{usdrSenderSecret, blockHash})
+	usdrTagMessages := tagMessageGenUsdr(senderIdx, usdrSecrets, usdrNullifier)
 
 	usdrTxValues := make([]*big.Int, nBanks)
 	for i := range usdrTxValues {
@@ -543,8 +545,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	usdrTxValues[senderIdx] = negMod(big.NewInt(usdrFeeAmt))
 	usdrTxValues[usdrRecipientIdx] = big.NewInt(usdrFeeAmt)
 
-	usdrTxCommit, usdrTxRandom := genCommitmentAndRandomUsdr(senderIdx, big.NewInt(usdrFeeAmt), usdrTxValues, new(big.Int).Set(blockHash), usdrSecrets)
-	usdrNullifier, _ := poseidon.Hash([]*big.Int{usdrSenderSecret, blockHash})
+	usdrTxCommit, usdrTxRandom := genCommitmentAndRandomUsdr(senderIdx, big.NewInt(usdrFeeAmt), usdrTxValues, usdrNullifier, usdrSecrets)
 
 	usdrPrevCommitSlice := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {

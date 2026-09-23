@@ -295,35 +295,40 @@ func legacyGenCommitmentAndRandom(senderId int, transferValue *big.Int, txValues
 }
 
 // tagMessageGenUsdr/rValueUsdr/genCommitmentAndRandomUsdr mirror
-// legacyTagMessageGen/legacyRValue/legacyGenCommitmentAndRandom above but
-// use the USDr circuit's domain-separation constants
-// (hashTagUsdr/hashRandomUsdr) instead of hashTag/hashRandom, so the
-// off-circuit MessageTags/TxRandomValues match what USDrCircuit.Define
-// computes in-circuit. fingerPrintGen is NOT duplicated — the FingerPrint
-// matrix doesn't use either domain constant, so it's identical between
-// the two circuits.
-func tagMessageGenUsdr(secrets []*big.Int, blockHash *big.Int) []*big.Int {
-	bh := new(big.Int).Mod(blockHash, curveP)
+// tagMessageGen/rValue/genCommitmentAndRandom above but use the USDr
+// circuit's domain-separation constants (hashTagUsdr/hashRandomUsdr)
+// instead of hashTag/hashRandom, so the off-circuit MessageTags/
+// TxRandomValues match what USDrCircuit.Define computes in-circuit.
+// fingerPrintGen is NOT duplicated — the FingerPrint matrix doesn't use
+// either domain constant, so it's identical between the two circuits.
+//
+// Like tagMessageGen/rValue/genCommitmentAndRandom, these take a
+// per-transaction nullifier (not BlockNumber directly) and fold it with
+// SenderId/receiverId via perSlotNonce — usdr/circuit.go's own H-01/H-02
+// fix (ported from enygma/circuit.go) requires this; the caller computes
+// usdrNullifier = Poseidon(secretRemain, BlockNumber) itself (no circular
+// dependency — it doesn't need these functions' output) and passes it in.
+func tagMessageGenUsdr(senderId int, secrets []*big.Int, nullifier *big.Int) []*big.Int {
 	out := make([]*big.Int, len(secrets))
 	for i, s := range secrets {
-		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, bh})
+		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, perSlotNonce(nullifier, senderId, i)})
 		out[i] = h.Mod(h, curveP)
 	}
 	return out
 }
 
-func rValueUsdr(s, blockHash *big.Int) *big.Int {
-	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, blockHash})
+func rValueUsdr(s, nullifier *big.Int, senderId, receiverId int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, perSlotNonce(nullifier, senderId, receiverId)})
 	return h.Mod(h, curveP)
 }
 
-func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, blockHash *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
+func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, nullifier *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
 	n := len(secrets)
 	rValues := make([]*big.Int, n)
 	rSum := new(big.Int)
 
 	for i := 0; i < n; i++ {
-		r := rValueUsdr(secrets[i], blockHash)
+		r := rValueUsdr(secrets[i], nullifier, senderId, i)
 		rValues[i] = r
 		if i != senderId {
 			rSum.Add(rSum, r)
