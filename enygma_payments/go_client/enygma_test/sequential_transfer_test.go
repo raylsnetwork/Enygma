@@ -232,9 +232,10 @@ func TestSequentialTransfers(t *testing.T) {
 		artifactBase+"/UsdrVerifier.sol/Verifier.json")
 	waitTxOK(instance.AddUsdrVerifier(mkAuth(), usdrVerifierAddr))
 	waitTxOK(instance.SetUsdrFixedFee(mkAuth(), big.NewInt(usdrFeeAmt)))
+	usdrCx, usdrCy := regCommit(big.NewInt(usdrPrevR))
 	for i := 0; i < nBanks; i++ {
 		waitTxOK(instance.InitializeUsdrBalance(mkAuth(),
-			big.NewInt(int64(i+1)), big.NewInt(usdrPrevR)))
+			big.NewInt(int64(i+1)), usdrCx, usdrCy))
 	}
 	waitTxOK(instance.MintUsdrSupply(mkAuth(), big.NewInt(usdrMintAmt), big.NewInt(senderIdx+1)))
 	t.Logf("setup: usdr verifier registered, %d banks USDr-initialized, %d USDr minted to bank 0", nBanks, usdrMintAmt)
@@ -417,7 +418,8 @@ func TestSequentialTransfers(t *testing.T) {
 		usdrSecrets[senderIdx] = usdrSenderSecret
 
 		usdrFp := fingerPrintGen(usdrSecrets, senderIdx)
-		usdrTagMessages := tagMessageGenUsdr(usdrSecrets, new(big.Int).Set(blockHash))
+		usdrNullifier, _ := poseidon.Hash([]*big.Int{usdrSenderSecret, blockHash})
+		usdrTagMessages := tagMessageGenUsdr(senderIdx, usdrSecrets, usdrNullifier)
 
 		usdrTxValues := make([]*big.Int, nBanks)
 		for i := range usdrTxValues {
@@ -427,8 +429,7 @@ func TestSequentialTransfers(t *testing.T) {
 		usdrTxValues[usdrRecipientIdx] = big.NewInt(usdrFeeAmt)
 
 		usdrTxCommit, usdrTxRand := genCommitmentAndRandomUsdr(
-			senderIdx, big.NewInt(usdrFeeAmt), usdrTxValues, new(big.Int).Set(blockHash), usdrSecrets)
-		usdrNullifier, _ := poseidon.Hash([]*big.Int{usdrSenderSecret, blockHash})
+			senderIdx, big.NewInt(usdrFeeAmt), usdrTxValues, usdrNullifier, usdrSecrets)
 
 		usdrPrevCommitSlice := make([][]string, nBanks)
 		for i, pt := range usdrPrevBals {

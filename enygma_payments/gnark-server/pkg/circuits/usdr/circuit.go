@@ -99,7 +99,12 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	}
 
 	selectedVBits := api.ToBinary(selected_v, 252)
-	vBits := api.ToBinary(circuit.FeeAmount, 252)
+	// vBits: Fix C-02 (ported from enygma/circuit.go). FeeAmount both feeds
+	// a Pedersen scalar mult (via TxCommit, transitively) and was
+	// independently range-checked here at 252 bits — 252 bits admits
+	// values up to 2P and Com(b,r) == Com(b+kP,r). Bounded to 64 bits: ample
+	// for any realistic fee, and 2^64 << P leaves no aliasing room.
+	vBits := api.ToBinary(circuit.FeeAmount, 64)
 	pDiffBits := api.ToBinary(JubJubPrimeSubGroup, 252)
 
 	selectedVConstrained := api.FromBinary(selectedVBits...)
@@ -111,6 +116,27 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	expectedTxValueMod := utils.ReduceModP(api, expectedTxValue) // Fix C-01
 
 	api.AssertIsEqual(selectedVConstrained, expectedTxValueMod)
+
+	///////////////////////////////////**///////////////////////////////////
+	// Fix C-03 (ported from enygma/circuit.go): only the sender's own slot
+	// (selected_v, just constrained above) had any bound on its magnitude.
+	// Every OTHER TxValues[i] was unconstrained except for the aggregate
+	// Σ TxCommit == (0,1) — since P − w (a debit of w) is a perfectly valid
+	// field element, a prover could name any other registered account, put
+	// a small honest credit at one slot and P − w at another, and the
+	// on-chain contract would apply both deltas verbatim: a silent debit of
+	// w from an account that never consented. Range-check every non-sender
+	// slot to 64 bits and separately assert the non-sender credits sum to
+	// the sender's declared fee AS INTEGERS, not just mod P.
+	sumNonSenderValues := frontend.Variable(0)
+	for i := 0; i < k; i++ {
+		isSenderSlot := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
+		nonSenderValue := api.Select(isSenderSlot, frontend.Variable(0), circuit.TxValues[i])
+		nonSenderBits := api.ToBinary(nonSenderValue, 64)
+		nonSenderConstrained := api.FromBinary(nonSenderBits...)
+		sumNonSenderValues = api.Add(sumNonSenderValues, nonSenderConstrained)
+	}
+	api.AssertIsEqual(sumNonSenderValues, vConstrained)
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check if previous commits and tx commits are on Curve
@@ -131,6 +157,18 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 
 	api.AssertIsEqual(secretRemain, selectedSecret)
+
+	///////////////////////////////////**//////////////////////////////////////
+	// Knowledge of Nullifier
+	// Preimage = secretRemain (Poseidon(prevR, sk) mod p) — unique per sender per round
+	// Diagonal of FingerPrintofSharedSecrets is skipped, so we use the sender's self-derived secret
+	//
+	// Computed here (moved up, matching enygma/circuit.go's Fix H-01/H-02
+	// structure) because computedNullifier is reused below as the
+	// per-transaction value mixed into the message-tag and blinding-factor
+	// derivations — see those blocks for why.
+	computedNullifier := pos.Poseidon(api, []frontend.Variable{secretRemain, circuit.BlockNumber})
+	api.AssertIsEqual(computedNullifier, circuit.Nullifier)
 
 	///////////////////////////////////**///////////////////////////////////
 	// Check if FingerPrintofSharedSecrets is well formed for sender's column
@@ -196,9 +234,21 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	// constant would make MessageTags identical/correlated between the two
 	// proofs. 120 is arbitrary but must stay distinct from EnygmaCircuit's 12
 	// and from any other circuit sharing this witness pattern.
+	//
+	// Fix H-01 (ported from enygma/circuit.go): the tag used to be
+	// Poseidon(HashTag, SharedSecrets[i], BlockNumber) — BlockNumber is the
+	// epoch anchor, not the current transaction, so every tag for a
+	// receiver slot i was constant for an entire epoch, letting a passive
+	// chain observer single out the sender's slot (the only one that
+	// changes) and link "A pays B"/"B pays A" to the same relationship.
+	// computedNullifier (fresh per transaction — see the Nullifier block
+	// above) replaces BlockNumber, and SenderId/AnonymitySet[i] are mixed
+	// in as ordered inputs so direction can't correlate two proofs either.
 	HashTag := pos.Poseidon(api, []frontend.Variable{120})
 	for i := 0; i < k; i++ {
-		calculatedMessageTag := pos.Poseidon(api, []frontend.Variable{HashTag, circuit.SharedSecrets[i], circuit.BlockNumber})
+		directionTag := pos.Poseidon(api, []frontend.Variable{circuit.SenderId, circuit.AnonymitySet[i]})
+		perSlotNonce := pos.Poseidon(api, []frontend.Variable{computedNullifier, directionTag})
+		calculatedMessageTag := pos.Poseidon(api, []frontend.Variable{HashTag, circuit.SharedSecrets[i], perSlotNonce})
 		calculatedMessageTagMod := utils.ReduceModP(api, calculatedMessageTag) // Fix C-01
 
 		api.AssertIsEqual(circuit.MessageTags[i], calculatedMessageTagMod)
@@ -236,7 +286,13 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 
 	///////////////////////////////////**///////////////////////////////////
 	// Range Proof: previousV >= sender_tx_value and sender_tx_value >= 0
-	previousVBits := api.ToBinary(circuit.PreviousSenderBalance, 252)
+	// Fix C-02 (ported from enygma/circuit.go): PreviousSenderBalance is
+	// passed directly into utils.PedersenCommitment(api,
+	// circuit.PreviousSenderBalance, ...) above (the same wire), so a
+	// 252-bit bound here let claimed = real + P (or +2P) satisfy both that
+	// commitment (periodic mod P) and this solvency check with an inflated
+	// balance. 64 bits closes it the same way as FeeAmount above.
+	previousVBits := api.ToBinary(circuit.PreviousSenderBalance, 64)
 	previousVConstrained := api.FromBinary(previousVBits...)
 
 	// previousV >= sender_tx_value means Cmp(previousV, sender_tx_value) != -1
@@ -246,22 +302,6 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	// sender_tx_value >= 0 means Cmp(sender_tx_value, 0) != -1
 	vGreaterEqualZero := api.Cmp(vConstrained, frontend.Variable(0))
 	api.AssertIsEqual(api.IsZero(api.Add(vGreaterEqualZero, frontend.Variable(1))), frontend.Variable(0))
-
-	///////////////////////////////////**//////////////////////////////////////
-	// Knowledge of Nullifier
-	// Preimage = secretRemain (Poseidon(prevR, sk) mod p) — unique per sender per round
-	// Diagonal of FingerPrintofSharedSecrets is skipped, so we use the sender's self-derived secret
-	//
-	// Note: unlike MessageTags/TxRandomValues (below), the nullifier does not
-	// depend on HashTag/HashRandom at all — it's Poseidon(secretRemain,
-	// BlockNumber), where secretRemain derives from PreviousSenderRandomValue
-	// (the USDr balance's own blinding factor, independent of the main
-	// asset's). As long as the two proofs' PreviousSenderRandomValue differ
-	// (they do — different balance, different blinding), the two nullifiers
-	// are independent without needing a domain constant here.
-
-	computedNullifier := pos.Poseidon(api, []frontend.Variable{secretRemain, circuit.BlockNumber})
-	api.AssertIsEqual(computedNullifier, circuit.Nullifier)
 
 	///////////////////////////////////**//////////////////////////////////////
 	// Check if Tx Commitment is well formed
@@ -281,11 +321,22 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 
 	// DOMAIN-SEPARATED from EnygmaCircuit (Poseidon(21)) — same rationale as
 	// HashTag above.
+	//
+	// Fix H-02 (ported from enygma/circuit.go): same root cause as H-01
+	// above, applied to the Pedersen blinding factor instead of the message
+	// tag — r_i used to be Poseidon(HashRandom, SharedSecrets[i],
+	// BlockNumber), constant for a whole epoch, so subtracting two
+	// commitment deltas at a common slot across two same-epoch transactions
+	// cancelled the blinding term exactly, leaving (v1-v2)*G recoverable by
+	// table lookup for realistic (small) amounts. computedNullifier/
+	// SenderId/AnonymitySet[i] replace BlockNumber, same as H-01.
 	HashRandom := pos.Poseidon(api, []frontend.Variable{210})
 
 	// First pass: compute all hashes, reduce modulo JubJubPrimeSubGroup
 	for i := 0; i < k; i++ {
-		RandomFactor := pos.Poseidon(api, []frontend.Variable{HashRandom, circuit.SharedSecrets[i], circuit.BlockNumber})
+		randomDirectionTag := pos.Poseidon(api, []frontend.Variable{circuit.SenderId, circuit.AnonymitySet[i]})
+		randomPerSlotNonce := pos.Poseidon(api, []frontend.Variable{computedNullifier, randomDirectionTag})
+		RandomFactor := pos.Poseidon(api, []frontend.Variable{HashRandom, circuit.SharedSecrets[i], randomPerSlotNonce})
 		// Reduce RandomFactor modulo JubJubPrimeSubGroup
 		hashModP := utils.ReduceModP(api, RandomFactor) // Fix C-01
 
