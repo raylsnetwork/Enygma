@@ -233,6 +233,13 @@ func initializePayment() error {
 		return fmt.Errorf("failed to set usdrTokenId: %w", err)
 	}
 
+	// paymentWithUsdrFee only accepts its USDr leg against this vault; the
+	// UsdrCoinVault registered above is vaultId 1.
+	fmt.Println("Pinning the USDr fee vault (vaultId 1)...")
+	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "setUsdrFeeVaultId", big.NewInt(1)); err != nil {
+		return fmt.Errorf("failed to set the USDr fee vault: %w", err)
+	}
+
 	fmt.Println("EnygmaDvp initialized for the dedicated Payment deployment.")
 	return nil
 }
