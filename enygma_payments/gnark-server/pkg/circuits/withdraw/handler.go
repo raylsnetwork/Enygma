@@ -65,11 +65,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// witness.Fill goroutine leak.
 		bp := &utils.BigIntParser{}
 
-		witness.SenderId = frontend.Variable(request.SenderID)
-		witness.Address = frontend.Variable(request.Address)
+		witness.SenderId = bp.Parse(request.SenderID)
+		witness.Address = bp.Parse(request.Address)
 
-		witness.SenderTxValue = frontend.Variable(request.SenderTxValue)
-		witness.SecretKey = frontend.Variable(request.SecretKey)
+		witness.SenderTxValue = bp.Parse(request.SenderTxValue)
+		witness.SecretKey = bp.Parse(request.SecretKey)
 
 		for i := 0; i < config.NCommitment; i++ {
 			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])
@@ -97,7 +97,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// fields (BlockNumber via frontend.Variable directly, matching
 		// deposit's own convention; the rest via bp.Parse like every
 		// other field here).
-		witness.BlockNumber = frontend.Variable(request.BlockNumber)
+		witness.BlockNumber = bp.Parse(request.BlockNumber)
 		witness.Nullifier = bp.Parse(request.Nullifier)
 		witness.PreviousSenderBalance = bp.Parse(request.PreviousSenderBalance)
 		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
@@ -221,6 +221,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// against Σ depositParams[i].amount on chain.
 		publicSignal = append(publicSignal, new(big.Int).Set(totalDepositValue))
 		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
+
+		// The public signals above are parsed again from the request; fail
+		// rather than return a zero placeholder for a value that did not parse.
+		if err := bp.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
 
 		c.JSON(http.StatusOK, WithdrawOutput{
 			Proof:        proofRemix,

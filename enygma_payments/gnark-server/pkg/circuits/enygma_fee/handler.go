@@ -63,9 +63,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// witness.Fill goroutine leak.
 		bp := &utils.BigIntParser{}
 
-		witness.SenderId = frontend.Variable(request.SenderID)
-		witness.SenderTxValue = frontend.Variable(request.SenderTxValue)
-		witness.SecretKey = frontend.Variable(request.SecretKey)
+		witness.SenderId = bp.Parse(request.SenderID)
+		witness.SenderTxValue = bp.Parse(request.SenderTxValue)
+		witness.SecretKey = bp.Parse(request.SecretKey)
 		witness.Fee = bp.Parse(request.Fee)
 
 		for i := 0; i < config.NCommitment; i++ {
@@ -87,7 +87,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.PreviousSenderBalance = bp.Parse(request.PreviousSenderBalance)
 		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
 		witness.Nullifier = bp.Parse(request.Nullifier)
-		witness.BlockNumber = frontend.Variable(request.BlockNumber)
+		witness.BlockNumber = bp.Parse(request.BlockNumber)
 
 		// ── Compute aggregate public outputs ─────────────────────────────────
 		// SumTxValuesWithFee = (Σ TxValues + fee) mod P_bjj
@@ -207,6 +207,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		publicSignal = append(publicSignal, sumCommit.Y)                 // 52 SumTxCommit.Y
 		publicSignal = append(publicSignal, sumTxVal)                    // 53 SumTxValuesWithFee
 		publicSignal = append(publicSignal, bp.Parse(request.DomainId))  // 54 DomainId (Fix L-01)
+
+		// The public signals above are parsed again from the request; fail
+		// rather than return a zero placeholder for a value that did not parse.
+		if err := bp.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
 
 		c.JSON(http.StatusOK, EnygmaFeeOutput{
 			Proof:        proofRemix,
