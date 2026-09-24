@@ -209,6 +209,12 @@ contract Enygma is IEnygma {
 
     /// @notice Consumed nullifiers — prevents proof replay
     mapping(uint256 => bool) private _nullifiers;
+    // USDr proofs record their nullifiers here, not in _nullifiers. The USDr
+    // nullifier formula has no asset tag, so an account whose main and USDr
+    // balances share a blinding factor produces the same value for both
+    // proofs of one transfer(); a shared set made the second insert revert
+    // with NullifierAlreadyUsed and locked the account out.
+    mapping(uint256 => bool) private _usdrNullifiers;
 
     // ── Fix C-04 ────────────────────────────────────────────────────────
     // Each participant's blinding-factor shift is derived from SharedSecrets[i],
@@ -1135,10 +1141,10 @@ contract Enygma is IEnygma {
         _verifyBlockNumberFP(proof.public_signal);
         _verifyBlockNumberUsdr(usdrProof.public_signal);
 
-        // Record nullifiers before state changes (Fix C-2) — shared
-        // _nullifiers mapping, safe: the two circuits' domain-separation
-        // constants (see USDrCircuit) make the two nullifiers independent
-        // even for the same sender/block.
+        // Record nullifiers before state changes (Fix C-2), in two
+        // separate sets (_nullifiers / _usdrNullifiers): the two circuits
+        // share one nullifier formula, so they are kept apart by storage, not
+        // by value.
         _consumeNullifierFP(proof.public_signal);
         _consumeNullifierUsdr(usdrProof.public_signal);
 
@@ -2143,8 +2149,8 @@ contract Enygma is IEnygma {
      */
     function _consumeNullifierUsdr(uint256[83] calldata public_signal) private {
         uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
-        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
-        _nullifiers[nullifier] = true;
+        if (_usdrNullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _usdrNullifiers[nullifier] = true;
     }
 
     /**
