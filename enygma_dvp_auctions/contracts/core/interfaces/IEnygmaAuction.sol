@@ -53,6 +53,8 @@ interface IEnygmaAuction {
     // -------------------------------------------------------------------------
 
     /// @notice Emitted when Bob locks his NFT and opens the bidding.
+    event AuctionAnnounced(bytes32 indexed paramsHash);
+
     event AuctionInitialized(
         uint256 indexed auctionId,
         uint256 commitLocked,
@@ -149,6 +151,11 @@ interface IEnygmaAuction {
     error InvalidDeadline();
     error InvalidSettlementDeadline();
     error BiddingClosed();
+    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) was not
+    // announced with announceAuction() first.
+    error ParamsNotAnnounced();
+    // revertAuction: a batch has already been submitted.
+    error BatchesAlreadySubmitted();
     error BidsStillOpen();
     error DeadlineNotReached();
     error SettlementDeadlineNotReached();
@@ -161,6 +168,10 @@ interface IEnygmaAuction {
     // -------------------------------------------------------------------------
     // Functions
     // -------------------------------------------------------------------------
+
+    /// @notice Bob commits to his auction's parameters before initAuction(); see EnygmaAuction.
+    /// @param paramsHash keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice))
+    function announceAuction(bytes32 paramsHash) external returns (bool);
 
     /// @notice Bob locks his NFT and creates the auction.
     /// @param proof               Groth16 proof [ax,ay,bx1,bx0,by1,by0,cx,cy]

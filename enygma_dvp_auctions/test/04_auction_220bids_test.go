@@ -198,6 +198,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
+	announceAuctionParams(t, ethClient, auctionContract, ownerAuth, auctionId, deadline, settlementDeadline, floorPrice)
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		toBigArr8(lockResult.Proof), toBigArr7(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
 	)
