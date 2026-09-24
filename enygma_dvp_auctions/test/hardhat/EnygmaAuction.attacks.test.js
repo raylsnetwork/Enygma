@@ -2,7 +2,7 @@
 // contract should keep; a failure message starting with "VULNERABLE:" means the
 // property does not hold. Each block is a regression test for one audit finding. Uses the same mocks as EnygmaAuction.test.js.
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
+const { ethers, network } = require("hardhat");
 const { time, takeSnapshot } = require("@nomicfoundation/hardhat-network-helpers");
 
 const BIDDING = 1;
@@ -92,6 +92,48 @@ describe("EnygmaAuction — attack scenarios", function () {
       await auction.initAuction(ZERO_PROOF, stmt, deadline, settlement, 10);
       await expect(auction.initAuction(ZERO_PROOF, stmt, deadline, settlement, 10))
         .to.be.revertedWithCustomError(auction, "AuctionAlreadyExists");
+    });
+
+    it("A3b: an announcement made in the same block as initAuction does not count", async function () {
+      const [, , attacker] = await ethers.getSigners();
+      const { auction } = await deploy();
+      // The attacker sees Bob's initAuction in the mempool, so it knows the auctionId
+      // (statement[0]). It announces parameters of its own and calls initAuction with
+      // them in the same block.
+      const deadline = (await time.latest()) + 60, settlement = deadline + 3 * DAY;
+      await network.provider.send("evm_setAutomine", [false]);
+      try {
+        const announceTx = await auction.connect(attacker).announceAuction(paramsHash(1, deadline, settlement, 0), { gasLimit: 200000 });
+        const initTx = await auction.connect(attacker).initAuction(ZERO_PROOF, stmt, deadline, settlement, 0, { gasLimit: 2000000 });
+        await network.provider.send("evm_mine");
+        expect((await ethers.provider.getTransactionReceipt(announceTx.hash)).status).to.equal(1);
+        expect((await ethers.provider.getTransactionReceipt(initTx.hash)).status).to.equal(0);
+      } finally {
+        await network.provider.send("evm_setAutomine", [true]);
+      }
+      expect(Number((await auction.getAuctionCore(1)).state)).to.equal(0); // INACTIVE: no auction was opened
+    });
+
+    it("A3c: Bob's older announcement still wins against a same-block attacker", async function () {
+      const [, bob, attacker] = await ethers.getSigners();
+      const { auction } = await deploy();
+      const deadline = (await time.latest()) + 3600, settlement = deadline + 3 * DAY, floor = 10;
+      await auction.connect(bob).announceAuction(paramsHash(1, deadline, settlement, floor)); // mined earlier
+      await network.provider.send("evm_setAutomine", [false]);
+      try {
+        // Same block, attacker first: announce its own parameters and try to init with them...
+        const atkAnnounce = await auction.connect(attacker).announceAuction(paramsHash(1, deadline, settlement, 0), { gasLimit: 200000 });
+        const atkInit = await auction.connect(attacker).initAuction(ZERO_PROOF, stmt, deadline, settlement, 0, { gasLimit: 2000000 });
+        // ...then Bob's own init, which relies on the older announcement.
+        const bobInit = await auction.connect(bob).initAuction(ZERO_PROOF, stmt, deadline, settlement, floor, { gasLimit: 2000000 });
+        await network.provider.send("evm_mine");
+        expect((await ethers.provider.getTransactionReceipt(atkAnnounce.hash)).status).to.equal(1);
+        expect((await ethers.provider.getTransactionReceipt(atkInit.hash)).status).to.equal(0);
+        expect((await ethers.provider.getTransactionReceipt(bobInit.hash)).status).to.equal(1);
+      } finally {
+        await network.provider.send("evm_setAutomine", [true]);
+      }
+      expect((await auction.getAuctionCore(1)).floorPrice).to.equal(BigInt(floor));
     });
 
     it("A4: settlementDeadline is capped at deadline + 30 days", async function () {

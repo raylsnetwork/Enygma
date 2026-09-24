@@ -160,7 +160,7 @@ interface IEnygmaAuction {
     error BelowFloorPrice();
     error PayoutCommitMismatch();
     // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) was not
-    // announced with announceAuction() first.
+    // announced with announceAuction() in an earlier block.
     error ParamsNotAnnounced();
     // revertAuction: a batch has already been submitted.
     error BatchesAlreadySubmitted();
