@@ -141,7 +141,7 @@ interface IEnygmaDvp {
     error SwapDeadlineMustBeInFuture();
     error SwapNotFound();
     error SwapNotExpiredYet();
-    error Unauthorized();      // HIGH-10: caller is not the swap initiator
+    error SwapDeadlineTooFar();
 
     error InvalidStatementSize();
     error InvalidVaultId();

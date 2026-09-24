@@ -46,6 +46,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     uint256 public constant VK_ID_AUCTION_PRIVATE_OPENING = 8;
     uint256 public constant VK_ID_AUCTION_NOT_WINNING_BID = 9;
 
+    // Upper bound on a pending swap's deadline, measured from the first-leg
+    // submission. The deadline is a plain argument (not a public signal of the
+    // initiator proof), so whoever submits the first leg picks it; without a
+    // ceiling a front-runner could lock the initiator's note until an
+    // arbitrarily distant timestamp.
+    uint256 public constant MAX_SWAP_DURATION = 30 days;
+
     bytes32 public constant DEFAULT_OWNER_ROLE =
         keccak256(abi.encodePacked("ownerRole"));
 
@@ -674,6 +681,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (deadline <= block.timestamp) {
                 revert SwapDeadlineMustBeInFuture();
             }
+            if (deadline > block.timestamp + MAX_SWAP_DURATION) {
+                revert SwapDeadlineTooFar();
+            }
 
             // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA]
             // commitmentsIndex = 4 → receiptUniqueId = commitB
@@ -683,7 +693,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             // The DvPDestinationCircuit enforces StMessage = commitB, so Bob's
             // receiptMessage = commitB — this is the lookup key Bob uses when settling.
             // Keying by commitB (not a derived swapId) aligns circuit and contract.
-            // HIGH-10 fix: store initiator to restrict claimSwapTimeout.
+            // initiator is informational only (msg.sender of the first leg, which
+            // may be a relayer or a front-runner, not the note's owner) — it is
+            // deliberately NOT an authorization input for claimSwapTimeout.
             uint256 commitB          = receiptUniqueId;
             uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
             // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
@@ -715,7 +727,17 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // CRIT-2 fix: properly handle swap timeout by:
     //   1. Spending (nullifying) Alice's input nullifiers — not just unlocking.
     //   2. Inserting revertCommitA into the vault — Alice can spend this note.
-    // HIGH-10 fix: restrict to the swap initiator — prevents griefing by third parties.
+    //
+    // Deliberately callable by ANYONE (this replaces the HIGH-10 restriction to
+    // the first-leg submitter). The submitter is not authenticated: the first
+    // leg's receipt is public, so a front-runner can submit Alice's receipt
+    // first, become "initiator" and choose the deadline — under the old
+    // restriction only that party could ever release Alice's note. Permitting
+    // any caller costs nothing: the outcome is fixed by Alice's proof, since
+    // revertCommitA comes from the circuit's public statement and is
+    // spendable only with her key, so a third party triggering the refund can
+    // only ever return the note to its owner. The deadline ceiling
+    // (MAX_SWAP_DURATION) bounds how long a hijacked swap can hold the note.
     function claimSwapTimeout(uint256 pendingReceiptId) public nonReentrant returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 
@@ -725,11 +747,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (block.timestamp <= meta.deadline) {
             revert SwapNotExpiredYet();
         }
-        // HIGH-10: only the original initiator can claim the timeout.
-        if (msg.sender != meta.initiator) {
-            revert Unauthorized();
-        }
-
         uint256 vaultId       = meta.vaultId;
         uint256 revertCommitA = meta.revertCommitA;
 
