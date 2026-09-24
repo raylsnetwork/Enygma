@@ -104,7 +104,7 @@ func TestC04_UsdrLegFingerprints(t *testing.T) {
 
 	transfer := func(nullifierSeed int64, usdrMatrix *[nBanks][nBanks]*big.Int) error {
 		pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fp, nullifierSeed)
-		usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+		usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 		for i := 0; i < nBanks; i++ {
 			for j := 0; j < nBanks; j++ {
 				if i == j {

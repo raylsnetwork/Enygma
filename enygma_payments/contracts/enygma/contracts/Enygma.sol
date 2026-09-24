@@ -99,6 +99,10 @@ contract Enygma is IEnygma {
     // constants above.
     uint256 private constant USDR_FEE_AMOUNT_OFFSET = 80;
     uint256 private constant USDR_DOMAIN_OFFSET = 81; // Fix L-01
+    // The fee recipient's spend public key (83rd signal). Required to equal the
+    // key of the account that submitted the transaction, so the fee is paid to
+    // the relayer rather than to whichever participant the prover picked.
+    uint256 private constant USDR_FEE_RECIPIENT_OFFSET = 82;
 
     // ============================================
     // STATE VARIABLES
@@ -314,6 +318,10 @@ contract Enygma is IEnygma {
     /// @notice The USDr proof's public FeeAmount signal doesn't equal
     /// usdrFixedFeeAmount — a validly-formed proof for the wrong fee.
     error InvalidFeeAmount();
+    /// @notice The USDr proof's FeeRecipientKey signal is not the public key
+    /// of the account that submitted this transaction (msg.sender), so the
+    /// fee would not be paid to the relayer.
+    error InvalidFeeRecipient();
 
     // ============================================
     // MODIFIERS
@@ -1034,7 +1042,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Register USDr transfer verifier contract (verifies 82-signal
+     * @notice Register USDr transfer verifier contract (verifies 83-signal
      * proofs — two more than the main transfer verifier's 80, since the
      * fee amount and DomainId (Fix L-01) are both public signals here —
      * different key)
@@ -1731,7 +1739,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify zero-knowledge proof for the USDr transfer (82-signal
+     * @notice Verify zero-knowledge proof for the USDr transfer (83-signal
      * shape — the fee amount and DomainId (Fix L-01) are both public
      * signals here, unlike the main transfer proof's 80 — different
      * verifying key)
@@ -1744,7 +1752,7 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
-        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[82])", proof));
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[83])", proof));
     }
 
     /**
@@ -1770,7 +1778,7 @@ contract Enygma is IEnygma {
      */
     function _verifyUsdrMainBinding(
         uint256[81] calldata mainSignal,
-        uint256[82] calldata usdrSignal
+        uint256[83] calldata usdrSignal
     ) private pure {
         for (uint256 i = FP_PUBLIC_KEY_OFFSET; i < FP_PUBLIC_KEY_OFFSET + FP_PUBLIC_KEY_SIZE; ) {
             if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
@@ -2042,7 +2050,7 @@ contract Enygma is IEnygma {
      * sharing the same pre-state.
      */
     function _verifyPublicInputsUsdr(
-        uint256[82] calldata public_signal,
+        uint256[83] calldata public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
@@ -2052,6 +2060,16 @@ contract Enygma is IEnygma {
 
         if (public_signal[USDR_FEE_AMOUNT_OFFSET] != usdrFixedFeeAmount) {
             revert InvalidFeeAmount();
+        }
+
+        // The circuit pins the whole fee to the participant whose public key is
+        // FeeRecipientKey (and rejects a proof where that participant is the
+        // sender). Requiring that key to be the submitter's own makes the
+        // relayer, the account that pays the gas, the account that is paid.
+        // Without this a sender could name any participant as the recipient
+        // and have its transfer relayed for free.
+        if (public_signal[USDR_FEE_RECIPIENT_OFFSET] != publicKeys[addressToAccountId[msg.sender]]) {
+            revert InvalidFeeRecipient();
         }
 
         (Point[] memory balances, uint256[] memory keys) = getUsdrPublicValues(
@@ -2109,21 +2127,21 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify block number freshness for the 82-signal USDr proof.
+     * @notice Verify block number freshness for the 83-signal USDr proof.
      * Offset is identical to FP_BLOCK_NUMBER_OFFSET — only the array
      * length differs (81 vs 80), which calldata typing requires a
      * separate function signature for.
      */
-    function _verifyBlockNumberUsdr(uint256[82] calldata public_signal) private view {
+    function _verifyBlockNumberUsdr(uint256[83] calldata public_signal) private view {
         if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
 
     /**
-     * @notice Record nullifier as spent for the 82-signal USDr proof.
+     * @notice Record nullifier as spent for the 83-signal USDr proof.
      */
-    function _consumeNullifierUsdr(uint256[82] calldata public_signal) private {
+    function _consumeNullifierUsdr(uint256[83] calldata public_signal) private {
         uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;

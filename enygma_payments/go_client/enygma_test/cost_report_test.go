@@ -654,7 +654,7 @@ func TestCostReport(t *testing.T) {
 		return r
 	}
 	setupMockUsdr(t, client, mkAuth, waitTx, instance, accountIds)
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal81, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal81, accountIds, bankAddrs[0])
 	usdrCommitmentStrs := make([][]string, len(usdrDeltas))
 	for i, pt := range usdrDeltas {
 		usdrCommitmentStrs[i] = []string{pt.C1.String(), pt.C2.String()}

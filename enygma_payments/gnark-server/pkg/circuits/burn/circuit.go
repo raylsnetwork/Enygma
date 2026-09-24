@@ -116,7 +116,16 @@ func (circuit *BurnCircuit) Define(api frontend.API) error {
 	// Nullifier: same construction as every other circuit
 	// (Poseidon(Poseidon(prevR, sk) mod P, BlockNumber)) — replay
 	// protection, and incidentally a second proof of sk knowledge.
-	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousRandomValue, circuit.SecretKey})
+	// Fix (nullifier canonicality): the blinding factor reaches a Pedersen
+	// scalar multiplication, which only sees it mod P, but it used to reach
+	// the Poseidon below as a raw field element. Every value r + k*P below Fr
+	// (up to 8 of them) therefore opens the SAME on-chain commitment yet
+	// produced a different secretRemain and nullifier, so one state had
+	// several valid nullifiers. Hashing the reduced value makes the nullifier
+	// a function of the commitment's actual opening. Honest blinding factors
+	// are already < P, so honest nullifiers are unchanged.
+	prevRCanonical := utils.ReduceModP(api, circuit.PreviousRandomValue)
+	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{prevRCanonical, circuit.SecretKey})
 	secretRemain := utils.ReduceModP(api, secretSenderCalculated)
 	computedNullifier := pos.Poseidon(api, []frontend.Variable{secretRemain, circuit.BlockNumber})
 	api.AssertIsEqual(computedNullifier, circuit.Nullifier)

@@ -100,6 +100,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.Nullifier = bp.Parse(request.Nullifier)
 		witness.BlockNumber = frontend.Variable(request.BlockNumber)
 		witness.DomainId = bp.Parse(request.DomainId) // Fix L-01
+		witness.FeeRecipientKey = bp.Parse(request.FeeRecipientKey)
 
 		if err := bp.Err(); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
@@ -200,6 +201,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// offset (0-79) unchanged.
 		publicSignal = append(publicSignal, bp.Parse(request.SenderTxValue))
 		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
+		// FeeRecipientKey is public slot 82, last: the contract requires it
+		// to be the submitter's registered public key.
+		publicSignal = append(publicSignal, bp.Parse(request.FeeRecipientKey))
 
 		if err := bp.Err(); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})

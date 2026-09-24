@@ -133,7 +133,16 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 		selectedSecret = api.Add(selectedSecret, api.Mul(eq, circuit.SharedSecrets[i]))
 	}
 
-	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
+	// Fix (nullifier canonicality): the blinding factor reaches a Pedersen
+	// scalar multiplication, which only sees it mod P, but it used to reach
+	// the Poseidon below as a raw field element. Every value r + k*P below Fr
+	// (up to 8 of them) therefore opens the SAME on-chain commitment yet
+	// produced a different secretRemain and nullifier, so one state had
+	// several valid nullifiers. Hashing the reduced value makes the nullifier
+	// a function of the commitment's actual opening. Honest blinding factors
+	// are already < P, so honest nullifiers are unchanged.
+	prevRCanonical := utils.ReduceModP(api, circuit.PreviousSenderRandomValue)
+	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{prevRCanonical, circuit.SecretKey})
 	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 
 	api.AssertIsEqual(secretRemain, selectedSecret)

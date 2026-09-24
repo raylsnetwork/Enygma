@@ -62,8 +62,21 @@ type USDrCircuit struct {
 	// generated for one Enygma deployment could be paired with a valid
 	// main proof for a different deployment sharing the same pre-state
 	// (same registered keys/anonymity set/block number). Appended last —
-	// this is the new 82nd slot (index 81).
+	// this is slot 81. FeeRecipientKey follows at slot 82 (83 signals in all).
 	DomainId frontend.Variable `gnark:",public"`
+	// FeeRecipientKey is the spend public key of the account that is paid the
+	// fee (slot 82, appended last). The circuit only used to require that the
+	// non-sender credits ADD UP to FeeAmount; which slot got them, and in what
+	// split, was left to the prover, and nothing checked that the relayer was
+	// among them, so a bank could pay the fee to another participant (or split
+	// it) and still have its transfer relayed. Now exactly one participant's
+	// PublicKey equals this value, it must not be the sender's own slot, it
+	// receives the whole FeeAmount, and every other non-sender slot receives
+	// nothing. Enygma.sol requires this signal to equal the public key of the
+	// account that submitted the transaction (msg.sender), i.e. the relayer.
+	// Consequence: a bank cannot submit its own transfer, because it cannot be
+	// its own fee recipient; a transfer needs a separate relaying account.
+	FeeRecipientKey frontend.Variable `gnark:",public"`
 
 	// Private signals
 	SenderId                  frontend.Variable   // Identifier of the sender
@@ -129,13 +142,23 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 	// slot to 64 bits and separately assert the non-sender credits sum to
 	// the sender's declared fee AS INTEGERS, not just mod P.
 	sumNonSenderValues := frontend.Variable(0)
+	recipientCount := frontend.Variable(0)
 	for i := 0; i < k; i++ {
 		isSenderSlot := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
 		nonSenderValue := api.Select(isSenderSlot, frontend.Variable(0), circuit.TxValues[i])
 		nonSenderBits := api.ToBinary(nonSenderValue, 64)
 		nonSenderConstrained := api.FromBinary(nonSenderBits...)
 		sumNonSenderValues = api.Add(sumNonSenderValues, nonSenderConstrained)
+
+		// Fee recipient binding: the slot whose public key is FeeRecipientKey
+		// gets the whole fee; every other non-sender slot gets exactly 0; the
+		// sender's own slot can never be the recipient.
+		isRecipient := api.IsZero(api.Sub(circuit.PublicKey[i], circuit.FeeRecipientKey))
+		recipientCount = api.Add(recipientCount, isRecipient)
+		api.AssertIsEqual(api.Mul(isRecipient, isSenderSlot), 0)
+		api.AssertIsEqual(nonSenderConstrained, api.Mul(isRecipient, vConstrained))
 	}
+	api.AssertIsEqual(recipientCount, 1)
 	api.AssertIsEqual(sumNonSenderValues, vConstrained)
 
 	///////////////////////////////////**///////////////////////////////////
@@ -153,7 +176,16 @@ func (circuit *USDrCircuit) Define(api frontend.API) error {
 		selectedSecret = api.Add(selectedSecret, api.Mul(eq, circuit.SharedSecrets[i]))
 	}
 
-	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
+	// Fix (nullifier canonicality): the blinding factor reaches a Pedersen
+	// scalar multiplication, which only sees it mod P, but it used to reach
+	// the Poseidon below as a raw field element. Every value r + k*P below Fr
+	// (up to 8 of them) therefore opens the SAME on-chain commitment yet
+	// produced a different secretRemain and nullifier, so one state had
+	// several valid nullifiers. Hashing the reduced value makes the nullifier
+	// a function of the commitment's actual opening. Honest blinding factors
+	// are already < P, so honest nullifiers are unchanged.
+	prevRCanonical := utils.ReduceModP(api, circuit.PreviousSenderRandomValue)
+	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{prevRCanonical, circuit.SecretKey})
 	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 
 	api.AssertIsEqual(secretRemain, selectedSecret)
@@ -398,6 +430,9 @@ type USDrRequest struct {
 	TxRandomValues            []string `json:"tx_random_values" binding:"required,len=6"`
 	SenderTxValue             string   `json:"sender_tx_value" binding:"required"`
 	DomainId                  string   `json:"domain_id" binding:"required"`
+	// FeeRecipientKey: public key of the account paid the fee (the relaying
+	// account); see USDrCircuit.FeeRecipientKey.
+	FeeRecipientKey string `json:"fee_recipient_key" binding:"required"`
 }
 
 type USDrOutput struct {
