@@ -73,9 +73,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// before frontend.NewWitness is ever called.
 		bp := &utils.BigIntParser{}
 
-		witness.SenderId = frontend.Variable(request.SenderID)
-		witness.FeeAmount = frontend.Variable(request.SenderTxValue)
-		witness.SecretKey = frontend.Variable(request.SecretKey)
+		witness.SenderId = bp.Parse(request.SenderID)
+		witness.FeeAmount = bp.Parse(request.SenderTxValue)
+		witness.SecretKey = bp.Parse(request.SecretKey)
 
 		for i := 0; i < config.NCommitment; i++ {
 			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])
@@ -98,7 +98,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.PreviousSenderBalance = bp.Parse(request.PreviousSenderBalance)
 		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
 		witness.Nullifier = bp.Parse(request.Nullifier)
-		witness.BlockNumber = frontend.Variable(request.BlockNumber)
+		witness.BlockNumber = bp.Parse(request.BlockNumber)
 		witness.DomainId = bp.Parse(request.DomainId) // Fix L-01
 		witness.FeeRecipientKey = bp.Parse(request.FeeRecipientKey)
 

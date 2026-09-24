@@ -65,14 +65,14 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// witness.Fill goroutine leak.
 		bp := &utils.BigIntParser{}
 
-		witness.SenderId = frontend.Variable(request.SenderID)
-		witness.Address = frontend.Variable(request.Address)
+		witness.SenderId = bp.Parse(request.SenderID)
+		witness.Address = bp.Parse(request.Address)
 
-		witness.Hash = frontend.Variable(request.Hash)
+		witness.Hash = bp.Parse(request.Hash)
 
-		witness.SenderTxValue = frontend.Variable(request.SenderTxValue)
-		witness.SecretKey = frontend.Variable(request.SecretKey)
-		witness.PkDeposit = frontend.Variable(request.PkDeposit)
+		witness.SenderTxValue = bp.Parse(request.SenderTxValue)
+		witness.SecretKey = bp.Parse(request.SecretKey)
+		witness.PkDeposit = bp.Parse(request.PkDeposit)
 
 		for i := 0; i < config.NCommitment; i++ {
 			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])
@@ -94,7 +94,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.PreviousSenderBalance = bp.Parse(request.PreviousSenderBalance)
 		witness.PreviousSenderRandomValue = bp.Parse(request.PreviousSenderRandomValue)
 		witness.Nullifier = bp.Parse(request.Nullifier)
-		witness.BlockNumber = frontend.Variable(request.BlockNumber)
+		witness.BlockNumber = bp.Parse(request.BlockNumber)
 		witness.DomainId = bp.Parse(request.DomainId) // Fix L-01
 
 		if err := bp.Err(); err != nil {
@@ -186,6 +186,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		publicSignal = append(publicSignal, bp.Parse(request.Nullifier))
 		publicSignal = append(publicSignal, bp.Parse(request.Hash))
 		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
+
+		// The public signals above are parsed again from the request; fail
+		// rather than return a zero placeholder for a value that did not parse.
+		if err := bp.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
 
 		c.JSON(http.StatusOK, DepositOutput{
 			Proof:        proofRemix,
