@@ -541,6 +541,14 @@ contract Enygma is IEnygma {
         // idempotent", which it was not.
         if (publicKeys[accountId] != 0) revert AlreadyRegistered();
         if (accountId == 0) revert InvalidAccountId();
+        // Account ids must be assigned 1, 2, 3, ... with no gaps. Every
+        // per-account loop in this contract (check(), checkUsdr(),
+        // getPublicValues, balance propagation) iterates 1.._totalRegisteredParties,
+        // so an id above that range sits outside all of them: its
+        // commitment is added to totalSupply but never summed, breaking
+        // check() (and reverting mintSupply/burn) until every skipped id is
+        // registered, and its balance is never propagated across epochs.
+        if (accountId != _totalRegisteredParties + 1) revert InvalidAccountId();
         if (publicKey == 0) revert InvalidPublicKey();
         // viewKey is legitimately empty for accounts that never
         // participate in ZK circuits (e.g. the relayer's own self-
@@ -549,7 +557,7 @@ contract Enygma is IEnygma {
         // not a truncated or malformed one that would silently break key
         // agreement for whoever tries to use it later.
         if (viewKey.length != 0 && viewKey.length != 1184) revert InvalidViewKeyLength();
-        if (!CurveBabyJubJub.isOnCurve(initialCommitX, initialCommitY)) {
+        if (!_isValidCommitment(initialCommitX, initialCommitY)) {
             revert InvalidCommitmentPoint();
         }
 
@@ -664,7 +672,7 @@ contract Enygma is IEnygma {
         if (existing.c1 != 0 || (existing.c2 != 0 && existing.c2 != 1)) {
             revert AlreadyRegistered();
         }
-        if (!CurveBabyJubJub.isOnCurve(initialUsdrCommitX, initialUsdrCommitY)) {
+        if (!_isValidCommitment(initialUsdrCommitX, initialUsdrCommitY)) {
             revert InvalidCommitmentPoint();
         }
 
@@ -710,7 +718,8 @@ contract Enygma is IEnygma {
         uint256 mintCommitX,
         uint256 mintCommitY
     ) external onlyOwner whenInitialized whenNotPaused returns (bool) {
-        if (!CurveBabyJubJub.isOnCurve(mintCommitX, mintCommitY)) {
+        if (publicKeys[recipientId] == 0) revert UnregisteredParticipant();
+        if (!_isValidCommitment(mintCommitX, mintCommitY)) {
             revert InvalidCommitmentPoint();
         }
 
@@ -771,7 +780,11 @@ contract Enygma is IEnygma {
     function mintUsdrSupply(
         uint256 amount,
         uint256 recipientId
-    ) external onlyOwner whenInitialized returns (bool) {
+    ) external onlyOwner whenInitialized whenNotPaused returns (bool) {
+        // An unregistered recipient would add amount*G to usdrTotalSupply
+        // while the credited slot sits outside the range checkUsdr() sums
+        // over, breaking the USDr invariant with no USDr burn to repair it.
+        if (publicKeys[recipientId] == 0) revert UnregisteredParticipant();
         (uint256 amountX, uint256 amountY) = derivePk(amount);
 
         (usdrTotalSupplyX, usdrTotalSupplyY) = CurveBabyJubJub.pointAdd(
@@ -807,6 +820,11 @@ contract Enygma is IEnygma {
         lastBlockNum = epochStart;
 
         emit SupplyMinted(lastBlockNum, amount, recipientId);
+
+        // Same guard mintSupply() has: surface a broken invariant at the
+        // mint instead of at some later checkUsdr().
+        _checkUsdrInvariant();
+
         return true;
     }
 
@@ -846,10 +864,7 @@ contract Enygma is IEnygma {
         // yes/no. The code.length check above closes the other half: a
         // delegatecall/staticcall to a codeless address returns
         // success=true, which looked identical to a valid proof.
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[9])", proof)
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[9])", proof));
 
         // Fix L-01: see _expectedDomainId's doc comment.
         if (proof.public_signal[BURN_DOMAIN_OFFSET] != _expectedDomainId()) {
@@ -1268,10 +1283,7 @@ contract Enygma is IEnygma {
         // verifier registered by a compromised or careless owner).
         // Fix M-14: was uint256[50] — the real (and, after Fix C-09,
         // still-real) circuit arity is 51.
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof)
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
         _verifyPublicInputs52(proof.public_signal, participantIds, commitmentDeltas);
@@ -1404,10 +1416,7 @@ contract Enygma is IEnygma {
         // Hash — the deposit note commitment — at 50); this contract
         // declaring 50 made every deposit() call revert InvalidProof
         // unconditionally, regardless of proof validity.
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof)
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
         _verifyPublicInputs52(proof.public_signal, participantIds, commitmentDeltas);
@@ -1593,6 +1602,10 @@ contract Enygma is IEnygma {
      * of check() for the USDr ledger.
      */
     function checkUsdr() external view returns (bool) {
+        return _checkUsdrInvariant();
+    }
+
+    function _checkUsdrInvariant() private view returns (bool) {
         uint256 sumX;
         uint256 sumY = 1; // Start with neutral element
 
@@ -1670,6 +1683,39 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Whether (x, y) is a usable commitment point: on the curve AND
+     *         with both coordinates reduced below the base field.
+     * @dev CurveBabyJubJub.isOnCurve reduces with mulmod, so it accepts
+     *      x + Q for a valid x. Such a value would be stored verbatim, but
+     *      every proof public signal must be < Q, so an account whose stored
+     *      balance had an unreduced coordinate could never match a proof's
+     *      PreviousCommit and would be unusable as a participant.
+     */
+    function _isValidCommitment(uint256 x, uint256 y) private pure returns (bool) {
+        return x < CurveBabyJubJub.Q && y < CurveBabyJubJub.Q && CurveBabyJubJub.isOnCurve(x, y);
+    }
+
+    /**
+     * @notice Runs a verifier's verifyProof via staticcall and accepts only a
+     *         call that neither reverted nor returned a falsy result.
+     * @dev The generated gnark verifiers are `view` with no return value and
+     *      revert on an invalid proof, so a successful call with empty
+     *      returndata is a valid proof. But the call site cannot assume every
+     *      registered verifier behaves that way: one that reports failure by
+     *      returning `false` (as enygma_dvp's GenericGroth16Verifier does)
+     *      makes a bare `success` check accept an invalid proof — the same
+     *      class as the unchecked verifyProof bug fixed in enygma_dvp. Any
+     *      returndata that is not exactly one word equal to 1 is rejected.
+     */
+    function _verifyViaStaticcall(address verifier, bytes memory data) private view {
+        (bool success, bytes memory ret) = verifier.staticcall(data);
+        if (!success) revert InvalidProof();
+        if (ret.length != 0) {
+            if (ret.length != 32 || abi.decode(ret, (uint256)) != 1) revert InvalidProof();
+        }
+    }
+
+    /**
      * @notice Verify zero-knowledge proof for transfer
      */
     function _verifyTransferProof(
@@ -1681,13 +1727,7 @@ contract Enygma is IEnygma {
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
         // staticcall, not delegatecall — see the matching comment in withdraw().
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[81])",
-                proof
-            )
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[81])", proof));
     }
 
     /**
@@ -1704,13 +1744,7 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[82])",
-                proof
-            )
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[82])", proof));
     }
 
     /**
@@ -2401,13 +2435,7 @@ contract Enygma is IEnygma {
         if (_feeVerifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
         // staticcall, not delegatecall — see the matching comment in withdraw().
-        (bool success, ) = _feeVerifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[55])",
-                proof
-            )
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(_feeVerifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[55])", proof));
     }
 
     /**
