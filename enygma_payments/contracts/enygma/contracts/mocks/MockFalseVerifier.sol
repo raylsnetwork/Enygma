@@ -8,7 +8,7 @@ pragma solidity ^0.8.24;
 ///         a bare "did the call revert" check would accept it.
 ///
 ///         Both proof shapes transfer() uses are provided (main: 81 signals,
-///         USDr: 82) so the same instance can be registered for either.
+///         USDr: 83) so the same instance can be registered for either.
 contract MockFalseVerifier {
     function verifyProof(
         uint256[8] calldata,
@@ -19,7 +19,7 @@ contract MockFalseVerifier {
 
     function verifyProof(
         uint256[8] calldata,
-        uint256[82] calldata
+        uint256[83] calldata
     ) external pure returns (bool) {
         return false;
     }

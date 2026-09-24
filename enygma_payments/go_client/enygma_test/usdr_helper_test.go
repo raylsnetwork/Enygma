@@ -55,6 +55,7 @@ const (
 	usdrHelperNullifierOff    = 79
 	usdrHelperFeeAmountOff    = 80
 	usdrHelperDomainOff       = 81
+	usdrHelperFeeRecipientOff = 82
 )
 
 // usdrHelperNullifierSeq guarantees a fresh, never-reused USDr nullifier
@@ -104,7 +105,7 @@ func setupMockUsdr(
 // PublicKey/AnonymitySet/BlockNumber are copied from it verbatim so
 // _verifyUsdrMainBinding always passes, whatever those fields actually
 // encode; the off-diagonal fingerprint matrix is copied too (Fix C-04, USDr
-// leg). participantAccountIds must be the same accountIds (same order)
+// leg). submitter is the address that will call transfer(). participantAccountIds must be the same accountIds (same order)
 // passed as transfer()'s participantIds argument.
 func buildMockUsdrLeg(
 	t *testing.T,
@@ -112,10 +113,11 @@ func buildMockUsdrLeg(
 	enygmaAddr common.Address,
 	mainSignal [81]*big.Int,
 	participantAccountIds []int64,
+	submitter common.Address,
 ) ([]enygma.IEnygmaPoint, enygma.IEnygmaUsdrProof) {
 	t.Helper()
 
-	var usdrSignal [82]*big.Int
+	var usdrSignal [83]*big.Int
 	for i := range usdrSignal {
 		usdrSignal[i] = big.NewInt(0)
 	}
@@ -157,6 +159,18 @@ func buildMockUsdrLeg(
 
 	usdrSignal[usdrHelperFeeAmountOff] = big.NewInt(usdrFeeAmt)
 	usdrSignal[usdrHelperDomainOff] = expectedDomainId(enygmaAddr) // Fix L-01
+
+	// The contract requires the fee-recipient key to be the submitter's own
+	// registered public key (InvalidFeeRecipient otherwise).
+	submitterId, err := instance.AddressToAccountId(&bind.CallOpts{}, submitter)
+	if err != nil {
+		t.Fatalf("addressToAccountId(%s): %v", submitter, err)
+	}
+	submitterKey, err := instance.PublicKeys(&bind.CallOpts{}, submitterId)
+	if err != nil {
+		t.Fatalf("publicKeys(%s): %v", submitterId, err)
+	}
+	usdrSignal[usdrHelperFeeRecipientOff] = submitterKey
 
 	seq := atomic.AddInt64(&usdrHelperNullifierSeq, 1)
 	// Offset well clear of any small hand-picked seeds the *_repro_test.go

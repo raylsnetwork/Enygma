@@ -74,7 +74,7 @@ func TestVerifierReturningFalseIsRejected(t *testing.T) {
 
 	transfer := func(nullifierSeed int64) error {
 		pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fp, nullifierSeed)
-		usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+		usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 		tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas,
 			enygma.IEnygmaProof{Proof: zeroProof, PublicSignal: pubSig},
 			usdrDeltas, usdrProof, participantIds, "")
