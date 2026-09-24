@@ -129,6 +129,14 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 		outputsTotal = api.Add(outputsTotal, circuit.WtValuesOut[j])
 	}
 
+	// StFee is public and is used only in the conservation equation below, which
+	// holds in the field. Every input and output value is range-checked, but StFee
+	// was not: a prover could pick StFee = Fr - d and satisfy
+	// sum(out) + StFee == sum(in) (mod Fr) with outputs worth d more than the
+	// inputs, creating value from nothing. Bound it like every note value: an
+	// honest fee is part of an input note's value, so it is below TmRange.
+	api.AssertIsEqual(cmp.IsLess(api, circuit.StFee, circuit.Config.TmRange), 1)
+
 	// Conservation: outputs + fee must equal inputs — fee is absorbed, not an output.
 	api.AssertIsEqual(api.Add(outputsTotal, circuit.StFee), inputsTotal)
 

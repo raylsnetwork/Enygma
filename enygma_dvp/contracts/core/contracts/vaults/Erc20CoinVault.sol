@@ -50,6 +50,12 @@ contract Erc20CoinVault is AbstractCoinVault {
     // DvP Initiator circuit: circuit id=24 in enygmadvp.config.json → VK slot 23 (0-indexed)
     uint256 public constant VK_ID_DVP_INITIATOR = 23;
 
+    // Exclusive upper bound on the public StFee of a PaymentFee proof: the range
+    // bound the circuits put on every note value (TmRange, 10^36 in the gnark
+    // handlers). No honest fee reaches it, since a fee is part of an input note's
+    // value.
+    uint256 public constant MAX_FEE_AMOUNT = 10 ** 36;
+
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -395,6 +401,17 @@ contract Erc20CoinVault is AbstractCoinVault {
             // USDr circuit has 9 (adds StFee AND a public StTokenId at index 8).
             // Regular payment circuit has 7 public signals — dispatch by statement length.
             if (receipt.statement.length == 8) {
+                // PaymentFeeCircuit enforces  sum(in) == sum(out) + StFee  in the
+                // field but did not range-check StFee, so a prover could pick
+                // StFee = Fr - d and spend a note of value v into outputs worth
+                // v + d: value created from nothing, then withdrawn from other
+                // depositors' funds. payment() does not look at the fee at all and
+                // paymentWithFee() only compares it with a value the caller
+                // supplies, so the bound is enforced here, on every path that
+                // verifies a receipt of this shape. statement[7] is StFee.
+                if (receipt.statement[7] >= MAX_FEE_AMOUNT) {
+                    revert IEnygmaDvp.FeeOutOfRange();
+                }
                 if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC20_JOINSPLIT_FEE,
                     receipt.proof,
