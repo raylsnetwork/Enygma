@@ -578,6 +578,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 		"tx_random_values":             toStrs(usdrTxRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", usdrFeeAmt),
 		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
+		"fee_recipient_key":            keyStrs[usdrRecipientIdx],
 	})
 
 	t.Log("requesting USDr fee proof (may take ~30s)…")
@@ -600,7 +601,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	// 82 = the main proof's 80-signal layout + FeeAmount + DomainId (Fix
 	// L-01), both public, appended last — see USDrCircuit.Define /
 	// IEnygma.UsdrProof.
-	if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 82 {
+	if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 83 {
 		t.Fatalf("unexpected usdr proof sizes: proof=%d publicSignal=%d", len(usdrProofResp.Proof), len(usdrProofResp.PublicSignal))
 	}
 	t.Log("USDr fee proof received")
@@ -609,7 +610,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		usdrProof8[i] = usdrProofResp.Proof[i]
 	}
-	var usdrPubSig82 [82]*big.Int
+	var usdrPubSig82 [83]*big.Int
 	for i := range usdrPubSig82 {
 		usdrPubSig82[i] = big.NewInt(0)
 	}
@@ -638,9 +639,22 @@ func TestNullifierReuseProtection(t *testing.T) {
 		t.Fatalf("getUsdrBalance(relayer) before transfer: %v", err)
 	}
 
+	// The contract requires the fee-recipient key to be the submitter's own,
+	// so the transfer is submitted by the "relayer" bank, not the sender.
+	relayerAuth := func() *bind.TransactOpts {
+		nonce, _ := client.PendingNonceAt(context.Background(), bankAddrs[usdrRecipientIdx])
+		gasPrice, _ := client.SuggestGasPrice(context.Background())
+		auth, _ := bind.NewKeyedTransactorWithChainID(bankKeys[usdrRecipientIdx], big.NewInt(chainID))
+		auth.Nonce = big.NewInt(int64(nonce))
+		auth.Value = big.NewInt(0)
+		auth.GasLimit = 16_000_000
+		auth.GasPrice = gasPrice
+		return auth
+	}
+
 	// ── First submission: must succeed ────────────────────────────────────────
 	// Fix H-09: no attribution for a direct test call.
-	r1 := waitTx(instance.Transfer(mkAuth(), commitmentDeltas, transferProof, usdrCommitmentDeltas, usdrTransferProof, participantIds, ""))
+	r1 := waitTx(instance.Transfer(relayerAuth(), commitmentDeltas, transferProof, usdrCommitmentDeltas, usdrTransferProof, participantIds, ""))
 	if r1.Status != 1 {
 		t.Fatal("first Transfer reverted — setup problem, not a nullifier issue")
 	}
@@ -681,7 +695,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	// reproducing the same send-time-revert behavior in
 	// TestInvalidProofRejection against the original (pre-USDr) code
 	// path too. Accept either outcome as "rejected".
-	tx2, sendErr := instance.Transfer(mkAuth(), commitmentDeltas, transferProof, usdrCommitmentDeltas, usdrTransferProof, participantIds, "")
+	tx2, sendErr := instance.Transfer(relayerAuth(), commitmentDeltas, transferProof, usdrCommitmentDeltas, usdrTransferProof, participantIds, "")
 	if sendErr != nil {
 		if !strings.Contains(sendErr.Error(), "revert") && !strings.Contains(sendErr.Error(), "Revert") {
 			t.Fatalf("FAIL: second Transfer with the same proof failed with an unexpected (non-revert) error: %v", sendErr)
@@ -1135,7 +1149,7 @@ func TestInvalidProofRejection(t *testing.T) {
 	// USDr proofs carry two extra public signals (FeeAmount, DomainId) —
 	// see IEnygma.UsdrProof — so the garbage USDr leg needs its own
 	// 82-length array; it can't reuse badTransferProof's 81-length type.
-	var badUsdrPubSig [82]*big.Int
+	var badUsdrPubSig [83]*big.Int
 	for i := range badUsdrPubSig {
 		badUsdrPubSig[i] = big.NewInt(0)
 	}

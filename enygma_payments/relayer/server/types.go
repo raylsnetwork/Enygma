@@ -7,7 +7,7 @@ package server
 // Used for Enygma-to-Enygma confidential transfers (the enygma circuit),
 // plus a second, independent USDr proof that pays the relayer a fixed fee,
 // settled atomically in the same on-chain transfer() call. PublicSignal
-// must have exactly 81 elements and UsdrPublicSignal exactly 82 (the last
+// must have exactly 81 elements and UsdrPublicSignal exactly 83 (the last
 // element of each being the Fix L-01 domain separator on both circuits —
 // UsdrPublicSignal has one further element, FeeAmount, ahead of it) — Fix
 // L-05: this used to be silently zero-padded up to the expected length
