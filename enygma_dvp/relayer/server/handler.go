@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
@@ -826,9 +828,23 @@ type errWouldRevert struct{ cause error }
 func (e *errWouldRevert) Error() string { return "would revert: " + e.cause.Error() }
 func (e *errWouldRevert) Unwrap() error { return e.cause }
 
-// isRevertError reports whether an eth_estimateGas / eth_call error came from
-// the EVM rejecting the call, as opposed to a transport or node failure.
+// isRevertError reports whether an eth_call error came from the EVM rejecting the
+// call, as opposed to a transport or node failure. In order:
+//  1. a network error (connection refused, timeout, context deadline) is never a
+//     revert, whatever its text says;
+//  2. an RPC error with code 3 is the standard "execution reverted" code (geth,
+//     Nethermind, most L2 nodes);
+//  3. otherwise fall back to the message, which is how Hardhat reports it
+//     ("VM Exception while processing transaction: reverted ...").
 func isRevertError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return false
+	}
+	var rpcErr rpc.Error
+	if errors.As(err, &rpcErr) && rpcErr.ErrorCode() == 3 {
+		return true
+	}
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "revert") || strings.Contains(m, "vm exception") ||
 		strings.Contains(m, "invalid opcode") || strings.Contains(m, "out of gas")

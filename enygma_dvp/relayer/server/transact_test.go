@@ -12,8 +12,10 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -220,5 +222,44 @@ func TestTransact_NodeFailureIsNotReportedAsARevert(t *testing.T) {
 	var wr *errWouldRevert
 	if errors.As(err, &wr) {
 		t.Fatalf("a transport failure was reported as a revert: %v", err)
+	}
+}
+
+// rpcErr is a minimal go-ethereum rpc.Error.
+type rpcErr struct {
+	code int
+	msg  string
+}
+
+func (e rpcErr) Error() string  { return e.msg }
+func (e rpcErr) ErrorCode() int { return e.code }
+
+// timeoutErr is a net.Error whose text mentions a revert.
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "request timed out; upstream said: execution reverted" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+var _ net.Error = timeoutErr{}
+
+func TestIsRevertError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"rpc code 3 with a message that has no revert wording", rpcErr{3, "call failed"}, true},
+		{"geth style message", errors.New("execution reverted: InvalidProof()"), true},
+		{"hardhat style message", errors.New("VM Exception while processing transaction: reverted with custom error 'X()'"), true},
+		{"wrapped rpc code 3", fmt.Errorf("simulate: %w", rpcErr{3, "boom"}), true},
+		{"other rpc code without revert wording", rpcErr{-32000, "nonce too low"}, false},
+		{"connection refused", errors.New("dial tcp 127.0.0.1:8545: connect: connection refused"), false},
+		{"network error whose text mentions a revert", timeoutErr{}, false},
+	}
+	for _, c := range cases {
+		if got := isRevertError(c.err); got != c.want {
+			t.Errorf("%s: isRevertError = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
