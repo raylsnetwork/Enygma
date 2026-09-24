@@ -454,6 +454,7 @@ func TestSequentialTransfers(t *testing.T) {
 			"tx_random_values":             toStrs(usdrTxRand),
 			"sender_tx_value":              fmt.Sprintf("%d", usdrFeeAmt),
 			"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
+			"fee_recipient_key":            keyStrs[usdrRecipientIdx],
 		})
 
 		usdrGnarkResp, err := http.Post(gnarkUsdrURL, "application/json", bytes.NewReader(usdrReqBody))
@@ -475,7 +476,7 @@ func TestSequentialTransfers(t *testing.T) {
 		// 82 = the main proof's 80-signal layout + FeeAmount + DomainId
 		// (Fix L-01), both public, appended last — see USDrCircuit.Define
 		// / IEnygma.UsdrProof.
-		if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 82 {
+		if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 83 {
 			t.Fatalf("[%s] unexpected usdr sizes: proof=%d signal=%d",
 				label, len(usdrProofResp.Proof), len(usdrProofResp.PublicSignal))
 		}

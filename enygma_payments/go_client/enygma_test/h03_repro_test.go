@@ -192,7 +192,7 @@ func TestH03_TopAccountSurvivesTransferRollover(t *testing.T) {
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 
 	blockHashBefore := pubSig[36]
 	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "")

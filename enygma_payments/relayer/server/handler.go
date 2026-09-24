@@ -53,7 +53,7 @@ const txTimeout = 45 * time.Second
 const (
 	TransferPublicSignalLen    = 81 // enygma circuit: FingerPrint 6x6 + Fix L-01 domain separator
 	TransferFeePublicSignalLen = 55 // enygma_fee circuit: 54 signals + domain separator
-	UsdrFeePublicSignalLen     = 82 // usdr circuit: same 80-signal layout + FeeAmount + domain separator
+	UsdrFeePublicSignalLen     = 83 // usdr circuit: 80-signal layout + FeeAmount + domain separator + FeeRecipientKey
 )
 
 // maxParticipants is the exact commitmentDeltas/participantIds length every
@@ -280,7 +280,7 @@ func (h *Handler) Info(c *gin.Context) {
 // independent USDr proof paying the relayer a fee, settled atomically in
 // the same call. PublicSignal must have exactly 81 elements (FingerPrint
 // 6×6 layout plus the Fix L-01 domain separator in the last slot);
-// UsdrPublicSignal must have exactly 82 (the same 80-signal layout, plus
+// UsdrPublicSignal must have exactly 83 (the same 80-signal layout, plus
 // FeeAmount at slot 80, plus its own Fix L-01 domain separator at slot
 // 81). The domain separator itself is supplied by the caller (part of
 // req.PublicSignal/req.UsdrPublicSignal, like every other signal) — the

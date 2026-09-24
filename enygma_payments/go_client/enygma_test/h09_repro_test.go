@@ -96,7 +96,7 @@ func TestH09_RelayAttribution(t *testing.T) {
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 
 	const wantBankTag = "acme-bank-01" // stands in for the relayer's Fix H-06 per-bank credential id
 	auth := bankAuth(t, client, banks[0])
@@ -185,7 +185,7 @@ func TestH09_RelayAttribution_EmptyTagAllowed(t *testing.T) {
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 
 	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "")
 	if sendErr != nil {

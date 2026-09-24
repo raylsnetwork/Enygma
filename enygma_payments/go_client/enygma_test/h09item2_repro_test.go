@@ -316,7 +316,7 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 	for i := range participantIds {
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig81, usdrAccountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig81, usdrAccountIds, banks[senderIdx].addr)
 
 	balBefore, err := instance.GetBalance(&bind.CallOpts{}, big.NewInt(1))
 	if err != nil {
