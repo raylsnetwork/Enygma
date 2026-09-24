@@ -41,13 +41,14 @@ interface ICoinVault {
 ///
 /// Lifecycle
 /// ---------
+///   0. Bob calls announceAuction()  — commits to hash(auctionId, deadline, settlementDeadline, floorPrice)
 ///   1. Bob calls initAuction()      — locks NFT, sets deadline + settlementDeadline + floorPrice, opens bidding
 ///   2. Bidders call submitBid()     — locks USDC, publishes ML-KEM capsule (only before deadline)
 ///   3. Auctioneer calls submitBatch() (one per 100-bid batch) — Phase 1 (only after deadline)
 ///   4. Auctioneer calls settleOptimistic() — posts Phase-2 claim; proof stored but not verified yet
 ///       └─ challengeSettlement()   — anyone forces verification during the challenge window
 ///       └─ finalizeSettlement()    — anyone finalizes an unchallenged claim after the window
-///   5a. Bob calls revertAuction()  — cancels at any time while BIDDING; reclaims NFT with fresh commitment
+///   5a. Bob calls revertAuction()  — cancels while BIDDING and before the first batch; reclaims NFT with fresh commitment
 ///   5b. Anyone calls recoverAuction() — timeout path once settlementDeadline passes; uses pre-committed revertCommit
 ///   6. Bidders call reclaimBid()   — releases pre-committed revertCommit into USDC tree (losers after SETTLED,
 ///                                    everyone after CANCELED)
@@ -92,6 +93,15 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
     // Optimistic settlement parameters (owner-configurable).
     uint256 public challengeWindow = 1 days;
+
+    // Longest allowed gap between the bidding deadline and the settlement
+    // deadline. recoverAuction() only opens at settlementDeadline, so this is
+    // the longest a seller's note can be held by an auction nobody settles.
+    uint256 public constant MAX_SETTLEMENT_WINDOW = 30 days;
+
+    // Hashes of (auctionId, deadline, settlementDeadline, floorPrice) that a
+    // seller announced before calling initAuction(). See announceAuction().
+    mapping(bytes32 => bool) private _announcedParams;
 
     // Per-auction core state.
     struct AuctionCore {
@@ -183,6 +193,25 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [5] StNftTokenId
     //   [6] StRevertCommit = Erc721Commitment(tokenId, pk_B, saltRevert)
 
+    /// @notice Commit to an auction's parameters before initAuction() is called.
+    /// @dev The AuctionLock proof does not cover deadline, settlementDeadline or
+    ///      floorPrice, and its statement is public the moment initAuction() is
+    ///      broadcast. Without this step a front-runner could replay Bob's proof
+    ///      and statement with parameters of its own (floor price 0, a deadline
+    ///      that closes at once, a settlement deadline far in the future) and hold
+    ///      Bob's note. initAuction() therefore only accepts parameters whose hash
+    ///      was announced first. The auctionId is a hash of Bob's fresh commitment
+    ///      and is not public before initAuction(), so it acts as the salt and the
+    ///      announcement reveals nothing a front-runner can use. Replaying Bob's
+    ///      own parameters after that is harmless: they are what Bob intended.
+    ///      Hash: keccak256(abi.encode(auctionId, deadline, settlementDeadline,
+    ///      floorPrice)).
+    function announceAuction(bytes32 paramsHash) external returns (bool) {
+        _announcedParams[paramsHash] = true;
+        emit AuctionAnnounced(paramsHash);
+        return true;
+    }
+
     function initAuction(
         uint256[8] calldata proof,
         uint256[7] calldata statement,
@@ -201,6 +230,12 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (_auctions[auctionId].state != AuctionState.INACTIVE) revert AuctionAlreadyExists();
         if (deadline <= block.timestamp)                          revert InvalidDeadline();
         if (settlementDeadline < deadline + 2 days)               revert InvalidSettlementDeadline();
+        if (settlementDeadline > deadline + MAX_SETTLEMENT_WINDOW) revert InvalidSettlementDeadline();
+
+        // The parameters must be the ones announced before this call.
+        bytes32 paramsHash = keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice));
+        if (!_announcedParams[paramsHash]) revert ParamsNotAnnounced();
+        delete _announcedParams[paramsHash];
 
         // Verify the AuctionLock ZK proof.
         _verifyProof(VK_LOCK, proof, _toArr7(statement));
@@ -609,8 +644,8 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [2] StNftTokenId     — must match auctions[id].nftTokenId
     //   [3] StRevertedCommit — fresh commitment, re-inserted into the NFT tree
     //
-    // Bob may cancel at any time while the auction is in BIDDING state. The ZK
-    // proof proves he owns the locked note; no timing restriction is needed.
+    // Bob may cancel while the auction is in BIDDING state and no batch has been
+    // submitted yet. The ZK proof proves he owns the locked note.
     // Bidders reclaim their USDC via reclaimBid() once the auction is CANCELED.
 
     function revertAuction(
@@ -624,7 +659,10 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
         AuctionCore storage a = _auctions[auctionId];
         if (a.state != AuctionState.BIDDING)   revert AuctionStateMismatch();
-        if (block.timestamp >= a.deadline)     revert BiddingClosed();
+        // Bob may cancel until the first batch is submitted. Batches publish the
+        // batch winners' bids, so cancelling after that point would let the seller
+        // walk away once the result is known.
+        if (a.batchCount != 0)                 revert BatchesAlreadySubmitted();
         if (commitLocked != a.commitLocked)    revert CommitLockedMismatch();
         if (nftTokenId    != a.nftTokenId)     revert InvalidNftTokenId();
 
