@@ -92,9 +92,13 @@ var hy, _ = new(big.Int).SetString("75128302698277136297240238252498613277686727
 var H = &babyjub.Point{X: hx, Y: hy}
 
 func main() {
-	accountID := flag.Int64("account-id", 100,
-		"accountId to register the relayer under (must be non-zero, unique across all participants)")
+	accountID := flag.Int64("account-id", 0,
+		"accountId to register the relayer under: the NEXT sequential id "+
+			"(Enygma.registerAccount requires ids 1, 2, 3, ... with no gaps)")
 	flag.Parse()
+	if *accountID <= 0 {
+		log.Fatal("--account-id must be set to the next unused account id (the contract requires sequential ids)")
+	}
 
 	rpcURL := envOr("RELAYER_RPC_URL", "http://127.0.0.1:8545")
 	chainIDStr := envOr("RELAYER_CHAIN_ID", "1337")
