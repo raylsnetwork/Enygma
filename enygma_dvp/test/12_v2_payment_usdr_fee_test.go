@@ -706,8 +706,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			UsdrEncTxData:  "0x",
 			UsdrFeeSalt:    usdrFeeSalt.String(),
 		})
-		if status != http.StatusInternalServerError {
-			t.Fatalf("expected 500 (on-chain revert surfaced), got %d: %+v", status, resp)
+		// The relayer simulates the call first and refuses one that would revert
+		// (422), so nothing is sent and it pays no gas for the bad request.
+		if status != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422 (would-revert refused by the pre-flight simulation), got %d: %+v", status, resp)
 		}
 		t.Logf("  relayer responded %d: %s", status, resp.Error)
 		if !strings.Contains(resp.Error, "InvalidUsdrFee") {
