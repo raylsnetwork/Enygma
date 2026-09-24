@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"golang.org/x/crypto/sha3"
 )
 
 // AuctionProofResult holds the parsed {proof, publicSignal} response from the
@@ -161,13 +163,32 @@ type AuctionBidParams struct {
 	SaltA       *big.Int      // fresh random salt for the locked bid commitment (commitA)
 	SaltB       *big.Int      // salt for the seller's payout commitment (commitB) — HKDF(ss, "note salt")
 	SaltRevert  *big.Int      // fresh random salt for the revert commitment (≠ SaltA)
+	Ctxt1       []byte        // ML-KEM capsule that will be passed to submitBid() as ctxt1
+	Ctxt2       []byte        // AEAD ciphertext that will be passed to submitBid() as ctxt2
+}
+
+// AuctionCtxtHash is the value the AuctionBid circuit binds as StCtxtHash and
+// EnygmaAuction.submitBid() recomputes from its ctxt1/ctxt2 arguments:
+//
+//	keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr
+func AuctionCtxtHash(ctxt1, ctxt2 []byte) *big.Int {
+	keccak := func(b ...[]byte) []byte {
+		h := sha3.NewLegacyKeccak256()
+		for _, x := range b {
+			h.Write(x)
+		}
+		return h.Sum(nil)
+	}
+	digest := keccak(keccak(ctxt1), keccak(ctxt2))
+	return new(big.Int).Mod(new(big.Int).SetBytes(digest), SNARK_SCALAR_FIELD)
 }
 
 // AuctionBidProof generates a proof for the AuctionBid circuit.
 //
 // Returns PublicSignal = [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier,
-// StCommitA, StCommitB, StRevertCommit] — exactly the `statement` argument
-// submitBid() expects on-chain.
+// StCommitA, StCommitB, StRevertCommit, StCtxtHash] — exactly the `statement`
+// argument submitBid() expects on-chain. The Ctxt1/Ctxt2 given here must be the
+// bytes later passed to submitBid().
 func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult, error) {
 	nullifier, err := GetNullifierWithTree(p.Bidder.PrivateKey, p.TreeNumber, p.MerkleProof.Indices)
 	if err != nil {
@@ -189,6 +210,8 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		return nil, fmt.Errorf("revertCommit: %w", err)
 	}
 
+	ctxtHash := AuctionCtxtHash(p.Ctxt1, p.Ctxt2)
+
 	payload := map[string]interface{}{
 		"stAuctionId":    p.AuctionId.String(),
 		"stTreeNumber":   p.TreeNumber.String(),
@@ -197,6 +220,8 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		"stCommitA":      commitA.String(),
 		"stCommitB":      commitB.String(),
 		"stRevertCommit": revertCommit.String(),
+		"stCtxtHash":     ctxtHash.String(),
+		"wtCtxtHash":     ctxtHash.String(),
 		"wtAuctionId":    p.AuctionId.String(),
 		"wtTreeNumber":   p.TreeNumber.String(),
 		"wtSpendKey":     p.Bidder.PrivateKey.String(),
