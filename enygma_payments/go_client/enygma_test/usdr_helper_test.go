@@ -103,7 +103,8 @@ func setupMockUsdr(
 // public_signal array the caller already built for the main proof —
 // PublicKey/AnonymitySet/BlockNumber are copied from it verbatim so
 // _verifyUsdrMainBinding always passes, whatever those fields actually
-// encode. participantAccountIds must be the same accountIds (same order)
+// encode; the off-diagonal fingerprint matrix is copied too (Fix C-04, USDr
+// leg). participantAccountIds must be the same accountIds (same order)
 // passed as transfer()'s participantIds argument.
 func buildMockUsdrLeg(
 	t *testing.T,
@@ -119,6 +120,15 @@ func buildMockUsdrLeg(
 		usdrSignal[i] = big.NewInt(0)
 	}
 
+	// Fix C-04 (USDr leg): the contract requires every off-diagonal cell of
+	// the USDr proof's fingerprint matrix to equal the main proof's.
+	for i := 0; i < nBanks; i++ {
+		for j := 0; j < nBanks; j++ {
+			if i != j {
+				usdrSignal[i*nBanks+j] = mainSignal[i*nBanks+j]
+			}
+		}
+	}
 	for i := 0; i < usdrHelperPublicKeySize; i++ {
 		usdrSignal[usdrHelperPublicKeyOffset+i] = mainSignal[usdrHelperPublicKeyOffset+i]
 	}

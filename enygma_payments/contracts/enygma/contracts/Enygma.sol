@@ -647,8 +647,23 @@ contract Enygma is IEnygma {
         uint256 accountId,
         uint256 initialUsdrCommitX,
         uint256 initialUsdrCommitY
-    ) external onlyOwner returns (bool) {
+    ) external onlyOwner whenInitialized returns (bool) {
+        // whenInitialized: same rationale as registerAccount's Fix L-02 —
+        // initialize() resets usdrTotalSupply to the neutral element, so a
+        // commitment added before it would be silently discarded from the
+        // supply while still sitting in the account's balance.
+        if (publicKeys[accountId] == 0) revert UnregisteredParticipant();
         if (usdrInitialized[accountId]) revert AlreadyRegistered();
+        // usdrInitialized only tracks this function. A balance can already be
+        // non-neutral through mintUsdrSupply() or a transfer, and overwriting
+        // it here would destroy that value while still adding the new
+        // commitment to usdrTotalSupply, breaking checkUsdr() for good. An
+        // unset slot is (0,0); one that has been propagated but never
+        // credited is the neutral element (0,1).
+        Point storage existing = usdrBalanceCommitments[lastBlockNum][accountId];
+        if (existing.c1 != 0 || (existing.c2 != 0 && existing.c2 != 1)) {
+            revert AlreadyRegistered();
+        }
         if (!CurveBabyJubJub.isOnCurve(initialUsdrCommitX, initialUsdrCommitY)) {
             revert InvalidCommitmentPoint();
         }
@@ -1701,9 +1716,23 @@ contract Enygma is IEnygma {
     /**
      * @notice Assert the main and USDr proofs are about the same
      * transaction: same public keys, same anonymity set, same block
-     * number. PreviousCommit/TxCommit legitimately differ (different
-     * balance); MessageTags/Nullifier legitimately differ too (USDrCircuit
-     * uses different domain-separation constants).
+     * number, and the same pairwise fingerprints. PreviousCommit/TxCommit
+     * legitimately differ (different balance); MessageTags/Nullifier
+     * legitimately differ too (USDrCircuit uses different domain-separation
+     * constants).
+     *
+     * Fix C-04 (USDr leg): the USDr proof has its own
+     * FingerPrintofSharedSecrets matrix and derives every non-sender
+     * participant's blinding factor from its own SharedSecrets[i], a private
+     * witness the sender chooses. _verifyFingerprints only inspects the
+     * MAIN proof, so without this comparison a sender could publish a
+     * fabricated matrix in the USDr proof, shift each victim's USDr
+     * commitment by a blinding factor the victim cannot recompute, and
+     * freeze their USDr balance — which every sender needs to pay the
+     * transfer fee. Requiring every off-diagonal cell to equal the main
+     * proof's (already checked against the mutually confirmed registry) ties
+     * the USDr leg to the same confirmed secrets. The diagonal is skipped,
+     * matching _verifyFingerprints: a bank has no shared secret with itself.
      */
     function _verifyUsdrMainBinding(
         uint256[81] calldata mainSignal,
@@ -1723,6 +1752,20 @@ contract Enygma is IEnygma {
         }
         if (mainSignal[FP_BLOCK_NUMBER_OFFSET] != usdrSignal[FP_BLOCK_NUMBER_OFFSET]) {
             revert UsdrBindingMismatch();
+        }
+        for (uint256 i; i < DEFAULT_SIZE; ) {
+            for (uint256 j; j < DEFAULT_SIZE; ) {
+                if (i != j) {
+                    uint256 idx = FP_FINGERPRINT_OFFSET + i * DEFAULT_SIZE + j;
+                    if (mainSignal[idx] != usdrSignal[idx]) revert UsdrBindingMismatch();
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            unchecked {
+                ++i;
+            }
         }
     }
 
