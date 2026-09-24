@@ -24,6 +24,15 @@ type RelayTransferRequest struct {
 	UsdrCommitments  [][]string `json:"usdrCommitments"  binding:"required"`
 
 	KIndex []int64 `json:"kIndex" binding:"required"` // shared by both proofs
+
+	// UsdrFeeRandomness is the blinding factor of the commitment in THIS
+	// relayer's own slot of the USDr proof (the TxRandomValues entry the
+	// client used for that slot). The relayer recomputes
+	// Com(usdrFixedFeeAmount, UsdrFeeRandomness) and requires it to equal
+	// that slot's delta, so it knows it is actually being paid before it
+	// spends gas — see Config.VerifyFeeSlot. Required unless the relayer is
+	// configured not to verify.
+	UsdrFeeRandomness string `json:"usdrFeeRandomness"`
 }
 
 // RelayTransferFeeRequest is the JSON body accepted by POST /relay/transfer_fee.

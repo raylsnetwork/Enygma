@@ -51,3 +51,38 @@ func TestParseAPIKeys_DuplicateTokenRejected(t *testing.T) {
 		t.Fatal("expected error for duplicate token across two banks, got nil")
 	}
 }
+
+// ── RELAYER_VERIFY_FEE_SLOT ───────────────────────────────────────────────────
+
+func TestLoad_VerifyFeeSlotDefaultsOn(t *testing.T) {
+	t.Setenv("RELAYER_PRIVATE_KEY", "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+	t.Setenv("RELAYER_API_KEYS", "bank-a:tok-a")
+	t.Setenv("RELAYER_VERIFY_FEE_SLOT", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.VerifyFeeSlot {
+		t.Fatal("fee-slot verification must default to ON")
+	}
+}
+
+func TestLoad_VerifyFeeSlotCanBeDisabledExplicitly(t *testing.T) {
+	t.Setenv("RELAYER_PRIVATE_KEY", "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+	t.Setenv("RELAYER_API_KEYS", "bank-a:tok-a")
+	for _, v := range []string{"false", "0", "no", "FALSE"} {
+		t.Setenv("RELAYER_VERIFY_FEE_SLOT", v)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(%q): %v", v, err)
+		}
+		if cfg.VerifyFeeSlot {
+			t.Errorf("RELAYER_VERIFY_FEE_SLOT=%q should disable verification", v)
+		}
+	}
+	t.Setenv("RELAYER_VERIFY_FEE_SLOT", "garbage")
+	cfg, _ := Load()
+	if !cfg.VerifyFeeSlot {
+		t.Error("an unrecognised value must not silently disable verification")
+	}
+}
