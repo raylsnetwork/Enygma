@@ -151,6 +151,14 @@ interface IEnygmaAuction {
     error InvalidDeadline();
     error InvalidSettlementDeadline();
     error BiddingClosed();
+    error CiphertextMismatch();
+    error MaxBidsReached();
+    error InvalidBatchId();
+    error BidsNotAllBatched();
+    error WinnerAmountMismatch();
+    error WinnerNotHighest();
+    error BelowFloorPrice();
+    error PayoutCommitMismatch();
     // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) was not
     // announced with announceAuction() first.
     error ParamsNotAnnounced();
@@ -190,12 +198,12 @@ interface IEnygmaAuction {
 
     /// @notice A bidder locks their USDC and submits a sealed bid. Only before deadline.
     /// @param proof      Groth16 proof
-    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit]
+    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash]
     /// @param ctxt1      ML-KEM capsule (published so the auctioneer can decrypt)
     /// @param ctxt2      AEAD ciphertext of bid details
     function submitBid(
         uint256[8]  calldata proof,
-        uint256[7]  calldata statement,
+        uint256[8]  calldata statement,
         bytes       calldata ctxt1,
         bytes       calldata ctxt2
     ) external returns (bool);

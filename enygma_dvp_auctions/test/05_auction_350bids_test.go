@@ -249,6 +249,8 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 		saltRevert, err := core.RandomInField()
 		checkErr(t, fmt.Sprintf("RandomInField(saltRevert %d)", i), err)
 
+		ctxt1 := []byte("dummy-mlkem-capsule")
+		ctxt2 := []byte("dummy-aead-ciphertext")
 		bidResult, err := gnarkClient.AuctionBidProof(core.AuctionBidParams{
 			AuctionId:   auctionId,
 			Bidder:      bidders[i],
@@ -261,6 +263,8 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 			SaltA:       saltA,
 			SaltB:       saltB,
 			SaltRevert:  saltRevert,
+			Ctxt1:       ctxt1,
+			Ctxt2:       ctxt2,
 		})
 		checkErr(t, fmt.Sprintf("AuctionBidProof(bidder %d)", i), err)
 
@@ -273,9 +277,9 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 
 		bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
 			toBigArr8(bidResult.Proof),
-			toBigArr7(bidResult.PublicSignal),
-			[]byte("dummy-mlkem-capsule"),
-			[]byte("dummy-aead-ciphertext"),
+			toBigArr8(bidResult.PublicSignal),
+			ctxt1,
+			ctxt2,
 		)
 		checkErr(t, fmt.Sprintf("submitBid tx (bidder %d)", i), err)
 		waitTx(t, ethClient, bidTx)

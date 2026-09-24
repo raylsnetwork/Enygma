@@ -22,8 +22,15 @@ function lockStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, c
   return [auctionId, treeNumber, merkleRoot, nullifier, commitLocked, nftTokenId, revertCommit];
 }
 
-function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0 }) {
-  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit];
+const FR = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+// keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr — StCtxtHash.
+function ctxtHash(ctxt1 = "0x", ctxt2 = "0x") {
+  return BigInt(ethers.keccak256(ethers.concat([ethers.keccak256(ctxt1), ethers.keccak256(ctxt2)]))) % FR;
+}
+
+function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0, ctxt1 = "0x", ctxt2 = "0x" }) {
+  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit, ctxtHash(ctxt1, ctxt2)];
 }
 
 function batchStatement({ auctionId, slots, winnerCommit, winnerPk, winnerAmount }) {
