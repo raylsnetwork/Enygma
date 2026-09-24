@@ -69,6 +69,15 @@ contract Erc721CoinVault is AbstractCoinVault {
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
+        // transfer() is open to any caller, and checkReceiptConditions also
+        // accepts a DvP Destination receipt (non-zero StMessage): Bob's delivery
+        // leg of a swap. That leg must only settle through
+        // EnygmaDvp.submitPartialSettlement together with Alice's payment leg;
+        // run alone it would hand Bob's token over for nothing. A standalone
+        // ERC721 transfer proof carries StMessage == 0.
+        if (receipt.statement[0] != 0) {
+            revert IEnygmaDvp.InvalidPaymentMessage();
+        }
         checkReceiptConditions(receipt);
         // NEW-1 fix: nullify inputs before inserting outputs (CEI).
         // Inserting first opened a reentrancy window via the Poseidon precompile
