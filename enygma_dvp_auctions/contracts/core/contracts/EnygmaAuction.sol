@@ -111,9 +111,10 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     uint256 private constant SNARK_SCALAR_FIELD =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    // Hashes of (auctionId, deadline, settlementDeadline, floorPrice) that a
-    // seller announced before calling initAuction(). See announceAuction().
-    mapping(bytes32 => bool) private _announcedParams;
+    // Block in which each hash of (auctionId, deadline, settlementDeadline,
+    // floorPrice) was first announced by a seller. initAuction() only accepts a
+    // hash announced in an EARLIER block. See announceAuction().
+    mapping(bytes32 => uint256) private _announcedAtBlock;
 
     // auctionId → number of bids that have been placed in a submitted batch.
     // settleOptimistic() requires this to equal the auction's live bidCount, so
@@ -217,14 +218,26 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ///      and statement with parameters of its own (floor price 0, a deadline
     ///      that closes at once, a settlement deadline far in the future) and hold
     ///      Bob's note. initAuction() therefore only accepts parameters whose hash
-    ///      was announced first. The auctionId is a hash of Bob's fresh commitment
-    ///      and is not public before initAuction(), so it acts as the salt and the
-    ///      announcement reveals nothing a front-runner can use. Replaying Bob's
-    ///      own parameters after that is harmless: they are what Bob intended.
+    ///      was announced in an earlier block.
+    ///
+    ///      Before initAuction() is broadcast, the auctionId (a hash of Bob's fresh
+    ///      commitment) is not public, so it works as the salt and nobody can
+    ///      announce a hash for Bob's auction. Once Bob's initAuction() sits in the
+    ///      mempool the auctionId is visible, and a front-runner can announce its
+    ///      own parameters and even call initAuction(); that is why an announcement
+    ///      made in the same block does not count: the front-runner's announcement
+    ///      cannot be older than Bob's, and Bob's transaction, which relies on the
+    ///      older one, is mined first. What this cannot stop is a block builder that
+    ///      censors Bob's initAuction() for a block. Only binding the parameters
+    ///      into the AuctionLock proof closes that.
+    ///      Replaying Bob's own parameters is harmless: they are what Bob intended.
     ///      Hash: keccak256(abi.encode(auctionId, deadline, settlementDeadline,
     ///      floorPrice)).
     function announceAuction(bytes32 paramsHash) external returns (bool) {
-        _announcedParams[paramsHash] = true;
+        // Keep the first announcement's block: re-announcing must not move it later.
+        if (_announcedAtBlock[paramsHash] == 0) {
+            _announcedAtBlock[paramsHash] = block.number;
+        }
         emit AuctionAnnounced(paramsHash);
         return true;
     }
@@ -249,10 +262,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (settlementDeadline < deadline + 2 days)               revert InvalidSettlementDeadline();
         if (settlementDeadline > deadline + MAX_SETTLEMENT_WINDOW) revert InvalidSettlementDeadline();
 
-        // The parameters must be the ones announced before this call.
+        // The parameters must be the ones announced in an earlier block.
         bytes32 paramsHash = keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice));
-        if (!_announcedParams[paramsHash]) revert ParamsNotAnnounced();
-        delete _announcedParams[paramsHash];
+        uint256 announcedAt = _announcedAtBlock[paramsHash];
+        if (announcedAt == 0 || announcedAt >= block.number) revert ParamsNotAnnounced();
+        delete _announcedAtBlock[paramsHash];
 
         // Verify the AuctionLock ZK proof.
         _verifyProof(VK_LOCK, proof, _toArr7(statement));
