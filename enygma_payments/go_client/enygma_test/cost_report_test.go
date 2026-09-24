@@ -571,6 +571,9 @@ func TestCostReport(t *testing.T) {
 		"RELAYER_GAS_LIMIT=10000000",
 		"RELAYER_CONTRACT_ADDR="+enygmaAddr.Hex(),
 		"RELAYER_PORT="+testRelayerPort,
+		// This test's USDr leg is a structural stand-in (neutral deltas, no fee
+		// note), so the relayer cannot verify it is paid.
+		"RELAYER_VERIFY_FEE_SLOT=false",
 	)
 	// Capture stdout/stderr so a startup crash is diagnosable instead of
 	// silently manifesting as "did not become ready" — same pattern

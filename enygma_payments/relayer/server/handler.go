@@ -36,6 +36,10 @@ type EnygmaContract interface {
 	// a given submission.
 	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, usdrCommitmentDeltas []enygma.IEnygmaPoint, usdrProof enygma.IEnygmaUsdrProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
+
+	// Read-only calls used to check the relayer is paid (see verifyFeeSlot).
+	UsdrFixedFeeAmount(opts *bind.CallOpts) (*big.Int, error)
+	AddressToAccountId(opts *bind.CallOpts, arg0 common.Address) (*big.Int, error)
 }
 
 // txTimeout is the maximum time to wait for a transaction to be mined.
@@ -362,6 +366,16 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	}
 	if err := checkParticipantCount(len(usdrCommitments), len(kIndex)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.verifyFeeSlot(c.Request.Context(), usdrPubSig82, usdrCommitments, kIndex, req.UsdrFeeRandomness); err != nil {
+		log.Printf("[relay] bank=%s transfer: rejected, fee slot: %v", bankID, err)
+		status := http.StatusPaymentRequired
+		if _, transient := err.(*feeSlotLookupError); transient {
+			status = http.StatusBadGateway
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
