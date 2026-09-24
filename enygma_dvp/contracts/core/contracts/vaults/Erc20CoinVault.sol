@@ -137,17 +137,31 @@ contract Erc20CoinVault is AbstractCoinVault {
         return true;
     }
 
+    // transfer()/transferV2() are open to any caller, so they must only settle
+    // receipts that are complete on their own. A DvP Initiator receipt (one
+    // input, numberOfOutputs == 1, non-zero StMessage) is one half of a swap:
+    // it must only settle through EnygmaDvp.submitPartialSettlement, together
+    // with the counterparty's leg. checkReceiptConditions dispatches such a
+    // receipt to the initiator verification key and accepts it, so without this
+    // guard anyone holding the receipt (the counterparty, or a mempool observer)
+    // could spend the initiator's input note and insert commitB with nothing
+    // delivered in return. Retail transfer proofs carry StMessage == 0 and at
+    // least two outputs.
+    function _requireStandaloneTransfer(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) internal pure {
+        if (receipt.statement[0] != 0) {
+            revert IEnygmaDvp.InvalidPaymentMessage();
+        }
+        if (receipt.numberOfOutputs < 2) {
+            revert IEnygmaDvp.InvalidNumberOfOutputs();
+        }
+    }
+
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
-        // NEW-3 fix: ERC20 JoinSplit circuit does not constrain StMessage in-circuit;
-        // DvP Initiator proofs (numberOfOutputs == 1) are routed through this same
-        // function and are expected to carry a non-zero StMessage (= StCommitA).
-        // Only reject explicitly zero-expected receipt types: retail transfer proofs
-        // (2-output) must have message == 0.
-        if (receipt.numberOfOutputs == 2 && receipt.statement[0] != 0) {
-            revert IEnygmaDvp.InvalidPaymentMessage();
-        }
+        _requireStandaloneTransfer(receipt);
         checkReceiptConditions(receipt);
         // NEW-1 fix: nullify inputs before inserting outputs (CEI).
         // Reversed order opened a reentrancy window via the Poseidon precompile
@@ -181,6 +195,8 @@ contract Erc20CoinVault is AbstractCoinVault {
             ciphertextII.length == receipt.numberOfOutputs,
             "Erc20CoinVault: ciphertext length mismatch"
         );
+
+        _requireStandaloneTransfer(receipt);
 
         checkReceiptConditions(receipt);
         // NEW-1 fix: nullify inputs before inserting outputs (CEI — matches transfer()).
