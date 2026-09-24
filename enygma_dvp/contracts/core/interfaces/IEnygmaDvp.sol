@@ -152,6 +152,9 @@ interface IEnygmaDvp {
     // paymentWithRelayerFee: the proof's public StFee signal does not match
     // the contract-configured relayerFixedFeeAmount.
     error InvalidRelayerFee();
+    // A fee-circuit receipt whose public StFee is not below MAX_FEE_AMOUNT: see
+    // Erc20CoinVault.checkReceiptConditions.
+    error FeeOutOfRange();
     // paymentWithUsdrFee: the USDr leg's public StFee or StTokenId signal
     // does not match usdrFixedFeeAmount / usdrTokenId.
     error InvalidUsdrFee();
