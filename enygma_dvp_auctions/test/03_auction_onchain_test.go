@@ -200,6 +200,7 @@ func TestAuction_OnChain(t *testing.T) {
 	proof8Lock := toBigArr8(lockResult.Proof)
 	signal7Lock := toBigArr7(lockResult.PublicSignal)
 
+	announceAuctionParams(t, ethClient, auctionContract, ownerAuth, auctionId, deadline, settlementDeadline, floorPrice)
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		proof8Lock, signal7Lock, deadline, settlementDeadline, floorPrice,
 	)
@@ -603,3 +604,27 @@ func toBigArr104(slice []*big.Int) [104]*big.Int {
 }
 
 var _ = fmt.Sprintf // suppress "imported and not used"
+
+// announceAuctionParams commits to an auction's parameters before initAuction():
+// EnygmaAuction only accepts (auctionId, deadline, settlementDeadline,
+// floorPrice) whose hash was announced first, so a front-runner cannot replay the
+// lock proof with parameters of its own.
+// Hash: keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)).
+func announceAuctionParams(
+	t *testing.T,
+	client *ethclient.Client,
+	auction *bind.BoundContract,
+	auth *bind.TransactOpts,
+	auctionId, deadline, settlementDeadline, floorPrice *big.Int,
+) {
+	t.Helper()
+	var enc []byte
+	for _, v := range []*big.Int{auctionId, deadline, settlementDeadline, floorPrice} {
+		enc = append(enc, common.LeftPadBytes(v.Bytes(), 32)...)
+	}
+	var h [32]byte
+	copy(h[:], crypto.Keccak256(enc))
+	tx, err := auction.Transact(auth, "announceAuction", h)
+	checkErr(t, "announceAuction tx", err)
+	waitTx(t, client, tx)
+}
