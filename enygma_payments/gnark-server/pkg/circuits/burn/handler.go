@@ -134,6 +134,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			bp.Parse(request.DomainId), // Fix L-01
 		}
 
+		// The public signals above are parsed again from the request; fail
+		// rather than return a zero placeholder for a value that did not parse.
+		if err := bp.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+			return
+		}
+
 		c.JSON(http.StatusOK, BurnOutput{
 			Proof:        proofRemix,
 			PublicSignal: publicSignal,
