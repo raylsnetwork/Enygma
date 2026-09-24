@@ -155,6 +155,9 @@ interface IEnygmaDvp {
     // paymentWithUsdrFee: the USDr leg's public StFee or StTokenId signal
     // does not match usdrFixedFeeAmount / usdrTokenId.
     error InvalidUsdrFee();
+    // paymentWithUsdrFee: usdrVaultId is not the configured USDr vault (or none
+    // has been configured with setUsdrFeeVaultId).
+    error InvalidUsdrVault();
 
     error AuditorAlreadyRegistered(uint256, uint256);
     error AuditorNotRegistered(uint256);
@@ -502,6 +505,11 @@ interface IEnygmaDvp {
     // paymentWithUsdrFee() checks the USDr proof's public signals against.
     function setUsdrFixedFee(uint256 amount) external returns (bool);
     function setUsdrTokenId(uint256 tokenId) external returns (bool);
+    // setUsdrFeeVaultId (owner-only) pins the vault paymentWithUsdrFee() accepts
+    // for its USDr leg.
+    function setUsdrFeeVaultId(uint256 vaultId) external returns (bool);
+    function usdrFeeVaultId() external view returns (uint256);
+    function usdrFeeVaultSet() external view returns (bool);
     function usdrFixedFeeAmount() external view returns (uint256);
     function usdrTokenId() external view returns (uint256);
 

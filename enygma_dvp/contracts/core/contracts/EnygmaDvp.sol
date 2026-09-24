@@ -120,6 +120,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // since each vault already has its own independent tree/nullifier space.
     uint256 public usdrFixedFeeAmount;
     uint256 public usdrTokenId;
+    // The vault that holds the USDr asset. paymentWithUsdrFee() only accepts a
+    // fee leg against this vault: the proof binds the fee note to whichever
+    // vault it was built for, so without this pin a sender could pay the "USDr"
+    // fee in any other vault whose proof shape matches (for instance the main
+    // token's own vault), and the relayer would be paid in the wrong asset.
+    // usdrFeeVaultSet distinguishes "unset" from vault id 0.
+    uint256 public usdrFeeVaultId;
+    bool public usdrFeeVaultSet;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -303,6 +311,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 tokenId_
     ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         usdrTokenId = tokenId_;
+        return true;
+    }
+
+    // setUsdrFeeVaultId pins the vault paymentWithUsdrFee() accepts for its
+    // USDr leg. It must already be registered. Until it is called,
+    // paymentWithUsdrFee() reverts InvalidUsdrVault.
+    function setUsdrFeeVaultId(
+        uint256 vaultId_
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        if (_coinVaults[vaultId_] == address(0)) revert InvalidVaultId();
+        usdrFeeVaultId = vaultId_;
+        usdrFeeVaultSet = true;
         return true;
     }
 
@@ -1176,6 +1196,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   [7] StFee               = relayer fee amount — checked against usdrFixedFeeAmount
     //   [8] StTokenId           = checked against usdrTokenId (config hygiene, see that
     //                             state var's doc comment — not security-critical)
+    // usdrVaultId must equal usdrFeeVaultId (set by setUsdrFeeVaultId).
     //
     // ctxt/encTxData are the main payment's Bob note-discovery data;
     // usdrCtxt/usdrEncTxData are the USDr fee note's (typically the relayer's
@@ -1191,6 +1212,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes calldata usdrCtxt,
         bytes calldata usdrEncTxData
     ) external returns (bool) {
+        // The USDr leg must settle in the configured USDr vault, not one the
+        // caller picks — see usdrFeeVaultId.
+        if (!usdrFeeVaultSet || usdrVaultId != usdrFeeVaultId) revert InvalidUsdrVault();
+
         // ── main leg — identical checks/settlement to payment() ──
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
