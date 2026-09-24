@@ -28,9 +28,15 @@ type AuctionBidCircuitConfig struct {
 // The auctioneer decrypts ctxt_1/ctxt_2 (submitted alongside the proof) to
 // verify commitB's preimage and determine the winning bid.
 //
-// Public statement (7 elements):
+// StCtxtHash binds the bid to the ciphertexts published with it: the contract
+// requires it to equal a hash of the ctxt1/ctxt2 arguments of submitBid(). The
+// ciphertexts are not otherwise part of the proof, so without this anyone who saw
+// the proof and statement in the mempool could register the bid with ciphertexts
+// of their own, and the auctioneer could not decrypt it.
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit]
+// Public statement (8 elements):
+//
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash]
 type AuctionBidCircuit struct {
 	Config AuctionBidCircuitConfig
 
@@ -42,6 +48,7 @@ type AuctionBidCircuit struct {
 	StCommitA      frontend.Variable `gnark:",public"` // Alice's locked bid commitment
 	StCommitB      frontend.Variable `gnark:",public"` // Bob's USDC payout destination commitment
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
+	StCtxtHash     frontend.Variable `gnark:",public"` // hash of the ciphertexts submitted with the bid (checked on-chain)
 
 	// --- private witnesses ---
 	WtAuctionId  frontend.Variable // must equal StAuctionId; binds proof to one auction
@@ -61,6 +68,7 @@ type AuctionBidCircuit struct {
 	WtSaltB      frontend.Variable // salt for commitB = HKDF(ss, "note salt")
 	WtBidAmount  frontend.Variable // bid amount — constrained == WtAmount (all-in)
 	WtSaltRevert frontend.Variable // fresh random salt for revert commitment (≠ saltA)
+	WtCtxtHash   frontend.Variable // must equal StCtxtHash
 }
 
 func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
@@ -120,6 +128,11 @@ func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
 	// 10. Recovery salt must differ from saltA — reusing saltA would make
 	// StRevertCommit trivially derivable from the already-public StCommitA.
 	api.AssertIsDifferent(circuit.WtSaltRevert, circuit.WtSaltA)
+
+	// 11. Bind the ciphertext hash. This is a real constraint between the public
+	// value and a private witness, so the public input takes part in the
+	// verification equation: a proof made for one hash does not verify for another.
+	api.AssertIsEqual(circuit.WtCtxtHash, circuit.StCtxtHash)
 
 	return nil
 }
