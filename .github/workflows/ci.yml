@@ -25,6 +25,8 @@ jobs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - id: list
         run: |
           echo "matrix=$(git ls-files '*go.mod' | xargs -n1 dirname | sort | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
@@ -45,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: actions/setup-go@v5
         with:
           go-version: "stable"
@@ -61,6 +65,8 @@ jobs:
         module: ${{ fromJSON(needs.modules.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
