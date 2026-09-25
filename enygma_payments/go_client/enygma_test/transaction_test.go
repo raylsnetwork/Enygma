@@ -358,21 +358,27 @@ func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues [
 // chainURL and chainID are configurable via environment variables so the same
 // test suite runs against both a local Hardhat node and Rayls mainnet.
 //
-// Local Hardhat:
+// The default is a LOCAL Hardhat node (http://127.0.0.1:8545, chain 1337, the
+// payments Hardhat config's chain id), which is not reachable unless one is
+// running, so a bare `go test ./...` skips these tests. Do not default to a
+// public network: it is reachable, so the tests would run there, and with a key
+// exported they would transact on it. deploy_direct.py had the same default and
+// was changed for the same reason (Fix M-07). To run against another chain, set
+// both variables explicitly:
 //
-//	export ENYGMA_CHAIN_URL=http://127.0.0.1:8545
-//	export ENYGMA_CHAIN_ID=31337
-//	export MY_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+//	export ENYGMA_CHAIN_URL=https://mainnet-rpc.rayls.com
+//	export ENYGMA_CHAIN_ID=72957
+//	export MY_KEY=<key>
 //
-// Rayls mainnet (default, no env vars needed):
+// Local Hardhat (see contracts/enygma/hardhat.config.js for the funded key):
 //
-//	export MY_KEY=<your-mainnet-key>
+//	export MY_KEY=<the owner key from hardhat.config.js>
 var (
 	chainURL = func() string {
 		if u := os.Getenv("ENYGMA_CHAIN_URL"); u != "" {
 			return u
 		}
-		return "https://mainnet-rpc.rayls.com"
+		return "http://127.0.0.1:8545"
 	}()
 	chainID = func() int64 {
 		if s := os.Getenv("ENYGMA_CHAIN_ID"); s != "" {
@@ -380,7 +386,7 @@ var (
 				return n
 			}
 		}
-		return 72957
+		return 1337
 	}()
 )
 

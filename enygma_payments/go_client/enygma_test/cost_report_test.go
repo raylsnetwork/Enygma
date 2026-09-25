@@ -13,7 +13,7 @@ package enygma_test
 //   E. Grand Total             — total gas and native-token cost across all operations
 //
 // Prerequisites:
-//   - chain reachable at mainnet-rpc.rayls.com (export MY_KEY=<hex-private-key>)
+//   - a chain at ENYGMA_CHAIN_URL (default: local Hardhat, http://127.0.0.1:8545; export MY_KEY=<hex-private-key>)
 //   - gnark server running on :8080
 //   - relayer binary built: cd enygma_payments/relayer && ./run.sh
 //     The test spawns its own relayer on :8083 → the freshly-deployed contract.
