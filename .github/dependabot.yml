@@ -18,6 +18,7 @@ updates:
       - "/enygma_dvp_auctions/scripts"
       - "/enygma_dvp_auctions/src"
       - "/enygma_dvp_auctions/test"
+      - "/enygma_gnark_shared"
       - "/enygma_payments/demo"
       - "/enygma_payments/gnark-server"
       - "/enygma_payments/go_client/enygma_test"
