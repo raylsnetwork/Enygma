@@ -233,8 +233,8 @@ func TestRelayHandler_Transfer_Deduplication(t *testing.T) {
 
 	body := validTransferBody()
 	// Pre-seed the in-flight map to simulate a concurrent identical request.
-	h.SetInFlight("transfer:"+body.Proof[0], struct{}{})
-	defer h.DeleteInFlight("transfer:" + body.Proof[0])
+	h.SetInFlight("transfer:"+body.Proof[0]+":"+body.UsdrProof[0], struct{}{})
+	defer h.DeleteInFlight("transfer:" + body.Proof[0] + ":" + body.UsdrProof[0])
 
 	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, body)
 	if w.Code != http.StatusConflict {

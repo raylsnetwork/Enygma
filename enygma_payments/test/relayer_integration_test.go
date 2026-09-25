@@ -158,8 +158,8 @@ func TestRelayIntegration_Deduplication(t *testing.T) {
 
 	body := validTransferBody()
 	// Mark the dedup key as in-flight to simulate a concurrent duplicate.
-	h.SetInFlight("transfer:"+body.Proof[0], struct{}{})
-	defer h.DeleteInFlight("transfer:" + body.Proof[0])
+	h.SetInFlight("transfer:"+body.Proof[0]+":"+body.UsdrProof[0], struct{}{})
+	defer h.DeleteInFlight("transfer:" + body.Proof[0] + ":" + body.UsdrProof[0])
 
 	resp := postURL(t, srv.URL+"/relay/transfer", testAPIKey, body)
 	resp.Body.Close()
