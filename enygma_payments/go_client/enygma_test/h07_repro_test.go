@@ -9,6 +9,16 @@ package enygma_test
 // Value routed to such a slot is destroyed (its key is unrecoverable),
 // making this a griefing/value-destruction primitive rather than theft.
 //
+// registerAccount now requires ids to be assigned sequentially (1, 2, 3, ...
+// with no gaps), so the "in-range but never registered" slot H-07 describes
+// can no longer be created at all: every id in 1.._totalRegisteredParties is
+// registered by construction, and an id above that range is out of the
+// getPublicValues array and reverts before any per-participant check. The
+// keys[accountId]==0 check in _verifyPublicInputsFP stays as defense in
+// depth. This test therefore asserts both halves of that guarantee: the gap
+// cannot be constructed, and a transfer naming an unregistered id is still
+// rejected.
+//
 // Uses c04Setup/buildTransferSignal/bankAuth (MockTransferVerifier —
 // _verifyPublicInputsFP's own logic is what's under test here, not proof
 // validity) — the same infrastructure C-04's tests already established.
@@ -26,7 +36,6 @@ import (
 	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -41,19 +50,11 @@ func TestH07_UnregisteredParticipantRejected(t *testing.T) {
 	}
 	defer client.Close()
 
-	// c04Setup registers exactly 6 banks, accountIds 1..6, so
-	// _totalRegisteredParties == 6 and _verifyPublicInputsFP's internal
-	// getPublicValues(_totalRegisteredParties + 1) array only spans
-	// indices 0..6 — id 7 alone would be OUT of that range and revert
-	// with a plain array-bounds panic rather than exercising H-07's
-	// check at all. Registering one more, unrelated account (id=200)
-	// grows _totalRegisteredParties to 7 (array now spans 0..7) while
-	// leaving id 7 itself still unregistered — a genuine in-range gap,
-	// exactly the audit's "second ownerless slot" scenario, and what
-	// actually exercises the new keys[accountId]==0 check instead of
-	// short-circuiting on an unrelated bounds panic.
 	instance, banks, enygmaAddr := c04Setup(t, client)
 
+	// Registering a non-adjacent id (200) used to grow _totalRegisteredParties
+	// to 7 while leaving id 7 unregistered — the exact in-range gap H-07
+	// needed. It must now be refused.
 	ctx := context.Background()
 	ownerKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(ownerKey.PublicKey)
@@ -75,13 +76,14 @@ func TestH07_UnregisteredParticipantRejected(t *testing.T) {
 	ownerAuth.GasPrice = gasPrice
 
 	fillerCx, fillerCy := regCommit(big.NewInt(424242))
-	fillerTx, err := instance.RegisterAccount(ownerAuth, ownerAddr, big.NewInt(200), big.NewInt(999999), fillerCx, fillerCy, []byte{})
-	if err != nil {
-		t.Fatalf("register filler account: %v", err)
+	_, fillerErr := instance.RegisterAccount(ownerAuth, ownerAddr, big.NewInt(200), big.NewInt(999999), fillerCx, fillerCy, []byte{})
+	if fillerErr == nil {
+		t.Fatal("FAIL: registerAccount(id=200) was accepted while only ids 1..6 exist — an in-range gap can be created again")
 	}
-	if r, err := bind.WaitMined(ctx, client, fillerTx); err != nil || r.Status != ethtypes.ReceiptStatusSuccessful {
-		t.Fatalf("register filler account not mined: err=%v receipt=%+v", err, r)
+	if !strings.Contains(fillerErr.Error(), "InvalidAccountId") {
+		t.Fatalf("registerAccount(id=200) reverted, but not with InvalidAccountId: %v", fillerErr)
 	}
+	t.Logf("registerAccount(id=200) correctly refused (ids must be sequential): %v", fillerErr)
 
 	var fingerprints [nBanks][nBanks]*big.Int
 	for i := 0; i < nBanks; i++ {
@@ -108,14 +110,18 @@ func TestH07_UnregisteredParticipantRejected(t *testing.T) {
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 
 	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr == nil {
 		t.Fatal("FAIL (H-07 regressed): transfer() naming an unregistered participant (id=7) was accepted")
 	}
-	if !strings.Contains(sendErr.Error(), "UnregisteredParticipant") {
-		t.Fatalf("transfer() with an unregistered participant reverted, but not with UnregisteredParticipant: %v", sendErr)
+	// id 7 is above _totalRegisteredParties (6), so it is now rejected by the
+	// out-of-range array access before the keys[accountId]==0 check is reached.
+	// Either revert proves the transfer is refused.
+	msg := sendErr.Error()
+	if !strings.Contains(msg, "UnregisteredParticipant") && !strings.Contains(msg, "panic") && !strings.Contains(msg, "0x32") {
+		t.Fatalf("transfer() with an unregistered participant reverted, but not with UnregisteredParticipant or an out-of-range panic: %v", sendErr)
 	}
 	t.Logf("transfer() correctly rejected an unregistered participant id: %v", sendErr)
 }
@@ -153,7 +159,7 @@ func TestH07_AccountIdZeroRejected(t *testing.T) {
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 
 	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr == nil {

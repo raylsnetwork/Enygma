@@ -36,6 +36,10 @@ type EnygmaContract interface {
 	// a given submission.
 	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, usdrCommitmentDeltas []enygma.IEnygmaPoint, usdrProof enygma.IEnygmaUsdrProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
+
+	// Read-only calls used to check the relayer is paid (see verifyFeeSlot).
+	UsdrFixedFeeAmount(opts *bind.CallOpts) (*big.Int, error)
+	AddressToAccountId(opts *bind.CallOpts, arg0 common.Address) (*big.Int, error)
 }
 
 // txTimeout is the maximum time to wait for a transaction to be mined.
@@ -49,7 +53,7 @@ const txTimeout = 45 * time.Second
 const (
 	TransferPublicSignalLen    = 81 // enygma circuit: FingerPrint 6x6 + Fix L-01 domain separator
 	TransferFeePublicSignalLen = 55 // enygma_fee circuit: 54 signals + domain separator
-	UsdrFeePublicSignalLen     = 82 // usdr circuit: same 80-signal layout + FeeAmount + domain separator
+	UsdrFeePublicSignalLen     = 83 // usdr circuit: 80-signal layout + FeeAmount + domain separator + FeeRecipientKey
 )
 
 // maxParticipants is the exact commitmentDeltas/participantIds length every
@@ -276,7 +280,7 @@ func (h *Handler) Info(c *gin.Context) {
 // independent USDr proof paying the relayer a fee, settled atomically in
 // the same call. PublicSignal must have exactly 81 elements (FingerPrint
 // 6×6 layout plus the Fix L-01 domain separator in the last slot);
-// UsdrPublicSignal must have exactly 82 (the same 80-signal layout, plus
+// UsdrPublicSignal must have exactly 83 (the same 80-signal layout, plus
 // FeeAmount at slot 80, plus its own Fix L-01 domain separator at slot
 // 81). The domain separator itself is supplied by the caller (part of
 // req.PublicSignal/req.UsdrPublicSignal, like every other signal) — the
@@ -362,6 +366,16 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	}
 	if err := checkParticipantCount(len(usdrCommitments), len(kIndex)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.verifyFeeSlot(c.Request.Context(), usdrPubSig82, usdrCommitments, kIndex, req.UsdrFeeRandomness); err != nil {
+		log.Printf("[relay] bank=%s transfer: rejected, fee slot: %v", bankID, err)
+		status := http.StatusPaymentRequired
+		if _, transient := err.(*feeSlotLookupError); transient {
+			status = http.StatusBadGateway
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -295,35 +295,40 @@ func legacyGenCommitmentAndRandom(senderId int, transferValue *big.Int, txValues
 }
 
 // tagMessageGenUsdr/rValueUsdr/genCommitmentAndRandomUsdr mirror
-// legacyTagMessageGen/legacyRValue/legacyGenCommitmentAndRandom above but
-// use the USDr circuit's domain-separation constants
-// (hashTagUsdr/hashRandomUsdr) instead of hashTag/hashRandom, so the
-// off-circuit MessageTags/TxRandomValues match what USDrCircuit.Define
-// computes in-circuit. fingerPrintGen is NOT duplicated — the FingerPrint
-// matrix doesn't use either domain constant, so it's identical between
-// the two circuits.
-func tagMessageGenUsdr(secrets []*big.Int, blockHash *big.Int) []*big.Int {
-	bh := new(big.Int).Mod(blockHash, curveP)
+// tagMessageGen/rValue/genCommitmentAndRandom above but use the USDr
+// circuit's domain-separation constants (hashTagUsdr/hashRandomUsdr)
+// instead of hashTag/hashRandom, so the off-circuit MessageTags/
+// TxRandomValues match what USDrCircuit.Define computes in-circuit.
+// fingerPrintGen is NOT duplicated — the FingerPrint matrix doesn't use
+// either domain constant, so it's identical between the two circuits.
+//
+// Like tagMessageGen/rValue/genCommitmentAndRandom, these take a
+// per-transaction nullifier (not BlockNumber directly) and fold it with
+// SenderId/receiverId via perSlotNonce — usdr/circuit.go's own H-01/H-02
+// fix (ported from enygma/circuit.go) requires this; the caller computes
+// usdrNullifier = Poseidon(secretRemain, BlockNumber) itself (no circular
+// dependency — it doesn't need these functions' output) and passes it in.
+func tagMessageGenUsdr(senderId int, secrets []*big.Int, nullifier *big.Int) []*big.Int {
 	out := make([]*big.Int, len(secrets))
 	for i, s := range secrets {
-		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, bh})
+		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, perSlotNonce(nullifier, senderId, i)})
 		out[i] = h.Mod(h, curveP)
 	}
 	return out
 }
 
-func rValueUsdr(s, blockHash *big.Int) *big.Int {
-	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, blockHash})
+func rValueUsdr(s, nullifier *big.Int, senderId, receiverId int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, perSlotNonce(nullifier, senderId, receiverId)})
 	return h.Mod(h, curveP)
 }
 
-func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, blockHash *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
+func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, nullifier *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
 	n := len(secrets)
 	rValues := make([]*big.Int, n)
 	rSum := new(big.Int)
 
 	for i := 0; i < n; i++ {
-		r := rValueUsdr(secrets[i], blockHash)
+		r := rValueUsdr(secrets[i], nullifier, senderId, i)
 		rValues[i] = r
 		if i != senderId {
 			rSum.Add(rSum, r)
@@ -353,21 +358,27 @@ func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues [
 // chainURL and chainID are configurable via environment variables so the same
 // test suite runs against both a local Hardhat node and Rayls mainnet.
 //
-// Local Hardhat:
+// The default is a LOCAL Hardhat node (http://127.0.0.1:8545, chain 1337, the
+// payments Hardhat config's chain id), which is not reachable unless one is
+// running, so a bare `go test ./...` skips these tests. Do not default to a
+// public network: it is reachable, so the tests would run there, and with a key
+// exported they would transact on it. deploy_direct.py had the same default and
+// was changed for the same reason (Fix M-07). To run against another chain, set
+// both variables explicitly:
 //
-//	export ENYGMA_CHAIN_URL=http://127.0.0.1:8545
-//	export ENYGMA_CHAIN_ID=31337
-//	export MY_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+//	export ENYGMA_CHAIN_URL=https://mainnet-rpc.rayls.com
+//	export ENYGMA_CHAIN_ID=72957
+//	export MY_KEY=<key>
 //
-// Rayls mainnet (default, no env vars needed):
+// Local Hardhat (see contracts/enygma/hardhat.config.js for the funded key):
 //
-//	export MY_KEY=<your-mainnet-key>
+//	export MY_KEY=<the owner key from hardhat.config.js>
 var (
 	chainURL = func() string {
 		if u := os.Getenv("ENYGMA_CHAIN_URL"); u != "" {
 			return u
 		}
-		return "https://mainnet-rpc.rayls.com"
+		return "http://127.0.0.1:8545"
 	}()
 	chainID = func() int64 {
 		if s := os.Getenv("ENYGMA_CHAIN_ID"); s != "" {
@@ -375,7 +386,7 @@ var (
 				return n
 			}
 		}
-		return 72957
+		return 1337
 	}()
 )
 
@@ -458,10 +469,10 @@ func readReceipts(t *testing.T) (tokenAddr, verifierAddr string) {
 	t.Helper()
 	// Resolve path relative to this file's location.
 	_, testFile, _, _ := runtime.Caller(0)
-	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma_payments/go_client", "web3", "deploy_receipts.json")
+	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma", "web3", "deploy_receipts.json")
 	data, err := os.ReadFile(receiptsPath)
 	if err != nil {
-		t.Skipf("deploy_receipts.json not found at %s — run the Python deploy scripts first:\n  cd enygma_payments/run_scripts && python deploy_enygma.py ...\n(err: %v)", receiptsPath, err)
+		t.Skipf("deploy_receipts.json not found at %s — run the deploy script first:\n  OWNER_KEY=<hex> node run_scripts/deploy_node.js\n(err: %v)", receiptsPath, err)
 	}
 	var r receipts
 	if err := json.Unmarshal(data, &r); err != nil {

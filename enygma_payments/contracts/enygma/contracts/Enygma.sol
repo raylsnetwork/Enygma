@@ -99,6 +99,10 @@ contract Enygma is IEnygma {
     // constants above.
     uint256 private constant USDR_FEE_AMOUNT_OFFSET = 80;
     uint256 private constant USDR_DOMAIN_OFFSET = 81; // Fix L-01
+    // The fee recipient's spend public key (83rd signal). Required to equal the
+    // key of the account that submitted the transaction, so the fee is paid to
+    // the relayer rather than to whichever participant the prover picked.
+    uint256 private constant USDR_FEE_RECIPIENT_OFFSET = 82;
 
     // ============================================
     // STATE VARIABLES
@@ -169,6 +173,13 @@ contract Enygma is IEnygma {
     /// different asset.
     mapping(uint256 => mapping(uint256 => Point)) public usdrBalanceCommitments;
 
+    /// @notice Tracks whether initializeUsdrBalance() has already run for an
+    /// account — usdrBalanceCommitments is keyed by epoch (lastBlockNum) and
+    /// lazily migrated forward, so a zero entry at the *current* epoch does
+    /// not by itself mean "never initialized"; this flag is the actual
+    /// source of truth, mirroring registerAccount()'s own idempotency guard.
+    mapping(uint256 => bool) public usdrInitialized;
+
     /// @notice Public spend keys for each account (Poseidon(sk,sk) mod P)
     mapping(uint256 => uint256) public publicKeys;
 
@@ -198,6 +209,12 @@ contract Enygma is IEnygma {
 
     /// @notice Consumed nullifiers — prevents proof replay
     mapping(uint256 => bool) private _nullifiers;
+    // USDr proofs record their nullifiers here, not in _nullifiers. The USDr
+    // nullifier formula has no asset tag, so an account whose main and USDr
+    // balances share a blinding factor produces the same value for both
+    // proofs of one transfer(); a shared set made the second insert revert
+    // with NullifierAlreadyUsed and locked the account out.
+    mapping(uint256 => bool) private _usdrNullifiers;
 
     // ── Fix C-04 ────────────────────────────────────────────────────────
     // Each participant's blinding-factor shift is derived from SharedSecrets[i],
@@ -307,6 +324,10 @@ contract Enygma is IEnygma {
     /// @notice The USDr proof's public FeeAmount signal doesn't equal
     /// usdrFixedFeeAmount — a validly-formed proof for the wrong fee.
     error InvalidFeeAmount();
+    /// @notice The USDr proof's FeeRecipientKey signal is not the public key
+    /// of the account that submitted this transaction (msg.sender), so the
+    /// fee would not be paid to the relayer.
+    error InvalidFeeRecipient();
 
     // ============================================
     // MODIFIERS
@@ -534,6 +555,14 @@ contract Enygma is IEnygma {
         // idempotent", which it was not.
         if (publicKeys[accountId] != 0) revert AlreadyRegistered();
         if (accountId == 0) revert InvalidAccountId();
+        // Account ids must be assigned 1, 2, 3, ... with no gaps. Every
+        // per-account loop in this contract (check(), checkUsdr(),
+        // getPublicValues, balance propagation) iterates 1.._totalRegisteredParties,
+        // so an id above that range sits outside all of them: its
+        // commitment is added to totalSupply but never summed, breaking
+        // check() (and reverting mintSupply/burn) until every skipped id is
+        // registered, and its balance is never propagated across epochs.
+        if (accountId != _totalRegisteredParties + 1) revert InvalidAccountId();
         if (publicKey == 0) revert InvalidPublicKey();
         // viewKey is legitimately empty for accounts that never
         // participate in ZK circuits (e.g. the relayer's own self-
@@ -542,7 +571,7 @@ contract Enygma is IEnygma {
         // not a truncated or malformed one that would silently break key
         // agreement for whoever tries to use it later.
         if (viewKey.length != 0 && viewKey.length != 1184) revert InvalidViewKeyLength();
-        if (!CurveBabyJubJub.isOnCurve(initialCommitX, initialCommitY)) {
+        if (!_isValidCommitment(initialCommitX, initialCommitY)) {
             revert InvalidCommitmentPoint();
         }
 
@@ -623,20 +652,50 @@ contract Enygma is IEnygma {
      * demo/test registration flows) untouched. Trade-off: must be called
      * once per already-registered account (including ones registered
      * before this feature shipped) or checkUsdr() reverts for them until it is.
+     *
+     * Takes a caller-precomputed commitment point rather than raw
+     * randomness, matching registerAccount()'s own pattern: computing
+     * Com(0, randomness) on chain from a plaintext randomness argument
+     * would expose the account's USDr blinding factor to any chain
+     * observer via calldata, exactly the leak registerAccount() was
+     * hardened to avoid (see its own doc comment). The caller computes the
+     * commitment off chain (e.g. via a pedCom eth_call, never a tx) and
+     * submits only the resulting point.
      * @param accountId Account to initialize (must already be registered)
-     * @param randomness Randomness for the initial USDr commitment
+     * @param initialUsdrCommitX X coordinate of Com(0, randomness)
+     * @param initialUsdrCommitY Y coordinate of Com(0, randomness)
      */
     function initializeUsdrBalance(
         uint256 accountId,
-        uint256 randomness
-    ) external onlyOwner returns (bool) {
-        // Create initial balance commitment: Com(0, randomness) = randomness*H
-        (uint256 commitX, uint256 commitY) = pedCom(0, randomness);
-        usdrBalanceCommitments[lastBlockNum][accountId] = Point(commitX, commitY);
+        uint256 initialUsdrCommitX,
+        uint256 initialUsdrCommitY
+    ) external onlyOwner whenInitialized returns (bool) {
+        // whenInitialized: same rationale as registerAccount's Fix L-02 —
+        // initialize() resets usdrTotalSupply to the neutral element, so a
+        // commitment added before it would be silently discarded from the
+        // supply while still sitting in the account's balance.
+        if (publicKeys[accountId] == 0) revert UnregisteredParticipant();
+        if (usdrInitialized[accountId]) revert AlreadyRegistered();
+        // usdrInitialized only tracks this function. A balance can already be
+        // non-neutral through mintUsdrSupply() or a transfer, and overwriting
+        // it here would destroy that value while still adding the new
+        // commitment to usdrTotalSupply, breaking checkUsdr() for good. An
+        // unset slot is (0,0); one that has been propagated but never
+        // credited is the neutral element (0,1).
+        Point storage existing = usdrBalanceCommitments[lastBlockNum][accountId];
+        if (existing.c1 != 0 || (existing.c2 != 0 && existing.c2 != 1)) {
+            revert AlreadyRegistered();
+        }
+        if (!_isValidCommitment(initialUsdrCommitX, initialUsdrCommitY)) {
+            revert InvalidCommitmentPoint();
+        }
+
+        usdrInitialized[accountId] = true;
+        usdrBalanceCommitments[lastBlockNum][accountId] = Point(initialUsdrCommitX, initialUsdrCommitY);
 
         (usdrTotalSupplyX, usdrTotalSupplyY) = CurveBabyJubJub.pointAdd(
             usdrTotalSupplyX, usdrTotalSupplyY,
-            commitX, commitY
+            initialUsdrCommitX, initialUsdrCommitY
         );
 
         return true;
@@ -673,7 +732,8 @@ contract Enygma is IEnygma {
         uint256 mintCommitX,
         uint256 mintCommitY
     ) external onlyOwner whenInitialized whenNotPaused returns (bool) {
-        if (!CurveBabyJubJub.isOnCurve(mintCommitX, mintCommitY)) {
+        if (publicKeys[recipientId] == 0) revert UnregisteredParticipant();
+        if (!_isValidCommitment(mintCommitX, mintCommitY)) {
             revert InvalidCommitmentPoint();
         }
 
@@ -734,7 +794,11 @@ contract Enygma is IEnygma {
     function mintUsdrSupply(
         uint256 amount,
         uint256 recipientId
-    ) external onlyOwner whenInitialized returns (bool) {
+    ) external onlyOwner whenInitialized whenNotPaused returns (bool) {
+        // An unregistered recipient would add amount*G to usdrTotalSupply
+        // while the credited slot sits outside the range checkUsdr() sums
+        // over, breaking the USDr invariant with no USDr burn to repair it.
+        if (publicKeys[recipientId] == 0) revert UnregisteredParticipant();
         (uint256 amountX, uint256 amountY) = derivePk(amount);
 
         (usdrTotalSupplyX, usdrTotalSupplyY) = CurveBabyJubJub.pointAdd(
@@ -770,6 +834,11 @@ contract Enygma is IEnygma {
         lastBlockNum = epochStart;
 
         emit SupplyMinted(lastBlockNum, amount, recipientId);
+
+        // Same guard mintSupply() has: surface a broken invariant at the
+        // mint instead of at some later checkUsdr().
+        _checkUsdrInvariant();
+
         return true;
     }
 
@@ -809,10 +878,7 @@ contract Enygma is IEnygma {
         // yes/no. The code.length check above closes the other half: a
         // delegatecall/staticcall to a codeless address returns
         // success=true, which looked identical to a valid proof.
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[9])", proof)
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[9])", proof));
 
         // Fix L-01: see _expectedDomainId's doc comment.
         if (proof.public_signal[BURN_DOMAIN_OFFSET] != _expectedDomainId()) {
@@ -982,7 +1048,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Register USDr transfer verifier contract (verifies 82-signal
+     * @notice Register USDr transfer verifier contract (verifies 83-signal
      * proofs — two more than the main transfer verifier's 80, since the
      * fee amount and DomainId (Fix L-01) are both public signals here —
      * different key)
@@ -1075,10 +1141,10 @@ contract Enygma is IEnygma {
         _verifyBlockNumberFP(proof.public_signal);
         _verifyBlockNumberUsdr(usdrProof.public_signal);
 
-        // Record nullifiers before state changes (Fix C-2) — shared
-        // _nullifiers mapping, safe: the two circuits' domain-separation
-        // constants (see USDrCircuit) make the two nullifiers independent
-        // even for the same sender/block.
+        // Record nullifiers before state changes (Fix C-2), in two
+        // separate sets (_nullifiers / _usdrNullifiers): the two circuits
+        // share one nullifier formula, so they are kept apart by storage, not
+        // by value.
         _consumeNullifierFP(proof.public_signal);
         _consumeNullifierUsdr(usdrProof.public_signal);
 
@@ -1231,10 +1297,7 @@ contract Enygma is IEnygma {
         // verifier registered by a compromised or careless owner).
         // Fix M-14: was uint256[50] — the real (and, after Fix C-09,
         // still-real) circuit arity is 51.
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof)
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
         _verifyPublicInputs52(proof.public_signal, participantIds, commitmentDeltas);
@@ -1367,10 +1430,7 @@ contract Enygma is IEnygma {
         // Hash — the deposit note commitment — at 50); this contract
         // declaring 50 made every deposit() call revert InvalidProof
         // unconditionally, regardless of proof validity.
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof)
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
         _verifyPublicInputs52(proof.public_signal, participantIds, commitmentDeltas);
@@ -1556,6 +1616,10 @@ contract Enygma is IEnygma {
      * of check() for the USDr ledger.
      */
     function checkUsdr() external view returns (bool) {
+        return _checkUsdrInvariant();
+    }
+
+    function _checkUsdrInvariant() private view returns (bool) {
         uint256 sumX;
         uint256 sumY = 1; // Start with neutral element
 
@@ -1633,6 +1697,39 @@ contract Enygma is IEnygma {
     }
 
     /**
+     * @notice Whether (x, y) is a usable commitment point: on the curve AND
+     *         with both coordinates reduced below the base field.
+     * @dev CurveBabyJubJub.isOnCurve reduces with mulmod, so it accepts
+     *      x + Q for a valid x. Such a value would be stored verbatim, but
+     *      every proof public signal must be < Q, so an account whose stored
+     *      balance had an unreduced coordinate could never match a proof's
+     *      PreviousCommit and would be unusable as a participant.
+     */
+    function _isValidCommitment(uint256 x, uint256 y) private pure returns (bool) {
+        return x < CurveBabyJubJub.Q && y < CurveBabyJubJub.Q && CurveBabyJubJub.isOnCurve(x, y);
+    }
+
+    /**
+     * @notice Runs a verifier's verifyProof via staticcall and accepts only a
+     *         call that neither reverted nor returned a falsy result.
+     * @dev The generated gnark verifiers are `view` with no return value and
+     *      revert on an invalid proof, so a successful call with empty
+     *      returndata is a valid proof. But the call site cannot assume every
+     *      registered verifier behaves that way: one that reports failure by
+     *      returning `false` (as enygma_dvp's GenericGroth16Verifier does)
+     *      makes a bare `success` check accept an invalid proof — the same
+     *      class as the unchecked verifyProof bug fixed in enygma_dvp. Any
+     *      returndata that is not exactly one word equal to 1 is rejected.
+     */
+    function _verifyViaStaticcall(address verifier, bytes memory data) private view {
+        (bool success, bytes memory ret) = verifier.staticcall(data);
+        if (!success) revert InvalidProof();
+        if (ret.length != 0) {
+            if (ret.length != 32 || abi.decode(ret, (uint256)) != 1) revert InvalidProof();
+        }
+    }
+
+    /**
      * @notice Verify zero-knowledge proof for transfer
      */
     function _verifyTransferProof(
@@ -1644,17 +1741,11 @@ contract Enygma is IEnygma {
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
         // staticcall, not delegatecall — see the matching comment in withdraw().
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[81])",
-                proof
-            )
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[81])", proof));
     }
 
     /**
-     * @notice Verify zero-knowledge proof for the USDr transfer (82-signal
+     * @notice Verify zero-knowledge proof for the USDr transfer (83-signal
      * shape — the fee amount and DomainId (Fix L-01) are both public
      * signals here, unlike the main transfer proof's 80 — different
      * verifying key)
@@ -1667,25 +1758,33 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
-        (bool success, ) = verifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[82])",
-                proof
-            )
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[83])", proof));
     }
 
     /**
      * @notice Assert the main and USDr proofs are about the same
      * transaction: same public keys, same anonymity set, same block
-     * number. PreviousCommit/TxCommit legitimately differ (different
-     * balance); MessageTags/Nullifier legitimately differ too (USDrCircuit
-     * uses different domain-separation constants).
+     * number, and the same pairwise fingerprints. PreviousCommit/TxCommit
+     * legitimately differ (different balance); MessageTags/Nullifier
+     * legitimately differ too (USDrCircuit uses different domain-separation
+     * constants).
+     *
+     * Fix C-04 (USDr leg): the USDr proof has its own
+     * FingerPrintofSharedSecrets matrix and derives every non-sender
+     * participant's blinding factor from its own SharedSecrets[i], a private
+     * witness the sender chooses. _verifyFingerprints only inspects the
+     * MAIN proof, so without this comparison a sender could publish a
+     * fabricated matrix in the USDr proof, shift each victim's USDr
+     * commitment by a blinding factor the victim cannot recompute, and
+     * freeze their USDr balance — which every sender needs to pay the
+     * transfer fee. Requiring every off-diagonal cell to equal the main
+     * proof's (already checked against the mutually confirmed registry) ties
+     * the USDr leg to the same confirmed secrets. The diagonal is skipped,
+     * matching _verifyFingerprints: a bank has no shared secret with itself.
      */
     function _verifyUsdrMainBinding(
         uint256[81] calldata mainSignal,
-        uint256[82] calldata usdrSignal
+        uint256[83] calldata usdrSignal
     ) private pure {
         for (uint256 i = FP_PUBLIC_KEY_OFFSET; i < FP_PUBLIC_KEY_OFFSET + FP_PUBLIC_KEY_SIZE; ) {
             if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
@@ -1701,6 +1800,20 @@ contract Enygma is IEnygma {
         }
         if (mainSignal[FP_BLOCK_NUMBER_OFFSET] != usdrSignal[FP_BLOCK_NUMBER_OFFSET]) {
             revert UsdrBindingMismatch();
+        }
+        for (uint256 i; i < DEFAULT_SIZE; ) {
+            for (uint256 j; j < DEFAULT_SIZE; ) {
+                if (i != j) {
+                    uint256 idx = FP_FINGERPRINT_OFFSET + i * DEFAULT_SIZE + j;
+                    if (mainSignal[idx] != usdrSignal[idx]) revert UsdrBindingMismatch();
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -1943,7 +2056,7 @@ contract Enygma is IEnygma {
      * sharing the same pre-state.
      */
     function _verifyPublicInputsUsdr(
-        uint256[82] calldata public_signal,
+        uint256[83] calldata public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
@@ -1953,6 +2066,16 @@ contract Enygma is IEnygma {
 
         if (public_signal[USDR_FEE_AMOUNT_OFFSET] != usdrFixedFeeAmount) {
             revert InvalidFeeAmount();
+        }
+
+        // The circuit pins the whole fee to the participant whose public key is
+        // FeeRecipientKey (and rejects a proof where that participant is the
+        // sender). Requiring that key to be the submitter's own makes the
+        // relayer, the account that pays the gas, the account that is paid.
+        // Without this a sender could name any participant as the recipient
+        // and have its transfer relayed for free.
+        if (public_signal[USDR_FEE_RECIPIENT_OFFSET] != publicKeys[addressToAccountId[msg.sender]]) {
+            revert InvalidFeeRecipient();
         }
 
         (Point[] memory balances, uint256[] memory keys) = getUsdrPublicValues(
@@ -2010,24 +2133,24 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify block number freshness for the 82-signal USDr proof.
+     * @notice Verify block number freshness for the 83-signal USDr proof.
      * Offset is identical to FP_BLOCK_NUMBER_OFFSET — only the array
      * length differs (81 vs 80), which calldata typing requires a
      * separate function signature for.
      */
-    function _verifyBlockNumberUsdr(uint256[82] calldata public_signal) private view {
+    function _verifyBlockNumberUsdr(uint256[83] calldata public_signal) private view {
         if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
 
     /**
-     * @notice Record nullifier as spent for the 82-signal USDr proof.
+     * @notice Record nullifier as spent for the 83-signal USDr proof.
      */
-    function _consumeNullifierUsdr(uint256[82] calldata public_signal) private {
+    function _consumeNullifierUsdr(uint256[83] calldata public_signal) private {
         uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
-        if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
-        _nullifiers[nullifier] = true;
+        if (_usdrNullifiers[nullifier]) revert NullifierAlreadyUsed();
+        _usdrNullifiers[nullifier] = true;
     }
 
     /**
@@ -2336,13 +2459,7 @@ contract Enygma is IEnygma {
         if (_feeVerifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
         // staticcall, not delegatecall — see the matching comment in withdraw().
-        (bool success, ) = _feeVerifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(uint256[8],uint256[55])",
-                proof
-            )
-        );
-        if (!success) revert InvalidProof();
+        _verifyViaStaticcall(_feeVerifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[55])", proof));
     }
 
     /**

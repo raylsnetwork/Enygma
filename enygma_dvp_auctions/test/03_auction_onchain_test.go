@@ -200,6 +200,7 @@ func TestAuction_OnChain(t *testing.T) {
 	proof8Lock := toBigArr8(lockResult.Proof)
 	signal7Lock := toBigArr7(lockResult.PublicSignal)
 
+	announceAuctionParams(t, ethClient, auctionContract, ownerAuth, auctionId, deadline, settlementDeadline, floorPrice)
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		proof8Lock, signal7Lock, deadline, settlementDeadline, floorPrice,
 	)
@@ -218,6 +219,11 @@ func TestAuction_OnChain(t *testing.T) {
 	saltRevertAlice, err := core.RandomInField()
 	checkErr(t, "RandomInField(saltRevertAlice)", err)
 
+	// Dummy ML-KEM ciphertext (content is not checked on-chain beyond its hash, which
+	// the bid proof binds as StCtxtHash — so they must be fixed before proving).
+	ctxt1 := []byte("dummy-mlkem-capsule")
+	ctxt2 := []byte("dummy-aead-ciphertext")
+
 	bidResult, err := gnarkClient.AuctionBidProof(core.AuctionBidParams{
 		AuctionId:   auctionId,
 		Bidder:      alice,
@@ -230,6 +236,8 @@ func TestAuction_OnChain(t *testing.T) {
 		SaltA:       saltA,
 		SaltB:       saltB,
 		SaltRevert:  saltRevertAlice,
+		Ctxt1:       ctxt1,
+		Ctxt2:       ctxt2,
 	})
 	checkErr(t, "AuctionBidProof", err)
 
@@ -239,14 +247,29 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("Alice commitB = %s", aliceCommitB)
 
 	proof8Bid := toBigArr8(bidResult.Proof)
-	signal7Bid := toBigArr7(bidResult.PublicSignal)
+	signal8Bid := toBigArr8(bidResult.PublicSignal)
 
-	// Dummy ML-KEM ciphertext (content not verified on-chain, only stored for auctioneer)
-	ctxt1 := []byte("dummy-mlkem-capsule")
-	ctxt2 := []byte("dummy-aead-ciphertext")
+	// A front-runner who copies the bid's proof and statement cannot swap the
+	// ciphertexts: the contract checks their hash against the statement...
+	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
+		proof8Bid, signal8Bid, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
+		t.Fatal("VULNERABLE: submitBid accepted the bid's proof with different ciphertexts")
+	} else if !strings.Contains(atkErr.Error(), "CiphertextMismatch") {
+		t.Fatalf("swapped ciphertexts rejected, but not with CiphertextMismatch: %v", atkErr)
+	}
+	// ...and rewriting the statement's hash to match them breaks the proof, because
+	// the circuit binds StCtxtHash.
+	forged := signal8Bid
+	forged[7] = core.AuctionCtxtHash([]byte("attacker-ctxt"), ctxt2)
+	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
+		proof8Bid, forged, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
+		t.Fatal("VULNERABLE: submitBid accepted a bid proof with a rewritten ciphertext hash")
+	} else if !strings.Contains(atkErr.Error(), "invalid proof") {
+		t.Fatalf("forged hash rejected, but not as an invalid proof: %v", atkErr)
+	}
 
 	bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
-		proof8Bid, signal7Bid, ctxt1, ctxt2,
+		proof8Bid, signal8Bid, ctxt1, ctxt2,
 	)
 	checkErr(t, "submitBid tx", err)
 	waitTx(t, ethClient, bidTx)
@@ -603,3 +626,27 @@ func toBigArr104(slice []*big.Int) [104]*big.Int {
 }
 
 var _ = fmt.Sprintf // suppress "imported and not used"
+
+// announceAuctionParams commits to an auction's parameters before initAuction():
+// EnygmaAuction only accepts (auctionId, deadline, settlementDeadline,
+// floorPrice) whose hash was announced first, so a front-runner cannot replay the
+// lock proof with parameters of its own.
+// Hash: keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)).
+func announceAuctionParams(
+	t *testing.T,
+	client *ethclient.Client,
+	auction *bind.BoundContract,
+	auth *bind.TransactOpts,
+	auctionId, deadline, settlementDeadline, floorPrice *big.Int,
+) {
+	t.Helper()
+	var enc []byte
+	for _, v := range []*big.Int{auctionId, deadline, settlementDeadline, floorPrice} {
+		enc = append(enc, common.LeftPadBytes(v.Bytes(), 32)...)
+	}
+	var h [32]byte
+	copy(h[:], crypto.Keccak256(enc))
+	tx, err := auction.Transact(auth, "announceAuction", h)
+	checkErr(t, "announceAuction tx", err)
+	waitTx(t, client, tx)
+}

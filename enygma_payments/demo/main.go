@@ -1093,7 +1093,7 @@ func (s *Server) transferBuildFingerprintMatrix(fc *flowCtx, secrets [nBanks]*bi
 // transferRequestZkProof builds the /proof/enygma request body from every
 // value derived so far and posts it to the gnark server. ok is false only
 // after fc.done has already been called with the failure reason.
-func (s *Server) transferRequestZkProof(fc *flowCtx, senderIdx int, senderAmt int64, prevBalances []enygma.IEnygmaPoint, onChainKeys []*big.Int, blockHash *big.Int, txValues [nBanks]*big.Int, txCommit [nBanks]enygma.IEnygmaPoint, txRandom [nBanks]*big.Int, tagMessages [nBanks]*big.Int, nullifier *big.Int, secrets [nBanks]*big.Int, senderSk, prevSenderR *big.Int, fpStrs [][]string) (resp proofResponse, ok bool) {
+func (s *Server) transferRequestZkProof(fc *flowCtx, senderIdx int, senderAmt int64, prevBalances []enygma.IEnygmaPoint, onChainKeys []*big.Int, blockHash *big.Int, txValues [nBanks]*big.Int, txCommit [nBanks]enygma.IEnygmaPoint, txRandom [nBanks]*big.Int, tagMessages [nBanks]*big.Int, nullifier *big.Int, secrets [nBanks]*big.Int, senderSk, prevSenderR *big.Int, fpStrs [][]string, tokenAddr string) (resp proofResponse, ok bool) {
 	// ZK proof
 	fc.emit("zk_proof", "running", "Generate ZK proof", "POST /proof/enygma — ~30s")
 	fc.log("Requesting ZK proof from gnark server (this may take ~30s)…")
@@ -1121,7 +1121,14 @@ func (s *Server) transferRequestZkProof(fc *flowCtx, senderIdx int, senderAmt in
 	for i := range kIndex {
 		kIndex[i] = fmt.Sprintf("%d", i)
 	}
+	// Fix L-01: domain separator, supplied by the caller like every other
+	// signal (the relayer/circuit don't compute it — Enygma.sol's own
+	// _expectedDomainId() is what actually enforces it on submission).
+	// Matches _expectedDomainId() exactly: (chainid << 160) | address(this).
+	domainId := new(big.Int).Lsh(big.NewInt(chainID), 160)
+	domainId.Or(domainId, new(big.Int).SetBytes(common.HexToAddress(tokenAddr).Bytes()))
 	proofReqBody, _ := json.Marshal(map[string]interface{}{
+		"domain_id":                    domainId.String(),
 		"fingerprint_shared_secrets":   fpStrs,
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
@@ -1314,6 +1321,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	s.state.mu.Lock()
 	ready := s.state.ready
 	inst := s.state.inst
+	tokenAddr := s.state.tokenAddr
 	s.state.mu.Unlock()
 	if !ready || inst == nil {
 		fc.done(false, "Run Setup first")
@@ -1337,7 +1345,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 
 	fpStrs := s.transferBuildFingerprintMatrix(fc, secrets, senderIdx)
 
-	proofResp, ok := s.transferRequestZkProof(fc, senderIdx, senderAmt, prevBalances, onChainKeys, blockHash, txValues, txCommit, txRandom, tagMessages, nullifier, secrets, senderSk, prevSenderR, fpStrs)
+	proofResp, ok := s.transferRequestZkProof(fc, senderIdx, senderAmt, prevBalances, onChainKeys, blockHash, txValues, txCommit, txRandom, tagMessages, nullifier, secrets, senderSk, prevSenderR, fpStrs, tokenAddr)
 	if !ok {
 		return
 	}

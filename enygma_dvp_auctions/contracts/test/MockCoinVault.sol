@@ -12,6 +12,14 @@ contract MockCoinVault {
     mapping(uint256 => bool) public nullified; // nullifier => permanently spent
     uint256[] public registeredCoins;          // every commitment ever registered, in order
 
+    // When set, nullifyCoin() reverts: lets tests reproduce a settlement that can
+    // never be applied (a claim stuck in PENDING_SETTLEMENT).
+    bool public nullifyReverts;
+
+    function setNullifyReverts(bool v) external {
+        nullifyReverts = v;
+    }
+
     function setRootValid(bool v) external {
         rootValid = v;
     }
@@ -31,6 +39,7 @@ contract MockCoinVault {
     }
 
     function nullifyCoin(uint256 /*treeNumber*/, uint256 nullifier) external returns (bool) {
+        require(!nullifyReverts, "MockCoinVault: nullify reverts");
         nullified[nullifier] = true;
         return true;
     }

@@ -175,3 +175,64 @@ func TestReduceModP_EndToEndProof(t *testing.T) {
 	}
 	t.Log("honest end-to-end Groth16 prove+verify through the fixed ReduceModP succeeds")
 }
+
+// wrapThreshold is t = 8P - Fr (~2^126). For an input v < t, the integer
+// 7P + (v + P - t) equals v + Fr, so (q, r) = (7, v + P - t) satisfies
+// q*P + r == v (mod Fr) with r < P and q < 8 — a second, wrong reduction —
+// unless ReduceModP also bounds r by Fr - 7P when q == 7.
+func wrapThreshold() *big.Int {
+	return new(big.Int).Sub(new(big.Int).Mul(big.NewInt(8), P), ecc.BN254.ScalarField())
+}
+
+// TestReduceModP_RejectsWrappedDecompositionOfSmallInputs is the regression
+// for the residual C-01 gap: the wrapped decomposition of a small input must
+// be rejected, not merely the r-anywhere forgery C-01 originally covered.
+func TestReduceModP_RejectsWrappedDecompositionOfSmallInputs(t *testing.T) {
+	tt := wrapThreshold()
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &reduceModPCircuit{})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	wrapped := func(_ *big.Int, in []*big.Int, out []*big.Int) error {
+		out[0] = new(big.Int).Add(in[0], new(big.Int).Sub(P, tt)) // r' = v + P - t
+		out[1] = big.NewInt(7)
+		return nil
+	}
+	for _, v := range []*big.Int{big.NewInt(0), big.NewInt(5), new(big.Int).Sub(tt, big.NewInt(1))} {
+		claimed := new(big.Int).Add(v, new(big.Int).Sub(P, tt))
+		w, _ := frontend.NewWitness(&reduceModPCircuit{Value: v, Expect: claimed}, ecc.BN254.ScalarField())
+		if _, err := ccs.Solve(w, solver.OverrideHint(solver.GetHintID(ModHint), wrapped)); err == nil {
+			t.Errorf("ReduceModP(%s) == %s (the wrapped decomposition) was accepted", v, claimed)
+		}
+	}
+}
+
+// TestReduceModP_HonestReductionAtTheBoundaries makes sure the tighter bound
+// does not reject any honest input: the last input with quotient 6, the first
+// and last with quotient 7, and the field's largest element.
+func TestReduceModP_HonestReductionAtTheBoundaries(t *testing.T) {
+	solver.RegisterHint(ModHint)
+	fr := ecc.BN254.ScalarField()
+	tt := wrapThreshold()
+	sevenP := new(big.Int).Mul(big.NewInt(7), P)
+	cases := map[string]*big.Int{
+		"0":                            big.NewInt(0),
+		"1":                            big.NewInt(1),
+		"t-1 (largest ambiguous)":      new(big.Int).Sub(tt, big.NewInt(1)),
+		"t (smallest unambiguous)":     tt,
+		"P-1":                          new(big.Int).Sub(P, big.NewInt(1)),
+		"P":                            new(big.Int).Set(P),
+		"7P-1 (largest with q=6)":      new(big.Int).Sub(sevenP, big.NewInt(1)),
+		"7P (smallest with q=7)":       sevenP,
+		"Fr-1 (largest field value)":   new(big.Int).Sub(fr, big.NewInt(1)),
+		"Fr-7P-1+7P (max r, q=7)":      new(big.Int).Sub(fr, big.NewInt(1)),
+		"a 254-bit Poseidon-like hash": new(big.Int).Sub(fr, big.NewInt(123456789)),
+	}
+	for name, v := range cases {
+		expect := new(big.Int).Mod(v, P)
+		w := &reduceModPCircuit{Value: v, Expect: expect}
+		if err := test.IsSolved(&reduceModPCircuit{}, w, fr); err != nil {
+			t.Errorf("%s: honest reduction of %s rejected: %v", name, v, err)
+		}
+	}
+}

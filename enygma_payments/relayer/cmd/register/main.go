@@ -81,9 +81,13 @@ import (
 var curveP, _ = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
 
 func main() {
-	accountID := flag.Int64("account-id", 100,
-		"accountId to register the relayer under (must be non-zero, unique across all participants)")
+	accountID := flag.Int64("account-id", 0,
+		"accountId to register the relayer under: the NEXT sequential id "+
+			"(Enygma.registerAccount requires ids 1, 2, 3, ... with no gaps)")
 	flag.Parse()
+	if *accountID <= 0 {
+		log.Fatal("--account-id must be set to the next unused account id (the contract requires sequential ids)")
+	}
 
 	rpcURL := envOr("RELAYER_RPC_URL", "http://127.0.0.1:8545")
 	chainIDStr := envOr("RELAYER_CHAIN_ID", "1337")
@@ -211,11 +215,21 @@ func main() {
 	}
 	log.Printf("  Block:            %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
 
+	// Fix Vuln 3: initializeUsdrBalance now takes a pre-computed commitment
+	// point instead of a raw randomness scalar — same rationale as
+	// registerAccount() above: computing Com(0, randomness) on chain from
+	// a plaintext randomness argument would expose the USDr blinding
+	// factor to any chain observer via calldata.
+	initialUsdrCommitX, initialUsdrCommitY, err := instance.PedCom(&bind.CallOpts{}, big.NewInt(0), usdrRandomness)
+	if err != nil {
+		log.Fatalf("pedCom(0, usdrRandomness): %v", err)
+	}
+
 	// Fresh nonce for the next transaction from the same owner key — auth's
 	// Nonce isn't set explicitly (go-ethereum fetches it per-call), so this
 	// is safe as long as nothing else races the owner key between the two
 	// calls, same assumption the rest of this tool already makes.
-	usdrTx, err := instance.InitializeUsdrBalance(auth, big.NewInt(*accountID), usdrRandomness)
+	usdrTx, err := instance.InitializeUsdrBalance(auth, big.NewInt(*accountID), initialUsdrCommitX, initialUsdrCommitY)
 	if err != nil {
 		log.Fatalf("initializeUsdrBalance(): %v", err)
 	}

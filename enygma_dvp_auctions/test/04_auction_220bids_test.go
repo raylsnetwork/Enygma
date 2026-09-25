@@ -198,6 +198,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
+	announceAuctionParams(t, ethClient, auctionContract, ownerAuth, auctionId, deadline, settlementDeadline, floorPrice)
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
 		toBigArr8(lockResult.Proof), toBigArr7(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
 	)
@@ -225,6 +226,8 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 		saltRevert, err := core.RandomInField()
 		checkErr(t, fmt.Sprintf("RandomInField(saltRevert %d)", i), err)
 
+		ctxt1 := []byte("dummy-mlkem-capsule")
+		ctxt2 := []byte("dummy-aead-ciphertext")
 		bidResult, err := gnarkClient.AuctionBidProof(core.AuctionBidParams{
 			AuctionId:   auctionId,
 			Bidder:      bidders[i],
@@ -237,6 +240,8 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 			SaltA:       saltA,
 			SaltB:       saltB,
 			SaltRevert:  saltRevert,
+			Ctxt1:       ctxt1,
+			Ctxt2:       ctxt2,
 		})
 		checkErr(t, fmt.Sprintf("AuctionBidProof(bidder %d)", i), err)
 
@@ -249,9 +254,9 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 		bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
 			toBigArr8(bidResult.Proof),
-			toBigArr7(bidResult.PublicSignal),
-			[]byte("dummy-mlkem-capsule"),
-			[]byte("dummy-aead-ciphertext"),
+			toBigArr8(bidResult.PublicSignal),
+			ctxt1,
+			ctxt2,
 		)
 		checkErr(t, fmt.Sprintf("submitBid tx (bidder %d)", i), err)
 		waitTx(t, ethClient, bidTx)

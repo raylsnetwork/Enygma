@@ -102,7 +102,12 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
 
             emit Commitment(_vaultId, commitment);
         } else {
-            // batch mode: params layout [tokenIds | amounts | pkSpeends | salts]
+            // batch mode: params layout [tokenIds | amounts | pkSpeends | salts].
+            // params.length must be an exact multiple of 4 — otherwise the
+            // division below truncates and every index computed from
+            // tokenCount silently misaligns with the caller's intended
+            // layout instead of reverting.
+            if (params.length % 4 != 0) revert InvalidErc1155BatchTransfer();
             uint256 tokenCount = params.length / 4;
 
             uint256[] memory tokenIds = new uint256[](tokenCount);

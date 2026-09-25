@@ -9,6 +9,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/iden3/go-iden3-crypto/babyjub"
 	"github.com/iden3/go-iden3-crypto/poseidon"
@@ -114,7 +115,31 @@ func MustLoadKeys(curve ecc.ID, pkPath, vkPath string) (groth16.ProvingKey, grot
 	if err != nil {
 		log.Fatalf("load verifying key %q: %v", vkPath, err)
 	}
+	if err := CheckKeyPair(pk, vk); err != nil {
+		log.Fatalf("keys %q / %q do not match: %v", pkPath, vkPath, err)
+	}
 	return pk, vk
+}
+
+// CheckKeyPair reports whether a proving key and a verifying key came from the
+// same trusted setup. Both carry [alpha]1, [beta]2 and [delta]2 from that
+// setup, so a stale key regenerated on only one side differs in at least one of
+// them. Without this a mismatched pair booted healthy and only failed when
+// SelfVerify ran on the first proof request. It is a cheap consistency check,
+// not a proof that either key is sound.
+func CheckKeyPair(pk groth16.ProvingKey, vk groth16.VerifyingKey) error {
+	p, ok := pk.(*groth16_bn254.ProvingKey)
+	if !ok {
+		return fmt.Errorf("unsupported proving key type %T", pk)
+	}
+	v, ok := vk.(*groth16_bn254.VerifyingKey)
+	if !ok {
+		return fmt.Errorf("unsupported verifying key type %T", vk)
+	}
+	if !p.G1.Alpha.Equal(&v.G1.Alpha) || !p.G2.Beta.Equal(&v.G2.Beta) || !p.G2.Delta.Equal(&v.G2.Delta) {
+		return fmt.Errorf("setup parameters differ (alpha/beta/delta)")
+	}
+	return nil
 }
 
 // SelfVerify re-verifies a freshly generated proof against its own public
@@ -183,10 +208,20 @@ func ModHint(mod *big.Int, inputs []*big.Int, res []*big.Int) error {
 // calling frontend.NewWitness (the audit's own remediation: "this alone
 // removes the leak trigger") — means a malformed request is rejected on
 // the cheap validation path and never reaches the code that leaks.
+//
+// The value must also be a canonical field element, 0 <= n < Fr. gnark
+// reduces an out-of-range witness value mod Fr, so a negative or oversized
+// input used to give a proof for the reduced value while the handler returned
+// the raw, unreduced number as the public signal; the two disagree, and the
+// on-chain verifier rejects the pair. Rejecting it here keeps the witness and
+// the returned public signals the same number.
 func ParseBigInt(s string) (*big.Int, error) {
 	n, ok := new(big.Int).SetString(s, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid decimal integer %q", s)
+	}
+	if n.Sign() < 0 || n.Cmp(ecc.BN254.ScalarField()) >= 0 {
+		return nil, fmt.Errorf("integer out of field range")
 	}
 	return n, nil
 }

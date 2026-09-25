@@ -53,6 +53,8 @@ interface IEnygmaAuction {
     // -------------------------------------------------------------------------
 
     /// @notice Emitted when Bob locks his NFT and opens the bidding.
+    event AuctionAnnounced(bytes32 indexed paramsHash);
+
     event AuctionInitialized(
         uint256 indexed auctionId,
         uint256 commitLocked,
@@ -149,6 +151,19 @@ interface IEnygmaAuction {
     error InvalidDeadline();
     error InvalidSettlementDeadline();
     error BiddingClosed();
+    error CiphertextMismatch();
+    error MaxBidsReached();
+    error InvalidBatchId();
+    error BidsNotAllBatched();
+    error WinnerAmountMismatch();
+    error WinnerNotHighest();
+    error BelowFloorPrice();
+    error PayoutCommitMismatch();
+    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) was not
+    // announced with announceAuction() in an earlier block.
+    error ParamsNotAnnounced();
+    // revertAuction: a batch has already been submitted.
+    error BatchesAlreadySubmitted();
     error BidsStillOpen();
     error DeadlineNotReached();
     error SettlementDeadlineNotReached();
@@ -161,6 +176,10 @@ interface IEnygmaAuction {
     // -------------------------------------------------------------------------
     // Functions
     // -------------------------------------------------------------------------
+
+    /// @notice Bob commits to his auction's parameters before initAuction(); see EnygmaAuction.
+    /// @param paramsHash keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice))
+    function announceAuction(bytes32 paramsHash) external returns (bool);
 
     /// @notice Bob locks his NFT and creates the auction.
     /// @param proof               Groth16 proof [ax,ay,bx1,bx0,by1,by0,cx,cy]
@@ -179,12 +198,12 @@ interface IEnygmaAuction {
 
     /// @notice A bidder locks their USDC and submits a sealed bid. Only before deadline.
     /// @param proof      Groth16 proof
-    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit]
+    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash]
     /// @param ctxt1      ML-KEM capsule (published so the auctioneer can decrypt)
     /// @param ctxt2      AEAD ciphertext of bid details
     function submitBid(
         uint256[8]  calldata proof,
-        uint256[7]  calldata statement,
+        uint256[8]  calldata statement,
         bytes       calldata ctxt1,
         bytes       calldata ctxt2
     ) external returns (bool);
