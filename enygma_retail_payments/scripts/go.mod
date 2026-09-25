@@ -1,6 +1,6 @@
-module enygma_retail_payments
+module enygma_retail_payments/scripts
 
-go 1.25.0
+go 1.26.0
 toolchain go1.25.13
 
 require github.com/ethereum/go-ethereum v1.16.8

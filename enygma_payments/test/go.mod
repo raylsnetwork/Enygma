@@ -1,10 +1,10 @@
-module enygma-test
+module enygma_payments/test
 
 go 1.26.0
 toolchain go1.26.6
 
 require (
-	enygma_payments_relayer v0.0.0-00010101000000-000000000000
+	enygma_payments/relayer v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/iden3/go-iden3-crypto v0.0.16
 )
@@ -66,4 +66,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace enygma_payments_relayer => ../relayer
+replace enygma_payments/relayer => ../relayer

@@ -1,20 +1,18 @@
-package primitives 
+package primitives
 
-import(
+import (
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
-	 pos "gnark_server/poseidon"
 )
-
 
 func PublicKey(api frontend.API, privateKey frontend.Variable) frontend.Variable {
 	return pos.Poseidon(api, []frontend.Variable{privateKey})
 }
 
+func PublicKeyNative(api frontend.API, privateKey frontend.Variable) frontend.Variable {
 
-func PublicKeyNative(api frontend.API, privateKey frontend.Variable)frontend.Variable{
+	publicKeyId, _ := api.NewHint(PoseidonPrivateKeyNative, 1, privateKey)
 
-	publicKeyId,_:= api.NewHint(PoseidonPrivateKeyNative, 1, privateKey)
-		
 	return publicKeyId[0]
 
 }

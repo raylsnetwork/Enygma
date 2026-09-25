@@ -10,7 +10,7 @@ package tests
 // generation at all (only /proof/privateMint, /proof/dvpInitiator,
 // /proof/dvpDestination exist) — so a real proof-driven test isn't
 // currently possible here. EnygmaAuction also isn't part of the standard
-// deploy.go/init.go pipeline (it's a separate, not-yet-wired-in contract),
+// scripts/cmd/deploy + cmd/init pipeline (it's a separate, not-yet-wired-in contract),
 // so these tests deploy and wire up a standalone instance themselves.
 //
 // What IS directly testable without any proof: the two checks fixed here
@@ -43,7 +43,7 @@ import (
 // mnemonic in hardhat.config.js ("federal unhappy avoid ... link",
 // path m/44'/60'/0'/0/1) — derived once and hardcoded here the same way
 // hardhatPrivKeyHex (Account[0]) already is in helpers_test.go. Address
-// 0xD2C3b34Abae5664986C8cf0F14d1D434Ac894768 matches hardhatRecipientHex.
+// 0xD2C3b34Abae5664986C8cf0F14d1D434Ac894768 is hardhat account[1].
 const hardhatAccount1PrivKeyHex = "69b5623bd1cfe22983c8849d155ca641238c18ab1b2e34c5ae943ed2ce4716b7"
 
 // loadArtifactABIAndBytecode reads a Hardhat artifact and returns both its

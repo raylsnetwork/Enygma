@@ -1,8 +1,8 @@
 package templates
 
 import (
+	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
-	"gnark_server/primitives"
 )
 
 // AuctionRevertCircuit proves that the caller owns the locked NFT note behind

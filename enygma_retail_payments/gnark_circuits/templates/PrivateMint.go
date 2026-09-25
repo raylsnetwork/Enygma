@@ -1,15 +1,13 @@
 package templates
 
-import(
+import (
+	pos "enygma_gnark_shared/poseidon"
+	"enygma_retail_payments/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
-	pos "gnark_server/poseidon"
 )
 
-
-
-type PrivateMintConfig struct{
+type PrivateMintConfig struct {
 	TmRange frontend.Variable
 }
 
@@ -28,17 +26,14 @@ type PrivateMintCircuit struct {
 	PublicKey frontend.Variable // pk_spend of the recipient (Alice's spend public key)
 }
 
+func (circuit *PrivateMintCircuit) Define(api frontend.API) error {
 
-func (circuit *PrivateMintCircuit) Define(api frontend.API) error{
-
-	
 	api.AssertIsEqual(cmp.IsLess(api, circuit.Amount, circuit.Config.TmRange), 1)
-    api.AssertIsEqual(cmp.IsLessOrEqual(api, 0, circuit.Amount), 1)
-	
+	api.AssertIsEqual(cmp.IsLessOrEqual(api, 0, circuit.Amount), 1)
+
 	calculatedCommitment := primitives.Erc20CommitmentV2(api, circuit.PublicKey, circuit.Salt, circuit.Amount, circuit.TokenId)
 	api.AssertIsEqual(calculatedCommitment, circuit.Commitment)
 
-	
 	calculatedCipherText := pos.Poseidon(api, []frontend.Variable{circuit.PublicKey, circuit.Salt, circuit.ContractAddress})
 	api.AssertIsEqual(calculatedCipherText, circuit.CipherText)
 

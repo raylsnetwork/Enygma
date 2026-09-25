@@ -5,17 +5,17 @@ import (
 	"math/big"
 	"net/http"
 
-	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	"gnark_server/utils"
+	"enygma_dvp_auctions/gnark_circuits/primitives"
+	"enygma_dvp_auctions/gnark_circuits/templates"
+	"enygma_dvp_auctions/gnark_circuits/utils"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
@@ -42,13 +42,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		// public inputs
 		witness.StAuctionId = frontend.Variable(req.StAuctionId)
-		witness.StCommitA   = frontend.Variable(req.StCommitA)
+		witness.StCommitA = frontend.Variable(req.StCommitA)
 
 		// private witnesses
-		witness.WtSpendKey  = frontend.Variable(req.WtSpendKey)
-		witness.WtSaltA     = frontend.Variable(req.WtSaltA)
-		witness.WtAmount    = frontend.Variable(req.WtAmount)
-		witness.WtTokenId   = frontend.Variable(req.WtTokenId)
+		witness.WtSpendKey = frontend.Variable(req.WtSpendKey)
+		witness.WtSaltA = frontend.Variable(req.WtSaltA)
+		witness.WtAmount = frontend.Variable(req.WtAmount)
+		witness.WtTokenId = frontend.Variable(req.WtTokenId)
 		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
 
 		solver.RegisterHint(primitives.PoseidonNative)

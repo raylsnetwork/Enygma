@@ -1,0 +1,74 @@
+# Dependabot version updates.
+#
+# Every Go module in the repo must appear under the gomod `directories` list
+# below; the `discover modules` job in .github/workflows/ci.yml fails if one
+# is missing. Security updates for the existing alerts additionally require
+# "Dependabot security updates" to be enabled in the repository settings.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - "/enygma_dvp/demo"
+      - "/enygma_dvp/gnark_circuits"
+      - "/enygma_dvp/relayer"
+      - "/enygma_dvp/scripts"
+      - "/enygma_dvp/src"
+      - "/enygma_dvp/test"
+      - "/enygma_dvp_auctions/gnark_circuits"
+      - "/enygma_dvp_auctions/scripts"
+      - "/enygma_dvp_auctions/src"
+      - "/enygma_dvp_auctions/test"
+      - "/enygma_gnark_shared"
+      - "/enygma_payments/demo"
+      - "/enygma_payments/gnark-server"
+      - "/enygma_payments/go_client/enygma_test"
+      - "/enygma_payments/go_client"
+      - "/enygma_payments/relayer"
+      - "/enygma_payments/test"
+      - "/enygma_retail_payments/demo"
+      - "/enygma_retail_payments/gnark_circuits"
+      - "/enygma_retail_payments/private_tags/src"
+      - "/enygma_retail_payments/private_tags/test"
+      - "/enygma_retail_payments/relayer"
+      - "/enygma_retail_payments/scripts"
+      - "/enygma_retail_payments/src"
+      - "/enygma_retail_payments/test"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      go-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directories:
+      - "/enygma_demo"
+      - "/enygma_dvp"
+      - "/enygma_dvp_auctions"
+      - "/enygma_payments/contracts/enygma"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/enygma_payments/run_scripts"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

@@ -27,10 +27,10 @@ import (
 )
 
 const (
-	numBids220    = 220
-	winnerIdx220  = 55  // bidder 55 bids 300; all others bid 100
-	winnerAmt220  = 300
-	loserAmt220   = 100
+	numBids220   = 220
+	winnerIdx220 = 55 // bidder 55 bids 300; all others bid 100
+	winnerAmt220 = 300
+	loserAmt220  = 100
 )
 
 func TestAuction_OnChain_220Bids(t *testing.T) {
@@ -44,15 +44,15 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 	// ─── Setup ────────────────────────────────────────────────────────────────
 
 	projectRoot := findProjectRoot(t)
-	receipts    := loadOnChainReceipts(t, projectRoot)
-	ethClient   := dialEth(t)
+	receipts := loadOnChainReceipts(t, projectRoot)
+	ethClient := dialEth(t)
 	defer ethClient.Close()
 
 	chainID, _ := new(big.Int).SetString(onchainChain, 10)
-	ownerAuth   := makeAuth(t, ownerPrivKey, chainID)
+	ownerAuth := makeAuth(t, ownerPrivKey, chainID)
 
-	auctionABI  := loadABI(t, projectRoot, "core/contracts/EnygmaAuction.sol/EnygmaAuction")
-	vaultABI    := loadABI(t, projectRoot, "core/contracts/AuctionCoinVault.sol/AuctionCoinVault")
+	auctionABI := loadABI(t, projectRoot, "core/contracts/EnygmaAuction.sol/EnygmaAuction")
+	vaultABI := loadABI(t, projectRoot, "core/contracts/AuctionCoinVault.sol/AuctionCoinVault")
 
 	auctionContract := bind.NewBoundContract(
 		common.HexToAddress(receipts["EnygmaAuction"]),
@@ -78,9 +78,9 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 	gnarkClient := core.NewAuctionClient("")
 
-	nftTokenId  := big.NewInt(onchainNftTokenId)
+	nftTokenId := big.NewInt(onchainNftTokenId)
 	usdcTokenId := big.NewInt(onchainUsdcTokenId)
-	floorPrice  := big.NewInt(onchainFloorPrice)
+	floorPrice := big.NewInt(onchainFloorPrice)
 
 	// ─── Bob (NFT seller) ─────────────────────────────────────────────────────
 
@@ -128,8 +128,8 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 	// ─── USDC commitments for all 220 bidders ────────────────────────────────
 
-	saltsIn     := make([]*big.Int, numBids220)
-	amounts     := make([]*big.Int, numBids220)
+	saltsIn := make([]*big.Int, numBids220)
+	amounts := make([]*big.Int, numBids220)
 	usdcCommits := make([]*big.Int, numBids220)
 
 	for i := 0; i < numBids220; i++ {
@@ -194,7 +194,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
-	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
+	deadline := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
 	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
@@ -289,7 +289,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 	for b := 0; b < numBatches; b++ {
 		start := b * core.AuctionBatchSize
-		end   := start + core.AuctionBatchSize
+		end := start + core.AuctionBatchSize
 		if end > numBids220 {
 			end = numBids220
 		}
@@ -315,7 +315,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 		// Public signal layout: [auctionId, bidCommitA[0..99], batchWinnerCommit, batchWinnerPk, batchWinnerAmount]
 		batchWinnerCommit := batchResult.PublicSignal[101]
-		batchWinnerPk     := batchResult.PublicSignal[102]
+		batchWinnerPk := batchResult.PublicSignal[102]
 		batchWinnerAmount := batchResult.PublicSignal[103]
 		t.Logf("  batch %d winner: commitA=%s amount=%s", b+1, batchWinnerCommit, batchWinnerAmount)
 
@@ -366,7 +366,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 	checkErr(t, "AuctionFinalProof", err)
 
 	overallWinnerCommit := finalResult.PublicSignal[31]
-	winningAmount       := finalResult.PublicSignal[36]
+	winningAmount := finalResult.PublicSignal[36]
 	t.Logf("  overallWinnerCommit = %s", overallWinnerCommit)
 	t.Logf("  winningAmount       = %s", winningAmount)
 
@@ -418,7 +418,7 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 	checkErr(t, "getAuctionCore", err)
 	// fields: state, nftTokenId, commitLocked, revertCommit, overallWinnerCommit,
 	//         batchCount, deadline, settlementDeadline, floorPrice, bidCount
-	onChainWinner   := coreResults[4].(*big.Int)
+	onChainWinner := coreResults[4].(*big.Int)
 	onChainBidCount := coreResults[9].(*big.Int)
 	t.Logf("  overallWinnerCommit = %s", onChainWinner)
 	t.Logf("  bidCount            = %s", onChainBidCount)

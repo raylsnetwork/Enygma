@@ -13,9 +13,9 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	utils "gnark_server/utils"
+	"enygma_retail_payments/gnark_circuits/primitives"
+	"enygma_retail_payments/gnark_circuits/templates"
+	utils "enygma_retail_payments/gnark_circuits/utils"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
@@ -67,9 +67,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		circuit := newCircuit()
 		witness := newCircuit()
 
-		witness.StMessage         = frontend.Variable(request.StMessage)
+		witness.StMessage = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
-		witness.WtTokenId         = frontend.Variable(request.WtTokenId)
+		witness.WtTokenId = frontend.Variable(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {
 			witness.StTreeNumbers[i] = frontend.Variable(request.StTreeNumbers[i])

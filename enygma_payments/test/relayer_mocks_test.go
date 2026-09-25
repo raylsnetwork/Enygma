@@ -6,9 +6,9 @@ import (
 	"context"
 	"math/big"
 
-	"enygma_payments_relayer/config"
-	contracts "enygma_payments_relayer/contracts"
-	"enygma_payments_relayer/server"
+	"enygma_payments/relayer/config"
+	contracts "enygma_payments/relayer/contracts"
+	"enygma_payments/relayer/server"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -103,17 +103,15 @@ func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
 
 // ── Valid request body ────────────────────────────────────────────────────────
 
-// transferPublicSignalLen is the enygma circuit's exact public-signal
-// arity (FingerPrint 6×6 layout + the Fix L-01 domain separator).
-// Fix L-05: RelayTransfer now requires exactly this many elements —
-// no more, no less — rather than accepting anything up to it and
-// zero-padding the rest.
-const transferPublicSignalLen = 81
-
-// usdrPublicSignalLen is the USDr fee circuit's exact public-signal arity
-// (the same layout as the main circuit, plus one extra slot), required by
-// the second, independent USDr proof that /relay/transfer now carries.
-const usdrPublicSignalLen = 82
+// Local lowercase aliases for server's exported public-signal-length
+// constants, so the rest of this test package (and relayer_handler_test.go /
+// relayer_integration_test.go, same package) can keep referring to them by
+// their existing short names without duplicating the literals.
+const (
+	transferPublicSignalLen    = server.TransferPublicSignalLen
+	transferFeePublicSignalLen = server.TransferFeePublicSignalLen
+	usdrPublicSignalLen        = server.UsdrFeePublicSignalLen
+)
 
 func validTransferBody() server.RelayTransferRequest {
 	var proof, usdrProof [8]string

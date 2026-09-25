@@ -236,33 +236,29 @@ func TestDoRPC_RefusesCrossHostRedirect(t *testing.T) {
 // TestDoRPC_SameHostRedirect_CaseInsensitiveHostname: DNS hostnames are
 // case-insensitive, so a same-host redirect that differs only in case must
 // still be treated as same-host, not wrongly refused.
+// TestDoRPC_SameHostRedirect_CaseInsensitiveHostname used to drive this
+// through a real httptest server and a live client.Do round trip: request
+// "http://localhost:<port>/", follow a redirect to "http://LOCALHOST:<port>/v1/",
+// and check the request actually landed. That coupled the test to which
+// loopback address the machine's resolver hands back for "localhost" —
+// 127.0.0.1 or ::1, decided by /etc/gai.conf / nsswitch.conf / the container
+// runtime, not by this code — and httptest.NewServer only ever binds
+// 127.0.0.1. Wherever "localhost" resolved to ::1 first (observed on both
+// macOS and a GitHub Actions Ubuntu runner, inconsistently even between two
+// runs of the identical commit on the same runner image), the client dialed
+// a loopback address nothing was listening on and the test failed for a
+// reason that has nothing to do with the case-insensitivity this test
+// exists to check.
+//
+// DNS-hostname case-insensitivity is decided entirely by
+// validateSameHostRedirect's strings.EqualFold call — a pure function, no
+// network involved — so test that directly instead, the same way this
+// file's other validateSameHostRedirect tests already do below.
 func TestDoRPC_SameHostRedirect_CaseInsensitiveHostname(t *testing.T) {
-	// One server (same port throughout, isolating the case-sensitivity
-	// variable) that redirects to an upper-cased absolute hostname on its
-	// own port, then serves the real response.
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			port := srv.Listener.Addr().(*net.TCPAddr).Port
-			http.Redirect(w, r, fmt.Sprintf("http://LOCALHOST:%d/v1/", port), http.StatusFound)
-			return
-		}
-		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"0x2a"}`)
-	}))
-	defer srv.Close()
-	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	originalURL := fmt.Sprintf("http://localhost:%d/", port)
-
-	client, err := newSafeRPCClient(originalURL)
-	if err != nil {
-		t.Fatalf("newSafeRPCClient(%s): %v", originalURL, err)
-	}
-	resp, err := doRPC(client, originalURL, jsonRPCReq)
-	if err != nil {
-		t.Fatalf("case-different same-host redirect should be followed: %v", err)
-	}
-	if resp.Result != "0x2a" {
-		t.Fatalf("expected result 0x2a, got %v", resp.Result)
+	orig, _ := url.Parse("http://localhost:8080/")
+	target, _ := url.Parse("http://LOCALHOST:8080/v1/")
+	if err := validateSameHostRedirect(orig, target); err != nil {
+		t.Fatalf("case-different same-host redirect should be allowed: %v", err)
 	}
 }
 

@@ -10,6 +10,54 @@ There is also an [interactive demo](./enygma_demo) — a single HTML file, no bu
 through key setup, a confidential payment and a DvP swap, and lets you view the same ledger as a
 bank, as the chain, as the regulator and as the operator.
 
+## Repository layout
+
+Each variant is a self-contained set of Go modules plus Solidity contracts; nothing outside
+`enygma_dvp/src` is imported across variants. See each project's own README for its full layout
+and manual run steps.
+
+| Project | Model | Contains |
+|---|---|---|
+| [`enygma_payments`](./enygma_payments) | Account-based | contracts, gnark proof server, relayer, Go client/CLI |
+| [`enygma_retail_payments`](./enygma_retail_payments) | UTXO-based | contracts, gnark proof server, relayer, private tags, demo |
+| [`enygma_dvp`](./enygma_dvp) | UTXO-based | contracts, gnark proof server, relayer, deploy/init scripts, demo |
+| [`enygma_dvp_auctions`](./enygma_dvp_auctions) | UTXO-based | contracts, gnark proof server, deploy/init scripts |
+| [`enygma_demo`](./enygma_demo) | — | single-file interactive HTML demo (no build step) |
+
+### Protocol docs index
+
+| Doc | Covers |
+|---|---|
+| [`source_of_true.md`](./source_of_true.md) | Design rationale shared across all four variants — why Poseidon, why Groth16, why BN254, and where each primitive appears in code. |
+| [`enygma_dvp/protocol_description.md`](./enygma_dvp/protocol_description.md) | DvP protocol overview (deposit/transfer/withdraw/swap flows); points to `dvp_protocol.md` for the formal definitions. |
+| [`enygma_dvp/dvp_protocol.md`](./enygma_dvp/dvp_protocol.md) | DvP's formal definitions: commitment structure, nullifiers, key generation, ZK proof statements, security goals. |
+| [`enygma_dvp/docs/`](./enygma_dvp/docs/) | DvP's own doc set: gnark proof API, Merkle API, per-flow walkthroughs — see its own [README](./enygma_dvp/docs/README.md). |
+| [`enygma_payments/protocol_description.md`](./enygma_payments/protocol_description.md) | Institutional (account-based) payments protocol. |
+| [`enygma_retail_payments/protocol_description.md`](./enygma_retail_payments/protocol_description.md) | Retail (UTXO-based) payments protocol. |
+| [`enygma_dvp_auctions/docs/protocol_description.md`](./enygma_dvp_auctions/docs/protocol_description.md) | Auction protocol overview. |
+| [`enygma_dvp_auctions/docs/auction_protocol_v2.md`](./enygma_dvp_auctions/docs/auction_protocol_v2.md) | Changes from the v1 auction protocol. |
+| [`enygma_dvp_auctions/docs/docs.md`](./enygma_dvp_auctions/docs/docs.md) | Auction technical reference (contract/circuit-level). |
+
+## Development
+
+The repo is ~25 independent Go modules (`git ls-files '*go.mod'` lists them) — there is no single
+`go build ./...` at the root. The [`Makefile`](./Makefile) loops over all of them:
+
+```bash
+make help       # list every target
+make ci         # what CI runs: gofmt check + build + vet + unit tests, every module
+make ci MODULE=enygma_dvp/src   # the same, scoped to one module
+```
+
+CI (`.github/workflows/ci.yml`) runs `make ci` per module on every push and pull request against
+`main`. Dependency updates are managed by [Dependabot](./.github/dependabot.yml); every Go module
+must be listed there, and CI fails if a new one is added without a matching entry.
+
+`make ci` does not include integration tests — those need a running chain and gnark proof server,
+and skip themselves when those aren't reachable. `make dvp-chain`, `make dvp-gnark`, etc. give the
+DvP local dev loop (`make help` lists the retail and auctions equivalents); `enygma_payments` isn't
+wired into the Makefile yet — see its `demo_instructions.md` and `gnark-server/README.md`.
+
 ## System Architecture
 
 * **Users**: Traditional users of the system who want to transact with other users. 

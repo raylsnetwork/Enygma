@@ -39,10 +39,10 @@ func TestUserRegistration(t *testing.T) {
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	aliceAuth := hardhatAuth(t, client)
-	bobAuth   := hardhatBobAuth(t, client)
+	bobAuth := hardhatBobAuth(t, client)
 
 	alicePkSpend := big.NewInt(0xA11CE)
-	bobPkSpend   := big.NewInt(0xB0B)
+	bobPkSpend := big.NewInt(0xB0B)
 
 	// Generate real ML-KEM-768 view keypairs.
 	aliceViewPair, err := rpcore.NewViewKeyPair()
@@ -178,7 +178,7 @@ func TestSybilProtection(t *testing.T) {
 	client := mustDial(t)
 	defer client.Close()
 
-	receipts     := loadOnchainReceipts(t)
+	receipts := loadOnchainReceipts(t)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	// Alice is the deployer → owner of UserRegistry.
@@ -234,13 +234,13 @@ func TestSybilProtection(t *testing.T) {
 	}
 
 	// Force value=0 to bypass the auto-fee logic and test the contract rejection.
-	carolAuthNoFee        := *carolAuth
-	carolAuthNoFee.Value  = big.NewInt(0)
-	carolAuthNoFeePtr     := &carolAuthNoFee
+	carolAuthNoFee := *carolAuth
+	carolAuthNoFee.Value = big.NewInt(0)
+	carolAuthNoFeePtr := &carolAuthNoFee
 
 	// We call the contract directly to test the revert.
 	registryABI := loadOnchainABI(t, "UserRegistry")
-	registry    := bindContract(t, client, registryAddr, registryABI)
+	registry := bindContract(t, client, registryAddr, registryABI)
 	_, err = registry.Transact(carolAuthNoFeePtr, "register",
 		carolPkSpend, carolViewPair.EncapsKey, carolMlKemCt, carolAesCt)
 	if err == nil {

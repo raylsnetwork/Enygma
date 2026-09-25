@@ -14,7 +14,7 @@ package tests
 // Prerequisites:
 //   1. Hardhat node (keep running):     cd ../enygma_dvp && npx hardhat node
 //   2. Deploy + init contracts:         bash setup.sh   (from enygma_retail_payments/ root)
-//   3. Gnark server (port 8082, keep running): cd gnark_circuits && go run main.go
+//   3. Gnark server (port 8082, keep running): cd gnark_circuits && go run ./cmd/server
 //
 // Run with:
 //   cd test && go test ./... -v -timeout 600s
@@ -25,9 +25,8 @@ import (
 	"strings"
 	"testing"
 
-	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
-	endpoints "github.com/raylsnetwork/enygma_dvp/src/core/endpoints"
+	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -94,9 +93,9 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	auth := hardhatAuth(t, client)
 
 	gnarkClient := rpcore.NewPaymentClient("")
-	tokenId            := big.NewInt(0)
-	mintAmount         := big.NewInt(100)
-	vaultId            := big.NewInt(0)
+	tokenId := big.NewInt(0)
+	mintAmount := big.NewInt(100)
+	vaultId := big.NewInt(0)
 	contractAddressBig := new(big.Int).SetBytes(dvpAddr.Bytes())
 
 	// Step 1 — Alice generates her spend key pair.
@@ -190,27 +189,27 @@ func TestRetailErc20_Payment(t *testing.T) {
 	defer client.Close()
 
 	receipts := loadOnchainReceipts(t)
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
-	dvpAddr      := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	vaultABI := loadOnchainABI(t, "Erc20CoinVault")
 	erc20ABI := loadOnchainABI(t, "RaylsERC20")
-	dvpABI   := loadOnchainABI(t, "EnygmaDvp")
+	dvpABI := loadOnchainABI(t, "EnygmaDvp")
 
 	vault := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	erc20 := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
 
 	aliceAuth := hardhatAuth(t, client)
-	bobAuth   := hardhatBobAuth(t, client)
+	bobAuth := hardhatBobAuth(t, client)
 
 	gnarkClient := rpcore.NewPaymentClient("")
 	merkleDepth := 8
-	tokenId     := big.NewInt(0)
-	depositAmt  := big.NewInt(40)
-	paymentAmt  := big.NewInt(30)
-	changeAmt   := big.NewInt(10)
+	tokenId := big.NewInt(0)
+	depositAmt := big.NewInt(40)
+	paymentAmt := big.NewInt(30)
+	changeAmt := big.NewInt(10)
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Step 1: Key generation — Alice and Bob each generate their ZK key pairs.
@@ -378,8 +377,8 @@ func TestRetailErc20_Payment(t *testing.T) {
 		},
 		[]*big.Int{aliceSaltBField},
 		[]*big.Int{paymentAmt, changeAmt},
-		[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},  // local keys
-		[][]byte{bobView.EncapsKey, aliceView.EncapsKey},       // local keys
+		[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey}, // local keys
+		[][]byte{bobView.EncapsKey, aliceView.EncapsKey},     // local keys
 		merkleDepth,
 		[]*rpcore.MerkleProof{aliceProof},
 		[]*big.Int{big.NewInt(0)},
@@ -393,11 +392,11 @@ func TestRetailErc20_Payment(t *testing.T) {
 	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
 
 	snarkProof := proofStringsToOnchain(t, paymentResult.Proof)
-	onchainReceipt := endpoints.ProofReceipt{
-		Proof: endpoints.SnarkProof{
-			A: endpoints.G1Point{X: snarkProof.A.X, Y: snarkProof.A.Y},
-			B: endpoints.G2Point{X: snarkProof.B.X, Y: snarkProof.B.Y},
-			C: endpoints.G1Point{X: snarkProof.C.X, Y: snarkProof.C.Y},
+	onchainReceipt := ProofReceipt{
+		Proof: SnarkProof{
+			A: G1Point{X: snarkProof.A.X, Y: snarkProof.A.Y},
+			B: G2Point{X: snarkProof.B.X, Y: snarkProof.B.Y},
+			C: G1Point{X: snarkProof.C.X, Y: snarkProof.C.Y},
 		},
 		Statement:       paymentResult.ContractStatement(),
 		NumberOfInputs:  big.NewInt(int64(paymentResult.NumberOfInputs)),
@@ -405,12 +404,12 @@ func TestRetailErc20_Payment(t *testing.T) {
 	}
 
 	vaultId := big.NewInt(0)
-	onchainTx, err := endpoints.SubmitPayment(
+	onchainTx, err := submitPayment(
 		client, aliceAuth, dvpABI, dvpAddr,
 		onchainReceipt,
 		vaultId,
-		paymentResult.CipherText,  // Bob's ML-KEM capsule only
-		paymentResult.EncTxData,   // Bob's AES-GCM ciphertext only
+		paymentResult.CipherText, // Bob's ML-KEM capsule only
+		paymentResult.EncTxData,  // Bob's AES-GCM ciphertext only
 	)
 	if err != nil {
 		t.Fatalf("SubmitPayment: %v", err)
@@ -482,5 +481,3 @@ func TestRetailErc20_Payment(t *testing.T) {
 	t.Logf("=== PAYMENT COMPLETE: Alice paid %s tokens to Bob, kept %s tokens as change ===",
 		paymentAmt, changeAmt)
 }
-
-

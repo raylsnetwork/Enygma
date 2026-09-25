@@ -1,13 +1,13 @@
 package templates
 
-import(
+import (
+	"enygma_dvp/gnark_circuits/primitives"
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
-	pos "gnark_server/poseidon"
 )
 
-type PrivateMintConfig struct{
+type PrivateMintConfig struct {
 	// TmRange is the exclusive upper bound on Amount — same constant used by
 	// JoinSplit ERC20 — baked in at circuit compile time so no extra public input
 	// is needed. Keys must be regenerated if this value changes.
@@ -29,8 +29,7 @@ type PrivateMintCircuit struct {
 	PublicKey frontend.Variable // pk_spend of the recipient (Alice's spend public key)
 }
 
-
-func (circuit *PrivateMintCircuit) Define(api frontend.API) error{
+func (circuit *PrivateMintCircuit) Define(api frontend.API) error {
 
 	// DVP-9 fix: amount range check — 0 ≤ Amount < TmRange.
 	// Without this, a prover can set Amount to a large field element that wraps

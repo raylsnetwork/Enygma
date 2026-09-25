@@ -1,0 +1,75 @@
+name: ci
+
+# Build, vet and unit-test every Go module, and enforce gofmt.
+# Run the same checks locally with `make ci` (see the root Makefile).
+# Integration tests that need a chain or gnark server skip themselves and are
+# not exercised here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  modules:
+    name: discover modules
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - id: list
+        run: |
+          echo "matrix=$(git ls-files '*go.mod' | xargs -n1 dirname | sort | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+      # Fail loudly when a new module is added but Dependabot does not cover it.
+      - name: Every Go module is listed in dependabot.yml
+        run: |
+          missing=0
+          for d in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            if ! grep -q "\"/$d\"" .github/dependabot.yml; then
+              echo "::error::$d has a go.mod but is not covered by .github/dependabot.yml"
+              missing=1
+            fi
+          done
+          exit $missing
+
+  fmt:
+    name: gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - run: make fmt-check
+
+  go:
+    name: go (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.modules.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: build, vet, test
+        run: make build vet test-unit MODULE=${{ matrix.module }}

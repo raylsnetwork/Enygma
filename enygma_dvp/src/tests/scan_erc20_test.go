@@ -57,9 +57,9 @@ func TestScanForErc20Notes_FullFlow(t *testing.T) {
 	// --- Chain event (what gets posted on-chain) ---
 	events := []core.OnChainErc20Event{
 		{
-			Commitment:  commitment,
+			Commitment: commitment,
 			CipherText: cipherText,
-			EncTxData: encTxData,
+			EncTxData:  encTxData,
 		},
 	}
 
@@ -197,9 +197,9 @@ func TestScanForErc20Notes_MultipleEvents(t *testing.T) {
 	}
 
 	events := []core.OnChainErc20Event{
-		makeEvent(bobView.EncapsKey, bobSpend.PublicKey, big.NewInt(10), big.NewInt(5)),   // Bob: 5 USDT
+		makeEvent(bobView.EncapsKey, bobSpend.PublicKey, big.NewInt(10), big.NewInt(5)),     // Bob: 5 USDT
 		makeEvent(carolView.EncapsKey, carolSpend.PublicKey, big.NewInt(10), big.NewInt(3)), // Carol: skip
-		makeEvent(bobView.EncapsKey, bobSpend.PublicKey, big.NewInt(10), big.NewInt(7)),   // Bob: 7 USDT
+		makeEvent(bobView.EncapsKey, bobSpend.PublicKey, big.NewInt(10), big.NewInt(7)),     // Bob: 7 USDT
 	}
 
 	owned, err := core.ScanForErc20Notes(bobView.DecapsKey, bobSpend.PublicKey, events)

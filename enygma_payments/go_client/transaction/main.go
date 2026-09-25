@@ -8,13 +8,13 @@ import (
 	"os"
 	"strconv"
 
-	"enygma/agreement"
-	"enygma/config"
-	enygma "enygma/contracts"
-	"enygma/internal/curve"
-	"enygma/internal/proof"
-	"enygma/internal/randomness"
-	"enygma/internal/types"
+	"enygma_payments/go_client/agreement"
+	"enygma_payments/go_client/config"
+	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/go_client/internal/curve"
+	"enygma_payments/go_client/internal/proof"
+	"enygma_payments/go_client/internal/randomness"
+	"enygma_payments/go_client/internal/types"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -46,12 +46,6 @@ type relayTransferRequest struct {
 	UsdrCommitments  [][]string `json:"usdrCommitments"`
 
 	KIndex []int64 `json:"kIndex"`
-}
-
-type relayTxResponse struct {
-	TxHash      string `json:"txHash"`
-	BlockNumber uint64 `json:"blockNumber"`
-	GasUsed     uint64 `json:"gasUsed"`
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────

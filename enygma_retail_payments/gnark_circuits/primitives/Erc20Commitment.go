@@ -1,8 +1,8 @@
 package primitives
 
 import (
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
-	pos "gnark_server/poseidon"
 )
 
 // Erc20CommitmentV2 computes the ERC20 commitment for the non-interactive flow.

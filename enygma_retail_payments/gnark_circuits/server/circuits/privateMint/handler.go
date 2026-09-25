@@ -3,39 +3,38 @@ package privateMint
 import (
 	"fmt"
 	"math/big"
-    "net/http"
+	"net/http"
 
-	utils "gnark_server/utils"
+	utils "enygma_retail_payments/gnark_circuits/utils"
 
-    "github.com/gin-gonic/gin"
-	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
-    "github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/constraint/solver"
-    
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/gin-gonic/gin"
+
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 
-	"gnark_server/templates"
-	"gnark_server/primitives"
- 
+	"enygma_retail_payments/gnark_circuits/primitives"
+	"enygma_retail_payments/gnark_circuits/templates"
 )
 
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
-	curve := ecc.BN254 
-	
+	curve := ecc.BN254
+
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
 	return func(c *gin.Context) {
-        var request PrivateMintRequest
-		
-        if err := c.ShouldBindJSON(&request); err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-            return
-        } 
+		var request PrivateMintRequest
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		// fmt.Println(request)
-	
+
 		var publicSignal []*big.Int
 
 		range_ := frontend.Variable("1000000000000000000000000000000000000")
@@ -43,8 +42,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			Config: templates.PrivateMintConfig{TmRange: range_},
 		}
 		witness := templates.PrivateMintCircuit{}
-	
-		
+
 		witness.Commitment = frontend.Variable(request.Commitment)
 		witness.ContractAddress = frontend.Variable(request.ContractAddress)
 		witness.TokenId = frontend.Variable(request.TokenId)
@@ -86,7 +84,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 
 		println("Proof verified successfully!")
-		
+
 		p := proof.(*groth16_bn254.Proof)
 		A_x1 := new(big.Int)
 		p.Ar.X.BigInt(A_x1)
@@ -115,19 +113,18 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		//Proof in Remix format (order matters!)
 		proofRemix := []*big.Int{
-			A_x1, A_y1,     // G1 point Ar
-			BX11, BX01,     // G2 point Bs.X (Fp²)
-			BY11, BY01,     // G2 point Bs.Y (Fp²)
-			C_x1, C_y1,     // G1 point Krs
+			A_x1, A_y1, // G1 point Ar
+			BX11, BX01, // G2 point Bs.X (Fp²)
+			BY11, BY01, // G2 point Bs.Y (Fp²)
+			C_x1, C_y1, // G1 point Krs
 		}
 
-		
 		proofStr := make([]string, len(proofRemix))
 		for i, v := range proofRemix {
 			proofStr[i] = v.String() // full decimal, no exponent
 		}
 
-		publicSignal=[]*big.Int{
+		publicSignal = []*big.Int{
 			utils.ParseBigInt(request.Commitment),
 			utils.ParseBigInt(request.ContractAddress),
 			utils.ParseBigInt(request.TokenId),
@@ -139,14 +136,10 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			pubStr[i] = v.String()
 		}
 
-		
 		c.JSON(http.StatusOK, PrivateMintOutput{
 			Proof:        proofStr,
 			PublicSignal: pubStr,
 		})
-
-	
-
 
 	}
 }

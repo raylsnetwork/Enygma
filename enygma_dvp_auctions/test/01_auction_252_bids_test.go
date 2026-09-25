@@ -24,8 +24,8 @@ package tests
 //
 // Prerequisites:
 //   1. Auction gnark server running on :8083
-//      cd gnark_circuits && go run generation.go   (once)
-//      cd gnark_circuits && go run main.go
+//      cd gnark_circuits && go run ./cmd/keygen   (once)
+//      cd gnark_circuits && go run ./cmd/server
 //
 // Run with:
 //   cd test && go mod tidy && CC=/usr/bin/clang go test -run TestAuction_252Bids -v -timeout 1800s
@@ -44,13 +44,13 @@ const (
 )
 
 type bidderState struct {
-	sk      *core.SpendKeyPair
-	saltIn  *big.Int
-	amount  *big.Int
-	saltA   *big.Int
-	saltB   *big.Int
-	commitA *big.Int
-	commitB *big.Int
+	sk       *core.SpendKeyPair
+	saltIn   *big.Int
+	amount   *big.Int
+	saltA    *big.Int
+	saltB    *big.Int
+	commitA  *big.Int
+	commitB  *big.Int
 	commitIn *big.Int
 }
 

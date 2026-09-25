@@ -17,7 +17,7 @@ package tests
 //
 //	Terminal 1: cd ../enygma_dvp && npx hardhat node
 //	Terminal 2: bash setup.sh          (from enygma_retail_payments/)
-//	Terminal 3: cd gnark_circuits && go run main.go
+//	Terminal 3: cd gnark_circuits && go run ./cmd/server
 //	Terminal 4: cd relayer && RELAYER_PRIVATE_KEY=<key> RELAYER_API_KEY=<token> go run main.go
 //
 // Run:
@@ -151,27 +151,27 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 	defer client.Close()
 
 	receipts := loadOnchainReceipts(t)
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
-	dvpAddr      := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	vaultABI := loadOnchainABI(t, "Erc20CoinVault")
-	erc20ABI  := loadOnchainABI(t, "RaylsERC20")
-	dvpABI    := loadOnchainABI(t, "EnygmaDvp")
+	erc20ABI := loadOnchainABI(t, "RaylsERC20")
+	dvpABI := loadOnchainABI(t, "EnygmaDvp")
 
 	vault := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	erc20 := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
 
 	aliceAuth := hardhatAuth(t, client)
-	bobAuth   := hardhatBobAuth(t, client)
+	bobAuth := hardhatBobAuth(t, client)
 
 	gnarkClient := rpcore.NewPaymentClient("")
 	merkleDepth := 8
-	tokenId     := big.NewInt(0)
-	depositAmt  := big.NewInt(40)
-	paymentAmt  := big.NewInt(30)
-	changeAmt   := big.NewInt(10)
+	tokenId := big.NewInt(0)
+	depositAmt := big.NewInt(40)
+	paymentAmt := big.NewInt(30)
+	changeAmt := big.NewInt(10)
 
 	// ──────────────────────────────────────────────────────────────────────────
 	// Step 1: Key generation
@@ -382,7 +382,7 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 		t.Fatalf("TransactionReceipt(%s): %v", relayResp.TxHash, err)
 	}
 
-	paymentSig  := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
 	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 
 	var paymentEvents, nullifierEvents int

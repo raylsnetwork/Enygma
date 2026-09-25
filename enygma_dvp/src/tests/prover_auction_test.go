@@ -71,16 +71,16 @@ func TestAuctionInitProof_Success(t *testing.T) {
 	merkleDepth := 8
 
 	result, err := client.AuctionInitProof(
-		big.NewInt(1),           // stBeacon
-		big.NewInt(42),          // tokenId
-		big.NewInt(0xABC),       // wtContractAddress
-		makeKeyPair(10, 20),     // keyIn
-		merkleDepth,             // merkleDepth
+		big.NewInt(1),                // stBeacon
+		big.NewInt(42),               // tokenId
+		big.NewInt(0xABC),            // wtContractAddress
+		makeKeyPair(10, 20),          // keyIn
+		merkleDepth,                  // merkleDepth
 		makeMerkleProof(merkleDepth), // merkleProof
-		big.NewInt(999),         // merkleRoot
-		big.NewInt(0),           // stTreeNumber
-		0,                       // vaultId (ERC20)
-		big.NewInt(555),         // assetGroupMerkleRoot
+		big.NewInt(999),              // merkleRoot
+		big.NewInt(0),                // stTreeNumber
+		0,                            // vaultId (ERC20)
+		big.NewInt(555),              // assetGroupMerkleRoot
 		makeMerkleProof(merkleDepth), // assetGroupMerkleProof
 		[]*big.Int{big.NewInt(100)},  // wtIdParams
 	)
@@ -235,23 +235,23 @@ func TestAuctionBidProof_Success(t *testing.T) {
 	keysOut := []core.KeyPair{makeKeyPair(50, 60), makeKeyPair(70, 80)}
 
 	result, err := client.AuctionBidProof(
-		big.NewInt(1),                                      // stAuctionId
-		big.NewInt(100),                                    // wtBidAmount
-		big.NewInt(999),                                    // wtBidRandom
-		big.NewInt(0xABC),                                  // assetAddress
-		[]*big.Int{big.NewInt(50), big.NewInt(50)},         // wtValuesIn
+		big.NewInt(1),     // stAuctionId
+		big.NewInt(100),   // wtBidAmount
+		big.NewInt(999),   // wtBidRandom
+		big.NewInt(0xABC), // assetAddress
+		[]*big.Int{big.NewInt(50), big.NewInt(50)}, // wtValuesIn
 		keysIn,
-		[]*big.Int{big.NewInt(40), big.NewInt(60)},         // wtValuesOut
+		[]*big.Int{big.NewInt(40), big.NewInt(60)}, // wtValuesOut
 		keysOut,
 		merkleDepth,
-		MerkleProofPair(merkleDepth, 2),                    // merkleProofs
-		[]*big.Int{big.NewInt(999), big.NewInt(999)},       // stMerkleRoots
-		[]*big.Int{big.NewInt(0), big.NewInt(0)},           // stTreeNumbers
-		0,                                                   // stVaultId
-		[][]*big.Int{{big.NewInt(50)}, {big.NewInt(50)}},   // wtIdParamsIn
-		[][]*big.Int{{big.NewInt(40)}, {big.NewInt(60)}},   // wtIdParamsOut
-		big.NewInt(555),                                     // stAssetGroupMerkleRoot
-		makeMerkleProof(merkleDepth),                        // assetGroupMerkleProof
+		MerkleProofPair(merkleDepth, 2), // merkleProofs
+		[]*big.Int{big.NewInt(999), big.NewInt(999)}, // stMerkleRoots
+		[]*big.Int{big.NewInt(0), big.NewInt(0)},     // stTreeNumbers
+		0,                                            // stVaultId
+		[][]*big.Int{{big.NewInt(50)}, {big.NewInt(50)}}, // wtIdParamsIn
+		[][]*big.Int{{big.NewInt(40)}, {big.NewInt(60)}}, // wtIdParamsOut
+		big.NewInt(555),              // stAssetGroupMerkleRoot
+		makeMerkleProof(merkleDepth), // assetGroupMerkleProof
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

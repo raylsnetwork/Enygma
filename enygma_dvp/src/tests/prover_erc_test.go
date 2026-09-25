@@ -43,18 +43,18 @@ func TestErc20JoinSplitProof_Success(t *testing.T) {
 	recipientViewKeys := [][]byte{makeViewEncapKey(t), makeViewEncapKey(t)}
 
 	result, err := client.Erc20JoinSplitProof(
-		big.NewInt(1),                                    // stMessage
-		[]*big.Int{big.NewInt(100), big.NewInt(200)},     // wtValuesIn
+		big.NewInt(1), // stMessage
+		[]*big.Int{big.NewInt(100), big.NewInt(200)}, // wtValuesIn
 		keysIn,
-		[]*big.Int{big.NewInt(150), big.NewInt(150)},     // wtSaltsIn
-		[]*big.Int{big.NewInt(150), big.NewInt(150)},     // wtValuesOut
+		[]*big.Int{big.NewInt(150), big.NewInt(150)}, // wtSaltsIn
+		[]*big.Int{big.NewInt(150), big.NewInt(150)}, // wtValuesOut
 		recipientSpendPks,
 		recipientViewKeys,
 		merkleDepth,
 		MerkleProofPair(merkleDepth, 2),
-		[]*big.Int{big.NewInt(0), big.NewInt(1)},         // stTreeNumbers
-		big.NewInt(0),                                     // wtTokenId
-		false,                                             // use10_2
+		[]*big.Int{big.NewInt(0), big.NewInt(1)}, // stTreeNumbers
+		big.NewInt(0),                            // wtTokenId
+		false,                                    // use10_2
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -128,12 +128,12 @@ func TestErc20JoinSplitProof_ZeroValueInput(t *testing.T) {
 	// First input has zero value — should use zero path elements
 	result, err := client.Erc20JoinSplitProof(
 		big.NewInt(1),
-		[]*big.Int{big.NewInt(0), big.NewInt(200)},     // first input is zero
+		[]*big.Int{big.NewInt(0), big.NewInt(200)}, // first input is zero
 		[]core.KeyPair{makeKeyPair(10, 20), makeKeyPair(30, 40)},
-		[]*big.Int{big.NewInt(0), big.NewInt(150)},     // wtSaltsIn
-		[]*big.Int{big.NewInt(200)},                    // wtValuesOut
-		[]*big.Int{big.NewInt(60)},                     // recipientSpendPks
-		[][]byte{makeViewEncapKey(t)},                  // recipientViewEncapKeys
+		[]*big.Int{big.NewInt(0), big.NewInt(150)}, // wtSaltsIn
+		[]*big.Int{big.NewInt(200)},                // wtValuesOut
+		[]*big.Int{big.NewInt(60)},                 // recipientSpendPks
+		[][]byte{makeViewEncapKey(t)},              // recipientViewEncapKeys
 		merkleDepth,
 		MerkleProofPair(merkleDepth, 2),
 		[]*big.Int{big.NewInt(0), big.NewInt(0)},
@@ -171,9 +171,9 @@ func TestErc20JoinSplitProof_10_2Variant(t *testing.T) {
 		big.NewInt(1),
 		[]*big.Int{big.NewInt(100), big.NewInt(200)},
 		[]core.KeyPair{makeKeyPair(10, 20), makeKeyPair(30, 40)},
-		[]*big.Int{big.NewInt(150), big.NewInt(150)},     // wtSaltsIn
+		[]*big.Int{big.NewInt(150), big.NewInt(150)}, // wtSaltsIn
 		[]*big.Int{big.NewInt(150), big.NewInt(150)},
-		[]*big.Int{big.NewInt(60), big.NewInt(80)},       // recipientSpendPks
+		[]*big.Int{big.NewInt(60), big.NewInt(80)},         // recipientSpendPks
 		[][]byte{makeViewEncapKey(t), makeViewEncapKey(t)}, // recipientViewEncapKeys
 		merkleDepth,
 		MerkleProofPair(merkleDepth, 2),
@@ -216,16 +216,16 @@ func TestErc20WithdrawProof_Success(t *testing.T) {
 	keysIn := []core.KeyPair{makeKeyPair(10, 20), makeKeyPair(30, 40)}
 
 	result, err := client.Erc20WithdrawProof(
-		big.NewInt(0),                                   // stMessage
-		[]*big.Int{withdrawAmount, big.NewInt(0)},       // wtValuesIn
+		big.NewInt(0), // stMessage
+		[]*big.Int{withdrawAmount, big.NewInt(0)}, // wtValuesIn
 		keysIn,
-		[]*big.Int{big.NewInt(77), big.NewInt(0)},       // wtSaltsIn
+		[]*big.Int{big.NewInt(77), big.NewInt(0)}, // wtSaltsIn
 		withdrawAmount,
 		recipientAddr,
 		dummyPk,
 		merkleDepth,
 		MerkleProofPair(merkleDepth, 2),
-		[]*big.Int{big.NewInt(0), big.NewInt(0)},        // stTreeNumbers
+		[]*big.Int{big.NewInt(0), big.NewInt(0)}, // stTreeNumbers
 		tokenId,
 		false, // use10_2
 	)
@@ -325,16 +325,16 @@ func TestErc721OwnershipProof_Success(t *testing.T) {
 	merkleDepth := 8
 
 	result, err := client.Erc721OwnershipProof(
-		big.NewInt(1),                 // stMessage
-		big.NewInt(42),                // wtValue (tokenId)
-		makeKeyPair(10, 20),           // keyIn
-		big.NewInt(77),                // wtSaltIn
-		makeKeyPair(50, 60),           // keyOut
-		makeViewEncapKey(t),           // recipientViewEncapKey
+		big.NewInt(1),       // stMessage
+		big.NewInt(42),      // wtValue (tokenId)
+		makeKeyPair(10, 20), // keyIn
+		big.NewInt(77),      // wtSaltIn
+		makeKeyPair(50, 60), // keyOut
+		makeViewEncapKey(t), // recipientViewEncapKey
 		merkleDepth,
 		makeMerkleProof(merkleDepth),
-		big.NewInt(0),                 // stTreeNumber
-		big.NewInt(0xABC),             // wtErc721ContractAddress
+		big.NewInt(0),     // stTreeNumber
+		big.NewInt(0xABC), // wtErc721ContractAddress
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -391,20 +391,20 @@ func TestErc1155FungibleJoinSplitProof_Success(t *testing.T) {
 	assetGroupProof := makeMerkleProof(merkleDepth)
 
 	result, err := client.Erc1155FungibleJoinSplitProof(
-		big.NewInt(1),                                    // stMessage
-		[]*big.Int{big.NewInt(100), big.NewInt(200)},     // wtValuesIn
+		big.NewInt(1), // stMessage
+		[]*big.Int{big.NewInt(100), big.NewInt(200)}, // wtValuesIn
 		keysIn,
-		[]*big.Int{big.NewInt(50), big.NewInt(50)},       // wtSaltsIn
-		[]*big.Int{big.NewInt(150), big.NewInt(150)},     // wtValuesOut
+		[]*big.Int{big.NewInt(50), big.NewInt(50)},   // wtSaltsIn
+		[]*big.Int{big.NewInt(150), big.NewInt(150)}, // wtValuesOut
 		keysOut,
 		[][]byte{makeViewEncapKey(t), makeViewEncapKey(t)}, // recipientViewEncapKeys
 		merkleDepth,
 		MerkleProofPair(merkleDepth, 2),
-		[]*big.Int{big.NewInt(0), big.NewInt(1)},         // stTreeNumbers
-		big.NewInt(0xDEF),                                 // wtErc1155ContractAddress
-		big.NewInt(42),                                    // wtErc1155TokenId
-		big.NewInt(0),                                     // stAssetGroupTreeNumber
-		assetGroupProof,                                   // assetGroupMerkleProof
+		[]*big.Int{big.NewInt(0), big.NewInt(1)}, // stTreeNumbers
+		big.NewInt(0xDEF),                        // wtErc1155ContractAddress
+		big.NewInt(42),                           // wtErc1155TokenId
+		big.NewInt(0),                            // stAssetGroupTreeNumber
+		assetGroupProof,                          // assetGroupMerkleProof
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -463,19 +463,19 @@ func TestErc1155NonFungibleOwnershipProof_Success(t *testing.T) {
 	assetGroupProof := makeMerkleProof(merkleDepth)
 
 	result, err := client.Erc1155NonFungibleOwnershipProof(
-		big.NewInt(1),                 // stMessage
-		big.NewInt(1),                 // wtValue (amount, typically 1 for NFT)
-		makeKeyPair(10, 20),           // keyIn
-		big.NewInt(77),                // wtSaltIn
-		makeKeyPair(50, 60),           // keyOut
-		makeViewEncapKey(t),           // recipientViewEncapKey
+		big.NewInt(1),       // stMessage
+		big.NewInt(1),       // wtValue (amount, typically 1 for NFT)
+		makeKeyPair(10, 20), // keyIn
+		big.NewInt(77),      // wtSaltIn
+		makeKeyPair(50, 60), // keyOut
+		makeViewEncapKey(t), // recipientViewEncapKey
 		merkleDepth,
 		makeMerkleProof(merkleDepth),
-		big.NewInt(0),                 // stTreeNumber
-		big.NewInt(0xDEF),             // wtErc1155ContractAddress
-		big.NewInt(42),                // wtErc1155TokenId
-		big.NewInt(0),                 // stAssetGroupTreeNumber
-		assetGroupProof,               // assetGroupMerkleProof
+		big.NewInt(0),     // stTreeNumber
+		big.NewInt(0xDEF), // wtErc1155ContractAddress
+		big.NewInt(42),    // wtErc1155TokenId
+		big.NewInt(0),     // stAssetGroupTreeNumber
+		assetGroupProof,   // assetGroupMerkleProof
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -596,17 +596,17 @@ func TestGnarkProverDispatcher_AuctionInit(t *testing.T) {
 	inputs := map[string]interface{}{
 		"st_beacon":                  "1",
 		"st_vaultId":                 "0",
-		"st_auctionId":              "42",
-		"st_treeNumber":             "0",
-		"st_merkleRoot":             "root0",
-		"st_nullifier":              "null0",
-		"st_assetGroup_merkleRoot":  "agRoot",
-		"wt_commitment":             "cmt0",
-		"wt_pathElements":           []interface{}{"elem0"},
-		"wt_pathIndices":            "0",
-		"wt_privateKey":             "pk0",
-		"wt_idParams":               []interface{}{"id0"},
-		"wt_contractAddress":        "0xABC",
+		"st_auctionId":               "42",
+		"st_treeNumber":              "0",
+		"st_merkleRoot":              "root0",
+		"st_nullifier":               "null0",
+		"st_assetGroup_merkleRoot":   "agRoot",
+		"wt_commitment":              "cmt0",
+		"wt_pathElements":            []interface{}{"elem0"},
+		"wt_pathIndices":             "0",
+		"wt_privateKey":              "pk0",
+		"wt_idParams":                []interface{}{"id0"},
+		"wt_contractAddress":         "0xABC",
 		"wt_assetGroup_pathElements": []interface{}{"agEl0"},
 		"wt_assetGroup_pathIndices":  "0",
 	}
@@ -775,4 +775,3 @@ func TestErc20PrivateMintProof_CommitmentUsableAsJoinSplitInput(t *testing.T) {
 		t.Errorf("recomputed commitment mismatch: got %s, want %s", recomputed, result.Commitment)
 	}
 }
-

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"enygma_relayer/config"
+	"enygma_retail_payments/relayer/config"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -69,11 +69,11 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 	// All /relay/* routes require a valid Bearer token and are rate-limited.
 	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rateLimitMiddleware())
 	{
-		relay.POST("/payment",             h.RelayPayment)
+		relay.POST("/payment", h.RelayPayment)
 		relay.POST("/payment_relayer_fee", h.RelayPaymentRelayerFee)
-		relay.POST("/payment_usdr_fee",    h.RelayPaymentUsdrFee)
-		relay.POST("/tag",                 h.RelayTag)
-		relay.POST("/channel",             h.RelayChannel)
+		relay.POST("/payment_usdr_fee", h.RelayPaymentUsdrFee)
+		relay.POST("/tag", h.RelayTag)
+		relay.POST("/channel", h.RelayChannel)
 	}
 
 	return r, nil

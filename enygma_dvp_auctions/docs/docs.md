@@ -229,9 +229,9 @@ struct BidData {
 
 ## 6. gnark Server
 
-**Start:** `cd gnark_circuits && go run main.go` (starts on `:8081`)
+**Start:** `cd gnark_circuits && go run ./cmd/server` (starts on `:8081`)
 
-**Key generation:** `cd gnark_circuits && go run generation.go` (writes to `./scripts/keys/`)
+**Key generation:** `cd gnark_circuits && go run ./cmd/keygen` (writes to `./scripts/keys/`)
 
 **Endpoints:**
 
@@ -312,18 +312,18 @@ All endpoints return `{ proof: [8]bigint, publicSignal: []bigint }`.
 ### Prerequisites
 - Hardhat node running (`npx hardhat node`)
 - Poseidon artifacts regenerated from circomlibjs (run `node scripts/regen_poseidon.js`)
-- gnark keys generated (`cd gnark_circuits && go run generation.go`)
+- gnark keys generated (`cd gnark_circuits && go run ./cmd/keygen`)
 - VKs exported to circom format (`go run ./cmd/export_vk_init_auction/ ../build`)
 
 ### Steps
 ```bash
 # 1. Deploy contracts
-cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy deploy.go enygma.go
+cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy ./cmd/deploy
 cd .. && /tmp/deploy
 # → build/receipts.json
 
 # 2. Initialize (register VKs, grant vault roles)
-cd scripts && CC=/usr/bin/clang go build -o /tmp/init init.go enygma.go
+cd scripts && CC=/usr/bin/clang go build -o /tmp/init ./cmd/init
 cd .. && /tmp/init
 ```
 
@@ -332,5 +332,5 @@ cd .. && /tmp/init
 |---|---|
 | `enygma_auction.config.json` | Network + circuit VK ID mapping |
 | `build/receipts.json` | Deployed contract addresses |
-| `build/AuctionLock.json` .. `AuctionWithdraw.json` | Circom-format VKs for `init.go` |
+| `build/AuctionLock.json` .. `AuctionWithdraw.json` | Circom-format VKs for `scripts/cmd/init` |
 | `gnark_circuits/scripts/keys/*.pk/vk` | Groth16 proving/verifying keys |

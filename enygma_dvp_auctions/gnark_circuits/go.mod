@@ -1,6 +1,7 @@
-module gnark_server
+module enygma_dvp_auctions/gnark_circuits
 
 go 1.26.0
+
 toolchain go1.26.6
 
 require (
@@ -11,6 +12,7 @@ require (
 )
 
 require (
+	enygma_gnark_shared v0.0.0
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -48,3 +50,5 @@ require (
 	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace enygma_gnark_shared => ../../enygma_gnark_shared

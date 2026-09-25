@@ -5,17 +5,17 @@ import (
 	"math/big"
 	"net/http"
 
-	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	"gnark_server/utils"
+	"enygma_dvp_auctions/gnark_circuits/primitives"
+	"enygma_dvp_auctions/gnark_circuits/templates"
+	"enygma_dvp_auctions/gnark_circuits/utils"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the

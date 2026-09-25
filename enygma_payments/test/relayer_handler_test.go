@@ -17,7 +17,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"enygma_payments_relayer/server"
+	"enygma_payments/relayer/server"
 
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -95,7 +95,9 @@ func TestRelayHandler_Info(t *testing.T) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func serveHTTPPost(r interface{ ServeHTTP(http.ResponseWriter, *http.Request) }, path, apiKey string, body interface{}) *httptest.ResponseRecorder {
+func serveHTTPPost(r interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}, path, apiKey string, body interface{}) *httptest.ResponseRecorder {
 	data, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")

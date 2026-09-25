@@ -1,8 +1,8 @@
 package primitives
 
 import (
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
-	pos "gnark_server/poseidon"
 )
 
 func Commitment(api frontend.API, uniqueId frontend.Variable, publicKey frontend.Variable) frontend.Variable {

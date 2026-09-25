@@ -36,8 +36,8 @@ import (
 	"testing"
 	"time"
 
-	"enygma/agreement"
-	enygma "enygma/contracts"
+	"enygma_payments/go_client/agreement"
+	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -458,7 +458,7 @@ func readReceipts(t *testing.T) (tokenAddr, verifierAddr string) {
 	t.Helper()
 	// Resolve path relative to this file's location.
 	_, testFile, _, _ := runtime.Caller(0)
-	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma", "web3", "deploy_receipts.json")
+	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma_payments/go_client", "web3", "deploy_receipts.json")
 	data, err := os.ReadFile(receiptsPath)
 	if err != nil {
 		t.Skipf("deploy_receipts.json not found at %s — run the Python deploy scripts first:\n  cd enygma_payments/run_scripts && python deploy_enygma.py ...\n(err: %v)", receiptsPath, err)

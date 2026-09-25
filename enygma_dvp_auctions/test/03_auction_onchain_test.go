@@ -4,8 +4,8 @@ package tests
 //
 // This test mirrors the structure of enygma_dvp's integration tests:
 //   1. Running Hardhat node  (npx hardhat node, from enygma_dvp_auctions/)
-//   2. Deployed contracts    (scripts/deploy.go → build/receipts.json)
-//   3. Initialised VKs/roles (scripts/init.go)
+//   2. Deployed contracts    (scripts/cmd/deploy → build/receipts.json)
+//   3. Initialised VKs/roles (scripts/cmd/init)
 //   4. Auction gnark server  (gnark_circuits/main.go on :8083)
 //
 // Scenario (single bidder, 1 batch, direct settle):
@@ -17,10 +17,10 @@ package tests
 //
 // Run:
 //   npx hardhat node &
-//   cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy deploy.go init.go && cd .. && /tmp/deploy
+//   cd scripts && CC=/usr/bin/clang go build -o /tmp/deploy ./cmd/deploy && cd .. && /tmp/deploy
 //   cd gnark_circuits && go run ./cmd/export_vk_init_auction/ ../build
-//   cd scripts && CC=/usr/bin/clang go build -o /tmp/init deploy.go init.go && cd .. && /tmp/init
-//   cd gnark_circuits && go run main.go &
+//   cd scripts && CC=/usr/bin/clang go build -o /tmp/init ./cmd/init && cd .. && /tmp/init
+//   cd gnark_circuits && go run ./cmd/server &
 //   cd test && CC=/usr/bin/clang go test -run TestAuction_OnChain -v -timeout 600s
 
 import (
@@ -45,9 +45,9 @@ import (
 )
 
 const (
-	hardhatRPC    = "http://localhost:8545"
-	onchainChain  = "31337"
-	ownerPrivKey  = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+	hardhatRPC   = "http://localhost:8545"
+	onchainChain = "31337"
+	ownerPrivKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 	onchainNftTokenId  = 42
 	onchainUsdcTokenId = 0
@@ -76,7 +76,7 @@ func TestAuction_OnChain(t *testing.T) {
 	ownerAuth := makeAuth(t, ownerPrivKey, chainID)
 
 	auctionABI := loadABI(t, projectRoot, "core/contracts/EnygmaAuction.sol/EnygmaAuction")
-	vaultABI   := loadABI(t, projectRoot, "core/contracts/AuctionCoinVault.sol/AuctionCoinVault")
+	vaultABI := loadABI(t, projectRoot, "core/contracts/AuctionCoinVault.sol/AuctionCoinVault")
 
 	auctionContract := bind.NewBoundContract(
 		common.HexToAddress(receipts["EnygmaAuction"]),
@@ -93,10 +93,10 @@ func TestAuction_OnChain(t *testing.T) {
 
 	gnarkClient := core.NewAuctionClient("") // defaults to :8083
 
-	nftTokenId  := big.NewInt(onchainNftTokenId)
+	nftTokenId := big.NewInt(onchainNftTokenId)
 	usdcTokenId := big.NewInt(onchainUsdcTokenId)
-	floorPrice  := big.NewInt(onchainFloorPrice)
-	bidAmount   := big.NewInt(onchainBidAmount)
+	floorPrice := big.NewInt(onchainFloorPrice)
+	bidAmount := big.NewInt(onchainBidAmount)
 
 	// ─── Key pairs ────────────────────────────────────────────────────────────
 
@@ -194,10 +194,10 @@ func TestAuction_OnChain(t *testing.T) {
 	// settlementDeadline >= deadline + 2 days; the extra hour is just headroom past that minimum)
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
-	deadline           := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
+	deadline := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
-	proof8Lock  := toBigArr8(lockResult.Proof)
+	proof8Lock := toBigArr8(lockResult.Proof)
 	signal7Lock := toBigArr7(lockResult.PublicSignal)
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
@@ -238,7 +238,7 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("Alice commitA = %s", aliceCommitA)
 	t.Logf("Alice commitB = %s", aliceCommitB)
 
-	proof8Bid  := toBigArr8(bidResult.Proof)
+	proof8Bid := toBigArr8(bidResult.Proof)
 	signal7Bid := toBigArr7(bidResult.PublicSignal)
 
 	// Dummy ML-KEM ciphertext (content not verified on-chain, only stored for auctioneer)
@@ -287,13 +287,13 @@ func TestAuction_OnChain(t *testing.T) {
 	checkErr(t, "AuctionBatchProof", err)
 
 	batchWinnerCommit := batchResult.PublicSignal[101]
-	batchWinnerPk     := batchResult.PublicSignal[102]
+	batchWinnerPk := batchResult.PublicSignal[102]
 	batchWinnerAmount := batchResult.PublicSignal[103]
 	t.Logf("Batch winner commitA=%s amount=%s", batchWinnerCommit, batchWinnerAmount)
 
-	batchId      := big.NewInt(1)
-	proof8Batch  := toBigArr8(batchResult.Proof)
-	signal104    := toBigArr104(batchResult.PublicSignal)
+	batchId := big.NewInt(1)
+	proof8Batch := toBigArr8(batchResult.Proof)
+	signal104 := toBigArr104(batchResult.PublicSignal)
 
 	batchTx, err := auctionContract.Transact(ownerAuth, "submitBatch",
 		batchId, proof8Batch, signal104,
@@ -334,8 +334,8 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("  overallWinnerCommit = %s", finalResult.PublicSignal[31])
 	t.Logf("  winningAmount       = %s", finalResult.PublicSignal[36])
 
-	proof8Final  := toBigArr8(finalResult.Proof)
-	signal38     := toBigArr38(finalResult.PublicSignal)
+	proof8Final := toBigArr8(finalResult.Proof)
+	signal38 := toBigArr38(finalResult.PublicSignal)
 
 	// batchIds[i] maps statement slot i to the on-chain batchId submitted by submitBatch.
 	var batchIds [10]*big.Int
@@ -387,7 +387,7 @@ func TestAuction_OnChain(t *testing.T) {
 	// Return order: state, nftTokenId, commitLocked, revertCommit, overallWinnerCommit,
 	//               batchCount, deadline, settlementDeadline, floorPrice, bidCount
 	overallWinnerCommit := coreResults[4].(*big.Int)
-	bidCount            := coreResults[9].(*big.Int)
+	bidCount := coreResults[9].(*big.Int)
 	t.Logf("  overallWinnerCommit = %s", overallWinnerCommit)
 	t.Logf("  bidCount            = %s", bidCount)
 
@@ -471,7 +471,7 @@ func loadOnChainReceipts(t *testing.T, projectRoot string) map[string]string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(projectRoot, "build", "receipts.json"))
 	if err != nil {
-		t.Skipf("build/receipts.json not found — run scripts/deploy.go first: %v", err)
+		t.Skipf("build/receipts.json not found — run scripts/cmd/deploy first: %v", err)
 	}
 	var raw map[string]struct {
 		ContractAddress string `json:"contractAddress"`
@@ -569,17 +569,6 @@ func toBigArr8(slice []*big.Int) [8]*big.Int {
 	return arr
 }
 
-func toBigArr6(slice []*big.Int) [6]*big.Int {
-	var arr [6]*big.Int
-	for i := 0; i < 6 && i < len(slice); i++ {
-		arr[i] = slice[i]
-	}
-	for i := len(slice); i < 6; i++ {
-		arr[i] = big.NewInt(0)
-	}
-	return arr
-}
-
 func toBigArr7(slice []*big.Int) [7]*big.Int {
 	var arr [7]*big.Int
 	for i := 0; i < 7 && i < len(slice); i++ {
@@ -611,25 +600,6 @@ func toBigArr104(slice []*big.Int) [104]*big.Int {
 		arr[i] = big.NewInt(0)
 	}
 	return arr
-}
-
-func toBigArr10(slice []*big.Int) [10]*big.Int {
-	var arr [10]*big.Int
-	for i := 0; i < 10 && i < len(slice); i++ {
-		arr[i] = slice[i]
-	}
-	for i := len(slice); i < 10; i++ {
-		arr[i] = big.NewInt(0)
-	}
-	return arr
-}
-
-// formatAddr converts a hex string to a log-friendly short form.
-func formatAddr(hex string) string {
-	if len(hex) > 10 {
-		return hex[:6] + "…" + hex[len(hex)-4:]
-	}
-	return hex
 }
 
 var _ = fmt.Sprintf // suppress "imported and not used"
