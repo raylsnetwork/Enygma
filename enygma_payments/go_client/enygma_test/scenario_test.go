@@ -23,7 +23,7 @@ package enygma_test
 //                                   Pedersen randomness between rounds and verifies check().
 //
 // Prerequisites for all tests:
-//   chain: Rayls mainnet reachable at https://mainnet-rpc.rayls.com
+//   chain: a node at ENYGMA_CHAIN_URL (default: local Hardhat, http://127.0.0.1:8545, chain 1337)
 //   gnark: gnark server running on localhost:8080 (only for TestNullifierReuseProtection)
 //
 // Run:
