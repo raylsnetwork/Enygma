@@ -110,19 +110,36 @@ func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
 // zero-padding the rest.
 const transferPublicSignalLen = 81
 
+// usdrPublicSignalLen is the usdr circuit's exact public-signal arity
+// (the main circuit's 80, plus the public FeeAmount slot, plus its own
+// Fix L-01 domain separator — see IEnygma.UsdrProof). RelayTransfer
+// requires exactly this many elements for UsdrPublicSignal too, the same
+// as transferPublicSignalLen does for the main proof.
+const usdrPublicSignalLen = 82
+
 func validTransferBody() server.RelayTransferRequest {
-	var proof [8]string
+	var proof, usdrProof [8]string
 	for i := range proof {
 		proof[i] = big.NewInt(int64(i + 1)).String()
+		usdrProof[i] = big.NewInt(int64(i + 21)).String()
 	}
 	pubSig := make([]string, transferPublicSignalLen)
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(int64(i + 100)).String()
 	}
+	usdrPubSig := make([]string, usdrPublicSignalLen)
+	for i := range usdrPubSig {
+		usdrPubSig[i] = big.NewInt(int64(i + 300)).String()
+	}
+	commitments := [][]string{{"1", "2"}, {"3", "4"}, {"5", "6"}, {"7", "8"}, {"9", "10"}, {"11", "12"}}
+	usdrCommitments := [][]string{{"13", "14"}, {"15", "16"}, {"17", "18"}, {"19", "20"}, {"21", "22"}, {"23", "24"}}
 	return server.RelayTransferRequest{
-		Proof:        proof,
-		PublicSignal: pubSig,
-		Commitments:  [][]string{{"1", "2"}, {"3", "4"}, {"5", "6"}, {"7", "8"}, {"9", "10"}, {"11", "12"}},
-		KIndex:       []int64{1, 2, 3, 4, 5, 6},
+		Proof:            proof,
+		PublicSignal:     pubSig,
+		Commitments:      commitments,
+		UsdrProof:        usdrProof,
+		UsdrPublicSignal: usdrPubSig,
+		UsdrCommitments:  usdrCommitments,
+		KIndex:           []int64{1, 2, 3, 4, 5, 6},
 	}
 }
