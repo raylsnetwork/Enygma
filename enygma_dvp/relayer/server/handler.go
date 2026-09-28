@@ -4,21 +4,26 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"enygma_dvp/relayer/config"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
@@ -184,7 +189,7 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	receipt := buildProofReceipt(parsed)
 	txReceipt, err := h.transact("payment", receipt, vaultId, ctBytes, encBytes)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
+		relayError(c, "payment", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -313,7 +318,7 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	receipt := buildProofReceipt(parsed)
 	txReceipt, err := h.transact("paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
+		relayError(c, "paymentWithRelayerFee", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -483,7 +488,7 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		receipt, vaultId, ctBytes, encBytes,
 		usdrReceipt, usdrVaultId, usdrCtBytes, usdrEncBytes)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
+		relayError(c, "paymentWithUsdrFee", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -552,7 +557,7 @@ func (h *Handler) RelaySwap(c *gin.Context) {
 	delReceipt := buildProofReceipt(delParsed)
 	txReceipt, err := h.transact("swap", payReceipt, delReceipt, payVaultId, delVaultId)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("swap(): %s", err)})
+		relayError(c, "swap", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -621,7 +626,7 @@ func (h *Handler) RelayExchange(c *gin.Context) {
 	r2 := buildProofReceipt(parsed2)
 	txReceipt, err := h.transact("exchange", r1, r2, vaultId1, vaultId2)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("exchange(): %s", err)})
+		relayError(c, "exchange", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -812,9 +817,87 @@ func (h *Handler) releaseNullifiers(keys []string) {
 
 // ── chain helpers ─────────────────────────────────────────────────────────────
 
+// simulateTimeout bounds the pre-flight simulation of a submission.
+const simulateTimeout = 60 * time.Second
+
+// errWouldRevert reports that the node's simulation of a submission reverted:
+// the transaction was NOT sent. It is the caller's request that is at fault
+// (bad proof, spent nullifier, wrong fee, ...), not the relayer.
+type errWouldRevert struct{ cause error }
+
+func (e *errWouldRevert) Error() string { return "would revert: " + e.cause.Error() }
+func (e *errWouldRevert) Unwrap() error { return e.cause }
+
+// isRevertError reports whether an eth_call error came from the EVM rejecting the
+// call, as opposed to a transport or node failure. In order:
+//  1. a network error (connection refused, timeout, context deadline) is never a
+//     revert, whatever its text says;
+//  2. an RPC error with code 3 is the standard "execution reverted" code (geth,
+//     Nethermind, most L2 nodes);
+//  3. otherwise fall back to the message, which is how Hardhat reports it
+//     ("VM Exception while processing transaction: reverted ...").
+func isRevertError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return false
+	}
+	var rpcErr rpc.Error
+	if errors.As(err, &rpcErr) && rpcErr.ErrorCode() == 3 {
+		return true
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "revert") || strings.Contains(m, "vm exception") ||
+		strings.Contains(m, "invalid opcode") || strings.Contains(m, "out of gas")
+}
+
+// relayError writes the response for a failed submission. A submission that the
+// pre-flight simulation showed would revert is a client error (422); anything
+// else is a relayer or node failure (500).
+func relayError(c *gin.Context, method string, err error) {
+	var wr *errWouldRevert
+	if errors.As(err, &wr) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("%s(): %s", method, err)})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s(): %s", method, err)})
+}
+
+// transact simulates the call against the current chain state and sends it only
+// if the simulation succeeds.
+//
+// The relayer used to send every validated request with a fixed 8,000,000 gas
+// limit and no simulation. A request with a bad proof was sent anyway and
+// reverted on-chain: an invalid proof makes the pairing precompile fail, which
+// consumes all the gas passed to it, and each such request cost the relayer
+// about 7.5M gas. Anyone holding the API key could drain the relayer's funds with
+// junk proofs. eth_call runs the call once, at the same gas cap the transaction
+// will use, and fails on a revert, so nothing is sent for a request that cannot
+// succeed. The limit stays at the cap: a transaction that succeeds only pays for
+// the gas it uses, so a high limit costs nothing extra, and one call is much
+// cheaper than eth_estimateGas's repeated executions of two Groth16 verifications.
 func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, error) {
 	h.txMu.Lock()
 	defer h.txMu.Unlock()
+
+	data, err := h.dvpABI.Pack(method, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pack %s: %w", method, err)
+	}
+
+	simCtx, cancel := context.WithTimeout(context.Background(), simulateTimeout)
+	defer cancel()
+	if _, err := h.client.CallContract(simCtx, ethereum.CallMsg{
+		From: h.auth.From,
+		To:   &h.dvpAddr,
+		Gas:  h.auth.GasLimit,
+		Data: data,
+	}, nil); err != nil {
+		if isRevertError(err) {
+			return nil, &errWouldRevert{cause: err}
+		}
+		return nil, fmt.Errorf("simulate %s: %w", method, err)
+	}
+
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, method, args...)
 	if err != nil {

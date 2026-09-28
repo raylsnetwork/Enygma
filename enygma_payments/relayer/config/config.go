@@ -77,6 +77,22 @@ type Config struct {
 	// chains where gas estimation is known to be unreliable — that is a
 	// deliberate, logged opt-out of the pre-flight check, not the default.
 	GasLimit uint64
+
+	// VerifyFeeSlot makes /relay/transfer reject a transfer unless the USDr
+	// fee note in THIS relayer's own participant slot opens to the contract's
+	// usdrFixedFeeAmount. Default: true.
+	//
+	// The USDr circuit only requires the non-sender credits to add up to the
+	// fee; which slot receives them, and in what split, is left to the
+	// prover. Without this check a bank can pay the fee to any other
+	// participant (or split it) and still have its transfer relayed, so the
+	// relayer pays the gas and is not paid. The relayer can check this
+	// without any key material because the client supplies the opening
+	// (usdrFeeRandomness) of the commitment in the relayer's slot; a
+	// commitment that opens to (fee, r) is binding, so a false opening
+	// simply fails to match. Set RELAYER_VERIFY_FEE_SLOT=false only for a
+	// relayer that deliberately does not charge.
+	VerifyFeeSlot bool
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -117,6 +133,15 @@ func Load() (*Config, error) {
 			"eth_estimateGas pre-flight simulation (Fix H-10), so guaranteed-revert payloads will "+
 			"be signed and broadcast instead of rejected locally. Unset it to auto-estimate.",
 			cfg.GasLimit)
+	}
+
+	// Fee-slot verification defaults ON; only an explicit "false"/"0" disables it.
+	cfg.VerifyFeeSlot = true
+	switch strings.ToLower(getenv("RELAYER_VERIFY_FEE_SLOT", "true")) {
+	case "false", "0", "no":
+		cfg.VerifyFeeSlot = false
+		log.Printf("config: RELAYER_VERIFY_FEE_SLOT=false — this relayer will relay transfers " +
+			"WITHOUT checking that the USDr fee is paid to its own slot.")
 	}
 
 	// Parse API keys. RELAYER_API_KEYS is "bankId:token,bankId:token,...".

@@ -33,6 +33,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -221,20 +222,20 @@ func TestSequentialTransfers(t *testing.T) {
 	// ── USDr setup: every transfer() call now also settles a second,
 	// independent USDr fee proof in the same atomic call (see
 	// TestNullifierReuseProtection for the single-round version of this).
-	// usdrRecipientIdx stands in for "the relayer" — see the same note in
-	// scenario_test.go: no separate relayer identity is needed here since
-	// proveAndRelay talks to a real relayer HTTP service, but that service
-	// just forwards whatever proof it's given; it doesn't need to BE one
-	// of the 6 accounts for this test.
-	const usdrRecipientIdx = (senderIdx + 1) % nBanks // bank 1
+	// usdrRecipientIdx is the relayer's own slot (bank 5, accountId 6, signing
+	// with bankKeys[5] — see the relayer subprocess below). The relayer verifies
+	// it is actually paid the USDr fee before relaying (Config.VerifyFeeSlot),
+	// so it must be a participant other than the sender.
+	const usdrRecipientIdx = nBanks - 1
 	t.Log("deploying UsdrVerifier.sol…")
 	usdrVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/UsdrVerifier.sol/Verifier.json")
 	waitTxOK(instance.AddUsdrVerifier(mkAuth(), usdrVerifierAddr))
 	waitTxOK(instance.SetUsdrFixedFee(mkAuth(), big.NewInt(usdrFeeAmt)))
+	usdrCx, usdrCy := regCommit(big.NewInt(usdrPrevR))
 	for i := 0; i < nBanks; i++ {
 		waitTxOK(instance.InitializeUsdrBalance(mkAuth(),
-			big.NewInt(int64(i+1)), big.NewInt(usdrPrevR)))
+			big.NewInt(int64(i+1)), usdrCx, usdrCy))
 	}
 	waitTxOK(instance.MintUsdrSupply(mkAuth(), big.NewInt(usdrMintAmt), big.NewInt(senderIdx+1)))
 	t.Logf("setup: usdr verifier registered, %d banks USDr-initialized, %d USDr minted to bank 0", nBanks, usdrMintAmt)
@@ -257,15 +258,11 @@ func TestSequentialTransfers(t *testing.T) {
 	const seqRelayerPort = "8084"
 	seqRelayerURL := "http://127.0.0.1:" + seqRelayerPort
 
-	// ownerPrivKey is only non-empty when MY_KEY is set; fall back to the
-	// committed Hardhat test key for local runs, matching mustPrivKey's own
-	// fallback (and fee_transfer_test.go's identical pattern for its own
-	// relayer subprocess) — without this, the relayer subprocess starts
-	// with an empty RELAYER_PRIVATE_KEY and exits immediately.
-	relayerPrivKey := ownerPrivKey
-	if relayerPrivKey == "" {
-		relayerPrivKey = hardhatTestKey
-	}
+	// The relayer is bank usdrRecipientIdx's own registered account (funded
+	// above), NOT the sender's: it has to be a participant slot other than the
+	// sender's so it can be paid the USDr fee, and it verifies that it is
+	// before relaying (Config.VerifyFeeSlot).
+	relayerPrivKey := hex.EncodeToString(crypto.FromECDSA(bankKeys[usdrRecipientIdx]))
 
 	relayerCmd := exec.Command(relayerBin)
 	relayerCmd.Dir = relayerDir
@@ -417,7 +414,8 @@ func TestSequentialTransfers(t *testing.T) {
 		usdrSecrets[senderIdx] = usdrSenderSecret
 
 		usdrFp := fingerPrintGen(usdrSecrets, senderIdx)
-		usdrTagMessages := tagMessageGenUsdr(usdrSecrets, new(big.Int).Set(blockHash))
+		usdrNullifier, _ := poseidon.Hash([]*big.Int{usdrSenderSecret, blockHash})
+		usdrTagMessages := tagMessageGenUsdr(senderIdx, usdrSecrets, usdrNullifier)
 
 		usdrTxValues := make([]*big.Int, nBanks)
 		for i := range usdrTxValues {
@@ -427,8 +425,7 @@ func TestSequentialTransfers(t *testing.T) {
 		usdrTxValues[usdrRecipientIdx] = big.NewInt(usdrFeeAmt)
 
 		usdrTxCommit, usdrTxRand := genCommitmentAndRandomUsdr(
-			senderIdx, big.NewInt(usdrFeeAmt), usdrTxValues, new(big.Int).Set(blockHash), usdrSecrets)
-		usdrNullifier, _ := poseidon.Hash([]*big.Int{usdrSenderSecret, blockHash})
+			senderIdx, big.NewInt(usdrFeeAmt), usdrTxValues, usdrNullifier, usdrSecrets)
 
 		usdrPrevCommitSlice := make([][]string, nBanks)
 		for i, pt := range usdrPrevBals {
@@ -457,6 +454,7 @@ func TestSequentialTransfers(t *testing.T) {
 			"tx_random_values":             toStrs(usdrTxRand),
 			"sender_tx_value":              fmt.Sprintf("%d", usdrFeeAmt),
 			"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
+			"fee_recipient_key":            keyStrs[usdrRecipientIdx],
 		})
 
 		usdrGnarkResp, err := http.Post(gnarkUsdrURL, "application/json", bytes.NewReader(usdrReqBody))
@@ -478,7 +476,7 @@ func TestSequentialTransfers(t *testing.T) {
 		// 82 = the main proof's 80-signal layout + FeeAmount + DomainId
 		// (Fix L-01), both public, appended last — see USDrCircuit.Define
 		// / IEnygma.UsdrProof.
-		if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 82 {
+		if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 83 {
 			t.Fatalf("[%s] unexpected usdr sizes: proof=%d signal=%d",
 				label, len(usdrProofResp.Proof), len(usdrProofResp.PublicSignal))
 		}
@@ -532,7 +530,31 @@ func TestSequentialTransfers(t *testing.T) {
 			UsdrPublicSignal []string   `json:"usdrPublicSignal"`
 			UsdrCommitments  [][]string `json:"usdrCommitments"`
 			KIndex           []int64    `json:"kIndex"`
-		}{proof8, pubSigStrs, commStrs, usdrProof8, usdrPubSigStrs, usdrCommStrs, kIdx64}
+			// The opening of the relayer's own USDr note: the blinding factor
+			// used for its slot, so it can verify it is paid before spending gas.
+			UsdrFeeRandomness string `json:"usdrFeeRandomness"`
+		}{proof8, pubSigStrs, commStrs, usdrProof8, usdrPubSigStrs, usdrCommStrs, kIdx64,
+			usdrTxRand[usdrRecipientIdx].String()}
+		// Negative check first: with a fee opening that does not open the relayer's
+		// commitment, the relayer must refuse (402) before submitting anything.
+		badReq := relayReq
+		badReq.UsdrFeeRandomness = "1"
+		badBody, _ := json.Marshal(badReq)
+		badHTTPReq, _ := http.NewRequest(http.MethodPost, seqRelayerURL+"/relay/transfer", bytes.NewReader(badBody))
+		badHTTPReq.Header.Set("Content-Type", "application/json")
+		badHTTPReq.Header.Set("Authorization", "Bearer "+relayerKey)
+		badResp, err := http.DefaultClient.Do(badHTTPReq)
+		if err != nil {
+			t.Fatalf("[%s] relay POST (bad fee opening): %v", label, err)
+		}
+		badRespBody, _ := io.ReadAll(badResp.Body)
+		badResp.Body.Close()
+		if badResp.StatusCode != http.StatusPaymentRequired {
+			t.Fatalf("[%s] relayer accepted or mishandled a transfer whose fee opening is wrong: %d %s",
+				label, badResp.StatusCode, badRespBody)
+		}
+		t.Logf("  [%s] relayer refused a transfer with a wrong fee opening (402) ✓", label)
+
 		relayBody, _ := json.Marshal(relayReq)
 
 		relayHTTPReq, _ := http.NewRequest(http.MethodPost,
@@ -707,7 +729,7 @@ func TestSequentialTransfers(t *testing.T) {
 	}
 	t.Log("  checkUsdr() PASSED ✓ — Σ(all bank USDr commitments) == usdrTotalSupply after both transfers")
 
-	// usdrRecipientIdx (bank 1, accountId 2) stood in for "the relayer" —
+	// usdrRecipientIdx (the last bank, accountId 6) is the relayer's slot —
 	// it must have collected usdrFeeAmt in each of the two rounds.
 	relayerUsdrBal, err := instance.GetUsdrBalance(&bind.CallOpts{}, big.NewInt(usdrRecipientIdx+1))
 	if err != nil {

@@ -11,12 +11,26 @@ const CANCELED = 4;
 
 const ZERO_PROOF = Array(8).fill(0);
 
+// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) — what
+// announceAuction() must be given before initAuction().
+function paramsHash(auctionId, deadline, settlementDeadline, floorPrice) {
+  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]));
+}
+
 function lockStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitLocked, nftTokenId, revertCommit = 0 }) {
   return [auctionId, treeNumber, merkleRoot, nullifier, commitLocked, nftTokenId, revertCommit];
 }
 
-function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0 }) {
-  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit];
+const FR = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+// keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr — StCtxtHash.
+function ctxtHash(ctxt1 = "0x", ctxt2 = "0x") {
+  return BigInt(ethers.keccak256(ethers.concat([ethers.keccak256(ctxt1), ethers.keccak256(ctxt2)]))) % FR;
+}
+
+function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0, ctxt1 = "0x", ctxt2 = "0x" }) {
+  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit, ctxtHash(ctxt1, ctxt2)];
 }
 
 function batchStatement({ auctionId, slots, winnerCommit, winnerPk, winnerAmount }) {
@@ -88,6 +102,7 @@ describe("EnygmaAuction", function () {
   async function lockAuction({ auctionId, nftTokenId = 77, commitLocked, deadlineDelta = 3600, floorPrice = 10 }) {
     const deadline = (await time.latest()) + deadlineDelta;
     const settlementDeadline = deadline + 2 * 24 * 3600 + 3600;
+    await auction.announceAuction(paramsHash(auctionId, deadline, settlementDeadline, floorPrice));
     await auction.initAuction(
       ZERO_PROOF,
       lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked, nftTokenId }),

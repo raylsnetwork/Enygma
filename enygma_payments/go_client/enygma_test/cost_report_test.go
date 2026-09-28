@@ -13,7 +13,7 @@ package enygma_test
 //   E. Grand Total             — total gas and native-token cost across all operations
 //
 // Prerequisites:
-//   - chain reachable at mainnet-rpc.rayls.com (export MY_KEY=<hex-private-key>)
+//   - a chain at ENYGMA_CHAIN_URL (default: local Hardhat, http://127.0.0.1:8545; export MY_KEY=<hex-private-key>)
 //   - gnark server running on :8080
 //   - relayer binary built: cd enygma_payments/relayer && ./run.sh
 //     The test spawns its own relayer on :8083 → the freshly-deployed contract.
@@ -571,6 +571,9 @@ func TestCostReport(t *testing.T) {
 		"RELAYER_GAS_LIMIT=10000000",
 		"RELAYER_CONTRACT_ADDR="+enygmaAddr.Hex(),
 		"RELAYER_PORT="+testRelayerPort,
+		// This test's USDr leg is a structural stand-in (neutral deltas, no fee
+		// note), so the relayer cannot verify it is paid.
+		"RELAYER_VERIFY_FEE_SLOT=false",
 	)
 	// Capture stdout/stderr so a startup crash is diagnosable instead of
 	// silently manifesting as "did not become ready" — same pattern
@@ -651,7 +654,7 @@ func TestCostReport(t *testing.T) {
 		return r
 	}
 	setupMockUsdr(t, client, mkAuth, waitTx, instance, accountIds)
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal81, accountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal81, accountIds, bankAddrs[0])
 	usdrCommitmentStrs := make([][]string, len(usdrDeltas))
 	for i, pt := range usdrDeltas {
 		usdrCommitmentStrs[i] = []string{pt.C1.String(), pt.C2.String()}
