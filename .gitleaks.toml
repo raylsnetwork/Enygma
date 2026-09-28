@@ -71,6 +71,17 @@ regexes = [
   # above rather than re-flagged on every commit until then — see that
   # finding before assuming this is fine to leave long-term.
   '''34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154''',
+  # Standard Hardhat mnemonic ("test test test ... junk") derived accounts #0
+  # and #1, committed in plaintext as the "hardhat" network's own accounts in
+  # enygmadvp.config.json / enygmapayment.config.json / enygmadvp_payment.config.json
+  # — same category as the two keys above. A full-history scan (which is what
+  # CI runs, fetch-depth: 0) surfaces them wherever a test's doc comment or
+  # constant quotes one to show how to start the relayer locally; the path
+  # allowlist above already covers other files using these same two keys, but
+  # not every one, so allowlisting the key values directly is both more
+  # precise and covers any future file that quotes them the same way.
+  '''9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda''',
+  '''69b5623bd1cfe22983c8849d155ca641238c18ab1b2e34c5ae943ed2ce4716b7''',
   # False positives, not secrets: gnark-server/pkg/circuits/withdraw/
   # m03_repro_test.go builds a filepath.Join(...) to the withdraw circuit's
   # own key filenames — high enough entropy to trip the generic-api-key
