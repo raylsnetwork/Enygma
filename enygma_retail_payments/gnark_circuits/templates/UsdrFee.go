@@ -1,9 +1,9 @@
 package templates
 
 import (
+	"enygma_retail_payments/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 // UsdrFeeCircuit is a second, independent relayer-fee asset: a 1-in/2-out

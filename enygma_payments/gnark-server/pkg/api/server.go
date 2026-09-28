@@ -4,13 +4,13 @@ import (
 	"net/http"
 	"strings"
 
-	"enygma-server/config"
-	"enygma-server/pkg/circuits/burn"
-	"enygma-server/pkg/circuits/deposit"
-	"enygma-server/pkg/circuits/enygma"
-	"enygma-server/pkg/circuits/enygma_fee"
-	"enygma-server/pkg/circuits/usdr"
-	"enygma-server/pkg/circuits/withdraw"
+	"enygma_payments/gnark-server/config"
+	"enygma_payments/gnark-server/pkg/circuits/burn"
+	"enygma_payments/gnark-server/pkg/circuits/deposit"
+	"enygma_payments/gnark-server/pkg/circuits/enygma"
+	"enygma_payments/gnark-server/pkg/circuits/enygma_fee"
+	"enygma_payments/gnark-server/pkg/circuits/usdr"
+	"enygma_payments/gnark-server/pkg/circuits/withdraw"
 	"github.com/gin-gonic/gin"
 )
 

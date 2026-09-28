@@ -1,4 +1,4 @@
-module enygma-server
+module enygma_payments/gnark-server
 
 go 1.26.0
 

@@ -1,0 +1,27 @@
+# SSH / TLS private keys
+*.pem
+
+# Compiled binaries
+enygma_dvp/demo/demo
+enygma_retail_payments/demo/demo
+enygma_payments/gnark-server/enygma-server
+
+# Runtime state
+enygma_retail_payments/relayer/relayer_state.db
+
+# Generated gnark Burn/Relayer keys and verifier (regenerate locally)
+enygma_payments/gnark-server/keys/Burn*
+enygma_payments/gnark-server/keys/Relayer*
+
+# OS / editor junk
+.DS_Store
+
+# Lean build cache
+.lake/
+
+# Compiled binaries (build with `go build`)
+enygma_payments/gnark-server/poseidon_hash
+enygma_payments/relayer/register
+enygma_retail_payments/gnark_circuits/export_vk
+enygma_retail_payments/scripts/deploy
+enygma_retail_payments/scripts/init

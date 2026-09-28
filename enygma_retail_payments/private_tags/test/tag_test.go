@@ -52,14 +52,14 @@ import (
 // ── Hardhat constants ──────────────────────────────────────────────────────────
 
 const (
-	hardhatRPC      = "http://localhost:8545"
-	hardhatChainID  = 1337
+	hardhatRPC     = "http://localhost:8545"
+	hardhatChainID = 1337
 	// account[0] — Alice (owner / deployer)
 	alicePrivKeyHex = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 	aliceAddr       = "0x0F1013e0e46B97144b25b3131668EF99858BD8D0"
 	// account[1] — Bob
-	bobPrivKeyHex   = "69b5623bd1cfe22983c8849d155ca641238c18ab1b2e34c5ae943ed2ce4716b7"
-	bobAddr         = "0xD2C3b34Abae5664986C8cf0F14d1D434Ac894768"
+	bobPrivKeyHex = "69b5623bd1cfe22983c8849d155ca641238c18ab1b2e34c5ae943ed2ce4716b7"
+	bobAddr       = "0xD2C3b34Abae5664986C8cf0F14d1D434Ac894768"
 )
 
 // tagRegistryArtifactPath resolves relative to the test binary's working directory.
@@ -170,13 +170,17 @@ func TestDeriveTag(t *testing.T) {
 	for i := range ss {
 		ss[i] = 0xAB
 	}
-	pkBob    := big.NewInt(0xB0B)
+	pkBob := big.NewInt(0xB0B)
 	blockNum := uint64(42)
 
 	tag1, err := tags.DeriveTag(blockNum, pkBob, ss)
-	if err != nil { t.Fatalf("DeriveTag: %v", err) }
+	if err != nil {
+		t.Fatalf("DeriveTag: %v", err)
+	}
 	tag2, err := tags.DeriveTag(blockNum, pkBob, ss)
-	if err != nil { t.Fatalf("DeriveTag: %v", err) }
+	if err != nil {
+		t.Fatalf("DeriveTag: %v", err)
+	}
 
 	// Deterministic.
 	if tag1 != tag2 {
@@ -234,9 +238,9 @@ func TestTagPayloadRoundTrip(t *testing.T) {
 		t.Fatalf("DecryptPayload: %v", err)
 	}
 
-	amount  := new(big.Int).SetBytes(recovered[0:32])
+	amount := new(big.Int).SetBytes(recovered[0:32])
 	tokenId := new(big.Int).SetBytes(recovered[32:64])
-	salt    := new(big.Int).SetBytes(recovered[64:96])
+	salt := new(big.Int).SetBytes(recovered[64:96])
 
 	if amount.Cmp(big.NewInt(30)) != 0 {
 		t.Errorf("amount: got %s, want 30", amount)
@@ -259,7 +263,7 @@ func TestTagSystem_OnChain(t *testing.T) {
 		t.Skip("hardhat node not running on localhost:8545 — skipping")
 	}
 
-	bg     := context.Background()
+	bg := context.Background()
 	client := mustDial(t)
 	defer client.Close()
 
@@ -301,9 +305,9 @@ func TestTagSystem_OnChain(t *testing.T) {
 	t.Log("Step 3 — Alice publishes a payment tag alongside her transaction")
 
 	// Payload Alice wants to communicate to Bob (e.g. note data: amount, tokenId, salt).
-	paymentAmt  := big.NewInt(30)
-	tokenId     := big.NewInt(0)
-	noteSalt    := big.NewInt(0xDEADBEEF)
+	paymentAmt := big.NewInt(30)
+	tokenId := big.NewInt(0)
+	noteSalt := big.NewInt(0xDEADBEEF)
 
 	payload := make([]byte, 96)
 	paymentAmt.FillBytes(payload[0:32])
@@ -324,7 +328,9 @@ func TestTagSystem_OnChain(t *testing.T) {
 	targetBlock := currentBlock + 1
 
 	tag, err := tags.DeriveTag(targetBlock, bobPkSpend, sharedSecret)
-	if err != nil { t.Fatalf("DeriveTag: %v", err) }
+	if err != nil {
+		t.Fatalf("DeriveTag: %v", err)
+	}
 	t.Logf("  tag (block %d) = %x  [Poseidon3]", targetBlock, tag)
 
 	blockNumber := publishTagDirect(t, client, aliceAuth, registryAddr, tag, ctxt)
@@ -335,7 +341,9 @@ func TestTagSystem_OnChain(t *testing.T) {
 		t.Logf("  note: predicted block %d, actual block %d — recomputing tag",
 			targetBlock, blockNumber)
 		tag, err = tags.DeriveTag(blockNumber, bobPkSpend, sharedSecret)
-		if err != nil { t.Fatalf("DeriveTag (recompute): %v", err) }
+		if err != nil {
+			t.Fatalf("DeriveTag (recompute): %v", err)
+		}
 	}
 
 	// ── Step 4: Bob scans the block ───────────────────────────────────────────
@@ -367,9 +375,9 @@ func TestTagSystem_OnChain(t *testing.T) {
 		t.Fatalf("DecryptPayload: %v", err)
 	}
 
-	recoveredAmt    := new(big.Int).SetBytes(recoveredPayload[0:32])
-	recoveredToken  := new(big.Int).SetBytes(recoveredPayload[32:64])
-	recoveredSalt   := new(big.Int).SetBytes(recoveredPayload[64:96])
+	recoveredAmt := new(big.Int).SetBytes(recoveredPayload[0:32])
+	recoveredToken := new(big.Int).SetBytes(recoveredPayload[32:64])
+	recoveredSalt := new(big.Int).SetBytes(recoveredPayload[64:96])
 
 	if recoveredAmt.Cmp(paymentAmt) != 0 {
 		t.Errorf("amount: got %s, want %s", recoveredAmt, paymentAmt)
@@ -451,30 +459,30 @@ func TestTagSystem_OnChain(t *testing.T) {
 
 // TestChannelSetup_OnChain exercises the full Setup Phase from the paper (§3):
 //
-//  Sender Flow (Bob → Alice):
-//   3. ss, c1 ← ML-KEM.Encapsulate(pk_A)
-//   4. k = HKDF(ss, context)
-//   5. c2 = AEAD.Encrypt(k, "Hello Alice", c1)   — c1 as AAD
-//   6. PrivacySubset bitmap (Bob is in a 2-user system)
-//   7. Publish <c1, c2, bitmap> on TagChannelRegistry
+//	Sender Flow (Bob → Alice):
+//	 3. ss, c1 ← ML-KEM.Encapsulate(pk_A)
+//	 4. k = HKDF(ss, context)
+//	 5. c2 = AEAD.Encrypt(k, "Hello Alice", c1)   — c1 as AAD
+//	 6. PrivacySubset bitmap (Bob is in a 2-user system)
+//	 7. Publish <c1, c2, bitmap> on TagChannelRegistry
 //
-//  Recipient Flow (Alice scans):
-//   1. Decapsulate(sk_view, c1) → ss'
-//   2. k' = HKDF(ss', context)
-//   3. AEAD.Decrypt(k', c2, c1) → "Hello Alice"   — c1 as AAD check
+//	Recipient Flow (Alice scans):
+//	 1. Decapsulate(sk_view, c1) → ss'
+//	 2. k' = HKDF(ss', context)
+//	 3. AEAD.Decrypt(k', c2, c1) → "Hello Alice"   — c1 as AAD check
 //
-//  Then Alice uses ss' to derive a tag and verifies it matches Bob's expected tag.
+//	Then Alice uses ss' to derive a tag and verifies it matches Bob's expected tag.
 func TestChannelSetup_OnChain(t *testing.T) {
 	if !chainAvailable() {
 		t.Skip("hardhat node not running on localhost:8545 — skipping")
 	}
 
-	bg     := context.Background()
+	bg := context.Background()
 	client := mustDial(t)
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 
 	// ── Step 1: Deploy TagChannelRegistry ─────────────────────────────────────
 	t.Log("Step 1 — deploying TagChannelRegistry")
@@ -560,7 +568,7 @@ func TestChannelSetup_OnChain(t *testing.T) {
 
 	// Both ss (Bob's) and ch.SharedSecret (Alice's recovered) must be equal
 	// so that DeriveTag produces the same tag on both sides.
-	bobTagInput   := new(big.Int).SetBytes(ss)
+	bobTagInput := new(big.Int).SetBytes(ss)
 	aliceTagInput := new(big.Int).SetBytes(ch.SharedSecret)
 	if bobTagInput.Cmp(aliceTagInput) != 0 {
 		t.Errorf("shared secret mismatch:\n  Bob:   %x\n  Alice: %x", ss[:8], ch.SharedSecret[:8])
@@ -569,13 +577,17 @@ func TestChannelSetup_OnChain(t *testing.T) {
 
 	// Derive a tag from block 42 and verify both sides compute the same value.
 	alicePkSpend := big.NewInt(0xA11CE)
-	blockNum     := uint64(42)
+	blockNum := uint64(42)
 
 	tagBob, err := tags.DeriveTag(blockNum, alicePkSpend, ss)
-	if err != nil { t.Fatalf("DeriveTag (Bob side): %v", err) }
+	if err != nil {
+		t.Fatalf("DeriveTag (Bob side): %v", err)
+	}
 
 	tagAlice, err := tags.DeriveTag(blockNum, alicePkSpend, ch.SharedSecret)
-	if err != nil { t.Fatalf("DeriveTag (Alice side): %v", err) }
+	if err != nil {
+		t.Fatalf("DeriveTag (Alice side): %v", err)
+	}
 
 	if tagBob != tagAlice {
 		t.Errorf("tag mismatch:\n  Bob:   %x\n  Alice: %x", tagBob, tagAlice)
@@ -611,7 +623,9 @@ func TestChannelSetup_OnChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read artifact: %v", err)
 		}
-		var art struct{ ABI json.RawMessage `json:"abi"` }
+		var art struct {
+			ABI json.RawMessage `json:"abi"`
+		}
 		if err := json.Unmarshal(artifactData, &art); err != nil {
 			t.Fatalf("parse artifact: %v", err)
 		}
@@ -637,11 +651,11 @@ func TestChannelSetup_OnChain(t *testing.T) {
 // TestAllPrivacyModes_OnChain publishes a channel for each of the four privacy
 // modes (None, Subset, Rift, Full) and verifies end-to-end:
 //
-//   1. Channel is published on-chain with the correct bitmap structure.
-//   2. Alice (correct key) scans and finds exactly her channel.
-//   3. Message and senderId round-trip correctly.
-//   4. Shared secrets match between sender and recipient.
-//   5. A wrong key (Carol) finds nothing for any mode.
+//  1. Channel is published on-chain with the correct bitmap structure.
+//  2. Alice (correct key) scans and finds exactly her channel.
+//  3. Message and senderId round-trip correctly.
+//  4. Shared secrets match between sender and recipient.
+//  5. A wrong key (Carol) finds nothing for any mode.
 //
 // Setup: 6 total registered users, Alice is at index 2.
 // Rift mode excludes users at indices 0 and 4.
@@ -654,7 +668,7 @@ func TestAllPrivacyModes_OnChain(t *testing.T) {
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 
 	// Deploy a single TagChannelRegistry shared across all sub-tests.
 	registryAddr, err := tags.DeployTagChannelRegistry(client, aliceAuth, "../contracts/TagChannelRegistry.json")
@@ -853,7 +867,7 @@ func TestDummyMessages_OnChain(t *testing.T) {
 		t.Skip("hardhat node not running on localhost:8545 — skipping")
 	}
 
-	bg     := context.Background()
+	bg := context.Background()
 	client := mustDial(t)
 	defer client.Close()
 
@@ -867,9 +881,11 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	t.Logf("TagRegistry at %s", registryAddr.Hex())
 
 	sharedSecret := make([]byte, 32)
-	for i := range sharedSecret { sharedSecret[i] = 0xAB }
-	channelKey  := tags.DeriveChannelKey(sharedSecret)
-	bobPkSpend  := big.NewInt(0xB0B)
+	for i := range sharedSecret {
+		sharedSecret[i] = 0xAB
+	}
+	channelKey := tags.DeriveChannelKey(sharedSecret)
+	bobPkSpend := big.NewInt(0xB0B)
 
 	// ── Publish a REAL tag ────────────────────────────────────────────────────
 	t.Log("Publishing real tag")
@@ -878,11 +894,15 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	realBlock := currentBlock + 1
 
 	realTag, err := tags.DeriveTag(realBlock, bobPkSpend, sharedSecret)
-	if err != nil { t.Fatalf("DeriveTag: %v", err) }
+	if err != nil {
+		t.Fatalf("DeriveTag: %v", err)
+	}
 
 	realPayload := []byte("payment:30:token0")
 	realCtxt, err := tags.EncryptPayload(channelKey, realPayload)
-	if err != nil { t.Fatalf("EncryptPayload: %v", err) }
+	if err != nil {
+		t.Fatalf("EncryptPayload: %v", err)
+	}
 
 	realBlock = publishTagDirect(t, client, aliceAuth, registryAddr, realTag, realCtxt)
 	t.Logf("  real tag published at block %d", realBlock)
@@ -894,7 +914,9 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	dummyBlock := currentBlock + 1
 
 	dummyTagVal, dummyCtxtVal, err := tags.PrepareDummyTag(dummyBlock, bobPkSpend, sharedSecret)
-	if err != nil { t.Fatalf("PrepareDummyTag: %v", err) }
+	if err != nil {
+		t.Fatalf("PrepareDummyTag: %v", err)
+	}
 	// In production: POST to /relay/tag — relayer publishes.
 	// Here (test-only): publish directly to exercise ScanBlock logic.
 	actualDummyBlock := publishTagDirect(t, client, aliceAuth, registryAddr, dummyTagVal, dummyCtxtVal)
@@ -917,13 +939,17 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	bobChannels := []tags.Channel{{SharedSecret: sharedSecret, PkSpend: bobPkSpend}}
 
 	realMatches, err := tags.ScanBlock(client, registryAddr, realBlock, bobChannels)
-	if err != nil { t.Fatalf("ScanBlock (real): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanBlock (real): %v", err)
+	}
 	if len(realMatches) != 1 {
 		t.Fatalf("expected 1 real match, got %d", len(realMatches))
 	}
 
 	decryptedReal, err := tags.DecryptPayload(channelKey, realMatches[0].Entry.Ctxt)
-	if err != nil { t.Fatalf("DecryptPayload (real): %v", err) }
+	if err != nil {
+		t.Fatalf("DecryptPayload (real): %v", err)
+	}
 
 	if tags.IsDummyPayload(decryptedReal) {
 		t.Error("real payload incorrectly identified as dummy")
@@ -939,13 +965,17 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	_ = dummyTag
 
 	dummyMatches, err := tags.ScanBlock(client, registryAddr, actualDummyBlock, dummyChannels)
-	if err != nil { t.Fatalf("ScanBlock (dummy): %v", err) }
+	if err != nil {
+		t.Fatalf("ScanBlock (dummy): %v", err)
+	}
 	if len(dummyMatches) != 1 {
 		t.Fatalf("expected 1 dummy match, got %d", len(dummyMatches))
 	}
 
 	decryptedDummy, err := tags.DecryptPayload(channelKey, dummyMatches[0].Entry.Ctxt)
-	if err != nil { t.Fatalf("DecryptPayload (dummy): %v", err) }
+	if err != nil {
+		t.Fatalf("DecryptPayload (dummy): %v", err)
+	}
 
 	if !tags.IsDummyPayload(decryptedDummy) {
 		t.Errorf("expected dummy payload, got %q", string(decryptedDummy))
@@ -970,7 +1000,7 @@ func TestDummyMessages_OnChain(t *testing.T) {
 //	Rift   — all users except excluded ones; targeted dissociation
 //	Full   — all N users; no information about recipient
 func TestPrivacyModes(t *testing.T) {
-	const totalUsers  = 8
+	const totalUsers = 8
 	const recipientIdx = 3 // user index 3 is the recipient
 
 	t.Log("=== Privacy Mode Descriptions ===")
@@ -1050,9 +1080,9 @@ func computeBitmap(mode tags.PrivacyMode, totalUsers, recipientIdx int, excluded
 	// in TestChannelSetup_OnChain. This test verifies the mode descriptions
 	// and logic at the unit level using bit counting from known inputs.
 	byteLen := (totalUsers + 7) / 8
-	bits    := make([]byte, byteLen)
+	bits := make([]byte, byteLen)
 
-	set   := func(idx int) { bits[idx/8] |= 1 << (uint(idx) % 8) }
+	set := func(idx int) { bits[idx/8] |= 1 << (uint(idx) % 8) }
 	clear := func(idx int) { bits[idx/8] &^= 1 << (uint(idx) % 8) }
 	isSet := func(idx int) bool { return bits[idx/8]&(1<<(uint(idx)%8)) != 0 }
 
@@ -1065,26 +1095,38 @@ func computeBitmap(mode tags.PrivacyMode, totalUsers, recipientIdx int, excluded
 		decoy := (recipientIdx + 1) % totalUsers
 		set(decoy)
 	case tags.PrivacyRift:
-		for i := 0; i < totalUsers; i++ { set(i) }
+		for i := 0; i < totalUsers; i++ {
+			set(i)
+		}
 		exMap := make(map[int]bool)
-		for _, e := range excluded { exMap[e] = true }
+		for _, e := range excluded {
+			exMap[e] = true
+		}
 		for idx := range exMap {
-			if idx != recipientIdx { clear(idx) }
+			if idx != recipientIdx {
+				clear(idx)
+			}
 		}
 	case tags.PrivacyFull:
-		for i := 0; i < totalUsers; i++ { set(i) }
+		for i := 0; i < totalUsers; i++ {
+			set(i)
+		}
 	}
 
 	var setBits []int
 	for i := 0; i < totalUsers; i++ {
-		if isSet(i) { setBits = append(setBits, i) }
+		if isSet(i) {
+			setBits = append(setBits, i)
+		}
 	}
 	return bits, setBits
 }
 
 func contains(slice []int, val int) bool {
 	for _, v := range slice {
-		if v == val { return true }
+		if v == val {
+			return true
+		}
 	}
 	return false
 }
@@ -1099,16 +1141,16 @@ func TestChannelPayload_Encoding(t *testing.T) {
 		senderId []byte
 	}{
 		{"with sender ID", []byte("Hello"), []byte("0xBob")},
-		{"anonymous",      []byte("Hello"), nil},
-		{"empty message",  []byte{},        []byte("0xBob")},
-		{"both empty",     []byte{},        nil},
+		{"anonymous", []byte("Hello"), nil},
+		{"empty message", []byte{}, []byte("0xBob")},
+		{"both empty", []byte{}, nil},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			channelKey := tags.DeriveChannelKey([]byte("test-secret-32bytes-padding!!!!!"))
-			ss         := []byte("test-secret-32bytes-padding!!!!!")
-			c1         := make([]byte, 1088) // fake c1 for AAD
+			ss := []byte("test-secret-32bytes-padding!!!!!")
+			c1 := make([]byte, 1088) // fake c1 for AAD
 
 			// Encrypt via SetupChannel logic — use EncryptPayload as proxy
 			// (full on-chain test in TestChannelSetup_OnChain)
@@ -1176,12 +1218,12 @@ func TestUserRegistryIntegration(t *testing.T) {
 		t.Skip("hardhat node not running on localhost:8545 — skipping")
 	}
 
-	bg     := context.Background()
+	bg := context.Background()
 	client := mustDial(t)
 	defer client.Close()
 
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
-	bobAuth   := hardhatAuthFromKey(t, bobPrivKeyHex)
+	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 
 	// Deploy a fresh UserRegistry for this test.
 	t.Log("Step 1 — deploying UserRegistry")
@@ -1190,16 +1232,20 @@ func TestUserRegistryIntegration(t *testing.T) {
 
 	// Generate ML-KEM keypairs for Alice and Bob.
 	aliceDK, err := mlkem.GenerateKey768()
-	if err != nil { t.Fatalf("mlkem (Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("mlkem (Alice): %v", err)
+	}
 	bobDK, err := mlkem.GenerateKey768()
-	if err != nil { t.Fatalf("mlkem (Bob): %v", err) }
+	if err != nil {
+		t.Fatalf("mlkem (Bob): %v", err)
+	}
 
 	alicePkView := aliceDK.EncapsulationKey().Bytes() // 1184 bytes
-	bobPkView   := bobDK.EncapsulationKey().Bytes()
+	bobPkView := bobDK.EncapsulationKey().Bytes()
 	_ = bobDK
 
 	alicePkSpend := big.NewInt(0xA11CE)
-	bobPkSpend   := big.NewInt(0xB0B)
+	bobPkSpend := big.NewInt(0xB0B)
 
 	// ── Register Alice and Bob ────────────────────────────────────────────────
 	t.Log("Step 2 — registering Alice and Bob")
@@ -1214,7 +1260,9 @@ func TestUserRegistryIntegration(t *testing.T) {
 		a, _ := abi.JSON(strings.NewReader(string(artifact.ABI)))
 		c := bind.NewBoundContract(userRegistryAddr, a, client, client, client)
 		tx, err := c.Transact(auth, "register", pkSpend, pkView, make([]byte, 1088), make([]byte, 92))
-		if err != nil { t.Fatalf("%s register: %v", name, err) }
+		if err != nil {
+			t.Fatalf("%s register: %v", name, err)
+		}
 		bind.WaitMined(bg, client, tx)
 		t.Logf("  %s registered (addr=%s)", name, auth.From.Hex())
 	}
@@ -1225,7 +1273,9 @@ func TestUserRegistryIntegration(t *testing.T) {
 	// ── Gap 1: GetUserCount ───────────────────────────────────────────────────
 	t.Log("Step 3 — GetUserCount (gap 1: totalUsers for bitmap)")
 	count, err := tags.GetUserCount(client, userRegistryAddr)
-	if err != nil { t.Fatalf("GetUserCount: %v", err) }
+	if err != nil {
+		t.Fatalf("GetUserCount: %v", err)
+	}
 	if count != 2 {
 		t.Errorf("GetUserCount: got %d, want 2", count)
 	}
@@ -1234,9 +1284,13 @@ func TestUserRegistryIntegration(t *testing.T) {
 	// ── Gap 1: GetRecipientIndex ──────────────────────────────────────────────
 	t.Log("Step 4 — GetRecipientIndex (gap 1: recipientIdx for bitmap)")
 	aliceIdx, err := tags.GetRecipientIndex(client, userRegistryAddr, common.HexToAddress(aliceAddr))
-	if err != nil { t.Fatalf("GetRecipientIndex(Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("GetRecipientIndex(Alice): %v", err)
+	}
 	bobIdx, err := tags.GetRecipientIndex(client, userRegistryAddr, common.HexToAddress(bobAddr))
-	if err != nil { t.Fatalf("GetRecipientIndex(Bob): %v", err) }
+	if err != nil {
+		t.Fatalf("GetRecipientIndex(Bob): %v", err)
+	}
 	t.Logf("  Alice index=%d  Bob index=%d ✓", aliceIdx, bobIdx)
 	if aliceIdx == bobIdx {
 		t.Error("Alice and Bob should have different indices")
@@ -1246,7 +1300,9 @@ func TestUserRegistryIntegration(t *testing.T) {
 	t.Log("Step 5 — GetRecipientPkView (gap 2: pk_view lookup for encapsulation)")
 	retrievedAlicePkView, err := tags.GetRecipientPkView(client, userRegistryAddr,
 		common.HexToAddress(aliceAddr))
-	if err != nil { t.Fatalf("GetRecipientPkView(Alice): %v", err) }
+	if err != nil {
+		t.Fatalf("GetRecipientPkView(Alice): %v", err)
+	}
 	if len(retrievedAlicePkView) != 1184 {
 		t.Errorf("pk_view length: got %d, want 1184", len(retrievedAlicePkView))
 	}
@@ -1259,7 +1315,9 @@ func TestUserRegistryIntegration(t *testing.T) {
 	t.Log("Step 6 — FindRecipientByPkSpend (gap 2: pk_view lookup by ZK identity)")
 	foundAddr, foundPkView, foundIdx, err := tags.FindRecipientByPkSpend(
 		client, userRegistryAddr, alicePkSpend)
-	if err != nil { t.Fatalf("FindRecipientByPkSpend: %v", err) }
+	if err != nil {
+		t.Fatalf("FindRecipientByPkSpend: %v", err)
+	}
 	if foundAddr != common.HexToAddress(aliceAddr) {
 		t.Errorf("address: got %s, want %s", foundAddr.Hex(), aliceAddr)
 	}
@@ -1285,18 +1343,24 @@ func TestUserRegistryIntegration(t *testing.T) {
 		tags.PrivacySubset,
 		nil,
 	)
-	if err != nil { t.Fatalf("PrepareChannelSetupForRecipient: %v", err) }
+	if err != nil {
+		t.Fatalf("PrepareChannelSetupForRecipient: %v", err)
+	}
 	t.Logf("  ss=%x...  c1=%dB  c2=%dB  bitmap=%dB ✓", ss[:8], len(c1), len(c2), len(bitmap))
 
 	// Publish the channel (test-only direct publish — in production use /relay/channel).
 	channelRegistryAddr, err := tags.DeployTagChannelRegistry(
 		client, aliceAuth, "../contracts/TagChannelRegistry.json")
-	if err != nil { t.Fatalf("DeployTagChannelRegistry: %v", err) }
+	if err != nil {
+		t.Fatalf("DeployTagChannelRegistry: %v", err)
+	}
 	openChannelDirect(t, client, bobAuth, channelRegistryAddr, c1, c2, bitmap)
 
 	// Alice scans and recovers the channel.
 	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, 0, 100)
-	if err != nil { t.Fatalf("ScanChannels: %v", err) }
+	if err != nil {
+		t.Fatalf("ScanChannels: %v", err)
+	}
 	if len(found) != 1 {
 		t.Fatalf("Alice expected 1 channel, found %d", len(found))
 	}

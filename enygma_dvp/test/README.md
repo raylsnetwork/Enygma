@@ -21,7 +21,7 @@ npx hardhat node
 
 ```bash
 # Build and run the deploy script (from repo root)
-cd scripts && go build -o /tmp/deploy_contracts deploy.go enygma.go
+cd scripts && go build -o /tmp/deploy_contracts ./cmd/deploy
 cd .. && /tmp/deploy_contracts
 # → writes build/receipts.json
 
@@ -29,7 +29,7 @@ cd .. && /tmp/deploy_contracts
 cd gnark_circuits && go run ./cmd/export_vk_init/ ../build
 
 # Build and run the init script (from repo root)
-cd scripts && go build -o /tmp/init_contracts init.go enygma.go
+cd scripts && go build -o /tmp/init_contracts ./cmd/init
 cd .. && /tmp/init_contracts
 ```
 
@@ -41,7 +41,7 @@ cd .. && /tmp/init_contracts
 
 ```bash
 cd gnark_circuits
-go run main.go
+go run ./cmd/server
 # Starts on :8081 — keep this running in a separate terminal
 ```
 
@@ -81,7 +81,7 @@ If the Hardhat node or gnark server isn't reachable the test prints `SKIP` and e
 | `08_v2_swap_erc721_erc20_onchain_test.go` | `TestV2Swap_Erc721ForErc20_OnChain` | Atomic DVP swap: Alice's ERC721 NFT ↔ Bob's ERC20 payment via `EnygmaDvp.swap()` |
 | `09_v2_erc20_private_mint_test.go` | `TestV2Erc20OnChain_PrivateMint` | ERC20 private mint → transferV2 |
 | `10_v2_swap_erc1155nonfungible_erc20_onchain_test.go` | `TestV2Swap_Erc1155NonFungibleForErc20_OnChain` | Atomic DVP swap: Alice's ERC1155 NFT ↔ Bob's ERC20 payment via `EnygmaDvp.swap()` |
-| `helpers_test.go` | *(no test functions)* | Shared helpers: `loadVaultMerkleTree`, `buildReceipt`, `hardhatAuth`, etc. |
+| `helpers_test.go` | *(no test functions)* | Shared helpers: `loadVaultMerkleTree`, `hardhatAuth`, etc. |
 
 ---
 

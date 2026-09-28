@@ -1,17 +1,14 @@
 package script
 
-import(
+import (
 	"fmt"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/frontend"
-	
-	"gnark_server/templates"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 
+	"enygma_retail_payments/gnark_circuits/templates"
 )
-
-
 
 func SetupPayment(config templates.PaymentCircuitConfig, circuitName string) {
 	fmt.Println("Initializing Setup Process")

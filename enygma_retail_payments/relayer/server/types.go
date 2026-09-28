@@ -256,7 +256,3 @@ type RelayChannelResponse struct {
 	BlockNumber uint64 `json:"blockNumber"`
 	GasUsed     uint64 `json:"gasUsed"`
 }
-
-
-
-

@@ -1,9 +1,9 @@
 package templates
 
 import (
+	"enygma_dvp/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 type DvPDestinationCircuitConfig struct {
@@ -16,9 +16,9 @@ type DvPDestinationCircuitConfig struct {
 // DvPDestinationCircuit proves Bob's side of a DvP (Delivery vs Payment) swap.
 //
 // Bob spends his current note (asset 2) and proves:
-//   1. COMMIT_A — Alice's receiving commitment — correctly encodes Bob's asset.
-//   2. COMMIT_B — Alice's delivery commitment to Bob — is computed from the same
-//      parameters Alice used, binding StMessage to this specific swap.
+//  1. COMMIT_A — Alice's receiving commitment — correctly encodes Bob's asset.
+//  2. COMMIT_B — Alice's delivery commitment to Bob — is computed from the same
+//     parameters Alice used, binding StMessage to this specific swap.
 //
 // This is the key linking constraint of the protocol:
 //
@@ -62,11 +62,11 @@ type DvPDestinationCircuit struct {
 	WtPathIndex    frontend.Variable   // leaf index in the tree
 
 	// --- private witnesses: cross-commitment inputs ---
-	WtSpendPkAlice    frontend.Variable // Alice's spend public key
-	WtSaltA           frontend.Variable // HKDF(ss_B, "Init Salt") — Bob derived this by decapsulating
-	WtSaltB           frontend.Variable // HKDF(ss_B, "note salt") — used by Alice to build COMMIT_B
-	WtValueAlice      frontend.Variable // amount_1 (Alice's asset — from ENC_TX_DATA decryption)
-	WtTokenIdAlice    frontend.Variable // token_id_1 (Alice's asset — from ENC_TX_DATA decryption)
+	WtSpendPkAlice frontend.Variable // Alice's spend public key
+	WtSaltA        frontend.Variable // HKDF(ss_B, "Init Salt") — Bob derived this by decapsulating
+	WtSaltB        frontend.Variable // HKDF(ss_B, "note salt") — used by Alice to build COMMIT_B
+	WtValueAlice   frontend.Variable // amount_1 (Alice's asset — from ENC_TX_DATA decryption)
+	WtTokenIdAlice frontend.Variable // token_id_1 (Alice's asset — from ENC_TX_DATA decryption)
 }
 
 func (circuit *DvPDestinationCircuit) Define(api frontend.API) error {

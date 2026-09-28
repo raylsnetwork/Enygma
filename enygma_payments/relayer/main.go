@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"enygma_payments_relayer/config"
-	"enygma_payments_relayer/server"
+	"enygma_payments/relayer/config"
+	"enygma_payments/relayer/server"
 )
 
 func main() {

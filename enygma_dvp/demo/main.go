@@ -20,7 +20,7 @@
 //
 //  1. Hardhat node  :  npx hardhat node                       (from enygma_dvp/)
 //  2. Deploy+init   :  see enygma_dvp/MEMORY.md / scripts/
-//  3. Gnark server  :  cd gnark_circuits && go run main.go     (must include DvP keys)
+//  3. Gnark server  :  cd gnark_circuits && go run ./cmd/server     (must include DvP keys)
 package main
 
 import (

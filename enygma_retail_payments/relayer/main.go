@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"enygma_relayer/config"
-	"enygma_relayer/server"
+	"enygma_retail_payments/relayer/config"
+	"enygma_retail_payments/relayer/server"
 )
 
 func main() {

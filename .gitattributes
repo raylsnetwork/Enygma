@@ -1,0 +1,9 @@
+*.key filter=lfs diff=lfs merge=lfs -text
+
+# abigen-generated contract bindings — byte-identical copies (same source
+# contract, two consumers). Already collapsed in GitHub PR diffs via Go's
+# own "// Code generated ... DO NOT EDIT." convention, which linguist
+# auto-detects; explicit here so that stays true even if the header ever
+# changes, and so `git diff` tooling that reads .gitattributes picks it up.
+enygma_payments/go_client/contracts/enygma.go linguist-generated=true
+enygma_payments/relayer/contracts/enygma.go linguist-generated=true

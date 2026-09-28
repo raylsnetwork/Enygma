@@ -13,9 +13,9 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	utils "gnark_server/utils"
+	"enygma_dvp/gnark_circuits/primitives"
+	"enygma_dvp/gnark_circuits/templates"
+	utils "enygma_dvp/gnark_circuits/utils"
 )
 
 // NewHandler returns a gin.HandlerFunc for POST /proof/paymentRelayerFeePublic.
@@ -85,29 +85,29 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness := newCircuit()
 
-		witness.StMessage         = frontend.Variable(request.StMessage)
+		witness.StMessage = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
-		witness.StFee             = frontend.Variable(request.StFee)
-		witness.WtTokenId         = frontend.Variable(request.WtTokenId)
+		witness.StFee = frontend.Variable(request.StFee)
+		witness.WtTokenId = frontend.Variable(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {
-			witness.StTreeNumbers[i]   = frontend.Variable(request.StTreeNumbers[i])
-			witness.StMerkleRoots[i]   = frontend.Variable(request.StMerkleRoots[i])
-			witness.StNullifiers[i]    = frontend.Variable(request.StNullifiers[i])
+			witness.StTreeNumbers[i] = frontend.Variable(request.StTreeNumbers[i])
+			witness.StMerkleRoots[i] = frontend.Variable(request.StMerkleRoots[i])
+			witness.StNullifiers[i] = frontend.Variable(request.StNullifiers[i])
 			witness.WtPrivateKeysIn[i] = frontend.Variable(request.WtPrivateKeysIn[i])
-			witness.WtValuesIn[i]      = frontend.Variable(request.WtValuesIn[i])
-			witness.WtSaltsIn[i]       = frontend.Variable(request.WtSaltsIn[i])
-			witness.WtPathIndices[i]   = frontend.Variable(request.WtPathIndices[i])
+			witness.WtValuesIn[i] = frontend.Variable(request.WtValuesIn[i])
+			witness.WtSaltsIn[i] = frontend.Variable(request.WtSaltsIn[i])
+			witness.WtPathIndices[i] = frontend.Variable(request.WtPathIndices[i])
 			for j := 0; j < cfg.TmMerkleTreeDepth; j++ {
 				witness.WtPathElements[i][j] = frontend.Variable(request.WtPathElements[i][j])
 			}
 		}
 
 		for i := 0; i < cfg.TmMOutputs; i++ {
-			witness.StCommitmentsOut[i]     = frontend.Variable(request.StCommitmentsOut[i])
+			witness.StCommitmentsOut[i] = frontend.Variable(request.StCommitmentsOut[i])
 			witness.WtSpendPublicKeysOut[i] = frontend.Variable(request.WtSpendPublicKeysOut[i])
-			witness.WtValuesOut[i]          = frontend.Variable(request.WtValuesOut[i])
-			witness.WtSaltsOut[i]           = frontend.Variable(request.WtSaltsOut[i])
+			witness.WtValuesOut[i] = frontend.Variable(request.WtValuesOut[i])
+			witness.WtSaltsOut[i] = frontend.Variable(request.WtSaltsOut[i])
 		}
 
 		witness.Config = cfg

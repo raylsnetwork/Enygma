@@ -7,13 +7,13 @@
 package main
 
 import (
-	_ "embed"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -65,6 +65,9 @@ const (
 	mintAmount  = 500
 	transferAmt = 100
 
+	// Hardhat account[0] — well-known default dev key, public, never a
+	// security boundary (see .gitleaks.toml, which allowlists it by
+	// exact value for that reason).
 	defaultOwnerKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 	defaultRelayKey = "enygma-test-secret"
 
@@ -120,8 +123,6 @@ func rpcHostPort() string {
 
 var (
 	curveP, _ = new(big.Int).SetString("2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
-	// BN254 field prime — same Q used by Solidity's CurveBabyJubJub
-	curveQ, _ = new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
 	// curveG: NUMS hash-to-curve derivation, seed "2" (H-11 fix). Reproduce
 	// with: cd gnark-server && go run ./cmd/derive_generator
@@ -166,66 +167,6 @@ func randomBlinding() *big.Int {
 			return r
 		}
 	}
-}
-
-func addPoints(a, b *babyjub.Point) *babyjub.Point {
-	return babyjub.NewPoint().Projective().Add(a.Projective(), b.Projective()).Affine()
-}
-
-// addPointsAffine mirrors CurveBabyJubJub.pointAdd exactly:
-//
-//	x3 = (x1*y2 + y1*x2) / (1 + D*x1*x2*y1*y2)
-//	y3 = (y1*y2 - A*x1*x2) / (1 - D*x1*x2*y1*y2)
-//
-// Uses the same Q, A=168700, D=168696 constants as the Solidity contract.
-func addPointsAffine(ax, ay, bx, by *big.Int) (x3, y3 *big.Int) {
-	Q := curveQ
-	D := big.NewInt(168696)
-	A := big.NewInt(168700)
-
-	one := big.NewInt(1)
-
-	// neutral-element fast paths (match Solidity's early returns)
-	if ax.Sign() == 0 && ay.Cmp(one) == 0 {
-		return new(big.Int).Set(bx), new(big.Int).Set(by)
-	}
-	if bx.Sign() == 0 && by.Cmp(one) == 0 {
-		return new(big.Int).Set(ax), new(big.Int).Set(ay)
-	}
-
-	x1x2 := new(big.Int).Mul(ax, bx)
-	x1x2.Mod(x1x2, Q)
-
-	y1y2 := new(big.Int).Mul(ay, by)
-	y1y2.Mod(y1y2, Q)
-
-	dx1x2y1y2 := new(big.Int).Mul(D, x1x2)
-	dx1x2y1y2.Mul(dx1x2y1y2, y1y2)
-	dx1x2y1y2.Mod(dx1x2y1y2, Q)
-
-	x3Num := new(big.Int).Add(
-		new(big.Int).Mul(ax, by),
-		new(big.Int).Mul(ay, bx),
-	)
-	x3Num.Mod(x3Num, Q)
-
-	y3Num := new(big.Int).Sub(y1y2, new(big.Int).Mul(A, x1x2))
-	y3Num.Mod(y3Num, Q)
-
-	x3Den := new(big.Int).Add(one, dx1x2y1y2)
-	x3Den.Mod(x3Den, Q)
-
-	y3Den := new(big.Int).Sub(new(big.Int).Set(Q), dx1x2y1y2)
-	y3Den.Add(y3Den, one)
-	y3Den.Mod(y3Den, Q)
-
-	x3 = new(big.Int).Mul(x3Num, new(big.Int).ModInverse(x3Den, Q))
-	x3.Mod(x3, Q)
-
-	y3 = new(big.Int).Mul(y3Num, new(big.Int).ModInverse(y3Den, Q))
-	y3.Mod(y3, Q)
-
-	return x3, y3
 }
 
 func negMod(x *big.Int) *big.Int {
@@ -276,7 +217,7 @@ func pause(d time.Duration) {
 
 type Event struct {
 	Type    string `json:"type"`
-	Tab     string `json:"tab,omitempty"`     // "setup" | "onboarding" | "transfer"
+	Tab     string `json:"tab,omitempty"` // "setup" | "onboarding" | "transfer"
 	Step    string `json:"step,omitempty"`
 	BankIdx int    `json:"bankIdx,omitempty"` // for bank-specific step events
 	Status  string `json:"status,omitempty"`
@@ -325,22 +266,22 @@ func (b *Broker) publish(e Event) {
 // ── Persistent connection state ────────────────────────────────────────────────
 
 type connState struct {
-	mu            sync.Mutex
-	ready         bool
-	client        *ethclient.Client
-	priv          *ecdsa.PrivateKey
-	owner         common.Address
-	inst          *enygma.Enygma
-	tokenAddr     string
-	verifierAddr  string
-	totalGasUsed  uint64
-	mintedBalances [nBanks]int64      // cumulative plaintext balance per bank; updated after each mint/transfer
-	lastSenderIdx  int               // senderIdx from the most recent completed transfer
-	registeredSks  [nBanks]*big.Int  // sk used at registration time; nil until registered
-	lastRValues    [nBanks]*big.Int  // TxRandomValues from the last successful transfer; for verify tab
-	cumulativeR    [nBanks]*big.Int  // running sum of txRandom per bank across all transfers (mod P)
-	transferCount  int               // number of completed transfers
-	kaSecrets      [nBanks][nBanks]*big.Int  // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
+	mu             sync.Mutex
+	ready          bool
+	client         *ethclient.Client
+	priv           *ecdsa.PrivateKey
+	owner          common.Address
+	inst           *enygma.Enygma
+	tokenAddr      string
+	verifierAddr   string
+	totalGasUsed   uint64
+	mintedBalances [nBanks]int64            // cumulative plaintext balance per bank; updated after each mint/transfer
+	lastSenderIdx  int                      // senderIdx from the most recent completed transfer
+	registeredSks  [nBanks]*big.Int         // sk used at registration time; nil until registered
+	lastRValues    [nBanks]*big.Int         // TxRandomValues from the last successful transfer; for verify tab
+	cumulativeR    [nBanks]*big.Int         // running sum of txRandom per bank across all transfers (mod P)
+	transferCount  int                      // number of completed transfers
+	kaSecrets      [nBanks][nBanks]*big.Int // kaSecrets[i][j] = secret shared by Bank i and Bank j (symmetric)
 	kaEKs          [nBanks][]byte           // ML-KEM-768 encapsulation keys (1184B each, public_view_key)
 }
 
@@ -602,8 +543,12 @@ func (fc *flowCtx) waitTx(label string, tx *ethtypes.Transaction, txErr error) (
 // ── Contract address resolver ─────────────────────────────────────────────────
 
 type deployReceipts struct {
-	TOKEN    struct{ ContractAddress string `json:"contractAddress"` } `json:"TOKEN"`
-	VERIFIER struct{ ContractAddress string `json:"contractAddress"` } `json:"VERIFIER"`
+	TOKEN struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"TOKEN"`
+	VERIFIER struct {
+		ContractAddress string `json:"contractAddress"`
+	} `json:"VERIFIER"`
 }
 
 func resolveAddresses() (token, verifier string, err error) {
@@ -613,7 +558,7 @@ func resolveAddresses() (token, verifier string, err error) {
 		return
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
-	receiptsPath := filepath.Join(filepath.Dir(thisFile), "..", "run_scripts", "build", "enygma", "web3", "deploy_receipts.json")
+	receiptsPath := filepath.Join(filepath.Dir(thisFile), "..", "run_scripts", "build", "enygma_payments/go_client", "web3", "deploy_receipts.json")
 	if data, readErr := os.ReadFile(receiptsPath); readErr == nil {
 		var rec deployReceipts
 		if json.Unmarshal(data, &rec) == nil {
@@ -638,9 +583,15 @@ func runSetup(s *Server) {
 
 	fc.emit("prerequisites", "running", "Check prerequisites", "Probing Hardhat · Gnark · Relayer…")
 	var missing []string
-	if !tcpAvailable(rpcHostPort())     { missing = append(missing, "Chain RPC ("+rpcHostPort()+")") }
-	if !tcpAvailable("127.0.0.1:8080") { missing = append(missing, "Gnark :8080") }
-	if !tcpAvailable("127.0.0.1:8082") { missing = append(missing, "Relayer :8082") }
+	if !tcpAvailable(rpcHostPort()) {
+		missing = append(missing, "Chain RPC ("+rpcHostPort()+")")
+	}
+	if !tcpAvailable("127.0.0.1:8080") {
+		missing = append(missing, "Gnark :8080")
+	}
+	if !tcpAvailable("127.0.0.1:8082") {
+		missing = append(missing, "Relayer :8082")
+	}
 	if len(missing) > 0 {
 		fc.emit("prerequisites", "error", "Check prerequisites", "Not reachable: "+strings.Join(missing, ", "))
 		fc.done(false, "Start "+strings.Join(missing, ", ")+" first")
@@ -900,35 +851,39 @@ func runMintSupply(s *Server, amount int64, bankIdx int) {
 
 // ── Tab 3: Transfer flow ──────────────────────────────────────────────────────
 
-func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks]int64) {
-	fc := newCtx(s, "transfer")
-	s.state.mu.Lock()
-	ready := s.state.ready
-	inst := s.state.inst
-	s.state.mu.Unlock()
-	if !ready || inst == nil {
-		fc.done(false, "Run Setup first")
-		return
-	}
+// proofResponse is the gnark server's /proof/enygma response shape.
+type proofResponse struct {
+	Proof        []*big.Int `json:"proof"`
+	PublicSignal []*big.Int `json:"publicSignal"`
+}
 
-	flowStart := time.Now()
+// relayResponse is the relayer's /relay/transfer response shape.
+type relayResponse struct {
+	TxHash      string `json:"txHash"`
+	BlockNumber uint64 `json:"blockNumber"`
+	GasUsed     uint64 `json:"gasUsed"`
+}
 
+// transferReadOnChainState reads pre-transfer balances, the on-chain public
+// keys and the current epoch block hash. ok is false only after fc.done has
+// already been called with the failure reason.
+func (s *Server) transferReadOnChainState(fc *flowCtx, inst *enygma.Enygma, senderIdx int) (prevBalances []enygma.IEnygmaPoint, onChainKeys []*big.Int, blockHash *big.Int, ok bool) {
 	// Read on-chain state
 	fc.emit("read_state", "running", "Read on-chain state", "getPublicValues(7) + getBlckHash()")
 	pubVals, err := inst.GetPublicValues(&bind.CallOpts{}, big.NewInt(nBanks+1))
 	if err != nil {
 		fc.emit("read_state", "error", "Read on-chain state", err.Error())
 		fc.done(false, "GetPublicValues failed")
-		return
+		return nil, nil, nil, false
 	}
-	blockHash, err := inst.GetBlckHash(&bind.CallOpts{})
+	blockHash, err = inst.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		fc.emit("read_state", "error", "Read on-chain state", err.Error())
 		fc.done(false, "GetBlckHash failed")
-		return
+		return nil, nil, nil, false
 	}
-	prevBalances := pubVals.Balances[1:]
-	onChainKeys  := pubVals.Keys[1:]
+	prevBalances = pubVals.Balances[1:]
+	onChainKeys = pubVals.Keys[1:]
 	fc.emit("read_state", "success", "Read on-chain state",
 		fmt.Sprintf("epochBlockHash = %s · %d accounts", trunc(blockHash.String(), 12), nBanks))
 	fc.log(fmt.Sprintf("Epoch block hash: %s", blockHash.String()))
@@ -941,11 +896,16 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 			Value: fmt.Sprintf("(%s…,%s…)", trunc(prevBalances[i].C1.String(), 8), trunc(prevBalances[i].C2.String(), 8))})
 	}
 	pause(600 * time.Millisecond)
+	return prevBalances, onChainKeys, blockHash, true
+}
 
+// transferDeriveSecrets derives the sender's shared secret and the
+// transaction nullifier, then the per-bank shared secrets (ML-KEM derived
+// where key agreement has run, demo defaults otherwise).
+func (s *Server) transferDeriveSecrets(fc *flowCtx, senderIdx int, blockHash *big.Int) (senderSk, senderSecret, nullifier, prevSenderR *big.Int, secrets [nBanks]*big.Int) {
 	// Derive shared secrets — use the sk registered for bank 0 (falls back to default)
 	s.state.mu.Lock()
-	senderSk := s.state.registeredSks[senderIdx]
-	var prevSenderR *big.Int
+	senderSk = s.state.registeredSks[senderIdx]
 	if s.state.cumulativeR[senderIdx] != nil {
 		// Fix H-02 residual: registration and every mint now fold a real
 		// secret blinding factor into cumulativeR (see runRegisterBank /
@@ -962,7 +922,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		senderSk = bankSks[senderIdx]
 	}
 	fc.emit("derive_secrets", "running", "Derive shared secrets", "s₀ = Poseidon(prevR, sk) mod P")
-	senderSecret, _ := poseidon.Hash([]*big.Int{prevSenderR, senderSk})
+	senderSecret, _ = poseidon.Hash([]*big.Int{prevSenderR, senderSk})
 	senderSecret.Mod(senderSecret, curveP)
 
 	// Compute nullifier — uses senderSecret (= Poseidon(prevR, sk) mod P) directly.
@@ -971,7 +931,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	// message-tag and blinding-factor derivations below, replacing the
 	// epoch-constant blockHash — see rValue/tagValue's comment.
 	fc.emit("compute_nullifier", "running", "Compute nullifier", "η = Poseidon(senderSecret, epochHash)")
-	nullifier, _ := poseidon.Hash([]*big.Int{senderSecret, blockHash})
+	nullifier, _ = poseidon.Hash([]*big.Int{senderSecret, blockHash})
 	fc.emit("compute_nullifier", "success", "Compute nullifier",
 		fmt.Sprintf("η = %s", trunc(nullifier.String(), 20)))
 	fc.log(fmt.Sprintf("Nullifier: %s", nullifier.String()))
@@ -979,7 +939,6 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 
 	// Use ML-KEM derived secrets if key agreement has been run; fall back to demo defaults.
 	demoDefaults := [nBanks]int64{31415, 54142, 814712, 250912012, 12312512, 12312512}
-	var secrets [nBanks]*big.Int
 	for i := 0; i < nBanks; i++ {
 		if i == senderIdx {
 			secrets[i] = senderSecret
@@ -991,15 +950,19 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	}
 	fc.emit("derive_secrets", "success", "Derive shared secrets",
 		fmt.Sprintf("s[%d] = Poseidon(%s, %s) = %s", senderIdx, trunc(prevSenderR.String(), 10), trunc(senderSk.String(), 10), trunc(senderSecret.String(), 20)))
-	for i, s := range secrets {
-		fc.log(fmt.Sprintf("  s[%d] = %s", i, trunc(s.String(), 40)))
-		fc.participant(i, "secret", trunc(s.String(), 16)+"…")
+	for i, sec := range secrets {
+		fc.log(fmt.Sprintf("  s[%d] = %s", i, trunc(sec.String(), 40)))
+		fc.participant(i, "secret", trunc(sec.String(), 16)+"…")
 	}
 	pause(1200 * time.Millisecond)
+	return senderSk, senderSecret, nullifier, prevSenderR, secrets
+}
 
+// transferComputeRandoms computes each bank's blinding factor, with the
+// sender's set to minus the sum of the receivers' (so the total sums to 0).
+func (s *Server) transferComputeRandoms(fc *flowCtx, secrets [nBanks]*big.Int, nullifier *big.Int, senderIdx int) (rValues [nBanks]*big.Int) {
 	// Compute random factors
 	fc.emit("compute_randoms", "running", "Compute random factors", "r_i = Poseidon(H₂₁, s_i, perSlotNonce)")
-	var rValues [nBanks]*big.Int
 	rSum := new(big.Int)
 	for i := 0; i < nBanks; i++ {
 		r := rValue(secrets[i], nullifier, senderIdx, i)
@@ -1017,10 +980,14 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		fc.participant(i, "r", trunc(rValues[i].String(), 16)+"…")
 	}
 	pause(1200 * time.Millisecond)
+	return rValues
+}
 
+// transferBuildCommitments builds each bank's Pedersen commitment to its
+// balance delta (negative for the sender, positive for credited receivers).
+func (s *Server) transferBuildCommitments(fc *flowCtx, senderIdx int, senderAmt int64, receiverAmts [nBanks]int64, rValues [nBanks]*big.Int) (txValues [nBanks]*big.Int, txCommit [nBanks]enygma.IEnygmaPoint, txRandom [nBanks]*big.Int) {
 	// Build Pedersen commitments
 	fc.emit("build_commits", "running", "Build Pedersen commitments", "TxCommit_i = v_i·G + r_i·H")
-	var txValues [nBanks]*big.Int
 	for i := 0; i < nBanks; i++ {
 		if i == senderIdx {
 			txValues[i] = negMod(big.NewInt(senderAmt))
@@ -1034,8 +1001,6 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		}
 		return fmt.Sprintf("+%d  (credit)", v)
 	}
-	var txRandom [nBanks]*big.Int
-	var txCommit [nBanks]enygma.IEnygmaPoint
 	for i := 0; i < nBanks; i++ {
 		var pt *babyjub.Point
 		if i == senderIdx {
@@ -1070,10 +1035,13 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 			fmt.Sprintf("(%s…, %s…)", trunc(txCommit[i].C1.String(), 10), trunc(txCommit[i].C2.String(), 10)))
 	}
 	pause(1200 * time.Millisecond)
+	return txValues, txCommit, txRandom
+}
 
+// transferComputeTags computes each bank's message tag.
+func (s *Server) transferComputeTags(fc *flowCtx, secrets [nBanks]*big.Int, nullifier *big.Int, senderIdx int) (tagMessages [nBanks]*big.Int) {
 	// Compute message tags
 	fc.emit("compute_tags", "running", "Compute message tags", "t_i = Poseidon(H₁₂, s_i, perSlotNonce)")
-	var tagMessages [nBanks]*big.Int
 	for i := 0; i < nBanks; i++ {
 		tagMessages[i] = tagValue(secrets[i], nullifier, senderIdx, i)
 	}
@@ -1083,12 +1051,16 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		fc.participant(i, "tag", trunc(tagMessages[i].String(), 16)+"…")
 	}
 	pause(1200 * time.Millisecond)
+	return tagMessages
+}
 
+// transferBuildFingerprintMatrix loads the full k×k FingerPrint matrix if key
+// agreement has been run, or falls back to a sparse sender-column-only one.
+func (s *Server) transferBuildFingerprintMatrix(fc *flowCtx, secrets [nBanks]*big.Int, senderIdx int) (fpStrs [][]string) {
 	// Build k×k FingerPrint matrix.
 	// If key agreement has been run, load the full pre-computed matrix from disk
 	// (fp[i][j] = Poseidon(ss[i][j]) mod P for all pairs).
 	// Otherwise fall back to the sparse demo-defaults matrix (sender's column only).
-	var fpStrs [][]string
 	if loaded, err := loadFingerprintMatrix(); err == nil {
 		fpStrs = loaded
 		fc.log(fmt.Sprintf("FingerPrint: loaded full %dx%d matrix from %s", nBanks, nBanks, fpMatrixFile))
@@ -1115,17 +1087,23 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 		}
 		fc.log("FingerPrint: key agreement not run — using sparse sender-column-only matrix")
 	}
+	return fpStrs
+}
 
+// transferRequestZkProof builds the /proof/enygma request body from every
+// value derived so far and posts it to the gnark server. ok is false only
+// after fc.done has already been called with the failure reason.
+func (s *Server) transferRequestZkProof(fc *flowCtx, senderIdx int, senderAmt int64, prevBalances []enygma.IEnygmaPoint, onChainKeys []*big.Int, blockHash *big.Int, txValues [nBanks]*big.Int, txCommit [nBanks]enygma.IEnygmaPoint, txRandom [nBanks]*big.Int, tagMessages [nBanks]*big.Int, nullifier *big.Int, secrets [nBanks]*big.Int, senderSk, prevSenderR *big.Int, fpStrs [][]string) (resp proofResponse, ok bool) {
 	// ZK proof
 	fc.emit("zk_proof", "running", "Generate ZK proof", "POST /proof/enygma — ~30s")
 	fc.log("Requesting ZK proof from gnark server (this may take ~30s)…")
 
 	toStrs := func(vals [nBanks]*big.Int) []string {
-		s := make([]string, nBanks)
+		strs := make([]string, nBanks)
 		for i, v := range vals {
-			s[i] = v.String()
+			strs[i] = v.String()
 		}
-		return s
+		return strs
 	}
 	prevCommitSlice := make([][]string, nBanks)
 	for i, pt := range prevBalances {
@@ -1167,30 +1145,32 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	if err != nil {
 		fc.emit("zk_proof", "error", "Generate ZK proof", err.Error())
 		fc.done(false, "Gnark server unreachable")
-		return
+		return proofResponse{}, false
 	}
 	defer httpResp.Body.Close()
 	proofBody, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode != http.StatusOK {
 		fc.emit("zk_proof", "error", "Generate ZK proof", string(proofBody))
 		fc.done(false, "Proof generation failed")
-		return
+		return proofResponse{}, false
 	}
-	var proofResp struct {
-		Proof        []*big.Int `json:"proof"`
-		PublicSignal []*big.Int `json:"publicSignal"`
-	}
-	if err := json.Unmarshal(proofBody, &proofResp); err != nil {
+	if err := json.Unmarshal(proofBody, &resp); err != nil {
 		fc.emit("zk_proof", "error", "Generate ZK proof", "bad response: "+err.Error())
 		fc.done(false, "Cannot parse proof response")
-		return
+		return proofResponse{}, false
 	}
 	proofElapsed := time.Since(t0Proof)
 	fc.emit("zk_proof", "success", "Generate ZK proof",
-		fmt.Sprintf("π ready in %s · %d signals", proofElapsed.Round(time.Millisecond), len(proofResp.PublicSignal)))
+		fmt.Sprintf("π ready in %s · %d signals", proofElapsed.Round(time.Millisecond), len(resp.PublicSignal)))
 	fc.metric("proofTimeMs", fmt.Sprintf("%d", proofElapsed.Milliseconds()))
 	fc.metric("proofSizeBytes", "256")
+	return resp, true
+}
 
+// transferSubmitViaRelayer posts the proof to the relayer's /relay/transfer
+// endpoint. ok is false only after fc.done has already been called with the
+// failure reason.
+func (s *Server) transferSubmitViaRelayer(fc *flowCtx, resp proofResponse) (result relayResponse, ok bool) {
 	// Relay
 	fc.emit("relay_transfer", "running", "Submit via Relayer", "POST /relay/transfer")
 	fc.log("Submitting Transfer via relayer…")
@@ -1199,16 +1179,16 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	const txCommitOffset = 54
 	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
-		c1 := proofResp.PublicSignal[txCommitOffset+2*i]
-		c2 := proofResp.PublicSignal[txCommitOffset+2*i+1]
+		c1 := resp.PublicSignal[txCommitOffset+2*i]
+		c2 := resp.PublicSignal[txCommitOffset+2*i+1]
 		commFinal[i] = []string{c1.String(), c2.String()}
 	}
 	var proof8 [8]string
 	for i := 0; i < 8; i++ {
-		proof8[i] = proofResp.Proof[i].String()
+		proof8[i] = resp.Proof[i].String()
 	}
-	pubSigStrs := make([]string, len(proofResp.PublicSignal))
-	for i, v := range proofResp.PublicSignal {
+	pubSigStrs := make([]string, len(resp.PublicSignal))
+	for i, v := range resp.PublicSignal {
 		pubSigStrs[i] = v.String()
 	}
 	kIdx64 := make([]int64, nBanks)
@@ -1235,29 +1215,29 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	if err != nil {
 		fc.emit("relay_transfer", "error", "Submit via Relayer", err.Error())
 		fc.done(false, "Relayer unreachable")
-		return
+		return relayResponse{}, false
 	}
 	defer relayHTTPResp.Body.Close()
 	relayRespBody, _ := io.ReadAll(relayHTTPResp.Body)
 	if relayHTTPResp.StatusCode != http.StatusOK {
 		fc.emit("relay_transfer", "error", "Submit via Relayer", string(relayRespBody))
 		fc.done(false, "Transfer rejected")
-		return
+		return relayResponse{}, false
 	}
-	var relayResult struct {
-		TxHash      string `json:"txHash"`
-		BlockNumber uint64 `json:"blockNumber"`
-		GasUsed     uint64 `json:"gasUsed"`
-	}
-	json.Unmarshal(relayRespBody, &relayResult)
+	json.Unmarshal(relayRespBody, &result)
 	relayRTT := time.Since(relayStart)
-	s.state.totalGasUsed += relayResult.GasUsed
+	s.state.totalGasUsed += result.GasUsed
 	fc.emit("relay_transfer", "success", "Submit via Relayer",
-		fmt.Sprintf("tx %s · block %d · gas %d", trunc(relayResult.TxHash, 14), relayResult.BlockNumber, relayResult.GasUsed))
+		fmt.Sprintf("tx %s · block %d · gas %d", trunc(result.TxHash, 14), result.BlockNumber, result.GasUsed))
 	fc.metric("verifyTimeMs", fmt.Sprintf("%d", relayRTT.Milliseconds()))
-	fc.metric("verifyGas", fmt.Sprintf("%d", relayResult.GasUsed))
+	fc.metric("verifyGas", fmt.Sprintf("%d", result.GasUsed))
 	pause(800 * time.Millisecond)
+	return result, true
+}
 
+// transferUpdateLocalState applies the now-settled transfer to local demo
+// state (minted balances, cumulative blinding factors, counters).
+func (s *Server) transferUpdateLocalState(senderIdx int, senderAmt int64, receiverAmts [nBanks]int64, txRandom [nBanks]*big.Int) {
 	// Transfer confirmed on-chain — update server state before verify so state stays
 	// in sync even if the homomorphic check below fails.
 	s.state.mu.Lock()
@@ -1277,7 +1257,13 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	s.state.transferCount++
 	s.state.lastSenderIdx = senderIdx
 	s.state.mu.Unlock()
+}
 
+// transferVerifyBalance re-derives the sender's expected new balance using
+// the contract's own homomorphic addition and checks it against the
+// contract's actual post-transfer balance. ok is false only after fc.done
+// has already been called with the failure reason.
+func (s *Server) transferVerifyBalance(fc *flowCtx, inst *enygma.Enygma, senderIdx int, senderAmt int64, prevBalances []enygma.IEnygmaPoint, txCommit [nBanks]enygma.IEnygmaPoint) (ok bool) {
 	// Verify balance — use the contract's own pointAdd (addPedComm) so the expected
 	// value is computed with the exact same arithmetic as _updateBalancesForTransfer.
 	fc.emit("verify_balance", "running", "Verify balance", "getBalance(1) + homomorphic check")
@@ -1285,7 +1271,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	if err != nil {
 		fc.emit("verify_balance", "error", "Verify balance", err.Error())
 		fc.done(false, "GetBalance failed")
-		return
+		return false
 	}
 
 	expX, expY, pedErr := inst.AddPedComm(&bind.CallOpts{},
@@ -1295,7 +1281,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 	if pedErr != nil {
 		fc.emit("verify_balance", "error", "Verify balance", "addPedComm: "+pedErr.Error())
 		fc.done(false, "Verify: addPedComm failed")
-		return
+		return false
 	}
 
 	if newBal.X.Cmp(expX) != 0 || newBal.Y.Cmp(expY) != 0 {
@@ -1304,7 +1290,7 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 				trunc(newBal.X.String(), 12), trunc(newBal.Y.String(), 12),
 				trunc(expX.String(), 12), trunc(expY.String(), 12)))
 		fc.done(false, "Balance homomorphic check FAILED")
-		return
+		return false
 	}
 	fc.emit("verify_balance", "success", "Verify balance",
 		fmt.Sprintf("prevBalance + TxCommit[%d] = newBalance ✓  (−%d tokens confirmed)", senderIdx, senderAmt))
@@ -1319,6 +1305,51 @@ func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks
 			fc.b.publish(Event{Type: "participant", Tab: "transfer", Pid: i, Field: "finalBal",
 				Value: fmt.Sprintf("(%s…,%s…)", trunc(bal.C1.String(), 8), trunc(bal.C2.String(), 8))})
 		}
+	}
+	return true
+}
+
+func runTransfer(s *Server, senderIdx int, senderAmt int64, receiverAmts [nBanks]int64) {
+	fc := newCtx(s, "transfer")
+	s.state.mu.Lock()
+	ready := s.state.ready
+	inst := s.state.inst
+	s.state.mu.Unlock()
+	if !ready || inst == nil {
+		fc.done(false, "Run Setup first")
+		return
+	}
+
+	flowStart := time.Now()
+
+	prevBalances, onChainKeys, blockHash, ok := s.transferReadOnChainState(fc, inst, senderIdx)
+	if !ok {
+		return
+	}
+
+	senderSk, _, nullifier, prevSenderR, secrets := s.transferDeriveSecrets(fc, senderIdx, blockHash)
+
+	rValues := s.transferComputeRandoms(fc, secrets, nullifier, senderIdx)
+
+	txValues, txCommit, txRandom := s.transferBuildCommitments(fc, senderIdx, senderAmt, receiverAmts, rValues)
+
+	tagMessages := s.transferComputeTags(fc, secrets, nullifier, senderIdx)
+
+	fpStrs := s.transferBuildFingerprintMatrix(fc, secrets, senderIdx)
+
+	proofResp, ok := s.transferRequestZkProof(fc, senderIdx, senderAmt, prevBalances, onChainKeys, blockHash, txValues, txCommit, txRandom, tagMessages, nullifier, secrets, senderSk, prevSenderR, fpStrs)
+	if !ok {
+		return
+	}
+
+	if _, ok := s.transferSubmitViaRelayer(fc, proofResp); !ok {
+		return
+	}
+
+	s.transferUpdateLocalState(senderIdx, senderAmt, receiverAmts, txRandom)
+
+	if ok := s.transferVerifyBalance(fc, inst, senderIdx, senderAmt, prevBalances, txCommit); !ok {
+		return
 	}
 
 	flowMs := time.Since(flowStart).Milliseconds()

@@ -58,25 +58,25 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	defer client.Close()
 
 	receipts := loadOnchainReceipts(t)
-	vaultAddr    := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
-	erc20Addr    := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	vaultABI := loadOnchainABI(t, "Erc20CoinVault")
-	erc20ABI  := loadOnchainABI(t, "RaylsERC20")
+	erc20ABI := loadOnchainABI(t, "RaylsERC20")
 
 	vault := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
 	erc20 := bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client)
 
 	aliceAuth := hardhatAuth(t, client)
-	bobAuth   := hardhatBobAuth(t, client)
+	bobAuth := hardhatBobAuth(t, client)
 
 	gnarkClient := rpcore.NewPaymentClient("")
 	merkleDepth := 8
-	tokenId      := big.NewInt(0)
-	depositAmt   := big.NewInt(40)
-	paymentAmt   := big.NewInt(30)
-	changeAmt    := big.NewInt(10)
+	tokenId := big.NewInt(0)
+	depositAmt := big.NewInt(40)
+	paymentAmt := big.NewInt(30)
+	changeAmt := big.NewInt(10)
 
 	// ── Step 1: Auditor keypair ───────────────────────────────────────────────
 	t.Log("Step 1 — generating auditor ML-KEM-768 keypair")
@@ -235,8 +235,8 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
-	bobCommitment   := paymentResult.ContractStatement()[4]
-	aliceChangeCmt  := paymentResult.ContractStatement()[5]
+	bobCommitment := paymentResult.ContractStatement()[4]
+	aliceChangeCmt := paymentResult.ContractStatement()[5]
 	t.Logf("  proof generated")
 	t.Logf("  Bob's output commitment:   %s", bobCommitment)
 	t.Logf("  Alice's change commitment: %s", aliceChangeCmt)
@@ -264,7 +264,7 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 		t.Fatalf("TransactionReceipt: %v", err)
 	}
 
-	paymentSig   := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
 	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 
 	var paymentCount, nullifierCount int
@@ -307,7 +307,7 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	t.Log("Step 10 — auditor reads audit ciphertexts for all registered users")
 
 	aliceAddr := common.HexToAddress(hardhatAliceAddr)
-	bobAddr   := common.HexToAddress(hardhatBobAddr)
+	bobAddr := common.HexToAddress(hardhatBobAddr)
 
 	// When a user was registered in this run, read from chain to verify the
 	// round-trip. When already registered (different auditor key on-chain),
@@ -340,7 +340,7 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	// with these keys, so the auditor scan must use them to verify commitments.
 	// (On-chain spend keys may differ if registration was skipped.)
 	aliceAuditSpendKey := aliceSpend.PublicKey
-	bobAuditSpendKey   := bobSpend.PublicKey
+	bobAuditSpendKey := bobSpend.PublicKey
 	_ = aliceAddr
 	_ = bobAddr
 
@@ -372,8 +372,8 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	t.Log("Step 12 — auditor scans payment event with each user's recovered view key")
 
 	type userEntry struct {
-		name   string
-		dk     interface{ Decapsulate([]byte) ([]byte, error) }
+		name    string
+		dk      interface{ Decapsulate([]byte) ([]byte, error) }
 		pkSpend *big.Int
 	}
 
@@ -402,7 +402,7 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	t.Log("Step 13 — verifying auditor's note matches Bob's direct scan")
 
 	auditorNote := bobAuditNotes[0]
-	directNote  := bobDirect[0]
+	directNote := bobDirect[0]
 
 	if auditorNote.Amount.Cmp(directNote.Amount) != 0 {
 		t.Errorf("amount mismatch: auditor=%s direct=%s", auditorNote.Amount, directNote.Amount)

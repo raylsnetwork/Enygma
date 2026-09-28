@@ -65,8 +65,8 @@ import (
 	"strings"
 	"time"
 
-	enygma "enygma/contracts"
-	"enygma/internal/curve"
+	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/go_client/internal/curve"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"

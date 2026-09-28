@@ -26,8 +26,8 @@ var (
 	// built through this package tracks an AuctionCoinVault (NftVault or
 	// UsdcVault), never enygma_dvp's own Merkle.sol-based vaults, which use
 	// a different (non-strict) boundary. See dvpcore.MerkleTree.exclusiveCapacity.
-	NewMerkleTree = dvpcore.NewMerkleTreeStrict
-	GetNullifier  = dvpcore.GetNullifier
+	NewMerkleTree     = dvpcore.NewMerkleTreeStrict
+	GetNullifier      = dvpcore.GetNullifier
 	GetAuctionId      = dvpcore.GetAuctionId
 	Erc721Commitment  = dvpcore.Erc721Commitment
 	Erc20CommitmentV2 = dvpcore.Erc20CommitmentV2

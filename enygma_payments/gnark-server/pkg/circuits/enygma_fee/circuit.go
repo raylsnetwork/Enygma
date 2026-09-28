@@ -3,8 +3,8 @@ package enygma_fee
 import (
 	"math/big"
 
-	pos "enygma-server/poseidon"
-	utils "enygma-server/utils"
+	pos "enygma_payments/gnark-server/poseidon"
+	utils "enygma_payments/gnark-server/utils"
 
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"

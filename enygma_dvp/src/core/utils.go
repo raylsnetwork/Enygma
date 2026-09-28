@@ -486,7 +486,6 @@ func EncodeMessage(m *big.Int) *babyjub.Point {
 
 // DecodeMessage recovers the integer from a BabyJubJub point by brute-force search
 func DecodeMessage(point *babyjub.Point, maxM *big.Int) (*big.Int, error) {
-	fmt.Printf("Allowed range: %s\n", maxM.String())
 	m := new(big.Int)
 	for m.Cmp(maxM) < 0 {
 		candidate := EncodeMessage(m)
@@ -532,7 +531,6 @@ func BabyDecrypt(c1, c2 *babyjub.Point, privateKey *big.Int, allowedRange *big.I
 
 	decrypted, err := DecodeMessage(mDec, allowedRange)
 	if err != nil {
-		fmt.Println("Invalid value")
 		return nil
 	}
 	return decrypted
@@ -609,11 +607,11 @@ func AuditorEncKey(pubKeyX, pubKeyY, random *big.Int) (*big.Int, *big.Int) {
 
 // PoseidonEncryptResult holds the result of Poseidon encryption
 type PoseidonEncryptResult struct {
-	Encrypted  []*big.Int
-	Nonce      *big.Int
-	RandomVal  *big.Int
-	SharedKey  *babyjub.Point
-	AuthKey    *babyjub.Point
+	Encrypted []*big.Int
+	Nonce     *big.Int
+	RandomVal *big.Int
+	SharedKey *babyjub.Point
+	AuthKey   *babyjub.Point
 }
 
 // PoseidonEncryptWrapper encrypts inputs using Poseidon sponge encryption

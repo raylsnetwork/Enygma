@@ -1,8 +1,8 @@
 package templates
 
 import (
+	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
-	"gnark_server/primitives"
 )
 
 // AuctionWithdrawCircuit proves that the caller knows the preimage of an

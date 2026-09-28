@@ -23,11 +23,11 @@ import (
 	"strings"
 	"testing"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/crypto"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 

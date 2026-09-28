@@ -5,17 +5,17 @@ import (
 	"math/big"
 	"net/http"
 
-	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"gnark_server/primitives"
-	"gnark_server/templates"
-	"gnark_server/utils"
+	"enygma_dvp_auctions/gnark_circuits/primitives"
+	"enygma_dvp_auctions/gnark_circuits/templates"
+	"enygma_dvp_auctions/gnark_circuits/utils"
 )
 
 const merkleDepth = 8
@@ -48,20 +48,20 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// populate public inputs
-		witness.StAuctionId    = frontend.Variable(req.StAuctionId)
-		witness.StTreeNumber   = frontend.Variable(req.StTreeNumber)
-		witness.StMerkleRoot   = frontend.Variable(req.StMerkleRoot)
-		witness.StNullifier    = frontend.Variable(req.StNullifier)
+		witness.StAuctionId = frontend.Variable(req.StAuctionId)
+		witness.StTreeNumber = frontend.Variable(req.StTreeNumber)
+		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
+		witness.StNullifier = frontend.Variable(req.StNullifier)
 		witness.StCommitLocked = frontend.Variable(req.StCommitLocked)
-		witness.StNftTokenId   = frontend.Variable(req.StNftTokenId)
+		witness.StNftTokenId = frontend.Variable(req.StNftTokenId)
 		witness.StRevertCommit = frontend.Variable(req.StRevertCommit)
 
 		// populate private witnesses
 		witness.WtTreeNumber = frontend.Variable(req.WtTreeNumber)
-		witness.WtSpendKey   = frontend.Variable(req.WtSpendKey)
-		witness.WtTokenId    = frontend.Variable(req.WtTokenId)
-		witness.WtSaltIn     = frontend.Variable(req.WtSaltIn)
-		witness.WtPathIndex  = frontend.Variable(req.WtPathIndex)
+		witness.WtSpendKey = frontend.Variable(req.WtSpendKey)
+		witness.WtTokenId = frontend.Variable(req.WtTokenId)
+		witness.WtSaltIn = frontend.Variable(req.WtSaltIn)
+		witness.WtPathIndex = frontend.Variable(req.WtPathIndex)
 		witness.WtSaltLocked = frontend.Variable(req.WtSaltLocked)
 		witness.WtSaltRevert = frontend.Variable(req.WtSaltRevert)
 		for j := 0; j < merkleDepth; j++ {
@@ -102,13 +102,17 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		p := proof.(*groth16_bn254.Proof)
 		ax, ay := new(big.Int), new(big.Int)
-		p.Ar.X.BigInt(ax); p.Ar.Y.BigInt(ay)
+		p.Ar.X.BigInt(ax)
+		p.Ar.Y.BigInt(ay)
 		cx, cy := new(big.Int), new(big.Int)
-		p.Krs.X.BigInt(cx); p.Krs.Y.BigInt(cy)
+		p.Krs.X.BigInt(cx)
+		p.Krs.Y.BigInt(cy)
 		bx0, bx1 := new(big.Int), new(big.Int)
-		p.Bs.X.A0.BigInt(bx0); p.Bs.X.A1.BigInt(bx1)
+		p.Bs.X.A0.BigInt(bx0)
+		p.Bs.X.A1.BigInt(bx1)
 		by0, by1 := new(big.Int), new(big.Int)
-		p.Bs.Y.A0.BigInt(by0); p.Bs.Y.A1.BigInt(by1)
+		p.Bs.Y.A0.BigInt(by0)
+		p.Bs.Y.A1.BigInt(by1)
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 

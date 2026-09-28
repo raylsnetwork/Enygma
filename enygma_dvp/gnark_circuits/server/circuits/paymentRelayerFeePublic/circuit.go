@@ -19,13 +19,13 @@ import "math/big"
 //	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2],
 //	 StContractAddress, StFee]
 type PaymentRelayerFeePublicRequest struct {
-	StMessage         string       `json:"stMessage"         binding:"required"`
-	StTreeNumbers     [1]string    `json:"stTreeNumbers"     binding:"required"`
-	StMerkleRoots     [1]string    `json:"stMerkleRoots"     binding:"required"`
-	StNullifiers      [1]string    `json:"stNullifiers"      binding:"required"`
-	StCommitmentsOut  [3]string    `json:"stCommitmentsOut"  binding:"required"`
-	StContractAddress string       `json:"stContractAddress" binding:"required"`
-	StFee             string       `json:"stFee"             binding:"required"`
+	StMessage         string    `json:"stMessage"         binding:"required"`
+	StTreeNumbers     [1]string `json:"stTreeNumbers"     binding:"required"`
+	StMerkleRoots     [1]string `json:"stMerkleRoots"     binding:"required"`
+	StNullifiers      [1]string `json:"stNullifiers"      binding:"required"`
+	StCommitmentsOut  [3]string `json:"stCommitmentsOut"  binding:"required"`
+	StContractAddress string    `json:"stContractAddress" binding:"required"`
+	StFee             string    `json:"stFee"             binding:"required"`
 
 	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`
 	WtValuesIn           [1]string    `json:"wtValuesIn"           binding:"required"`

@@ -54,4 +54,3 @@ func Load() *Config {
 		UsdrFeeVk:                 "./scripts/keys/UsdrFeeVK.key",
 	}
 }
-

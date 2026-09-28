@@ -1,10 +1,9 @@
-package primitives 
+package primitives
 
-import(
+import (
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
-	 pos "gnark_server/poseidon"
 )
-
 
 func AuctionId(api frontend.API, commitment frontend.Variable) frontend.Variable {
 	return pos.Poseidon(api, []frontend.Variable{commitment})

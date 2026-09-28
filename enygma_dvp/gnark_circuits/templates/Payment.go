@@ -1,17 +1,17 @@
 package templates
 
 import (
+	"enygma_dvp/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
-	"gnark_server/primitives"
 )
 
 // PaymentCircuitConfig holds the compile-time parameters for the Payment circuit.
 type PaymentCircuitConfig struct {
-	TmNInputs       int 
-	TmMOutputs      int 
+	TmNInputs         int
+	TmMOutputs        int
 	TmMerkleTreeDepth int
-	TmRange         frontend.Variable // upper bound for range checks (e.g. 2^64)
+	TmRange           frontend.Variable // upper bound for range checks (e.g. 2^64)
 }
 
 type PaymentCircuit struct {
@@ -21,17 +21,17 @@ type PaymentCircuit struct {
 	// Layout (non-interleaved, matching ContractStatement):
 	//   [StMessage, StTreeNumbers[0..N-1], StMerkleRoots[0..N-1],
 	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1], StContractAddress]
-	StMessage        frontend.Variable   `gnark:",public"` // domain-separation / DVP link (0 = standalone)
-	StTreeNumbers    []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
-	StMerkleRoots    []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input
-	StNullifiers     []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
-	StCommitmentsOut []frontend.Variable `gnark:",public"` // TmMOutputs — output commitment per output
-	StContractAddress frontend.Variable  `gnark:",public"` // vault contract address (uint160)
+	StMessage         frontend.Variable   `gnark:",public"` // domain-separation / DVP link (0 = standalone)
+	StTreeNumbers     []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
+	StMerkleRoots     []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input
+	StNullifiers      []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
+	StCommitmentsOut  []frontend.Variable `gnark:",public"` // TmMOutputs — output commitment per output
+	StContractAddress frontend.Variable   `gnark:",public"` // vault contract address (uint160)
 
 	// --- private witnesses: inputs ---
 	WtPrivateKeysIn []frontend.Variable   // TmNInputs — sk_spend per input
 	WtValuesIn      []frontend.Variable   // TmNInputs — amount per input
-	WtSaltsIn       []frontend.Variable   // TmNInputs — saltIn[i] (from when Alice received this note)	
+	WtSaltsIn       []frontend.Variable   // TmNInputs — saltIn[i] (from when Alice received this note)
 	WtPathElements  [][]frontend.Variable // TmNInputs x TmMerkleTreeDepth
 	WtPathIndices   []frontend.Variable   // TmNInputs — leaf position per input
 
@@ -45,9 +45,9 @@ type PaymentCircuit struct {
 }
 
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
-	
+
 	api.AssertIsEqual(circuit.StMessage, 0)
-	
+
 	// Change outputs (j >= 1) are constrained to use this key below.
 	senderPk := primitives.PublicKey(api, circuit.WtPrivateKeysIn[0])
 

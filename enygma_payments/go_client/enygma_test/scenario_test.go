@@ -51,7 +51,7 @@ import (
 	"strings"
 	"testing"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -836,6 +836,7 @@ func scenarioClient(t *testing.T) (*ethclient.Client, func() *bind.TransactOpts,
 // Run:
 //
 //	CC=/usr/bin/clang go test -run TestBurnBalanceUpdate -v -timeout 60s
+//
 // TestBurnBalanceUpdate exercises the H-13 fix: burn() now requires a
 // zero-knowledge proof of solvency and the correct new commitment instead
 // of unverified plaintext point arithmetic. It uses MockBurnVerifier

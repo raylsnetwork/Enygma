@@ -58,7 +58,7 @@ import (
 	"testing"
 	"time"
 
-	enygma "enygma/contracts"
+	enygma "enygma_payments/go_client/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -76,9 +76,9 @@ const (
 	// the relayer rejects any proof where signal[50] != PROTOCOL_FEE.
 	PROTOCOL_FEE = 20
 
-	feeDstAmt  = 60                     // bank 1 receives (destination)
-	feeChgAmt  = 40                     // bank 2 receives (change)
-	feeSendAmt = feeDstAmt + feeChgAmt  // 100: on-chain debit (fee paid separately)
+	feeDstAmt  = 60                    // bank 1 receives (destination)
+	feeChgAmt  = 40                    // bank 2 receives (change)
+	feeSendAmt = feeDstAmt + feeChgAmt // 100: on-chain debit (fee paid separately)
 )
 
 func TestFeeTransferFlow(t *testing.T) {
