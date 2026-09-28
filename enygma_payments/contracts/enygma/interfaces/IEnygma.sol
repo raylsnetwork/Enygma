@@ -18,6 +18,18 @@ interface IEnygma {
         uint256[81] public_signal;
     }
 
+    /// @notice USDr proofs carry two extra public signals versus the main
+    /// 80-signal FingerPrint layout (82, not 80): the fee amount is public
+    /// (not hidden like the main asset's transfer amount) so the contract
+    /// can enforce it equals usdrFixedFeeAmount — see USDrCircuit.Define's
+    /// FeeAmount field — and Fix L-01's DomainId, appended last, binding
+    /// the USDr leg to this specific deployment the same way the main
+    /// proof's own DomainId does.
+    struct UsdrProof {
+        uint256[8] proof;
+        uint256[82] public_signal;
+    }
+
     // Fix M-14/C-09/L-01: withdraw/deposit are genuinely [52]-signal —
     // the real circuit arity in both cases (see Enygma.sol's
     // WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET/DEPOSIT_HASH_OFFSET doc
@@ -152,6 +164,11 @@ interface IEnygma {
     // off-chain (the same way registration's r reaches the account
     // holder) for them to derive their account's updated blinding factor.
     function mintSupply(uint256 amount, uint256 to, uint256 mintCommitX, uint256 mintCommitY) external returns (bool);
+
+    /// @notice Mint USDr to a specific account — the only way anyone
+    /// acquires USDr to pay relayer fees with (initializeUsdrBalance()
+    /// alone only ever creates a zero balance).
+    function mintUsdrSupply(uint256 amount, uint256 to) external returns (bool);
     function check() external view returns (bool);
     function addVerifier(address verifier) external returns (bool);
 
@@ -168,12 +185,22 @@ interface IEnygma {
         uint256 size
     ) external view returns (Point[] memory, uint256[] memory);
 
+    // usdrCommitments/usdrProof are a second, independent proof over a
+    // second private balance ("USDr") tracked per account alongside the
+    // main balance above — see usdrBalanceCommitments/addUsdrVerifier/
+    // initializeUsdrBalance. Both proofs are verified and settled
+    // atomically in this one call, using the same participantIds for both
+    // (the same k=6 anonymity set). usdrProof's fee amount (public signal
+    // index 80) must equal usdrFixedFeeAmount.
+    //
     // Fix H-09: bankTag is optional (pass "" for no attribution — every
     // direct on-chain caller other than the relayer has no bank
     // credential to report) and unvalidated; see RelayAttribution's doc.
     function transfer(
         Point[] memory commitments,
         Proof memory proof,
+        Point[] memory usdrCommitments,
+        UsdrProof memory usdrProof,
         uint256[] memory k,
         string memory bankTag
     ) external returns (bool);
@@ -185,6 +212,43 @@ interface IEnygma {
     function addFeeVerifier(address verifier) external returns (bool);
 
     // Fix H-09: see transfer()'s identical bankTag doc comment above.
+
+    /// @notice Register the verifier for USDr transfer proofs (82-signal
+    /// shape — two more than the main transfer proof's 80, since the fee
+    /// amount and DomainId (Fix L-01) are both public signals here —
+    /// different verifying key).
+    function addUsdrVerifier(address verifier) external returns (bool);
+
+    /// @notice Set the fixed USDr relayer fee. Every transfer()'s usdrProof
+    /// must carry exactly this amount as its public FeeAmount signal
+    /// (index 80) or the call reverts InvalidFeeAmount() — see
+    /// USDrCircuit.Define. Governance-adjustable (a public input, not a
+    /// circuit constant) so changing it never requires new proving/
+    /// verifying keys.
+    function setUsdrFixedFee(uint256 amount) external returns (bool);
+
+    function usdrFixedFeeAmount() external view returns (uint256);
+
+    /// @notice Create an account's initial USDr balance commitment. Must be
+    /// called once per account before that account can be a participant in
+    /// a transfer() that carries a USDr proof, or checkUsdr() reverts for it.
+    function initializeUsdrBalance(
+        uint256 accountId,
+        uint256 randomness
+    ) external returns (bool);
+
+    function getUsdrBalance(
+        uint256 accountId
+    ) external view returns (uint256 x, uint256 y);
+
+    function getUsdrPublicValues(
+        uint256 count
+    ) external view returns (Point[] memory, uint256[] memory);
+
+    /// @notice Verify Σ(usdrBalanceCommitments) == usdrTotalSupply, the USDr
+    /// analog of check().
+    function checkUsdr() external view returns (bool);
+
     function transferWithFee(
         Point[] memory commitments,
         FeeProof memory proof,

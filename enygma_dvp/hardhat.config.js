@@ -2,7 +2,6 @@
 /* global task */
 const ethers = require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-etherscan");
-require("@nomiclabs/hardhat-waffle");
 require("hardhat-gas-reporter");
 require("hardhat-artifactor");
 require("hardhat-tracer");

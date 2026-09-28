@@ -30,12 +30,20 @@ func TestScanForErc20Notes_FullFlow(t *testing.T) {
 	}
 
 	// --- Alice builds the output note for Bob ---
-	saltB, cipherText, err := core.Encapsulate(bobView.EncapsKey)
+	ss, cipherText, err := core.Encapsulate(bobView.EncapsKey)
 	if err != nil {
 		t.Fatalf("Encapsulate: %v", err)
 	}
+	saltB, err := core.DerivePaymentSalt(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt: %v", err)
+	}
+	encKey, err := core.DerivePaymentKey(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
+	}
 
-	encTxData, err := core.EncryptPayload(saltB, tokenId, amount)
+	encTxData, err := core.EncryptPayload(encKey, tokenId, amount)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
 	}
@@ -93,14 +101,22 @@ func TestScanForErc20Notes_IgnoresOtherRecipients(t *testing.T) {
 		t.Fatalf("NewSpendKeyPair carol: %v", err)
 	}
 
-	saltB, cipherText, err := core.Encapsulate(carolView.EncapsKey)
+	ss, cipherText, err := core.Encapsulate(carolView.EncapsKey)
 	if err != nil {
 		t.Fatalf("Encapsulate: %v", err)
+	}
+	saltB, err := core.DerivePaymentSalt(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt: %v", err)
+	}
+	encKey, err := core.DerivePaymentKey(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
 	}
 	tokenId := big.NewInt(10)
 	amount := big.NewInt(5)
 
-	encTxData, err := core.EncryptPayload(saltB, tokenId, amount)
+	encTxData, err := core.EncryptPayload(encKey, tokenId, amount)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
 	}
@@ -156,11 +172,19 @@ func TestScanForErc20Notes_MultipleEvents(t *testing.T) {
 
 	makeEvent := func(viewEncapKey []byte, spendPk *big.Int, tokenId, amount *big.Int) core.OnChainErc20Event {
 		t.Helper()
-		saltB, ctI, err := core.Encapsulate(viewEncapKey)
+		ss, ctI, err := core.Encapsulate(viewEncapKey)
 		if err != nil {
 			t.Fatalf("Encapsulate: %v", err)
 		}
-		ctII, err := core.EncryptPayload(saltB, tokenId, amount)
+		saltB, err := core.DerivePaymentSalt(ss)
+		if err != nil {
+			t.Fatalf("DerivePaymentSalt: %v", err)
+		}
+		encKey, err := core.DerivePaymentKey(ss)
+		if err != nil {
+			t.Fatalf("DerivePaymentKey: %v", err)
+		}
+		ctII, err := core.EncryptPayload(encKey, tokenId, amount)
 		if err != nil {
 			t.Fatalf("EncryptPayload: %v", err)
 		}
@@ -211,11 +235,19 @@ func TestScanForErc20Notes_SaltBFieldUsableAsWitness(t *testing.T) {
 		t.Fatalf("NewViewKeyPair: %v", err)
 	}
 
-	saltB, cipherText, err := core.Encapsulate(bobView.EncapsKey)
+	ss, cipherText, err := core.Encapsulate(bobView.EncapsKey)
 	if err != nil {
 		t.Fatalf("Encapsulate: %v", err)
 	}
-	encTxData, err := core.EncryptPayload(saltB, tokenId, amount)
+	saltB, err := core.DerivePaymentSalt(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentSalt: %v", err)
+	}
+	encKey, err := core.DerivePaymentKey(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
+	}
+	encTxData, err := core.EncryptPayload(encKey, tokenId, amount)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
 	}

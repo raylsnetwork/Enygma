@@ -76,10 +76,18 @@ describe("EnygmaAuction", function () {
   });
 
   // lockAuction: creates an auction with deadline=now+deadlineDelta,
-  // settlementDeadline=deadline+7200. Returns the deadline timestamp.
+  // settlementDeadline=deadline+2 days+1h. Returns the deadline timestamp.
+  //
+  // BUGFIX: this used to compute settlementDeadline as deadline+7200 (2 hours),
+  // but initAuction() requires settlementDeadline >= deadline + 2 days
+  // (EnygmaAuction.sol's InvalidSettlementDeadline check) — a stale test
+  // fixture left over from before that requirement existed/changed, which made
+  // every single test in this file revert at the very first initAuction()
+  // call. Bumped to satisfy the actual contract requirement, with a 1-hour
+  // margin to avoid any timestamp-rounding edge case.
   async function lockAuction({ auctionId, nftTokenId = 77, commitLocked, deadlineDelta = 3600, floorPrice = 10 }) {
     const deadline = (await time.latest()) + deadlineDelta;
-    const settlementDeadline = deadline + 7200;
+    const settlementDeadline = deadline + 2 * 24 * 3600 + 3600;
     await auction.initAuction(
       ZERO_PROOF,
       lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked, nftTokenId }),
@@ -289,9 +297,17 @@ describe("EnygmaAuction", function () {
       }));
     }
 
+    // BUGFIX: winnerCommitB must equal the winning bid's own commitB (701,
+    // from setUpThroughBatch()'s `commitB: 701` on the winner's submitBid call)
+    // — _settleUsdcVault() requires payoutCommit == winnerBid.commitB exactly
+    // (a deliberate check preventing the auctioneer from substituting an
+    // arbitrary payout recipient). This was hardcoded to an unrelated 1234,
+    // a stale/mismatched fixture value that made every settlement-path test
+    // revert with "payout commitment mismatch" — never caught before since
+    // this contract didn't even compile until the stack-too-deep fix.
     const finalStmt = (auctionId, { floorPrice = 10 } = {}) => finalStatement({
       auctionId, batches: [{ commit: 601, pk: 900, amount: 1000 }],
-      overallWinnerCommit: 601, winnerPk: 900, winnerCommitB: 1234, winnerNftCommit: 5678,
+      overallWinnerCommit: 601, winnerPk: 900, winnerCommitB: 701, winnerNftCommit: 5678,
       nftTokenId: 77, winningAmount: 1000, floorPrice,
     });
 
@@ -312,9 +328,10 @@ describe("EnygmaAuction", function () {
       // winner's locked USDC note was permanently spent at settlement
       expect(await erc20Vault.locked(501n)).to.equal(false);
       expect(await erc20Vault.nullified(501n)).to.equal(true);
-      // Bob's USDC payout commitment (winnerCommitB) was inserted
+      // Bob's USDC payout commitment (winnerCommitB, matching the winner's
+      // own commitB — see the matching comment on finalStmt()) was inserted
       expect(await erc20Vault.registeredCoinsLength()).to.equal(1);
-      expect(await erc20Vault.registeredCoins(0)).to.equal(1234n);
+      expect(await erc20Vault.registeredCoins(0)).to.equal(701n);
 
       const winnerBid = await auction.getBid(1, 601);
       expect(winnerBid.claimed).to.equal(true);
@@ -449,8 +466,10 @@ describe("EnygmaAuction", function () {
       await auction.settleOptimistic(
         ZERO_PROOF,
         finalStatement({
+          // winnerCommitB must match the winner's own commitB (701) from
+          // submitBid above — see the matching comment on finalStmt().
           auctionId: 1, batches: [{ commit: 601, pk: 900, amount: 1000 }],
-          overallWinnerCommit: 601, winnerPk: 900, winnerCommitB: 1234, winnerNftCommit: 5678,
+          overallWinnerCommit: 601, winnerPk: 900, winnerCommitB: 701, winnerNftCommit: 5678,
           nftTokenId: 77, winningAmount: 1000, floorPrice: 10,
         }),
         batchIdsArr({ 0: 1 }),

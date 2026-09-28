@@ -26,6 +26,26 @@ abstract contract AbstractCoinVault is
 
     bytes32 public constant DEFAULT_OWNER_ROLE =
         keccak256(abi.encodePacked("ownerRole"));
+
+    // SECURITY FIX: previously the auction contract was granted the full
+    // DEFAULT_DVP_ROLE in initializeVault() below — the same role the DVP
+    // contract itself holds, covering every DVP-gated function on this vault
+    // (insertCommitmentsFromReceipt, nullifyFromReceipt, unlockFromReceipt,
+    // addPendingProofReceipt, even initializeVault itself), when the auction
+    // contract only ever calls lockCoin/unlockCoin/nullifyCoin/registerCoins.
+    // DEFAULT_AUCTION_ROLE already existed as a declared-but-unused constant
+    // here and on EnygmaDvp — wiring it up now to actually scope the auction
+    // contract down to just those 4 functions via onlyDvpOrAuction() below,
+    // instead of the full DVP role.
+    modifier onlyDvpOrAuction() {
+        require(
+            hasRole(DEFAULT_DVP_ROLE, msg.sender) ||
+                hasRole(DEFAULT_AUCTION_ROLE, msg.sender),
+            "AbstractCoinVault: caller is not DVP or authorized auction"
+        );
+        _;
+    }
+
     ///////////////////////////////////////////////
     //           Private attributes
     //////////////////////////////////////////////
@@ -107,7 +127,10 @@ abstract contract AbstractCoinVault is
         _zkAuctionContractAddress = zkAuctionContractAddress;
         _numberOfIdentifiers = numberOfAssetIdentifiers;
 
-        _setupRole(DEFAULT_DVP_ROLE, _zkAuctionContractAddress);
+        // SECURITY FIX: grant the narrower DEFAULT_AUCTION_ROLE instead of
+        // DEFAULT_DVP_ROLE — see the matching comment where the role is
+        // declared above.
+        _setupRole(DEFAULT_AUCTION_ROLE, _zkAuctionContractAddress);
 
         initializeMerkle(treeDepth, _vaultId, _hashContractAddress);
 
@@ -167,6 +190,14 @@ abstract contract AbstractCoinVault is
                 }
             }
         }
+        // BUG FIX: falling off the end of a function declared `returns
+        // (bool)` implicitly returns the type's zero value — false — not an
+        // error, just an easy thing to miss. Every call site in this
+        // codebase currently ignores this return value (Slither:
+        // unused-return), so this was silently dormant, but the function's
+        // own declared contract says "true means success", and it could
+        // never actually return that.
+        return true;
     }
 
     function _unlockFromReceipt(
@@ -188,6 +219,7 @@ abstract contract AbstractCoinVault is
                 }
             }
         }
+        return true; // see the matching comment in _nullifyFromReceipt.
     }
 
     // public access is only allowed for ZkDvp
@@ -206,7 +238,7 @@ abstract contract AbstractCoinVault is
     function lockCoin(
         uint256 treeNumber,
         uint256 nullifier
-    ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+    ) public onlyDvpOrAuction returns (bool) {
         lock(treeNumber, nullifier);
         emit CoinLocked(_vaultId, treeNumber, nullifier);
 
@@ -216,7 +248,7 @@ abstract contract AbstractCoinVault is
     function unlockCoin(
         uint256 treeNumber,
         uint256 nullifier
-    ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+    ) public onlyDvpOrAuction returns (bool) {
         unlock(treeNumber, nullifier);
         emit CoinUnlocked(_vaultId, treeNumber, nullifier);
 
@@ -226,7 +258,7 @@ abstract contract AbstractCoinVault is
     function nullifyCoin(
         uint256 treeNumber,
         uint256 nullifier
-    ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+    ) public onlyDvpOrAuction returns (bool) {
         setNullifier(treeNumber, nullifier);
         emit Nullifier(_vaultId, treeNumber, nullifier);
 
@@ -235,7 +267,7 @@ abstract contract AbstractCoinVault is
 
     function registerCoins(
         uint256[] memory commitments
-    ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+    ) public onlyDvpOrAuction returns (bool) {
         uint numberOfCommitments = 0;
         for (uint256 i = 0; i < commitments.length; i++) {
             if (commitments[i] != 0) {

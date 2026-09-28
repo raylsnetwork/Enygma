@@ -26,6 +26,11 @@ type Config struct {
 	// Erc20VaultAddr — address of the deployed Erc20CoinVault contract.
 	// Used to check nullifier and root state before relaying.
 	Erc20VaultAddr string
+	// UsdrVaultAddr — address of the deployed USDr Erc20CoinVault contract
+	// (a second, independent vault registered on the same EnygmaDvp — see
+	// EnygmaDvp.paymentWithUsdrFee). Used the same way as Erc20VaultAddr,
+	// but for the USDr leg of POST /relay/payment_usdr_fee.
+	UsdrVaultAddr string
 	// TagRegistryAddr — address of the deployed TagRegistry contract.
 	// Used by POST /relay/tag to publish private messaging tags on-chain.
 	TagRegistryAddr string
@@ -37,6 +42,19 @@ type Config struct {
 	ReceiptsPath string
 	// Port — HTTP listen port. Defaults to 8090.
 	Port string
+	// RelayerFeeSpendPrivateKey — the relayer's own BabyJubJub spend private key
+	// (decimal, positive), used ONLY to verify off-chain that a relayer-fee note
+	// (PaymentRelayerFeePublic circuit) is actually addressed to this relayer
+	// before it's submitted on-chain. Independent of RelayerPrivateKeyHex (which
+	// signs Ethereum transactions) — this is a Poseidon-scheme key, matching the
+	// scheme NewSpendKeyPair uses for regular payment notes.
+	// Optional: stays nil if unset, in which case POST /relay/payment_relayer_fee
+	// always returns 503.
+	RelayerFeeSpendPrivateKey *big.Int
+	// MinFee — minimum acceptable relayer fee (StFee), in token base units.
+	// POST /relay/payment_relayer_fee rejects proofs whose fee is below this
+	// floor. Defaults to 0 (no floor).
+	MinFee *big.Int
 }
 
 func Load() (*Config, error) {
@@ -46,6 +64,7 @@ func Load() (*Config, error) {
 		APIKey:               getenv("RELAYER_API_KEY", ""),
 		EnygmaDvpAddr:        getenv("RELAYER_DVP_ADDR", ""),
 		Erc20VaultAddr:       getenv("RELAYER_ERC20_VAULT_ADDR", ""),
+		UsdrVaultAddr:        getenv("RELAYER_USDR_VAULT_ADDR", ""),
 		TagRegistryAddr:        getenv("RELAYER_TAG_REGISTRY_ADDR", ""),
 		TagChannelRegistryAddr: getenv("RELAYER_TAG_CHANNEL_REGISTRY_ADDR", ""),
 		ReceiptsPath:         getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),
@@ -65,6 +84,24 @@ func Load() (*Config, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("RELAYER_API_KEY must be set")
 	}
+
+	// RELAYER_FEE_SPEND_PRIVATE_KEY is optional — /relay/payment_relayer_fee
+	// is simply unavailable (503) if it's not configured.
+	if feeKeyStr := getenv("RELAYER_FEE_SPEND_PRIVATE_KEY", ""); feeKeyStr != "" {
+		feeKey, ok := new(big.Int).SetString(feeKeyStr, 10)
+		if !ok || feeKey.Sign() <= 0 {
+			return nil, fmt.Errorf("invalid RELAYER_FEE_SPEND_PRIVATE_KEY: must be a positive decimal integer")
+		}
+		cfg.RelayerFeeSpendPrivateKey = feeKey
+	}
+
+	minFeeStr := getenv("RELAYER_MIN_FEE", "0")
+	minFee, ok := new(big.Int).SetString(minFeeStr, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid RELAYER_MIN_FEE: %q", minFeeStr)
+	}
+	cfg.MinFee = minFee
+
 	return cfg, nil
 }
 

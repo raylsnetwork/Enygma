@@ -1,7 +1,30 @@
 {
   "name": "hardhat-project",
   "dependencies": {
-    "hardhat": "^2.22.14",
+    "hardhat": "^2.22.19",
     "solc-js": "^1.0.1"
+  },
+  "overrides": {
+    "lodash": "4.18.1",
+    "elliptic": "6.6.1",
+    "immutable": "4.3.9",
+    "@fastify/busboy": "3.2.2",
+    "undici": "7.29.0",
+    "uuid": "14.0.2",
+    "brace-expansion": "2.1.4",
+    "tmp": "0.2.7",
+    "serialize-javascript": "7.1.1",
+    "adm-zip": "0.5.18",
+    "glob": "10.5.0",
+    "cipher-base": "1.0.7",
+    "pbkdf2": "3.1.6",
+    "sha.js": "2.4.12",
+    "mocha": {
+      "minimatch": "5.1.9"
+    },
+    "hardhat": {
+      "ws": "7.5.13",
+      "undici": "5.29.0"
+    }
   }
 }

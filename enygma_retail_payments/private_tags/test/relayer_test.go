@@ -106,7 +106,11 @@ type relayInfoResp struct {
 	TagRegistryAddr        string `json:"tagRegistryAddr"`
 	TagChannelRegistryAddr string `json:"tagChannelRegistryAddr"`
 	ChainID                int64  `json:"chainId"`
-	Error                  string `json:"error,omitempty"`
+	// FeeSpendPubKey is the relayer's BabyJubJub spend public key for
+	// relayer-fee notes (empty string if RELAYER_FEE_SPEND_PRIVATE_KEY is not
+	// configured on the relayer) — see POST /relay/payment_relayer_fee.
+	FeeSpendPubKey string `json:"feeSpendPubKey,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 type relayTagResp struct {

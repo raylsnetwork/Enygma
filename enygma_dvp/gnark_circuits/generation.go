@@ -99,25 +99,9 @@ func GenerationVkPk (){
 	// }
 
 	// NOT covered by integration tests (test/01–04)
-	// erc20_join_split := templates.Erc20CircuitConfig{
-	// 	TmNInputs: 2,
-	// 	TmMOutputs:  2,
-	// 	TmMerkleTreeDepth:8,
-	// 	TmRange: frontend.Variable("1000000000000000000000000000000000000"),
-	// }
-
-	// NOT covered by integration tests (test/01–04)
 	// erc20Auditor_join_split_10_2 := templates.Erc20WithAuditorConfig{
 	// 	TmNInputs: 10,
 	// 	TmMOutputs: 2,
-	// 	TmMerkleTreeDepth:8,
-	// 	TmRange: frontend.Variable("1000000000000000000000000000000000000"),
-	// }
-
-	// NOT covered by integration tests (test/01–04)
-	// erc20_join_split_10_2 := templates.Erc20CircuitConfig{
-	// 	TmNInputs: 10,
-	// 	TmMOutputs:  2,
 	// 	TmMerkleTreeDepth:8,
 	// 	TmRange: frontend.Variable("1000000000000000000000000000000000000"),
 	// }
@@ -205,6 +189,57 @@ func GenerationVkPk (){
 	script.SetupPrivateMint(private_mint_config, "PrivateMint")
 	script.SetupDvPInitiator(dvp_initiator_config, "DvPInitiator")
 	script.SetupDvPDestination(dvp_destination_config, "DvPDestination")
+
+	// Payment-family circuits — dedicated Payment deployment, ported from
+	// enygma_retail_payments. Covered by test/12_v2_payment_usdr_fee_test.go.
+	payment1in_config := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPayment(payment1in_config, "Payment")
+
+	// 2-input/2-output circuit: separate VK slot. 1-in and 2-in circuits have
+	// different R1CS and must use distinct VKs.
+	payment2in_config := templates.PaymentCircuitConfig{
+		TmNInputs:         2,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPayment(payment2in_config, "Payment2in")
+
+	// 1-input/2-output fee circuit: fee absorbed into sender's input.
+	payment_fee_config := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPaymentFee(payment_fee_config, "PaymentFee")
+
+	// 1-input/3-output relayer-fee circuit: fee paid out as its own spendable
+	// note, same token as the payment.
+	payment_relayer_fee_public_config := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        3,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupPaymentRelayerFeePublic(payment_relayer_fee_public_config, "PaymentRelayerFeePublic")
+
+	// 1-input/2-output USDr circuit: a second, independent relayer-fee asset.
+	// StTokenId is public here (private everywhere else), giving this
+	// circuit's 9-element statement a shape distinct from every other
+	// 1-in/2-out circuit's (7 or 8) — new VK slot (VK_ID_ERC20_USDR = 4).
+	usdr_fee_config := templates.PaymentCircuitConfig{
+		TmNInputs:         1,
+		TmMOutputs:        2,
+		TmMerkleTreeDepth: 8,
+		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
+	}
+	script.SetupUsdrFee(usdr_fee_config, "UsdrFee")
 }
 
 func main(){

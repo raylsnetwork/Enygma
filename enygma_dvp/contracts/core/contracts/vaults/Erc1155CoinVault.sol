@@ -428,44 +428,44 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
 
         if (receiptType == 5) {
             verifyAuditorPublicKey(receipt);
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC1155_NON_FUNG_AUDITOR,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else if (receiptType == 4) {
             // Auditor-enabled Proof
 
             verifyAuditorPublicKey(receipt);
-            IVerifier(_verifierContractAddress).verifyProof(
+            if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC1155_FUNG_AUDITOR,
                 receipt.proof,
                 receipt.statement
-            );
+            )) revert InvalidProof();
         } else if (receiptType == 1) {
             // it is normal receipt
             if (jInputSize == 1) {
-                IVerifier(_verifierContractAddress).verifyProof(
+                if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC1155_1,
                     receipt.proof,
                     receipt.statement
-                );
+                )) revert InvalidProof();
             } else if (jInputSize == 2) {
-                IVerifier(_verifierContractAddress).verifyProof(
+                if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC1155_2,
                     receipt.proof,
                     receipt.statement
-                );
+                )) revert InvalidProof();
             } else {
                 revert InvalidStatmentSize();
             }
         } else if (receiptType == 2) {
             if (jInputSize == 10) {
-                IVerifier(_verifierContractAddress).verifyProof(
+                if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC1155_10,
                     receipt.proof,
                     receipt.statement
-                );
+                )) revert InvalidProof();
             } else {
                 revert InvalidStatmentSize();
             }

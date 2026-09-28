@@ -183,16 +183,19 @@ func TestH03_TopAccountSurvivesTransferRollover(t *testing.T) {
 
 	pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fingerprints, 555)
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	for i := 0; i < nBanks; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
 	blockHashBefore := pubSig[36]
-	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, participantIds, "")
+	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "")
 	if sendErr != nil {
 		t.Fatalf("honest 6-participant transfer() reverted — setup problem, not what this test is checking: %v", sendErr)
 	}

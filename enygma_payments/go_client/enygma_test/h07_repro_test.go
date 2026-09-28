@@ -96,17 +96,21 @@ func TestH07_UnregisteredParticipantRejected(t *testing.T) {
 	// bank 5's real accountID (6), so this test is unambiguously about
 	// H-07's check rather than incidentally tripping the sort-order one.
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	for i := 0; i < nBanks-1; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 	participantIds[nBanks-1] = big.NewInt(7)
+	accountIds[nBanks-1] = 7
 
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
-	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, participantIds, "") // Fix H-09: no attribution for a direct test call
+	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr == nil {
 		t.Fatal("FAIL (H-07 regressed): transfer() naming an unregistered participant (id=7) was accepted")
 	}
@@ -137,17 +141,21 @@ func TestH07_AccountIdZeroRejected(t *testing.T) {
 	pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fingerprints, 778)
 
 	participantIds := make([]*big.Int, nBanks)
+	accountIds := make([]int64, nBanks)
 	participantIds[0] = big.NewInt(0) // the classic sink — never registerable since M-06
+	accountIds[0] = 0
 	for i := 1; i < nBanks; i++ {
 		participantIds[i] = big.NewInt(banks[i].accountID)
+		accountIds[i] = banks[i].accountID
 	}
 
 	proof := enygma.IEnygmaProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds)
 
-	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, participantIds, "") // Fix H-09: no attribution for a direct test call
+	_, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "") // Fix H-09: no attribution for a direct test call
 	if sendErr == nil {
 		t.Fatal("FAIL (H-07 regressed): transfer() naming accountId=0 as a participant was accepted")
 	}
