@@ -737,7 +737,7 @@ func parseReceipt(r *ReceiptPayload) (*parsedReceipt, error) {
 	if r.NumberOfInputs > 10 || r.NumberOfOutputs > 10 {
 		return nil, fmt.Errorf("numberOfInputs/Outputs exceeds maximum of 10")
 	}
-	// DVP initiator proofs carry extra elements (commitA, revertCommitA) beyond
+	// DVP proofs carry extra elements (commitA, revertCommitA, counterVault) beyond
 	// the standard 1+3*nIn+nOut layout — use >= so we don't reject them.
 	minExpected := 1 + 3*r.NumberOfInputs + r.NumberOfOutputs
 	if len(sig) < minExpected {

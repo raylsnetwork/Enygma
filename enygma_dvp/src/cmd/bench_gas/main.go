@@ -213,8 +213,8 @@ func main() {
 		nPublic int
 	}{
 		{"PrivateMint     (4 public inputs)", 4},
-		{"DvPInitiator    (7 public inputs)", 7},
-		{"DvPDestination  (5 public inputs)", 5},
+		{"DvPInitiator    (8 public inputs)", 8},
+		{"DvPDestination  (6 public inputs)", 6},
 	}
 
 	for _, c := range circuits {
