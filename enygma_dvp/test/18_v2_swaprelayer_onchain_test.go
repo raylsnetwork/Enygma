@@ -2,18 +2,21 @@ package tests
 
 // 18_v2_swaprelayer_onchain_test.go
 //
-// End-to-end check of SwapRelayer's closed-swapId fix against the real
-// EnygmaDvp, vaults and Groth16 proofs (17_ covers the same logic on a mock).
+// End-to-end check of SwapRelayer against the real EnygmaDvp, vaults and
+// Groth16 proofs (17_ covers the same logic on a mock).
 //
-//   1. Alice submits her payment leg (ERC-20) under swapId #1, the swap
-//      expires and she cancels: her note is unlocked.
-//   2. Bob's late delivery leg (ERC-721) under swapId #1 is rejected with
+//   1. Alice submits her payment leg (ERC-20), the swap expires and a third
+//      party cancels it: her note is unlocked.
+//   2. Bob's late delivery leg (ERC-721) under that swapId is rejected with
 //      SwapClosed and his note is NOT locked; replaying Alice's leg is
 //      rejected too.
-//   3. Both notes are still usable: the same two legs settle under a new
-//      swapId #2 (the normal flow still works with real proofs).
-//   4. swapId #2, now settled, is closed as well.
-//   5. An expiry beyond MAX_SWAP_DURATION is rejected.
+//   3. A second pair of legs: a leg with a corrupted proof, and a genuine leg
+//      under the wrong swapId, are rejected without locking anything; an
+//      expiry beyond MAX_SWAP_DURATION is rejected; then both legs settle.
+//   4. The settled swapId is closed as well.
+//
+// The swapId is derived from the legs (SwapRelayer.swapIdOf), so a leg can
+// only occupy its own swap's slot.
 //
 // deploy/init do not deploy SwapRelayer, so the test deploys it, registers it
 // as a relayer and registers the (ERC-20, ERC-721) vault pair itself.
@@ -365,14 +368,13 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	}
 
 	t.Log("Building real swap legs (Alice: 30 ERC-20, Bob: ERC-721)…")
-	pay, del, commitA, commitB := buildSwapLegs(t, client, owner, receipts)
+	pay, del, _, _ := buildSwapLegs(t, client, owner, receipts)
 	ctI, ctII := []byte{0x01}, []byte{0x02}
 	vPay, vDel := big.NewInt(0), big.NewInt(1)
-	id1 := crypto.Keccak256Hash([]byte("swaprelayer-e2e-1"), commitB.Bytes())
-	id2 := crypto.Keccak256Hash([]byte("swaprelayer-e2e-2"), commitB.Bytes())
+	id1 := swapIdOf(pay, del)
 
-	// ── 1. Alice submits, swap expires, Alice cancels ─────────────────────────
-	t.Log("1. Alice submits her payment leg under swapId #1, then cancels after expiry")
+	// ── 1. Alice submits, swap expires, someone else cancels ─────────────────
+	t.Log("1. Alice submits her payment leg, then a third party cancels it after expiry")
 	if e, _ := r.send("alice", "submitReceipt", id1, pay, true, vPay, big.NewInt(r.now()+120), ctI, ctII); e != "" {
 		t.Fatalf("Alice's leg: %s", e)
 	}
@@ -380,7 +382,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 		t.Fatal("Alice's note should be locked while her leg is pending")
 	}
 	r.advance(300)
-	if e, _ := r.send("alice", "cancelSwap", id1); e != "" {
+	if e, _ := r.send("mallory", "cancelSwap", id1); e != "" {
 		t.Fatalf("cancelSwap: %s", e)
 	}
 	if locked, spent := r.nullifierState(0, pay); locked || spent {
@@ -389,7 +391,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	t.Log("   cancelled; Alice's note is free again")
 
 	// ── 2. Late legs under the cancelled swapId ───────────────────────────────
-	t.Log("2. Bob's late delivery leg under the cancelled swapId #1")
+	t.Log("2. Bob's late delivery leg under the cancelled swapId")
 	if e, _ := r.send("bob", "submitReceipt", id1, del, false, vDel, big.NewInt(r.now()+120), ctI, ctII); e != "SwapClosed" {
 		t.Fatalf("Bob's late leg: got %q, want SwapClosed", e)
 	}
@@ -405,12 +407,37 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	}
 	t.Log("   replay of Alice's leg by a third party also rejected")
 
-	// ── 3. Same legs settle under a new swapId ────────────────────────────────
-	t.Log("3. The same two legs settle under a new swapId #2")
-	if e, _ := r.send("alice", "submitReceipt", id2, pay, true, vPay, big.NewInt(r.now()+600), ctI, ctII); e != "" {
+	// ── 3. A new swap: junk and misfiled legs are rejected, then it settles ──
+	t.Log("3. A second swap (new legs)")
+	pay2, del2, commitA2, commitB2 := buildSwapLegs(t, client, owner, receipts)
+	id2 := swapIdOf(pay2, del2)
+
+	junk := pay2
+	junk.Proof.A.X = new(big.Int).Add(pay2.Proof.A.X, big.NewInt(1))
+	if e, _ := r.send("mallory", "submitReceipt", id2, junk, true, vPay, big.NewInt(r.now()+600), ctI, ctII); e == "" {
+		t.Fatal("a leg with a corrupted proof was accepted")
+	} else {
+		t.Logf("   leg with a corrupted proof rejected (%s)", e)
+	}
+	if e, _ := r.send("mallory", "submitReceipt", id1, pay2, true, vPay, big.NewInt(r.now()+600), ctI, ctII); e != "SwapClosed" {
+		t.Fatalf("leg under a closed foreign swapId: got %q, want SwapClosed", e)
+	}
+	otherId := crypto.Keccak256Hash([]byte("not this swap"))
+	if e, _ := r.send("mallory", "submitReceipt", otherId, pay2, true, vPay, big.NewInt(r.now()+600), ctI, ctII); e != "SwapIdMismatch" {
+		t.Fatalf("leg under a foreign swapId: got %q, want SwapIdMismatch", e)
+	}
+	if e, _ := r.send("mallory", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+31*24*3600), ctI, ctII); e != "ExpiryTooFar" {
+		t.Fatalf("far expiry: got %q, want ExpiryTooFar", e)
+	}
+	if locked, _ := r.nullifierState(0, pay2); locked {
+		t.Fatal("Alice's second note was locked by a rejected leg")
+	}
+	t.Log("   junk proof, foreign swapId and 31-day expiry all rejected; nothing locked")
+
+	if e, _ := r.send("alice", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+600), ctI, ctII); e != "" {
 		t.Fatalf("Alice's leg (#2): %s", e)
 	}
-	e, rcpt := r.send("bob", "submitReceipt", id2, del, false, vDel, big.NewInt(r.now()+600), ctI, ctII)
+	e, rcpt := r.send("bob", "submitReceipt", id2, del2, false, vDel, big.NewInt(r.now()+600), ctI, ctII)
 	if e != "" {
 		t.Fatalf("Bob's leg (#2): %s", e)
 	}
@@ -422,8 +449,8 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 		case l.Topics[0] == settledSig && l.Topics[1] == id2:
 			settled = true
 		case l.Topics[0] == commitmentSig && len(l.Topics) >= 3:
-			gotA = gotA || l.Topics[2].Big().Cmp(commitA) == 0
-			gotB = gotB || l.Topics[2].Big().Cmp(commitB) == 0
+			gotA = gotA || l.Topics[2].Big().Cmp(commitA2) == 0
+			gotB = gotB || l.Topics[2].Big().Cmp(commitB2) == 0
 		}
 	}
 	if !settled || !gotA || !gotB {
@@ -433,7 +460,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 		vault int64
 		rc    onchainProofReceipt
 		who   string
-	}{{0, pay, "Alice"}, {1, del, "Bob"}} {
+	}{{0, pay2, "Alice"}, {1, del2, "Bob"}} {
 		if locked, spent := r.nullifierState(c.vault, c.rc); locked || !spent {
 			t.Fatalf("%s's note after settlement: locked=%v spent=%v, want spent and unlocked", c.who, locked, spent)
 		}
@@ -441,17 +468,15 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	t.Logf("   settled in block %d (gas %d): both notes spent, both new notes inserted", rcpt.BlockNumber, rcpt.GasUsed)
 
 	// ── 4. Settled swapId is closed ───────────────────────────────────────────
-	t.Log("4. A new leg under the settled swapId #2")
-	if e, _ := r.send("mallory", "submitReceipt", id2, pay, true, vPay, big.NewInt(r.now()+120), ctI, ctII); e != "SwapClosed" {
+	t.Log("4. A leg under the settled swapId")
+	if e, _ := r.send("mallory", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+120), ctI, ctII); e != "SwapClosed" {
 		t.Fatalf("leg on settled swapId: got %q, want SwapClosed", e)
 	}
 	t.Log("   rejected with SwapClosed")
+}
 
-	// ── 5. Expiry cap ─────────────────────────────────────────────────────────
-	t.Log("5. A leg whose expiry is 31 days away")
-	id3 := crypto.Keccak256Hash([]byte("swaprelayer-e2e-3"), commitB.Bytes())
-	if e, _ := r.send("mallory", "submitReceipt", id3, pay, true, vPay, big.NewInt(r.now()+31*24*3600), ctI, ctII); e != "ExpiryTooFar" {
-		t.Fatalf("far expiry: got %q, want ExpiryTooFar", e)
-	}
-	t.Log("   rejected with ExpiryTooFar")
+// swapIdOf mirrors SwapRelayer.swapIdOf: keccak256(abi.encode(deliveryMessage,
+// paymentMessage)), the two legs' statement messages.
+func swapIdOf(pay, del onchainProofReceipt) common.Hash {
+	return crypto.Keccak256Hash(common.BigToHash(del.Statement[0]).Bytes(), common.BigToHash(pay.Statement[0]).Bytes())
 }
