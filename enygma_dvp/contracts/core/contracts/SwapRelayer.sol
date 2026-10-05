@@ -23,11 +23,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 ///   If the counterparty never submits, the initiator can call cancelSwap()
 ///   after expiry to unlock their nullifiers and recover their note.
 ///
-/// A settled or cancelled swapId is closed for good: any later leg under it
-/// reverts with SwapClosed. Without this, deleting the record let a late leg
-/// reopen the swapId as a new swap that could never settle, locking that
-/// leg's note until its own expiry.
-///
 /// swapId derivation (off-chain, both parties compute independently):
 ///   swapId = keccak256(abi.encode(commitmentB, C'))
 ///   where commitmentB and C' are the pre-computed cross-commitments from Step 3.
@@ -45,16 +40,9 @@ contract SwapRelayer is ReentrancyGuard {
         uint256 expiry;
     }
 
-    /// Same bound as EnygmaDvp.MAX_SWAP_DURATION: caps how long a submitted
-    /// leg can keep its note locked.
-    uint256 public constant MAX_SWAP_DURATION = 30 days;
-
     IEnygmaDvp public immutable dvp;
 
     mapping(bytes32 => PendingSwap) public swaps;
-
-    /// swapIds that have been settled or cancelled.
-    mapping(bytes32 => bool) public closed;
 
     event SwapReceiptSubmitted(
         bytes32 indexed swapId,
@@ -71,8 +59,6 @@ contract SwapRelayer is ReentrancyGuard {
     error NothingToCancel();
     error NotYourSwap();
     error BothSidesAlreadyIn();
-    error SwapClosed();
-    error ExpiryTooFar();
 
     constructor(address dvpAddress) {
         dvp = IEnygmaDvp(dvpAddress);
@@ -95,8 +81,6 @@ contract SwapRelayer is ReentrancyGuard {
         bytes   calldata                 ctI,
         bytes   calldata                 ctII
     ) external nonReentrant {
-        if (closed[swapId]) revert SwapClosed();
-
         PendingSwap storage s = swaps[swapId];
 
         if (s.expiry != 0 && block.timestamp >= s.expiry) revert SwapExpired();
@@ -121,7 +105,6 @@ contract SwapRelayer is ReentrancyGuard {
             // immediately cancel their own leg via cancelSwap (expiry=0 passes the
             // "block.timestamp < s.expiry" check as false for any uint256 timestamp).
             require(expiry > block.timestamp, "SwapRelayer: expiry must be in the future");
-            if (expiry > block.timestamp + MAX_SWAP_DURATION) revert ExpiryTooFar();
             s.expiry = expiry;
         }
 
@@ -154,7 +137,6 @@ contract SwapRelayer is ReentrancyGuard {
                 s.deliveryVaultId
             );
             delete swaps[swapId];
-            closed[swapId] = true;
             emit SwapSettled(swapId);
         }
     }
@@ -178,7 +160,6 @@ contract SwapRelayer is ReentrancyGuard {
         }
 
         delete swaps[swapId];
-        closed[swapId] = true;
         emit SwapCancelled(swapId);
     }
 }
