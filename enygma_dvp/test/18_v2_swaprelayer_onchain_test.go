@@ -267,6 +267,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		bobSpend.PublicKey, bobView.EncapsKey,
 		one, nftTokenId,
 		big.NewInt(0), aliceProof, depth,
+		vaultInt(nftVaultAddr), // Alice is paid from the NFT vault
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
@@ -299,6 +300,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		core.SaltBToField(saltB), decAmount, decTokenId,
 		initiator.CommitA,
 		big.NewInt(0), bobProof, depth,
+		vaultInt(erc20VaultAddr), // Bob is paid from the ERC-20 vault
 	)
 	if err != nil {
 		t.Fatalf("DvPDestinationProof: %v", err)
