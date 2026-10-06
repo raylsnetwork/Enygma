@@ -59,6 +59,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
 		witness.StNullifier = frontend.Variable(req.StNullifier)
 		witness.StCommitA = frontend.Variable(req.StCommitA)
+		witness.StCounterVault = frontend.Variable(req.StCounterVault)
 
 		witness.WtSpendKeyIn = frontend.Variable(req.WtSpendKeyIn)
 		witness.WtValueIn = frontend.Variable(req.WtValueIn)
@@ -124,13 +125,14 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// --- public signal: [msg, treeNum, root, nf_B, commitA] ---
+		// --- public signal: [msg, treeNum, root, nf_B, commitA, counterVault] ---
 		publicSignal := []*big.Int{
 			utils.ParseBigInt(req.StMessage),
 			utils.ParseBigInt(req.StTreeNumber),
 			utils.ParseBigInt(req.StMerkleRoot),
 			utils.ParseBigInt(req.StNullifier),
 			utils.ParseBigInt(req.StCommitA),
+			utils.ParseBigInt(req.StCounterVault),
 		}
 
 		c.JSON(http.StatusOK, DvPDestinationOutput{

@@ -222,7 +222,7 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 // DvPInitiatorResult holds the output of DvPInitiatorProof.
 type DvPInitiatorResult struct {
 	Proof           []string   // 8-element Groth16 proof
-	Statement       []*big.Int // [commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA] (7 elements)
+	Statement       []*big.Int // [commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault] (8 elements)
 	NumberOfInputs  int        // always 1
 	NumberOfOutputs int        // reported as 1 on-chain (only commitB inserted; commitA goes to ERC721 vault via Bob's proof)
 	CipherText      []byte     // ML-KEM capsule for Bob (1088 bytes)
@@ -243,6 +243,11 @@ type DvPInitiatorResult struct {
 // On-chain receipt should use NumberOfOutputs=1 so only commitB (statement[4])
 // is inserted into the ERC20 vault. commitA goes into the ERC721 vault via
 // Bob's DvPDestinationProof; revertCommitA is only inserted on swap timeout.
+//
+// counterVault is the address (as an integer) of the vault Alice expects to be
+// paid from, i.e. the counterparty's vault. It is the statement's last element
+// and EnygmaDvp rejects a settlement from any other vault (CounterVaultMismatch).
+// The same applies to DvPInitiatorProofFromSalts and DvPDestinationProof.
 func (c *GnarkClient) DvPInitiatorProof(
 	aliceKey KeyPair,
 	aliceSaltIn *big.Int,
@@ -255,7 +260,11 @@ func (c *GnarkClient) DvPInitiatorProof(
 	stTreeNumber *big.Int,
 	merkleProof *MerkleProof,
 	merkleDepth int,
+	counterVault *big.Int,
 ) (*DvPInitiatorResult, error) {
+	if err := checkCounterVault(counterVault); err != nil {
+		return nil, err
+	}
 	ss, cipherText, err := Encapsulate(bobViewEncapKey)
 	if err != nil {
 		return nil, fmt.Errorf("Encapsulate: %w", err)
@@ -322,6 +331,7 @@ func (c *GnarkClient) DvPInitiatorProof(
 		"stCommitB":       commitB.String(),
 		"stCommitA":       commitA.String(),
 		"stRevertCommitA": revertCommitA.String(),
+		"stCounterVault":  counterVault.String(),
 		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
 		"wtValueIn":       valueIn.String(),
 		"wtSaltIn":        aliceSaltIn.String(),
@@ -353,10 +363,10 @@ func (c *GnarkClient) DvPInitiatorProof(
 		proofStrs[i] = n.String()
 	}
 
-	// Full 7-element statement for VK verification (DvP Initiator VK has IC[8]).
+	// Full 8-element statement for VK verification (DvP Initiator VK has IC[9]).
 	// On-chain NumberOfOutputs is reported as 1 so only commitB (statement[4])
 	// is inserted into the ERC20 vault during settlement.
-	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA}
+	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA, counterVault}
 
 	return &DvPInitiatorResult{
 		Proof:           proofStrs,
@@ -394,7 +404,11 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 	stTreeNumber *big.Int,
 	merkleProof *MerkleProof,
 	merkleDepth int,
+	counterVault *big.Int,
 ) (*DvPInitiatorResult, error) {
+	if err := checkCounterVault(counterVault); err != nil {
+		return nil, err
+	}
 	pathIndex := merkleProof.Indices
 	// HIGH-1 fix: incorporate tree number into the nullifier.
 	nf, err := GetNullifierWithTree(aliceKey.PrivateKey, stTreeNumber, pathIndex, merkleDepth)
@@ -434,6 +448,7 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 		"stCommitB":       commitB.String(),
 		"stCommitA":       commitA.String(),
 		"stRevertCommitA": revertCommitA.String(),
+		"stCounterVault":  counterVault.String(),
 		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
 		"wtValueIn":       valueIn.String(),
 		"wtSaltIn":        aliceSaltIn.String(),
@@ -465,7 +480,7 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 		proofStrs[i] = n.String()
 	}
 
-	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA}
+	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA, counterVault}
 	return &DvPInitiatorResult{
 		Proof:           proofStrs,
 		Statement:       statement,
@@ -481,7 +496,7 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 // DvPDestinationResult holds the output of DvPDestinationProof.
 type DvPDestinationResult struct {
 	Proof           []string   // 8-element Groth16 proof
-	Statement       []*big.Int // [commitB, treeNum, root, nf_B, commitA]
+	Statement       []*big.Int // [commitB, treeNum, root, nf_B, commitA, counterVault]
 	NumberOfInputs  int        // always 1
 	NumberOfOutputs int        // always 1
 }
@@ -507,7 +522,11 @@ func (c *GnarkClient) DvPDestinationProof(
 	stTreeNumber *big.Int,
 	merkleProof *MerkleProof,
 	merkleDepth int,
+	counterVault *big.Int,
 ) (*DvPDestinationResult, error) {
+	if err := checkCounterVault(counterVault); err != nil {
+		return nil, err
+	}
 	pathIndex := merkleProof.Indices
 	// HIGH-1 fix: incorporate tree number into the nullifier.
 	nf, err := GetNullifierWithTree(bobKey.PrivateKey, stTreeNumber, pathIndex, merkleDepth)
@@ -530,6 +549,7 @@ func (c *GnarkClient) DvPDestinationProof(
 		"stMerkleRoot":   merkleProof.Root.String(),
 		"stNullifier":    nf.String(),
 		"stCommitA":      commitA.String(),
+		"stCounterVault": counterVault.String(),
 		"wtSpendKeyIn":   bobKey.PrivateKey.String(),
 		"wtValueIn":      valueIn.String(),
 		"wtSaltIn":       bobSaltIn.String(),
@@ -560,11 +580,20 @@ func (c *GnarkClient) DvPDestinationProof(
 		proofStrs[i] = n.String()
 	}
 
-	statement := []*big.Int{commitB, stTreeNumber, merkleProof.Root, nf, commitA}
+	statement := []*big.Int{commitB, stTreeNumber, merkleProof.Root, nf, commitA, counterVault}
 	return &DvPDestinationResult{
 		Proof:           proofStrs,
 		Statement:       statement,
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 	}, nil
+}
+
+// checkCounterVault rejects a missing counterparty vault before a proof request
+// (the circuits require it to be non-zero).
+func checkCounterVault(counterVault *big.Int) error {
+	if counterVault == nil || counterVault.Sign() <= 0 {
+		return fmt.Errorf("counterVault must be the counterparty vault's address (non-zero)")
+	}
+	return nil
 }
