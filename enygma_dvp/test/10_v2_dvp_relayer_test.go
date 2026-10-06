@@ -365,6 +365,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 		bobSpend.PublicKey, bobView.EncapsKey,
 		nftAmount, nftTokenId,
 		big.NewInt(0), aliceProof, merkleDepth,
+		vaultInt(nftVaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
@@ -428,6 +429,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 		decTokenId, // Alice's ERC20 tokenId Bob receives
 		initiator.CommitA,
 		big.NewInt(0), bobProof, merkleDepth,
+		vaultInt(erc20VaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("DvPDestinationProof: %v", err)
@@ -739,6 +741,7 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 		big.NewInt(0),
 		aliceProof,
 		merkleDepth,
+		vaultInt(erc20VaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Alice): %v", err)
@@ -764,6 +767,7 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 		big.NewInt(0),
 		bobProof,
 		merkleDepth,
+		vaultInt(erc20VaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Bob): %v", err)

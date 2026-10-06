@@ -36,9 +36,14 @@ type DvPInitiatorCircuitConfig struct {
 // Bob can decapsulate CTXT, re-derive saltB/saltA/encKey and independently
 // verify both COMMIT_B and COMMIT_A before creating his response proof.
 //
-// Public statement (7 elements):
+// Public statement (8 elements):
 //
-//	[msg, treeNum, root, nf_A, commitB, commitA, revertCommitA]
+//	[msg, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault]
+//
+// counterVault is the address of the vault Alice expects to be paid from: the
+// one COMMIT_A is inserted into at settlement. The commitments do not name a
+// vault, so without it a counterparty could pay from another vault in the same
+// asset group. EnygmaDvp checks it against the actual counterparty vault.
 type DvPInitiatorCircuit struct {
 	Config DvPInitiatorCircuitConfig
 
@@ -50,6 +55,7 @@ type DvPInitiatorCircuit struct {
 	StCommitB       frontend.Variable `gnark:",public"` // Bob receives Alice's asset
 	StCommitA       frontend.Variable `gnark:",public"` // Alice receives Bob's asset
 	StRevertCommitA frontend.Variable `gnark:",public"` // Alice's fallback if swap times out
+	StCounterVault  frontend.Variable `gnark:",public"` // vault Alice must be paid from (COMMIT_A's vault)
 
 	// --- private witnesses: Alice's input note ---
 	WtSpendKeyIn   frontend.Variable   // Alice's spend secret key
@@ -139,6 +145,11 @@ func (circuit *DvPInitiatorCircuit) Define(api frontend.API) error {
 		circuit.WtTokenIdIn,
 	)
 	api.AssertIsEqual(revertCommitA, circuit.StRevertCommitA)
+
+	// 8. The expected counterparty vault must be set. This is also what binds
+	// StCounterVault to the proof: a public input that appears in no constraint
+	// is unconstrained by Groth16 verification and could be changed freely.
+	api.AssertIsDifferent(circuit.StCounterVault, 0)
 
 	return nil
 }

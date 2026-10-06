@@ -5,13 +5,15 @@ import "math/big"
 // DvPDestinationRequest is the JSON body accepted by /proof/dvpDestination.
 //
 // Fixed config: Merkle depth 8.
-// Public statement returned: [msg, treeNum, root, nf_B, commitA]
+// Public statement returned: [msg, treeNum, root, nf_B, commitA, counterVault]
 type DvPDestinationRequest struct {
 	StMessage    string `json:"stMessage"    binding:"required"`
 	StTreeNumber string `json:"stTreeNumber" binding:"required"`
 	StMerkleRoot string `json:"stMerkleRoot" binding:"required"`
 	StNullifier  string `json:"stNullifier"  binding:"required"`
 	StCommitA    string `json:"stCommitA"    binding:"required"`
+	// Address (decimal) of the vault the prover expects to be paid from.
+	StCounterVault string `json:"stCounterVault" binding:"required"`
 
 	WtSpendKeyIn   string    `json:"wtSpendKeyIn"   binding:"required"`
 	WtValueIn      string    `json:"wtValueIn"      binding:"required"`

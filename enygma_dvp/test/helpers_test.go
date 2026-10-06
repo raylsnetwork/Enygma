@@ -183,3 +183,9 @@ func loadVaultMerkleTree(t *testing.T, client *ethclient.Client, vaultAddr commo
 	t.Logf("loadVaultMerkleTree: loaded %d commitment leaves from vault %s", len(logs), vaultAddr.Hex())
 	return mt
 }
+
+// vaultInt is a vault address as the integer a DvP proof's counterVault
+// public input carries.
+func vaultInt(vault common.Address) *big.Int {
+	return new(big.Int).SetBytes(vault.Bytes())
+}

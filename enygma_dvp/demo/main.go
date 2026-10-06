@@ -830,6 +830,7 @@ func stepDvpInitiator(fs *FlowState) {
 		fs.nftAmountBig, fs.nftTokenIdBig,
 		big.NewInt(0),
 		aliceMerkleProof, merkleDepth,
+		new(big.Int).SetBytes(fs.erc721VaultAddr.Bytes()),
 	)
 	if err != nil {
 		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("DvPInitiatorProof: %w", err).Error())
@@ -927,6 +928,7 @@ func stepDvpDestination(fs *FlowState) {
 		fs.initiatorResult.CommitA,
 		big.NewInt(0),
 		fs.bobMerkleProof, merkleDepth,
+		new(big.Int).SetBytes(fs.erc20VaultAddr.Bytes()),
 	)
 	if err != nil {
 		emitStep(b, "dvp_destination", "error", "DvP Destination Proof", fmt.Errorf("DvPDestinationProof: %w", err).Error())

@@ -232,6 +232,7 @@ func TestV2DvP(t *testing.T) {
 		big.NewInt(0),
 		aliceProof,
 		merkleDepth,
+		vaultInt(nftVaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
@@ -316,6 +317,7 @@ func TestV2DvP(t *testing.T) {
 		big.NewInt(0),
 		bobProof,
 		merkleDepth,
+		vaultInt(erc20VaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("DvPDestinationProof: %v", err)

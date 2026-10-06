@@ -116,9 +116,14 @@ func waitOK(t *testing.T, client *ethclient.Client, what string, tx *types.Trans
 // exchangeLegs deposits two ERC-20 notes and builds cross-referencing
 // DvPInitiator receipts for an ERC-20-for-ERC-20 exchange (the same
 // construction as TestDvP_ExchangeViaRelayer). Alice's swap key is her
-// commitB, which is also Bob's statement message.
-func exchangeLegs(t *testing.T, tc *dvpTestContext) (alice, bob onchainProofReceipt) {
+// commitB, which is also Bob's statement message. Each proof names the vault
+// its prover expects to be paid from: the ERC-20 vault unless overridden.
+func exchangeLegs(t *testing.T, tc *dvpTestContext, expects ...common.Address) (alice, bob onchainProofReceipt) {
 	t.Helper()
+	aliceExpects, bobExpects := tc.erc20VaultAddr, tc.erc20VaultAddr
+	if len(expects) == 2 {
+		aliceExpects, bobExpects = expects[0], expects[1]
+	}
 	tokenId := big.NewInt(0)
 	aliceAmt, bobAmt := big.NewInt(20), big.NewInt(15)
 	type note struct {
@@ -186,14 +191,14 @@ func exchangeLegs(t *testing.T, tc *dvpTestContext) (alice, bob onchainProofRece
 	ar, err := tc.gnarkClient.DvPInitiatorProofFromSalts(
 		core.KeyPair{PrivateKey: a.spend.PrivateKey, PublicKey: a.spend.PublicKey},
 		a.salt, aliceAmt, tokenId, b.spend.PublicKey, saltForBob, bobAmt, tokenId, saltForAlice,
-		big.NewInt(0), aProof, tc.merkleDepth)
+		big.NewInt(0), aProof, tc.merkleDepth, vaultInt(aliceExpects))
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Alice): %v", err)
 	}
 	br, err := tc.gnarkClient.DvPInitiatorProofFromSalts(
 		core.KeyPair{PrivateKey: b.spend.PrivateKey, PublicKey: b.spend.PublicKey},
 		b.salt, bobAmt, tokenId, a.spend.PublicKey, saltForAlice, aliceAmt, tokenId, saltForBob,
-		big.NewInt(0), bProof, tc.merkleDepth)
+		big.NewInt(0), bProof, tc.merkleDepth, vaultInt(bobExpects))
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Bob): %v", err)
 	}

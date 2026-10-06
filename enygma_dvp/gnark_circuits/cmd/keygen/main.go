@@ -1,6 +1,9 @@
 package main
 
 import (
+	"flag"
+	"strings"
+
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 
@@ -33,7 +36,13 @@ import (
 //   - ERC1155 NonFungible with Auditor
 //   - Auction Init, Auction Bid, Auction Private Opening, Auction Not Winning
 //   - Auction Init with Auditor, Auction Bid with Auditor
-func GenerationVkPk() {
+//
+// GenerationVkPk regenerates every circuit named in only, or all of them if only
+// is empty. Each run draws fresh random keys, so regenerate only the circuits
+// that changed: regenerating PrivateMint also requires re-patching
+// PrivateMintVerifier.sol (cmd/patch_verifier) and the retail copies.
+func GenerationVkPk(only map[string]bool) {
+	want := func(name string) bool { return len(only) == 0 || only[name] }
 
 	solver.RegisterHint(primitives.ModHint)
 
@@ -183,9 +192,15 @@ func GenerationVkPk() {
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 
-	script.SetupPrivateMint(private_mint_config, "PrivateMint")
-	script.SetupDvPInitiator(dvp_initiator_config, "DvPInitiator")
-	script.SetupDvPDestination(dvp_destination_config, "DvPDestination")
+	if want("PrivateMint") {
+		script.SetupPrivateMint(private_mint_config, "PrivateMint")
+	}
+	if want("DvPInitiator") {
+		script.SetupDvPInitiator(dvp_initiator_config, "DvPInitiator")
+	}
+	if want("DvPDestination") {
+		script.SetupDvPDestination(dvp_destination_config, "DvPDestination")
+	}
 
 	// Payment-family circuits — dedicated Payment deployment, ported from
 	// enygma_retail_payments. Covered by test/12_v2_payment_usdr_fee_test.go.
@@ -195,7 +210,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPayment(payment1in_config, "Payment")
+	if want("Payment") {
+		script.SetupPayment(payment1in_config, "Payment")
+	}
 
 	// 2-input/2-output circuit: separate VK slot. 1-in and 2-in circuits have
 	// different R1CS and must use distinct VKs.
@@ -205,7 +222,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPayment(payment2in_config, "Payment2in")
+	if want("Payment2in") {
+		script.SetupPayment(payment2in_config, "Payment2in")
+	}
 
 	// 1-input/2-output fee circuit: fee absorbed into sender's input.
 	payment_fee_config := templates.PaymentCircuitConfig{
@@ -214,7 +233,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPaymentFee(payment_fee_config, "PaymentFee")
+	if want("PaymentFee") {
+		script.SetupPaymentFee(payment_fee_config, "PaymentFee")
+	}
 
 	// 1-input/3-output relayer-fee circuit: fee paid out as its own spendable
 	// note, same token as the payment.
@@ -224,7 +245,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPaymentRelayerFeePublic(payment_relayer_fee_public_config, "PaymentRelayerFeePublic")
+	if want("PaymentRelayerFeePublic") {
+		script.SetupPaymentRelayerFeePublic(payment_relayer_fee_public_config, "PaymentRelayerFeePublic")
+	}
 
 	// 1-input/2-output USDr circuit: a second, independent relayer-fee asset.
 	// StTokenId is public here (private everywhere else), giving this
@@ -236,9 +259,19 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupUsdrFee(usdr_fee_config, "UsdrFee")
+	if want("UsdrFee") {
+		script.SetupUsdrFee(usdr_fee_config, "UsdrFee")
+	}
 }
 
 func main() {
-	GenerationVkPk()
+	onlyFlag := flag.String("only", "", "comma-separated circuits to regenerate (default: all), e.g. DvPInitiator,DvPDestination")
+	flag.Parse()
+	only := map[string]bool{}
+	for _, name := range strings.Split(*onlyFlag, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			only[name] = true
+		}
+	}
+	GenerationVkPk(only)
 }
