@@ -4,6 +4,7 @@
 pragma solidity ^0.8.0;
 
 import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
+import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// @title SwapRelayer
@@ -20,17 +21,22 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 ///        → both sides present → EnygmaDvp.swap() called atomically ✓
 ///
 /// Cancellation:
-///   If the counterparty never submits, the initiator can call cancelSwap()
-///   after expiry to unlock their nullifiers and recover their note.
+///   If the counterparty never submits, anyone can call cancelSwap() after
+///   expiry to unlock the submitted leg's nullifiers, returning the note to its
+///   owner (nothing else moves, so the caller does not matter).
 ///
 /// A settled or cancelled swapId is closed for good: any later leg under it
 /// reverts with SwapClosed. Without this, deleting the record let a late leg
 /// reopen the swapId as a new swap that could never settle, locking that
 /// leg's note until its own expiry.
 ///
-/// swapId derivation (off-chain, both parties compute independently):
+/// swapId derivation (both parties compute it independently; see swapIdOf):
 ///   swapId = keccak256(abi.encode(commitmentB, C'))
-///   where commitmentB and C' are the pre-computed cross-commitments from Step 3.
+///   where commitmentB and C' are the pre-computed cross-commitments from Step 3
+///   (the delivery leg's and the payment leg's statement messages). Each leg
+///   carries both, so submitReceipt checks that the swapId matches the leg and
+///   that the leg's proof verifies before locking anything: a leg can only
+///   occupy the slot of its own swap.
 contract SwapRelayer is ReentrancyGuard {
 
     struct PendingSwap {
@@ -69,10 +75,10 @@ contract SwapRelayer is ReentrancyGuard {
     error AlreadySubmitted();
     error SwapNotExpiredYet();
     error NothingToCancel();
-    error NotYourSwap();
     error BothSidesAlreadyIn();
     error SwapClosed();
     error ExpiryTooFar();
+    error SwapIdMismatch();
 
     constructor(address dvpAddress) {
         dvp = IEnygmaDvp(dvpAddress);
@@ -96,6 +102,11 @@ contract SwapRelayer is ReentrancyGuard {
         bytes   calldata                 ctII
     ) external nonReentrant {
         if (closed[swapId]) revert SwapClosed();
+        if (swapId != swapIdOf(receipt, isPayment)) revert SwapIdMismatch();
+        // Verify the leg (proof, Merkle root, unspent nullifiers) before it can
+        // lock anything. Without this a junk receipt could occupy a swap's slot
+        // and lock arbitrary nullifiers until its expiry.
+        IAbstractCoinVault(dvp.vaultById(vaultId)).checkReceiptConditions(receipt);
 
         PendingSwap storage s = swaps[swapId];
 
@@ -159,9 +170,27 @@ contract SwapRelayer is ReentrancyGuard {
         }
     }
 
-    /// @notice Cancel a pending swap after expiry.
-    ///         Unlocks the caller's nullifiers so their note can be used elsewhere.
-    ///         Only callable by the party who submitted their leg, after expiry.
+    /// @notice swapId of the swap a leg belongs to:
+    ///         keccak256(abi.encode(deliveryMessage, paymentMessage)).
+    ///         A leg's statement message is its own side's; the counterparty's
+    ///         message is its first output commitment.
+    function swapIdOf(
+        IEnygmaDvp.ProofReceipt calldata receipt,
+        bool isPayment
+    ) public pure returns (bytes32) {
+        uint256 own = receipt.statement[0];
+        uint256 other = receipt.statement[1 + 3 * receipt.numberOfInputs];
+        return isPayment
+            ? keccak256(abi.encode(other, own))
+            : keccak256(abi.encode(own, other));
+    }
+
+    /// @notice Cancel a pending swap after expiry, unlocking the submitted
+    ///         leg's nullifiers so its note can be used elsewhere.
+    ///         Callable by anyone: the outcome is fixed (the note goes back to
+    ///         its owner). Restricting it to the submitter let whoever submitted
+    ///         a leg first (e.g. by replaying a published receipt) be the only
+    ///         one able to release it.
     function cancelSwap(bytes32 swapId) external nonReentrant {
         PendingSwap storage s = swaps[swapId];
 
@@ -169,12 +198,10 @@ contract SwapRelayer is ReentrancyGuard {
         if (!s.paymentSubmitted && !s.deliverySubmitted) revert NothingToCancel();
         if (s.paymentSubmitted && s.deliverySubmitted) revert BothSidesAlreadyIn();
 
-        if (s.paymentSubmitted && msg.sender == s.paymentParty) {
+        if (s.paymentSubmitted) {
             dvp.unlockReceiptNullifiers(s.paymentReceipt, s.paymentVaultId);
-        } else if (s.deliverySubmitted && msg.sender == s.deliveryParty) {
-            dvp.unlockReceiptNullifiers(s.deliveryReceipt, s.deliveryVaultId);
         } else {
-            revert NotYourSwap();
+            dvp.unlockReceiptNullifiers(s.deliveryReceipt, s.deliveryVaultId);
         }
 
         delete swaps[swapId];
