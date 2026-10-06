@@ -140,6 +140,7 @@ interface IEnygmaDvp {
     error SwapDeadlineExpired();
     error SwapDeadlineMustBeInFuture();
     error SwapNotFound();
+    error SwapClosed();
     error SwapNotExpiredYet();
     error SwapDeadlineTooFar();
 

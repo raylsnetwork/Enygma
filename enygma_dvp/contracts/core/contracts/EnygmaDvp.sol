@@ -100,6 +100,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // uniqueId of the receipt
     mapping(uint256 => TransactionMetadata) private _pendingTransactions;
 
+    // Swaps (keyed like _pendingTransactions, by commitB) that have settled or
+    // been reclaimed via claimSwapTimeout. Deleting the pending record alone let
+    // a late counterparty leg fall through to the first-leg branch and open a
+    // new swap that could never settle, locking that leg's note until its own
+    // deadline.
+    mapping(uint256 => bool) private _closedSwaps;
+
     // auditor's mapping AuditorId -> AuditorData
     mapping(uint256 => AuditorData) private _registeredAuditors;
 
@@ -684,6 +691,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
             IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(receipt2);
             delete _pendingTransactions[receiptMessage];
+            _closedSwaps[receiptMessage] = true;
 
             // Call _settleOnGroupPair directly (bypassing onlyRelayer on the public wrappers)
             // since submitPartialSettlement is itself a permissionless entry point.
@@ -698,6 +706,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 _settleOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
             }
         } else {
+            // A counterparty leg carries the swap key (commitB) as its message.
+            // If that swap already settled or timed out, reject the leg rather
+            // than opening a new swap with it.
+            if (_closedSwaps[receiptMessage]) {
+                revert SwapClosed();
+            }
+            // Only an initiator-shaped receipt (with commitA and revertCommitA
+            // after commitB) can open a swap. A destination leg with no pending
+            // swap to complete would otherwise fail on an out-of-bounds read.
+            if (receipt.statement.length < commitmentsIndex + 3) {
+                revert SwapNotFound();
+            }
             if (deadline <= block.timestamp) {
                 revert SwapDeadlineMustBeInFuture();
             }
@@ -784,6 +804,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         IAbstractCoinVault(_coinVaults[vaultId]).registerCoins(revertCommits);
 
         delete _pendingTransactions[pendingReceiptId];
+        _closedSwaps[pendingReceiptId] = true;
 
         emit SwapTimedOut(pendingReceiptId);
         return true;

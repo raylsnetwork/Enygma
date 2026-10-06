@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds all relayer configuration loaded from environment variables.
@@ -35,6 +36,11 @@ type Config struct {
 	// Optional: stays nil if unset, in which case the fee-relay routes always
 	// return 503.
 	RelayerFeeSpendPrivateKey *big.Int
+	// TxTimeout — how long a relay request waits for its transaction to be
+	// mined before answering 202 (pending) with the tx hash. Defaults to 2m.
+	// Without a bound, one stuck transaction held the submission lock forever
+	// and every later request queued behind it.
+	TxTimeout time.Duration
 	// MinFee — minimum acceptable relayer fee (StFee), in token base units.
 	// The fee-relay routes reject proofs whose fee is below this floor.
 	// Defaults to 0 (no floor).
@@ -74,6 +80,12 @@ func Load() (*Config, error) {
 		}
 		cfg.RelayerFeeSpendPrivateKey = feeKey
 	}
+
+	txTimeout, err := time.ParseDuration(getenv("RELAYER_TX_TIMEOUT", "2m"))
+	if err != nil || txTimeout <= 0 {
+		return nil, fmt.Errorf("invalid RELAYER_TX_TIMEOUT: must be a positive duration such as 90s or 2m")
+	}
+	cfg.TxTimeout = txTimeout
 
 	minFeeStr := getenv("RELAYER_MIN_FEE", "0")
 	minFee, ok := new(big.Int).SetString(minFeeStr, 10)
