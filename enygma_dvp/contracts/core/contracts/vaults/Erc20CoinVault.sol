@@ -440,7 +440,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 receipt.statement
             )) revert InvalidProof();
         } else if (receipt.numberOfInputs == 1) {
-            // DvP Initiator: 1-input/3-output circuit with 7-element statement.
+            // DvP Initiator: 1-input/3-output circuit with 8-element statement
+            // (…, revertCommitA, counterVault).
             // numberOfOutputs is reported as 1 on-chain so only statement[4]=commitB
             // is inserted into the vault; the full 7-element statement is used for VK verification.
             if (!IVerifier(_verifierContractAddress).verifyProof(
