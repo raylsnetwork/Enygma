@@ -347,6 +347,7 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 		big.NewInt(0), // stTreeNumber
 		d.aliceMerkleProof,
 		tc.merkleDepth,
+		vaultInt(tc.erc721VaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("Alice DvPInitiatorProof: %v", err)
@@ -429,6 +430,7 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 		big.NewInt(0),     // stTreeNumber
 		d.bobMerkleProof,
 		tc.merkleDepth,
+		vaultInt(tc.erc20VaultAddr),
 	)
 	if err != nil {
 		t.Fatalf("Bob DvPDestinationProof: %v", err)

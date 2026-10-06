@@ -208,7 +208,8 @@ contract Erc721CoinVault is AbstractCoinVault {
     function checkReceiptConditions(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public view override returns (bool) {
-        // Statement layout (ERC721 Ownership and DvP Destination share the same 5-element structure):
+        // Statement layout (ERC721 Ownership: 5 elements; DvP Destination appends
+        // counterVault as a 6th, checked by EnygmaDvp at settlement):
         // 0 message;
         // 1 treeNumber;
         // 2 merkleRoot;

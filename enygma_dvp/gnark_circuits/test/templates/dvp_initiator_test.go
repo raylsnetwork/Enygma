@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/test"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
@@ -30,6 +32,7 @@ type dvpInitiatorTestWitness struct {
 	spendPkBob, saltB, commitB           *big.Int
 	saltA, valueBob, tokenIdBob, commitA *big.Int
 	revertSalt, revertCommitA            *big.Int
+	counterVault                         *big.Int
 }
 
 func buildValidDvpInitiatorWitness(t *testing.T) *dvpInitiatorTestWitness {
@@ -93,6 +96,9 @@ func buildValidDvpInitiatorWitness(t *testing.T) *dvpInitiatorTestWitness {
 		t.Fatal(err)
 	}
 
+	// Any non-zero value; on-chain it is the counterparty vault's address.
+	w.counterVault = new(big.Int).SetBytes([]byte{0xa3, 0x4b, 0x0b, 0xb5, 0xf2, 0xd8, 0xc1, 0x67})
+
 	return w
 }
 
@@ -105,6 +111,7 @@ func (w *dvpInitiatorTestWitness) circuit() *templates.DvPInitiatorCircuit {
 		StCommitB:       w.commitB,
 		StCommitA:       w.commitA,
 		StRevertCommitA: w.revertCommitA,
+		StCounterVault:  w.counterVault,
 
 		WtSpendKeyIn:   w.skAlice,
 		WtValueIn:      w.valueIn,
@@ -157,4 +164,61 @@ func TestDvpInitiatorCircuit_TamperedTreeNumber_Fails(t *testing.T) {
 	wc.Config = dvpInitiatorTestConfig()
 	wc.StTreeNumber = big.NewInt(1) // nullifier still bound to treeNumber=0
 	assert.ProverFailed(emptyDvpInitiatorCircuit(), wc, test.WithCurves(ecc.BN254))
+}
+
+// TestDvpInitiatorCircuit_ZeroCounterVault_Fails: the expected counterparty
+// vault must be set.
+func TestDvpInitiatorCircuit_ZeroCounterVault_Fails(t *testing.T) {
+	assert := test.NewAssert(t)
+	w := buildValidDvpInitiatorWitness(t)
+	wc := w.circuit()
+	wc.Config = dvpInitiatorTestConfig()
+	wc.StCounterVault = big.NewInt(0)
+	assert.ProverFailed(emptyDvpInitiatorCircuit(), wc, test.WithCurves(ecc.BN254))
+}
+
+// TestDvpInitiatorCircuit_CounterVaultIsBoundByTheProof: a Groth16 proof made
+// for one counterparty vault must not verify for another. A public input that
+// appeared in no constraint would verify for any value; this is what the
+// AssertIsDifferent constraint in Define guarantees against.
+func TestDvpInitiatorCircuit_CounterVaultIsBoundByTheProof(t *testing.T) {
+	w := buildValidDvpInitiatorWitness(t)
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, emptyDvpInitiatorCircuit())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pk, vk, err := groth16.Setup(ccs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc := w.circuit()
+	wc.Config = dvpInitiatorTestConfig()
+	full, err := frontend.NewWitness(wc, ecc.BN254.ScalarField())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := groth16.Prove(ccs, pk, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := func(counterVault *big.Int) *templates.DvPInitiatorCircuit {
+		c := w.circuit()
+		c.Config = dvpInitiatorTestConfig()
+		c.StCounterVault = counterVault
+		return c
+	}
+	honest, err := frontend.NewWitness(public(w.counterVault), ecc.BN254.ScalarField(), frontend.PublicOnly())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := groth16.Verify(proof, vk, honest); err != nil {
+		t.Fatalf("proof does not verify with its own counterparty vault: %v", err)
+	}
+	other, err := frontend.NewWitness(public(new(big.Int).Add(w.counterVault, big.NewInt(1))), ecc.BN254.ScalarField(), frontend.PublicOnly())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := groth16.Verify(proof, vk, other); err == nil {
+		t.Fatal("VULNERABLE: the proof verified for a different counterparty vault")
+	}
 }

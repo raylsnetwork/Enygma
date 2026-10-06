@@ -26,6 +26,9 @@ import (
 var BN254Order, _ = new(big.Int).SetString(
 	"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
+// benchCounterVault stands in for the counterparty vault address (any non-zero value).
+var benchCounterVault = big.NewInt(0xa34b0bb5)
+
 func poseidon2(a, b *big.Int) *big.Int {
 	h, _ := poseidon.Hash([]*big.Int{a, b})
 	return h.Mod(h, BN254Order)
@@ -169,6 +172,7 @@ func main() {
 			StCommitB:       frontend.Variable(commitB),
 			StCommitA:       frontend.Variable(commitA),
 			StRevertCommitA: frontend.Variable(revertCommitA),
+			StCounterVault:  frontend.Variable(benchCounterVault),
 			WtSpendKeyIn:    frontend.Variable(spendSkA),
 			WtValueIn:       frontend.Variable(valueIn),
 			WtSaltIn:        frontend.Variable(saltIn),
@@ -233,6 +237,7 @@ func main() {
 			StMerkleRoot:   frontend.Variable(root),
 			StNullifier:    frontend.Variable(nfB),
 			StCommitA:      frontend.Variable(commitA),
+			StCounterVault: frontend.Variable(benchCounterVault),
 			WtSpendKeyIn:   frontend.Variable(spendSkB),
 			WtValueIn:      frontend.Variable(valueIn),
 			WtSaltIn:       frontend.Variable(saltIn),

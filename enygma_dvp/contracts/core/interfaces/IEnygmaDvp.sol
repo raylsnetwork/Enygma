@@ -141,6 +141,7 @@ interface IEnygmaDvp {
     error SwapDeadlineMustBeInFuture();
     error SwapNotFound();
     error SwapClosed();
+    error CounterVaultMismatch();
     error SwapNotExpiredYet();
     error SwapDeadlineTooFar();
 

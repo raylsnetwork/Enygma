@@ -125,7 +125,7 @@ sequenceDiagram
 
 ---
 
-## Statement Layout (DvP Initiator, 7 elements)
+## Statement Layout (DvP Initiator, 8 elements)
 
 | Index | Field | Value |
 |-------|-------|-------|
@@ -136,8 +136,9 @@ sequenceDiagram
 | 4 | `COMMIT_B` | Bob's USDT output (receiptUniqueId) |
 | 5 | `COMMIT_A` | Alice's NFT output |
 | 6 | `REVERT_COMMIT_A` | Alice's USDT fallback if timeout |
+| 7 | `counterVault` | Address of the vault Alice must be paid from (the NFT vault) |
 
-## Statement Layout (DvP Destination, 5 elements)
+## Statement Layout (DvP Destination, 6 elements)
 
 | Index | Field | Value |
 |-------|-------|-------|
@@ -146,6 +147,7 @@ sequenceDiagram
 | 2 | `merkleRoot` | NFT Merkle root |
 | 3 | `nullifier` | Bob's ticket nullifier |
 | 4 | `COMMIT_A` | Alice's NFT output (must match stored targetId) |
+| 5 | `counterVault` | Address of the vault Bob must be paid from (the ERC20 vault) |
 
 ## Key Contracts
 

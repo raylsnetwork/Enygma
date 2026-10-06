@@ -725,7 +725,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 revert SwapDeadlineTooFar();
             }
 
-            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA]
+            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA, counterVault]
             // commitmentsIndex = 4 → receiptUniqueId = commitB
             // commitmentsIndex+1 = 5 → commitA_expected (what Alice expects Bob to deliver)
             //
@@ -970,6 +970,24 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         IAbstractCoinVault deliveryCoinVault = IAbstractCoinVault(
             _coinVaults[vaultId2]
         );
+
+        // Each DvP proof ends with the address of the vault its prover expects
+        // to be paid from (StCounterVault): receipt1's prover is paid from
+        // vault2 (where receipt2's outputs are inserted) and vice versa. The
+        // commitments do not name a vault, so without this a counterparty could
+        // pay from another vault in the same asset group.
+        if (
+            receipt1.statement[receipt1.statement.length - 1] !=
+            uint256(uint160(address(deliveryCoinVault)))
+        ) {
+            revert CounterVaultMismatch();
+        }
+        if (
+            receipt2.statement[receipt2.statement.length - 1] !=
+            uint256(uint160(address(paymentCoinVault)))
+        ) {
+            revert CounterVaultMismatch();
+        }
 
         // asserting item proof shows that item belongs to group1
         if (
