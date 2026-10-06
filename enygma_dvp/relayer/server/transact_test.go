@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -37,6 +38,13 @@ type mockNode struct {
 	failWith string // if set, eth_call fails with this message instead of a revert
 	callGas  uint64
 	sentGas  uint64
+	unmined  bool // if set, eth_getTransactionReceipt reports the tx as not mined yet
+}
+
+func (m *mockNode) setUnmined(v bool) {
+	m.mu.Lock()
+	m.unmined = v
+	m.mu.Unlock()
 }
 
 func (m *mockNode) called(method string) bool {
@@ -122,6 +130,13 @@ func (m *mockNode) serve(t *testing.T) *httptest.Server {
 			m.mu.Unlock()
 			reply(tx.Hash().Hex())
 		case "eth_getTransactionReceipt":
+			m.mu.Lock()
+			unmined := m.unmined
+			m.mu.Unlock()
+			if unmined {
+				reply(nil)
+				return
+			}
 			reply(map[string]interface{}{
 				"transactionHash": zero32, "transactionIndex": "0x0", "blockHash": zero32, "blockNumber": "0x2",
 				"cumulativeGasUsed": "0x5208", "gasUsed": "0x5208", "status": "0x1",
@@ -260,6 +275,62 @@ func TestIsRevertError(t *testing.T) {
 	for _, c := range cases {
 		if got := isRevertError(c.err); got != c.want {
 			t.Errorf("%s: isRevertError = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestTransact_StuckTransactionTimesOutAndKeepsClaims(t *testing.T) {
+	// A transaction that is never mined must not hold the relayer forever: transact
+	// returns errTxPending after txTimeout, releasing txMu, and the request's
+	// nullifier claims stay held until the transaction is finally mined.
+	node := &mockNode{unmined: true}
+	srv := node.serve(t)
+	defer srv.Close()
+	h := newTestHandler(t, srv.URL, 8_000_000)
+	h.txTimeout = 300 * time.Millisecond
+
+	start := time.Now()
+	_, err := h.transact("ping")
+	var pending *errTxPending
+	if !errors.As(err, &pending) {
+		t.Fatalf("expected errTxPending, got: %v", err)
+	}
+	if waited := time.Since(start); waited > 5*time.Second {
+		t.Fatalf("transact waited %v for a stuck transaction", waited)
+	}
+	if !h.txMu.TryLock() {
+		t.Fatal("txMu still held after the timeout")
+	}
+	h.txMu.Unlock()
+
+	key := "vault:0:42"
+	h.inFlight.Store(key, struct{}{})
+	h.settleClaims([]string{key}, err)
+	time.Sleep(200 * time.Millisecond)
+	if _, held := h.inFlight.Load(key); !held {
+		t.Fatal("claim released while the transaction is still pending")
+	}
+
+	node.setUnmined(false) // the transaction lands
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, held := h.inFlight.Load(key); !held {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("claim not released after the transaction was mined")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestSettleClaims_ReleasesImmediatelyWhenNotPending(t *testing.T) {
+	h := &Handler{}
+	for _, err := range []error{nil, errors.New("boom"), &errWouldRevert{cause: errors.New("x")}} {
+		h.inFlight.Store("k", struct{}{})
+		h.settleClaims([]string{"k"}, err)
+		if _, held := h.inFlight.Load("k"); held {
+			t.Fatalf("claim still held after err=%v", err)
 		}
 	}
 }
