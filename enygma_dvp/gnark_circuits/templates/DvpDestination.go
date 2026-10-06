@@ -40,18 +40,22 @@ type DvPDestinationCircuitConfig struct {
 // Bob decrypts ENC_TX_DATA to get (tokenIdAlice, valueAlice) and verifies
 // both COMMIT_B and COMMIT_A before submitting his proof.
 //
-// Public statement (5 elements):
+// Public statement (6 elements):
 //
-//	[commitB, treeNum, root, nf_B, commitA]
+//	[commitB, treeNum, root, nf_B, commitA, counterVault]
+//
+// counterVault is the address of the vault Bob expects to be paid from: the one
+// COMMIT_B is inserted into at settlement (see DvPInitiatorCircuit).
 type DvPDestinationCircuit struct {
 	Config DvPDestinationCircuitConfig
 
 	// --- public inputs ---
-	StMessage    frontend.Variable `gnark:",public"` // COMMIT_B — Alice's delivery commitment to Bob (HIGH-3: must equal computed commitB)
-	StTreeNumber frontend.Variable `gnark:",public"` // sub-tree index for Bob's input note
-	StMerkleRoot frontend.Variable `gnark:",public"` // Merkle root
-	StNullifier  frontend.Variable `gnark:",public"` // nf_B = NullifierWithTree(sk_B, treeNum, leafIndex)
-	StCommitA    frontend.Variable `gnark:",public"` // COMMIT_A from Alice's initiator proof
+	StMessage      frontend.Variable `gnark:",public"` // COMMIT_B — Alice's delivery commitment to Bob (HIGH-3: must equal computed commitB)
+	StTreeNumber   frontend.Variable `gnark:",public"` // sub-tree index for Bob's input note
+	StMerkleRoot   frontend.Variable `gnark:",public"` // Merkle root
+	StNullifier    frontend.Variable `gnark:",public"` // nf_B = NullifierWithTree(sk_B, treeNum, leafIndex)
+	StCommitA      frontend.Variable `gnark:",public"` // COMMIT_A from Alice's initiator proof
+	StCounterVault frontend.Variable `gnark:",public"` // vault Bob must be paid from (COMMIT_B's vault)
 
 	// --- private witnesses: Bob's input note ---
 	WtSpendKeyIn   frontend.Variable   // Bob's spend secret key
@@ -128,6 +132,10 @@ func (circuit *DvPDestinationCircuit) Define(api frontend.API) error {
 		circuit.WtTokenIdAlice,
 	)
 	api.AssertIsEqual(circuit.StMessage, commitB)
+
+	// 7. The expected counterparty vault must be set; this constraint is also
+	// what binds StCounterVault to the proof (see DvPInitiatorCircuit).
+	api.AssertIsDifferent(circuit.StCounterVault, 0)
 
 	return nil
 }

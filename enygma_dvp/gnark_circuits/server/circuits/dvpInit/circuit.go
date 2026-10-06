@@ -5,7 +5,7 @@ import "math/big"
 // DvPInitiatorRequest is the JSON body accepted by /proof/dvpInitiator.
 //
 // Fixed config: Merkle depth 8.
-// Public statement returned: [msg, treeNum, root, nf_A, commitB, commitA, revertCommitA]
+// Public statement returned: [msg, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault]
 type DvPInitiatorRequest struct {
 	StMessage       string `json:"stMessage"       binding:"required"`
 	StTreeNumber    string `json:"stTreeNumber"    binding:"required"`
@@ -14,6 +14,8 @@ type DvPInitiatorRequest struct {
 	StCommitB       string `json:"stCommitB"       binding:"required"`
 	StCommitA       string `json:"stCommitA"       binding:"required"`
 	StRevertCommitA string `json:"stRevertCommitA" binding:"required"`
+	// Address (decimal) of the vault the prover expects to be paid from.
+	StCounterVault string `json:"stCounterVault" binding:"required"`
 
 	WtSpendKeyIn   string    `json:"wtSpendKeyIn"   binding:"required"`
 	WtValueIn      string    `json:"wtValueIn"      binding:"required"`

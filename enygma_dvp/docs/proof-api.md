@@ -151,6 +151,7 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
   "stCommitB":       "string (required) — output commitment for Bob",
   "stCommitA":       "string (required) — change commitment for Alice",
   "stRevertCommitA": "string (required) — revert commitment for Alice",
+  "stCounterVault":  "string (required) — address (decimal) of the vault Alice must be paid from",
 
   "wtSpendKeyIn":   "string (required)",
   "wtValueIn":      "string (required)",
@@ -179,6 +180,7 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
 | `stCommitB` | Output commitment for Bob's payment |
 | `stCommitA` | Output change commitment for Alice |
 | `stRevertCommitA` | Revert commitment returned to Alice on cancellation |
+| `stCounterVault` | Address of the vault Alice expects to be paid from (the counterparty's vault). Must be non-zero; `EnygmaDvp` rejects a settlement from any other vault with `CounterVaultMismatch` |
 
 **Private witnesses (`wt` prefix):**
 
@@ -205,7 +207,8 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
   "publicSignal": [
     "stMessage",
     "stTreeNumber", "stMerkleRoot", "stNullifier",
-    "stCommitB", "stCommitA", "stRevertCommitA"
+    "stCommitB", "stCommitA", "stRevertCommitA",
+    "stCounterVault"
   ]
 }
 ```
@@ -213,7 +216,7 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
 | Field | Type | Description |
 |---|---|---|
 | `proof` | `[8]string` | Groth16 proof in Remix/Solidity order |
-| `publicSignal` | `[7]string` | `[msg, treeNum, root, nullifier, commitB, commitA, revertCommitA]` |
+| `publicSignal` | `[8]string` | `[msg, treeNum, root, nullifier, commitB, commitA, revertCommitA, counterVault]` |
 
 ---
 
@@ -230,6 +233,7 @@ Generates a proof for the destination side of a DvP swap. Bob proves ownership o
   "stMerkleRoot": "string (required)",
   "stNullifier":  "string (required)",
   "stCommitA":    "string (required) — output commitment for Alice",
+  "stCounterVault": "string (required) — address (decimal) of the vault Bob must be paid from",
 
   "wtSpendKeyIn":   "string (required)",
   "wtValueIn":      "string (required)",
@@ -252,6 +256,7 @@ Generates a proof for the destination side of a DvP swap. Bob proves ownership o
 | `stMerkleRoot` | Bob's input note Merkle root |
 | `stNullifier` | Bob's input note nullifier |
 | `stCommitA` | Output commitment for Alice |
+| `stCounterVault` | Address of the vault Bob expects to be paid from (Alice's vault). Must be non-zero; checked by `EnygmaDvp` at settlement |
 
 **Private witnesses (`wt` prefix):**
 
@@ -274,7 +279,8 @@ Generates a proof for the destination side of a DvP swap. Bob proves ownership o
   "publicSignal": [
     "stMessage",
     "stTreeNumber", "stMerkleRoot", "stNullifier",
-    "stCommitA"
+    "stCommitA",
+    "stCounterVault"
   ]
 }
 ```
@@ -282,7 +288,7 @@ Generates a proof for the destination side of a DvP swap. Bob proves ownership o
 | Field | Type | Description |
 |---|---|---|
 | `proof` | `[8]string` | Groth16 proof in Remix/Solidity order |
-| `publicSignal` | `[5]string` | `[msg, treeNum, root, nullifier, commitA]` |
+| `publicSignal` | `[6]string` | `[msg, treeNum, root, nullifier, commitA, counterVault]` |
 
 ---
 
