@@ -221,6 +221,10 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// against Σ depositParams[i].amount on chain.
 		publicSignal = append(publicSignal, new(big.Int).Set(totalDepositValue))
 		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
+		// The 10 DvP deposit commitments (signals 52-61), in slot order.
+		for i := 0; i < 10; i++ {
+			publicSignal = append(publicSignal, bp.Parse(request.Hashes[i]))
+		}
 
 		// The public signals above are parsed again from the request; fail
 		// rather than return a zero placeholder for a value that did not parse.

@@ -52,6 +52,16 @@ contract Enygma is IEnygma {
     // all — not a circuit change). Two separately-named constants at the
     // same numeric offset for self-documentation at each call site.
     uint256 private constant WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET = 50;
+
+    // withdraw's signals 52-61: the DvP commitment each deposit slot creates,
+    // Poseidon(Poseidon(asset, amount), recipientPublicKey), or 0 for an
+    // unused slot. withdraw() requires the notes the DvP vault actually
+    // inserts to be exactly these. Before, only the total amount was bound,
+    // so whoever submitted the proof chose the recipients: another bank
+    // could replay a pending withdrawal with its own keys and the same
+    // total, and receive the funds.
+    uint256 private constant WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET = 52;
+    uint256 private constant WITHDRAW_MAX_DEPOSITS = 10;
     uint256 private constant DEPOSIT_HASH_OFFSET = 50;
 
     // Fix L-01: domain-separator offsets, one per circuit layout — the
@@ -314,6 +324,8 @@ contract Enygma is IEnygma {
     error InvalidFee(); // Fix M-13
     error FeeExceedsModulus(); // Fix M-13
     error DepositValueMismatch(); // Fix C-09
+    error DepositCommitmentMismatch();
+    error TooManyDeposits();
     error ReentrancyGuardReentrantCall(); // Fix L-12
     error InvalidDomain(); // Fix L-01
     /// @notice The USDr proof's public_signal doesn't match the main
@@ -1285,18 +1297,22 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
-        // Fix M-14: was uint256[50] — the real (and, after Fix C-09,
-        // still-real) circuit arity is 51.
-        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
+        // 52 signals shared with deposit's layout, then the 10 DvP deposit
+        // commitments (WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET).
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[62])", proof));
+        if (depositParams.length > WITHDRAW_MAX_DEPOSITS) revert TooManyDeposits();
+
+        // The checks shared with deposit() read the first 52 signals.
+        uint256[52] memory sharedSignals = _withdrawSharedSignals(proof.public_signal);
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
-        _verifyPublicInputs52(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyPublicInputs52(sharedSignals, participantIds, commitmentDeltas);
 
         // Verify proof was generated against the current block
-        _verifyBlockNumber52(proof.public_signal);
+        _verifyBlockNumber52(sharedSignals);
 
         // Record nullifier before state changes (Fix C-2)
-        _consumeNullifier52(proof.public_signal);
+        _consumeNullifier52(sharedSignals);
 
         // Fix C-09: the circuit's own Σ VPerDeposit == SenderTxValue
         // assertion (withdraw/circuit.go) is only meaningful once this
@@ -1339,6 +1355,9 @@ contract Enygma is IEnygma {
         uint256[] memory zkDvpCommitments = _executeZkDvpDeposits(
             depositParams
         );
+        // The notes actually created must be the proof's commitments, so
+        // the recipients are the prover's and not the submitter's choice.
+        _verifyDepositCommitments(zkDvpCommitments, proof.public_signal);
 
         return (true, zkDvpCommitments);
     }
@@ -1352,6 +1371,35 @@ contract Enygma is IEnygma {
      *         _propagateBalancesExcept / _burnFeeFromSupply elsewhere in
      *         this file).
      */
+    /// @dev withdraw()'s first 52 signals: the layout it shares with deposit().
+    function _withdrawSharedSignals(
+        uint256[62] calldata publicSignal
+    ) private pure returns (uint256[52] memory shared) {
+        for (uint256 i; i < 52; ) {
+            shared[i] = publicSignal[i];
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @dev Requires the DvP commitments withdraw() created to equal the
+    ///      proof's (signals 52-61, in slot order), and every slot without a
+    ///      deposit to carry 0.
+    function _verifyDepositCommitments(
+        uint256[] memory created,
+        uint256[62] calldata publicSignal
+    ) private pure {
+        for (uint256 i; i < WITHDRAW_MAX_DEPOSITS; ) {
+            uint256 expected = publicSignal[WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET + i];
+            uint256 actual = i < created.length ? created[i] : 0;
+            if (actual != expected) revert DepositCommitmentMismatch();
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function _verifyDepositValueBinding(
         DepositParams[] calldata depositParams,
         uint256 requiredTotal
@@ -1847,7 +1895,7 @@ contract Enygma is IEnygma {
      *         deleted here rather than widened uselessly.
      */
     function _verifyPublicInputs52(
-        uint256[52] calldata public_signal,
+        uint256[52] memory public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
@@ -1908,7 +1956,7 @@ contract Enygma is IEnygma {
     /**
      * @notice [52]-arity twin of _verifyBlockNumber. See _verifyPublicInputs52.
      */
-    function _verifyBlockNumber52(uint256[52] calldata public_signal) private view {
+    function _verifyBlockNumber52(uint256[52] memory public_signal) private view {
         if (uint256(public_signal[BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
@@ -1917,7 +1965,7 @@ contract Enygma is IEnygma {
     /**
      * @notice [52]-arity twin of _consumeNullifier. See _verifyPublicInputs52.
      */
-    function _consumeNullifier52(uint256[52] calldata public_signal) private {
+    function _consumeNullifier52(uint256[52] memory public_signal) private {
         uint256 nullifier = public_signal[NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;
