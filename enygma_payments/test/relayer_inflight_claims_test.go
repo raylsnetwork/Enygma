@@ -105,3 +105,48 @@ func TestRelayHandler_Transfer_TimeoutAnswersPendingAndHoldsClaim(t *testing.T) 
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// A transfer proof binds every participant's current balance, so a second
+// transfer touching an account of a pending one is refused (409) instead of
+// being sent to revert on chain; it goes through once the account is free.
+func TestRelayHandler_Transfer_ConflictingParticipantRefused(t *testing.T) {
+	tx := dummyTx()
+	h := newTestHandler(&mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)})
+	r := server.NewWithHandler(testAPIKeys, h)
+
+	body := validTransferBody() // participants 1..6, nullifiers not in flight
+	busy := server.ParticipantKey(body.KIndex[2])
+	h.SetInFlight(busy, struct{}{}) // another transfer touching account 3 is pending
+
+	if w := serveHTTPPost(r, "/relay/transfer", testAPIKey, body); w.Code != http.StatusConflict {
+		t.Fatalf("transfer sharing a pending participant: got %d, want 409: %s", w.Code, w.Body.String())
+	}
+	// Nothing of the refused request stays claimed.
+	key, _ := server.DedupKey("transfer", body)
+	if h.InFlight(key) || h.InFlight(server.ParticipantKey(body.KIndex[0])) {
+		t.Fatal("a refused request left claims behind")
+	}
+
+	h.DeleteInFlight(busy) // the pending transfer settled
+	if w := serveHTTPPost(r, "/relay/transfer", testAPIKey, body); w.Code != http.StatusOK {
+		t.Fatalf("after the account is free: got %d, want 200: %s", w.Code, w.Body.String())
+	}
+	for _, id := range body.KIndex {
+		if h.InFlight(server.ParticipantKey(id)) {
+			t.Fatalf("account %d still claimed after its transfer was mined", id)
+		}
+	}
+}
+
+// A repeated participant id is a malformed request (400), not a transient
+// conflict with its own account claim (409).
+func TestRelayHandler_Transfer_DuplicateParticipantIdIsBadRequest(t *testing.T) {
+	tx := dummyTx()
+	h := newTestHandler(&mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)})
+	r := server.NewWithHandler(testAPIKeys, h)
+	body := validTransferBody()
+	body.KIndex = []int64{1, 2, 3, 3, 5, 6}
+	if w := serveHTTPPost(r, "/relay/transfer", testAPIKey, body); w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate participant id: got %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
