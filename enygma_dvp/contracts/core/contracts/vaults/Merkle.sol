@@ -82,6 +82,12 @@ contract Merkle is IMerkle {
         // state for the second would remain inconsistent and waste gas.
         require(lockedNullifiers[_treeNumber][_nullifierId] == false, "Merkle: Nullifier already locked.");
         require(_nullifierId != 0, "Merkle: Nullifier can not be zero.");
+        // A spent note cannot be locked. Every current caller checks the
+        // nullifier first (checkReceiptConditions), but lock() itself did
+        // not, so a caller that skipped that check could lock a spent note
+        // into a pending swap or auction bid that can never settle. The
+        // auction protocol's vault (AuctionCoinVault.lockCoin) has the same check.
+        require(nullifiers[_treeNumber][_nullifierId] == false, "Merkle: Nullifier already spent.");
 
         lockedNullifiers[_treeNumber][_nullifierId] = true;
 
