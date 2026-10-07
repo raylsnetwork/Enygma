@@ -406,7 +406,6 @@ func expectedDomainId(contractAddr common.Address) *big.Int {
 const (
 	gnarkURL     = "http://127.0.0.1:8080/proof/enygma"
 	gnarkUsdrURL = "http://127.0.0.1:8080/proof/usdr"
-	relayerURL   = "http://127.0.0.1:8082"
 	relayerKey   = "enygma-test-secret" // must match RELAYER_API_KEY
 
 	nBanks      = 6
@@ -534,9 +533,6 @@ func TestFullTransactionFlow(t *testing.T) {
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
 	}
-	if !tcpAvailable("127.0.0.1:8082") {
-		t.Skip("relayer not reachable at localhost:8082 — start the relayer first")
-	}
 
 	// Read contract addresses from deploy_receipts.json (updated by deploy scripts).
 	tokenAddr, verifierAddr := readReceipts(t)
@@ -606,8 +602,10 @@ func TestFullTransactionFlow(t *testing.T) {
 		pks[i] = pk.Mod(pk, curveP)
 	}
 
-	// Register banks with accountIds 1-6 (avoids onlyRegistered sentinel=0 bug).
-	// All use ownerAddr; addressToAccountId is overwritten each call — last value is 6 ≠ 0.
+	// Each bank has its own registered key: it confirms fingerprints from
+	// it, and the test-local relayer runs as bank relayFeeSlot.
+	banks := newRelayBanks(t, client, privKey, mkAuth)
+	// Register banks with accountIds 1-6, each under its own address.
 	// Bank 0 registers with senderRegR (not senderPrevR directly) since it
 	// mints below too — senderRegR + senderMintR == senderPrevR, see that
 	// constant's comment. Banks 1-5 never mint in this test, so their
@@ -618,7 +616,7 @@ func TestFullTransactionFlow(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		rcpt := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
+		rcpt := waitTx(instance.RegisterAccount(mkAuth(), banks.addrs[i], big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
 		if rcpt.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
@@ -631,6 +629,11 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
+
+	// ── Setup: USDr fee ledger, fingerprints, test-local relayer ─────────────
+	setupUsdrLedger(t, client, instance, mkAuth, waitTx)
+	confirmFingerprints(t, instance, banks, waitTx, senderSecrets())
+	relayURL := startTestRelayer(t, common.HexToAddress(tokenAddr), banks)
 
 	// ── Read on-chain state ────────────────────────────────────────────────────
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
@@ -764,12 +767,11 @@ func TestFullTransactionFlow(t *testing.T) {
 	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
 	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
-	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
-		c1 := proofResp.PublicSignal[txCommitOffset+2*i]
-		c2 := proofResp.PublicSignal[txCommitOffset+2*i+1]
-		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: c1, C2: c2}
-		commFinal[i] = []string{c1.String(), c2.String()}
+		commitmentDeltas[i] = enygma.IEnygmaPoint{
+			C1: proofResp.PublicSignal[txCommitOffset+2*i],
+			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
+		}
 	}
 
 	var proof8 [8]string
@@ -782,23 +784,8 @@ func TestFullTransactionFlow(t *testing.T) {
 		pubSigStrs[i] = v.String()
 	}
 
-	// participantIds[i] = i+1 (maps circuit bank i → on-chain accountId i+1)
-	kIdx64 := make([]int64, nBanks)
-	for i := range kIdx64 {
-		kIdx64[i] = int64(i + 1)
-	}
-
-	relayReq := struct {
-		Proof        [8]string  `json:"proof"`
-		PublicSignal []string   `json:"publicSignal"`
-		Commitments  [][]string `json:"commitments"`
-		KIndex       []int64    `json:"kIndex"`
-	}{
-		Proof:        proof8,
-		PublicSignal: pubSigStrs,
-		Commitments:  commFinal,
-		KIndex:       kIdx64,
-	}
+	usdr := buildUsdrFeeLeg(t, blockHash, usdrBalances(t, instance), onChainKeys, common.HexToAddress(tokenAddr))
+	relayReq := relayTransferBody(proof8, pubSigStrs, commitmentDeltas, usdr)
 
 	// ── Submit Transfer via relayer ────────────────────────────────────────────
 	t.Log("submitting Transfer via relayer...")
@@ -807,17 +794,12 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Fatalf("marshal relay request: %v", err)
 	}
 
-	apiKey := os.Getenv("RELAYER_API_KEY")
-	if apiKey == "" {
-		apiKey = relayerKey
-	}
-
-	relayHTTPReq, err := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer", bytes.NewReader(relayBody))
+	relayHTTPReq, err := http.NewRequest(http.MethodPost, relayURL+"/relay/transfer", bytes.NewReader(relayBody))
 	if err != nil {
 		t.Fatalf("build relay request: %v", err)
 	}
 	relayHTTPReq.Header.Set("Content-Type", "application/json")
-	relayHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+	relayHTTPReq.Header.Set("Authorization", "Bearer "+relayerKey)
 
 	relayHTTPResp, err := http.DefaultClient.Do(relayHTTPReq)
 	if err != nil {
