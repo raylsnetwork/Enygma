@@ -209,7 +209,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 	// the very end of withdraw()'s body; only the reentrant INNER call
 	// (same proof, replayed mid-execution) is what nonReentrant actually
 	// blocks. This mirrors H-15's "nothing happens" pattern otherwise.
-	var pubSig [52]*big.Int
+	var pubSig [62]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
