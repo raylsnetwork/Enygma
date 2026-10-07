@@ -16,9 +16,9 @@ package enygma_test
 // Prerequisites:
 //  1. Hardhat node on localhost:8545, contracts deployed with EPOCH_INTERVAL=5 (or any small value):
 //       EPOCH_INTERVAL=5 python3 run_scripts/deploy_direct.py
-//  2. (phases 6-8 only) Gnark server on localhost:8080
-//  3. (phases 6-8 only) Relayer on localhost:8082
-//       cd enygma_payments/relayer && RELAYER_PRIVATE_KEY=<key> RELAYER_API_KEY=change-me go run main.go
+//  2. (phases 7-9 only) Gnark server on localhost:8080
+//  3. (phases 7-9 only) The relayer binary built (cd enygma_payments/relayer && ./run.sh);
+//     the test runs its own relayer on :8085 as one of the banks, so it can be paid the USDr fee
 //
 // Run:
 //
@@ -35,7 +35,6 @@ import (
 	"io"
 	"math/big"
 	"net/http"
-	"os"
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
@@ -172,8 +171,9 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	return proof8, pubSigStrs, deltas
 }
 
-// relayTransferBody builds the JSON body for POST /relay/transfer.
-func relayTransferBody(proof8 [8]string, pubSigStrs []string, deltas []enygma.IEnygmaPoint) interface{} {
+// relayTransferBody builds the JSON body for POST /relay/transfer: the main
+// proof and the USDr fee leg paying the relayer.
+func relayTransferBody(proof8 [8]string, pubSigStrs []string, deltas []enygma.IEnygmaPoint, usdr usdrFeeLeg) interface{} {
 	commFinal := make([][]string, nBanks)
 	for i, d := range deltas {
 		commFinal[i] = []string{d.C1.String(), d.C2.String()}
@@ -183,23 +183,31 @@ func relayTransferBody(proof8 [8]string, pubSigStrs []string, deltas []enygma.IE
 		kIdx64[i] = int64(i + 1)
 	}
 	return struct {
-		Proof        [8]string  `json:"proof"`
-		PublicSignal []string   `json:"publicSignal"`
-		Commitments  [][]string `json:"commitments"`
-		KIndex       []int64    `json:"kIndex"`
+		Proof             [8]string  `json:"proof"`
+		PublicSignal      []string   `json:"publicSignal"`
+		Commitments       [][]string `json:"commitments"`
+		UsdrProof         [8]string  `json:"usdrProof"`
+		UsdrPublicSignal  []string   `json:"usdrPublicSignal"`
+		UsdrCommitments   [][]string `json:"usdrCommitments"`
+		KIndex            []int64    `json:"kIndex"`
+		UsdrFeeRandomness string     `json:"usdrFeeRandomness"`
 	}{
-		Proof:        proof8,
-		PublicSignal: pubSigStrs,
-		Commitments:  commFinal,
-		KIndex:       kIdx64,
+		Proof:             proof8,
+		PublicSignal:      pubSigStrs,
+		Commitments:       commFinal,
+		UsdrProof:         usdr.Proof,
+		UsdrPublicSignal:  usdr.PublicSignal,
+		UsdrCommitments:   usdr.Commitments,
+		KIndex:            kIdx64,
+		UsdrFeeRandomness: usdr.FeeRandomness,
 	}
 }
 
-// postRelayTransfer POSTs a transfer to the relayer and returns (statusCode, responseBody).
-func postRelayTransfer(t *testing.T, apiKey string, req interface{}) (int, []byte) {
+// postRelayTransfer POSTs a transfer to the relayer at url and returns (statusCode, responseBody).
+func postRelayTransfer(t *testing.T, url, apiKey string, req interface{}) (int, []byte) {
 	t.Helper()
 	data, _ := json.Marshal(req)
-	httpReq, _ := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer", bytes.NewReader(data))
+	httpReq, _ := http.NewRequest(http.MethodPost, url+"/relay/transfer", bytes.NewReader(data))
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	resp, err := http.DefaultClient.Do(httpReq)
@@ -342,6 +350,9 @@ func TestEpochIntervalFlow(t *testing.T) {
 		}
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Each bank has its own registered key: it confirms fingerprints from
+	// it, and the test-local relayer runs as bank relayFeeSlot.
+	banks := newRelayBanks(t, client, privKey, mkAuth)
 	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
 	// directly) since it mints below too — senderRegR + senderMintR ==
 	// senderPrevR, used directly by gnarkProofBody above.
@@ -351,7 +362,7 @@ func TestEpochIntervalFlow(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
+		if r := waitTx(instance.RegisterAccount(mkAuth(), banks.addrs[i], big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
@@ -362,6 +373,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 		t.Fatal("initial mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
+	setupUsdrLedger(t, client, instance, mkAuth, waitTx)
+	confirmFingerprints(t, instance, banks, waitTx, senderSecrets())
 
 	// ── Phase 3: Verify lastBlockNum is epoch-aligned ─────────────────────────
 	t.Log("=== Phase 3: epoch alignment ===")
@@ -403,8 +416,15 @@ func TestEpochIntervalFlow(t *testing.T) {
 	// ── Phase 5: mintSupply within epoch — slot must be epochStart, not block.number
 	t.Log("=== Phase 5: mint within epoch ===")
 
+	// The mint lands in the next block. If that block would start a new
+	// epoch, mine one first, so the mint lands mid-epoch: this phase checks
+	// the slot is the epoch start, not the mint's own block number.
 	blockBeforeMint5 := currentBlock(t, ctx, client)
-	expectedSlot5 := epochStartFor(blockBeforeMint5, interval)
+	if new(big.Int).Mod(new(big.Int).Add(blockBeforeMint5, big.NewInt(1)), interval).Sign() == 0 {
+		mineBlocks(t, rpcClient, 1)
+		blockBeforeMint5 = currentBlock(t, ctx, client)
+	}
+	expectedSlot5 := epochStartFor(new(big.Int).Add(blockBeforeMint5, big.NewInt(1)), interval)
 	// Mint to bank 2 (accountId=2), NOT bank 0 (sender), so senderPrevV=500 stays correct for phase 7.
 	// Fix H-02 residual: this bank never sends/proves in this test, so the
 	// exact mint blinding factor doesn't need to match anything downstream.
@@ -471,15 +491,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 		t.Log("=== Phases 7-8: SKIPPED — gnark server not available at 127.0.0.1:8080 ===")
 		return
 	}
-	if !tcpAvailable("127.0.0.1:8082") {
-		t.Log("=== Phases 7-8: SKIPPED — relayer not available at 127.0.0.1:8082 ===")
-		return
-	}
-
-	apiKey := os.Getenv("RELAYER_API_KEY")
-	if apiKey == "" {
-		apiKey = relayerKey
-	}
+	relayURL := startTestRelayer(t, contractAddr, banks)
+	apiKey := relayerKey
 
 	// ── Phase 7: Generate ZK proof at current epoch, verify lastBlockNum = epochStart ──
 	t.Log("=== Phase 7: ZK transfer — verify epoch slot usage ===")
@@ -499,6 +512,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 
 	// Generate proof — saved, NOT submitted yet (will be the stale proof in phase 8).
 	proof8_7, pubSig7, deltas7 := callGnarkServer(t, gnarkProofBody(t, new(big.Int).Set(epochStart7), prevBalances7, onChainKeys7, contractAddr))
+	usdrPrevBals := usdrBalances(t, instance)
+	usdr7 := buildUsdrFeeLeg(t, new(big.Int).Set(epochStart7), usdrPrevBals, onChainKeys7, contractAddr)
 
 	// ── Phase 8: Advance to the next epoch WITHOUT changing balances ───────────
 	// mintSupply(0) adds the Baby Jubjub identity point — a no-op for commitments.
@@ -547,8 +562,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 	// On a real node the tx mines with Status=0 → relayer returns HTTP 400.
 	// Both are valid rejection signals; we accept either.
 	t.Log("submitting stale proof (proof.blockNum=epochStart7, chain.lastBlockNum=epochStart8) — expect 400/500...")
-	staleReq := relayTransferBody(proof8_7, pubSig7, deltas7)
-	code, body8 := postRelayTransfer(t, apiKey, staleReq)
+	staleReq := relayTransferBody(proof8_7, pubSig7, deltas7, usdr7)
+	code, body8 := postRelayTransfer(t, relayURL, apiKey, staleReq)
 	if code != http.StatusBadRequest && code != http.StatusInternalServerError {
 		t.Errorf("stale proof: got HTTP %d, want 400 or 500\nbody: %s", code, body8)
 	} else if !bytes.Contains(body8, []byte("InvalidBlockNumber")) {
@@ -572,7 +587,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 	blockBeforeTransfer9 := currentBlock(t, ctx, client)
 	expectedSlot9 := epochStartFor(blockBeforeTransfer9, interval)
 
-	code9, body9 := postRelayTransfer(t, apiKey, relayTransferBody(proof8_9, pubSig9, deltas9))
+	usdr9 := buildUsdrFeeLeg(t, new(big.Int).Set(epochStart8), usdrPrevBals, onChainKeys7, contractAddr)
+	code9, body9 := postRelayTransfer(t, relayURL, apiKey, relayTransferBody(proof8_9, pubSig9, deltas9, usdr9))
 	if code9 != http.StatusOK {
 		t.Fatalf("fresh proof rejected (HTTP %d): %s", code9, body9)
 	}
@@ -621,7 +637,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 // the new epoch without altering any bank's balance, so _verifyPublicInputs still
 // passes and only _verifyBlockNumber fires as the rejection cause.
 //
-// Prerequisites: fresh Hardhat node, gnark server on :8080, relayer on :8082.
+// Prerequisites: fresh Hardhat node, gnark server on :8080, the relayer binary
+// built (the test runs its own relayer on :8085).
 //
 // Run alone (requires fresh chain):
 //
@@ -632,9 +649,6 @@ func TestBlockNumberMismatch(t *testing.T) {
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at :8080")
-	}
-	if !tcpAvailable("127.0.0.1:8082") {
-		t.Skip("relayer not reachable at :8082")
 	}
 
 	ctx := context.Background()
@@ -678,10 +692,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 		return r
 	}
 
-	apiKey := os.Getenv("RELAYER_API_KEY")
-	if apiKey == "" {
-		apiKey = relayerKey
-	}
+	apiKey := relayerKey
 
 	// ── Setup ─────────────────────────────────────────────────────────────────
 	if tx, txErr := instance.Initialize(mkAuth()); txErr == nil {
@@ -695,6 +706,9 @@ func TestBlockNumberMismatch(t *testing.T) {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})
 		pks[i] = pk.Mod(pk, curveP)
 	}
+	// Each bank has its own registered key: it confirms fingerprints from
+	// it, and the test-local relayer runs as bank relayFeeSlot.
+	banks := newRelayBanks(t, client, privKey, mkAuth)
 	// Fix H-02 residual: bank 0 registers with senderRegR (not senderPrevR
 	// directly) since it mints below too — senderRegR + senderMintR ==
 	// senderPrevR, used directly by gnarkProofBody above.
@@ -704,7 +718,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
+		if r := waitTx(instance.RegisterAccount(mkAuth(), banks.addrs[i], big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
@@ -712,6 +726,9 @@ func TestBlockNumberMismatch(t *testing.T) {
 	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 		t.Fatal("mintSupply failed")
 	}
+	setupUsdrLedger(t, client, instance, mkAuth, waitTx)
+	confirmFingerprints(t, instance, banks, waitTx, senderSecrets())
+	relayURL := startTestRelayer(t, contractAddr, banks)
 	t.Logf("setup complete: 6 banks registered, %d minted to bank 0", mintAmt)
 
 	interval := readEpochInterval(t, ctx, client, contractAddr)
@@ -730,6 +747,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 
 	proof8, pubSig, deltas := callGnarkServer(t,
 		gnarkProofBody(t, new(big.Int).Set(proofEpoch), pubVals.Balances[1:], pubVals.Keys[1:], contractAddr))
+	usdr := buildUsdrFeeLeg(t, new(big.Int).Set(proofEpoch), usdrBalances(t, instance), pubVals.Keys[1:], contractAddr)
 
 	// ── Step 2: advance blockchain epoch without touching balances ────────────
 	// Mine to the next epoch boundary, then mintSupply(0) which adds the
@@ -764,7 +782,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 	// error and returns HTTP 500. On a real chain the tx mines with Status=0
 	// and the relayer returns HTTP 400. Both confirm rejection.
 	t.Logf("step 3: submitting proof (blockNum=%s) to chain (lastBlockNum=%s)...", proofEpoch, chainEpoch)
-	code, respBody := postRelayTransfer(t, apiKey, relayTransferBody(proof8, pubSig, deltas))
+	code, respBody := postRelayTransfer(t, relayURL, apiKey, relayTransferBody(proof8, pubSig, deltas, usdr))
 
 	t.Logf("relayer response: HTTP %d — %s", code, respBody)
 
