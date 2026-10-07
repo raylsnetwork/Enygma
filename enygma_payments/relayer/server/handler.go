@@ -2,9 +2,8 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -43,7 +42,7 @@ type EnygmaContract interface {
 }
 
 // txTimeout is the maximum time to wait for a transaction to be mined.
-const txTimeout = 45 * time.Second
+var txTimeout = 45 * time.Second // a var only so tests can shorten it
 
 // Exact public-signal arities this relayer accepts, one per circuit.
 // Exported so external test packages (e.g. relayer_mocks_test.go) can
@@ -198,6 +197,20 @@ func (h *Handler) SetInFlight(key string, val any) { h.inFlight.Store(key, val) 
 // DeleteInFlight removes key from the deduplication map.
 // Exported for test cleanup after SetInFlight.
 func (h *Handler) DeleteInFlight(key string) { h.inFlight.Delete(key) }
+
+// InFlight reports whether key is currently claimed (for tests).
+func (h *Handler) InFlight(key string) bool {
+	_, ok := h.inFlight.Load(key)
+	return ok
+}
+
+// SetTxTimeout shortens how long relay routes wait for a receipt, for tests
+// that exercise the still-pending path; it returns a func restoring the old value.
+func SetTxTimeout(d time.Duration) (restore func()) {
+	old := txTimeout
+	txTimeout = d
+	return func() { txTimeout = old }
+}
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
@@ -389,16 +402,17 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		PublicSignal: usdrPubSig82,
 	}
 
-	dedupKey, err := requestDedupKey("transfer", req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup key: %v", err)})
-		return
+	// One claim per nullifier the transfer consumes (main and USDr legs):
+	// the same note cannot be relayed twice at once, whichever route or
+	// other request fields carry it.
+	claimKeys := []string{
+		nullifierKey(mainNullifiers, pubSig80[transferNullifierIndex]),
+		nullifierKey(usdrNullifiers, usdrPubSig82[usdrNullifierIndex]),
 	}
-	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
+	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(dedupKey)
 
 	log.Printf("[relay] bank=%s transfer: submitting", bankID)
 
@@ -413,6 +427,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, usdrCommitments, usdrTransferProof, kIndex, bankID) // Fix H-09
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(claimKeys)
 		log.Printf("[relay] bank=%s transfer: submit failed: %v", bankID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transfer(): %v", err)})
 		return
@@ -422,12 +437,8 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	defer atomic.AddInt64(&h.pendingTxs, -1)
 
 	log.Printf("[relay] bank=%s transfer: submitted tx=%s, waiting for confirmation", bankID, tx.Hash().Hex())
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	receipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		log.Printf("[relay] bank=%s transfer: tx=%s wait mined failed: %v", bankID, tx.Hash().Hex(), err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+	receipt, ok := h.waitMined(c, "transfer", bankID, tx, claimKeys)
+	if !ok {
 		return
 	}
 	if receipt.Status != 1 {
@@ -504,16 +515,13 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 		PublicSignal: pubSig54,
 	}
 
-	dedupKey, err := requestDedupKey("transfer_fee", req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup key: %v", err)})
-		return
-	}
-	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
+	// Same main-ledger nullifier set as /relay/transfer, so the same note
+	// is blocked across both routes.
+	claimKeys := []string{nullifierKey(mainNullifiers, pubSig54[feeNullifierIndex])}
+	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(dedupKey)
 
 	log.Printf("[relay] bank=%s transfer_fee: submitting", bankID)
 
@@ -521,6 +529,7 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 	tx, err := h.instance.TransferWithFee(h.auth, commitments, feeProof, kIndex, bankID) // Fix H-09
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(claimKeys)
 		log.Printf("[relay] bank=%s transfer_fee: submit failed: %v", bankID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transferWithFee(): %v", err)})
 		return
@@ -530,12 +539,8 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 	defer atomic.AddInt64(&h.pendingTxs, -1)
 
 	log.Printf("[relay] bank=%s transfer_fee: submitted tx=%s, waiting for confirmation", bankID, tx.Hash().Hex())
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	receipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		log.Printf("[relay] bank=%s transfer_fee: tx=%s wait mined failed: %v", bankID, tx.Hash().Hex(), err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+	receipt, ok := h.waitMined(c, "transfer_fee", bankID, tx, claimKeys)
+	if !ok {
 		return
 	}
 	if receipt.Status != 1 {
@@ -567,24 +572,102 @@ func bankIDFromContext(c *gin.Context) string {
 	return "unknown"
 }
 
-// DedupKey exposes requestDedupKey to external test packages that need to
-// pre-seed h.SetInFlight with the exact key RelayTransfer/RelayTransferFee
-// will compute for a given request body, to simulate a concurrent duplicate.
-func DedupKey(kind string, req any) (string, error) { return requestDedupKey(kind, req) }
+// In-flight claims are keyed by the nullifiers a request consumes — what
+// actually makes two requests conflict on chain. Fix H-10 had moved from a
+// proof[0] key to a hash of the whole body (so a request sharing proof[0]
+// was not refused), but that let the same proof through twice by changing
+// any other field (e.g. bankTag), and one of the two then reverted on chain
+// at the relayer's cost. Two requests with the same nullifier can never both
+// succeed, so a nullifier key is neither evadable nor a false positive.
+//
+// Offsets mirror Enygma.sol: FP_NULLIFIER_OFFSET (transfer and USDr proofs)
+// and NULLIFIER_OFFSET (fee proof). The main ledger and USDr have separate
+// nullifier sets (_nullifiers, _usdrNullifiers).
+const (
+	transferNullifierIndex = 79
+	usdrNullifierIndex     = 79
+	feeNullifierIndex      = 49
 
-// requestDedupKey hashes the entire request body (not just proof[0]) so an
-// attacker cannot evade deduplication by changing one unrelated field while
-// keeping proof[0] fixed, or force a false-positive 409 against an unrelated
-// request that happens to share the same proof[0] value (Fix H-10, mechanism
-// 4). req's JSON encoding is deterministic (a fixed struct, not a map), so
-// this hash is stable across repeated marshaling of an identical request.
-func requestDedupKey(kind string, req any) (string, error) {
-	data, err := json.Marshal(req)
-	if err != nil {
-		return "", err
+	mainNullifiers = "main"
+	usdrNullifiers = "usdr"
+)
+
+// pendingClaimHold bounds how long a nullifier stays claimed for a
+// transaction that was still unmined when its request timed out.
+const pendingClaimHold = time.Hour
+
+func nullifierKey(set string, nullifier *big.Int) string {
+	return "nf:" + set + ":" + nullifier.String()
+}
+
+// claim marks every key as in-flight, or none of them if any already is.
+func (h *Handler) claim(keys ...string) bool {
+	for i, k := range keys {
+		if _, loaded := h.inFlight.LoadOrStore(k, struct{}{}); loaded {
+			h.release(keys[:i])
+			return false
+		}
 	}
-	sum := sha256.Sum256(data)
-	return kind + ":" + hex.EncodeToString(sum[:]), nil
+	return true
+}
+
+func (h *Handler) release(keys []string) {
+	for _, k := range keys {
+		h.inFlight.Delete(k)
+	}
+}
+
+// waitMined waits up to txTimeout for tx and releases keys once its outcome
+// is known. If tx is still unmined it answers 202 with the hash and keeps the
+// keys claimed until tx is mined (or pendingClaimHold passes): released
+// earlier, a retry would be sent again and revert on chain at the relayer's
+// cost. ok is false when a response has already been written.
+func (h *Handler) waitMined(c *gin.Context, route, bankID string, tx *types.Transaction, keys []string) (*types.Receipt, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	receipt, err := bind.WaitMined(ctx, h.client, tx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		log.Printf("[relay] bank=%s %s: tx=%s still pending after %s", bankID, route, tx.Hash().Hex(), txTimeout)
+		go func() {
+			holdCtx, holdCancel := context.WithTimeout(context.Background(), pendingClaimHold)
+			defer holdCancel()
+			_, _ = bind.WaitMined(holdCtx, h.client, tx)
+			h.release(keys)
+		}()
+		c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
+		return nil, false
+	}
+	h.release(keys)
+	if err != nil {
+		log.Printf("[relay] bank=%s %s: tx=%s wait mined failed: %v", bankID, route, tx.Hash().Hex(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+		return nil, false
+	}
+	return receipt, true
+}
+
+// DedupKey returns the in-flight claim key of the main-ledger nullifier a
+// request consumes, for external tests that pre-seed h.SetInFlight to
+// simulate a concurrent duplicate. kind is "transfer" or "transfer_fee".
+func DedupKey(kind string, req any) (string, error) {
+	var signal []string
+	index := 0
+	switch r := req.(type) {
+	case RelayTransferRequest:
+		signal, index = r.PublicSignal, transferNullifierIndex
+	case RelayTransferFeeRequest:
+		signal, index = r.PublicSignal, feeNullifierIndex
+	default:
+		return "", fmt.Errorf("DedupKey: unsupported request type %T for %q", req, kind)
+	}
+	if index >= len(signal) {
+		return "", fmt.Errorf("DedupKey: publicSignal has %d elements", len(signal))
+	}
+	n, ok := new(big.Int).SetString(signal[index], 0)
+	if !ok {
+		return "", fmt.Errorf("DedupKey: invalid nullifier %q", signal[index])
+	}
+	return nullifierKey(mainNullifiers, n), nil
 }
 
 // parseParticipantIds converts the request's []int64 kIndex into []*big.Int,

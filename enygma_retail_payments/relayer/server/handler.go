@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -53,7 +54,64 @@ type proofReceipt struct {
 // step below) — holding it would let one slow-to-mine transaction block
 // every other request across all /relay/* endpoints indefinitely, since
 // txMu is shared process-wide.
-const txTimeout = 45 * time.Second
+var txTimeout = 45 * time.Second // a var only so tests can shorten it
+
+// pendingClaimHold bounds how long a note stays claimed for a transaction
+// that was still unmined when its request timed out.
+const pendingClaimHold = time.Hour
+
+// nullifierKey is the in-flight claim for one note. It is scoped by vault,
+// since nullifiers are per vault (the same tree/nullifier in the ERC-20 and
+// USDr vaults are different notes), and it is the same on every route, so a
+// note cannot be relayed through two routes at once.
+func nullifierKey(vault common.Address, tree, nullifier *big.Int) string {
+	return "nf:" + vault.Hex() + ":" + tree.String() + ":" + nullifier.String()
+}
+
+// claim marks every key as in-flight, or none of them if any already is.
+func (h *Handler) claim(keys ...string) bool {
+	for i, k := range keys {
+		if _, loaded := h.inFlight.LoadOrStore(k, struct{}{}); loaded {
+			h.release(keys[:i])
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) release(keys []string) {
+	for _, k := range keys {
+		h.inFlight.Delete(k)
+	}
+}
+
+// waitMined waits up to txTimeout for tx and releases keys once its outcome
+// is known. If tx is still unmined it answers 202 with the hash and keeps
+// the keys claimed until tx is mined (or pendingClaimHold passes): released
+// earlier, a retry of the same notes would pass the "already spent" check
+// and be sent again, reverting on-chain at the relayer's cost. ok is false
+// when a response has already been written.
+func (h *Handler) waitMined(c *gin.Context, tx *types.Transaction, keys []string) (*types.Receipt, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	receipt, err := bind.WaitMined(ctx, h.client, tx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		go func() {
+			holdCtx, holdCancel := context.WithTimeout(context.Background(), pendingClaimHold)
+			defer holdCancel()
+			_, _ = bind.WaitMined(holdCtx, h.client, tx)
+			h.release(keys)
+		}()
+		c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
+		return nil, false
+	}
+	h.release(keys)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+		return nil, false
+	}
+	return receipt, true
+}
 
 // Handler holds all dependencies for the relay endpoints.
 type Handler struct {
@@ -265,13 +323,13 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	// Step 4 — claim nullifier as in-flight to block concurrent duplicate submissions.
-	nfKey := p.publicSignal[1].String() + ":" + p.publicSignal[3].String()
-	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+	// Step 4 — claim the note as in-flight to block concurrent duplicate
+	// submissions, on this route or any other (see nullifierKey).
+	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
+	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(nfKey)
 
 	// Step 5 — serialize submission to prevent nonce races under concurrency.
 	// txMu guards only the submission itself, not the wait below — see
@@ -285,14 +343,12 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	tx, err := dvp.Transact(h.auth, "payment", receipt, p.vaultId, p.cipherText, p.encTxData)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
@@ -411,12 +467,13 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	}
 
 	// Step 7 — claim nullifier as in-flight to block concurrent duplicate submissions.
-	nfKey := "relayerFee:" + p.publicSignal[1].String() + ":" + p.publicSignal[3].String()
-	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+	// Keyed per note, not per route: the same note relayed concurrently
+	// through /relay/payment and this route used to pass both checks.
+	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
+	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(nfKey)
 
 	// Step 8 — serialize submission to prevent nonce races under concurrency.
 	// txMu guards only the submission itself, not the wait below — see
@@ -430,14 +487,12 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	tx, err := dvp.Transact(h.auth, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
@@ -573,17 +628,17 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// Step (dedup) — claim both nullifiers as in-flight. Includes
-	// usdrTreeNum alongside the main-leg treeNum/nullifier and the USDr
-	// nullifier — omitting it let two legitimately distinct requests whose
-	// USDr legs live in different trees collide if their main-leg
-	// treeNum/nullifier and numeric usdrNullifier happened to match.
-	nfKey := "usdrFee:" + treeNum.String() + ":" + nullifier.String() + ":" + usdrTreeNum.String() + ":" + usdrNullifier.String()
-	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+	// Step (dedup) — claim both notes as in-flight, each in its own vault.
+	// One key per note (not one for the pair) so either note is also
+	// blocked from being relayed concurrently through another route.
+	nfKeys := []string{
+		nullifierKey(h.vaultAddr, treeNum, nullifier),
+		nullifierKey(h.usdrVaultAddr, usdrTreeNum, usdrNullifier),
+	}
+	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(nfKey)
 
 	// txMu guards only the submission itself, not the wait below — see
 	// txTimeout's doc comment.
@@ -598,14 +653,12 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
