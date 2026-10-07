@@ -55,6 +55,11 @@ contract SwapRelayer is ReentrancyGuard {
     /// leg can keep its note locked.
     uint256 public constant MAX_SWAP_DURATION = 30 days;
 
+    /// The asset groups EnygmaDvp.swap() settles: a payment leg spends a
+    /// fungible note, a delivery leg a non-fungible one.
+    uint256 public constant GROUP_ID_FUNGIBLES = 0;
+    uint256 public constant GROUP_ID_NON_FUNGIBLES = 1;
+
     IEnygmaDvp public immutable dvp;
 
     mapping(bytes32 => PendingSwap) public swaps;
@@ -79,6 +84,7 @@ contract SwapRelayer is ReentrancyGuard {
     error SwapClosed();
     error ExpiryTooFar();
     error SwapIdMismatch();
+    error LegTypeMismatch();
 
     constructor(address dvpAddress) {
         dvp = IEnygmaDvp(dvpAddress);
@@ -103,6 +109,14 @@ contract SwapRelayer is ReentrancyGuard {
     ) external nonReentrant {
         if (closed[swapId]) revert SwapClosed();
         if (swapId != swapIdOf(receipt, isPayment)) revert SwapIdMismatch();
+        // isPayment is the caller's claim, and swapIdOf orders the two
+        // messages by it, so a leg filed with the flag flipped gets a second
+        // ("mirror") swapId that nothing had closed or occupied: a published
+        // leg could be replayed there to lock its owner's note, or to block
+        // the owner's own submission. The leg's vault decides its side.
+        if (!dvp.isVaultMemberOf(vaultId, isPayment ? GROUP_ID_FUNGIBLES : GROUP_ID_NON_FUNGIBLES)) {
+            revert LegTypeMismatch();
+        }
         // Verify the leg (proof, Merkle root, unspent nullifiers) before it can
         // lock anything. Without this a junk receipt could occupy a swap's slot
         // and lock arbitrary nullifiers until its expiry.
@@ -164,8 +178,8 @@ contract SwapRelayer is ReentrancyGuard {
                 s.paymentVaultId,
                 s.deliveryVaultId
             );
+            _close(s.paymentReceipt);
             delete swaps[swapId];
-            closed[swapId] = true;
             emit SwapSettled(swapId);
         }
     }
@@ -185,6 +199,18 @@ contract SwapRelayer is ReentrancyGuard {
             : keccak256(abi.encode(own, other));
     }
 
+    /// @dev Closes the swap a leg belongs to, under both orderings of its two
+    ///      messages: its swapId and the mirror a flipped isPayment flag would
+    ///      give. The vault check in submitReceipt already keeps a leg out of
+    ///      the mirror; closing it too means a closed swap stays closed even
+    ///      if a vault ever sat in both groups.
+    function _close(IEnygmaDvp.ProofReceipt storage leg) private {
+        uint256 own = leg.statement[0];
+        uint256 other = leg.statement[1 + 3 * leg.numberOfInputs];
+        closed[keccak256(abi.encode(own, other))] = true;
+        closed[keccak256(abi.encode(other, own))] = true;
+    }
+
     /// @notice Cancel a pending swap after expiry, unlocking the submitted
     ///         leg's nullifiers so its note can be used elsewhere.
     ///         Callable by anyone: the outcome is fixed (the note goes back to
@@ -200,12 +226,13 @@ contract SwapRelayer is ReentrancyGuard {
 
         if (s.paymentSubmitted) {
             dvp.unlockReceiptNullifiers(s.paymentReceipt, s.paymentVaultId);
+            _close(s.paymentReceipt);
         } else {
             dvp.unlockReceiptNullifiers(s.deliveryReceipt, s.deliveryVaultId);
+            _close(s.deliveryReceipt);
         }
 
         delete swaps[swapId];
-        closed[swapId] = true;
         emit SwapCancelled(swapId);
     }
 }
