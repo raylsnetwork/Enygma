@@ -453,8 +453,9 @@ func TestM03_HandlerProvesRealRequest(t *testing.T) {
 	if len(resp.Proof) != 8 {
 		t.Errorf("proof: got %d elements, want 8", len(resp.Proof))
 	}
-	if len(resp.PublicSignal) != 52 {
-		t.Errorf("publicSignal: got %d elements, want 52", len(resp.PublicSignal))
+	// 52 signals up to DomainId, then the 10 DvP deposit commitments.
+	if len(resp.PublicSignal) != 62 {
+		t.Errorf("publicSignal: got %d elements, want 62", len(resp.PublicSignal))
 	}
 	t.Logf("POST /proof/withdraw/6 returned a real proof (8 elements) and %d public signals — the withdraw circuit's HTTP prover route is unblocked ✓", len(resp.PublicSignal))
 }

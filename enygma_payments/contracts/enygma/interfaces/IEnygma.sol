@@ -37,9 +37,12 @@ interface IEnygma {
     // deposit's original [50] mismatch (circuit produced 51, this
     // struct declared 50) made deposit() revert InvalidProof
     // unconditionally before Fix M-14.
+    // 52 signals shared with deposit's layout, then the withdrawal's 10 DvP
+    // deposit commitments at 52-61 (see Enygma.sol's
+    // WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET).
     struct WithdrawProof {
         uint256[8] proof;
-        uint256[52] public_signal;
+        uint256[62] public_signal;
     }
 
     struct DepositProof {
