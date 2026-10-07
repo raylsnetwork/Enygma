@@ -47,6 +47,12 @@ contract SwapRelayerDvpMock {
         return true;
     }
 
+    /// Group membership as on a real deployment: vault 0 is fungible
+    /// (group 0), vault 1 non-fungible (group 1).
+    function isVaultMemberOf(uint256 vaultId, uint256 groupId) external pure returns (bool) {
+        return vaultId <= 1 && vaultId == groupId;
+    }
+
     function isRegisteredSwapGroupPair(uint256, uint256) external pure returns (bool) {
         return true;
     }
