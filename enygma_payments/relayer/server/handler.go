@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -405,10 +406,10 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	// One claim per nullifier the transfer consumes (main and USDr legs):
 	// the same note cannot be relayed twice at once, whichever route or
 	// other request fields carry it.
-	claimKeys := []string{
+	claimKeys := append([]string{
 		nullifierKey(mainNullifiers, pubSig80[transferNullifierIndex]),
 		nullifierKey(usdrNullifiers, usdrPubSig82[usdrNullifierIndex]),
-	}
+	}, participantKeys(kIndex)...)
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
 		return
@@ -517,7 +518,7 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 
 	// Same main-ledger nullifier set as /relay/transfer, so the same note
 	// is blocked across both routes.
-	claimKeys := []string{nullifierKey(mainNullifiers, pubSig54[feeNullifierIndex])}
+	claimKeys := append([]string{nullifierKey(mainNullifiers, pubSig54[feeNullifierIndex])}, participantKeys(kIndex)...)
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
 		return
@@ -598,6 +599,25 @@ const pendingClaimHold = time.Hour
 
 func nullifierKey(set string, nullifier *big.Int) string {
 	return "nf:" + set + ":" + nullifier.String()
+}
+
+// participantKeys are the claims on a transfer's participant accounts. A
+// transfer proof binds every participant's current balance commitment (and
+// the epoch), so while one transfer is pending any other transfer touching
+// one of its accounts is built on balances about to change and would revert
+// on chain at the relayer's cost; it gets 409 instead and can be re-proven.
+// Transfers over disjoint accounts still run concurrently.
+func participantKeys(ids []*big.Int) []string {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = ParticipantKey(id.Int64())
+	}
+	return keys
+}
+
+// ParticipantKey is the in-flight claim on one participant account.
+func ParticipantKey(accountId int64) string {
+	return "acct:" + strconv.FormatInt(accountId, 10)
 }
 
 // claim marks every key as in-flight, or none of them if any already is.
@@ -682,10 +702,18 @@ func DedupKey(kind string, req any) (string, error) {
 // silent reinterpretation.
 func parseParticipantIds(ids []int64) ([]*big.Int, error) {
 	out := make([]*big.Int, len(ids))
+	seen := make(map[int64]bool, len(ids))
 	for i, id := range ids {
 		if id < 0 {
 			return nil, fmt.Errorf("[%d]: negative id %d is not a valid account id", i, id)
 		}
+		// A repeated id is rejected on chain anyway (participant ids must be
+		// strictly increasing); refusing it here returns 400 instead of
+		// colliding with its own participant claim as a misleading 409.
+		if seen[id] {
+			return nil, fmt.Errorf("[%d]: duplicate account id %d", i, id)
+		}
+		seen[id] = true
 		out[i] = big.NewInt(id)
 	}
 	return out, nil
