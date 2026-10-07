@@ -110,6 +110,11 @@ func successReceipt(tx *types.Transaction) *types.Receipt {
 
 // newTestHandler creates a Handler backed by mock contract + mock miner.
 func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
+	return newTestHandlerWithBackend(c, m)
+}
+
+// newTestHandlerWithBackend is newTestHandler with any receipt backend.
+func newTestHandlerWithBackend(c *mockContract, m bind.DeployBackend) *server.Handler {
 	privKey, _ := crypto.HexToECDSA(hardhatKey0)
 	auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(1337))
 	cfg := &config.Config{
