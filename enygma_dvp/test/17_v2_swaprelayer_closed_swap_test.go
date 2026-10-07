@@ -356,4 +356,49 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 			t.Fatal("Alice's nullifier still locked after cancel")
 		}
 	})
+	// The same leg has a second ("mirror") swapId when filed with the
+	// isPayment flag flipped: swapIdOf orders the messages by the flag.
+	mirrorOf := func(payMsg, delMsg int64) common.Hash {
+		return crypto.Keccak256Hash(common.BigToHash(big.NewInt(payMsg)).Bytes(), common.BigToHash(big.NewInt(delMsg)).Bytes())
+	}
+
+	t.Run("a leg filed with the flag flipped is rejected", func(t *testing.T) {
+		env := newSwapRelayerEnv(t)
+		alice, _, id := swapPair(81, 82, 101, 202)
+		expiry := big.NewInt(int64(env.now() + 29*24*3600))
+
+		// Mallory front-runs Alice, filing her payment leg as a delivery leg.
+		if r := env.send("mallory", "submitReceipt", mirrorOf(81, 82), alice, false, pv, expiry, ctx, ctx); r != "LegTypeMismatch" {
+			t.Fatalf("payment leg filed as delivery: got %q, want LegTypeMismatch", r)
+		}
+		if env.locked(paymentVault, alice.Statement[3]) {
+			t.Fatal("the flipped leg locked Alice's note")
+		}
+		// Alice's own submission still goes through.
+		if r := env.send("alice", "submitReceipt", id, alice, true, pv, big.NewInt(int64(env.now()+3600)), ctx, ctx); r != "" {
+			t.Fatalf("Alice's own leg after the attempt: %s", r)
+		}
+	})
+
+	t.Run("the mirror of a cancelled swap is closed too", func(t *testing.T) {
+		env := newSwapRelayerEnv(t)
+		alice, _, id := swapPair(91, 92, 101, 202)
+		if r := env.send("alice", "submitReceipt", id, alice, true, pv, big.NewInt(int64(env.now()+3600)), ctx, ctx); r != "" {
+			t.Fatalf("Alice's leg: %s", r)
+		}
+		if err := env.backend.AdjustTime(2 * time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		env.backend.Commit()
+		if r := env.send("alice", "cancelSwap", id); r != "" {
+			t.Fatalf("cancelSwap: %s", r)
+		}
+		lateExpiry := big.NewInt(int64(env.now() + 29*24*3600))
+		if r := env.send("mallory", "submitReceipt", mirrorOf(91, 92), alice, false, pv, lateExpiry, ctx, ctx); r != "SwapClosed" {
+			t.Fatalf("replay under the mirror id: got %q, want SwapClosed", r)
+		}
+		if env.locked(paymentVault, alice.Statement[3]) {
+			t.Fatal("the replay re-locked Alice's note")
+		}
+	})
 }

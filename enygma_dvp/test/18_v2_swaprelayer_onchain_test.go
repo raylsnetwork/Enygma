@@ -15,6 +15,11 @@ package tests
 //      expiry beyond MAX_SWAP_DURATION is rejected; then both legs settle.
 //   4. The settled swapId is closed as well.
 //
+// In 1 and 2, Alice's leg filed with the isPayment flag flipped (which gives
+// a second, "mirror" swapId) is rejected before her submission (LegTypeMismatch:
+// her ERC-20 vault is not a delivery vault) and after the cancel (SwapClosed:
+// the mirror is closed with the swap).
+//
 // The swapId is derived from the legs (SwapRelayer.swapIdOf), so a leg can
 // only occupy its own swap's slot.
 //
@@ -374,9 +379,18 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	ctI, ctII := []byte{0x01}, []byte{0x02}
 	vPay, vDel := big.NewInt(0), big.NewInt(1)
 	id1 := swapIdOf(pay, del)
+	mirror1 := crypto.Keccak256Hash(common.BigToHash(pay.Statement[0]).Bytes(), common.BigToHash(del.Statement[0]).Bytes())
 
 	// ── 1. Alice submits, swap expires, someone else cancels ─────────────────
 	t.Log("1. Alice submits her payment leg, then a third party cancels it after expiry")
+	// Mallory front-runs her, filing the payment leg as a delivery leg (mirror id).
+	if e, _ := r.send("mallory", "submitReceipt", mirror1, pay, false, vPay, big.NewInt(r.now()+29*24*3600), ctI, ctII); e != "LegTypeMismatch" {
+		t.Fatalf("payment leg filed as delivery under the mirror id: got %q, want LegTypeMismatch", e)
+	}
+	if locked, _ := r.nullifierState(0, pay); locked {
+		t.Fatal("the flipped leg locked Alice's note")
+	}
+	t.Log("   front-run with the isPayment flag flipped rejected (LegTypeMismatch)")
 	if e, _ := r.send("alice", "submitReceipt", id1, pay, true, vPay, big.NewInt(r.now()+120), ctI, ctII); e != "" {
 		t.Fatalf("Alice's leg: %s", e)
 	}
@@ -408,6 +422,13 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 		t.Fatal("Alice's note was re-locked by a replay")
 	}
 	t.Log("   replay of Alice's leg by a third party also rejected")
+	if e, _ := r.send("mallory", "submitReceipt", mirror1, pay, false, vPay, big.NewInt(r.now()+29*24*3600), ctI, ctII); e != "SwapClosed" {
+		t.Fatalf("replay of Alice's leg under the mirror id: got %q, want SwapClosed", e)
+	}
+	if locked, _ := r.nullifierState(0, pay); locked {
+		t.Fatal("Alice's note was re-locked under the mirror id")
+	}
+	t.Log("   ...and under the mirror id (SwapClosed)")
 
 	// ── 3. A new swap: junk and misfiled legs are rejected, then it settles ──
 	t.Log("3. A second swap (new legs)")
