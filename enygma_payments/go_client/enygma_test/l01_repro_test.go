@@ -131,7 +131,7 @@ func l01DeployAndRegister(t *testing.T, client *ethclient.Client, mkAuth func() 
 // actually rejects it, not just that a correctly-domained proof happens to
 // pass.
 func l01BuildWithdrawProof(dep l01Deployment, domainAddr common.Address, nullifierSeed string) (enygma.IEnygmaWithdrawProof, []enygma.IEnygmaPoint, []*big.Int) {
-	var pubSig [52]*big.Int
+	var pubSig [62]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}

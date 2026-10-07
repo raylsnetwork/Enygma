@@ -170,7 +170,7 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 	// PREVIOUS_COMMIT_OFFSET=12, TX_COMMIT_OFFSET=24, BLOCK_NUMBER_OFFSET=36,
 	// NULLIFIER_OFFSET=49, DOMAIN_OFFSET=51 (Fix L-01; Enygma.sol's own
 	// constants).
-	var pubSig [52]*big.Int
+	var pubSig [62]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}

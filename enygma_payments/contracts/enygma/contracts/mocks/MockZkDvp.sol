@@ -22,7 +22,16 @@ contract MockZkDvp {
     ) external returns (bool, uint256) {
         totalMinted += depositParams[0]; // amount
         callCount += 1;
-        return (true, uint256(keccak256(abi.encode(depositParams, callCount))));
+        return (true, commitmentOf(depositParams[0], depositParams[1]));
+    }
+
+    /// @notice The commitment this mock "inserts" for (amount, publicKey):
+    ///         deterministic, so a test can put it in a withdraw proof's
+    ///         deposit-commitment signals (the real vault computes
+    ///         Poseidon(Poseidon(asset, amount), publicKey)).
+    function commitmentOf(uint256 amount, uint256 publicKey) public pure returns (uint256) {
+        return uint256(keccak256(abi.encode(amount, publicKey))) %
+            21888242871839275222246405745257275088548364400416034343698204186575808495617;
     }
 
     function withdrawThroughEnygma(
