@@ -5,6 +5,7 @@ package server
 // past a request's timeout until the transaction is actually mined.
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"math/big"
@@ -15,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
 )
@@ -142,5 +145,116 @@ func TestWaitMined_MinedReleasesClaims(t *testing.T) {
 	}
 	if !h.claim(keys...) {
 		t.Fatal("the note stayed claimed after its transaction was mined")
+	}
+}
+
+// txNode is a JSON-RPC node that accepts transactions and reports no receipt
+// until mined is set.
+func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
+	zero32 := "0x" + strings.Repeat("00", 32)
+	header := map[string]interface{}{
+		"parentHash": zero32, "sha3Uncles": zero32, "miner": "0x" + strings.Repeat("00", 20),
+		"stateRoot": zero32, "transactionsRoot": zero32, "receiptsRoot": zero32,
+		"logsBloom": "0x" + strings.Repeat("00", 256), "difficulty": "0x0", "number": "0x1",
+		"gasLimit": "0x1c9c380", "gasUsed": "0x0", "timestamp": "0x1", "extraData": "0x",
+		"baseFeePerGas": "0x1", "hash": zero32,
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ID     json.RawMessage   `json:"id"`
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
+		}
+		_ = json.Unmarshal(body, &req)
+		var result interface{}
+		switch req.Method {
+		case "eth_chainId":
+			result = "0x539"
+		case "eth_getTransactionCount":
+			result = "0x0"
+		case "eth_gasPrice", "eth_maxPriorityFeePerGas":
+			result = "0x1"
+		case "eth_getBlockByNumber":
+			result = header
+		case "eth_sendRawTransaction":
+			var raw string
+			_ = json.Unmarshal(req.Params[0], &raw)
+			var tx types.Transaction
+			_ = tx.UnmarshalBinary(common.FromHex(raw))
+			result = tx.Hash().Hex()
+		case "eth_getTransactionReceipt":
+			if mined.Load() {
+				result = map[string]interface{}{
+					"transactionHash": zero32, "transactionIndex": "0x0", "blockHash": zero32, "blockNumber": "0x2",
+					"cumulativeGasUsed": "0x5208", "gasUsed": "0x5208", "status": "0x1",
+					"logs": []interface{}{}, "logsBloom": "0x" + strings.Repeat("00", 256), "type": "0x2",
+					"effectiveGasPrice": "0x1", "contractAddress": nil,
+				}
+			}
+		}
+		out, _ := json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": req.ID, "result": result})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	}))
+}
+
+// A tag publication still unmined when the request times out answers 202 and
+// keeps the tag claimed until it is mined: released earlier, a retry would
+// publish the same tag again and revert (TagAlreadyExists) at the relayer's cost.
+func TestRelayTag_TimeoutAnswersPendingAndHoldsClaim(t *testing.T) {
+	var mined atomic.Bool
+	srv := txNode(t, &mined)
+	defer srv.Close()
+	client, err := ethclient.Dial(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.GasLimit = 1_000_000
+	tagABI, err := loadABIFromFile("../../private_tags/contracts/TagRegistry.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{
+		client: client, auth: auth,
+		tagRegistryAddr: common.HexToAddress("0x00000000000000000000000000000000000000c3"),
+		tagRegistryABI:  tagABI,
+	}
+	saved := txTimeout
+	txTimeout = 300 * time.Millisecond
+	defer func() { txTimeout = saved }()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/relay/tag", h.RelayTag)
+	tag := "0x" + strings.Repeat("ab", 32)
+	post := func() *httptest.ResponseRecorder {
+		body, _ := json.Marshal(RelayTagRequest{Tag: tag, Ctxt: "0x01"})
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/relay/tag", bytes.NewReader(body)))
+		return w
+	}
+
+	if w := post(); w.Code != http.StatusAccepted {
+		t.Fatalf("unmined publication: got %d, want 202: %s", w.Code, w.Body.String())
+	}
+	if w := post(); w.Code != http.StatusConflict {
+		t.Fatalf("retry while the first publication is pending: got %d, want 409", w.Code)
+	}
+	mined.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	for !h.claim(tag) {
+		if time.Now().After(deadline) {
+			t.Fatal("the tag stayed claimed after its transaction was mined")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
