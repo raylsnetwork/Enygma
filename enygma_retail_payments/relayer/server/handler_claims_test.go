@@ -171,6 +171,8 @@ func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
 		switch req.Method {
 		case "eth_chainId":
 			result = "0x539"
+		case "eth_blockNumber":
+			result = "0x1"
 		case "eth_getTransactionCount":
 			result = "0x0"
 		case "eth_gasPrice", "eth_maxPriorityFeePerGas":
@@ -199,13 +201,12 @@ func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
 	}))
 }
 
-// A tag publication still unmined when the request times out answers 202 and
-// keeps the tag claimed until it is mined: released earlier, a retry would
-// publish the same tag again and revert (TagAlreadyExists) at the relayer's cost.
-func TestRelayTag_TimeoutAnswersPendingAndHoldsClaim(t *testing.T) {
-	var mined atomic.Bool
-	srv := txNode(t, &mined)
-	defer srv.Close()
+// tagHandler builds a handler whose registries sit on a node that accepts
+// transactions and reports no receipt until mined is set.
+func tagHandler(t *testing.T, mined *atomic.Bool) (*Handler, *gin.Engine) {
+	t.Helper()
+	srv := txNode(t, mined)
+	t.Cleanup(srv.Close)
 	client, err := ethclient.Dial(srv.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -223,38 +224,107 @@ func TestRelayTag_TimeoutAnswersPendingAndHoldsClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	chanABI, err := loadABIFromFile("../../private_tags/contracts/TagChannelRegistry.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &Handler{
 		client: client, auth: auth,
-		tagRegistryAddr: common.HexToAddress("0x00000000000000000000000000000000000000c3"),
-		tagRegistryABI:  tagABI,
+		tagRegistryAddr:        common.HexToAddress("0x00000000000000000000000000000000000000c3"),
+		tagRegistryABI:         tagABI,
+		tagChannelRegistryAddr: common.HexToAddress("0x00000000000000000000000000000000000000c4"),
+		tagChannelRegistryABI:  chanABI,
 	}
 	saved := txTimeout
 	txTimeout = 300 * time.Millisecond
-	defer func() { txTimeout = saved }()
-
+	t.Cleanup(func() { txTimeout = saved })
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.POST("/relay/tag", h.RelayTag)
-	tag := "0x" + strings.Repeat("ab", 32)
-	post := func() *httptest.ResponseRecorder {
-		body, _ := json.Marshal(RelayTagRequest{Tag: tag, Ctxt: "0x01"})
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/relay/tag", bytes.NewReader(body)))
-		return w
-	}
+	r.POST("/relay/channel", h.RelayChannel)
+	return h, r
+}
 
-	if w := post(); w.Code != http.StatusAccepted {
+func postJSON(r *gin.Engine, path string, v interface{}) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(v)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
+	return w
+}
+
+// A tag publication still unmined when the request times out answers 202 and
+// keeps the tag claimed until it is mined: TagRegistry only rejects a repeated
+// tag within one block, so a retry in another block would publish it again.
+// The claim is on the decoded tag, so another hex spelling of it collides.
+func TestRelayTag_TimeoutAnswersPendingAndHoldsClaim(t *testing.T) {
+	var mined atomic.Bool
+	h, r := tagHandler(t, &mined)
+	hexTag := strings.Repeat("ab", 32)
+
+	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tag: "0x" + hexTag, Ctxt: "0x01"}); w.Code != http.StatusAccepted {
 		t.Fatalf("unmined publication: got %d, want 202: %s", w.Code, w.Body.String())
 	}
-	if w := post(); w.Code != http.StatusConflict {
-		t.Fatalf("retry while the first publication is pending: got %d, want 409", w.Code)
+	for _, spelling := range []string{"0x" + hexTag, hexTag, "0x" + strings.ToUpper(hexTag)} {
+		if w := postJSON(r, "/relay/tag", RelayTagRequest{Tag: spelling, Ctxt: "0x01"}); w.Code != http.StatusConflict {
+			t.Fatalf("retry as %q while the first is pending: got %d, want 409", spelling, w.Code)
+		}
 	}
 	mined.Store(true)
+	var tag [32]byte
+	copy(tag[:], common.FromHex(hexTag))
 	deadline := time.Now().Add(5 * time.Second)
-	for !h.claim(tag) {
+	for !h.claim(tagKey(tag)) {
 		if time.Now().After(deadline) {
 			t.Fatal("the tag stayed claimed after its transaction was mined")
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Window mode claims every tag of the window: a shifted window that still
+// covers a tag being published collides.
+func TestRelayTag_WindowClaimsEveryTag(t *testing.T) {
+	var mined atomic.Bool
+	_, r := tagHandler(t, &mined)
+	tagA, tagB := "0x"+strings.Repeat("a1", 32), "0x"+strings.Repeat("b2", 32)
+
+	// The node reports block 1, so the publication targets block 2 = startBlock.
+	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{tagA, tagB}, StartBlock: 2, Ctxt: "0x01"}); w.Code != http.StatusAccepted {
+		t.Fatalf("unmined window publication: got %d, want 202: %s", w.Code, w.Body.String())
+	}
+	other := "0x" + strings.Repeat("c3", 32)
+	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{other, tagB}, StartBlock: 1, Ctxt: "0x01"}); w.Code != http.StatusConflict {
+		t.Fatalf("shifted window sharing a pending tag: got %d, want 409", w.Code)
+	}
+}
+
+// A window tag is decoded and validated before anything is claimed, so a
+// caller cannot use it to name (and hold) another claim, such as a note's.
+func TestRelayTag_RejectsMalformedWindowTagBeforeClaiming(t *testing.T) {
+	var mined atomic.Bool
+	h, r := tagHandler(t, &mined)
+	noteKey := "nf:0x00000000000000000000000000000000000000a1:0:42"
+	w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{noteKey, "0x" + strings.Repeat("ab", 32)}, StartBlock: 3, Ctxt: "0x01"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("window with a malformed tag: got %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if _, held := h.inFlight.Load(noteKey); held {
+		t.Fatal("a malformed window tag claimed another key")
+	}
+}
+
+// A channel setup still unmined at the timeout keeps its c1 claimed; the claim
+// is on the decoded c1, so another hex spelling of it collides.
+func TestRelayChannel_TimeoutHoldsClaimForAnySpelling(t *testing.T) {
+	var mined atomic.Bool
+	_, r := tagHandler(t, &mined)
+	c1 := strings.Repeat("cd", 1088)
+	req := RelayChannelRequest{C1: "0x" + c1, C2: "0x01", Bitmap: "0x01"}
+	if w := postJSON(r, "/relay/channel", req); w.Code != http.StatusAccepted {
+		t.Fatalf("unmined channel setup: got %d, want 202: %s", w.Code, w.Body.String())
+	}
+	req.C1 = strings.ToUpper(c1)
+	if w := postJSON(r, "/relay/channel", req); w.Code != http.StatusConflict {
+		t.Fatalf("same c1 in another spelling while pending: got %d, want 409", w.Code)
 	}
 }

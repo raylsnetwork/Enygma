@@ -137,3 +137,16 @@ func TestRelayHandler_Transfer_ConflictingParticipantRefused(t *testing.T) {
 		}
 	}
 }
+
+// A repeated participant id is a malformed request (400), not a transient
+// conflict with its own account claim (409).
+func TestRelayHandler_Transfer_DuplicateParticipantIdIsBadRequest(t *testing.T) {
+	tx := dummyTx()
+	h := newTestHandler(&mockContract{tx: tx}, &mockMiner{receipt: successReceipt(tx)})
+	r := server.NewWithHandler(testAPIKeys, h)
+	body := validTransferBody()
+	body.KIndex = []int64{1, 2, 3, 3, 5, 6}
+	if w := serveHTTPPost(r, "/relay/transfer", testAPIKey, body); w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate participant id: got %d, want 400: %s", w.Code, w.Body.String())
+	}
+}

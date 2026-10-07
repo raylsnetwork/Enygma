@@ -702,10 +702,18 @@ func DedupKey(kind string, req any) (string, error) {
 // silent reinterpretation.
 func parseParticipantIds(ids []int64) ([]*big.Int, error) {
 	out := make([]*big.Int, len(ids))
+	seen := make(map[int64]bool, len(ids))
 	for i, id := range ids {
 		if id < 0 {
 			return nil, fmt.Errorf("[%d]: negative id %d is not a valid account id", i, id)
 		}
+		// A repeated id is rejected on chain anyway (participant ids must be
+		// strictly increasing); refusing it here returns 400 instead of
+		// colliding with its own participant claim as a misleading 409.
+		if seen[id] {
+			return nil, fmt.Errorf("[%d]: duplicate account id %d", i, id)
+		}
+		seen[id] = true
 		out[i] = big.NewInt(id)
 	}
 	return out, nil

@@ -68,6 +68,27 @@ func nullifierKey(vault common.Address, tree, nullifier *big.Int) string {
 	return "nf:" + vault.Hex() + ":" + tree.String() + ":" + nullifier.String()
 }
 
+// tagKey and channelKey are the in-flight claims for a tag publication and a
+// channel setup. Each kind of claim has its own prefix (notes use "nf:"), so
+// a caller-supplied value can never name another kind's claim.
+func tagKey(tag [32]byte) string { return "tag:" + hex.EncodeToString(tag[:]) }
+
+func channelKey(c1 []byte) string { return "chan:" + crypto.Keccak256Hash(c1).Hex() }
+
+// decodeTag decodes a 32-byte hex tag (0x prefix optional, any case).
+func decodeTag(s, field string) ([32]byte, error) {
+	var tag [32]byte
+	b, err := decodeHexField(s, field)
+	if err != nil {
+		return tag, err
+	}
+	if len(b) != 32 {
+		return tag, fmt.Errorf("%s must be 32 bytes, got %d", field, len(b))
+	}
+	copy(tag[:], b)
+	return tag, nil
+}
+
 // claim marks every key as in-flight, or none of them if any already is.
 func (h *Handler) claim(keys ...string) bool {
 	for i, k := range keys {
@@ -720,19 +741,27 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		return
 	}
 
-	// Validate single tag now; window tags are validated on each attempt below.
+	// Decode and validate every tag up front: the claims below are keyed on
+	// the decoded bytes, so all of them must be well-formed before claiming.
 	var singleTag [32]byte
+	var windowTags [][32]byte
 	if !windowMode {
-		tagBytes, err := decodeHexField(req.Tag, "tag")
+		tag, err := decodeTag(req.Tag, "tag")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if len(tagBytes) != 32 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("tag must be 32 bytes, got %d", len(tagBytes))})
-			return
+		singleTag = tag
+	} else {
+		windowTags = make([][32]byte, len(req.Tags))
+		for i, t := range req.Tags {
+			tag, err := decodeTag(t, fmt.Sprintf("tags[%d]", i))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			windowTags[i] = tag
 		}
-		copy(singleTag[:], tagBytes)
 	}
 
 	// Step 2 — TagRegistry must be configured.
@@ -743,19 +772,27 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		return
 	}
 
-	// Step 3 — in-flight dedup key.
-	inFlightKey := req.Tag
+	// Step 3 — claim the tag(s) as in-flight, keyed on the decoded bytes so
+	// the same tag cannot slip past in another hex spelling (0x prefix,
+	// letter case). In window mode every tag of the window is claimed, not
+	// just the first: a shifted window that still covers the tag being
+	// published collides on it.
+	var claimKeys []string
 	if windowMode {
-		inFlightKey = req.Tags[0] // keyed by first window tag
+		for _, t := range windowTags {
+			claimKeys = append(claimKeys, tagKey(t))
+		}
+	} else {
+		claimKeys = []string{tagKey(singleTag)}
 	}
-	claimKeys := []string{inFlightKey}
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "tag already in-flight"})
 		return
 	}
 	// Released when the request ends, unless an attempt is still unmined:
-	// then only once it is mined, so a retry cannot publish the same tag
-	// again and revert (TagAlreadyExists) at the relayer's cost.
+	// then only once it is mined. TagRegistry only rejects a repeated tag
+	// within one block, so a retry released early and landing in another
+	// block would publish the same tag a second time at the relayer's cost.
 	var pendingTx *types.Transaction
 	defer func() {
 		if pendingTx != nil {
@@ -792,16 +829,7 @@ func (h *Handler) RelayTag(c *gin.Context) {
 				})
 				return
 			}
-			tagBytes, err := decodeHexField(req.Tags[idx], fmt.Sprintf("tags[%d]", idx))
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			if len(tagBytes) != 32 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("tags[%d] must be 32 bytes, got %d", idx, len(tagBytes))})
-				return
-			}
-			copy(tag[:], tagBytes)
+			tag = windowTags[idx]
 		} else {
 			tag = singleTag
 		}
@@ -817,6 +845,9 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		txReceipt, err := bind.WaitMined(waitCtx, h.client, tx)
 		cancel()
 		if errors.Is(err, context.DeadlineExceeded) {
+			// Outcome unknown: the block-drift check below has not run, so in
+			// window mode the client must confirm from the receipt that the
+			// transaction landed in the block its tag was for.
 			pendingTx = tx
 			c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
 			return
@@ -951,7 +982,8 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 	}
 
 	// Step 3 — claim c1 as in-flight (keyed by first 16 bytes of c1 hex).
-	claimKeys := []string{req.C1[:min(34, len(req.C1))]}
+	// Keyed on the decoded c1, so another hex spelling of it collides.
+	claimKeys := []string{channelKey(c1)}
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "channel setup already in-flight"})
 		return
@@ -985,6 +1017,9 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 	var channelIdx uint64
 	channelOpenedSig := crypto.Keccak256Hash([]byte("ChannelOpened(uint256,address)"))
 	for _, log := range txReceipt.Logs {
+		if log.Address != h.tagChannelRegistryAddr || len(log.Topics) < 2 {
+			continue
+		}
 		if log.Topics[0] == channelOpenedSig {
 			channelIdx = new(big.Int).SetBytes(log.Topics[1].Bytes()).Uint64()
 			break
