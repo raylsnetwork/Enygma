@@ -735,10 +735,36 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		return
 	}
 
-	ctxt, err := decodeHexField(req.Ctxt, "ctxt")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	// The payload is under a per-block key, so it travels with its tag: one
+	// ctxt in single mode, one per tag in window mode.
+	var singleCtxt []byte
+	var windowCtxts [][]byte
+	if !windowMode {
+		if req.Ctxt == "" || len(req.Ctxts) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "single mode takes ctxt (not ctxts)"})
+			return
+		}
+		ctxt, err := decodeHexField(req.Ctxt, "ctxt")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		singleCtxt = ctxt
+	} else {
+		if req.Ctxt != "" || len(req.Ctxts) != len(req.Tags) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+				"window mode takes ctxts, one per tag (got %d tags, %d ctxts)", len(req.Tags), len(req.Ctxts))})
+			return
+		}
+		windowCtxts = make([][]byte, len(req.Ctxts))
+		for i, s := range req.Ctxts {
+			ctxt, err := decodeHexField(s, fmt.Sprintf("ctxts[%d]", i))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			windowCtxts[i] = ctxt
+		}
 	}
 
 	// Decode and validate every tag up front: the claims below are keyed on
@@ -812,6 +838,7 @@ func (h *Handler) RelayTag(c *gin.Context) {
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		var tag [32]byte
+		var ctxt []byte
 
 		if windowMode {
 			// Pick the tag for the block this tx is expected to land in.
@@ -829,9 +856,9 @@ func (h *Handler) RelayTag(c *gin.Context) {
 				})
 				return
 			}
-			tag = windowTags[idx]
+			tag, ctxt = windowTags[idx], windowCtxts[idx]
 		} else {
-			tag = singleTag
+			tag, ctxt = singleTag, singleCtxt
 		}
 
 		h.txMu.Lock()

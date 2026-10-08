@@ -202,13 +202,15 @@ type parsedUsdrFee struct {
 //
 // Window mode — caller provides a window of pre-derived tags so the relayer
 // can pick the one matching the actual landing block, eliminating block-
-// prediction mismatch:
+// prediction mismatch. The payload is under a per-block key, so it comes once
+// per block too: ctxts[i] is under the key of block startBlock+i:
 //
-//	{ "tags": ["0x...", "0x...", "0x..."], "startBlock": 42, "ctxt": "0x..." }
+//	{ "tags": ["0x...", "0x...", "0x..."], "startBlock": 42, "ctxts": ["0x...", "0x...", "0x..."] }
 //
 // In window mode the relayer queries the pending block, picks the appropriate
-// tag, and retries (up to 3 times) if the tx lands in a later block that is
-// still within the window.  Use tags.PrepareTagWithWindow to build the request.
+// (tag, ctxt) pair, and retries (up to 3 times) if the tx lands in a later
+// block that is still within the window. Use tags.PrepareTagWithWindow to
+// build the request.
 type RelayTagRequest struct {
 	// Single-tag mode: pre-computed tag for a specific block.
 	Tag string `json:"tag,omitempty"`
@@ -218,8 +220,11 @@ type RelayTagRequest struct {
 	Tags       []string `json:"tags,omitempty"`
 	StartBlock uint64   `json:"startBlock,omitempty"`
 
-	// Ctxt is always required in both modes.
-	Ctxt string `json:"ctxt" binding:"required"`
+	// Single-tag mode: the payload, under the key of the tag's block.
+	Ctxt string `json:"ctxt,omitempty"`
+	// Window mode: ctxts[i] is the payload under the key of block
+	// startBlock+i, published with tags[i]. Same length as Tags.
+	Ctxts []string `json:"ctxts,omitempty"`
 }
 
 // RelayTagResponse is returned on successful tag publication.
