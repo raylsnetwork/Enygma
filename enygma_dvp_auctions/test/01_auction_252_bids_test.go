@@ -104,6 +104,10 @@ func TestAuction_252Bids(t *testing.T) {
 		MerkleProof: nftProof,
 		SaltLocked:  saltLocked,
 		SaltRevert:  saltRevertBob,
+		// Prover-only test: the parameters are only bound into the proof.
+		Deadline:           big.NewInt(1_900_000_000),
+		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
+		FloorPrice:         big.NewInt(10),
 	})
 	if err != nil {
 		t.Fatalf("AuctionLock: %v", err)
@@ -176,6 +180,7 @@ func TestAuction_252Bids(t *testing.T) {
 		SaltA:       saltA0,
 		SaltB:       saltB0,
 		SaltRevert:  saltRevert0,
+		FloorPrice:  big.NewInt(1), // bidder 0 bids 1: the proof shows the bid reaches this floor
 	})
 	if err != nil {
 		t.Fatalf("AuctionBid: %v", err)

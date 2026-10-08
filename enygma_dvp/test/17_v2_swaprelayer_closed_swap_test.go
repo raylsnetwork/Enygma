@@ -298,6 +298,22 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		}
 	})
 
+	// The first submitter (possibly a front-runner holding Alice's public
+	// leg) picks the expiry, and anyone can cancel once it passes: one under
+	// MIN_SWAP_DURATION would let them cancel before Bob can deliver.
+	t.Run("expiry under MIN_SWAP_DURATION is rejected", func(t *testing.T) {
+		env := newSwapRelayerEnv(t)
+		alice, _, id := swapPair(33, 34, 101, 202)
+		soon := big.NewInt(int64(env.now() + 60))
+
+		if r := env.send("mallory", "submitReceipt", id, alice, true, pv, soon, ctx, ctx); r != "ExpiryTooSoon" {
+			t.Fatalf("VULNERABLE: 1-minute expiry: got %q, want ExpiryTooSoon", r)
+		}
+		if env.locked(paymentVault, alice.Statement[3]) {
+			t.Fatal("nullifier locked despite rejected expiry")
+		}
+	})
+
 	t.Run("a leg with an invalid proof cannot occupy a swap", func(t *testing.T) {
 		env := newSwapRelayerEnv(t)
 		alice, _, id := swapPair(41, 42, 101, 202)

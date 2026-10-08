@@ -55,6 +55,12 @@ contract SwapRelayer is ReentrancyGuard {
     /// leg can keep its note locked.
     uint256 public constant MAX_SWAP_DURATION = 30 days;
 
+    /// Same bound as EnygmaDvp.MIN_SWAP_DURATION: cancelSwap is callable by
+    /// anyone once the expiry passes, and the first submitter (possibly a
+    /// front-runner holding the other party's public receipt) picks it, so the
+    /// counterparty is always given at least this long to submit its leg.
+    uint256 public constant MIN_SWAP_DURATION = 15 minutes;
+
     /// The asset groups EnygmaDvp.swap() settles: a payment leg spends a
     /// fungible note, a delivery leg a non-fungible one.
     uint256 public constant GROUP_ID_FUNGIBLES = 0;
@@ -83,6 +89,7 @@ contract SwapRelayer is ReentrancyGuard {
     error BothSidesAlreadyIn();
     error SwapClosed();
     error ExpiryTooFar();
+    error ExpiryTooSoon();
     error SwapIdMismatch();
     error LegTypeMismatch();
 
@@ -147,6 +154,7 @@ contract SwapRelayer is ReentrancyGuard {
             // "block.timestamp < s.expiry" check as false for any uint256 timestamp).
             require(expiry > block.timestamp, "SwapRelayer: expiry must be in the future");
             if (expiry > block.timestamp + MAX_SWAP_DURATION) revert ExpiryTooFar();
+            if (expiry < block.timestamp + MIN_SWAP_DURATION) revert ExpiryTooSoon();
             s.expiry = expiry;
         }
 

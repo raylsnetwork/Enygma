@@ -167,9 +167,9 @@ sequenceDiagram
     participant Vault as NFT Vault
 
     Bob->>gnark: sk_B, saltIn, saltLocked, saltRevert, Merkle path
-    gnark-->>Bob: π_lock, statement[7]
+    gnark-->>Bob: π_lock, statement[8]
 
-    Bob->>Chain: initAuction(π_lock, statement[7], deadline, settlementDeadline, floorPrice)
+    Bob->>Chain: initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice)
     note over Chain: Verify π_lock
     Chain->>Vault: lockCoin(nf_B)
     note over Chain: state = BIDDING
@@ -285,9 +285,9 @@ sequenceDiagram
 
     note over Alice: ML-KEM.Encaps(pk_auction) → ss, ctxt1
     Alice->>gnark: sk_A, saltIn, saltA, saltB, saltRevert, Merkle path
-    gnark-->>Alice: π_bid, statement[7]
+    gnark-->>Alice: π_bid, statement[9]
 
-    Alice->>Chain: submitBid(π_bid, statement[7], ctxt1, ctxt2)
+    Alice->>Chain: submitBid(π_bid, statement[9], ctxt1, ctxt2)
     note over Chain: Verify π_bid (before deadline)
     Chain->>Vault: lockCoin(nf_A)
     note over Chain: Store BidData { commitA, commitB, revertCommit }
@@ -529,7 +529,7 @@ The optimistic path means **the honest case costs no on-chain proof verification
 
 ## Phase 3a — Bob Cancels the Auction (`revertAuction`)
 
-Bob may cancel **at any time while the auction is in BIDDING state** — before or after the bidding deadline. Because bids are sealed with ML-KEM, Bob gains no information advantage from early cancellation.
+Bob may cancel **while the auction is in BIDDING state and before the bidding deadline**. Bids are sealed with ML-KEM, so cancelling during bidding gives him no information advantage; after the deadline, the auctioneer's `submitBatch()` carries the batch winners' amounts and is visible in the mempool before it is mined, so a cancel then could front-run the result.
 
 Bob generates:
 
@@ -565,7 +565,7 @@ sequenceDiagram
     gnark-->>Bob: π_revert, statement[4]
 
     Bob->>Chain: revertAuction(π_revert, statement[4])
-    note over Chain: Verify π_revert (any time while BIDDING)
+    note over Chain: Verify π_revert (BIDDING, before the deadline)
     Chain->>Vault: spend commitLocked → insert revertedCommit
     note over Chain: state = CANCELED
 ```
@@ -658,7 +658,7 @@ sequenceDiagram
     rect rgba(100,200,100,0.10)
         note over Alice,Chain: PHASE 0b — Sealed Bid (before deadline)
         note over Alice: ML-KEM.Encaps(pk_auction) → ss, ctxt1
-        Alice->>Chain: submitBid(π_bid, statement[7], ctxt1, ctxt2)
+        Alice->>Chain: submitBid(π_bid, statement[9], ctxt1, ctxt2)
         note over Chain: nullify nf_A → store BidData
     end
 
@@ -683,7 +683,7 @@ sequenceDiagram
 
     rect rgba(255,50,50,0.08)
         note over Bob,Chain: PHASE 3 — Cancel / Timeout (alternative to Phase 2)
-        alt Bob cancels (any time while BIDDING)
+        alt Bob cancels (while BIDDING, before the deadline)
             Bob->>Chain: revertAuction(π_revert) → state = CANCELED
         else Timeout past settlementDeadline
             Chain->>Chain: recoverAuction() → state = CANCELED
