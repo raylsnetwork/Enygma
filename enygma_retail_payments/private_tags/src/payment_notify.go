@@ -55,14 +55,15 @@ func PreparePaymentTag(
 }
 
 // DecryptPaymentNote decrypts the ctxt PreparePaymentTag produced for
-// blockNumber, the block its tag was found in (ScannedTag.BlockNumber).
+// blockNumber, the block its tag was found in (ScannedTag.BlockNumber), to the
+// recipient whose spend key is recipientPkSpend.
 // Returns the PaymentNote containing amount, tokenId, and saltB.
 //
 // Bob verifies his commitment with:
 //
 //	Poseidon4(bobPkSpend, note.Salt, note.Amount, note.TokenId) == destinationCommitment
-func DecryptPaymentNote(channelSS []byte, blockNumber uint64, ctxt []byte) (*PaymentNote, error) {
-	plaintext, err := DecryptPayload(DeriveBlockKey(channelSS, blockNumber), ctxt)
+func DecryptPaymentNote(channelSS []byte, recipientPkSpend *big.Int, blockNumber uint64, ctxt []byte) (*PaymentNote, error) {
+	plaintext, err := DecryptPayload(DeriveBlockKey(channelSS, blockNumber, recipientPkSpend), ctxt)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt payment note: %w", err)
 	}

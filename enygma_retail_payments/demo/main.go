@@ -505,7 +505,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found 0 tags in registry"))
 			return false
 		}
-		note, err := tags.DecryptPaymentNote(channelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
+		note, err := tags.DecryptPaymentNote(channelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 		if err != nil {
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err))
 			return false

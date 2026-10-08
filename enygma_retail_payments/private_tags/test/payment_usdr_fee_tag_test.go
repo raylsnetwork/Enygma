@@ -648,7 +648,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
 	}
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

@@ -376,7 +376,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 	// ── Step 13: Bob decrypts the tag and verifies the payment note ───────────
 	t.Log("Step 13 — Bob decrypts tag and verifies his payment note")
 
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

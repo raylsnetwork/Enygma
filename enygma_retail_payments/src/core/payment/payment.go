@@ -56,13 +56,16 @@ func NewPaymentClient(baseURL string) *dvpcore.GnarkClient {
 // ── Shared-secret key derivation (used by payment and tag system) ─────────────
 
 // DeriveBlockKey derives the 32-byte AES key for a channel payload published
-// in blockNumber, using HKDF-SHA256. Like the tag, it changes every block, so
-// one block's key opens only that block's payload. Identical to the
-// private-tag system's tags.DeriveBlockKey.
+// in blockNumber to the recipient whose spend key is recipientPkSpend, using
+// HKDF-SHA256. Like the tag, it changes every block and with the direction,
+// so one block's key opens only that block's payload to that recipient.
+// Identical to the private-tag system's tags.DeriveBlockKey.
 //
-//	key = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-block-key-v1" || uint64_be(blockNumber))
-func DeriveBlockKey(sharedSecret []byte, blockNumber uint64) [32]byte {
+//	key = HKDF-SHA256(sharedSecret, salt=nil,
+//	        info="enygma-block-key-v1" || uint64_be(blockNumber) || be32(pkRecipient))
+func DeriveBlockKey(sharedSecret []byte, blockNumber uint64, recipientPkSpend *big.Int) [32]byte {
 	info := binary.BigEndian.AppendUint64([]byte("enygma-block-key-v1"), blockNumber)
+	info = append(info, recipientPkSpend.FillBytes(make([]byte, 32))...)
 	r := hkdf.New(sha256.New, sharedSecret, nil, info)
 	var key [32]byte
 	io.ReadFull(r, key[:]) //nolint:errcheck — hkdf.Reader.Read never errors

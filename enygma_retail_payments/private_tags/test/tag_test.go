@@ -219,7 +219,7 @@ func TestTagPayloadRoundTrip(t *testing.T) {
 	for i := range ss {
 		ss[i] = 0xDE
 	}
-	channelKey := tags.DeriveBlockKey(ss, 100)
+	channelKey := tags.DeriveBlockKey(ss, 100, big.NewInt(0xB0B))
 
 	// Payload: arbitrary bytes (e.g. payment amount + tokenId + salt)
 	payload := make([]byte, 96)
@@ -264,15 +264,16 @@ func TestBlockKeyIsolation(t *testing.T) {
 	for i := range ss {
 		ss[i] = 0xDE
 	}
-	k100, k101 := tags.DeriveBlockKey(ss, 100), tags.DeriveBlockKey(ss, 101)
+	bob := big.NewInt(0xB0B)
+	k100, k101 := tags.DeriveBlockKey(ss, 100, bob), tags.DeriveBlockKey(ss, 101, bob)
 	if k100 == k101 {
 		t.Fatal("blocks 100 and 101 derived the same key")
 	}
-	if k100 != tags.DeriveBlockKey(ss, 100) {
+	if k100 != tags.DeriveBlockKey(ss, 100, bob) {
 		t.Fatal("DeriveBlockKey is not deterministic")
 	}
 	other := make([]byte, 32)
-	if k100 == tags.DeriveBlockKey(other, 100) {
+	if k100 == tags.DeriveBlockKey(other, 100, bob) {
 		t.Fatal("two channels derived the same key for one block")
 	}
 
@@ -296,9 +297,51 @@ func TestBlockKeyIsolation(t *testing.T) {
 		}
 	}
 
-	m := tags.ScannedTag{BlockNumber: 101, Entry: tags.TagEntry{Ctxt: ct101}, SharedSecret: ss}
+	m := tags.ScannedTag{BlockNumber: 101, Entry: tags.TagEntry{Ctxt: ct101}, SharedSecret: ss, PkSpend: bob}
 	if pt, err := m.Decrypt(); err != nil || string(pt) != "payment in block 101" {
 		t.Fatalf("ScannedTag.Decrypt: %q, %v", pt, err)
+	}
+}
+
+// The tag and the key change with who is sending: over one channel, in one
+// block, a payment Alice→Bob and one Bob→Alice get different tags and keys.
+// With H(sharedSecret, blockNumber) alone they would be identical, so the two
+// would collide in TagRegistry and each party would match its own outgoing
+// payment when scanning.
+func TestTagAndKeyDifferByDirection(t *testing.T) {
+	ss := make([]byte, 32)
+	for i := range ss {
+		ss[i] = 0xDE
+	}
+	alice, bob := big.NewInt(0xA11CE), big.NewInt(0xB0B)
+	const block = 100
+
+	toBob, err := tags.DeriveTag(block, bob, ss)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toAlice, err := tags.DeriveTag(block, alice, ss)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toBob == toAlice {
+		t.Fatal("Alice→Bob and Bob→Alice got the same tag in one block")
+	}
+	kToBob, kToAlice := tags.DeriveBlockKey(ss, block, bob), tags.DeriveBlockKey(ss, block, alice)
+	if kToBob == kToAlice {
+		t.Fatal("Alice→Bob and Bob→Alice got the same key in one block")
+	}
+
+	// Disclosing one direction's key reveals nothing of the other's payment.
+	ct, err := tags.EncryptPayload(kToBob, []byte("Alice pays Bob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tags.DecryptPayload(kToAlice, ct); err == nil {
+		t.Fatal("the Bob→Alice key opened the Alice→Bob payment")
+	}
+	if pt, err := tags.DecryptPayload(kToBob, ct); err != nil || string(pt) != "Alice pays Bob" {
+		t.Fatalf("the Alice→Bob key does not open its payment: %v", err)
 	}
 }
 
@@ -367,7 +410,7 @@ func TestTagSystem_OnChain(t *testing.T) {
 	}
 	targetBlock := currentBlock + 1
 
-	ctxt, err := tags.EncryptPayload(tags.DeriveBlockKey(sharedSecret, targetBlock), payload)
+	ctxt, err := tags.EncryptPayload(tags.DeriveBlockKey(sharedSecret, targetBlock, bobPkSpend), payload)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
 	}
@@ -940,7 +983,7 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	}
 
 	realPayload := []byte("payment:30:token0")
-	realCtxt, err := tags.EncryptPayload(tags.DeriveBlockKey(sharedSecret, realBlock), realPayload)
+	realCtxt, err := tags.EncryptPayload(tags.DeriveBlockKey(sharedSecret, realBlock, bobPkSpend), realPayload)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
 	}

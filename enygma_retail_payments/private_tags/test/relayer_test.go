@@ -423,7 +423,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decrypt (real, block %d): %v", realBlock, err)
 	}
-	if _, err := tags.DecryptPayload(tags.DeriveBlockKey(ssBob, realBlock+1), realMatches[0].Entry.Ctxt); err == nil {
+	if _, err := tags.DecryptPayload(tags.DeriveBlockKey(ssBob, realBlock+1, bobPkSpend), realMatches[0].Entry.Ctxt); err == nil {
 		t.Error("the next block's key opened this block's payload")
 	}
 	if tags.IsDummyPayload(decrypted) {
@@ -660,12 +660,12 @@ func TestScanCursor(t *testing.T) {
 
 	currentBlock, _ := client.BlockNumber(bg)
 	tag1, _ := tags.DeriveTag(currentBlock+1, bobPkSpend, ss)
-	ctxt1, _ := tags.EncryptPayload(tags.DeriveBlockKey(ss, currentBlock+1), []byte("payment-A"))
+	ctxt1, _ := tags.EncryptPayload(tags.DeriveBlockKey(ss, currentBlock+1, bobPkSpend), []byte("payment-A"))
 	block1 := publishTagDirect(t, client, aliceAuth, tagRegAddr, tag1, ctxt1)
 
 	currentBlock, _ = client.BlockNumber(bg)
 	tag2, _ := tags.DeriveTag(currentBlock+1, bobPkSpend, ss)
-	ctxt2, _ := tags.EncryptPayload(tags.DeriveBlockKey(ss, currentBlock+1), []byte("payment-B"))
+	ctxt2, _ := tags.EncryptPayload(tags.DeriveBlockKey(ss, currentBlock+1, bobPkSpend), []byte("payment-B"))
 	block2 := publishTagDirect(t, client, aliceAuth, tagRegAddr, tag2, ctxt2)
 	t.Logf("  tags in blocks %d and %d", block1, block2)
 

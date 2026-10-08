@@ -525,7 +525,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  Bob found tag at block %d ✓", matches[0].BlockNumber)
 
 	// Bob decrypts the tag payload to recover the note.
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

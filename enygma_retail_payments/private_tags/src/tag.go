@@ -15,18 +15,27 @@
 // circuit if needed in the future, and is consistent with the paper's suggestion
 // of "secure hashing (e.g., SHA3)" — the paper leaves TH abstract.
 //
-// # Payload encryption (a key per block, like the tag)
+// # Payload encryption (a key per block and direction, like the tag)
 //
-//	k_b  = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-block-key-v1" || blockNumber)
+//	k_b  = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-block-key-v1" || blockNumber || pkRecipient)
 //	ctxt = AES-256-GCM(key=k_b, plaintext=payload)
 //
 // Each block's payload has its own key, so disclosing one block's key to an
 // auditor reveals that block's payment only, not the channel's history.
 //
+// # Direction
+//
+// Both the tag and the key take the recipient's spend key, so they differ by
+// direction: in the same block, a payment Alice→Bob and one Bob→Alice over
+// the same channel get different tags and different keys. With
+// H(sharedSecret, blockNumber) alone they would be identical: the two would
+// collide in TagRegistry (one tag per block), and each party's own outgoing
+// payment would match its own scan.
+//
 // # Sender workflow (via relayer for sender privacy)
 //
 //	tag,  err := DeriveTag(blockNumber, bob.PkSpend, sharedSecret)
-//	ctxt, err := EncryptPayload(DeriveBlockKey(sharedSecret, blockNumber), payload)
+//	ctxt, err := EncryptPayload(DeriveBlockKey(sharedSecret, blockNumber, bob.PkSpend), payload)
 //	// POST /relay/tag { tag: hex(tag), ctxt: hex(ctxt) }
 //
 // # Recipient scanning
@@ -85,18 +94,20 @@ type Channel struct {
 type ScannedTag struct {
 	BlockNumber  uint64
 	Entry        TagEntry
-	SharedSecret []byte // the channel shared secret that matched
+	SharedSecret []byte   // the channel shared secret that matched
+	PkSpend      *big.Int // the scanning recipient's spend public key
 }
 
 // Decrypt opens the matched entry's payload with the key of the block it was
-// published in.
+// published in (for this recipient's direction).
 func (m ScannedTag) Decrypt() ([]byte, error) {
-	return DecryptPayload(DeriveBlockKey(m.SharedSecret, m.BlockNumber), m.Entry.Ctxt)
+	return DecryptPayload(DeriveBlockKey(m.SharedSecret, m.BlockNumber, m.PkSpend), m.Entry.Ctxt)
 }
 
 // ── Tag derivation ────────────────────────────────────────────────────────────
 
 // DeriveTag computes the private messaging tag for a given block and recipient.
+// The recipient's key makes it differ by direction (see "Direction" above).
 //
 //	ss_field = sharedSecret mod BN254_p
 //	t        = Poseidon(blockNumber, pkRecipient, ss_field)
@@ -130,15 +141,19 @@ func DeriveChannelKey(sharedSecret []byte) [32]byte {
 }
 
 // DeriveBlockKey derives the 32-byte AES key for the payload published with a
-// channel's tag in blockNumber.
+// channel's tag in blockNumber, to the recipient whose spend key is
+// recipientPkSpend.
 //
-//	k_b = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-block-key-v1" || uint64_be(blockNumber))
+//	k_b = HKDF-SHA256(sharedSecret, salt=nil,
+//	        info="enygma-block-key-v1" || uint64_be(blockNumber) || be32(pkRecipient))
 //
-// Like the tag, it changes every block, so one block's key opens only that
-// block's payload: it can be disclosed to an auditor without revealing any
-// other payment on the channel.
-func DeriveBlockKey(sharedSecret []byte, blockNumber uint64) [32]byte {
+// Like the tag, it changes every block and with the direction, so one block's
+// key opens only that block's payload to that recipient: it can be disclosed
+// to an auditor without revealing any other payment on the channel, in either
+// direction.
+func DeriveBlockKey(sharedSecret []byte, blockNumber uint64, recipientPkSpend *big.Int) [32]byte {
 	info := binary.BigEndian.AppendUint64([]byte("enygma-block-key-v1"), blockNumber)
+	info = append(info, recipientPkSpend.FillBytes(make([]byte, 32))...)
 	r := hkdf.New(sha256.New, sharedSecret, nil, info)
 	var key [32]byte
 	io.ReadFull(r, key[:]) //nolint:errcheck — hkdf.Reader.Read never errors
@@ -193,7 +208,7 @@ func PrepareTagWithWindow(
 
 	ctxts = make([][]byte, windowSize)
 	for i := range ctxts {
-		ctxts[i], err = EncryptPayload(DeriveBlockKey(sharedSecret, startBlock+uint64(i)), payload)
+		ctxts[i], err = EncryptPayload(DeriveBlockKey(sharedSecret, startBlock+uint64(i), recipientPkSpend), payload)
 		if err != nil {
 			return 0, nil, nil, fmt.Errorf("EncryptPayload(block=%d): %w", startBlock+uint64(i), err)
 		}
@@ -255,7 +270,7 @@ func PrepareDummyTag(blockNumber uint64, recipientPkSpend *big.Int, sharedSecret
 	if err != nil {
 		return [32]byte{}, nil, fmt.Errorf("DeriveTag (dummy): %w", err)
 	}
-	ctxt, err := EncryptPayload(DeriveBlockKey(sharedSecret, blockNumber), []byte(dummyMsgMarker))
+	ctxt, err := EncryptPayload(DeriveBlockKey(sharedSecret, blockNumber, recipientPkSpend), []byte(dummyMsgMarker))
 	if err != nil {
 		return [32]byte{}, nil, fmt.Errorf("EncryptPayload (dummy): %w", err)
 	}
@@ -344,6 +359,7 @@ func ScanBlock(
 					BlockNumber:  blockNumber,
 					Entry:        entry,
 					SharedSecret: ch.SharedSecret,
+					PkSpend:      ch.PkSpend,
 				})
 			}
 		}
