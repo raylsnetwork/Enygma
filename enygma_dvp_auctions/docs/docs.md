@@ -9,7 +9,7 @@ Enygma Auction is a ZK sealed-bid NFT auction. Bob locks an ERC-721 NFT; bidders
 - Bids are sealed with ML-KEM post-quantum encryption; only the auctioneer can decrypt
 - Every step except timeout recovery and bid reclaim requires a Groth16 proof
 - Optimistic settlement: proof stored, not verified on-chain unless challenged
-- Bidders can withdraw before the deadline; seller can cancel at any time
+- Bidders can withdraw before the deadline; seller can cancel until the deadline
 
 ---
 
@@ -125,7 +125,7 @@ Bob proves he owns the locked NFT note and mints it back under a fresh salt — 
 1. Bob generates `saltLocked`, `saltRevert` (random, distinct)
 2. Computes `commitLocked`, `revertCommit`, `auctionId`, `nf_B`
 3. Calls gnark server `/proof/auctionLock` to generate `π_lock`
-4. Submits `initAuction(π_lock, statement[7], deadline, settlementDeadline, floorPrice)`
+4. Submits `initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice)`
 5. Contract verifies proof, calls `nftVault.lockCoin(nf_B)`, records `commitLocked` + `revertCommit`
 
 ### Phase 0b — Alice submits a sealed bid (`submitBid`)
@@ -134,7 +134,7 @@ Bob proves he owns the locked NFT note and mints it back under a fresh salt — 
 3. Chooses `saltRevert` (random, ≠ saltA)
 4. Encrypts bid: `ctxt2 = AES-GCM(k, pk_B || tokenId || amount, aad=ctxt1)`
 5. Calls gnark server `/proof/auctionBid` to generate `π_bid`
-6. Submits `submitBid(π_bid, statement[7], ctxt1, ctxt2)`
+6. Submits `submitBid(π_bid, statement[9], ctxt1, ctxt2)`
 7. Contract verifies proof, calls `usdcVault.lockCoin(nf_A)` (note locked, not spent), stores `BidData`
 
 ### Phase 0c — Alice withdraws a bid (`withdrawBid`)
@@ -162,7 +162,7 @@ After `deadline`:
 **Challenge path:** anyone can call `challengeSettlement()` within the window to force on-chain Groth16 verification. Invalid proof → state → BIDDING (auctioneer resubmits). Valid proof → SETTLED immediately.
 
 ### Phase 3a — Bob cancels (`revertAuction`)
-Bob can cancel at any time while state == BIDDING (before or after deadline).
+Bob can cancel while state == BIDDING, before the bidding deadline. (After it, submitBatch() carries the batch winners' amounts and is visible in the mempool before it is mined, so a later cancel could front-run the result.)
 1. Calls gnark `/proof/auctionRevert`, submits `revertAuction(π_revert, statement[4])`
 2. Contract unlocks + nullifies the NFT note, inserts `revertedCommit` (fresh salt), state → CANCELED
 

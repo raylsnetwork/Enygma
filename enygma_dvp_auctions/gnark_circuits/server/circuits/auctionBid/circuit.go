@@ -6,7 +6,7 @@ import "math/big"
 //
 // Fixed config: Merkle depth 8, all-in bid (bidAmount == note amount).
 //
-// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash]
+// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
 type AuctionBidRequest struct {
 	StAuctionId    string `json:"stAuctionId"    binding:"required"`
 	StTreeNumber   string `json:"stTreeNumber"   binding:"required"`
@@ -16,6 +16,7 @@ type AuctionBidRequest struct {
 	StCommitB      string `json:"stCommitB"      binding:"required"` // Bob's USDC payout destination
 	StRevertCommit string `json:"stRevertCommit" binding:"required"` // Alice's pre-committed recovery destination
 	StCtxtHash     string `json:"stCtxtHash"     binding:"required"` // hash of the ciphertexts submitted with the bid
+	StFloorPrice   string `json:"stFloorPrice"   binding:"required"` // the auction's floor price; the bid must reach it
 
 	WtAuctionId    string    `json:"wtAuctionId"    binding:"required"` // must equal StAuctionId
 	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber

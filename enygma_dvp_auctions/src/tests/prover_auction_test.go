@@ -84,13 +84,16 @@ func TestAuctionLockProof_Success(t *testing.T) {
 
 	client := core.NewAuctionClient(server.URL)
 	result, err := client.AuctionLockProof(core.AuctionLockParams{
-		Bob:         makeSpendKeyPair(10, 20),
-		TokenId:     big.NewInt(77),
-		SaltIn:      big.NewInt(5),
-		TreeNumber:  big.NewInt(0),
-		MerkleProof: makeMerkleProof(core.AuctionMerkleDepth),
-		SaltLocked:  big.NewInt(123),
-		SaltRevert:  big.NewInt(456),
+		Bob:                makeSpendKeyPair(10, 20),
+		TokenId:            big.NewInt(77),
+		SaltIn:             big.NewInt(5),
+		TreeNumber:         big.NewInt(0),
+		MerkleProof:        makeMerkleProof(core.AuctionMerkleDepth),
+		SaltLocked:         big.NewInt(123),
+		SaltRevert:         big.NewInt(456),
+		Deadline:           big.NewInt(1_900_000_000),
+		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
+		FloorPrice:         big.NewInt(1),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -114,13 +117,16 @@ func TestAuctionLockProof_PayloadFields(t *testing.T) {
 	saltRevert := big.NewInt(456)
 
 	_, err := client.AuctionLockProof(core.AuctionLockParams{
-		Bob:         bob,
-		TokenId:     tokenId,
-		SaltIn:      big.NewInt(5),
-		TreeNumber:  big.NewInt(0),
-		MerkleProof: makeMerkleProof(core.AuctionMerkleDepth),
-		SaltLocked:  saltLocked,
-		SaltRevert:  saltRevert,
+		Bob:                bob,
+		TokenId:            tokenId,
+		SaltIn:             big.NewInt(5),
+		TreeNumber:         big.NewInt(0),
+		MerkleProof:        makeMerkleProof(core.AuctionMerkleDepth),
+		SaltLocked:         saltLocked,
+		SaltRevert:         saltRevert,
+		Deadline:           big.NewInt(1_900_000_000),
+		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
+		FloorPrice:         big.NewInt(1),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -145,6 +151,12 @@ func TestAuctionLockProof_PayloadFields(t *testing.T) {
 	wantAuctionId, _ := core.GetAuctionId(wantCommitLocked)
 	if payload["stAuctionId"] != wantAuctionId.String() {
 		t.Errorf("stAuctionId mismatch: got %v want %s", payload["stAuctionId"], wantAuctionId)
+	}
+
+	// stParamsHash binds the auction's parameters, exactly as initAuction() hashes them.
+	wantParams := core.AuctionParamsHash(wantAuctionId, big.NewInt(1_900_000_000), big.NewInt(1_900_000_000+3*86400), big.NewInt(1))
+	if payload["stParamsHash"] != wantParams.String() || payload["wtParamsHash"] != wantParams.String() {
+		t.Errorf("params hash: st=%v wt=%v want %s", payload["stParamsHash"], payload["wtParamsHash"], wantParams)
 	}
 
 	// stRevertCommit must be independently derivable from saltRevert.
@@ -176,6 +188,7 @@ func TestAuctionBidProof_Success(t *testing.T) {
 		SaltA:       big.NewInt(11),
 		SaltB:       big.NewInt(22),
 		SaltRevert:  big.NewInt(33),
+		FloorPrice:  big.NewInt(1),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -210,12 +223,17 @@ func TestAuctionBidProof_PayloadFields(t *testing.T) {
 		SaltA:       saltA,
 		SaltB:       saltB,
 		SaltRevert:  saltRevert,
+		FloorPrice:  big.NewInt(1),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	payload := *captured
+	// The proof is made against the auction's floor price.
+	if payload["stFloorPrice"] != "1" {
+		t.Errorf("stFloorPrice: got %v want 1", payload["stFloorPrice"])
+	}
 	// All-in bid: wtAmount must equal wtBidAmount.
 	if payload["wtAmount"] != payload["wtBidAmount"] {
 		t.Errorf("expected wtAmount == wtBidAmount (all-in), got %v vs %v",
@@ -460,13 +478,16 @@ func TestAuctionLockProof_ServerError(t *testing.T) {
 
 	client := core.NewAuctionClient(server.URL)
 	_, err := client.AuctionLockProof(core.AuctionLockParams{
-		Bob:         makeSpendKeyPair(10, 20),
-		TokenId:     big.NewInt(77),
-		SaltIn:      big.NewInt(5),
-		TreeNumber:  big.NewInt(0),
-		MerkleProof: makeMerkleProof(core.AuctionMerkleDepth),
-		SaltLocked:  big.NewInt(123),
-		SaltRevert:  big.NewInt(456),
+		Bob:                makeSpendKeyPair(10, 20),
+		TokenId:            big.NewInt(77),
+		SaltIn:             big.NewInt(5),
+		TreeNumber:         big.NewInt(0),
+		MerkleProof:        makeMerkleProof(core.AuctionMerkleDepth),
+		SaltLocked:         big.NewInt(123),
+		SaltRevert:         big.NewInt(456),
+		Deadline:           big.NewInt(1_900_000_000),
+		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
+		FloorPrice:         big.NewInt(1),
 	})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -506,8 +527,27 @@ func TestAuctionBidProof_MalformedResponse(t *testing.T) {
 		SaltA:       big.NewInt(11),
 		SaltB:       big.NewInt(22),
 		SaltRevert:  big.NewInt(33),
+		FloorPrice:  big.NewInt(1),
 	})
 	if err == nil {
 		t.Fatal("expected error for malformed proof (wrong element count)")
+	}
+}
+
+// The lock proof binds the auction's parameters, so it cannot be made without them.
+func TestAuctionLockProof_RequiresParams(t *testing.T) {
+	server := mockAuctionServer(t, "/proof/auctionLock", 8)
+	defer server.Close()
+	_, err := core.NewAuctionClient(server.URL).AuctionLockProof(core.AuctionLockParams{
+		Bob:         makeSpendKeyPair(10, 20),
+		TokenId:     big.NewInt(42),
+		SaltIn:      big.NewInt(5),
+		TreeNumber:  big.NewInt(0),
+		MerkleProof: makeMerkleProof(core.AuctionMerkleDepth),
+		SaltLocked:  big.NewInt(99),
+		SaltRevert:  big.NewInt(77),
+	})
+	if err == nil {
+		t.Fatal("a lock proof was requested without the auction parameters it must bind")
 	}
 }

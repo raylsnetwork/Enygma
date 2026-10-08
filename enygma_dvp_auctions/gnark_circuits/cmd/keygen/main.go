@@ -9,9 +9,11 @@ package main
 // Keys are written to ./scripts/keys/.
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
@@ -31,14 +33,43 @@ func main() {
 	solver.RegisterHint(primitives.PoseidonNative)
 	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
-	generateAuctionLock()
-	generateAuctionBid()
-	generateAuctionWithdraw()
-	generateAuctionBatch()
-	generateAuctionFinal()
-	generateAuctionRevert()
+	// -only regenerates just the named circuits (comma-separated), keeping the
+	// other keys and their already-registered verifying keys as they are.
+	only := flag.String("only", "", "comma-separated circuits to regenerate (AuctionLock,AuctionBid,AuctionWithdraw,AuctionBatch,AuctionFinal,AuctionRevert); default all")
+	flag.Parse()
+	all := []struct {
+		name string
+		gen  func()
+	}{
+		{"AuctionLock", generateAuctionLock},
+		{"AuctionBid", generateAuctionBid},
+		{"AuctionWithdraw", generateAuctionWithdraw},
+		{"AuctionBatch", generateAuctionBatch},
+		{"AuctionFinal", generateAuctionFinal},
+		{"AuctionRevert", generateAuctionRevert},
+	}
+	want := map[string]bool{}
+	for _, n := range strings.Split(*only, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			want[n] = true
+		}
+	}
+	known := map[string]bool{}
+	for _, c := range all {
+		known[c.name] = true
+	}
+	for n := range want {
+		if !known[n] {
+			log.Fatalf("unknown circuit %q", n)
+		}
+	}
+	for _, c := range all {
+		if len(want) == 0 || want[c.name] {
+			c.gen()
+		}
+	}
 
-	fmt.Println("all keys generated → ./scripts/keys/")
+	fmt.Println("keys generated → ./scripts/keys/")
 }
 
 func generateAuctionLock() {

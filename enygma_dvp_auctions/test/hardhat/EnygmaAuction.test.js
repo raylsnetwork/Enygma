@@ -11,15 +11,17 @@ const CANCELED = 4;
 
 const ZERO_PROOF = Array(8).fill(0);
 
-// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) — what
-// announceAuction() must be given before initAuction().
+// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr
+// — the AuctionLock proof's StParamsHash, which initAuction() checks.
 function paramsHash(auctionId, deadline, settlementDeadline, floorPrice) {
-  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]));
+  return BigInt(ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]))) % FR;
 }
 
-function lockStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitLocked, nftTokenId, revertCommit = 0 }) {
-  return [auctionId, treeNumber, merkleRoot, nullifier, commitLocked, nftTokenId, revertCommit];
+function lockStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitLocked, nftTokenId, revertCommit = 0,
+  deadline, settlementDeadline, floorPrice }) {
+  const ph = deadline === undefined ? 0n : paramsHash(auctionId, deadline, settlementDeadline, floorPrice);
+  return [auctionId, treeNumber, merkleRoot, nullifier, commitLocked, nftTokenId, revertCommit, ph];
 }
 
 const FR = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -29,8 +31,8 @@ function ctxtHash(ctxt1 = "0x", ctxt2 = "0x") {
   return BigInt(ethers.keccak256(ethers.concat([ethers.keccak256(ctxt1), ethers.keccak256(ctxt2)]))) % FR;
 }
 
-function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0, ctxt1 = "0x", ctxt2 = "0x" }) {
-  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit, ctxtHash(ctxt1, ctxt2)];
+function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0, ctxt1 = "0x", ctxt2 = "0x", floorPrice = 10 }) {
+  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit, ctxtHash(ctxt1, ctxt2), floorPrice];
 }
 
 function batchStatement({ auctionId, slots, winnerCommit, winnerPk, winnerAmount }) {
@@ -102,10 +104,9 @@ describe("EnygmaAuction", function () {
   async function lockAuction({ auctionId, nftTokenId = 77, commitLocked, deadlineDelta = 3600, floorPrice = 10 }) {
     const deadline = (await time.latest()) + deadlineDelta;
     const settlementDeadline = deadline + 2 * 24 * 3600 + 3600;
-    await auction.announceAuction(paramsHash(auctionId, deadline, settlementDeadline, floorPrice));
     await auction.initAuction(
       ZERO_PROOF,
-      lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked, nftTokenId }),
+      lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked, nftTokenId, deadline, settlementDeadline, floorPrice }),
       deadline,
       settlementDeadline,
       floorPrice,
@@ -443,12 +444,13 @@ describe("EnygmaAuction", function () {
       expect(await erc721Vault.registeredCoins(0)).to.equal(999n);
     });
 
-    it("allows Bob to cancel after the deadline as well", async function () {
+    it("does not let Bob cancel after the deadline", async function () {
       await lockAuction({ auctionId: 1, commitLocked: 200, deadlineDelta: 3600 });
       await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700 }), "0x", "0x");
       await time.increase(3700);
-      await auction.revertAuction(ZERO_PROOF, revertStatement({ auctionId: 1, commitLocked: 200, nftTokenId: 77, revertedCommit: 999 }));
-      expect((await auction.getAuctionCore(1)).state).to.equal(CANCELED);
+      await expect(
+        auction.revertAuction(ZERO_PROOF, revertStatement({ auctionId: 1, commitLocked: 200, nftTokenId: 77, revertedCommit: 999 }))
+      ).to.be.revertedWithCustomError(auction, "BiddingClosed");
     });
 
     it("rejects a commitLocked that doesn't match what was recorded at init", async function () {
