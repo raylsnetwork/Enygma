@@ -258,23 +258,6 @@ func legacyTagMessageGen(secrets []*big.Int, blockHash *big.Int) []*big.Int {
 	return out
 }
 
-// tagMessageGenUsdr/rValueUsdr/genCommitmentAndRandomUsdr mirror
-// tagMessageGen/rValue/genCommitmentAndRandom above but use the USDr
-// circuit's domain-separation constants (hashTagUsdr/hashRandomUsdr)
-// instead of hashTag/hashRandom, so the off-circuit MessageTags/
-// TxRandomValues match what USDrCircuit.Define computes in-circuit.
-// fingerPrintGen is NOT duplicated — the FingerPrint matrix doesn't use
-// either domain constant, so it's identical between the two circuits.
-func tagMessageGenUsdr(secrets []*big.Int, blockHash *big.Int) []*big.Int {
-	bh := new(big.Int).Mod(blockHash, curveP)
-	out := make([]*big.Int, len(secrets))
-	for i, s := range secrets {
-		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, bh})
-		out[i] = h.Mod(h, curveP)
-	}
-	return out
-}
-
 func legacyRValue(s, blockHash *big.Int) *big.Int {
 	h, _ := poseidon.Hash([]*big.Int{hashRandom, s, blockHash})
 	return h.Mod(h, curveP)
@@ -311,18 +294,41 @@ func legacyGenCommitmentAndRandom(senderId int, transferValue *big.Int, txValues
 	return commits, txRandom
 }
 
-func rValueUsdr(s, blockHash *big.Int) *big.Int {
-	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, blockHash})
+// tagMessageGenUsdr/rValueUsdr/genCommitmentAndRandomUsdr mirror
+// tagMessageGen/rValue/genCommitmentAndRandom above but use the USDr
+// circuit's domain-separation constants (hashTagUsdr/hashRandomUsdr)
+// instead of hashTag/hashRandom, so the off-circuit MessageTags/
+// TxRandomValues match what USDrCircuit.Define computes in-circuit.
+// fingerPrintGen is NOT duplicated — the FingerPrint matrix doesn't use
+// either domain constant, so it's identical between the two circuits.
+//
+// Like tagMessageGen/rValue/genCommitmentAndRandom, these take a
+// per-transaction nullifier (not BlockNumber directly) and fold it with
+// SenderId/receiverId via perSlotNonce — usdr/circuit.go's own H-01/H-02
+// fix (ported from enygma/circuit.go) requires this; the caller computes
+// usdrNullifier = Poseidon(secretRemain, BlockNumber) itself (no circular
+// dependency — it doesn't need these functions' output) and passes it in.
+func tagMessageGenUsdr(senderId int, secrets []*big.Int, nullifier *big.Int) []*big.Int {
+	out := make([]*big.Int, len(secrets))
+	for i, s := range secrets {
+		h, _ := poseidon.Hash([]*big.Int{hashTagUsdr, s, perSlotNonce(nullifier, senderId, i)})
+		out[i] = h.Mod(h, curveP)
+	}
+	return out
+}
+
+func rValueUsdr(s, nullifier *big.Int, senderId, receiverId int) *big.Int {
+	h, _ := poseidon.Hash([]*big.Int{hashRandomUsdr, s, perSlotNonce(nullifier, senderId, receiverId)})
 	return h.Mod(h, curveP)
 }
 
-func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, blockHash *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
+func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues []*big.Int, nullifier *big.Int, secrets []*big.Int) ([]enygma.IEnygmaPoint, []*big.Int) {
 	n := len(secrets)
 	rValues := make([]*big.Int, n)
 	rSum := new(big.Int)
 
 	for i := 0; i < n; i++ {
-		r := rValueUsdr(secrets[i], blockHash)
+		r := rValueUsdr(secrets[i], nullifier, senderId, i)
 		rValues[i] = r
 		if i != senderId {
 			rSum.Add(rSum, r)
@@ -352,21 +358,27 @@ func genCommitmentAndRandomUsdr(senderId int, transferValue *big.Int, txValues [
 // chainURL and chainID are configurable via environment variables so the same
 // test suite runs against both a local Hardhat node and Rayls mainnet.
 //
-// Local Hardhat:
+// The default is a LOCAL Hardhat node (http://127.0.0.1:8545, chain 1337, the
+// payments Hardhat config's chain id), which is not reachable unless one is
+// running, so a bare `go test ./...` skips these tests. Do not default to a
+// public network: it is reachable, so the tests would run there, and with a key
+// exported they would transact on it. deploy_direct.py had the same default and
+// was changed for the same reason (Fix M-07). To run against another chain, set
+// both variables explicitly:
 //
-//	export ENYGMA_CHAIN_URL=http://127.0.0.1:8545
-//	export ENYGMA_CHAIN_ID=31337
-//	export MY_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+//	export ENYGMA_CHAIN_URL=https://mainnet-rpc.rayls.com
+//	export ENYGMA_CHAIN_ID=72957
+//	export MY_KEY=<key>
 //
-// Rayls mainnet (default, no env vars needed):
+// Local Hardhat (see contracts/enygma/hardhat.config.js for the funded key):
 //
-//	export MY_KEY=<your-mainnet-key>
+//	export MY_KEY=<the owner key from hardhat.config.js>
 var (
 	chainURL = func() string {
 		if u := os.Getenv("ENYGMA_CHAIN_URL"); u != "" {
 			return u
 		}
-		return "https://mainnet-rpc.rayls.com"
+		return "http://127.0.0.1:8545"
 	}()
 	chainID = func() int64 {
 		if s := os.Getenv("ENYGMA_CHAIN_ID"); s != "" {
@@ -374,7 +386,7 @@ var (
 				return n
 			}
 		}
-		return 72957
+		return 1337
 	}()
 )
 
@@ -394,7 +406,6 @@ func expectedDomainId(contractAddr common.Address) *big.Int {
 const (
 	gnarkURL     = "http://127.0.0.1:8080/proof/enygma"
 	gnarkUsdrURL = "http://127.0.0.1:8080/proof/usdr"
-	relayerURL   = "http://127.0.0.1:8082"
 	relayerKey   = "enygma-test-secret" // must match RELAYER_API_KEY
 
 	nBanks      = 6
@@ -457,10 +468,10 @@ func readReceipts(t *testing.T) (tokenAddr, verifierAddr string) {
 	t.Helper()
 	// Resolve path relative to this file's location.
 	_, testFile, _, _ := runtime.Caller(0)
-	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma_payments/go_client", "web3", "deploy_receipts.json")
+	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma", "web3", "deploy_receipts.json")
 	data, err := os.ReadFile(receiptsPath)
 	if err != nil {
-		t.Skipf("deploy_receipts.json not found at %s — run the Python deploy scripts first:\n  cd enygma_payments/run_scripts && python deploy_enygma.py ...\n(err: %v)", receiptsPath, err)
+		t.Skipf("deploy_receipts.json not found at %s — run the deploy script first:\n  OWNER_KEY=<hex> node run_scripts/deploy_node.js\n(err: %v)", receiptsPath, err)
 	}
 	var r receipts
 	if err := json.Unmarshal(data, &r); err != nil {
@@ -521,9 +532,6 @@ func TestFullTransactionFlow(t *testing.T) {
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
-	}
-	if !tcpAvailable("127.0.0.1:8082") {
-		t.Skip("relayer not reachable at localhost:8082 — start the relayer first")
 	}
 
 	// Read contract addresses from deploy_receipts.json (updated by deploy scripts).
@@ -594,8 +602,10 @@ func TestFullTransactionFlow(t *testing.T) {
 		pks[i] = pk.Mod(pk, curveP)
 	}
 
-	// Register banks with accountIds 1-6 (avoids onlyRegistered sentinel=0 bug).
-	// All use ownerAddr; addressToAccountId is overwritten each call — last value is 6 ≠ 0.
+	// Each bank has its own registered key: it confirms fingerprints from
+	// it, and the test-local relayer runs as bank relayFeeSlot.
+	banks := newRelayBanks(t, client, privKey, mkAuth)
+	// Register banks with accountIds 1-6, each under its own address.
 	// Bank 0 registers with senderRegR (not senderPrevR directly) since it
 	// mints below too — senderRegR + senderMintR == senderPrevR, see that
 	// constant's comment. Banks 1-5 never mint in this test, so their
@@ -606,7 +616,7 @@ func TestFullTransactionFlow(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		rcpt := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
+		rcpt := waitTx(instance.RegisterAccount(mkAuth(), banks.addrs[i], big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{}))
 		if rcpt.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
@@ -619,6 +629,11 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Fatal("mintSupply failed")
 	}
 	t.Logf("minted %d to bank 0 (accountId=1)", mintAmt)
+
+	// ── Setup: USDr fee ledger, fingerprints, test-local relayer ─────────────
+	setupUsdrLedger(t, client, instance, mkAuth, waitTx)
+	confirmFingerprints(t, instance, banks, waitTx, senderSecrets())
+	relayURL := startTestRelayer(t, common.HexToAddress(tokenAddr), banks)
 
 	// ── Read on-chain state ────────────────────────────────────────────────────
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
@@ -752,12 +767,11 @@ func TestFullTransactionFlow(t *testing.T) {
 	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
 	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
-	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
-		c1 := proofResp.PublicSignal[txCommitOffset+2*i]
-		c2 := proofResp.PublicSignal[txCommitOffset+2*i+1]
-		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: c1, C2: c2}
-		commFinal[i] = []string{c1.String(), c2.String()}
+		commitmentDeltas[i] = enygma.IEnygmaPoint{
+			C1: proofResp.PublicSignal[txCommitOffset+2*i],
+			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
+		}
 	}
 
 	var proof8 [8]string
@@ -770,23 +784,8 @@ func TestFullTransactionFlow(t *testing.T) {
 		pubSigStrs[i] = v.String()
 	}
 
-	// participantIds[i] = i+1 (maps circuit bank i → on-chain accountId i+1)
-	kIdx64 := make([]int64, nBanks)
-	for i := range kIdx64 {
-		kIdx64[i] = int64(i + 1)
-	}
-
-	relayReq := struct {
-		Proof        [8]string  `json:"proof"`
-		PublicSignal []string   `json:"publicSignal"`
-		Commitments  [][]string `json:"commitments"`
-		KIndex       []int64    `json:"kIndex"`
-	}{
-		Proof:        proof8,
-		PublicSignal: pubSigStrs,
-		Commitments:  commFinal,
-		KIndex:       kIdx64,
-	}
+	usdr := buildUsdrFeeLeg(t, blockHash, usdrBalances(t, instance), onChainKeys, common.HexToAddress(tokenAddr))
+	relayReq := relayTransferBody(proof8, pubSigStrs, commitmentDeltas, usdr)
 
 	// ── Submit Transfer via relayer ────────────────────────────────────────────
 	t.Log("submitting Transfer via relayer...")
@@ -795,17 +794,12 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Fatalf("marshal relay request: %v", err)
 	}
 
-	apiKey := os.Getenv("RELAYER_API_KEY")
-	if apiKey == "" {
-		apiKey = relayerKey
-	}
-
-	relayHTTPReq, err := http.NewRequest(http.MethodPost, relayerURL+"/relay/transfer", bytes.NewReader(relayBody))
+	relayHTTPReq, err := http.NewRequest(http.MethodPost, relayURL+"/relay/transfer", bytes.NewReader(relayBody))
 	if err != nil {
 		t.Fatalf("build relay request: %v", err)
 	}
 	relayHTTPReq.Header.Set("Content-Type", "application/json")
-	relayHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+	relayHTTPReq.Header.Set("Authorization", "Bearer "+relayerKey)
 
 	relayHTTPResp, err := http.DefaultClient.Do(relayHTTPReq)
 	if err != nil {

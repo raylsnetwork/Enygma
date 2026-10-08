@@ -116,7 +116,7 @@ func TestH14EmptyParticipantArraysRejected(t *testing.T) {
 	// nullifier (offset 49). Everything else is zero — irrelevant, since
 	// _verifyPublicInputs's whole body is skipped for len(participantIds)==0
 	// and the mock verifier ignores proof content entirely.
-	var pubSig [52]*big.Int
+	var pubSig [62]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}

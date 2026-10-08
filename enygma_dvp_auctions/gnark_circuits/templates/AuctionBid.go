@@ -28,9 +28,20 @@ type AuctionBidCircuitConfig struct {
 // The auctioneer decrypts ctxt_1/ctxt_2 (submitted alongside the proof) to
 // verify commitB's preimage and determine the winning bid.
 //
-// Public statement (7 elements):
+// StCtxtHash binds the bid to the ciphertexts published with it: the contract
+// requires it to equal a hash of the ctxt1/ctxt2 arguments of submitBid(). The
+// ciphertexts are not otherwise part of the proof, so without this anyone who saw
+// the proof and statement in the mempool could register the bid with ciphertexts
+// of their own, and the auctioneer could not decrypt it.
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit]
+// StFloorPrice is the auction's floor price, supplied on-chain from the auction's
+// own state: the bid must be at least that much. Without it a bid of any amount
+// (dust) was accepted, so one party could fill an auction's MAX_BIDS slots with
+// worthless bids and lock honest bidders out.
+//
+// Public statement (9 elements):
+//
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
 type AuctionBidCircuit struct {
 	Config AuctionBidCircuitConfig
 
@@ -42,6 +53,8 @@ type AuctionBidCircuit struct {
 	StCommitA      frontend.Variable `gnark:",public"` // Alice's locked bid commitment
 	StCommitB      frontend.Variable `gnark:",public"` // Bob's USDC payout destination commitment
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
+	StCtxtHash     frontend.Variable `gnark:",public"` // hash of the ciphertexts submitted with the bid (checked on-chain)
+	StFloorPrice   frontend.Variable `gnark:",public"` // the auction's floor price (checked on-chain); bidAmount >= it
 
 	// --- private witnesses ---
 	WtAuctionId  frontend.Variable // must equal StAuctionId; binds proof to one auction
@@ -61,6 +74,7 @@ type AuctionBidCircuit struct {
 	WtSaltB      frontend.Variable // salt for commitB = HKDF(ss, "note salt")
 	WtBidAmount  frontend.Variable // bid amount — constrained == WtAmount (all-in)
 	WtSaltRevert frontend.Variable // fresh random salt for revert commitment (≠ saltA)
+	WtCtxtHash   frontend.Variable // must equal StCtxtHash
 }
 
 func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
@@ -120,6 +134,15 @@ func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
 	// 10. Recovery salt must differ from saltA — reusing saltA would make
 	// StRevertCommit trivially derivable from the already-public StCommitA.
 	api.AssertIsDifferent(circuit.WtSaltRevert, circuit.WtSaltA)
+
+	// 11. Bind the ciphertext hash. This is a real constraint between the public
+	// value and a private witness, so the public input takes part in the
+	// verification equation: a proof made for one hash does not verify for another.
+	api.AssertIsEqual(circuit.WtCtxtHash, circuit.StCtxtHash)
+
+	// 12. The bid must reach the auction's floor price.
+	isBelowFloor := cmp.IsLess(api, circuit.WtBidAmount, circuit.StFloorPrice)
+	api.AssertIsEqual(isBelowFloor, 0)
 
 	return nil
 }

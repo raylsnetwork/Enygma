@@ -46,6 +46,20 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     uint256 public constant VK_ID_AUCTION_PRIVATE_OPENING = 8;
     uint256 public constant VK_ID_AUCTION_NOT_WINNING_BID = 9;
 
+    // Upper bound on a pending swap's deadline, measured from the first-leg
+    // submission. The deadline is a plain argument (not a public signal of the
+    // initiator proof), so whoever submits the first leg picks it; without a
+    // ceiling a front-runner could lock the initiator's note until an
+    // arbitrarily distant timestamp.
+    uint256 public constant MAX_SWAP_DURATION = 30 days;
+
+    // Floor on the same deadline. claimSwapTimeout is callable by anyone, so
+    // without it a front-runner who submits the initiator's public receipt
+    // first could set a deadline a second away and cancel the swap in the
+    // next block, before the counterparty can deliver. The counterparty always
+    // gets at least this long.
+    uint256 public constant MIN_SWAP_DURATION = 15 minutes;
+
     bytes32 public constant DEFAULT_OWNER_ROLE =
         keccak256(abi.encodePacked("ownerRole"));
 
@@ -93,6 +107,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // uniqueId of the receipt
     mapping(uint256 => TransactionMetadata) private _pendingTransactions;
 
+    // Swaps (keyed like _pendingTransactions, by commitB) that have settled or
+    // been reclaimed via claimSwapTimeout. Deleting the pending record alone let
+    // a late counterparty leg fall through to the first-leg branch and open a
+    // new swap that could never settle, locking that leg's note until its own
+    // deadline.
+    mapping(uint256 => bool) private _closedSwaps;
+
     // auditor's mapping AuditorId -> AuditorData
     mapping(uint256 => AuditorData) private _registeredAuditors;
 
@@ -113,6 +134,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // since each vault already has its own independent tree/nullifier space.
     uint256 public usdrFixedFeeAmount;
     uint256 public usdrTokenId;
+    // The vault that holds the USDr asset. paymentWithUsdrFee() only accepts a
+    // fee leg against this vault: the proof binds the fee note to whichever
+    // vault it was built for, so without this pin a sender could pay the "USDr"
+    // fee in any other vault whose proof shape matches (for instance the main
+    // token's own vault), and the relayer would be paid in the wrong asset.
+    // usdrFeeVaultSet distinguishes "unset" from vault id 0.
+    uint256 public usdrFeeVaultId;
+    bool public usdrFeeVaultSet;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -296,6 +325,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 tokenId_
     ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         usdrTokenId = tokenId_;
+        return true;
+    }
+
+    // setUsdrFeeVaultId pins the vault paymentWithUsdrFee() accepts for its
+    // USDr leg. It must already be registered. Until it is called,
+    // paymentWithUsdrFee() reverts InvalidUsdrVault.
+    function setUsdrFeeVaultId(
+        uint256 vaultId_
+    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        if (_coinVaults[vaultId_] == address(0)) revert InvalidVaultId();
+        usdrFeeVaultId = vaultId_;
+        usdrFeeVaultSet = true;
         return true;
     }
 
@@ -657,6 +698,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
             IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(receipt2);
             delete _pendingTransactions[receiptMessage];
+            _closedSwaps[receiptMessage] = true;
 
             // Call _settleOnGroupPair directly (bypassing onlyRelayer on the public wrappers)
             // since submitPartialSettlement is itself a permissionless entry point.
@@ -671,11 +713,29 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 _settleOnGroupPair(receipt2, receipt, vaultId2, vaultId, groupId2, groupId);
             }
         } else {
+            // A counterparty leg carries the swap key (commitB) as its message.
+            // If that swap already settled or timed out, reject the leg rather
+            // than opening a new swap with it.
+            if (_closedSwaps[receiptMessage]) {
+                revert SwapClosed();
+            }
+            // Only an initiator-shaped receipt (with commitA and revertCommitA
+            // after commitB) can open a swap. A destination leg with no pending
+            // swap to complete would otherwise fail on an out-of-bounds read.
+            if (receipt.statement.length < commitmentsIndex + 3) {
+                revert SwapNotFound();
+            }
             if (deadline <= block.timestamp) {
                 revert SwapDeadlineMustBeInFuture();
             }
+            if (deadline < block.timestamp + MIN_SWAP_DURATION) {
+                revert SwapDeadlineTooSoon();
+            }
+            if (deadline > block.timestamp + MAX_SWAP_DURATION) {
+                revert SwapDeadlineTooFar();
+            }
 
-            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA]
+            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA, counterVault]
             // commitmentsIndex = 4 → receiptUniqueId = commitB
             // commitmentsIndex+1 = 5 → commitA_expected (what Alice expects Bob to deliver)
             //
@@ -683,7 +743,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             // The DvPDestinationCircuit enforces StMessage = commitB, so Bob's
             // receiptMessage = commitB — this is the lookup key Bob uses when settling.
             // Keying by commitB (not a derived swapId) aligns circuit and contract.
-            // HIGH-10 fix: store initiator to restrict claimSwapTimeout.
+            // initiator is informational only (msg.sender of the first leg, which
+            // may be a relayer or a front-runner, not the note's owner) — it is
+            // deliberately NOT an authorization input for claimSwapTimeout.
             uint256 commitB          = receiptUniqueId;
             uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
             // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
@@ -715,7 +777,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // CRIT-2 fix: properly handle swap timeout by:
     //   1. Spending (nullifying) Alice's input nullifiers — not just unlocking.
     //   2. Inserting revertCommitA into the vault — Alice can spend this note.
-    // HIGH-10 fix: restrict to the swap initiator — prevents griefing by third parties.
+    //
+    // Deliberately callable by ANYONE (this replaces the HIGH-10 restriction to
+    // the first-leg submitter). The submitter is not authenticated: the first
+    // leg's receipt is public, so a front-runner can submit Alice's receipt
+    // first, become "initiator" and choose the deadline — under the old
+    // restriction only that party could ever release Alice's note. Permitting
+    // any caller costs nothing: the outcome is fixed by Alice's proof, since
+    // revertCommitA comes from the circuit's public statement and is
+    // spendable only with her key, so a third party triggering the refund can
+    // only ever return the note to its owner. The deadline ceiling
+    // (MAX_SWAP_DURATION) bounds how long a hijacked swap can hold the note,
+    // and its floor (MIN_SWAP_DURATION) how soon one can be timed out.
     function claimSwapTimeout(uint256 pendingReceiptId) public nonReentrant returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 
@@ -725,11 +798,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (block.timestamp <= meta.deadline) {
             revert SwapNotExpiredYet();
         }
-        // HIGH-10: only the original initiator can claim the timeout.
-        if (msg.sender != meta.initiator) {
-            revert Unauthorized();
-        }
-
         uint256 vaultId       = meta.vaultId;
         uint256 revertCommitA = meta.revertCommitA;
 
@@ -747,6 +815,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         IAbstractCoinVault(_coinVaults[vaultId]).registerCoins(revertCommits);
 
         delete _pendingTransactions[pendingReceiptId];
+        _closedSwaps[pendingReceiptId] = true;
 
         emit SwapTimedOut(pendingReceiptId);
         return true;
@@ -912,6 +981,24 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         IAbstractCoinVault deliveryCoinVault = IAbstractCoinVault(
             _coinVaults[vaultId2]
         );
+
+        // Each DvP proof ends with the address of the vault its prover expects
+        // to be paid from (StCounterVault): receipt1's prover is paid from
+        // vault2 (where receipt2's outputs are inserted) and vice versa. The
+        // commitments do not name a vault, so without this a counterparty could
+        // pay from another vault in the same asset group.
+        if (
+            receipt1.statement[receipt1.statement.length - 1] !=
+            uint256(uint160(address(deliveryCoinVault)))
+        ) {
+            revert CounterVaultMismatch();
+        }
+        if (
+            receipt2.statement[receipt2.statement.length - 1] !=
+            uint256(uint160(address(paymentCoinVault)))
+        ) {
+            revert CounterVaultMismatch();
+        }
 
         // asserting item proof shows that item belongs to group1
         if (
@@ -1159,6 +1246,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   [7] StFee               = relayer fee amount — checked against usdrFixedFeeAmount
     //   [8] StTokenId           = checked against usdrTokenId (config hygiene, see that
     //                             state var's doc comment — not security-critical)
+    // usdrVaultId must equal usdrFeeVaultId (set by setUsdrFeeVaultId).
     //
     // ctxt/encTxData are the main payment's Bob note-discovery data;
     // usdrCtxt/usdrEncTxData are the USDr fee note's (typically the relayer's
@@ -1174,6 +1262,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes calldata usdrCtxt,
         bytes calldata usdrEncTxData
     ) external returns (bool) {
+        // The USDr leg must settle in the configured USDr vault, not one the
+        // caller picks — see usdrFeeVaultId.
+        if (!usdrFeeVaultSet || usdrVaultId != usdrFeeVaultId) revert InvalidUsdrVault();
+
         // ── main leg — identical checks/settlement to payment() ──
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();

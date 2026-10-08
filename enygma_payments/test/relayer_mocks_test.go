@@ -36,6 +36,25 @@ type mockContract struct {
 	tx         *types.Transaction
 	err        error
 	gotBankTag string
+
+	// Read-only state answered to the relayer's fee-slot check. Only used by
+	// tests that turn Config.VerifyFeeSlot on.
+	usdrFee   *big.Int
+	accountID *big.Int
+}
+
+func (m *mockContract) UsdrFixedFeeAmount(_ *bind.CallOpts) (*big.Int, error) {
+	if m.usdrFee == nil {
+		return big.NewInt(0), nil
+	}
+	return m.usdrFee, nil
+}
+
+func (m *mockContract) AddressToAccountId(_ *bind.CallOpts, _ common.Address) (*big.Int, error) {
+	if m.accountID == nil {
+		return big.NewInt(0), nil
+	}
+	return m.accountID, nil
 }
 
 func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaUsdrProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
@@ -91,6 +110,11 @@ func successReceipt(tx *types.Transaction) *types.Receipt {
 
 // newTestHandler creates a Handler backed by mock contract + mock miner.
 func newTestHandler(c *mockContract, m *mockMiner) *server.Handler {
+	return newTestHandlerWithBackend(c, m)
+}
+
+// newTestHandlerWithBackend is newTestHandler with any receipt backend.
+func newTestHandlerWithBackend(c *mockContract, m bind.DeployBackend) *server.Handler {
 	privKey, _ := crypto.HexToECDSA(hardhatKey0)
 	auth, _ := bind.NewKeyedTransactorWithChainID(privKey, big.NewInt(1337))
 	cfg := &config.Config{

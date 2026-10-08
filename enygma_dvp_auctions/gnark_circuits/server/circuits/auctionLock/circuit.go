@@ -6,7 +6,7 @@ import "math/big"
 //
 // Fixed config: Merkle depth 8.
 //
-// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId, stRevertCommit]
+// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId, stRevertCommit, stParamsHash]
 type AuctionLockRequest struct {
 	StAuctionId    string `json:"stAuctionId"    binding:"required"`
 	StTreeNumber   string `json:"stTreeNumber"   binding:"required"`
@@ -15,6 +15,7 @@ type AuctionLockRequest struct {
 	StCommitLocked string `json:"stCommitLocked" binding:"required"`
 	StNftTokenId   string `json:"stNftTokenId"   binding:"required"`
 	StRevertCommit string `json:"stRevertCommit" binding:"required"`
+	StParamsHash   string `json:"stParamsHash"   binding:"required"` // keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr
 
 	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber
 	WtSpendKey     string    `json:"wtSpendKey"     binding:"required"`
@@ -24,6 +25,7 @@ type AuctionLockRequest struct {
 	WtPathIndex    string    `json:"wtPathIndex"    binding:"required"`
 	WtSaltLocked   string    `json:"wtSaltLocked"   binding:"required"`
 	WtSaltRevert   string    `json:"wtSaltRevert"   binding:"required"`
+	WtParamsHash   string    `json:"wtParamsHash"   binding:"required"` // must equal StParamsHash
 }
 
 // AuctionLockOutput is the JSON response from POST /proof/auctionLock.

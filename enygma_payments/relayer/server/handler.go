@@ -2,14 +2,14 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,10 +36,14 @@ type EnygmaContract interface {
 	// a given submission.
 	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, usdrCommitmentDeltas []enygma.IEnygmaPoint, usdrProof enygma.IEnygmaUsdrProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
+
+	// Read-only calls used to check the relayer is paid (see verifyFeeSlot).
+	UsdrFixedFeeAmount(opts *bind.CallOpts) (*big.Int, error)
+	AddressToAccountId(opts *bind.CallOpts, arg0 common.Address) (*big.Int, error)
 }
 
 // txTimeout is the maximum time to wait for a transaction to be mined.
-const txTimeout = 45 * time.Second
+var txTimeout = 45 * time.Second // a var only so tests can shorten it
 
 // Exact public-signal arities this relayer accepts, one per circuit.
 // Exported so external test packages (e.g. relayer_mocks_test.go) can
@@ -49,7 +53,7 @@ const txTimeout = 45 * time.Second
 const (
 	TransferPublicSignalLen    = 81 // enygma circuit: FingerPrint 6x6 + Fix L-01 domain separator
 	TransferFeePublicSignalLen = 55 // enygma_fee circuit: 54 signals + domain separator
-	UsdrFeePublicSignalLen     = 82 // usdr circuit: same 80-signal layout + FeeAmount + domain separator
+	UsdrFeePublicSignalLen     = 83 // usdr circuit: 80-signal layout + FeeAmount + domain separator + FeeRecipientKey
 )
 
 // maxParticipants is the exact commitmentDeltas/participantIds length every
@@ -195,6 +199,20 @@ func (h *Handler) SetInFlight(key string, val any) { h.inFlight.Store(key, val) 
 // Exported for test cleanup after SetInFlight.
 func (h *Handler) DeleteInFlight(key string) { h.inFlight.Delete(key) }
 
+// InFlight reports whether key is currently claimed (for tests).
+func (h *Handler) InFlight(key string) bool {
+	_, ok := h.inFlight.Load(key)
+	return ok
+}
+
+// SetTxTimeout shortens how long relay routes wait for a receipt, for tests
+// that exercise the still-pending path; it returns a func restoring the old value.
+func SetTxTimeout(d time.Duration) (restore func()) {
+	old := txTimeout
+	txTimeout = d
+	return func() { txTimeout = old }
+}
+
 // ── Health ────────────────────────────────────────────────────────────────────
 
 // HealthResponse is returned by GET /health.
@@ -276,7 +294,7 @@ func (h *Handler) Info(c *gin.Context) {
 // independent USDr proof paying the relayer a fee, settled atomically in
 // the same call. PublicSignal must have exactly 81 elements (FingerPrint
 // 6×6 layout plus the Fix L-01 domain separator in the last slot);
-// UsdrPublicSignal must have exactly 82 (the same 80-signal layout, plus
+// UsdrPublicSignal must have exactly 83 (the same 80-signal layout, plus
 // FeeAmount at slot 80, plus its own Fix L-01 domain separator at slot
 // 81). The domain separator itself is supplied by the caller (part of
 // req.PublicSignal/req.UsdrPublicSignal, like every other signal) — the
@@ -366,6 +384,16 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		return
 	}
 
+	if err := h.verifyFeeSlot(c.Request.Context(), usdrPubSig82, usdrCommitments, kIndex, req.UsdrFeeRandomness); err != nil {
+		log.Printf("[relay] bank=%s transfer: rejected, fee slot: %v", bankID, err)
+		status := http.StatusPaymentRequired
+		if _, transient := err.(*feeSlotLookupError); transient {
+			status = http.StatusBadGateway
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
 	transferProof := enygma.IEnygmaProof{
 		Proof:        proof8,
 		PublicSignal: pubSig80,
@@ -375,16 +403,17 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		PublicSignal: usdrPubSig82,
 	}
 
-	dedupKey, err := requestDedupKey("transfer", req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup key: %v", err)})
-		return
-	}
-	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
+	// One claim per nullifier the transfer consumes (main and USDr legs):
+	// the same note cannot be relayed twice at once, whichever route or
+	// other request fields carry it.
+	claimKeys := append([]string{
+		nullifierKey(mainNullifiers, pubSig80[transferNullifierIndex]),
+		nullifierKey(usdrNullifiers, usdrPubSig82[usdrNullifierIndex]),
+	}, participantKeys(kIndex)...)
+	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(dedupKey)
 
 	log.Printf("[relay] bank=%s transfer: submitting", bankID)
 
@@ -399,6 +428,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, usdrCommitments, usdrTransferProof, kIndex, bankID) // Fix H-09
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(claimKeys)
 		log.Printf("[relay] bank=%s transfer: submit failed: %v", bankID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transfer(): %v", err)})
 		return
@@ -408,12 +438,8 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	defer atomic.AddInt64(&h.pendingTxs, -1)
 
 	log.Printf("[relay] bank=%s transfer: submitted tx=%s, waiting for confirmation", bankID, tx.Hash().Hex())
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	receipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		log.Printf("[relay] bank=%s transfer: tx=%s wait mined failed: %v", bankID, tx.Hash().Hex(), err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+	receipt, ok := h.waitMined(c, "transfer", bankID, tx, claimKeys)
+	if !ok {
 		return
 	}
 	if receipt.Status != 1 {
@@ -490,16 +516,13 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 		PublicSignal: pubSig54,
 	}
 
-	dedupKey, err := requestDedupKey("transfer_fee", req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dedup key: %v", err)})
-		return
-	}
-	if _, loaded := h.inFlight.LoadOrStore(dedupKey, struct{}{}); loaded {
+	// Same main-ledger nullifier set as /relay/transfer, so the same note
+	// is blocked across both routes.
+	claimKeys := append([]string{nullifierKey(mainNullifiers, pubSig54[feeNullifierIndex])}, participantKeys(kIndex)...)
+	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(dedupKey)
 
 	log.Printf("[relay] bank=%s transfer_fee: submitting", bankID)
 
@@ -507,6 +530,7 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 	tx, err := h.instance.TransferWithFee(h.auth, commitments, feeProof, kIndex, bankID) // Fix H-09
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(claimKeys)
 		log.Printf("[relay] bank=%s transfer_fee: submit failed: %v", bankID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("transferWithFee(): %v", err)})
 		return
@@ -516,12 +540,8 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 	defer atomic.AddInt64(&h.pendingTxs, -1)
 
 	log.Printf("[relay] bank=%s transfer_fee: submitted tx=%s, waiting for confirmation", bankID, tx.Hash().Hex())
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	receipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		log.Printf("[relay] bank=%s transfer_fee: tx=%s wait mined failed: %v", bankID, tx.Hash().Hex(), err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+	receipt, ok := h.waitMined(c, "transfer_fee", bankID, tx, claimKeys)
+	if !ok {
 		return
 	}
 	if receipt.Status != 1 {
@@ -553,24 +573,121 @@ func bankIDFromContext(c *gin.Context) string {
 	return "unknown"
 }
 
-// DedupKey exposes requestDedupKey to external test packages that need to
-// pre-seed h.SetInFlight with the exact key RelayTransfer/RelayTransferFee
-// will compute for a given request body, to simulate a concurrent duplicate.
-func DedupKey(kind string, req any) (string, error) { return requestDedupKey(kind, req) }
+// In-flight claims are keyed by the nullifiers a request consumes — what
+// actually makes two requests conflict on chain. Fix H-10 had moved from a
+// proof[0] key to a hash of the whole body (so a request sharing proof[0]
+// was not refused), but that let the same proof through twice by changing
+// any other field (e.g. bankTag), and one of the two then reverted on chain
+// at the relayer's cost. Two requests with the same nullifier can never both
+// succeed, so a nullifier key is neither evadable nor a false positive.
+//
+// Offsets mirror Enygma.sol: FP_NULLIFIER_OFFSET (transfer and USDr proofs)
+// and NULLIFIER_OFFSET (fee proof). The main ledger and USDr have separate
+// nullifier sets (_nullifiers, _usdrNullifiers).
+const (
+	transferNullifierIndex = 79
+	usdrNullifierIndex     = 79
+	feeNullifierIndex      = 49
 
-// requestDedupKey hashes the entire request body (not just proof[0]) so an
-// attacker cannot evade deduplication by changing one unrelated field while
-// keeping proof[0] fixed, or force a false-positive 409 against an unrelated
-// request that happens to share the same proof[0] value (Fix H-10, mechanism
-// 4). req's JSON encoding is deterministic (a fixed struct, not a map), so
-// this hash is stable across repeated marshaling of an identical request.
-func requestDedupKey(kind string, req any) (string, error) {
-	data, err := json.Marshal(req)
-	if err != nil {
-		return "", err
+	mainNullifiers = "main"
+	usdrNullifiers = "usdr"
+)
+
+// pendingClaimHold bounds how long a nullifier stays claimed for a
+// transaction that was still unmined when its request timed out.
+const pendingClaimHold = time.Hour
+
+func nullifierKey(set string, nullifier *big.Int) string {
+	return "nf:" + set + ":" + nullifier.String()
+}
+
+// participantKeys are the claims on a transfer's participant accounts. A
+// transfer proof binds every participant's current balance commitment (and
+// the epoch), so while one transfer is pending any other transfer touching
+// one of its accounts is built on balances about to change and would revert
+// on chain at the relayer's cost; it gets 409 instead and can be re-proven.
+// Transfers over disjoint accounts still run concurrently.
+func participantKeys(ids []*big.Int) []string {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = ParticipantKey(id.Int64())
 	}
-	sum := sha256.Sum256(data)
-	return kind + ":" + hex.EncodeToString(sum[:]), nil
+	return keys
+}
+
+// ParticipantKey is the in-flight claim on one participant account.
+func ParticipantKey(accountId int64) string {
+	return "acct:" + strconv.FormatInt(accountId, 10)
+}
+
+// claim marks every key as in-flight, or none of them if any already is.
+func (h *Handler) claim(keys ...string) bool {
+	for i, k := range keys {
+		if _, loaded := h.inFlight.LoadOrStore(k, struct{}{}); loaded {
+			h.release(keys[:i])
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) release(keys []string) {
+	for _, k := range keys {
+		h.inFlight.Delete(k)
+	}
+}
+
+// waitMined waits up to txTimeout for tx and releases keys once its outcome
+// is known. If tx is still unmined it answers 202 with the hash and keeps the
+// keys claimed until tx is mined (or pendingClaimHold passes): released
+// earlier, a retry would be sent again and revert on chain at the relayer's
+// cost. ok is false when a response has already been written.
+func (h *Handler) waitMined(c *gin.Context, route, bankID string, tx *types.Transaction, keys []string) (*types.Receipt, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	receipt, err := bind.WaitMined(ctx, h.client, tx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		log.Printf("[relay] bank=%s %s: tx=%s still pending after %s", bankID, route, tx.Hash().Hex(), txTimeout)
+		go func() {
+			holdCtx, holdCancel := context.WithTimeout(context.Background(), pendingClaimHold)
+			defer holdCancel()
+			_, _ = bind.WaitMined(holdCtx, h.client, tx)
+			h.release(keys)
+		}()
+		c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
+		return nil, false
+	}
+	h.release(keys)
+	if err != nil {
+		log.Printf("[relay] bank=%s %s: tx=%s wait mined failed: %v", bankID, route, tx.Hash().Hex(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %v", err)})
+		return nil, false
+	}
+	return receipt, true
+}
+
+// DedupKey returns the in-flight claim key of the main-ledger nullifier a
+// request consumes, for external tests that pre-seed h.SetInFlight to
+// simulate a concurrent duplicate. kind is "transfer" or "transfer_fee".
+func DedupKey(kind string, req any) (string, error) {
+	var signal []string
+	index := 0
+	switch r := req.(type) {
+	case RelayTransferRequest:
+		signal, index = r.PublicSignal, transferNullifierIndex
+	case RelayTransferFeeRequest:
+		signal, index = r.PublicSignal, feeNullifierIndex
+	default:
+		return "", fmt.Errorf("DedupKey: unsupported request type %T for %q", req, kind)
+	}
+	if index >= len(signal) {
+		return "", fmt.Errorf("DedupKey: publicSignal has %d elements", len(signal))
+	}
+	n, ok := new(big.Int).SetString(signal[index], 0)
+	if !ok {
+		return "", fmt.Errorf("DedupKey: invalid nullifier %q", signal[index])
+	}
+	return nullifierKey(mainNullifiers, n), nil
 }
 
 // parseParticipantIds converts the request's []int64 kIndex into []*big.Int,
@@ -585,10 +702,18 @@ func requestDedupKey(kind string, req any) (string, error) {
 // silent reinterpretation.
 func parseParticipantIds(ids []int64) ([]*big.Int, error) {
 	out := make([]*big.Int, len(ids))
+	seen := make(map[int64]bool, len(ids))
 	for i, id := range ids {
 		if id < 0 {
 			return nil, fmt.Errorf("[%d]: negative id %d is not a valid account id", i, id)
 		}
+		// A repeated id is rejected on chain anyway (participant ids must be
+		// strictly increasing); refusing it here returns 400 instead of
+		// colliding with its own participant claim as a misleading 409.
+		if seen[id] {
+			return nil, fmt.Errorf("[%d]: duplicate account id %d", i, id)
+		}
+		seen[id] = true
 		out[i] = big.NewInt(id)
 	}
 	return out, nil

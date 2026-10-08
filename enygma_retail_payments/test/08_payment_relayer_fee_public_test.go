@@ -244,11 +244,10 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 		rfpPayAmt, rfpChangeAmt, rfpRelayerAmt)
 
 	// Compute nullifier: Poseidon(sk, treeNumber*2^treeDepth+pathIndices,
-	// contractAddress) — GetNullifierBoundTree, matching the circuit-side
-	// NullifierBoundTree fix.
-	nullifier, err := dvpcore.GetNullifierBoundTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
+	// (the tree-bound formula every circuit spending from this vault uses).
+	nullifier, err := dvpcore.GetNullifierWithTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth)
 	if err != nil {
-		t.Fatalf("GetNullifierBound: %v", err)
+		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 	t.Logf("  nullifier: %s", nullifier)
 

@@ -1,6 +1,9 @@
 package utils
 
 import (
+	"math/big"
+
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 	cmp "github.com/consensys/gnark/std/math/cmp"
@@ -82,6 +85,10 @@ func ScalarMul(api frontend.API, p twistededwards.Point, scalar frontend.Variabl
 	return result
 }
 
+// reduceModPQ7Bound is Fr - 7P: the exclusive upper bound on the remainder
+// when the quotient is 7 (see ReduceModP).
+var reduceModPQ7Bound = new(big.Int).Sub(ecc.BN254.ScalarField(), new(big.Int).Mul(big.NewInt(7), P))
+
 // ReduceModP performs a fully-constrained reduction of value modulo the Baby
 // Jubjub prime subgroup order P. Fixes C-01: the raw two-constraint hint
 // gadget this replaces (q·P + r == value, r < P, copy-pasted at all 28 call
@@ -102,12 +109,28 @@ func ScalarMul(api frontend.API, p twistededwards.Point, scalar frontend.Variabl
 // property (no valid witness exists for q > 7) for a handful of
 // constraints — this is what "three-bit decomposition, essentially free"
 // actually requires.
+//
+// Fix (residual C-01 gap): q < 8 alone is NOT enough. Fr = 8P - t with
+// t ~ 2^126, so q = 7 admits integers 7P + r up to 8P - 1, which is >= Fr.
+// Those wrap around to the small field elements [0, t): for an input v < t
+// the pair (7, v + P - t) satisfies q*P + r == v (mod Fr), r < P and q < 8
+// exactly as the honest (0, v) does, and ReduceModP(v) could return either.
+// The reduction is unique only for inputs >= t. Every current call site feeds
+// it a Poseidon output or P - v for a 64-bit v, so an input below t needs a
+// hash below 2^126 (about 2^-128) and there is no known exploit, but a gadget
+// that claims to reduce must not have a second answer. The fix requires the
+// integer q*P + r to be a valid canonical field element: when q == 7 the
+// remainder must satisfy r < Fr - 7P (not merely r < P). One comparison
+// against a bound selected by q replaces the old fixed comparison, so the
+// constraint count is unchanged apart from a handful of selects.
 func ReduceModP(api frontend.API, value frontend.Variable) frontend.Variable {
 	out, _ := api.NewHint(ModHint, 2, value)
 	r, q := out[0], out[1]
 	api.AssertIsEqual(api.Add(api.Mul(q, P), r), value)
-	api.AssertIsEqual(cmp.IsLess(api, r, P), 1)
-	api.ToBinary(q, 3)
+	qBits := api.ToBinary(q, 3)
+	isQ7 := api.Mul(qBits[0], api.Mul(qBits[1], qBits[2]))
+	bound := api.Select(isQ7, reduceModPQ7Bound, P)
+	api.AssertIsEqual(cmp.IsLess(api, r, bound), 1)
 	return r
 }
 

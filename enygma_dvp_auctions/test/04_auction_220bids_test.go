@@ -178,28 +178,31 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 	t.Log("── Phase 0a: AuctionLock / initAuction ──────────────────────────────────")
 
-	lockResult, err := gnarkClient.AuctionLockProof(core.AuctionLockParams{
-		Bob:         bob,
-		TokenId:     nftTokenId,
-		SaltIn:      bobSaltIn,
-		TreeNumber:  big.NewInt(0),
-		MerkleProof: nftProof,
-		SaltLocked:  saltLocked,
-		SaltRevert:  saltRevertBob,
-	})
-	checkErr(t, "AuctionLockProof", err)
-
-	auctionId := lockResult.PublicSignal[0]
-	t.Logf("auctionId = %s", auctionId)
-
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	checkErr(t, "HeaderByNumber", err)
 	deadline := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
 	// EnygmaAuction.initAuction requires settlementDeadline >= deadline + 2 days.
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
+	lockResult, err := gnarkClient.AuctionLockProof(core.AuctionLockParams{
+		Bob:                bob,
+		TokenId:            nftTokenId,
+		SaltIn:             bobSaltIn,
+		TreeNumber:         big.NewInt(0),
+		MerkleProof:        nftProof,
+		SaltLocked:         saltLocked,
+		SaltRevert:         saltRevertBob,
+		Deadline:           deadline,
+		SettlementDeadline: settlementDeadline,
+		FloorPrice:         floorPrice,
+	})
+	checkErr(t, "AuctionLockProof", err)
+
+	auctionId := lockResult.PublicSignal[0]
+	t.Logf("auctionId = %s", auctionId)
+
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
-		toBigArr8(lockResult.Proof), toBigArr7(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
+		toBigArr8(lockResult.Proof), toBigArr8(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
 	)
 	checkErr(t, "initAuction tx", err)
 	waitTx(t, ethClient, initTx)
@@ -225,6 +228,8 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 		saltRevert, err := core.RandomInField()
 		checkErr(t, fmt.Sprintf("RandomInField(saltRevert %d)", i), err)
 
+		ctxt1 := []byte("dummy-mlkem-capsule")
+		ctxt2 := []byte("dummy-aead-ciphertext")
 		bidResult, err := gnarkClient.AuctionBidProof(core.AuctionBidParams{
 			AuctionId:   auctionId,
 			Bidder:      bidders[i],
@@ -237,6 +242,9 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 			SaltA:       saltA,
 			SaltB:       saltB,
 			SaltRevert:  saltRevert,
+			Ctxt1:       ctxt1,
+			Ctxt2:       ctxt2,
+			FloorPrice:  floorPrice,
 		})
 		checkErr(t, fmt.Sprintf("AuctionBidProof(bidder %d)", i), err)
 
@@ -249,9 +257,9 @@ func TestAuction_OnChain_220Bids(t *testing.T) {
 
 		bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
 			toBigArr8(bidResult.Proof),
-			toBigArr7(bidResult.PublicSignal),
-			[]byte("dummy-mlkem-capsule"),
-			[]byte("dummy-aead-ciphertext"),
+			toBigArr9(bidResult.PublicSignal),
+			ctxt1,
+			ctxt2,
 		)
 		checkErr(t, fmt.Sprintf("submitBid tx (bidder %d)", i), err)
 		waitTx(t, ethClient, bidTx)

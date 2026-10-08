@@ -41,14 +41,15 @@ interface ICoinVault {
 ///
 /// Lifecycle
 /// ---------
-///   1. Bob calls initAuction()      — locks NFT, sets deadline + settlementDeadline + floorPrice, opens bidding
+///   1. Bob calls initAuction()      — locks NFT, sets deadline + settlementDeadline + floorPrice (bound by his proof), opens bidding
 ///   2. Bidders call submitBid()     — locks USDC, publishes ML-KEM capsule (only before deadline)
 ///   3. Auctioneer calls submitBatch() (one per 100-bid batch) — Phase 1 (only after deadline)
 ///   4. Auctioneer calls settleOptimistic() — posts Phase-2 claim; proof stored but not verified yet
 ///       └─ challengeSettlement()   — anyone forces verification during the challenge window
 ///       └─ finalizeSettlement()    — anyone finalizes an unchallenged claim after the window
-///   5a. Bob calls revertAuction()  — cancels at any time while BIDDING; reclaims NFT with fresh commitment
-///   5b. Anyone calls recoverAuction() — timeout path once settlementDeadline passes; uses pre-committed revertCommit
+///   5a. Bob calls revertAuction()  — cancels while BIDDING and before the first batch; reclaims NFT with fresh commitment
+///   5b. Anyone calls recoverAuction() — timeout path once settlementDeadline passes (also for a claim stuck in
+///                                    PENDING_SETTLEMENT); uses pre-committed revertCommit
 ///   6. Bidders call reclaimBid()   — releases pre-committed revertCommit into USDC tree (losers after SETTLED,
 ///                                    everyone after CANCELED)
 ///
@@ -92,6 +93,31 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
     // Optimistic settlement parameters (owner-configurable).
     uint256 public challengeWindow = 1 days;
+
+    // Longest allowed gap between the bidding deadline and the settlement
+    // deadline. recoverAuction() only opens at settlementDeadline, so this is
+    // the longest a seller's note can be held by an auction nobody settles.
+    uint256 public constant MAX_SETTLEMENT_WINDOW = 30 days;
+
+    // At most 10 batches of 100 bids can be settled, so more bids than this could
+    // never all be batched; submitBid() stops accepting bids at this number.
+    uint256 public constant MAX_BIDS = 1000;
+
+    // How long after a claim's challenge window closes anyone may still finalize it
+    // before recoverAuction() may cancel a claim that never finalizes.
+    uint256 public constant STUCK_CLAIM_GRACE = 7 days;
+
+    // Gas recoverAuction() must have before it tries to finalize a pending claim
+    // (vault unlock/nullify/insert for the NFT and the winning bid, with margin).
+    uint256 public constant RECOVER_FINALIZE_GAS = 3_000_000;
+
+    uint256 private constant SNARK_SCALAR_FIELD =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
+
+    // auctionId → number of bids that have been placed in a submitted batch.
+    // settleOptimistic() requires this to equal the auction's live bidCount, so
+    // the auctioneer cannot leave a bid out of every batch.
+    mapping(uint256 => uint256) private _batchedBids;
 
     // Per-auction core state.
     struct AuctionCore {
@@ -174,7 +200,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // Phase 0a — Bob locks the NFT and opens bidding
     // -----------------------------------------------------------------------
     //
-    // AuctionLock public statement (7 elements):
+    // AuctionLock public statement (8 elements):
     //   [0] StAuctionId    = Poseidon(commitLocked)
     //   [1] StTreeNumber   = Bob's NFT sub-tree index
     //   [2] StMerkleRoot   = current ERC-721 Merkle root
@@ -182,10 +208,18 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [4] StCommitLocked = Erc721Commitment(tokenId, pk_B, saltLocked)
     //   [5] StNftTokenId
     //   [6] StRevertCommit = Erc721Commitment(tokenId, pk_B, saltRevert)
+    //   [7] StParamsHash   = keccak256(abi.encode(auctionId, deadline,
+    //                        settlementDeadline, floorPrice)) mod Fr
+    //
+    // [7] binds the auction's parameters to Bob's proof. The statement is public
+    // the moment initAuction() is broadcast, so without it a front-runner could
+    // replay Bob's proof with parameters of its own (floor price 0, a deadline
+    // that closes at once, a settlement deadline far out) and hold his note.
+    // Replaying Bob's own parameters is harmless: they are what he chose.
 
     function initAuction(
         uint256[8] calldata proof,
-        uint256[7] calldata statement,
+        uint256[8] calldata statement,
         uint256    deadline,
         uint256    settlementDeadline,
         uint256    floorPrice
@@ -201,9 +235,14 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (_auctions[auctionId].state != AuctionState.INACTIVE) revert AuctionAlreadyExists();
         if (deadline <= block.timestamp)                          revert InvalidDeadline();
         if (settlementDeadline < deadline + 2 days)               revert InvalidSettlementDeadline();
+        if (settlementDeadline > deadline + MAX_SETTLEMENT_WINDOW) revert InvalidSettlementDeadline();
+
+        // The parameters must be the ones Bob's proof was made for.
+        if (statement[7] != _paramsHash(auctionId, deadline, settlementDeadline, floorPrice))
+            revert ParamsMismatch();
 
         // Verify the AuctionLock ZK proof.
-        _verifyProof(VK_LOCK, proof, _toArr7(statement));
+        _verifyProof(VK_LOCK, proof, _toArr8(statement));
 
         // Ensure the Merkle root Alice used matches a root the NFT vault accepts.
         if (!ICoinVault(_erc721Vault).verifyRoot(treeNumber, merkleRoot))
@@ -235,7 +274,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // Phase 0b — Alice (bidder) submits a sealed bid — only before deadline
     // -----------------------------------------------------------------------
     //
-    // AuctionBid public statement (7 elements):
+    // AuctionBid public statement (9 elements):
     //   [0] StAuctionId   — must match an open auction
     //   [1] StTreeNumber  — bidder's USDC sub-tree
     //   [2] StMerkleRoot  — current ERC-20 Merkle root
@@ -243,10 +282,15 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [4] StCommitA     — bidder's locked bid commitment (held in escrow)
     //   [5] StCommitB     — USDC payout destination for the seller if this bid wins
     //   [6] StRevertCommit — Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId)
+    //   [7] StCtxtHash     — keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr
+    //   [8] StFloorPrice   — the auction's floor price; the circuit proves bidAmount >= it
+    //
+    // The ciphertexts are not part of the proof otherwise, so [7] is what stops a
+    // front-runner from registering this bid with ciphertexts of its own.
 
     function submitBid(
         uint256[8] calldata proof,
-        uint256[7] calldata statement,
+        uint256[9] calldata statement,
         bytes      calldata ctxt1,
         bytes      calldata ctxt2
     ) external nonReentrant returns (bool) {
@@ -261,9 +305,14 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (_auctions[auctionId].state != AuctionState.BIDDING) revert AuctionStateMismatch();
         if (block.timestamp >= _auctions[auctionId].deadline)   revert BiddingClosed();
         if (_bids[auctionId][commitA].active)                   revert BidAlreadyExists();
+        if (_auctions[auctionId].bidCount >= MAX_BIDS)          revert MaxBidsReached();
+        if (statement[7] != _ctxtHash(ctxt1, ctxt2))            revert CiphertextMismatch();
+        // The proof shows the bid reaches this floor, so it must be this
+        // auction's: otherwise dust bids could fill the MAX_BIDS slots.
+        if (statement[8] != _auctions[auctionId].floorPrice)    revert FloorPriceMismatch();
 
         // Verify the AuctionBid ZK proof.
-        _verifyProof(VK_BID, proof, _toArr7(statement));
+        _verifyProof(VK_BID, proof, _toArr9(statement));
 
         // Ensure the Merkle root matches a root the USDC vault accepts.
         if (!ICoinVault(_erc20Vault).verifyRoot(treeNumber, merkleRoot))
@@ -370,6 +419,9 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ) external nonReentrant onlyRole(AUCTIONEER_ROLE) returns (bool) {
         uint256 auctionId = statement[0];
 
+        // settleOptimistic() reads batchId 0 as an empty slot, so a batch stored
+        // under it could never be included in a settlement.
+        if (batchId == 0)                                        revert InvalidBatchId();
         if (_auctions[auctionId].state != AuctionState.BIDDING) revert AuctionStateMismatch();
         if (block.timestamp < _auctions[auctionId].deadline)    revert BidsStillOpen();
         if (_batches[auctionId][batchId].submitted)              revert BatchAlreadySubmitted();
@@ -377,6 +429,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         // Every active slot must reference a real, unbatched on-chain bid.
         // Marking each bid as batched here prevents the same commitA from
         // appearing in a second submitBatch call (cross-batch duplicate).
+        uint256 batchedNow;
         for (uint256 i = 0; i < 100; i++) {
             uint256 commitA = statement[1 + i];
             if (commitA == 0) continue;
@@ -384,7 +437,9 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             if (!b.active)  revert UnknownBid(commitA);
             if (b.batched)  revert BidAlreadyBatched(commitA);
             b.batched = true;
+            batchedNow++;
         }
+        _batchedBids[auctionId] += batchedNow;
 
         // Verify the AuctionBatch ZK proof.
         uint256[] memory inputs = new uint256[](104);
@@ -467,18 +522,9 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
         _crossCheckBatches(auctionId, statement, batchIds);
 
-        // Ensure the overall winner (statement[31]) is one of the verified batch
-        // winners (statement[1..10]).  Without this check the auctioneer could name
-        // an arbitrary address as winner in Phase-2 and have it pass unchallenged if
-        // no watchdog calls challengeSettlement() within the window.
-        bool winnerFound = false;
-        for (uint256 i = 0; i < 10; i++) {
-            if (statement[1 + i] != 0 && statement[1 + i] == statement[31]) {
-                winnerFound = true;
-                break;
-            }
-        }
-        require(winnerFound, "EnygmaAuction: overall winner not in any verified batch");
+        // Everything the contract can check from public data is checked now, so a
+        // claim that could never be applied is refused instead of parked.
+        _validateClaim(auctionId, statement);
 
         if (statement[35] != _auctions[auctionId].nftTokenId) revert InvalidNftTokenId();
         if (statement[37] != _auctions[auctionId].floorPrice) revert FloorPriceMismatch();
@@ -600,7 +646,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 3 — Bob cancels the auction at any time (before or after deadline)
+    // Phase 3 — Bob cancels the auction while bidding is open
     // -----------------------------------------------------------------------
     //
     // AuctionRevert public statement (4 elements):
@@ -609,8 +655,8 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [2] StNftTokenId     — must match auctions[id].nftTokenId
     //   [3] StRevertedCommit — fresh commitment, re-inserted into the NFT tree
     //
-    // Bob may cancel at any time while the auction is in BIDDING state. The ZK
-    // proof proves he owns the locked note; no timing restriction is needed.
+    // Bob may cancel while the auction is in BIDDING state, before its deadline.
+    // The ZK proof proves he owns the locked note.
     // Bidders reclaim their USDC via reclaimBid() once the auction is CANCELED.
 
     function revertAuction(
@@ -624,7 +670,14 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
         AuctionCore storage a = _auctions[auctionId];
         if (a.state != AuctionState.BIDDING)   revert AuctionStateMismatch();
+        // Bob may cancel only while bidding is open. After the deadline the
+        // auctioneer's submitBatch() carries the batch winners' amounts, and it
+        // is visible in the mempool before it is mined, so a seller allowed to
+        // cancel until the first batch lands could read the result there and
+        // front-run it. An auction nobody settles is released by recoverAuction()
+        // after settlementDeadline.
         if (block.timestamp >= a.deadline)     revert BiddingClosed();
+        if (a.batchCount != 0)                 revert BatchesAlreadySubmitted();
         if (commitLocked != a.commitLocked)    revert CommitLockedMismatch();
         if (nftTokenId    != a.nftTokenId)     revert InvalidNftTokenId();
 
@@ -661,8 +714,28 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
     function recoverAuction(uint256 auctionId) external nonReentrant returns (bool) {
         AuctionCore storage a = _auctions[auctionId];
-        if (a.state != AuctionState.BIDDING)              revert AuctionStateMismatch();
-        if (block.timestamp < a.settlementDeadline)        revert SettlementDeadlineNotReached();
+        if (a.state == AuctionState.PENDING_SETTLEMENT) {
+            // A claim still pending a grace period after its challenge window
+            // closed is released here, so the NFT and every bid cannot stay locked
+            // forever. An unchallenged claim stands, though, so it is finalized if
+            // it can be applied: cancelling one merely because nobody called
+            // finalizeSettlement() would take the auction from its winner. Only a
+            // claim whose settlement reverts is cancelled.
+            uint256 releaseAt = _claims[auctionId].challengeDeadline + STUCK_CLAIM_GRACE;
+            if (releaseAt < a.settlementDeadline) releaseAt = a.settlementDeadline;
+            if (block.timestamp < releaseAt) revert SettlementDeadlineNotReached();
+            // Enough gas that the settlement attempt cannot fail for lack of it:
+            // otherwise a caller could make a healthy claim look stuck.
+            require(gasleft() >= RECOVER_FINALIZE_GAS, "EnygmaAuction: insufficient gas to try the settlement");
+            try this.finalizeChallengedSettlement(auctionId) {
+                return true;
+            } catch {
+                delete _claims[auctionId];
+            }
+        } else {
+            if (a.state != AuctionState.BIDDING)           revert AuctionStateMismatch();
+            if (block.timestamp < a.settlementDeadline)    revert SettlementDeadlineNotReached();
+        }
 
         // Spend Bob's locked NFT note: unlock then permanently nullify.
         ICoinVault(_erc721Vault).unlockCoin(a.nftTreeNumber, a.nftNullifier);
@@ -763,6 +836,41 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    /// @dev Public-data checks on a settlement claim. The batch winners' public keys and
+    ///      amounts are public and were proven in Phase 1, so the winner selection, the
+    ///      floor and the seller's payout commitment can all be checked without the
+    ///      Phase-2 proof. Only the NFT commitment for the winner (statement[34]) still
+    ///      depends on that proof.
+    function _validateClaim(uint256 auctionId, uint256[38] calldata statement) internal view {
+        AuctionCore storage a = _auctions[auctionId];
+
+        // Every live bid must sit in a submitted batch: otherwise the auctioneer
+        // could leave the highest bid out.
+        if (_batchedBids[auctionId] != a.bidCount) revert BidsNotAllBatched();
+
+        // The overall winner must be one of the verified batch winners and must
+        // carry the highest amount among them.
+        uint256 winnerCommit = statement[31];
+        uint256 maxAmount;
+        uint256 winnerSlot = type(uint256).max;
+        for (uint256 i = 0; i < 10; i++) {
+            uint256 slotCommit = statement[1 + i];
+            if (slotCommit == 0) continue;
+            if (statement[21 + i] > maxAmount) maxAmount = statement[21 + i];
+            if (slotCommit == winnerCommit) winnerSlot = i;
+        }
+        require(winnerSlot != type(uint256).max, "EnygmaAuction: overall winner not in any verified batch");
+        if (statement[11 + winnerSlot] != statement[32]) revert BatchResultMismatch(winnerSlot); // winner pk
+        if (statement[21 + winnerSlot] != statement[36]) revert WinnerAmountMismatch();
+        if (statement[36] != maxAmount)                  revert WinnerNotHighest();
+        if (statement[36] < a.floorPrice)                revert BelowFloorPrice();
+
+        // The payout must go to the commitB the winner published with the bid.
+        BidData storage winnerBid = _bids[auctionId][winnerCommit];
+        if (!winnerBid.active)                           revert UnknownBid(winnerCommit);
+        if (statement[33] != winnerBid.commitB)          revert PayoutCommitMismatch();
+    }
 
     /// @dev Cross-references each active batch slot in an AuctionFinal statement
     ///      against the stored Phase-1 result. This is pure public-data checking
@@ -873,8 +981,28 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         for (uint256 i = 0; i < 6; i++) a[i] = s[i];
     }
 
-    function _toArr7(uint256[7] calldata s) internal pure returns (uint256[] memory a) {
-        a = new uint256[](7);
-        for (uint256 i = 0; i < 7; i++) a[i] = s[i];
+    function _toArr8(uint256[8] calldata s) internal pure returns (uint256[] memory a) {
+        a = new uint256[](8);
+        for (uint256 i = 0; i < 8; i++) a[i] = s[i];
+    }
+
+    /// @dev The value the AuctionBid circuit binds as StCtxtHash.
+    function _ctxtHash(bytes calldata ctxt1, bytes calldata ctxt2) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2)))) % SNARK_SCALAR_FIELD;
+    }
+
+    function _toArr9(uint256[9] calldata s) internal pure returns (uint256[] memory a) {
+        a = new uint256[](9);
+        for (uint256 i = 0; i < 9; i++) a[i] = s[i];
+    }
+
+    /// @dev The value the AuctionLock circuit binds as StParamsHash.
+    function _paramsHash(
+        uint256 auctionId,
+        uint256 deadline,
+        uint256 settlementDeadline,
+        uint256 floorPrice
+    ) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice))) % SNARK_SCALAR_FIELD;
     }
 }

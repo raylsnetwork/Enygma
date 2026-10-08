@@ -38,6 +38,16 @@ type WithdrawEnygmaCircuit struct {
 	// Fix L-01: chainId<<160 | contractAddress — see enygma/circuit.go's
 	// DomainId field doc comment for the full reasoning; identical here.
 	DomainId frontend.Variable `gnark:",public"`
+	// The DvP commitments this withdrawal creates, one per deposit slot
+	// (0 for an unused slot): Poseidon(Poseidon(Address, VPerDeposit[i]),
+	// Poseidon(SkDeposits[i])) — exactly what the DvP vault's
+	// depositThroughEnygma inserts. Public (signals 52-61, after DomainId so
+	// every earlier offset is unchanged) so Enygma.sol can require the notes
+	// actually created to be these. While they were private, only the total
+	// amount was bound: whoever submitted the proof chose the recipients'
+	// public keys, so another bank could replay a pending withdrawal with
+	// its own keys and receive the funds.
+	Hashes [10]frontend.Variable `gnark:",public"`
 
 	// Private signals
 	SenderId                  frontend.Variable     // Identifier of the sender
@@ -48,7 +58,6 @@ type WithdrawEnygmaCircuit struct {
 	TxValues                  []frontend.Variable   // Balances debited/credited
 	TxRandomValues            []frontend.Variable   // Random factors for pedersen commitments
 	SenderTxValue             frontend.Variable     // Amount to withdraw
-	Hashes                    [10]frontend.Variable // Deposit hashes (always 10)
 	SkDeposits                [10]frontend.Variable // Secret keys for deposits
 	VPerDeposit               [10]frontend.Variable // Value per deposit
 	Address                   frontend.Variable     // Withdraw address
@@ -133,7 +142,16 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 		selectedSecret = api.Add(selectedSecret, api.Mul(eq, circuit.SharedSecrets[i]))
 	}
 
-	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{circuit.PreviousSenderRandomValue, circuit.SecretKey})
+	// Fix (nullifier canonicality): the blinding factor reaches a Pedersen
+	// scalar multiplication, which only sees it mod P, but it used to reach
+	// the Poseidon below as a raw field element. Every value r + k*P below Fr
+	// (up to 8 of them) therefore opens the SAME on-chain commitment yet
+	// produced a different secretRemain and nullifier, so one state had
+	// several valid nullifiers. Hashing the reduced value makes the nullifier
+	// a function of the commitment's actual opening. Honest blinding factors
+	// are already < P, so honest nullifiers are unchanged.
+	prevRCanonical := utils.ReduceModP(api, circuit.PreviousSenderRandomValue)
+	secretSenderCalculated := pos.Poseidon(api, []frontend.Variable{prevRCanonical, circuit.SecretKey})
 	secretRemain := utils.ReduceModP(api, secretSenderCalculated) // Fix C-01
 
 	api.AssertIsEqual(secretRemain, selectedSecret)
@@ -335,6 +353,10 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 		conditionalDifference := api.Mul(enabled, difference)
 
 		api.AssertIsEqual(conditionalDifference, frontend.Variable(0))
+
+		// An unused slot (VPerDeposit 0) must publish Hashes 0, so the
+		// contract can tell exactly which slots carry a deposit.
+		api.AssertIsEqual(api.Mul(isDepositZero, circuit.Hashes[i]), frontend.Variable(0))
 
 		sumVPerDeposit = api.Add(sumVPerDeposit, circuit.VPerDeposit[i])
 	}

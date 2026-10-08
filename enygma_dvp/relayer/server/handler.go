@@ -4,21 +4,26 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"enygma_dvp/relayer/config"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
@@ -56,7 +61,9 @@ type Handler struct {
 	auth     *bind.TransactOpts
 	client   *ethclient.Client
 	txMu     sync.Mutex // serializes on-chain submissions — prevents nonce races
-	inFlight sync.Map   // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
+	// txTimeout bounds how long transact waits for a receipt (0 = defaultTxTimeout).
+	txTimeout time.Duration
+	inFlight  sync.Map // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
 
 	feeSpendPubKey *big.Int // nil unless RELAYER_FEE_SPEND_PRIVATE_KEY is configured
 }
@@ -117,6 +124,7 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		dvpAddr:        common.HexToAddress(dvpAddrStr),
 		auth:           auth,
 		client:         client,
+		txTimeout:      cfg.TxTimeout,
 		feeSpendPubKey: feeSpendPubKey,
 	}, nil
 }
@@ -179,12 +187,12 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	defer h.releaseNullifiers(nfKeys)
 
 	receipt := buildProofReceipt(parsed)
 	txReceipt, err := h.transact("payment", receipt, vaultId, ctBytes, encBytes)
+	h.settleClaims(nfKeys, err)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
+		relayError(c, "payment", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -308,12 +316,12 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	defer h.releaseNullifiers(nfKeys)
 
 	receipt := buildProofReceipt(parsed)
 	txReceipt, err := h.transact("paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
+	h.settleClaims(nfKeys, err)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
+		relayError(c, "paymentWithRelayerFee", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -475,15 +483,15 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	defer h.releaseNullifiers(nfKeys)
 
 	receipt := buildProofReceipt(parsed)
 	usdrReceipt := buildProofReceipt(usdrParsed)
 	txReceipt, err := h.transact("paymentWithUsdrFee",
 		receipt, vaultId, ctBytes, encBytes,
 		usdrReceipt, usdrVaultId, usdrCtBytes, usdrEncBytes)
+	h.settleClaims(nfKeys, err)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
+		relayError(c, "paymentWithUsdrFee", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -546,13 +554,13 @@ func (h *Handler) RelaySwap(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	defer h.releaseNullifiers(nfKeys)
 
 	payReceipt := buildProofReceipt(payParsed)
 	delReceipt := buildProofReceipt(delParsed)
 	txReceipt, err := h.transact("swap", payReceipt, delReceipt, payVaultId, delVaultId)
+	h.settleClaims(nfKeys, err)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("swap(): %s", err)})
+		relayError(c, "swap", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -615,13 +623,13 @@ func (h *Handler) RelayExchange(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	defer h.releaseNullifiers(nfKeys)
 
 	r1 := buildProofReceipt(parsed1)
 	r2 := buildProofReceipt(parsed2)
 	txReceipt, err := h.transact("exchange", r1, r2, vaultId1, vaultId2)
+	h.settleClaims(nfKeys, err)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("exchange(): %s", err)})
+		relayError(c, "exchange", err)
 		return
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -729,7 +737,7 @@ func parseReceipt(r *ReceiptPayload) (*parsedReceipt, error) {
 	if r.NumberOfInputs > 10 || r.NumberOfOutputs > 10 {
 		return nil, fmt.Errorf("numberOfInputs/Outputs exceeds maximum of 10")
 	}
-	// DVP initiator proofs carry extra elements (commitA, revertCommitA) beyond
+	// DVP proofs carry extra elements (commitA, revertCommitA, counterVault) beyond
 	// the standard 1+3*nIn+nOut layout — use >= so we don't reject them.
 	minExpected := 1 + 3*r.NumberOfInputs + r.NumberOfOutputs
 	if len(sig) < minExpected {
@@ -810,17 +818,145 @@ func (h *Handler) releaseNullifiers(keys []string) {
 	}
 }
 
+// pendingClaimHold bounds how long nullifier claims stay held for a
+// transaction that was still unmined when its request timed out.
+const pendingClaimHold = time.Hour
+
+// settleClaims releases a request's nullifier claims once its submission is
+// over. If the transaction was sent but is still pending (errTxPending), the
+// claims stay held until it is mined (or pendingClaimHold passes), so the same
+// notes cannot be submitted again while the first transaction can still land.
+func (h *Handler) settleClaims(keys []string, err error) {
+	var pending *errTxPending
+	if !errors.As(err, &pending) {
+		h.releaseNullifiers(keys)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), pendingClaimHold)
+		defer cancel()
+		_, _ = bind.WaitMined(ctx, h.client, pending.tx)
+		h.releaseNullifiers(keys)
+	}()
+}
+
 // ── chain helpers ─────────────────────────────────────────────────────────────
 
+// simulateTimeout bounds the pre-flight simulation of a submission.
+const simulateTimeout = 60 * time.Second
+
+// errWouldRevert reports that the node's simulation of a submission reverted:
+// the transaction was NOT sent. It is the caller's request that is at fault
+// (bad proof, spent nullifier, wrong fee, ...), not the relayer.
+type errWouldRevert struct{ cause error }
+
+func (e *errWouldRevert) Error() string { return "would revert: " + e.cause.Error() }
+func (e *errWouldRevert) Unwrap() error { return e.cause }
+
+// defaultTxTimeout is used when the handler was built without a TxTimeout.
+const defaultTxTimeout = 2 * time.Minute
+
+// errTxPending reports that the transaction was sent but not mined within the
+// timeout. It may still be mined later; the caller gets its hash to follow it.
+type errTxPending struct{ tx *types.Transaction }
+
+func (e *errTxPending) Error() string {
+	return "transaction " + e.tx.Hash().Hex() + " sent but not mined yet"
+}
+
+// isRevertError reports whether an eth_call error came from the EVM rejecting the
+// call, as opposed to a transport or node failure. In order:
+//  1. a network error (connection refused, timeout, context deadline) is never a
+//     revert, whatever its text says;
+//  2. an RPC error with code 3 is the standard "execution reverted" code (geth,
+//     Nethermind, most L2 nodes);
+//  3. otherwise fall back to the message, which is how Hardhat reports it
+//     ("VM Exception while processing transaction: reverted ...").
+func isRevertError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return false
+	}
+	var rpcErr rpc.Error
+	if errors.As(err, &rpcErr) && rpcErr.ErrorCode() == 3 {
+		return true
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "revert") || strings.Contains(m, "vm exception") ||
+		strings.Contains(m, "invalid opcode") || strings.Contains(m, "out of gas")
+}
+
+// relayError writes the response for a failed submission. A submission that the
+// pre-flight simulation showed would revert is a client error (422); anything
+// else is a relayer or node failure (500).
+func relayError(c *gin.Context, method string, err error) {
+	var wr *errWouldRevert
+	if errors.As(err, &wr) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("%s(): %s", method, err)})
+		return
+	}
+	// Sent but not mined within RELAYER_TX_TIMEOUT: accepted, outcome unknown.
+	var pending *errTxPending
+	if errors.As(err, &pending) {
+		c.JSON(http.StatusAccepted, gin.H{"txHash": pending.tx.Hash().Hex(), "status": "pending"})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s(): %s", method, err)})
+}
+
+// transact simulates the call against the current chain state and sends it only
+// if the simulation succeeds.
+//
+// The relayer used to send every validated request with a fixed 8,000,000 gas
+// limit and no simulation. A request with a bad proof was sent anyway and
+// reverted on-chain: an invalid proof makes the pairing precompile fail, which
+// consumes all the gas passed to it, and each such request cost the relayer
+// about 7.5M gas. Anyone holding the API key could drain the relayer's funds with
+// junk proofs. eth_call runs the call once, at the same gas cap the transaction
+// will use, and fails on a revert, so nothing is sent for a request that cannot
+// succeed. The limit stays at the cap: a transaction that succeeds only pays for
+// the gas it uses, so a high limit costs nothing extra, and one call is much
+// cheaper than eth_estimateGas's repeated executions of two Groth16 verifications.
 func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, error) {
 	h.txMu.Lock()
 	defer h.txMu.Unlock()
+
+	data, err := h.dvpABI.Pack(method, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pack %s: %w", method, err)
+	}
+
+	simCtx, cancel := context.WithTimeout(context.Background(), simulateTimeout)
+	defer cancel()
+	if _, err := h.client.CallContract(simCtx, ethereum.CallMsg{
+		From: h.auth.From,
+		To:   &h.dvpAddr,
+		Gas:  h.auth.GasLimit,
+		Data: data,
+	}, nil); err != nil {
+		if isRevertError(err) {
+			return nil, &errWouldRevert{cause: err}
+		}
+		return nil, fmt.Errorf("simulate %s: %w", method, err)
+	}
+
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, method, args...)
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := bind.WaitMined(context.Background(), h.client, tx)
+	// Bounded wait: an unbounded one held txMu forever if the transaction got
+	// stuck (e.g. underpriced), blocking every later submission.
+	timeout := h.txTimeout
+	if timeout <= 0 {
+		timeout = defaultTxTimeout
+	}
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), timeout)
+	defer cancelWait()
+	receipt, err := bind.WaitMined(waitCtx, h.client, tx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil, &errTxPending{tx: tx}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("wait mined: %w", err)
 	}

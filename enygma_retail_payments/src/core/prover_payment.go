@@ -32,8 +32,8 @@ var (
 	EncryptPayload    = pay.EncryptPayload
 	DecryptPayload    = pay.DecryptPayload
 	RandomInField     = pay.RandomInField
-	// DeriveChannelKey derives the AES key used by the private-tag system.
-	DeriveChannelKey   = pay.DeriveChannelKey
+	// DeriveBlockKey derives the per-block AES key used by the private-tag system.
+	DeriveBlockKey     = pay.DeriveBlockKey
 	ChannelEncryptNote = pay.ChannelEncryptNote
 	ChannelDecryptNote = pay.ChannelDecryptNote
 )

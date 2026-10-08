@@ -7,7 +7,7 @@ package server
 // Used for Enygma-to-Enygma confidential transfers (the enygma circuit),
 // plus a second, independent USDr proof that pays the relayer a fixed fee,
 // settled atomically in the same on-chain transfer() call. PublicSignal
-// must have exactly 81 elements and UsdrPublicSignal exactly 82 (the last
+// must have exactly 81 elements and UsdrPublicSignal exactly 83 (the last
 // element of each being the Fix L-01 domain separator on both circuits —
 // UsdrPublicSignal has one further element, FeeAmount, ahead of it) — Fix
 // L-05: this used to be silently zero-padded up to the expected length
@@ -24,6 +24,15 @@ type RelayTransferRequest struct {
 	UsdrCommitments  [][]string `json:"usdrCommitments"  binding:"required"`
 
 	KIndex []int64 `json:"kIndex" binding:"required"` // shared by both proofs
+
+	// UsdrFeeRandomness is the blinding factor of the commitment in THIS
+	// relayer's own slot of the USDr proof (the TxRandomValues entry the
+	// client used for that slot). The relayer recomputes
+	// Com(usdrFixedFeeAmount, UsdrFeeRandomness) and requires it to equal
+	// that slot's delta, so it knows it is actually being paid before it
+	// spends gas — see Config.VerifyFeeSlot. Required unless the relayer is
+	// configured not to verify.
+	UsdrFeeRandomness string `json:"usdrFeeRandomness"`
 }
 
 // RelayTransferFeeRequest is the JSON body accepted by POST /relay/transfer_fee.

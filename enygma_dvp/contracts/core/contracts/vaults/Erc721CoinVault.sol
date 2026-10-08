@@ -69,6 +69,15 @@ contract Erc721CoinVault is AbstractCoinVault {
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
+        // transfer() is open to any caller, and checkReceiptConditions also
+        // accepts a DvP Destination receipt (non-zero StMessage): Bob's delivery
+        // leg of a swap. That leg must only settle through
+        // EnygmaDvp.submitPartialSettlement together with Alice's payment leg;
+        // run alone it would hand Bob's token over for nothing. A standalone
+        // ERC721 transfer proof carries StMessage == 0.
+        if (receipt.statement[0] != 0) {
+            revert IEnygmaDvp.InvalidPaymentMessage();
+        }
         checkReceiptConditions(receipt);
         // NEW-1 fix: nullify inputs before inserting outputs (CEI).
         // Inserting first opened a reentrancy window via the Poseidon precompile
@@ -199,12 +208,21 @@ contract Erc721CoinVault is AbstractCoinVault {
     function checkReceiptConditions(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public view override returns (bool) {
-        // Statement layout (ERC721 Ownership and DvP Destination share the same 5-element structure):
+        // Statement layout (ERC721 Ownership: 5 elements; DvP Destination appends
+        // counterVault as a 6th, checked by EnygmaDvp at settlement):
         // 0 message;
         // 1 treeNumber;
         // 2 merkleRoot;
         // 3 nullifier;
         // 4 commitment (commitA for DvP Destination);
+
+        // Both proof types here spend exactly one note into one output, and the
+        // statement offsets below are fixed. transfer()/withdraw() walk the
+        // statement by numberOfInputs/numberOfOutputs, so a receipt that
+        // misreported them (e.g. 0 inputs) would verify yet nullify nothing and
+        // insert the real output commitment: a free copy of the note.
+        if (receipt.numberOfInputs != 1) revert InvalidNumberOfInputs();
+        if (receipt.numberOfOutputs != 1) revert InvalidNumberOfOutputs();
 
         if (!isValidRoot(receipt.statement[1], receipt.statement[2])) {
             revert InvalidMerkleRoot();
@@ -222,12 +240,20 @@ contract Erc721CoinVault is AbstractCoinVault {
         // proof that failed VK_ID_ERC721_1 would be re-verified against VK_ID_DVP_DESTINATION,
         // allowing semantic confusion between the two circuit types.
         if (receipt.statement[0] == 0) {
+            if (receipt.statement.length != 5) revert InvalidStatmentSize();
+            // The legacy ownership circuit's nullifier is Poseidon(sk, pathIndex),
+            // with no tree number; the DvP Destination circuit's, for the same
+            // note, is Poseidon(sk, treeNumber*2^depth + pathIndex). The two agree
+            // only in tree 0, so anywhere else a note would have two unspent
+            // nullifiers and could be spent once through each.
+            if (receipt.statement[1] != 0) revert LegacyProofOutsideFirstTree();
             if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC721_1,
                 receipt.proof,
                 receipt.statement
             )) revert InvalidProof();
         } else {
+            if (receipt.statement.length != 6) revert InvalidStatmentSize();
             if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_DVP_DESTINATION,
                 receipt.proof,

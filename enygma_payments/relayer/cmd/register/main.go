@@ -92,9 +92,13 @@ var hy, _ = new(big.Int).SetString("75128302698277136297240238252498613277686727
 var H = &babyjub.Point{X: hx, Y: hy}
 
 func main() {
-	accountID := flag.Int64("account-id", 100,
-		"accountId to register the relayer under (must be non-zero, unique across all participants)")
+	accountID := flag.Int64("account-id", 0,
+		"accountId to register the relayer under: the NEXT sequential id "+
+			"(Enygma.registerAccount requires ids 1, 2, 3, ... with no gaps)")
 	flag.Parse()
+	if *accountID <= 0 {
+		log.Fatal("--account-id must be set to the next unused account id (the contract requires sequential ids)")
+	}
 
 	rpcURL := envOr("RELAYER_RPC_URL", "http://127.0.0.1:8545")
 	chainIDStr := envOr("RELAYER_CHAIN_ID", "1337")
@@ -214,11 +218,19 @@ func main() {
 	}
 	log.Printf("  Block:            %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
 
+	// Fix Vuln 3: initializeUsdrBalance takes a pre-computed commitment point
+	// instead of a raw randomness scalar, so the USDr blinding factor never
+	// leaves this process. Com(0, r) = r*H is computed here, like
+	// registerAccount's above: asking the contract's pedCom() for it would send
+	// r in plaintext to the RPC node (an eth_call), which may log requests.
+	usdrCommitPt := babyjub.NewPoint().Mul(usdrRandomness, H)
+	initialUsdrCommitX, initialUsdrCommitY := usdrCommitPt.X, usdrCommitPt.Y
+
 	// Fresh nonce for the next transaction from the same owner key — auth's
 	// Nonce isn't set explicitly (go-ethereum fetches it per-call), so this
 	// is safe as long as nothing else races the owner key between the two
 	// calls, same assumption the rest of this tool already makes.
-	usdrTx, err := instance.InitializeUsdrBalance(auth, big.NewInt(*accountID), usdrRandomness)
+	usdrTx, err := instance.InitializeUsdrBalance(auth, big.NewInt(*accountID), initialUsdrCommitX, initialUsdrCommitY)
 	if err != nil {
 		log.Fatalf("initializeUsdrBalance(): %v", err)
 	}

@@ -377,13 +377,12 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		d := depositIntoVault(t, ctx, client, vault, erc20, vaultAddr, owner, depositAmt, tokenId, merkleDepth)
 
-		// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
-		// vault AND tree, matching the circuit-side NullifierBoundTree fix
+		// The tree-bound nullifier every circuit spending from this vault uses.
 		// (StContractAddress and StTreeNumbers were both previously
 		// unconstrained).
-		nullifier, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
+		nullifier, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth)
 		if err != nil {
-			t.Fatalf("GetNullifierBound: %v", err)
+			t.Fatalf("GetNullifierWithTree: %v", err)
 		}
 
 		ssBob, ctxtBob, err := core.Encapsulate(bobView.EncapsKey)
@@ -509,11 +508,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		d := depositIntoVault(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, owner, depositAmt, usdrTokenId, merkleDepth)
 
-		// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
-		// vault AND tree, matching the circuit-side NullifierBoundTree fix.
-		nullifier, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth, new(big.Int).SetBytes(usdrVaultAddr.Bytes()))
+		// The tree-bound nullifier every circuit spending from this vault uses.
+		nullifier, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth)
 		if err != nil {
-			t.Fatalf("GetNullifierBound (usdr): %v", err)
+			t.Fatalf("GetNullifierWithTree (usdr): %v", err)
 		}
 
 		fSalt, err := core.RandomInField()
@@ -706,8 +704,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			UsdrEncTxData:  "0x",
 			UsdrFeeSalt:    usdrFeeSalt.String(),
 		})
-		if status != http.StatusInternalServerError {
-			t.Fatalf("expected 500 (on-chain revert surfaced), got %d: %+v", status, resp)
+		// The relayer simulates the call first and refuses one that would revert
+		// (422), so nothing is sent and it pays no gas for the bad request.
+		if status != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422 (would-revert refused by the pre-flight simulation), got %d: %+v", status, resp)
 		}
 		t.Logf("  relayer responded %d: %s", status, resp.Error)
 		if !strings.Contains(resp.Error, "InvalidUsdrFee") {
@@ -715,6 +715,47 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		} else {
 			t.Log("  confirmed the specific InvalidUsdrFee revert fired ✓")
 		}
+	})
+
+	// The relayer refuses a receipt whose root is not known to the vault named
+	// by usdrVaultId, so the on-chain pin is exercised by calling the contract
+	// directly. The pin is checked before any proof is looked at, so an empty
+	// receipt is enough: vault 0 (the main token's vault) must be refused with
+	// InvalidUsdrVault, while the pinned vault 1 must not be.
+	t.Run("negative: usdr leg against a vault that is not the pinned USDr vault", func(t *testing.T) {
+		emptyReceipt := func(n int) onchainProofReceipt {
+			st := make([]*big.Int, n)
+			for i := range st {
+				st[i] = big.NewInt(0)
+			}
+			z := func() *big.Int { return big.NewInt(0) }
+			return onchainProofReceipt{
+				Proof: onchainSnarkProof{
+					A: onchainG1Point{X: z(), Y: z()},
+					B: onchainG2Point{X: [2]*big.Int{z(), z()}, Y: [2]*big.Int{z(), z()}},
+					C: onchainG1Point{X: z(), Y: z()},
+				},
+				Statement: st, NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(2),
+			}
+		}
+		callWith := func(usdrVaultId int64) error {
+			var out []interface{}
+			return dvp.Call(&bind.CallOpts{From: owner.From}, &out, "paymentWithUsdrFee",
+				emptyReceipt(7), big.NewInt(0), []byte{}, []byte{},
+				emptyReceipt(9), big.NewInt(usdrVaultId), []byte{}, []byte{})
+		}
+
+		err := callWith(0)
+		if err == nil || !strings.Contains(err.Error(), "InvalidUsdrVault") {
+			t.Fatalf("usdrVaultId=0 (not the USDr vault): expected InvalidUsdrVault, got: %v", err)
+		}
+		t.Log("  usdrVaultId=0 rejected with InvalidUsdrVault ✓")
+
+		err = callWith(1)
+		if err != nil && strings.Contains(err.Error(), "InvalidUsdrVault") {
+			t.Fatalf("usdrVaultId=1 (the pinned vault) was wrongly rejected: %v", err)
+		}
+		t.Logf("  usdrVaultId=1 passes the pin (fails later on the empty proof, as expected): %v", err)
 	})
 
 	t.Run("negative: usdr fee note addressed to a non-relayer key", func(t *testing.T) {

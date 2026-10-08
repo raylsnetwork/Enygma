@@ -461,7 +461,7 @@ Alice's proof must enforce:
 
 #### Alice's Proof $\pi_A$ — DvPInitiator Circuit
 
-Public inputs: $(\mathrm{StMessage},\ treeNum_A,\ MerkleRoot_A,\ nf_A,\ C^{\text{out}}_B,\ C^{\text{out}}_A,\ C^{\text{rev}}_A)$
+Public inputs: $(\mathrm{StMessage},\ treeNum_A,\ MerkleRoot_A,\ nf_A,\ C^{\text{out}}_B,\ C^{\text{out}}_A,\ C^{\text{rev}}_A,\ vault_B)$
 
 The circuit enforces:
 
@@ -474,12 +474,15 @@ The circuit enforces:
 - $C^{\text{rev}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{rev}},\ amount_1,\ token{id_1})$
 - $\mathrm{StMessage} = C^{\text{out}}_A$
 - $0 \le amount_1,\ amount_2 < 2^{128}$
+- $vault_B \ne 0$
+
+$vault_B$ is the address of the vault Alice expects to be paid from (where $C^{\text{out}}_A$ is inserted). The commitments do not name a vault, so at settlement `EnygmaDvp` checks that Bob's leg really comes from $vault_B$ (and Bob's $vault_A$ symmetrically); otherwise it reverts with `CounterVaultMismatch`. Without this, a counterparty could pay from another vault in the same asset group.
 
 Note: $treeNum_A$ is used by the contract for nullifier map routing; it is not incorporated into the nullifier computation.
 
 #### Bob's Proof $\pi_B$ — DvPDestination Circuit
 
-Public inputs: $(\mathrm{StMessage},\ treeNum_B,\ MerkleRoot_B,\ nf_B,\ C^{\text{out}}_A)$
+Public inputs: $(\mathrm{StMessage},\ treeNum_B,\ MerkleRoot_B,\ nf_B,\ C^{\text{out}}_A,\ vault_A)$
 
 The circuit enforces:
 
@@ -491,6 +494,7 @@ The circuit enforces:
 - $C^{\text{out}}B = \mathrm{H}(pk_B^{\text{spend}},\ salt_B^{\text{out}},\ amount_1,\ token{id_1})$
 - $\mathrm{StMessage} = C^{\text{out}}_B$
 - $0 \le amount_2,\ amount_1 < 2^{128}$
+- $vault_A \ne 0$ (the vault Bob expects to be paid from, where $C^{\text{out}}_B$ is inserted)
 
 Note: $treeNum_B$ is used by the contract for nullifier map routing; it is not incorporated into the nullifier computation.
 

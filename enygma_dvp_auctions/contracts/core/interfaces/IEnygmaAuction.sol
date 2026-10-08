@@ -149,6 +149,19 @@ interface IEnygmaAuction {
     error InvalidDeadline();
     error InvalidSettlementDeadline();
     error BiddingClosed();
+    error CiphertextMismatch();
+    error MaxBidsReached();
+    error InvalidBatchId();
+    error BidsNotAllBatched();
+    error WinnerAmountMismatch();
+    error WinnerNotHighest();
+    error BelowFloorPrice();
+    error PayoutCommitMismatch();
+    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) is not
+    // what the AuctionLock proof's StParamsHash was made for.
+    error ParamsMismatch();
+    // revertAuction: a batch has already been submitted.
+    error BatchesAlreadySubmitted();
     error BidsStillOpen();
     error DeadlineNotReached();
     error SettlementDeadlineNotReached();
@@ -164,14 +177,14 @@ interface IEnygmaAuction {
 
     /// @notice Bob locks his NFT and creates the auction.
     /// @param proof               Groth16 proof [ax,ay,bx1,bx0,by1,by0,cx,cy]
-    /// @param statement           [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitLocked, StNftTokenId, StRevertCommit]
+    /// @param statement           [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitLocked, StNftTokenId, StRevertCommit, StParamsHash]
     /// @param deadline            Unix timestamp after which bidding closes and settlement/revert may proceed.
     /// @param settlementDeadline  Unix timestamp after which anyone can trigger timeout recovery.
     ///                            Must be strictly greater than deadline.
     /// @param floorPrice          Seller's reserve price; enforced in-circuit by AuctionFinal.
     function initAuction(
         uint256[8]  calldata proof,
-        uint256[7]  calldata statement,
+        uint256[8]  calldata statement,
         uint256     deadline,
         uint256     settlementDeadline,
         uint256     floorPrice
@@ -179,12 +192,12 @@ interface IEnygmaAuction {
 
     /// @notice A bidder locks their USDC and submits a sealed bid. Only before deadline.
     /// @param proof      Groth16 proof
-    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit]
+    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice]
     /// @param ctxt1      ML-KEM capsule (published so the auctioneer can decrypt)
     /// @param ctxt2      AEAD ciphertext of bid details
     function submitBid(
         uint256[8]  calldata proof,
-        uint256[7]  calldata statement,
+        uint256[9]  calldata statement,
         bytes       calldata ctxt1,
         bytes       calldata ctxt2
     ) external returns (bool);

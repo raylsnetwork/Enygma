@@ -233,11 +233,10 @@ func depositAndBuildRelayerFeeWitness(
 		t.Fatalf("GenerateProof: %v", err)
 	}
 
-	// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
-	// vault AND tree, matching the circuit-side NullifierBoundTree fix.
-	nullifier, err := dvpcore.GetNullifierBoundTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
+	// The tree-bound nullifier every circuit spending from this vault uses.
+	nullifier, err := dvpcore.GetNullifierWithTree(aliceSpend.PrivateKey, big.NewInt(int64(aliceProof.TreeNumber)), aliceProof.Indices, merkleDepth)
 	if err != nil {
-		t.Fatalf("GetNullifierBound: %v", err)
+		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 
 	ssBob, ctxtBob, err := rpcore.Encapsulate(bobViewEncapsKey)
@@ -588,7 +587,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 
 	paymentAmt := big.NewInt(rfTagPaymentAmt)
 	tokenId := w.tokenId
-	startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
+	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
 		client, 3, bobSpend.PublicKey, channelSS, paymentAmt, tokenId, w.saltBobField,
 	)
 	if err != nil {
@@ -603,7 +602,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	status = postJSON(t, "/relay/tag", relayTagReq{
 		Tags:       hexTags,
 		StartBlock: startBlock,
-		Ctxt:       toHex(noteCtxt),
+		Ctxts:      hexAll(noteCtxts),
 	}, &tagResp)
 	if status == http.StatusServiceUnavailable {
 		t.Skipf("relayer TagRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR=<addr>")
@@ -629,7 +628,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
 	}
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

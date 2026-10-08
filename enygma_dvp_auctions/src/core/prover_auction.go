@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"golang.org/x/crypto/sha3"
 )
 
 // AuctionProofResult holds the parsed {proof, publicSignal} response from the
@@ -97,13 +99,32 @@ type AuctionLockParams struct {
 	MerkleProof *MerkleProof  // inclusion proof for Bob's existing NFT note
 	SaltLocked  *big.Int      // fresh random salt for the locked commitment
 	SaltRevert  *big.Int      // fresh random salt for the revert commitment (≠ SaltLocked)
+	// The auction's parameters, exactly as they will be passed to
+	// initAuction(): the proof binds them (StParamsHash), so a front-runner
+	// replaying it cannot open the auction with parameters of its own.
+	Deadline           *big.Int
+	SettlementDeadline *big.Int
+	FloorPrice         *big.Int
+}
+
+// AuctionParamsHash is the value the AuctionLock circuit binds as StParamsHash
+// and EnygmaAuction.initAuction() recomputes from its arguments:
+//
+//	keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr
+func AuctionParamsHash(auctionId, deadline, settlementDeadline, floorPrice *big.Int) *big.Int {
+	h := sha3.NewLegacyKeccak256()
+	for _, v := range []*big.Int{auctionId, deadline, settlementDeadline, floorPrice} {
+		h.Write(v.FillBytes(make([]byte, 32)))
+	}
+	return new(big.Int).Mod(new(big.Int).SetBytes(h.Sum(nil)), SNARK_SCALAR_FIELD)
 }
 
 // AuctionLockProof generates a proof for the AuctionLock circuit.
 //
 // Returns PublicSignal = [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier,
-// StCommitLocked, StNftTokenId, StRevertCommit] — exactly the `statement`
-// argument initAuction() expects on-chain.
+// StCommitLocked, StNftTokenId, StRevertCommit, StParamsHash] — exactly the
+// `statement` argument initAuction() expects on-chain, with the same
+// Deadline/SettlementDeadline/FloorPrice.
 func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResult, error) {
 	nullifier, err := GetNullifierWithTree(p.Bob.PrivateKey, p.TreeNumber, p.MerkleProof.Indices)
 	if err != nil {
@@ -125,6 +146,11 @@ func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResu
 		return nil, fmt.Errorf("revertCommit: %w", err)
 	}
 
+	if p.Deadline == nil || p.SettlementDeadline == nil || p.FloorPrice == nil {
+		return nil, fmt.Errorf("deadline, settlement deadline and floor price are required: the proof binds them")
+	}
+	paramsHash := AuctionParamsHash(auctionId, p.Deadline, p.SettlementDeadline, p.FloorPrice)
+
 	payload := map[string]interface{}{
 		"stAuctionId":    auctionId.String(),
 		"stTreeNumber":   p.TreeNumber.String(),
@@ -133,6 +159,8 @@ func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResu
 		"stCommitLocked": commitLocked.String(),
 		"stNftTokenId":   p.TokenId.String(),
 		"stRevertCommit": revertCommit.String(),
+		"stParamsHash":   paramsHash.String(),
+		"wtParamsHash":   paramsHash.String(),
 		"wtTreeNumber":   p.TreeNumber.String(),
 		"wtSpendKey":     p.Bob.PrivateKey.String(),
 		"wtTokenId":      p.TokenId.String(),
@@ -161,13 +189,33 @@ type AuctionBidParams struct {
 	SaltA       *big.Int      // fresh random salt for the locked bid commitment (commitA)
 	SaltB       *big.Int      // salt for the seller's payout commitment (commitB) — HKDF(ss, "note salt")
 	SaltRevert  *big.Int      // fresh random salt for the revert commitment (≠ SaltA)
+	Ctxt1       []byte        // ML-KEM capsule that will be passed to submitBid() as ctxt1
+	Ctxt2       []byte        // AEAD ciphertext that will be passed to submitBid() as ctxt2
+	FloorPrice  *big.Int      // the auction's floor price; the proof shows BidAmount >= it (StFloorPrice)
+}
+
+// AuctionCtxtHash is the value the AuctionBid circuit binds as StCtxtHash and
+// EnygmaAuction.submitBid() recomputes from its ctxt1/ctxt2 arguments:
+//
+//	keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr
+func AuctionCtxtHash(ctxt1, ctxt2 []byte) *big.Int {
+	keccak := func(b ...[]byte) []byte {
+		h := sha3.NewLegacyKeccak256()
+		for _, x := range b {
+			h.Write(x)
+		}
+		return h.Sum(nil)
+	}
+	digest := keccak(keccak(ctxt1), keccak(ctxt2))
+	return new(big.Int).Mod(new(big.Int).SetBytes(digest), SNARK_SCALAR_FIELD)
 }
 
 // AuctionBidProof generates a proof for the AuctionBid circuit.
 //
 // Returns PublicSignal = [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier,
-// StCommitA, StCommitB, StRevertCommit] — exactly the `statement` argument
-// submitBid() expects on-chain.
+// StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice] — exactly the
+// `statement` argument submitBid() expects on-chain. The Ctxt1/Ctxt2 given here must be the
+// bytes later passed to submitBid().
 func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult, error) {
 	nullifier, err := GetNullifierWithTree(p.Bidder.PrivateKey, p.TreeNumber, p.MerkleProof.Indices)
 	if err != nil {
@@ -189,6 +237,11 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		return nil, fmt.Errorf("revertCommit: %w", err)
 	}
 
+	ctxtHash := AuctionCtxtHash(p.Ctxt1, p.Ctxt2)
+	if p.FloorPrice == nil {
+		return nil, fmt.Errorf("floor price is required: the proof shows the bid reaches it")
+	}
+
 	payload := map[string]interface{}{
 		"stAuctionId":    p.AuctionId.String(),
 		"stTreeNumber":   p.TreeNumber.String(),
@@ -197,6 +250,9 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		"stCommitA":      commitA.String(),
 		"stCommitB":      commitB.String(),
 		"stRevertCommit": revertCommit.String(),
+		"stCtxtHash":     ctxtHash.String(),
+		"wtCtxtHash":     ctxtHash.String(),
+		"stFloorPrice":   p.FloorPrice.String(),
 		"wtAuctionId":    p.AuctionId.String(),
 		"wtTreeNumber":   p.TreeNumber.String(),
 		"wtSpendKey":     p.Bidder.PrivateKey.String(),

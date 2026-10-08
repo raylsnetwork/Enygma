@@ -274,7 +274,7 @@ func TestC09_WithdrawRejectsMismatchedDepositValue(t *testing.T) {
 	const claimedNoteValue = 1_000_000
 	debitCommit := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(claimedDebit)), big.NewInt(0))
 
-	var pubSig [52]*big.Int
+	var pubSig [62]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
@@ -368,7 +368,7 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 	const withdrawAmount = 300
 	debitCommit := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(withdrawAmount)), big.NewInt(0))
 
-	var pubSig [52]*big.Int
+	var pubSig [62]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
@@ -391,8 +391,9 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 	}
 	pubSig[36] = blockHash
 	pubSig[49] = deterministicNullifier(t, "m15-withdraw-debit")
-	pubSig[50] = big.NewInt(withdrawAmount)   // TotalDepositValue: matches Σ depositParams below (Fix C-09)
-	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[50] = big.NewInt(withdrawAmount)                                   // TotalDepositValue: matches Σ depositParams below (Fix C-09)
+	pubSig[51] = expectedDomainId(enygmaAddr)                                 // Fix L-01
+	pubSig[52] = mockDvpCommitment(big.NewInt(withdrawAmount), big.NewInt(1)) // the deposit below
 
 	proof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
@@ -450,4 +451,13 @@ func emptyWithdrawParams() enygma.IEnygmaWithdrawParams {
 			NumberOfOutputs: big.NewInt(0),
 		},
 	}
+}
+
+// mockDvpCommitment mirrors MockZkDvp.commitmentOf: the commitment the mock
+// bridge reports for a deposit of amount to publicKey, which a withdraw
+// proof must carry in its deposit-commitment signals (52-61).
+func mockDvpCommitment(amount, publicKey *big.Int) *big.Int {
+	field, _ := new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+	h := crypto.Keccak256(common.BigToHash(amount).Bytes(), common.BigToHash(publicKey).Bytes())
+	return new(big.Int).Mod(new(big.Int).SetBytes(h), field)
 }

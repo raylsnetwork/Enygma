@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -53,7 +54,90 @@ type proofReceipt struct {
 // step below) — holding it would let one slow-to-mine transaction block
 // every other request across all /relay/* endpoints indefinitely, since
 // txMu is shared process-wide.
-const txTimeout = 45 * time.Second
+var txTimeout = 45 * time.Second // a var only so tests can shorten it
+
+// pendingClaimHold bounds how long a note stays claimed for a transaction
+// that was still unmined when its request timed out.
+const pendingClaimHold = time.Hour
+
+// nullifierKey is the in-flight claim for one note. It is scoped by vault,
+// since nullifiers are per vault (the same tree/nullifier in the ERC-20 and
+// USDr vaults are different notes), and it is the same on every route, so a
+// note cannot be relayed through two routes at once.
+func nullifierKey(vault common.Address, tree, nullifier *big.Int) string {
+	return "nf:" + vault.Hex() + ":" + tree.String() + ":" + nullifier.String()
+}
+
+// tagKey and channelKey are the in-flight claims for a tag publication and a
+// channel setup. Each kind of claim has its own prefix (notes use "nf:"), so
+// a caller-supplied value can never name another kind's claim.
+func tagKey(tag [32]byte) string { return "tag:" + hex.EncodeToString(tag[:]) }
+
+func channelKey(c1 []byte) string { return "chan:" + crypto.Keccak256Hash(c1).Hex() }
+
+// decodeTag decodes a 32-byte hex tag (0x prefix optional, any case).
+func decodeTag(s, field string) ([32]byte, error) {
+	var tag [32]byte
+	b, err := decodeHexField(s, field)
+	if err != nil {
+		return tag, err
+	}
+	if len(b) != 32 {
+		return tag, fmt.Errorf("%s must be 32 bytes, got %d", field, len(b))
+	}
+	copy(tag[:], b)
+	return tag, nil
+}
+
+// claim marks every key as in-flight, or none of them if any already is.
+func (h *Handler) claim(keys ...string) bool {
+	for i, k := range keys {
+		if _, loaded := h.inFlight.LoadOrStore(k, struct{}{}); loaded {
+			h.release(keys[:i])
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) release(keys []string) {
+	for _, k := range keys {
+		h.inFlight.Delete(k)
+	}
+}
+
+// releaseWhenMined releases keys once tx is mined (or pendingClaimHold passes).
+func (h *Handler) releaseWhenMined(tx *types.Transaction, keys []string) {
+	go func() {
+		holdCtx, holdCancel := context.WithTimeout(context.Background(), pendingClaimHold)
+		defer holdCancel()
+		_, _ = bind.WaitMined(holdCtx, h.client, tx)
+		h.release(keys)
+	}()
+}
+
+// waitMined waits up to txTimeout for tx and releases keys once its outcome
+// is known. If tx is still unmined it answers 202 with the hash and keeps
+// the keys claimed until tx is mined (or pendingClaimHold passes): released
+// earlier, a retry of the same notes would pass the "already spent" check
+// and be sent again, reverting on-chain at the relayer's cost. ok is false
+// when a response has already been written.
+func (h *Handler) waitMined(c *gin.Context, tx *types.Transaction, keys []string) (*types.Receipt, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	defer cancel()
+	receipt, err := bind.WaitMined(ctx, h.client, tx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		h.releaseWhenMined(tx, keys)
+		c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
+		return nil, false
+	}
+	h.release(keys)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+		return nil, false
+	}
+	return receipt, true
+}
 
 // Handler holds all dependencies for the relay endpoints.
 type Handler struct {
@@ -265,13 +349,13 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	// Step 4 — claim nullifier as in-flight to block concurrent duplicate submissions.
-	nfKey := p.publicSignal[1].String() + ":" + p.publicSignal[3].String()
-	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+	// Step 4 — claim the note as in-flight to block concurrent duplicate
+	// submissions, on this route or any other (see nullifierKey).
+	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
+	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(nfKey)
 
 	// Step 5 — serialize submission to prevent nonce races under concurrency.
 	// txMu guards only the submission itself, not the wait below — see
@@ -285,14 +369,12 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	tx, err := dvp.Transact(h.auth, "payment", receipt, p.vaultId, p.cipherText, p.encTxData)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
@@ -411,12 +493,13 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	}
 
 	// Step 7 — claim nullifier as in-flight to block concurrent duplicate submissions.
-	nfKey := "relayerFee:" + p.publicSignal[1].String() + ":" + p.publicSignal[3].String()
-	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+	// Keyed per note, not per route: the same note relayed concurrently
+	// through /relay/payment and this route used to pass both checks.
+	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
+	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(nfKey)
 
 	// Step 8 — serialize submission to prevent nonce races under concurrency.
 	// txMu guards only the submission itself, not the wait below — see
@@ -430,14 +513,12 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	tx, err := dvp.Transact(h.auth, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
@@ -573,17 +654,17 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// Step (dedup) — claim both nullifiers as in-flight. Includes
-	// usdrTreeNum alongside the main-leg treeNum/nullifier and the USDr
-	// nullifier — omitting it let two legitimately distinct requests whose
-	// USDr legs live in different trees collide if their main-leg
-	// treeNum/nullifier and numeric usdrNullifier happened to match.
-	nfKey := "usdrFee:" + treeNum.String() + ":" + nullifier.String() + ":" + usdrTreeNum.String() + ":" + usdrNullifier.String()
-	if _, loaded := h.inFlight.LoadOrStore(nfKey, struct{}{}); loaded {
+	// Step (dedup) — claim both notes as in-flight, each in its own vault.
+	// One key per note (not one for the pair) so either note is also
+	// blocked from being relayed concurrently through another route.
+	nfKeys := []string{
+		nullifierKey(h.vaultAddr, treeNum, nullifier),
+		nullifierKey(h.usdrVaultAddr, usdrTreeNum, usdrNullifier),
+	}
+	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(nfKey)
 
 	// txMu guards only the submission itself, not the wait below — see
 	// txTimeout's doc comment.
@@ -598,14 +679,12 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
@@ -656,25 +735,59 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		return
 	}
 
-	ctxt, err := decodeHexField(req.Ctxt, "ctxt")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Validate single tag now; window tags are validated on each attempt below.
-	var singleTag [32]byte
+	// The payload is under a per-block key, so it travels with its tag: one
+	// ctxt in single mode, one per tag in window mode.
+	var singleCtxt []byte
+	var windowCtxts [][]byte
 	if !windowMode {
-		tagBytes, err := decodeHexField(req.Tag, "tag")
+		if req.Ctxt == "" || len(req.Ctxts) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "single mode takes ctxt (not ctxts)"})
+			return
+		}
+		ctxt, err := decodeHexField(req.Ctxt, "ctxt")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if len(tagBytes) != 32 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("tag must be 32 bytes, got %d", len(tagBytes))})
+		singleCtxt = ctxt
+	} else {
+		if req.Ctxt != "" || len(req.Ctxts) != len(req.Tags) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+				"window mode takes ctxts, one per tag (got %d tags, %d ctxts)", len(req.Tags), len(req.Ctxts))})
 			return
 		}
-		copy(singleTag[:], tagBytes)
+		windowCtxts = make([][]byte, len(req.Ctxts))
+		for i, s := range req.Ctxts {
+			ctxt, err := decodeHexField(s, fmt.Sprintf("ctxts[%d]", i))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			windowCtxts[i] = ctxt
+		}
+	}
+
+	// Decode and validate every tag up front: the claims below are keyed on
+	// the decoded bytes, so all of them must be well-formed before claiming.
+	var singleTag [32]byte
+	var windowTags [][32]byte
+	if !windowMode {
+		tag, err := decodeTag(req.Tag, "tag")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		singleTag = tag
+	} else {
+		windowTags = make([][32]byte, len(req.Tags))
+		for i, t := range req.Tags {
+			tag, err := decodeTag(t, fmt.Sprintf("tags[%d]", i))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			windowTags[i] = tag
+		}
 	}
 
 	// Step 2 — TagRegistry must be configured.
@@ -685,16 +798,35 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		return
 	}
 
-	// Step 3 — in-flight dedup key.
-	inFlightKey := req.Tag
+	// Step 3 — claim the tag(s) as in-flight, keyed on the decoded bytes so
+	// the same tag cannot slip past in another hex spelling (0x prefix,
+	// letter case). In window mode every tag of the window is claimed, not
+	// just the first: a shifted window that still covers the tag being
+	// published collides on it.
+	var claimKeys []string
 	if windowMode {
-		inFlightKey = req.Tags[0] // keyed by first window tag
+		for _, t := range windowTags {
+			claimKeys = append(claimKeys, tagKey(t))
+		}
+	} else {
+		claimKeys = []string{tagKey(singleTag)}
 	}
-	if _, loaded := h.inFlight.LoadOrStore(inFlightKey, struct{}{}); loaded {
+	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "tag already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(inFlightKey)
+	// Released when the request ends, unless an attempt is still unmined:
+	// then only once it is mined. TagRegistry only rejects a repeated tag
+	// within one block, so a retry released early and landing in another
+	// block would publish the same tag a second time at the relayer's cost.
+	var pendingTx *types.Transaction
+	defer func() {
+		if pendingTx != nil {
+			h.releaseWhenMined(pendingTx, claimKeys)
+			return
+		}
+		h.release(claimKeys)
+	}()
 
 	// Step 5 — submit. Window mode retries up to 3 times on block drift.
 	// txMu is locked/unlocked per attempt below, around the submission
@@ -706,6 +838,7 @@ func (h *Handler) RelayTag(c *gin.Context) {
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		var tag [32]byte
+		var ctxt []byte
 
 		if windowMode {
 			// Pick the tag for the block this tx is expected to land in.
@@ -723,18 +856,9 @@ func (h *Handler) RelayTag(c *gin.Context) {
 				})
 				return
 			}
-			tagBytes, err := decodeHexField(req.Tags[idx], fmt.Sprintf("tags[%d]", idx))
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			if len(tagBytes) != 32 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("tags[%d] must be 32 bytes, got %d", idx, len(tagBytes))})
-				return
-			}
-			copy(tag[:], tagBytes)
+			tag, ctxt = windowTags[idx], windowCtxts[idx]
 		} else {
-			tag = singleTag
+			tag, ctxt = singleTag, singleCtxt
 		}
 
 		h.txMu.Lock()
@@ -747,6 +871,14 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		waitCtx, cancel := context.WithTimeout(context.Background(), txTimeout)
 		txReceipt, err := bind.WaitMined(waitCtx, h.client, tx)
 		cancel()
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Outcome unknown: the block-drift check below has not run, so in
+			// window mode the client must confirm from the receipt that the
+			// transaction landed in the block its tag was for.
+			pendingTx = tx
+			c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
+			return
+		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
 			return
@@ -877,12 +1009,12 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 	}
 
 	// Step 3 — claim c1 as in-flight (keyed by first 16 bytes of c1 hex).
-	c1Key := req.C1[:min(34, len(req.C1))]
-	if _, loaded := h.inFlight.LoadOrStore(c1Key, struct{}{}); loaded {
+	// Keyed on the decoded c1, so another hex spelling of it collides.
+	claimKeys := []string{channelKey(c1)}
+	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "channel setup already in-flight"})
 		return
 	}
-	defer h.inFlight.Delete(c1Key)
 
 	// Step 4 — serialize submission to prevent nonce races. txMu guards
 	// only the submission itself, not the wait below — see txTimeout's
@@ -894,14 +1026,13 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 	tx, err := registry.Transact(h.auth, "openChannel", c1, c2, bitmap)
 	h.txMu.Unlock()
 	if err != nil {
+		h.release(claimKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("openChannel(): %s", err)})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), txTimeout)
-	defer cancel()
-	txReceipt, err := bind.WaitMined(ctx, h.client, tx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+	// Held past a timeout until mined, so a retry is not published twice.
+	txReceipt, ok := h.waitMined(c, tx, claimKeys)
+	if !ok {
 		return
 	}
 	if txReceipt.Status == types.ReceiptStatusFailed {
@@ -913,6 +1044,9 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 	var channelIdx uint64
 	channelOpenedSig := crypto.Keccak256Hash([]byte("ChannelOpened(uint256,address)"))
 	for _, log := range txReceipt.Logs {
+		if log.Address != h.tagChannelRegistryAddr || len(log.Topics) < 2 {
+			continue
+		}
 		if log.Topics[0] == channelOpenedSig {
 			channelIdx = new(big.Int).SetBytes(log.Topics[1].Bytes()).Uint64()
 			break

@@ -102,7 +102,12 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
 
             emit Commitment(_vaultId, commitment);
         } else {
-            // batch mode: params layout [tokenIds | amounts | pkSpeends | salts]
+            // batch mode: params layout [tokenIds | amounts | pkSpeends | salts].
+            // params.length must be an exact multiple of 4 — otherwise the
+            // division below truncates and every index computed from
+            // tokenCount silently misaligns with the caller's intended
+            // layout instead of reverting.
+            if (params.length % 4 != 0) revert InvalidErc1155BatchTransfer();
             uint256 tokenCount = params.length / 4;
 
             uint256[] memory tokenIds = new uint256[](tokenCount);
@@ -144,6 +149,16 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
+        // transfer() is open to any caller, and checkReceiptConditions accepts
+        // a receipt whatever its StMessage. A non-zero StMessage marks one leg
+        // of a DvP swap, which must only settle through
+        // EnygmaDvp.submitPartialSettlement together with the counterparty's
+        // leg; run alone it would hand the owner's token over for nothing.
+        // Same guard as Erc20CoinVault and Erc721CoinVault. A standalone
+        // ERC1155 transfer proof carries StMessage == 0.
+        if (receipt.statement[0] != 0) {
+            revert IEnygmaDvp.InvalidPaymentMessage();
+        }
         // H-4 fix: added nonReentrant guard and corrected CEI ordering.
         // Previously outputs were inserted before nullifiers were spent, opening a
         // reentrancy window via the Poseidon precompile inside insertLeaves(). A

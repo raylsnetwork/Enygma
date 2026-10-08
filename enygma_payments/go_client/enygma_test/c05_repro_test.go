@@ -307,7 +307,7 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 		big.NewInt(1), big.NewInt(1), big.NewInt(3), big.NewInt(4), big.NewInt(5), big.NewInt(6),
 	}
 	attackAccountIds := []int64{1, 1, 3, 4, 5, 6}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig80, attackAccountIds)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig80, attackAccountIds, banks[0].addr)
 
 	// bankAuth(banks[0]), not mkAuth() — onlyRegistered requires
 	// addressToAccountId[msg.sender] != 0, and only the 6 banks' own
