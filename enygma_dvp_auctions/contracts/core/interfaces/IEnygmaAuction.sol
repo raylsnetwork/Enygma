@@ -53,8 +53,6 @@ interface IEnygmaAuction {
     // -------------------------------------------------------------------------
 
     /// @notice Emitted when Bob locks his NFT and opens the bidding.
-    event AuctionAnnounced(bytes32 indexed paramsHash);
-
     event AuctionInitialized(
         uint256 indexed auctionId,
         uint256 commitLocked,
@@ -159,9 +157,9 @@ interface IEnygmaAuction {
     error WinnerNotHighest();
     error BelowFloorPrice();
     error PayoutCommitMismatch();
-    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) was not
-    // announced with announceAuction() in an earlier block.
-    error ParamsNotAnnounced();
+    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) is not
+    // what the AuctionLock proof's StParamsHash was made for.
+    error ParamsMismatch();
     // revertAuction: a batch has already been submitted.
     error BatchesAlreadySubmitted();
     error BidsStillOpen();
@@ -177,20 +175,16 @@ interface IEnygmaAuction {
     // Functions
     // -------------------------------------------------------------------------
 
-    /// @notice Bob commits to his auction's parameters before initAuction(); see EnygmaAuction.
-    /// @param paramsHash keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice))
-    function announceAuction(bytes32 paramsHash) external returns (bool);
-
     /// @notice Bob locks his NFT and creates the auction.
     /// @param proof               Groth16 proof [ax,ay,bx1,bx0,by1,by0,cx,cy]
-    /// @param statement           [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitLocked, StNftTokenId, StRevertCommit]
+    /// @param statement           [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitLocked, StNftTokenId, StRevertCommit, StParamsHash]
     /// @param deadline            Unix timestamp after which bidding closes and settlement/revert may proceed.
     /// @param settlementDeadline  Unix timestamp after which anyone can trigger timeout recovery.
     ///                            Must be strictly greater than deadline.
     /// @param floorPrice          Seller's reserve price; enforced in-circuit by AuctionFinal.
     function initAuction(
         uint256[8]  calldata proof,
-        uint256[7]  calldata statement,
+        uint256[8]  calldata statement,
         uint256     deadline,
         uint256     settlementDeadline,
         uint256     floorPrice
@@ -198,12 +192,12 @@ interface IEnygmaAuction {
 
     /// @notice A bidder locks their USDC and submits a sealed bid. Only before deadline.
     /// @param proof      Groth16 proof
-    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash]
+    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice]
     /// @param ctxt1      ML-KEM capsule (published so the auctioneer can decrypt)
     /// @param ctxt2      AEAD ciphertext of bid details
     function submitBid(
         uint256[8]  calldata proof,
-        uint256[8]  calldata statement,
+        uint256[9]  calldata statement,
         bytes       calldata ctxt1,
         bytes       calldata ctxt2
     ) external returns (bool);
