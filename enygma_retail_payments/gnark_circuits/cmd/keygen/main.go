@@ -1,7 +1,12 @@
 // Key generation entry point. Run from gnark_circuits/ with: go run ./cmd/keygen
+// (all circuits) or go run ./cmd/keygen -only Payment,PaymentFee (just those).
 package main
 
 import (
+	"flag"
+	"log"
+	"strings"
+
 	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 
@@ -10,7 +15,12 @@ import (
 	"enygma_retail_payments/gnark_circuits/templates"
 )
 
-func GenerationVkPk() {
+// GenerationVkPk regenerates every circuit named in only, or all of them if only
+// is empty. Each run draws fresh random keys, so regenerate only the circuits
+// whose constraints changed: a regenerated PrivateMint key, for one, also needs
+// a regenerated PrivateMintVerifier contract.
+func GenerationVkPk(only map[string]bool) {
+	want := func(name string) bool { return len(only) == 0 || only[name] }
 	solver.RegisterHint(primitives.ModHint)
 	solver.RegisterHint(primitives.PoseidonNative)
 	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
@@ -21,7 +31,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPayment(payment1inConfig, "Payment")
+	if want("Payment") {
+		script.SetupPayment(payment1inConfig, "Payment")
+	}
 
 	// 2-input/2-output circuit: separate VK slot (VK_ID_ERC20_JOINSPLIT_2INPUT = 1).
 	// Fixes VULN-2: 1-in and 2-in circuits have different R1CS and must use distinct VKs.
@@ -31,7 +43,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPayment(payment2inConfig, "Payment2in")
+	if want("Payment2in") {
+		script.SetupPayment(payment2inConfig, "Payment2in")
+	}
 
 	// 1-input/2-output fee circuit: fee absorbed into sender's input (not a
 	// separate output note). Separate VK slot (VK_ID_ERC20_JOINSPLIT_FEE = 2).
@@ -41,7 +55,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPaymentFee(paymentFeeConfig, "PaymentFee")
+	if want("PaymentFee") {
+		script.SetupPaymentFee(paymentFeeConfig, "PaymentFee")
+	}
 
 	// 1-input/3-output relayer-fee circuit: fee paid out as its own spendable
 	// note. Separate VK slot (VK_ID_ERC20_JOINSPLIT_RELAYER = 3).
@@ -51,7 +67,9 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupPaymentRelayerFeePublic(paymentRelayerFeePublicConfig, "PaymentRelayerFeePublic")
+	if want("PaymentRelayerFeePublic") {
+		script.SetupPaymentRelayerFeePublic(paymentRelayerFeePublicConfig, "PaymentRelayerFeePublic")
+	}
 
 	// 1-input/2-output USDr circuit: a second, independent relayer-fee asset.
 	// StTokenId is public here (private everywhere else), which is what gives
@@ -63,11 +81,33 @@ func GenerationVkPk() {
 		TmMerkleTreeDepth: 8,
 		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
-	script.SetupUsdrFee(usdrFeeConfig, "UsdrFee")
+	if want("UsdrFee") {
+		script.SetupUsdrFee(usdrFeeConfig, "UsdrFee")
+	}
 
-	script.SetupPrivateMint("PrivateMint")
+	if want("PrivateMint") {
+		script.SetupPrivateMint("PrivateMint")
+	}
 }
 
+var circuits = []string{"Payment", "Payment2in", "PaymentFee", "PaymentRelayerFeePublic", "UsdrFee", "PrivateMint"}
+
 func main() {
-	GenerationVkPk()
+	onlyFlag := flag.String("only", "", "comma-separated circuits to regenerate (default: all): "+strings.Join(circuits, ","))
+	flag.Parse()
+	only := map[string]bool{}
+	for _, name := range strings.Split(*onlyFlag, ",") {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		known := false
+		for _, c := range circuits {
+			known = known || c == name
+		}
+		if !known {
+			log.Fatalf("unknown circuit %q", name)
+		}
+		only[name] = true
+	}
+	GenerationVkPk(only)
 }

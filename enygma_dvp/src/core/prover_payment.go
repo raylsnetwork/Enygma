@@ -67,8 +67,8 @@ func (r *PaymentResult) ContractStatement() []*big.Int {
 
 // BoundPaymentProof generates a Payment circuit proof for Alice paying some amount
 // to Bob, with optional change back to herself, binding the proof to a specific
-// vault contract address (and, via NullifierBoundTree, the tree the input note
-// lives in — see Nullifier.go's StContractAddress/StTreeNumbers fix).
+// vault contract address (StContractAddress, constrained in-circuit) and, via
+// the tree-bound nullifier, the tree the input note lives in.
 //
 // contractAddress must be the uint160 representation of the Erc20CoinVault address
 // (i.e., new(big.Int).SetBytes(vaultAddr.Bytes())).
@@ -117,13 +117,12 @@ func (c *GnarkClient) BoundPaymentProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			// nullifier: Poseidon(sk, treeNumber*2^treeDepth+leafIndex, contractAddress)
-			// — GetNullifierBoundTree, not the plain GetNullifier, so the proof
-			// is bound to this specific vault contract AND tree (matches the
-			// circuit-side NullifierBoundTree fix).
-			nf, err := GetNullifierBoundTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth, contractAddress)
+			// nullifier: Poseidon(sk, treeNumber*2^treeDepth+leafIndex), the
+			// formula every circuit spending from this vault uses (the DvP
+			// circuits too), so a note has one nullifier however it is spent.
+			nf, err := GetNullifierWithTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth)
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBoundTree input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifierWithTree input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}
@@ -284,12 +283,11 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		} else {
 			wtPathIndices[i] = merkleProofs[i].Indices
 			wtPathElements = append(wtPathElements, merkleProofs[i].Elements...)
-			// GetNullifierBoundTree (not the plain GetNullifier), matching the
-			// circuit-side NullifierBoundTree fix — binds the proof to this
-			// vault AND tree.
-			nf, err := GetNullifierBoundTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth, contractAddress)
+			// The same tree-bound nullifier as every other circuit spending from
+			// this vault (see BoundPaymentProof).
+			nf, err := GetNullifierWithTree(keysIn[i].PrivateKey, stTreeNumbers[i], wtPathIndices[i], merkleDepth)
 			if err != nil {
-				return nil, fmt.Errorf("GetNullifierBoundTree input %d: %w", i, err)
+				return nil, fmt.Errorf("GetNullifierWithTree input %d: %w", i, err)
 			}
 			stNullifiers[i] = nf
 		}
