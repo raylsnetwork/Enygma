@@ -65,7 +65,9 @@ const (
 	dvpTokenIdInvalid  = int64(102)
 
 	// Deadline window for timeout scenarios (seconds)
-	dvpDeadlineSeconds = int64(60)
+	// Just over EnygmaDvp.MIN_SWAP_DURATION (15 minutes), the shortest
+	// deadline a first leg can set; the tests fast-forward past it.
+	dvpDeadlineSeconds = int64(16 * 60)
 )
 
 // ── shared setup ──────────────────────────────────────────────────────────────
@@ -613,11 +615,11 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 		d := dvpSetupDeposits(t, tc, dvpTokenIdDeadline)
 		p := dvpGenerateProofs(t, tc, d)
 
-		// deadline = now + 60 seconds
+		// deadline = now + dvpDeadlineSeconds
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(dvpDeadlineSeconds))
 
 		// ── Alice submits first leg ────────────────────────────────────────────
-		t.Logf("Alice submitting first leg with 60s deadline=%s", deadline)
+		t.Logf("Alice submitting first leg with %ds deadline=%s", dvpDeadlineSeconds, deadline)
 		aliceTx, err := tc.dvp.Transact(tc.auth, "submitPartialSettlement",
 			p.aliceReceipt,
 			big.NewInt(0),
@@ -722,7 +724,7 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(dvpDeadlineSeconds))
 
 		// ── Alice submits first leg ────────────────────────────────────────────
-		t.Logf("Alice submitting first leg with 60s deadline=%s", deadline)
+		t.Logf("Alice submitting first leg with %ds deadline=%s", dvpDeadlineSeconds, deadline)
 		aliceTx, err := tc.dvp.Transact(tc.auth, "submitPartialSettlement",
 			p.aliceReceipt,
 			big.NewInt(0),

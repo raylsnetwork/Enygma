@@ -175,20 +175,6 @@ func TestAuction_OnChain(t *testing.T) {
 	saltRevertBob, err := core.RandomInField()
 	checkErr(t, "RandomInField(saltRevertBob)", err)
 
-	lockResult, err := gnarkClient.AuctionLockProof(core.AuctionLockParams{
-		Bob:         bob,
-		TokenId:     nftTokenId,
-		SaltIn:      bobSaltIn,
-		TreeNumber:  big.NewInt(0),
-		MerkleProof: nftProof,
-		SaltLocked:  saltLocked,
-		SaltRevert:  saltRevertBob,
-	})
-	checkErr(t, "AuctionLockProof", err)
-
-	auctionId := lockResult.PublicSignal[0]
-	t.Logf("auctionId = %s", auctionId)
-
 	// deadline = current block timestamp + 3600 seconds
 	// settlementDeadline = deadline + 2 days + 3600 seconds (EnygmaAuction.initAuction requires
 	// settlementDeadline >= deadline + 2 days; the extra hour is just headroom past that minimum)
@@ -197,12 +183,47 @@ func TestAuction_OnChain(t *testing.T) {
 	deadline := new(big.Int).Add(new(big.Int).SetUint64(header.Time), big.NewInt(3600))
 	settlementDeadline := new(big.Int).Add(deadline, big.NewInt(2*86400+3600))
 
-	proof8Lock := toBigArr8(lockResult.Proof)
-	signal7Lock := toBigArr7(lockResult.PublicSignal)
+	lockResult, err := gnarkClient.AuctionLockProof(core.AuctionLockParams{
+		Bob:                bob,
+		TokenId:            nftTokenId,
+		SaltIn:             bobSaltIn,
+		TreeNumber:         big.NewInt(0),
+		MerkleProof:        nftProof,
+		SaltLocked:         saltLocked,
+		SaltRevert:         saltRevertBob,
+		Deadline:           deadline,
+		SettlementDeadline: settlementDeadline,
+		FloorPrice:         floorPrice,
+	})
+	checkErr(t, "AuctionLockProof", err)
 
-	announceAuctionParams(t, ethClient, auctionContract, ownerAuth, auctionId, deadline, settlementDeadline, floorPrice)
+	auctionId := lockResult.PublicSignal[0]
+	t.Logf("auctionId = %s", auctionId)
+
+	proof8Lock := toBigArr8(lockResult.Proof)
+	signal8Lock := toBigArr8(lockResult.PublicSignal)
+
+	// A front-runner replaying Bob's lock proof cannot open his auction with
+	// parameters of its own: the contract checks them against the proof's
+	// StParamsHash...
+	if _, atkErr := auctionContract.Transact(ownerAuth, "initAuction",
+		proof8Lock, signal8Lock, deadline, settlementDeadline, big.NewInt(0)); atkErr == nil {
+		t.Fatal("VULNERABLE: initAuction accepted Bob's lock proof with a zero floor price")
+	} else if !strings.Contains(atkErr.Error(), "ParamsMismatch") {
+		t.Fatalf("other parameters rejected, but not with ParamsMismatch: %v", atkErr)
+	}
+	// ...and rewriting StParamsHash to match them breaks the proof.
+	forgedLock := signal8Lock
+	forgedLock[7] = core.AuctionParamsHash(auctionId, deadline, settlementDeadline, big.NewInt(0))
+	if _, atkErr := auctionContract.Transact(ownerAuth, "initAuction",
+		proof8Lock, forgedLock, deadline, settlementDeadline, big.NewInt(0)); atkErr == nil {
+		t.Fatal("VULNERABLE: initAuction accepted a lock proof with a rewritten parameters hash")
+	} else if !strings.Contains(atkErr.Error(), "invalid proof") {
+		t.Fatalf("forged parameters hash rejected, but not as an invalid proof: %v", atkErr)
+	}
+
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
-		proof8Lock, signal7Lock, deadline, settlementDeadline, floorPrice,
+		proof8Lock, signal8Lock, deadline, settlementDeadline, floorPrice,
 	)
 	checkErr(t, "initAuction tx", err)
 	waitTx(t, ethClient, initTx)
@@ -224,6 +245,27 @@ func TestAuction_OnChain(t *testing.T) {
 	ctxt1 := []byte("dummy-mlkem-capsule")
 	ctxt2 := []byte("dummy-aead-ciphertext")
 
+	// A bid below the floor price cannot be proven: the circuit enforces
+	// bidAmount >= StFloorPrice, so dust bids cannot fill the auction's slots.
+	if _, dustErr := gnarkClient.AuctionBidProof(core.AuctionBidParams{
+		AuctionId:   auctionId,
+		Bidder:      alice,
+		BidAmount:   bidAmount,
+		TokenId:     usdcTokenId,
+		SaltIn:      aliceSaltIn,
+		TreeNumber:  big.NewInt(0),
+		MerkleProof: usdcProof,
+		BobPk:       bob.PublicKey,
+		SaltA:       big.NewInt(11),
+		SaltB:       big.NewInt(22),
+		SaltRevert:  big.NewInt(33),
+		Ctxt1:       []byte("dust"),
+		Ctxt2:       []byte("dust"),
+		FloorPrice:  new(big.Int).Add(bidAmount, big.NewInt(1)),
+	}); dustErr == nil {
+		t.Fatal("VULNERABLE: a bid below the floor price was proven")
+	}
+
 	bidResult, err := gnarkClient.AuctionBidProof(core.AuctionBidParams{
 		AuctionId:   auctionId,
 		Bidder:      alice,
@@ -238,6 +280,7 @@ func TestAuction_OnChain(t *testing.T) {
 		SaltRevert:  saltRevertAlice,
 		Ctxt1:       ctxt1,
 		Ctxt2:       ctxt2,
+		FloorPrice:  floorPrice,
 	})
 	checkErr(t, "AuctionBidProof", err)
 
@@ -247,19 +290,19 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("Alice commitB = %s", aliceCommitB)
 
 	proof8Bid := toBigArr8(bidResult.Proof)
-	signal8Bid := toBigArr8(bidResult.PublicSignal)
+	signal9Bid := toBigArr9(bidResult.PublicSignal)
 
 	// A front-runner who copies the bid's proof and statement cannot swap the
 	// ciphertexts: the contract checks their hash against the statement...
 	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
-		proof8Bid, signal8Bid, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
+		proof8Bid, signal9Bid, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
 		t.Fatal("VULNERABLE: submitBid accepted the bid's proof with different ciphertexts")
 	} else if !strings.Contains(atkErr.Error(), "CiphertextMismatch") {
 		t.Fatalf("swapped ciphertexts rejected, but not with CiphertextMismatch: %v", atkErr)
 	}
 	// ...and rewriting the statement's hash to match them breaks the proof, because
 	// the circuit binds StCtxtHash.
-	forged := signal8Bid
+	forged := signal9Bid
 	forged[7] = core.AuctionCtxtHash([]byte("attacker-ctxt"), ctxt2)
 	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
 		proof8Bid, forged, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
@@ -269,7 +312,7 @@ func TestAuction_OnChain(t *testing.T) {
 	}
 
 	bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
-		proof8Bid, signal8Bid, ctxt1, ctxt2,
+		proof8Bid, signal9Bid, ctxt1, ctxt2,
 	)
 	checkErr(t, "submitBid tx", err)
 	waitTx(t, ethClient, bidTx)
@@ -385,8 +428,17 @@ func TestAuction_OnChain(t *testing.T) {
 
 	finalizeTx, err := auctionContract.Transact(ownerAuth, "finalizeSettlement", auctionId)
 	checkErr(t, "finalizeSettlement tx", err)
-	waitTx(t, ethClient, finalizeTx)
-	t.Log("finalizeSettlement: OK")
+	finalizeRcpt, err := bind.WaitMined(context.Background(), ethClient, finalizeTx)
+	checkErr(t, "wait finalizeSettlement", err)
+	if finalizeRcpt.Status != 1 {
+		t.Fatal("finalizeSettlement reverted")
+	}
+	// recoverAuction() reserves RECOVER_FINALIZE_GAS (3,000,000) to try the same
+	// settlement before it may cancel a claim; a real one must fit well within it.
+	if finalizeRcpt.GasUsed*2 > 3_000_000 {
+		t.Errorf("finalizeSettlement used %d gas: RECOVER_FINALIZE_GAS (3,000,000) leaves under 2x margin", finalizeRcpt.GasUsed)
+	}
+	t.Logf("finalizeSettlement: OK (gas %d)", finalizeRcpt.GasUsed)
 
 	// ─── Verify final state ───────────────────────────────────────────────────
 
@@ -592,12 +644,12 @@ func toBigArr8(slice []*big.Int) [8]*big.Int {
 	return arr
 }
 
-func toBigArr7(slice []*big.Int) [7]*big.Int {
-	var arr [7]*big.Int
-	for i := 0; i < 7 && i < len(slice); i++ {
+func toBigArr9(slice []*big.Int) [9]*big.Int {
+	var arr [9]*big.Int
+	for i := 0; i < 9 && i < len(slice); i++ {
 		arr[i] = slice[i]
 	}
-	for i := len(slice); i < 7; i++ {
+	for i := len(slice); i < 9; i++ {
 		arr[i] = big.NewInt(0)
 	}
 	return arr
@@ -626,27 +678,3 @@ func toBigArr104(slice []*big.Int) [104]*big.Int {
 }
 
 var _ = fmt.Sprintf // suppress "imported and not used"
-
-// announceAuctionParams commits to an auction's parameters before initAuction():
-// EnygmaAuction only accepts (auctionId, deadline, settlementDeadline,
-// floorPrice) whose hash was announced first, so a front-runner cannot replay the
-// lock proof with parameters of its own.
-// Hash: keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)).
-func announceAuctionParams(
-	t *testing.T,
-	client *ethclient.Client,
-	auction *bind.BoundContract,
-	auth *bind.TransactOpts,
-	auctionId, deadline, settlementDeadline, floorPrice *big.Int,
-) {
-	t.Helper()
-	var enc []byte
-	for _, v := range []*big.Int{auctionId, deadline, settlementDeadline, floorPrice} {
-		enc = append(enc, common.LeftPadBytes(v.Bytes(), 32)...)
-	}
-	var h [32]byte
-	copy(h[:], crypto.Keccak256(enc))
-	tx, err := auction.Transact(auth, "announceAuction", h)
-	checkErr(t, "announceAuction tx", err)
-	waitTx(t, client, tx)
-}

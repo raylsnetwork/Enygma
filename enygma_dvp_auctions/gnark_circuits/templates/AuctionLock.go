@@ -20,9 +20,16 @@ type AuctionLockCircuitConfig struct {
 // Off-chain Bob generates a fresh WtSaltLocked using ML-KEM or random bytes.
 // The contract records stCommitLocked as the locked NFT commitment.
 //
-// Public statement (7 elements):
+// StParamsHash binds the auction's parameters to the proof: the contract
+// requires it to equal keccak256(abi.encode(auctionId, deadline,
+// settlementDeadline, floorPrice)) mod Fr of the initAuction() arguments. They
+// are not otherwise part of the proof, so without it a front-runner who saw
+// Bob's proof in the mempool could open his auction with a floor price and
+// deadlines of its own.
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId, stRevertCommit]
+// Public statement (8 elements):
+//
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitLocked, stNftTokenId, stRevertCommit, stParamsHash]
 type AuctionLockCircuit struct {
 	Config AuctionLockCircuitConfig
 
@@ -34,6 +41,7 @@ type AuctionLockCircuit struct {
 	StCommitLocked frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltLocked)
 	StNftTokenId   frontend.Variable `gnark:",public"` // public tokenId so bidders know what is up for auction
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltRevert) — pre-committed recovery destination
+	StParamsHash   frontend.Variable `gnark:",public"` // hash of the auction's deadline, settlement deadline and floor price (checked on-chain)
 
 	// --- private witnesses ---
 	WtTreeNumber frontend.Variable // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay
@@ -48,6 +56,7 @@ type AuctionLockCircuit struct {
 	// --- private witnesses: auction-locked output + timeout recovery ---
 	WtSaltLocked frontend.Variable // fresh random salt for the locked commitment
 	WtSaltRevert frontend.Variable // fresh random salt for the revert commitment (≠ saltLocked)
+	WtParamsHash frontend.Variable // must equal StParamsHash
 }
 
 func (circuit *AuctionLockCircuit) Define(api frontend.API) error {
@@ -100,6 +109,11 @@ func (circuit *AuctionLockCircuit) Define(api frontend.API) error {
 	// 9. Recovery salt must differ from the locked salt — reusing saltLocked would
 	// make StRevertCommit trivially derivable from the already-public StCommitLocked.
 	api.AssertIsDifferent(circuit.WtSaltRevert, circuit.WtSaltLocked)
+
+	// 10. Bind the parameters hash. A real constraint between the public value
+	// and a private witness, so a proof made for one set of parameters does not
+	// verify for another.
+	api.AssertIsEqual(circuit.WtParamsHash, circuit.StParamsHash)
 
 	return nil
 }

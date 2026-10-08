@@ -11,18 +11,20 @@ const SETTLED = 3;
 const ZERO_PROOF = Array(8).fill(0);
 const DAY = 24 * 3600;
 
+// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr — the lock proof's StParamsHash.
 const paramsHash = (auctionId, deadline, settlementDeadline, floorPrice) =>
-  ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]));
+  BigInt(ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]))) % FR;
 
-const lockStatement = ({ auctionId, nullifier, commitLocked, nftTokenId = 77 }) =>
-  [auctionId, 0, 1, nullifier, commitLocked, nftTokenId, 0];
+// A lock statement whose proof was made for (deadline, settlementDeadline, floorPrice).
+const lockStatement = ({ auctionId, nullifier, commitLocked, nftTokenId = 77, deadline = 0, settlementDeadline = 0, floorPrice = 0 }) =>
+  [auctionId, 0, 1, nullifier, commitLocked, nftTokenId, 0, paramsHash(auctionId, deadline, settlementDeadline, floorPrice)];
 const FR = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 // keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr — the bid's StCtxtHash.
 const ctxtHash = (c1 = "0x", c2 = "0x") =>
   BigInt(ethers.keccak256(ethers.concat([ethers.keccak256(c1), ethers.keccak256(c2)]))) % FR;
-const bidStatement = ({ auctionId, nullifier, commitA, commitB, ctxt1 = "0x", ctxt2 = "0x" }) =>
-  [auctionId, 0, 1, nullifier, commitA, commitB, 0, ctxtHash(ctxt1, ctxt2)];
+const bidStatement = ({ auctionId, nullifier, commitA, commitB, ctxt1 = "0x", ctxt2 = "0x", floorPrice = 10 }) =>
+  [auctionId, 0, 1, nullifier, commitA, commitB, 0, ctxtHash(ctxt1, ctxt2), floorPrice];
 const batchStatement = ({ auctionId, commits, winnerCommit, winnerPk, winnerAmount }) => {
   const c = Array(100).fill(0);
   commits.forEach((v, i) => { c[i] = v; });
@@ -47,115 +49,92 @@ async function deploy(verifierFactoryName = "MockVerifier", verifierArgs = [], v
 
 async function openAuction(auction, { auctionId = 1, deadlineDelta = 3600, floorPrice = 10 } = {}) {
   const deadline = (await time.latest()) + deadlineDelta;
-  await auction.announceAuction(paramsHash(auctionId, deadline, deadline + 2 * DAY + 3600, floorPrice));
+  const settlementDeadline = deadline + 2 * DAY + 3600;
   await auction.initAuction(ZERO_PROOF,
-    lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked: 200 }),
-    deadline, deadline + 2 * DAY + 3600, floorPrice);
+    lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked: 200, deadline, settlementDeadline, floorPrice }),
+    deadline, settlementDeadline, floorPrice);
   return deadline;
 }
 
 describe("EnygmaAuction — attack scenarios", function () {
   // ── A. initAuction's timing/floor parameters must be the seller's ─────────
   describe("A: a front-runner cannot choose the parameters of Bob's auction", function () {
-    const stmt = lockStatement({ auctionId: 1, nullifier: 1001, commitLocked: 200 });
+    // Bob's lock proof was made for these parameters (its StParamsHash).
+    const bobParams = async () => {
+      const deadline = (await time.latest()) + 3600;
+      return { deadline, settlementDeadline: deadline + 3 * DAY, floorPrice: 10 };
+    };
+    const bobStmt = (p) => lockStatement({ auctionId: 1, nullifier: 1001, commitLocked: 200, ...p });
 
-    it("A1: the attacker's own parameters are rejected unless announced", async function () {
+    it("A1: replaying Bob's proof with other parameters is rejected", async function () {
       const [, , attacker] = await ethers.getSigners();
       const { auction } = await deploy();
-      const now = await time.latest();
-      const atkDeadline = now + 30;
-      await expect(
-        auction.connect(attacker).initAuction(ZERO_PROOF, stmt, atkDeadline, atkDeadline + 10 * 365 * DAY, 0)
-      ).to.be.revertedWithCustomError(auction, "InvalidSettlementDeadline"); // capped
-      await expect(
-        auction.connect(attacker).initAuction(ZERO_PROOF, stmt, atkDeadline, atkDeadline + 3 * DAY, 0)
-      ).to.be.revertedWithCustomError(auction, "ParamsNotAnnounced");
+      const p = await bobParams();
+      // The attacker copies Bob's proof and statement from the mempool and
+      // submits them first with a zero floor price, or deadlines of its own.
+      for (const [deadline, settlementDeadline, floorPrice] of [
+        [p.deadline, p.settlementDeadline, 0],
+        [p.deadline - 3000, p.settlementDeadline, p.floorPrice],
+        [p.deadline, p.settlementDeadline + 20 * DAY, p.floorPrice],
+      ]) {
+        await expect(
+          auction.connect(attacker).initAuction(ZERO_PROOF, bobStmt(p), deadline, settlementDeadline, floorPrice),
+          "VULNERABLE: Bob's proof opened the auction with the attacker's parameters",
+        ).to.be.revertedWithCustomError(auction, "ParamsMismatch");
+      }
+      expect(Number((await auction.getAuctionCore(1)).state)).to.equal(0); // still INACTIVE
     });
 
-    it("A2: Bob's announced parameters go through; replaying them is harmless", async function () {
-      const [, bob, attacker] = await ethers.getSigners();
+    it("A2: Bob's own parameters go through, even when a third party submits them", async function () {
+      const [, , attacker] = await ethers.getSigners();
       const { auction } = await deploy();
-      const deadline = (await time.latest()) + 3600, settlement = deadline + 3 * DAY, floor = 10;
-      await auction.connect(bob).announceAuction(paramsHash(1, deadline, settlement, floor));
-      // The attacker sees Bob's init in the mempool and submits the same proof with Bob's own values.
-      await auction.connect(attacker).initAuction(ZERO_PROOF, stmt, deadline, settlement, floor);
+      const p = await bobParams();
+      await auction.connect(attacker).initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice);
       const core = await auction.getAuctionCore(1);
-      expect(core.floorPrice).to.equal(BigInt(floor));
-      expect(core.deadline).to.equal(BigInt(deadline));
-      expect(core.settlementDeadline).to.equal(BigInt(settlement));
+      expect(core.floorPrice).to.equal(BigInt(p.floorPrice));
+      expect(core.deadline).to.equal(BigInt(p.deadline));
+      expect(core.settlementDeadline).to.equal(BigInt(p.settlementDeadline));
     });
 
-    it("A3: an announcement cannot be reused for a second auction", async function () {
+    it("A3: a proof cannot open the same auction twice", async function () {
       const { auction } = await deploy();
-      const deadline = (await time.latest()) + 3600, settlement = deadline + 3 * DAY;
-      await auction.announceAuction(paramsHash(1, deadline, settlement, 10));
-      await auction.initAuction(ZERO_PROOF, stmt, deadline, settlement, 10);
-      await expect(auction.initAuction(ZERO_PROOF, stmt, deadline, settlement, 10))
+      const p = await bobParams();
+      await auction.initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice);
+      await expect(auction.initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice))
         .to.be.revertedWithCustomError(auction, "AuctionAlreadyExists");
-    });
-
-    it("A3b: an announcement made in the same block as initAuction does not count", async function () {
-      const [, , attacker] = await ethers.getSigners();
-      const { auction } = await deploy();
-      // The attacker sees Bob's initAuction in the mempool, so it knows the auctionId
-      // (statement[0]). It announces parameters of its own and calls initAuction with
-      // them in the same block.
-      const deadline = (await time.latest()) + 60, settlement = deadline + 3 * DAY;
-      await network.provider.send("evm_setAutomine", [false]);
-      try {
-        const announceTx = await auction.connect(attacker).announceAuction(paramsHash(1, deadline, settlement, 0), { gasLimit: 200000 });
-        const initTx = await auction.connect(attacker).initAuction(ZERO_PROOF, stmt, deadline, settlement, 0, { gasLimit: 2000000 });
-        await network.provider.send("evm_mine");
-        expect((await ethers.provider.getTransactionReceipt(announceTx.hash)).status).to.equal(1);
-        expect((await ethers.provider.getTransactionReceipt(initTx.hash)).status).to.equal(0);
-      } finally {
-        await network.provider.send("evm_setAutomine", [true]);
-      }
-      expect(Number((await auction.getAuctionCore(1)).state)).to.equal(0); // INACTIVE: no auction was opened
-    });
-
-    it("A3c: Bob's older announcement still wins against a same-block attacker", async function () {
-      const [, bob, attacker] = await ethers.getSigners();
-      const { auction } = await deploy();
-      const deadline = (await time.latest()) + 3600, settlement = deadline + 3 * DAY, floor = 10;
-      await auction.connect(bob).announceAuction(paramsHash(1, deadline, settlement, floor)); // mined earlier
-      await network.provider.send("evm_setAutomine", [false]);
-      try {
-        // Same block, attacker first: announce its own parameters and try to init with them...
-        const atkAnnounce = await auction.connect(attacker).announceAuction(paramsHash(1, deadline, settlement, 0), { gasLimit: 200000 });
-        const atkInit = await auction.connect(attacker).initAuction(ZERO_PROOF, stmt, deadline, settlement, 0, { gasLimit: 2000000 });
-        // ...then Bob's own init, which relies on the older announcement.
-        const bobInit = await auction.connect(bob).initAuction(ZERO_PROOF, stmt, deadline, settlement, floor, { gasLimit: 2000000 });
-        await network.provider.send("evm_mine");
-        expect((await ethers.provider.getTransactionReceipt(atkAnnounce.hash)).status).to.equal(1);
-        expect((await ethers.provider.getTransactionReceipt(atkInit.hash)).status).to.equal(0);
-        expect((await ethers.provider.getTransactionReceipt(bobInit.hash)).status).to.equal(1);
-      } finally {
-        await network.provider.send("evm_setAutomine", [true]);
-      }
-      expect((await auction.getAuctionCore(1)).floorPrice).to.equal(BigInt(floor));
     });
 
     it("A4: settlementDeadline is capped at deadline + 30 days", async function () {
       const { auction } = await deploy();
       const deadline = (await time.latest()) + 3600;
       const tooFar = deadline + 30 * DAY + 1;
-      await auction.announceAuction(paramsHash(1, deadline, tooFar, 10));
-      await expect(auction.initAuction(ZERO_PROOF, stmt, deadline, tooFar, 10))
+      await expect(auction.initAuction(ZERO_PROOF, bobStmt({ deadline, settlementDeadline: tooFar, floorPrice: 10 }), deadline, tooFar, 10))
         .to.be.revertedWithCustomError(auction, "InvalidSettlementDeadline");
       const ok = deadline + 30 * DAY;
-      await auction.announceAuction(paramsHash(1, deadline, ok, 10));
-      await auction.initAuction(ZERO_PROOF, stmt, deadline, ok, 10);
+      await auction.initAuction(ZERO_PROOF, bobStmt({ deadline, settlementDeadline: ok, floorPrice: 10 }), deadline, ok, 10);
     });
   });
 
-  describe("A5: Bob can cancel until the first batch", function () {
-    it("cancels after the deadline while no batch exists", async function () {
+  describe("A5: Bob can cancel only while bidding is open", function () {
+    it("cancels before the deadline", async function () {
       const { auction } = await deploy();
-      await openAuction(auction, { deadlineDelta: 10 });
-      await time.increase(20);
+      await openAuction(auction, { deadlineDelta: 3600 });
       await auction.revertAuction(ZERO_PROOF, [1, 200, 77, 999]);
       expect(Number((await auction.getAuctionCore(1)).state)).to.equal(4); // CANCELED
+    });
+
+    it("cannot cancel after the deadline, even before the first batch is mined", async function () {
+      // The auctioneer's submitBatch carries the batch winners' amounts and sits in
+      // the mempool before it is mined: a seller still allowed to cancel could read
+      // the result there and front-run it.
+      const { auction } = await deploy();
+      await openAuction(auction, { deadlineDelta: 10 });
+      await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700 }), "0x", "0x");
+      await time.increase(20);
+      expect((await auction.getAuctionCore(1)).batchCount).to.equal(0n);
+      await expect(auction.revertAuction(ZERO_PROOF, [1, 200, 77, 999]),
+        "VULNERABLE: the seller cancelled after the deadline, with the batch result already public")
+        .to.be.revertedWithCustomError(auction, "BiddingClosed");
     });
 
     it("cannot cancel once a batch has been submitted", async function () {
@@ -165,7 +144,7 @@ describe("EnygmaAuction — attack scenarios", function () {
       await time.increase(20);
       await auction.submitBatch(1, ZERO_PROOF, batchStatement({ auctionId: 1, commits: [600], winnerCommit: 600, winnerPk: 900, winnerAmount: 1000 }));
       await expect(auction.revertAuction(ZERO_PROOF, [1, 200, 77, 999]))
-        .to.be.revertedWithCustomError(auction, "BatchesAlreadySubmitted");
+        .to.be.revertedWithCustomError(auction, "BiddingClosed");
     });
   });
 
@@ -209,6 +188,31 @@ describe("EnygmaAuction — attack scenarios", function () {
       // Bidders get their notes back once the vault works again.
       await erc20Vault.setNullifyReverts(false);
       await auction.reclaimBid(1, 600);
+    });
+
+    it("B4: a healthy claim nobody finalized is settled, not cancelled, after the grace period", async function () {
+      const { auction } = await deploy();
+      await upToBatch(auction);
+      await auction.settleOptimistic(ZERO_PROOF, claim(), batchIdsArr([1]));
+      await time.increase(40 * DAY);
+      // recoverAuction once cancelled any claim past the grace period, taking the
+      // auction from its winner; a claim that can be applied must be applied.
+      await auction.recoverAuction(1);
+      const core = await auction.getAuctionCore(1);
+      expect(Number(core.state), "VULNERABLE: an unfinalized but valid claim was cancelled").to.equal(SETTLED);
+      expect(core.overallWinnerCommit).to.equal(600n);
+      await expect(auction.reclaimBid(1, 600)).to.be.revertedWithCustomError(auction, "BidAlreadyClaimed"); // paid out to the seller
+    });
+
+    it("B5: recoverAuction cannot be starved of gas to make a healthy claim look stuck", async function () {
+      const { auction } = await deploy();
+      await upToBatch(auction);
+      await auction.settleOptimistic(ZERO_PROOF, claim(), batchIdsArr([1]));
+      await time.increase(40 * DAY);
+      await expect(auction.recoverAuction(1, { gasLimit: 1_000_000 })).to.be.reverted;
+      expect(Number((await auction.getAuctionCore(1)).state)).to.equal(PENDING_SETTLEMENT);
+      await auction.recoverAuction(1);
+      expect(Number((await auction.getAuctionCore(1)).state)).to.equal(SETTLED);
     });
 
     it("B3: a healthy claim can still be finalized by anyone once its window closes", async function () {
@@ -325,6 +329,23 @@ describe("EnygmaAuction — attack scenarios", function () {
   });
 
   // ── G. Bid ciphertexts are bound to the proof ─────────────────────────────
+  // ── H. Bids must reach the floor price ─────────────────────────────────────
+  describe("H: bid floor", function () {
+    it("H1: a bid proven against another floor price is rejected", async function () {
+      // The AuctionBid circuit proves bidAmount >= StFloorPrice; the contract
+      // makes StFloorPrice this auction's floor, so a dust bid (proven against a
+      // floor of 0) cannot take one of the auction's MAX_BIDS slots.
+      const { auction } = await deploy();
+      await openAuction(auction, { floorPrice: 10 });
+      await expect(
+        auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700, floorPrice: 0 }), "0x", "0x"),
+        "VULNERABLE: a bid proven against a zero floor was accepted",
+      ).to.be.revertedWithCustomError(auction, "FloorPriceMismatch");
+      await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700, floorPrice: 10 }), "0x", "0x");
+      expect((await auction.getAuctionCore(1)).bidCount).to.equal(1n);
+    });
+  });
+
   describe("G: bid ciphertexts", function () {
     it("G1: a front-runner cannot register the bid with ciphertexts of its own", async function () {
       const [, bidder, attacker] = await ethers.getSigners();

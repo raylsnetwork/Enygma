@@ -55,7 +55,7 @@ func TestV2DvP_CounterVaultBinding(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			d.t = t
 			alice, bob := exchangeLegs(t, tc, c.aliceExpects, c.bobExpects)
-			d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(600))
+			d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
 			if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, zero); e != "CounterVaultMismatch" {
 				t.Fatalf("Bob's leg from an unexpected vault: got %q, want CounterVaultMismatch", e)
 			}
@@ -71,7 +71,7 @@ func TestV2DvP_CounterVaultBinding(t *testing.T) {
 	t.Run("matching vaults settle", func(t *testing.T) {
 		d.t = t
 		alice, bob := exchangeLegs(t, tc, tc.erc20VaultAddr, tc.erc20VaultAddr)
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(600))
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
 		d.mustSubmit("Bob's leg", "submitPartialSettlement", bob, zero, zero, zero)
 		for who, rc := range map[string]onchainProofReceipt{"Alice": alice, "Bob": bob} {
 			if _, spent := d.noteState(tc.erc20Vault, rc); !spent {

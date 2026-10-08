@@ -98,6 +98,10 @@ func (d *directSwap) noteState(vault *bind.BoundContract, rc onchainProofReceipt
 	return locked, out[0].(bool)
 }
 
+// minSwapDeadline is a deadline offset just over EnygmaDvp.MIN_SWAP_DURATION
+// (15 minutes), the shortest a first leg can set.
+const minSwapDeadline = 16 * 60
+
 func (d *directSwap) deadlineIn(seconds int64) *big.Int {
 	return new(big.Int).Add(currentBlockTimestamp(d.t, d.tc.client), big.NewInt(seconds))
 }
@@ -236,8 +240,8 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 		d.t = t
 		alice, bob := exchangeLegs(t, tc)
 
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(60))
-		hardhatIncreaseTime(t, tc.client, 120)
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
+		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", alice.Statement[4])
 
 		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, d.deadlineIn(7*24*3600)); e != "SwapClosed" {
@@ -252,7 +256,7 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 	t.Run("exchange: normal settlement still works", func(t *testing.T) {
 		d.t = t
 		alice, bob := exchangeLegs(t, tc)
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(600))
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
 		d.mustSubmit("Bob's leg", "submitPartialSettlement", bob, zero, zero, zero)
 		for who, rc := range map[string]onchainProofReceipt{"Alice": alice, "Bob": bob} {
 			if locked, spent := d.noteState(tc.erc20Vault, rc); locked || !spent {
@@ -261,7 +265,7 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 		}
 		// The settled swap is closed too: Bob's leg again is rejected (by
 		// the spent-nullifier check, which runs first).
-		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, d.deadlineIn(600)); e != "InvalidNullifier" {
+		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, d.deadlineIn(minSwapDeadline)); e != "InvalidNullifier" {
 			t.Fatalf("Bob's leg after settlement: got %q, want InvalidNullifier", e)
 		}
 		t.Log("exchange settled; resubmission rejected")
@@ -271,8 +275,8 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 		d.t = t
 		p := dvpGenerateProofs(t, tc, dvpSetupDeposits(t, tc, nftId()))
 
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(60))
-		hardhatIncreaseTime(t, tc.client, 120)
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline))
+		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", p.commitB)
 
 		for _, dl := range []*big.Int{zero, d.deadlineIn(3600)} {
@@ -290,11 +294,11 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 		d.t = t
 		p := dvpGenerateProofs(t, tc, dvpSetupDeposits(t, tc, nftId()))
 
-		if e, _ := d.submit("submitPartialSettlement", p.bobReceipt, one, one, d.deadlineIn(600)); e != "SwapNotFound" {
+		if e, _ := d.submit("submitPartialSettlement", p.bobReceipt, one, one, d.deadlineIn(minSwapDeadline)); e != "SwapNotFound" {
 			t.Fatalf("destination leg with no pending swap: got %q, want SwapNotFound", e)
 		}
 		// The normal order still settles afterwards.
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(600))
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline))
 		d.mustSubmit("Bob's leg", "submitPartialSettlement", p.bobReceipt, one, one, zero)
 		if _, spent := d.noteState(tc.erc721Vault, p.bobReceipt); !spent {
 			t.Fatal("Bob's NFT note not spent after settlement")
@@ -305,14 +309,14 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 	t.Run("claimSwapTimeout on a closed swap", func(t *testing.T) {
 		d.t = t
 		p := dvpGenerateProofs(t, tc, dvpSetupDeposits(t, tc, nftId()))
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(60))
-		hardhatIncreaseTime(t, tc.client, 120)
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline))
+		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", p.commitB)
 		if e, _ := d.submit("claimSwapTimeout", p.commitB); e != "SwapNotFound" {
 			t.Fatalf("second claimSwapTimeout: got %q, want SwapNotFound", e)
 		}
 		// Alice's leg cannot reopen the swap either: her note is spent.
-		if e, _ := d.submit("submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(600)); e != "InvalidNullifier" {
+		if e, _ := d.submit("submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline)); e != "InvalidNullifier" {
 			t.Fatalf("Alice's leg after timeout: got %q, want InvalidNullifier", e)
 		}
 	})

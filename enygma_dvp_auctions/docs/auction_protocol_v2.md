@@ -7,8 +7,8 @@ Changes from v1:
 - **`recoverAuction()`**: permissionless timeout recovery that inserts Bob's pre-committed revert note into the NFT tree and marks the auction CANCELED.
 - **`reclaimBid()`**: now inserts `bid.revertCommit` (fresh salt, unlinkable) instead of the original `commitA`, preserving bidder privacy after cancellation.
 - **No bond mechanics**: the optimistic challenge path is deadline-gated only; no ETH bonds are required from either auctioneer or challenger.
-- **`revertAuction()` anytime cancel**: Bob can cancel the auction at any time while the state is BIDDING — before or after the bidding deadline. The deadline guard was removed because sealed ML-KEM bids give Bob no information advantage from early cancellation. After CANCELED, all bidders reclaim their USDC via `reclaimBid()` using their pre-committed `revertCommit`.
-- `initAuction` / `submitBid` now accept `statement[7]` (was `statement[6]`); the 7th element is `revertCommit`.
+- **`revertAuction()` cancel**: Bob can cancel the auction while the state is BIDDING. (Later restored: only before the bidding deadline, since after it the auctioneer's submitBatch() reveals batch winners' amounts in the mempool before it is mined.) After CANCELED, all bidders reclaim their USDC via `reclaimBid()` using their pre-committed `revertCommit`.
+- `initAuction` / `submitBid` now accept `statement[7]` (was `statement[6]`); the 7th element is `revertCommit`. (Since then: `initAuction` takes `statement[8]`, adding `StParamsHash`, and `submitBid` takes `statement[9]`, adding `StCtxtHash` and `StFloorPrice`.)
 - **Single settlement path**: `settle()` (immediate on-chain verification) was removed; only the optimistic path remains (`settleOptimistic` → challenge window → `finalizeSettlement` or `challengeSettlement`).
 
 ```mermaid
@@ -57,9 +57,9 @@ sequenceDiagram
 
         gnark-->>bob: { proof: π[8], publicSignal: [auctionId, treeNumber, merkleRoot,<br>                                    nullifier, commitLocked, nftTokenId,<br>                                    revertCommit] }   ← 7 signals (was 6)
 
-        bob->>chain: initAuction(π_lock, statement[7], deadline, settlementDeadline, floorPrice)
+        bob->>chain: initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice)
 
-        chain->>verif: verifyProof(VK_LOCK, π_lock, statement[7])
+        chain->>verif: verifyProof(VK_LOCK, π_lock, statement[8])
         verif-->>chain: ✓ valid
 
         chain->>nft: verifyRoot(treeNumber, merkleRoot)
@@ -87,10 +87,10 @@ sequenceDiagram
 
             gnark-->>alice: { proof: π[8], publicSignal: [auctionId, treeNumber, merkleRoot,<br>                                       nullifier, commitA, commitB,<br>                                       revertCommit] }   ← 7 signals (was 6)
 
-            alice->>chain: submitBid(π_bid, statement[7], ctxt1, ctxt2)
+            alice->>chain: submitBid(π_bid, statement[9], ctxt1, ctxt2)
             note over chain: Guards:<br>① state[auctionId] == BIDDING<br>② block.timestamp < deadline<br>③ _bids[auctionId][commitA] not already active
 
-            chain->>verif: verifyProof(VK_BID, π_bid, statement[7])
+            chain->>verif: verifyProof(VK_BID, π_bid, statement[9])
             verif-->>chain: ✓ valid
 
             chain->>usdc: verifyRoot(treeNumber, merkleRoot)
@@ -231,8 +231,8 @@ sequenceDiagram
     %% ═══════════════════════════════════════════════════════════════
 
     rect rgba(150,100,150,0.10)
-        note over bob,verif: ── CANCEL PATH: Bob Cancels Auction  →  revertAuction()  (any time while BIDDING) ─
-        note over bob,verif: Bob may cancel before OR after the bidding deadline, at any time while state == BIDDING<br>Bidders who already submitted bids recover their USDC via reclaimBid() after CANCELED
+        note over bob,verif: ── CANCEL PATH: Bob Cancels Auction  →  revertAuction()  (while BIDDING, before the deadline) ─
+        note over bob,verif: Bob may cancel only while state == BIDDING and before the bidding deadline<br>Bidders who already submitted bids recover their USDC via reclaimBid() after CANCELED
 
         note over bob: Computes:<br>saltOut        ← fresh random field element<br>revertedCommit  = Erc721Commitment(tokenId, pk_B, saltOut)<br>(new salt → revertedCommit is unlinkable to commitLocked on-chain)
 
@@ -243,7 +243,7 @@ sequenceDiagram
         gnark-->>bob: { proof: π[8], publicSignal: [auctionId, commitLocked, nftTokenId, revertedCommit] }
 
         bob->>chain: revertAuction(π_revert, statement[4])
-        note over chain: Checks:<br>① state[auctionId] == BIDDING  (no timing restriction)<br>② statement[1] == auctions[auctionId].commitLocked<br>③ statement[2] == auctions[auctionId].nftTokenId
+        note over chain: Checks:<br>① state[auctionId] == BIDDING and block.timestamp < deadline<br>② statement[1] == auctions[auctionId].commitLocked<br>③ statement[2] == auctions[auctionId].nftTokenId
 
         chain->>verif: verifyProof(VK_REVERT, π_revert, statement[4])
         verif-->>chain: ✓ valid

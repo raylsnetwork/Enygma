@@ -53,6 +53,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // arbitrarily distant timestamp.
     uint256 public constant MAX_SWAP_DURATION = 30 days;
 
+    // Floor on the same deadline. claimSwapTimeout is callable by anyone, so
+    // without it a front-runner who submits the initiator's public receipt
+    // first could set a deadline a second away and cancel the swap in the
+    // next block, before the counterparty can deliver. The counterparty always
+    // gets at least this long.
+    uint256 public constant MIN_SWAP_DURATION = 15 minutes;
+
     bytes32 public constant DEFAULT_OWNER_ROLE =
         keccak256(abi.encodePacked("ownerRole"));
 
@@ -721,6 +728,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (deadline <= block.timestamp) {
                 revert SwapDeadlineMustBeInFuture();
             }
+            if (deadline < block.timestamp + MIN_SWAP_DURATION) {
+                revert SwapDeadlineTooSoon();
+            }
             if (deadline > block.timestamp + MAX_SWAP_DURATION) {
                 revert SwapDeadlineTooFar();
             }
@@ -777,7 +787,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // revertCommitA comes from the circuit's public statement and is
     // spendable only with her key, so a third party triggering the refund can
     // only ever return the note to its owner. The deadline ceiling
-    // (MAX_SWAP_DURATION) bounds how long a hijacked swap can hold the note.
+    // (MAX_SWAP_DURATION) bounds how long a hijacked swap can hold the note,
+    // and its floor (MIN_SWAP_DURATION) how soon one can be timed out.
     function claimSwapTimeout(uint256 pendingReceiptId) public nonReentrant returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 

@@ -64,8 +64,11 @@ const (
 	frontRunTokenLeg2      = int64(113)
 	frontRunTokenFar       = int64(114)
 
-	// Short window the attacker picks for the victim's swap.
-	frontRunAttackerDeadlineSeconds = int64(30)
+	// A window under EnygmaDvp.MIN_SWAP_DURATION (15 minutes): the contract
+	// must refuse it.
+	frontRunTooShortDeadlineSeconds = int64(30)
+	// The shortest window the attacker can still pick for the victim's swap.
+	frontRunAttackerDeadlineSeconds = int64(16 * 60)
 )
 
 // attackerAuth returns a transactor for a fresh, funded key distinct from
@@ -162,8 +165,20 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		d := dvpSetupDeposits(t, tc, frontRunTokenHijack)
 		p := dvpGenerateProofs(t, tc, d)
 
-		// The attacker sees Alice's receipt and submits it first, with a very
-		// short deadline of their own choosing.
+		// The attacker sees Alice's receipt and submits it first, with a
+		// deadline of their own choosing. One so short that they could time the
+		// swap out (claimSwapTimeout is open to anyone) before Bob can deliver
+		// must be refused.
+		tooSoon := new(big.Int).Add(currentBlockTimestamp(t, tc.client),
+			big.NewInt(frontRunTooShortDeadlineSeconds))
+		if status, err := submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, tooSoon); err == nil && status == 1 {
+			t.Fatalf("VULNERABLE: a %ds deadline was accepted, so the attacker can cancel Alice's swap before Bob can deliver", frontRunTooShortDeadlineSeconds)
+		} else if !isRevert(err, "SwapDeadlineTooSoon") {
+			t.Fatalf("a %ds deadline was refused, but not with SwapDeadlineTooSoon: status=%d err=%v", frontRunTooShortDeadlineSeconds, status, err)
+		}
+		t.Logf("a %ds deadline is refused (SwapDeadlineTooSoon)", frontRunTooShortDeadlineSeconds)
+
+		// The shortest deadline still allowed.
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client),
 			big.NewInt(frontRunAttackerDeadlineSeconds))
 		status, err := submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, deadline)

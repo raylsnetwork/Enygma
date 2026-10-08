@@ -34,9 +34,14 @@ type AuctionBidCircuitConfig struct {
 // the proof and statement in the mempool could register the bid with ciphertexts
 // of their own, and the auctioneer could not decrypt it.
 //
-// Public statement (8 elements):
+// StFloorPrice is the auction's floor price, supplied on-chain from the auction's
+// own state: the bid must be at least that much. Without it a bid of any amount
+// (dust) was accepted, so one party could fill an auction's MAX_BIDS slots with
+// worthless bids and lock honest bidders out.
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash]
+// Public statement (9 elements):
+//
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
 type AuctionBidCircuit struct {
 	Config AuctionBidCircuitConfig
 
@@ -49,6 +54,7 @@ type AuctionBidCircuit struct {
 	StCommitB      frontend.Variable `gnark:",public"` // Bob's USDC payout destination commitment
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
 	StCtxtHash     frontend.Variable `gnark:",public"` // hash of the ciphertexts submitted with the bid (checked on-chain)
+	StFloorPrice   frontend.Variable `gnark:",public"` // the auction's floor price (checked on-chain); bidAmount >= it
 
 	// --- private witnesses ---
 	WtAuctionId  frontend.Variable // must equal StAuctionId; binds proof to one auction
@@ -133,6 +139,10 @@ func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
 	// value and a private witness, so the public input takes part in the
 	// verification equation: a proof made for one hash does not verify for another.
 	api.AssertIsEqual(circuit.WtCtxtHash, circuit.StCtxtHash)
+
+	// 12. The bid must reach the auction's floor price.
+	isBelowFloor := cmp.IsLess(api, circuit.WtBidAmount, circuit.StFloorPrice)
+	api.AssertIsEqual(isBelowFloor, 0)
 
 	return nil
 }
