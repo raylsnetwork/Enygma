@@ -467,7 +467,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	// ═════════════════════════════════════════════════════════════════════════
 	t.Log("── Phase 6: Tag Notification via /relay/tag (window mode) ──")
 
-	startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
+	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
 		client, 3,
 		bobSpend.PublicKey,
 		channelSS,
@@ -476,7 +476,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreparePaymentTag: %v", err)
 	}
-	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes", startBlock, startBlock+3, len(noteCtxt))
+	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes each", startBlock, startBlock+3, len(noteCtxts[0]))
 
 	hexTags := make([]string, len(windowTags))
 	for i, wt := range windowTags {
@@ -488,7 +488,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	status = postJSON(t, "/relay/tag", relayTagReq{
 		Tags:       hexTags,
 		StartBlock: startBlock,
-		Ctxt:       toHex(noteCtxt),
+		Ctxts:      hexAll(noteCtxts),
 	}, &tagResp)
 
 	if status == http.StatusServiceUnavailable {
@@ -525,7 +525,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  Bob found tag at block %d ✓", matches[0].BlockNumber)
 
 	// Bob decrypts the tag payload to recover the note.
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

@@ -15,15 +15,18 @@
 // circuit if needed in the future, and is consistent with the paper's suggestion
 // of "secure hashing (e.g., SHA3)" — the paper leaves TH abstract.
 //
-// # Payload encryption
+// # Payload encryption (a key per block, like the tag)
 //
-//	channelKey = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-channel-key-v1")
-//	ctxt       = AES-256-GCM(key=channelKey, plaintext=payload)
+//	k_b  = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-block-key-v1" || blockNumber)
+//	ctxt = AES-256-GCM(key=k_b, plaintext=payload)
+//
+// Each block's payload has its own key, so disclosing one block's key to an
+// auditor reveals that block's payment only, not the channel's history.
 //
 // # Sender workflow (via relayer for sender privacy)
 //
 //	tag,  err := DeriveTag(blockNumber, bob.PkSpend, sharedSecret)
-//	ctxt, err := EncryptPayload(DeriveChannelKey(sharedSecret), payload)
+//	ctxt, err := EncryptPayload(DeriveBlockKey(sharedSecret, blockNumber), payload)
 //	// POST /relay/tag { tag: hex(tag), ctxt: hex(ctxt) }
 //
 // # Recipient scanning
@@ -31,7 +34,7 @@
 //	for each block:
 //	    matched, err := ScanBlock(client, registryAddr, blockNumber, channels)
 //	    for _, m := range matched:
-//	        payload, err := DecryptPayload(DeriveChannelKey(m.SharedSecret), m.Entry.Ctxt)
+//	        payload, err := m.Decrypt()
 package tags
 
 import (
@@ -40,6 +43,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,6 +88,12 @@ type ScannedTag struct {
 	SharedSecret []byte // the channel shared secret that matched
 }
 
+// Decrypt opens the matched entry's payload with the key of the block it was
+// published in.
+func (m ScannedTag) Decrypt() ([]byte, error) {
+	return DecryptPayload(DeriveBlockKey(m.SharedSecret, m.BlockNumber), m.Entry.Ctxt)
+}
+
 // ── Tag derivation ────────────────────────────────────────────────────────────
 
 // DeriveTag computes the private messaging tag for a given block and recipient.
@@ -107,14 +117,29 @@ func DeriveTag(blockNumber uint64, recipientPkSpend *big.Int, sharedSecret []byt
 	return tag, nil
 }
 
-// DeriveChannelKey derives the 32-byte AES channel key from a shared secret.
+// DeriveChannelKey derives the key that encrypts a channel's setup message c2
+// (AEAD with c1 as associated data, paper §3). It is used only at channel
+// setup; payloads published with tags use DeriveBlockKey.
 //
 //	channelKey = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-channel-key-v1")
-//
-// Identical to channel_setup.DeriveChannelKey — both packages must produce
-// the same key so that payloads encrypted by one can be decrypted by the other.
 func DeriveChannelKey(sharedSecret []byte) [32]byte {
 	r := hkdf.New(sha256.New, sharedSecret, nil, []byte("enygma-channel-key-v1"))
+	var key [32]byte
+	io.ReadFull(r, key[:]) //nolint:errcheck — hkdf.Reader.Read never errors
+	return key
+}
+
+// DeriveBlockKey derives the 32-byte AES key for the payload published with a
+// channel's tag in blockNumber.
+//
+//	k_b = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-block-key-v1" || uint64_be(blockNumber))
+//
+// Like the tag, it changes every block, so one block's key opens only that
+// block's payload: it can be disclosed to an auditor without revealing any
+// other payment on the channel.
+func DeriveBlockKey(sharedSecret []byte, blockNumber uint64) [32]byte {
+	info := binary.BigEndian.AppendUint64([]byte("enygma-block-key-v1"), blockNumber)
+	r := hkdf.New(sha256.New, sharedSecret, nil, info)
 	var key [32]byte
 	io.ReadFull(r, key[:]) //nolint:errcheck — hkdf.Reader.Read never errors
 	return key
@@ -138,22 +163,23 @@ func DeriveTagWindow(startBlock uint64, windowSize int, recipientPkSpend *big.In
 	return tags, nil
 }
 
-// PrepareTagWithWindow prepares a tag window + encrypted payload for relayer
-// submission, querying the chain to set the correct startBlock.
+// PrepareTagWithWindow prepares a tag window for relayer submission, querying
+// the chain to set the correct startBlock, and encrypts payload once per block
+// of the window: ctxts[i] is under the key of block startBlock+i, the block
+// tags[i] is for. The relayer publishes the (tag, ctxt) pair for the block the
+// transaction lands in, so the payload is always under that block's key.
 //
 // windowSize controls how many consecutive blocks to cover (recommend 3–5).
-// Returns (startBlock, tags, ctxt) ready to pass to POST /relay/tag as window mode.
 //
-//	startBlock, tags, ctxt, err := PrepareTagWithWindow(client, 3, pkSpend, ss, key, payload)
-//	// POST /relay/tag { "tags": hexTags, "startBlock": startBlock, "ctxt": hex(ctxt) }
+//	startBlock, tags, ctxts, err := PrepareTagWithWindow(client, 3, pkSpend, ss, payload)
+//	// POST /relay/tag { "tags": hexTags, "startBlock": startBlock, "ctxts": hexCtxts }
 func PrepareTagWithWindow(
 	client *ethclient.Client,
 	windowSize int,
 	recipientPkSpend *big.Int,
 	sharedSecret []byte,
-	channelKey [32]byte,
 	payload []byte,
-) (startBlock uint64, tags [][32]byte, ctxt []byte, err error) {
+) (startBlock uint64, tags [][32]byte, ctxts [][]byte, err error) {
 	currentBlock, err := client.BlockNumber(context.Background())
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("BlockNumber: %w", err)
@@ -165,16 +191,19 @@ func PrepareTagWithWindow(
 		return 0, nil, nil, err
 	}
 
-	ctxt, err = EncryptPayload(channelKey, payload)
-	if err != nil {
-		return 0, nil, nil, fmt.Errorf("EncryptPayload: %w", err)
+	ctxts = make([][]byte, windowSize)
+	for i := range ctxts {
+		ctxts[i], err = EncryptPayload(DeriveBlockKey(sharedSecret, startBlock+uint64(i)), payload)
+		if err != nil {
+			return 0, nil, nil, fmt.Errorf("EncryptPayload(block=%d): %w", startBlock+uint64(i), err)
+		}
 	}
-	return startBlock, tags, ctxt, nil
+	return startBlock, tags, ctxts, nil
 }
 
 // ── Payload encryption ────────────────────────────────────────────────────────
 
-// EncryptPayload encrypts a tag payload using the channel key (AES-256-GCM).
+// EncryptPayload encrypts a tag payload under a block key (AES-256-GCM).
 // Output format: nonce(12 bytes) || ciphertext+tag.
 func EncryptPayload(channelKey [32]byte, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(channelKey[:])
@@ -226,8 +255,7 @@ func PrepareDummyTag(blockNumber uint64, recipientPkSpend *big.Int, sharedSecret
 	if err != nil {
 		return [32]byte{}, nil, fmt.Errorf("DeriveTag (dummy): %w", err)
 	}
-	k := DeriveChannelKey(sharedSecret)
-	ctxt, err := EncryptPayload(k, []byte(dummyMsgMarker))
+	ctxt, err := EncryptPayload(DeriveBlockKey(sharedSecret, blockNumber), []byte(dummyMsgMarker))
 	if err != nil {
 		return [32]byte{}, nil, fmt.Errorf("EncryptPayload (dummy): %w", err)
 	}
@@ -237,7 +265,7 @@ func PrepareDummyTag(blockNumber uint64, recipientPkSpend *big.Int, sharedSecret
 // IsDummyPayload returns true if a decrypted tag payload is a dummy message.
 // Recipients call this after DecryptPayload to discard cover-traffic entries.
 //
-//	plaintext, err := DecryptPayload(channelKey, entry.Ctxt)
+//	plaintext, err := match.Decrypt()
 //	if err == nil && tags.IsDummyPayload(plaintext) { continue }
 func IsDummyPayload(plaintext []byte) bool {
 	return string(plaintext) == dummyMsgMarker

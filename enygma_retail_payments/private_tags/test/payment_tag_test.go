@@ -453,7 +453,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	t.Log("          (test-only: direct publish — in production use /relay/tag)")
 
 	// Use window size 3: covers startBlock, startBlock+1, startBlock+2.
-	startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
+	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
 		client, 3,
 		bobSpend.PublicKey,
 		channelSS,
@@ -462,10 +462,10 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreparePaymentTag: %v", err)
 	}
-	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes", startBlock, startBlock+3, len(noteCtxt))
+	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes each", startBlock, startBlock+3, len(noteCtxts[0]))
 
 	// Publish using windowTags[0] (expected to land in startBlock).
-	tagBlock := publishTagDirect(t, client, aliceAuth, tagRegAddr, windowTags[0], noteCtxt)
+	tagBlock := publishTagDirect(t, client, aliceAuth, tagRegAddr, windowTags[0], noteCtxts[0])
 
 	// If the block drifted, republish with the correct tag from the window.
 	if tagBlock != startBlock {
@@ -475,7 +475,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 				tagBlock, startBlock, startBlock+uint64(len(windowTags)))
 		}
 		t.Logf("  block drift %d→%d — republishing with window tag[%d]", startBlock, tagBlock, offset)
-		tagBlock = publishTagDirect(t, client, aliceAuth, tagRegAddr, windowTags[offset], noteCtxt)
+		tagBlock = publishTagDirect(t, client, aliceAuth, tagRegAddr, windowTags[offset], noteCtxts[offset])
 	}
 	t.Logf("  tag published at block %d ✓", tagBlock)
 
@@ -496,7 +496,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	// ── Step 13: Bob decrypts the tag and verifies the payment note ───────────
 	t.Log("Step 13 — Bob decrypts tag and verifies his payment note")
 
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

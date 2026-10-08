@@ -261,7 +261,8 @@ type relayChannelResponse struct {
 type relayTagRequest struct {
 	Tags       []string `json:"tags,omitempty"`
 	StartBlock uint64   `json:"startBlock,omitempty"`
-	Ctxt       string   `json:"ctxt"`
+	Ctxt       string   `json:"ctxt,omitempty"`
+	Ctxts      []string `json:"ctxts,omitempty"`
 }
 
 type relayTagResponse struct {
@@ -444,7 +445,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 	if withTag {
 		emit("tag", "running", "Publish Tag", "Alice notifies Bob via private tag (POST /relay/tag)…")
 
-		startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
+		startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
 			client, 3,
 			bobSpend.PublicKey,
 			channelSS,
@@ -460,12 +461,17 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 			wt := wt
 			hexTags[i] = toHex(wt[:])
 		}
+		// One payload per block of the window, each under that block's key.
+		hexCtxts := make([]string, len(noteCtxts))
+		for i, ct := range noteCtxts {
+			hexCtxts[i] = toHex(ct)
+		}
 
 		var tagResp relayTagResponse
 		status, err := postRelayer("/relay/tag", relayTagRequest{
 			Tags:       hexTags,
 			StartBlock: startBlock,
-			Ctxt:       toHex(noteCtxt),
+			Ctxts:      hexCtxts,
 		}, &tagResp)
 		if err != nil {
 			fail("tag", "Publish Tag", err)
@@ -499,7 +505,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found 0 tags in registry"))
 			return false
 		}
-		note, err := tags.DecryptPaymentNote(channelSS, matches[0].Entry.Ctxt)
+		note, err := tags.DecryptPaymentNote(channelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 		if err != nil {
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err))
 			return false

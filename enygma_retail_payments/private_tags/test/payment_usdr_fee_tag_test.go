@@ -607,7 +607,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	// ═════════════════════════════════════════════════════════════════════════
 	t.Log("── Phase 6: Tag Notification via /relay/tag (window mode) ──")
 
-	startBlock, windowTags, noteCtxt, err := tags.PreparePaymentTag(
+	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
 		client, 3, bobSpend.PublicKey, channelSS, mainPayAmt, big.NewInt(0), paymentResult.SaltB,
 	)
 	if err != nil {
@@ -622,7 +622,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	status = postJSON(t, "/relay/tag", relayTagReq{
 		Tags:       hexTags,
 		StartBlock: startBlock,
-		Ctxt:       toHex(noteCtxt),
+		Ctxts:      hexAll(noteCtxts),
 	}, &tagResp)
 	if status == http.StatusServiceUnavailable {
 		t.Skipf("relayer TagRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR=<addr>")
@@ -648,7 +648,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
 	}
-	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].Entry.Ctxt)
+	note, err := tags.DecryptPaymentNote(bobChannelSS, matches[0].BlockNumber, matches[0].Entry.Ctxt)
 	if err != nil {
 		t.Fatalf("DecryptPaymentNote: %v", err)
 	}

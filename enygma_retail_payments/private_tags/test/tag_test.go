@@ -219,7 +219,7 @@ func TestTagPayloadRoundTrip(t *testing.T) {
 	for i := range ss {
 		ss[i] = 0xDE
 	}
-	channelKey := tags.DeriveChannelKey(ss)
+	channelKey := tags.DeriveBlockKey(ss, 100)
 
 	// Payload: arbitrary bytes (e.g. payment amount + tokenId + salt)
 	payload := make([]byte, 96)
@@ -254,6 +254,52 @@ func TestTagPayloadRoundTrip(t *testing.T) {
 		t.Error("expected decryption failure with wrong key")
 	}
 	t.Log("wrong-key rejection ✓")
+}
+
+// Each block's payload has its own key (paper §3): one block's key, as an
+// auditor would be given, opens that block's payload and no other block's,
+// and the channel's setup key opens none of them.
+func TestBlockKeyIsolation(t *testing.T) {
+	ss := make([]byte, 32)
+	for i := range ss {
+		ss[i] = 0xDE
+	}
+	k100, k101 := tags.DeriveBlockKey(ss, 100), tags.DeriveBlockKey(ss, 101)
+	if k100 == k101 {
+		t.Fatal("blocks 100 and 101 derived the same key")
+	}
+	if k100 != tags.DeriveBlockKey(ss, 100) {
+		t.Fatal("DeriveBlockKey is not deterministic")
+	}
+	other := make([]byte, 32)
+	if k100 == tags.DeriveBlockKey(other, 100) {
+		t.Fatal("two channels derived the same key for one block")
+	}
+
+	ct100, err := tags.EncryptPayload(k100, []byte("payment in block 100"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct101, err := tags.EncryptPayload(k101, []byte("payment in block 101"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pt, err := tags.DecryptPayload(k100, ct100); err != nil || string(pt) != "payment in block 100" {
+		t.Fatalf("block 100's key does not open block 100's payload: %v", err)
+	}
+	if _, err := tags.DecryptPayload(k100, ct101); err == nil {
+		t.Fatal("block 100's key opened block 101's payload")
+	}
+	for _, ct := range [][]byte{ct100, ct101} {
+		if _, err := tags.DecryptPayload(tags.DeriveChannelKey(ss), ct); err == nil {
+			t.Fatal("the channel setup key opened a block payload")
+		}
+	}
+
+	m := tags.ScannedTag{BlockNumber: 101, Entry: tags.TagEntry{Ctxt: ct101}, SharedSecret: ss}
+	if pt, err := m.Decrypt(); err != nil || string(pt) != "payment in block 101" {
+		t.Fatalf("ScannedTag.Decrypt: %q, %v", pt, err)
+	}
 }
 
 // ── On-chain integration test ─────────────────────────────────────────────────
@@ -294,8 +340,6 @@ func TestTagSystem_OnChain(t *testing.T) {
 	for i := range sharedSecret {
 		sharedSecret[i] = 0xAB
 	}
-	channelKey := tags.DeriveChannelKey(sharedSecret)
-	t.Logf("  channelKey[:8] = %x", channelKey[:8])
 
 	// Bob's spend key (the recipient's public key used as tweak in DeriveTag).
 	// In production this is fetched from UserRegistry.
@@ -314,18 +358,19 @@ func TestTagSystem_OnChain(t *testing.T) {
 	tokenId.FillBytes(payload[32:64])
 	noteSalt.FillBytes(payload[64:96])
 
-	ctxt, err := tags.EncryptPayload(channelKey, payload)
-	if err != nil {
-		t.Fatalf("EncryptPayload: %v", err)
-	}
-
-	// Alice needs the block number BEFORE publishing so she can compute the tag.
-	// She uses the NEXT block number (the block her transaction will land in).
+	// Alice needs the block number BEFORE publishing so she can compute the
+	// tag and the block's key. She uses the NEXT block number (the block her
+	// transaction will land in).
 	currentBlock, err := client.BlockNumber(bg)
 	if err != nil {
 		t.Fatalf("BlockNumber: %v", err)
 	}
 	targetBlock := currentBlock + 1
+
+	ctxt, err := tags.EncryptPayload(tags.DeriveBlockKey(sharedSecret, targetBlock), payload)
+	if err != nil {
+		t.Fatalf("EncryptPayload: %v", err)
+	}
 
 	tag, err := tags.DeriveTag(targetBlock, bobPkSpend, sharedSecret)
 	if err != nil {
@@ -367,10 +412,7 @@ func TestTagSystem_OnChain(t *testing.T) {
 	t.Log("Step 5 — Bob decrypts the tag payload")
 
 	match := matches[0]
-	recoveredPayload, err := tags.DecryptPayload(
-		tags.DeriveChannelKey(match.SharedSecret),
-		match.Entry.Ctxt,
-	)
+	recoveredPayload, err := match.Decrypt()
 	if err != nil {
 		t.Fatalf("DecryptPayload: %v", err)
 	}
@@ -884,7 +926,6 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	for i := range sharedSecret {
 		sharedSecret[i] = 0xAB
 	}
-	channelKey := tags.DeriveChannelKey(sharedSecret)
 	bobPkSpend := big.NewInt(0xB0B)
 
 	// ── Publish a REAL tag ────────────────────────────────────────────────────
@@ -899,7 +940,7 @@ func TestDummyMessages_OnChain(t *testing.T) {
 	}
 
 	realPayload := []byte("payment:30:token0")
-	realCtxt, err := tags.EncryptPayload(channelKey, realPayload)
+	realCtxt, err := tags.EncryptPayload(tags.DeriveBlockKey(sharedSecret, realBlock), realPayload)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
 	}
@@ -946,7 +987,7 @@ func TestDummyMessages_OnChain(t *testing.T) {
 		t.Fatalf("expected 1 real match, got %d", len(realMatches))
 	}
 
-	decryptedReal, err := tags.DecryptPayload(channelKey, realMatches[0].Entry.Ctxt)
+	decryptedReal, err := realMatches[0].Decrypt()
 	if err != nil {
 		t.Fatalf("DecryptPayload (real): %v", err)
 	}
@@ -972,7 +1013,7 @@ func TestDummyMessages_OnChain(t *testing.T) {
 		t.Fatalf("expected 1 dummy match, got %d", len(dummyMatches))
 	}
 
-	decryptedDummy, err := tags.DecryptPayload(channelKey, dummyMatches[0].Entry.Ctxt)
+	decryptedDummy, err := dummyMatches[0].Decrypt()
 	if err != nil {
 		t.Fatalf("DecryptPayload (dummy): %v", err)
 	}

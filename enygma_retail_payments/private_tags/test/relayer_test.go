@@ -98,7 +98,17 @@ type relayTagReq struct {
 	// Window mode
 	Tags       []string `json:"tags,omitempty"`
 	StartBlock uint64   `json:"startBlock,omitempty"`
-	Ctxt       string   `json:"ctxt"`
+	Ctxt       string   `json:"ctxt,omitempty"`
+	Ctxts      []string `json:"ctxts,omitempty"`
+}
+
+// hexAll hex-encodes each byte slice.
+func hexAll(bs [][]byte) []string {
+	out := make([]string, len(bs))
+	for i, b := range bs {
+		out[i] = toHex(b)
+	}
+	return out
 }
 
 type relayInfoResp struct {
@@ -343,8 +353,6 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	// ═════════════════════════════════════════════════════════════════════════
 	t.Log("── Phase 2: Real Tag via /relay/tag (window mode) ──")
 
-	channelKey := tags.DeriveChannelKey(ssAlice)
-
 	// Payload Bob will read after finding the tag.
 	notePayload := make([]byte, 96)
 	big.NewInt(30).FillBytes(notePayload[0:32])
@@ -353,12 +361,14 @@ func TestFullFlowViaRelayer(t *testing.T) {
 
 	// Gap 4: use PrepareTagWithWindow — derives tags for 3 consecutive blocks so
 	// the relayer can pick the correct one regardless of when the tx lands.
-	startBlock, windowTags, realCtxt, err := tags.PrepareTagWithWindow(
-		client, 3, bobPkSpend, ssAlice, channelKey, notePayload)
+	// The payload is encrypted once per block of the window, each under that
+	// block's key; the relayer publishes the one for the block it lands in.
+	startBlock, windowTags, realCtxts, err := tags.PrepareTagWithWindow(
+		client, 3, bobPkSpend, ssAlice, notePayload)
 	if err != nil {
 		t.Fatalf("PrepareTagWithWindow: %v", err)
 	}
-	t.Logf("  tag window: blocks [%d, %d)  ctxt=%dB", startBlock, startBlock+3, len(realCtxt))
+	t.Logf("  tag window: blocks [%d, %d)  ctxt=%dB each", startBlock, startBlock+3, len(realCtxts[0]))
 
 	hexWindowTags := make([]string, len(windowTags))
 	for i, wt := range windowTags {
@@ -370,7 +380,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	status = postJSON(t, "/relay/tag", relayTagReq{
 		Tags:       hexWindowTags,
 		StartBlock: startBlock,
-		Ctxt:       toHex(realCtxt),
+		Ctxts:      hexAll(realCtxts),
 	}, &tagResp)
 
 	if status == http.StatusServiceUnavailable {
@@ -406,10 +416,15 @@ func TestFullFlowViaRelayer(t *testing.T) {
 		t.Fatalf("Bob expected 1 real tag match, got %d", len(realMatches))
 	}
 
-	// Bob decrypts and verifies the payload.
-	decrypted, err := tags.DecryptPayload(tags.DeriveChannelKey(ssBob), realMatches[0].Entry.Ctxt)
+	// Bob decrypts with the key of the block he found the tag in. The
+	// payload published is the window's copy for that block, so no other
+	// block's key opens it.
+	decrypted, err := realMatches[0].Decrypt()
 	if err != nil {
-		t.Fatalf("DecryptPayload (real): %v", err)
+		t.Fatalf("Decrypt (real, block %d): %v", realBlock, err)
+	}
+	if _, err := tags.DecryptPayload(tags.DeriveBlockKey(ssBob, realBlock+1), realMatches[0].Entry.Ctxt); err == nil {
+		t.Error("the next block's key opened this block's payload")
 	}
 	if tags.IsDummyPayload(decrypted) {
 		t.Error("real tag payload incorrectly identified as dummy")
@@ -426,8 +441,8 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	// ═════════════════════════════════════════════════════════════════════════
 	t.Log("── Phase 3: Dummy Tag via /relay/tag (cover traffic) ──")
 
-	dummyStartBlock, dummyWindowTags, dummyCtxt, err := tags.PrepareTagWithWindow(
-		client, 3, bobPkSpend, ssAlice, channelKey, []byte("enygma-dummy-v1"))
+	dummyStartBlock, dummyWindowTags, dummyCtxts, err := tags.PrepareTagWithWindow(
+		client, 3, bobPkSpend, ssAlice, []byte("enygma-dummy-v1"))
 	if err != nil {
 		t.Fatalf("PrepareTagWithWindow (dummy): %v", err)
 	}
@@ -445,7 +460,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	status = postJSON(t, "/relay/tag", relayTagReq{
 		Tags:       hexDummyTags,
 		StartBlock: dummyStartBlock,
-		Ctxt:       toHex(dummyCtxt),
+		Ctxts:      hexAll(dummyCtxts),
 	}, &dummyResp)
 
 	if status != http.StatusOK {
@@ -477,10 +492,9 @@ func TestFullFlowViaRelayer(t *testing.T) {
 		t.Fatalf("Bob expected 1 dummy tag match, got %d", len(dummyMatches))
 	}
 
-	decryptedDummy, err := tags.DecryptPayload(
-		tags.DeriveChannelKey(ssBob), dummyMatches[0].Entry.Ctxt)
+	decryptedDummy, err := dummyMatches[0].Decrypt()
 	if err != nil {
-		t.Fatalf("DecryptPayload (dummy): %v", err)
+		t.Fatalf("Decrypt (dummy): %v", err)
 	}
 	if !tags.IsDummyPayload(decryptedDummy) {
 		t.Errorf("expected dummy payload, got %q", string(decryptedDummy))
@@ -636,7 +650,6 @@ func TestScanCursor(t *testing.T) {
 		ss[i] = 0xCC
 	}
 	bobPkSpend := big.NewInt(0xB0B)
-	channelKey := tags.DeriveChannelKey(ss)
 	channels := []tags.Channel{{SharedSecret: ss, PkSpend: bobPkSpend}}
 
 	aliceDK, _ := mlkem.GenerateKey768()
@@ -647,12 +660,12 @@ func TestScanCursor(t *testing.T) {
 
 	currentBlock, _ := client.BlockNumber(bg)
 	tag1, _ := tags.DeriveTag(currentBlock+1, bobPkSpend, ss)
-	ctxt1, _ := tags.EncryptPayload(channelKey, []byte("payment-A"))
+	ctxt1, _ := tags.EncryptPayload(tags.DeriveBlockKey(ss, currentBlock+1), []byte("payment-A"))
 	block1 := publishTagDirect(t, client, aliceAuth, tagRegAddr, tag1, ctxt1)
 
 	currentBlock, _ = client.BlockNumber(bg)
 	tag2, _ := tags.DeriveTag(currentBlock+1, bobPkSpend, ss)
-	ctxt2, _ := tags.EncryptPayload(channelKey, []byte("payment-B"))
+	ctxt2, _ := tags.EncryptPayload(tags.DeriveBlockKey(ss, currentBlock+1), []byte("payment-B"))
 	block2 := publishTagDirect(t, client, aliceAuth, tagRegAddr, tag2, ctxt2)
 	t.Logf("  tags in blocks %d and %d", block1, block2)
 
