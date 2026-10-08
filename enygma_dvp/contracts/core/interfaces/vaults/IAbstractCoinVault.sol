@@ -71,6 +71,9 @@ interface IAbstractCoinVault {
     error InvalidNullifier();
     error InvalidNumberOfInputs();
     error InvalidNumberOfOutputs();
+    // A legacy ERC721 ownership proof for a note outside tree 0 (see
+    // Erc721CoinVault.checkReceiptConditions).
+    error LegacyProofOutsideFirstTree();
     error WrongNumberOfIdentifiers();
     error NotImplemented();
     error FungibilityMismatch();
