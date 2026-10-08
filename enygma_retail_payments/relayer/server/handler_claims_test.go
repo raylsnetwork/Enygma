@@ -148,6 +148,9 @@ func TestWaitMined_MinedReleasesClaims(t *testing.T) {
 	}
 }
 
+// sentTxData holds the calldata of the last transaction txNode accepted.
+var sentTxData atomic.Value
+
 // txNode is a JSON-RPC node that accepts transactions and reports no receipt
 // until mined is set.
 func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
@@ -184,6 +187,7 @@ func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
 			_ = json.Unmarshal(req.Params[0], &raw)
 			var tx types.Transaction
 			_ = tx.UnmarshalBinary(common.FromHex(raw))
+			sentTxData.Store(tx.Data())
 			result = tx.Hash().Hex()
 		case "eth_getTransactionReceipt":
 			if mined.Load() {
@@ -289,11 +293,11 @@ func TestRelayTag_WindowClaimsEveryTag(t *testing.T) {
 	tagA, tagB := "0x"+strings.Repeat("a1", 32), "0x"+strings.Repeat("b2", 32)
 
 	// The node reports block 1, so the publication targets block 2 = startBlock.
-	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{tagA, tagB}, StartBlock: 2, Ctxt: "0x01"}); w.Code != http.StatusAccepted {
+	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{tagA, tagB}, StartBlock: 2, Ctxts: []string{"0x01", "0x02"}}); w.Code != http.StatusAccepted {
 		t.Fatalf("unmined window publication: got %d, want 202: %s", w.Code, w.Body.String())
 	}
 	other := "0x" + strings.Repeat("c3", 32)
-	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{other, tagB}, StartBlock: 1, Ctxt: "0x01"}); w.Code != http.StatusConflict {
+	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{other, tagB}, StartBlock: 1, Ctxts: []string{"0x01", "0x02"}}); w.Code != http.StatusConflict {
 		t.Fatalf("shifted window sharing a pending tag: got %d, want 409", w.Code)
 	}
 }
@@ -304,7 +308,7 @@ func TestRelayTag_RejectsMalformedWindowTagBeforeClaiming(t *testing.T) {
 	var mined atomic.Bool
 	h, r := tagHandler(t, &mined)
 	noteKey := "nf:0x00000000000000000000000000000000000000a1:0:42"
-	w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{noteKey, "0x" + strings.Repeat("ab", 32)}, StartBlock: 3, Ctxt: "0x01"})
+	w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: []string{noteKey, "0x" + strings.Repeat("ab", 32)}, StartBlock: 3, Ctxts: []string{"0x01", "0x02"}})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("window with a malformed tag: got %d, want 400: %s", w.Code, w.Body.String())
 	}
@@ -326,5 +330,49 @@ func TestRelayChannel_TimeoutHoldsClaimForAnySpelling(t *testing.T) {
 	req.C1 = strings.ToUpper(c1)
 	if w := postJSON(r, "/relay/channel", req); w.Code != http.StatusConflict {
 		t.Fatalf("same c1 in another spelling while pending: got %d, want 409", w.Code)
+	}
+}
+
+// The payload is under a per-block key, so in window mode the relayer must
+// publish the ctxt for the same block as the tag it picks: ctxts[i] with tags[i].
+func TestRelayTag_WindowPublishesTheCtxtOfTheChosenBlock(t *testing.T) {
+	var mined atomic.Bool
+	h, r := tagHandler(t, &mined)
+	tags := []string{"0x" + strings.Repeat("a1", 32), "0x" + strings.Repeat("b2", 32), "0x" + strings.Repeat("c3", 32)}
+	ctxts := []string{"0x" + strings.Repeat("11", 40), "0x" + strings.Repeat("22", 40), "0x" + strings.Repeat("33", 40)}
+
+	// The node reports block 1, so the publication targets block 2: index 1.
+	if w := postJSON(r, "/relay/tag", RelayTagRequest{Tags: tags, StartBlock: 1, Ctxts: ctxts}); w.Code != http.StatusAccepted {
+		t.Fatalf("window publication: got %d, want 202: %s", w.Code, w.Body.String())
+	}
+	data, _ := sentTxData.Load().([]byte)
+	args, err := h.tagRegistryABI.Methods["publishTag"].Inputs.Unpack(data[4:])
+	if err != nil {
+		t.Fatalf("decode publishTag call: %v", err)
+	}
+	gotTag, gotCtxt := args[0].([32]byte), args[1].([]byte)
+	if common.Bytes2Hex(gotTag[:]) != strings.Repeat("b2", 32) {
+		t.Fatalf("published tag %x, want tags[1]", gotTag)
+	}
+	if common.Bytes2Hex(gotCtxt) != strings.Repeat("22", 40) {
+		t.Fatalf("published ctxt %x, want ctxts[1] (the chosen block's)", gotCtxt)
+	}
+}
+
+// Window mode needs one ctxt per tag; single mode takes exactly one ctxt.
+func TestRelayTag_CtxtsMustMatchTheMode(t *testing.T) {
+	var mined atomic.Bool
+	_, r := tagHandler(t, &mined)
+	tagA, tagB := "0x"+strings.Repeat("a1", 32), "0x"+strings.Repeat("b2", 32)
+	for name, req := range map[string]RelayTagRequest{
+		"window with a single ctxt":      {Tags: []string{tagA, tagB}, StartBlock: 2, Ctxt: "0x01"},
+		"window with too few ctxts":      {Tags: []string{tagA, tagB}, StartBlock: 2, Ctxts: []string{"0x01"}},
+		"window with a malformed ctxt":   {Tags: []string{tagA, tagB}, StartBlock: 2, Ctxts: []string{"0x01", "zz"}},
+		"single tag with ctxts":          {Tag: tagA, Ctxts: []string{"0x01"}},
+		"single tag with no ctxt at all": {Tag: tagA},
+	} {
+		if w := postJSON(r, "/relay/tag", req); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400: %s", name, w.Code, w.Body.String())
+		}
 	}
 }
