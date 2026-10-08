@@ -11,34 +11,19 @@ func Nullifier(api frontend.API, privateKey frontend.Variable, pathIndex fronten
 	return pos.Poseidon(api, []frontend.Variable{privateKey, pathIndex})
 }
 
-// NullifierBound computes a nullifier bound to a specific contract deployment.
-// Used by Payment.go, PaymentFee.go, PaymentRelayerFeePublic.go and
-// UsdrFee.go — their StContractAddress public input was previously
-// completely unconstrained (same bug class as PrivateMintCircuit's pre-fix
-// ContractAddress, "Vuln 11") since they constrained their nullifier with
-// the plain Nullifier() above instead of this one.
+// NullifierTree computes the tree-bound nullifier every circuit spending from a
+// vault must use:
 //
-//	nf = Poseidon(sk, leafIndex, contractAddress)
+//	nf = Poseidon(sk, treeNumber*2^treeDepth + pathIndex)
 //
-// Including contractAddress prevents cross-deployment proof replay: a proof
-// generated for vault A produces a different nullifier than the same note
-// would produce for vault B — the property this primitive exists for.
-func NullifierBound(api frontend.API, privateKey, pathIndex, contractAddress frontend.Variable) frontend.Variable {
-	return pos.Poseidon(api, []frontend.Variable{privateKey, pathIndex, contractAddress})
-}
-
-// NullifierBoundTree additionally binds StTreeNumbers (also previously
-// completely unconstrained in Payment.go/PaymentFee.go/
-// PaymentRelayerFeePublic.go/UsdrFee.go):
-//
-//	nf = Poseidon(sk, treeNumber*2^treeDepth + pathIndex, contractAddress)
-//
-// Matches core.GetNullifierBoundTree's Go-side formula exactly — the same
-// treeNumber*capacity+pathIndex folding core.GetNullifierWithTree already
-// uses ("HIGH-1 fix": Poseidon(sk, pathIndex) alone is identical for the
-// same slot in two different trees, enabling cross-tree double-spend).
-func NullifierBoundTree(api frontend.API, privateKey, treeNumber, pathIndex frontend.Variable, treeDepth int, contractAddress frontend.Variable) frontend.Variable {
+// Matches core.GetNullifierWithTree and enygma_dvp's NullifierTree exactly. The
+// vault records spends by nullifier value only, so every circuit that can
+// spend a given commitment (Payment family, DvpInitiator, DvpDestination) must
+// derive the same value from it: two formulas would give one note two unspent
+// nullifiers and let it be spent once through each. The vault address is bound
+// separately in each circuit (StContractAddress), not through the nullifier.
+func NullifierTree(api frontend.API, privateKey, treeNumber, pathIndex frontend.Variable, treeDepth int) frontend.Variable {
 	capacity := new(big.Int).Lsh(big.NewInt(1), uint(treeDepth))
 	globalIdx := api.Add(api.Mul(treeNumber, capacity), pathIndex)
-	return pos.Poseidon(api, []frontend.Variable{privateKey, globalIdx, contractAddress})
+	return pos.Poseidon(api, []frontend.Variable{privateKey, globalIdx})
 }

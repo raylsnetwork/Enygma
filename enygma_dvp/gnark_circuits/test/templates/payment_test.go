@@ -11,12 +11,12 @@
 //   - StTreeNumbers[i] was completely unconstrained (a prover could pick any
 //     tree number independent of which tree their note actually lives in).
 //
-// Both are now bound into the nullifier via NullifierBoundTree. Each
-// negative test below tampers with exactly ONE field of an otherwise-valid
-// witness and asserts the prover fails — if either binding regresses (e.g.
-// someone "simplifies" the nullifier formula back to the plain Nullifier()),
-// these tests catch it immediately instead of requiring a full Picus run or
-// another manual audit pass.
+// StTreeNumbers is bound through the tree-bound nullifier, Poseidon(sk,
+// treeNumber*2^depth + pathIndex) — the formula every circuit spending from a
+// vault must share (see TestPaymentCircuit_VaultBoundNullifier_Fails) — and
+// StContractAddress by its own constraint. Each negative test tampers with
+// exactly ONE field of an otherwise-valid witness; the address test checks the
+// proof itself does not verify with another address.
 package test
 
 import (
@@ -88,7 +88,7 @@ func buildValidPaymentWitness(t *testing.T) *paymentTestWitness {
 
 	// globalIdx = treeNumber*2^depth + pathIndices = 0*4 + 0 = 0
 	globalIdx := big.NewInt(0)
-	w.nullifier, err = poseidon.Hash([]*big.Int{w.sk, globalIdx, w.contractAddress})
+	w.nullifier, err = poseidon.Hash([]*big.Int{w.sk, globalIdx})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,16 +181,42 @@ func TestPaymentCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 // TestPaymentCircuit_TamperedContractAddress_Fails locks in the
-// StContractAddress fix: changing StContractAddress alone, without
-// recomputing the nullifier to match, must fail — before the fix,
-// StContractAddress was never referenced anywhere in Define() and this
-// witness would have satisfied the circuit regardless.
+// StContractAddress binding: a proof made for one vault address must not
+// verify with another (before the fix StContractAddress was referenced nowhere
+// in Define(), so it could be rewritten freely).
 func TestPaymentCircuit_TamperedContractAddress_Fails(t *testing.T) {
+	w := buildValidPaymentWitness(t)
+	wc := w.circuit()
+	wc.Config = paymentTestConfig()
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentCircuit(), wc, &tampered)
+}
+
+func TestPaymentCircuit_ZeroContractAddress_Fails(t *testing.T) {
 	assert := test.NewAssert(t)
 	w := buildValidPaymentWitness(t)
 	wc := w.circuit()
 	wc.Config = paymentTestConfig()
-	wc.StContractAddress = big.NewInt(0xDEAD) // nullifier still bound to 0xABCD
+	wc.StContractAddress = big.NewInt(0)
+	assert.ProverFailed(emptyPaymentCircuit(), wc, test.WithCurves(ecc.BN254))
+}
+
+// TestPaymentCircuit_VaultBoundNullifier_Fails locks the nullifier to the
+// formula DvpInitiator/DvpDestination use, Poseidon(sk, globalIdx). The vault
+// records spends by nullifier value only, so a payment nullifier that also
+// hashed the vault address gave one note two unspent nullifiers, and it could
+// be spent once through a payment and again through a DvP proof.
+func TestPaymentCircuit_VaultBoundNullifier_Fails(t *testing.T) {
+	assert := test.NewAssert(t)
+	w := buildValidPaymentWitness(t)
+	vaultBound, err := poseidon.Hash([]*big.Int{w.sk, big.NewInt(0), w.contractAddress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.nullifier = vaultBound
+	wc := w.circuit()
+	wc.Config = paymentTestConfig()
 	assert.ProverFailed(emptyPaymentCircuit(), wc, test.WithCurves(ecc.BN254))
 }
 
