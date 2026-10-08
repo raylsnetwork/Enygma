@@ -62,7 +62,7 @@ func buildFeeFamilyInputFixture(t *testing.T, tokenId int64) *feeFamilyInputFixt
 	f.contractAddress = big.NewInt(0xABCD)
 
 	globalIdx := big.NewInt(0) // treeNumber*2^depth + pathIndices = 0
-	f.nullifier, err = poseidon.Hash([]*big.Int{f.sk, globalIdx, f.contractAddress})
+	f.nullifier, err = poseidon.Hash([]*big.Int{f.sk, globalIdx})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,16 +159,54 @@ func TestPaymentFeeCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 func TestPaymentFeeCircuit_TamperedContractAddress_Fails(t *testing.T) {
-	assert := test.NewAssert(t)
 	wc, _ := buildValidPaymentFeeWitness(t)
-	wc.StContractAddress = big.NewInt(0xDEAD)
-	assert.ProverFailed(emptyPaymentFeeCircuit(), wc, test.WithCurves(ecc.BN254))
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentFeeCircuit(), wc, &tampered)
 }
 
 func TestPaymentFeeCircuit_TamperedTreeNumber_Fails(t *testing.T) {
 	assert := test.NewAssert(t)
 	wc, _ := buildValidPaymentFeeWitness(t)
 	wc.StTreeNumbers = []frontend.Variable{big.NewInt(1)}
+	assert.ProverFailed(emptyPaymentFeeCircuit(), wc, test.WithCurves(ecc.BN254))
+}
+
+// PaymentFee's StFee is a public input used only in
+//
+//	sum(valuesIn) == sum(valuesOut) + StFee   (mod Fr)
+//
+// so without a range check on StFee a prover can choose StFee = Fr - d and spend
+// a note of value v into outputs worth v + d: every output value is individually
+// range-checked, but the fee wraps around the field.
+func TestPaymentFeeCircuit_StFeeWraparoundMintsValue_Fails(t *testing.T) {
+	assert := test.NewAssert(t)
+	wc, f := buildValidPaymentFeeWitness(t)
+
+	// Inputs are worth 100. Make the outputs worth 150 + 40 = 190 and choose
+	// StFee so the sum still balances modulo Fr: 190 + (Fr - 90) == 100 (mod Fr).
+	pkOut0, err := poseidon.Hash([]*big.Int{big.NewInt(999)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saltOut0 := big.NewInt(444)
+	inflatedOut0 := big.NewInt(150)
+	cmt0, err := poseidon.Hash([]*big.Int{pkOut0, saltOut0, inflatedOut0, f.tokenId})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc.StCommitmentsOut = []frontend.Variable{cmt0, wc.StCommitmentsOut[1]}
+	wc.WtValuesOut = []frontend.Variable{inflatedOut0, wc.WtValuesOut[1]}
+	wc.StFee = new(big.Int).Sub(ecc.BN254.ScalarField(), big.NewInt(90))
+
+	assert.ProverFailed(emptyPaymentFeeCircuit(), wc, test.WithCurves(ecc.BN254))
+}
+
+func TestPaymentFeeCircuit_StFeeAtTheRangeBound_Fails(t *testing.T) {
+	assert := test.NewAssert(t)
+	wc, _ := buildValidPaymentFeeWitness(t)
+	// A fee equal to TmRange (10^36) is out of range whatever else balances.
+	wc.StFee = new(big.Int).Set(new(big.Int).Exp(big.NewInt(10), big.NewInt(36), nil))
 	assert.ProverFailed(emptyPaymentFeeCircuit(), wc, test.WithCurves(ecc.BN254))
 }
 
@@ -267,10 +305,10 @@ func TestPaymentRelayerFeePublicCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 func TestPaymentRelayerFeePublicCircuit_TamperedContractAddress_Fails(t *testing.T) {
-	assert := test.NewAssert(t)
 	wc := buildValidPaymentRelayerFeePublicWitness(t)
-	wc.StContractAddress = big.NewInt(0xDEAD)
-	assert.ProverFailed(emptyPaymentRelayerFeePublicCircuit(), wc, test.WithCurves(ecc.BN254))
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentRelayerFeePublicCircuit(), wc, &tampered)
 }
 
 func TestPaymentRelayerFeePublicCircuit_TamperedTreeNumber_Fails(t *testing.T) {
@@ -362,10 +400,10 @@ func TestUsdrFeeCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 func TestUsdrFeeCircuit_TamperedContractAddress_Fails(t *testing.T) {
-	assert := test.NewAssert(t)
 	wc := buildValidUsdrFeeWitness(t)
-	wc.StContractAddress = big.NewInt(0xDEAD)
-	assert.ProverFailed(emptyUsdrFeeCircuit(), wc, test.WithCurves(ecc.BN254))
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyUsdrFeeCircuit(), wc, &tampered)
 }
 
 func TestUsdrFeeCircuit_TamperedTreeNumber_Fails(t *testing.T) {

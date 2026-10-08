@@ -80,8 +80,13 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		// StContractAddress/StTreeNumbers fix — see Payment.go for the full rationale.
-		nullifier := primitives.NullifierBoundTree(api, circuit.WtPrivateKeysIn[i], circuit.StTreeNumbers[i], circuit.WtPathIndices[i], circuit.Config.TmMerkleTreeDepth, circuit.StContractAddress)
+		// The note's nullifier: Poseidon(sk, treeNumber*2^depth + pathIndex), binding
+		// StTreeNumbers. It must be the same formula as every other circuit that
+		// spends from this vault (DvpInitiator, DvpDestination): the vault records
+		// spends by nullifier value only, so two formulas would give one note two
+		// unspent nullifiers and let it be spent once through each. The vault
+		// address is bound separately below, not through the nullifier.
+		nullifier := primitives.NullifierTree(api, circuit.WtPrivateKeysIn[i], circuit.StTreeNumbers[i], circuit.WtPathIndices[i], circuit.Config.TmMerkleTreeDepth)
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
@@ -130,7 +135,22 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 	}
 
 	// Conservation: outputs + fee must equal inputs — fee is absorbed, not an output.
+	// StFee is public and is used only in the conservation equation below, which
+	// holds in the field. Every input and output value is range-checked, but StFee
+	// was not: a prover could pick StFee = Fr - d and satisfy
+	// sum(out) + StFee == sum(in) (mod Fr) with outputs worth d more than the
+	// inputs, creating value from nothing. Bound it like every note value: an
+	// honest fee is part of an input note's value, so it is below TmRange.
+	// (Same check as enygma_dvp's PaymentFee; the vault's MAX_FEE_AMOUNT bound
+	// also enforces it on-chain.)
+	api.AssertIsEqual(cmp.IsLess(api, circuit.StFee, circuit.Config.TmRange), 1)
+
 	api.AssertIsEqual(api.Add(outputsTotal, circuit.StFee), inputsTotal)
+
+	// Bind StContractAddress (the vault address, checked on-chain against the
+	// verifying vault): a public input that appears in no constraint is not
+	// bound by the proof, so it would be free to rewrite.
+	api.AssertIsDifferent(circuit.StContractAddress, 0)
 
 	return nil
 }

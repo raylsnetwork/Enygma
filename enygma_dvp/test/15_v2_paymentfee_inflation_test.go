@@ -146,9 +146,9 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 	inflated := big.NewInt(1010)
 	d := depositIntoVault(t, ctx, client, vault, erc20, vaultAddr, owner, deposit, tokenId, merkleDepth)
 
-	nullifier, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth, vaultAddrBig)
+	nullifier, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth)
 	if err != nil {
-		t.Fatalf("GetNullifierBoundTree: %v", err)
+		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 	inflSalt, _ := core.RandomInField()
 	changeSalt, _ := core.RandomInField()
@@ -229,9 +229,9 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateProof (inflated note): %v", err)
 	}
-	nf2, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(mp.TreeNumber)), mp.Indices, merkleDepth, vaultAddrBig)
+	nf2, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(mp.TreeNumber)), mp.Indices, merkleDepth)
 	if err != nil {
-		t.Fatalf("GetNullifierBoundTree: %v", err)
+		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 	wdCmt, err := core.Erc20CommitmentV2(new(big.Int).SetBytes(recipient.Bytes()), big.NewInt(0), inflated, tokenId)
 	if err != nil {
@@ -319,9 +319,9 @@ func TestV2PaymentFee_HonestFeeStillWorks(t *testing.T) {
 
 	deposit, pay, change, fee := big.NewInt(10), big.NewInt(6), big.NewInt(3), big.NewInt(1)
 	d := depositIntoVault(t, ctx, client, vault, erc20, vaultAddr, owner, deposit, tokenId, merkleDepth)
-	nullifier, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth, vaultAddrBig)
+	nullifier, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth)
 	if err != nil {
-		t.Fatalf("GetNullifierBoundTree: %v", err)
+		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 	bob, err := core.NewSpendKeyPair()
 	if err != nil {
