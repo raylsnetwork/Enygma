@@ -377,13 +377,12 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		d := depositIntoVault(t, ctx, client, vault, erc20, vaultAddr, owner, depositAmt, tokenId, merkleDepth)
 
-		// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
-		// vault AND tree, matching the circuit-side NullifierBoundTree fix
+		// The tree-bound nullifier every circuit spending from this vault uses.
 		// (StContractAddress and StTreeNumbers were both previously
 		// unconstrained).
-		nullifier, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth, new(big.Int).SetBytes(vaultAddr.Bytes()))
+		nullifier, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth)
 		if err != nil {
-			t.Fatalf("GetNullifierBound: %v", err)
+			t.Fatalf("GetNullifierWithTree: %v", err)
 		}
 
 		ssBob, ctxtBob, err := core.Encapsulate(bobView.EncapsKey)
@@ -509,11 +508,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		d := depositIntoVault(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, owner, depositAmt, usdrTokenId, merkleDepth)
 
-		// GetNullifierBoundTree (not GetNullifier) — binds the proof to this
-		// vault AND tree, matching the circuit-side NullifierBoundTree fix.
-		nullifier, err := core.GetNullifierBoundTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth, new(big.Int).SetBytes(usdrVaultAddr.Bytes()))
+		// The tree-bound nullifier every circuit spending from this vault uses.
+		nullifier, err := core.GetNullifierWithTree(d.spend.PrivateKey, big.NewInt(int64(d.merkleProof.TreeNumber)), d.merkleProof.Indices, merkleDepth)
 		if err != nil {
-			t.Fatalf("GetNullifierBound (usdr): %v", err)
+			t.Fatalf("GetNullifierWithTree (usdr): %v", err)
 		}
 
 		fSalt, err := core.RandomInField()

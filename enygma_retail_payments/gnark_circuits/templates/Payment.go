@@ -75,13 +75,13 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 			api.AssertIsEqual(api.Mul(pkDiff, enable), 0)
 		}
 
-		// StContractAddress/StTreeNumbers fix: switch to NullifierBoundTree so
-		// neither is a completely unconstrained public input anymore — a
-		// prover could otherwise pick any vault address AND any tree number at
-		// proof-generation time (same bug class as PrivateMintCircuit's
-		// pre-fix ContractAddress, "Vuln 11"). Does not change statement
-		// shape/length.
-		nullifier := primitives.NullifierBoundTree(api, circuit.WtPrivateKeysIn[i], circuit.StTreeNumbers[i], circuit.WtPathIndices[i], circuit.Config.TmMerkleTreeDepth, circuit.StContractAddress)
+		// The note's nullifier: Poseidon(sk, treeNumber*2^depth + pathIndex), binding
+		// StTreeNumbers. It must be the same formula as every other circuit that
+		// spends from this vault (DvpInitiator, DvpDestination): the vault records
+		// spends by nullifier value only, so two formulas would give one note two
+		// unspent nullifiers and let it be spent once through each. The vault
+		// address is bound separately below, not through the nullifier.
+		nullifier := primitives.NullifierTree(api, circuit.WtPrivateKeysIn[i], circuit.StTreeNumbers[i], circuit.WtPathIndices[i], circuit.Config.TmMerkleTreeDepth)
 		nullifierDiff := api.Sub(nullifier, circuit.StNullifiers[i])
 		api.AssertIsEqual(api.Mul(nullifierDiff, enable), 0)
 		api.AssertIsEqual(api.Mul(circuit.StNullifiers[i], isZero), 0)
@@ -136,6 +136,11 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 
 	// Conservation: total inputs must equal total outputs
 	api.AssertIsEqual(outputsTotal, inputsTotal)
+
+	// Bind StContractAddress (the vault address, checked on-chain against the
+	// verifying vault): a public input that appears in no constraint is not
+	// bound by the proof, so it would be free to rewrite.
+	api.AssertIsDifferent(circuit.StContractAddress, 0)
 
 	return nil
 }

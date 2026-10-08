@@ -46,6 +46,10 @@ contract Erc20CoinVault is AbstractCoinVault {
     // gets its own dispatch case below rather than colliding with either.
     // Fee is paid (output[0], a real spendable note), not burned like FEE's.
     uint256 public constant VK_ID_ERC20_USDR = 4;
+    // Former 10-input join-split slot. No longer accepted: its circuit was
+    // removed, and its nullifier, Poseidon(sk, pathIndex), differs from the
+    // tree-bound one every current circuit uses for notes past the first tree,
+    // which would let one note be spent once through each.
     uint256 public constant VK_ID_ERC20_10INPUT = 6;
     // DvP Initiator circuit: circuit id=24 in enygmadvp.config.json → VK slot 23 (0-indexed)
     uint256 public constant VK_ID_DVP_INITIATOR = 23;
@@ -393,7 +397,7 @@ contract Erc20CoinVault is AbstractCoinVault {
             }
         }
 
-        if (receipt.numberOfInputs != 1 && receipt.numberOfInputs != 2 && receipt.numberOfInputs != 10) {
+        if (receipt.numberOfInputs != 1 && receipt.numberOfInputs != 2) {
             revert InvalidNumberOfInputs();
         }
         if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
@@ -449,16 +453,10 @@ contract Erc20CoinVault is AbstractCoinVault {
                 receipt.proof,
                 receipt.statement
             )) revert InvalidProof();
-        } else if (receipt.numberOfInputs == 2) {
+        } else {
             // 2-input/2-output circuit uses its own VK slot — VULN-2 fix.
             if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_JOINSPLIT_2INPUT,
-                receipt.proof,
-                receipt.statement
-            )) revert InvalidProof();
-        } else {
-            if (!IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_10INPUT,
                 receipt.proof,
                 receipt.statement
             )) revert InvalidProof();

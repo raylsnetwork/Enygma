@@ -218,15 +218,13 @@ func main() {
 	}
 	log.Printf("  Block:            %d (gas used: %d)", receipt.BlockNumber.Uint64(), receipt.GasUsed)
 
-	// Fix Vuln 3: initializeUsdrBalance now takes a pre-computed commitment
-	// point instead of a raw randomness scalar — same rationale as
-	// registerAccount() above: computing Com(0, randomness) on chain from
-	// a plaintext randomness argument would expose the USDr blinding
-	// factor to any chain observer via calldata.
-	initialUsdrCommitX, initialUsdrCommitY, err := instance.PedCom(&bind.CallOpts{}, big.NewInt(0), usdrRandomness)
-	if err != nil {
-		log.Fatalf("pedCom(0, usdrRandomness): %v", err)
-	}
+	// Fix Vuln 3: initializeUsdrBalance takes a pre-computed commitment point
+	// instead of a raw randomness scalar, so the USDr blinding factor never
+	// leaves this process. Com(0, r) = r*H is computed here, like
+	// registerAccount's above: asking the contract's pedCom() for it would send
+	// r in plaintext to the RPC node (an eth_call), which may log requests.
+	usdrCommitPt := babyjub.NewPoint().Mul(usdrRandomness, H)
+	initialUsdrCommitX, initialUsdrCommitY := usdrCommitPt.X, usdrCommitPt.Y
 
 	// Fresh nonce for the next transaction from the same owner key — auth's
 	// Nonce isn't set explicitly (go-ethereum fetches it per-call), so this

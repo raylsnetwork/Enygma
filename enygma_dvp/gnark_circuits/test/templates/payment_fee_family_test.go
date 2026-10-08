@@ -62,7 +62,7 @@ func buildFeeFamilyInputFixture(t *testing.T, tokenId int64) *feeFamilyInputFixt
 	f.contractAddress = big.NewInt(0xABCD)
 
 	globalIdx := big.NewInt(0) // treeNumber*2^depth + pathIndices = 0
-	f.nullifier, err = poseidon.Hash([]*big.Int{f.sk, globalIdx, f.contractAddress})
+	f.nullifier, err = poseidon.Hash([]*big.Int{f.sk, globalIdx})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,10 +159,10 @@ func TestPaymentFeeCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 func TestPaymentFeeCircuit_TamperedContractAddress_Fails(t *testing.T) {
-	assert := test.NewAssert(t)
 	wc, _ := buildValidPaymentFeeWitness(t)
-	wc.StContractAddress = big.NewInt(0xDEAD)
-	assert.ProverFailed(emptyPaymentFeeCircuit(), wc, test.WithCurves(ecc.BN254))
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentFeeCircuit(), wc, &tampered)
 }
 
 func TestPaymentFeeCircuit_TamperedTreeNumber_Fails(t *testing.T) {
@@ -305,10 +305,10 @@ func TestPaymentRelayerFeePublicCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 func TestPaymentRelayerFeePublicCircuit_TamperedContractAddress_Fails(t *testing.T) {
-	assert := test.NewAssert(t)
 	wc := buildValidPaymentRelayerFeePublicWitness(t)
-	wc.StContractAddress = big.NewInt(0xDEAD)
-	assert.ProverFailed(emptyPaymentRelayerFeePublicCircuit(), wc, test.WithCurves(ecc.BN254))
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentRelayerFeePublicCircuit(), wc, &tampered)
 }
 
 func TestPaymentRelayerFeePublicCircuit_TamperedTreeNumber_Fails(t *testing.T) {
@@ -400,10 +400,10 @@ func TestUsdrFeeCircuit_ValidWitness_Succeeds(t *testing.T) {
 }
 
 func TestUsdrFeeCircuit_TamperedContractAddress_Fails(t *testing.T) {
-	assert := test.NewAssert(t)
 	wc := buildValidUsdrFeeWitness(t)
-	wc.StContractAddress = big.NewInt(0xDEAD)
-	assert.ProverFailed(emptyUsdrFeeCircuit(), wc, test.WithCurves(ecc.BN254))
+	tampered := *wc
+	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyUsdrFeeCircuit(), wc, &tampered)
 }
 
 func TestUsdrFeeCircuit_TamperedTreeNumber_Fails(t *testing.T) {
