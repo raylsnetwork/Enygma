@@ -130,6 +130,7 @@ func ScanBlocksFromCursor(
 					BlockNumber:  log.BlockNumber,
 					Entry:        TagEntry{Publisher: publisher, Tag: tag, Ctxt: ctxt},
 					SharedSecret: ch.SharedSecret,
+					PkSpend:      ch.PkSpend,
 				})
 			}
 		}

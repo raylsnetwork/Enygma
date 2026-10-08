@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/big"
@@ -54,12 +55,18 @@ func NewPaymentClient(baseURL string) *dvpcore.GnarkClient {
 
 // ── Shared-secret key derivation (used by payment and tag system) ─────────────
 
-// DeriveChannelKey derives a 32-byte AES key from a shared secret using HKDF-SHA256.
-// Used by the private-tag system to encrypt per-channel payloads.
+// DeriveBlockKey derives the 32-byte AES key for a channel payload published
+// in blockNumber to the recipient whose spend key is recipientPkSpend, using
+// HKDF-SHA256. Like the tag, it changes every block and with the direction,
+// so one block's key opens only that block's payload to that recipient.
+// Identical to the private-tag system's tags.DeriveBlockKey.
 //
-//	key = HKDF-SHA256(sharedSecret, salt=nil, info="enygma-channel-key-v1")
-func DeriveChannelKey(sharedSecret []byte) [32]byte {
-	r := hkdf.New(sha256.New, sharedSecret, nil, []byte("enygma-channel-key-v1"))
+//	key = HKDF-SHA256(sharedSecret, salt=nil,
+//	        info="enygma-block-key-v1" || uint64_be(blockNumber) || be32(pkRecipient))
+func DeriveBlockKey(sharedSecret []byte, blockNumber uint64, recipientPkSpend *big.Int) [32]byte {
+	info := binary.BigEndian.AppendUint64([]byte("enygma-block-key-v1"), blockNumber)
+	info = append(info, recipientPkSpend.FillBytes(make([]byte, 32))...)
+	r := hkdf.New(sha256.New, sharedSecret, nil, info)
 	var key [32]byte
 	io.ReadFull(r, key[:]) //nolint:errcheck — hkdf.Reader.Read never errors
 	return key
@@ -74,7 +81,8 @@ type ChannelNote struct {
 	Salt    *big.Int
 }
 
-// ChannelEncryptNote encrypts note data using the established channel key (AES-256-GCM).
+// ChannelEncryptNote encrypts note data under a channel block key
+// (DeriveBlockKey) with AES-256-GCM.
 //
 // Plaintext layout (96 bytes): amount(32 BE) || tokenId(32 BE) || salt(32 BE).
 // Output: nonce(12) || ciphertext+tag = 124 bytes.

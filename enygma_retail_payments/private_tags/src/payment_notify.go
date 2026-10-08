@@ -29,42 +29,41 @@ type PaymentNote struct {
 // a payment has been sent to him.
 //
 // The note payload is encoded as amount(32 BE) || tokenId(32 BE) || saltB(32 BE)
-// and encrypted with the channel key derived from the pre-established channel
-// shared secret (from Phase 2 channel setup — separate from the per-payment
-// ML-KEM shared secret).
+// and encrypted once per block of the window, each under that block's key
+// (DeriveBlockKey) from the pre-established channel shared secret (from Phase 2
+// channel setup — separate from the per-payment ML-KEM shared secret).
 //
 // Parameters:
 //   - channelSS: shared secret from the Phase 2 channel Alice established with Bob
 //   - saltB: the saltB field element from PaymentResult.SaltB — the salt used in
 //     Bob's output commitment, derived by Alice during ML-KEM encapsulation
 //
-// Returns (startBlock, tags, ctxt) ready for the relayer window-mode request.
+// Returns (startBlock, tags, ctxts) ready for the relayer window-mode request.
 func PreparePaymentTag(
 	client *ethclient.Client,
 	windowSize int,
 	recipientPkSpend *big.Int,
 	channelSS []byte,
 	amount, tokenId, saltB *big.Int,
-) (startBlock uint64, tagWindow [][32]byte, ctxt []byte, err error) {
-	channelKey := DeriveChannelKey(channelSS)
-
+) (startBlock uint64, tagWindow [][32]byte, ctxts [][]byte, err error) {
 	payload := make([]byte, 96)
 	amount.FillBytes(payload[0:32])
 	tokenId.FillBytes(payload[32:64])
 	saltB.FillBytes(payload[64:96])
 
-	return PrepareTagWithWindow(client, windowSize, recipientPkSpend, channelSS, channelKey, payload)
+	return PrepareTagWithWindow(client, windowSize, recipientPkSpend, channelSS, payload)
 }
 
-// DecryptPaymentNote decrypts a tag ctxt produced by PreparePaymentTag.
+// DecryptPaymentNote decrypts the ctxt PreparePaymentTag produced for
+// blockNumber, the block its tag was found in (ScannedTag.BlockNumber), to the
+// recipient whose spend key is recipientPkSpend.
 // Returns the PaymentNote containing amount, tokenId, and saltB.
 //
 // Bob verifies his commitment with:
 //
 //	Poseidon4(bobPkSpend, note.Salt, note.Amount, note.TokenId) == destinationCommitment
-func DecryptPaymentNote(channelSS []byte, ctxt []byte) (*PaymentNote, error) {
-	channelKey := DeriveChannelKey(channelSS)
-	plaintext, err := DecryptPayload(channelKey, ctxt)
+func DecryptPaymentNote(channelSS []byte, recipientPkSpend *big.Int, blockNumber uint64, ctxt []byte) (*PaymentNote, error) {
+	plaintext, err := DecryptPayload(DeriveBlockKey(channelSS, blockNumber, recipientPkSpend), ctxt)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt payment note: %w", err)
 	}
