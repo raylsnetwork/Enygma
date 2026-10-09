@@ -495,7 +495,11 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		if recomputed.Cmp(cmtRelayer) != 0 {
 			t.Errorf("fee commitment mismatch: got %s, want %s", recomputed, cmtRelayer)
 		}
-		t.Logf("  relayer fee note (amount=%s) confirmed spendable ✓", relayerFixedFee)
+		t.Logf("  relayer fee note (amount=%s) matches the fee the client paid ✓", relayerFixedFee)
+
+		// The relayer must be able to spend it: it learned the salt only from
+		// this request, so it has to have kept it.
+		spendFeeNoteFromRelayerStore(t, ctx, client, owner, gnarkClient, vault, vaultAddr, merkleDepth, cmtRelayer, resp.TxHash)
 	})
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -672,7 +676,9 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		if recomputed.Cmp(cmtFee) != 0 {
 			t.Errorf("USDr fee commitment mismatch: got %s, want %s", recomputed, cmtFee)
 		}
-		t.Logf("  USDr fee note (amount=%s, separate token) confirmed spendable ✓ — atomic with the main payment", usdrFixedFee)
+		t.Logf("  USDr fee note (amount=%s, separate token) matches the fee the client paid ✓ — atomic with the main payment", usdrFixedFee)
+
+		spendFeeNoteFromRelayerStore(t, ctx, client, owner, gnarkClient, usdrVault, usdrVaultAddr, merkleDepth, cmtFee, resp.TxHash)
 	})
 
 	t.Run("negative: usdrFee mismatches usdrFixedFeeAmount", func(t *testing.T) {
