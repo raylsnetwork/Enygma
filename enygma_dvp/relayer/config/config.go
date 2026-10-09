@@ -45,6 +45,13 @@ type Config struct {
 	// The fee-relay routes reject proofs whose fee is below this floor.
 	// Defaults to 0 (no floor).
 	MinFee *big.Int
+
+	// FeeNotesPath is where the relayer keeps the opening (salt, amount,
+	// tokenId) of every fee note it is paid with, appended as JSON lines.
+	// The client chooses a fee note's salt and the relayer learns it only from
+	// the request, so without this file its fee notes cannot be spent.
+	// RELAYER_FEE_NOTES_PATH, default ./fee_notes.jsonl. Back it up.
+	FeeNotesPath string
 }
 
 func Load() (*Config, error) {
@@ -55,6 +62,7 @@ func Load() (*Config, error) {
 		EnygmaDvpAddr:        getenv("RELAYER_DVP_ADDR", ""),
 		ReceiptsPath:         getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),
 		Port:                 getenv("RELAYER_PORT", "8091"),
+		FeeNotesPath:         getenv("RELAYER_FEE_NOTES_PATH", "fee_notes.jsonl"),
 	}
 
 	chainIDStr := getenv("RELAYER_CHAIN_ID", "1337")
