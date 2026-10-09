@@ -747,6 +747,20 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             // may be a relayer or a front-runner, not the note's owner) — it is
             // deliberately NOT an authorization input for claimSwapTimeout.
             uint256 commitB          = receiptUniqueId;
+            // A swap is keyed by commitB, so commitB is what must be fresh: the
+            // check above reads this leg's own message (commitA for an
+            // initiator), which is not the swap key. Without these, anyone who
+            // knows commitB's opening (the counterparty does) could open a
+            // second swap with it from another vault in the group, overwriting
+            // the pending record: the first initiator's note would stay locked
+            // with no record left to time it out, and a closed swap could be
+            // reopened.
+            if (_closedSwaps[commitB]) {
+                revert SwapClosed();
+            }
+            if (_pendingTransactions[commitB].deadline != 0) {
+                revert SwapAlreadyPending();
+            }
             uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
             // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
             // accepting it as a caller-supplied parameter. The circuit constrains it to
