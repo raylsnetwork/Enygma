@@ -21,7 +21,7 @@ jobs:
       # PR, regardless of content. The underlying gitleaks CLI itself is
       # still free/open-source (MIT) and needs no license; run it directly
       # instead of through the paid Action wrapper.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "stable"
       - name: Install gitleaks
