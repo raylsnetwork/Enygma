@@ -39,6 +39,9 @@ type mockNode struct {
 	callGas  uint64
 	sentGas  uint64
 	unmined  bool // if set, eth_getTransactionReceipt reports the tx as not mined yet
+	// callReply, if set, answers eth_call for the calldata it recognises
+	// (ok=true); anything else gets the default empty result.
+	callReply func(data []byte) (result string, ok bool)
 }
 
 func (m *mockNode) setUnmined(v bool) {
@@ -96,9 +99,21 @@ func (m *mockNode) serve(t *testing.T) *httptest.Server {
 			reply("0x539")
 		case "eth_call":
 			var msg struct {
-				Gas string `json:"gas"`
+				Gas   string `json:"gas"`
+				Data  string `json:"data"`
+				Input string `json:"input"`
 			}
 			_ = json.Unmarshal(req.Params[0], &msg)
+			if m.callReply != nil {
+				data := msg.Input
+				if data == "" {
+					data = msg.Data
+				}
+				if res, ok := m.callReply(common.FromHex(data)); ok {
+					reply(res)
+					return
+				}
+			}
 			m.mu.Lock()
 			m.callGas = new(big.Int).SetBytes(common.FromHex(msg.Gas)).Uint64()
 			m.mu.Unlock()
