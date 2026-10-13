@@ -50,3 +50,6 @@ contracts/echidna/corpus/
 
 # crytic-compile build artifact (Slither/Echidna byproduct, regenerable)
 crytic-export/
+
+# Relayer fee-note openings (salts of the fee notes it is paid with); keep and back up, never commit.
+relayer/fee_notes.jsonl

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -66,6 +67,9 @@ type Handler struct {
 	inFlight  sync.Map // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
 
 	feeSpendPubKey *big.Int // nil unless RELAYER_FEE_SPEND_PRIVATE_KEY is configured
+	// feeNotes keeps the opening of every fee note this relayer is paid with
+	// (see feeNoteStore); set whenever feeSpendPubKey is.
+	feeNotes *feeNoteStore
 }
 
 // NewHandler wires up the handler from config.
@@ -126,6 +130,7 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		client:         client,
 		txTimeout:      cfg.TxTimeout,
 		feeSpendPubKey: feeSpendPubKey,
+		feeNotes:       newFeeNoteStore(cfg.FeeNotesPath),
 	}, nil
 }
 
@@ -217,7 +222,9 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 //  4. Confirm the fee note is actually addressed to this relayer: recompute
 //     Poseidon(feeSpendPubKey, feeSalt, StFee, tokenId) and compare against
 //     statement[6] (the fee note's commitment, output 2).
-//  5. Sign and submit to EnygmaDvp.paymentWithRelayerFee().
+//  5. Keep the fee note's opening (feeNoteStore): the salt reaches the relayer
+//     only through this request, and without it the note cannot be spent.
+//  6. Sign and submit to EnygmaDvp.paymentWithRelayerFee().
 func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	if h.feeSpendPubKey == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -317,12 +324,21 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
+	if err := h.feeNotes.recordSubmitted("paymentWithRelayerFee", vaultId, cmtRelayer, feeSalt, fee, tokenId); err != nil {
+		h.settleClaims(nfKeys, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
+		return
+	}
+
 	receipt := buildProofReceipt(parsed)
 	txReceipt, err := h.transact("paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
 		relayError(c, "paymentWithRelayerFee", err)
 		return
+	}
+	if err := h.feeNotes.recordMined("paymentWithRelayerFee", vaultId, cmtRelayer, txReceipt.TxHash.Hex(), txReceipt.BlockNumber.Uint64()); err != nil {
+		log.Printf("[relay] fee note store: recording the mined fee note: %v (its opening is already kept)", err)
 	}
 	c.JSON(http.StatusOK, RelayResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
@@ -484,6 +500,12 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
+	if err := h.feeNotes.recordSubmitted("paymentWithUsdrFee", usdrVaultId, cmtFee, usdrFeeSalt, fee, tokenId); err != nil {
+		h.settleClaims(nfKeys, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
+		return
+	}
+
 	receipt := buildProofReceipt(parsed)
 	usdrReceipt := buildProofReceipt(usdrParsed)
 	txReceipt, err := h.transact("paymentWithUsdrFee",
@@ -493,6 +515,9 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	if err != nil {
 		relayError(c, "paymentWithUsdrFee", err)
 		return
+	}
+	if err := h.feeNotes.recordMined("paymentWithUsdrFee", usdrVaultId, cmtFee, txReceipt.TxHash.Hex(), txReceipt.BlockNumber.Uint64()); err != nil {
+		log.Printf("[relay] fee note store: recording the mined fee note: %v (its opening is already kept)", err)
 	}
 	c.JSON(http.StatusOK, RelayResponse{
 		TxHash:      txReceipt.TxHash.Hex(),

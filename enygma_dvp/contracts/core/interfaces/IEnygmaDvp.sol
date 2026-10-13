@@ -145,6 +145,7 @@ interface IEnygmaDvp {
     error SwapNotExpiredYet();
     error SwapDeadlineTooFar();
     error SwapDeadlineTooSoon();
+    error SwapAlreadyPending();
 
     error InvalidStatementSize();
     error InvalidVaultId();
