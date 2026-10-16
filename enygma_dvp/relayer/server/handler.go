@@ -58,10 +58,13 @@ type Handler struct {
 	cfg      *config.Config
 	dvpABI   abi.ABI
 	vaultABI abi.ABI
-	dvpAddr  common.Address
-	auth     *bind.TransactOpts
-	client   *ethclient.Client
-	txMu     sync.Mutex // serializes on-chain submissions — prevents nonce races
+	// erc20VaultABI is Erc20CoinVault's: the partial-withdraw route calls the
+	// vault directly rather than through EnygmaDvp.
+	erc20VaultABI abi.ABI
+	dvpAddr       common.Address
+	auth          *bind.TransactOpts
+	client        *ethclient.Client
+	txMu          sync.Mutex // serializes on-chain submissions — prevents nonce races
 	// txTimeout bounds how long transact waits for a receipt (0 = defaultTxTimeout).
 	txTimeout time.Duration
 	inFlight  sync.Map // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
@@ -109,6 +112,10 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load AbstractCoinVault ABI: %w", err)
 	}
+	erc20VaultABI, err := loadABIFromArtifact("../artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
+	if err != nil {
+		return nil, fmt.Errorf("load Erc20CoinVault ABI: %w", err)
+	}
 
 	// RELAYER_FEE_SPEND_PRIVATE_KEY is optional — derive the relayer's fee-note
 	// spend pubkey once at startup if it's set. Same scheme as a user's
@@ -125,6 +132,7 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		cfg:            cfg,
 		dvpABI:         dvpABI,
 		vaultABI:       vaultABI,
+		erc20VaultABI:  erc20VaultABI,
 		dvpAddr:        common.HexToAddress(dvpAddrStr),
 		auth:           auth,
 		client:         client,
@@ -338,6 +346,168 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 	if err := h.feeNotes.recordMined("paymentWithRelayerFee", vaultId, cmtRelayer, txReceipt.TxHash.Hex(), txReceipt.BlockNumber.Uint64()); err != nil {
+		log.Printf("[relay] fee note store: recording the mined fee note: %v (its opening is already kept)", err)
+	}
+	c.JSON(http.StatusOK, RelayResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
+}
+
+// withdrawMessage is the StMessage of a withdrawal proof: WITHDRAW_MESSAGE in
+// IEnygmaDvp.sol, MessageWithdraw in the gnark Payment templates.
+const withdrawMessage = 1
+
+// RelayPartialWithdraw handles POST /relay/partial_withdraw.
+//
+// Withdraws part of a note for its owner, who pays this relayer from the note
+// instead of paying gas: a PaymentRelayerFeePublic proof whose outputs are the
+// withdrawal (to Recipient), the owner's change note and this relayer's fee
+// note, settled with Erc20CoinVault.partialWithdrawWithRelayerFee.
+//
+//  1. Confirm relayer-fee relaying is configured.
+//  2. Parse the receipt; require the 1-in/3-out, 9-element shape and the
+//     withdrawal StMessage.
+//  3. Check output[0] opens to Poseidon4(uint160(Recipient), 0, Amount,
+//     TokenId), so the request says what the proof pays out.
+//  4. Enforce RELAYER_MIN_FEE against the public StFee (statement[8]) and
+//     confirm the fee note (statement[6]) is addressed to this relayer.
+//  5. Check the root and nullifier, claim the nullifier, keep the fee note's
+//     opening, then simulate and submit.
+func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+
+	var req RelayPartialWithdrawRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	parsed, err := parseReceipt(&req.Receipt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
+		return
+	}
+	if parsed.nIn != 1 || parsed.nOut != 3 || len(parsed.signal) != 9 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/3-output PaymentRelayerFeePublic receipt with a 9-element publicSignal"})
+		return
+	}
+	// A withdrawal proof carries StMessage withdrawMessage (the vault's
+	// WITHDRAW_MESSAGE); a payment proof (0) would be refused on-chain.
+	if parsed.signal[0].Cmp(big.NewInt(withdrawMessage)) != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[0] (StMessage) is %s; a withdrawal proof must carry %d", parsed.signal[0], withdrawMessage)})
+		return
+	}
+	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid vaultId: %q", req.VaultId)})
+		return
+	}
+	if !common.IsHexAddress(req.Recipient) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid recipient address: %q", req.Recipient)})
+		return
+	}
+	recipient := common.HexToAddress(req.Recipient)
+	amount, ok := new(big.Int).SetString(req.Amount, 10)
+	if !ok || amount.Sign() <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid amount: %q (must be a positive integer)", req.Amount)})
+		return
+	}
+	tokenId, ok := new(big.Int).SetString(req.TokenId, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid tokenId: %q", req.TokenId)})
+		return
+	}
+	feeSalt, ok := new(big.Int).SetString(req.FeeSalt, 10)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid feeSalt: %q", req.FeeSalt)})
+		return
+	}
+	ctBytes, err := decodeHex(req.CipherText, "cipherText")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	encBytes, err := decodeHex(req.EncTxData, "encTxData")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Statement: [msg, treeNum0, root0, nf0, cmtWithdraw, cmtChange, cmtRelayer, contractAddr, fee]
+	withdrawCmt, err := poseidon.Hash([]*big.Int{new(big.Int).SetBytes(recipient.Bytes()), big.NewInt(0), amount, tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute withdrawal commitment: %s", err)})
+		return
+	}
+	if withdrawCmt.Cmp(parsed.signal[4]) != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "statement[4] does not match Poseidon(uint160(recipient), 0, amount, tokenId) — " +
+				"the proof does not withdraw this amount to this recipient",
+		})
+		return
+	}
+
+	fee := parsed.signal[8]
+	cmtRelayer := parsed.signal[6]
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
+		})
+		return
+	}
+	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, feeSalt, fee, tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
+		return
+	}
+	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "fee note is not addressed to this relayer's published spend key " +
+				"(GET /relay/info) — statement[6] does not match " +
+				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
+		})
+		return
+	}
+
+	vaultAddr, err := h.resolveVault(vaultId)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.validateReceipt(vaultAddr, parsed); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	nfKeys, err := h.claimNullifiers(nullifierClaim{vaultAddr, parsed})
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+
+	const method = "partialWithdrawWithRelayerFee"
+	if err := h.feeNotes.recordSubmitted(method, vaultId, cmtRelayer, feeSalt, fee, tokenId); err != nil {
+		h.settleClaims(nfKeys, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
+		return
+	}
+
+	receipt := buildProofReceipt(parsed)
+	txReceipt, err := h.transactTo(vaultAddr, h.erc20VaultABI, method,
+		[]*big.Int{amount, tokenId}, recipient, receipt, ctBytes, encBytes)
+	h.settleClaims(nfKeys, err)
+	if err != nil {
+		relayError(c, method, err)
+		return
+	}
+	if err := h.feeNotes.recordMined(method, vaultId, cmtRelayer, txReceipt.TxHash.Hex(), txReceipt.BlockNumber.Uint64()); err != nil {
 		log.Printf("[relay] fee note store: recording the mined fee note: %v (its opening is already kept)", err)
 	}
 	c.JSON(http.StatusOK, RelayResponse{
@@ -943,10 +1113,16 @@ func relayError(c *gin.Context, method string, err error) {
 // the gas it uses, so a high limit costs nothing extra, and one call is much
 // cheaper than eth_estimateGas's repeated executions of two Groth16 verifications.
 func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, error) {
+	return h.transactTo(h.dvpAddr, h.dvpABI, method, args...)
+}
+
+// transactTo is transact against any contract: the partial-withdraw route
+// calls a vault, not EnygmaDvp.
+func (h *Handler) transactTo(to common.Address, contractABI abi.ABI, method string, args ...interface{}) (*types.Receipt, error) {
 	h.txMu.Lock()
 	defer h.txMu.Unlock()
 
-	data, err := h.dvpABI.Pack(method, args...)
+	data, err := contractABI.Pack(method, args...)
 	if err != nil {
 		return nil, fmt.Errorf("pack %s: %w", method, err)
 	}
@@ -955,7 +1131,7 @@ func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, 
 	defer cancel()
 	if _, err := h.client.CallContract(simCtx, ethereum.CallMsg{
 		From: h.auth.From,
-		To:   &h.dvpAddr,
+		To:   &to,
 		Gas:  h.auth.GasLimit,
 		Data: data,
 	}, nil); err != nil {
@@ -965,8 +1141,8 @@ func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, 
 		return nil, fmt.Errorf("simulate %s: %w", method, err)
 	}
 
-	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
-	tx, err := dvp.Transact(h.auth, method, args...)
+	target := bind.NewBoundContract(to, contractABI, h.client, h.client, h.client)
+	tx, err := target.Transact(h.auth, method, args...)
 	if err != nil {
 		return nil, err
 	}

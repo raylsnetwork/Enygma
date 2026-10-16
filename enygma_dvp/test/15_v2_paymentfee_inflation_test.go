@@ -249,7 +249,7 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		}
 	}
 	wp := postPaymentGnarkProof(t, "/proof/payment", map[string]interface{}{
-		"stMessage":            "0",
+		"stMessage":            "1", // WITHDRAW_MESSAGE: withdrawV2 takes withdrawal proofs only
 		"stTreeNumbers":        [1]string{"0"},
 		"stMerkleRoots":        [1]string{mp.Root.String()},
 		"stNullifiers":         [1]string{nf2.String()},

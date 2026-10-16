@@ -10,7 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
@@ -655,8 +655,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 receiptMessage = receipt.statement[0];
         uint256 receiptUniqueId = receipt.statement[commitmentsIndex];
 
-        // to avoid submission of the withdraw proof
-        if (receiptMessage == 0 || receiptUniqueId == 0) {
+        // to avoid submission of a payment (0) or withdrawal (WITHDRAW_MESSAGE)
+        // proof: neither is a swap leg, and parking one here would lock its
+        // note and, on timeout, insert outputs that are not swap refunds.
+        if (receiptMessage == 0 || receiptMessage == WITHDRAW_MESSAGE || receiptUniqueId == 0) {
             revert InvalidPartialProofReceipt();
         }
 

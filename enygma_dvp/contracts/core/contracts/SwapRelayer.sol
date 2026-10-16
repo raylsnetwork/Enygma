@@ -3,7 +3,7 @@
 
 pragma solidity ^0.8.0;
 
-import {IEnygmaDvp} from "../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
@@ -92,6 +92,7 @@ contract SwapRelayer is ReentrancyGuard {
     error ExpiryTooSoon();
     error SwapIdMismatch();
     error LegTypeMismatch();
+    error WithdrawalReceipt();
 
     constructor(address dvpAddress) {
         dvp = IEnygmaDvp(dvpAddress);
@@ -115,6 +116,9 @@ contract SwapRelayer is ReentrancyGuard {
         bytes   calldata                 ctII
     ) external nonReentrant {
         if (closed[swapId]) revert SwapClosed();
+        // A withdrawal receipt is not a leg: filing one would lock its note
+        // until expiry (see WITHDRAW_MESSAGE).
+        if (receipt.statement[0] == WITHDRAW_MESSAGE) revert WithdrawalReceipt();
         if (swapId != swapIdOf(receipt, isPayment)) revert SwapIdMismatch();
         // isPayment is the caller's claim, and swapIdOf orders the two
         // messages by it, so a leg filed with the flag flipped gets a second

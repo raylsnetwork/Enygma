@@ -61,7 +61,9 @@ type PaymentRelayerFeePublicCircuit struct {
 
 func (circuit *PaymentRelayerFeePublicCircuit) Define(api frontend.API) error {
 
-	api.AssertIsEqual(circuit.StMessage, 0)
+	// 0 for a payment with a relayer fee, MessageWithdraw for a relayed
+	// partial withdrawal (see assertPaymentMessage).
+	assertPaymentMessage(api, circuit.StMessage)
 
 	senderPk := primitives.PublicKey(api, circuit.WtPrivateKeysIn[0])
 
