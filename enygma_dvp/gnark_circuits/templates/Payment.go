@@ -21,7 +21,7 @@ type PaymentCircuit struct {
 	// Layout (non-interleaved, matching ContractStatement):
 	//   [StMessage, StTreeNumbers[0..N-1], StMerkleRoots[0..N-1],
 	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1], StContractAddress]
-	StMessage         frontend.Variable   `gnark:",public"` // domain-separation / DVP link (0 = standalone)
+	StMessage         frontend.Variable   `gnark:",public"` // 0 = payment, MessageWithdraw = withdrawal
 	StTreeNumbers     []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
 	StMerkleRoots     []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input
 	StNullifiers      []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
@@ -44,9 +44,23 @@ type PaymentCircuit struct {
 	WtSaltsOut           []frontend.Variable // TmMOutputs — salt per output (HKDF-derived for output 0; random for change outputs)
 }
 
+// MessageWithdraw is the StMessage of a withdrawal proof. The Payment-family
+// circuits accept StMessage 0, a payment (EnygmaDvp.payment, vault transfer),
+// or MessageWithdraw, a withdrawal (Erc20CoinVault.partialWithdraw,
+// partialWithdrawWithRelayerFee, withdrawV2). Each settlement function takes
+// only its own value, so a withdrawal receipt cannot be settled as a payment
+// (which would insert the withdrawal output as an unspendable note) or a
+// payment as a withdrawal.
+const MessageWithdraw = 1
+
+// assertPaymentMessage restricts StMessage to 0 or MessageWithdraw.
+func assertPaymentMessage(api frontend.API, message frontend.Variable) {
+	api.AssertIsEqual(api.Mul(message, api.Sub(message, MessageWithdraw)), 0)
+}
+
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
 
-	api.AssertIsEqual(circuit.StMessage, 0)
+	assertPaymentMessage(api, circuit.StMessage)
 
 	// Change outputs (j >= 1) are constrained to use this key below.
 	senderPk := primitives.PublicKey(api, circuit.WtPrivateKeysIn[0])

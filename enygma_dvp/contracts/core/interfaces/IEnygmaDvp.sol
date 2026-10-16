@@ -3,6 +3,17 @@
 
 pragma solidity ^0.8.0;
 
+// StMessage of a withdrawal proof. The Payment-family circuits (Payment,
+// Payment2in, PaymentRelayerFeePublic) accept StMessage 0, a payment, or
+// WITHDRAW_MESSAGE, a withdrawal, and every settlement function takes only its
+// own value: EnygmaDvp.payment*/the vault's transfer* require 0, the vault's
+// partialWithdraw/partialWithdrawWithRelayerFee/withdrawV2 require
+// WITHDRAW_MESSAGE, and the DvP entry points refuse it. With one value for
+// both, anyone could settle a pending withdrawal as a payment first, turning
+// the withdrawn amount into a note no one can spend, or as a full withdrawal
+// that drops the change note. A DvP message is a hash, never 1.
+uint256 constant WITHDRAW_MESSAGE = 1;
+
 interface IEnygmaDvp {
     ///////////////////////////////////////////////
     //                  Structs

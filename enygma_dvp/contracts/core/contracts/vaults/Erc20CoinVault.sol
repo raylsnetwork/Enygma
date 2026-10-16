@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../../interfaces/IEnygmaDvp.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
@@ -229,46 +229,21 @@ contract Erc20CoinVault is AbstractCoinVault {
     //
     // withdrawParams[0] = amount
     // withdrawParams[1] = tokenId (must match the value used when input notes were created)
+    //
+    // The same as partialWithdraw without the change note's EncryptedNote: it
+    // takes the same withdrawal receipt (StMessage WITHDRAW_MESSAGE) and also
+    // inserts the change note, so a withdrawal settled here instead never
+    // loses its change. It used to accept a payment receipt (StMessage 0) and
+    // drop output[1], and it marked inputs spent without refusing locked
+    // ones; both made a pending withdrawal destroyable by whoever settled its
+    // receipt first through another function.
     function withdrawV2(
         uint256[] memory withdrawParams,
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
     ) public nonReentrant returns (bool) {
-        uint256 amount  = withdrawParams[0];
-        uint256 tokenId = withdrawParams[1];
-
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
-
-        uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
-            [uint256(uint160(recipient)), 0, amount, tokenId]
-        );
-
-        if (receipt.statement[commitmentsIndex] != commitment) {
-            revert InvalidOpening();
-        }
-
-        checkReceiptConditions(receipt);
-
-        // Effects: nullify input coins before external transfer (checks-effects-interactions)
-        uint256 treeNumbersIndex = 1;
-        uint256 nullifiersIndex  = 1 + 2 * receipt.numberOfInputs;
-        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-            if (receipt.statement[nullifiersIndex + i] != 0) {
-                setNullifier(
-                    receipt.statement[treeNumbersIndex + i],
-                    receipt.statement[nullifiersIndex + i]
-                );
-                emit Nullifier(
-                    _vaultId,
-                    receipt.statement[treeNumbersIndex + i],
-                    receipt.statement[nullifiersIndex + i]
-                );
-            }
-        }
-
-        // Interaction: transfer tokens after all state changes
-        IERC20(_assetContractAddress).safeTransfer(recipient, amount);
-
+        _requirePlainPaymentShape(receipt);
+        _settlePartialWithdraw(withdrawParams, recipient, receipt, "", "");
         return true;
     }
 
@@ -297,26 +272,87 @@ contract Erc20CoinVault is AbstractCoinVault {
         bytes calldata ciphertextI,
         bytes calldata ciphertextII
     ) public nonReentrant returns (bool) {
-        uint256 amount  = withdrawParams[0];
-        uint256 tokenId = withdrawParams[1];
+        _requirePlainPaymentShape(receipt);
+        _settlePartialWithdraw(withdrawParams, recipient, receipt, ciphertextI, ciphertextII);
+        return true;
+    }
 
-        if (amount == 0) {
-            revert ZeroWithdrawAmount();
-        }
+    // Only the plain Payment circuits: 1-in or 2-in, 2 outputs, and
+    // [message, trees, roots, nullifiers, 2 commitments, contractAddress].
+    // The fee circuits (8 and 9 elements with one input) would burn or pay
+    // part of the input outside the two outputs.
+    function _requirePlainPaymentShape(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) internal pure {
         if (receipt.numberOfInputs != 1 && receipt.numberOfInputs != 2) {
             revert InvalidNumberOfInputs();
         }
         if (receipt.numberOfOutputs != 2) {
             revert IEnygmaDvp.InvalidNumberOfOutputs();
         }
-        // [message, trees, roots, nullifiers, 2 commitments, contractAddress]:
-        // only the plain Payment circuits have this length. The fee circuits
-        // (8 and 9 elements with one input) would burn or pay part of the
-        // input outside the two outputs.
         if (receipt.statement.length != 3 * receipt.numberOfInputs + 4) {
             revert InvalidStatmentSize();
         }
-        if (receipt.statement[0] != 0) {
+    }
+
+    // partialWithdrawWithRelayerFee — partialWithdraw for a relayer, which
+    // submits the transaction and is paid from the note instead of the owner
+    // paying gas, e.g. withdraw 10 from a note of 100, pay the relayer 1 and
+    // keep a note of 89.
+    //
+    // The receipt is a PaymentRelayerFeePublic proof (1-in/3-out, VK slot 3,
+    // 9-element statement) bound to this vault:
+    //   output[0] = Poseidon4(uint160(recipient), 0, amount, tokenId) — paid out
+    //   output[1] = the change note; the circuit requires the sender's own key
+    //   output[2] = the relayer's fee note, value StFee (statement[8])
+    // and sum(in) == amount + change + StFee. The change and fee notes are
+    // inserted. Anyone may submit the receipt: the recipient, the amount and
+    // the fee note's owner are all fixed by the proof, so a different
+    // submitter cannot redirect anything. The fee is the one the owner proved;
+    // a relayer checks that it is acceptable, and addressed to its key, before
+    // relaying.
+    //
+    // withdrawParams, ciphertextI/II: as for partialWithdraw (the ciphertexts
+    // are the change note's). The relayer keeps its fee note's opening itself.
+    function partialWithdrawWithRelayerFee(
+        uint256[] memory withdrawParams,
+        address recipient,
+        IEnygmaDvp.ProofReceipt memory receipt,
+        bytes calldata ciphertextI,
+        bytes calldata ciphertextII
+    ) public nonReentrant returns (bool) {
+        if (receipt.numberOfInputs != 1) {
+            revert InvalidNumberOfInputs();
+        }
+        if (receipt.numberOfOutputs != 3) {
+            revert IEnygmaDvp.InvalidNumberOfOutputs();
+        }
+        // [message, tree, root, nullifier, 3 commitments, contractAddress, fee]
+        if (receipt.statement.length != 9) {
+            revert InvalidStatmentSize();
+        }
+        _settlePartialWithdraw(withdrawParams, recipient, receipt, ciphertextI, ciphertextII);
+        return true;
+    }
+
+    // Shared by partialWithdraw and partialWithdrawWithRelayerFee once each
+    // has checked the receipt's shape: output[0] is the withdrawal, every
+    // later output (the change note, then any relayer fee note) is inserted.
+    function _settlePartialWithdraw(
+        uint256[] memory withdrawParams,
+        address recipient,
+        IEnygmaDvp.ProofReceipt memory receipt,
+        bytes memory ciphertextI,
+        bytes memory ciphertextII
+    ) internal {
+        uint256 amount  = withdrawParams[0];
+        uint256 tokenId = withdrawParams[1];
+
+        if (amount == 0) {
+            revert ZeroWithdrawAmount();
+        }
+        // A withdrawal proof, not a payment one (see WITHDRAW_MESSAGE).
+        if (receipt.statement[0] != WITHDRAW_MESSAGE) {
             revert IEnygmaDvp.InvalidPaymentMessage();
         }
 
@@ -333,23 +369,27 @@ contract Erc20CoinVault is AbstractCoinVault {
         // nullifiers and the proof.
         checkReceiptConditions(receipt);
 
-        // Effects: nullify the inputs (refusing locked ones), then insert only
-        // the change note.
+        // Effects: nullify the inputs (refusing locked ones), then insert
+        // every output but the withdrawal.
         _nullifyFromReceipt(receipt);
 
-        uint256 changeCommitment = receipt.statement[commitmentsIndex + 1];
-        uint256[] memory commitments = new uint256[](1);
-        commitments[0] = changeCommitment;
+        uint256[] memory commitments = new uint256[](receipt.numberOfOutputs - 1);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            commitments[i] = receipt.statement[commitmentsIndex + 1 + i];
+            emit Commitment(_vaultId, commitments[i]);
+        }
         insertLeaves(commitments);
 
-        emit Commitment(_vaultId, changeCommitment);
-        emit EncryptedNote(_vaultId, changeCommitment, ciphertextI, ciphertextII);
+        // Read from the statement, not commitments[0]: insertLeaves uses its
+        // argument as scratch space for the tree's inner hashes.
+        uint256 changeCommitment = receipt.statement[commitmentsIndex + 1];
+        if (ciphertextI.length != 0) {
+            emit EncryptedNote(_vaultId, changeCommitment, ciphertextI, ciphertextII);
+        }
         emit PartialWithdrawal(_vaultId, recipient, amount, changeCommitment);
 
         // Interaction: transfer tokens after all state changes
         IERC20(_assetContractAddress).safeTransfer(recipient, amount);
-
-        return true;
     }
 
     function withdraw(

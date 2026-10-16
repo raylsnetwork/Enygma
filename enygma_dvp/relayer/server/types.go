@@ -47,6 +47,29 @@ type RelayPaymentRelayerFeeRequest struct {
 	TokenId    string         `json:"tokenId"    binding:"required"`
 }
 
+// ── partial withdraw (PaymentRelayerFeePublic circuit) ────────────────────────
+
+// RelayPartialWithdrawRequest is the body for POST /relay/partial_withdraw.
+// PublicSignal layout (1-in/3-out, 9 elements):
+//
+//	[msg, treeNum0, root0, nullifier0, cmtWithdraw, cmtChange, cmtRelayer, contractAddress, fee]
+//
+// cmtWithdraw must be Poseidon4(uint160(Recipient), 0, Amount, TokenId): the
+// part paid out to Recipient. cmtChange is the owner's change note, and
+// CipherText/EncTxData are its discovery data (ML-KEM capsule / AES-GCM
+// payload, hex). FeeSalt and TokenId let the relayer confirm cmtRelayer is
+// addressed to its own fee key, as for /relay/payment_relayer_fee.
+type RelayPartialWithdrawRequest struct {
+	VaultId    string         `json:"vaultId"    binding:"required"`
+	Receipt    ReceiptPayload `json:"receipt"    binding:"required"`
+	Recipient  string         `json:"recipient"  binding:"required"`
+	Amount     string         `json:"amount"     binding:"required"`
+	TokenId    string         `json:"tokenId"    binding:"required"`
+	FeeSalt    string         `json:"feeSalt"    binding:"required"`
+	CipherText string         `json:"cipherText" binding:"required"`
+	EncTxData  string         `json:"encTxData"  binding:"required"`
+}
+
 // ── USDr fee (second, independent asset — UsdrFeeCircuit) ─────────────────────
 
 // RelayPaymentUsdrFeeRequest is the body for POST /relay/payment_usdr_fee.

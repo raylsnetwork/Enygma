@@ -40,7 +40,9 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 
@@ -140,6 +142,10 @@ type pwSpend struct {
 	nullifiers  []*big.Int
 	amount      *big.Int
 	recipient   common.Address
+	// proofStrs is the raw proof, for submitting through the relayer.
+	proofStrs []string
+	// feeSalt/feeCommit open the relayer fee note (PaymentRelayerFeePublic only).
+	feeSalt, feeCommit *big.Int
 }
 
 // pwCircuit selects the gnark circuit a withdrawal proof is made with.
@@ -158,14 +164,35 @@ const (
 // refused, so callers can test that.
 func (e *pwEnv) proveWithdraw(t *testing.T, in pwNote, amount, changeValue *big.Int, recipient common.Address) (*pwSpend, error) {
 	t.Helper()
-	return e.proveWithdrawWith(t, pwPayment, []pwNote{in}, amount, changeValue, nil, recipient)
+	return e.proveWithdrawWith(t, pwPayment, []pwNote{in}, amount, changeValue, nil, nil, recipient)
 }
 
 // proveWithdrawWith is proveWithdraw for one or two input notes (all owned by
 // ins[0]'s keys for the change note) and any of the three Payment-family
 // circuits. fee is PaymentFee's burned StFee or PaymentRelayerFeePublic's fee
-// note value; it is ignored for pwPayment.
-func (e *pwEnv) proveWithdrawWith(t *testing.T, circuit pwCircuit, ins []pwNote, amount, changeValue, fee *big.Int, recipient common.Address) (*pwSpend, error) {
+// note value; it is ignored for pwPayment. relayerPk owns the
+// PaymentRelayerFeePublic fee note (nil: a fresh key).
+func (e *pwEnv) proveWithdrawWith(t *testing.T, circuit pwCircuit, ins []pwNote, amount, changeValue, fee, relayerPk *big.Int, recipient common.Address) (*pwSpend, error) {
+	t.Helper()
+	// The withdrawal message, except PaymentFee: it is never a withdrawal and
+	// its circuit only takes a payment's.
+	message := pwWithdrawMessage
+	if circuit == pwPaymentFee {
+		message = pwPaymentMessage
+	}
+	return e.proveWithdrawMsg(t, circuit, message, ins, amount, changeValue, fee, relayerPk, recipient)
+}
+
+// StMessage values of the Payment-family circuits: WITHDRAW_MESSAGE in
+// IEnygmaDvp.sol for a withdrawal, 0 for a payment.
+const (
+	pwPaymentMessage  = "0"
+	pwWithdrawMessage = "1"
+)
+
+// proveWithdrawMsg is proveWithdrawWith with the proof's StMessage chosen by
+// the caller.
+func (e *pwEnv) proveWithdrawMsg(t *testing.T, circuit pwCircuit, message string, ins []pwNote, amount, changeValue, fee, relayerPk *big.Int, recipient common.Address) (*pwSpend, error) {
 	t.Helper()
 	nIn := len(ins)
 	mt := loadVaultMerkleTree(t, e.client, e.vaultAddr, partialWithdrawDepth)
@@ -236,12 +263,13 @@ func (e *pwEnv) proveWithdrawWith(t *testing.T, circuit pwCircuit, ins []pwNote,
 	outValues := []string{amount.String(), changeValue.String()}
 	outSalts := []string{"0", changeSalt.String()}
 
+	var feeSalt, feeCommit *big.Int
 	endpoint := "/proof/payment"
 	if nIn == 2 {
 		endpoint = "/proof/payment2in"
 	}
 	body := map[string]interface{}{
-		"stMessage":         "0",
+		"stMessage":         message,
 		"stTreeNumbers":     trees,
 		"stMerkleRoots":     roots,
 		"stNullifiers":      nullifierStrs,
@@ -260,17 +288,21 @@ func (e *pwEnv) proveWithdrawWith(t *testing.T, circuit pwCircuit, ins []pwNote,
 	case pwPaymentRelayerFeePublic:
 		// A relayer's fee note as the third output.
 		endpoint = "/proof/paymentRelayerFeePublic"
-		relayer, err := core.NewSpendKeyPair()
-		if err != nil {
-			t.Fatalf("NewSpendKeyPair (relayer): %v", err)
+		if relayerPk == nil {
+			relayer, err := core.NewSpendKeyPair()
+			if err != nil {
+				t.Fatalf("NewSpendKeyPair (relayer): %v", err)
+			}
+			relayerPk = relayer.PublicKey
 		}
 		relayerSalt, _ := core.RandomInField()
-		relayerCmt, err := core.Erc20CommitmentV2(relayer.PublicKey, relayerSalt, fee, e.tokenId)
+		relayerCmt, err := core.Erc20CommitmentV2(relayerPk, relayerSalt, fee, e.tokenId)
 		if err != nil {
 			t.Fatalf("relayer commitment: %v", err)
 		}
+		feeSalt, feeCommit = relayerSalt, relayerCmt
 		commitments = append(commitments, relayerCmt.String())
-		outPks = append(outPks, relayer.PublicKey.String())
+		outPks = append(outPks, relayerPk.String())
 		outValues = append(outValues, fee.String())
 		outSalts = append(outSalts, relayerSalt.String())
 		body["stFee"] = fee.String()
@@ -313,6 +345,9 @@ func (e *pwEnv) proveWithdrawWith(t *testing.T, circuit pwCircuit, ins []pwNote,
 		nullifiers:  nullifiers,
 		amount:      amount,
 		recipient:   recipient,
+		proofStrs:   proofStrs,
+		feeSalt:     feeSalt,
+		feeCommit:   feeCommit,
 	}, nil
 }
 
@@ -579,10 +614,11 @@ func TestV2Erc20PartialWithdraw_Rejections(t *testing.T) {
 		bad.Statement = append(append([]*big.Int{}, s.receipt.Statement...), big.NewInt(1))
 		e.expectRevert(t, "InvalidStatmentSize", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
-	t.Run("nonzero_message", func(t *testing.T) {
+	t.Run("payment_message", func(t *testing.T) {
+		// StMessage 0 marks a payment proof, not a withdrawal.
 		bad := s.receipt
 		bad.Statement = append([]*big.Int{}, s.receipt.Statement...)
-		bad.Statement[0] = big.NewInt(1)
+		bad.Statement[0] = big.NewInt(0)
 		e.expectRevert(t, "InvalidPaymentMessage", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
 	t.Run("overdraw_refused_by_prover", func(t *testing.T) {
@@ -642,7 +678,7 @@ func TestV2Erc20PartialWithdraw_TwoInputs(t *testing.T) {
 	note40 := depositFor(t, e, spend, view, big.NewInt(40))
 	t.Logf("deposited two notes for one owner: 60 and 40")
 
-	s, err := e.proveWithdrawWith(t, pwPayment, []pwNote{note60, note40}, big.NewInt(10), big.NewInt(90), nil, recipient)
+	s, err := e.proveWithdrawWith(t, pwPayment, []pwNote{note60, note40}, big.NewInt(10), big.NewInt(90), nil, nil, recipient)
 	if err != nil {
 		t.Fatalf("gnark /proof/payment2in: %v", err)
 	}
@@ -685,7 +721,7 @@ func TestV2Erc20PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 
 	t.Run("PaymentFee", func(t *testing.T) {
 		// 100 = 10 withdrawn + 89 change + 1 burned fee.
-		s, err := e.proveWithdrawWith(t, pwPaymentFee, []pwNote{note}, big.NewInt(10), big.NewInt(89), big.NewInt(1), recipient)
+		s, err := e.proveWithdrawWith(t, pwPaymentFee, []pwNote{note}, big.NewInt(10), big.NewInt(89), big.NewInt(1), nil, recipient)
 		if err != nil {
 			t.Fatalf("gnark /proof/paymentFee: %v", err)
 		}
@@ -700,7 +736,7 @@ func TestV2Erc20PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 
 	t.Run("PaymentRelayerFeePublic", func(t *testing.T) {
 		// 100 = 10 withdrawn + 85 change + 5 relayer fee note.
-		s, err := e.proveWithdrawWith(t, pwPaymentRelayerFeePublic, []pwNote{note}, big.NewInt(10), big.NewInt(85), big.NewInt(5), recipient)
+		s, err := e.proveWithdrawWith(t, pwPaymentRelayerFeePublic, []pwNote{note}, big.NewInt(10), big.NewInt(85), big.NewInt(5), nil, recipient)
 		if err != nil {
 			t.Fatalf("gnark /proof/paymentRelayerFeePublic: %v", err)
 		}
@@ -723,4 +759,129 @@ func TestV2Erc20PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 	s := e.mustProveWithdraw(t, note, big.NewInt(10), big.NewInt(90), recipient)
 	e.submitPartialWithdraw(t, big.NewInt(10), recipient, s)
 	t.Logf("the note was untouched by the rejected fee proofs and withdrew normally")
+}
+
+// expectCallRevert sends method on contract and requires it to be rejected
+// with want before anything is mined.
+func expectCallRevert(t *testing.T, e *pwEnv, contract *bind.BoundContract, want, method string, args ...interface{}) {
+	t.Helper()
+	tx, err := contract.Transact(e.owner, method, args...)
+	if err == nil {
+		mined, werr := bind.WaitMined(e.ctx, e.client, tx)
+		if werr == nil && mined.Status == types.ReceiptStatusSuccessful {
+			t.Fatalf("%s accepted the receipt; want a %s revert", method, want)
+		}
+		t.Fatalf("%s reverted on-chain, but the reason could not be checked against %s (err=%v)", method, want, werr)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("%s rejected with %q; want %s", method, err, want)
+	}
+	t.Logf("%s refused the receipt: %s", method, want)
+}
+
+// deploySwapRelayer deploys a SwapRelayer for the Payment deployment's
+// EnygmaDvp (the dedicated deployment does not include one).
+func deploySwapRelayer(t *testing.T, e *pwEnv, dvpAddr common.Address) *bind.BoundContract {
+	t.Helper()
+	data, err := os.ReadFile("../artifacts/contracts/core/contracts/SwapRelayer.sol/SwapRelayer.json")
+	if err != nil {
+		t.Fatalf("read SwapRelayer artifact: %v", err)
+	}
+	var artifact struct {
+		Bytecode string `json:"bytecode"`
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatalf("parse SwapRelayer artifact: %v", err)
+	}
+	srABI := loadOnchainABI(t, "core/contracts/SwapRelayer.sol/SwapRelayer.json")
+	_, tx, sr, err := bind.DeployContract(e.owner, srABI, common.FromHex(artifact.Bytecode), e.client, dvpAddr)
+	if err != nil {
+		t.Fatalf("deploy SwapRelayer: %v", err)
+	}
+	if _, err := bind.WaitMined(e.ctx, e.client, tx); err != nil {
+		t.Fatalf("wait SwapRelayer deploy: %v", err)
+	}
+	return sr
+}
+
+// TestV2Erc20PartialWithdraw_NoCrossSettlement is the regression test for a
+// withdrawal receipt being settled by a different function first. Payment and
+// withdrawal proofs used to share StMessage 0, so anyone could take a pending
+// partialWithdraw receipt and settle it through vault.transfer (the withdrawn
+// amount became a note owned by an address: locked forever) or withdrawV2 (the
+// change note was dropped). Now a withdrawal proof carries WITHDRAW_MESSAGE:
+// every payment and DvP path refuses it, withdrawV2 keeps its change note, and
+// the withdrawal paths refuse a payment proof.
+func TestV2Erc20PartialWithdraw_NoCrossSettlement(t *testing.T) {
+	e := newPartialWithdrawEnv(t)
+	recipient := common.HexToAddress("0x0000000000000000000000000000000000005e84")
+	receipts := loadPaymentReceipts(t)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+	dvp := bind.NewBoundContract(dvpAddr, loadOnchainABI(t, "core/contracts/EnygmaDvp.sol/EnygmaDvp.json"), e.client, e.client, e.client)
+
+	note := newDepositNote(t, e, big.NewInt(100))
+	s := e.mustProveWithdraw(t, note, big.NewInt(10), big.NewInt(90), recipient)
+	if s.receipt.Statement[0].Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("withdrawal proof carries StMessage %s, want WITHDRAW_MESSAGE (1)", s.receipt.Statement[0])
+	}
+	if !e.verifiesAt(t, 0, s.receipt) {
+		t.Fatalf("the withdrawal proof does not verify against VK slot 0 — the regenerated Payment key is not registered")
+	}
+
+	t.Run("payment_paths_refuse_a_withdrawal", func(t *testing.T) {
+		expectCallRevert(t, e, e.vault, "InvalidPaymentMessage", "transfer", s.receipt)
+		expectCallRevert(t, e, e.vault, "InvalidPaymentMessage", "transferV2", s.receipt, [][]byte{{1}, {1}}, [][]byte{{1}, {1}})
+		expectCallRevert(t, e, dvp, "InvalidPaymentMessage", "payment", s.receipt, big.NewInt(0), []byte{}, []byte{})
+	})
+	t.Run("dvp_paths_refuse_a_withdrawal", func(t *testing.T) {
+		expectCallRevert(t, e, dvp, "InvalidPartialProofReceipt", "submitPartialSettlement", s.receipt, big.NewInt(0), big.NewInt(0), big.NewInt(0))
+		sr := deploySwapRelayer(t, e, dvpAddr)
+		expectCallRevert(t, e, sr, "WithdrawalReceipt", "submitReceipt", [32]byte{1}, s.receipt, true, big.NewInt(0), big.NewInt(0), []byte{}, []byte{})
+	})
+	t.Run("withdrawal_paths_refuse_a_payment", func(t *testing.T) {
+		pay, err := e.proveWithdrawMsg(t, pwPayment, pwPaymentMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, recipient)
+		if err != nil {
+			t.Fatalf("gnark /proof/payment (message 0): %v", err)
+		}
+		expectCallRevert(t, e, e.vault, "InvalidPaymentMessage", "partialWithdraw", []*big.Int{big.NewInt(10), e.tokenId}, recipient, pay.receipt, pay.ctI, pay.ctII)
+		expectCallRevert(t, e, e.vault, "InvalidPaymentMessage", "withdrawV2", []*big.Int{big.NewInt(10), e.tokenId}, recipient, pay.receipt)
+	})
+	t.Run("circuit_refuses_other_messages", func(t *testing.T) {
+		if _, err := e.proveWithdrawMsg(t, pwPayment, "2", []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, recipient); err == nil {
+			t.Fatalf("the Payment circuit proved StMessage 2")
+		} else {
+			t.Logf("prover refused StMessage 2: %.100s", err)
+		}
+	})
+	t.Run("relayer_fee_withdrawal_refused_by_payment_paths", func(t *testing.T) {
+		rs, err := e.proveWithdrawWith(t, pwPaymentRelayerFeePublic, []pwNote{note}, big.NewInt(10), big.NewInt(89), big.NewInt(1), nil, recipient)
+		if err != nil {
+			t.Fatalf("gnark /proof/paymentRelayerFeePublic: %v", err)
+		}
+		expectCallRevert(t, e, e.vault, "InvalidPaymentMessage", "transfer", rs.receipt)
+		expectCallRevert(t, e, dvp, "InvalidPaymentMessage", "paymentWithRelayerFee", rs.receipt, big.NewInt(0), []byte{}, []byte{})
+		expectCallRevert(t, e, e.vault, "InvalidNumberOfOutputs", "withdrawV2", []*big.Int{big.NewInt(10), e.tokenId}, recipient, rs.receipt)
+	})
+
+	// Settling the withdrawal through withdrawV2 instead of partialWithdraw
+	// (what a front-runner could do) no longer loses the change: the 90 note
+	// is inserted and spendable.
+	before := e.balanceOf(t, recipient)
+	tx, err := e.vault.Transact(e.owner, "withdrawV2", []*big.Int{big.NewInt(10), e.tokenId}, recipient, s.receipt)
+	if err != nil {
+		t.Fatalf("withdrawV2: %v", err)
+	}
+	if m, err := bind.WaitMined(e.ctx, e.client, tx); err != nil || m.Status != types.ReceiptStatusSuccessful {
+		t.Fatalf("withdrawV2 reverted (receipt=%v err=%v)", m, err)
+	}
+	mt := loadVaultMerkleTree(t, e.client, e.vaultAddr, partialWithdrawDepth)
+	if _, err := mt.GenerateProof(s.change.commit); err != nil {
+		t.Fatalf("withdrawV2 dropped the change note: %v", err)
+	}
+	rest := e.mustProveWithdraw(t, s.change, big.NewInt(90), big.NewInt(0), recipient)
+	e.submitPartialWithdraw(t, big.NewInt(90), recipient, rest)
+	if got := new(big.Int).Sub(e.balanceOf(t, recipient), before); got.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("recipient received %s, want 100 (10 through withdrawV2, then the 90 change)", got)
+	}
+	t.Logf("withdrawV2 kept the change note: 10 withdrawn, then the 90 change withdrawn in full")
 }
