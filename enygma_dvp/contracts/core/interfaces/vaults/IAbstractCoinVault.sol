@@ -54,6 +54,15 @@ interface IAbstractCoinVault {
 
     event PendingProofAdded(IEnygmaDvp.ProofReceipt pendingProof);
 
+    // Fired by partialWithdraw: `amount` left the vault to `recipient` and the
+    // rest of the spent note came back as `changeCommitment`.
+    event PartialWithdrawal(
+        uint256 indexed vaultId,
+        address indexed recipient,
+        uint256 amount,
+        uint256 indexed changeCommitment
+    );
+
     error RottenChallenge();
     error InvalidOpening();
     // SECURITY: IVerifier.verifyProof() returns false (rather than reverting)
@@ -82,6 +91,7 @@ interface IAbstractCoinVault {
     error CantSpendLockedCoin();
     error CoinAlreadyUnlocked();
     error InvalidStatmentSize();
+    error ZeroWithdrawAmount();
 
     error InvalidAuditorPublicKey();
 
