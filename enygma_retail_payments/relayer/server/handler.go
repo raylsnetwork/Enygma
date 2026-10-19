@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
@@ -157,6 +160,9 @@ type Handler struct {
 	txMu                   sync.Mutex // serializes on-chain submissions — prevents nonce races
 	inFlight               sync.Map   // prevents concurrent duplicate submissions
 	feeSpendPubKey         *big.Int   // nil unless RELAYER_FEE_SPEND_PRIVATE_KEY is configured
+	// feeNotes keeps the opening of every fee note this relayer is paid with
+	// (see feeNoteStore): without it those notes could never be spent.
+	feeNotes *feeNoteStore
 }
 
 // NewHandler wires up the handler from config.
@@ -273,6 +279,7 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		auth:                   auth,
 		client:                 client,
 		feeSpendPubKey:         feeSpendPubKey,
+		feeNotes:               newFeeNoteStore(cfg.FeeNotesPath),
 	}, nil
 }
 
@@ -300,7 +307,7 @@ func (h *Handler) Info(c *gin.Context) {
 //  1. Parse and decode all fields from the request body.
 //  2. Check the Merkle root is known to the vault (rootHistory).
 //  3. Check the nullifier has not been spent (nullifiers mapping).
-//  4. Sign and submit to EnygmaDvp.payment().
+//  4. Simulate the call, then sign and submit to EnygmaDvp.payment().
 func (h *Handler) RelayPayment(c *gin.Context) {
 	var req RelayPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -312,6 +319,10 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	p, err := parseRequest(&req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+
+	if !h.requireVault(c, "vaultId", p.vaultId, h.vaultAddr) {
 		return
 	}
 
@@ -358,14 +369,17 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	// Step 5 — serialize submission to prevent nonce races under concurrency.
+	// Step 5 — build ProofReceipt and simulate it: nothing is sent for a
+	// request the chain would reject.
+	receipt := buildProofReceipt(p)
+	if !h.simulate(c, nfKeys, h.dvpAddr, h.dvpABI, "payment", receipt, p.vaultId, p.cipherText, p.encTxData) {
+		return
+	}
+
+	// Step 6 — serialize submission to prevent nonce races under concurrency.
 	// txMu guards only the submission itself, not the wait below — see
 	// txTimeout's doc comment.
 	h.txMu.Lock()
-
-	// Step 6 — build ProofReceipt and submit.
-	receipt := buildProofReceipt(p)
-
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, "payment", receipt, p.vaultId, p.cipherText, p.encTxData)
 	h.txMu.Unlock()
@@ -410,7 +424,8 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 //     relayer's own benefit — the fee AMOUNT is enforced on-chain by the
 //     contract (relayerFixedFeeAmount); this step only confirms the relayer
 //     can actually spend the note it's about to pay gas to help create.
-//  7. Sign and submit to EnygmaDvp.paymentWithRelayerFee().
+//  7. Simulate the call, keep the fee note's opening (feeNoteStore), then
+//     sign and submit to EnygmaDvp.paymentWithRelayerFee().
 func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 	// Step 2 — relayer-fee relaying must be configured.
 	if h.feeSpendPubKey == nil {
@@ -451,14 +466,26 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	// Step 8 — serialize submission to prevent nonce races under concurrency.
+	// Step 8 — simulate: nothing is sent, or recorded, for a request the chain
+	// would reject.
+	receipt := buildRelayerFeeProofReceipt(p)
+	if !h.simulate(c, nfKeys, h.dvpAddr, h.dvpABI, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData) {
+		return
+	}
+
+	// Step 9 — keep the fee note's opening before sending: the salt reaches
+	// this relayer only through the request.
+	cmtRelayer, fee := p.publicSignal[6], p.publicSignal[8]
+	if err := h.feeNotes.recordSubmitted("paymentWithRelayerFee", p.vaultId, cmtRelayer, p.feeSalt, fee, p.tokenId); err != nil {
+		h.release(nfKeys)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
+		return
+	}
+
+	// Step 10 — serialize submission to prevent nonce races under concurrency.
 	// txMu guards only the submission itself, not the wait below — see
 	// txTimeout's doc comment.
 	h.txMu.Lock()
-
-	// Step 9 — build ProofReceipt and submit.
-	receipt := buildRelayerFeeProofReceipt(p)
-
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData)
 	h.txMu.Unlock()
@@ -475,6 +502,7 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
 		return
 	}
+	h.recordFeeNoteMined("paymentWithRelayerFee", p.vaultId, cmtRelayer, txReceipt)
 
 	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
@@ -487,8 +515,13 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 // before this relayer pays gas for it (RelayPaymentRelayerFee's steps 3–6,
 // shared with RelayPartialWithdraw): the Merkle root is known, the nullifier
 // unspent, the fee at least RELAYER_MIN_FEE, and the fee note addressed to this
-// relayer. It writes the error response and returns false if any check fails.
+// relayer, after requireVault. It writes the error response and returns false
+// if any check fails.
 func (h *Handler) checkRelayerFeeLeg(c *gin.Context, p *parsedRelayerFee) bool {
+	if !h.requireVault(c, "vaultId", p.vaultId, h.vaultAddr) {
+		return false
+	}
+
 	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtOut0, cmtChange, cmtRelayer, contractAddr, fee]
 	treeNum := p.publicSignal[1]
 	root := p.publicSignal[2]
@@ -550,6 +583,88 @@ func (h *Handler) checkRelayerFeeLeg(c *gin.Context, p *parsedRelayerFee) bool {
 	}
 
 	return true
+}
+
+// simulateTimeout bounds the pre-flight simulation of a submission.
+const simulateTimeout = 15 * time.Second
+
+// simulate runs the call against the current chain state, at the gas limit the
+// transaction will be sent with, before anything is sent or recorded. A request
+// with a bad proof or a stale root would otherwise be sent and revert on-chain:
+// a failed pairing check uses all the gas it is given, paid by the relayer. On
+// failure it releases keys, writes the response (422 if the call reverts, 500
+// if the node could not run it) and returns false.
+func (h *Handler) simulate(c *gin.Context, keys []string, to common.Address, contractABI abi.ABI, method string, args ...interface{}) bool {
+	data, err := contractABI.Pack(method, args...)
+	if err != nil {
+		h.release(keys)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("pack %s: %s", method, err)})
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), simulateTimeout)
+	defer cancel()
+	if _, err := h.client.CallContract(ctx, ethereum.CallMsg{From: h.auth.From, To: &to, Gas: h.auth.GasLimit, Data: data}, nil); err != nil {
+		h.release(keys)
+		if isRevertError(err) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("%s() would revert: %s", method, err)})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("simulate %s(): %s", method, err)})
+		}
+		return false
+	}
+	return true
+}
+
+// isRevertError reports whether a simulation failed because the call reverted
+// (the request's fault) rather than because the node could not run it: the
+// JSON-RPC execution-error code 3, or a node that only says so in its message.
+func isRevertError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return false
+	}
+	var rpcErr rpc.Error
+	if errors.As(err, &rpcErr) && rpcErr.ErrorCode() == 3 {
+		return true
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "revert") || strings.Contains(m, "vm exception") ||
+		strings.Contains(m, "invalid opcode") || strings.Contains(m, "out of gas")
+}
+
+// requireVault checks that the vaultId a request names is the vault this
+// relayer checks its roots and nullifiers against (want). EnygmaDvp settles
+// against vaultById(vaultId), so with another id the request would be checked
+// against one vault and settled against a different one: it would revert at
+// the relayer's cost, and a fee note would be recorded under the wrong vault.
+// It writes the error response and returns false on a mismatch.
+func (h *Handler) requireVault(c *gin.Context, field string, vaultId *big.Int, want common.Address) bool {
+	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
+	var out []interface{}
+	if err := dvp.Call(&bind.CallOpts{}, &out, "vaultById", vaultId); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("vaultById(%s): %s", vaultId, err)})
+		return false
+	}
+	got, ok := out[0].(common.Address)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected type from vaultById()"})
+		return false
+	}
+	if got != want {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("%s %s is vault %s, but this relayer relays for vault %s", field, vaultId, got.Hex(), want.Hex()),
+		})
+		return false
+	}
+	return true
+}
+
+// recordFeeNoteMined notes the transaction that inserted a fee note. Best
+// effort: the opening is already kept by recordSubmitted.
+func (h *Handler) recordFeeNoteMined(route string, vaultId, commitment *big.Int, r *types.Receipt) {
+	if err := h.feeNotes.recordMined(route, vaultId, commitment, r.TxHash.Hex(), r.BlockNumber.Uint64()); err != nil {
+		log.Printf("[relay] fee note store: recording the mined fee note: %v (its opening is already kept)", err)
+	}
 }
 
 // withdrawMessage is the StMessage of a withdrawal proof: WITHDRAW_MESSAGE in
@@ -634,20 +749,13 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 	receipt := buildRelayerFeeProofReceipt(p)
 	args := []interface{}{[]*big.Int{amount, p.tokenId}, recipient, receipt, p.cipherText, p.encTxData}
 
-	// Unlike the payment routes this one simulates first: the vault checks
-	// the receipt against the recipient and amount only on-chain, and a
-	// reverted submission would cost the relayer its gas.
-	data, err := h.vaultABI.Pack(method, args...)
-	if err != nil {
-		h.release(nfKeys)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("pack %s: %s", method, err)})
+	if !h.simulate(c, nfKeys, h.vaultAddr, h.vaultABI, method, args...) {
 		return
 	}
-	simCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if _, err := h.client.CallContract(simCtx, ethereum.CallMsg{From: h.auth.From, To: &h.vaultAddr, Data: data}, nil); err != nil {
+	cmtRelayer, fee := p.publicSignal[6], p.publicSignal[8]
+	if err := h.feeNotes.recordSubmitted(method, p.vaultId, cmtRelayer, p.feeSalt, fee, p.tokenId); err != nil {
 		h.release(nfKeys)
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("%s() would revert: %s", method, err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
 		return
 	}
 
@@ -668,6 +776,7 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
 		return
 	}
+	h.recordFeeNoteMined(method, p.vaultId, cmtRelayer, txReceipt)
 	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
 		BlockNumber: txReceipt.BlockNumber.Uint64(),
@@ -693,7 +802,8 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 //     StTokenId read straight from the USDr leg's own public signal — and
 //     compare against usdrSignal[4] (the fee note's commitment, output 0 of
 //     the UsdrFeeCircuit).
-//  6. Sign and submit both receipts to EnygmaDvp.paymentWithUsdrFee().
+//  6. Simulate the call, keep the fee note's opening (feeNoteStore), then
+//     sign and submit both receipts to EnygmaDvp.paymentWithUsdrFee().
 func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	if (h.usdrVaultAddr == common.Address{}) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -717,6 +827,11 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	p, err := parseUsdrFeeRequest(&req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+
+	if !h.requireVault(c, "vaultId", p.vaultId, h.vaultAddr) ||
+		!h.requireVault(c, "usdrVaultId", p.usdrVaultId, h.usdrVaultAddr) {
 		return
 	}
 
@@ -808,13 +923,25 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
+	// Simulate, then keep the USDr fee note's opening before sending: the salt
+	// reaches this relayer only through the request.
+	receipt, usdrReceipt := buildUsdrFeeProofReceipts(p)
+	if !h.simulate(c, nfKeys, h.dvpAddr, h.dvpABI, "paymentWithUsdrFee",
+		receipt, p.vaultId, p.cipherText, p.encTxData,
+		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData) {
+		return
+	}
+	if err := h.feeNotes.recordSubmitted("paymentWithUsdrFee", p.usdrVaultId, cmtFee, p.usdrFeeSalt, fee, tokenId); err != nil {
+		h.release(nfKeys)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
+		return
+	}
+
 	// txMu guards only the submission itself, not the wait below — see
 	// txTimeout's doc comment.
 	h.txMu.Lock()
 
-	// Step 6 — build both ProofReceipts and submit atomically.
-	receipt, usdrReceipt := buildUsdrFeeProofReceipts(p)
-
+	// Step 6 — submit both receipts atomically.
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
 	tx, err := dvp.Transact(h.auth, "paymentWithUsdrFee",
 		receipt, p.vaultId, p.cipherText, p.encTxData,
@@ -833,6 +960,7 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
 		return
 	}
+	h.recordFeeNoteMined("paymentWithUsdrFee", p.usdrVaultId, cmtFee, txReceipt)
 
 	c.JSON(http.StatusOK, RelayPaymentUsdrFeeResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
