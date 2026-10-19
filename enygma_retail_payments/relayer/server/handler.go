@@ -15,6 +15,7 @@ import (
 
 	"enygma_retail_payments/relayer/config"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -432,65 +433,14 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
+	// Steps 3–6.
+	if !h.checkRelayerFeeLeg(c, p) {
+		return
+	}
+
 	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee]
 	treeNum := p.publicSignal[1]
-	root := p.publicSignal[2]
 	nullifier := p.publicSignal[3]
-	cmtRelayer := p.publicSignal[6]
-	fee := p.publicSignal[8]
-
-	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
-
-	// Step 3 — Merkle root must be in the vault's rootHistory.
-	var rootResult []interface{}
-	if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("rootHistory check: %s", err)})
-		return
-	}
-	rootKnown, ok := rootResult[0].(bool)
-	if !ok || !rootKnown {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "merkle root is not a known vault root"})
-		return
-	}
-
-	// Step 4 — Nullifier must not already be spent.
-	var nfResult []interface{}
-	if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("nullifiers check: %s", err)})
-		return
-	}
-	nfSpent, ok := nfResult[0].(bool)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected type from nullifiers()"})
-		return
-	}
-	if nfSpent {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nullifier already spent"})
-		return
-	}
-
-	// Step 5 — minimum fee floor.
-	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
-		})
-		return
-	}
-
-	// Step 6 — the fee note must actually be addressed to this relayer's key.
-	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, p.feeSalt, fee, p.tokenId})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
-		return
-	}
-	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": "fee note is not addressed to this relayer's published spend key " +
-				"(GET /relay/info) — publicSignal[6] does not match " +
-				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
-		})
-		return
-	}
 
 	// Step 7 — claim nullifier as in-flight to block concurrent duplicate submissions.
 	// Keyed per note, not per route: the same note relayed concurrently
@@ -526,6 +476,198 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
+	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
+}
+
+// checkRelayerFeeLeg runs the checks a PaymentRelayerFeePublic receipt needs
+// before this relayer pays gas for it (RelayPaymentRelayerFee's steps 3–6,
+// shared with RelayPartialWithdraw): the Merkle root is known, the nullifier
+// unspent, the fee at least RELAYER_MIN_FEE, and the fee note addressed to this
+// relayer. It writes the error response and returns false if any check fails.
+func (h *Handler) checkRelayerFeeLeg(c *gin.Context, p *parsedRelayerFee) bool {
+	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtOut0, cmtChange, cmtRelayer, contractAddr, fee]
+	treeNum := p.publicSignal[1]
+	root := p.publicSignal[2]
+	nullifier := p.publicSignal[3]
+	cmtRelayer := p.publicSignal[6]
+	fee := p.publicSignal[8]
+
+	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
+
+	// Step 3 — Merkle root must be in the vault's rootHistory.
+	var rootResult []interface{}
+	if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("rootHistory check: %s", err)})
+		return false
+	}
+	rootKnown, ok := rootResult[0].(bool)
+	if !ok || !rootKnown {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "merkle root is not a known vault root"})
+		return false
+	}
+
+	// Step 4 — Nullifier must not already be spent.
+	var nfResult []interface{}
+	if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("nullifiers check: %s", err)})
+		return false
+	}
+	nfSpent, ok := nfResult[0].(bool)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected type from nullifiers()"})
+		return false
+	}
+	if nfSpent {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "nullifier already spent"})
+		return false
+	}
+
+	// Step 5 — minimum fee floor.
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
+		})
+		return false
+	}
+
+	// Step 6 — the fee note must actually be addressed to this relayer's key.
+	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, p.feeSalt, fee, p.tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
+		return false
+	}
+	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error": "fee note is not addressed to this relayer's published spend key " +
+				"(GET /relay/info) — publicSignal[6] does not match " +
+				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
+		})
+		return false
+	}
+
+	return true
+}
+
+// withdrawMessage is the StMessage of a withdrawal proof: WITHDRAW_MESSAGE in
+// enygma_dvp's IEnygmaDvp.sol, MessageWithdraw in the gnark Payment templates.
+const withdrawMessage = 1
+
+// RelayPartialWithdraw is the gin handler for POST /relay/partial_withdraw.
+//
+// Withdraws part of a note for its owner, who pays this relayer from the note
+// instead of paying gas: a PaymentRelayerFeePublic proof whose outputs are the
+// withdrawal (to Recipient), the owner's change note and this relayer's fee
+// note, settled with Erc20CoinVault.partialWithdrawWithRelayerFee.
+//
+//  1. Confirm relayer-fee relaying is configured, and parse the request.
+//  2. Require the withdrawal StMessage, and that output[0] opens to
+//     Poseidon4(uint160(Recipient), 0, Amount, TokenId), so the request says
+//     what the proof pays out.
+//  3. The checks RelayPaymentRelayerFee makes (checkRelayerFeeLeg): known
+//     root, unspent nullifier, RELAYER_MIN_FEE, fee note addressed to this
+//     relayer.
+//  4. Claim the nullifier, simulate the call, then submit it to the vault.
+func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+
+	var req RelayPartialWithdrawRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := parseRelayerFeeRequest(&req.RelayPaymentRelayerFeeRequest)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	if !common.IsHexAddress(req.Recipient) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid recipient address: %q", req.Recipient)})
+		return
+	}
+	recipient := common.HexToAddress(req.Recipient)
+	amount, ok := new(big.Int).SetString(req.Amount, 10)
+	if !ok || amount.Sign() <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid amount: %q (must be a positive integer)", req.Amount)})
+		return
+	}
+
+	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtWithdraw, cmtChange, cmtRelayer, contractAddr, fee]
+	if p.publicSignal[0].Cmp(big.NewInt(withdrawMessage)) != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[0] (StMessage) is %s; a withdrawal proof must carry %d", p.publicSignal[0], withdrawMessage)})
+		return
+	}
+	withdrawCmt, err := poseidon.Hash([]*big.Int{new(big.Int).SetBytes(recipient.Bytes()), big.NewInt(0), amount, p.tokenId})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute withdrawal commitment: %s", err)})
+		return
+	}
+	if withdrawCmt.Cmp(p.publicSignal[4]) != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "publicSignal[4] does not match Poseidon(uint160(recipient), 0, amount, tokenId) — " +
+				"the proof does not withdraw this amount to this recipient",
+		})
+		return
+	}
+
+	if !h.checkRelayerFeeLeg(c, p) {
+		return
+	}
+
+	treeNum := p.publicSignal[1]
+	nullifier := p.publicSignal[3]
+	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
+	if !h.claim(nfKeys...) {
+		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
+		return
+	}
+
+	const method = "partialWithdrawWithRelayerFee"
+	receipt := buildRelayerFeeProofReceipt(p)
+	args := []interface{}{[]*big.Int{amount, p.tokenId}, recipient, receipt, p.cipherText, p.encTxData}
+
+	// Unlike the payment routes this one simulates first: the vault checks
+	// the receipt against the recipient and amount only on-chain, and a
+	// reverted submission would cost the relayer its gas.
+	data, err := h.vaultABI.Pack(method, args...)
+	if err != nil {
+		h.release(nfKeys)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("pack %s: %s", method, err)})
+		return
+	}
+	simCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := h.client.CallContract(simCtx, ethereum.CallMsg{From: h.auth.From, To: &h.vaultAddr, Data: data}, nil); err != nil {
+		h.release(nfKeys)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("%s() would revert: %s", method, err)})
+		return
+	}
+
+	h.txMu.Lock()
+	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
+	tx, err := vault.Transact(h.auth, method, args...)
+	h.txMu.Unlock()
+	if err != nil {
+		h.release(nfKeys)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s(): %s", method, err)})
+		return
+	}
+	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	if !ok {
+		return
+	}
+	if txReceipt.Status == types.ReceiptStatusFailed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
+		return
+	}
 	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
 		BlockNumber: txReceipt.BlockNumber.Uint64(),

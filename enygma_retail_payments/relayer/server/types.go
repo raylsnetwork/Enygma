@@ -118,6 +118,19 @@ type RelayPaymentRelayerFeeResponse struct {
 	GasUsed     uint64 `json:"gasUsed"`
 }
 
+// RelayPartialWithdrawRequest is the JSON body accepted by
+// POST /relay/partial_withdraw: a PaymentRelayerFeePublic withdrawal proof,
+// with the same fields as RelayPaymentRelayerFeeRequest (CipherText/EncTxData
+// are the owner's change note's discovery data) plus what it withdraws.
+// publicSignal[4] must be Poseidon4(uint160(Recipient), 0, Amount, TokenId).
+type RelayPartialWithdrawRequest struct {
+	RelayPaymentRelayerFeeRequest
+	// Recipient is the address the withdrawn tokens go to (hex).
+	Recipient string `json:"recipient" binding:"required"`
+	// Amount is the withdrawn amount (decimal string).
+	Amount string `json:"amount" binding:"required"`
+}
+
 // parsedRelayerFee holds the decoded form of a RelayPaymentRelayerFeeRequest
 // ready for validation and on-chain submission.
 type parsedRelayerFee struct {

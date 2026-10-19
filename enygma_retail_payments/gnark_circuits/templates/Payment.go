@@ -1,6 +1,7 @@
 package templates
 
 import (
+	pos "enygma_gnark_shared/poseidon"
 	"enygma_retail_payments/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
@@ -21,7 +22,7 @@ type PaymentCircuit struct {
 	// Layout (non-interleaved, matching ContractStatement):
 	//   [StMessage, StTreeNumbers[0..N-1], StMerkleRoots[0..N-1],
 	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1], StContractAddress]
-	StMessage         frontend.Variable   `gnark:",public"` // domain-separation / DVP link (0 = standalone)
+	StMessage         frontend.Variable   `gnark:",public"` // 0 = payment, MessageWithdraw = withdrawal
 	StTreeNumbers     []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
 	StMerkleRoots     []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input
 	StNullifiers      []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
@@ -44,9 +45,39 @@ type PaymentCircuit struct {
 	WtSaltsOut           []frontend.Variable // TmMOutputs — salt per output (HKDF-derived for output 0; random for change outputs)
 }
 
+// MessageWithdraw is the StMessage of a withdrawal proof. The Payment-family
+// circuits accept StMessage 0, a payment (EnygmaDvp.payment, vault transfer),
+// or MessageWithdraw, a withdrawal (Erc20CoinVault.partialWithdraw,
+// partialWithdrawWithRelayerFee, withdrawV2). Each settlement function takes
+// only its own value, so a withdrawal receipt cannot be settled as a payment
+// (which would insert the withdrawal output as an unspendable note) or a
+// payment as a withdrawal. Same value as enygma_dvp's templates and
+// WITHDRAW_MESSAGE in enygma_dvp's IEnygmaDvp.sol.
+const MessageWithdraw = 1
+
+// assertPaymentMessage restricts StMessage to 0 or MessageWithdraw.
+func assertPaymentMessage(api frontend.API, message frontend.Variable) {
+	api.AssertIsEqual(api.Mul(message, api.Sub(message, MessageWithdraw)), 0)
+}
+
+// assertWithdrawChangeSalt makes a withdrawal's change note (output[1])
+// recoverable from the owner's key alone: when message is MessageWithdraw
+// (after assertPaymentMessage it is 0 or 1, so it serves as the selector), the
+// change salt must be Poseidon(sk, nullifier0), and input 0 must be a real
+// note, so that nullifier0 is unique and on chain. The vault publishes the
+// change note's EncryptedNote, but those ciphertexts are not bound by the
+// proof: whoever settles the receipt first can drop or replace them. With
+// this rule the owner rebuilds the note from public data instead (the spent
+// nullifier, and the withdrawn amount and fee); see core.WithdrawChangeSalt.
+func assertWithdrawChangeSalt(api frontend.API, message, sk, nullifier0, changeSalt frontend.Variable) {
+	api.AssertIsEqual(api.Mul(message, api.IsZero(nullifier0)), 0)
+	expected := pos.Poseidon(api, []frontend.Variable{sk, nullifier0})
+	api.AssertIsEqual(api.Mul(message, api.Sub(changeSalt, expected)), 0)
+}
+
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
 
-	api.AssertIsEqual(circuit.StMessage, 0)
+	assertPaymentMessage(api, circuit.StMessage)
 
 	// Change outputs (j >= 1) are constrained to use this key below.
 	senderPk := primitives.PublicKey(api, circuit.WtPrivateKeysIn[0])
@@ -136,6 +167,8 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 
 	// Conservation: total inputs must equal total outputs
 	api.AssertIsEqual(outputsTotal, inputsTotal)
+
+	assertWithdrawChangeSalt(api, circuit.StMessage, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
 
 	// Bind StContractAddress (the vault address, checked on-chain against the
 	// verifying vault): a public input that appears in no constraint is not

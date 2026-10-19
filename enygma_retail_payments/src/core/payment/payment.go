@@ -42,6 +42,8 @@ var (
 	EncryptPayload       = dvpcore.EncryptPayload
 	DecryptPayload       = dvpcore.DecryptPayload
 	RandomInField        = dvpcore.RandomInField
+	WithdrawChangeSalt   = dvpcore.WithdrawChangeSalt
+	WithdrawChangeNote   = dvpcore.WithdrawChangeNote
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.
