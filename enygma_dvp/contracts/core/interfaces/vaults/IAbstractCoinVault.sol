@@ -54,8 +54,10 @@ interface IAbstractCoinVault {
 
     event PendingProofAdded(IEnygmaDvp.ProofReceipt pendingProof);
 
-    // Fired by partialWithdraw: `amount` left the vault to `recipient` and the
-    // rest of the spent note came back as `changeCommitment`.
+    // Fired by Erc20CoinVault's partialWithdraw, partialWithdrawWithRelayerFee
+    // and withdrawV2: `amount` left the vault to `recipient` and the rest of
+    // the spent note came back as `changeCommitment` (any relayer fee note is
+    // only in its Commitment event).
     event PartialWithdrawal(
         uint256 indexed vaultId,
         address indexed recipient,

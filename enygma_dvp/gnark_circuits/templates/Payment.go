@@ -2,6 +2,7 @@ package templates
 
 import (
 	"enygma_dvp/gnark_circuits/primitives"
+	pos "enygma_gnark_shared/poseidon"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
 )
@@ -56,6 +57,21 @@ const MessageWithdraw = 1
 // assertPaymentMessage restricts StMessage to 0 or MessageWithdraw.
 func assertPaymentMessage(api frontend.API, message frontend.Variable) {
 	api.AssertIsEqual(api.Mul(message, api.Sub(message, MessageWithdraw)), 0)
+}
+
+// assertWithdrawChangeSalt makes a withdrawal's change note (output[1])
+// recoverable from the owner's key alone: when message is MessageWithdraw
+// (after assertPaymentMessage it is 0 or 1, so it serves as the selector), the
+// change salt must be Poseidon(sk, nullifier0), and input 0 must be a real
+// note, so that nullifier0 is unique and on chain. The vault publishes the
+// change note's EncryptedNote, but those ciphertexts are not bound by the
+// proof: whoever settles the receipt first can drop or replace them. With
+// this rule the owner rebuilds the note from public data instead (the spent
+// nullifier, and the withdrawn amount and fee); see core.WithdrawChangeSalt.
+func assertWithdrawChangeSalt(api frontend.API, message, sk, nullifier0, changeSalt frontend.Variable) {
+	api.AssertIsEqual(api.Mul(message, api.IsZero(nullifier0)), 0)
+	expected := pos.Poseidon(api, []frontend.Variable{sk, nullifier0})
+	api.AssertIsEqual(api.Mul(message, api.Sub(changeSalt, expected)), 0)
 }
 
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
@@ -150,6 +166,8 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 
 	// Conservation: total inputs must equal total outputs
 	api.AssertIsEqual(outputsTotal, inputsTotal)
+
+	assertWithdrawChangeSalt(api, circuit.StMessage, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
 
 	// Bind StContractAddress (the vault address, checked on-chain against the
 	// verifying vault): a public input that appears in no constraint is not

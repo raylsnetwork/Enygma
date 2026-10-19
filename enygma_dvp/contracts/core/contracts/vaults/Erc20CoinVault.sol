@@ -258,13 +258,26 @@ contract Erc20CoinVault is AbstractCoinVault {
     //               inserted into the tree. The circuit enforces
     //               sum(in) == amount + rest, so the change holds exactly the
     //               remainder.
-    // withdrawV2 accepts the same receipt but drops output[1]; use it only
-    // when the whole note is withdrawn.
+    // withdrawV2 settles the same receipt without the change note's
+    // EncryptedNote.
+    //
+    // The VK slots below are the dedicated Payment deployment's (and retail's):
+    // Payment 0, Payment2in 1, PaymentRelayerFeePublic 3. The main deployment
+    // registers other circuits in slots 1-3 (OwnershipErc721, ...), so there
+    // only the 1-input form works; a 2-input receipt, and any
+    // partialWithdrawWithRelayerFee receipt, fails verification (the
+    // statement length does not match those keys) and reverts.
     //
     // withdrawParams[0] = amount
     // withdrawParams[1] = tokenId (must match the value used when input notes were created)
     // ciphertextI/II    = EncryptedNote payload for the change note, so the
-    //                     owner's wallet can rediscover it from chain events
+    //                     owner's wallet can rediscover it from chain events.
+    //                     The proof does not bind them, so whoever settles the
+    //                     receipt first can replace them; the circuit therefore
+    //                     fixes the change salt to Poseidon(sk, nullifier0), and
+    //                     the owner can always rebuild the change note from its
+    //                     key and this transaction's Nullifier and
+    //                     PartialWithdrawal events (core.WithdrawChangeNote).
     function partialWithdraw(
         uint256[] memory withdrawParams,
         address recipient,

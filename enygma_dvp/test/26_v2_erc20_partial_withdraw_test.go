@@ -194,6 +194,14 @@ const (
 // the caller.
 func (e *pwEnv) proveWithdrawMsg(t *testing.T, circuit pwCircuit, message string, ins []pwNote, amount, changeValue, fee, relayerPk *big.Int, recipient common.Address) (*pwSpend, error) {
 	t.Helper()
+	return e.proveWithdrawFull(t, circuit, message, ins, amount, changeValue, fee, relayerPk, nil, recipient)
+}
+
+// proveWithdrawFull is proveWithdrawMsg with the change note's salt chosen by
+// the caller (nil: the salt a wallet uses — WithdrawChangeSalt for a
+// withdrawal, the KEM-derived one for a payment).
+func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message string, ins []pwNote, amount, changeValue, fee, relayerPk, changeSaltOverride *big.Int, recipient common.Address) (*pwSpend, error) {
+	t.Helper()
 	nIn := len(ins)
 	mt := loadVaultMerkleTree(t, e.client, e.vaultAddr, partialWithdrawDepth)
 
@@ -249,6 +257,18 @@ func (e *pwEnv) proveWithdrawMsg(t *testing.T, circuit pwCircuit, message string
 		t.Fatalf("DerivePaymentKey: %v", err)
 	}
 	changeSalt := core.SaltBToField(saltB)
+	if message == pwWithdrawMessage {
+		// The circuit requires a withdrawal's change salt to be recoverable
+		// from the owner's key: Poseidon(sk, nullifier of input 0). The
+		// EncryptedNote below is then only a convenience.
+		changeSalt, err = core.WithdrawChangeSalt(owner.spend.PrivateKey, nullifiers[0])
+		if err != nil {
+			t.Fatalf("WithdrawChangeSalt: %v", err)
+		}
+	}
+	if changeSaltOverride != nil {
+		changeSalt = changeSaltOverride
+	}
 	ctII, err := core.EncryptPayload(encKey, e.tokenId, changeValue)
 	if err != nil {
 		t.Fatalf("EncryptPayload: %v", err)
@@ -455,6 +475,7 @@ func (e *pwEnv) expectRevert(t *testing.T, want string, amount *big.Int, recipie
 func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 	t.Helper()
 	var sawPW, sawNote, sawNullifier bool
+	var firstNullifier, eventChange *big.Int
 	for _, lg := range mined.Logs {
 		if lg.Address != e.vaultAddr || len(lg.Topics) == 0 {
 			continue
@@ -469,8 +490,9 @@ func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 			if got := common.BytesToAddress(lg.Topics[2].Bytes()); got != s.recipient {
 				t.Errorf("PartialWithdrawal recipient = %s, want %s", got.Hex(), s.recipient.Hex())
 			}
-			if got := lg.Topics[3].Big(); got.Cmp(s.change.commit) != 0 {
-				t.Errorf("PartialWithdrawal changeCommitment = %s, want %s", got, s.change.commit)
+			eventChange = lg.Topics[3].Big()
+			if eventChange.Cmp(s.change.commit) != 0 {
+				t.Errorf("PartialWithdrawal changeCommitment = %s, want %s", eventChange, s.change.commit)
 			}
 			vals, err := ev.Inputs.NonIndexed().Unpack(lg.Data)
 			if err != nil {
@@ -493,7 +515,6 @@ func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 			if err != nil {
 				t.Fatalf("Decapsulate change note: %v", err)
 			}
-			saltB, _ := core.DerivePaymentSalt(ss)
 			encKey, _ := core.DerivePaymentKey(ss)
 			tokenId, amount, err := core.DecryptPayload(encKey, vals[1].([]byte))
 			if err != nil {
@@ -502,10 +523,10 @@ func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 			if amount.Cmp(s.change.value) != 0 || tokenId.Cmp(e.tokenId) != 0 {
 				t.Errorf("change note decrypts to amount=%s tokenId=%s, want %s/%s", amount, tokenId, s.change.value, e.tokenId)
 			}
-			if core.SaltBToField(saltB).Cmp(s.change.salt) != 0 {
-				t.Errorf("change note salt from the event does not match the committed salt")
-			}
 		case "Nullifier":
+			if !sawNullifier {
+				firstNullifier = lg.Topics[3].Big()
+			}
 			sawNullifier = true
 		case "Commitment":
 			if lg.Topics[2].Big().Cmp(s.change.commit) != 0 {
@@ -515,6 +536,17 @@ func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 	}
 	if !sawPW || !sawNote || !sawNullifier {
 		t.Errorf("missing events: PartialWithdrawal=%v EncryptedNote=%v Nullifier=%v", sawPW, sawNote, sawNullifier)
+	}
+	// The owner can rebuild the change note from its key and the events
+	// alone, without the EncryptedNote.
+	if firstNullifier != nil && eventChange != nil {
+		_, rebuilt, err := core.WithdrawChangeNote(s.change.spend.PrivateKey, firstNullifier, s.change.value, e.tokenId)
+		if err != nil {
+			t.Fatalf("WithdrawChangeNote: %v", err)
+		}
+		if rebuilt.Cmp(eventChange) != 0 {
+			t.Errorf("the change note rebuilt from the owner's key and the Nullifier event (%s) is not the event's changeCommitment %s", rebuilt, eventChange)
+		}
 	}
 	for i := range s.nullifiers {
 		if !e.nullifierSpent(t, s.treeNumbers[i], s.nullifiers[i]) {
@@ -884,4 +916,115 @@ func TestV2Erc20PartialWithdraw_NoCrossSettlement(t *testing.T) {
 		t.Fatalf("recipient received %s, want 100 (10 through withdrawV2, then the 90 change)", got)
 	}
 	t.Logf("withdrawV2 kept the change note: 10 withdrawn, then the 90 change withdrawn in full")
+}
+
+// TestV2Erc20PartialWithdraw_RecoverChangeWithoutCiphertext is the regression test for a
+// pending withdrawal's change note being made undiscoverable. Its
+// EncryptedNote ciphertexts are not bound by the proof, so whoever settles the
+// receipt first can replace them (here with junk) or omit them (withdrawV2).
+// The circuit now requires a withdrawal's change salt to be
+// Poseidon(sk, nullifier0), so the owner rebuilds the note from its spend key
+// and the transaction's events alone, and spends it.
+func TestV2Erc20PartialWithdraw_RecoverChangeWithoutCiphertext(t *testing.T) {
+	e := newPartialWithdrawEnv(t)
+	recipient := common.HexToAddress("0x0000000000000000000000000000000000005e85")
+
+	t.Run("prover_requires_the_recoverable_salt", func(t *testing.T) {
+		note := newDepositNote(t, e, big.NewInt(100))
+		random, _ := core.RandomInField()
+		if _, err := e.proveWithdrawFull(t, pwPayment, pwWithdrawMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, random, recipient); err == nil {
+			t.Fatalf("the Payment circuit proved a withdrawal whose change salt is not Poseidon(sk, nullifier0)")
+		} else {
+			t.Logf("Payment prover refused a random change salt: %.100s", err)
+		}
+		if _, err := e.proveWithdrawFull(t, pwPaymentRelayerFeePublic, pwWithdrawMessage, []pwNote{note}, big.NewInt(10), big.NewInt(89), big.NewInt(1), nil, random, recipient); err == nil {
+			t.Fatalf("the PaymentRelayerFeePublic circuit proved a withdrawal whose change salt is not Poseidon(sk, nullifier0)")
+		} else {
+			t.Logf("PaymentRelayerFeePublic prover refused a random change salt: %.100s", err)
+		}
+		// A payment's change salt stays free (the KEM-derived one is used).
+		if _, err := e.proveWithdrawMsg(t, pwPayment, pwPaymentMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, recipient); err != nil {
+			t.Fatalf("a payment proof with a KEM-derived change salt was refused: %v", err)
+		}
+	})
+
+	for _, via := range []string{"partialWithdraw_with_junk_ciphertexts", "withdrawV2"} {
+		t.Run(via, func(t *testing.T) {
+			note := newDepositNote(t, e, big.NewInt(100))
+			s := e.mustProveWithdraw(t, note, big.NewInt(10), big.NewInt(90), recipient)
+			before := e.balanceOf(t, recipient)
+
+			// Someone else settles the owner's receipt first, without usable
+			// discovery data.
+			var tx *types.Transaction
+			var err error
+			if via == "withdrawV2" {
+				tx, err = e.vault.Transact(e.owner, "withdrawV2", []*big.Int{big.NewInt(10), e.tokenId}, recipient, s.receipt)
+			} else {
+				tx, err = e.vault.Transact(e.owner, "partialWithdraw", []*big.Int{big.NewInt(10), e.tokenId}, recipient, s.receipt, []byte{0xde, 0xad}, []byte{0xbe, 0xef})
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", via, err)
+			}
+			mined, err := bind.WaitMined(e.ctx, e.client, tx)
+			if err != nil || mined.Status != types.ReceiptStatusSuccessful {
+				t.Fatalf("%s reverted (receipt=%v err=%v)", via, mined, err)
+			}
+
+			// The owner knows only its spend key and the note it held (100).
+			// From the transaction: the first Nullifier event and the
+			// PartialWithdrawal amount and changeCommitment.
+			var nullifier0, amount, changeCmt *big.Int
+			for _, lg := range mined.Logs {
+				if lg.Address != e.vaultAddr || len(lg.Topics) == 0 {
+					continue
+				}
+				ev, err := e.vaultABI.EventByID(lg.Topics[0])
+				if err != nil {
+					continue
+				}
+				switch ev.Name {
+				case "Nullifier":
+					if nullifier0 == nil {
+						nullifier0 = lg.Topics[3].Big()
+					}
+				case "PartialWithdrawal":
+					changeCmt = lg.Topics[3].Big()
+					vals, err := ev.Inputs.NonIndexed().Unpack(lg.Data)
+					if err != nil {
+						t.Fatalf("unpack PartialWithdrawal: %v", err)
+					}
+					amount = vals[0].(*big.Int)
+				case "EncryptedNote":
+					vals, err := ev.Inputs.NonIndexed().Unpack(lg.Data)
+					if err != nil {
+						t.Fatalf("unpack EncryptedNote: %v", err)
+					}
+					if _, err := core.Decapsulate(note.view.DecapsKey, vals[0].([]byte)); err == nil {
+						t.Fatalf("the replaced EncryptedNote still decapsulates — the junk did not take effect")
+					}
+				}
+			}
+			if nullifier0 == nil || amount == nil || changeCmt == nil {
+				t.Fatalf("missing events: nullifier=%v amount=%v changeCommitment=%v", nullifier0, amount, changeCmt)
+			}
+			changeValue := new(big.Int).Sub(note.value, amount)
+			salt, rebuilt, err := core.WithdrawChangeNote(note.spend.PrivateKey, nullifier0, changeValue, e.tokenId)
+			if err != nil {
+				t.Fatalf("WithdrawChangeNote: %v", err)
+			}
+			if rebuilt.Cmp(changeCmt) != 0 {
+				t.Fatalf("rebuilt change note %s is not the settled changeCommitment %s", rebuilt, changeCmt)
+			}
+
+			// The rebuilt note is spendable: withdraw all 90.
+			recovered := pwNote{spend: note.spend, view: note.view, salt: salt, value: changeValue, commit: rebuilt}
+			rest := e.mustProveWithdraw(t, recovered, changeValue, big.NewInt(0), recipient)
+			e.submitPartialWithdraw(t, changeValue, recipient, rest)
+			if got := new(big.Int).Sub(e.balanceOf(t, recipient), before); got.Cmp(big.NewInt(100)) != 0 {
+				t.Fatalf("recipient received %s, want 100 (10, then the recovered 90)", got)
+			}
+			t.Logf("%s: change note of %s rebuilt from the key and events, then withdrawn", via, changeValue)
+		})
+	}
 }

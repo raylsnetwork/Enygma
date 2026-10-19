@@ -646,6 +646,34 @@ func Erc20CommitmentV2(pkSpend, saltBField, amount, tokenId *big.Int) (*big.Int,
 	return poseidon.Hash([]*big.Int{pkSpend, saltBField, amount, tokenId})
 }
 
+// WithdrawChangeSalt is the salt a withdrawal's change note must use:
+// Poseidon(sk, nullifier0), where sk is the owner's spend key and nullifier0
+// the nullifier of the withdrawal's first input. The Payment-family circuits
+// enforce it for StMessage WITHDRAW_MESSAGE, so the change note never depends
+// on its EncryptedNote, which the proof does not bind (whoever settles a
+// receipt first can drop or replace those ciphertexts).
+func WithdrawChangeSalt(sk, nullifier0 *big.Int) (*big.Int, error) {
+	return poseidon.Hash([]*big.Int{sk, nullifier0})
+}
+
+// WithdrawChangeNote rebuilds a withdrawal's change note from public data and
+// the owner's spend key: nullifier0 is in the withdrawal's Nullifier event,
+// and changeValue is the spent notes' total minus the PartialWithdrawal
+// amount (and minus the relayer fee, statement[8], for a relayed one). The
+// commitment equals the PartialWithdrawal event's changeCommitment.
+func WithdrawChangeNote(sk, nullifier0, changeValue, tokenId *big.Int) (salt, commitment *big.Int, err error) {
+	salt, err = WithdrawChangeSalt(sk, nullifier0)
+	if err != nil {
+		return nil, nil, err
+	}
+	pk, err := GetPublicKey(sk)
+	if err != nil {
+		return nil, nil, err
+	}
+	commitment, err = Erc20CommitmentV2(pk, salt, changeValue, tokenId)
+	return salt, commitment, err
+}
+
 // Erc721UniqueId computes the unique ID for an ERC-721 token commitment
 func Erc721UniqueId(contractAddress, tokenId *big.Int) (*big.Int, error) {
 	return poseidon.Hash([]*big.Int{contractAddress, tokenId})
