@@ -174,3 +174,19 @@ func TestRelayPaymentRelayerFee_RefusesWhenTheOpeningCannotBeKept(t *testing.T) 
 		t.Fatal("the nullifier stayed claimed after the refusal")
 	}
 }
+
+// The opening is saved only once the simulation passes: a request the chain
+// would reject leaves no record of a fee note that will never exist.
+func TestRelayPaymentRelayerFee_RecordsNothingWhenTheCallWouldRevert(t *testing.T) {
+	f := newFeeRelayFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+	f.node.revert = true
+	if w := f.post(); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("relay of a reverting payment: got %d, want 422: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(f.notesAt); !os.IsNotExist(err) {
+		t.Fatalf("recorded a fee note for a payment that was not sent: %+v", readFeeNotes(t, f.notesAt))
+	}
+	if f.node.called("eth_sendRawTransaction") {
+		t.Fatal("sent a payment whose simulation reverted")
+	}
+}
