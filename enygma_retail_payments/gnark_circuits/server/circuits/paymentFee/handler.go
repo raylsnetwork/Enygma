@@ -152,10 +152,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		// [msg, treeNum[0], root[0], nf[0], cmt_bob, cmt_change, contractAddr, fee]
 		var publicSignal []*big.Int
 		publicSignal = append(publicSignal, utils.ParseBigInt(request.StMessage))
-		for i := 0; i < cfg.TmNInputs; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.StTreeNumbers[i]))
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.StMerkleRoots[i]))
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.StNullifiers[i]))
+		// Grouped by field, in the circuit's public-input order — the order
+		// the proof verifies against and the vaults read: all tree numbers,
+		// then all roots, then all nullifiers.
+		for _, field := range [][]string{request.StTreeNumbers[:], request.StMerkleRoots[:], request.StNullifiers[:]} {
+			for i := 0; i < cfg.TmNInputs; i++ {
+				publicSignal = append(publicSignal, utils.ParseBigInt(field[i]))
+			}
 		}
 		for i := 0; i < cfg.TmMOutputs; i++ {
 			publicSignal = append(publicSignal, utils.ParseBigInt(request.StCommitmentsOut[i]))
