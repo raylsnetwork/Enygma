@@ -332,14 +332,11 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	if err := h.feeNotes.recordSubmitted("paymentWithRelayerFee", vaultId, cmtRelayer, feeSalt, fee, tokenId); err != nil {
-		h.settleClaims(nfKeys, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
-		return
+	keepFeeNote := func() error {
+		return h.feeNotes.recordSubmitted("paymentWithRelayerFee", vaultId, cmtRelayer, feeSalt, fee, tokenId)
 	}
-
 	receipt := buildProofReceipt(parsed)
-	txReceipt, err := h.transact("paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
+	txReceipt, err := h.transactWith(h.dvpAddr, h.dvpABI, keepFeeNote, "paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
 		relayError(c, "paymentWithRelayerFee", err)
@@ -493,14 +490,11 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 	}
 
 	const method = "partialWithdrawWithRelayerFee"
-	if err := h.feeNotes.recordSubmitted(method, vaultId, cmtRelayer, feeSalt, fee, tokenId); err != nil {
-		h.settleClaims(nfKeys, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
-		return
+	keepFeeNote := func() error {
+		return h.feeNotes.recordSubmitted(method, vaultId, cmtRelayer, feeSalt, fee, tokenId)
 	}
-
 	receipt := buildProofReceipt(parsed)
-	txReceipt, err := h.transactTo(vaultAddr, h.erc20VaultABI, method,
+	txReceipt, err := h.transactWith(vaultAddr, h.erc20VaultABI, keepFeeNote, method,
 		[]*big.Int{amount, tokenId}, recipient, receipt, ctBytes, encBytes)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
@@ -670,15 +664,12 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	if err := h.feeNotes.recordSubmitted("paymentWithUsdrFee", usdrVaultId, cmtFee, usdrFeeSalt, fee, tokenId); err != nil {
-		h.settleClaims(nfKeys, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
-		return
+	keepFeeNote := func() error {
+		return h.feeNotes.recordSubmitted("paymentWithUsdrFee", usdrVaultId, cmtFee, usdrFeeSalt, fee, tokenId)
 	}
-
 	receipt := buildProofReceipt(parsed)
 	usdrReceipt := buildProofReceipt(usdrParsed)
-	txReceipt, err := h.transact("paymentWithUsdrFee",
+	txReceipt, err := h.transactWith(h.dvpAddr, h.dvpABI, keepFeeNote, "paymentWithUsdrFee",
 		receipt, vaultId, ctBytes, encBytes,
 		usdrReceipt, usdrVaultId, usdrCtBytes, usdrEncBytes)
 	h.settleClaims(nfKeys, err)
@@ -1119,6 +1110,24 @@ func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, 
 // transactTo is transact against any contract: the partial-withdraw route
 // calls a vault, not EnygmaDvp.
 func (h *Handler) transactTo(to common.Address, contractABI abi.ABI, method string, args ...interface{}) (*types.Receipt, error) {
+	return h.transactWith(to, contractABI, nil, method, args...)
+}
+
+// errFeeNoteNotKept reports that a fee note's opening could not be saved, so
+// the transaction was NOT sent: the relayer would be paid with a note it can
+// never spend.
+type errFeeNoteNotKept struct{ cause error }
+
+func (e *errFeeNoteNotKept) Error() string {
+	return "could not keep the fee note's opening, so it would be unspendable; not relaying: " + e.cause.Error()
+}
+func (e *errFeeNoteNotKept) Unwrap() error { return e.cause }
+
+// transactWith is transactTo with a step that runs once the simulation has
+// passed and before the transaction is sent; if it fails, nothing is sent.
+// The fee routes save the fee note's opening there, so a request whose
+// simulation reverts leaves no record of a note that will never exist.
+func (h *Handler) transactWith(to common.Address, contractABI abi.ABI, beforeSend func() error, method string, args ...interface{}) (*types.Receipt, error) {
 	h.txMu.Lock()
 	defer h.txMu.Unlock()
 
@@ -1139,6 +1148,11 @@ func (h *Handler) transactTo(to common.Address, contractABI abi.ABI, method stri
 			return nil, &errWouldRevert{cause: err}
 		}
 		return nil, fmt.Errorf("simulate %s: %w", method, err)
+	}
+	if beforeSend != nil {
+		if err := beforeSend(); err != nil {
+			return nil, &errFeeNoteNotKept{cause: err}
+		}
 	}
 
 	target := bind.NewBoundContract(to, contractABI, h.client, h.client, h.client)
