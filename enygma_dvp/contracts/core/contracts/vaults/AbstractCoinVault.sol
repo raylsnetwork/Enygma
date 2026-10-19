@@ -182,12 +182,7 @@ abstract contract AbstractCoinVault is
             uint256 treeNumber = receipt.statement[1 + i];
             uint256 nullifier = receipt.statement[nullifiersIndex + i];
             if (receipt.statement[rootsIndex + i] != 0) {
-                if (!isLocked(treeNumber, nullifier)) {
-                    setNullifier(treeNumber, nullifier);
-                    emit Nullifier(_vaultId, treeNumber, nullifier);
-                } else {
-                    revert CantSpendLockedCoin();
-                }
+                _spendNullifier(treeNumber, nullifier);
             }
         }
         // BUG FIX: falling off the end of a function declared `returns
@@ -198,6 +193,18 @@ abstract contract AbstractCoinVault is
         // own declared contract says "true means success", and it could
         // never actually return that.
         return true;
+    }
+
+    // Marks one input note spent. A note locked in a pending swap or auction
+    // (lockCoin) cannot be spent until it is unlocked: every path that sets a
+    // nullifier from a receipt, including the legacy withdraw functions, goes
+    // through here.
+    function _spendNullifier(uint256 treeNumber, uint256 nullifier) internal {
+        if (isLocked(treeNumber, nullifier)) {
+            revert CantSpendLockedCoin();
+        }
+        setNullifier(treeNumber, nullifier);
+        emit Nullifier(_vaultId, treeNumber, nullifier);
     }
 
     function _unlockFromReceipt(

@@ -215,12 +215,7 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
             }
 
             if (receipt.statement[nullifiersIndex + i] != 0) {
-                setNullifier(
-                    receipt.statement[1 + i],
-                    receipt.statement[nullifiersIndex + i]
-                );
-                emit Nullifier(
-                    _vaultId,
+                _spendNullifier(
                     receipt.statement[1 + i],
                     receipt.statement[nullifiersIndex + i]
                 );

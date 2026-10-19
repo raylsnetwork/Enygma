@@ -125,12 +125,7 @@ contract Erc721CoinVault is AbstractCoinVault {
         // Effects: nullify input coins before external transfer (checks-effects-interactions)
         for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
             if (receipt.statement[nullifiersIndex + i] != 0) {
-                setNullifier(
-                    receipt.statement[treeNumbersIndex + i],
-                    receipt.statement[nullifiersIndex + i]
-                );
-                emit Nullifier(
-                    _vaultId,
+                _spendNullifier(
                     receipt.statement[treeNumbersIndex + i],
                     receipt.statement[nullifiersIndex + i]
                 );
