@@ -72,6 +72,7 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 		relay.POST("/payment", h.RelayPayment)
 		relay.POST("/payment_relayer_fee", h.RelayPaymentRelayerFee)
 		relay.POST("/payment_usdr_fee", h.RelayPaymentUsdrFee)
+		relay.POST("/partial_withdraw", h.RelayPartialWithdraw)
 		relay.POST("/tag", h.RelayTag)
 		relay.POST("/channel", h.RelayChannel)
 	}
