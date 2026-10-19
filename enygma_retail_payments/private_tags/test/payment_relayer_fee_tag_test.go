@@ -774,8 +774,8 @@ func TestPaymentRelayerFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 			t.Fatalf("expected failure (mismatched fee should revert on-chain), got 200: %+v", resp)
 		}
 		t.Logf("  relayer responded %d: %s", status, resp.Error)
-		// Hardhat simulates before accepting a tx, so the revert surfaces as a
-		// 500 from dvp.Transact() itself, carrying the exact revert reason.
+		// The relayer simulates the call before sending it, so the revert
+		// surfaces there (422), carrying the exact revert reason.
 		if !strings.Contains(resp.Error, "InvalidRelayerFee") {
 			t.Errorf("expected the InvalidRelayerFee revert reason, got: %s", resp.Error)
 		} else {

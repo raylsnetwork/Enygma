@@ -892,8 +892,8 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 	t.Run("on-chain: usdrFee mismatches usdrFixedFeeAmount", func(t *testing.T) {
 		mismatchedFee := new(big.Int).Add(fixedFee, big.NewInt(1))
 		resp, status := buildAndSubmit(t, mismatchedFee, relayerFeePubKey, tokenId)
-		if status != http.StatusInternalServerError {
-			t.Fatalf("expected 500 (on-chain revert surfaced), got %d: %+v", status, resp)
+		if status != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422 (the relayer's simulation hits the on-chain revert), got %d: %+v", status, resp)
 		}
 		t.Logf("  relayer responded %d: %s", status, resp.Error)
 		if !strings.Contains(resp.Error, "InvalidUsdrFee") {
@@ -906,8 +906,8 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 	t.Run("on-chain: usdrTokenId mismatches configured value", func(t *testing.T) {
 		wrongTokenId := big.NewInt(1)
 		resp, status := buildAndSubmit(t, fixedFee, relayerFeePubKey, wrongTokenId)
-		if status != http.StatusInternalServerError {
-			t.Fatalf("expected 500 (on-chain revert surfaced), got %d: %+v", status, resp)
+		if status != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422 (the relayer's simulation hits the on-chain revert), got %d: %+v", status, resp)
 		}
 		t.Logf("  relayer responded %d: %s", status, resp.Error)
 		if !strings.Contains(resp.Error, "InvalidUsdrFee") {

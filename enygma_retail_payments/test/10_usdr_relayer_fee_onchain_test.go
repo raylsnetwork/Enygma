@@ -500,7 +500,7 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 		testUsdrFeeRejected(t, ctx, client, vault, erc20, usdrVault, usdrErc20, vaultAddr, usdrVaultAddr,
 			aliceAuth, bobSpend.PublicKey, bobView.EncapsKey, gnarkClient, merkleDepth,
 			mismatchedFee, relayerFeePubKey, tokenId,
-			http.StatusInternalServerError, "InvalidUsdrFee")
+			http.StatusUnprocessableEntity, "InvalidUsdrFee")
 	})
 
 	// ── Negative B: on-chain enforcement (tokenId mismatch) ───────────────────
@@ -509,7 +509,7 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 		testUsdrFeeRejected(t, ctx, client, vault, erc20, usdrVault, usdrErc20, vaultAddr, usdrVaultAddr,
 			aliceAuth, bobSpend.PublicKey, bobView.EncapsKey, gnarkClient, merkleDepth,
 			fixedFee, relayerFeePubKey, wrongTokenId,
-			http.StatusInternalServerError, "InvalidUsdrFee")
+			http.StatusUnprocessableEntity, "InvalidUsdrFee")
 	})
 
 	// ── Negative C: off-chain enforcement (wrong recipient key) ───────────────

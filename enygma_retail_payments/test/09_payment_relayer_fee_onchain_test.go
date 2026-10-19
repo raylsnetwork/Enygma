@@ -483,15 +483,13 @@ func TestRetailErc20_PaymentRelayerFeeOnChain(t *testing.T) {
 		t.Fatalf("negative A: expected the relay to fail (mismatched fee should revert on-chain), got 200: %+v", respA)
 	}
 	t.Logf("  negative A: relayer responded %d: %s", statusA, respA.Error)
-	// Hardhat Network simulates a transaction before accepting it into the
-	// mempool, so a reverting on-chain call fails at dvp.Transact() itself
-	// (500 from the relayer) rather than being mined with a failed receipt —
-	// unlike a plain network's "submit first, fail on-chain later" behavior.
-	// The important assertion is the *reason*: this must be the specific
+	// The relayer simulates the call before sending it, so the on-chain
+	// check refuses it there (422) and nothing is sent or paid for. The
+	// important assertion is the *reason*: this must be the specific
 	// InvalidRelayerFee revert this test exists to catch, not some other
 	// unrelated failure.
-	if statusA != http.StatusInternalServerError {
-		t.Errorf("negative A: expected 500 (on-chain revert surfaced from Transact), got %d", statusA)
+	if statusA != http.StatusUnprocessableEntity {
+		t.Errorf("negative A: expected 422 (the relayer's simulation hits the on-chain revert), got %d", statusA)
 	}
 	if !strings.Contains(respA.Error, "InvalidRelayerFee") {
 		t.Errorf("negative A: expected the revert reason to be InvalidRelayerFee, got: %s", respA.Error)
