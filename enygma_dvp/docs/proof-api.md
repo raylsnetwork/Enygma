@@ -119,8 +119,9 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
   "proof": ["Ar.X", "Ar.Y", "Bs.X.A1", "Bs.X.A0", "Bs.Y.A1", "Bs.Y.A0", "Krs.X", "Krs.Y"],
   "publicSignal": [
     "stMessage",
-    "stTreeNumbers[0]", "stMerkleRoots[0]", "stNullifiers[0]",
-    "stTreeNumbers[1]", "stMerkleRoots[1]", "stNullifiers[1]",
+    "stTreeNumbers[0]", "stTreeNumbers[1]",
+    "stMerkleRoots[0]", "stMerkleRoots[1]",
+    "stNullifiers[0]", "stNullifiers[1]",
     "stCommitmentsOut[0]",
     "stCommitmentsOut[1]"
   ]
@@ -130,9 +131,9 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
 | Field | Type | Description |
 |---|---|---|
 | `proof` | `[8]string` | Groth16 proof in Remix/Solidity order |
-| `publicSignal` | `[9]string` | Public inputs — interleaved layout: `[msg, treeNum0, root0, nf0, treeNum1, root1, nf1, cmt0, cmt1]` |
+| `publicSignal` | `[9]string` | Public inputs, grouped by field: `[msg, treeNum0, treeNum1, root0, root1, nf0, nf1, cmt0, cmt1]` |
 
-> **Note:** The on-chain contract expects a non-interleaved layout. The Go client's `ContractStatement()` converts the interleaved public signal to `[msg, treeNums..., roots..., nullifiers..., commitments...]` before submission.
+> **Note:** `publicSignal` is in the circuit's public-input order, which is also the statement layout the on-chain contracts expect (`[msg, treeNums..., roots..., nullifiers..., commitments..., ...]`), so it can be submitted as is. Every Payment-family endpoint (`/proof/payment`, `/proof/payment2in`, `/proof/paymentFee`, `/proof/paymentRelayerFeePublic`, `/proof/usdrFee`) returns this layout. The Go client builds its own statement in the interleaved form `[msg, tree0, root0, nf0, ...]`; its `ContractStatement()` converts that to the grouped layout.
 
 ---
 

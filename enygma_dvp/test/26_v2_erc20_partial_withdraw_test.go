@@ -340,17 +340,9 @@ func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message strin
 	for i, v := range proof.Proof {
 		proofStrs[i] = v.String()
 	}
-	// The handlers return [msg, tree0, root0, null0, tree1, root1, null1, ...];
-	// the verifier and the vault take the inputs grouped:
-	// [msg, trees..., roots..., nullifiers..., ...]. Same for one input.
-	sig := proof.PublicSignal
-	statement := []*big.Int{sig[0]}
-	for field := 0; field < 3; field++ {
-		for i := 0; i < nIn; i++ {
-			statement = append(statement, sig[1+3*i+field])
-		}
-	}
-	statement = append(statement, sig[1+3*nIn:]...)
+	// The handlers return the public inputs grouped, as the verifier and the
+	// vault take them: [msg, trees..., roots..., nullifiers..., ...].
+	statement := proof.PublicSignal
 	return &pwSpend{
 		receipt: onchainProofReceipt{
 			Proof:           proofStringsToOnchain(t, proofStrs),
