@@ -1,7 +1,7 @@
 {
   "name": "hardhat-project",
   "dependencies": {
-    "hardhat": "^2.22.19",
+    "hardhat": "^3.20.0",
     "solc-js": "^1.0.1"
   },
   "overrides": {
