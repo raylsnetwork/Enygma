@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/iden3/go-iden3-crypto/poseidon"
@@ -75,14 +76,16 @@ func TestH13BurnRejectsMismatchedPreviousCommit(t *testing.T) {
 	newCommit := pedersenCommitment(big.NewInt(300), prevR)
 	burnProof := enygma.IEnygmaBurnProof{
 		Proof: [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
-		PublicSignal: [9]*big.Int{
-			publicKey,
-			big.NewInt(1), big.NewInt(1), // wrong PreviousCommit
-			newCommit.X, newCommit.Y,
-			big.NewInt(200),
-			blockHash,
-			nullifier,
-			expectedDomainId(enygmaAddr), // Fix L-01
+		PublicSignal: [layout.BurnLen]*big.Int{
+			layout.BurnPublicKeyOffset:              publicKey,
+			layout.BurnPreviousCommitmentOffset:     big.NewInt(1), // wrong PreviousCommit
+			layout.BurnPreviousCommitmentOffset + 1: big.NewInt(1),
+			layout.BurnNewCommitmentOffset:          newCommit.X,
+			layout.BurnNewCommitmentOffset + 1:      newCommit.Y,
+			layout.BurnAmountOffset:                 big.NewInt(200),
+			layout.BurnBlockNumberOffset:            blockHash,
+			layout.BurnNullifierOffset:              nullifier,
+			layout.BurnDomainIdOffset:               expectedDomainId(enygmaAddr), // Fix L-01
 		},
 	}
 
@@ -145,14 +148,16 @@ func TestH13BurnNullifierReuseRejected(t *testing.T) {
 	newCommit := pedersenCommitment(big.NewInt(400), prevR)
 	burnProof := enygma.IEnygmaBurnProof{
 		Proof: [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
-		PublicSignal: [9]*big.Int{
-			publicKey,
-			prevBal.X, prevBal.Y,
-			newCommit.X, newCommit.Y,
-			big.NewInt(100),
-			blockHash,
-			nullifier,
-			expectedDomainId(enygmaAddr), // Fix L-01
+		PublicSignal: [layout.BurnLen]*big.Int{
+			layout.BurnPublicKeyOffset:              publicKey,
+			layout.BurnPreviousCommitmentOffset:     prevBal.X,
+			layout.BurnPreviousCommitmentOffset + 1: prevBal.Y,
+			layout.BurnNewCommitmentOffset:          newCommit.X,
+			layout.BurnNewCommitmentOffset + 1:      newCommit.Y,
+			layout.BurnAmountOffset:                 big.NewInt(100),
+			layout.BurnBlockNumberOffset:            blockHash,
+			layout.BurnNullifierOffset:              nullifier,
+			layout.BurnDomainIdOffset:               expectedDomainId(enygmaAddr), // Fix L-01
 		},
 	}
 

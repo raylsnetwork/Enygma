@@ -32,6 +32,7 @@ import (
 	"time"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -302,7 +303,7 @@ func buildUsdrFeeLeg(t *testing.T, blockHash *big.Int, usdrPrevBals []enygma.IEn
 	if err := json.NewDecoder(resp.Body).Decode(&proof); err != nil {
 		t.Fatalf("decode usdr proof: %v", err)
 	}
-	if len(proof.Proof) != 8 || len(proof.PublicSignal) != 83 {
+	if len(proof.Proof) != 8 || len(proof.PublicSignal) != layout.UsdrLen {
 		t.Fatalf("unexpected usdr proof sizes: proof=%d publicSignal=%d", len(proof.Proof), len(proof.PublicSignal))
 	}
 
@@ -310,11 +311,9 @@ func buildUsdrFeeLeg(t *testing.T, blockHash *big.Int, usdrPrevBals []enygma.IEn
 	for i := 0; i < 8; i++ {
 		leg.Proof[i] = proof.Proof[i].String()
 	}
-	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
-	const txCommitOffset = 54
 	leg.Commitments = make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
-		leg.Commitments[i] = []string{proof.PublicSignal[txCommitOffset+2*i].String(), proof.PublicSignal[txCommitOffset+2*i+1].String()}
+		leg.Commitments[i] = []string{proof.PublicSignal[layout.UsdrTxCommitmentsOffset+2*i].String(), proof.PublicSignal[layout.UsdrTxCommitmentsOffset+2*i+1].String()}
 	}
 	t.Log("USDr fee proof received")
 	return leg

@@ -47,6 +47,7 @@ import (
 	"time"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -396,7 +397,7 @@ func TestSequentialTransfers(t *testing.T) {
 		if err := json.NewDecoder(gnarkResp.Body).Decode(&proofResp); err != nil {
 			t.Fatalf("[%s] decode proof: %v", label, err)
 		}
-		if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
+		if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != layout.TransferLen {
 			t.Fatalf("[%s] unexpected sizes: proof=%d signal=%d",
 				label, len(proofResp.Proof), len(proofResp.PublicSignal))
 		}
@@ -476,28 +477,26 @@ func TestSequentialTransfers(t *testing.T) {
 		// 82 = the main proof's 80-signal layout + FeeAmount + DomainId
 		// (Fix L-01), both public, appended last — see USDrCircuit.Define
 		// / IEnygma.UsdrProof.
-		if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 83 {
+		if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != layout.UsdrLen {
 			t.Fatalf("[%s] unexpected usdr sizes: proof=%d signal=%d",
 				label, len(usdrProofResp.Proof), len(usdrProofResp.PublicSignal))
 		}
 		t.Logf("  [%s] usdr fee proof received", label)
 
-		// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
-		const txCommitOffset = 54
 		deltas := make([]enygma.IEnygmaPoint, nBanks)
 		commStrs := make([][]string, nBanks)
 		for i := 0; i < nBanks; i++ {
 			deltas[i] = enygma.IEnygmaPoint{
-				C1: proofResp.PublicSignal[txCommitOffset+2*i],
-				C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
+				C1: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i],
+				C2: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i+1],
 			}
 			commStrs[i] = []string{deltas[i].C1.String(), deltas[i].C2.String()}
 		}
 		usdrCommStrs := make([][]string, nBanks)
 		for i := 0; i < nBanks; i++ {
 			usdrCommStrs[i] = []string{
-				usdrProofResp.PublicSignal[txCommitOffset+2*i].String(),
-				usdrProofResp.PublicSignal[txCommitOffset+2*i+1].String(),
+				usdrProofResp.PublicSignal[layout.UsdrTxCommitmentsOffset+2*i].String(),
+				usdrProofResp.PublicSignal[layout.UsdrTxCommitmentsOffset+2*i+1].String(),
 			}
 		}
 

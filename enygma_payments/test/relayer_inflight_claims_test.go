@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"enygma_payments/layout"
 	"enygma_payments/relayer/server"
 
 	"github.com/ethereum/go-ethereum"
@@ -44,8 +45,8 @@ func TestRelayHandler_Transfer_DuplicateNullifierRefusedWhateverElseDiffers(t *t
 
 	// A different note goes through.
 	other := validTransferBody()
-	other.PublicSignal[server.TransferPublicSignalLen-2] = "123456789"
-	other.UsdrPublicSignal[79] = "987654321"
+	other.PublicSignal[layout.TransferNullifierOffset] = "123456789"
+	other.UsdrPublicSignal[layout.UsdrNullifierOffset] = "987654321"
 	if w := serveHTTPPost(r, "/relay/transfer", testAPIKey, other); w.Code != http.StatusOK {
 		t.Fatalf("a different nullifier was refused: got %d: %s", w.Code, w.Body.String())
 	}

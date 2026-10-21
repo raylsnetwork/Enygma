@@ -6,6 +6,7 @@ import (
 	"context"
 	"math/big"
 
+	"enygma_payments/layout"
 	"enygma_payments/relayer/config"
 	contracts "enygma_payments/relayer/contracts"
 	"enygma_payments/relayer/server"
@@ -127,27 +128,17 @@ func newTestHandlerWithBackend(c *mockContract, m bind.DeployBackend) *server.Ha
 
 // ── Valid request body ────────────────────────────────────────────────────────
 
-// Local lowercase aliases for server's exported public-signal-length
-// constants, so the rest of this test package (and relayer_handler_test.go /
-// relayer_integration_test.go, same package) can keep referring to them by
-// their existing short names without duplicating the literals.
-const (
-	transferPublicSignalLen    = server.TransferPublicSignalLen
-	transferFeePublicSignalLen = server.TransferFeePublicSignalLen
-	usdrPublicSignalLen        = server.UsdrFeePublicSignalLen
-)
-
 func validTransferBody() server.RelayTransferRequest {
 	var proof, usdrProof [8]string
 	for i := range proof {
 		proof[i] = big.NewInt(int64(i + 1)).String()
 		usdrProof[i] = big.NewInt(int64(i + 21)).String()
 	}
-	pubSig := make([]string, transferPublicSignalLen)
+	pubSig := make([]string, layout.TransferLen)
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(int64(i + 100)).String()
 	}
-	usdrPubSig := make([]string, usdrPublicSignalLen)
+	usdrPubSig := make([]string, layout.UsdrLen)
 	for i := range usdrPubSig {
 		usdrPubSig[i] = big.NewInt(int64(i + 300)).String()
 	}

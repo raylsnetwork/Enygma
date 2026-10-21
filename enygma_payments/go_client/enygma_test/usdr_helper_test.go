@@ -35,27 +35,12 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
-)
-
-// Public signal offsets shared with Enygma.sol's FP_*/USDR_* constants —
-// see that file's own comment block for the authoritative layout.
-const (
-	usdrHelperPublicKeyOffset = 36
-	usdrHelperPublicKeySize   = 6
-	usdrHelperPrevCommitOff   = 42
-	usdrHelperTxCommitOff     = 54
-	usdrHelperBlockNumberOff  = 66
-	usdrHelperKIndexOffset    = 67
-	usdrHelperKIndexSize      = 6
-	usdrHelperNullifierOff    = 79
-	usdrHelperFeeAmountOff    = 80
-	usdrHelperDomainOff       = 81
-	usdrHelperFeeRecipientOff = 82
 )
 
 // usdrHelperNullifierSeq guarantees a fresh, never-reused USDr nullifier
@@ -111,13 +96,13 @@ func buildMockUsdrLeg(
 	t *testing.T,
 	instance *enygma.Enygma,
 	enygmaAddr common.Address,
-	mainSignal [81]*big.Int,
+	mainSignal [layout.TransferLen]*big.Int,
 	participantAccountIds []int64,
 	submitter common.Address,
 ) ([]enygma.IEnygmaPoint, enygma.IEnygmaUsdrProof) {
 	t.Helper()
 
-	var usdrSignal [83]*big.Int
+	var usdrSignal [layout.UsdrLen]*big.Int
 	for i := range usdrSignal {
 		usdrSignal[i] = big.NewInt(0)
 	}
@@ -127,17 +112,17 @@ func buildMockUsdrLeg(
 	for i := 0; i < nBanks; i++ {
 		for j := 0; j < nBanks; j++ {
 			if i != j {
-				usdrSignal[i*nBanks+j] = mainSignal[i*nBanks+j]
+				usdrSignal[layout.UsdrFingerprintOffset+i*nBanks+j] = mainSignal[layout.TransferFingerprintOffset+i*nBanks+j]
 			}
 		}
 	}
-	for i := 0; i < usdrHelperPublicKeySize; i++ {
-		usdrSignal[usdrHelperPublicKeyOffset+i] = mainSignal[usdrHelperPublicKeyOffset+i]
+	for i := 0; i < layout.UsdrPublicKeysSize; i++ {
+		usdrSignal[layout.UsdrPublicKeysOffset+i] = mainSignal[layout.TransferPublicKeysOffset+i]
 	}
-	for i := 0; i < usdrHelperKIndexSize; i++ {
-		usdrSignal[usdrHelperKIndexOffset+i] = mainSignal[usdrHelperKIndexOffset+i]
+	for i := 0; i < layout.UsdrAnonymitySetSize; i++ {
+		usdrSignal[layout.UsdrAnonymitySetOffset+i] = mainSignal[layout.TransferAnonymitySetOffset+i]
 	}
-	usdrSignal[usdrHelperBlockNumberOff] = mainSignal[usdrHelperBlockNumberOff]
+	usdrSignal[layout.UsdrBlockNumberOffset] = mainSignal[layout.TransferBlockNumberOffset]
 
 	usdrCommitmentDeltas := make([]enygma.IEnygmaPoint, len(participantAccountIds))
 	for i, accountId := range participantAccountIds {
@@ -145,20 +130,20 @@ func buildMockUsdrLeg(
 		if err != nil {
 			t.Fatalf("getUsdrBalance(accountId=%d): %v", accountId, err)
 		}
-		usdrSignal[usdrHelperPrevCommitOff+2*i] = bal.X
-		usdrSignal[usdrHelperPrevCommitOff+2*i+1] = bal.Y
+		usdrSignal[layout.UsdrPreviousCommitmentsOffset+2*i] = bal.X
+		usdrSignal[layout.UsdrPreviousCommitmentsOffset+2*i+1] = bal.Y
 
 		// Neutral element (0,1): zero delta — this leg doesn't need to
 		// represent a real fee flow, only satisfy the contract's own
 		// self-consistency check between public_signal's TxCommit and the
 		// separately-passed usdrCommitmentDeltas parameter.
-		usdrSignal[usdrHelperTxCommitOff+2*i] = big.NewInt(0)
-		usdrSignal[usdrHelperTxCommitOff+2*i+1] = big.NewInt(1)
+		usdrSignal[layout.UsdrTxCommitmentsOffset+2*i] = big.NewInt(0)
+		usdrSignal[layout.UsdrTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 		usdrCommitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 	}
 
-	usdrSignal[usdrHelperFeeAmountOff] = big.NewInt(usdrFeeAmt)
-	usdrSignal[usdrHelperDomainOff] = expectedDomainId(enygmaAddr) // Fix L-01
+	usdrSignal[layout.UsdrFeeAmountOffset] = big.NewInt(usdrFeeAmt)
+	usdrSignal[layout.UsdrDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	// The contract requires the fee-recipient key to be the submitter's own
 	// registered public key (InvalidFeeRecipient otherwise).
@@ -170,14 +155,14 @@ func buildMockUsdrLeg(
 	if err != nil {
 		t.Fatalf("publicKeys(%s): %v", submitterId, err)
 	}
-	usdrSignal[usdrHelperFeeRecipientOff] = submitterKey
+	usdrSignal[layout.UsdrFeeRecipientKeyOffset] = submitterKey
 
 	seq := atomic.AddInt64(&usdrHelperNullifierSeq, 1)
 	// Offset well clear of any small hand-picked seeds the *_repro_test.go
 	// files use for their own main-proof nullifiers (e.g. c04's 111/222),
 	// and of any real Poseidon-derived nullifier the live gnark path might
 	// produce (effectively random in the ~254-bit field).
-	usdrSignal[usdrHelperNullifierOff] = big.NewInt(900_000_000 + seq)
+	usdrSignal[layout.UsdrNullifierOffset] = big.NewInt(900_000_000 + seq)
 
 	usdrProof := enygma.IEnygmaUsdrProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},

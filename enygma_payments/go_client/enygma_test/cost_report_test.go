@@ -42,6 +42,7 @@ import (
 	"time"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -346,7 +347,7 @@ func TestCostReport(t *testing.T) {
 	t.Log("════════════════════════════════════════════════════════")
 	t.Log("  The gnark server re-derives the circuit witness from the request,")
 	t.Log("  runs Groth16 proving on the Baby JubJub circuit, and returns")
-	t.Log("  an 8-element proof + 50-element public signal (no gas cost).")
+	t.Log("  an 8-element proof + public signal (no gas cost).")
 
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
@@ -494,7 +495,7 @@ func TestCostReport(t *testing.T) {
 		t.Fatalf("decode proof: %v", err)
 	}
 	proofDuration := time.Since(proofStart)
-	t.Logf("  Proof generated in %s (8 elements + 80 public signals)", proofDuration.Round(time.Millisecond))
+	t.Logf("  Proof generated in %s (8 elements + %d public signals)", proofDuration.Round(time.Millisecond), layout.TransferLen)
 	t.Log("  Cost: $0.00 (proof generation is off-chain, runs on your server)")
 
 	// ══════════════════════════════════════════════════════════════════════════
@@ -507,9 +508,9 @@ func TestCostReport(t *testing.T) {
 	t.Log("  HOW THE RELAYER SENDS A TRANSACTION:")
 	t.Log("")
 	t.Log("  1. Test  → POST /relay/transfer  (HTTP, Bearer token auth)")
-	t.Log("             payload: {proof[8], publicSignal[50], commitments[6][2], kIndex[6]}")
+	t.Log("             payload: {proof[8], publicSignal[layout.TransferLen], commitments[6][2], kIndex[6]}")
 	t.Log("")
-	t.Log("  2. Relayer parses JSON, validates field counts, zero-pads publicSignal to [50].")
+	t.Log("  2. Relayer parses JSON and requires exactly layout.TransferLen public signals.")
 	t.Log("")
 	t.Log("  3. Relayer holds a txMu mutex to prevent nonce races across concurrent requests.")
 	t.Log("     It also deduplicates identical in-flight requests via proof[0] as the key.")
@@ -609,13 +610,11 @@ func TestCostReport(t *testing.T) {
 	t.Log("  test-local relayer ready ✓")
 
 	// ── Build relay request and submit ────────────────────────────────────────
-	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
-	const txCommitOffset = 54
 	commitmentDeltas := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commitmentDeltas[i] = []string{
-			proofResp.PublicSignal[txCommitOffset+2*i].String(),
-			proofResp.PublicSignal[txCommitOffset+2*i+1].String(),
+			proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i].String(),
+			proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i+1].String(),
 		}
 	}
 	var proof8Strs [8]string
@@ -636,8 +635,8 @@ func TestCostReport(t *testing.T) {
 	// the main transfer's gas cost, not USDr's, so it uses the same
 	// MockUsdrVerifier + structurally-valid (not cryptographically real)
 	// leg the *_repro_test.go files use (see usdr_helper_test.go).
-	var mainSignal81 [81]*big.Int
-	copy(mainSignal81[:], proofResp.PublicSignal)
+	var mainSignal [layout.TransferLen]*big.Int
+	copy(mainSignal[:], proofResp.PublicSignal)
 	accountIds := make([]int64, nBanks)
 	for i := range accountIds {
 		accountIds[i] = int64(i + 1)
@@ -654,7 +653,7 @@ func TestCostReport(t *testing.T) {
 		return r
 	}
 	setupMockUsdr(t, client, mkAuth, waitTx, instance, accountIds)
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal81, accountIds, bankAddrs[0])
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainSignal, accountIds, bankAddrs[0])
 	usdrCommitmentStrs := make([][]string, len(usdrDeltas))
 	for i, pt := range usdrDeltas {
 		usdrCommitmentStrs[i] = []string{pt.C1.String(), pt.C2.String()}

@@ -73,6 +73,16 @@ Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which
 * **ZK Circuit(s)**: [Gnark](https://docs.gnark.consensys.net/)
 * **Verifier**: [Solidity](https://www.soliditylang.org/)
 
+### Statement layouts
+
+Each circuit's public-signal order (its statement layout) is derived from the circuit in `gnark-server` and generated into `layout/` (Go, used by the relayer and test suites) and `contracts/enygma/contracts/StatementLayout.sol` (used by `Enygma.sol` and `IEnygma.sol`). Never write a public-signal length or offset by hand; use those generated names. After changing any circuit's public signals, regenerate:
+
+```bash
+cd gnark-server && go generate ./cmd/genlayout
+```
+
+`go test ./cmd/genlayout` fails while the generated files are stale, or while one of `Enygma.sol`'s `verifyProof(...)` selector strings (which Solidity cannot build from a constant) disagrees with its circuit's statement length. See [`gnark-server/README.md`](gnark-server/README.md#statement-layouts).
+
 
 ## Performance
 To show that our protocol runs on commodity hardware and does not come with extreme hardware requirements, we measured the performance of our design using a Mac mini M1 from 2020 with 16GB of memory. We obtained the following numbers: 

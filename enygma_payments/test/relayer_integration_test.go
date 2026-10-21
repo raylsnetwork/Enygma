@@ -199,7 +199,7 @@ func TestRelayIntegration_TransferPublicSignalRejectsShort(t *testing.T) {
 	srv := newIntegrationServer(t, &mockContract{}, &mockMiner{})
 
 	body := validTransferBody()
-	body.PublicSignal = []string{big.NewInt(999).String()} // only 1 signal, want exactly transferPublicSignalLen
+	body.PublicSignal = []string{big.NewInt(999).String()} // only 1 signal, want exactly layout.TransferLen
 
 	resp := postURL(t, srv.URL+"/relay/transfer", testAPIKey, body)
 	b := readAll(t, resp)

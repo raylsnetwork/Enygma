@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -209,24 +210,24 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 	// the very end of withdraw()'s body; only the reentrant INNER call
 	// (same proof, replayed mid-execution) is what nonReentrant actually
 	// blocks. This mirrors H-15's "nothing happens" pattern otherwise.
-	var pubSig [62]*big.Int
+	var pubSig [layout.WithdrawLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = keys6[i]
-		pubSig[12+2*i] = balances6[i].C1
-		pubSig[12+2*i+1] = balances6[i].C2
-		pubSig[24+2*i] = big.NewInt(0)
-		pubSig[24+2*i+1] = big.NewInt(1)
+		pubSig[layout.WithdrawPublicKeysOffset+i] = keys6[i]
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i] = balances6[i].C1
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
+		pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = big.NewInt(0)
+		pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = new(big.Int).SetBytes(crypto.Keccak256([]byte("l12-reentrancy")))
-	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[layout.WithdrawBlockNumberOffset] = blockHash
+	pubSig[layout.WithdrawNullifierOffset] = new(big.Int).SetBytes(crypto.Keccak256([]byte("l12-reentrancy")))
+	pubSig[layout.WithdrawDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},

@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	enygma_payments/go_client v0.0.0
+	enygma_payments/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/iden3/go-iden3-crypto v0.0.16
 )
@@ -43,3 +44,5 @@ require (
 )
 
 replace enygma_payments/go_client => ../
+
+replace enygma_payments/layout => ../../layout

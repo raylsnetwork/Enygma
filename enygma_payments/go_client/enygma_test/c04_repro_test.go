@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -254,7 +255,7 @@ func TestC04_RegisterFingerprint_RequiresBothParties(t *testing.T) {
 // from lastBlockNum, a fresh Nullifier) is honestly constructed — the mock
 // verifier means this test is entirely about _verifyFingerprints, not
 // proof validity, so TxCommit is left at the neutral element throughout.
-func buildTransferSignal(t *testing.T, instance *enygma.Enygma, enygmaAddr common.Address, fingerprints [nBanks][nBanks]*big.Int, nullifierSeed int64) ([81]*big.Int, []enygma.IEnygmaPoint) {
+func buildTransferSignal(t *testing.T, instance *enygma.Enygma, enygmaAddr common.Address, fingerprints [nBanks][nBanks]*big.Int, nullifierSeed int64) ([layout.TransferLen]*big.Int, []enygma.IEnygmaPoint) {
 	t.Helper()
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
@@ -267,25 +268,25 @@ func buildTransferSignal(t *testing.T, instance *enygma.Enygma, enygmaAddr commo
 	keys := pubVals.Keys[1:]
 	balances := pubVals.Balances[1:]
 
-	var pubSig [81]*big.Int
+	var pubSig [layout.TransferLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	for i := 0; i < nBanks; i++ {
 		for j := 0; j < nBanks; j++ {
 			if i != j {
-				pubSig[i*nBanks+j] = fingerprints[i][j]
+				pubSig[layout.TransferFingerprintOffset+i*nBanks+j] = fingerprints[i][j]
 			}
 		}
-		pubSig[36+i] = keys[i]
-		pubSig[42+2*i] = balances[i].C1
-		pubSig[42+2*i+1] = balances[i].C2
-		pubSig[54+2*i] = big.NewInt(0) // TxCommit = neutral element (0,1): zero delta
-		pubSig[54+2*i+1] = big.NewInt(1)
+		pubSig[layout.TransferPublicKeysOffset+i] = keys[i]
+		pubSig[layout.TransferPreviousCommitmentsOffset+2*i] = balances[i].C1
+		pubSig[layout.TransferPreviousCommitmentsOffset+2*i+1] = balances[i].C2
+		pubSig[layout.TransferTxCommitmentsOffset+2*i] = big.NewInt(0) // TxCommit = neutral element (0,1): zero delta
+		pubSig[layout.TransferTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 	}
-	pubSig[66] = blockHash
-	pubSig[79] = new(big.Int).SetInt64(nullifierSeed)
-	pubSig[80] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[layout.TransferBlockNumberOffset] = blockHash
+	pubSig[layout.TransferNullifierOffset] = new(big.Int).SetInt64(nullifierSeed)
+	pubSig[layout.TransferDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {

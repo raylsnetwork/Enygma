@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"enygma_payments/layout"
 	"enygma_payments/relayer/server"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -247,10 +248,10 @@ func TestRelayHandler_Transfer_NegativeProofElementRejected(t *testing.T) {
 
 func TestRelayHandler_Transfer_TooManyPublicSignals(t *testing.T) {
 	body := validTransferBody()
-	// Fix L-05: exactly transferPublicSignalLen is now required — one
+	// Fix L-05: exactly layout.TransferLen is now required — one
 	// element over that must be rejected the same way one under it is
 	// (TestRelayHandler_Transfer_EmptyPublicSignals).
-	body.PublicSignal = make([]string, transferPublicSignalLen+1)
+	body.PublicSignal = make([]string, layout.TransferLen+1)
 	for i := range body.PublicSignal {
 		body.PublicSignal[i] = "1"
 	}
@@ -273,7 +274,7 @@ func TestRelayHandler_Transfer_InvalidPublicSignal(t *testing.T) {
 
 // TestRelayHandler_Transfer_EmptyPublicSignals reproduces the core L-05
 // finding directly: an empty (or any short) publicSignal used to be
-// silently zero-padded up to transferPublicSignalLen and forwarded as a
+// silently zero-padded up to layout.TransferLen and forwarded as a
 // signed, broadcast transaction — a malformed/truncated request paid
 // real gas for a payload that could only ever revert on chain (Groth16
 // verification over the padded vector cannot match a proof generated for

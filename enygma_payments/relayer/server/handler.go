@@ -46,17 +46,6 @@ type EnygmaContract interface {
 // txTimeout is the maximum time to wait for a transaction to be mined.
 var txTimeout = 45 * time.Second // a var only so tests can shorten it
 
-// Exact public-signal arities this relayer accepts, one per circuit.
-// Exported so external test packages (e.g. relayer_mocks_test.go) can
-// reference the same values instead of duplicating the literals — see the
-// Fix L-05 comment below for why exact (not "up to N") length is enforced,
-// and each handler's own doc comment for the signal layout.
-const (
-	TransferPublicSignalLen    = layout.TransferLen    // enygma circuit, generated from the circuit
-	TransferFeePublicSignalLen = layout.TransferFeeLen // enygma_fee circuit, generated from the circuit
-	UsdrFeePublicSignalLen     = layout.UsdrLen        // usdr circuit, generated from the circuit
-)
-
 // maxParticipants is the exact commitmentDeltas/participantIds length every
 // Enygma transfer path requires on-chain (Enygma.sol's DEFAULT_SIZE — see
 // _updateBalancesForTransfer's callers, which all revert InvalidParticipantCount
@@ -293,12 +282,12 @@ func (h *Handler) Info(c *gin.Context) {
 // usdrProof, participantIds, bankTag). Used for confidential
 // Enygma-to-Enygma balance updates (the enygma circuit), plus a second,
 // independent USDr proof paying the relayer a fee, settled atomically in
-// the same call. PublicSignal must have exactly 81 elements (FingerPrint
-// 6×6 layout plus the Fix L-01 domain separator in the last slot);
-// UsdrPublicSignal must have exactly 83 (the same 80-signal layout, plus
-// FeeAmount at slot 80, plus its own Fix L-01 domain separator at slot
-// 81). The domain separator itself is supplied by the caller (part of
-// req.PublicSignal/req.UsdrPublicSignal, like every other signal) — the
+// the same call. PublicSignal must have exactly layout.TransferLen elements
+// and UsdrPublicSignal exactly layout.UsdrLen (see the generated layout
+// package for every field's position, including each Fix L-01 domain
+// separator and the USDr FeeAmount). The domain separator itself is
+// supplied by the caller (part of req.PublicSignal/req.UsdrPublicSignal,
+// like every other signal) — the
 // relayer does not compute or validate it; the contract's own
 // _expectedDomainId() check is what actually enforces it. Both proofs
 // share KIndex (the same k=6 anonymity-set participantIds).
@@ -328,18 +317,18 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
 		return
 	}
-	if len(req.PublicSignal) != TransferPublicSignalLen {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: enygma circuit requires exactly %d elements, got %d", TransferPublicSignalLen, len(req.PublicSignal))})
+	if len(req.PublicSignal) != layout.TransferLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: enygma circuit requires exactly %d elements, got %d", layout.TransferLen, len(req.PublicSignal))})
 		return
 	}
-	var pubSig80 [TransferPublicSignalLen]*big.Int
+	var pubSig [layout.TransferLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("publicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		pubSig80[i] = n
+		pubSig[i] = n
 	}
 
 	usdrProof8, err := parseProof8(req.UsdrProof)
@@ -347,18 +336,18 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrProof: %v", err)})
 		return
 	}
-	if len(req.UsdrPublicSignal) != UsdrFeePublicSignalLen {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: usdr circuit requires exactly %d elements, got %d", UsdrFeePublicSignalLen, len(req.UsdrPublicSignal))})
+	if len(req.UsdrPublicSignal) != layout.UsdrLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("usdrPublicSignal: usdr circuit requires exactly %d elements, got %d", layout.UsdrLen, len(req.UsdrPublicSignal))})
 		return
 	}
-	var usdrPubSig82 [UsdrFeePublicSignalLen]*big.Int
+	var usdrPubSig [layout.UsdrLen]*big.Int
 	for i, s := range req.UsdrPublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("usdrPublicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		usdrPubSig82[i] = n
+		usdrPubSig[i] = n
 	}
 
 	commitments, err := parseCommitments(req.Commitments)
@@ -385,7 +374,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 		return
 	}
 
-	if err := h.verifyFeeSlot(c.Request.Context(), usdrPubSig82, usdrCommitments, kIndex, req.UsdrFeeRandomness); err != nil {
+	if err := h.verifyFeeSlot(c.Request.Context(), usdrPubSig, usdrCommitments, kIndex, req.UsdrFeeRandomness); err != nil {
 		log.Printf("[relay] bank=%s transfer: rejected, fee slot: %v", bankID, err)
 		status := http.StatusPaymentRequired
 		if _, transient := err.(*feeSlotLookupError); transient {
@@ -397,19 +386,19 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 
 	transferProof := enygma.IEnygmaProof{
 		Proof:        proof8,
-		PublicSignal: pubSig80,
+		PublicSignal: pubSig,
 	}
 	usdrTransferProof := enygma.IEnygmaUsdrProof{
 		Proof:        usdrProof8,
-		PublicSignal: usdrPubSig82,
+		PublicSignal: usdrPubSig,
 	}
 
 	// One claim per nullifier the transfer consumes (main and USDr legs):
 	// the same note cannot be relayed twice at once, whichever route or
 	// other request fields carry it.
 	claimKeys := append([]string{
-		nullifierKey(mainNullifiers, pubSig80[transferNullifierIndex]),
-		nullifierKey(usdrNullifiers, usdrPubSig82[usdrNullifierIndex]),
+		nullifierKey(mainNullifiers, pubSig[layout.TransferNullifierOffset]),
+		nullifierKey(usdrNullifiers, usdrPubSig[layout.UsdrNullifierOffset]),
 	}, participantKeys(kIndex)...)
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate transfer already in-flight"})
@@ -464,11 +453,11 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 //
 // Calls Enygma.transferWithFee(commitmentDeltas, proof, participantIds).
 // Used for confidential transfers where the user embeds a public fee in the
-// ZK proof (enygma_fee circuit, 55-element public signal — 54 real signals
-// plus the Fix L-01 domain separator in the last slot, supplied by the
-// caller like every other signal).
-// The fee amount is at publicSignal[50] and is visible to the relayer without
-// revealing any other private information.
+// ZK proof (enygma_fee circuit, layout.TransferFeeLen public signals,
+// including the Fix L-01 domain separator, supplied by the caller like every
+// other signal).
+// The fee amount is at publicSignal[layout.TransferFeeFeeAmountOffset] and is
+// visible to the relayer without revealing any other private information.
 func (h *Handler) RelayTransferFee(c *gin.Context) {
 	var req RelayTransferFeeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -482,19 +471,19 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof: %v", err)})
 		return
 	}
-	if len(req.PublicSignal) != TransferFeePublicSignalLen {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: fee circuit requires exactly %d elements, got %d", TransferFeePublicSignalLen, len(req.PublicSignal))})
+	if len(req.PublicSignal) != layout.TransferFeeLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal: fee circuit requires exactly %d elements, got %d", layout.TransferFeeLen, len(req.PublicSignal))})
 		return
 	}
 
-	var pubSig54 [TransferFeePublicSignalLen]*big.Int
+	var feePubSig [layout.TransferFeeLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, err := checkFieldElement(fmt.Sprintf("publicSignal[%d]", i), s, bn254Fr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		pubSig54[i] = n
+		feePubSig[i] = n
 	}
 
 	commitments, err := parseCommitments(req.Commitments)
@@ -514,12 +503,12 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 
 	feeProof := enygma.IEnygmaFeeProof{
 		Proof:        proof8,
-		PublicSignal: pubSig54,
+		PublicSignal: feePubSig,
 	}
 
 	// Same main-ledger nullifier set as /relay/transfer, so the same note
 	// is blocked across both routes.
-	claimKeys := append([]string{nullifierKey(mainNullifiers, pubSig54[feeNullifierIndex])}, participantKeys(kIndex)...)
+	claimKeys := append([]string{nullifierKey(mainNullifiers, feePubSig[layout.TransferFeeNullifierOffset])}, participantKeys(kIndex)...)
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate fee transfer already in-flight"})
 		return
@@ -582,14 +571,9 @@ func bankIDFromContext(c *gin.Context) string {
 // at the relayer's cost. Two requests with the same nullifier can never both
 // succeed, so a nullifier key is neither evadable nor a false positive.
 //
-// Each offset comes from its circuit's generated statement layout. The main
-// ledger and USDr have separate nullifier sets (_nullifiers,
+// The main ledger and USDr have separate nullifier sets (_nullifiers,
 // _usdrNullifiers); the fee proof spends from the main ledger's.
 const (
-	transferNullifierIndex = layout.TransferNullifierOffset
-	usdrNullifierIndex     = layout.UsdrNullifierOffset
-	feeNullifierIndex      = layout.TransferFeeNullifierOffset
-
 	mainNullifiers = "main"
 	usdrNullifiers = "usdr"
 )
@@ -675,9 +659,9 @@ func DedupKey(kind string, req any) (string, error) {
 	index := 0
 	switch r := req.(type) {
 	case RelayTransferRequest:
-		signal, index = r.PublicSignal, transferNullifierIndex
+		signal, index = r.PublicSignal, layout.TransferNullifierOffset
 	case RelayTransferFeeRequest:
-		signal, index = r.PublicSignal, feeNullifierIndex
+		signal, index = r.PublicSignal, layout.TransferFeeNullifierOffset
 	default:
 		return "", fmt.Errorf("DedupKey: unsupported request type %T for %q", req, kind)
 	}

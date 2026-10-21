@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"testing"
 
+	"enygma_payments/layout"
 	"enygma_payments/relayer/config"
 	"enygma_payments/relayer/server"
 
@@ -68,14 +69,14 @@ func newFeeCheckingHandler(c *mockContract, m *mockMiner) *server.Handler {
 func paidTransferBody(fee, r *big.Int) server.RelayTransferRequest {
 	body := validTransferBody()
 	const slot = 5
-	body.UsdrPublicSignal[80] = fee.String()
+	body.UsdrPublicSignal[layout.UsdrFeeAmountOffset] = fee.String()
 	for i := 0; i < 6; i++ {
 		pt := testPedersen(big.NewInt(0), big.NewInt(int64(2000+i)))
 		if i == slot {
 			pt = testPedersen(fee, r)
 		}
-		body.UsdrPublicSignal[54+2*i] = pt.X.String()
-		body.UsdrPublicSignal[54+2*i+1] = pt.Y.String()
+		body.UsdrPublicSignal[layout.UsdrTxCommitmentsOffset+2*i] = pt.X.String()
+		body.UsdrPublicSignal[layout.UsdrTxCommitmentsOffset+2*i+1] = pt.Y.String()
 		body.UsdrCommitments[i] = []string{pt.X.String(), pt.Y.String()}
 	}
 	body.UsdrFeeRandomness = r.String()
