@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"enygma_payments/layout"
 	"enygma_payments/relayer/config"
 	enygma "enygma_payments/relayer/contracts"
 
@@ -51,9 +52,9 @@ var txTimeout = 45 * time.Second // a var only so tests can shorten it
 // Fix L-05 comment below for why exact (not "up to N") length is enforced,
 // and each handler's own doc comment for the signal layout.
 const (
-	TransferPublicSignalLen    = 81 // enygma circuit: FingerPrint 6x6 + Fix L-01 domain separator
-	TransferFeePublicSignalLen = 55 // enygma_fee circuit: 54 signals + domain separator
-	UsdrFeePublicSignalLen     = 83 // usdr circuit: 80-signal layout + FeeAmount + domain separator + FeeRecipientKey
+	TransferPublicSignalLen    = layout.TransferLen // enygma circuit, generated from the circuit
+	TransferFeePublicSignalLen = 55                 // enygma_fee circuit: 54 signals + domain separator
+	UsdrFeePublicSignalLen     = 83                 // usdr circuit: 80-signal layout + FeeAmount + domain separator + FeeRecipientKey
 )
 
 // maxParticipants is the exact commitmentDeltas/participantIds length every
@@ -581,11 +582,13 @@ func bankIDFromContext(c *gin.Context) string {
 // at the relayer's cost. Two requests with the same nullifier can never both
 // succeed, so a nullifier key is neither evadable nor a false positive.
 //
-// Offsets mirror Enygma.sol: FP_NULLIFIER_OFFSET (transfer and USDr proofs)
-// and NULLIFIER_OFFSET (fee proof). The main ledger and USDr have separate
+// The transfer offset comes from the generated statement layout; the USDr
+// and fee offsets mirror Enygma.sol (the USDr layout shares the transfer
+// layout's prefix, so its nullifier sits at the same index; NULLIFIER_OFFSET
+// for the fee proof). The main ledger and USDr have separate
 // nullifier sets (_nullifiers, _usdrNullifiers).
 const (
-	transferNullifierIndex = 79
+	transferNullifierIndex = layout.TransferNullifierOffset
 	usdrNullifierIndex     = 79
 	feeNullifierIndex      = 49
 

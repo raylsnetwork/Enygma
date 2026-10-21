@@ -53,9 +53,7 @@ func generateKeys(circuit frontend.Circuit, pkPath, vkPath, solPath string) erro
 }
 
 func generateKeysEnygma() error {
-	config := enygma.EnygmaCircuitConfig{
-		NCommitment: 6,
-	}
+	config := enygma.DefaultConfig
 
 	fp := make([][]frontend.Variable, config.NCommitment)
 	for i := range fp {

@@ -1,6 +1,7 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 import "./CurveBabyJubJub.sol";
+import "./StatementLayout.sol";
 import "../interfaces/IEnygma.sol";
 import "../interfaces/IERC20.sol";
 import "../interfaces/IZkDvp.sol";
@@ -70,22 +71,11 @@ contract Enygma is IEnygma {
     // what value each is checked against.
     uint256 private constant BRIDGE_DOMAIN_OFFSET = 51; // withdraw/deposit (52-signal)
 
-    // Public signal offsets for the 81-signal FingerPrint layout (main transfer circuit)
-    // Layout (k=6): [FingerPrint×36][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier][DomainId]
-    uint256 private constant FP_FINGERPRINT_OFFSET = 0;
-    uint256 private constant FP_FINGERPRINT_SIZE = 36;
-    uint256 private constant FP_PUBLIC_KEY_OFFSET = 36;
-    uint256 private constant FP_PUBLIC_KEY_SIZE = 6;
-    uint256 private constant FP_PREVIOUS_COMMIT_OFFSET = 42;
-    uint256 private constant FP_PREVIOUS_COMMIT_SIZE = 12;
-    uint256 private constant FP_TX_COMMIT_OFFSET = 54;
-    uint256 private constant FP_TX_COMMIT_SIZE = 12;
-    uint256 private constant FP_BLOCK_NUMBER_OFFSET = 66;
-    uint256 private constant FP_K_INDEX_OFFSET = 67;
-    uint256 private constant FP_K_INDEX_SIZE = 6;
-    uint256 private constant FP_MESSAGE_TAGS_OFFSET = 73;
-    uint256 private constant FP_NULLIFIER_OFFSET = 79;
-    uint256 private constant FP_DOMAIN_OFFSET = 80; // Fix L-01
+    // The main transfer circuit's offsets (StatementLayout.TRANSFER_*) and
+    // length (TRANSFER_LEN) are generated from the circuit; see
+    // StatementLayout.sol. Private functions take uint256[TRANSFER_LEN], so a
+    // length change stops compiling until IEnygma's uint256[81] (and the
+    // verifyProof selector string) follow.
 
     // Fix L-01: fee layout (54-signal base + FEE_OFFSET(50) = 55-signal
     // once the domain slot is added).
@@ -105,8 +95,8 @@ contract Enygma is IEnygma {
     // above: FeeAmount (index 80) — public because the fee is a fixed,
     // protocol-known amount, not something the sender needs to hide — and
     // Fix L-01's DomainId (index 81), binding the USDr leg to this specific
-    // deployment. Every other USDr offset is identical to the FP_*
-    // constants above.
+    // deployment. Every other USDr offset is identical to the
+    // StatementLayout.TRANSFER_* constants.
     uint256 private constant USDR_FEE_AMOUNT_OFFSET = 80;
     uint256 private constant USDR_DOMAIN_OFFSET = 81; // Fix L-01
     // The fee recipient's spend public key (83rd signal). Required to equal the
@@ -1820,28 +1810,39 @@ contract Enygma is IEnygma {
      * matching _verifyFingerprints: a bank has no shared secret with itself.
      */
     function _verifyUsdrMainBinding(
-        uint256[81] calldata mainSignal,
+        uint256[TRANSFER_LEN] calldata mainSignal,
         uint256[83] calldata usdrSignal
     ) private pure {
-        for (uint256 i = FP_PUBLIC_KEY_OFFSET; i < FP_PUBLIC_KEY_OFFSET + FP_PUBLIC_KEY_SIZE; ) {
+        for (
+            uint256 i = StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET;
+            i < StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET + StatementLayout.TRANSFER_PUBLIC_KEYS_SIZE;
+
+        ) {
             if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
             unchecked {
                 ++i;
             }
         }
-        for (uint256 i = FP_K_INDEX_OFFSET; i < FP_K_INDEX_OFFSET + FP_K_INDEX_SIZE; ) {
+        for (
+            uint256 i = StatementLayout.TRANSFER_ANONYMITY_SET_OFFSET;
+            i < StatementLayout.TRANSFER_ANONYMITY_SET_OFFSET + StatementLayout.TRANSFER_ANONYMITY_SET_SIZE;
+
+        ) {
             if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
             unchecked {
                 ++i;
             }
         }
-        if (mainSignal[FP_BLOCK_NUMBER_OFFSET] != usdrSignal[FP_BLOCK_NUMBER_OFFSET]) {
+        if (
+            mainSignal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET] !=
+            usdrSignal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET]
+        ) {
             revert UsdrBindingMismatch();
         }
         for (uint256 i; i < DEFAULT_SIZE; ) {
             for (uint256 j; j < DEFAULT_SIZE; ) {
                 if (i != j) {
-                    uint256 idx = FP_FINGERPRINT_OFFSET + i * DEFAULT_SIZE + j;
+                    uint256 idx = StatementLayout.TRANSFER_FINGERPRINT_OFFSET + i * DEFAULT_SIZE + j;
                     if (mainSignal[idx] != usdrSignal[idx]) revert UsdrBindingMismatch();
                 }
                 unchecked {
@@ -1975,12 +1976,12 @@ contract Enygma is IEnygma {
      * @notice Verify public inputs for the 80-signal FingerPrint transfer circuit
      */
     function _verifyPublicInputsFP(
-        uint256[81] calldata public_signal,
+        uint256[TRANSFER_LEN] calldata public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
         // Fix L-01: see _verifyPublicInputs52's identical comment.
-        if (public_signal[FP_DOMAIN_OFFSET] != _expectedDomainId()) {
+        if (public_signal[StatementLayout.TRANSFER_DOMAIN_ID_OFFSET] != _expectedDomainId()) {
             revert InvalidDomain();
         }
 
@@ -1994,11 +1995,11 @@ contract Enygma is IEnygma {
 
             if (keys[accountId] == 0) revert UnregisteredParticipant(); // Fix H-07
 
-            if (uint256(public_signal[FP_PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+            if (uint256(public_signal[StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET + i]) != keys[accountId]) {
                 revert InvalidPublicInputs();
             }
 
-            uint256 commitOffset = FP_PREVIOUS_COMMIT_OFFSET + (i << 1);
+            uint256 commitOffset = StatementLayout.TRANSFER_PREVIOUS_COMMITMENTS_OFFSET + (i << 1);
             if (
                 uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
                 uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
@@ -2006,7 +2007,7 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
-            uint256 txOffset = FP_TX_COMMIT_OFFSET + (i << 1);
+            uint256 txOffset = StatementLayout.TRANSFER_TX_COMMITMENTS_OFFSET + (i << 1);
             if (
                 commitmentDeltas[i].c1 != public_signal[txOffset] ||
                 commitmentDeltas[i].c2 != public_signal[txOffset + 1]
@@ -2024,10 +2025,11 @@ contract Enygma is IEnygma {
      * @notice Fix C-04: verify every pairwise fingerprint among a
      *         transfer's participants is mutually confirmed on-chain and
      *         matches exactly what the proof publishes. FingerPrintofSharedSecrets
-     *         is a row-major k×k matrix at FP_FINGERPRINT_OFFSET (k =
+     *         is a row-major k×k matrix at
+     *         StatementLayout.TRANSFER_FINGERPRINT_OFFSET (k =
      *         participantIds.length, always DEFAULT_SIZE for this circuit
      *         — the offsets below already assume that, same as every
-     *         other FP_* constant). Checked uniformly across every
+     *         other StatementLayout.TRANSFER_* constant). Checked uniformly across every
      *         off-diagonal cell rather than only "the sender's column",
      *         because the contract has no way to identify which slot is
      *         the sender without breaking the anonymity set — and doesn't
@@ -2048,7 +2050,7 @@ contract Enygma is IEnygma {
      *         passes through" would leave the freeze attack fully intact.
      */
     function _verifyFingerprints(
-        uint256[81] calldata public_signal,
+        uint256[TRANSFER_LEN] calldata public_signal,
         uint256[] calldata participantIds
     ) private view {
         uint256 len = participantIds.length;
@@ -2060,7 +2062,7 @@ contract Enygma is IEnygma {
                     if (!fingerprintConfirmed[idI][idJ]) {
                         revert FingerprintNotConfirmed();
                     }
-                    uint256 offset = FP_FINGERPRINT_OFFSET + i * len + j;
+                    uint256 offset = StatementLayout.TRANSFER_FINGERPRINT_OFFSET + i * len + j;
                     if (
                         uint256(public_signal[offset]) !=
                         confirmedFingerprint[idI][idJ]
@@ -2125,11 +2127,11 @@ contract Enygma is IEnygma {
 
             if (keys[accountId] == 0) revert UnregisteredParticipant(); // Fix H-07
 
-            if (uint256(public_signal[FP_PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+            if (uint256(public_signal[StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET + i]) != keys[accountId]) {
                 revert InvalidPublicInputs();
             }
 
-            uint256 commitOffset = FP_PREVIOUS_COMMIT_OFFSET + (i << 1);
+            uint256 commitOffset = StatementLayout.TRANSFER_PREVIOUS_COMMITMENTS_OFFSET + (i << 1);
             if (
                 uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
                 uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
@@ -2137,7 +2139,7 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
-            uint256 txOffset = FP_TX_COMMIT_OFFSET + (i << 1);
+            uint256 txOffset = StatementLayout.TRANSFER_TX_COMMITMENTS_OFFSET + (i << 1);
             if (
                 commitmentDeltas[i].c1 != public_signal[txOffset] ||
                 commitmentDeltas[i].c2 != public_signal[txOffset + 1]
@@ -2154,8 +2156,8 @@ contract Enygma is IEnygma {
     /**
      * @notice Verify block number freshness for the 80-signal FingerPrint transfer circuit
      */
-    function _verifyBlockNumberFP(uint256[81] calldata public_signal) private view {
-        if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+    function _verifyBlockNumberFP(uint256[TRANSFER_LEN] calldata public_signal) private view {
+        if (uint256(public_signal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
@@ -2163,20 +2165,20 @@ contract Enygma is IEnygma {
     /**
      * @notice Record nullifier as spent for the 80-signal FingerPrint transfer circuit
      */
-    function _consumeNullifierFP(uint256[81] calldata public_signal) private {
-        uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
+    function _consumeNullifierFP(uint256[TRANSFER_LEN] calldata public_signal) private {
+        uint256 nullifier = public_signal[StatementLayout.TRANSFER_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;
     }
 
     /**
      * @notice Verify block number freshness for the 83-signal USDr proof.
-     * Offset is identical to FP_BLOCK_NUMBER_OFFSET — only the array
-     * length differs (81 vs 80), which calldata typing requires a
-     * separate function signature for.
+     * Offset is identical to StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET —
+     * only the array length differs (83 vs 81), which calldata typing
+     * requires a separate function signature for.
      */
     function _verifyBlockNumberUsdr(uint256[83] calldata public_signal) private view {
-        if (uint256(public_signal[FP_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+        if (uint256(public_signal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
@@ -2185,7 +2187,7 @@ contract Enygma is IEnygma {
      * @notice Record nullifier as spent for the 83-signal USDr proof.
      */
     function _consumeNullifierUsdr(uint256[83] calldata public_signal) private {
-        uint256 nullifier = public_signal[FP_NULLIFIER_OFFSET];
+        uint256 nullifier = public_signal[StatementLayout.TRANSFER_NULLIFIER_OFFSET];
         if (_usdrNullifiers[nullifier]) revert NullifierAlreadyUsed();
         _usdrNullifiers[nullifier] = true;
     }
