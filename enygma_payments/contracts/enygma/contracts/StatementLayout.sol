@@ -32,6 +32,63 @@ library StatementLayout {
     uint256 internal constant TRANSFER_NULLIFIER_SIZE = 1;
     uint256 internal constant TRANSFER_DOMAIN_ID_OFFSET = 80;
     uint256 internal constant TRANSFER_DOMAIN_ID_SIZE = 1;
+
+    // TransferFee statement layout (TRANSFER_FEE_LEN = 55 public signals).
+    uint256 internal constant TRANSFER_FEE_HASHED_SHARED_SECRETS_OFFSET = 0;
+    uint256 internal constant TRANSFER_FEE_HASHED_SHARED_SECRETS_SIZE = 6;
+    uint256 internal constant TRANSFER_FEE_PUBLIC_KEYS_OFFSET = 6;
+    uint256 internal constant TRANSFER_FEE_PUBLIC_KEYS_SIZE = 6;
+    // PreviousCommitments: [6][2], row-major: element [i][j] at TRANSFER_FEE_PREVIOUS_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant TRANSFER_FEE_PREVIOUS_COMMITMENTS_OFFSET = 12;
+    uint256 internal constant TRANSFER_FEE_PREVIOUS_COMMITMENTS_SIZE = 12;
+    // TxCommitments: [6][2], row-major: element [i][j] at TRANSFER_FEE_TX_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant TRANSFER_FEE_TX_COMMITMENTS_OFFSET = 24;
+    uint256 internal constant TRANSFER_FEE_TX_COMMITMENTS_SIZE = 12;
+    uint256 internal constant TRANSFER_FEE_BLOCK_NUMBER_OFFSET = 36;
+    uint256 internal constant TRANSFER_FEE_BLOCK_NUMBER_SIZE = 1;
+    uint256 internal constant TRANSFER_FEE_ANONYMITY_SET_OFFSET = 37;
+    uint256 internal constant TRANSFER_FEE_ANONYMITY_SET_SIZE = 6;
+    uint256 internal constant TRANSFER_FEE_MESSAGE_TAGS_OFFSET = 43;
+    uint256 internal constant TRANSFER_FEE_MESSAGE_TAGS_SIZE = 6;
+    uint256 internal constant TRANSFER_FEE_NULLIFIER_OFFSET = 49;
+    uint256 internal constant TRANSFER_FEE_NULLIFIER_SIZE = 1;
+    uint256 internal constant TRANSFER_FEE_FEE_AMOUNT_OFFSET = 50;
+    uint256 internal constant TRANSFER_FEE_FEE_AMOUNT_SIZE = 1;
+    uint256 internal constant TRANSFER_FEE_SUM_TX_COMMITMENTS_OFFSET = 51;
+    uint256 internal constant TRANSFER_FEE_SUM_TX_COMMITMENTS_SIZE = 2;
+    uint256 internal constant TRANSFER_FEE_SUM_TX_VALUES_WITH_FEE_OFFSET = 53;
+    uint256 internal constant TRANSFER_FEE_SUM_TX_VALUES_WITH_FEE_SIZE = 1;
+    uint256 internal constant TRANSFER_FEE_DOMAIN_ID_OFFSET = 54;
+    uint256 internal constant TRANSFER_FEE_DOMAIN_ID_SIZE = 1;
+
+    // Usdr statement layout (USDR_LEN = 83 public signals).
+    // Fingerprint: [6][6], row-major: element [i][j] at USDR_FINGERPRINT_OFFSET + i*6 + j.
+    uint256 internal constant USDR_FINGERPRINT_OFFSET = 0;
+    uint256 internal constant USDR_FINGERPRINT_SIZE = 36;
+    uint256 internal constant USDR_PUBLIC_KEYS_OFFSET = 36;
+    uint256 internal constant USDR_PUBLIC_KEYS_SIZE = 6;
+    // PreviousCommitments: [6][2], row-major: element [i][j] at USDR_PREVIOUS_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant USDR_PREVIOUS_COMMITMENTS_OFFSET = 42;
+    uint256 internal constant USDR_PREVIOUS_COMMITMENTS_SIZE = 12;
+    // TxCommitments: [6][2], row-major: element [i][j] at USDR_TX_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant USDR_TX_COMMITMENTS_OFFSET = 54;
+    uint256 internal constant USDR_TX_COMMITMENTS_SIZE = 12;
+    uint256 internal constant USDR_BLOCK_NUMBER_OFFSET = 66;
+    uint256 internal constant USDR_BLOCK_NUMBER_SIZE = 1;
+    uint256 internal constant USDR_ANONYMITY_SET_OFFSET = 67;
+    uint256 internal constant USDR_ANONYMITY_SET_SIZE = 6;
+    uint256 internal constant USDR_MESSAGE_TAGS_OFFSET = 73;
+    uint256 internal constant USDR_MESSAGE_TAGS_SIZE = 6;
+    uint256 internal constant USDR_NULLIFIER_OFFSET = 79;
+    uint256 internal constant USDR_NULLIFIER_SIZE = 1;
+    uint256 internal constant USDR_FEE_AMOUNT_OFFSET = 80;
+    uint256 internal constant USDR_FEE_AMOUNT_SIZE = 1;
+    uint256 internal constant USDR_DOMAIN_ID_OFFSET = 81;
+    uint256 internal constant USDR_DOMAIN_ID_SIZE = 1;
+    uint256 internal constant USDR_FEE_RECIPIENT_KEY_OFFSET = 82;
+    uint256 internal constant USDR_FEE_RECIPIENT_KEY_SIZE = 1;
 }
 
 uint256 constant TRANSFER_LEN = 81;
+uint256 constant TRANSFER_FEE_LEN = 55;
+uint256 constant USDR_LEN = 83;

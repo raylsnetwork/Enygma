@@ -52,9 +52,9 @@ var txTimeout = 45 * time.Second // a var only so tests can shorten it
 // Fix L-05 comment below for why exact (not "up to N") length is enforced,
 // and each handler's own doc comment for the signal layout.
 const (
-	TransferPublicSignalLen    = layout.TransferLen // enygma circuit, generated from the circuit
-	TransferFeePublicSignalLen = 55                 // enygma_fee circuit: 54 signals + domain separator
-	UsdrFeePublicSignalLen     = 83                 // usdr circuit: 80-signal layout + FeeAmount + domain separator + FeeRecipientKey
+	TransferPublicSignalLen    = layout.TransferLen    // enygma circuit, generated from the circuit
+	TransferFeePublicSignalLen = layout.TransferFeeLen // enygma_fee circuit, generated from the circuit
+	UsdrFeePublicSignalLen     = layout.UsdrLen        // usdr circuit, generated from the circuit
 )
 
 // maxParticipants is the exact commitmentDeltas/participantIds length every
@@ -582,15 +582,13 @@ func bankIDFromContext(c *gin.Context) string {
 // at the relayer's cost. Two requests with the same nullifier can never both
 // succeed, so a nullifier key is neither evadable nor a false positive.
 //
-// The transfer offset comes from the generated statement layout; the USDr
-// and fee offsets mirror Enygma.sol (the USDr layout shares the transfer
-// layout's prefix, so its nullifier sits at the same index; NULLIFIER_OFFSET
-// for the fee proof). The main ledger and USDr have separate
-// nullifier sets (_nullifiers, _usdrNullifiers).
+// Each offset comes from its circuit's generated statement layout. The main
+// ledger and USDr have separate nullifier sets (_nullifiers,
+// _usdrNullifiers); the fee proof spends from the main ledger's.
 const (
 	transferNullifierIndex = layout.TransferNullifierOffset
-	usdrNullifierIndex     = 79
-	feeNullifierIndex      = 49
+	usdrNullifierIndex     = layout.UsdrNullifierOffset
+	feeNullifierIndex      = layout.TransferFeeNullifierOffset
 
 	mainNullifiers = "main"
 	usdrNullifiers = "usdr"

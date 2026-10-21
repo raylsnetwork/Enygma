@@ -14,7 +14,7 @@ contract Enygma is IEnygma {
     uint256 private constant STATUS_INITIALIZED = 1;
     uint256 private constant DEFAULT_SIZE = 6;
 
-    // Public signal offsets for the 50-signal layout (withdraw, fee, deposit circuits)
+    // Public signal offsets for the 50-signal layout (withdraw, deposit circuits)
     // Layout (k=6): [HashSecrets×6][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
     uint256 private constant ARRAY_HASH_SECRET_OFFSET = 0;
     uint256 private constant ARRAY_HASH_SECRET_SIZE = 6;
@@ -30,16 +30,15 @@ contract Enygma is IEnygma {
     uint256 private constant MESSAGE_TAGS_OFFSET = 43;
     uint256 private constant NULLIFIER_OFFSET = 49;
 
-    // Fix M-13: the fee layout (enygma_fee circuit) extends the 50-signal
-    // base with three more slots — the fee itself (50) and two aggregate
-    // values the circuit computes but nothing on-chain previously read at
-    // all: SumTxCommit.X/Y (51-52) and SumTxValuesWithFee (53). Only FEE_OFFSET
-    // is used below; SumTxCommit/SumTxValuesWithFee are provably unusable as
-    // an independent check (SumTxCommit is asserted equal to the constant
-    // (0,1) two lines earlier in the circuit, and SumTxValuesWithFee is an
-    // unbounded hint remainder) — see the fee-burn comment on transferWithFee
-    // for why FEE_OFFSET alone is sufficient.
-    uint256 private constant FEE_OFFSET = 50;
+    // Fix M-13: the fee layout (enygma_fee circuit, StatementLayout.TRANSFER_FEE_*)
+    // extends the 50-signal base with three more slots — the fee itself
+    // (FeeAmount) and two aggregate values the circuit computes but nothing
+    // on-chain previously read at all: SumTxCommitments and
+    // SumTxValuesWithFee. Only FeeAmount is used below; the other two are
+    // provably unusable as an independent check (SumTxCommitments is asserted
+    // equal to the constant (0,1) two lines earlier in the circuit, and
+    // SumTxValuesWithFee is an unbounded hint remainder) — see the fee-burn
+    // comment on transferWithFee for why FeeAmount alone is sufficient.
 
     // Fix M-14/C-09: withdraw and deposit are both genuinely 51-signal
     // layouts (the 50-signal constants above cover every index they
@@ -71,15 +70,13 @@ contract Enygma is IEnygma {
     // what value each is checked against.
     uint256 private constant BRIDGE_DOMAIN_OFFSET = 51; // withdraw/deposit (52-signal)
 
-    // The main transfer circuit's offsets (StatementLayout.TRANSFER_*) and
-    // length (TRANSFER_LEN) are generated from the circuit; see
-    // StatementLayout.sol. Private functions take uint256[TRANSFER_LEN], so a
-    // length change stops compiling until IEnygma's uint256[81] (and the
-    // verifyProof selector string) follow.
-
-    // Fix L-01: fee layout (54-signal base + FEE_OFFSET(50) = 55-signal
-    // once the domain slot is added).
-    uint256 private constant FEE_DOMAIN_OFFSET = 54;
+    // The transfer, transfer-with-fee and USDr circuits' offsets
+    // (StatementLayout.TRANSFER_*, TRANSFER_FEE_*, USDR_*) and lengths
+    // (TRANSFER_LEN, TRANSFER_FEE_LEN, USDR_LEN) are generated from the
+    // circuits; see StatementLayout.sol. Private functions take
+    // uint256[<CIRCUIT>_LEN], so a length change stops compiling until
+    // IEnygma's uint256[81]/[55]/[83] (and the verifyProof selector strings)
+    // follow.
 
     // Public signal offsets for the 9-signal burn circuit (Fix H-13).
     // Layout: [PublicKey, PrevCommit×2, NewCommit×2, Amount, BlockNum, Nullifier, DomainId]
@@ -91,18 +88,14 @@ contract Enygma is IEnygma {
     uint256 private constant BURN_NULLIFIER_OFFSET = 7;
     uint256 private constant BURN_DOMAIN_OFFSET = 8; // Fix L-01
 
-    // USDr proofs carry two extra signals beyond the 80-signal FP layout
-    // above: FeeAmount (index 80) — public because the fee is a fixed,
-    // protocol-known amount, not something the sender needs to hide — and
-    // Fix L-01's DomainId (index 81), binding the USDr leg to this specific
-    // deployment. Every other USDr offset is identical to the
-    // StatementLayout.TRANSFER_* constants.
-    uint256 private constant USDR_FEE_AMOUNT_OFFSET = 80;
-    uint256 private constant USDR_DOMAIN_OFFSET = 81; // Fix L-01
-    // The fee recipient's spend public key (83rd signal). Required to equal the
-    // key of the account that submitted the transaction, so the fee is paid to
-    // the relayer rather than to whichever participant the prover picked.
-    uint256 private constant USDR_FEE_RECIPIENT_OFFSET = 82;
+    // USDr proofs (StatementLayout.USDR_*) carry three extra signals beyond
+    // the 80-signal FP layout: FeeAmount — public because the fee is a
+    // fixed, protocol-known amount, not something the sender needs to hide —
+    // Fix L-01's DomainId, binding the USDr leg to this specific deployment,
+    // and FeeRecipientKey, the fee recipient's spend public key. That key is
+    // required to equal the key of the account that submitted the
+    // transaction, so the fee is paid to the relayer rather than to whichever
+    // participant the prover picked.
 
     // ============================================
     // STATE VARIABLES
@@ -132,7 +125,7 @@ contract Enygma is IEnygma {
     uint256 public totalSupplyAmount;
 
     /// @notice Fix M-13: the fee `transferWithFee`'s proof must carry at
-    /// public_signal[FEE_OFFSET]. Enforced by exact match (not merely read)
+    /// public_signal[StatementLayout.TRANSFER_FEE_FEE_AMOUNT_OFFSET]. Enforced by exact match (not merely read)
     /// so the fee is mandatory, not advisory — a prover cannot submit
     /// fee=0 to skip it. Owner-configurable, defaults to 0 (no fee
     /// required) until explicitly set. See setProtocolFee / transferWithFee.
@@ -146,7 +139,7 @@ contract Enygma is IEnygma {
     uint256 public usdrTotalSupplyAmount;
 
     // Fixed relayer fee, enforced on-chain against every usdrProof's public
-    // FeeAmount signal (USDR_FEE_AMOUNT_OFFSET). A public input rather than
+    // FeeAmount signal (StatementLayout.USDR_FEE_AMOUNT_OFFSET). A public input rather than
     // a circuit constant, so changing it needs no new proving/verifying
     // keys — see setUsdrFixedFee().
     uint256 public usdrFixedFeeAmount;
@@ -462,7 +455,7 @@ contract Enygma is IEnygma {
     }
 
     /// @notice Fix M-13: set the fee transferWithFee's proof must carry
-    ///         exactly (public_signal[FEE_OFFSET]). Not gated by
+    ///         exactly (public_signal[StatementLayout.TRANSFER_FEE_FEE_AMOUNT_OFFSET]). Not gated by
     ///         whenNotPaused — an administrative config change, not a
     ///         value-moving operation, same as addVerifier.
     function setProtocolFee(uint256 newFee) external onlyOwner returns (bool) {
@@ -1208,7 +1201,7 @@ contract Enygma is IEnygma {
         // from totalSupply — decrementing by exactly what the circuit's
         // own Pedersen equation already forces the balance sum to lose —
         // keeps check() consistent instead of permanently false.
-        uint256 fee = proof.public_signal[FEE_OFFSET];
+        uint256 fee = proof.public_signal[StatementLayout.TRANSFER_FEE_FEE_AMOUNT_OFFSET];
         if (fee != protocolFee) revert InvalidFee();
         _burnFeeFromSupply(fee);
 
@@ -1811,39 +1804,40 @@ contract Enygma is IEnygma {
      */
     function _verifyUsdrMainBinding(
         uint256[TRANSFER_LEN] calldata mainSignal,
-        uint256[83] calldata usdrSignal
+        uint256[USDR_LEN] calldata usdrSignal
     ) private pure {
-        for (
-            uint256 i = StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET;
-            i < StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET + StatementLayout.TRANSFER_PUBLIC_KEYS_SIZE;
-
-        ) {
-            if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
+        for (uint256 i; i < StatementLayout.TRANSFER_PUBLIC_KEYS_SIZE; ) {
+            if (
+                mainSignal[StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET + i] !=
+                usdrSignal[StatementLayout.USDR_PUBLIC_KEYS_OFFSET + i]
+            ) revert UsdrBindingMismatch();
             unchecked {
                 ++i;
             }
         }
-        for (
-            uint256 i = StatementLayout.TRANSFER_ANONYMITY_SET_OFFSET;
-            i < StatementLayout.TRANSFER_ANONYMITY_SET_OFFSET + StatementLayout.TRANSFER_ANONYMITY_SET_SIZE;
-
-        ) {
-            if (mainSignal[i] != usdrSignal[i]) revert UsdrBindingMismatch();
+        for (uint256 i; i < StatementLayout.TRANSFER_ANONYMITY_SET_SIZE; ) {
+            if (
+                mainSignal[StatementLayout.TRANSFER_ANONYMITY_SET_OFFSET + i] !=
+                usdrSignal[StatementLayout.USDR_ANONYMITY_SET_OFFSET + i]
+            ) revert UsdrBindingMismatch();
             unchecked {
                 ++i;
             }
         }
         if (
             mainSignal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET] !=
-            usdrSignal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET]
+            usdrSignal[StatementLayout.USDR_BLOCK_NUMBER_OFFSET]
         ) {
             revert UsdrBindingMismatch();
         }
         for (uint256 i; i < DEFAULT_SIZE; ) {
             for (uint256 j; j < DEFAULT_SIZE; ) {
                 if (i != j) {
-                    uint256 idx = StatementLayout.TRANSFER_FINGERPRINT_OFFSET + i * DEFAULT_SIZE + j;
-                    if (mainSignal[idx] != usdrSignal[idx]) revert UsdrBindingMismatch();
+                    uint256 cell = i * DEFAULT_SIZE + j;
+                    if (
+                        mainSignal[StatementLayout.TRANSFER_FINGERPRINT_OFFSET + cell] !=
+                        usdrSignal[StatementLayout.USDR_FINGERPRINT_OFFSET + cell]
+                    ) revert UsdrBindingMismatch();
                 }
                 unchecked {
                     ++j;
@@ -2095,15 +2089,15 @@ contract Enygma is IEnygma {
      * sharing the same pre-state.
      */
     function _verifyPublicInputsUsdr(
-        uint256[83] calldata public_signal,
+        uint256[USDR_LEN] calldata public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
-        if (public_signal[USDR_DOMAIN_OFFSET] != _expectedDomainId()) { // Fix L-01
+        if (public_signal[StatementLayout.USDR_DOMAIN_ID_OFFSET] != _expectedDomainId()) { // Fix L-01
             revert InvalidDomain();
         }
 
-        if (public_signal[USDR_FEE_AMOUNT_OFFSET] != usdrFixedFeeAmount) {
+        if (public_signal[StatementLayout.USDR_FEE_AMOUNT_OFFSET] != usdrFixedFeeAmount) {
             revert InvalidFeeAmount();
         }
 
@@ -2113,7 +2107,7 @@ contract Enygma is IEnygma {
         // relayer, the account that pays the gas, the account that is paid.
         // Without this a sender could name any participant as the recipient
         // and have its transfer relayed for free.
-        if (public_signal[USDR_FEE_RECIPIENT_OFFSET] != publicKeys[addressToAccountId[msg.sender]]) {
+        if (public_signal[StatementLayout.USDR_FEE_RECIPIENT_KEY_OFFSET] != publicKeys[addressToAccountId[msg.sender]]) {
             revert InvalidFeeRecipient();
         }
 
@@ -2127,11 +2121,11 @@ contract Enygma is IEnygma {
 
             if (keys[accountId] == 0) revert UnregisteredParticipant(); // Fix H-07
 
-            if (uint256(public_signal[StatementLayout.TRANSFER_PUBLIC_KEYS_OFFSET + i]) != keys[accountId]) {
+            if (uint256(public_signal[StatementLayout.USDR_PUBLIC_KEYS_OFFSET + i]) != keys[accountId]) {
                 revert InvalidPublicInputs();
             }
 
-            uint256 commitOffset = StatementLayout.TRANSFER_PREVIOUS_COMMITMENTS_OFFSET + (i << 1);
+            uint256 commitOffset = StatementLayout.USDR_PREVIOUS_COMMITMENTS_OFFSET + (i << 1);
             if (
                 uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
                 uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
@@ -2139,7 +2133,7 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
-            uint256 txOffset = StatementLayout.TRANSFER_TX_COMMITMENTS_OFFSET + (i << 1);
+            uint256 txOffset = StatementLayout.USDR_TX_COMMITMENTS_OFFSET + (i << 1);
             if (
                 commitmentDeltas[i].c1 != public_signal[txOffset] ||
                 commitmentDeltas[i].c2 != public_signal[txOffset + 1]
@@ -2173,12 +2167,11 @@ contract Enygma is IEnygma {
 
     /**
      * @notice Verify block number freshness for the 83-signal USDr proof.
-     * Offset is identical to StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET —
-     * only the array length differs (83 vs 81), which calldata typing
-     * requires a separate function signature for.
+     * A separate function from _verifyBlockNumberFP because calldata typing
+     * fixes the array length (USDR_LEN vs TRANSFER_LEN).
      */
-    function _verifyBlockNumberUsdr(uint256[83] calldata public_signal) private view {
-        if (uint256(public_signal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+    function _verifyBlockNumberUsdr(uint256[USDR_LEN] calldata public_signal) private view {
+        if (uint256(public_signal[StatementLayout.USDR_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
@@ -2186,8 +2179,8 @@ contract Enygma is IEnygma {
     /**
      * @notice Record nullifier as spent for the 83-signal USDr proof.
      */
-    function _consumeNullifierUsdr(uint256[83] calldata public_signal) private {
-        uint256 nullifier = public_signal[StatementLayout.TRANSFER_NULLIFIER_OFFSET];
+    function _consumeNullifierUsdr(uint256[USDR_LEN] calldata public_signal) private {
+        uint256 nullifier = public_signal[StatementLayout.USDR_NULLIFIER_OFFSET];
         if (_usdrNullifiers[nullifier]) revert NullifierAlreadyUsed();
         _usdrNullifiers[nullifier] = true;
     }
@@ -2510,12 +2503,12 @@ contract Enygma is IEnygma {
      * @notice Verify fee public inputs match contract state (same offsets as base, 55-element array)
      */
     function _verifyFeePublicInputs(
-        uint256[55] calldata public_signal,
+        uint256[TRANSFER_FEE_LEN] calldata public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
         // Fix L-01: see _verifyPublicInputs52's identical comment.
-        if (public_signal[FEE_DOMAIN_OFFSET] != _expectedDomainId()) {
+        if (public_signal[StatementLayout.TRANSFER_FEE_DOMAIN_ID_OFFSET] != _expectedDomainId()) {
             revert InvalidDomain();
         }
 
@@ -2529,11 +2522,11 @@ contract Enygma is IEnygma {
 
             if (keys[accountId] == 0) revert UnregisteredParticipant(); // Fix H-07
 
-            if (uint256(public_signal[PUBLIC_KEY_OFFSET + i]) != keys[accountId]) {
+            if (uint256(public_signal[StatementLayout.TRANSFER_FEE_PUBLIC_KEYS_OFFSET + i]) != keys[accountId]) {
                 revert InvalidPublicInputs();
             }
 
-            uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1);
+            uint256 commitOffset = StatementLayout.TRANSFER_FEE_PREVIOUS_COMMITMENTS_OFFSET + (i << 1);
             if (
                 uint256(public_signal[commitOffset]) != balances[accountId].c1 ||
                 uint256(public_signal[commitOffset + 1]) != balances[accountId].c2
@@ -2541,7 +2534,7 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
-            uint256 txOffset = TX_COMMIT_OFFSET + (i << 1);
+            uint256 txOffset = StatementLayout.TRANSFER_FEE_TX_COMMITMENTS_OFFSET + (i << 1);
             if (
                 commitmentDeltas[i].c1 != public_signal[txOffset] ||
                 commitmentDeltas[i].c2 != public_signal[txOffset + 1]
@@ -2558,8 +2551,8 @@ contract Enygma is IEnygma {
     /**
      * @notice Verify block number freshness for fee proof
      */
-    function _verifyFeeBlockNumber(uint256[55] calldata public_signal) private view {
-        if (uint256(public_signal[BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+    function _verifyFeeBlockNumber(uint256[TRANSFER_FEE_LEN] calldata public_signal) private view {
+        if (uint256(public_signal[StatementLayout.TRANSFER_FEE_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
@@ -2567,8 +2560,8 @@ contract Enygma is IEnygma {
     /**
      * @notice Record fee nullifier as spent
      */
-    function _consumeFeeNullifier(uint256[55] calldata public_signal) private {
-        uint256 nullifier = public_signal[NULLIFIER_OFFSET];
+    function _consumeFeeNullifier(uint256[TRANSFER_FEE_LEN] calldata public_signal) private {
+        uint256 nullifier = public_signal[StatementLayout.TRANSFER_FEE_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;
     }

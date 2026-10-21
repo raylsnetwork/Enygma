@@ -81,9 +81,7 @@ func generateKeysEnygma() error {
 }
 
 func generateKeysUsdr() error {
-	config := usdr.USDrCircuitConfig{
-		NCommitment: 6,
-	}
+	config := usdr.DefaultConfig
 
 	fp := make([][]frontend.Variable, config.NCommitment)
 	for i := range fp {
@@ -111,7 +109,7 @@ func generateKeysUsdr() error {
 }
 
 func generateKeysEnygmaFee() error {
-	config := enygma_fee.EnygmaFeeCircuitConfig{NCommitment: 6}
+	config := enygma_fee.DefaultConfig
 	circuit := enygma_fee.EnygmaFeeCircuit{
 		Config:              config,
 		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
