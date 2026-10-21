@@ -42,3 +42,87 @@ const (
 	TransferDomainIdOffset = 80
 	TransferDomainIdSize   = 1
 )
+
+// TransferFee statement layout (55 public signals).
+const (
+	TransferFeeLen = 55
+
+	TransferFeeHashedSharedSecretsOffset = 0
+	TransferFeeHashedSharedSecretsSize   = 6
+
+	TransferFeePublicKeysOffset = 6
+	TransferFeePublicKeysSize   = 6
+
+	// PreviousCommitments: [6][2], row-major: element [i][j] at TransferFeePreviousCommitmentsOffset + i*2 + j.
+	TransferFeePreviousCommitmentsOffset = 12
+	TransferFeePreviousCommitmentsSize   = 12
+
+	// TxCommitments: [6][2], row-major: element [i][j] at TransferFeeTxCommitmentsOffset + i*2 + j.
+	TransferFeeTxCommitmentsOffset = 24
+	TransferFeeTxCommitmentsSize   = 12
+
+	TransferFeeBlockNumberOffset = 36
+	TransferFeeBlockNumberSize   = 1
+
+	TransferFeeAnonymitySetOffset = 37
+	TransferFeeAnonymitySetSize   = 6
+
+	TransferFeeMessageTagsOffset = 43
+	TransferFeeMessageTagsSize   = 6
+
+	TransferFeeNullifierOffset = 49
+	TransferFeeNullifierSize   = 1
+
+	TransferFeeFeeAmountOffset = 50
+	TransferFeeFeeAmountSize   = 1
+
+	TransferFeeSumTxCommitmentsOffset = 51
+	TransferFeeSumTxCommitmentsSize   = 2
+
+	TransferFeeSumTxValuesWithFeeOffset = 53
+	TransferFeeSumTxValuesWithFeeSize   = 1
+
+	TransferFeeDomainIdOffset = 54
+	TransferFeeDomainIdSize   = 1
+)
+
+// Usdr statement layout (83 public signals).
+const (
+	UsdrLen = 83
+
+	// Fingerprint: [6][6], row-major: element [i][j] at UsdrFingerprintOffset + i*6 + j.
+	UsdrFingerprintOffset = 0
+	UsdrFingerprintSize   = 36
+
+	UsdrPublicKeysOffset = 36
+	UsdrPublicKeysSize   = 6
+
+	// PreviousCommitments: [6][2], row-major: element [i][j] at UsdrPreviousCommitmentsOffset + i*2 + j.
+	UsdrPreviousCommitmentsOffset = 42
+	UsdrPreviousCommitmentsSize   = 12
+
+	// TxCommitments: [6][2], row-major: element [i][j] at UsdrTxCommitmentsOffset + i*2 + j.
+	UsdrTxCommitmentsOffset = 54
+	UsdrTxCommitmentsSize   = 12
+
+	UsdrBlockNumberOffset = 66
+	UsdrBlockNumberSize   = 1
+
+	UsdrAnonymitySetOffset = 67
+	UsdrAnonymitySetSize   = 6
+
+	UsdrMessageTagsOffset = 73
+	UsdrMessageTagsSize   = 6
+
+	UsdrNullifierOffset = 79
+	UsdrNullifierSize   = 1
+
+	UsdrFeeAmountOffset = 80
+	UsdrFeeAmountSize   = 1
+
+	UsdrDomainIdOffset = 81
+	UsdrDomainIdSize   = 1
+
+	UsdrFeeRecipientKeyOffset = 82
+	UsdrFeeRecipientKeySize   = 1
+)

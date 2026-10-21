@@ -39,7 +39,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	curve := ecc.BN254
 	pk, vk := utils.MustLoadKeys(curve, pkPath, vkPath) // Fix L-04 part 1
 
-	config := EnygmaFeeCircuitConfig{NCommitment: 6}
+	config := DefaultConfig
 	circuitTemplate := createCircuitTemplate(config)
 	solver.RegisterHint(utils.ModHint)
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitTemplate)

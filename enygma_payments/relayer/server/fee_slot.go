@@ -5,17 +5,18 @@ import (
 	"fmt"
 	"math/big"
 
+	"enygma_payments/layout"
 	enygma "enygma_payments/relayer/contracts"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/iden3/go-iden3-crypto/babyjub"
 )
 
-// USDr public-signal offsets this check reads (Enygma.sol: FP_TX_COMMIT_OFFSET
-// and USDR_FEE_AMOUNT_OFFSET).
+// USDr public-signal offsets this check reads, from the generated statement
+// layout.
 const (
-	usdrTxCommitOffset  = 54
-	usdrFeeAmountOffset = 80
+	usdrTxCommitmentsOffset = layout.UsdrTxCommitmentsOffset
+	usdrFeeAmountOffset     = layout.UsdrFeeAmountOffset
 )
 
 // Pedersen generators — identical to Enygma.sol's GX/GY/HX/HY and
@@ -111,7 +112,7 @@ func (h *Handler) verifyFeeSlot(
 		return fmt.Errorf("the relayer's account (%s) is not one of the transfer's participants, so the fee cannot be paid to it", relayerID)
 	}
 
-	dx, dy := usdrSignal[usdrTxCommitOffset+2*slot], usdrSignal[usdrTxCommitOffset+2*slot+1]
+	dx, dy := usdrSignal[usdrTxCommitmentsOffset+2*slot], usdrSignal[usdrTxCommitmentsOffset+2*slot+1]
 	if usdrCommitments[slot].C1.Cmp(dx) != 0 || usdrCommitments[slot].C2.Cmp(dy) != 0 {
 		return fmt.Errorf("usdrCommitments[%d] does not match the USDr proof's TxCommit for the relayer's slot", slot)
 	}

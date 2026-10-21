@@ -16,6 +16,8 @@ import (
 	"os"
 
 	enygma "enygma_payments/gnark-server/pkg/circuits/enygma"
+	"enygma_payments/gnark-server/pkg/circuits/enygma_fee"
+	"enygma_payments/gnark-server/pkg/circuits/usdr"
 	"enygma_payments/gnark-server/pkg/statement"
 )
 
@@ -29,6 +31,8 @@ const (
 func generate() map[string][]byte {
 	layouts := []statement.Layout{
 		enygma.StatementLayout(),
+		enygma_fee.StatementLayout(),
+		usdr.StatementLayout(),
 	}
 	return map[string][]byte{
 		goOut:  statement.RenderGo(layouts),

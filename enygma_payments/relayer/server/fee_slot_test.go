@@ -77,7 +77,7 @@ func newFeeSlotFixture(t *testing.T) feeSlotFixture {
 		if i == f.relayerSlot {
 			pt = pedersen(fee, f.randomness)
 		}
-		f.signal[usdrTxCommitOffset+2*i], f.signal[usdrTxCommitOffset+2*i+1] = pt.X, pt.Y
+		f.signal[usdrTxCommitmentsOffset+2*i], f.signal[usdrTxCommitmentsOffset+2*i+1] = pt.X, pt.Y
 		f.commitments = append(f.commitments, enygma.IEnygmaPoint{C1: pt.X, C2: pt.Y})
 	}
 	return f
@@ -107,10 +107,10 @@ func TestVerifyFeeSlot_RejectsFeePaidToAnotherSlot(t *testing.T) {
 	// slot with a zero-value note.
 	fee := f.signal[usdrFeeAmountOffset]
 	to := pedersen(fee, big.NewInt(555))
-	f.signal[usdrTxCommitOffset+2*2], f.signal[usdrTxCommitOffset+2*2+1] = to.X, to.Y
+	f.signal[usdrTxCommitmentsOffset+2*2], f.signal[usdrTxCommitmentsOffset+2*2+1] = to.X, to.Y
 	f.commitments[2] = enygma.IEnygmaPoint{C1: to.X, C2: to.Y}
 	own := pedersen(big.NewInt(0), f.randomness)
-	f.signal[usdrTxCommitOffset+2*f.relayerSlot], f.signal[usdrTxCommitOffset+2*f.relayerSlot+1] = own.X, own.Y
+	f.signal[usdrTxCommitmentsOffset+2*f.relayerSlot], f.signal[usdrTxCommitmentsOffset+2*f.relayerSlot+1] = own.X, own.Y
 	f.commitments[f.relayerSlot] = enygma.IEnygmaPoint{C1: own.X, C2: own.Y}
 
 	err := f.verify(f.randomness.String())
@@ -122,7 +122,7 @@ func TestVerifyFeeSlot_RejectsFeePaidToAnotherSlot(t *testing.T) {
 func TestVerifyFeeSlot_RejectsPartialFee(t *testing.T) {
 	f := newFeeSlotFixture(t)
 	part := pedersen(big.NewInt(1), f.randomness) // 1 of a 10 fee
-	f.signal[usdrTxCommitOffset+2*f.relayerSlot], f.signal[usdrTxCommitOffset+2*f.relayerSlot+1] = part.X, part.Y
+	f.signal[usdrTxCommitmentsOffset+2*f.relayerSlot], f.signal[usdrTxCommitmentsOffset+2*f.relayerSlot+1] = part.X, part.Y
 	f.commitments[f.relayerSlot] = enygma.IEnygmaPoint{C1: part.X, C2: part.Y}
 	if err := f.verify(f.randomness.String()); err == nil {
 		t.Fatal("a fee note worth 1 of a fixed fee of 10 was accepted")
