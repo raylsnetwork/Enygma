@@ -105,6 +105,21 @@ go run cmd/server/main.go
 
 This launches the local ZK-SNARK service that listens for proof-generation and verification requests.
 
+### Statement Layouts
+
+Each circuit's statement layout (the order, offsets and sizes of its public signals) is derived from the circuit's own public fields (`pkg/statement`; the transfer circuit's is `enygma.StatementLayout()`). Two committed files are generated from the layouts:
+
+- `../layout/layout.go`: a dependency-free Go package imported by the relayer;
+- `../contracts/enygma/contracts/StatementLayout.sol`: the constants library used by `Enygma.sol`.
+
+After changing any circuit's public signals, regenerate both:
+
+```bash
+go generate ./cmd/genlayout
+```
+
+`go test ./cmd/genlayout` fails while either file is stale.
+
 ### Transparent Setup (Generator H)
 
 The second generator H used in Pedersen commitments is derived from a nothing-up-my-sleeve number so that no one knows its discrete log relative to G. To reproduce or verify the derivation:
