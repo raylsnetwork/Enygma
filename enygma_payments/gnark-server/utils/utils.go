@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/backend/witness"
@@ -162,6 +163,27 @@ func SelfVerify(proof groth16.Proof, vk groth16.VerifyingKey, witnessFull witnes
 		return fmt.Errorf("self-verification failed: %w", err)
 	}
 	return nil
+}
+
+// PublicSignals returns the public part of witnessFull, in public-witness
+// order, as the big ints a prove handler responds with. It is
+// read off the same witness the proof is made and self-verified from, so the
+// returned statement is by construction the one the proof verifies against;
+// handlers must not rebuild it from request fields.
+func PublicSignals(witnessFull witness.Witness) ([]*big.Int, error) {
+	publicWitness, err := witnessFull.Public()
+	if err != nil {
+		return nil, fmt.Errorf("extract public witness: %w", err)
+	}
+	vec, ok := publicWitness.Vector().(fr_bn254.Vector)
+	if !ok {
+		return nil, fmt.Errorf("public witness is %T, want a BN254 vector", publicWitness.Vector())
+	}
+	signals := make([]*big.Int, len(vec))
+	for i := range vec {
+		signals[i] = vec[i].BigInt(new(big.Int))
+	}
+	return signals, nil
 }
 
 // ModHint is the hint-solver half of ReduceModP (utils/circuits.go):

@@ -56,8 +56,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness := createWithdrawCircuitTemplate(config)
 
-		var publicSignal []*big.Int
-
 		// Fix M-08: bp.Parse accumulates the first parse failure instead
 		// of silently turning a malformed decimal into nil. bp.Err() is
 		// checked below, before frontend.NewWitness is ever called — see
@@ -193,43 +191,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			C_x1, C_y1,
 		}
 
-		// Generate public signal - order must match circuit public signal order
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.HashedSharedSecrets[i]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.PublicKey[i]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][0]))
-			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][1]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][0]))
-			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][1]))
-		}
-		publicSignal = append(publicSignal, bp.Parse(request.BlockNumber))
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.AnonymitySet[i]))
-		}
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.MessageTags[i]))
-		}
-		publicSignal = append(publicSignal, bp.Parse(request.Nullifier))
-		// Fix C-09: TotalDepositValue — see the AssertIsEqual in
-		// circuit.go and Enygma.sol's withdraw() for how this gets bound
-		// against Σ depositParams[i].amount on chain.
-		publicSignal = append(publicSignal, new(big.Int).Set(totalDepositValue))
-		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
-		// The 10 DvP deposit commitments (signals 52-61), in slot order.
-		for i := 0; i < 10; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.Hashes[i]))
-		}
-
-		// The public signals above are parsed again from the request; fail
-		// rather than return a zero placeholder for a value that did not parse.
-		if err := bp.Err(); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+		// The statement is the proof's own public witness, not a rebuild
+		// from the request, so it cannot disagree with what was proven.
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("server-side %v", err)})
 			return
 		}
 

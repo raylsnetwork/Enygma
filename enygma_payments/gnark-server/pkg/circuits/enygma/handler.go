@@ -59,8 +59,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness := createCircuitTemplate(config)
 
-		var publicSignal []*big.Int
-
 		// Fix M-08: bp.Parse accumulates the first parse failure instead
 		// of silently turning a malformed decimal into nil — the exact
 		// value that used to reach frontend.NewWitness and trigger
@@ -160,42 +158,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			C_x1, C_y1,
 		}
 
-		// Generate public signal - order must match circuit public signal order
-		// FingerPrintofSharedSecrets is k×k, flattened row-major (36 values for k=6)
-		for i := 0; i < config.NCommitment; i++ {
-			for j := 0; j < config.NCommitment; j++ {
-				publicSignal = append(publicSignal, bp.Parse(request.FingerPrintofSharedSecrets[i][j]))
-			}
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.PublicKey[i]))
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][0]))
-			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][1]))
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][0]))
-			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][1]))
-		}
-		publicSignal = append(publicSignal, bp.Parse(request.BlockNumber))
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.AnonymitySet[i]))
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.MessageTags[i]))
-		}
-		publicSignal = append(publicSignal, bp.Parse(request.Nullifier))
-		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
-
-		// The public signals above are parsed again from the request; fail
-		// rather than return a zero placeholder for a value that did not parse.
-		if err := bp.Err(); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+		// The statement is the proof's own public witness, not a rebuild
+		// from the request, so it cannot disagree with what was proven.
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("server-side %v", err)})
 			return
 		}
 
