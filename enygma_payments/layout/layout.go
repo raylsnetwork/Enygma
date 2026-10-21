@@ -126,3 +126,106 @@ const (
 	UsdrFeeRecipientKeyOffset = 82
 	UsdrFeeRecipientKeySize   = 1
 )
+
+// Withdraw statement layout (62 public signals).
+const (
+	WithdrawLen = 62
+
+	WithdrawHashedSharedSecretsOffset = 0
+	WithdrawHashedSharedSecretsSize   = 6
+
+	WithdrawPublicKeysOffset = 6
+	WithdrawPublicKeysSize   = 6
+
+	// PreviousCommitments: [6][2], row-major: element [i][j] at WithdrawPreviousCommitmentsOffset + i*2 + j.
+	WithdrawPreviousCommitmentsOffset = 12
+	WithdrawPreviousCommitmentsSize   = 12
+
+	// TxCommitments: [6][2], row-major: element [i][j] at WithdrawTxCommitmentsOffset + i*2 + j.
+	WithdrawTxCommitmentsOffset = 24
+	WithdrawTxCommitmentsSize   = 12
+
+	WithdrawBlockNumberOffset = 36
+	WithdrawBlockNumberSize   = 1
+
+	WithdrawAnonymitySetOffset = 37
+	WithdrawAnonymitySetSize   = 6
+
+	WithdrawMessageTagsOffset = 43
+	WithdrawMessageTagsSize   = 6
+
+	WithdrawNullifierOffset = 49
+	WithdrawNullifierSize   = 1
+
+	WithdrawTotalDepositValueOffset = 50
+	WithdrawTotalDepositValueSize   = 1
+
+	WithdrawDomainIdOffset = 51
+	WithdrawDomainIdSize   = 1
+
+	WithdrawDepositCommitmentsOffset = 52
+	WithdrawDepositCommitmentsSize   = 10
+)
+
+// Deposit statement layout (52 public signals).
+const (
+	DepositLen = 52
+
+	DepositHashedSharedSecretsOffset = 0
+	DepositHashedSharedSecretsSize   = 6
+
+	DepositPublicKeysOffset = 6
+	DepositPublicKeysSize   = 6
+
+	// PreviousCommitments: [6][2], row-major: element [i][j] at DepositPreviousCommitmentsOffset + i*2 + j.
+	DepositPreviousCommitmentsOffset = 12
+	DepositPreviousCommitmentsSize   = 12
+
+	// TxCommitments: [6][2], row-major: element [i][j] at DepositTxCommitmentsOffset + i*2 + j.
+	DepositTxCommitmentsOffset = 24
+	DepositTxCommitmentsSize   = 12
+
+	DepositBlockNumberOffset = 36
+	DepositBlockNumberSize   = 1
+
+	DepositAnonymitySetOffset = 37
+	DepositAnonymitySetSize   = 6
+
+	DepositMessageTagsOffset = 43
+	DepositMessageTagsSize   = 6
+
+	DepositNullifierOffset = 49
+	DepositNullifierSize   = 1
+
+	DepositHashOffset = 50
+	DepositHashSize   = 1
+
+	DepositDomainIdOffset = 51
+	DepositDomainIdSize   = 1
+)
+
+// Burn statement layout (9 public signals).
+const (
+	BurnLen = 9
+
+	BurnPublicKeyOffset = 0
+	BurnPublicKeySize   = 1
+
+	BurnPreviousCommitmentOffset = 1
+	BurnPreviousCommitmentSize   = 2
+
+	BurnNewCommitmentOffset = 3
+	BurnNewCommitmentSize   = 2
+
+	BurnAmountOffset = 5
+	BurnAmountSize   = 1
+
+	BurnBlockNumberOffset = 6
+	BurnBlockNumberSize   = 1
+
+	BurnNullifierOffset = 7
+	BurnNullifierSize   = 1
+
+	BurnDomainIdOffset = 8
+	BurnDomainIdSize   = 1
+)

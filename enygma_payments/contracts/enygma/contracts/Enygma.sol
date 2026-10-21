@@ -14,22 +14,6 @@ contract Enygma is IEnygma {
     uint256 private constant STATUS_INITIALIZED = 1;
     uint256 private constant DEFAULT_SIZE = 6;
 
-    // Public signal offsets for the 50-signal layout (withdraw, deposit circuits)
-    // Layout (k=6): [HashSecrets×6][PublicKeys×6][PrevCommit×12][TxCommit×12][BlockNum][AnonSet×6][MsgTags×6][Nullifier]
-    uint256 private constant ARRAY_HASH_SECRET_OFFSET = 0;
-    uint256 private constant ARRAY_HASH_SECRET_SIZE = 6;
-    uint256 private constant PUBLIC_KEY_OFFSET = 6;
-    uint256 private constant PUBLIC_KEY_SIZE = 6;
-    uint256 private constant PREVIOUS_COMMIT_OFFSET = 12;
-    uint256 private constant PREVIOUS_COMMIT_SIZE = 12;
-    uint256 private constant TX_COMMIT_OFFSET = 24;
-    uint256 private constant TX_COMMIT_SIZE = 12;
-    uint256 private constant BLOCK_NUMBER_OFFSET = 36;
-    uint256 private constant K_INDEX_OFFSET = 37;
-    uint256 private constant K_INDEX_SIZE = 6;
-    uint256 private constant MESSAGE_TAGS_OFFSET = 43;
-    uint256 private constant NULLIFIER_OFFSET = 49;
-
     // Fix M-13: the fee layout (enygma_fee circuit, StatementLayout.TRANSFER_FEE_*)
     // extends the 50-signal base with three more slots — the fee itself
     // (FeeAmount) and two aggregate values the circuit computes but nothing
@@ -40,53 +24,36 @@ contract Enygma is IEnygma {
     // SumTxValuesWithFee is an unbounded hint remainder) — see the fee-burn
     // comment on transferWithFee for why FeeAmount alone is sufficient.
 
-    // Fix M-14/C-09: withdraw and deposit are both genuinely 51-signal
-    // layouts (the 50-signal constants above cover every index they
-    // share; slot 50 is the extra one, meaning differs by function).
-    // withdraw's slot 50 is TotalDepositValue (Fix C-09 — bound in-circuit
-    // to Σ VPerDeposit == SenderTxValue; Enygma.sol's withdraw() checks it
-    // against Σ depositParams[i].amount before calling out to the DvP
-    // vault). deposit's slot 50 is Hash, the deposit note commitment
-    // (already existed in the circuit; M-14's bug was the *contract*
-    // treating this as a 50-signal array and never reading index 50 at
-    // all — not a circuit change). Two separately-named constants at the
-    // same numeric offset for self-documentation at each call site.
-    uint256 private constant WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET = 50;
-
-    // withdraw's signals 52-61: the DvP commitment each deposit slot creates,
-    // Poseidon(Poseidon(asset, amount), recipientPublicKey), or 0 for an
-    // unused slot. withdraw() requires the notes the DvP vault actually
+    // Fix M-14/C-09: withdraw and deposit share the 50-signal base
+    // (HashedSharedSecrets..Nullifier) and DomainId at slot 51; slot 50 is
+    // the extra one, meaning differs by function. withdraw's slot 50 is
+    // TotalDepositValue (Fix C-09 — bound in-circuit to Σ VPerDeposit ==
+    // SenderTxValue; Enygma.sol's withdraw() checks it against
+    // Σ depositParams[i].amount before calling out to the DvP vault).
+    // deposit's slot 50 is Hash, the deposit note commitment (already
+    // existed in the circuit; M-14's bug was the *contract* treating this
+    // as a 50-signal array and never reading index 50 at all — not a
+    // circuit change). withdraw() runs deposit()'s checks on its first
+    // DEPOSIT_LEN signals, so those checks read StatementLayout.DEPOSIT_*;
+    // gnark-server's withdraw layout test pins that every field they read
+    // sits at the same offset in both layouts.
+    //
+    // withdraw's StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS: the DvP
+    // commitment each deposit slot creates, Poseidon(Poseidon(asset,
+    // amount), recipientPublicKey), or 0 for an unused slot. withdraw() requires the notes the DvP vault actually
     // inserts to be exactly these. Before, only the total amount was bound,
     // so whoever submitted the proof chose the recipients: another bank
     // could replay a pending withdrawal with its own keys and the same
     // total, and receive the funds.
-    uint256 private constant WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET = 52;
-    uint256 private constant WITHDRAW_MAX_DEPOSITS = 10;
-    uint256 private constant DEPOSIT_HASH_OFFSET = 50;
 
-    // Fix L-01: domain-separator offsets, one per circuit layout — the
-    // slot immediately after the each layout's previous last signal, so
-    // every layout gains exactly one signal. See _expectedDomainId() for
-    // what value each is checked against.
-    uint256 private constant BRIDGE_DOMAIN_OFFSET = 51; // withdraw/deposit (52-signal)
-
-    // The transfer, transfer-with-fee and USDr circuits' offsets
-    // (StatementLayout.TRANSFER_*, TRANSFER_FEE_*, USDR_*) and lengths
-    // (TRANSFER_LEN, TRANSFER_FEE_LEN, USDR_LEN) are generated from the
-    // circuits; see StatementLayout.sol. Private functions take
-    // uint256[<CIRCUIT>_LEN], so a length change stops compiling until
-    // IEnygma's uint256[81]/[55]/[83] (and the verifyProof selector strings)
-    // follow.
-
-    // Public signal offsets for the 9-signal burn circuit (Fix H-13).
-    // Layout: [PublicKey, PrevCommit×2, NewCommit×2, Amount, BlockNum, Nullifier, DomainId]
-    uint256 private constant BURN_PUBLIC_KEY_OFFSET = 0;
-    uint256 private constant BURN_PREVIOUS_COMMIT_OFFSET = 1;
-    uint256 private constant BURN_NEW_COMMIT_OFFSET = 3;
-    uint256 private constant BURN_AMOUNT_OFFSET = 5;
-    uint256 private constant BURN_BLOCK_NUMBER_OFFSET = 6;
-    uint256 private constant BURN_NULLIFIER_OFFSET = 7;
-    uint256 private constant BURN_DOMAIN_OFFSET = 8; // Fix L-01
+    // Every circuit's offsets (StatementLayout.TRANSFER_*, TRANSFER_FEE_*,
+    // USDR_*, WITHDRAW_*, DEPOSIT_*, BURN_*) and lengths (TRANSFER_LEN,
+    // TRANSFER_FEE_LEN, USDR_LEN, WITHDRAW_LEN, DEPOSIT_LEN, BURN_LEN) are
+    // generated from the circuits; see StatementLayout.sol. Private
+    // functions take uint256[<CIRCUIT>_LEN], so a length change stops
+    // compiling until IEnygma's fixed arities (and the verifyProof selector
+    // strings) follow. Fix L-01 added a DomainId signal to every layout;
+    // see _expectedDomainId() for what each is checked against.
 
     // USDr proofs (StatementLayout.USDR_*) carry three extra signals beyond
     // the 80-signal FP layout: FeeAmount — public because the fee is a
@@ -873,25 +840,25 @@ contract Enygma is IEnygma {
         _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[9])", proof));
 
         // Fix L-01: see _expectedDomainId's doc comment.
-        if (proof.public_signal[BURN_DOMAIN_OFFSET] != _expectedDomainId()) {
+        if (proof.public_signal[StatementLayout.BURN_DOMAIN_ID_OFFSET] != _expectedDomainId()) {
             revert InvalidDomain();
         }
 
         // Bind the proof to this specific, named account and its current
         // on-chain balance — otherwise a valid proof for ANY account could
         // be replayed against a different accountId.
-        if (proof.public_signal[BURN_PUBLIC_KEY_OFFSET] != publicKeys[accountId]) {
+        if (proof.public_signal[StatementLayout.BURN_PUBLIC_KEY_OFFSET] != publicKeys[accountId]) {
             revert InvalidPublicInputs();
         }
         (uint256 balX, uint256 balY) = getBalance(accountId);
         if (
-            proof.public_signal[BURN_PREVIOUS_COMMIT_OFFSET] != balX ||
-            proof.public_signal[BURN_PREVIOUS_COMMIT_OFFSET + 1] != balY
+            proof.public_signal[StatementLayout.BURN_PREVIOUS_COMMITMENT_OFFSET] != balX ||
+            proof.public_signal[StatementLayout.BURN_PREVIOUS_COMMITMENT_OFFSET + 1] != balY
         ) {
             revert InvalidPublicInputs();
         }
 
-        uint256 amount = proof.public_signal[BURN_AMOUNT_OFFSET];
+        uint256 amount = proof.public_signal[StatementLayout.BURN_AMOUNT_OFFSET];
         // Defense in depth: the circuit already range-checks Amount to 64
         // bits, so this can't actually trigger from a valid proof, but a
         // cheap on-chain sanity bound costs nothing. (The audit's original
@@ -900,12 +867,12 @@ contract Enygma is IEnygma {
         if (amount >= CurveBabyJubJub.P) revert BurnExceedsModulus();
 
         if (
-            uint256(proof.public_signal[BURN_BLOCK_NUMBER_OFFSET]) != lastBlockNum
+            uint256(proof.public_signal[StatementLayout.BURN_BLOCK_NUMBER_OFFSET]) != lastBlockNum
         ) {
             revert InvalidBlockNumber();
         }
 
-        uint256 nullifier = proof.public_signal[BURN_NULLIFIER_OFFSET];
+        uint256 nullifier = proof.public_signal[StatementLayout.BURN_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;
 
@@ -919,8 +886,8 @@ contract Enygma is IEnygma {
 
         uint256 epochStart = _currentEpochStart();
         balanceCommitments[epochStart][accountId] = Point(
-            proof.public_signal[BURN_NEW_COMMIT_OFFSET],
-            proof.public_signal[BURN_NEW_COMMIT_OFFSET + 1]
+            proof.public_signal[StatementLayout.BURN_NEW_COMMITMENT_OFFSET],
+            proof.public_signal[StatementLayout.BURN_NEW_COMMITMENT_OFFSET + 1]
         );
         lastBlockNum = epochStart;
 
@@ -1280,22 +1247,22 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
-        // 52 signals shared with deposit's layout, then the 10 DvP deposit
-        // commitments (WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET).
+        // DEPOSIT_LEN signals shared with deposit's layout, then the DvP deposit
+        // commitments (StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET).
         _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[62])", proof));
-        if (depositParams.length > WITHDRAW_MAX_DEPOSITS) revert TooManyDeposits();
+        if (depositParams.length > StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_SIZE) revert TooManyDeposits();
 
-        // The checks shared with deposit() read the first 52 signals.
-        uint256[52] memory sharedSignals = _withdrawSharedSignals(proof.public_signal);
+        // The checks shared with deposit() read the first DEPOSIT_LEN signals.
+        uint256[DEPOSIT_LEN] memory sharedSignals = _withdrawSharedSignals(proof.public_signal);
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
-        _verifyPublicInputs52(sharedSignals, participantIds, commitmentDeltas);
+        _verifyPublicInputsDeposit(sharedSignals, participantIds, commitmentDeltas);
 
         // Verify proof was generated against the current block
-        _verifyBlockNumber52(sharedSignals);
+        _verifyBlockNumberDeposit(sharedSignals);
 
         // Record nullifier before state changes (Fix C-2)
-        _consumeNullifier52(sharedSignals);
+        _consumeNullifierDeposit(sharedSignals);
 
         // Fix C-09: the circuit's own Σ VPerDeposit == SenderTxValue
         // assertion (withdraw/circuit.go) is only meaningful once this
@@ -1309,7 +1276,7 @@ contract Enygma is IEnygma {
         // arbitrary-value DvP notes. Reverting here, before
         // _executeZkDvpDeposits ever runs, is what makes the circuit's
         // binding actually load-bearing instead of decorative.
-        _verifyDepositValueBinding(depositParams, proof.public_signal[WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET]);
+        _verifyDepositValueBinding(depositParams, proof.public_signal[StatementLayout.WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET]);
 
         // Fix L-12: this used to call out to the ZkDvp bridge (below)
         // *before* updating Enygma's own state — a classic
@@ -1354,11 +1321,11 @@ contract Enygma is IEnygma {
      *         _propagateBalancesExcept / _burnFeeFromSupply elsewhere in
      *         this file).
      */
-    /// @dev withdraw()'s first 52 signals: the layout it shares with deposit().
+    /// @dev withdraw()'s first DEPOSIT_LEN signals: the layout it shares with deposit().
     function _withdrawSharedSignals(
-        uint256[62] calldata publicSignal
-    ) private pure returns (uint256[52] memory shared) {
-        for (uint256 i; i < 52; ) {
+        uint256[WITHDRAW_LEN] calldata publicSignal
+    ) private pure returns (uint256[DEPOSIT_LEN] memory shared) {
+        for (uint256 i; i < DEPOSIT_LEN; ) {
             shared[i] = publicSignal[i];
             unchecked {
                 ++i;
@@ -1367,14 +1334,15 @@ contract Enygma is IEnygma {
     }
 
     /// @dev Requires the DvP commitments withdraw() created to equal the
-    ///      proof's (signals 52-61, in slot order), and every slot without a
+    ///      proof's (StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS, in slot
+    ///      order), and every slot without a
     ///      deposit to carry 0.
     function _verifyDepositCommitments(
         uint256[] memory created,
-        uint256[62] calldata publicSignal
+        uint256[WITHDRAW_LEN] calldata publicSignal
     ) private pure {
-        for (uint256 i; i < WITHDRAW_MAX_DEPOSITS; ) {
-            uint256 expected = publicSignal[WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET + i];
+        for (uint256 i; i < StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_SIZE; ) {
+            uint256 expected = publicSignal[StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET + i];
             uint256 actual = i < created.length ? created[i] : 0;
             if (actual != expected) revert DepositCommitmentMismatch();
             unchecked {
@@ -1453,16 +1421,17 @@ contract Enygma is IEnygma {
         _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
-        _verifyPublicInputs52(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyPublicInputsDeposit(proof.public_signal, participantIds, commitmentDeltas);
 
         // Verify proof was generated against the current block
-        _verifyBlockNumber52(proof.public_signal);
+        _verifyBlockNumberDeposit(proof.public_signal);
 
         // Record nullifier before state changes (Fix C-2)
-        _consumeNullifier52(proof.public_signal);
+        _consumeNullifierDeposit(proof.public_signal);
 
         // NOT fixed here (C-09's symmetric deposit-side gap): nothing
-        // below binds proof.public_signal[DEPOSIT_HASH_OFFSET] (the
+        // below binds
+        // proof.public_signal[StatementLayout.DEPOSIT_HASH_OFFSET] (the
         // deposit note commitment) against withdrawParam.transaction —
         // the audit's own remediation asks for exactly that. It is
         // deliberately not attempted in this fix: withdrawParam.transaction
@@ -1475,7 +1444,8 @@ contract Enygma is IEnygma {
         // this interface declares, a type mismatch discovered while
         // scoping this fix that means this call cannot reach the real
         // vault via ABI-compatible calldata at all today. Binding
-        // DEPOSIT_HASH_OFFSET correctly needs that mismatch resolved and
+        // StatementLayout.DEPOSIT_HASH_OFFSET correctly needs that mismatch
+        // resolved and
         // the real statement layout cross-referenced first; doing it
         // blindly here risked a binding that looks fixed but checks the
         // wrong thing, which is worse than the documented gap. The
@@ -1877,10 +1847,10 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Fix M-14/C-09/L-01: [52]-arity — used by both deposit() and
-     *         withdraw() now that both circuits are genuinely 52-signal
-     *         (see WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET/DEPOSIT_HASH_OFFSET's
-     *         doc comment for slot 50; slot 51 is the new L-01 domain
+     * @notice Fix M-14/C-09/L-01: [DEPOSIT_LEN]-arity — used by both
+     *         deposit() and withdraw() (whose first DEPOSIT_LEN signals
+     *         share deposit's layout; see the M-14/C-09 note under CONSTANTS
+     *         for slot 50; slot 51 is the new L-01 domain
      *         separator, checked here since every caller needs it
      *         identically, unlike slot 50). This function used to be two
      *         separate [50]- and [51]-arity copies
@@ -1888,9 +1858,12 @@ contract Enygma is IEnygma {
      *         had no remaining callers after the C-09/M-14 fix moved
      *         deposit()/withdraw() onto the 51-wide layout, so it was
      *         deleted here rather than widened uselessly.
+     *         Reads StatementLayout.DEPOSIT_* only; a field read here must
+     *         also be pinned by gnark-server's withdraw
+     *         TestStatementLayout_PrefixSharedWithDeposit.
      */
-    function _verifyPublicInputs52(
-        uint256[52] memory public_signal,
+    function _verifyPublicInputsDeposit(
+        uint256[DEPOSIT_LEN] memory public_signal,
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
@@ -1903,7 +1876,7 @@ contract Enygma is IEnygma {
         // mint) but real. Checking this first, before any other
         // per-participant work, rejects a cross-deployment replay as
         // cheaply as possible.
-        if (public_signal[BRIDGE_DOMAIN_OFFSET] != _expectedDomainId()) {
+        if (public_signal[StatementLayout.DEPOSIT_DOMAIN_ID_OFFSET] != _expectedDomainId()) {
             revert InvalidDomain();
         }
 
@@ -1918,13 +1891,13 @@ contract Enygma is IEnygma {
             if (keys[accountId] == 0) revert UnregisteredParticipant(); // Fix H-07
 
             if (
-                uint256(public_signal[PUBLIC_KEY_OFFSET + i]) !=
+                uint256(public_signal[StatementLayout.DEPOSIT_PUBLIC_KEYS_OFFSET + i]) !=
                 keys[accountId]
             ) {
                 revert InvalidPublicInputs();
             }
 
-            uint256 commitOffset = PREVIOUS_COMMIT_OFFSET + (i << 1);
+            uint256 commitOffset = StatementLayout.DEPOSIT_PREVIOUS_COMMITMENTS_OFFSET + (i << 1);
             if (
                 uint256(public_signal[commitOffset]) !=
                 balances[accountId].c1 ||
@@ -1934,7 +1907,7 @@ contract Enygma is IEnygma {
                 revert InvalidPublicInputs();
             }
 
-            uint256 txOffset = TX_COMMIT_OFFSET + (i << 1);
+            uint256 txOffset = StatementLayout.DEPOSIT_TX_COMMITMENTS_OFFSET + (i << 1);
             if (
                 commitmentDeltas[i].c1 != public_signal[txOffset] ||
                 commitmentDeltas[i].c2 != public_signal[txOffset + 1]
@@ -1949,19 +1922,19 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice [52]-arity twin of _verifyBlockNumber. See _verifyPublicInputs52.
+     * @notice [DEPOSIT_LEN]-arity twin of _verifyBlockNumber. See _verifyPublicInputsDeposit.
      */
-    function _verifyBlockNumber52(uint256[52] memory public_signal) private view {
-        if (uint256(public_signal[BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
+    function _verifyBlockNumberDeposit(uint256[DEPOSIT_LEN] memory public_signal) private view {
+        if (uint256(public_signal[StatementLayout.DEPOSIT_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
             revert InvalidBlockNumber();
         }
     }
 
     /**
-     * @notice [52]-arity twin of _consumeNullifier. See _verifyPublicInputs52.
+     * @notice [DEPOSIT_LEN]-arity twin of _consumeNullifier. See _verifyPublicInputsDeposit.
      */
-    function _consumeNullifier52(uint256[52] memory public_signal) private {
-        uint256 nullifier = public_signal[NULLIFIER_OFFSET];
+    function _consumeNullifierDeposit(uint256[DEPOSIT_LEN] memory public_signal) private {
+        uint256 nullifier = public_signal[StatementLayout.DEPOSIT_NULLIFIER_OFFSET];
         if (_nullifiers[nullifier]) revert NullifierAlreadyUsed();
         _nullifiers[nullifier] = true;
     }
@@ -1974,7 +1947,7 @@ contract Enygma is IEnygma {
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
-        // Fix L-01: see _verifyPublicInputs52's identical comment.
+        // Fix L-01: see _verifyPublicInputsDeposit's identical comment.
         if (public_signal[StatementLayout.TRANSFER_DOMAIN_ID_OFFSET] != _expectedDomainId()) {
             revert InvalidDomain();
         }
@@ -2507,7 +2480,7 @@ contract Enygma is IEnygma {
         uint256[] calldata participantIds,
         Point[] calldata commitmentDeltas
     ) private view {
-        // Fix L-01: see _verifyPublicInputs52's identical comment.
+        // Fix L-01: see _verifyPublicInputsDeposit's identical comment.
         if (public_signal[StatementLayout.TRANSFER_FEE_DOMAIN_ID_OFFSET] != _expectedDomainId()) {
             revert InvalidDomain();
         }

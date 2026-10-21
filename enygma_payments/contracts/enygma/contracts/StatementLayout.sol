@@ -87,8 +87,77 @@ library StatementLayout {
     uint256 internal constant USDR_DOMAIN_ID_SIZE = 1;
     uint256 internal constant USDR_FEE_RECIPIENT_KEY_OFFSET = 82;
     uint256 internal constant USDR_FEE_RECIPIENT_KEY_SIZE = 1;
+
+    // Withdraw statement layout (WITHDRAW_LEN = 62 public signals).
+    uint256 internal constant WITHDRAW_HASHED_SHARED_SECRETS_OFFSET = 0;
+    uint256 internal constant WITHDRAW_HASHED_SHARED_SECRETS_SIZE = 6;
+    uint256 internal constant WITHDRAW_PUBLIC_KEYS_OFFSET = 6;
+    uint256 internal constant WITHDRAW_PUBLIC_KEYS_SIZE = 6;
+    // PreviousCommitments: [6][2], row-major: element [i][j] at WITHDRAW_PREVIOUS_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant WITHDRAW_PREVIOUS_COMMITMENTS_OFFSET = 12;
+    uint256 internal constant WITHDRAW_PREVIOUS_COMMITMENTS_SIZE = 12;
+    // TxCommitments: [6][2], row-major: element [i][j] at WITHDRAW_TX_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant WITHDRAW_TX_COMMITMENTS_OFFSET = 24;
+    uint256 internal constant WITHDRAW_TX_COMMITMENTS_SIZE = 12;
+    uint256 internal constant WITHDRAW_BLOCK_NUMBER_OFFSET = 36;
+    uint256 internal constant WITHDRAW_BLOCK_NUMBER_SIZE = 1;
+    uint256 internal constant WITHDRAW_ANONYMITY_SET_OFFSET = 37;
+    uint256 internal constant WITHDRAW_ANONYMITY_SET_SIZE = 6;
+    uint256 internal constant WITHDRAW_MESSAGE_TAGS_OFFSET = 43;
+    uint256 internal constant WITHDRAW_MESSAGE_TAGS_SIZE = 6;
+    uint256 internal constant WITHDRAW_NULLIFIER_OFFSET = 49;
+    uint256 internal constant WITHDRAW_NULLIFIER_SIZE = 1;
+    uint256 internal constant WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET = 50;
+    uint256 internal constant WITHDRAW_TOTAL_DEPOSIT_VALUE_SIZE = 1;
+    uint256 internal constant WITHDRAW_DOMAIN_ID_OFFSET = 51;
+    uint256 internal constant WITHDRAW_DOMAIN_ID_SIZE = 1;
+    uint256 internal constant WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET = 52;
+    uint256 internal constant WITHDRAW_DEPOSIT_COMMITMENTS_SIZE = 10;
+
+    // Deposit statement layout (DEPOSIT_LEN = 52 public signals).
+    uint256 internal constant DEPOSIT_HASHED_SHARED_SECRETS_OFFSET = 0;
+    uint256 internal constant DEPOSIT_HASHED_SHARED_SECRETS_SIZE = 6;
+    uint256 internal constant DEPOSIT_PUBLIC_KEYS_OFFSET = 6;
+    uint256 internal constant DEPOSIT_PUBLIC_KEYS_SIZE = 6;
+    // PreviousCommitments: [6][2], row-major: element [i][j] at DEPOSIT_PREVIOUS_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant DEPOSIT_PREVIOUS_COMMITMENTS_OFFSET = 12;
+    uint256 internal constant DEPOSIT_PREVIOUS_COMMITMENTS_SIZE = 12;
+    // TxCommitments: [6][2], row-major: element [i][j] at DEPOSIT_TX_COMMITMENTS_OFFSET + i*2 + j.
+    uint256 internal constant DEPOSIT_TX_COMMITMENTS_OFFSET = 24;
+    uint256 internal constant DEPOSIT_TX_COMMITMENTS_SIZE = 12;
+    uint256 internal constant DEPOSIT_BLOCK_NUMBER_OFFSET = 36;
+    uint256 internal constant DEPOSIT_BLOCK_NUMBER_SIZE = 1;
+    uint256 internal constant DEPOSIT_ANONYMITY_SET_OFFSET = 37;
+    uint256 internal constant DEPOSIT_ANONYMITY_SET_SIZE = 6;
+    uint256 internal constant DEPOSIT_MESSAGE_TAGS_OFFSET = 43;
+    uint256 internal constant DEPOSIT_MESSAGE_TAGS_SIZE = 6;
+    uint256 internal constant DEPOSIT_NULLIFIER_OFFSET = 49;
+    uint256 internal constant DEPOSIT_NULLIFIER_SIZE = 1;
+    uint256 internal constant DEPOSIT_HASH_OFFSET = 50;
+    uint256 internal constant DEPOSIT_HASH_SIZE = 1;
+    uint256 internal constant DEPOSIT_DOMAIN_ID_OFFSET = 51;
+    uint256 internal constant DEPOSIT_DOMAIN_ID_SIZE = 1;
+
+    // Burn statement layout (BURN_LEN = 9 public signals).
+    uint256 internal constant BURN_PUBLIC_KEY_OFFSET = 0;
+    uint256 internal constant BURN_PUBLIC_KEY_SIZE = 1;
+    uint256 internal constant BURN_PREVIOUS_COMMITMENT_OFFSET = 1;
+    uint256 internal constant BURN_PREVIOUS_COMMITMENT_SIZE = 2;
+    uint256 internal constant BURN_NEW_COMMITMENT_OFFSET = 3;
+    uint256 internal constant BURN_NEW_COMMITMENT_SIZE = 2;
+    uint256 internal constant BURN_AMOUNT_OFFSET = 5;
+    uint256 internal constant BURN_AMOUNT_SIZE = 1;
+    uint256 internal constant BURN_BLOCK_NUMBER_OFFSET = 6;
+    uint256 internal constant BURN_BLOCK_NUMBER_SIZE = 1;
+    uint256 internal constant BURN_NULLIFIER_OFFSET = 7;
+    uint256 internal constant BURN_NULLIFIER_SIZE = 1;
+    uint256 internal constant BURN_DOMAIN_ID_OFFSET = 8;
+    uint256 internal constant BURN_DOMAIN_ID_SIZE = 1;
 }
 
 uint256 constant TRANSFER_LEN = 81;
 uint256 constant TRANSFER_FEE_LEN = 55;
 uint256 constant USDR_LEN = 83;
+uint256 constant WITHDRAW_LEN = 62;
+uint256 constant DEPOSIT_LEN = 52;
+uint256 constant BURN_LEN = 9;
