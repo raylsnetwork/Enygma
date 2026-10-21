@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -58,7 +59,7 @@ func TestUsdrFeeRecipientBinding(t *testing.T) {
 		pubSig, deltas := buildTransferSignal(t, instance, enygmaAddr, fp, nullifierSeed)
 		usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 		if recipientKey != nil {
-			usdrProof.PublicSignal[usdrHelperFeeRecipientOff] = recipientKey
+			usdrProof.PublicSignal[layout.UsdrFeeRecipientKeyOffset] = recipientKey
 		}
 		tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas,
 			enygma.IEnygmaProof{Proof: zeroProof, PublicSignal: pubSig},

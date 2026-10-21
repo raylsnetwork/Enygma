@@ -46,6 +46,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -86,25 +87,25 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 	// element) — this test is purely about whether the [51]-arity call
 	// reaches and passes verification at all (Fix M-14), not about the
 	// credit direction (Fix M-15, covered separately below).
-	var pubSig [52]*big.Int
+	var pubSig [layout.DepositLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = keys6[i]
-		pubSig[12+2*i] = balances6[i].C1
-		pubSig[12+2*i+1] = balances6[i].C2
-		pubSig[24+2*i] = big.NewInt(0)
-		pubSig[24+2*i+1] = big.NewInt(1)
+		pubSig[layout.DepositPublicKeysOffset+i] = keys6[i]
+		pubSig[layout.DepositPreviousCommitmentsOffset+2*i] = balances6[i].C1
+		pubSig[layout.DepositPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
+		pubSig[layout.DepositTxCommitmentsOffset+2*i] = big.NewInt(0)
+		pubSig[layout.DepositTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = deterministicNullifier(t, "m14-arity")
-	pubSig[50] = big.NewInt(424242)           // Hash — unbound by the contract (documented C-09 deposit-side gap), any value accepted
-	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[layout.DepositBlockNumberOffset] = blockHash
+	pubSig[layout.DepositNullifierOffset] = deterministicNullifier(t, "m14-arity")
+	pubSig[layout.DepositHashOffset] = big.NewInt(424242)               // Hash — unbound by the contract (documented C-09 deposit-side gap), any value accepted
+	pubSig[layout.DepositDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaDepositProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
@@ -113,9 +114,9 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 	withdrawParam := emptyWithdrawParams()
 
 	if r := waitTx(instance.Deposit(mkAuth(), commitmentDeltas, proof, withdrawParam, participantIds)); r.Status != 1 {
-		t.Fatal("FAIL (M-14 regressed): deposit() with a correctly-shaped [51]-signal proof reverted")
+		t.Fatal("FAIL (M-14 regressed): deposit() with a correctly-shaped [layout.DepositLen]-signal proof reverted")
 	}
-	t.Log("deposit() with [51]-arity public_signal succeeded — M-14's arity mismatch is fixed")
+	t.Log("deposit() with [layout.DepositLen]-arity public_signal succeeded — M-14's arity mismatch is fixed")
 }
 
 func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
@@ -162,31 +163,31 @@ func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
 	const depositAmount = 250
 	creditCommit := pedersenCommitment(big.NewInt(depositAmount), big.NewInt(0))
 
-	var pubSig [52]*big.Int
+	var pubSig [layout.DepositLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = keys6[i]
-		pubSig[12+2*i] = balances6[i].C1
-		pubSig[12+2*i+1] = balances6[i].C2
+		pubSig[layout.DepositPublicKeysOffset+i] = keys6[i]
+		pubSig[layout.DepositPreviousCommitmentsOffset+2*i] = balances6[i].C1
+		pubSig[layout.DepositPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
 		if i == 0 {
-			pubSig[24+2*i] = creditCommit.X
-			pubSig[24+2*i+1] = creditCommit.Y
+			pubSig[layout.DepositTxCommitmentsOffset+2*i] = creditCommit.X
+			pubSig[layout.DepositTxCommitmentsOffset+2*i+1] = creditCommit.Y
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: creditCommit.X, C2: creditCommit.Y}
 		} else {
-			pubSig[24+2*i] = big.NewInt(0)
-			pubSig[24+2*i+1] = big.NewInt(1)
+			pubSig[layout.DepositTxCommitmentsOffset+2*i] = big.NewInt(0)
+			pubSig[layout.DepositTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = deterministicNullifier(t, "m15-deposit-credit")
-	pubSig[50] = big.NewInt(1)                // Hash — unbound (documented C-09 deposit-side gap)
-	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[layout.DepositBlockNumberOffset] = blockHash
+	pubSig[layout.DepositNullifierOffset] = deterministicNullifier(t, "m15-deposit-credit")
+	pubSig[layout.DepositHashOffset] = big.NewInt(1)                    // Hash — unbound (documented C-09 deposit-side gap)
+	pubSig[layout.DepositDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaDepositProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
@@ -274,31 +275,31 @@ func TestC09_WithdrawRejectsMismatchedDepositValue(t *testing.T) {
 	const claimedNoteValue = 1_000_000
 	debitCommit := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(claimedDebit)), big.NewInt(0))
 
-	var pubSig [62]*big.Int
+	var pubSig [layout.WithdrawLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = keys6[i]
-		pubSig[12+2*i] = balances6[i].C1
-		pubSig[12+2*i+1] = balances6[i].C2
+		pubSig[layout.WithdrawPublicKeysOffset+i] = keys6[i]
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i] = balances6[i].C1
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
 		if i == 0 {
-			pubSig[24+2*i] = debitCommit.X
-			pubSig[24+2*i+1] = debitCommit.Y
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = debitCommit.X
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = debitCommit.Y
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: debitCommit.X, C2: debitCommit.Y}
 		} else {
-			pubSig[24+2*i] = big.NewInt(0)
-			pubSig[24+2*i+1] = big.NewInt(1)
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = big.NewInt(0)
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = deterministicNullifier(t, "c09-mismatch")
-	pubSig[50] = big.NewInt(claimedDebit)     // TotalDepositValue: proof claims only 1
-	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[layout.WithdrawBlockNumberOffset] = blockHash
+	pubSig[layout.WithdrawNullifierOffset] = deterministicNullifier(t, "c09-mismatch")
+	pubSig[layout.WithdrawTotalDepositValueOffset] = big.NewInt(claimedDebit) // TotalDepositValue: proof claims only 1
+	pubSig[layout.WithdrawDomainIdOffset] = expectedDomainId(enygmaAddr)      // Fix L-01
 
 	proof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
@@ -368,32 +369,32 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 	const withdrawAmount = 300
 	debitCommit := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(withdrawAmount)), big.NewInt(0))
 
-	var pubSig [62]*big.Int
+	var pubSig [layout.WithdrawLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = keys6[i]
-		pubSig[12+2*i] = balances6[i].C1
-		pubSig[12+2*i+1] = balances6[i].C2
+		pubSig[layout.WithdrawPublicKeysOffset+i] = keys6[i]
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i] = balances6[i].C1
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
 		if i == 0 {
-			pubSig[24+2*i] = debitCommit.X
-			pubSig[24+2*i+1] = debitCommit.Y
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = debitCommit.X
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = debitCommit.Y
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: debitCommit.X, C2: debitCommit.Y}
 		} else {
-			pubSig[24+2*i] = big.NewInt(0)
-			pubSig[24+2*i+1] = big.NewInt(1)
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = big.NewInt(0)
+			pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = deterministicNullifier(t, "m15-withdraw-debit")
-	pubSig[50] = big.NewInt(withdrawAmount)                                   // TotalDepositValue: matches Σ depositParams below (Fix C-09)
-	pubSig[51] = expectedDomainId(enygmaAddr)                                 // Fix L-01
-	pubSig[52] = mockDvpCommitment(big.NewInt(withdrawAmount), big.NewInt(1)) // the deposit below
+	pubSig[layout.WithdrawBlockNumberOffset] = blockHash
+	pubSig[layout.WithdrawNullifierOffset] = deterministicNullifier(t, "m15-withdraw-debit")
+	pubSig[layout.WithdrawTotalDepositValueOffset] = big.NewInt(withdrawAmount)                                    // TotalDepositValue: matches Σ depositParams below (Fix C-09)
+	pubSig[layout.WithdrawDomainIdOffset] = expectedDomainId(enygmaAddr)                                           // Fix L-01
+	pubSig[layout.WithdrawDepositCommitmentsOffset] = mockDvpCommitment(big.NewInt(withdrawAmount), big.NewInt(1)) // the deposit below
 
 	proof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},

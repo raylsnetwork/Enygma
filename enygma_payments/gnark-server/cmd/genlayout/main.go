@@ -1,12 +1,15 @@
 // Command genlayout renders the payments circuits' statement layouts into
-// the committed Go package (enygma_payments/layout, imported by the relayer)
-// and Solidity library (StatementLayout.sol, used by Enygma.sol).
+// the committed Go package (enygma_payments/layout, imported by the relayer
+// and the test suites) and Solidity library (StatementLayout.sol, used by
+// Enygma.sol and IEnygma.sol).
 //
 // Regenerate after changing any circuit's public signals:
 //
 //	cd gnark-server && go generate ./cmd/genlayout
 //
-// main_test.go fails while the committed files are stale.
+// main_test.go fails while the committed files are stale; arity_test.go
+// fails while one of Enygma.sol's verifyProof selector strings disagrees
+// with its circuit's statement length.
 package main
 
 //go:generate go run .

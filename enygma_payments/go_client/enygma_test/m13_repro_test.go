@@ -42,6 +42,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -109,9 +110,9 @@ func m13Setup(t *testing.T) m13Fixture {
 // verbatim); every other bank's delta is the neutral element (0,1). Σ =
 // -fee·G, exactly what the real circuit's Pedersen equation would force,
 // so a well-formed fee (matching protocolFee) leaves check() intact after
-// _burnFeeFromSupply runs. Slot 54 is the Fix L-01 domain separator.
-func (f m13Fixture) buildFeeSignal(fee int64, nullifierSeed string) ([55]*big.Int, []enygma.IEnygmaPoint) {
-	var pubSig [55]*big.Int
+// _burnFeeFromSupply runs.
+func (f m13Fixture) buildFeeSignal(fee int64, nullifierSeed string) ([layout.TransferFeeLen]*big.Int, []enygma.IEnygmaPoint) {
+	var pubSig [layout.TransferFeeLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
@@ -120,26 +121,26 @@ func (f m13Fixture) buildFeeSignal(fee int64, nullifierSeed string) ([55]*big.In
 	negFeeCommit := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(fee)), big.NewInt(0))
 
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = f.keys6[i]
-		pubSig[12+2*i] = f.balances6[i].C1
-		pubSig[12+2*i+1] = f.balances6[i].C2
+		pubSig[layout.TransferFeePublicKeysOffset+i] = f.keys6[i]
+		pubSig[layout.TransferFeePreviousCommitmentsOffset+2*i] = f.balances6[i].C1
+		pubSig[layout.TransferFeePreviousCommitmentsOffset+2*i+1] = f.balances6[i].C2
 		if i == 0 {
-			pubSig[24+2*i] = negFeeCommit.X
-			pubSig[24+2*i+1] = negFeeCommit.Y
+			pubSig[layout.TransferFeeTxCommitmentsOffset+2*i] = negFeeCommit.X
+			pubSig[layout.TransferFeeTxCommitmentsOffset+2*i+1] = negFeeCommit.Y
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: negFeeCommit.X, C2: negFeeCommit.Y}
 		} else {
-			pubSig[24+2*i] = big.NewInt(0)
-			pubSig[24+2*i+1] = big.NewInt(1)
+			pubSig[layout.TransferFeeTxCommitmentsOffset+2*i] = big.NewInt(0)
+			pubSig[layout.TransferFeeTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		}
 	}
-	pubSig[36] = f.blockHash
-	pubSig[49] = new(big.Int).SetBytes(crypto.Keccak256([]byte("m13-" + nullifierSeed)))
-	pubSig[50] = big.NewInt(fee)
-	// 51-52 (SumTxCommit) and 53 (SumTxValuesWithFee) are unread by the
-	// contract (that's the whole point of M-13 — see FEE_OFFSET's doc in
+	pubSig[layout.TransferFeeBlockNumberOffset] = f.blockHash
+	pubSig[layout.TransferFeeNullifierOffset] = new(big.Int).SetBytes(crypto.Keccak256([]byte("m13-" + nullifierSeed)))
+	pubSig[layout.TransferFeeFeeAmountOffset] = big.NewInt(fee)
+	// SumTxCommitments and SumTxValuesWithFee are unread by the contract
+	// (that's the whole point of M-13 — see the Fix M-13 note in
 	// Enygma.sol) so they're left at 0 deliberately.
-	pubSig[54] = expectedDomainId(f.enygmaAddr) // Fix L-01
+	pubSig[layout.TransferFeeDomainIdOffset] = expectedDomainId(f.enygmaAddr) // Fix L-01
 	return pubSig, commitmentDeltas
 }
 

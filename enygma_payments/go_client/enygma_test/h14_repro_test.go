@@ -37,6 +37,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -116,12 +117,12 @@ func TestH14EmptyParticipantArraysRejected(t *testing.T) {
 	// nullifier (offset 49). Everything else is zero — irrelevant, since
 	// _verifyPublicInputs's whole body is skipped for len(participantIds)==0
 	// and the mock verifier ignores proof content entirely.
-	var pubSig [62]*big.Int
+	var pubSig [layout.WithdrawLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = new(big.Int).SetBytes(crypto.Keccak256([]byte("H14-repro-nullifier")))
+	pubSig[layout.WithdrawBlockNumberOffset] = blockHash
+	pubSig[layout.WithdrawNullifierOffset] = new(big.Int).SetBytes(crypto.Keccak256([]byte("H14-repro-nullifier")))
 
 	attackProof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},

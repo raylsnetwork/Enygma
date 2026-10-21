@@ -38,6 +38,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -126,7 +127,7 @@ func gnarkProofBody(t *testing.T, blockHash *big.Int, prevBalances []enygma.IEny
 	return body
 }
 
-// callGnarkServer posts to the gnark proof server and returns (proof[8], pubSignal[50], deltas).
+// callGnarkServer posts to the gnark proof server and returns (proof[8], pubSignal[layout.TransferLen], deltas).
 func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygma.IEnygmaPoint) {
 	t.Helper()
 	t.Log("requesting ZK proof (may take ~30s)...")
@@ -146,7 +147,7 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	if e := json.NewDecoder(httpResp.Body).Decode(&resp); e != nil {
 		t.Fatalf("decode proof: %v", e)
 	}
-	if len(resp.Proof) != 8 || len(resp.PublicSignal) != 81 {
+	if len(resp.Proof) != 8 || len(resp.PublicSignal) != layout.TransferLen {
 		t.Fatalf("unexpected sizes: proof=%d publicSignal=%d", len(resp.Proof), len(resp.PublicSignal))
 	}
 	t.Log("proof received ✓")
@@ -155,17 +156,15 @@ func callGnarkServer(t *testing.T, reqBody []byte) ([8]string, []string, []enygm
 	for i := 0; i < 8; i++ {
 		proof8[i] = resp.Proof[i].String()
 	}
-	pubSigStrs := make([]string, 81)
+	pubSigStrs := make([]string, layout.TransferLen)
 	for i, v := range resp.PublicSignal {
 		pubSigStrs[i] = v.String()
 	}
-	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
-	const txCommitOffset = 54
 	deltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		deltas[i] = enygma.IEnygmaPoint{
-			C1: resp.PublicSignal[txCommitOffset+2*i],
-			C2: resp.PublicSignal[txCommitOffset+2*i+1],
+			C1: resp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i],
+			C2: resp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i+1],
 		}
 	}
 	return proof8, pubSigStrs, deltas

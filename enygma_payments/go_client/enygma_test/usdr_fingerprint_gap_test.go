@@ -39,6 +39,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -110,7 +111,7 @@ func TestC04_UsdrLegFingerprints(t *testing.T) {
 				if i == j {
 					continue
 				}
-				usdrProof.PublicSignal[i*nBanks+j] = usdrMatrix[i][j]
+				usdrProof.PublicSignal[layout.UsdrFingerprintOffset+i*nBanks+j] = usdrMatrix[i][j]
 			}
 		}
 		tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas,

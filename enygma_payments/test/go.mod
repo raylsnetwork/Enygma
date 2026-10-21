@@ -3,13 +3,13 @@ module enygma_payments/test
 go 1.26.8
 
 require (
+	enygma_payments/layout v0.0.0
 	enygma_payments/relayer v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/iden3/go-iden3-crypto v0.0.16
 )
 
 require (
-	enygma_payments/layout v0.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect

@@ -38,6 +38,7 @@ import (
 
 	"enygma_payments/go_client/agreement"
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -758,19 +759,17 @@ func TestFullTransactionFlow(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != layout.TransferLen {
 		t.Fatalf("bad sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")
 
 	// ── Build relay Transfer request ───────────────────────────────────────────
-	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
-	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commitmentDeltas[i] = enygma.IEnygmaPoint{
-			C1: proofResp.PublicSignal[txCommitOffset+2*i],
-			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
+			C1: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i],
+			C2: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i+1],
 		}
 	}
 

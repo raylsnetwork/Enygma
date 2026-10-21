@@ -109,8 +109,8 @@ This launches the local ZK-SNARK service that listens for proof-generation and v
 
 Each circuit's statement layout (the order, offsets and sizes of its public signals) is derived from the circuit's own public fields (`pkg/statement`; e.g. `enygma.StatementLayout()`; likewise `enygma_fee`, `usdr`, `withdraw`, `deposit` and `burn`). Two committed files are generated from the layouts:
 
-- `../layout/layout.go`: a dependency-free Go package imported by the relayer;
-- `../contracts/enygma/contracts/StatementLayout.sol`: the constants library used by `Enygma.sol`.
+- `../layout/layout.go`: a dependency-free Go package imported by the relayer and the test suites (`../test`, `../go_client/enygma_test`);
+- `../contracts/enygma/contracts/StatementLayout.sol`: the constants library used by `Enygma.sol`, whose `*_LEN` constants also size `IEnygma.sol`'s public-signal arrays.
 
 After changing any circuit's public signals, regenerate both:
 
@@ -118,7 +118,7 @@ After changing any circuit's public signals, regenerate both:
 go generate ./cmd/genlayout
 ```
 
-`go test ./cmd/genlayout` fails while either file is stale.
+`go test ./cmd/genlayout` fails while either file is stale. It also pins the arity in each of `Enygma.sol`'s `verifyProof(uint256[8],uint256[N])` selector strings to its circuit's statement length, since Solidity cannot build those strings from the generated constants.
 
 ### Transparent Setup (Generator H)
 

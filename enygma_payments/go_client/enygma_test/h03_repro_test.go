@@ -57,6 +57,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -194,7 +195,7 @@ func TestH03_TopAccountSurvivesTransferRollover(t *testing.T) {
 	}
 	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig, accountIds, banks[0].addr)
 
-	blockHashBefore := pubSig[36]
+	blockHashBefore := pubSig[layout.TransferBlockNumberOffset]
 	tx, sendErr := instance.Transfer(bankAuth(t, client, banks[0]), deltas, proof, usdrDeltas, usdrProof, participantIds, "")
 	if sendErr != nil {
 		t.Fatalf("honest 6-participant transfer() reverted — setup problem, not what this test is checking: %v", sendErr)

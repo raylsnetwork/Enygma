@@ -15,24 +15,23 @@ contract Enygma is IEnygma {
     uint256 private constant DEFAULT_SIZE = 6;
 
     // Fix M-13: the fee layout (enygma_fee circuit, StatementLayout.TRANSFER_FEE_*)
-    // extends the 50-signal base with three more slots — the fee itself
-    // (FeeAmount) and two aggregate values the circuit computes but nothing
-    // on-chain previously read at all: SumTxCommitments and
+    // adds three fields after Nullifier — the fee itself (FeeAmount) and
+    // two aggregate values the circuit computes but nothing on-chain
+    // previously read at all: SumTxCommitments and
     // SumTxValuesWithFee. Only FeeAmount is used below; the other two are
     // provably unusable as an independent check (SumTxCommitments is asserted
     // equal to the constant (0,1) two lines earlier in the circuit, and
     // SumTxValuesWithFee is an unbounded hint remainder) — see the fee-burn
     // comment on transferWithFee for why FeeAmount alone is sufficient.
 
-    // Fix M-14/C-09: withdraw and deposit share the 50-signal base
-    // (HashedSharedSecrets..Nullifier) and DomainId at slot 51; slot 50 is
-    // the extra one, meaning differs by function. withdraw's slot 50 is
-    // TotalDepositValue (Fix C-09 — bound in-circuit to Σ VPerDeposit ==
-    // SenderTxValue; Enygma.sol's withdraw() checks it against
+    // Fix M-14/C-09: withdraw and deposit share their fields up to and
+    // including Nullifier, and DomainId; the one field between them differs
+    // by function. withdraw's is TotalDepositValue (Fix C-09 — bound
+    // in-circuit to Σ VPerDeposit == SenderTxValue; withdraw() checks it against
     // Σ depositParams[i].amount before calling out to the DvP vault).
-    // deposit's slot 50 is Hash, the deposit note commitment (already
-    // existed in the circuit; M-14's bug was the *contract* treating this
-    // as a 50-signal array and never reading index 50 at all — not a
+    // deposit's is Hash, the deposit note commitment (already existed in
+    // the circuit; M-14's bug was the *contract* declaring the deposit
+    // signal one element short and never reading Hash at all — not a
     // circuit change). withdraw() runs deposit()'s checks on its first
     // DEPOSIT_LEN signals, so those checks read StatementLayout.DEPOSIT_*;
     // gnark-server's withdraw layout test pins that every field they read
@@ -55,11 +54,12 @@ contract Enygma is IEnygma {
     // strings) follow. Fix L-01 added a DomainId signal to every layout;
     // see _expectedDomainId() for what each is checked against.
 
-    // USDr proofs (StatementLayout.USDR_*) carry three extra signals beyond
-    // the 80-signal FP layout: FeeAmount — public because the fee is a
+    // USDr proofs (StatementLayout.USDR_*) carry two signals the transfer
+    // layout does not: FeeAmount — public because the fee is a
     // fixed, protocol-known amount, not something the sender needs to hide —
-    // Fix L-01's DomainId, binding the USDr leg to this specific deployment,
-    // and FeeRecipientKey, the fee recipient's spend public key. That key is
+    // and FeeRecipientKey, the fee recipient's spend public key. Like the
+    // transfer proof, the USDr proof also carries its own Fix L-01 DomainId,
+    // binding the USDr leg to this specific deployment. FeeRecipientKey is
     // required to equal the key of the account that submitted the
     // transaction, so the fee is paid to the relayer rather than to whichever
     // participant the prover picked.
@@ -979,7 +979,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Register fee transfer verifier contract (verifies 51-signal fee proofs)
+     * @notice Register fee transfer verifier contract (verifies TRANSFER_FEE_LEN-signal fee proofs)
      * @param verifier Address of fee verifier contract
      */
     function addFeeVerifier(address verifier) external onlyOwner returns (bool) {
@@ -1007,10 +1007,9 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Register USDr transfer verifier contract (verifies 83-signal
-     * proofs — two more than the main transfer verifier's 80, since the
-     * fee amount and DomainId (Fix L-01) are both public signals here —
-     * different key)
+     * @notice Register USDr transfer verifier contract (verifies USDR_LEN-signal
+     * proofs — the USDr layout adds FeeAmount and FeeRecipientKey to the
+     * transfer layout's fields — different key)
      * @param verifier Address of USDr verifier contract
      */
     function addUsdrVerifier(address verifier) external onlyOwner returns (bool) {
@@ -1026,7 +1025,8 @@ contract Enygma is IEnygma {
     /**
      * @notice Set the fixed USDr relayer fee. Every transfer()'s usdrProof
      * must carry exactly this amount as its public FeeAmount signal
-     * (index 80) or the call reverts InvalidFeeAmount().
+     * (StatementLayout.USDR_FEE_AMOUNT_OFFSET) or the call reverts
+     * InvalidFeeAmount().
      * @param amount The fixed fee, in USDr's plaintext unit.
      */
     function setUsdrFixedFee(uint256 amount) external onlyOwner returns (bool) {
@@ -1061,7 +1061,8 @@ contract Enygma is IEnygma {
      * @param usdrProof Zero-knowledge proof (USDr) — independently proves a
      * USDr balance update for the same participantIds/anonymity set/block
      * number as `proof`, typically crediting the relayer's slot. Its public
-     * FeeAmount signal (index 80) must equal usdrFixedFeeAmount.
+     * FeeAmount signal (StatementLayout.USDR_FEE_AMOUNT_OFFSET) must equal
+     * usdrFixedFeeAmount.
      * @param participantIds Account IDs involved in transfer — shared by
      * both proofs (same k=6 anonymity set for both)
      * @param bankTag Fix H-09: optional, unvalidated caller-supplied
@@ -1126,9 +1127,10 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Execute confidential transfer with public fee (51-signal fee circuit)
+     * @notice Execute confidential transfer with public fee (enygma_fee circuit)
      * @param commitmentDeltas Balance changes for each participant
-     * @param proof Zero-knowledge fee proof (51 public signals; fee at index 50)
+     * @param proof Zero-knowledge fee proof (StatementLayout.TRANSFER_FEE_*;
+     *        fee at TRANSFER_FEE_FEE_AMOUNT_OFFSET)
      * @param participantIds Account IDs involved in transfer
      * @dev C-04 NOT fixed here. enygma_fee's circuit exposes
      *      HashedSharedSecrets as a flat per-participant array (index i =
@@ -1413,11 +1415,11 @@ contract Enygma is IEnygma {
         if (verifier == address(0)) revert VerifierNotFound();
         if (verifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
-        // Fix M-14: was uint256[50] — the deposit circuit has always
-        // produced 51 signals (HashedSharedSecrets..Nullifier at 0-49,
-        // Hash — the deposit note commitment — at 50); this contract
-        // declaring 50 made every deposit() call revert InvalidProof
-        // unconditionally, regardless of proof validity.
+        // Fix M-14: the deposit signal used to be declared one element
+        // shorter than the circuit's (it omitted Hash, the deposit note
+        // commitment), which made every deposit() call revert InvalidProof
+        // unconditionally, regardless of proof validity. The selector's
+        // arity is pinned to DEPOSIT_LEN by gnark-server's genlayout tests.
         _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
@@ -1735,10 +1737,9 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify zero-knowledge proof for the USDr transfer (83-signal
-     * shape — the fee amount and DomainId (Fix L-01) are both public
-     * signals here, unlike the main transfer proof's 80 — different
-     * verifying key)
+     * @notice Verify zero-knowledge proof for the USDr transfer (USDR_LEN
+     * signals — FeeAmount and FeeRecipientKey are public here, unlike in
+     * the main transfer proof — different verifying key)
      */
     function _verifyUsdrTransferProof(
         UsdrProof calldata proof,
@@ -1850,14 +1851,13 @@ contract Enygma is IEnygma {
      * @notice Fix M-14/C-09/L-01: [DEPOSIT_LEN]-arity — used by both
      *         deposit() and withdraw() (whose first DEPOSIT_LEN signals
      *         share deposit's layout; see the M-14/C-09 note under CONSTANTS
-     *         for slot 50; slot 51 is the new L-01 domain
+     *         for the field that differs; DomainId is the L-01 domain
      *         separator, checked here since every caller needs it
-     *         identically, unlike slot 50). This function used to be two
-     *         separate [50]- and [51]-arity copies
-     *         (_verifyPublicInputs / _verifyPublicInputs51); the [50] one
-     *         had no remaining callers after the C-09/M-14 fix moved
-     *         deposit()/withdraw() onto the 51-wide layout, so it was
-     *         deleted here rather than widened uselessly.
+     *         identically). This function used to be two separate copies
+     *         of different arity (_verifyPublicInputs /
+     *         _verifyPublicInputs51); the shorter one had no remaining
+     *         callers after the C-09/M-14 fix, so it was deleted here
+     *         rather than widened uselessly.
      *         Reads StatementLayout.DEPOSIT_* only; a field read here must
      *         also be pinned by gnark-server's withdraw
      *         TestStatementLayout_PrefixSharedWithDeposit.
@@ -1940,7 +1940,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify public inputs for the 80-signal FingerPrint transfer circuit
+     * @notice Verify public inputs for the FingerPrint transfer circuit (TRANSFER_LEN signals)
      */
     function _verifyPublicInputsFP(
         uint256[TRANSFER_LEN] calldata public_signal,
@@ -2121,7 +2121,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify block number freshness for the 80-signal FingerPrint transfer circuit
+     * @notice Verify block number freshness for the FingerPrint transfer circuit
      */
     function _verifyBlockNumberFP(uint256[TRANSFER_LEN] calldata public_signal) private view {
         if (uint256(public_signal[StatementLayout.TRANSFER_BLOCK_NUMBER_OFFSET]) != lastBlockNum) {
@@ -2130,7 +2130,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Record nullifier as spent for the 80-signal FingerPrint transfer circuit
+     * @notice Record nullifier as spent for the FingerPrint transfer circuit
      */
     function _consumeNullifierFP(uint256[TRANSFER_LEN] calldata public_signal) private {
         uint256 nullifier = public_signal[StatementLayout.TRANSFER_NULLIFIER_OFFSET];
@@ -2139,7 +2139,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Verify block number freshness for the 83-signal USDr proof.
+     * @notice Verify block number freshness for the USDr proof.
      * A separate function from _verifyBlockNumberFP because calldata typing
      * fixes the array length (USDR_LEN vs TRANSFER_LEN).
      */
@@ -2150,7 +2150,7 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Record nullifier as spent for the 83-signal USDr proof.
+     * @notice Record nullifier as spent for the USDr proof.
      */
     function _consumeNullifierUsdr(uint256[USDR_LEN] calldata public_signal) private {
         uint256 nullifier = public_signal[StatementLayout.USDR_NULLIFIER_OFFSET];
@@ -2462,7 +2462,7 @@ contract Enygma is IEnygma {
 
 
     /**
-     * @notice Verify zero-knowledge fee proof (delegates to 54-signal fee verifier)
+     * @notice Verify zero-knowledge fee proof (delegates to the TRANSFER_FEE_LEN-signal fee verifier)
      */
     function _verifyFeeTransferProof(FeeProof calldata proof) private view {
         if (_feeVerifier == address(0)) revert VerifierNotFound();

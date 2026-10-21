@@ -59,6 +59,7 @@ import (
 	"time"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -393,13 +394,13 @@ func TestFeeTransferFlow(t *testing.T) {
 		t.Fatalf("expected 8 proof elements, got %d", len(proofResp.Proof))
 	}
 	// 51 base + 2 SumTxCommit(X,Y) + 1 SumTxValuesWithFee + 1 DomainId (Fix L-01) = 55
-	if len(proofResp.PublicSignal) != 55 {
+	if len(proofResp.PublicSignal) != layout.TransferFeeLen {
 		t.Fatalf("expected 55 public signals, got %d", len(proofResp.PublicSignal))
 	}
 	t.Log("proof: 8 elements, public signal: 55 elements ✓")
 
 	// signal[50]: PROTOCOL_FEE constant — relayer verifies this before submitting.
-	if feeFromSignal := proofResp.PublicSignal[50]; feeFromSignal.Cmp(big.NewInt(PROTOCOL_FEE)) != 0 {
+	if feeFromSignal := proofResp.PublicSignal[layout.TransferFeeFeeAmountOffset]; feeFromSignal.Cmp(big.NewInt(PROTOCOL_FEE)) != 0 {
 		t.Fatalf("signal[50] (fee) = %s, want %d", feeFromSignal, PROTOCOL_FEE)
 	}
 	t.Logf("signal[50] = %d == PROTOCOL_FEE ✓", PROTOCOL_FEE)
@@ -407,8 +408,8 @@ func TestFeeTransferFlow(t *testing.T) {
 	// signal[51–52]: SumTxCommit = Σ(TxCommit) + fee·G.
 	// Sender's TxValue = -(amount+fee) ⟹ Σ(TxCommit) = (-fee)·G.
 	// Circuit adds fee·G ⟹ SumTxCommit = (0)·G = BJJ identity = (0,1).
-	sumTxCommitX := proofResp.PublicSignal[51]
-	sumTxCommitY := proofResp.PublicSignal[52]
+	sumTxCommitX := proofResp.PublicSignal[layout.TransferFeeSumTxCommitmentsOffset]
+	sumTxCommitY := proofResp.PublicSignal[layout.TransferFeeSumTxCommitmentsOffset+1]
 	bjjIdentityX := big.NewInt(0)
 	bjjIdentityY := big.NewInt(1)
 	if sumTxCommitX.Cmp(bjjIdentityX) != 0 || sumTxCommitY.Cmp(bjjIdentityY) != 0 {
@@ -420,7 +421,7 @@ func TestFeeTransferFlow(t *testing.T) {
 
 	// signal[53]: SumTxValuesWithFee = (Σ(TxValues) + fee) mod P.
 	// Sender's TxValue absorbs fee ⟹ Σ(TxValues) = -fee ⟹ this is 0.
-	sumTxValWithFee := proofResp.PublicSignal[53]
+	sumTxValWithFee := proofResp.PublicSignal[layout.TransferFeeSumTxValuesWithFeeOffset]
 	if sumTxValWithFee.Sign() != 0 {
 		t.Errorf("signal[53] (SumTxValuesWithFee) = %s, want 0 (fee embedded in sender TxValue)",
 			sumTxValWithFee)
@@ -429,12 +430,11 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 
 	// ── Build relay request ───────────────────────────────────────────────────
-	const txCommitOffset = 24
 	commFinal := make([][]string, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commFinal[i] = []string{
-			proofResp.PublicSignal[txCommitOffset+2*i].String(),
-			proofResp.PublicSignal[txCommitOffset+2*i+1].String(),
+			proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+2*i].String(),
+			proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+2*i+1].String(),
 		}
 	}
 
@@ -512,8 +512,8 @@ func TestFeeTransferFlow(t *testing.T) {
 			t.Fatalf("getBalance(%d): %v", tc.accountId, err)
 		}
 		delta := &babyjub.Point{
-			X: proofResp.PublicSignal[txCommitOffset+2*tc.idx],
-			Y: proofResp.PublicSignal[txCommitOffset+2*tc.idx+1],
+			X: proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+2*tc.idx],
+			Y: proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+2*tc.idx+1],
 		}
 		expected := addBJPoints(&babyjub.Point{X: prevBals[tc.idx].C1, Y: prevBals[tc.idx].C2}, delta)
 		got := &babyjub.Point{X: newBal.X, Y: newBal.Y}
@@ -532,13 +532,13 @@ func TestFeeTransferFlow(t *testing.T) {
 	t.Log("── Point Conservation ──────────────────────────────────────────────────")
 
 	sumPoint := &babyjub.Point{
-		X: proofResp.PublicSignal[txCommitOffset],
-		Y: proofResp.PublicSignal[txCommitOffset+1],
+		X: proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset],
+		Y: proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+1],
 	}
 	for i := 1; i < nBanks; i++ {
 		sumPoint = addBJPoints(sumPoint, &babyjub.Point{
-			X: proofResp.PublicSignal[txCommitOffset+2*i],
-			Y: proofResp.PublicSignal[txCommitOffset+2*i+1],
+			X: proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+2*i],
+			Y: proofResp.PublicSignal[layout.TransferFeeTxCommitmentsOffset+2*i+1],
 		})
 	}
 	// Add fee·G using the circuit generator

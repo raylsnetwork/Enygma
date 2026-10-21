@@ -52,6 +52,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -483,36 +484,34 @@ func TestNullifierReuseProtection(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != layout.TransferLen {
 		t.Fatalf("unexpected proof sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("proof received")
 
 	// Build on-chain proof struct.
-	// NOTE: IEnygmaProof.PublicSignal must be [81]*big.Int after contract/binding regeneration.
+	// NOTE: IEnygmaProof.PublicSignal must be [layout.TransferLen]*big.Int after contract/binding regeneration.
 	var proof8 [8]*big.Int
 	for i := 0; i < 8; i++ {
 		proof8[i] = proofResp.Proof[i]
 	}
-	var pubSig80 [81]*big.Int
-	for i := range pubSig80 {
-		pubSig80[i] = big.NewInt(0)
+	var mainPubSig [layout.TransferLen]*big.Int
+	for i := range mainPubSig {
+		mainPubSig[i] = big.NewInt(0)
 	}
 	for i, v := range proofResp.PublicSignal {
-		pubSig80[i] = v
+		mainPubSig[i] = v
 	}
 
-	// TX_COMMIT_OFFSET = 36 (FingerPrint 6×6) + 6 (pks) + 12 (prevCommit) = 54.
-	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commitmentDeltas[i] = enygma.IEnygmaPoint{
-			C1: proofResp.PublicSignal[txCommitOffset+2*i],
-			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
+			C1: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i],
+			C2: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i+1],
 		}
 	}
 
-	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig80}
+	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: mainPubSig}
 
 	// ── Build and submit the USDr fee proof ──────────────────────────────────
 	// Same AnonymitySet/PublicKey/BlockNumber as the main proof above (required
@@ -598,10 +597,9 @@ func TestNullifierReuseProtection(t *testing.T) {
 	if err := json.NewDecoder(usdrHTTPResp.Body).Decode(&usdrProofResp); err != nil {
 		t.Fatalf("decode usdr proof: %v", err)
 	}
-	// 82 = the main proof's 80-signal layout + FeeAmount + DomainId (Fix
-	// L-01), both public, appended last — see USDrCircuit.Define /
-	// IEnygma.UsdrProof.
-	if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != 83 {
+	// The USDr statement adds FeeAmount and FeeRecipientKey to the main
+	// proof's fields — see USDrCircuit.Define / IEnygma.UsdrProof.
+	if len(usdrProofResp.Proof) != 8 || len(usdrProofResp.PublicSignal) != layout.UsdrLen {
 		t.Fatalf("unexpected usdr proof sizes: proof=%d publicSignal=%d", len(usdrProofResp.Proof), len(usdrProofResp.PublicSignal))
 	}
 	t.Log("USDr fee proof received")
@@ -610,22 +608,22 @@ func TestNullifierReuseProtection(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		usdrProof8[i] = usdrProofResp.Proof[i]
 	}
-	var usdrPubSig82 [83]*big.Int
-	for i := range usdrPubSig82 {
-		usdrPubSig82[i] = big.NewInt(0)
+	var usdrPubSig [layout.UsdrLen]*big.Int
+	for i := range usdrPubSig {
+		usdrPubSig[i] = big.NewInt(0)
 	}
 	for i, v := range usdrProofResp.PublicSignal {
-		usdrPubSig82[i] = v
+		usdrPubSig[i] = v
 	}
 
 	usdrCommitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		usdrCommitmentDeltas[i] = enygma.IEnygmaPoint{
-			C1: usdrProofResp.PublicSignal[txCommitOffset+2*i],
-			C2: usdrProofResp.PublicSignal[txCommitOffset+2*i+1],
+			C1: usdrProofResp.PublicSignal[layout.UsdrTxCommitmentsOffset+2*i],
+			C2: usdrProofResp.PublicSignal[layout.UsdrTxCommitmentsOffset+2*i+1],
 		}
 	}
-	usdrTransferProof := enygma.IEnygmaUsdrProof{Proof: usdrProof8, PublicSignal: usdrPubSig82}
+	usdrTransferProof := enygma.IEnygmaUsdrProof{Proof: usdrProof8, PublicSignal: usdrPubSig}
 
 	participantIds := make([]*big.Int, nBanks)
 	for i := range participantIds {
@@ -928,14 +926,16 @@ func TestBurnBalanceUpdate(t *testing.T) {
 			big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0),
 			big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0),
 		}, // MockBurnVerifier ignores proof content entirely
-		PublicSignal: [9]*big.Int{
-			publicKey,
-			prevBal.X, prevBal.Y,
-			newCommit.X, newCommit.Y,
-			amount,
-			blockHash,
-			nullifier,
-			expectedDomainId(enygmaAddr), // Fix L-01
+		PublicSignal: [layout.BurnLen]*big.Int{
+			layout.BurnPublicKeyOffset:              publicKey,
+			layout.BurnPreviousCommitmentOffset:     prevBal.X,
+			layout.BurnPreviousCommitmentOffset + 1: prevBal.Y,
+			layout.BurnNewCommitmentOffset:          newCommit.X,
+			layout.BurnNewCommitmentOffset + 1:      newCommit.Y,
+			layout.BurnAmountOffset:                 amount,
+			layout.BurnBlockNumberOffset:            blockHash,
+			layout.BurnNullifierOffset:              nullifier,
+			layout.BurnDomainIdOffset:               expectedDomainId(enygmaAddr), // Fix L-01
 		},
 	}
 
@@ -1142,14 +1142,13 @@ func TestInvalidProofRejection(t *testing.T) {
 	for i := range badProof {
 		badProof[i] = big.NewInt(0)
 	}
-	var badPubSig [81]*big.Int
+	var badPubSig [layout.TransferLen]*big.Int
 	for i := range badPubSig {
 		badPubSig[i] = big.NewInt(0)
 	}
-	// USDr proofs carry two extra public signals (FeeAmount, DomainId) —
-	// see IEnygma.UsdrProof — so the garbage USDr leg needs its own
-	// 82-length array; it can't reuse badTransferProof's 81-length type.
-	var badUsdrPubSig [83]*big.Int
+	// The USDr statement is longer than the transfer statement — see
+	// IEnygma.UsdrProof — so the garbage USDr leg needs its own array type.
+	var badUsdrPubSig [layout.UsdrLen]*big.Int
 	for i := range badUsdrPubSig {
 		badUsdrPubSig[i] = big.NewInt(0)
 	}

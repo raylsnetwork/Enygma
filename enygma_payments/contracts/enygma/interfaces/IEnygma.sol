@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL3
 pragma solidity ^0.8.24;
 import "./IZkDvp.sol";
+import "../contracts/StatementLayout.sol";
 
 interface IEnygma {
     struct Point {
@@ -15,39 +16,34 @@ interface IEnygma {
     // Enygma.sol's _expectedDomainId() doc comment.
     struct Proof {
         uint256[8] proof;
-        uint256[81] public_signal;
+        uint256[TRANSFER_LEN] public_signal;
     }
 
-    /// @notice USDr proofs carry two extra public signals versus the main
-    /// 80-signal FingerPrint layout (83, not 80): the fee amount is public
-    /// (not hidden like the main asset's transfer amount) so the contract
-    /// can enforce it equals usdrFixedFeeAmount — see USDrCircuit.Define's
-    /// FeeAmount field — and Fix L-01's DomainId, appended last, binding
-    /// the USDr leg to this specific deployment the same way the main
-    /// proof's own DomainId does.
+    /// @notice USDr proofs (StatementLayout.USDR_*) carry public signals
+    /// the main FingerPrint layout does not: the fee amount is public (not
+    /// hidden like the main asset's transfer amount) so the contract can
+    /// enforce it equals usdrFixedFeeAmount — see USDrCircuit.Define's
+    /// FeeAmount field — and FeeRecipientKey, the fee recipient's spend
+    /// public key.
     struct UsdrProof {
         uint256[8] proof;
-        uint256[83] public_signal;
+        uint256[USDR_LEN] public_signal;
     }
 
-    // Fix M-14/C-09/L-01: withdraw/deposit are genuinely [52]-signal —
-    // the real circuit arity in both cases (see Enygma.sol's
-    // WITHDRAW_TOTAL_DEPOSIT_VALUE_OFFSET/DEPOSIT_HASH_OFFSET doc
-    // comment for slot 50; slot 51 is the L-01 domain separator).
-    // deposit's original [50] mismatch (circuit produced 51, this
-    // struct declared 50) made deposit() revert InvalidProof
-    // unconditionally before Fix M-14.
-    // 52 signals shared with deposit's layout, then the withdrawal's 10 DvP
-    // deposit commitments at 52-61 (see Enygma.sol's
-    // WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET).
+    // Fix M-14/C-09/L-01: deposit's struct used to declare one signal fewer
+    // than the circuit produced, which made deposit() revert InvalidProof
+    // unconditionally before Fix M-14. withdraw's first DEPOSIT_LEN signals
+    // share deposit's layout (see the M-14/C-09 note in Enygma.sol), then
+    // come the withdrawal's DvP deposit commitments
+    // (StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_*).
     struct WithdrawProof {
         uint256[8] proof;
-        uint256[62] public_signal;
+        uint256[WITHDRAW_LEN] public_signal;
     }
 
     struct DepositProof {
         uint256[8] proof;
-        uint256[52] public_signal;
+        uint256[DEPOSIT_LEN] public_signal;
     }
 
     struct SnarkProof {
@@ -59,7 +55,7 @@ interface IEnygma {
 
     struct FeeProof {
         uint256[8] proof;
-        uint256[55] public_signal;
+        uint256[TRANSFER_FEE_LEN] public_signal;
     }
 
     // Fix H-13: burn used to be plaintext arithmetic on a hidden balance,
@@ -70,7 +66,7 @@ interface IEnygma {
     //  Amount, BlockNumber, Nullifier, DomainId] — see gnark-server/pkg/circuits/burn.
     struct BurnProof {
         uint256[8] proof;
-        uint256[9] public_signal;
+        uint256[BURN_LEN] public_signal;
     }
 
     struct DepositParams {
@@ -176,7 +172,8 @@ interface IEnygma {
     function addVerifier(address verifier) external returns (bool);
 
     // Fix M-13: the required fee for transferWithFee, enforced by exact
-    // match against public_signal[FEE_OFFSET] — not merely advisory.
+    // match against public_signal[StatementLayout.TRANSFER_FEE_FEE_AMOUNT_OFFSET]
+    // — not merely advisory.
     function protocolFee() external view returns (uint256);
     function setProtocolFee(uint256 newFee) external returns (bool);
 
@@ -194,7 +191,7 @@ interface IEnygma {
     // initializeUsdrBalance. Both proofs are verified and settled
     // atomically in this one call, using the same participantIds for both
     // (the same k=6 anonymity set). usdrProof's fee amount (public signal
-    // index 80) must equal usdrFixedFeeAmount.
+    // StatementLayout.USDR_FEE_AMOUNT_OFFSET) must equal usdrFixedFeeAmount.
     //
     // Fix H-09: bankTag is optional (pass "" for no attribution — every
     // direct on-chain caller other than the relayer has no bank
@@ -216,15 +213,15 @@ interface IEnygma {
 
     // Fix H-09: see transfer()'s identical bankTag doc comment above.
 
-    /// @notice Register the verifier for USDr transfer proofs (83-signal
-    /// shape — two more than the main transfer proof's 80, since the fee
-    /// amount and DomainId (Fix L-01) are both public signals here —
-    /// different verifying key).
+    /// @notice Register the verifier for USDr transfer proofs (USDR_LEN
+    /// signals — FeeAmount and FeeRecipientKey are public here, unlike in
+    /// the main transfer proof — different verifying key).
     function addUsdrVerifier(address verifier) external returns (bool);
 
     /// @notice Set the fixed USDr relayer fee. Every transfer()'s usdrProof
     /// must carry exactly this amount as its public FeeAmount signal
-    /// (index 80) or the call reverts InvalidFeeAmount() — see
+    /// (StatementLayout.USDR_FEE_AMOUNT_OFFSET) or the call reverts
+    /// InvalidFeeAmount() — see
     /// USDrCircuit.Define. Governance-adjustable (a public input, not a
     /// circuit constant) so changing it never requires new proving/
     /// verifying keys.

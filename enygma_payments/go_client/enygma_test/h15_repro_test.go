@@ -45,6 +45,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -166,28 +167,24 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 	// the neutral element (0,1): a legitimate no-op for those 6 accounts,
 	// so this is a completely ordinary "nothing happens" withdraw() whose
 	// only interesting property is that it crosses an epoch boundary.
-	// public_signal layout (52-signal): PUBLIC_KEY_OFFSET=6,
-	// PREVIOUS_COMMIT_OFFSET=12, TX_COMMIT_OFFSET=24, BLOCK_NUMBER_OFFSET=36,
-	// NULLIFIER_OFFSET=49, DOMAIN_OFFSET=51 (Fix L-01; Enygma.sol's own
-	// constants).
-	var pubSig [62]*big.Int
+	var pubSig [layout.WithdrawLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, 6)
 	participantIds := make([]*big.Int, 6)
 	for i := 0; i < 6; i++ {
-		pubSig[6+i] = keys6[i]
-		pubSig[12+2*i] = balances6[i].C1
-		pubSig[12+2*i+1] = balances6[i].C2
-		pubSig[24+2*i] = big.NewInt(0) // TxCommit = neutral element (0,1): zero delta
-		pubSig[24+2*i+1] = big.NewInt(1)
+		pubSig[layout.WithdrawPublicKeysOffset+i] = keys6[i]
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i] = balances6[i].C1
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
+		pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = big.NewInt(0) // TxCommit = neutral element (0,1): zero delta
+		pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = blockHash
-	pubSig[49] = new(big.Int).SetBytes(crypto.Keccak256([]byte("H15-repro-nullifier")))
-	pubSig[51] = expectedDomainId(enygmaAddr) // Fix L-01
+	pubSig[layout.WithdrawBlockNumberOffset] = blockHash
+	pubSig[layout.WithdrawNullifierOffset] = new(big.Int).SetBytes(crypto.Keccak256([]byte("H15-repro-nullifier")))
+	pubSig[layout.WithdrawDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
 
 	proof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},

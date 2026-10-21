@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -75,38 +76,38 @@ func TestWithdrawRecipientBinding(t *testing.T) {
 		keys6, balances6 := pubVals.Keys[1:], pubVals.Balances[1:]
 		debit := pedersenCommitment(new(big.Int).Sub(curveP, big.NewInt(withdrawAmount)), big.NewInt(0))
 
-		var base [62]*big.Int
+		var base [layout.WithdrawLen]*big.Int
 		for i := range base {
 			base[i] = big.NewInt(0)
 		}
 		deltas := make([]enygma.IEnygmaPoint, nBanks)
 		ids := make([]*big.Int, nBanks)
 		for i := 0; i < nBanks; i++ {
-			base[6+i] = keys6[i]
-			base[12+2*i] = balances6[i].C1
-			base[12+2*i+1] = balances6[i].C2
+			base[layout.WithdrawPublicKeysOffset+i] = keys6[i]
+			base[layout.WithdrawPreviousCommitmentsOffset+2*i] = balances6[i].C1
+			base[layout.WithdrawPreviousCommitmentsOffset+2*i+1] = balances6[i].C2
 			if i == 0 {
-				base[24] = debit.X
-				base[25] = debit.Y
+				base[layout.WithdrawTxCommitmentsOffset] = debit.X
+				base[layout.WithdrawTxCommitmentsOffset+1] = debit.Y
 				deltas[i] = enygma.IEnygmaPoint{C1: debit.X, C2: debit.Y}
 			} else {
-				base[24+2*i] = big.NewInt(0)
-				base[24+2*i+1] = big.NewInt(1)
+				base[layout.WithdrawTxCommitmentsOffset+2*i] = big.NewInt(0)
+				base[layout.WithdrawTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 				deltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 			}
 			ids[i] = big.NewInt(int64(i + 1))
 		}
-		base[36] = blockHash
-		base[49] = deterministicNullifier(t, "withdraw-recipient-binding")
-		base[50] = big.NewInt(withdrawAmount)
-		base[51] = expectedDomainId(enygmaAddr)
+		base[layout.WithdrawBlockNumberOffset] = blockHash
+		base[layout.WithdrawNullifierOffset] = deterministicNullifier(t, "withdraw-recipient-binding")
+		base[layout.WithdrawTotalDepositValueOffset] = big.NewInt(withdrawAmount)
+		base[layout.WithdrawDomainIdOffset] = expectedDomainId(enygmaAddr)
 
 		return fixture{
 			instance: instance, mkAuth: mkAuth, waitTx: waitTx, deltas: deltas, ids: ids,
 			proofWith: func(commitments ...*big.Int) enygma.IEnygmaWithdrawProof {
 				sig := base
 				for i, c := range commitments {
-					sig[52+i] = c
+					sig[layout.WithdrawDepositCommitmentsOffset+i] = c
 				}
 				return enygma.IEnygmaWithdrawProof{Proof: [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)}, PublicSignal: sig}
 			},

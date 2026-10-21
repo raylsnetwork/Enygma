@@ -43,6 +43,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -297,7 +298,7 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 	}
 
 	proofResp := postProofRequest(t, reqBody)
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != layout.TransferLen {
 		t.Fatalf("unexpected proof sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("real proof received")
@@ -306,17 +307,17 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		proof8[i] = proofResp.Proof[i]
 	}
-	var pubSig81 [81]*big.Int
+	var mainPubSig [layout.TransferLen]*big.Int
 	for i, v := range proofResp.PublicSignal {
-		pubSig81[i] = v
+		mainPubSig[i] = v
 	}
-	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig81}
+	transferProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: mainPubSig}
 
 	participantIds := make([]*big.Int, nBanks)
 	for i := range participantIds {
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig81, usdrAccountIds, banks[senderIdx].addr)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainPubSig, usdrAccountIds, banks[senderIdx].addr)
 
 	balBefore, err := instance.GetBalance(&bind.CallOpts{}, big.NewInt(1))
 	if err != nil {

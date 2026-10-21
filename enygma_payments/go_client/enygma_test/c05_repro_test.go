@@ -40,6 +40,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
@@ -276,7 +277,7 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&proofResp); err != nil {
 		t.Fatalf("decode proof: %v", err)
 	}
-	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != 81 {
+	if len(proofResp.Proof) != 8 || len(proofResp.PublicSignal) != layout.TransferLen {
 		t.Fatalf("unexpected proof sizes: proof=%d publicSignal=%d", len(proofResp.Proof), len(proofResp.PublicSignal))
 	}
 	t.Log("attack proof received — circuit happily proved a witness with a duplicated non-sender identity")
@@ -285,29 +286,28 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		proof8[i] = proofResp.Proof[i]
 	}
-	var pubSig80 [81]*big.Int
-	for i := range pubSig80 {
-		pubSig80[i] = big.NewInt(0)
+	var mainPubSig [layout.TransferLen]*big.Int
+	for i := range mainPubSig {
+		mainPubSig[i] = big.NewInt(0)
 	}
 	for i, v := range proofResp.PublicSignal {
-		pubSig80[i] = v
+		mainPubSig[i] = v
 	}
-	const txCommitOffset = 54
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	for i := 0; i < nBanks; i++ {
 		commitmentDeltas[i] = enygma.IEnygmaPoint{
-			C1: proofResp.PublicSignal[txCommitOffset+2*i],
-			C2: proofResp.PublicSignal[txCommitOffset+2*i+1],
+			C1: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i],
+			C2: proofResp.PublicSignal[layout.TransferTxCommitmentsOffset+2*i+1],
 		}
 	}
-	attackProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: pubSig80}
+	attackProof := enygma.IEnygmaProof{Proof: proof8, PublicSignal: mainPubSig}
 
 	// The on-chain half of the attack: accountId 1 appears twice.
 	attackParticipantIds := []*big.Int{
 		big.NewInt(1), big.NewInt(1), big.NewInt(3), big.NewInt(4), big.NewInt(5), big.NewInt(6),
 	}
 	attackAccountIds := []int64{1, 1, 3, 4, 5, 6}
-	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, pubSig80, attackAccountIds, banks[0].addr)
+	usdrDeltas, usdrProof := buildMockUsdrLeg(t, instance, enygmaAddr, mainPubSig, attackAccountIds, banks[0].addr)
 
 	// bankAuth(banks[0]), not mkAuth() — onlyRegistered requires
 	// addressToAccountId[msg.sender] != 0, and only the 6 banks' own

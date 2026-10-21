@@ -12,13 +12,6 @@ import (
 	"github.com/iden3/go-iden3-crypto/babyjub"
 )
 
-// USDr public-signal offsets this check reads, from the generated statement
-// layout.
-const (
-	usdrTxCommitmentsOffset = layout.UsdrTxCommitmentsOffset
-	usdrFeeAmountOffset     = layout.UsdrFeeAmountOffset
-)
-
 // Pedersen generators — identical to Enygma.sol's GX/GY/HX/HY and
 // gnark-server/utils (Fix H-11's NUMS derivation).
 var (
@@ -67,7 +60,7 @@ func (e *feeSlotLookupError) Error() string { return e.err.Error() }
 // randomness that makes this hold.
 func (h *Handler) verifyFeeSlot(
 	ctx context.Context,
-	usdrSignal [UsdrFeePublicSignalLen]*big.Int,
+	usdrSignal [layout.UsdrLen]*big.Int,
 	usdrCommitments []enygma.IEnygmaPoint,
 	participantIds []*big.Int,
 	usdrFeeRandomness string,
@@ -88,9 +81,9 @@ func (h *Handler) verifyFeeSlot(
 	if err != nil {
 		return &feeSlotLookupError{fmt.Errorf("read usdrFixedFeeAmount: %w", err)}
 	}
-	if usdrSignal[usdrFeeAmountOffset].Cmp(fee) != 0 {
+	if usdrSignal[layout.UsdrFeeAmountOffset].Cmp(fee) != 0 {
 		return fmt.Errorf("USDr proof's FeeAmount %s does not equal the contract's usdrFixedFeeAmount %s",
-			usdrSignal[usdrFeeAmountOffset], fee)
+			usdrSignal[layout.UsdrFeeAmountOffset], fee)
 	}
 
 	relayerID, err := h.instance.AddressToAccountId(callOpts, h.auth.From)
@@ -112,7 +105,7 @@ func (h *Handler) verifyFeeSlot(
 		return fmt.Errorf("the relayer's account (%s) is not one of the transfer's participants, so the fee cannot be paid to it", relayerID)
 	}
 
-	dx, dy := usdrSignal[usdrTxCommitmentsOffset+2*slot], usdrSignal[usdrTxCommitmentsOffset+2*slot+1]
+	dx, dy := usdrSignal[layout.UsdrTxCommitmentsOffset+2*slot], usdrSignal[layout.UsdrTxCommitmentsOffset+2*slot+1]
 	if usdrCommitments[slot].C1.Cmp(dx) != 0 || usdrCommitments[slot].C2.Cmp(dy) != 0 {
 		return fmt.Errorf("usdrCommitments[%d] does not match the USDr proof's TxCommit for the relayer's slot", slot)
 	}

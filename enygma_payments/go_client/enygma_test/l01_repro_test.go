@@ -47,6 +47,7 @@ import (
 	"testing"
 
 	enygma "enygma_payments/go_client/contracts"
+	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -131,24 +132,24 @@ func l01DeployAndRegister(t *testing.T, client *ethclient.Client, mkAuth func() 
 // actually rejects it, not just that a correctly-domained proof happens to
 // pass.
 func l01BuildWithdrawProof(dep l01Deployment, domainAddr common.Address, nullifierSeed string) (enygma.IEnygmaWithdrawProof, []enygma.IEnygmaPoint, []*big.Int) {
-	var pubSig [62]*big.Int
+	var pubSig [layout.WithdrawLen]*big.Int
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
-		pubSig[6+i] = dep.keys6[i]
-		pubSig[12+2*i] = dep.balances6[i].C1
-		pubSig[12+2*i+1] = dep.balances6[i].C2
-		pubSig[24+2*i] = big.NewInt(0) // zero-delta: neutral element
-		pubSig[24+2*i+1] = big.NewInt(1)
+		pubSig[layout.WithdrawPublicKeysOffset+i] = dep.keys6[i]
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i] = dep.balances6[i].C1
+		pubSig[layout.WithdrawPreviousCommitmentsOffset+2*i+1] = dep.balances6[i].C2
+		pubSig[layout.WithdrawTxCommitmentsOffset+2*i] = big.NewInt(0) // zero-delta: neutral element
+		pubSig[layout.WithdrawTxCommitmentsOffset+2*i+1] = big.NewInt(1)
 		commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		participantIds[i] = big.NewInt(int64(i + 1))
 	}
-	pubSig[36] = dep.blockHash
-	pubSig[49] = new(big.Int).SetBytes(crypto.Keccak256([]byte(nullifierSeed)))
-	pubSig[51] = expectedDomainId(domainAddr) // Fix L-01
+	pubSig[layout.WithdrawBlockNumberOffset] = dep.blockHash
+	pubSig[layout.WithdrawNullifierOffset] = new(big.Int).SetBytes(crypto.Keccak256([]byte(nullifierSeed)))
+	pubSig[layout.WithdrawDomainIdOffset] = expectedDomainId(domainAddr) // Fix L-01
 
 	proof := enygma.IEnygmaWithdrawProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
