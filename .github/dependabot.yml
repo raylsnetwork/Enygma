@@ -23,6 +23,7 @@ updates:
       - "/enygma_payments/gnark-server"
       - "/enygma_payments/go_client/enygma_test"
       - "/enygma_payments/go_client"
+      - "/enygma_payments/layout"
       - "/enygma_payments/relayer"
       - "/enygma_payments/test"
       - "/enygma_retail_payments/demo"
