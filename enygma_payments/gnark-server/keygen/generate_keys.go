@@ -131,9 +131,7 @@ func generateKeysEnygmaFee() error {
 }
 
 func generateKeysZkDvpDeposit() error {
-	config := deposit.DepositEnygmaCircuitConfig{
-		NCommitment: 6,
-	}
+	config := deposit.DefaultConfig
 	depositCircuit := deposit.DepositEnygmaCircuit{
 		Config:              config,
 		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
@@ -175,9 +173,7 @@ func generateKeysZkDvpDeposit() error {
 //     than 6) verifier. Down to exactly one setup means exactly one
 //     trapdoor, matching what's actually used.
 func generateKeysZkDvpWithdraw() error {
-	config := withdraw.WithdrawEnygmaCircuitConfig{
-		NCommitment: 6,
-	}
+	config := withdraw.DefaultConfig
 
 	withdrawCircuit := withdraw.WithdrawEnygmaCircuit{
 		Config:              config,

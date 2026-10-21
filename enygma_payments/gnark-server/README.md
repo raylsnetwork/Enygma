@@ -107,7 +107,7 @@ This launches the local ZK-SNARK service that listens for proof-generation and v
 
 ### Statement Layouts
 
-Each circuit's statement layout (the order, offsets and sizes of its public signals) is derived from the circuit's own public fields (`pkg/statement`; e.g. `enygma.StatementLayout()`; likewise `enygma_fee` and `usdr`). Two committed files are generated from the layouts:
+Each circuit's statement layout (the order, offsets and sizes of its public signals) is derived from the circuit's own public fields (`pkg/statement`; e.g. `enygma.StatementLayout()`; likewise `enygma_fee`, `usdr`, `withdraw`, `deposit` and `burn`). Two committed files are generated from the layouts:
 
 - `../layout/layout.go`: a dependency-free Go package imported by the relayer;
 - `../contracts/enygma/contracts/StatementLayout.sol`: the constants library used by `Enygma.sol`.

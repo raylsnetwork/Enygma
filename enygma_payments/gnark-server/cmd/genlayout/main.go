@@ -15,9 +15,12 @@ import (
 	"log"
 	"os"
 
+	"enygma_payments/gnark-server/pkg/circuits/burn"
+	"enygma_payments/gnark-server/pkg/circuits/deposit"
 	enygma "enygma_payments/gnark-server/pkg/circuits/enygma"
 	"enygma_payments/gnark-server/pkg/circuits/enygma_fee"
 	"enygma_payments/gnark-server/pkg/circuits/usdr"
+	"enygma_payments/gnark-server/pkg/circuits/withdraw"
 	"enygma_payments/gnark-server/pkg/statement"
 )
 
@@ -33,6 +36,9 @@ func generate() map[string][]byte {
 		enygma.StatementLayout(),
 		enygma_fee.StatementLayout(),
 		usdr.StatementLayout(),
+		withdraw.StatementLayout(),
+		deposit.StatementLayout(),
+		burn.StatementLayout(),
 	}
 	return map[string][]byte{
 		goOut:  statement.RenderGo(layouts),
