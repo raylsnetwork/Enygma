@@ -64,8 +64,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness := createCircuitTemplate(config)
 
-		var publicSignal []*big.Int
-
 		// Fix M-08: bp.Parse accumulates the first parse failure instead
 		// of silently turning a malformed decimal into nil. bp.Err() is
 		// checked below, before frontend.NewWitness is ever called — see
@@ -152,44 +150,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			C_x1, C_y1,
 		}
 
-		// Generate public signal - order must match circuit public signal order
-		// FingerPrintofSharedSecrets is k×k, flattened row-major (36 values for k=6)
-		for i := 0; i < config.NCommitment; i++ {
-			for j := 0; j < config.NCommitment; j++ {
-				publicSignal = append(publicSignal, bp.Parse(request.FingerPrintofSharedSecrets[i][j]))
-			}
+		// The statement is the proof's own public witness, not a rebuild
+		// from the request, so it cannot disagree with what was proven.
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("server-side %v", err)})
+			return
 		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.PublicKey[i]))
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][0]))
-			publicSignal = append(publicSignal, bp.Parse(request.PreviousCommit[i][1]))
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][0]))
-			publicSignal = append(publicSignal, bp.Parse(request.TxCommit[i][1]))
-		}
-		publicSignal = append(publicSignal, bp.Parse(request.BlockNumber))
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.AnonymitySet[i]))
-		}
-
-		for i := 0; i < config.NCommitment; i++ {
-			publicSignal = append(publicSignal, bp.Parse(request.MessageTags[i]))
-		}
-		publicSignal = append(publicSignal, bp.Parse(request.Nullifier))
-		// FeeAmount is public slot 80 — see circuit.go's comment on why
-		// it's public. Must stay before DomainId to keep every earlier
-		// offset (0-79) unchanged.
-		publicSignal = append(publicSignal, bp.Parse(request.SenderTxValue))
-		publicSignal = append(publicSignal, bp.Parse(request.DomainId)) // Fix L-01
-		// FeeRecipientKey is public slot 82, last: the contract requires it
-		// to be the submitter's registered public key.
-		publicSignal = append(publicSignal, bp.Parse(request.FeeRecipientKey))
 
 		c.JSON(http.StatusOK, USDrOutput{
 			Proof:        proofRemix,

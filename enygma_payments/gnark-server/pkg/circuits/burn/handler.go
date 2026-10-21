@@ -120,24 +120,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			C_x1, C_y1,
 		}
 
-		// Public signal order must match circuit field declaration order:
-		// PublicKey, PreviousCommit×2, NewCommit×2, Amount, BlockNumber, Nullifier.
-		publicSignal := []*big.Int{
-			bp.Parse(request.PublicKey),
-			bp.Parse(request.PreviousCommit[0]),
-			bp.Parse(request.PreviousCommit[1]),
-			bp.Parse(request.NewCommit[0]),
-			bp.Parse(request.NewCommit[1]),
-			bp.Parse(request.Amount),
-			bp.Parse(request.BlockNumber),
-			bp.Parse(request.Nullifier),
-			bp.Parse(request.DomainId), // Fix L-01
-		}
-
-		// The public signals above are parsed again from the request; fail
-		// rather than return a zero placeholder for a value that did not parse.
-		if err := bp.Err(); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+		// The statement is the proof's own public witness, not a rebuild
+		// from the request, so it cannot disagree with what was proven.
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("server-side %v", err)})
 			return
 		}
 
