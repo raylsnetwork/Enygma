@@ -32,29 +32,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 	cfg := templates.PaymentRelayerFeePublicConfig
 
-	newCircuit := func() templates.PaymentRelayerFeePublicCircuit {
-		cir := templates.PaymentRelayerFeePublicCircuit{
-			Config:               cfg,
-			StTreeNumbers:        make([]frontend.Variable, cfg.TmNInputs),
-			StMerkleRoots:        make([]frontend.Variable, cfg.TmNInputs),
-			StNullifiers:         make([]frontend.Variable, cfg.TmNInputs),
-			StCommitmentsOut:     make([]frontend.Variable, cfg.TmMOutputs),
-			WtPrivateKeysIn:      make([]frontend.Variable, cfg.TmNInputs),
-			WtValuesIn:           make([]frontend.Variable, cfg.TmNInputs),
-			WtSaltsIn:            make([]frontend.Variable, cfg.TmNInputs),
-			WtPathIndices:        make([]frontend.Variable, cfg.TmNInputs),
-			WtPathElements:       make([][]frontend.Variable, cfg.TmNInputs),
-			WtSpendPublicKeysOut: make([]frontend.Variable, cfg.TmMOutputs),
-			WtValuesOut:          make([]frontend.Variable, cfg.TmMOutputs),
-			WtSaltsOut:           make([]frontend.Variable, cfg.TmMOutputs),
-		}
-		for i := range cir.WtPathElements {
-			cir.WtPathElements[i] = make([]frontend.Variable, cfg.TmMerkleTreeDepth)
-		}
-		return cir
-	}
-
-	circuit := newCircuit()
+	circuit := templates.NewPaymentRelayerFeePublicCircuit(cfg)
 
 	solver.RegisterHint(primitives.ModHint)
 	solver.RegisterHint(primitives.PoseidonNative)
@@ -72,7 +50,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
-		witness := newCircuit()
+		witness := templates.NewPaymentRelayerFeePublicCircuit(cfg)
 
 		witness.StMessage = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
