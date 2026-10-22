@@ -63,6 +63,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
@@ -79,18 +80,18 @@ const usdrTagChangeAmt = 10 // sender's USDr change, arbitrary
 // ── relay request/response (POST /relay/payment_usdr_fee) ─────────────────────
 
 type relayUsdrFeeReq struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [7]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
+	VaultId      string                    `json:"vaultId"`
+	Proof        [8]string                 `json:"proof"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
+	CipherText   string                    `json:"cipherText"`
+	EncTxData    string                    `json:"encTxData"`
 
-	UsdrVaultId      string    `json:"usdrVaultId"`
-	UsdrProof        [8]string `json:"usdrProof"`
-	UsdrPublicSignal [9]string `json:"usdrPublicSignal"`
-	UsdrCipherText   string    `json:"usdrCipherText"`
-	UsdrEncTxData    string    `json:"usdrEncTxData"`
-	UsdrFeeSalt      string    `json:"usdrFeeSalt"`
+	UsdrVaultId      string                    `json:"usdrVaultId"`
+	UsdrProof        [8]string                 `json:"usdrProof"`
+	UsdrPublicSignal [layout.UsdrFeeLen]string `json:"usdrPublicSignal"`
+	UsdrCipherText   string                    `json:"usdrCipherText"`
+	UsdrEncTxData    string                    `json:"usdrEncTxData"`
+	UsdrFeeSalt      string                    `json:"usdrFeeSalt"`
 }
 
 type relayUsdrFeeResp struct {
@@ -104,7 +105,7 @@ type relayUsdrFeeResp struct {
 
 type usdrFeeWitness struct {
 	proof        [8]string
-	publicSignal [9]string
+	publicSignal [layout.UsdrFeeLen]string
 	feeSalt      *big.Int
 	cmtFee       *big.Int
 }
@@ -248,15 +249,15 @@ func depositAndBuildUsdrFeeWitness(
 	if err != nil {
 		t.Fatalf("postGnarkProof usdrFee: %v", err)
 	}
-	if len(proofResp.PublicSignal) != 9 {
-		t.Fatalf("expected 9 public signals, got %d", len(proofResp.PublicSignal))
+	if len(proofResp.PublicSignal) != layout.UsdrFeeLen {
+		t.Fatalf("expected %d public signals, got %d", layout.UsdrFeeLen, len(proofResp.PublicSignal))
 	}
 
 	var proofArr [8]string
 	for i, v := range proofResp.Proof {
 		proofArr[i] = v.String()
 	}
-	var sigArr [9]string
+	var sigArr [layout.UsdrFeeLen]string
 	for i, v := range proofResp.PublicSignal {
 		sigArr[i] = v.String()
 	}
@@ -552,7 +553,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	var mainProofArr [8]string
 	copy(mainProofArr[:], paymentResult.Proof)
 	stmt := paymentResult.ContractStatement()
-	var mainSigArr [7]string
+	var mainSigArr [layout.PaymentLen]string
 	for i, v := range stmt {
 		mainSigArr[i] = v.String()
 	}
@@ -658,8 +659,8 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
 	}
-	if bobRecomputedCmt.Cmp(stmt[4]) != 0 {
-		t.Errorf("Bob's recomputed commitment mismatch: got %s, want %s", bobRecomputedCmt, stmt[4])
+	if bobRecomputedCmt.Cmp(stmt[layout.PaymentCommitmentsOutOffset]) != 0 {
+		t.Errorf("Bob's recomputed commitment mismatch: got %s, want %s", bobRecomputedCmt, stmt[layout.PaymentCommitmentsOutOffset])
 	}
 	t.Logf("  Bob found and verified his note via tag scan ✓ (amount=%s)", note.Amount)
 
@@ -869,7 +870,7 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 		var mainProofArr [8]string
 		copy(mainProofArr[:], paymentResult.Proof)
 		stmt := paymentResult.ContractStatement()
-		var mainSigArr [7]string
+		var mainSigArr [layout.PaymentLen]string
 		for i, v := range stmt {
 			mainSigArr[i] = v.String()
 		}

@@ -36,6 +36,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -56,11 +57,11 @@ const relayerAPIKey = "test-api-key-dev-only"
 // ── request / response types mirroring the relayer API ────────────────────────
 
 type relayPaymentRequest struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [7]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
+	VaultId      string                    `json:"vaultId"`
+	Proof        [8]string                 `json:"proof"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
+	CipherText   string                    `json:"cipherText"`
+	EncTxData    string                    `json:"encTxData"`
 }
 
 type relayPaymentResponse struct {
@@ -109,13 +110,11 @@ func buildRelayRequest(t *testing.T, result *dvpcore.PaymentResult, vaultId stri
 	var proof [8]string
 	copy(proof[:], result.Proof)
 
-	// PublicSignal: ContractStatement() gives non-interleaved []*big.Int.
-	// Layout: [msg, treeNum, root, nullifier, cmt_bob, cmt_change, contractAddr]
 	stmt := result.ContractStatement()
-	if len(stmt) != 7 {
-		t.Fatalf("expected 7 statement elements, got %d", len(stmt))
+	if len(stmt) != layout.PaymentLen {
+		t.Fatalf("expected %d statement elements, got %d", layout.PaymentLen, len(stmt))
 	}
-	var sig [7]string
+	var sig [layout.PaymentLen]string
 	for i, v := range stmt {
 		sig[i] = v.String()
 	}
@@ -340,8 +339,8 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
 	t.Logf("  proof generated")
-	t.Logf("  Bob's commitment    (output 0): %s", paymentResult.Statement[4])
-	t.Logf("  Alice's change cmt  (output 1): %s", paymentResult.Statement[5])
+	t.Logf("  Bob's commitment    (output 0): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
+	t.Logf("  Alice's change cmt  (output 1): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
 
 	// ──────────────────────────────────────────────────────────────────────────
 	// Step 6: Relay — Alice sends unsigned proof to relayer
@@ -429,7 +428,7 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 	_ = dvpAddr
 
 	bobEvents := []dvpcore.OnChainErc20Event{{
-		Commitment: paymentResult.ContractStatement()[4],
+		Commitment: paymentResult.ContractStatement()[layout.PaymentCommitmentsOutOffset],
 		CipherText: paymentResult.CipherText,
 		EncTxData:  paymentResult.EncTxData,
 	}}
@@ -451,9 +450,9 @@ func TestRetailErc20_PaymentViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (change verify): %v", err)
 	}
-	if aliceChangeCmt.Cmp(paymentResult.ContractStatement()[5]) != 0 {
+	if aliceChangeCmt.Cmp(paymentResult.ContractStatement()[layout.PaymentCommitmentsOutOffset+1]) != 0 {
 		t.Errorf("Alice's change commitment mismatch: got %s, want %s",
-			aliceChangeCmt, paymentResult.ContractStatement()[5])
+			aliceChangeCmt, paymentResult.ContractStatement()[layout.PaymentCommitmentsOutOffset+1])
 	}
 	t.Logf("  Alice change note verified: amount=%s saltA=%s", changeAmt, paymentResult.SaltA)
 

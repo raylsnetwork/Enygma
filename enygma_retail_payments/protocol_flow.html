@@ -1197,7 +1197,7 @@
     <div class="callout-icon">🔄</div>
     <div class="callout-body">
       <strong>Alice's Change Note — No Scanning Needed</strong>
-      <p>The Gnark server returns <code>saltA</code> directly in the proof result. Alice computes <code>C_change = Poseidon(pk_spend_A || saltA || changeAmt || tokenId)</code> and verifies it equals <code>statement[5]</code>. She can spend her change using <code>(sk_spend_A, saltA)</code>.</p>
+      <p>The Gnark server returns <code>saltA</code> directly in the proof result. Alice computes <code>C_change = Poseidon(pk_spend_A || saltA || changeAmt || tokenId)</code> and verifies it equals the statement's second output commitment (<code>CommitmentsOut[1]</code>). She can spend her change using <code>(sk_spend_A, saltA)</code>.</p>
     </div>
   </div>
 
@@ -1365,7 +1365,7 @@
         <div class="action-title">Verify + commit</div>
         <div class="action-body">
           ✓ Groth16.verify(proof)<br/>
-          ✓ statement[7] == fee parameter<br/>
+          ✓ statement's Fee == fee parameter<br/>
           ✓ nullifier not spent<br/>
           → mark nullifier<br/>
           → insert C_B + C_change<br/>

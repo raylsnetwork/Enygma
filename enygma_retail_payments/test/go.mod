@@ -3,6 +3,7 @@ module enygma_retail_payments/test
 go 1.26.8
 
 require (
+	enygma_retail_payments/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
 	github.com/raylsnetwork/enygma_retail_payments/src v0.0.0
@@ -48,3 +49,5 @@ replace github.com/raylsnetwork/enygma_retail_payments/src => ../src
 // Both repos must be cloned side-by-side: enygma_dvp/ and enygma_retail_payments/
 // in the same parent directory.
 replace github.com/raylsnetwork/enygma_dvp/src => ../../enygma_dvp/src
+
+replace enygma_retail_payments/layout => ../layout

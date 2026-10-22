@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -388,8 +389,8 @@ func TestRetailErc20_Payment(t *testing.T) {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
 	t.Logf("Step 5 — gnark Payment proof generated")
-	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[4])
-	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
+	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
+	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
 
 	snarkProof := proofStringsToOnchain(t, paymentResult.Proof)
 	onchainReceipt := ProofReceipt{
@@ -447,7 +448,7 @@ func TestRetailErc20_Payment(t *testing.T) {
 	// Step 6: Scanning — Bob and Alice scan Payment events for their notes.
 	// ─────────────────────────────────────────────────────────────────────────
 	bobEvents := []dvpcore.OnChainErc20Event{{
-		Commitment: paymentResult.Statement[4],
+		Commitment: paymentResult.Statement[layout.PaymentCommitmentsOutOffset],
 		CipherText: paymentResult.CipherText,
 		EncTxData:  paymentResult.EncTxData,
 	}}
@@ -471,9 +472,9 @@ func TestRetailErc20_Payment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (Alice change verify): %v", err)
 	}
-	if aliceChangeCmt.Cmp(paymentResult.Statement[5]) != 0 {
+	if aliceChangeCmt.Cmp(paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1]) != 0 {
 		t.Errorf("Alice's change commitment mismatch: got %s, want %s",
-			aliceChangeCmt, paymentResult.Statement[5])
+			aliceChangeCmt, paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
 	}
 	t.Logf("Step 6 — Alice verified her change note: amount=%s tokenId=%s saltA=%s",
 		changeAmt, tokenId, paymentResult.SaltA)

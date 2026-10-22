@@ -11,11 +11,8 @@ package tests
 // USDrCircuit, as opposed to the same-token, single-proof
 // PaymentRelayerFeePublic mechanism (test 09) already shipped for this repo.
 //
-// UsdrFeeCircuit is 1-in/2-out with a 9-element public statement:
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0] (relayer fee), StCommitmentsOut[1] (change),
-//	 StContractAddress, StFee, StTokenId]
+// UsdrFeeCircuit is 1-in/2-out: output 0 is the relayer's fee note, output 1
+// the sender's change, and the fee and token id are public.
 //
 // StTokenId is PUBLIC here (private WtTokenId everywhere else in this
 // codebase) — that's what gives this circuit's statement a distinct length
@@ -47,6 +44,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -64,18 +62,18 @@ const (
 // ── relay request/response (POST /relay/payment_usdr_fee) ─────────────────────
 
 type relayUsdrFeeReq struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [7]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
+	VaultId      string                    `json:"vaultId"`
+	Proof        [8]string                 `json:"proof"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
+	CipherText   string                    `json:"cipherText"`
+	EncTxData    string                    `json:"encTxData"`
 
-	UsdrVaultId      string    `json:"usdrVaultId"`
-	UsdrProof        [8]string `json:"usdrProof"`
-	UsdrPublicSignal [9]string `json:"usdrPublicSignal"`
-	UsdrCipherText   string    `json:"usdrCipherText"`
-	UsdrEncTxData    string    `json:"usdrEncTxData"`
-	UsdrFeeSalt      string    `json:"usdrFeeSalt"`
+	UsdrVaultId      string                    `json:"usdrVaultId"`
+	UsdrProof        [8]string                 `json:"usdrProof"`
+	UsdrPublicSignal [layout.UsdrFeeLen]string `json:"usdrPublicSignal"`
+	UsdrCipherText   string                    `json:"usdrCipherText"`
+	UsdrEncTxData    string                    `json:"usdrEncTxData"`
+	UsdrFeeSalt      string                    `json:"usdrFeeSalt"`
 }
 
 type relayUsdrFeeResp struct {
@@ -90,7 +88,7 @@ type relayUsdrFeeResp struct {
 
 type usdrFeeWitness struct {
 	proof        [8]string
-	publicSignal [9]string
+	publicSignal [layout.UsdrFeeLen]string
 	ctxtFee      []byte // opaque note-discovery data for the fee note (relayer already knows its own note; threaded through for symmetry)
 	ctxtChange   []byte
 	feeSalt      *big.Int
@@ -236,15 +234,15 @@ func depositAndBuildUsdrFeeWitness(
 	if err != nil {
 		t.Fatalf("postProof usdrFee: %v", err)
 	}
-	if len(proofResp.PublicSignal) != 9 {
-		t.Fatalf("expected 9 public signals, got %d", len(proofResp.PublicSignal))
+	if len(proofResp.PublicSignal) != layout.UsdrFeeLen {
+		t.Fatalf("expected %d public signals, got %d", layout.UsdrFeeLen, len(proofResp.PublicSignal))
 	}
 
 	var proofArr [8]string
 	for i, v := range proofResp.Proof {
 		proofArr[i] = v.String()
 	}
-	var sigArr [9]string
+	var sigArr [layout.UsdrFeeLen]string
 	for i, v := range proofResp.PublicSignal {
 		sigArr[i] = v.String()
 	}
@@ -419,7 +417,7 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 	var mainProofArr [8]string
 	copy(mainProofArr[:], paymentResult.Proof)
 	stmt := paymentResult.ContractStatement()
-	var mainSigArr [7]string
+	var mainSigArr [layout.PaymentLen]string
 	for i, v := range stmt {
 		mainSigArr[i] = v.String()
 	}
@@ -638,7 +636,7 @@ func testUsdrFeeRejected(
 	var mainProofArr [8]string
 	copy(mainProofArr[:], paymentResult.Proof)
 	stmt := paymentResult.ContractStatement()
-	var mainSigArr [7]string
+	var mainSigArr [layout.PaymentLen]string
 	for i, v := range stmt {
 		mainSigArr[i] = v.String()
 	}

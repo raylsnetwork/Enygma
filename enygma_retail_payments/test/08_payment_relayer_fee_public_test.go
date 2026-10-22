@@ -14,17 +14,8 @@ package tests
 //	changeAmt     = 10 (back to Alice)
 //	relayerFeeAmt =  5 (spendable note for relayer / Carol) — PUBLICLY VISIBLE
 //
-// Signal layout (1-in / 3-out, 9 elements):
-//
-//	signal[0]  StMessage             = 0
-//	signal[1]  StTreeNumbers[0]      = tree index
-//	signal[2]  StMerkleRoots[0]      = Merkle root
-//	signal[3]  StNullifiers[0]       = nullifier
-//	signal[4]  StCommitmentsOut[0]   = Bob's commitment   (output 0)
-//	signal[5]  StCommitmentsOut[1]   = Alice's change     (output 1, constrained to senderPk)
-//	signal[6]  StCommitmentsOut[2]   = Relayer fee note   (output 2)
-//	signal[7]  StContractAddress     = vault address
-//	signal[8]  StFee                 = relayer fee amount (NEW — publicly verifiable)
+// Outputs: 0 is Bob's payment, 1 Alice's change (constrained to senderPk),
+// 2 the relayer's fee note. The signals are read through layout.PaymentRelayerFee*.
 //
 // Prerequisites:
 //
@@ -41,7 +32,7 @@ package tests
 //
 //	The on-chain function paymentWithRelayerFeePublic does not yet exist in EnygmaDvp.
 //	This test verifies the gnark proof and all commitment math. When EnygmaDvp is updated
-//	with the new function (9-element statement, new VK slot), add the dvp.Transact call.
+//	with the new function (new VK slot), add the dvp.Transact call.
 
 import (
 	"bytes"
@@ -54,6 +45,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -332,21 +324,21 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	t.Log("  PaymentRelayerFeePublic proof generated ✓")
 
 	// ── Step 6: Verify public signals ────────────────────────────────────────
-	t.Log("Step 6 — verifying public signals (9 elements)")
+	t.Log("Step 6 — verifying public signals")
 
 	sig := proofResp.PublicSignal
-	if len(sig) != 9 {
-		t.Fatalf("expected 9 public signals, got %d", len(sig))
+	if len(sig) != layout.PaymentRelayerFeeLen {
+		t.Fatalf("expected %d public signals, got %d", layout.PaymentRelayerFeeLen, len(sig))
 	}
-	t.Logf("  signal[0] msg           = %s", sig[0])
-	t.Logf("  signal[1] treeNum       = %s", sig[1])
-	t.Logf("  signal[2] root          = %s", sig[2])
-	t.Logf("  signal[3] nullifier     = %s", sig[3])
-	t.Logf("  signal[4] cmt_bob       = %s", sig[4])
-	t.Logf("  signal[5] cmt_change    = %s", sig[5])
-	t.Logf("  signal[6] cmt_relayer   = %s", sig[6])
-	t.Logf("  signal[7] contractAddr  = %s", sig[7])
-	t.Logf("  signal[8] StFee         = %s", sig[8])
+	t.Logf("  msg           = %s", sig[layout.PaymentRelayerFeeMessageOffset])
+	t.Logf("  treeNum       = %s", sig[layout.PaymentRelayerFeeTreeNumbersOffset])
+	t.Logf("  root          = %s", sig[layout.PaymentRelayerFeeMerkleRootsOffset])
+	t.Logf("  nullifier     = %s", sig[layout.PaymentRelayerFeeNullifiersOffset])
+	t.Logf("  cmt_bob       = %s", sig[layout.PaymentRelayerFeeCommitmentsOutOffset])
+	t.Logf("  cmt_change    = %s", sig[layout.PaymentRelayerFeeCommitmentsOutOffset+1])
+	t.Logf("  cmt_relayer   = %s", sig[layout.PaymentRelayerFeeCommitmentsOutOffset+2])
+	t.Logf("  contractAddr  = %s", sig[layout.PaymentRelayerFeeContractAddressOffset])
+	t.Logf("  StFee         = %s", sig[layout.PaymentRelayerFeeFeeOffset])
 
 	checkBig := func(label string, got, want *big.Int) {
 		t.Helper()
@@ -357,13 +349,13 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 		}
 	}
 
-	checkBig("signal[2] merkle root", sig[2], aliceProof.Root)
-	checkBig("signal[3] nullifier", sig[3], nullifier)
-	checkBig("signal[4] cmt_bob", sig[4], cmtBob)
-	checkBig("signal[5] cmt_change", sig[5], cmtChange)
-	checkBig("signal[6] cmt_relayer", sig[6], cmtRelayer)
-	checkBig("signal[7] contractAddr", sig[7], vaultAddrBig)
-	checkBig("signal[8] StFee", sig[8], relayerAmt)
+	checkBig("merkle root", sig[layout.PaymentRelayerFeeMerkleRootsOffset], aliceProof.Root)
+	checkBig("nullifier", sig[layout.PaymentRelayerFeeNullifiersOffset], nullifier)
+	checkBig("cmt_bob", sig[layout.PaymentRelayerFeeCommitmentsOutOffset], cmtBob)
+	checkBig("cmt_change", sig[layout.PaymentRelayerFeeCommitmentsOutOffset+1], cmtChange)
+	checkBig("cmt_relayer", sig[layout.PaymentRelayerFeeCommitmentsOutOffset+2], cmtRelayer)
+	checkBig("contractAddr", sig[layout.PaymentRelayerFeeContractAddressOffset], vaultAddrBig)
+	checkBig("StFee", sig[layout.PaymentRelayerFeeFeeOffset], relayerAmt)
 
 	// ── Step 7: Bob scans his note via ML-KEM ────────────────────────────────
 	t.Log("Step 7 — Bob scans his note via ML-KEM")
@@ -392,8 +384,8 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (change verify): %v", err)
 	}
-	if aliceChangeCmt.Cmp(sig[5]) != 0 {
-		t.Errorf("Alice's change commitment mismatch: got %s, want %s", aliceChangeCmt, sig[5])
+	if aliceChangeCmt.Cmp(sig[layout.PaymentRelayerFeeCommitmentsOutOffset+1]) != 0 {
+		t.Errorf("Alice's change commitment mismatch: got %s, want %s", aliceChangeCmt, sig[layout.PaymentRelayerFeeCommitmentsOutOffset+1])
 	}
 	t.Logf("  Alice's change note: amount=%s saltA=%s ✓", changeAmt, saltA)
 
@@ -404,19 +396,19 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (relayer verify): %v", err)
 	}
-	if relayerFeeCmt.Cmp(sig[6]) != 0 {
-		t.Errorf("Relayer fee commitment mismatch: got %s, want %s", relayerFeeCmt, sig[6])
+	if relayerFeeCmt.Cmp(sig[layout.PaymentRelayerFeeCommitmentsOutOffset+2]) != 0 {
+		t.Errorf("Relayer fee commitment mismatch: got %s, want %s", relayerFeeCmt, sig[layout.PaymentRelayerFeeCommitmentsOutOffset+2])
 	}
 	t.Logf("  Relayer fee note: amount=%s saltRelayer=%s ✓", relayerAmt, saltRelayer)
 
 	// ── Step 10: Confirm public fee is visible ────────────────────────────────
 	t.Log("Step 10 — confirming public fee signal equals relayer fee amount")
 
-	if sig[8].Cmp(relayerAmt) != 0 {
-		t.Errorf("public StFee signal mismatch: got %s, want %s", sig[8], relayerAmt)
+	if sig[layout.PaymentRelayerFeeFeeOffset].Cmp(relayerAmt) != 0 {
+		t.Errorf("public StFee signal mismatch: got %s, want %s", sig[layout.PaymentRelayerFeeFeeOffset], relayerAmt)
 	}
 	t.Logf("  StFee=%s is publicly visible on-chain ✓ (anyone can verify Alice paid the relayer exactly %s tokens)",
-		sig[8], relayerAmt)
+		sig[layout.PaymentRelayerFeeFeeOffset], relayerAmt)
 
 	t.Logf("=== PAYMENT RELAYER FEE PUBLIC FLOW COMPLETE ===")
 	t.Logf("    Alice paid %s tokens to Bob", paymentAmt)

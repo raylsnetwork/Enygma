@@ -5,8 +5,8 @@ package tags_test
 //
 // Same flow as TestPaymentWithTagNotification but uses paymentWithFee() on-chain:
 //   - PaymentFee circuit: valueIn == Σ(valuesOut) + StFee
-//   - 8-element statement includes StFee at index 7
-//   - On-chain check: statement[7] == PROTOCOL_FEE
+//   - the statement carries a public StFee
+//   - On-chain check: StFee == PROTOCOL_FEE
 //   - Tag notification unchanged — Bob still receives via tag scan
 //
 // Constants:
@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -287,13 +288,13 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 
 	// Verify fee signal.
 	stmt := paymentResult.ContractStatement()
-	if len(stmt) != 8 {
-		t.Fatalf("expected 8 statement elements, got %d", len(stmt))
+	if len(stmt) != layout.PaymentFeeLen {
+		t.Fatalf("expected %d statement elements, got %d", layout.PaymentFeeLen, len(stmt))
 	}
-	if stmt[7].Cmp(fee) != 0 {
-		t.Errorf("statement[7] fee = %s, want %s", stmt[7], fee)
+	if stmt[layout.PaymentFeeFeeOffset].Cmp(fee) != 0 {
+		t.Errorf("statement fee = %s, want %s", stmt[layout.PaymentFeeFeeOffset], fee)
 	} else {
-		t.Logf("  statement[7] = %d == PROTOCOL_FEE ✓", feeTagProtocolFee)
+		t.Logf("  statement fee = %d == PROTOCOL_FEE ✓", feeTagProtocolFee)
 	}
 
 	// ── Step 10: Submit paymentWithFee on-chain ───────────────────────────────
@@ -402,7 +403,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
 	}
 
-	expectedBobCmt := paymentResult.Statement[4]
+	expectedBobCmt := paymentResult.Statement[layout.PaymentFeeCommitmentsOutOffset]
 	if bobRecomputedCmt.Cmp(expectedBobCmt) != 0 {
 		t.Errorf("Bob's recomputed commitment mismatch:\n  got:  %s\n  want: %s",
 			bobRecomputedCmt, expectedBobCmt)
@@ -418,9 +419,9 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err)
 	}
 
-	if aliceChangeCmt.Cmp(paymentResult.Statement[5]) != 0 {
+	if aliceChangeCmt.Cmp(paymentResult.Statement[layout.PaymentFeeCommitmentsOutOffset+1]) != 0 {
 		t.Errorf("Alice's change commitment mismatch:\n  got:  %s\n  want: %s",
-			aliceChangeCmt, paymentResult.Statement[5])
+			aliceChangeCmt, paymentResult.Statement[layout.PaymentFeeCommitmentsOutOffset+1])
 	}
 	t.Logf("  Alice change commitment: %s ✓", aliceChangeCmt)
 

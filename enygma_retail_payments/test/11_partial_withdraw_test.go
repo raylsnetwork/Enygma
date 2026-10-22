@@ -48,6 +48,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	core "github.com/raylsnetwork/enygma_dvp/src/core"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -691,8 +692,8 @@ func TestRetailErc20_PartialWithdraw_Rejections(t *testing.T) {
 		e.expectRevert(t, "ZeroWithdrawAmount", big.NewInt(0), recipient, s.receipt, s.ctI, s.ctII)
 	})
 	t.Run("fee_shaped_statement", func(t *testing.T) {
-		// An 8-element statement is the PaymentFee shape, whose fee leaves the
-		// input outside the two outputs.
+		// One signal more than Payment's is the PaymentFee statement length,
+		// whose fee leaves the input outside the two outputs.
 		bad := s.receipt
 		bad.Statement = append(append([]*big.Int{}, s.receipt.Statement...), big.NewInt(1))
 		e.expectRevert(t, "InvalidStatmentSize", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
@@ -701,7 +702,7 @@ func TestRetailErc20_PartialWithdraw_Rejections(t *testing.T) {
 		// StMessage 0 marks a payment proof, not a withdrawal.
 		bad := s.receipt
 		bad.Statement = append([]*big.Int{}, s.receipt.Statement...)
-		bad.Statement[0] = big.NewInt(0)
+		bad.Statement[layout.PaymentMessageOffset] = big.NewInt(0)
 		e.expectRevert(t, "InvalidPaymentMessage", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
 	t.Run("overdraw_refused_by_prover", func(t *testing.T) {
@@ -911,8 +912,8 @@ func TestRetailErc20_PartialWithdraw_NoCrossSettlement(t *testing.T) {
 
 	note := newDepositNote(t, e, big.NewInt(100))
 	s := e.mustProveWithdraw(t, note, big.NewInt(10), big.NewInt(90), recipient)
-	if s.receipt.Statement[0].Cmp(big.NewInt(1)) != 0 {
-		t.Fatalf("withdrawal proof carries StMessage %s, want WITHDRAW_MESSAGE (1)", s.receipt.Statement[0])
+	if s.receipt.Statement[layout.PaymentMessageOffset].Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("withdrawal proof carries StMessage %s, want WITHDRAW_MESSAGE (1)", s.receipt.Statement[layout.PaymentMessageOffset])
 	}
 	if !e.verifiesAt(t, 0, s.receipt) {
 		t.Fatalf("the withdrawal proof does not verify against VK slot 0 — the regenerated Payment key is not registered")
@@ -1039,9 +1040,9 @@ func (r *relayerEnv) proveRelayed(t *testing.T, in pwNote, amount, change, fee, 
 func (r *relayerEnv) request(s *pwSpend, recipient common.Address, amount *big.Int) relayPartialWithdrawReq {
 	var proof [8]string
 	copy(proof[:], s.proofStrs)
-	// The retail route takes exactly 9 public signals; a shorter statement
-	// leaves the rest empty, which the relayer refuses.
-	var sig [9]string
+	// The retail route takes exactly a PaymentRelayerFee statement; a shorter
+	// one leaves the rest empty, which the relayer refuses.
+	var sig [layout.PaymentRelayerFeeLen]string
 	for i, v := range s.receipt.Statement {
 		if i < len(sig) {
 			sig[i] = v.String()
@@ -1233,7 +1234,7 @@ func TestRetailRelayer_PartialWithdraw_Rejections(t *testing.T) {
 	})
 	t.Run("plain_payment_receipt", func(t *testing.T) {
 		plain := r.mustProveWithdraw(t, note, big.NewInt(10), big.NewInt(90), recipient)
-		// Its 7-element statement does not fill the route's 9 signals.
+		// A Payment statement does not fill the route's PaymentRelayerFee one.
 		r.expectRelayRefused(t, r.request(plain, recipient, big.NewInt(10)), http.StatusBadRequest, "parse")
 	})
 	t.Run("payment_message", func(t *testing.T) {
