@@ -18,6 +18,7 @@ import (
 	"sync"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	"enygma_retail_payments/relayer/config"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -250,13 +251,34 @@ func (f *feeFixture) feeCmt(t *testing.T, salt, fee, tokenId *big.Int) *big.Int 
 
 var proof8 = [8]string{"1", "2", "3", "4", "5", "6", "7", "8"}
 
+// paymentSignal is a Payment statement spending nullifier 55 of tree 0
+// (root 1) into outputs 6 and 7, bound to vault.
+func paymentSignal(vault common.Address) [layout.PaymentLen]string {
+	var s [layout.PaymentLen]string
+	s[layout.PaymentMessageOffset] = "0"
+	s[layout.PaymentTreeNumbersOffset] = "0"
+	s[layout.PaymentMerkleRootsOffset] = "1"
+	s[layout.PaymentNullifiersOffset] = "55"
+	s[layout.PaymentCommitmentsOutOffset] = "6"
+	s[layout.PaymentCommitmentsOutOffset+1] = "7"
+	s[layout.PaymentContractAddressOffset] = new(big.Int).SetBytes(vault.Bytes()).String()
+	return s
+}
+
 // relayerFeeRequest is a PaymentRelayerFeePublic request with message msg and
 // output[0] out0, paying fee 5 with salt to this relayer.
 func (f *feeFixture) relayerFeeRequest(t *testing.T, msg string, out0, salt *big.Int) RelayPaymentRelayerFeeRequest {
 	fee, tokenId := big.NewInt(5), big.NewInt(0)
-	// [msg, treeNum0, root0, nf0, out0, cmtChange, cmtRelayer, contractAddr, fee]
-	signal := [9]string{msg, "0", "1", "55", out0.String(), "7", f.feeCmt(t, salt, fee, tokenId).String(),
-		new(big.Int).SetBytes(f.vaultAddr.Bytes()).String(), fee.String()}
+	var signal [layout.PaymentRelayerFeeLen]string
+	signal[layout.PaymentRelayerFeeMessageOffset] = msg
+	signal[layout.PaymentRelayerFeeTreeNumbersOffset] = "0"
+	signal[layout.PaymentRelayerFeeMerkleRootsOffset] = "1"
+	signal[layout.PaymentRelayerFeeNullifiersOffset] = "55"
+	signal[layout.PaymentRelayerFeeCommitmentsOutOffset] = out0.String()
+	signal[layout.PaymentRelayerFeeCommitmentsOutOffset+1] = "7"
+	signal[layout.PaymentRelayerFeeCommitmentsOutOffset+2] = f.feeCmt(t, salt, fee, tokenId).String()
+	signal[layout.PaymentRelayerFeeContractAddressOffset] = new(big.Int).SetBytes(f.vaultAddr.Bytes()).String()
+	signal[layout.PaymentRelayerFeeFeeOffset] = fee.String()
 	return RelayPaymentRelayerFeeRequest{
 		VaultId: "0", Proof: proof8, PublicSignal: signal,
 		CipherText: "0x00", EncTxData: "0x00", FeeSalt: salt.String(), TokenId: tokenId.String(),
@@ -316,15 +338,22 @@ func TestRelayPartialWithdraw_KeepsTheFeeNoteOpening(t *testing.T) {
 func (f *feeFixture) usdrFeeRequest(t *testing.T, salt *big.Int) RelayPaymentUsdrFeeRequest {
 	fee, tokenId := big.NewInt(5), big.NewInt(0)
 	cmtFee := f.feeCmt(t, salt, fee, tokenId)
-	usdrVault := new(big.Int).SetBytes(f.h.usdrVaultAddr.Bytes()).String()
+	var usdr [layout.UsdrFeeLen]string
+	usdr[layout.UsdrFeeMessageOffset] = "0"
+	usdr[layout.UsdrFeeTreeNumbersOffset] = "0"
+	usdr[layout.UsdrFeeMerkleRootsOffset] = "1"
+	usdr[layout.UsdrFeeNullifiersOffset] = "66"
+	usdr[layout.UsdrFeeCommitmentsOutOffset] = cmtFee.String()
+	usdr[layout.UsdrFeeCommitmentsOutOffset+1] = "8"
+	usdr[layout.UsdrFeeContractAddressOffset] = new(big.Int).SetBytes(f.h.usdrVaultAddr.Bytes()).String()
+	usdr[layout.UsdrFeeFeeOffset] = fee.String()
+	usdr[layout.UsdrFeeTokenIdOffset] = tokenId.String()
 	return RelayPaymentUsdrFeeRequest{
 		VaultId: "0", Proof: proof8,
-		// [msg, treeNum0, root0, nf0, cmtBob, cmtChange, contractAddr]
-		PublicSignal: [7]string{"0", "0", "1", "55", "6", "7", new(big.Int).SetBytes(f.vaultAddr.Bytes()).String()},
+		PublicSignal: paymentSignal(f.vaultAddr),
 		CipherText:   "0x00", EncTxData: "0x00",
 		UsdrVaultId: "4", UsdrProof: proof8,
-		// [msg, treeNum0, root0, nf0, cmtFee, cmtChange, contractAddr, fee, tokenId]
-		UsdrPublicSignal: [9]string{"0", "0", "1", "66", cmtFee.String(), "8", usdrVault, fee.String(), tokenId.String()},
+		UsdrPublicSignal: usdr,
 		UsdrCipherText:   "0x00", UsdrEncTxData: "0x00", UsdrFeeSalt: salt.String(),
 	}
 }
@@ -371,7 +400,7 @@ func TestRelayRoutes_SendAndRecordNothingWhenTheCallWouldRevert(t *testing.T) {
 	cases := map[string]func(f *feeFixture, t *testing.T) interface{}{
 		"/relay/payment": func(f *feeFixture, t *testing.T) interface{} {
 			return RelayPaymentRequest{VaultId: "0", Proof: proof8,
-				PublicSignal: [7]string{"0", "0", "1", "55", "6", "7", new(big.Int).SetBytes(f.vaultAddr.Bytes()).String()},
+				PublicSignal: paymentSignal(f.vaultAddr),
 				CipherText:   "0x00", EncTxData: "0x00"}
 		},
 		"/relay/payment_relayer_fee": func(f *feeFixture, t *testing.T) interface{} {
@@ -413,7 +442,7 @@ func TestRelayRoutes_RefuseAnotherVault(t *testing.T) {
 	cases := map[string]func(f *feeFixture, t *testing.T) (string, interface{}){
 		"payment, registered other vault": func(f *feeFixture, t *testing.T) (string, interface{}) {
 			return "/relay/payment", RelayPaymentRequest{VaultId: "2", Proof: proof8,
-				PublicSignal: [7]string{"0", "0", "1", "55", "6", "7", new(big.Int).SetBytes(f.vaultAddr.Bytes()).String()},
+				PublicSignal: paymentSignal(f.vaultAddr),
 				CipherText:   "0x00", EncTxData: "0x00"}
 		},
 		"relayer fee, unregistered vault": func(f *feeFixture, t *testing.T) (string, interface{}) {

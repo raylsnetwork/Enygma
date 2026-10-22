@@ -3,6 +3,7 @@ module enygma_retail_payments/relayer
 go 1.26.8
 
 require (
+	enygma_retail_payments/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/gin-gonic/gin v1.10.1
 	github.com/iden3/go-iden3-crypto v0.0.17
@@ -64,3 +65,5 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace enygma_retail_payments/layout => ../layout
