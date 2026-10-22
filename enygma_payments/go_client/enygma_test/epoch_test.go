@@ -14,8 +14,7 @@ package enygma_test
 //   8. (requires gnark + relayer) A fresh proof at the new epoch is accepted
 //
 // Prerequisites:
-//  1. Hardhat node on localhost:8545, contracts deployed with EPOCH_INTERVAL=5 (or any small value):
-//       EPOCH_INTERVAL=5 python3 run_scripts/deploy_direct.py
+//  1. Hardhat node on localhost:8545 (the test deploys its own contracts)
 //  2. (phases 7-9 only) Gnark server on localhost:8080
 //  3. (phases 7-9 only) The relayer binary built (cd enygma_payments/relayer && ./run.sh);
 //     the test runs its own relayer on :8085 as one of the banks, so it can be paid the USDr fee
@@ -23,8 +22,6 @@ package enygma_test
 // Run:
 //
 //	cd go_client/enygma_test && CC=/usr/bin/clang go test -run TestEpochIntervalFlow -v -timeout 600s
-//
-// IMPORTANT: Run on a FRESH chain. Restart the Hardhat node between runs.
 
 import (
 	"bytes"
@@ -271,7 +268,7 @@ func currentBlock(t *testing.T, ctx context.Context, client *ethclient.Client) *
 
 func TestEpochIntervalFlow(t *testing.T) {
 	if !tcpAvailable("127.0.0.1:8545") {
-		t.Skip("chain not reachable at 127.0.0.1:8545 — start Hardhat and deploy:\n  EPOCH_INTERVAL=5 python3 run_scripts/deploy_direct.py")
+		t.Skip("chain not reachable at 127.0.0.1:8545 — start Hardhat first")
 	}
 
 	ctx := context.Background()
@@ -283,16 +280,6 @@ func TestEpochIntervalFlow(t *testing.T) {
 	}
 	defer rpcClient.Close()
 	client := ethclient.NewClient(rpcClient)
-
-	tokenAddr, verifierAddr := readReceipts(t)
-	t.Logf("TOKEN:    %s", tokenAddr)
-	t.Logf("VERIFIER: %s", verifierAddr)
-
-	contractAddr := common.HexToAddress(tokenAddr)
-	instance, err := enygma.NewEnygma(contractAddr, client)
-	if err != nil {
-		t.Fatalf("create contract: %v", err)
-	}
 
 	privKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
@@ -320,26 +307,18 @@ func TestEpochIntervalFlow(t *testing.T) {
 		return r
 	}
 
-	// ── Phase 1: Read epochInterval from contract ─────────────────────────────
+	// ── Phase 1: Deploy and read epochInterval from contract ──────────────────
 	t.Log("=== Phase 1: epoch configuration ===")
 
+	instance, contractAddr := deployEnygma(t, client, mkAuth, waitTx)
 	interval := readEpochInterval(t, ctx, client, contractAddr)
 	t.Logf("epochInterval = %s blocks", interval)
-	if interval.Sign() == 0 {
-		t.Fatal("epochInterval = 0 — contract was deployed without epoch parameter; re-deploy with EPOCH_INTERVAL=5")
+	if interval.Cmp(big.NewInt(testEpochInterval)) != 0 {
+		t.Fatalf("epochInterval = %s, want %d (the constructor argument)", interval, testEpochInterval)
 	}
 
 	// ── Phase 2: Contract setup ───────────────────────────────────────────────
 	t.Log("=== Phase 2: setup ===")
-
-	if tx, txErr := instance.Initialize(mkAuth()); txErr == nil {
-		if r, _ := bind.WaitMined(ctx, client, tx); r != nil && r.Status == 1 {
-			t.Log("contract initialized")
-		}
-	}
-	if r := waitTx(instance.AddVerifier(mkAuth(), common.HexToAddress(verifierAddr))); r.Status != 1 {
-		t.Fatal("addVerifier failed")
-	}
 
 	pks := make([]*big.Int, nBanks)
 	for i, sk := range bankSks {
@@ -636,15 +615,16 @@ func TestEpochIntervalFlow(t *testing.T) {
 // the new epoch without altering any bank's balance, so _verifyPublicInputs still
 // passes and only _verifyBlockNumber fires as the rejection cause.
 //
-// Prerequisites: fresh Hardhat node, gnark server on :8080, the relayer binary
-// built (the test runs its own relayer on :8085).
+// Prerequisites: Hardhat node (the test deploys its own contracts), gnark
+// server on :8080, the relayer binary built (the test runs its own relayer on
+// :8085).
 //
-// Run alone (requires fresh chain):
+// Run alone:
 //
 //	CC=/usr/bin/clang go test -run TestBlockNumberMismatch -v -timeout 300s
 func TestBlockNumberMismatch(t *testing.T) {
 	if !tcpAvailable("127.0.0.1:8545") {
-		t.Skip("chain not reachable at :8545 — start Hardhat with EPOCH_INTERVAL=5")
+		t.Skip("chain not reachable at :8545 — start Hardhat first")
 	}
 	if !tcpAvailable("127.0.0.1:8080") {
 		t.Skip("gnark server not reachable at :8080")
@@ -658,13 +638,6 @@ func TestBlockNumberMismatch(t *testing.T) {
 	}
 	defer rpcClient.Close()
 	client := ethclient.NewClient(rpcClient)
-
-	tokenAddr, verifierAddr := readReceipts(t)
-	contractAddr := common.HexToAddress(tokenAddr)
-	instance, err := enygma.NewEnygma(contractAddr, client)
-	if err != nil {
-		t.Fatalf("new contract: %v", err)
-	}
 
 	privKey := mustPrivKey(t)
 	ownerAddr := crypto.PubkeyToAddress(*privKey.Public().(*ecdsa.PublicKey))
@@ -694,12 +667,7 @@ func TestBlockNumberMismatch(t *testing.T) {
 	apiKey := relayerKey
 
 	// ── Setup ─────────────────────────────────────────────────────────────────
-	if tx, txErr := instance.Initialize(mkAuth()); txErr == nil {
-		bind.WaitMined(ctx, client, tx)
-	}
-	if r := waitTx(instance.AddVerifier(mkAuth(), common.HexToAddress(verifierAddr))); r.Status != 1 {
-		t.Fatal("addVerifier failed")
-	}
+	instance, contractAddr := deployEnygma(t, client, mkAuth, waitTx)
 	pks := make([]*big.Int, nBanks)
 	for i, sk := range bankSks {
 		pk, _ := poseidon.Hash([]*big.Int{sk, sk})

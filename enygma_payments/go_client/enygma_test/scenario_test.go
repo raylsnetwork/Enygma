@@ -116,26 +116,62 @@ func deployFromArtifact(
 	return addr
 }
 
+// testEpochInterval is the epochInterval every deployEnygma contract is built
+// with (deploy_direct.py's default).
+const testEpochInterval = 30
+
+// deployEnygma deploys a fresh Enygma (epochInterval testEpochInterval) and
+// Verifier pair, initializes Enygma and registers the verifier on it, and
+// returns the bound instance plus its address. Every test that registers
+// accounts deploys its own pair: registerAccount reverts AlreadyRegistered on
+// a contract another test already set up.
+func deployEnygma(
+	t *testing.T,
+	client *ethclient.Client,
+	mkAuth func() *bind.TransactOpts,
+	waitTx func(*ethtypes.Transaction, error) *ethtypes.Receipt,
+) (*enygma.Enygma, common.Address) {
+	t.Helper()
+	const artifactBase = "../../contracts/enygma/artifacts/contracts"
+	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
+		artifactBase+"/Enygma.sol/Enygma.json",
+		big.NewInt(testEpochInterval),
+	)
+	verifierAddr := deployFromArtifact(t, client, mkAuth(),
+		artifactBase+"/EnygmaVerifier.sol/Verifier.json",
+	)
+
+	instance, err := enygma.NewEnygma(enygmaAddr, client)
+	if err != nil {
+		t.Fatalf("bind contract: %v", err)
+	}
+
+	if r := waitTx(instance.Initialize(mkAuth())); r.Status != 1 {
+		t.Fatal("initialize failed")
+	}
+	if r := waitTx(instance.AddVerifier(mkAuth(), verifierAddr)); r.Status != 1 {
+		t.Fatal("addVerifier failed")
+	}
+	t.Logf("contracts: enygma=%s verifier=%s", enygmaAddr.Hex(), verifierAddr.Hex())
+	return instance, enygmaAddr
+}
+
 // ── TestCheckInvariant ────────────────────────────────────────────────────────
 
-// TestCheckInvariant calls check() on the existing deployed contract to verify
-// that the homomorphic sum of all bank balance commitments equals totalSupply.
-// Expected to be run after TestFullTransactionFlow on the same contract.
+// TestCheckInvariant calls check() on a freshly deployed contract with nBanks
+// registered accounts and one mint, to verify that the homomorphic sum of all
+// bank balance commitments equals totalSupply.
 func TestCheckInvariant(t *testing.T) {
 	if !chainAvailable() {
 		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
-	tokenAddr, _ := readReceipts(t)
 
-	client, err := ethclient.Dial(chainURL)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer client.Close()
+	client, mkAuth, waitTx := scenarioClient(t)
+	instance, _ := freshSetup(t, client, mkAuth, waitTx)
 
-	instance, err := enygma.NewEnygma(common.HexToAddress(tokenAddr), client)
-	if err != nil {
-		t.Fatalf("contract instance: %v", err)
+	mcx, mcy := mintCommitPt(big.NewInt(mintAmt), big.NewInt(senderMintR))
+	if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
+		t.Fatal("mintSupply failed")
 	}
 
 	nBanksOnChain, err := instance.TotalRegisteredBanks(&bind.CallOpts{})
@@ -714,7 +750,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 
 // ── Shared fresh-contract setup ───────────────────────────────────────────────
 
-// freshSetup deploys Enygma + Verifier, initializes them, registers nBanks accounts
+// freshSetup deploys Enygma + Verifier (deployEnygma), registers nBanks accounts
 // (all with senderPrevR as randomness), and returns the bound instance plus its
 // deployed address (Fix L-01: callers building a real public_signal array need
 // the address to compute expectedDomainId(enygmaAddr) for the domain slot —
@@ -730,25 +766,7 @@ func freshSetup(
 
 	ownerAddr := crypto.PubkeyToAddress(*mustPrivKey(t).Public().(*ecdsa.PublicKey))
 
-	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
-		artifactBase+"/Enygma.sol/Enygma.json",
-		big.NewInt(30),
-	)
-	verifierAddr := deployFromArtifact(t, client, mkAuth(),
-		artifactBase+"/EnygmaVerifier.sol/Verifier.json",
-	)
-
-	instance, err := enygma.NewEnygma(enygmaAddr, client)
-	if err != nil {
-		t.Fatalf("bind contract: %v", err)
-	}
-
-	waitTx(instance.Initialize(mkAuth()))
-
-	if r := waitTx(instance.AddVerifier(mkAuth(), verifierAddr)); r.Status != 1 {
-		t.Fatal("addVerifier failed")
-	}
+	instance, enygmaAddr := deployEnygma(t, client, mkAuth, waitTx)
 
 	pks := make([]*big.Int, nBanks)
 	for i, sk := range bankSks {
