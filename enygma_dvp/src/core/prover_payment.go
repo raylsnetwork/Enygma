@@ -10,8 +10,10 @@ import (
 // everything Alice needs to submit the transaction on-chain and that each
 // recipient needs to scan their note.
 type PaymentResult struct {
-	Proof           []string   // 8-element Groth16 proof
-	Statement       []*big.Int // interleaved: [msg, tree0, root0, null0, ..., cmt0, cmt1, contractAddr?]
+	Proof []string // 8-element Groth16 proof
+	// Statement is the public signals exactly as the gnark server returned
+	// them: the proved witness's public part, in the circuit's own order.
+	Statement       []*big.Int
 	NumberOfInputs  int
 	NumberOfOutputs int
 	// Bob's note discovery data (output 0 only — published on-chain).
@@ -21,48 +23,43 @@ type PaymentResult struct {
 	SaltB *big.Int // saltB field element used in Bob's output commitment
 	// Alice's change note data (private — not published on-chain).
 	SaltA *big.Int // random change salt; Alice must store this locally to open Commitment_A
-	// ContractAddress is non-nil when the proof was generated via BoundPaymentProof (VULN-5 fix).
-	// ContractStatement() appends it as the last statement element for on-chain verification.
+	// ContractAddress is non-nil when the proof was generated via BoundPaymentProof (VULN-5 fix):
+	// the vault the proof is bound to.
 	ContractAddress *big.Int
-	// Fee is non-nil when generated via BoundPaymentFeeProof.
-	// ContractStatement() appends it after ContractAddress so the on-chain verifier can
-	// check statement[last] == PROTOCOL_FEE.
+	// Fee is non-nil when generated via BoundPaymentFeeProof: the proof's public fee.
 	Fee *big.Int
 }
 
-// ContractStatement de-interleaves the statement for on-chain submission.
-// When ContractAddress is set (BoundPaymentProof), it is appended as the last element.
-// When Fee is also set (BoundPaymentFeeProof), it is appended after ContractAddress.
+// ContractStatement returns the statement for on-chain submission. The
+// server already returns it in the order the vault contracts read, so it is
+// Statement unchanged.
 func (r *PaymentResult) ContractStatement() []*big.Int {
-	nIn := r.NumberOfInputs
-	nOut := r.NumberOfOutputs
-	size := 1 + 3*nIn + nOut
-	if r.ContractAddress != nil {
-		size++
+	return r.Statement
+}
+
+// paymentResponse decodes a Payment-family prove handler's response: the
+// proof as decimal strings and the public signals it was proved against.
+func paymentResponse(body []byte) (proof []string, statement []*big.Int, err error) {
+	var resp struct {
+		Proof        []json.Number `json:"proof"`
+		PublicSignal []json.Number `json:"publicSignal"`
 	}
-	if r.Fee != nil {
-		size++
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, nil, err
 	}
-	out := make([]*big.Int, size)
-	out[0] = r.Statement[0]
-	for i := 0; i < nIn; i++ {
-		base := 1 + i*3
-		out[1+i] = r.Statement[base]
-		out[1+nIn+i] = r.Statement[base+1]
-		out[1+2*nIn+i] = r.Statement[base+2]
+	proof = make([]string, len(resp.Proof))
+	for i, n := range resp.Proof {
+		proof[i] = n.String()
 	}
-	for i := 0; i < nOut; i++ {
-		out[1+3*nIn+i] = r.Statement[1+3*nIn+i]
+	statement = make([]*big.Int, len(resp.PublicSignal))
+	for i, n := range resp.PublicSignal {
+		v, ok := new(big.Int).SetString(n.String(), 10)
+		if !ok {
+			return nil, nil, fmt.Errorf("publicSignal[%d]: %q is not a decimal integer", i, n)
+		}
+		statement[i] = v
 	}
-	idx := 1 + 3*nIn + nOut
-	if r.ContractAddress != nil {
-		out[idx] = r.ContractAddress
-		idx++
-	}
-	if r.Fee != nil {
-		out[idx] = r.Fee
-	}
-	return out
+	return proof, statement, nil
 }
 
 // BoundPaymentProof generates a Payment circuit proof for Alice paying some amount
@@ -208,26 +205,10 @@ func (c *GnarkClient) BoundPaymentProof(
 		return nil, fmt.Errorf("bound payment proof request failed: %w", err)
 	}
 
-	var gnarkResp struct {
-		Proof        []json.Number `json:"proof"`
-		PublicSignal []json.Number `json:"publicSignal"`
-	}
-	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+	proofStrs, statement, err := paymentResponse(body)
+	if err != nil {
 		return nil, fmt.Errorf("parse bound payment proof response: %w", err)
 	}
-	proofStrs := make([]string, len(gnarkResp.Proof))
-	for i, n := range gnarkResp.Proof {
-		proofStrs[i] = n.String()
-	}
-
-	// Statement: interleaved [msg, tree0, root0, nf0, ..., cmt0, cmt1, contractAddr]
-	statement := make([]*big.Int, 0, 1+3*nIn+nOut+1)
-	statement = append(statement, stMessage)
-	for i := 0; i < nIn; i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
-	statement = append(statement, contractAddress)
 
 	return &PaymentResult{
 		Proof:           proofStrs,
@@ -246,7 +227,6 @@ func (c *GnarkClient) BoundPaymentProof(
 // the protocol fee: Σ(valuesIn) == Σ(valuesOut) + stFee.
 //
 // stFee must equal PROTOCOL_FEE; the relayer checks this before submitting on-chain.
-// The resulting ContractStatement() appends [contractAddress, stFee] at the end.
 //
 // The circuit posts to /proof/paymentFee on the gnark server.
 func (c *GnarkClient) BoundPaymentFeeProof(
@@ -374,27 +354,10 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		return nil, fmt.Errorf("payment fee proof request failed: %w", err)
 	}
 
-	var gnarkResp struct {
-		Proof        []json.Number `json:"proof"`
-		PublicSignal []json.Number `json:"publicSignal"`
-	}
-	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+	proofStrs, statement, err := paymentResponse(body)
+	if err != nil {
 		return nil, fmt.Errorf("parse payment fee proof response: %w", err)
 	}
-	proofStrs := make([]string, len(gnarkResp.Proof))
-	for i, n := range gnarkResp.Proof {
-		proofStrs[i] = n.String()
-	}
-
-	// Statement: interleaved [msg, tree0, root0, nf0, ..., cmt0, cmt1, contractAddr, fee]
-	statement := make([]*big.Int, 0, 1+3*nIn+nOut+2)
-	statement = append(statement, stMessage)
-	for i := 0; i < nIn; i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
-	statement = append(statement, contractAddress)
-	statement = append(statement, stFee)
 
 	return &PaymentResult{
 		Proof:           proofStrs,

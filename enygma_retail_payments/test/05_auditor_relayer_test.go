@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -235,8 +236,8 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
-	bobCommitment := paymentResult.ContractStatement()[4]
-	aliceChangeCmt := paymentResult.ContractStatement()[5]
+	bobCommitment := paymentResult.ContractStatement()[layout.PaymentCommitmentsOutOffset]
+	aliceChangeCmt := paymentResult.ContractStatement()[layout.PaymentCommitmentsOutOffset+1]
 	t.Logf("  proof generated")
 	t.Logf("  Bob's output commitment:   %s", bobCommitment)
 	t.Logf("  Alice's change commitment: %s", aliceChangeCmt)

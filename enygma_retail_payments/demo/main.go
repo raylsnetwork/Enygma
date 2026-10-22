@@ -42,6 +42,7 @@ import (
 	"sync"
 	"time"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
@@ -230,11 +231,11 @@ type relayInfoResponse struct {
 }
 
 type relayPaymentRequest struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [7]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
+	VaultId      string                    `json:"vaultId"`
+	Proof        [8]string                 `json:"proof"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
+	CipherText   string                    `json:"cipherText"`
+	EncTxData    string                    `json:"encTxData"`
 }
 
 type relayPaymentResponse struct {
@@ -365,7 +366,7 @@ func buildRelayPaymentRequest(result *dvpcore.PaymentResult) relayPaymentRequest
 	var proof [8]string
 	copy(proof[:], result.Proof)
 	stmt := result.ContractStatement()
-	var sig [7]string
+	var sig [layout.PaymentLen]string
 	for i, v := range stmt {
 		sig[i] = v.String()
 	}
@@ -521,8 +522,8 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Erc20CommitmentV2 (verify): %w", err))
 			return false
 		}
-		if bobCmt.Cmp(stmt[4]) != 0 {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("commitment mismatch: got %s want %s", bobCmt.Text(10)[:12], stmt[4].Text(10)[:12]))
+		if bobCmt.Cmp(stmt[layout.PaymentCommitmentsOutOffset]) != 0 {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("commitment mismatch: got %s want %s", bobCmt.Text(10)[:12], stmt[layout.PaymentCommitmentsOutOffset].Text(10)[:12]))
 			return false
 		}
 		logMsg("key", fmt.Sprintf("Bob commitment: 0x%s… ✓ matches on-chain", bobCmt.Text(16)[:16]))
@@ -540,7 +541,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 			fail("verify", "Verify Commitment", err)
 			return false
 		}
-		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
+		if aliceChangeCmt.Cmp(stmt[layout.PaymentCommitmentsOutOffset+1]) != 0 {
 			fail("verify", "Verify Commitment", fmt.Errorf("Alice change commitment mismatch"))
 			return false
 		}
@@ -555,7 +556,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 		pause(1800 * time.Millisecond)
 
 		bobEvents := []dvpcore.OnChainErc20Event{{
-			Commitment: stmt[4],
+			Commitment: stmt[layout.PaymentCommitmentsOutOffset],
 			CipherText: paymentResult.CipherText,
 			EncTxData:  paymentResult.EncTxData,
 		}}
@@ -580,7 +581,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 			fail("scan", "Bob Scans Note", err)
 			return false
 		}
-		if aliceChangeCmt.Cmp(stmt[5]) != 0 {
+		if aliceChangeCmt.Cmp(stmt[layout.PaymentCommitmentsOutOffset+1]) != 0 {
 			fail("scan", "Bob Scans Note", fmt.Errorf("Alice change commitment mismatch"))
 			return false
 		}
@@ -1006,13 +1007,13 @@ func runFlow(b *Broker, withTag bool) {
 
 	stmt := paymentResult.ContractStatement()
 	logMsg("zk", fmt.Sprintf("proof generation: %d ms  size: 256 bytes (Groth16: 8 × 32-byte field elements)", proofGenMs))
-	logMsg("zk", fmt.Sprintf("nullifier: 0x%s…", stmt[3].Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("Bob commitment:   0x%s…", stmt[4].Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("Alice change cmt: 0x%s…", stmt[5].Text(16)[:16]))
+	logMsg("zk", fmt.Sprintf("nullifier: 0x%s…", stmt[layout.PaymentNullifiersOffset].Text(16)[:16]))
+	logMsg("zk", fmt.Sprintf("Bob commitment:   0x%s…", stmt[layout.PaymentCommitmentsOutOffset].Text(16)[:16]))
+	logMsg("zk", fmt.Sprintf("Alice change cmt: 0x%s…", stmt[layout.PaymentCommitmentsOutOffset+1].Text(16)[:16]))
 	logMsg("zk", fmt.Sprintf("Bob saltB: 0x%s…", paymentResult.SaltB.Text(16)[:16]))
-	panel(0, "nullifier", "0x"+stmt[3].Text(16))
+	panel(0, "nullifier", "0x"+stmt[layout.PaymentNullifiersOffset].Text(16))
 	panel(0, "proof", "0x"+paymentResult.Proof[0])
-	panel(1, "commitment", "0x"+stmt[4].Text(16))
+	panel(1, "commitment", "0x"+stmt[layout.PaymentCommitmentsOutOffset].Text(16))
 	proto("proofTimeMs", fmt.Sprintf("%d", proofGenMs))
 	proto("proofSizeBytes", "256")
 	emit("zkproof", "success", "Generate ZK Proof", fmt.Sprintf("Groth16 proof generated in %d ms — nullifier and output commitments revealed, inputs remain private", proofGenMs))

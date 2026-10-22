@@ -50,6 +50,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -408,8 +409,8 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
 	t.Logf("  proof generated")
-	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[4])
-	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
+	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
+	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
 	t.Logf("  Bob's saltB:                   %s", paymentResult.SaltB)
 
 	// ── Step 10: Submit payment on-chain ─────────────────────────────────────
@@ -523,7 +524,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
 	}
 
-	expectedBobCmt := paymentResult.Statement[4] // on-chain commitment for output 0
+	expectedBobCmt := paymentResult.Statement[layout.PaymentCommitmentsOutOffset] // on-chain commitment for output 0
 	if bobRecomputedCmt.Cmp(expectedBobCmt) != 0 {
 		t.Errorf("Bob's recomputed commitment mismatch:\n  got:  %s\n  want: %s",
 			bobRecomputedCmt, expectedBobCmt)
@@ -539,9 +540,9 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err)
 	}
 
-	if aliceChangeCmt.Cmp(paymentResult.Statement[5]) != 0 {
+	if aliceChangeCmt.Cmp(paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1]) != 0 {
 		t.Errorf("Alice's change commitment mismatch:\n  got:  %s\n  want: %s",
-			aliceChangeCmt, paymentResult.Statement[5])
+			aliceChangeCmt, paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
 	}
 	t.Logf("  Alice change commitment: %s ✓", aliceChangeCmt)
 

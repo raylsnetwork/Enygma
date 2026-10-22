@@ -39,6 +39,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -52,13 +53,13 @@ import (
 // ── request / response types mirroring the relayer's fee API ──────────────────
 
 type relayPaymentRelayerFeeRequest struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [9]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
-	FeeSalt      string    `json:"feeSalt"`
-	TokenId      string    `json:"tokenId"`
+	VaultId      string                              `json:"vaultId"`
+	Proof        [8]string                           `json:"proof"`
+	PublicSignal [layout.PaymentRelayerFeeLen]string `json:"publicSignal"`
+	CipherText   string                              `json:"cipherText"`
+	EncTxData    string                              `json:"encTxData"`
+	FeeSalt      string                              `json:"feeSalt"`
+	TokenId      string                              `json:"tokenId"`
 }
 
 type relayPaymentRelayerFeeResponse struct {
@@ -305,15 +306,15 @@ func runRelayerFeeFlow(
 		t.Fatalf("[%s] postProof paymentRelayerFeePublic: %v", p.label, err)
 	}
 	sig := proofResp.PublicSignal
-	if len(sig) != 9 {
-		t.Fatalf("[%s] expected 9 public signals, got %d", p.label, len(sig))
+	if len(sig) != layout.PaymentRelayerFeeLen {
+		t.Fatalf("[%s] expected %d public signals, got %d", p.label, layout.PaymentRelayerFeeLen, len(sig))
 	}
 
 	var proofArr [8]string
 	for i, v := range proofResp.Proof {
 		proofArr[i] = v.String()
 	}
-	var sigArr [9]string
+	var sigArr [layout.PaymentRelayerFeeLen]string
 	for i, v := range sig {
 		sigArr[i] = v.String()
 	}

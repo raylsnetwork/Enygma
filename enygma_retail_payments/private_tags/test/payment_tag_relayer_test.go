@@ -63,6 +63,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -75,11 +76,11 @@ import (
 
 // relayPaymentReq is the JSON body sent to POST /relay/payment.
 type relayPaymentReq struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [7]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
+	VaultId      string                    `json:"vaultId"`
+	Proof        [8]string                 `json:"proof"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
+	CipherText   string                    `json:"cipherText"`
+	EncTxData    string                    `json:"encTxData"`
 }
 
 // relayPaymentResp is the JSON body returned by POST /relay/payment.
@@ -99,12 +100,11 @@ func buildPayRelayRequest(t *testing.T, result *rpcore.PaymentResult) relayPayme
 	var proof [8]string
 	copy(proof[:], result.Proof)
 
-	// ContractStatement: non-interleaved [msg, treeNum, root, nullifier, cmt_bob, cmt_change, contractAddr]
 	stmt := result.ContractStatement()
-	if len(stmt) != 7 {
-		t.Fatalf("expected 7 statement elements, got %d", len(stmt))
+	if len(stmt) != layout.PaymentLen {
+		t.Fatalf("expected %d statement elements, got %d", layout.PaymentLen, len(stmt))
 	}
-	var sig [7]string
+	var sig [layout.PaymentLen]string
 	for i, v := range stmt {
 		sig[i] = v.String()
 	}
@@ -409,8 +409,8 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
 	t.Logf("  proof generated")
-	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[4])
-	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[5])
+	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
+	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
 	t.Logf("  Bob's saltB:                   %s", paymentResult.SaltB)
 
 	// ═════════════════════════════════════════════════════════════════════════
@@ -552,9 +552,9 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
 	}
 
-	if bobRecomputedCmt.Cmp(paymentResult.Statement[4]) != 0 {
+	if bobRecomputedCmt.Cmp(paymentResult.Statement[layout.PaymentCommitmentsOutOffset]) != 0 {
 		t.Errorf("Bob's recomputed commitment mismatch:\n  got:  %s\n  want: %s",
-			bobRecomputedCmt, paymentResult.Statement[4])
+			bobRecomputedCmt, paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
 	}
 	t.Logf("  Bob recomputed commitment: %s ✓", bobRecomputedCmt)
 	t.Log("  Bob can now generate a Merkle proof and withdraw")
@@ -565,7 +565,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (Alice change): %v", err)
 	}
-	if aliceChangeCmt.Cmp(paymentResult.Statement[5]) != 0 {
+	if aliceChangeCmt.Cmp(paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1]) != 0 {
 		t.Errorf("Alice's change commitment mismatch")
 	}
 	t.Logf("  Alice change commitment: %s ✓", aliceChangeCmt)

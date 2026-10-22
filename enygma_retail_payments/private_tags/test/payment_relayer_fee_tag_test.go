@@ -57,6 +57,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
@@ -112,13 +113,13 @@ func postGnarkProof(url string, body interface{}) (*rfGnarkProofResp, error) {
 // ── relay request/response (POST /relay/payment_relayer_fee) ──────────────────
 
 type relayRelayerFeeReq struct {
-	VaultId      string    `json:"vaultId"`
-	Proof        [8]string `json:"proof"`
-	PublicSignal [9]string `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
-	FeeSalt      string    `json:"feeSalt"`
-	TokenId      string    `json:"tokenId"`
+	VaultId      string                              `json:"vaultId"`
+	Proof        [8]string                           `json:"proof"`
+	PublicSignal [layout.PaymentRelayerFeeLen]string `json:"publicSignal"`
+	CipherText   string                              `json:"cipherText"`
+	EncTxData    string                              `json:"encTxData"`
+	FeeSalt      string                              `json:"feeSalt"`
+	TokenId      string                              `json:"tokenId"`
 }
 
 type relayRelayerFeeResp struct {
@@ -135,7 +136,7 @@ type relayRelayerFeeResp struct {
 // values (commitments/salts) used to cross-check the public signal.
 type relayerFeeWitness struct {
 	proof        [8]string
-	publicSignal [9]string
+	publicSignal [layout.PaymentRelayerFeeLen]string
 	ctxtBob      []byte
 	ctxtIIBob    []byte
 	feeSalt      *big.Int
@@ -310,15 +311,15 @@ func depositAndBuildRelayerFeeWitness(
 	if err != nil {
 		t.Fatalf("postGnarkProof paymentRelayerFeePublic: %v", err)
 	}
-	if len(proofResp.PublicSignal) != 9 {
-		t.Fatalf("expected 9 public signals, got %d", len(proofResp.PublicSignal))
+	if len(proofResp.PublicSignal) != layout.PaymentRelayerFeeLen {
+		t.Fatalf("expected %d public signals, got %d", layout.PaymentRelayerFeeLen, len(proofResp.PublicSignal))
 	}
 
 	var proofArr [8]string
 	for i, v := range proofResp.Proof {
 		proofArr[i] = v.String()
 	}
-	var sigArr [9]string
+	var sigArr [layout.PaymentRelayerFeeLen]string
 	for i, v := range proofResp.PublicSignal {
 		sigArr[i] = v.String()
 	}
@@ -532,7 +533,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	w := depositAndBuildRelayerFeeWitness(t, ctx, client, vault, erc20, vaultAddr, aliceAuth,
 		bobSpend.PublicKey, bobView.EncapsKey, fixedFee, relayerFeePubKey)
 	t.Log("  proof generated ✓")
-	t.Logf("  cmt_bob=%s cmt_relayer=%s StFee=%s", w.cmtBob, w.cmtRelayer, w.publicSignal[8])
+	t.Logf("  cmt_bob=%s cmt_relayer=%s StFee=%s", w.cmtBob, w.cmtRelayer, w.publicSignal[layout.PaymentRelayerFeeFeeOffset])
 
 	// ═════════════════════════════════════════════════════════════════════════
 	// PHASE 5 — Relay via /relay/payment_relayer_fee
@@ -675,8 +676,8 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	if recomputedFeeCmt.Cmp(w.cmtRelayer) != 0 {
 		t.Errorf("relayer fee commitment mismatch: got %s, want %s", recomputedFeeCmt, w.cmtRelayer)
 	}
-	if w.publicSignal[8] != fixedFee.String() {
-		t.Errorf("public StFee signal = %s, want %s", w.publicSignal[8], fixedFee)
+	if w.publicSignal[layout.PaymentRelayerFeeFeeOffset] != fixedFee.String() {
+		t.Errorf("public StFee signal = %s, want %s", w.publicSignal[layout.PaymentRelayerFeeFeeOffset], fixedFee)
 	}
 	t.Logf("  relayer fee note (amount=%s) confirmed spendable and publicly verifiable ✓", fixedFee)
 

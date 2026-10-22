@@ -133,7 +133,7 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
 | `proof` | `[8]string` | Groth16 proof in Remix/Solidity order |
 | `publicSignal` | `[9]string` | Public inputs, grouped by field: `[msg, treeNum0, treeNum1, root0, root1, nf0, nf1, cmt0, cmt1]` |
 
-> **Note:** `publicSignal` is in the circuit's public-input order, which is also the statement layout the on-chain contracts expect (`[msg, treeNums..., roots..., nullifiers..., commitments..., ...]`), so it can be submitted as is. Every Payment-family endpoint (`/proof/payment`, `/proof/payment2in`, `/proof/paymentFee`, `/proof/paymentRelayerFeePublic`, `/proof/usdrFee`) returns this layout. The Go client builds its own statement in the interleaved form `[msg, tree0, root0, nf0, ...]`; its `ContractStatement()` converts that to the grouped layout.
+> **Note:** `publicSignal` is in the circuit's public-input order, which is also the statement layout the on-chain contracts expect (`[msg, treeNums..., roots..., nullifiers..., commitments..., ...]`), so it can be submitted as is. Every Payment-family endpoint (`/proof/payment`, `/proof/payment2in`, `/proof/paymentFee`, `/proof/paymentRelayerFeePublic`, `/proof/usdrFee`) returns this layout. The Go client's `PaymentResult` keeps `publicSignal` as returned, and its `ContractStatement()` returns it unchanged. The offsets of each field are generated from the retail circuits: `enygma_retail_payments/layout` (Go) and `PaymentStatementLayout.sol` (Solidity).
 
 ---
 

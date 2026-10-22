@@ -3,6 +3,7 @@ module enygma_retail_payments/demo
 go 1.26.8
 
 require (
+	enygma_retail_payments/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
 	github.com/raylsnetwork/enygma_retail_payments/private_tags/src v0.0.0
@@ -44,6 +45,7 @@ require (
 )
 
 replace (
+	enygma_retail_payments/layout => ../layout
 	github.com/raylsnetwork/enygma_dvp/src => ../../enygma_dvp/src
 	github.com/raylsnetwork/enygma_retail_payments/private_tags/src => ../private_tags/src
 	github.com/raylsnetwork/enygma_retail_payments/src => ../src
