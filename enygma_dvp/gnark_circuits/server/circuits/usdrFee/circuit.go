@@ -18,10 +18,8 @@ import "math/big"
 // gives this circuit's statement a distinct length (9) from every other
 // 1-in/2-out circuit's (7 or 8) — see Erc20CoinVault.checkReceiptConditions.
 //
-// Public signal layout (9 elements):
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StContractAddress, StFee, StTokenId]
+// The response's public signals are the proven witness's, in the UsdrFee
+// statement layout (enygma_dvp/layout).
 type UsdrFeeRequest struct {
 	StMessage         string    `json:"stMessage"         binding:"required"`
 	StTreeNumbers     [1]string `json:"stTreeNumbers"     binding:"required"`

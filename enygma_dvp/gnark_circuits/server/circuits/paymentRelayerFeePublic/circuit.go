@@ -13,11 +13,8 @@ import "math/big"
 //   - Output[1]: Alice's change   — must equal senderPk (enforced in-circuit)
 //   - Output[2]: Relayer fee note — any pk_spend, amount == StFee (publicly verifiable)
 //
-// Public signal layout (9 elements):
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2],
-//	 StContractAddress, StFee]
+// The response's public signals are the proven witness's, in the PaymentRelayerFee
+// statement layout (enygma_dvp/layout).
 type PaymentRelayerFeePublicRequest struct {
 	StMessage         string    `json:"stMessage"         binding:"required"`
 	StTreeNumbers     [1]string `json:"stTreeNumbers"     binding:"required"`

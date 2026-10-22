@@ -140,21 +140,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [msg, treeNum[0], root[0], nf[0], cmt[0], cmt[1], contractAddr]
-		var publicSignal []*big.Int
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.StMessage))
-		// Grouped by field, in the circuit's public-input order — the order
-		// the proof verifies against and the vaults read: all tree numbers,
-		// then all roots, then all nullifiers.
-		for _, field := range [][]string{request.StTreeNumbers[:], request.StMerkleRoots[:], request.StNullifiers[:]} {
-			for i := 0; i < cfg.TmNInputs; i++ {
-				publicSignal = append(publicSignal, utils.ParseBigInt(field[i]))
-			}
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
-		for i := 0; i < cfg.TmMOutputs; i++ {
-			publicSignal = append(publicSignal, utils.ParseBigInt(request.StCommitmentsOut[i]))
-		}
-		publicSignal = append(publicSignal, utils.ParseBigInt(request.StContractAddress))
 
 		c.JSON(http.StatusOK, PaymentOutput{
 			Proof:        proofRemix,

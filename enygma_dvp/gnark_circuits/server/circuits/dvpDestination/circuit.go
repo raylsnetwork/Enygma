@@ -5,7 +5,8 @@ import "math/big"
 // DvPDestinationRequest is the JSON body accepted by /proof/dvpDestination.
 //
 // Fixed config: Merkle depth 8.
-// Public statement returned: [msg, treeNum, root, nf_B, commitA, counterVault]
+// The response's public signals are the proven witness's, in the DvpDestination
+// statement layout (enygma_dvp/layout).
 type DvPDestinationRequest struct {
 	StMessage    string `json:"stMessage"    binding:"required"`
 	StTreeNumber string `json:"stTreeNumber" binding:"required"`
