@@ -77,7 +77,8 @@ func TestV2CrossCircuit_NoteSpentByPaymentCannotOpenASwap(t *testing.T) {
 	}
 	t.Log("Alice's note spent by a payment")
 
-	payNullifier, dvpNullifier := pay.ContractStatement()[3], p.aliceReceipt.Statement[3]
+	_, dvpNullifier := dvpLegNote(t, p.aliceReceipt)
+	payNullifier := pay.Nullifiers()[0]
 	if payNullifier.Cmp(dvpNullifier) != 0 {
 		t.Errorf("VULNERABLE: the same note has two nullifiers: payment %s, DvP %s", payNullifier, dvpNullifier)
 	}
