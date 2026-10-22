@@ -125,14 +125,10 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// --- public signal: [msg, treeNum, root, nf_B, commitA, counterVault] ---
-		publicSignal := []*big.Int{
-			utils.ParseBigInt(req.StMessage),
-			utils.ParseBigInt(req.StTreeNumber),
-			utils.ParseBigInt(req.StMerkleRoot),
-			utils.ParseBigInt(req.StNullifier),
-			utils.ParseBigInt(req.StCommitA),
-			utils.ParseBigInt(req.StCounterVault),
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
 
 		c.JSON(http.StatusOK, DvPDestinationOutput{

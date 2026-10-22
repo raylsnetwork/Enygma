@@ -5,7 +5,8 @@ import "math/big"
 // DvPInitiatorRequest is the JSON body accepted by /proof/dvpInitiator.
 //
 // Fixed config: Merkle depth 8.
-// Public statement returned: [msg, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault]
+// The response's public signals are the proven witness's, in the DvpInitiator
+// statement layout (enygma_dvp/layout).
 type DvPInitiatorRequest struct {
 	StMessage       string `json:"stMessage"       binding:"required"`
 	StTreeNumber    string `json:"stTreeNumber"    binding:"required"`

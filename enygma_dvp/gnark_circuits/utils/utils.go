@@ -1,10 +1,14 @@
 package utils
 
 import (
-	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
+	"fmt"
 	"math/big"
 	"os"
+
+	"github.com/consensys/gnark-crypto/ecc"
+	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/witness"
 )
 
 func LoadProvingKey(curve ecc.ID, filename string) (groth16.ProvingKey, error) {
@@ -32,10 +36,24 @@ func LoadVerifyingKey(curve ecc.ID, filename string) (groth16.VerifyingKey, erro
 	return vk, err
 }
 
-func ParseBigInt(s string) *big.Int {
-	n, ok := new(big.Int).SetString(s, 10)
-	if !ok {
-		panic("ParseBigInt: invalid decimal integer: " + s)
+// PublicSignals returns the public part of witnessFull, in public-witness
+// order, as the big ints a prove handler responds with. Public-witness order
+// is the circuit's statement layout order. It is read off the same witness
+// the proof is made and verified from, so the returned statement is by
+// construction the one the proof verifies against; handlers must not rebuild
+// it from request fields.
+func PublicSignals(witnessFull witness.Witness) ([]*big.Int, error) {
+	publicWitness, err := witnessFull.Public()
+	if err != nil {
+		return nil, fmt.Errorf("extract public witness: %w", err)
 	}
-	return n
+	vec, ok := publicWitness.Vector().(fr_bn254.Vector)
+	if !ok {
+		return nil, fmt.Errorf("public witness is %T, want a BN254 vector", publicWitness.Vector())
+	}
+	signals := make([]*big.Int, len(vec))
+	for i := range vec {
+		signals[i] = vec[i].BigInt(new(big.Int))
+	}
+	return signals, nil
 }
