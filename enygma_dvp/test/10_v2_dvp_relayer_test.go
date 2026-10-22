@@ -370,8 +370,8 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
 	}
-	t.Logf("  commitB (Bob's USDT):    %s", initiator.CommitB)
-	t.Logf("  commitA (Alice's ticket):%s", initiator.CommitA)
+	t.Logf("  commitB (Bob's USDT):    %s", initiator.CommitB())
+	t.Logf("  commitA (Alice's ticket):%s", initiator.CommitA())
 
 	// ── Step 4: Bob scans + verifies commitments ──────────────────────────────
 	t.Log("Step 4 — Bob scans and verifies commitments")
@@ -405,15 +405,15 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commitB re-derive: %v", err)
 	}
-	if expectedCommitB.Cmp(initiator.CommitB) != 0 {
-		t.Fatalf("commitB mismatch: got %s want %s", expectedCommitB, initiator.CommitB)
+	if expectedCommitB.Cmp(initiator.CommitB()) != 0 {
+		t.Fatalf("commitB mismatch: got %s want %s", expectedCommitB, initiator.CommitB())
 	}
 	expectedCommitA, err := core.Erc20CommitmentV2(aliceSpend.PublicKey, saltAField, nftAmount, nftTokenId)
 	if err != nil {
 		t.Fatalf("commitA re-derive: %v", err)
 	}
-	if expectedCommitA.Cmp(initiator.CommitA) != 0 {
-		t.Fatalf("commitA mismatch: got %s want %s", expectedCommitA, initiator.CommitA)
+	if expectedCommitA.Cmp(initiator.CommitA()) != 0 {
+		t.Fatalf("commitA mismatch: got %s want %s", expectedCommitA, initiator.CommitA())
 	}
 	t.Logf("  commitB and commitA both verified")
 
@@ -427,7 +427,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 		saltBField, // Bob's HKDF payment salt (for Bob's ERC20 output commitment)
 		decAmount,  // Alice's ERC20 amount Bob receives
 		decTokenId, // Alice's ERC20 tokenId Bob receives
-		initiator.CommitA,
+		initiator.CommitA(),
 		big.NewInt(0), bobProof, merkleDepth,
 		vaultInt(erc20VaultAddr),
 	)
@@ -473,10 +473,10 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 			if len(log.Topics) >= 3 {
 				cmt := log.Topics[2].Big()
 				switch {
-				case cmt.Cmp(initiator.CommitB) == 0:
+				case cmt.Cmp(initiator.CommitB()) == 0:
 					foundCommitB = true
 					t.Logf("  commitB inserted (Bob's USDT): %s", cmt)
-				case cmt.Cmp(initiator.CommitA) == 0:
+				case cmt.Cmp(initiator.CommitA()) == 0:
 					foundCommitA = true
 					t.Logf("  commitA inserted (Alice's ticket): %s", cmt)
 				}
@@ -746,8 +746,8 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Alice): %v", err)
 	}
-	t.Logf("  Alice commitB (for Bob):   %s", aliceResult.CommitB)
-	t.Logf("  Alice commitA (for Alice): %s", aliceResult.CommitA)
+	t.Logf("  Alice commitB (for Bob):   %s", aliceResult.CommitB())
+	t.Logf("  Alice commitA (for Alice): %s", aliceResult.CommitA())
 
 	// ── Step 7: Bob generates DvPInitiatorProofFromSalts ─────────────────────
 	//
@@ -772,8 +772,8 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Bob): %v", err)
 	}
-	t.Logf("  Bob commitB (for Alice): %s", bobResult.CommitB)
-	t.Logf("  Bob commitA (for Bob):   %s", bobResult.CommitA)
+	t.Logf("  Bob commitB (for Alice): %s", bobResult.CommitB())
+	t.Logf("  Bob commitA (for Bob):   %s", bobResult.CommitA())
 
 	// ── Step 8: verify cross-references locally ───────────────────────────────
 	// receipt1.statement[0] (=commitForAlice) must equal receipt2.statement[4] (=commitForAlice)

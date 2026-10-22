@@ -358,9 +358,9 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 		t.Fatalf("expected 8-element DvP Initiator proof, got %d", len(aliceResult.Proof))
 	}
 
-	commitA := aliceResult.CommitA
-	commitB := aliceResult.CommitB
-	revertCommitA := aliceResult.RevertCommitA
+	commitA := aliceResult.CommitA()
+	commitB := aliceResult.CommitB()
+	revertCommitA := aliceResult.RevertCommitA()
 
 	// Verify DvP Initiator statement layout:
 	// [stMsg=commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA]

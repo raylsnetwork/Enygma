@@ -58,42 +58,9 @@ type AuditEncryptionData struct {
 	RealLength int        // number of meaningful plaintext values
 }
 
-// ContractStatement converts the interleaved statement produced by the Go prover
-// into the non-interleaved layout expected by the Solidity vault contracts.
-//
-// Go prover (interleaved):
-//
-//	[msg, tree0, root0, null0, tree1, root1, null1, …, cmt0, cmt1]
-//
-// Contract checkReceiptConditions (non-interleaved):
-//
-//	[msg, tree0..nIn-1, root0..nIn-1, null0..nIn-1, cmt0..nOut-1]
-//
-// The commitment elements are already last in both layouts so only the
-// per-input triplets (tree, root, null) need to be de-interleaved.
-func (r *ProofResult) ContractStatement() []*big.Int {
-	nIn := r.NumberOfInputs
-	nOut := r.NumberOfOutputs
-	out := make([]*big.Int, 1+3*nIn+nOut)
-
-	// message
-	out[0] = r.Statement[0]
-
-	// de-interleave: statement[1 + i*3 .. 1 + i*3 + 2] = (tree[i], root[i], null[i])
-	for i := 0; i < nIn; i++ {
-		base := 1 + i*3
-		out[1+i] = r.Statement[base]         // treeNumbers[i]
-		out[1+nIn+i] = r.Statement[base+1]   // merkleRoots[i]
-		out[1+2*nIn+i] = r.Statement[base+2] // nullifiers[i]
-	}
-
-	// commitments — same relative order, just placed after the three flat arrays
-	for i := 0; i < nOut; i++ {
-		out[1+3*nIn+i] = r.Statement[1+3*nIn+i]
-	}
-
-	return out
-}
+// ContractStatement returns the statement for on-chain submission: Statement,
+// as held, in the order the contracts read it.
+func (r *ProofResult) ContractStatement() []*big.Int { return r.Statement }
 
 // GnarkClient is an HTTP client for the gnark proof generation server.
 type GnarkClient struct {

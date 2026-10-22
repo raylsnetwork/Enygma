@@ -3,6 +3,7 @@ module github.com/raylsnetwork/enygma_dvp/src
 go 1.26.8
 
 require (
+	enygma_dvp/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/iden3/go-iden3-crypto v0.0.16
 	golang.org/x/crypto v0.57.0
@@ -105,3 +106,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace enygma_dvp/layout => ../layout

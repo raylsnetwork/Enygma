@@ -659,7 +659,7 @@ func WithdrawChangeSalt(sk, nullifier0 *big.Int) (*big.Int, error) {
 // WithdrawChangeNote rebuilds a withdrawal's change note from public data and
 // the owner's spend key: nullifier0 is in the withdrawal's Nullifier event,
 // and changeValue is the spent notes' total minus the PartialWithdrawal
-// amount (and minus the relayer fee, statement[8], for a relayed one). The
+// amount (and minus the relayer fee, the statement's Fee, for a relayed one). The
 // commitment equals the PartialWithdrawal event's changeCommitment.
 func WithdrawChangeNote(sk, nullifier0, changeValue, tokenId *big.Int) (salt, commitment *big.Int, err error) {
 	salt, err = WithdrawChangeSalt(sk, nullifier0)

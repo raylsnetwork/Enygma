@@ -241,9 +241,9 @@ func TestV2DvP(t *testing.T) {
 		t.Fatalf("expected 8-element proof, got %d", len(initiatorResult.Proof))
 	}
 	t.Logf("Step 3 — DvPInitiator proof generated")
-	t.Logf("  COMMIT_B  (Bob gets 30 USDT):          %s", initiatorResult.CommitB)
-	t.Logf("  COMMIT_A  (Alice gets ticket tokenId=%s): %s", nftTokenId, initiatorResult.CommitA)
-	t.Logf("  REVERT_COMMIT_A:                        %s", initiatorResult.RevertCommitA)
+	t.Logf("  COMMIT_B  (Bob gets 30 USDT):          %s", initiatorResult.CommitB())
+	t.Logf("  COMMIT_A  (Alice gets ticket tokenId=%s): %s", nftTokenId, initiatorResult.CommitA())
+	t.Logf("  REVERT_COMMIT_A:                        %s", initiatorResult.RevertCommitA())
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Step 4 — Bob scans and verifies COMMIT_B and COMMIT_A
@@ -282,8 +282,8 @@ func TestV2DvP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bob Erc20CommitmentV2 (COMMIT_B): %v", err)
 	}
-	if expectedCommitB.Cmp(initiatorResult.CommitB) != 0 {
-		t.Fatalf("COMMIT_B mismatch: got %s, want %s", expectedCommitB, initiatorResult.CommitB)
+	if expectedCommitB.Cmp(initiatorResult.CommitB()) != 0 {
+		t.Fatalf("COMMIT_B mismatch: got %s, want %s", expectedCommitB, initiatorResult.CommitB())
 	}
 	t.Logf("Step 4 — COMMIT_B verified (Bob receives %s USDT)", decAmount)
 
@@ -292,8 +292,8 @@ func TestV2DvP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bob Erc20CommitmentV2 (COMMIT_A): %v", err)
 	}
-	if expectedCommitA.Cmp(initiatorResult.CommitA) != 0 {
-		t.Fatalf("COMMIT_A mismatch: got %s, want %s", expectedCommitA, initiatorResult.CommitA)
+	if expectedCommitA.Cmp(initiatorResult.CommitA()) != 0 {
+		t.Fatalf("COMMIT_A mismatch: got %s, want %s", expectedCommitA, initiatorResult.CommitA())
 	}
 	t.Logf("Step 4 — COMMIT_A verified (Alice receives ticket tokenId=%s)", nftTokenId)
 
@@ -309,11 +309,11 @@ func TestV2DvP(t *testing.T) {
 		nftAmount,  // Bob delivers amount=1
 		nftTokenId, // Bob delivers tokenId=42
 		aliceSpend.PublicKey,
-		saltADerivedField,       // HKDF(ss_B, "Init Salt") — salt for Alice's output (she receives NFT)
-		saltBDerivedField,       // HKDF(ss_B, "note salt") — salt for Bob's output (he receives USDT)
-		decAmount,               // Alice's ERC20 amount that Bob receives
-		decTokenId,              // Alice's ERC20 tokenId that Bob receives
-		initiatorResult.CommitA, // COMMIT_A from Alice's proof
+		saltADerivedField,         // HKDF(ss_B, "Init Salt") — salt for Alice's output (she receives NFT)
+		saltBDerivedField,         // HKDF(ss_B, "note salt") — salt for Bob's output (he receives USDT)
+		decAmount,                 // Alice's ERC20 amount that Bob receives
+		decTokenId,                // Alice's ERC20 tokenId that Bob receives
+		initiatorResult.CommitA(), // COMMIT_A from Alice's proof
 		big.NewInt(0),
 		bobProof,
 		merkleDepth,

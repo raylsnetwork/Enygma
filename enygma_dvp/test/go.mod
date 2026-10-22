@@ -3,6 +3,7 @@ module enygma_dvp/test
 go 1.26.8
 
 require (
+	enygma_dvp/layout v0.0.0 // indirect
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/iden3/go-iden3-crypto v0.0.16
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
@@ -108,3 +109,5 @@ require (
 )
 
 replace github.com/raylsnetwork/enygma_dvp/src => ../src
+
+replace enygma_dvp/layout => ../layout
