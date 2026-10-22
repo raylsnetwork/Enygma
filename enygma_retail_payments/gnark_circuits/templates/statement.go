@@ -16,10 +16,10 @@ var paymentStatementNames = map[string]string{
 
 // feeStatementNames adds the public fee of PaymentFee, PaymentRelayerFeePublic
 // and UsdrFee.
-var feeStatementNames = with(paymentStatementNames, "StFee", "Fee")
+var feeStatementNames = withName(paymentStatementNames, "StFee", "Fee")
 
 // usdrFeeStatementNames adds UsdrFee's public token id.
-var usdrFeeStatementNames = with(feeStatementNames, "StTokenId", "TokenId")
+var usdrFeeStatementNames = withName(feeStatementNames, "StTokenId", "TokenId")
 
 // PaymentStatementLayout is the Payment circuit's statement layout at
 // PaymentConfig.
@@ -67,7 +67,7 @@ func StatementLayouts() []statement.Layout {
 	}
 }
 
-func with(names map[string]string, goName, name string) map[string]string {
+func withName(names map[string]string, goName, name string) map[string]string {
 	out := map[string]string{goName: name}
 	for k, v := range names {
 		out[k] = v

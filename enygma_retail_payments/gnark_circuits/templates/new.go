@@ -2,9 +2,10 @@ package templates
 
 import "github.com/consensys/gnark/frontend"
 
-// The New*Circuit functions return a circuit with Config set and every slice
-// sized for cfg, ready to compile or to fill in as a witness.
-
+// NewPaymentCircuit returns a PaymentCircuit with Config set and every slice
+// sized for cfg, ready to compile or to fill in as a witness. Keygen, the prove
+// handlers and the statement layouts all build their circuits through these
+// New*Circuit functions, so they share one shape.
 func NewPaymentCircuit(cfg PaymentCircuitConfig) PaymentCircuit {
 	return PaymentCircuit{
 		Config:               cfg,
@@ -23,6 +24,7 @@ func NewPaymentCircuit(cfg PaymentCircuitConfig) PaymentCircuit {
 	}
 }
 
+// NewPaymentFeeCircuit is NewPaymentCircuit for PaymentFeeCircuit.
 func NewPaymentFeeCircuit(cfg PaymentCircuitConfig) PaymentFeeCircuit {
 	return PaymentFeeCircuit{
 		Config:               cfg,
@@ -41,6 +43,7 @@ func NewPaymentFeeCircuit(cfg PaymentCircuitConfig) PaymentFeeCircuit {
 	}
 }
 
+// NewPaymentRelayerFeePublicCircuit is NewPaymentCircuit for PaymentRelayerFeePublicCircuit.
 func NewPaymentRelayerFeePublicCircuit(cfg PaymentCircuitConfig) PaymentRelayerFeePublicCircuit {
 	return PaymentRelayerFeePublicCircuit{
 		Config:               cfg,
@@ -59,6 +62,7 @@ func NewPaymentRelayerFeePublicCircuit(cfg PaymentCircuitConfig) PaymentRelayerF
 	}
 }
 
+// NewUsdrFeeCircuit is NewPaymentCircuit for UsdrFeeCircuit.
 func NewUsdrFeeCircuit(cfg PaymentCircuitConfig) UsdrFeeCircuit {
 	return UsdrFeeCircuit{
 		Config:               cfg,
