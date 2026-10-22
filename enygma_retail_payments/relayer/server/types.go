@@ -1,6 +1,10 @@
 package server
 
-import "math/big"
+import (
+	"math/big"
+
+	"enygma_retail_payments/layout"
+)
 
 // RelayPaymentRequest is the JSON body accepted by POST /relay/payment.
 //
@@ -12,17 +16,15 @@ import "math/big"
 //
 //	[Ax, Ay, BX_imag, BX_real, BY_imag, BY_real, Cx, Cy]
 //
-// PublicSignal layout for the Payment circuit (1 input / 2 outputs):
-//
-//	[msg, treeNum0, root0, nullifier0, commitment0, commitment1]
+// PublicSignal is a Payment circuit (1 input / 2 outputs) statement.
 type RelayPaymentRequest struct {
 	// VaultId identifies which Erc20CoinVault tree the input note belongs to.
 	VaultId string `json:"vaultId" binding:"required"`
 	// Proof is the 8-element Groth16 proof array (decimal strings).
 	Proof [8]string `json:"proof" binding:"required"`
-	// PublicSignal is the 7-element public witness array (decimal strings).
-	// Elements: [msg, treeNum, root, nullifier, commitOut, commitChange, contractAddress]
-	PublicSignal [7]string `json:"publicSignal" binding:"required"`
+	// PublicSignal is the Payment statement (decimal strings), in the order
+	// of layout.Payment*Offset.
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal" binding:"required"`
 	// CipherText is hex-encoded bytes passed opaquely to EnygmaDvp.payment().
 	// ML-KEM mode:    ML-KEM-768 capsule (1088 bytes).
 	// Channel mode:   32-byte channelId identifying the shared channel.
@@ -45,7 +47,7 @@ type RelayPaymentResponse struct {
 type parsed struct {
 	vaultId      *big.Int
 	proof        [8]*big.Int
-	publicSignal [7]*big.Int
+	publicSignal [layout.PaymentLen]*big.Int
 	cipherText   []byte
 	encTxData    []byte
 }
@@ -82,14 +84,12 @@ type InfoResponse struct {
 //
 //	[Ax, Ay, BX_imag, BX_real, BY_imag, BY_real, Cx, Cy]
 //
-// PublicSignal layout (9 elements):
-//
-//	[msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddress, fee]
+// PublicSignal is a PaymentRelayerFee statement.
 //
 // FeeSalt and TokenId are supplied so the relayer can independently
 // recompute the relayer fee note's commitment (Erc20CommitmentV2 formula:
 // Poseidon(feeSpendPubKey, feeSalt, fee, tokenId)) and confirm it matches
-// publicSignal[6] — i.e. that the note is actually addressed to this
+// the fee note's commitment (output 2) — i.e. that the note is actually addressed to this
 // relayer's own key — before ever submitting on-chain. Neither FeeSalt nor
 // TokenId is itself a public signal; only the resulting commitment is.
 type RelayPaymentRelayerFeeRequest struct {
@@ -97,14 +97,15 @@ type RelayPaymentRelayerFeeRequest struct {
 	VaultId string `json:"vaultId" binding:"required"`
 	// Proof is the 8-element Groth16 proof array (decimal strings).
 	Proof [8]string `json:"proof" binding:"required"`
-	// PublicSignal is the 9-element public witness array (decimal strings).
-	PublicSignal [9]string `json:"publicSignal" binding:"required"`
+	// PublicSignal is the PaymentRelayerFee statement (decimal strings), in
+	// the order of layout.PaymentRelayerFee*Offset.
+	PublicSignal [layout.PaymentRelayerFeeLen]string `json:"publicSignal" binding:"required"`
 	// CipherText / EncTxData are Bob's note discovery data, passed opaquely
 	// to EnygmaDvp.paymentWithRelayerFee(). Same encoding as RelayPaymentRequest.
 	CipherText string `json:"cipherText" binding:"required"`
 	EncTxData  string `json:"encTxData"  binding:"required"`
 	// FeeSalt is the random salt used in the relayer fee note's commitment
-	// (decimal string) — needed to recompute and verify publicSignal[6].
+	// (decimal string) — needed to recompute and verify its commitment.
 	FeeSalt string `json:"feeSalt" binding:"required"`
 	// TokenId is the token identifier used in the fee note's commitment
 	// (decimal string, "0" for plain ERC20 vaults).
@@ -122,7 +123,7 @@ type RelayPaymentRelayerFeeResponse struct {
 // POST /relay/partial_withdraw: a PaymentRelayerFeePublic withdrawal proof,
 // with the same fields as RelayPaymentRelayerFeeRequest (CipherText/EncTxData
 // are the owner's change note's discovery data) plus what it withdraws.
-// publicSignal[4] must be Poseidon4(uint160(Recipient), 0, Amount, TokenId).
+// Output 0 must be Poseidon4(uint160(Recipient), 0, Amount, TokenId).
 type RelayPartialWithdrawRequest struct {
 	RelayPaymentRelayerFeeRequest
 	// Recipient is the address the withdrawn tokens go to (hex).
@@ -136,7 +137,7 @@ type RelayPartialWithdrawRequest struct {
 type parsedRelayerFee struct {
 	vaultId      *big.Int
 	proof        [8]*big.Int
-	publicSignal [9]*big.Int
+	publicSignal [layout.PaymentRelayerFeeLen]*big.Int
 	cipherText   []byte
 	encTxData    []byte
 	feeSalt      *big.Int
@@ -149,34 +150,32 @@ type parsedRelayerFee struct {
 // POST /relay/payment_usdr_fee.
 //
 // Settles two independent proofs atomically in one on-chain call
-// (EnygmaDvp.paymentWithUsdrFee): a normal payment (7-element PublicSignal,
+// (EnygmaDvp.paymentWithUsdrFee): a normal payment (a Payment statement,
 // same shape as POST /relay/payment) and a UsdrFeeCircuit proof — a second,
 // independent relayer-fee asset with its own token/vault/circuit.
 //
-// UsdrPublicSignal layout (9 elements):
-//
-//	[msg, treeNum0, root0, nullifier0, cmtFee, cmtChange, contractAddress, fee, tokenId]
+// UsdrPublicSignal is a UsdrFee statement.
 //
 // UsdrFeeSalt is supplied so the relayer can independently recompute the
 // USDr fee note's commitment (Poseidon(feeSpendPubKey, feeSalt, fee,
-// tokenId) — fee and tokenId are read straight from UsdrPublicSignal[7]/[8]
+// tokenId) — fee and tokenId are read straight from UsdrPublicSignal
 // since both are public there, unlike the same-asset relayer-fee mechanism
 // where TokenId had to be supplied separately because it was never public).
 type RelayPaymentUsdrFeeRequest struct {
 	// Main leg — identical shape to RelayPaymentRequest.
-	VaultId      string    `json:"vaultId"      binding:"required"`
-	Proof        [8]string `json:"proof"        binding:"required"`
-	PublicSignal [7]string `json:"publicSignal" binding:"required"`
-	CipherText   string    `json:"cipherText"   binding:"required"`
-	EncTxData    string    `json:"encTxData"    binding:"required"`
+	VaultId      string                    `json:"vaultId"      binding:"required"`
+	Proof        [8]string                 `json:"proof"        binding:"required"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal" binding:"required"`
+	CipherText   string                    `json:"cipherText"   binding:"required"`
+	EncTxData    string                    `json:"encTxData"    binding:"required"`
 
 	// USDr leg.
-	UsdrVaultId      string    `json:"usdrVaultId"      binding:"required"`
-	UsdrProof        [8]string `json:"usdrProof"        binding:"required"`
-	UsdrPublicSignal [9]string `json:"usdrPublicSignal" binding:"required"`
-	UsdrCipherText   string    `json:"usdrCipherText"   binding:"required"`
-	UsdrEncTxData    string    `json:"usdrEncTxData"    binding:"required"`
-	UsdrFeeSalt      string    `json:"usdrFeeSalt"      binding:"required"`
+	UsdrVaultId      string                    `json:"usdrVaultId"      binding:"required"`
+	UsdrProof        [8]string                 `json:"usdrProof"        binding:"required"`
+	UsdrPublicSignal [layout.UsdrFeeLen]string `json:"usdrPublicSignal" binding:"required"`
+	UsdrCipherText   string                    `json:"usdrCipherText"   binding:"required"`
+	UsdrEncTxData    string                    `json:"usdrEncTxData"    binding:"required"`
+	UsdrFeeSalt      string                    `json:"usdrFeeSalt"      binding:"required"`
 }
 
 // RelayPaymentUsdrFeeResponse is returned on success.
@@ -191,13 +190,13 @@ type RelayPaymentUsdrFeeResponse struct {
 type parsedUsdrFee struct {
 	vaultId      *big.Int
 	proof        [8]*big.Int
-	publicSignal [7]*big.Int
+	publicSignal [layout.PaymentLen]*big.Int
 	cipherText   []byte
 	encTxData    []byte
 
 	usdrVaultId      *big.Int
 	usdrProof        [8]*big.Int
-	usdrPublicSignal [9]*big.Int
+	usdrPublicSignal [layout.UsdrFeeLen]*big.Int
 	usdrCipherText   []byte
 	usdrEncTxData    []byte
 	usdrFeeSalt      *big.Int

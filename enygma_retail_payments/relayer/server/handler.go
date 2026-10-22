@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"enygma_retail_payments/layout"
 	"enygma_retail_payments/relayer/config"
 
 	"github.com/ethereum/go-ethereum"
@@ -326,10 +327,9 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmt0, cmt1]
-	treeNum := p.publicSignal[1]
-	root := p.publicSignal[2]
-	nullifier := p.publicSignal[3]
+	treeNum := p.publicSignal[layout.PaymentTreeNumbersOffset]
+	root := p.publicSignal[layout.PaymentMerkleRootsOffset]
+	nullifier := p.publicSignal[layout.PaymentNullifiersOffset]
 
 	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
 
@@ -417,10 +417,10 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 //  2. Confirm relayer-fee relaying is configured (RELAYER_FEE_SPEND_PRIVATE_KEY).
 //  3. Check the Merkle root is known to the vault (rootHistory).
 //  4. Check the nullifier has not been spent (nullifiers mapping).
-//  5. Enforce the configured minimum fee (RELAYER_MIN_FEE) against publicSignal[8].
+//  5. Enforce the configured minimum fee (RELAYER_MIN_FEE) against the public fee.
 //  6. Confirm the fee note is actually addressed to this relayer: recompute
 //     Erc20CommitmentV2(feeSpendPubKey, feeSalt, fee, tokenId) and compare
-//     against publicSignal[6]. This is an off-chain sanity check for the
+//     against the fee note's commitment (output 2). This is an off-chain sanity check for the
 //     relayer's own benefit — the fee AMOUNT is enforced on-chain by the
 //     contract (relayerFixedFeeAmount); this step only confirms the relayer
 //     can actually spend the note it's about to pay gas to help create.
@@ -453,9 +453,8 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee]
-	treeNum := p.publicSignal[1]
-	nullifier := p.publicSignal[3]
+	treeNum := p.publicSignal[layout.PaymentRelayerFeeTreeNumbersOffset]
+	nullifier := p.publicSignal[layout.PaymentRelayerFeeNullifiersOffset]
 
 	// Step 7 — claim nullifier as in-flight to block concurrent duplicate submissions.
 	// Keyed per note, not per route: the same note relayed concurrently
@@ -475,7 +474,7 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 
 	// Step 9 — keep the fee note's opening before sending: the salt reaches
 	// this relayer only through the request.
-	cmtRelayer, fee := p.publicSignal[6], p.publicSignal[8]
+	cmtRelayer, fee := p.publicSignal[relayerFeeNoteOffset], p.publicSignal[layout.PaymentRelayerFeeFeeOffset]
 	if err := h.feeNotes.recordSubmitted("paymentWithRelayerFee", p.vaultId, cmtRelayer, p.feeSalt, fee, p.tokenId); err != nil {
 		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
@@ -522,12 +521,11 @@ func (h *Handler) checkRelayerFeeLeg(c *gin.Context, p *parsedRelayerFee) bool {
 		return false
 	}
 
-	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtOut0, cmtChange, cmtRelayer, contractAddr, fee]
-	treeNum := p.publicSignal[1]
-	root := p.publicSignal[2]
-	nullifier := p.publicSignal[3]
-	cmtRelayer := p.publicSignal[6]
-	fee := p.publicSignal[8]
+	treeNum := p.publicSignal[layout.PaymentRelayerFeeTreeNumbersOffset]
+	root := p.publicSignal[layout.PaymentRelayerFeeMerkleRootsOffset]
+	nullifier := p.publicSignal[layout.PaymentRelayerFeeNullifiersOffset]
+	cmtRelayer := p.publicSignal[relayerFeeNoteOffset]
+	fee := p.publicSignal[layout.PaymentRelayerFeeFeeOffset]
 
 	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
 
@@ -575,9 +573,9 @@ func (h *Handler) checkRelayerFeeLeg(c *gin.Context, p *parsedRelayerFee) bool {
 	}
 	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
 		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": "fee note is not addressed to this relayer's published spend key " +
-				"(GET /relay/info) — publicSignal[6] does not match " +
-				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
+			"error": fmt.Sprintf("fee note is not addressed to this relayer's published spend key "+
+				"(GET /relay/info) — publicSignal[%d] does not match "+
+				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)", relayerFeeNoteOffset),
 		})
 		return false
 	}
@@ -671,6 +669,11 @@ func (h *Handler) recordFeeNoteMined(route string, vaultId, commitment *big.Int,
 // enygma_dvp's IEnygmaDvp.sol, MessageWithdraw in the gnark Payment templates.
 const withdrawMessage = 1
 
+// relayerFeeNoteOffset is where a PaymentRelayerFee statement holds the
+// relayer's fee note commitment: output 2, after the payment (or withdrawal)
+// and the change.
+const relayerFeeNoteOffset = layout.PaymentRelayerFeeCommitmentsOutOffset + 2
+
 // RelayPartialWithdraw is the gin handler for POST /relay/partial_withdraw.
 //
 // Withdraws part of a note for its owner, who pays this relayer from the note
@@ -715,9 +718,9 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		return
 	}
 
-	// Public signal layout: [msg, treeNum0, root0, nullifier0, cmtWithdraw, cmtChange, cmtRelayer, contractAddr, fee]
-	if p.publicSignal[0].Cmp(big.NewInt(withdrawMessage)) != 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[0] (StMessage) is %s; a withdrawal proof must carry %d", p.publicSignal[0], withdrawMessage)})
+	message := p.publicSignal[layout.PaymentRelayerFeeMessageOffset]
+	if message.Cmp(big.NewInt(withdrawMessage)) != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[%d] (StMessage) is %s; a withdrawal proof must carry %d", layout.PaymentRelayerFeeMessageOffset, message, withdrawMessage)})
 		return
 	}
 	withdrawCmt, err := poseidon.Hash([]*big.Int{new(big.Int).SetBytes(recipient.Bytes()), big.NewInt(0), amount, p.tokenId})
@@ -725,10 +728,10 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute withdrawal commitment: %s", err)})
 		return
 	}
-	if withdrawCmt.Cmp(p.publicSignal[4]) != 0 {
+	if withdrawCmt.Cmp(p.publicSignal[layout.PaymentRelayerFeeCommitmentsOutOffset]) != 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "publicSignal[4] does not match Poseidon(uint160(recipient), 0, amount, tokenId) — " +
-				"the proof does not withdraw this amount to this recipient",
+			"error": fmt.Sprintf("publicSignal[%d] does not match Poseidon(uint160(recipient), 0, amount, tokenId) — "+
+				"the proof does not withdraw this amount to this recipient", layout.PaymentRelayerFeeCommitmentsOutOffset),
 		})
 		return
 	}
@@ -737,8 +740,8 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		return
 	}
 
-	treeNum := p.publicSignal[1]
-	nullifier := p.publicSignal[3]
+	treeNum := p.publicSignal[layout.PaymentRelayerFeeTreeNumbersOffset]
+	nullifier := p.publicSignal[layout.PaymentRelayerFeeNullifiersOffset]
 	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
 	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
@@ -752,7 +755,7 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 	if !h.simulate(c, nfKeys, h.vaultAddr, h.vaultABI, method, args...) {
 		return
 	}
-	cmtRelayer, fee := p.publicSignal[6], p.publicSignal[8]
+	cmtRelayer, fee := p.publicSignal[relayerFeeNoteOffset], p.publicSignal[layout.PaymentRelayerFeeFeeOffset]
 	if err := h.feeNotes.recordSubmitted(method, p.vaultId, cmtRelayer, p.feeSalt, fee, p.tokenId); err != nil {
 		h.release(nfKeys)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
@@ -796,12 +799,12 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 //  2. Parse and decode both legs' fields from the request body.
 //  3. Check both legs' Merkle roots are known and nullifiers unspent.
 //  4. Enforce the configured minimum fee (RELAYER_MIN_FEE) against the USDr
-//     leg's public StFee (usdrSignal[7]).
+//     leg's public StFee.
 //  5. Confirm the USDr fee note is addressed to this relayer: recompute
 //     Poseidon(feeSpendPubKey, feeSalt, StFee, StTokenId) — both StFee and
 //     StTokenId read straight from the USDr leg's own public signal — and
-//     compare against usdrSignal[4] (the fee note's commitment, output 0 of
-//     the UsdrFeeCircuit).
+//     compare against the fee note's commitment (output 0 of the
+//     UsdrFeeCircuit).
 //  6. Simulate the call, keep the fee note's opening (feeNoteStore), then
 //     sign and submit both receipts to EnygmaDvp.paymentWithUsdrFee().
 func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
@@ -835,18 +838,16 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// Main leg: [msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, contractAddr]
-	treeNum := p.publicSignal[1]
-	root := p.publicSignal[2]
-	nullifier := p.publicSignal[3]
+	treeNum := p.publicSignal[layout.PaymentTreeNumbersOffset]
+	root := p.publicSignal[layout.PaymentMerkleRootsOffset]
+	nullifier := p.publicSignal[layout.PaymentNullifiersOffset]
 
-	// USDr leg: [msg, treeNum0, root0, nullifier0, cmtFee, cmtChange, contractAddr, fee, tokenId]
-	usdrTreeNum := p.usdrPublicSignal[1]
-	usdrRoot := p.usdrPublicSignal[2]
-	usdrNullifier := p.usdrPublicSignal[3]
-	cmtFee := p.usdrPublicSignal[4]
-	fee := p.usdrPublicSignal[7]
-	tokenId := p.usdrPublicSignal[8]
+	usdrTreeNum := p.usdrPublicSignal[layout.UsdrFeeTreeNumbersOffset]
+	usdrRoot := p.usdrPublicSignal[layout.UsdrFeeMerkleRootsOffset]
+	usdrNullifier := p.usdrPublicSignal[layout.UsdrFeeNullifiersOffset]
+	cmtFee := p.usdrPublicSignal[layout.UsdrFeeCommitmentsOutOffset] // output 0: the fee note
+	fee := p.usdrPublicSignal[layout.UsdrFeeFeeOffset]
+	tokenId := p.usdrPublicSignal[layout.UsdrFeeTokenIdOffset]
 
 	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
 	usdrVault := bind.NewBoundContract(h.usdrVaultAddr, h.vaultABI, h.client, h.client, h.client)
@@ -904,9 +905,9 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	}
 	if expectedFeeCmt.Cmp(cmtFee) != 0 {
 		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": "USDr fee note is not addressed to this relayer's published spend key " +
-				"(GET /relay/info) — usdrPublicSignal[4] does not match " +
-				"Poseidon(relayerFeeSpendPubKey, usdrFeeSalt, StFee, StTokenId)",
+			"error": fmt.Sprintf("USDr fee note is not addressed to this relayer's published spend key "+
+				"(GET /relay/info) — usdrPublicSignal[%d] does not match "+
+				"Poseidon(relayerFeeSpendPubKey, usdrFeeSalt, StFee, StTokenId)", layout.UsdrFeeCommitmentsOutOffset),
 		})
 		return
 	}
@@ -1355,7 +1356,7 @@ func parseRequest(req *RelayPaymentRequest) (*parsed, error) {
 		proof[i] = n
 	}
 
-	var sig [7]*big.Int
+	var sig [layout.PaymentLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, ok := new(big.Int).SetString(s, 10)
 		if !ok {
@@ -1397,7 +1398,7 @@ func parseRelayerFeeRequest(req *RelayPaymentRelayerFeeRequest) (*parsedRelayerF
 		proof[i] = n
 	}
 
-	var sig [9]*big.Int
+	var sig [layout.PaymentRelayerFeeLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, ok := new(big.Int).SetString(s, 10)
 		if !ok {
@@ -1462,7 +1463,7 @@ func parseUsdrFeeRequest(req *RelayPaymentUsdrFeeRequest) (*parsedUsdrFee, error
 		usdrProof[i] = n
 	}
 
-	var sig [7]*big.Int
+	var sig [layout.PaymentLen]*big.Int
 	for i, s := range req.PublicSignal {
 		n, ok := new(big.Int).SetString(s, 10)
 		if !ok {
@@ -1470,7 +1471,7 @@ func parseUsdrFeeRequest(req *RelayPaymentUsdrFeeRequest) (*parsedUsdrFee, error
 		}
 		sig[i] = n
 	}
-	var usdrSig [9]*big.Int
+	var usdrSig [layout.UsdrFeeLen]*big.Int
 	for i, s := range req.UsdrPublicSignal {
 		n, ok := new(big.Int).SetString(s, 10)
 		if !ok {
@@ -1527,16 +1528,7 @@ func decodeHexField(s, fieldName string) ([]byte, error) {
 
 // buildProofReceipt maps the parsed proof + public signal into the
 // ProofReceipt struct that EnygmaDvp.payment() expects.
-//
-// Payment circuit (1 input / 2 outputs) public signal layout:
-//
-//	[msg, treeNum0, root0, nullifier0, commitment0, commitment1]
-//
-// ProofReceipt.Statement must be in non-interleaved form:
-//
-//	[msg, treeNum0, root0, nullifier0, commitment0, commitment1]
-//
-// NumberOfInputs=1, NumberOfOutputs=2.
+// for a Payment proof.
 func buildProofReceipt(p *parsed) proofReceipt {
 	// Proof element order from gnark: [Ax, Ay, BX_imag, BX_real, BY_imag, BY_real, Cx, Cy]
 	sp := snarkProof{
@@ -1547,26 +1539,17 @@ func buildProofReceipt(p *parsed) proofReceipt {
 		},
 		C: g1Point{X: p.proof[6], Y: p.proof[7]},
 	}
-	statement := make([]*big.Int, 7)
-	for i := range p.publicSignal {
-		statement[i] = p.publicSignal[i]
-	}
 	return proofReceipt{
 		Proof:           sp,
-		Statement:       statement,
-		NumberOfInputs:  big.NewInt(1),
-		NumberOfOutputs: big.NewInt(2),
+		Statement:       append(make([]*big.Int, 0, layout.PaymentLen), p.publicSignal[:]...),
+		NumberOfInputs:  big.NewInt(layout.PaymentNullifiersSize),
+		NumberOfOutputs: big.NewInt(layout.PaymentCommitmentsOutSize),
 	}
 }
 
 // buildRelayerFeeProofReceipt maps the parsed proof + public signal into the
-// ProofReceipt struct that EnygmaDvp.paymentWithRelayerFee() expects.
-//
-// PaymentRelayerFeePublic circuit (1 input / 3 outputs) public signal layout:
-//
-//	[msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddress, fee]
-//
-// NumberOfInputs=1, NumberOfOutputs=3.
+// ProofReceipt struct that EnygmaDvp.paymentWithRelayerFee() expects, for a
+// PaymentRelayerFeePublic proof.
 func buildRelayerFeeProofReceipt(p *parsedRelayerFee) proofReceipt {
 	sp := snarkProof{
 		A: g1Point{X: p.proof[0], Y: p.proof[1]},
@@ -1576,22 +1559,17 @@ func buildRelayerFeeProofReceipt(p *parsedRelayerFee) proofReceipt {
 		},
 		C: g1Point{X: p.proof[6], Y: p.proof[7]},
 	}
-	statement := make([]*big.Int, 9)
-	for i := range p.publicSignal {
-		statement[i] = p.publicSignal[i]
-	}
 	return proofReceipt{
 		Proof:           sp,
-		Statement:       statement,
-		NumberOfInputs:  big.NewInt(1),
-		NumberOfOutputs: big.NewInt(3),
+		Statement:       append(make([]*big.Int, 0, layout.PaymentRelayerFeeLen), p.publicSignal[:]...),
+		NumberOfInputs:  big.NewInt(layout.PaymentRelayerFeeNullifiersSize),
+		NumberOfOutputs: big.NewInt(layout.PaymentRelayerFeeCommitmentsOutSize),
 	}
 }
 
 // buildUsdrFeeProofReceipts maps a parsedUsdrFee into the two ProofReceipt
-// structs EnygmaDvp.paymentWithUsdrFee() expects — the main leg (identical
-// shape to buildProofReceipt's, NumberOfOutputs=2) and the USDr leg
-// (UsdrFeeCircuit: NumberOfInputs=1, NumberOfOutputs=2, 9-element statement).
+// structs EnygmaDvp.paymentWithUsdrFee() expects — the main leg (a Payment
+// proof, as buildProofReceipt's) and the USDr leg (a UsdrFee proof).
 func buildUsdrFeeProofReceipts(p *parsedUsdrFee) (receipt, usdrReceipt proofReceipt) {
 	sp := snarkProof{
 		A: g1Point{X: p.proof[0], Y: p.proof[1]},
@@ -1601,15 +1579,11 @@ func buildUsdrFeeProofReceipts(p *parsedUsdrFee) (receipt, usdrReceipt proofRece
 		},
 		C: g1Point{X: p.proof[6], Y: p.proof[7]},
 	}
-	statement := make([]*big.Int, 7)
-	for i := range p.publicSignal {
-		statement[i] = p.publicSignal[i]
-	}
 	receipt = proofReceipt{
 		Proof:           sp,
-		Statement:       statement,
-		NumberOfInputs:  big.NewInt(1),
-		NumberOfOutputs: big.NewInt(2),
+		Statement:       append(make([]*big.Int, 0, layout.PaymentLen), p.publicSignal[:]...),
+		NumberOfInputs:  big.NewInt(layout.PaymentNullifiersSize),
+		NumberOfOutputs: big.NewInt(layout.PaymentCommitmentsOutSize),
 	}
 
 	usdrSp := snarkProof{
@@ -1620,15 +1594,11 @@ func buildUsdrFeeProofReceipts(p *parsedUsdrFee) (receipt, usdrReceipt proofRece
 		},
 		C: g1Point{X: p.usdrProof[6], Y: p.usdrProof[7]},
 	}
-	usdrStatement := make([]*big.Int, 9)
-	for i := range p.usdrPublicSignal {
-		usdrStatement[i] = p.usdrPublicSignal[i]
-	}
 	usdrReceipt = proofReceipt{
 		Proof:           usdrSp,
-		Statement:       usdrStatement,
-		NumberOfInputs:  big.NewInt(1),
-		NumberOfOutputs: big.NewInt(2),
+		Statement:       append(make([]*big.Int, 0, layout.UsdrFeeLen), p.usdrPublicSignal[:]...),
+		NumberOfInputs:  big.NewInt(layout.UsdrFeeNullifiersSize),
+		NumberOfOutputs: big.NewInt(layout.UsdrFeeCommitmentsOutSize),
 	}
 
 	return receipt, usdrReceipt
