@@ -1,6 +1,6 @@
 package burn
 
-import "enygma_payments/gnark-server/pkg/statement"
+import "enygma_gnark_shared/statement"
 
 // statementNames gives each public field of BurnCircuit its domain name.
 // Order, offsets and sizes come from the circuit, not from here.

@@ -5,8 +5,10 @@
 // truth; circuit packages only annotate each public Go field with its domain
 // name.
 //
-// The generator in cmd/genlayout renders the layouts into a dependency-free
-// Go package and a Solidity constants library (see render.go).
+// Each project's generator (enygma_payments' gnark-server/cmd/genlayout,
+// enygma_retail_payments' gnark_circuits/cmd/genlayout) renders its layouts
+// into a dependency-free Go package and a Solidity constants library through
+// a Target (see render.go).
 package statement
 
 import (
