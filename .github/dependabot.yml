@@ -28,6 +28,7 @@ updates:
       - "/enygma_payments/test"
       - "/enygma_retail_payments/demo"
       - "/enygma_retail_payments/gnark_circuits"
+      - "/enygma_retail_payments/layout"
       - "/enygma_retail_payments/private_tags/src"
       - "/enygma_retail_payments/private_tags/test"
       - "/enygma_retail_payments/relayer"

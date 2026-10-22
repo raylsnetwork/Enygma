@@ -1,6 +1,6 @@
 # Glossary
 
-**Statement layout**: the order of a circuit's public signals, as named fields (offset, size) with a total length. A circuit package derives its own from the circuit's public fields (every payments circuit: transfer, transfer-with-fee, USDr, withdraw, deposit and burn); `gnark-server/cmd/genlayout` renders the layouts into the Go package `enygma_payments/layout` and the Solidity library `StatementLayout`.
+**Statement layout**: the order of a circuit's public signals, as named fields (offset, size) with a total length. A circuit package derives its own from the circuit's public fields (every payments circuit: transfer, transfer-with-fee, USDr, withdraw, deposit and burn); `gnark-server/cmd/genlayout` renders the layouts into the Go package `enygma_payments/layout` and the Solidity library `StatementLayout`. enygma_retail_payments' Payment-family circuits derive theirs the same way, at each circuit's deployed config (`templates.PaymentConfig` and the like); `gnark_circuits/cmd/genlayout` renders them into the Go package `enygma_retail_payments/layout` and the Solidity library `PaymentStatementLayout` in enygma_dvp, whose `EnygmaDvp` and `Erc20CoinVault` verify retail receipts. Derivation and rendering live in `enygma_gnark_shared/statement`.
 
 **Statement length**: a statement layout's total number of public signals (`layout.<Circuit>Len` in Go, `<CIRCUIT>_LEN` in Solidity). It is the fixed arity of the circuit's public-signal array wherever one is declared: the relayer's accepted request length, `IEnygma`'s proof structs, and the test helpers that build signal arrays.
 
@@ -15,3 +15,5 @@
 **Statement layout field names** (deposit circuit, prefix `Deposit`): `HashedSharedSecrets` through `Nullifier` as in withdraw, then `Hash` (the deposit note commitment), `DomainId`.
 
 **Statement layout field names** (burn circuit, prefix `Burn`): `PublicKey` (the burned account's spend public key), `PreviousCommitment` and `NewCommitment` (one (X, Y) balance commitment each, X first), `Amount`, `BlockNumber`, `Nullifier`, `DomainId`.
+
+**Statement layout field names** (retail Payment-family circuits, prefixes `Payment` (1 input), `Payment2in` (the Payment circuit at 2 inputs), `PaymentFee`, `PaymentRelayerFee` (the PaymentRelayerFeePublic circuit) and `UsdrFee`, which avoids enygma_payments' `Usdr`): `Message` (0 for a payment, 1 for a withdrawal), `TreeNumbers`, `MerkleRoots` and `Nullifiers` (one per input), `CommitmentsOut` (one per output), `ContractAddress` (the vault the proof is bound to), then `Fee` (PaymentFee, PaymentRelayerFee, UsdrFee: the public fee) and `TokenId` (UsdrFee: USDr's public token id).

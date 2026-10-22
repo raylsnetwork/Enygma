@@ -186,6 +186,29 @@ go run ./cmd/keygen
 After regenerating, re-run `setup.sh` (or the manual steps 2c–2e above) to export the
 new VK and re-initialize the contracts.
 
+## Statement Layouts
+
+Each Payment-family circuit's statement layout (the order, offsets and sizes of its
+public signals) is derived from the circuit's own public fields at the config it is
+deployed at (`gnark_circuits/templates/statement.go`; the configs are in
+`templates/deployed.go`, which keygen and the prove handlers also read). Two committed
+files are generated from the layouts:
+
+- `layout/layout.go`: a dependency-free Go package imported by the relayer, the test
+  suites and the demo;
+- `../enygma_dvp/contracts/core/contracts/PaymentStatementLayout.sol`: the constants
+  library `EnygmaDvp.sol` and `Erc20CoinVault.sol` read retail receipts through.
+
+After changing any Payment-family circuit's public signals or deployed config,
+regenerate both:
+
+```bash
+cd gnark_circuits
+go generate ./cmd/genlayout
+```
+
+`go test ./cmd/genlayout` fails while either file is stale.
+
 ## Implementation Details
 
 TBD

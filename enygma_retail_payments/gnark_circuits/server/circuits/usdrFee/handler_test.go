@@ -10,7 +10,8 @@ import (
 
 // TestHandler_ReturnsTheProofsPublicWitness drives the usdrFee prove handler
 // with throwaway keys: the public signals it returns must be the proof's own
-// public witness, and the proof must verify against them.
+// public witness, as many as its statement length, and the proof must verify
+// against them.
 func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	cfg := templates.UsdrFeeConfig
 	empty := templates.NewUsdrFeeCircuit(cfg)
@@ -47,6 +48,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		WtSaltsOut:           [2]string(ht.Strings(salts...)),
 	}
 	proof, signals := ht.Post(t, NewHandler(pkPath, vkPath), request)
+	ht.AssertStatementLen(t, signals, templates.UsdrFeeStatementLayout())
 
 	w := templates.NewUsdrFeeCircuit(cfg)
 	w.StMessage = 0

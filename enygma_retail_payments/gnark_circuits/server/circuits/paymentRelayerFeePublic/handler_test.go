@@ -10,8 +10,8 @@ import (
 
 // TestHandler_ReturnsTheProofsPublicWitness drives the
 // paymentRelayerFeePublic prove handler with throwaway keys: the public
-// signals it returns must be the proof's own public witness, and the proof
-// must verify against them.
+// signals it returns must be the proof's own public witness, as many as its
+// statement length, and the proof must verify against them.
 func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	cfg := templates.PaymentRelayerFeePublicConfig
 	empty := templates.NewPaymentRelayerFeePublicCircuit(cfg)
@@ -48,6 +48,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		WtSaltsOut:           [3]string(ht.Strings(salts...)),
 	}
 	proof, signals := ht.Post(t, NewHandler(pkPath, vkPath), request)
+	ht.AssertStatementLen(t, signals, templates.PaymentRelayerFeeStatementLayout())
 
 	w := templates.NewPaymentRelayerFeePublicCircuit(cfg)
 	w.StMessage = 0

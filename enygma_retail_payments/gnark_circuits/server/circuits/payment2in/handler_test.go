@@ -10,8 +10,9 @@ import (
 
 // TestHandler_ReturnsTheProofsPublicWitness drives the payment2in prove
 // handler with throwaway keys: the public signals it returns must be the
-// proof's own public witness, and the proof must verify against them. Input 1
-// is zero-value padding (root and nullifier 0).
+// proof's own public witness, as many as its statement length, and the proof
+// must verify against them. Input 1 is zero-value padding (root and
+// nullifier 0).
 func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	cfg := templates.Payment2inConfig
 	empty := templates.NewPaymentCircuit(cfg)
@@ -47,6 +48,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		WtSaltsOut:           [2]string(ht.Strings(salts...)),
 	}
 	proof, signals := ht.Post(t, NewHandler(pkPath, vkPath), request)
+	ht.AssertStatementLen(t, signals, templates.Payment2inStatementLayout())
 
 	w := templates.NewPaymentCircuit(cfg)
 	w.StMessage = 0

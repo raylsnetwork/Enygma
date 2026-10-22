@@ -18,10 +18,7 @@ type PaymentCircuitConfig struct {
 type PaymentCircuit struct {
 	Config PaymentCircuitConfig
 
-	// --- public inputs (statement) ---
-	// Layout (non-interleaved, matching ContractStatement):
-	//   [StMessage, StTreeNumbers[0..N-1], StMerkleRoots[0..N-1],
-	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1], StContractAddress]
+	// --- public inputs (statement; layout derived in statement.go) ---
 	StMessage         frontend.Variable   `gnark:",public"` // 0 = payment, MessageWithdraw = withdrawal
 	StTreeNumbers     []frontend.Variable `gnark:",public"` // TmNInputs — sub-tree index per input
 	StMerkleRoots     []frontend.Variable `gnark:",public"` // TmNInputs — Merkle root per input

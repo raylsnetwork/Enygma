@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"enygma_gnark_shared/statement"
+
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/groth16"
@@ -114,6 +116,15 @@ func AssertProvedWitness(t *testing.T, assignment frontend.Circuit, vk groth16.V
 	}
 	if err := groth16.Verify(proofFromRemix(t, proof), vk, publicWitness(t, signals)); err != nil {
 		t.Fatalf("returned proof and signals do not verify: %v", err)
+	}
+}
+
+// AssertStatementLen checks that a handler returned a statement of its
+// circuit's statement length.
+func AssertStatementLen(t *testing.T, signals []*big.Int, layout statement.Layout) {
+	t.Helper()
+	if len(signals) != layout.Len {
+		t.Errorf("got %d public signals, %s statement length is %d", len(signals), layout.Circuit, layout.Len)
 	}
 }
 
