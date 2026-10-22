@@ -10,6 +10,7 @@ updates:
     directories:
       - "/enygma_dvp/demo"
       - "/enygma_dvp/gnark_circuits"
+      - "/enygma_dvp/layout"
       - "/enygma_dvp/relayer"
       - "/enygma_dvp/scripts"
       - "/enygma_dvp/src"
