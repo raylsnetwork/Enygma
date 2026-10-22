@@ -17,6 +17,8 @@ const (
 	iEnygmaDvpSol           = "../../../contracts/core/interfaces/IEnygmaDvp.sol"
 	iPrivateMintVerifierSol = "../../../contracts/core/interfaces/IPrivateMintVerifier.sol"
 	privateMintVerifierSol  = "../../../contracts/core/contracts/PrivateMintVerifier.sol"
+	swapRelayerSol          = "../../../contracts/core/contracts/SwapRelayer.sol"
+	abstractCoinVaultSol    = "../../../contracts/core/contracts/vaults/AbstractCoinVault.sol"
 )
 
 var (
@@ -26,15 +28,19 @@ var (
 	solOffsetRead  = regexp.MustCompile(`\b([A-Z][A-Z0-9_]*)_OFFSET\b`)
 	solMintSignals = regexp.MustCompile(`uint256\[(\w+)\]\s+public_signal;`)
 	solMintInput   = regexp.MustCompile(`uint256\[(\w+)\]\s+calldata\s+input`)
+	solIndexRead   = regexp.MustCompile(`statement\[([^\]]*)\]`)
+	solNamedIndex  = regexp.MustCompile(`^\s*(Dsl|Psl)\.[A-Z][A-Z0-9_]*_OFFSET\s*$`)
+	solArity       = regexp.MustCompile(`\bnumberOf(Inputs|Outputs)\b`)
+	solPaymentCall = regexp.MustCompile(`\.(nullifyFromReceipt|insertCommitmentsFromReceipt)\(`)
 )
 
 // A DvP receipt's statement is a dynamic array, so the compiler cannot tie a
 // read at a DvpStatementLayout offset to the circuit that offset belongs to:
 // a DvpInitiator offset read from a DvpDestination statement compiles and
 // reads the wrong field, or past its end. This pins every such read in
-// EnygmaDvp and DvpReceipt to a statement length check for its own circuit:
-// the length compared last before the read, in the same function, must be
-// that circuit's statement length.
+// EnygmaDvp, DvpReceipt, SwapRelayer and the coin vaults to a statement
+// length check for its own circuit: the length compared last before the
+// read, in the same function, must be that circuit's statement length.
 func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 	lens := generatedLens(t)
 	circuits := map[string]int{
@@ -45,17 +51,69 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 	// (whose reads this checks): without one, the check passes on a file that
 	// still reads by hand-written index.
 	mustRead := map[string]bool{
-		"DvpReceipt.read":                   false,
-		"EnygmaDvp.submitPartialSettlement": false,
-		"EnygmaDvp._settleOnGroupPair":      false,
+		"DvpReceipt.read":                                  false,
+		"EnygmaDvp.submitPartialSettlement":                false,
+		"EnygmaDvp._settleOnGroupPair":                     false,
+		"EnygmaDvp.lockReceiptNullifiers":                  false,
+		"SwapRelayer.submitReceipt":                        false,
+		"SwapRelayer.swapIdOf":                             false,
+		"SwapRelayer._close":                               false,
+		"AbstractCoinVault.addPendingProofReceipt":         false,
+		"AbstractCoinVault.nullifyFromDvpReceipt":          false,
+		"AbstractCoinVault.insertCommitmentFromDvpReceipt": false,
+		"AbstractCoinVault.unlockFromDvpReceipt":           false,
 	}
-	for contract, path := range map[string]string{"EnygmaDvp": enygmaDvpSol, "DvpReceipt": dvpReceiptSol} {
+	// Each takes a lock on a leg's note, and must have refused a receipt of
+	// any other length (DvpReceipt.read) before it does.
+	lockAfterRead := map[string]string{
+		"SwapRelayer.submitReceipt":                "lockReceiptNullifiers(",
+		"EnygmaDvp.lockReceiptNullifiers":          "lockCoin(",
+		"AbstractCoinVault.addPendingProofReceipt": "lockCoin(",
+	}
+	// The DvP settlement paths hand legs to the vaults' DvP-receipt
+	// functions: the Payment-family ones walk the statement by the
+	// caller-supplied numberOfInputs/numberOfOutputs.
+	dvpPaths := map[string]bool{
+		"EnygmaDvp.submitPartialSettlement": true,
+		"EnygmaDvp.claimSwapTimeout":        true,
+		"EnygmaDvp._settleOnGroupPair":      true,
+		"EnygmaDvp.unlockReceiptNullifiers": true,
+	}
+	for contract, path := range map[string]string{
+		"EnygmaDvp":         enygmaDvpSol,
+		"DvpReceipt":        dvpReceiptSol,
+		"SwapRelayer":       swapRelayerSol,
+		"AbstractCoinVault": abstractCoinVaultSol,
+	} {
 		src := readFile(t, path)
 		for _, fn := range solFunction.FindAllStringSubmatch(src, -1) {
 			name := contract + "." + fn[1]
 			body := functionBody(t, src, fn[1])
-			if _, ok := mustRead[name]; ok && strings.Contains(body, "DvpReceipt.read(") {
-				mustRead[name] = true
+			if _, ok := mustRead[name]; ok {
+				if strings.Contains(body, "DvpReceipt.read(") {
+					mustRead[name] = true
+				}
+				// No hand-written statement offset: every index is a named
+				// layout offset, and the arity fields are not consulted.
+				for _, m := range solIndexRead.FindAllStringSubmatch(body, -1) {
+					if !solNamedIndex.MatchString(m[1]) {
+						t.Errorf("%s reads statement[%s], not a named layout offset", name, m[1])
+					}
+				}
+				if m := solArity.FindString(body); m != "" {
+					t.Errorf("%s reads a DvP receipt's %s", name, m)
+				}
+			}
+			if call, ok := lockAfterRead[name]; ok {
+				read, lock := strings.Index(body, "DvpReceipt.read("), strings.Index(body, call)
+				if read < 0 || lock < 0 || lock < read {
+					t.Errorf("%s calls %s before checking the leg's statement length", name, call)
+				}
+			}
+			if dvpPaths[name] {
+				if m := solPaymentCall.FindStringSubmatch(body); m != nil {
+					t.Errorf("%s settles a DvP leg with the Payment-family %s", name, m[1])
+				}
 			}
 			for _, m := range solOffsetRead.FindAllStringSubmatchIndex(body, -1) {
 				circuit, ok := circuitOf(body[m[2]:m[3]], circuits)
