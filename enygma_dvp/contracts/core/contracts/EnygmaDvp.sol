@@ -12,6 +12,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 
 import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset, paymentFeeOffset} from "../interfaces/IEnygmaDvp.sol";
 import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
+import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "./DvpStatementLayout.sol";
+import {DvpReceipt} from "./DvpReceipt.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
@@ -647,18 +649,16 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 groupId,
         uint256 deadline
     ) public nonReentrant returns (bool) {
-        // uint256 prootType = _proofType(receipt);
-        // uint inputSize = receipt.numberOfInputs;
-        // uint treeNumbersIndex = 1;
-        uint nullifiersIndex = 1 + (2 * receipt.numberOfInputs);
-        uint commitmentsIndex = nullifiersIndex + receipt.numberOfInputs;
-
-        uint256 receiptMessage = receipt.statement[0];
-        uint256 receiptUniqueId = receipt.statement[commitmentsIndex];
-
         // to avoid submission of a payment (0) or withdrawal (WITHDRAW_MESSAGE)
         // proof: neither is a swap leg, and parking one here would lock its
-        // note and, on timeout, insert outputs that are not swap refunds.
+        // note and, on timeout, insert outputs that are not swap refunds. A
+        // receipt that is not DvP-shaped is refused before anything is read.
+        if (!DvpReceipt.isLeg(receipt.statement)) {
+            revert InvalidPartialProofReceipt();
+        }
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        uint256 receiptMessage = leg.message;
+        uint256 receiptUniqueId = leg.commitment;
         if (receiptMessage == 0 || receiptMessage == WITHDRAW_MESSAGE || receiptUniqueId == 0) {
             revert InvalidPartialProofReceipt();
         }
@@ -722,10 +722,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (_closedSwaps[receiptMessage]) {
                 revert SwapClosed();
             }
-            // Only an initiator-shaped receipt (with commitA and revertCommitA
-            // after commitB) can open a swap. A destination leg with no pending
-            // swap to complete would otherwise fail on an out-of-bounds read.
-            if (receipt.statement.length < commitmentsIndex + 3) {
+            // Only an initiator leg (which carries commitA and revertCommitA)
+            // can open a swap; a destination leg has no pending swap to
+            // complete.
+            if (receipt.statement.length != DVP_INITIATOR_LEN) {
                 revert SwapNotFound();
             }
             if (deadline <= block.timestamp) {
@@ -738,9 +738,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 revert SwapDeadlineTooFar();
             }
 
-            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA, counterVault]
-            // commitmentsIndex = 4 → receiptUniqueId = commitB
-            // commitmentsIndex+1 = 5 → commitA_expected (what Alice expects Bob to deliver)
+            // receiptUniqueId is the initiator's CommitB; its CommitA is what
+            // Alice expects Bob to deliver.
             //
             // HIGH-2 fix (corrected): key _pendingTransactions by commitB.
             // The DvPDestinationCircuit enforces StMessage = commitB, so Bob's
@@ -764,12 +763,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (_pendingTransactions[commitB].deadline != 0) {
                 revert SwapAlreadyPending();
             }
-            uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
+            uint256 commitA_expected = receipt.statement[Dsl.DVP_INITIATOR_COMMIT_A_OFFSET];
             // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
             // accepting it as a caller-supplied parameter. The circuit constrains it to
             // Poseidon4(pkAlice, revertSalt, valueIn, tokenIdIn) so only Alice can spend it.
             // A caller-supplied value could be front-run to redirect the timeout refund.
-            uint256 revertCommitA    = receipt.statement[commitmentsIndex + 2]; // StRevertCommitA
+            uint256 revertCommitA    = receipt.statement[Dsl.DVP_INITIATOR_REVERT_COMMIT_A_OFFSET];
 
             _pendingTransactions[commitB].vaultId        = vaultId;
             _pendingTransactions[commitB].groupId         = groupId;
@@ -964,31 +963,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // [[VERIFICATION]]
         //-----------------------
 
-        // receipt1.inputs;
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-        // assetGroup_merkleRoot
-
-        uint nullifiersIndex = 1 + (2 * receipt1.numberOfInputs);
-        uint commitmentsIndex = nullifiersIndex + receipt1.numberOfInputs;
-
-        // ownReceipt.inputs:
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-        // assetGroup_merkleRoot
-
-        uint256 commitmentsIndex2 = 1 + 3 * receipt2.numberOfInputs;
-        // TODO:: fix hardcoded 4
-        if (receipt1.statement[0] != receipt2.statement[commitmentsIndex2]) {
+        // Each leg's message is the commitment its counterparty's leg inserts.
+        DvpReceipt.Leg memory leg1 = DvpReceipt.read(receipt1.statement);
+        DvpReceipt.Leg memory leg2 = DvpReceipt.read(receipt2.statement);
+        if (leg1.message != leg2.commitment) {
             revert InvalidPaymentMessage();
         }
-        if (receipt2.statement[0] != receipt1.statement[commitmentsIndex]) {
+        if (leg2.message != leg1.commitment) {
             revert InvalidDeliveryMessage();
         }
 
@@ -999,21 +980,15 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             _coinVaults[vaultId2]
         );
 
-        // Each DvP proof ends with the address of the vault its prover expects
-        // to be paid from (StCounterVault): receipt1's prover is paid from
-        // vault2 (where receipt2's outputs are inserted) and vice versa. The
-        // commitments do not name a vault, so without this a counterparty could
-        // pay from another vault in the same asset group.
-        if (
-            receipt1.statement[receipt1.statement.length - 1] !=
-            uint256(uint160(address(deliveryCoinVault)))
-        ) {
+        // Each DvP proof names the vault its prover expects to be paid from
+        // (CounterVault): receipt1's prover is paid from vault2 (where
+        // receipt2's outputs are inserted) and vice versa. The commitments do
+        // not name a vault, so without this a counterparty could pay from
+        // another vault in the same asset group.
+        if (leg1.counterVault != uint256(uint160(address(deliveryCoinVault)))) {
             revert CounterVaultMismatch();
         }
-        if (
-            receipt2.statement[receipt2.statement.length - 1] !=
-            uint256(uint160(address(paymentCoinVault)))
-        ) {
+        if (leg2.counterVault != uint256(uint160(address(paymentCoinVault)))) {
             revert CounterVaultMismatch();
         }
 
@@ -1056,7 +1031,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         paymentCoinVault.insertCommitmentsFromReceipt(receipt1);
         deliveryCoinVault.insertCommitmentsFromReceipt(receipt2);
 
-        emit Settled(receipt2.statement[0], receipt1.statement[0]);
+        emit Settled(leg2.message, leg1.message);
 
         return true;
     }
@@ -1289,32 +1264,31 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             revert InvalidVaultId();
         }
 
-        // Verify the ZK proof
-        // Public signals order: [commitment, contractAddress, tokenId, cipherText]
+        // Verify the ZK proof. public_signal is sized to PrivateMint's
+        // statement length, so its fields are read by name below.
         // Reverts with ProofInvalid if verification fails
         IPrivateMintVerifier(_privateMintVerifierAddress).verifyProof(
             proof.proof,
             proof.public_signal
         );
 
-        // CRIT-1 fix: the caller-supplied commitment must match proof.public_signal[0].
+        // CRIT-1 fix: the caller-supplied commitment must match the proof's Commitment.
         // Without this check the owner could insert an arbitrary commitment that was
         // never constrained by the ZK circuit, allowing phantom notes to be minted.
-        if (commitment != proof.public_signal[0]) {
+        if (commitment != proof.public_signal[Dsl.PRIVATE_MINT_COMMITMENT_OFFSET]) {
             revert PublicSignalMismatch();
         }
 
-        // DVP-7 fix: public signal[1] is ContractAddress — the circuit binds the proof to
-        // a specific deployment. Without this check a proof generated for a different
+        // DVP-7 fix: the circuit binds the proof to a specific deployment
+        // (ContractAddress). Without this check a proof generated for a different
         // EnygmaDvp deployment can be replayed here to mint a note that was never
         // authorised for this contract.
         require(
-            proof.public_signal[1] == uint256(uint160(address(this))),
+            proof.public_signal[Dsl.PRIVATE_MINT_CONTRACT_ADDRESS_OFFSET] == uint256(uint160(address(this))),
             "PrivateMint: proof bound to wrong contract"
         );
 
-        // Extract cipherText from public signals (index 3)
-        uint256 cipherText = proof.public_signal[3];
+        uint256 cipherText = proof.public_signal[Dsl.PRIVATE_MINT_CIPHER_TEXT_OFFSET];
 
         // Emit event with commitment and cipherText only
         emit PrivateMint(vaultId, commitment, cipherText);

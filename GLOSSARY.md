@@ -22,4 +22,6 @@
 
 **Statement layout field names** (DvP destination circuit, prefix `DvpDestination`): `Message` (equals the initiator's `CommitB`), `TreeNumber`, `MerkleRoot` and `Nullifier` (of the counterparty's one input note), `CommitA` (the initiator's `CommitA`, recomputed), `CounterVault` (the vault `CommitB` must be paid from).
 
+**DvP leg**: one party's receipt in a DvP swap, proved by `DvpInitiator` (it opens the swap) or `DvpDestination` (it completes it), told apart by statement length. Contracts read the fields both carry through the Solidity library `DvpReceipt`: the leg's `Message`, its commitment (the note its settlement inserts: an initiator's `CommitB`, a destination's `CommitA`; each leg's `Message` is the other leg's commitment) and its `CounterVault`.
+
 **Statement layout field names** (private mint circuit, prefix `PrivateMint`): `Commitment` (the minted note), `ContractAddress` (the deployment the proof is bound to), `TokenId`, `CipherText` (the note tag bound to that deployment).
