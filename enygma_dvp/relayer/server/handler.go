@@ -157,6 +157,7 @@ func (h *Handler) Info(c *gin.Context) {
 // ── endpoint handlers ─────────────────────────────────────────────────────────
 
 // RelayPayment handles POST /relay/payment.
+// The receipt is a Payment (1-input) or Payment2in (2-input) statement.
 // Validates the proof's Merkle root and nullifier, then calls dvp.payment().
 func (h *Handler) RelayPayment(c *gin.Context) {
 	var req RelayPaymentRequest
@@ -165,7 +166,7 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	parsed, err := parseReceipt(&req.Receipt)
+	parsed, err := parseReceipt(&req.Receipt, paymentLayout, payment2inLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
 		return
@@ -219,17 +220,17 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 //
 // Same-token relayer fee (PaymentRelayerFeePublic circuit): Alice pays Bob
 // (output 0), keeps change (output 1), and leaves a spendable fee note for
-// the relayer (output 2) whose amount is the public StFee signal
-// (statement[8]), enforced on-chain by EnygmaDvp.paymentWithRelayerFee()
-// against relayerFixedFeeAmount.
+// the relayer (output 2) whose amount is the public StFee signal, enforced
+// on-chain by EnygmaDvp.paymentWithRelayerFee() against relayerFixedFeeAmount.
 //
 // Validation steps:
 //  1. Confirm relayer-fee relaying is configured (RELAYER_FEE_SPEND_PRIVATE_KEY).
-//  2. Parse and validate the receipt exactly like RelayPayment (root/nullifier).
-//  3. Enforce the configured minimum fee (RELAYER_MIN_FEE) against statement[8].
-//  4. Confirm the fee note is actually addressed to this relayer: recompute
-//     Poseidon(feeSpendPubKey, feeSalt, StFee, tokenId) and compare against
-//     statement[6] (the fee note's commitment, output 2).
+//  2. Parse the receipt as a PaymentRelayerFee statement and validate it
+//     exactly like RelayPayment (root/nullifier).
+//  3. Enforce the configured minimum fee (RELAYER_MIN_FEE) against StFee.
+//  4. Confirm the fee note (output 2) is actually addressed to this relayer:
+//     Poseidon(feeSpendPubKey, feeSalt, StFee, tokenId). checkFeeNote does
+//     both.
 //  5. Keep the fee note's opening (feeNoteStore): the salt reaches the relayer
 //     only through this request, and without it the note cannot be spent.
 //  6. Sign and submit to EnygmaDvp.paymentWithRelayerFee().
@@ -247,23 +248,9 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	parsed, err := parseReceipt(&req.Receipt)
+	parsed, err := parseReceipt(&req.Receipt, paymentRelayerFeeLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
-		return
-	}
-	if parsed.nIn != 1 || parsed.nOut != 3 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/3-output PaymentRelayerFeePublic receipt"})
-		return
-	}
-	// parseReceipt's generic minExpected (1+3*nIn+nOut = 7 for nIn=1/nOut=3)
-	// doesn't account for this circuit's extra StContractAddress/StFee
-	// signals (9 elements total: [msg, treeNum0, root0, nf0, cmtBob,
-	// cmtChange, cmtRelayer, contractAddr, fee]) — check explicitly before
-	// indexing signal[6]/[8] below, or a short-but->=7 signal panics instead
-	// of returning a clean 400.
-	if len(parsed.signal) < 9 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal too short for PaymentRelayerFeePublic: got %d, need 9", len(parsed.signal))})
 		return
 	}
 	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
@@ -302,27 +289,10 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	// Statement: [msg, treeNum0, root0, nf0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee]
-	fee := parsed.signal[8]
-	cmtRelayer := parsed.signal[6]
-
-	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
-		})
-		return
-	}
-	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, feeSalt, fee, tokenId})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
-		return
-	}
-	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": "fee note is not addressed to this relayer's published spend key " +
-				"(GET /relay/info) — statement[6] does not match " +
-				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
-		})
+	fee := parsed.get(paymentRelayerFeeLayout.fee)
+	cmtRelayer := parsed.get(relayerFeeNote)
+	if status, err := h.checkFeeNote(cmtRelayer, fee, feeSalt, tokenId); err != nil {
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -364,12 +334,12 @@ const withdrawMessage = 1
 // note, settled with Erc20CoinVault.partialWithdrawWithRelayerFee.
 //
 //  1. Confirm relayer-fee relaying is configured.
-//  2. Parse the receipt; require the 1-in/3-out, 9-element shape and the
+//  2. Parse the receipt as a PaymentRelayerFee statement; require the
 //     withdrawal StMessage.
 //  3. Check output[0] opens to Poseidon4(uint160(Recipient), 0, Amount,
 //     TokenId), so the request says what the proof pays out.
-//  4. Enforce RELAYER_MIN_FEE against the public StFee (statement[8]) and
-//     confirm the fee note (statement[6]) is addressed to this relayer.
+//  4. checkFeeNote: enforce RELAYER_MIN_FEE against the public StFee and
+//     confirm the fee note (output 2) is addressed to this relayer.
 //  5. Check the root and nullifier, claim the nullifier, keep the fee note's
 //     opening, then simulate and submit.
 func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
@@ -386,19 +356,15 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		return
 	}
 
-	parsed, err := parseReceipt(&req.Receipt)
+	parsed, err := parseReceipt(&req.Receipt, paymentRelayerFeeLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
 		return
 	}
-	if parsed.nIn != 1 || parsed.nOut != 3 || len(parsed.signal) != 9 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/3-output PaymentRelayerFeePublic receipt with a 9-element publicSignal"})
-		return
-	}
 	// A withdrawal proof carries StMessage withdrawMessage (the vault's
 	// WITHDRAW_MESSAGE); a payment proof (0) would be refused on-chain.
-	if parsed.signal[0].Cmp(big.NewInt(withdrawMessage)) != 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal[0] (StMessage) is %s; a withdrawal proof must carry %d", parsed.signal[0], withdrawMessage)})
+	if msg := parsed.get(paymentRelayerFeeLayout.message); msg.Cmp(big.NewInt(withdrawMessage)) != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("StMessage is %s; a withdrawal proof must carry %d", msg, withdrawMessage)})
 		return
 	}
 	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
@@ -437,39 +403,23 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		return
 	}
 
-	// Statement: [msg, treeNum0, root0, nf0, cmtWithdraw, cmtChange, cmtRelayer, contractAddr, fee]
 	withdrawCmt, err := poseidon.Hash([]*big.Int{new(big.Int).SetBytes(recipient.Bytes()), big.NewInt(0), amount, tokenId})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute withdrawal commitment: %s", err)})
 		return
 	}
-	if withdrawCmt.Cmp(parsed.signal[4]) != 0 {
+	if withdrawCmt.Cmp(parsed.get(withdrawalNote)) != 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "statement[4] does not match Poseidon(uint160(recipient), 0, amount, tokenId) — " +
+			"error": "output 0 does not match Poseidon(uint160(recipient), 0, amount, tokenId) — " +
 				"the proof does not withdraw this amount to this recipient",
 		})
 		return
 	}
 
-	fee := parsed.signal[8]
-	cmtRelayer := parsed.signal[6]
-	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
-		})
-		return
-	}
-	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, feeSalt, fee, tokenId})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
-		return
-	}
-	if expectedFeeCmt.Cmp(cmtRelayer) != 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": "fee note is not addressed to this relayer's published spend key " +
-				"(GET /relay/info) — statement[6] does not match " +
-				"Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)",
-		})
+	fee := parsed.get(paymentRelayerFeeLayout.fee)
+	cmtRelayer := parsed.get(relayerFeeNote)
+	if status, err := h.checkFeeNote(cmtRelayer, fee, feeSalt, tokenId); err != nil {
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -521,12 +471,14 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 // Validation steps mirror RelayPaymentRelayerFee, applied to the USDr leg,
 // plus validating and settling the main leg in the same call:
 //  1. Confirm relayer-fee relaying is configured.
-//  2. Parse and validate BOTH receipts (root/nullifier, each against its own vault).
-//  3. Enforce RELAYER_MIN_FEE against the USDr leg's public StFee (statement[7]).
-//  4. Confirm the USDr fee note is addressed to this relayer: recompute
-//     Poseidon(feeSpendPubKey, feeSalt, StFee, StTokenId) — StFee and
-//     StTokenId read straight from the USDr leg's own public signal, both
-//     public there — and compare against statement[4] (output 0).
+//  2. Parse the main receipt as a Payment or Payment2in statement and the USDr
+//     receipt as a UsdrFee statement, and validate both (root/nullifier, each
+//     against its own vault).
+//  3. Enforce RELAYER_MIN_FEE against the USDr leg's public StFee.
+//  4. Confirm the USDr fee note (output 0) is addressed to this relayer:
+//     Poseidon(feeSpendPubKey, feeSalt, StFee, StTokenId), with StFee and
+//     StTokenId read straight from the USDr leg's own statement, both public
+//     there. checkFeeNote does both.
 //  5. Sign and submit both receipts to EnygmaDvp.paymentWithUsdrFee().
 func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	if h.feeSpendPubKey == nil {
@@ -542,40 +494,14 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	parsed, err := parseReceipt(&req.Receipt)
+	parsed, err := parseReceipt(&req.Receipt, paymentLayout, payment2inLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt: %s", err)})
 		return
 	}
-	// Every plain-payment circuit in this family (Payment, Payment2in) has
-	// exactly 2 outputs (recipient + change); nIn (1 or 2) is left
-	// unconstrained here since either is a valid main leg. Unlike
-	// RelayPaymentRelayerFee's/UsdrFee's shape check below, this isn't
-	// guarding an out-of-range signal index (the plain-payment wire shape
-	// has no extra elements beyond parseReceipt's generic length check) —
-	// it's defense-in-depth against a receipt built for a differently-shaped
-	// circuit being submitted as this route's main leg.
-	if parsed.nOut != 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 2-output payment receipt for the main leg"})
-		return
-	}
-	usdrParsed, err := parseReceipt(&req.UsdrReceipt)
+	usdrParsed, err := parseReceipt(&req.UsdrReceipt, usdrFeeLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse usdrReceipt: %s", err)})
-		return
-	}
-	if usdrParsed.nIn != 1 || usdrParsed.nOut != 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "expected a 1-input/2-output UsdrFee receipt"})
-		return
-	}
-	// parseReceipt's generic minExpected (1+3*nIn+nOut = 6 for nIn=1/nOut=2)
-	// doesn't account for UsdrFee's extra StContractAddress/StFee/StTokenId
-	// signals (9 elements total: [msg, treeNum0, root0, nf0, cmtFee,
-	// cmtChange, contractAddr, fee, tokenId]) — check explicitly before
-	// indexing signal[4]/[7]/[8] below, or a short-but->=6 signal panics
-	// instead of returning a clean 400.
-	if len(usdrParsed.signal) < 9 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("publicSignal too short for UsdrFee: got %d, need 9", len(usdrParsed.signal))})
 		return
 	}
 	vaultId, ok := new(big.Int).SetString(req.VaultId, 10)
@@ -633,28 +559,11 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// USDr statement: [msg, treeNum0, root0, nf0, cmtFee, cmtChange, contractAddr, fee, tokenId]
-	fee := usdrParsed.signal[7]
-	tokenId := usdrParsed.signal[8]
-	cmtFee := usdrParsed.signal[4]
-
-	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": fmt.Sprintf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee),
-		})
-		return
-	}
-	expectedFeeCmt, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, usdrFeeSalt, fee, tokenId})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compute expected fee commitment: %s", err)})
-		return
-	}
-	if expectedFeeCmt.Cmp(cmtFee) != 0 {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error": "USDr fee note is not addressed to this relayer's published spend key " +
-				"(GET /relay/info) — usdrReceipt.publicSignal[4] does not match " +
-				"Poseidon(relayerFeeSpendPubKey, usdrFeeSalt, StFee, StTokenId)",
-		})
+	fee := usdrParsed.get(usdrFeeLayout.fee)
+	tokenId := usdrParsed.get(usdrFeeLayout.tokenId)
+	cmtFee := usdrParsed.get(usdrFeeNote)
+	if status, err := h.checkFeeNote(cmtFee, fee, usdrFeeSalt, tokenId); err != nil {
+		c.JSON(status, gin.H{"error": "USDr leg: " + err.Error()})
 		return
 	}
 
@@ -688,7 +597,8 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 }
 
 // RelaySwap handles POST /relay/swap.
-// Validates both receipts, then calls dvp.swap().
+// The payment receipt is a DvpInitiator statement and the delivery receipt a
+// DvpDestination one. Validates both receipts, then calls dvp.swap().
 func (h *Handler) RelaySwap(c *gin.Context) {
 	var req RelaySwapRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -696,12 +606,12 @@ func (h *Handler) RelaySwap(c *gin.Context) {
 		return
 	}
 
-	payParsed, err := parseReceipt(&req.PaymentReceipt)
+	payParsed, err := parseReceipt(&req.PaymentReceipt, dvpInitiatorLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse paymentReceipt: %s", err)})
 		return
 	}
-	delParsed, err := parseReceipt(&req.DeliveryReceipt)
+	delParsed, err := parseReceipt(&req.DeliveryReceipt, dvpDestinationLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse deliveryReceipt: %s", err)})
 		return
@@ -757,7 +667,8 @@ func (h *Handler) RelaySwap(c *gin.Context) {
 }
 
 // RelayExchange handles POST /relay/exchange.
-// Validates both receipts, then calls dvp.exchange().
+// Both receipts are DvpInitiator statements. Validates both receipts, then
+// calls dvp.exchange().
 func (h *Handler) RelayExchange(c *gin.Context) {
 	var req RelayExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -765,12 +676,12 @@ func (h *Handler) RelayExchange(c *gin.Context) {
 		return
 	}
 
-	parsed1, err := parseReceipt(&req.Receipt1)
+	parsed1, err := parseReceipt(&req.Receipt1, dvpInitiatorLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt1: %s", err)})
 		return
 	}
-	parsed2, err := parseReceipt(&req.Receipt2)
+	parsed2, err := parseReceipt(&req.Receipt2, dvpInitiatorLayout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse receipt2: %s", err)})
 		return
@@ -827,6 +738,25 @@ func (h *Handler) RelayExchange(c *gin.Context) {
 
 // ── validation ────────────────────────────────────────────────────────────────
 
+// checkFeeNote is the claim check every fee route makes on the note it is paid
+// with: the fee must meet RELAYER_MIN_FEE, and the note must be
+// Poseidon(feeSpendPubKey, salt, fee, tokenId), i.e. addressed to this
+// relayer's published spend key. A refusal comes with its HTTP status.
+func (h *Handler) checkFeeNote(feeNote, fee, salt, tokenId *big.Int) (int, error) {
+	if h.cfg.MinFee.Sign() > 0 && fee.Cmp(h.cfg.MinFee) < 0 {
+		return http.StatusPaymentRequired, fmt.Errorf("fee %s is below the relayer's minimum %s", fee, h.cfg.MinFee)
+	}
+	expected, err := poseidon.Hash([]*big.Int{h.feeSpendPubKey, salt, fee, tokenId})
+	if err != nil {
+		return http.StatusInternalServerError, fmt.Errorf("compute expected fee commitment: %s", err)
+	}
+	if expected.Cmp(feeNote) != 0 {
+		return http.StatusPaymentRequired, errors.New("fee note is not addressed to this relayer's published spend key " +
+			"(GET /relay/info): it does not match Poseidon(relayerFeeSpendPubKey, feeSalt, StFee, tokenId)")
+	}
+	return 0, nil
+}
+
 // resolveVault calls dvp.vaultById(vaultId) to get the vault contract address.
 func (h *Handler) resolveVault(vaultId *big.Int) (common.Address, error) {
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
@@ -845,23 +775,13 @@ func (h *Handler) resolveVault(vaultId *big.Int) (common.Address, error) {
 }
 
 // validateReceipt checks each input's Merkle root and nullifier against the vault.
-//
-// Non-interleaved statement layout:
-//
-//	[msg, treeNum[0..nIn-1], root[0..nIn-1], nullifier[0..nIn-1], cmt[0..nOut-1]]
 func (h *Handler) validateReceipt(vaultAddr common.Address, p *parsedReceipt) error {
 	vault := bind.NewBoundContract(vaultAddr, h.vaultABI, h.client, h.client, h.client)
-	nIn := p.nIn
-	sig := p.signal
+	treeNumbers := p.layout.treeNumbers.in(p.signal)
+	roots := p.layout.merkleRoots.in(p.signal)
 
-	if len(sig) < 1+3*nIn {
-		return fmt.Errorf("publicSignal too short for %d inputs: got %d elements", nIn, len(sig))
-	}
-
-	for i := 0; i < nIn; i++ {
-		treeNum := sig[1+i]
-		root := sig[1+nIn+i]
-		nullifier := sig[1+2*nIn+i]
+	for i, nullifier := range p.layout.nullifiers.in(p.signal) {
+		treeNum, root := treeNumbers[i], roots[i]
 
 		var rootResult []interface{}
 		if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
@@ -889,11 +809,18 @@ func (h *Handler) validateReceipt(vaultAddr common.Address, p *parsedReceipt) er
 type parsedReceipt struct {
 	proof  [8]*big.Int
 	signal []*big.Int
-	nIn    int
-	nOut   int
+	layout statementLayout
 }
 
-func parseReceipt(r *ReceiptPayload) (*parsedReceipt, error) {
+// parseReceipt parses r as a statement with whichever accepted layout its
+// numberOfInputs/numberOfOutputs name. A publicSignal that is not that
+// layout's statement length is refused before anything else is parsed.
+func parseReceipt(r *ReceiptPayload, accepted ...statementLayout) (*parsedReceipt, error) {
+	c, err := layoutFor(r.NumberOfInputs, r.NumberOfOutputs, len(r.PublicSignal), accepted...)
+	if err != nil {
+		return nil, err
+	}
+
 	var proof [8]*big.Int
 	for i, s := range r.Proof {
 		n, ok := new(big.Int).SetString(s, 10)
@@ -912,32 +839,11 @@ func parseReceipt(r *ReceiptPayload) (*parsedReceipt, error) {
 		sig[i] = n
 	}
 
-	if r.NumberOfInputs <= 0 {
-		return nil, fmt.Errorf("numberOfInputs must be > 0")
-	}
-	if r.NumberOfOutputs <= 0 {
-		return nil, fmt.Errorf("numberOfOutputs must be > 0")
-	}
-	// Cap inputs/outputs to prevent RPC amplification: validateReceipt makes
-	// 2 RPC calls per input, so an unbounded nIn allows DoS via huge signals.
-	if r.NumberOfInputs > 10 || r.NumberOfOutputs > 10 {
-		return nil, fmt.Errorf("numberOfInputs/Outputs exceeds maximum of 10")
-	}
-	// DVP proofs carry extra elements (commitA, revertCommitA, counterVault) beyond
-	// the standard 1+3*nIn+nOut layout — use >= so we don't reject them.
-	minExpected := 1 + 3*r.NumberOfInputs + r.NumberOfOutputs
-	if len(sig) < minExpected {
-		return nil, fmt.Errorf("publicSignal too short: got %d, need at least %d (1+3*%d+%d)",
-			len(sig), minExpected, r.NumberOfInputs, r.NumberOfOutputs)
-	}
-
-	return &parsedReceipt{
-		proof:  proof,
-		signal: sig,
-		nIn:    r.NumberOfInputs,
-		nOut:   r.NumberOfOutputs,
-	}, nil
+	return &parsedReceipt{proof: proof, signal: sig, layout: c}, nil
 }
+
+// get returns the receipt's single-signal field f.
+func (p *parsedReceipt) get(f field) *big.Int { return f.one(p.signal) }
 
 func buildProofReceipt(p *parsedReceipt) proofReceipt {
 	sp := snarkProof{
@@ -951,8 +857,8 @@ func buildProofReceipt(p *parsedReceipt) proofReceipt {
 	return proofReceipt{
 		Proof:           sp,
 		Statement:       p.signal,
-		NumberOfInputs:  big.NewInt(int64(p.nIn)),
-		NumberOfOutputs: big.NewInt(int64(p.nOut)),
+		NumberOfInputs:  big.NewInt(int64(p.layout.nIn)),
+		NumberOfOutputs: big.NewInt(int64(p.layout.nOut)),
 	}
 }
 
@@ -981,12 +887,12 @@ func (h *Handler) claimNullifiers(claims ...nullifierClaim) ([]string, error) {
 	var claimed []string
 	for _, c := range claims {
 		r := c.receipt
-		for i := 0; i < r.nIn; i++ {
-			nullifier := r.signal[1+2*r.nIn+i]
+		treeNumbers := r.layout.treeNumbers.in(r.signal)
+		for i, nullifier := range r.layout.nullifiers.in(r.signal) {
 			if nullifier.Sign() == 0 {
 				continue
 			}
-			treeNum := r.signal[1+i]
+			treeNum := treeNumbers[i]
 			key := c.vault.Hex() + ":" + treeNum.String() + ":" + nullifier.String()
 			if _, loaded := h.inFlight.LoadOrStore(key, struct{}{}); loaded {
 				h.releaseNullifiers(claimed)

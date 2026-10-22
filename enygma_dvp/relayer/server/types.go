@@ -4,7 +4,8 @@ package server
 
 // ReceiptPayload carries a single Groth16 proof and its public signal.
 // NumberOfInputs and NumberOfOutputs are required by the ProofReceipt struct
-// on-chain and also drive pre-flight nullifier/root validation.
+// on-chain; they also pick which of the route's circuits the receipt is, and
+// PublicSignal must then be exactly that circuit's statement.
 type ReceiptPayload struct {
 	Proof           [8]string `json:"proof"           binding:"required"`
 	PublicSignal    []string  `json:"publicSignal"    binding:"required"`
@@ -15,9 +16,8 @@ type ReceiptPayload struct {
 // ── payment ──────────────────────────────────────────────────────────────────
 
 // RelayPaymentRequest is the body for POST /relay/payment.
-// PublicSignal layout (non-interleaved, 1-in/2-out):
-//
-//	[msg, treeNum0, root0, nullifier0, commitment_bob, commitment_change]
+// Receipt is a Payment (1-in/2-out) or Payment2in (2-in/2-out) statement, in
+// the order enygma_dvp/layout declares.
 type RelayPaymentRequest struct {
 	VaultId    string         `json:"vaultId"    binding:"required"`
 	Receipt    ReceiptPayload `json:"receipt"    binding:"required"`
@@ -28,13 +28,12 @@ type RelayPaymentRequest struct {
 // ── relayer fee (same token — PaymentRelayerFeePublic circuit) ────────────────
 
 // RelayPaymentRelayerFeeRequest is the body for POST /relay/payment_relayer_fee.
-// PublicSignal layout (non-interleaved, 1-in/3-out, 9 elements):
-//
-//	[msg, treeNum0, root0, nullifier0, cmtBob, cmtChange, cmtRelayer, contractAddress, fee]
+// Receipt is a PaymentRelayerFee (1-in/3-out) statement; its outputs are
+// Bob's note, the change and the relayer's fee note.
 //
 // FeeSalt/TokenId are supplied so the relayer can independently recompute the
 // fee note's commitment (Erc20CommitmentV2(feeSpendPubKey, feeSalt, fee,
-// tokenId)) and confirm it matches publicSignal[6] — i.e. that the note is
+// tokenId)) and confirm it matches output 2 — i.e. that the note is
 // actually addressed to this relayer's own key — before ever submitting
 // on-chain. TokenId is a private witness in this circuit (unlike UsdrFee's),
 // so it must be supplied here rather than read from the public signal.
@@ -50,9 +49,8 @@ type RelayPaymentRelayerFeeRequest struct {
 // ── partial withdraw (PaymentRelayerFeePublic circuit) ────────────────────────
 
 // RelayPartialWithdrawRequest is the body for POST /relay/partial_withdraw.
-// PublicSignal layout (1-in/3-out, 9 elements):
-//
-//	[msg, treeNum0, root0, nullifier0, cmtWithdraw, cmtChange, cmtRelayer, contractAddress, fee]
+// Receipt is a PaymentRelayerFee (1-in/3-out) statement; its outputs are
+// cmtWithdraw, cmtChange and cmtRelayer.
 //
 // cmtWithdraw must be Poseidon4(uint160(Recipient), 0, Amount, TokenId): the
 // part paid out to Recipient. cmtChange is the owner's change note, and
@@ -78,9 +76,9 @@ type RelayPartialWithdrawRequest struct {
 // UsdrFeeCircuit proof — a second, independent relayer-fee asset with its own
 // token/vault/circuit — against UsdrVaultId.
 //
-// UsdrReceipt's PublicSignal layout (non-interleaved, 1-in/2-out, 9 elements):
-//
-//	[msg, treeNum0, root0, nullifier0, cmtFee, cmtChange, contractAddress, fee, tokenId]
+// Receipt is a Payment or Payment2in statement; UsdrReceipt is a UsdrFee
+// (1-in/2-out) statement whose outputs are the relayer's fee note and the
+// sender's change.
 //
 // UsdrFeeSalt is supplied so the relayer can recompute the USDr fee note's
 // commitment; fee and tokenId are read straight from UsdrReceipt's own public
@@ -101,7 +99,8 @@ type RelayPaymentUsdrFeeRequest struct {
 // ── swap ─────────────────────────────────────────────────────────────────────
 
 // RelaySwapRequest is the body for POST /relay/swap.
-// Calls EnygmaDvp.swap(paymentReceipt, deliveryReceipt, paymentVaultId, deliveryVaultId).
+// PaymentReceipt is a DvpInitiator statement, DeliveryReceipt a DvpDestination
+// one. Calls EnygmaDvp.swap(paymentReceipt, deliveryReceipt, paymentVaultId, deliveryVaultId).
 type RelaySwapRequest struct {
 	PaymentReceipt  ReceiptPayload `json:"paymentReceipt"  binding:"required"`
 	DeliveryReceipt ReceiptPayload `json:"deliveryReceipt" binding:"required"`
@@ -112,6 +111,7 @@ type RelaySwapRequest struct {
 // ── exchange ─────────────────────────────────────────────────────────────────
 
 // RelayExchangeRequest is the body for POST /relay/exchange.
+// Both receipts are DvpInitiator statements.
 // Calls EnygmaDvp.exchange(receipt1, receipt2, vaultId1, vaultId2).
 type RelayExchangeRequest struct {
 	Receipt1 ReceiptPayload `json:"receipt1" binding:"required"`
