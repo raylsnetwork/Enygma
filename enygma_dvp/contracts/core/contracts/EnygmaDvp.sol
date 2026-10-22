@@ -10,7 +10,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset} from "../interfaces/IEnygmaDvp.sol";
+import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
@@ -1107,9 +1108,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         // NEW-3 fix: ERC20 JoinSplit circuit does not constrain StMessage in-circuit.
         // Enforce here that retail payment proofs carry message == 0, preventing a
-        // prover from embedding arbitrary data in statement[0] which could confuse
+        // prover from embedding arbitrary data in the message which could confuse
         // future protocol features that interpret that slot.
-        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
@@ -1124,12 +1125,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // Insert all output commitments into the Merkle tree.
         vault.insertCommitmentsFromReceipt(receipt);
 
-        // Statement layout (non-interleaved / ContractStatement):
-        //   [msg, treeNums[nIn], roots[nIn], nullifiers[nIn], cmts[nOut]]
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
-
         // Emit a Payment event for Bob's output (index 0) so he can scan and claim his note.
-        uint256 commitmentOut = receipt.statement[commitmentsIndex];
+        uint256 commitmentOut = receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1142,16 +1139,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // the protocolFee passed by the caller, preventing a prover from substituting
     // a different fee amount.
     //
-    // Statement layout (1-in/2-out fee circuit, 8 elements):
-    //   [0] StMessage          = 0
-    //   [1] StTreeNumbers[0]   = tree index
-    //   [2] StMerkleRoots[0]   = Merkle root
-    //   [3] StNullifiers[0]    = nullifier
-    //   [4] StCommitmentsOut[0] = Bob's commitment
-    //   [5] StCommitmentsOut[1] = Alice's change commitment
-    //   [6] StContractAddress   = vault address (carried for wire-format compatibility;
-    //                             not bound into the nullifier — nf = Poseidon(sk, leafIndex))
-    //   [7] StFee               = protocol fee
+    // The receipt is a PaymentFee proof (1 input, 2 outputs) or, with 3
+    // outputs, a PaymentRelayerFee one; any other shape is refused, since
+    // neither has a fee to check.
     function paymentWithFee(
         ProofReceipt memory receipt,
         uint256 vaultId,
@@ -1161,11 +1151,17 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     ) public returns (bool) {
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
-        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
-        // feeIdx = 1 + 3*nIn + nOut + 1  (contractAddr is at nIn+nOut, fee follows it)
-        uint256 feeIdx = 1 + 3 * receipt.numberOfInputs + receipt.numberOfOutputs + 1;
-        require(receipt.statement[feeIdx] == protocolFee, "EnygmaDvp: fee mismatch");
+        uint256 feeOffset;
+        if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
+            feeOffset = Psl.PAYMENT_FEE_FEE_OFFSET;
+        } else if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 3) {
+            feeOffset = Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET;
+        } else {
+            revert InvalidNumberOfOutputs();
+        }
+        require(receipt.statement[feeOffset] == protocolFee, "EnygmaDvp: fee mismatch");
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
@@ -1175,8 +1171,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
-        uint256 commitmentOut = receipt.statement[commitmentsIndex];
+        uint256 commitmentOut = receipt.statement[Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1186,24 +1181,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // Alice pays Bob (output 0), receives change (output 1), and the relayer earns
     // a spendable note (output 2). The ZK circuit enforces:
     //   Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]   (no value burned)
-    // Only output[1] is constrained to Alice's senderPk in-circuit.
-    //
-    // Statement layout (1-in/3-out, 9 elements — corrected from an earlier,
-    // stale 8-element comment; the PaymentRelayerFeePublic circuit's VK/wire
-    // format has always carried StFee as its 9th public signal):
-    //   [0] StMessage          = 0
-    //   [1] StTreeNumbers[0]
-    //   [2] StMerkleRoots[0]
-    //   [3] StNullifiers[0]
-    //   [4] StCommitmentsOut[0] = Bob's commitment
-    //   [5] StCommitmentsOut[1] = Alice's change commitment
-    //   [6] StCommitmentsOut[2] = Relayer fee commitment
-    //   [7] StContractAddress   = vault address (carried for wire-format compatibility;
-    //                             not bound into the nullifier — nf = Poseidon(sk, leafIndex))
-    //   [8] StFee               = relayer fee amount — bound in-circuit to valOut[2],
-    //                             and checked here against relayerFixedFeeAmount so the
-    //                             contract (not just the circuit's internal consistency)
-    //                             enforces the exact fee amount.
+    // Only output[1] is constrained to Alice's senderPk in-circuit. The
+    // circuit binds the fee to valOut[2]; it is checked here against
+    // relayerFixedFeeAmount so the contract (not just the circuit's internal
+    // consistency) enforces the exact fee amount.
     //
     // ctxt / encTxData are Bob's note discovery data (ML-KEM capsule / AEAD ciphertext).
     function paymentWithRelayerFee(
@@ -1214,15 +1195,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     ) public returns (bool) {
         if (receipt.numberOfOutputs != 3) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
-        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+        if (receipt.statement[Psl.PAYMENT_RELAYER_FEE_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
-        // feeIdx = 1 + 3*nIn + nOut + 1 (contractAddr is at nIn+nOut, fee follows it) —
-        // same formula paymentWithFee() uses above; evaluates to 8 for this circuit's
-        // 1-in/3-out shape. Without this check any StFee the prover claims in the proof
-        // would pass verification — the circuit only proves valOut[2] == StFee, not that
+        // Without this check any fee the prover claims in the proof would pass
+        // verification — the circuit only proves valOut[2] == StFee, not that
         // StFee matches any protocol-configured value.
-        uint256 feeIdx = 1 + 3 * receipt.numberOfInputs + receipt.numberOfOutputs + 1;
-        if (receipt.statement[feeIdx] != relayerFixedFeeAmount) revert InvalidRelayerFee();
+        if (receipt.statement[Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET] != relayerFixedFeeAmount) revert InvalidRelayerFee();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
@@ -1230,8 +1208,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
-        uint256 commitmentBob = receipt.statement[commitmentsIndex];
+        uint256 commitmentBob = receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)];
         emit Payment(vaultId, commitmentBob, ctxt, encTxData);
 
         return true;
@@ -1251,17 +1228,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // against its own vault's own tree; nothing here lets one proof be
     // replayed via the other.
     //
-    // usdrReceipt statement layout (1-in/2-out UsdrFee circuit, 9 elements):
-    //   [0] StMessage = 0
-    //   [1] StTreeNumbers[0]
-    //   [2] StMerkleRoots[0]
-    //   [3] StNullifiers[0]
-    //   [4] StCommitmentsOut[0] = relayer's fee commitment
-    //   [5] StCommitmentsOut[1] = sender's change commitment
-    //   [6] StContractAddress   = usdr vault address
-    //   [7] StFee               = relayer fee amount — checked against usdrFixedFeeAmount
-    //   [8] StTokenId           = checked against usdrTokenId (config hygiene, see that
-    //                             state var's doc comment — not security-critical)
+    // usdrReceipt is a UsdrFee proof: output[0] is the relayer's fee note,
+    // output[1] the sender's change. Its fee is checked against
+    // usdrFixedFeeAmount and its token id against usdrTokenId (config
+    // hygiene, see that state var's doc comment — not security-critical).
     // usdrVaultId must equal usdrFeeVaultId (set by setUsdrFeeVaultId).
     //
     // ctxt/encTxData are the main payment's Bob note-discovery data;
@@ -1285,31 +1255,29 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // ── main leg — identical checks/settlement to payment() ──
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
-        if (receipt.statement[0] != 0) revert InvalidPaymentMessage();
+        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
         vault.checkReceiptConditions(receipt);
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
-        emit Payment(vaultId, receipt.statement[commitmentsIndex], ctxt, encTxData);
+        emit Payment(vaultId, receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)], ctxt, encTxData);
 
         // ── USDr leg — checked against relayerFixedFeeAmount's USDr counterpart ──
         if (usdrReceipt.numberOfOutputs != 2) revert InvalidNumberOfOutputs();
         if (_coinVaults[usdrVaultId] == address(0)) revert InvalidVaultId();
-        if (usdrReceipt.statement[0] != 0) revert InvalidPaymentMessage();
+        if (usdrReceipt.statement[Psl.USDR_FEE_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
-        if (usdrReceipt.statement[7] != usdrFixedFeeAmount) revert InvalidUsdrFee();
-        if (usdrReceipt.statement[8] != usdrTokenId) revert InvalidUsdrFee();
+        if (usdrReceipt.statement[Psl.USDR_FEE_FEE_OFFSET] != usdrFixedFeeAmount) revert InvalidUsdrFee();
+        if (usdrReceipt.statement[Psl.USDR_FEE_TOKEN_ID_OFFSET] != usdrTokenId) revert InvalidUsdrFee();
 
         IAbstractCoinVault usdrVault = IAbstractCoinVault(_coinVaults[usdrVaultId]);
         usdrVault.checkReceiptConditions(usdrReceipt);
         usdrVault.nullifyFromReceipt(usdrReceipt);
         usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
 
-        uint256 usdrCommitmentsIndex = 1 + 3 * usdrReceipt.numberOfInputs;
-        emit Payment(usdrVaultId, usdrReceipt.statement[usdrCommitmentsIndex], usdrCtxt, usdrEncTxData);
+        emit Payment(usdrVaultId, usdrReceipt.statement[paymentCommitmentsOutOffset(usdrReceipt.numberOfInputs)], usdrCtxt, usdrEncTxData);
 
         return true;
     }

@@ -8,7 +8,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset} from "../../interfaces/IEnygmaDvp.sol";
+import {
+    PaymentStatementLayout as Psl,
+    PAYMENT_LEN,
+    PAYMENT2IN_LEN,
+    PAYMENT_FEE_LEN,
+    PAYMENT_RELAYER_FEE_LEN,
+    USDR_FEE_LEN
+} from "../PaymentStatementLayout.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
@@ -34,16 +42,16 @@ contract Erc20CoinVault is AbstractCoinVault {
     // therefore different Groth16 VKs.  They MUST NOT share the same VK slot.
     uint256 public constant VK_ID_ERC20_JOINSPLIT_2INPUT = 1;
     // 1-input / 2-output fee payment circuit (VK slot 2).
-    // Same topology as JOINSPLIT but has an extra StFee public signal (8-element statement).
+    // Same topology as JOINSPLIT but has an extra public StFee.
     uint256 public constant VK_ID_ERC20_JOINSPLIT_FEE = 2;
     // 1-input / 3-output relayer fee payment circuit (VK slot 3).
     // Alice pays Bob (output 0), keeps change (output 1), relayer earns spendable note (output 2).
     uint256 public constant VK_ID_ERC20_JOINSPLIT_RELAYER = 3;
     // 1-input / 2-output USDr circuit (VK slot 4) — a second, independent
     // relayer-fee asset. Same topology as JOINSPLIT_FEE but StTokenId is a
-    // PUBLIC signal here (private everywhere else), giving it a 9-element
-    // statement — distinct from JOINSPLIT's 7 and JOINSPLIT_FEE's 8, so it
-    // gets its own dispatch case below rather than colliding with either.
+    // PUBLIC signal here (private everywhere else), giving it a statement
+    // length (USDR_FEE_LEN) distinct from JOINSPLIT's and JOINSPLIT_FEE's, so
+    // it gets its own dispatch case below rather than colliding with either.
     // Fee is paid (output[0], a real spendable note), not burned like FEE's.
     uint256 public constant VK_ID_ERC20_USDR = 4;
     // Former 10-input join-split slot. No longer accepted: its circuit was
@@ -160,7 +168,7 @@ contract Erc20CoinVault is AbstractCoinVault {
     function _requireStandaloneTransfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) internal pure {
-        if (receipt.statement[0] != 0) {
+        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) {
             revert IEnygmaDvp.InvalidPaymentMessage();
         }
         if (receipt.numberOfOutputs < 2) {
@@ -188,13 +196,6 @@ contract Erc20CoinVault is AbstractCoinVault {
     //
     // ciphertextI[i]  — ML-KEM capsule for output note i
     // ciphertextII[i] — AEAD ciphertext of tokenId||amount for output note i
-    //
-    // Statement layout (mirrors checkReceiptConditions):
-    //   [0]           message
-    //   [1..nIn]      treeNumbers
-    //   [1+nIn..nIn]  merkleRoots
-    //   [1+2nIn..]    nullifiers
-    //   [1+3nIn..]    commitments  ← EncryptedNote emitted for each
     function transferV2(
         IEnygmaDvp.ProofReceipt memory receipt,
         bytes[] calldata ciphertextI,
@@ -214,9 +215,9 @@ contract Erc20CoinVault is AbstractCoinVault {
         _insertCommitmentsFromReceipt(receipt);
 
         // Emit EncryptedNote for each output so recipients can scan
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
+        uint256 commitmentsOffset = paymentCommitmentsOutOffset(receipt.numberOfInputs);
         for (uint256 i = 0; i < receipt.numberOfOutputs; i++) {
-            uint256 commitment = receipt.statement[commitmentsIndex + i];
+            uint256 commitment = receipt.statement[commitmentsOffset + i];
             emit EncryptedNote(_vaultId, commitment, ciphertextI[i], ciphertextII[i]);
         }
 
@@ -290,10 +291,9 @@ contract Erc20CoinVault is AbstractCoinVault {
         return true;
     }
 
-    // Only the plain Payment circuits: 1-in or 2-in, 2 outputs, and
-    // [message, trees, roots, nullifiers, 2 commitments, contractAddress].
-    // The fee circuits (8 and 9 elements with one input) would burn or pay
-    // part of the input outside the two outputs.
+    // Only the plain Payment circuits: Payment (1 input) or Payment2in, 2
+    // outputs. The fee circuits would burn or pay part of the input outside
+    // the two outputs.
     function _requirePlainPaymentShape(
         IEnygmaDvp.ProofReceipt memory receipt
     ) internal pure {
@@ -303,7 +303,8 @@ contract Erc20CoinVault is AbstractCoinVault {
         if (receipt.numberOfOutputs != 2) {
             revert IEnygmaDvp.InvalidNumberOfOutputs();
         }
-        if (receipt.statement.length != 3 * receipt.numberOfInputs + 4) {
+        uint256 statementLen = receipt.numberOfInputs == 1 ? PAYMENT_LEN : PAYMENT2IN_LEN;
+        if (receipt.statement.length != statementLen) {
             revert InvalidStatmentSize();
         }
     }
@@ -313,11 +314,11 @@ contract Erc20CoinVault is AbstractCoinVault {
     // paying gas, e.g. withdraw 10 from a note of 100, pay the relayer 1 and
     // keep a note of 89.
     //
-    // The receipt is a PaymentRelayerFeePublic proof (1-in/3-out, VK slot 3,
-    // 9-element statement) bound to this vault:
+    // The receipt is a PaymentRelayerFeePublic proof (1-in/3-out, VK slot 3)
+    // bound to this vault:
     //   output[0] = Poseidon4(uint160(recipient), 0, amount, tokenId) — paid out
     //   output[1] = the change note; the circuit requires the sender's own key
-    //   output[2] = the relayer's fee note, value StFee (statement[8])
+    //   output[2] = the relayer's fee note, value StFee
     // and sum(in) == amount + change + StFee. The change and fee notes are
     // inserted. Anyone may submit the receipt: the recipient, the amount and
     // the fee note's owner are all fixed by the proof, so a different
@@ -340,8 +341,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         if (receipt.numberOfOutputs != 3) {
             revert IEnygmaDvp.InvalidNumberOfOutputs();
         }
-        // [message, tree, root, nullifier, 3 commitments, contractAddress, fee]
-        if (receipt.statement.length != 9) {
+        if (receipt.statement.length != PAYMENT_RELAYER_FEE_LEN) {
             revert InvalidStatmentSize();
         }
         _settlePartialWithdraw(withdrawParams, recipient, receipt, ciphertextI, ciphertextII);
@@ -365,16 +365,16 @@ contract Erc20CoinVault is AbstractCoinVault {
             revert ZeroWithdrawAmount();
         }
         // A withdrawal proof, not a payment one (see WITHDRAW_MESSAGE).
-        if (receipt.statement[0] != WITHDRAW_MESSAGE) {
+        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != WITHDRAW_MESSAGE) {
             revert IEnygmaDvp.InvalidPaymentMessage();
         }
 
-        uint256 commitmentsIndex = 1 + 3 * receipt.numberOfInputs;
+        uint256 commitmentsOffset = paymentCommitmentsOutOffset(receipt.numberOfInputs);
 
         uint256 withdrawCommitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
             [uint256(uint160(recipient)), 0, amount, tokenId]
         );
-        if (receipt.statement[commitmentsIndex] != withdrawCommitment) {
+        if (receipt.statement[commitmentsOffset] != withdrawCommitment) {
             revert InvalidOpening();
         }
 
@@ -388,14 +388,14 @@ contract Erc20CoinVault is AbstractCoinVault {
 
         uint256[] memory commitments = new uint256[](receipt.numberOfOutputs - 1);
         for (uint256 i = 0; i < commitments.length; i++) {
-            commitments[i] = receipt.statement[commitmentsIndex + 1 + i];
+            commitments[i] = receipt.statement[commitmentsOffset + 1 + i];
             emit Commitment(_vaultId, commitments[i]);
         }
         insertLeaves(commitments);
 
         // Read from the statement, not commitments[0]: insertLeaves uses its
         // argument as scratch space for the tree's inner hashes.
-        uint256 changeCommitment = receipt.statement[commitmentsIndex + 1];
+        uint256 changeCommitment = receipt.statement[commitmentsOffset + 1];
         if (ciphertextI.length != 0) {
             emit EncryptedNote(_vaultId, changeCommitment, ciphertextI, ciphertextII);
         }
@@ -529,10 +529,9 @@ contract Erc20CoinVault is AbstractCoinVault {
             revert InvalidNumberOfInputs();
         }
         if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
-            // Fee payment circuit has 8 public signals (adds StFee at index 7).
-            // USDr circuit has 9 (adds StFee AND a public StTokenId at index 8).
-            // Regular payment circuit has 7 public signals — dispatch by statement length.
-            if (receipt.statement.length == 8) {
+            // PaymentFee, UsdrFee and Payment share this shape; dispatch by
+            // statement length.
+            if (receipt.statement.length == PAYMENT_FEE_LEN) {
                 // PaymentFeeCircuit enforces  sum(in) == sum(out) + StFee  in the
                 // field but did not range-check StFee, so a prover could pick
                 // StFee = Fr - d and spend a note of value v into outputs worth
@@ -540,8 +539,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 // depositors' funds. payment() does not look at the fee at all and
                 // paymentWithFee() only compares it with a value the caller
                 // supplies, so the bound is enforced here, on every path that
-                // verifies a receipt of this shape. statement[7] is StFee.
-                if (receipt.statement[7] >= MAX_FEE_AMOUNT) {
+                // verifies a receipt of this shape.
+                if (receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] >= MAX_FEE_AMOUNT) {
                     revert IEnygmaDvp.FeeOutOfRange();
                 }
                 if (!IVerifier(_verifierContractAddress).verifyProof(
@@ -549,7 +548,7 @@ contract Erc20CoinVault is AbstractCoinVault {
                     receipt.proof,
                     receipt.statement
                 )) revert InvalidProof();
-            } else if (receipt.statement.length == 9) {
+            } else if (receipt.statement.length == USDR_FEE_LEN) {
                 if (!IVerifier(_verifierContractAddress).verifyProof(
                     VK_ID_ERC20_USDR,
                     receipt.proof,
@@ -564,7 +563,7 @@ contract Erc20CoinVault is AbstractCoinVault {
                 )) revert InvalidProof();
             }
         } else if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 3) {
-            // PaymentRelayer circuit: 1-in/3-out, 8-element statement.
+            // PaymentRelayerFeePublic circuit: 1-in/3-out.
             // output[0]=Bob, output[1]=Alice change, output[2]=relayer fee note.
             if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_JOINSPLIT_RELAYER,

@@ -207,7 +207,9 @@ cd gnark_circuits
 go generate ./cmd/genlayout
 ```
 
-`go test ./cmd/genlayout` fails while either file is stale.
+`go test ./cmd/genlayout` fails while either file is stale. It also pins each of
+`Erc20CoinVault.sol`'s Payment-family statement length checks, and the verifying key
+each length dispatches to, to its circuit's statement length.
 
 ## Implementation Details
 
