@@ -14,17 +14,17 @@ package tests
 //
 // Cross-commitment layout (matches EnygmaDvp.submitPartialSettlement cross-referencing):
 //
-//   Alice ERC20 DvP Initiator (1-in, NumberOfOutputs=1 on-chain, 7-element statement):
-//     statement = [stMsg=commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA]
-//     receiptMessage  = statement[0] = commitA  (stMessage; set internally by DvPInitiatorProof)
-//     receiptUniqueId = statement[4] = commitB  (first output; only this is inserted into ERC20 vault)
+//   Alice ERC20 DvP Initiator (1-in, NumberOfOutputs=1 on-chain, DvpInitiator statement):
+//     Message = commitA, CommitB = commitB, CommitA = commitA, RevertCommitA = revertCommitA
+//     receiptMessage  = Message = commitA  (set internally by DvPInitiatorProof)
+//     receiptUniqueId = CommitB = commitB  (first output; only this is inserted into ERC20 vault)
 //   → stored: _pendingTransactions[commitB].targetReceiptId = commitA, deadline = deadline
 //   → VK: VK_ID_DVP_INITIATOR (slot 23); ERC20 vault detects numberOfInputs==1
 //
-//   Bob ERC721 DvP Destination (1-in/1-out, 5-element statement):
-//     statement = [stMsg=commitB, treeNum, root, nf_B, commitA]
-//     receiptMessage  = statement[0] = commitB
-//     receiptUniqueId = statement[4] = commitA
+//   Bob ERC721 DvP Destination (1-in/1-out, DvpDestination statement):
+//     Message = commitB, CommitA = commitA
+//     receiptMessage  = Message = commitB
+//     receiptUniqueId = CommitA = commitA
 //   → check: _pendingTransactions[commitB].targetReceiptId == commitA ✓ → settle
 //   → VK: VK_ID_DVP_DESTINATION (slot 24); ERC721 vault tries ownership VK, falls back to DvP VK
 //
@@ -50,6 +50,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -335,7 +337,7 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 	//   6. Sets stMessage = commitA (for on-chain cross-referencing)
 	//   7. Generates ZK proof with DvP Initiator circuit (VK slot 23)
 	//
-	// Statement: [commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA] (7 elements)
+	// Statement (DvpInitiator): Message = commitA, CommitB, CommitA, RevertCommitA, CounterVault
 	// NumberOfInputs=1, NumberOfOutputs=1 (only commitB is treated as payment output on-chain)
 	aliceResult, err := tc.gnarkClient.DvPInitiatorProof(
 		core.KeyPair{PrivateKey: d.aliceSpend.PrivateKey, PublicKey: d.aliceSpend.PublicKey},
@@ -362,19 +364,19 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 	commitB := aliceResult.CommitB()
 	revertCommitA := aliceResult.RevertCommitA()
 
-	// Verify DvP Initiator statement layout:
-	// [stMsg=commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA]
-	if aliceResult.Statement[0].Cmp(commitA) != 0 {
-		t.Fatalf("Alice DvP Initiator: statement[0] != commitA")
+	// Verify the DvP Initiator statement: Message is commitA, and the
+	// CommitB, CommitA and RevertCommitA outputs are where its layout puts them.
+	if aliceResult.Statement[layout.DvpInitiatorMessageOffset].Cmp(commitA) != 0 {
+		t.Fatalf("Alice DvP Initiator: Message != commitA")
 	}
-	if aliceResult.Statement[4].Cmp(commitB) != 0 {
-		t.Fatalf("Alice DvP Initiator: statement[4] != commitB")
+	if aliceResult.Statement[layout.DvpInitiatorCommitBOffset].Cmp(commitB) != 0 {
+		t.Fatalf("Alice DvP Initiator: CommitB != commitB")
 	}
-	if aliceResult.Statement[5].Cmp(commitA) != 0 {
-		t.Fatalf("Alice DvP Initiator: statement[5] != commitA")
+	if aliceResult.Statement[layout.DvpInitiatorCommitAOffset].Cmp(commitA) != 0 {
+		t.Fatalf("Alice DvP Initiator: CommitA != commitA")
 	}
-	if aliceResult.Statement[6].Cmp(revertCommitA) != 0 {
-		t.Fatalf("Alice DvP Initiator: statement[6] != revertCommitA")
+	if aliceResult.Statement[layout.DvpInitiatorRevertCommitAOffset].Cmp(revertCommitA) != 0 {
+		t.Fatalf("Alice DvP Initiator: RevertCommitA != revertCommitA")
 	}
 	t.Logf("commitA (Alice expects ERC721 tokenId=%s): %s", d.nftTokenId, commitA)
 	t.Logf("commitB (Bob receives %s USDT):            %s", d.erc20Amount, commitB)
@@ -397,7 +399,7 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 	//          = Erc721Commitment(nftTokenId, aliceSpendPk, saltA)
 	// where saltA was derived from Alice's KEM and is passed here off-chain.
 	//
-	// Statement: [commitB, treeNum, root, nf_B, commitA] (5 elements)
+	// Statement (DvpDestination): Message = commitB, CommitA, CounterVault
 	// NumberOfInputs=1, NumberOfOutputs=1 (commitA goes into ERC721 vault during settlement)
 	// Bob decapsulates Alice's ML-KEM ciphertext to derive saltB and Alice's payment details.
 	ssBobLocal, err := core.Decapsulate(d.bobView.DecapsKey, aliceResult.CipherText)
@@ -441,23 +443,23 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 		t.Fatalf("expected 8-element DvP Destination proof, got %d", len(bobResult.Proof))
 	}
 
-	// Verify DvP Destination statement layout:
-	// [stMsg=commitB, treeNum, root, nf_B, commitA]
-	if bobResult.Statement[0].Cmp(commitB) != 0 {
-		t.Fatalf("Bob DvP Destination: statement[0] != commitB")
+	// Verify the DvP Destination statement: Message is commitB and its
+	// CommitA output is commitA.
+	if bobResult.Statement[layout.DvpDestinationMessageOffset].Cmp(commitB) != 0 {
+		t.Fatalf("Bob DvP Destination: Message != commitB")
 	}
-	if bobResult.Statement[4].Cmp(commitA) != 0 {
-		t.Fatalf("Bob DvP Destination: statement[4] != commitA")
+	if bobResult.Statement[layout.DvpDestinationCommitAOffset].Cmp(commitA) != 0 {
+		t.Fatalf("Bob DvP Destination: CommitA != commitA")
 	}
 
 	// Cross-commitment consistency:
-	// Alice stMsg (statement[0]) == Bob output (statement[4]) == commitA ✓
-	// Bob stMsg (statement[0]) == Alice first output (statement[4]) == commitB ✓
-	if aliceResult.Statement[0].Cmp(bobResult.Statement[4]) != 0 {
-		t.Fatalf("cross-check FAILED: Alice stMsg (commitA) != Bob output (commitA)")
+	// Alice's Message == Bob's CommitA output == commitA ✓
+	// Bob's Message == Alice's CommitB output == commitB ✓
+	if aliceResult.Message().Cmp(bobResult.CommitA()) != 0 {
+		t.Fatalf("cross-check FAILED: Alice Message (commitA) != Bob CommitA")
 	}
-	if bobResult.Statement[0].Cmp(aliceResult.Statement[4]) != 0 {
-		t.Fatalf("cross-check FAILED: Bob stMsg (commitB) != Alice output (commitB)")
+	if bobResult.Message().Cmp(aliceResult.CommitB()) != 0 {
+		t.Fatalf("cross-check FAILED: Bob Message (commitB) != Alice CommitB")
 	}
 	t.Logf("Bob DvP Destination proof & cross-commitment consistency verified ✓")
 
@@ -530,7 +532,7 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 			big.NewInt(0), // vaultId = VAULT_ID_ERC20
 			big.NewInt(0), // groupId = GROUP_ID_FUNGIBLES
 			deadline,
-			// revertCommitA removed: contract now reads it from receipt.statement[6]
+			// revertCommitA removed: contract now reads it from the receipt's RevertCommitA
 		)
 		if err != nil {
 			t.Fatalf("Alice submitPartialSettlement: %v", err)

@@ -167,7 +167,7 @@ func spendFeeNoteFromRelayerStore(
 		t.Fatalf("FEE STRANDED: spending the fee note did not succeed (err=%v)", err)
 	}
 	var out []interface{}
-	if err := vault.Call(&bind.CallOpts{}, &out, "nullifiers", big.NewInt(int64(mp.TreeNumber)), stmt[3]); err != nil {
+	if err := vault.Call(&bind.CallOpts{}, &out, "nullifiers", big.NewInt(int64(mp.TreeNumber)), pay.Nullifiers()[0]); err != nil {
 		t.Fatalf("nullifiers(): %v", err)
 	}
 	if spent, _ := out[0].(bool); !spent {
