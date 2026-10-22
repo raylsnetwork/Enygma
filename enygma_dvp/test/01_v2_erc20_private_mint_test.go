@@ -25,22 +25,24 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 type onchainPrivateMintProof struct {
-	Proof        [8]*big.Int `abi:"proof"`
-	PublicSignal [4]*big.Int `abi:"public_signal"`
+	Proof        [8]*big.Int                     `abi:"proof"`
+	PublicSignal [layout.PrivateMintLen]*big.Int `abi:"public_signal"`
 }
 
-// proofStringsToPrivateMint converts the 8 proof strings and the 4-signal
+// proofStringsToPrivateMint converts the 8 proof strings and the PrivateMint
 // statement returned by the gnark server into the on-chain ABI struct.
 func proofStringsToPrivateMint(t *testing.T, proofStrs []string, statement []*big.Int) onchainPrivateMintProof {
 	t.Helper()
 	if len(proofStrs) != 8 {
 		t.Fatalf("expected 8 proof elements, got %d", len(proofStrs))
 	}
-	if len(statement) != 4 {
-		t.Fatalf("expected 4 public signal elements, got %d", len(statement))
+	if len(statement) != layout.PrivateMintLen {
+		t.Fatalf("expected %d public signal elements, got %d", layout.PrivateMintLen, len(statement))
 	}
 	var p onchainPrivateMintProof
 	for i, s := range proofStrs {

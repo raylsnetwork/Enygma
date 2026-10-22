@@ -54,6 +54,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 const (
@@ -453,8 +455,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"wtSaltsOut":           [3]string{saltBobField.String(), saltChange.String(), feeSalt.String()},
 		}
 		proof := postPaymentGnarkProof(t, "/proof/paymentRelayerFeePublic", reqBody)
-		if len(proof.PublicSignal) != 9 {
-			t.Fatalf("expected 9 public signals, got %d", len(proof.PublicSignal))
+		if len(proof.PublicSignal) != layout.PaymentRelayerFeeLen {
+			t.Fatalf("expected %d public signals, got %d", layout.PaymentRelayerFeeLen, len(proof.PublicSignal))
 		}
 
 		var proofArr [8]string
@@ -564,8 +566,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"wtSaltsOut":           [2]string{fSalt.String(), changeSalt.String()},
 		}
 		p := postPaymentGnarkProof(t, "/proof/usdrFee", reqBody)
-		if len(p.PublicSignal) != 9 {
-			t.Fatalf("expected 9 public signals, got %d", len(p.PublicSignal))
+		if len(p.PublicSignal) != layout.UsdrFeeLen {
+			t.Fatalf("expected %d public signals, got %d", layout.UsdrFeeLen, len(p.PublicSignal))
 		}
 		return p, fSalt, fCmt
 	}
@@ -747,8 +749,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		callWith := func(usdrVaultId int64) error {
 			var out []interface{}
 			return dvp.Call(&bind.CallOpts{From: owner.From}, &out, "paymentWithUsdrFee",
-				emptyReceipt(7), big.NewInt(0), []byte{}, []byte{},
-				emptyReceipt(9), big.NewInt(usdrVaultId), []byte{}, []byte{})
+				emptyReceipt(layout.PaymentLen), big.NewInt(0), []byte{}, []byte{},
+				emptyReceipt(layout.UsdrFeeLen), big.NewInt(usdrVaultId), []byte{}, []byte{})
 		}
 
 		err := callWith(0)

@@ -17,6 +17,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 // ── Hardhat constants ──────────────────────────────────────────────────────────
@@ -155,6 +157,22 @@ func proofStringsToOnchain(t *testing.T, proof []string) onchainSnarkProof {
 			Y: [2]*big.Int{vals[4], vals[5]},
 		},
 		C: onchainG1Point{X: vals[6], Y: vals[7]},
+	}
+}
+
+// dvpLegNote returns a DvP leg receipt's input note: its tree number and
+// nullifier, read through the DvpInitiator or DvpDestination statement
+// layout that the statement's length names.
+func dvpLegNote(t *testing.T, rc onchainProofReceipt) (tree, nullifier *big.Int) {
+	t.Helper()
+	switch st := rc.Statement; len(st) {
+	case layout.DvpInitiatorLen:
+		return st[layout.DvpInitiatorTreeNumberOffset], st[layout.DvpInitiatorNullifierOffset]
+	case layout.DvpDestinationLen:
+		return st[layout.DvpDestinationTreeNumberOffset], st[layout.DvpDestinationNullifierOffset]
+	default:
+		t.Fatalf("statement of length %d is not a DvP leg", len(st))
+		return nil, nil
 	}
 }
 

@@ -24,6 +24,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient/simulated"
 	"github.com/ethereum/go-ethereum/rpc"
+
+	"enygma_dvp/layout"
 )
 
 func TestV2Erc1155Vault_RejectsSwapLegInTransfer(t *testing.T) {
@@ -47,12 +49,17 @@ func TestV2Erc1155Vault_RejectsSwapLegInTransfer(t *testing.T) {
 	}
 	backend.Commit()
 
-	// A 1-in/1-out receipt shaped like a swap leg: statement
-	// [message, treeNumber, root, nullifier, commitment].
+	// A 1-in/1-out receipt shaped like a swap leg: a DvpDestination statement
+	// carrying message, with every other signal an arbitrary non-zero value.
 	receipt := func(message int64) interface{} {
 		type g1 struct{ X, Y *big.Int }
 		type g2 struct{ X, Y [2]*big.Int }
 		zero := big.NewInt(0)
+		st := make([]*big.Int, layout.DvpDestinationLen)
+		for i := range st {
+			st[i] = big.NewInt(int64(5 + i))
+		}
+		st[layout.DvpDestinationMessageOffset] = big.NewInt(message)
 		return struct {
 			Proof struct {
 				A g1
@@ -68,7 +75,7 @@ func TestV2Erc1155Vault_RejectsSwapLegInTransfer(t *testing.T) {
 				B g2
 				C g1
 			}{g1{zero, zero}, g2{[2]*big.Int{zero, zero}, [2]*big.Int{zero, zero}}, g1{zero, zero}},
-			Statement:       []*big.Int{big.NewInt(message), zero, big.NewInt(5), big.NewInt(6), big.NewInt(7)},
+			Statement:       st,
 			NumberOfInputs:  big.NewInt(1),
 			NumberOfOutputs: big.NewInt(1),
 		}
