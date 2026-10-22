@@ -32,6 +32,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient/simulated"
 	"github.com/ethereum/go-ethereum/rpc"
+
+	"enygma_dvp/layout"
 )
 
 type swapRelayerEnv struct {
@@ -184,8 +186,8 @@ func (e *swapRelayerEnv) swapCount() int64 {
 	return out[0].(*big.Int).Int64()
 }
 
-// leg builds a 1-input/1-output receipt for one side of a swap. A leg's
-// message is its own side's and its first output is the counterparty's, as
+// leg builds one side of a swap as a DvpDestination-shaped receipt. A leg's
+// message is its own side's and its commitment the counterparty's message, as
 // SwapRelayer.swapIdOf reads them. bad marks the proof as invalid for the mock.
 func leg(own, other, nullifier int64, bad bool) onchainProofReceipt {
 	z := big.NewInt(0)
@@ -193,16 +195,29 @@ func leg(own, other, nullifier int64, bad bool) onchainProofReceipt {
 	if bad {
 		ax = big.NewInt(0xbad) // SwapRelayerDvpMock.BAD_PROOF
 	}
+	st := make([]*big.Int, layout.DvpDestinationLen)
+	for i := range st {
+		st[i] = z
+	}
+	st[layout.DvpDestinationMessageOffset] = big.NewInt(own)
+	st[layout.DvpDestinationMerkleRootOffset] = big.NewInt(2)
+	st[layout.DvpDestinationNullifierOffset] = big.NewInt(nullifier)
+	st[layout.DvpDestinationCommitAOffset] = big.NewInt(other)
 	return onchainProofReceipt{
 		Proof: onchainSnarkProof{
 			A: onchainG1Point{X: ax, Y: z},
 			B: onchainG2Point{X: [2]*big.Int{z, z}, Y: [2]*big.Int{z, z}},
 			C: onchainG1Point{X: z, Y: z},
 		},
-		Statement:       []*big.Int{big.NewInt(own), z, big.NewInt(2), big.NewInt(nullifier), big.NewInt(other)},
+		Statement:       st,
 		NumberOfInputs:  big.NewInt(1),
 		NumberOfOutputs: big.NewInt(1),
 	}
+}
+
+// nullifierOf is the nullifier a leg built by leg spends.
+func nullifierOf(r onchainProofReceipt) *big.Int {
+	return r.Statement[layout.DvpDestinationNullifierOffset]
 }
 
 // swapPair returns matching payment and delivery legs and their swapId,
@@ -238,7 +253,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("alice", "cancelSwap", id); r != "" {
 			t.Fatalf("cancelSwap: %s", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("Alice's nullifier still locked after cancel")
 		}
 
@@ -247,7 +262,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("bob", "submitReceipt", id, bob, false, dv, lateExpiry, ctx, ctx); r != "SwapClosed" {
 			t.Fatalf("late leg: got %q, want SwapClosed", r)
 		}
-		if env.locked(deliveryVault, bob.Statement[3]) {
+		if env.locked(deliveryVault, nullifierOf(bob)) {
 			t.Fatal("Bob's nullifier locked by a leg on a cancelled swap")
 		}
 
@@ -255,7 +270,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("mallory", "submitReceipt", id, alice, true, pv, lateExpiry, ctx, ctx); r != "SwapClosed" {
 			t.Fatalf("replayed leg: got %q, want SwapClosed", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("Alice's nullifier re-locked by a replay")
 		}
 	})
@@ -293,7 +308,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("mallory", "submitReceipt", id, alice, true, pv, far, ctx, ctx); r != "ExpiryTooFar" {
 			t.Fatalf("far expiry: got %q, want ExpiryTooFar", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("nullifier locked despite rejected expiry")
 		}
 	})
@@ -309,7 +324,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("mallory", "submitReceipt", id, alice, true, pv, soon, ctx, ctx); r != "ExpiryTooSoon" {
 			t.Fatalf("VULNERABLE: 1-minute expiry: got %q, want ExpiryTooSoon", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("nullifier locked despite rejected expiry")
 		}
 	})
@@ -343,7 +358,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("mallory", "submitReceipt", otherId, alice, true, pv, expiry, ctx, ctx); r != "SwapIdMismatch" {
 			t.Fatalf("leg under a foreign swapId: got %q, want SwapIdMismatch", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("nullifier locked under a foreign swapId")
 		}
 	})
@@ -368,7 +383,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("alice", "cancelSwap", id); r != "" {
 			t.Fatalf("Alice cancelling the leg Mallory submitted: %s", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("Alice's nullifier still locked after cancel")
 		}
 	})
@@ -387,7 +402,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("mallory", "submitReceipt", mirrorOf(81, 82), alice, false, pv, expiry, ctx, ctx); r != "LegTypeMismatch" {
 			t.Fatalf("payment leg filed as delivery: got %q, want LegTypeMismatch", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("the flipped leg locked Alice's note")
 		}
 		// Alice's own submission still goes through.
@@ -413,8 +428,55 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		if r := env.send("mallory", "submitReceipt", mirrorOf(91, 92), alice, false, pv, lateExpiry, ctx, ctx); r != "SwapClosed" {
 			t.Fatalf("replay under the mirror id: got %q, want SwapClosed", r)
 		}
-		if env.locked(paymentVault, alice.Statement[3]) {
+		if env.locked(paymentVault, nullifierOf(alice)) {
 			t.Fatal("the replay re-locked Alice's note")
+		}
+	})
+
+	// SwapRelayer reads a leg's fields at DvpStatementLayout offsets, which
+	// only mean something in a DvP leg's statement: a receipt of any other
+	// length is refused before it can lock a note.
+	t.Run("a leg of the wrong length is rejected before any lock", func(t *testing.T) {
+		env := newSwapRelayerEnv(t)
+		alice, _, id := swapPair(93, 94, 101, 202)
+		expiry := big.NewInt(int64(env.now() + 3600))
+
+		for _, n := range []int{layout.DvpDestinationLen - 1, layout.DvpDestinationLen + 1, 0} {
+			// Alice's leg, cut short or padded with zeros.
+			wrongLen := alice
+			wrongLen.Statement = make([]*big.Int, n)
+			for i := range wrongLen.Statement {
+				wrongLen.Statement[i] = big.NewInt(0)
+			}
+			copy(wrongLen.Statement, alice.Statement)
+			if r := env.send("mallory", "submitReceipt", id, wrongLen, true, pv, expiry, ctx, ctx); r != "InvalidStatementSize" {
+				t.Fatalf("%d-signal leg: got %q, want InvalidStatementSize", n, r)
+			}
+			if env.locked(paymentVault, nullifierOf(alice)) {
+				t.Fatalf("a %d-signal leg locked a nullifier", n)
+			}
+		}
+		// The slot is still free for Alice's genuine leg.
+		if r := env.send("alice", "submitReceipt", id, alice, true, pv, expiry, ctx, ctx); r != "" {
+			t.Fatalf("Alice's leg after the attempts: %s", r)
+		}
+	})
+
+	// A withdrawal is Payment-shaped, so no DvP leg's length: it must still be
+	// refused as a withdrawal, as before the length check.
+	t.Run("a withdrawal receipt is refused as a withdrawal", func(t *testing.T) {
+		env := newSwapRelayerEnv(t)
+		alice, _, id := swapPair(95, 96, 101, 202)
+		expiry := big.NewInt(int64(env.now() + 3600))
+
+		withdrawal := alice
+		withdrawal.Statement = make([]*big.Int, layout.PaymentLen)
+		for i := range withdrawal.Statement {
+			withdrawal.Statement[i] = big.NewInt(0)
+		}
+		withdrawal.Statement[layout.PaymentMessageOffset] = big.NewInt(1) // WITHDRAW_MESSAGE
+		if r := env.send("mallory", "submitReceipt", id, withdrawal, true, pv, expiry, ctx, ctx); r != "WithdrawalReceipt" {
+			t.Fatalf("withdrawal receipt: got %q, want WithdrawalReceipt", r)
 		}
 	})
 }

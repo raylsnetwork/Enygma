@@ -18,6 +18,10 @@ library DvpReceipt {
     struct Leg {
         // Message: the commitment the counterparty's leg inserts.
         uint256 message;
+        // TreeNumber, MerkleRoot and Nullifier of the one note the leg spends.
+        uint256 treeNumber;
+        uint256 merkleRoot;
+        uint256 nullifier;
         // The commitment this leg inserts: an initiator's CommitB, a
         // destination's CommitA.
         uint256 commitment;
@@ -32,18 +36,24 @@ library DvpReceipt {
     /// Reverts with InvalidStatementSize unless statement is a DvP leg's.
     function read(uint256[] memory statement) internal pure returns (Leg memory) {
         if (statement.length == DVP_INITIATOR_LEN) {
-            return Leg(
-                statement[Dsl.DVP_INITIATOR_MESSAGE_OFFSET],
-                statement[Dsl.DVP_INITIATOR_COMMIT_B_OFFSET],
-                statement[Dsl.DVP_INITIATOR_COUNTER_VAULT_OFFSET]
-            );
+            return Leg({
+                message: statement[Dsl.DVP_INITIATOR_MESSAGE_OFFSET],
+                treeNumber: statement[Dsl.DVP_INITIATOR_TREE_NUMBER_OFFSET],
+                merkleRoot: statement[Dsl.DVP_INITIATOR_MERKLE_ROOT_OFFSET],
+                nullifier: statement[Dsl.DVP_INITIATOR_NULLIFIER_OFFSET],
+                commitment: statement[Dsl.DVP_INITIATOR_COMMIT_B_OFFSET],
+                counterVault: statement[Dsl.DVP_INITIATOR_COUNTER_VAULT_OFFSET]
+            });
         }
         if (statement.length == DVP_DESTINATION_LEN) {
-            return Leg(
-                statement[Dsl.DVP_DESTINATION_MESSAGE_OFFSET],
-                statement[Dsl.DVP_DESTINATION_COMMIT_A_OFFSET],
-                statement[Dsl.DVP_DESTINATION_COUNTER_VAULT_OFFSET]
-            );
+            return Leg({
+                message: statement[Dsl.DVP_DESTINATION_MESSAGE_OFFSET],
+                treeNumber: statement[Dsl.DVP_DESTINATION_TREE_NUMBER_OFFSET],
+                merkleRoot: statement[Dsl.DVP_DESTINATION_MERKLE_ROOT_OFFSET],
+                nullifier: statement[Dsl.DVP_DESTINATION_NULLIFIER_OFFSET],
+                commitment: statement[Dsl.DVP_DESTINATION_COMMIT_A_OFFSET],
+                counterVault: statement[Dsl.DVP_DESTINATION_COUNTER_VAULT_OFFSET]
+            });
         }
         revert IEnygmaDvp.InvalidStatementSize();
     }
