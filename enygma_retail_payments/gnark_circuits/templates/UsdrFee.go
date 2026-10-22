@@ -14,9 +14,9 @@ import (
 //     in this codebase). USDr is a single, fixed, known token — exactly like
 //     making FeeAmount public was the core design decision for enygma_payments'
 //     USDrCircuit, there is nothing to hide about USDr's token identity, and
-//     making it public is what gives this circuit's statement a distinct
-//     9-element length (7/8/9/10 are otherwise all already claimed by other
-//     circuits' statement lengths — see Erc20CoinVault.checkReceiptConditions).
+//     making it public is what gives this circuit's statement a length distinct
+//     from every other 1-in/2-out circuit's (see
+//     Erc20CoinVault.checkReceiptConditions).
 //   - The fee is PAID, not burned: output[0] is a real spendable note for the
 //     relayer, constrained to StFee, unlike PaymentFeeCircuit's StFee (which
 //     is simply subtracted from the conservation check with no matching
@@ -34,11 +34,6 @@ import (
 //
 //	[0] Relayer fee note — any pk_spend, amount == StFee (publicly verifiable)
 //	[1] Sender's change  — constrained to senderPk
-//
-// Public signal layout (9 elements):
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StContractAddress, StFee, StTokenId]
 type UsdrFeeCircuit struct {
 	Config PaymentCircuitConfig
 
