@@ -35,12 +35,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
-		cfg := templates.PaymentCircuitConfig{
-			TmNInputs:         2,
-			TmMOutputs:        2,
-			TmMerkleTreeDepth: 8,
-			TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-		}
+		cfg := templates.Payment2inConfig
 
 		newCircuit := func() templates.PaymentCircuit {
 			cir := templates.PaymentCircuit{

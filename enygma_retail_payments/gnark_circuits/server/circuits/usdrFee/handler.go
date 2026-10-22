@@ -35,12 +35,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
 
-	cfg := templates.PaymentCircuitConfig{
-		TmNInputs:         1,
-		TmMOutputs:        2,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
+	cfg := templates.UsdrFeeConfig
 
 	newCircuit := func() templates.UsdrFeeCircuit {
 		cir := templates.UsdrFeeCircuit{
