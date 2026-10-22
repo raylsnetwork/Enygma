@@ -36,8 +36,10 @@ func (t Target) RenderGo(layouts []Layout) []byte {
 	doc := fmt.Sprintf("Package %s holds %s statement layouts: the offset and size of every "+
 		"named public signal, and each statement's length. It has no dependencies, so it "+
 		"can be imported without gnark.", t.GoPackage, t.Subject)
-	fmt.Fprintf(&b, "%s\n//\n", comment("// ", wrap(doc)))
-	fmt.Fprintf(&b, "%s\n", comment("// ", flatteningDoc))
+	fmt.Fprintf(&b, "%s\n", comment("// ", wrap(doc)))
+	if multiDimensional(layouts) {
+		fmt.Fprintf(&b, "//\n%s\n", comment("// ", flatteningDoc))
+	}
 	fmt.Fprintf(&b, "package %s\n", t.GoPackage)
 	for _, l := range layouts {
 		fmt.Fprintf(&b, "\n// %s statement layout (%d public signals).\nconst (\n", l.Circuit, l.Len)
@@ -72,7 +74,9 @@ func (t Target) RenderSolidity(layouts []Layout) []byte {
 	if len(lines) > 1 {
 		fmt.Fprintf(&b, "%s\n", comment("///         ", strings.Join(lines[1:], "\n")))
 	}
-	fmt.Fprintf(&b, "%s\n", comment("///         ", flatteningDoc))
+	if multiDimensional(layouts) {
+		fmt.Fprintf(&b, "%s\n", comment("///         ", flatteningDoc))
+	}
 	fmt.Fprintf(&b, "///         Statement lengths are the file-level *_LEN constants: Solidity\n")
 	fmt.Fprintf(&b, "///         rejects a library-qualified constant as an array length, and\n")
 	fmt.Fprintf(&b, "///         the lengths size calldata public-signal arrays.\n")
@@ -138,6 +142,19 @@ func comment(prefix, text string) string {
 		lines[i] = prefix + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+// multiDimensional reports whether any layout has a multi-dimensional field,
+// whose flattening the rendered documentation then explains.
+func multiDimensional(layouts []Layout) bool {
+	for _, l := range layouts {
+		for _, f := range l.Fields {
+			if len(f.Shape) >= 2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // wrap greedily breaks text into lines of at most docWidth characters.
