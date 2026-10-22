@@ -35,8 +35,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 		// fmt.Println(request)
 
-		var publicSignal []*big.Int
-
 		range_ := frontend.Variable("1000000000000000000000000000000000000")
 		circuitPrivateMint := templates.PrivateMintCircuit{
 			Config: templates.PrivateMintConfig{TmRange: range_},
@@ -124,11 +122,10 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			proofStr[i] = v.String() // full decimal, no exponent
 		}
 
-		publicSignal = []*big.Int{
-			utils.ParseBigInt(request.Commitment),
-			utils.ParseBigInt(request.ContractAddress),
-			utils.ParseBigInt(request.TokenId),
-			utils.ParseBigInt(request.CipherText),
+		publicSignal, err := utils.PublicSignals(witnessFull)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
 
 		pubStr := make([]string, len(publicSignal))
