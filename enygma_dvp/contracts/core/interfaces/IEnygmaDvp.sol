@@ -3,6 +3,8 @@
 
 pragma solidity ^0.8.0;
 
+import {PaymentStatementLayout} from "../contracts/PaymentStatementLayout.sol";
+
 // StMessage of a withdrawal proof. The Payment-family circuits (Payment,
 // Payment2in, PaymentRelayerFeePublic) accept StMessage 0, a payment, or
 // WITHDRAW_MESSAGE, a withdrawal, and every settlement function takes only its
@@ -13,6 +15,16 @@ pragma solidity ^0.8.0;
 // the withdrawn amount into a note no one can spend, or as a full withdrawal
 // that drops the change note. A DvP message is a hash, never 1.
 uint256 constant WITHDRAW_MESSAGE = 1;
+
+// Offset of a Payment-family receipt's output commitments, which depends only
+// on its number of inputs: every 1-input layout puts them where Payment does,
+// and Payment2in is the only 2-input one. Callers have checked that
+// numberOfInputs is 1 or 2.
+function paymentCommitmentsOutOffset(uint256 numberOfInputs) pure returns (uint256) {
+    return numberOfInputs == 1
+        ? PaymentStatementLayout.PAYMENT_COMMITMENTS_OUT_OFFSET
+        : PaymentStatementLayout.PAYMENT2IN_COMMITMENTS_OUT_OFFSET;
+}
 
 interface IEnygmaDvp {
     ///////////////////////////////////////////////

@@ -9,7 +9,10 @@
 //
 //	cd gnark_circuits && go generate ./cmd/genlayout
 //
-// main_test.go fails while the committed files are stale.
+// main_test.go fails while the committed files are stale; arity_test.go
+// fails while one of Erc20CoinVault.sol's Payment-family length checks or
+// length-dispatched verifier calls disagrees with its circuit's statement
+// length, which the compiler cannot check.
 package main
 
 //go:generate go run .
