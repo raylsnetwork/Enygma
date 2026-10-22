@@ -26,12 +26,6 @@ import (
 //	[0] Bob's payment  — no ownership constraint (any pk_spend)
 //	[1] Alice's change — constrained to senderPk
 //	[2] Relayer fee    — any pk_spend, but amount == StFee (publicly verifiable)
-//
-// Public signal layout (9 elements):
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StCommitmentsOut[2],
-//	 StContractAddress, StFee]
 type PaymentRelayerFeePublicCircuit struct {
 	Config PaymentCircuitConfig
 

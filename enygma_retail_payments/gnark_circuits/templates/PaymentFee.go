@@ -22,11 +22,6 @@ import (
 //
 //	[0] Bob's payment  — no ownership constraint (any pk_spend)
 //	[1] Alice's change — constrained to senderPk
-//
-// Public signal layout (8 elements):
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StContractAddress, StFee]
 type PaymentFeeCircuit struct {
 	Config PaymentCircuitConfig
 

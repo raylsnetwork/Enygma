@@ -11,11 +11,6 @@ import "math/big"
 //
 //   - Output[0]: Bob's payment  — any pk_spend
 //   - Output[1]: Alice's change — must equal senderPk (enforced in-circuit)
-//
-// Public signal layout (8 elements):
-//
-//	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
-//	 StCommitmentsOut[0], StCommitmentsOut[1], StContractAddress, StFee]
 type PaymentFeeRequest struct {
 	StMessage         string    `json:"stMessage"         binding:"required"`
 	StTreeNumbers     [1]string `json:"stTreeNumbers"     binding:"required"`
