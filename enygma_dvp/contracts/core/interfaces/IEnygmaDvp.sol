@@ -4,6 +4,7 @@
 pragma solidity ^0.8.0;
 
 import {PaymentStatementLayout} from "../contracts/PaymentStatementLayout.sol";
+import {PRIVATE_MINT_LEN} from "../contracts/DvpStatementLayout.sol";
 
 // StMessage of a withdrawal proof. The Payment-family circuits (Payment,
 // Payment2in, PaymentRelayerFeePublic) accept StMessage 0, a payment, or
@@ -67,7 +68,7 @@ interface IEnygmaDvp {
 
     struct EnygmaPrivateMintProof {
         uint256[8] proof;
-        uint256[4] public_signal;
+        uint256[PRIVATE_MINT_LEN] public_signal;
     }
 
     // struct including the Ownership circuit
