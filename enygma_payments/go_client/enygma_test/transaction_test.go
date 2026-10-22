@@ -4,15 +4,10 @@ package enygma_test
 //   register banks → mint → generate ZK proof → submit Transfer → verify balances.
 //
 // Prerequisites (all must be running before executing):
-//   1. Ganache/Hardhat node on localhost:8545, contracts already deployed:
-//      cd enygma_payments/run_scripts && python deploy.py  (or equivalent)
+//   1. Ganache/Hardhat node on localhost:8545 (the test deploys its own
+//      Enygma + Verifier pair from contracts/enygma/artifacts)
 //   2. Gnark server on localhost:8080:
 //      cd enygma_payments/gnark-server && go run ./cmd/server/main.go
-//
-// Contract addresses are hardcoded from deploy_receipts.json.
-//
-// IMPORTANT: Run on a FRESH chain state. After one successful run the sender's
-// Pedersen commitment randomness changes — restart the node before re-running.
 //
 // Run:
 //
@@ -30,8 +25,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -454,36 +447,6 @@ var ownerPrivKey = func() string {
 	return "" // tests will fail with a clear "MY_KEY not set" message via mustPrivKey
 }()
 
-// receipts holds contract addresses read from deploy_receipts.json.
-type receipts struct {
-	TOKEN struct {
-		ContractAddress string `json:"contractAddress"`
-	} `json:"TOKEN"`
-	VERIFIER struct {
-		ContractAddress string `json:"contractAddress"`
-	} `json:"VERIFIER"`
-}
-
-// readReceipts reads deploy_receipts.json from run_scripts/build/enygma/web3/.
-func readReceipts(t *testing.T) (tokenAddr, verifierAddr string) {
-	t.Helper()
-	// Resolve path relative to this file's location.
-	_, testFile, _, _ := runtime.Caller(0)
-	receiptsPath := filepath.Join(filepath.Dir(testFile), "..", "..", "run_scripts", "build", "enygma", "web3", "deploy_receipts.json")
-	data, err := os.ReadFile(receiptsPath)
-	if err != nil {
-		t.Skipf("deploy_receipts.json not found at %s — run the deploy script first:\n  OWNER_KEY=<hex> node run_scripts/deploy_node.js\n(err: %v)", receiptsPath, err)
-	}
-	var r receipts
-	if err := json.Unmarshal(data, &r); err != nil {
-		t.Fatalf("parse deploy_receipts.json: %v", err)
-	}
-	if r.TOKEN.ContractAddress == "" || r.VERIFIER.ContractAddress == "" {
-		t.Fatal("deploy_receipts.json is missing TOKEN or VERIFIER address — re-run deploy scripts")
-	}
-	return r.TOKEN.ContractAddress, r.VERIFIER.ContractAddress
-}
-
 // testKeysDir holds the temporary directory for ML-KEM view keys in tests.
 // Created once per test binary invocation; cleaned up by os.Exit.
 var testKeysDir string
@@ -535,11 +498,6 @@ func TestFullTransactionFlow(t *testing.T) {
 		t.Skip("gnark server not reachable at localhost:8080 — start gnark-server first")
 	}
 
-	// Read contract addresses from deploy_receipts.json (updated by deploy scripts).
-	tokenAddr, verifierAddr := readReceipts(t)
-	t.Logf("TOKEN:    %s", tokenAddr)
-	t.Logf("VERIFIER: %s", verifierAddr)
-
 	// ── Ethereum client + auth factory ────────────────────────────────────────
 	client, err := ethclient.Dial(chainURL)
 	if err != nil {
@@ -574,24 +532,8 @@ func TestFullTransactionFlow(t *testing.T) {
 		return r
 	}
 
-	// ── Contract instance ──────────────────────────────────────────────────────
-	instance, err := enygma.NewEnygma(common.HexToAddress(tokenAddr), client)
-	if err != nil {
-		t.Fatalf("create contract: %v", err)
-	}
-
-	// ── Setup: initialize (idempotent — AlreadyInitialized is OK) ────────────
-	if tx, txErr := instance.Initialize(mkAuth()); txErr == nil {
-		if r, _ := bind.WaitMined(context.Background(), client, tx); r != nil && r.Status == 1 {
-			t.Log("contract initialized")
-		}
-	}
-
-	// ── Setup: register verifier ───────────────────────────────────────────────
-	if r := waitTx(instance.AddVerifier(mkAuth(), common.HexToAddress(verifierAddr))); r.Status != 1 {
-		t.Fatal("addVerifier failed")
-	}
-	t.Log("verifier registered")
+	// ── Setup: deploy, initialize and register the verifier ──────────────────
+	instance, enygmaAddr := deployEnygma(t, client, mkAuth, waitTx)
 
 	// ── Setup: compute public keys — Poseidon(sk, sk) mod P ──────────────────
 	pks := make([]*big.Int, nBanks)
@@ -634,7 +576,7 @@ func TestFullTransactionFlow(t *testing.T) {
 	// ── Setup: USDr fee ledger, fingerprints, test-local relayer ─────────────
 	setupUsdrLedger(t, client, instance, mkAuth, waitTx)
 	confirmFingerprints(t, instance, banks, waitTx, senderSecrets())
-	relayURL := startTestRelayer(t, common.HexToAddress(tokenAddr), banks)
+	relayURL := startTestRelayer(t, enygmaAddr, banks)
 
 	// ── Read on-chain state ────────────────────────────────────────────────────
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
@@ -733,7 +675,7 @@ func TestFullTransactionFlow(t *testing.T) {
 		"tx_values":                    toStrs(txValues),
 		"tx_random_values":             toStrs(txRandom),
 		"sender_tx_value":              fmt.Sprintf("%d", transferAmt),
-		"domain_id":                    expectedDomainId(common.HexToAddress(tokenAddr)).String(), // Fix L-01
+		"domain_id":                    expectedDomainId(enygmaAddr).String(), // Fix L-01
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -783,7 +725,7 @@ func TestFullTransactionFlow(t *testing.T) {
 		pubSigStrs[i] = v.String()
 	}
 
-	usdr := buildUsdrFeeLeg(t, blockHash, usdrBalances(t, instance), onChainKeys, common.HexToAddress(tokenAddr))
+	usdr := buildUsdrFeeLeg(t, blockHash, usdrBalances(t, instance), onChainKeys, enygmaAddr)
 	relayReq := relayTransferBody(proof8, pubSigStrs, commitmentDeltas, usdr)
 
 	// ── Submit Transfer via relayer ────────────────────────────────────────────

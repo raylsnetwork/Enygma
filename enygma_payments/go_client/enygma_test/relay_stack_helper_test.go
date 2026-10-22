@@ -1,7 +1,7 @@
 package enygma_test
 
 // Shared setup for the tests that relay a transfer through a relayer against
-// the deploy_direct.py contract (TestFullTransactionFlow, TestEpochIntervalFlow,
+// their own deployment (TestFullTransactionFlow, TestEpochIntervalFlow,
 // TestBlockNumberMismatch). A relayed transfer needs, beyond the main proof:
 //
 //   - every pair of participants to have confirmed each other's fingerprint
