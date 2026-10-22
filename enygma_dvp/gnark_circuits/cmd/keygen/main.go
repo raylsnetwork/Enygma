@@ -204,47 +204,27 @@ func GenerationVkPk(only map[string]bool) {
 
 	// Payment-family circuits — dedicated Payment deployment, ported from
 	// enygma_retail_payments. Covered by test/12_v2_payment_usdr_fee_test.go.
-	payment1in_config := templates.PaymentCircuitConfig{
-		TmNInputs:         1,
-		TmMOutputs:        2,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
+	payment1in_config := templates.PaymentConfig
 	if want("Payment") {
 		script.SetupPayment(payment1in_config, "Payment")
 	}
 
 	// 2-input/2-output circuit: separate VK slot. 1-in and 2-in circuits have
 	// different R1CS and must use distinct VKs.
-	payment2in_config := templates.PaymentCircuitConfig{
-		TmNInputs:         2,
-		TmMOutputs:        2,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
+	payment2in_config := templates.Payment2inConfig
 	if want("Payment2in") {
 		script.SetupPayment(payment2in_config, "Payment2in")
 	}
 
 	// 1-input/2-output fee circuit: fee absorbed into sender's input.
-	payment_fee_config := templates.PaymentCircuitConfig{
-		TmNInputs:         1,
-		TmMOutputs:        2,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
+	payment_fee_config := templates.PaymentFeeConfig
 	if want("PaymentFee") {
 		script.SetupPaymentFee(payment_fee_config, "PaymentFee")
 	}
 
 	// 1-input/3-output relayer-fee circuit: fee paid out as its own spendable
 	// note, same token as the payment.
-	payment_relayer_fee_public_config := templates.PaymentCircuitConfig{
-		TmNInputs:         1,
-		TmMOutputs:        3,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
+	payment_relayer_fee_public_config := templates.PaymentRelayerFeePublicConfig
 	if want("PaymentRelayerFeePublic") {
 		script.SetupPaymentRelayerFeePublic(payment_relayer_fee_public_config, "PaymentRelayerFeePublic")
 	}
@@ -253,12 +233,7 @@ func GenerationVkPk(only map[string]bool) {
 	// StTokenId is public here (private everywhere else), giving this
 	// circuit's 9-element statement a shape distinct from every other
 	// 1-in/2-out circuit's (7 or 8) — new VK slot (VK_ID_ERC20_USDR = 4).
-	usdr_fee_config := templates.PaymentCircuitConfig{
-		TmNInputs:         1,
-		TmMOutputs:        2,
-		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
-	}
+	usdr_fee_config := templates.UsdrFeeConfig
 	if want("UsdrFee") {
 		script.SetupUsdrFee(usdr_fee_config, "UsdrFee")
 	}
