@@ -5,6 +5,8 @@ pragma solidity ^0.8.0;
 
 import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
+import {DvpReceipt} from "./DvpReceipt.sol";
+import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// @title SwapRelayer
@@ -117,10 +119,18 @@ contract SwapRelayer is ReentrancyGuard {
     ) external nonReentrant {
         if (closed[swapId]) revert SwapClosed();
         // A withdrawal receipt is not a leg: filing one would lock its note
-        // until expiry (see WITHDRAW_MESSAGE).
-        if (receipt.statement[0] == WITHDRAW_MESSAGE) revert WithdrawalReceipt();
-        if (swapId != swapIdOf(receipt, isPayment)) revert SwapIdMismatch();
-        // isPayment is the caller's claim, and swapIdOf orders the two
+        // until expiry (see WITHDRAW_MESSAGE). A withdrawal is Payment-shaped,
+        // so this reads its message by the Payment layout, before the DvP
+        // length check below would refuse it as InvalidStatementSize.
+        if (
+            receipt.statement.length > Psl.PAYMENT_MESSAGE_OFFSET &&
+            receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] == WITHDRAW_MESSAGE
+        ) revert WithdrawalReceipt();
+        // Any other receipt that is not DvP-shaped is refused
+        // (InvalidStatementSize) before anything is locked.
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        if (swapId != _swapIdOf(leg, isPayment)) revert SwapIdMismatch();
+        // isPayment is the caller's claim, and _swapIdOf orders the two
         // messages by it, so a leg filed with the flag flipped gets a second
         // ("mirror") swapId that nothing had closed or occupied: a published
         // leg could be replayed there to lock its owner's note, or to block
@@ -198,17 +208,23 @@ contract SwapRelayer is ReentrancyGuard {
 
     /// @notice swapId of the swap a leg belongs to:
     ///         keccak256(abi.encode(deliveryMessage, paymentMessage)).
-    ///         A leg's statement message is its own side's; the counterparty's
-    ///         message is its first output commitment.
+    ///         A leg's Message is its own side's; the counterparty's message
+    ///         is the commitment the leg inserts. Reverts with
+    ///         InvalidStatementSize unless receipt is a DvP leg.
     function swapIdOf(
         IEnygmaDvp.ProofReceipt calldata receipt,
         bool isPayment
     ) public pure returns (bytes32) {
-        uint256 own = receipt.statement[0];
-        uint256 other = receipt.statement[1 + 3 * receipt.numberOfInputs];
+        return _swapIdOf(DvpReceipt.read(receipt.statement), isPayment);
+    }
+
+    function _swapIdOf(
+        DvpReceipt.Leg memory leg,
+        bool isPayment
+    ) private pure returns (bytes32) {
         return isPayment
-            ? keccak256(abi.encode(other, own))
-            : keccak256(abi.encode(own, other));
+            ? keccak256(abi.encode(leg.commitment, leg.message))
+            : keccak256(abi.encode(leg.message, leg.commitment));
     }
 
     /// @dev Closes the swap a leg belongs to, under both orderings of its two
@@ -216,11 +232,10 @@ contract SwapRelayer is ReentrancyGuard {
     ///      give. The vault check in submitReceipt already keeps a leg out of
     ///      the mirror; closing it too means a closed swap stays closed even
     ///      if a vault ever sat in both groups.
-    function _close(IEnygmaDvp.ProofReceipt storage leg) private {
-        uint256 own = leg.statement[0];
-        uint256 other = leg.statement[1 + 3 * leg.numberOfInputs];
-        closed[keccak256(abi.encode(own, other))] = true;
-        closed[keccak256(abi.encode(other, own))] = true;
+    function _close(IEnygmaDvp.ProofReceipt storage receipt) private {
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        closed[_swapIdOf(leg, true)] = true;
+        closed[_swapIdOf(leg, false)] = true;
     }
 
     /// @notice Cancel a pending swap after expiry, unlocking the submitted

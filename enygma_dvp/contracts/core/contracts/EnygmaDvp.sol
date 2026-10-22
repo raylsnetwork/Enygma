@@ -620,15 +620,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
-        uint treeNumbersIndex = 1;
-        uint nullifiersIndex  = 1 + (2 * receipt.numberOfInputs);
-
-        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-            IAbstractCoinVault(_coinVaults[vaultId]).lockCoin(
-                receipt.statement[treeNumbersIndex + i],
-                receipt.statement[nullifiersIndex + i]
-            );
-        }
+        // Reverts with InvalidStatementSize unless the receipt is a DvP leg.
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        IAbstractCoinVault(_coinVaults[vaultId]).lockCoin(leg.treeNumber, leg.nullifier);
         return true;
     }
 
@@ -639,7 +633,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
-        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
+        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromDvpReceipt(receipt);
         return true;
     }
 
@@ -699,7 +693,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 _coinVaults[vaultId2]
             ).getPendingProofReceipt(commitB2);
 
-            IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(receipt2);
+            IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromDvpReceipt(receipt2);
             delete _pendingTransactions[receiptMessage];
             _closedSwaps[receiptMessage] = true;
 
@@ -823,9 +817,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         // CRIT-2 fix: nullify Alice's input (mark as permanently spent)
         // then insert revertCommitA so Alice can reclaim her asset.
-        // The nullifiers were locked by addPendingProofReceipt; unlock first so nullifyFromReceipt succeeds.
-        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
-        IAbstractCoinVault(_coinVaults[vaultId]).nullifyFromReceipt(receipt);
+        // The nullifier was locked by addPendingProofReceipt; unlock first so nullifyFromDvpReceipt succeeds.
+        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromDvpReceipt(receipt);
+        IAbstractCoinVault(_coinVaults[vaultId]).nullifyFromDvpReceipt(receipt);
         uint256[] memory revertCommits = new uint256[](1);
         revertCommits[0] = revertCommitA;
         IAbstractCoinVault(_coinVaults[vaultId]).registerCoins(revertCommits);
@@ -1024,12 +1018,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // CRIT-5 fix: nullify inputs BEFORE inserting outputs.
         // This closes the double-spend window: if output insertion fails, inputs
         // are already spent so they cannot be reused in another transaction.
-        paymentCoinVault.nullifyFromReceipt(receipt1);
-        deliveryCoinVault.nullifyFromReceipt(receipt2);
+        paymentCoinVault.nullifyFromDvpReceipt(receipt1);
+        deliveryCoinVault.nullifyFromDvpReceipt(receipt2);
 
-        // Insert output commitments after inputs are permanently spent.
-        paymentCoinVault.insertCommitmentsFromReceipt(receipt1);
-        deliveryCoinVault.insertCommitmentsFromReceipt(receipt2);
+        // Insert each leg's commitment after inputs are permanently spent.
+        paymentCoinVault.insertCommitmentFromDvpReceipt(receipt1);
+        deliveryCoinVault.insertCommitmentFromDvpReceipt(receipt2);
 
         emit Settled(leg2.message, leg1.message);
 

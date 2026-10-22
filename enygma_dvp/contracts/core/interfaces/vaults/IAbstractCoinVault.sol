@@ -147,7 +147,16 @@ interface IAbstractCoinVault {
         IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
 
-    function unlockFromReceipt(
+    // DvP legs (DvpInitiator or DvpDestination receipts), read by name.
+    function nullifyFromDvpReceipt(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external returns (bool);
+
+    function insertCommitmentFromDvpReceipt(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external returns (bool);
+
+    function unlockFromDvpReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
     ) external returns (bool);
     /////////////////////////////////

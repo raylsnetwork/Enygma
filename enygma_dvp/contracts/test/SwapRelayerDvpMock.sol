@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {IEnygmaDvp} from "../core/interfaces/IEnygmaDvp.sol";
+import {DvpReceipt} from "../core/contracts/DvpReceipt.sol";
 
 /// @notice Test-only stand-in for the EnygmaDvp functions SwapRelayer calls,
 ///         and for the vault it checks legs against (vaultById returns this
@@ -67,8 +68,8 @@ contract SwapRelayerDvpMock {
         return true;
     }
 
-    // Single-input receipts: statement = [msg, tree, root, nullifier, ...].
+    // As EnygmaDvp.lockReceiptNullifiers reads it.
     function _nullifier(IEnygmaDvp.ProofReceipt calldata receipt) private pure returns (uint256) {
-        return receipt.statement[1 + 2 * receipt.numberOfInputs];
+        return DvpReceipt.read(receipt.statement).nullifier;
     }
 }
