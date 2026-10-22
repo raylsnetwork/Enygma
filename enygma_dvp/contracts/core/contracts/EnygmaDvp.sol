@@ -10,7 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset} from "../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset, paymentFeeOffset} from "../interfaces/IEnygmaDvp.sol";
 import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
@@ -1139,9 +1139,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // the protocolFee passed by the caller, preventing a prover from substituting
     // a different fee amount.
     //
-    // The receipt is a PaymentFee proof (1 input, 2 outputs) or, with 3
-    // outputs, a PaymentRelayerFee one; any other shape is refused, since
-    // neither has a fee to check.
+    // The fee is read at paymentFeeOffset: PaymentFee's for 1 input and 2
+    // outputs, PaymentRelayerFee's for 1 input and 3.
     function paymentWithFee(
         ProofReceipt memory receipt,
         uint256 vaultId,
@@ -1153,14 +1152,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
-        uint256 feeOffset;
-        if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
-            feeOffset = Psl.PAYMENT_FEE_FEE_OFFSET;
-        } else if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 3) {
-            feeOffset = Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET;
-        } else {
-            revert InvalidNumberOfOutputs();
-        }
+        uint256 feeOffset = paymentFeeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
         require(receipt.statement[feeOffset] == protocolFee, "EnygmaDvp: fee mismatch");
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
@@ -1171,7 +1163,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentOut = receipt.statement[Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET];
+        uint256 commitmentOut = receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1200,7 +1192,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // Without this check any fee the prover claims in the proof would pass
         // verification — the circuit only proves valOut[2] == StFee, not that
         // StFee matches any protocol-configured value.
-        if (receipt.statement[Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET] != relayerFixedFeeAmount) revert InvalidRelayerFee();
+        uint256 feeOffset = paymentFeeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
+        if (receipt.statement[feeOffset] != relayerFixedFeeAmount) revert InvalidRelayerFee();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
