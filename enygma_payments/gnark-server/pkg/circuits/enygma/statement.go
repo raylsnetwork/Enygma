@@ -1,6 +1,6 @@
 package enygma
 
-import "enygma_payments/gnark-server/pkg/statement"
+import "enygma_gnark_shared/statement"
 
 // DefaultConfig is the anonymity-set size the transfer circuit is compiled,
 // keyed and deployed at (Enygma.sol's DEFAULT_SIZE).

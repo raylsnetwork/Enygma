@@ -18,13 +18,13 @@ import (
 	"log"
 	"os"
 
+	"enygma_gnark_shared/statement"
 	"enygma_payments/gnark-server/pkg/circuits/burn"
 	"enygma_payments/gnark-server/pkg/circuits/deposit"
 	enygma "enygma_payments/gnark-server/pkg/circuits/enygma"
 	"enygma_payments/gnark-server/pkg/circuits/enygma_fee"
 	"enygma_payments/gnark-server/pkg/circuits/usdr"
 	"enygma_payments/gnark-server/pkg/circuits/withdraw"
-	"enygma_payments/gnark-server/pkg/statement"
 )
 
 // Output paths, relative to this directory (go generate and go test both
@@ -33,6 +33,13 @@ const (
 	goOut  = "../../../layout/layout.go"
 	solOut = "../../../contracts/enygma/contracts/StatementLayout.sol"
 )
+
+var target = statement.Target{
+	Generator:       "gnark-server/cmd/genlayout",
+	Subject:         "the payments circuits'",
+	GoPackage:       "layout",
+	SolidityLibrary: "StatementLayout",
+}
 
 func generate() map[string][]byte {
 	layouts := []statement.Layout{
@@ -44,8 +51,8 @@ func generate() map[string][]byte {
 		burn.StatementLayout(),
 	}
 	return map[string][]byte{
-		goOut:  statement.RenderGo(layouts),
-		solOut: statement.RenderSolidity(layouts),
+		goOut:  target.RenderGo(layouts),
+		solOut: target.RenderSolidity(layouts),
 	}
 }
 

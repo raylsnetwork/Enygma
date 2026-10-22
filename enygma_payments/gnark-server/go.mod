@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.6
 
 require (
+	enygma_gnark_shared v0.0.0
 	github.com/consensys/gnark v0.14.0
 	github.com/consensys/gnark-crypto v0.19.2
 	github.com/gin-gonic/gin v1.10.0
@@ -53,3 +54,5 @@ require (
 	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace enygma_gnark_shared => ../../enygma_gnark_shared

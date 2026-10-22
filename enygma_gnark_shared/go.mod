@@ -2,12 +2,14 @@ module enygma_gnark_shared
 
 go 1.26.0
 
-require github.com/consensys/gnark v0.14.0
+require (
+	github.com/consensys/gnark v0.14.0
+	github.com/consensys/gnark-crypto v0.19.1
+)
 
 require (
 	github.com/bits-and-blooms/bitset v1.24.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/consensys/gnark-crypto v0.19.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/google/pprof v0.0.0-20250820193118-f64d9cf942d6 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
