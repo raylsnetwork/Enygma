@@ -16,14 +16,19 @@ var (
 	solLen         = regexp.MustCompile(`uint256 constant (\w+_LEN) = (\d+);`)
 	solLengthCheck = regexp.MustCompile(`statement\.length\s*[!=]=\s*(\w+)`)
 	solLengthLen   = regexp.MustCompile(`\?\s*(\w+_LEN)\s*:\s*(\w+_LEN)`)
-	solVerifyProof = regexp.MustCompile(`verifyProof\(\s*(VK_ID_\w+)`)
+	solTableRow    = regexp.MustCompile(`PaymentCircuit\(\{([^}]*)\}\)`)
+	solRowVk       = regexp.MustCompile(`vkId:\s*(VK_ID_\w+)`)
+	solPslName     = regexp.MustCompile(`Psl\.([A-Z][A-Z0-9_]*)_(?:OFFSET|SIZE)\b`)
+	solIndexRead   = regexp.MustCompile(`statement\[([^\]]*)\]`)
+	solTableIndex  = regexp.MustCompile(`^\s*((Psl|Dsl)\.[A-Z][A-Z0-9_]*_OFFSET|circuit\.\w+(\s*\+\s*(1|i))*)\s*$`)
 )
 
-// Erc20CoinVault picks a Payment-family verifying key by statement length,
-// and checks a receipt's statement length before settling it, but nothing
-// ties a verifying key id or a function to the length of the circuit whose
-// key it is. This pins each such check to its circuit's statement length,
-// whether it is written as a generated *_LEN constant or as a literal.
+// Erc20CoinVault picks a Payment-family circuit from a table by shape and
+// statement length, and checks a receipt's statement length before settling
+// it, but nothing ties a table row or a function to the length of the
+// circuit it reads. This pins each such check to its circuit's statement
+// length, whether it is written as a generated *_LEN constant or as a
+// literal, and each row's offsets to its own circuit.
 func TestVaultLengthChecksMatchStatementLengths(t *testing.T) {
 	src := readFile(t, erc20CoinVaultSol)
 	lens := generatedLens(t)
@@ -38,33 +43,78 @@ func TestVaultLengthChecksMatchStatementLengths(t *testing.T) {
 		return n
 	}
 
-	// The verifier each length dispatches to in checkReceiptConditions: the
-	// length compared last before a verifyProof call is the one guarding it.
-	dispatch := map[string]int{
-		"VK_ID_ERC20_JOINSPLIT_FEE": templates.PaymentFeeStatementLayout().Len,
-		"VK_ID_ERC20_USDR":          templates.UsdrFeeStatementLayout().Len,
+	// _paymentCircuit is the Payment-family table: each row names a
+	// verifying key and the offsets the vault reads, and is returned after a
+	// statement length check. Pin each row to one circuit: the length
+	// compared last before it must be that circuit's, and every layout
+	// constant in it must be that circuit's own.
+	circuits := map[string]struct {
+		prefix string
+		len    int
+	}{
+		"VK_ID_ERC20_JOINSPLIT":         {"PAYMENT", templates.PaymentStatementLayout().Len},
+		"VK_ID_ERC20_JOINSPLIT_2INPUT":  {"PAYMENT2IN", templates.Payment2inStatementLayout().Len},
+		"VK_ID_ERC20_JOINSPLIT_FEE":     {"PAYMENT_FEE", templates.PaymentFeeStatementLayout().Len},
+		"VK_ID_ERC20_JOINSPLIT_RELAYER": {"PAYMENT_RELAYER_FEE", templates.PaymentRelayerFeeStatementLayout().Len},
+		"VK_ID_ERC20_USDR":              {"USDR_FEE", templates.UsdrFeeStatementLayout().Len},
 	}
-	body := functionBody(t, src, "checkReceiptConditions")
+	prefixes := []string{}
+	for _, c := range circuits {
+		prefixes = append(prefixes, c.prefix)
+	}
+	// circuitOf returns the circuit a layout constant name belongs to, by
+	// its longest matching circuit prefix.
+	circuitOf := func(constant string) string {
+		best := ""
+		for _, p := range prefixes {
+			if strings.HasPrefix(constant, p+"_") && len(p) > len(best) {
+				best = p
+			}
+		}
+		return best
+	}
+	table := functionBody(t, src, "_paymentCircuit")
 	seen := map[string]bool{}
-	for _, m := range solVerifyProof.FindAllStringSubmatchIndex(body, -1) {
-		vk := body[m[2]:m[3]]
-		want, ok := dispatch[vk]
+	for _, m := range solTableRow.FindAllStringSubmatchIndex(table, -1) {
+		row := table[m[2]:m[3]]
+		vk := solRowVk.FindStringSubmatch(row)
+		if vk == nil {
+			t.Errorf("_paymentCircuit row has no vkId: %s", row)
+			continue
+		}
+		c, ok := circuits[vk[1]]
 		if !ok {
+			t.Errorf("_paymentCircuit row names %s, not a Payment-family verifying key", vk[1])
 			continue
 		}
-		checks := solLengthCheck.FindAllStringSubmatch(body[:m[0]], -1)
+		if seen[vk[1]] {
+			t.Errorf("_paymentCircuit has two rows for %s", vk[1])
+		}
+		seen[vk[1]] = true
+		checks := solLengthCheck.FindAllStringSubmatch(table[:m[0]], -1)
 		if len(checks) == 0 {
-			t.Errorf("verifyProof(%s): no statement length check guards it", vk)
-			continue
+			t.Errorf("_paymentCircuit row %s: no statement length check guards it", vk[1])
+		} else if got := resolve(checks[len(checks)-1][1]); got != c.len {
+			t.Errorf("_paymentCircuit row %s is guarded by statement length %d, its circuit's is %d", vk[1], got, c.len)
 		}
-		if got := resolve(checks[len(checks)-1][1]); got != want {
-			t.Errorf("verifyProof(%s) is guarded by statement length %d, its circuit's is %d", vk, got, want)
+		for _, k := range solPslName.FindAllStringSubmatch(row, -1) {
+			if got := circuitOf(k[1]); got != c.prefix {
+				t.Errorf("_paymentCircuit row %s reads Psl.%s, a %s constant, not %s's", vk[1], k[1], got, c.prefix)
+			}
 		}
-		seen[vk] = true
 	}
-	for vk := range dispatch {
+	for vk := range circuits {
 		if !seen[vk] {
-			t.Errorf("checkReceiptConditions has no verifyProof(%s)", vk)
+			t.Errorf("_paymentCircuit has no row for %s", vk)
+		}
+	}
+
+	// Every read of a receipt's statement in the vault is at a named layout
+	// offset or at a table row's offset: none is counted from the
+	// caller-supplied numberOfInputs/numberOfOutputs.
+	for _, m := range solIndexRead.FindAllStringSubmatch(src, -1) {
+		if !solTableIndex.MatchString(m[1]) {
+			t.Errorf("Erc20CoinVault reads statement[%s], not a named layout offset or a table row's", m[1])
 		}
 	}
 

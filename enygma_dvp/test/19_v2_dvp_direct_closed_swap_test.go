@@ -36,6 +36,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 type directSwap struct {
@@ -85,7 +87,7 @@ func (d *directSwap) mustSubmit(what, method string, args ...interface{}) *types
 // noteState reports whether a single-input receipt's note is locked or spent.
 func (d *directSwap) noteState(vault *bind.BoundContract, rc onchainProofReceipt) (locked, spent bool) {
 	d.t.Helper()
-	tree, nf := rc.Statement[1], rc.Statement[3]
+	tree, nf := dvpLegNote(d.t, rc)
 	var out []interface{}
 	if err := vault.Call(nil, &out, "isLocked", tree, nf); err != nil {
 		d.t.Fatalf("isLocked: %v", err)
@@ -242,7 +244,7 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 
 		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
 		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
-		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", alice.Statement[4])
+		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", alice.Statement[layout.DvpInitiatorCommitBOffset])
 
 		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, d.deadlineIn(7*24*3600)); e != "SwapClosed" {
 			t.Fatalf("Bob's late leg: got %q, want SwapClosed", e)

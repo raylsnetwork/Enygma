@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"enygma_dvp/layout"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
@@ -167,13 +168,7 @@ func (c *GnarkClient) Erc20JoinSplitProof(
 		proofStrs[i] = n.String()
 	}
 
-	// Statement: [message, tree[0], root[0], null[0], ..., commit[0], commit[1]]
-	statement := make([]*big.Int, 0, 1+3*nIn+nOut)
-	statement = append(statement, stMessage)
-	for i := 0; i < nIn; i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
+	statement := joinSplitStatement(stMessage, stTreeNumbers, stMerkleRoots, stNullifiers, stCommitmentsOut)
 
 	return &ProofResult{
 		Proof:           proofStrs,
@@ -310,13 +305,7 @@ func (c *GnarkClient) Erc20WithdrawProof(
 		proofStrs2[i] = n.String()
 	}
 
-	// Statement: [message, tree[0], root[0], null[0], ..., commit[0], commit[1]]
-	statement := make([]*big.Int, 0, 1+3*nIn+2)
-	statement = append(statement, stMessage)
-	for i := 0; i < nIn; i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
+	statement := joinSplitStatement(stMessage, stTreeNumbers, stMerkleRoots, stNullifiers, stCommitmentsOut)
 
 	return &ProofResult{
 		Proof:           proofStrs2,
@@ -432,12 +421,7 @@ func (c *GnarkClient) Erc20JoinSplitProofFromSalts(
 		proofStrs[i] = n.String()
 	}
 
-	statement := make([]*big.Int, 0, 1+3*nIn+nOut)
-	statement = append(statement, stMessage)
-	for i := 0; i < nIn; i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
+	statement := joinSplitStatement(stMessage, stTreeNumbers, stMerkleRoots, stNullifiers, stCommitmentsOut)
 
 	return &ProofResult{
 		Proof:           proofStrs,
@@ -451,20 +435,40 @@ func (c *GnarkClient) Erc20JoinSplitProofFromSalts(
 
 // Erc20PrivateMintResult holds the outputs of a successful V2 PrivateMint proof.
 type Erc20PrivateMintResult struct {
-	// Commitment is the V2 note commitment: Poseidon(pkSpend, salt, amount, tokenId).
-	// This is what gets inserted into the Merkle tree on-chain.
-	Commitment *big.Int
-
-	// CipherText is the note tag: Poseidon(pkSpend, salt).
-	// Published on-chain as a public signal; Alice uses it to confirm a mint is hers.
-	CipherText *big.Int
+	Proof []string // 8-element Groth16 proof
+	// Statement is the public signals exactly as the gnark server returned
+	// them, in the PrivateMint statement layout's order.
+	Statement []*big.Int
 
 	// Salt is the random field element Alice chose. She must keep this as her
 	// WtSaltsIn witness when she later spends the note in a JoinSplit proof.
 	Salt *big.Int
+}
 
-	// ProofResponse carries the Groth16 proof and public signals from the gnark server.
-	ProofResponse *PrivateMintProofResponse
+// ContractStatement returns the statement for on-chain submission: Statement,
+// as the server returned it.
+func (r *Erc20PrivateMintResult) ContractStatement() []*big.Int { return r.Statement }
+
+// Commitment is the V2 note commitment: Poseidon(pkSpend, salt, amount, tokenId).
+// This is what gets inserted into the Merkle tree on-chain.
+func (r *Erc20PrivateMintResult) Commitment() *big.Int {
+	return r.Statement[layout.PrivateMintCommitmentOffset]
+}
+
+// ContractAddress is the deployment the proof is bound to.
+func (r *Erc20PrivateMintResult) ContractAddress() *big.Int {
+	return r.Statement[layout.PrivateMintContractAddressOffset]
+}
+
+// TokenId is the minted note's token id.
+func (r *Erc20PrivateMintResult) TokenId() *big.Int {
+	return r.Statement[layout.PrivateMintTokenIdOffset]
+}
+
+// CipherText is the note tag: Poseidon(pkSpend, salt, contractAddress).
+// Published on-chain; Alice uses it to confirm a mint is hers.
+func (r *Erc20PrivateMintResult) CipherText() *big.Int {
+	return r.Statement[layout.PrivateMintCipherTextOffset]
 }
 
 // Erc20PrivateMintProof generates a V2 PrivateMint proof for an ERC20 deposit.
@@ -509,16 +513,15 @@ func (c *GnarkClient) Erc20PrivateMintProof(
 		return nil, fmt.Errorf("privateMint proof request failed: %w", err)
 	}
 
-	var resp PrivateMintProofResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	proof, statement, err := proofResponse(body, layout.PrivateMintLen)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse privateMint response: %w", err)
 	}
 
 	return &Erc20PrivateMintResult{
-		Commitment:    commitment,
-		CipherText:    cipherText,
-		Salt:          salt,
-		ProofResponse: &resp,
+		Proof:     proof,
+		Statement: statement,
+		Salt:      salt,
 	}, nil
 }
 

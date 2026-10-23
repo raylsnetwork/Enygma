@@ -52,6 +52,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+
+	"enygma_dvp/layout"
 )
 
 // Hardhat accounts 3–5 from enygmadvp.config.json (account 2 is the relayer
@@ -139,7 +141,7 @@ var hardhatCustomErr = regexp.MustCompile(`custom error '(\w+)\(`)
 // locked and whether it is spent in the given vault.
 func (r *onchainSwapRelayer) nullifierState(vaultID int64, rc onchainProofReceipt) (locked, spent bool) {
 	r.t.Helper()
-	tree, nf := rc.Statement[1], rc.Statement[3]
+	tree, nf := dvpLegNote(r.t, rc)
 	var out []interface{}
 	if err := r.vaults[vaultID].Call(nil, &out, "isLocked", tree, nf); err != nil {
 		r.t.Fatalf("isLocked: %v", err)
@@ -310,7 +312,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		bobNftSalt, one, nftTokenId,
 		aliceSpend.PublicKey, core.SaltBToField(saltA),
 		core.SaltBToField(saltB), decAmount, decTokenId,
-		initiator.CommitA,
+		initiator.CommitA(),
 		big.NewInt(0), bobProof, depth,
 		vaultInt(erc20VaultAddr), // Bob is paid from the ERC-20 vault
 	)
@@ -330,7 +332,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		NumberOfInputs:  big.NewInt(int64(destination.NumberOfInputs)),
 		NumberOfOutputs: big.NewInt(int64(destination.NumberOfOutputs)),
 	}
-	return pay, del, initiator.CommitA, initiator.CommitB
+	return pay, del, initiator.CommitA(), initiator.CommitB()
 }
 
 func TestV2SwapRelayer_OnChain(t *testing.T) {
@@ -383,7 +385,10 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	ctI, ctII := []byte{0x01}, []byte{0x02}
 	vPay, vDel := big.NewInt(0), big.NewInt(1)
 	id1 := swapIdOf(pay, del)
-	mirror1 := crypto.Keccak256Hash(common.BigToHash(pay.Statement[0]).Bytes(), common.BigToHash(del.Statement[0]).Bytes())
+	// The mirror id names the same messages in the other order.
+	mirror1 := crypto.Keccak256Hash(
+		common.BigToHash(pay.Statement[layout.DvpInitiatorMessageOffset]).Bytes(),
+		common.BigToHash(del.Statement[layout.DvpDestinationMessageOffset]).Bytes())
 
 	// ── 1. Alice submits, swap expires, someone else cancels ─────────────────
 	t.Log("1. Alice submits her payment leg, then a third party cancels it after expiry")
@@ -509,7 +514,10 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 }
 
 // swapIdOf mirrors SwapRelayer.swapIdOf: keccak256(abi.encode(deliveryMessage,
-// paymentMessage)), the two legs' statement messages.
+// paymentMessage)), the two legs' statement messages. pay is a DvpInitiator
+// leg and del a DvpDestination leg, as buildSwapLegs makes them.
 func swapIdOf(pay, del onchainProofReceipt) common.Hash {
-	return crypto.Keccak256Hash(common.BigToHash(del.Statement[0]).Bytes(), common.BigToHash(pay.Statement[0]).Bytes())
+	return crypto.Keccak256Hash(
+		common.BigToHash(del.Statement[layout.DvpDestinationMessageOffset]).Bytes(),
+		common.BigToHash(pay.Statement[layout.DvpInitiatorMessageOffset]).Bytes())
 }

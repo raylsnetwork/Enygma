@@ -53,6 +53,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 const partialWithdrawDepth = 8
@@ -632,17 +634,19 @@ func TestV2Erc20PartialWithdraw_Rejections(t *testing.T) {
 		e.expectRevert(t, "ZeroWithdrawAmount", big.NewInt(0), recipient, s.receipt, s.ctI, s.ctII)
 	})
 	t.Run("fee_shaped_statement", func(t *testing.T) {
-		// An 8-element statement is the PaymentFee shape, whose fee leaves the
-		// input outside the two outputs.
+		// A PaymentFee-length statement, whose fee leaves the input outside the
+		// two outputs: the Payment statement with a trailing fee of 1.
 		bad := s.receipt
-		bad.Statement = append(append([]*big.Int{}, s.receipt.Statement...), big.NewInt(1))
+		bad.Statement = make([]*big.Int, layout.PaymentFeeLen)
+		copy(bad.Statement, s.receipt.Statement)
+		bad.Statement[layout.PaymentFeeFeeOffset] = big.NewInt(1)
 		e.expectRevert(t, "InvalidStatmentSize", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
 	t.Run("payment_message", func(t *testing.T) {
-		// StMessage 0 marks a payment proof, not a withdrawal.
+		// Message 0 marks a payment proof, not a withdrawal.
 		bad := s.receipt
 		bad.Statement = append([]*big.Int{}, s.receipt.Statement...)
-		bad.Statement[0] = big.NewInt(0)
+		bad.Statement[layout.PaymentMessageOffset] = big.NewInt(0)
 		e.expectRevert(t, "InvalidPaymentMessage", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
 	t.Run("overdraw_refused_by_prover", func(t *testing.T) {
@@ -706,8 +710,8 @@ func TestV2Erc20PartialWithdraw_TwoInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gnark /proof/payment2in: %v", err)
 	}
-	if n := len(s.receipt.Statement); n != 10 {
-		t.Fatalf("2-input statement has %d elements, want 10", n)
+	if n := len(s.receipt.Statement); n != layout.Payment2inLen {
+		t.Fatalf("2-input statement has %d elements, want %d", n, layout.Payment2inLen)
 	}
 	if !e.verifiesAt(t, 1, s.receipt) {
 		t.Fatalf("the 2-input proof does not verify against VK slot 1 (Payment2in)")
@@ -749,8 +753,8 @@ func TestV2Erc20PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gnark /proof/paymentFee: %v", err)
 		}
-		if n := len(s.receipt.Statement); n != 8 {
-			t.Fatalf("PaymentFee statement has %d elements, want 8", n)
+		if n := len(s.receipt.Statement); n != layout.PaymentFeeLen {
+			t.Fatalf("PaymentFee statement has %d elements, want %d", n, layout.PaymentFeeLen)
 		}
 		if !e.verifiesAt(t, 2, s.receipt) {
 			t.Fatalf("the PaymentFee proof does not verify against VK slot 2 — the test would prove nothing")
@@ -764,8 +768,8 @@ func TestV2Erc20PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gnark /proof/paymentRelayerFeePublic: %v", err)
 		}
-		if n := len(s.receipt.Statement); n != 9 {
-			t.Fatalf("PaymentRelayerFeePublic statement has %d elements, want 9", n)
+		if n := len(s.receipt.Statement); n != layout.PaymentRelayerFeeLen {
+			t.Fatalf("PaymentRelayerFeePublic statement has %d elements, want %d", n, layout.PaymentRelayerFeeLen)
 		}
 		if !e.verifiesAt(t, 3, s.receipt) {
 			t.Fatalf("the PaymentRelayerFeePublic proof does not verify against VK slot 3 — the test would prove nothing")
@@ -845,8 +849,8 @@ func TestV2Erc20PartialWithdraw_NoCrossSettlement(t *testing.T) {
 
 	note := newDepositNote(t, e, big.NewInt(100))
 	s := e.mustProveWithdraw(t, note, big.NewInt(10), big.NewInt(90), recipient)
-	if s.receipt.Statement[0].Cmp(big.NewInt(1)) != 0 {
-		t.Fatalf("withdrawal proof carries StMessage %s, want WITHDRAW_MESSAGE (1)", s.receipt.Statement[0])
+	if msg := s.receipt.Statement[layout.PaymentMessageOffset]; msg.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("withdrawal proof carries Message %s, want WITHDRAW_MESSAGE (1)", msg)
 	}
 	if !e.verifiesAt(t, 0, s.receipt) {
 		t.Fatalf("the withdrawal proof does not verify against VK slot 0 — the regenerated Payment key is not registered")

@@ -1,9 +1,10 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"enygma_dvp/layout"
 )
 
 // PaymentResult holds the output of the Payment-family proof functions —
@@ -12,7 +13,7 @@ import (
 type PaymentResult struct {
 	Proof []string // 8-element Groth16 proof
 	// Statement is the public signals exactly as the gnark server returned
-	// them: the proved witness's public part, in the circuit's own order.
+	// them: the proved witness's public part, in statement layout order.
 	Statement       []*big.Int
 	NumberOfInputs  int
 	NumberOfOutputs int
@@ -23,44 +24,63 @@ type PaymentResult struct {
 	SaltB *big.Int // saltB field element used in Bob's output commitment
 	// Alice's change note data (private — not published on-chain).
 	SaltA *big.Int // random change salt; Alice must store this locally to open Commitment_A
-	// ContractAddress is non-nil when the proof was generated via BoundPaymentProof (VULN-5 fix):
-	// the vault the proof is bound to.
-	ContractAddress *big.Int
-	// Fee is non-nil when generated via BoundPaymentFeeProof: the proof's public fee.
-	Fee *big.Int
+
+	circuit paymentLayout // the statement layout of the circuit that proved Statement
 }
 
-// ContractStatement returns the statement for on-chain submission. The
-// server already returns it in the order the vault contracts read, so it is
-// Statement unchanged.
-func (r *PaymentResult) ContractStatement() []*big.Int {
-	return r.Statement
+// paymentLayout is the statement layout of one Payment-family circuit.
+type paymentLayout struct {
+	length                                        int
+	message, treeNumbers, merkleRoots, nullifiers field
+	commitmentsOut, contractAddress, fee          field
 }
 
-// paymentResponse decodes a Payment-family prove handler's response: the
-// proof as decimal strings and the public signals it was proved against.
-func paymentResponse(body []byte) (proof []string, statement []*big.Int, err error) {
-	var resp struct {
-		Proof        []json.Number `json:"proof"`
-		PublicSignal []json.Number `json:"publicSignal"`
+var (
+	paymentStatement = paymentLayout{
+		length:          layout.PaymentLen,
+		message:         field{layout.PaymentMessageOffset, layout.PaymentMessageSize},
+		treeNumbers:     field{layout.PaymentTreeNumbersOffset, layout.PaymentTreeNumbersSize},
+		merkleRoots:     field{layout.PaymentMerkleRootsOffset, layout.PaymentMerkleRootsSize},
+		nullifiers:      field{layout.PaymentNullifiersOffset, layout.PaymentNullifiersSize},
+		commitmentsOut:  field{layout.PaymentCommitmentsOutOffset, layout.PaymentCommitmentsOutSize},
+		contractAddress: field{layout.PaymentContractAddressOffset, layout.PaymentContractAddressSize},
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, nil, err
+	paymentFeeStatement = paymentLayout{
+		length:          layout.PaymentFeeLen,
+		message:         field{layout.PaymentFeeMessageOffset, layout.PaymentFeeMessageSize},
+		treeNumbers:     field{layout.PaymentFeeTreeNumbersOffset, layout.PaymentFeeTreeNumbersSize},
+		merkleRoots:     field{layout.PaymentFeeMerkleRootsOffset, layout.PaymentFeeMerkleRootsSize},
+		nullifiers:      field{layout.PaymentFeeNullifiersOffset, layout.PaymentFeeNullifiersSize},
+		commitmentsOut:  field{layout.PaymentFeeCommitmentsOutOffset, layout.PaymentFeeCommitmentsOutSize},
+		contractAddress: field{layout.PaymentFeeContractAddressOffset, layout.PaymentFeeContractAddressSize},
+		fee:             field{layout.PaymentFeeFeeOffset, layout.PaymentFeeFeeSize},
 	}
-	proof = make([]string, len(resp.Proof))
-	for i, n := range resp.Proof {
-		proof[i] = n.String()
-	}
-	statement = make([]*big.Int, len(resp.PublicSignal))
-	for i, n := range resp.PublicSignal {
-		v, ok := new(big.Int).SetString(n.String(), 10)
-		if !ok {
-			return nil, nil, fmt.Errorf("publicSignal[%d]: %q is not a decimal integer", i, n)
-		}
-		statement[i] = v
-	}
-	return proof, statement, nil
-}
+)
+
+// ContractStatement returns the statement for on-chain submission: Statement,
+// as the server returned it.
+func (r *PaymentResult) ContractStatement() []*big.Int { return r.Statement }
+
+// Message is the statement's message: 0 for a payment, 1 for a withdrawal.
+func (r *PaymentResult) Message() *big.Int { return r.circuit.message.one(r.Statement) }
+
+// TreeNumbers are the trees the input notes live in, one per input.
+func (r *PaymentResult) TreeNumbers() []*big.Int { return r.circuit.treeNumbers.in(r.Statement) }
+
+// MerkleRoots are the roots the input notes are proved against, one per input.
+func (r *PaymentResult) MerkleRoots() []*big.Int { return r.circuit.merkleRoots.in(r.Statement) }
+
+// Nullifiers are the input notes' nullifiers, one per input.
+func (r *PaymentResult) Nullifiers() []*big.Int { return r.circuit.nullifiers.in(r.Statement) }
+
+// CommitmentsOut are the output notes' commitments, one per output.
+func (r *PaymentResult) CommitmentsOut() []*big.Int { return r.circuit.commitmentsOut.in(r.Statement) }
+
+// ContractAddress is the vault the proof is bound to (VULN-5 fix).
+func (r *PaymentResult) ContractAddress() *big.Int { return r.circuit.contractAddress.one(r.Statement) }
+
+// Fee is the proof's public fee, or nil for a circuit without one (Payment).
+func (r *PaymentResult) Fee() *big.Int { return r.circuit.fee.one(r.Statement) }
 
 // BoundPaymentProof generates a Payment circuit proof for Alice paying some amount
 // to Bob, with optional change back to herself, binding the proof to a specific
@@ -205,7 +225,7 @@ func (c *GnarkClient) BoundPaymentProof(
 		return nil, fmt.Errorf("bound payment proof request failed: %w", err)
 	}
 
-	proofStrs, statement, err := paymentResponse(body)
+	proofStrs, statement, err := proofResponse(body, paymentStatement.length)
 	if err != nil {
 		return nil, fmt.Errorf("parse bound payment proof response: %w", err)
 	}
@@ -219,7 +239,7 @@ func (c *GnarkClient) BoundPaymentProof(
 		EncTxData:       encTxData,
 		SaltB:           wtSaltsOut[0],
 		SaltA:           saltA,
-		ContractAddress: contractAddress,
+		circuit:         paymentStatement,
 	}, nil
 }
 
@@ -354,7 +374,7 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		return nil, fmt.Errorf("payment fee proof request failed: %w", err)
 	}
 
-	proofStrs, statement, err := paymentResponse(body)
+	proofStrs, statement, err := proofResponse(body, paymentFeeStatement.length)
 	if err != nil {
 		return nil, fmt.Errorf("parse payment fee proof response: %w", err)
 	}
@@ -368,7 +388,6 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		EncTxData:       encTxData,
 		SaltB:           wtSaltsOut[0],
 		SaltA:           saltA,
-		ContractAddress: contractAddress,
-		Fee:             stFee,
+		circuit:         paymentFeeStatement,
 	}, nil
 }

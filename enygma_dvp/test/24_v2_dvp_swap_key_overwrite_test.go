@@ -94,7 +94,7 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 	if status, err := submitLeg(t, tc, tc.auth, aliceLeg, 0, 0, deadline); err != nil || status != 1 {
 		t.Fatalf("Alice's leg: status=%d err=%v", status, err)
 	}
-	t.Logf("Alice opened swap commitB=%s from vault 0", alice.CommitB)
+	t.Logf("Alice opened swap commitB=%s from vault 0", alice.CommitB())
 
 	// ── Bob builds a leg with the SAME commitB from his own note in vault 2 ───
 	// commitB = Poseidon(pkBob, saltB, amount, tokenId); Bob knows all four.
@@ -113,7 +113,7 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bob DvPInitiatorProofFromSalts: %v", err)
 	}
-	if bob.CommitB.Cmp(alice.CommitB) != 0 {
+	if bob.CommitB().Cmp(alice.CommitB()) != 0 {
 		t.Fatalf("test setup: Bob's leg does not reproduce Alice's commitB")
 	}
 	bobLeg := onchainProofReceipt{
@@ -134,7 +134,7 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 
 	// 2. Once Alice's swap has timed out (and closed), Bob's leg must not reopen it.
 	hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
-	tx, err = tc.dvp.Transact(tc.auth, "claimSwapTimeout", alice.CommitB)
+	tx, err = tc.dvp.Transact(tc.auth, "claimSwapTimeout", alice.CommitB())
 	waitOK(t, tc.client, "claimSwapTimeout (Alice)", tx, err)
 	deadline2 := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(minSwapDeadline))
 	status, err = submitLeg(t, tc, tc.auth, bobLeg, vault2Id, 0, deadline2)

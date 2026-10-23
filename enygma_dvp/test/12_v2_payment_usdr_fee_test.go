@@ -54,6 +54,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 const (
@@ -453,8 +455,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"wtSaltsOut":           [3]string{saltBobField.String(), saltChange.String(), feeSalt.String()},
 		}
 		proof := postPaymentGnarkProof(t, "/proof/paymentRelayerFeePublic", reqBody)
-		if len(proof.PublicSignal) != 9 {
-			t.Fatalf("expected 9 public signals, got %d", len(proof.PublicSignal))
+		if len(proof.PublicSignal) != layout.PaymentRelayerFeeLen {
+			t.Fatalf("expected %d public signals, got %d", layout.PaymentRelayerFeeLen, len(proof.PublicSignal))
 		}
 
 		var proofArr [8]string
@@ -564,8 +566,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"wtSaltsOut":           [2]string{fSalt.String(), changeSalt.String()},
 		}
 		p := postPaymentGnarkProof(t, "/proof/usdrFee", reqBody)
-		if len(p.PublicSignal) != 9 {
-			t.Fatalf("expected 9 public signals, got %d", len(p.PublicSignal))
+		if len(p.PublicSignal) != layout.UsdrFeeLen {
+			t.Fatalf("expected %d public signals, got %d", layout.UsdrFeeLen, len(p.PublicSignal))
 		}
 		return p, fSalt, fCmt
 	}
@@ -747,8 +749,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		callWith := func(usdrVaultId int64) error {
 			var out []interface{}
 			return dvp.Call(&bind.CallOpts{From: owner.From}, &out, "paymentWithUsdrFee",
-				emptyReceipt(7), big.NewInt(0), []byte{}, []byte{},
-				emptyReceipt(9), big.NewInt(usdrVaultId), []byte{}, []byte{})
+				emptyReceipt(layout.PaymentLen), big.NewInt(0), []byte{}, []byte{},
+				emptyReceipt(layout.UsdrFeeLen), big.NewInt(usdrVaultId), []byte{}, []byte{})
 		}
 
 		err := callWith(0)
@@ -762,6 +764,17 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			t.Fatalf("usdrVaultId=1 (the pinned vault) was wrongly rejected: %v", err)
 		}
 		t.Logf("  usdrVaultId=1 passes the pin (fails later on the empty proof, as expected): %v", err)
+
+		// The USDr leg's fee and token id are read as UsdrFee fields, so a
+		// statement of any other length is refused before the main leg is
+		// even looked at: a Payment receipt would be read past its end.
+		err = dvp.Call(&bind.CallOpts{From: owner.From}, &[]interface{}{}, "paymentWithUsdrFee",
+			emptyReceipt(layout.PaymentLen), big.NewInt(0), []byte{}, []byte{},
+			emptyReceipt(layout.PaymentLen), big.NewInt(1), []byte{}, []byte{})
+		if err == nil || !strings.Contains(err.Error(), "InvalidStatementSize") {
+			t.Fatalf("usdr leg with a Payment-length statement: expected InvalidStatementSize, got: %v", err)
+		}
+		t.Log("  usdr leg with a Payment-length statement rejected with InvalidStatementSize ✓")
 	})
 
 	t.Run("negative: usdr fee note addressed to a non-relayer key", func(t *testing.T) {

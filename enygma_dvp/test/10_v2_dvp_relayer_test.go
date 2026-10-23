@@ -13,8 +13,8 @@ package tests
 // from within this test suite.
 //
 // Exchange protocol note: exchange() requires both receipts to pass the
-// ERC-20 vault's checkReceiptConditions which accesses statement[5], so both
-// parties must use DvPInitiatorProofFromSalts (7-element statement). Salts are
+// ERC-20 vault's checkDvpReceiptConditions, which takes only a DvpInitiator leg,
+// so both parties must use DvPInitiatorProofFromSalts. Salts are
 // pre-agreed so the output commitments cross-reference each other without KEM.
 //
 // Plus auth/validation error tests that only need the relayer to be running.
@@ -48,6 +48,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -131,8 +133,26 @@ func dvpPost(t *testing.T, path, apiKey string, body interface{}) (*dvpRelayResp
 
 // ── proof payload builders ────────────────────────────────────────────────────
 
+// zeroPaymentReq is a /relay/payment request whose nIn-in/nOut-out receipt has
+// an all-zero proof and a publicSignal of sigLen zeros.
+func zeroPaymentReq(nIn, nOut, sigLen int) relayPaymentReq {
+	var proof [8]string
+	for i := range proof {
+		proof[i] = "0"
+	}
+	sig := make([]string, sigLen)
+	for i := range sig {
+		sig[i] = "0"
+	}
+	return relayPaymentReq{
+		VaultId:    vaultIdErc20,
+		Receipt:    dvpReceiptPayload{Proof: proof, PublicSignal: sig, NumberOfInputs: nIn, NumberOfOutputs: nOut},
+		CipherText: "0x00",
+		EncTxData:  "0x00",
+	}
+}
+
 // dvpInitiatorToPayload converts a DvPInitiatorResult to a dvpReceiptPayload.
-// Statement is already in non-interleaved form (nIn=1, so interleaved == non-interleaved).
 func dvpInitiatorToPayload(t *testing.T, r *core.DvPInitiatorResult) dvpReceiptPayload {
 	t.Helper()
 	sig := make([]string, len(r.Statement))
@@ -370,8 +390,8 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
 	}
-	t.Logf("  commitB (Bob's USDT):    %s", initiator.CommitB)
-	t.Logf("  commitA (Alice's ticket):%s", initiator.CommitA)
+	t.Logf("  commitB (Bob's USDT):    %s", initiator.CommitB())
+	t.Logf("  commitA (Alice's ticket):%s", initiator.CommitA())
 
 	// ── Step 4: Bob scans + verifies commitments ──────────────────────────────
 	t.Log("Step 4 — Bob scans and verifies commitments")
@@ -405,15 +425,15 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commitB re-derive: %v", err)
 	}
-	if expectedCommitB.Cmp(initiator.CommitB) != 0 {
-		t.Fatalf("commitB mismatch: got %s want %s", expectedCommitB, initiator.CommitB)
+	if expectedCommitB.Cmp(initiator.CommitB()) != 0 {
+		t.Fatalf("commitB mismatch: got %s want %s", expectedCommitB, initiator.CommitB())
 	}
 	expectedCommitA, err := core.Erc20CommitmentV2(aliceSpend.PublicKey, saltAField, nftAmount, nftTokenId)
 	if err != nil {
 		t.Fatalf("commitA re-derive: %v", err)
 	}
-	if expectedCommitA.Cmp(initiator.CommitA) != 0 {
-		t.Fatalf("commitA mismatch: got %s want %s", expectedCommitA, initiator.CommitA)
+	if expectedCommitA.Cmp(initiator.CommitA()) != 0 {
+		t.Fatalf("commitA mismatch: got %s want %s", expectedCommitA, initiator.CommitA())
 	}
 	t.Logf("  commitB and commitA both verified")
 
@@ -427,7 +447,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 		saltBField, // Bob's HKDF payment salt (for Bob's ERC20 output commitment)
 		decAmount,  // Alice's ERC20 amount Bob receives
 		decTokenId, // Alice's ERC20 tokenId Bob receives
-		initiator.CommitA,
+		initiator.CommitA(),
 		big.NewInt(0), bobProof, merkleDepth,
 		vaultInt(erc20VaultAddr),
 	)
@@ -473,10 +493,10 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 			if len(log.Topics) >= 3 {
 				cmt := log.Topics[2].Big()
 				switch {
-				case cmt.Cmp(initiator.CommitB) == 0:
+				case cmt.Cmp(initiator.CommitB()) == 0:
 					foundCommitB = true
 					t.Logf("  commitB inserted (Bob's USDT): %s", cmt)
-				case cmt.Cmp(initiator.CommitA) == 0:
+				case cmt.Cmp(initiator.CommitA()) == 0:
 					foundCommitA = true
 					t.Logf("  commitA inserted (Alice's ticket): %s", cmt)
 				}
@@ -507,8 +527,8 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 //   Bob   deposits 15 tokens → Alice gets 15 tokens
 //
 // Since exchange() requires both receipts to be ERC-20 Initiator-style proofs
-// (the ERC-20 vault's checkReceiptConditions accesses statement[5] which only
-// exists in a 7-element DvP Initiator statement), both parties use
+// (the ERC-20 vault's checkDvpReceiptConditions takes only a DvpInitiator leg),
+// both parties use
 // DvPInitiatorProofFromSalts with pre-agreed salts so the output commitments
 // cross-reference each other:
 //
@@ -519,8 +539,8 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 //   Bob:   stMessage=commitForBob,   commitB=commitForAlice, commitA=commitForBob
 //
 // Cross-reference check (on-chain):
-//   receipt1.statement[0] (Alice's stMessage = commitForAlice) == receipt2.statement[4] (Bob's commitB = commitForAlice)
-//   receipt2.statement[0] (Bob's   stMessage = commitForBob)   == receipt1.statement[4] (Alice's commitB = commitForBob)
+//   receipt1 Message (Alice's = commitForAlice) == receipt2 CommitB (Bob's = commitForAlice)
+//   receipt2 Message (Bob's   = commitForBob)   == receipt1 CommitB (Alice's = commitForBob)
 //
 // Verification:
 //   - commitForBob  (Alice → Bob)  appears in Commitment events
@@ -746,8 +766,8 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Alice): %v", err)
 	}
-	t.Logf("  Alice commitB (for Bob):   %s", aliceResult.CommitB)
-	t.Logf("  Alice commitA (for Alice): %s", aliceResult.CommitA)
+	t.Logf("  Alice commitB (for Bob):   %s", aliceResult.CommitB())
+	t.Logf("  Alice commitA (for Alice): %s", aliceResult.CommitA())
 
 	// ── Step 7: Bob generates DvPInitiatorProofFromSalts ─────────────────────
 	//
@@ -772,19 +792,19 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Bob): %v", err)
 	}
-	t.Logf("  Bob commitB (for Alice): %s", bobResult.CommitB)
-	t.Logf("  Bob commitA (for Bob):   %s", bobResult.CommitA)
+	t.Logf("  Bob commitB (for Alice): %s", bobResult.CommitB())
+	t.Logf("  Bob commitA (for Bob):   %s", bobResult.CommitA())
 
 	// ── Step 8: verify cross-references locally ───────────────────────────────
-	// receipt1.statement[0] (=commitForAlice) must equal receipt2.statement[4] (=commitForAlice)
-	// receipt2.statement[0] (=commitForBob)   must equal receipt1.statement[4] (=commitForBob)
-	if aliceResult.Statement[0].Cmp(bobResult.Statement[4]) != 0 {
-		t.Fatalf("cross-ref A: alice.stmt[0]=%s != bob.stmt[4]=%s",
-			aliceResult.Statement[0], bobResult.Statement[4])
+	// receipt1 Message (=commitForAlice) must equal receipt2 CommitB (=commitForAlice)
+	// receipt2 Message (=commitForBob)   must equal receipt1 CommitB (=commitForBob)
+	if aliceResult.Message().Cmp(bobResult.CommitB()) != 0 {
+		t.Fatalf("cross-ref A: alice Message=%s != bob CommitB=%s",
+			aliceResult.Message(), bobResult.CommitB())
 	}
-	if bobResult.Statement[0].Cmp(aliceResult.Statement[4]) != 0 {
-		t.Fatalf("cross-ref B: bob.stmt[0]=%s != alice.stmt[4]=%s",
-			bobResult.Statement[0], aliceResult.Statement[4])
+	if bobResult.Message().Cmp(aliceResult.CommitB()) != 0 {
+		t.Fatalf("cross-ref B: bob Message=%s != alice CommitB=%s",
+			bobResult.Message(), aliceResult.CommitB())
 	}
 	t.Log("  cross-reference check passed")
 
@@ -917,9 +937,10 @@ func TestDvPRelayer_BadProof(t *testing.T) {
 	if !serverAvailable("localhost:8091") {
 		t.Skip("DVP relayer not running on localhost:8091 — skipping")
 	}
-	// payment: malformed proof element
-	body := `{"vaultId":"0","receipt":{"proof":["not-a-number","0","0","0","0","0","0","0"],"publicSignal":["0","0","0","0","0"],"numberOfInputs":1,"numberOfOutputs":1},"cipherText":"0x00","encTxData":"0x00"}`
-	relayResp, status, err := dvpPost(t, "/relay/payment", dvpRelayerAPIKey, json.RawMessage(body))
+	// payment: a Payment-shaped receipt with a malformed proof element
+	body := zeroPaymentReq(1, 2, layout.PaymentLen)
+	body.Receipt.Proof[0] = "not-a-number"
+	relayResp, status, err := dvpPost(t, "/relay/payment", dvpRelayerAPIKey, body)
 	if err != nil {
 		t.Fatalf("POST /relay/payment: %v", err)
 	}
@@ -934,9 +955,9 @@ func TestDvPRelayer_SignalTooShort(t *testing.T) {
 	if !serverAvailable("localhost:8091") {
 		t.Skip("DVP relayer not running on localhost:8091 — skipping")
 	}
-	// numberOfInputs=2 but only 5 signal elements — needs at least 1+3*2+1=8
-	body := `{"vaultId":"0","receipt":{"proof":["0","0","0","0","0","0","0","0"],"publicSignal":["0","0","0","0","0"],"numberOfInputs":2,"numberOfOutputs":1},"cipherText":"0x00","encTxData":"0x00"}`
-	relayResp, status, err := dvpPost(t, "/relay/payment", dvpRelayerAPIKey, json.RawMessage(body))
+	// a 2-in/2-out receipt one signal short of the Payment2in statement
+	body := zeroPaymentReq(2, 2, layout.Payment2inLen-1)
+	relayResp, status, err := dvpPost(t, "/relay/payment", dvpRelayerAPIKey, body)
 	if err != nil {
 		t.Fatalf("POST /relay/payment: %v", err)
 	}

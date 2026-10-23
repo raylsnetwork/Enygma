@@ -25,22 +25,24 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 type onchainPrivateMintProof struct {
-	Proof        [8]*big.Int `abi:"proof"`
-	PublicSignal [4]*big.Int `abi:"public_signal"`
+	Proof        [8]*big.Int                     `abi:"proof"`
+	PublicSignal [layout.PrivateMintLen]*big.Int `abi:"public_signal"`
 }
 
-// proofStringsToPrivateMint converts the 8 proof strings and 4 public signal strings
-// returned by the gnark server into the on-chain ABI struct.
-func proofStringsToPrivateMint(t *testing.T, proofStrs []string, sigStrs []string) onchainPrivateMintProof {
+// proofStringsToPrivateMint converts the 8 proof strings and the PrivateMint
+// statement returned by the gnark server into the on-chain ABI struct.
+func proofStringsToPrivateMint(t *testing.T, proofStrs []string, statement []*big.Int) onchainPrivateMintProof {
 	t.Helper()
 	if len(proofStrs) != 8 {
 		t.Fatalf("expected 8 proof elements, got %d", len(proofStrs))
 	}
-	if len(sigStrs) != 4 {
-		t.Fatalf("expected 4 public signal elements, got %d", len(sigStrs))
+	if len(statement) != layout.PrivateMintLen {
+		t.Fatalf("expected %d public signal elements, got %d", layout.PrivateMintLen, len(statement))
 	}
 	var p onchainPrivateMintProof
 	for i, s := range proofStrs {
@@ -50,13 +52,7 @@ func proofStringsToPrivateMint(t *testing.T, proofStrs []string, sigStrs []strin
 		}
 		p.Proof[i] = n
 	}
-	for i, s := range sigStrs {
-		n, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			t.Fatalf("invalid public_signal element %d: %q", i, s)
-		}
-		p.PublicSignal[i] = n
-	}
+	copy(p.PublicSignal[:], statement)
 	return p
 }
 
@@ -138,13 +134,13 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20PrivateMintProof: %v", err)
 	}
-	t.Logf("Step 2 — commitment:  %s", mintResult.Commitment)
-	t.Logf("Step 2 — cipherText:  %s", mintResult.CipherText)
+	t.Logf("Step 2 — commitment:  %s", mintResult.Commitment())
+	t.Logf("Step 2 — cipherText:  %s", mintResult.CipherText())
 
 	// Convert proof and public signal to on-chain ABI types
 	proof := proofStringsToPrivateMint(t,
-		mintResult.ProofResponse.Proof,
-		mintResult.ProofResponse.PublicSignal,
+		mintResult.Proof,
+		mintResult.ContractStatement(),
 	)
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -155,7 +151,7 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	//     3. IAbstractCoinVault.registerCoins([commitment]) — inserts the Merkle leaf
 	//   Emits: PrivateMint(vaultId, commitment, cipherText)
 	// ─────────────────────────────────────────────────────────────────────────
-	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment, proof)
+	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)
 	}
@@ -185,11 +181,11 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	if eventVaultId.Cmp(vaultId) != 0 {
 		t.Errorf("event vaultId: got %s, want %s", eventVaultId, vaultId)
 	}
-	if eventCommitment.Cmp(mintResult.Commitment) != 0 {
-		t.Errorf("event commitment: got %s, want %s", eventCommitment, mintResult.Commitment)
+	if eventCommitment.Cmp(mintResult.Commitment()) != 0 {
+		t.Errorf("event commitment: got %s, want %s", eventCommitment, mintResult.Commitment())
 	}
-	if eventCipherText.Cmp(mintResult.CipherText) != 0 {
-		t.Errorf("event cipherText: got %s, want %s", eventCipherText, mintResult.CipherText)
+	if eventCipherText.Cmp(mintResult.CipherText()) != 0 {
+		t.Errorf("event cipherText: got %s, want %s", eventCipherText, mintResult.CipherText())
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -213,9 +209,9 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 
 	// Alice checks cipherText matches her (pk, salt) pair:
 	//   Poseidon2(pk_alice, salt) == cipherText from event
-	if mintResult.CipherText.Cmp(eventCipherText) != 0 {
+	if mintResult.CipherText().Cmp(eventCipherText) != 0 {
 		t.Errorf("Alice cipherText mismatch: computed %s, on-chain %s",
-			mintResult.CipherText, eventCipherText)
+			mintResult.CipherText(), eventCipherText)
 	}
 
 	t.Logf("Step 4 — Alice confirmed: note is hers, commitment=%s salt=%s amount=%s",

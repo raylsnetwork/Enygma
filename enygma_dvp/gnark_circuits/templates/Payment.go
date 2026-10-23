@@ -19,7 +19,7 @@ type PaymentCircuit struct {
 	Config PaymentCircuitConfig
 
 	// --- public inputs (statement) ---
-	// Layout (non-interleaved, matching ContractStatement):
+	// Layout (grouped by field; the statement layout derives it from this order):
 	//   [StMessage, StTreeNumbers[0..N-1], StMerkleRoots[0..N-1],
 	//    StNullifiers[0..N-1], StCommitmentsOut[0..M-1], StContractAddress]
 	StMessage         frontend.Variable   `gnark:",public"` // 0 = payment, MessageWithdraw = withdrawal

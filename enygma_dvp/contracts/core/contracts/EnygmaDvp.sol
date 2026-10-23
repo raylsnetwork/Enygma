@@ -10,8 +10,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset, paymentFeeOffset} from "../interfaces/IEnygmaDvp.sol";
-import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
+import {
+    PaymentStatementLayout as Psl,
+    PAYMENT_LEN,
+    PAYMENT2IN_LEN,
+    PAYMENT_FEE_LEN,
+    PAYMENT_RELAYER_FEE_LEN,
+    USDR_FEE_LEN
+} from "./PaymentStatementLayout.sol";
+import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "./DvpStatementLayout.sol";
+import {DvpReceipt} from "./DvpReceipt.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
@@ -586,24 +595,48 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //          Swap/exchange functions
     //////////////////////////////////////////////
 
-    function _proofType(
-        ProofReceipt memory receipt
-    ) internal pure returns (uint256) {
-        uint256 expectedBatchSize = 1 + 6 * receipt.numberOfInputs;
-        uint256 expectedNormalSize = 3 +
-            3 *
-            receipt.numberOfInputs +
-            receipt.numberOfOutputs;
-
-        // TODO:: needs audit, not secure
-        if (receipt.statement.length == expectedNormalSize) {
-            return 1;
-        } else if (receipt.statement.length == expectedBatchSize) {
-            return 2;
+    // Offset of the output commitments in a receipt settled by the payment
+    // entry points, read from the circuit Erc20CoinVault._paymentCircuit
+    // would pick: by inputs and outputs, then by statement length where
+    // Payment, PaymentFee and UsdrFee all have 1 input and 2 outputs. The
+    // payment entry points settle against any registered vault, and
+    // EnygmaErc20CoinVault and Erc1155CoinVault also take legacy joinsplit
+    // receipts of other shapes; those fall through to
+    // _joinsplitCommitmentsOutOffset.
+    function _commitmentsOutOffset(ProofReceipt memory receipt) internal pure returns (uint256) {
+        uint256 numberOfInputs = receipt.numberOfInputs;
+        uint256 numberOfOutputs = receipt.numberOfOutputs;
+        uint256 length = receipt.statement.length;
+        if (numberOfInputs == 2 && numberOfOutputs == 2 && length == PAYMENT2IN_LEN) {
+            return Psl.PAYMENT2IN_COMMITMENTS_OUT_OFFSET;
         }
+        if (numberOfInputs == 1 && numberOfOutputs == 3 && length == PAYMENT_RELAYER_FEE_LEN) {
+            return Psl.PAYMENT_RELAYER_FEE_COMMITMENTS_OUT_OFFSET;
+        }
+        if (numberOfInputs == 1 && numberOfOutputs == 2) {
+            if (length == PAYMENT_LEN) return Psl.PAYMENT_COMMITMENTS_OUT_OFFSET;
+            if (length == PAYMENT_FEE_LEN) return Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET;
+            if (length == USDR_FEE_LEN) return Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET;
+        }
+        return _joinsplitCommitmentsOutOffset(numberOfInputs);
+    }
 
-        revert InvalidStatementSize();
-        return 0;
+    // Legacy joinsplit circuits have no template in enygma_dvp, so no
+    // statement layout (#96); they share the prefix [message, trees, roots,
+    // nullifiers], one signal per input each.
+    function _joinsplitCommitmentsOutOffset(uint256 numberOfInputs) internal pure returns (uint256) {
+        return 1 + 3 * numberOfInputs;
+    }
+
+    // Offset of a fee-carrying receipt's fee: PaymentFee's (1 input, 2 outputs)
+    // or PaymentRelayerFee's (1 input, 3 outputs). Any other shape has no
+    // Payment-family fee; for it this is the signal after the contract address
+    // that follows the output commitments, as for those two. Only the legacy
+    // joinsplit receipts described at _joinsplitCommitmentsOutOffset reach it.
+    function _feeOffset(uint256 numberOfInputs, uint256 numberOfOutputs) internal pure returns (uint256) {
+        if (numberOfInputs == 1 && numberOfOutputs == 2) return Psl.PAYMENT_FEE_FEE_OFFSET;
+        if (numberOfInputs == 1 && numberOfOutputs == 3) return Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET;
+        return _joinsplitCommitmentsOutOffset(numberOfInputs) + numberOfOutputs + 1;
     }
 
     modifier onlyRelayer() {
@@ -618,15 +651,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
-        uint treeNumbersIndex = 1;
-        uint nullifiersIndex  = 1 + (2 * receipt.numberOfInputs);
-
-        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-            IAbstractCoinVault(_coinVaults[vaultId]).lockCoin(
-                receipt.statement[treeNumbersIndex + i],
-                receipt.statement[nullifiersIndex + i]
-            );
-        }
+        // Reverts with InvalidStatementSize unless the receipt is a DvP leg.
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        IAbstractCoinVault(_coinVaults[vaultId]).lockCoin(leg.treeNumber, leg.nullifier);
         return true;
     }
 
@@ -637,7 +664,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
-        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
+        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromDvpReceipt(receipt);
         return true;
     }
 
@@ -647,24 +674,22 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 groupId,
         uint256 deadline
     ) public nonReentrant returns (bool) {
-        // uint256 prootType = _proofType(receipt);
-        // uint inputSize = receipt.numberOfInputs;
-        // uint treeNumbersIndex = 1;
-        uint nullifiersIndex = 1 + (2 * receipt.numberOfInputs);
-        uint commitmentsIndex = nullifiersIndex + receipt.numberOfInputs;
-
-        uint256 receiptMessage = receipt.statement[0];
-        uint256 receiptUniqueId = receipt.statement[commitmentsIndex];
-
         // to avoid submission of a payment (0) or withdrawal (WITHDRAW_MESSAGE)
         // proof: neither is a swap leg, and parking one here would lock its
-        // note and, on timeout, insert outputs that are not swap refunds.
+        // note and, on timeout, insert outputs that are not swap refunds. A
+        // receipt that is not DvP-shaped is refused before anything is read.
+        if (!DvpReceipt.isLeg(receipt.statement)) {
+            revert InvalidPartialProofReceipt();
+        }
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        uint256 receiptMessage = leg.message;
+        uint256 receiptUniqueId = leg.commitment;
         if (receiptMessage == 0 || receiptMessage == WITHDRAW_MESSAGE || receiptUniqueId == 0) {
             revert InvalidPartialProofReceipt();
         }
 
         // checking the receipt, vaultId and groupId validity
-        IAbstractCoinVault(_coinVaults[vaultId]).checkReceiptConditions(
+        IAbstractCoinVault(_coinVaults[vaultId]).checkDvpReceiptConditions(
             receipt
         );
 
@@ -699,7 +724,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 _coinVaults[vaultId2]
             ).getPendingProofReceipt(commitB2);
 
-            IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromReceipt(receipt2);
+            IAbstractCoinVault(_coinVaults[vaultId2]).unlockFromDvpReceipt(receipt2);
             delete _pendingTransactions[receiptMessage];
             _closedSwaps[receiptMessage] = true;
 
@@ -722,10 +747,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (_closedSwaps[receiptMessage]) {
                 revert SwapClosed();
             }
-            // Only an initiator-shaped receipt (with commitA and revertCommitA
-            // after commitB) can open a swap. A destination leg with no pending
-            // swap to complete would otherwise fail on an out-of-bounds read.
-            if (receipt.statement.length < commitmentsIndex + 3) {
+            // Only an initiator leg (which carries commitA and revertCommitA)
+            // can open a swap; a destination leg has no pending swap to
+            // complete.
+            if (receipt.statement.length != DVP_INITIATOR_LEN) {
                 revert SwapNotFound();
             }
             if (deadline <= block.timestamp) {
@@ -738,9 +763,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
                 revert SwapDeadlineTooFar();
             }
 
-            // DvPInitiator statement: [stMsg=commitA, tree, root, nf, commitB, commitA, revertCommitA, counterVault]
-            // commitmentsIndex = 4 → receiptUniqueId = commitB
-            // commitmentsIndex+1 = 5 → commitA_expected (what Alice expects Bob to deliver)
+            // receiptUniqueId is the initiator's CommitB; its CommitA is what
+            // Alice expects Bob to deliver.
             //
             // HIGH-2 fix (corrected): key _pendingTransactions by commitB.
             // The DvPDestinationCircuit enforces StMessage = commitB, so Bob's
@@ -764,12 +788,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (_pendingTransactions[commitB].deadline != 0) {
                 revert SwapAlreadyPending();
             }
-            uint256 commitA_expected = receipt.statement[commitmentsIndex + 1]; // StCommitA
+            uint256 commitA_expected = receipt.statement[Dsl.DVP_INITIATOR_COMMIT_A_OFFSET];
             // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
             // accepting it as a caller-supplied parameter. The circuit constrains it to
             // Poseidon4(pkAlice, revertSalt, valueIn, tokenIdIn) so only Alice can spend it.
             // A caller-supplied value could be front-run to redirect the timeout refund.
-            uint256 revertCommitA    = receipt.statement[commitmentsIndex + 2]; // StRevertCommitA
+            uint256 revertCommitA    = receipt.statement[Dsl.DVP_INITIATOR_REVERT_COMMIT_A_OFFSET];
 
             _pendingTransactions[commitB].vaultId        = vaultId;
             _pendingTransactions[commitB].groupId         = groupId;
@@ -824,9 +848,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         // CRIT-2 fix: nullify Alice's input (mark as permanently spent)
         // then insert revertCommitA so Alice can reclaim her asset.
-        // The nullifiers were locked by addPendingProofReceipt; unlock first so nullifyFromReceipt succeeds.
-        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
-        IAbstractCoinVault(_coinVaults[vaultId]).nullifyFromReceipt(receipt);
+        // The nullifier was locked by addPendingProofReceipt; unlock first so nullifyFromDvpReceipt succeeds.
+        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromDvpReceipt(receipt);
+        IAbstractCoinVault(_coinVaults[vaultId]).nullifyFromDvpReceipt(receipt);
         uint256[] memory revertCommits = new uint256[](1);
         revertCommits[0] = revertCommitA;
         IAbstractCoinVault(_coinVaults[vaultId]).registerCoins(revertCommits);
@@ -964,31 +988,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // [[VERIFICATION]]
         //-----------------------
 
-        // receipt1.inputs;
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-        // assetGroup_merkleRoot
-
-        uint nullifiersIndex = 1 + (2 * receipt1.numberOfInputs);
-        uint commitmentsIndex = nullifiersIndex + receipt1.numberOfInputs;
-
-        // ownReceipt.inputs:
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-        // assetGroup_merkleRoot
-
-        uint256 commitmentsIndex2 = 1 + 3 * receipt2.numberOfInputs;
-        // TODO:: fix hardcoded 4
-        if (receipt1.statement[0] != receipt2.statement[commitmentsIndex2]) {
+        // Each leg's message is the commitment its counterparty's leg inserts.
+        DvpReceipt.Leg memory leg1 = DvpReceipt.read(receipt1.statement);
+        DvpReceipt.Leg memory leg2 = DvpReceipt.read(receipt2.statement);
+        if (leg1.message != leg2.commitment) {
             revert InvalidPaymentMessage();
         }
-        if (receipt2.statement[0] != receipt1.statement[commitmentsIndex]) {
+        if (leg2.message != leg1.commitment) {
             revert InvalidDeliveryMessage();
         }
 
@@ -999,21 +1005,15 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             _coinVaults[vaultId2]
         );
 
-        // Each DvP proof ends with the address of the vault its prover expects
-        // to be paid from (StCounterVault): receipt1's prover is paid from
-        // vault2 (where receipt2's outputs are inserted) and vice versa. The
-        // commitments do not name a vault, so without this a counterparty could
-        // pay from another vault in the same asset group.
-        if (
-            receipt1.statement[receipt1.statement.length - 1] !=
-            uint256(uint160(address(deliveryCoinVault)))
-        ) {
+        // Each DvP proof names the vault its prover expects to be paid from
+        // (CounterVault): receipt1's prover is paid from vault2 (where
+        // receipt2's outputs are inserted) and vice versa. The commitments do
+        // not name a vault, so without this a counterparty could pay from
+        // another vault in the same asset group.
+        if (leg1.counterVault != uint256(uint160(address(deliveryCoinVault)))) {
             revert CounterVaultMismatch();
         }
-        if (
-            receipt2.statement[receipt2.statement.length - 1] !=
-            uint256(uint160(address(paymentCoinVault)))
-        ) {
+        if (leg2.counterVault != uint256(uint160(address(paymentCoinVault)))) {
             revert CounterVaultMismatch();
         }
 
@@ -1027,7 +1027,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             revert GroupMembershipMismatch();
         }
 
-        paymentCoinVault.checkReceiptConditions(receipt1);
+        paymentCoinVault.checkDvpReceiptConditions(receipt1);
 
         // asserting item proof shows that item belongs to group2
         if (
@@ -1040,7 +1040,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         }
 
         // checking other conditions of the
-        deliveryCoinVault.checkReceiptConditions(receipt2);
+        deliveryCoinVault.checkDvpReceiptConditions(receipt2);
 
         //-----------------------
         // [[SETTLEMENT]]
@@ -1049,14 +1049,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // CRIT-5 fix: nullify inputs BEFORE inserting outputs.
         // This closes the double-spend window: if output insertion fails, inputs
         // are already spent so they cannot be reused in another transaction.
-        paymentCoinVault.nullifyFromReceipt(receipt1);
-        deliveryCoinVault.nullifyFromReceipt(receipt2);
+        paymentCoinVault.nullifyFromDvpReceipt(receipt1);
+        deliveryCoinVault.nullifyFromDvpReceipt(receipt2);
 
-        // Insert output commitments after inputs are permanently spent.
-        paymentCoinVault.insertCommitmentsFromReceipt(receipt1);
-        deliveryCoinVault.insertCommitmentsFromReceipt(receipt2);
+        // Insert each leg's commitment after inputs are permanently spent.
+        paymentCoinVault.insertCommitmentFromDvpReceipt(receipt1);
+        deliveryCoinVault.insertCommitmentFromDvpReceipt(receipt2);
 
-        emit Settled(receipt2.statement[0], receipt1.statement[0]);
+        emit Settled(leg2.message, leg1.message);
 
         return true;
     }
@@ -1126,7 +1126,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.insertCommitmentsFromReceipt(receipt);
 
         // Emit a Payment event for Bob's output (index 0) so he can scan and claim his note.
-        uint256 commitmentOut = receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)];
+        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt)];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1139,7 +1139,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // the protocolFee passed by the caller, preventing a prover from substituting
     // a different fee amount.
     //
-    // The fee is read at paymentFeeOffset: PaymentFee's for 1 input and 2
+    // The fee is read at _feeOffset: PaymentFee's for 1 input and 2
     // outputs, PaymentRelayerFee's for 1 input and 3.
     function paymentWithFee(
         ProofReceipt memory receipt,
@@ -1152,18 +1152,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
-        uint256 feeOffset = paymentFeeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
+        uint256 feeOffset = _feeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
         require(receipt.statement[feeOffset] == protocolFee, "EnygmaDvp: fee mismatch");
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
-        // Verify ZK proof with fee VK (dispatched in checkReceiptConditions by statement.length).
+        // Verify ZK proof with fee VK (checkReceiptConditions picks it by shape and statement length).
         vault.checkReceiptConditions(receipt);
 
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentOut = receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)];
+        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt)];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1192,7 +1192,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // Without this check any fee the prover claims in the proof would pass
         // verification — the circuit only proves valOut[2] == StFee, not that
         // StFee matches any protocol-configured value.
-        uint256 feeOffset = paymentFeeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
+        uint256 feeOffset = _feeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
         if (receipt.statement[feeOffset] != relayerFixedFeeAmount) revert InvalidRelayerFee();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
@@ -1201,7 +1201,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentBob = receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)];
+        uint256 commitmentBob = receipt.statement[_commitmentsOutOffset(receipt)];
         emit Payment(vaultId, commitmentBob, ctxt, encTxData);
 
         return true;
@@ -1244,6 +1244,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // The USDr leg must settle in the configured USDr vault, not one the
         // caller picks — see usdrFeeVaultId.
         if (!usdrFeeVaultSet || usdrVaultId != usdrFeeVaultId) revert InvalidUsdrVault();
+        // The USDr leg is read as a UsdrFee statement below; any other length
+        // is another circuit's receipt, refused before anything is read.
+        if (usdrReceipt.statement.length != USDR_FEE_LEN) revert InvalidStatementSize();
 
         // ── main leg — identical checks/settlement to payment() ──
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
@@ -1255,7 +1258,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        emit Payment(vaultId, receipt.statement[paymentCommitmentsOutOffset(receipt.numberOfInputs)], ctxt, encTxData);
+        emit Payment(vaultId, receipt.statement[_commitmentsOutOffset(receipt)], ctxt, encTxData);
 
         // ── USDr leg — checked against relayerFixedFeeAmount's USDr counterpart ──
         if (usdrReceipt.numberOfOutputs != 2) revert InvalidNumberOfOutputs();
@@ -1270,7 +1273,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         usdrVault.nullifyFromReceipt(usdrReceipt);
         usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
 
-        emit Payment(usdrVaultId, usdrReceipt.statement[paymentCommitmentsOutOffset(usdrReceipt.numberOfInputs)], usdrCtxt, usdrEncTxData);
+        emit Payment(usdrVaultId, usdrReceipt.statement[Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET], usdrCtxt, usdrEncTxData);
 
         return true;
     }
@@ -1289,32 +1292,31 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             revert InvalidVaultId();
         }
 
-        // Verify the ZK proof
-        // Public signals order: [commitment, contractAddress, tokenId, cipherText]
+        // Verify the ZK proof. public_signal is sized to PrivateMint's
+        // statement length, so its fields are read by name below.
         // Reverts with ProofInvalid if verification fails
         IPrivateMintVerifier(_privateMintVerifierAddress).verifyProof(
             proof.proof,
             proof.public_signal
         );
 
-        // CRIT-1 fix: the caller-supplied commitment must match proof.public_signal[0].
+        // CRIT-1 fix: the caller-supplied commitment must match the proof's Commitment.
         // Without this check the owner could insert an arbitrary commitment that was
         // never constrained by the ZK circuit, allowing phantom notes to be minted.
-        if (commitment != proof.public_signal[0]) {
+        if (commitment != proof.public_signal[Dsl.PRIVATE_MINT_COMMITMENT_OFFSET]) {
             revert PublicSignalMismatch();
         }
 
-        // DVP-7 fix: public signal[1] is ContractAddress — the circuit binds the proof to
-        // a specific deployment. Without this check a proof generated for a different
+        // DVP-7 fix: the circuit binds the proof to a specific deployment
+        // (ContractAddress). Without this check a proof generated for a different
         // EnygmaDvp deployment can be replayed here to mint a note that was never
         // authorised for this contract.
         require(
-            proof.public_signal[1] == uint256(uint160(address(this))),
+            proof.public_signal[Dsl.PRIVATE_MINT_CONTRACT_ADDRESS_OFFSET] == uint256(uint160(address(this))),
             "PrivateMint: proof bound to wrong contract"
         );
 
-        // Extract cipherText from public signals (index 3)
-        uint256 cipherText = proof.public_signal[3];
+        uint256 cipherText = proof.public_signal[Dsl.PRIVATE_MINT_CIPHER_TEXT_OFFSET];
 
         // Emit event with commitment and cipherText only
         emit PrivateMint(vaultId, commitment, cipherText);

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"enygma_dvp/layout"
 )
 
 // ZkDvpSwapInitResult holds everything Alice produces when initiating a ZkDvp swap.
@@ -221,16 +223,59 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 
 // DvPInitiatorResult holds the output of DvPInitiatorProof.
 type DvPInitiatorResult struct {
-	Proof           []string   // 8-element Groth16 proof
-	Statement       []*big.Int // [commitA, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault] (8 elements)
-	NumberOfInputs  int        // always 1
-	NumberOfOutputs int        // reported as 1 on-chain (only commitB inserted; commitA goes to ERC721 vault via Bob's proof)
-	CipherText      []byte     // ML-KEM capsule for Bob (1088 bytes)
-	EncTxData       []byte     // AES-256-GCM ciphertext of (tokenIdIn || valueIn)
-	CommitB         *big.Int
-	CommitA         *big.Int
-	RevertCommitA   *big.Int
+	Proof []string // 8-element Groth16 proof
+	// Statement is the public signals exactly as the gnark server returned
+	// them, in the DvpInitiator statement layout's order.
+	Statement       []*big.Int
+	NumberOfInputs  int      // always 1
+	NumberOfOutputs int      // reported as 1 on-chain (only commitB inserted; commitA goes to ERC721 vault via Bob's proof)
+	CipherText      []byte   // ML-KEM capsule for Bob (1088 bytes)
+	EncTxData       []byte   // AES-256-GCM ciphertext of (tokenIdIn || valueIn)
 	SaltA           *big.Int // passed to Bob's DvPDestinationProof
+}
+
+// ContractStatement returns the statement for on-chain submission: Statement,
+// as the server returned it.
+func (r *DvPInitiatorResult) ContractStatement() []*big.Int { return r.Statement }
+
+// Message equals CommitA, linking the two legs of the swap.
+func (r *DvPInitiatorResult) Message() *big.Int {
+	return r.Statement[layout.DvpInitiatorMessageOffset]
+}
+
+// TreeNumber is the tree the initiator's input note lives in.
+func (r *DvPInitiatorResult) TreeNumber() *big.Int {
+	return r.Statement[layout.DvpInitiatorTreeNumberOffset]
+}
+
+// MerkleRoot is the root the initiator's input note is proved against.
+func (r *DvPInitiatorResult) MerkleRoot() *big.Int {
+	return r.Statement[layout.DvpInitiatorMerkleRootOffset]
+}
+
+// Nullifier is the initiator's input note's nullifier.
+func (r *DvPInitiatorResult) Nullifier() *big.Int {
+	return r.Statement[layout.DvpInitiatorNullifierOffset]
+}
+
+// CommitB is the note the counterparty receives: the initiator's asset.
+func (r *DvPInitiatorResult) CommitB() *big.Int {
+	return r.Statement[layout.DvpInitiatorCommitBOffset]
+}
+
+// CommitA is the note the initiator receives: the counterparty's asset.
+func (r *DvPInitiatorResult) CommitA() *big.Int {
+	return r.Statement[layout.DvpInitiatorCommitAOffset]
+}
+
+// RevertCommitA is the initiator's refund note if the swap times out.
+func (r *DvPInitiatorResult) RevertCommitA() *big.Int {
+	return r.Statement[layout.DvpInitiatorRevertCommitAOffset]
+}
+
+// CounterVault is the vault CommitA must be paid from.
+func (r *DvPInitiatorResult) CounterVault() *big.Int {
+	return r.Statement[layout.DvpInitiatorCounterVaultOffset]
 }
 
 // DvPInitiatorProof generates Alice's side of the DvP proof.
@@ -238,15 +283,15 @@ type DvPInitiatorResult struct {
 // stMessage is automatically set to commitA (Alice's expected output from Bob) so that
 // the on-chain submitPartialSettlement cross-reference check works:
 //
-//	_pendingTransactions[commitB].targetReceiptId = commitA = statement[0]
+//	_pendingTransactions[commitB].targetReceiptId = commitA = Message
 //
-// On-chain receipt should use NumberOfOutputs=1 so only commitB (statement[4])
+// On-chain receipt should use NumberOfOutputs=1 so only CommitB
 // is inserted into the ERC20 vault. commitA goes into the ERC721 vault via
 // Bob's DvPDestinationProof; revertCommitA is only inserted on swap timeout.
 //
 // counterVault is the address (as an integer) of the vault Alice expects to be
-// paid from, i.e. the counterparty's vault. It is the statement's last element
-// and EnygmaDvp rejects a settlement from any other vault (CounterVaultMismatch).
+// paid from, i.e. the counterparty's vault. It is the statement's CounterVault
+// field and EnygmaDvp rejects a settlement from any other vault (CounterVaultMismatch).
 // The same applies to DvPInitiatorProofFromSalts and DvPDestinationProof.
 func (c *GnarkClient) DvPInitiatorProof(
 	aliceKey KeyPair,
@@ -319,7 +364,7 @@ func (c *GnarkClient) DvPInitiatorProof(
 	copy(pathElems, merkleProof.Elements[:merkleDepth])
 
 	// stMessage = commitA for on-chain cross-referencing:
-	//   submitPartialSettlement stores _pendingTransactions[commitB].targetReceiptId = statement[0] = commitA
+	//   submitPartialSettlement stores _pendingTransactions[commitB].targetReceiptId = Message = commitA
 	//   Bob's DvPDestinationProof uses stMessage=commitB, output=commitA, so the check resolves correctly.
 	stMessage := commitA
 
@@ -351,23 +396,13 @@ func (c *GnarkClient) DvPInitiatorProof(
 		return nil, fmt.Errorf("dvpInitiator proof request failed: %w", err)
 	}
 
-	var gnarkResp struct {
-		Proof        []json.Number `json:"proof"`
-		PublicSignal []json.Number `json:"publicSignal"`
-	}
-	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+	proofStrs, statement, err := proofResponse(body, layout.DvpInitiatorLen)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse dvpInitiator proof response: %w", err)
 	}
-	proofStrs := make([]string, len(gnarkResp.Proof))
-	for i, n := range gnarkResp.Proof {
-		proofStrs[i] = n.String()
-	}
 
-	// Full 8-element statement for VK verification (DvP Initiator VK has IC[9]).
-	// On-chain NumberOfOutputs is reported as 1 so only commitB (statement[4])
-	// is inserted into the ERC20 vault during settlement.
-	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA, counterVault}
-
+	// On-chain NumberOfOutputs is reported as 1 so only CommitB is inserted
+	// into the ERC20 vault during settlement.
 	return &DvPInitiatorResult{
 		Proof:           proofStrs,
 		Statement:       statement,
@@ -375,9 +410,6 @@ func (c *GnarkClient) DvPInitiatorProof(
 		NumberOfOutputs: 1, // only commitB counts as payment output; commitA goes to ERC721 via Bob's proof
 		CipherText:      cipherText,
 		EncTxData:       encTxData,
-		CommitB:         commitB,
-		CommitA:         commitA,
-		RevertCommitA:   revertCommitA,
 		SaltA:           saltA,
 	}, nil
 }
@@ -468,37 +500,62 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 		return nil, fmt.Errorf("dvpInitiatorFromSalts proof request failed: %w", err)
 	}
 
-	var gnarkResp struct {
-		Proof        []json.Number `json:"proof"`
-		PublicSignal []json.Number `json:"publicSignal"`
-	}
-	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+	proofStrs, statement, err := proofResponse(body, layout.DvpInitiatorLen)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse dvpInitiatorFromSalts proof response: %w", err)
 	}
-	proofStrs := make([]string, len(gnarkResp.Proof))
-	for i, n := range gnarkResp.Proof {
-		proofStrs[i] = n.String()
-	}
 
-	statement := []*big.Int{stMessage, stTreeNumber, merkleProof.Root, nf, commitB, commitA, revertCommitA, counterVault}
 	return &DvPInitiatorResult{
 		Proof:           proofStrs,
 		Statement:       statement,
 		NumberOfInputs:  1,
 		NumberOfOutputs: 1,
 		SaltA:           saltA,
-		CommitB:         commitB,
-		CommitA:         commitA,
-		RevertCommitA:   revertCommitA,
 	}, nil
 }
 
 // DvPDestinationResult holds the output of DvPDestinationProof.
 type DvPDestinationResult struct {
-	Proof           []string   // 8-element Groth16 proof
-	Statement       []*big.Int // [commitB, treeNum, root, nf_B, commitA, counterVault]
-	NumberOfInputs  int        // always 1
-	NumberOfOutputs int        // always 1
+	Proof []string // 8-element Groth16 proof
+	// Statement is the public signals exactly as the gnark server returned
+	// them, in the DvpDestination statement layout's order.
+	Statement       []*big.Int
+	NumberOfInputs  int // always 1
+	NumberOfOutputs int // always 1
+}
+
+// ContractStatement returns the statement for on-chain submission: Statement,
+// as the server returned it.
+func (r *DvPDestinationResult) ContractStatement() []*big.Int { return r.Statement }
+
+// Message equals the initiator's CommitB.
+func (r *DvPDestinationResult) Message() *big.Int {
+	return r.Statement[layout.DvpDestinationMessageOffset]
+}
+
+// TreeNumber is the tree the counterparty's input note lives in.
+func (r *DvPDestinationResult) TreeNumber() *big.Int {
+	return r.Statement[layout.DvpDestinationTreeNumberOffset]
+}
+
+// MerkleRoot is the root the counterparty's input note is proved against.
+func (r *DvPDestinationResult) MerkleRoot() *big.Int {
+	return r.Statement[layout.DvpDestinationMerkleRootOffset]
+}
+
+// Nullifier is the counterparty's input note's nullifier.
+func (r *DvPDestinationResult) Nullifier() *big.Int {
+	return r.Statement[layout.DvpDestinationNullifierOffset]
+}
+
+// CommitA is the initiator's CommitA, recomputed.
+func (r *DvPDestinationResult) CommitA() *big.Int {
+	return r.Statement[layout.DvpDestinationCommitAOffset]
+}
+
+// CounterVault is the vault the initiator's CommitB must be paid from.
+func (r *DvPDestinationResult) CounterVault() *big.Int {
+	return r.Statement[layout.DvpDestinationCounterVaultOffset]
 }
 
 // DvPDestinationProof generates Bob's side of the DvP proof.
@@ -568,19 +625,11 @@ func (c *GnarkClient) DvPDestinationProof(
 		return nil, fmt.Errorf("dvpDestination proof request failed: %w", err)
 	}
 
-	var gnarkResp struct {
-		Proof        []json.Number `json:"proof"`
-		PublicSignal []json.Number `json:"publicSignal"`
-	}
-	if err := json.Unmarshal(body, &gnarkResp); err != nil {
+	proofStrs, statement, err := proofResponse(body, layout.DvpDestinationLen)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse dvpDestination proof response: %w", err)
 	}
-	proofStrs := make([]string, len(gnarkResp.Proof))
-	for i, n := range gnarkResp.Proof {
-		proofStrs[i] = n.String()
-	}
 
-	statement := []*big.Int{commitB, stTreeNumber, merkleProof.Root, nf, commitA, counterVault}
 	return &DvPDestinationResult{
 		Proof:           proofStrs,
 		Statement:       statement,

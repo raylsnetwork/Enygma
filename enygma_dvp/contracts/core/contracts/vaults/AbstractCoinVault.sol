@@ -11,6 +11,7 @@ import {
     IAbstractCoinVault
 } from "../../interfaces/vaults/IAbstractCoinVault.sol";
 import {Merkle} from "./Merkle.sol";
+import {DvpReceipt} from "../DvpReceipt.sol";
 
 abstract contract AbstractCoinVault is
     IAbstractCoinVault,
@@ -30,9 +31,10 @@ abstract contract AbstractCoinVault is
     // SECURITY FIX: previously the auction contract was granted the full
     // DEFAULT_DVP_ROLE in initializeVault() below — the same role the DVP
     // contract itself holds, covering every DVP-gated function on this vault
-    // (insertCommitmentsFromReceipt, nullifyFromReceipt, unlockFromReceipt,
-    // addPendingProofReceipt, even initializeVault itself), when the auction
-    // contract only ever calls lockCoin/unlockCoin/nullifyCoin/registerCoins.
+    // (insertCommitmentsFromReceipt, nullifyFromReceipt, the DvP-receipt
+    // functions, addPendingProofReceipt, even initializeVault itself), when
+    // the auction contract only ever calls
+    // lockCoin/unlockCoin/nullifyCoin/registerCoins.
     // DEFAULT_AUCTION_ROLE already existed as a declared-but-unused constant
     // here and on EnygmaDvp — wiring it up now to actually scope the auction
     // contract down to just those 4 functions via onlyDvpOrAuction() below,
@@ -137,9 +139,16 @@ abstract contract AbstractCoinVault is
         return true;
     }
 
+    // _insertCommitmentsFromReceipt and _nullifyFromReceipt walk the legacy
+    // joinsplit statement, [message, trees[nIn], roots[nIn], nullifiers[nIn],
+    // commitments[nOut], ...], by the caller-supplied numberOfInputs and
+    // numberOfOutputs. Only the legacy circuits with no generated layout use
+    // them: the ERC721 and ERC1155 transfers and EnygmaErc20CoinVault.
+    // Erc20CoinVault overrides both to read through its Payment-family
+    // layouts, and a DvP leg goes through the *FromDvpReceipt functions.
     function _insertCommitmentsFromReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) internal returns (bool) {
+    ) internal virtual returns (bool) {
         uint256 inputSize = receipt.numberOfInputs;
         uint256 outputSize = receipt.numberOfOutputs;
         uint nullifiersIndex = 1 + (2 * inputSize);
@@ -173,7 +182,7 @@ abstract contract AbstractCoinVault is
 
     function _nullifyFromReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) internal returns (bool) {
+    ) internal virtual returns (bool) {
         uint256 inputSize = receipt.numberOfInputs;
 
         uint rootsIndex = 1 + (1 * inputSize);
@@ -207,28 +216,6 @@ abstract contract AbstractCoinVault is
         emit Nullifier(_vaultId, treeNumber, nullifier);
     }
 
-    function _unlockFromReceipt(
-        IEnygmaDvp.ProofReceipt memory receipt
-    ) internal returns (bool) {
-        uint256 inputSize = receipt.numberOfInputs;
-
-        uint rootsIndex = 1 + (1 * inputSize);
-        uint nullifiersIndex = 1 + (2 * inputSize);
-        for (uint i = 0; i < inputSize; i++) {
-            uint256 treeNumber = receipt.statement[1 + i];
-            uint256 nullifier = receipt.statement[nullifiersIndex + i];
-            if (receipt.statement[rootsIndex + i] != 0) {
-                if (isLocked(treeNumber, nullifier)) {
-                    unlockCoin(treeNumber, nullifier);
-                    emit CoinUnlocked(_vaultId, treeNumber, nullifier);
-                } else {
-                    revert CoinAlreadyUnlocked();
-                }
-            }
-        }
-        return true; // see the matching comment in _nullifyFromReceipt.
-    }
-
     // public access is only allowed for ZkDvp
     function nullifyFromReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
@@ -236,10 +223,61 @@ abstract contract AbstractCoinVault is
         return _nullifyFromReceipt(receipt);
     }
 
-    function unlockFromReceipt(
+    // Checks a DvP leg (see IAbstractCoinVault). Only the vaults that settle
+    // one, Erc20CoinVault and Erc721CoinVault, override it.
+    function checkDvpReceiptConditions(
+        IEnygmaDvp.ProofReceipt memory
+    ) public view virtual returns (bool) {
+        revert DvpLegNotSupported();
+    }
+
+    // A DvP leg's receipt is read through DvpReceipt (which reverts with
+    // InvalidStatementSize unless it is DvpInitiator- or DvpDestination-
+    // shaped), never by numberOfInputs/numberOfOutputs: those are
+    // caller-supplied, and the leg spends exactly one note and inserts exactly
+    // one commitment.
+
+    // Spends the note a DvP leg spends; publicly only accessible by ZkDvp.
+    function nullifyFromDvpReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
-        return _unlockFromReceipt(receipt);
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        if (leg.merkleRoot != 0) {
+            _spendNullifier(leg.treeNumber, leg.nullifier);
+        }
+        return true;
+    }
+
+    // Inserts the commitment a DvP leg's settlement inserts; publicly only
+    // accessible by ZkDvp.
+    function insertCommitmentFromDvpReceipt(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        if (leg.commitment != 0) {
+            uint256[] memory commitments = new uint256[](1);
+            commitments[0] = leg.commitment;
+            emit Commitment(_vaultId, leg.commitment);
+            insertLeaves(commitments);
+        }
+        return true;
+    }
+
+    // Releases the lock on the note a DvP leg spends; publicly only
+    // accessible by ZkDvp.
+    function unlockFromDvpReceipt(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        if (leg.merkleRoot != 0) {
+            if (isLocked(leg.treeNumber, leg.nullifier)) {
+                unlockCoin(leg.treeNumber, leg.nullifier);
+                emit CoinUnlocked(_vaultId, leg.treeNumber, leg.nullifier);
+            } else {
+                revert CoinAlreadyUnlocked();
+            }
+        }
+        return true;
     }
 
     function lockCoin(
@@ -298,32 +336,21 @@ abstract contract AbstractCoinVault is
         return true;
     }
 
+    // Parks a DvP initiator's leg under the commitment it inserts (its
+    // CommitB) and locks the note it spends.
     function addPendingProofReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
-        uint256 inputSize = receipt.numberOfInputs;
-        uint256 outputSize = receipt.numberOfOutputs;
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
 
-        uint treeNumbersIndex = 1;
-        uint nullifiersIndex = 1 + (2 * inputSize);
-        uint commitmentsIndex = nullifiersIndex + inputSize;
-
-        uint256 utxoUniqueId = receipt.statement[commitmentsIndex];
-
-        if (_pendingProofReceipts[utxoUniqueId].statement.length != 0) {
+        if (_pendingProofReceipts[leg.commitment].statement.length != 0) {
             // proofReceipt has been already added to the vault
             revert ProofReceiptAlreadyAdded();
         } else {
-            _pendingProofReceipts[utxoUniqueId] = receipt;
+            _pendingProofReceipts[leg.commitment] = receipt;
 
-            // lock the nullifiers to avoid potential front-running cases
-
-            for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-                lockCoin(
-                    receipt.statement[treeNumbersIndex + i],
-                    receipt.statement[nullifiersIndex + i]
-                );
-            }
+            // lock the nullifier to avoid potential front-running cases
+            lockCoin(leg.treeNumber, leg.nullifier);
         }
 
         return true;
