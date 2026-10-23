@@ -72,19 +72,24 @@ sequenceDiagram
 
 ---
 
-## Circuit Statement Layout (interleaved, 9 elements)
+## Circuit Statement Layout (Payment2in, 10 elements)
+
+Grouped by field, in the order of the Payment2in statement layout
+(`layout.Payment2in*` in `enygma_dvp/layout`, `PAYMENT2IN_*` in
+`PaymentStatementLayout`); read offsets from there, not from this table.
 
 | Index | Field | Description |
 |-------|-------|-------------|
-| 0 | `stMessage` | `0` (standalone payment) |
-| 1 | `treeNumber[0]` | ERC20 vault tree number (Alice's note) |
-| 2 | `merkleRoot[0]` | Merkle root at time of proof |
-| 3 | `nullifier[0]` | Nullifier for Alice's 40 USDT note |
-| 4 | `treeNumber[1]` | `0` (dummy input) |
-| 5 | `merkleRoot[1]` | `0` (dummy) |
-| 6 | `nullifier[1]` | `0` (dummy) |
-| 7 | `commitment[0]` | Bob's 30 USDT commitment |
-| 8 | `commitment[1]` | Alice's 10 USDT change commitment |
+| 0 | `Message` | `0` (standalone payment) |
+| 1 | `TreeNumbers[0]` | ERC20 vault tree number (Alice's note) |
+| 2 | `TreeNumbers[1]` | `0` (dummy input) |
+| 3 | `MerkleRoots[0]` | Merkle root at time of proof |
+| 4 | `MerkleRoots[1]` | `0` (dummy) |
+| 5 | `Nullifiers[0]` | Nullifier for Alice's 40 USDT note |
+| 6 | `Nullifiers[1]` | `0` (dummy) |
+| 7 | `CommitmentsOut[0]` | Bob's 30 USDT commitment |
+| 8 | `CommitmentsOut[1]` | Alice's 10 USDT change commitment |
+| 9 | `ContractAddress` | Vault the proof is bound to |
 
 ## Key Contracts
 
