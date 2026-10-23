@@ -764,6 +764,17 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			t.Fatalf("usdrVaultId=1 (the pinned vault) was wrongly rejected: %v", err)
 		}
 		t.Logf("  usdrVaultId=1 passes the pin (fails later on the empty proof, as expected): %v", err)
+
+		// The USDr leg's fee and token id are read as UsdrFee fields, so a
+		// statement of any other length is refused before the main leg is
+		// even looked at: a Payment receipt would be read past its end.
+		err = dvp.Call(&bind.CallOpts{From: owner.From}, &[]interface{}{}, "paymentWithUsdrFee",
+			emptyReceipt(layout.PaymentLen), big.NewInt(0), []byte{}, []byte{},
+			emptyReceipt(layout.PaymentLen), big.NewInt(1), []byte{}, []byte{})
+		if err == nil || !strings.Contains(err.Error(), "InvalidStatementSize") {
+			t.Fatalf("usdr leg with a Payment-length statement: expected InvalidStatementSize, got: %v", err)
+		}
+		t.Log("  usdr leg with a Payment-length statement rejected with InvalidStatementSize ✓")
 	})
 
 	t.Run("negative: usdr fee note addressed to a non-relayer key", func(t *testing.T) {

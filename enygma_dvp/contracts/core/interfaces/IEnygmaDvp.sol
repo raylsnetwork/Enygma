@@ -3,7 +3,6 @@
 
 pragma solidity ^0.8.0;
 
-import {PaymentStatementLayout} from "../contracts/PaymentStatementLayout.sol";
 import {PRIVATE_MINT_LEN} from "../contracts/DvpStatementLayout.sol";
 
 // StMessage of a withdrawal proof. The Payment-family circuits (Payment,
@@ -17,15 +16,6 @@ import {PRIVATE_MINT_LEN} from "../contracts/DvpStatementLayout.sol";
 // that drops the change note. A DvP message is a hash, never 1.
 uint256 constant WITHDRAW_MESSAGE = 1;
 
-// Offset of a Payment-family receipt's output commitments, which depends only
-// on its number of inputs: every 1-input Payment-family layout puts them where
-// Payment does, and Payment2in is the only 2-input one. Any other input count
-// is not a Payment-family receipt.
-function paymentCommitmentsOutOffset(uint256 numberOfInputs) pure returns (uint256) {
-    if (numberOfInputs == 1) return PaymentStatementLayout.PAYMENT_COMMITMENTS_OUT_OFFSET;
-    if (numberOfInputs == 2) return PaymentStatementLayout.PAYMENT2IN_COMMITMENTS_OUT_OFFSET;
-    revert IEnygmaDvp.InvalidStatementSize();
-}
 
 interface IEnygmaDvp {
     ///////////////////////////////////////////////

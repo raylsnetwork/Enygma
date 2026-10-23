@@ -9,4 +9,4 @@ A coin vault used to verify every receipt through one `checkReceiptConditions`, 
 
 ## Consequences
 
-The vault ABI changes, so retail's copies of the `EnygmaDvp` and `Erc20CoinVault` artifacts must be refreshed with it. `Erc20CoinVault._requireStandaloneTransfer` stays, but only as extra protection: a DvP leg can no longer pass `checkReceiptConditions` at all.
+The vault ABI changes: besides `checkDvpReceiptConditions`, the vaults spend and pay a DvP leg through `nullifyFromDvpReceipt` and `insertCommitmentFromDvpReceipt`, and `unlockFromReceipt` becomes `unlockFromDvpReceipt`, since it only ever unlocks a leg's note. These depart from #96's "contract public functions keep their signatures", by decision; any caller of the old `unlockFromReceipt` must move to the new name. A leg always locks, nullifies and inserts exactly one note, as its circuit does, whatever counts the caller supplies. Retail's copies of the `EnygmaDvp` and `Erc20CoinVault` artifacts must be refreshed with it. `Erc20CoinVault._requireStandaloneTransfer` stays, but only as extra protection: a DvP leg can no longer pass `checkReceiptConditions` at all.
