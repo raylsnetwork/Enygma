@@ -17,26 +17,14 @@ import {PRIVATE_MINT_LEN} from "../contracts/DvpStatementLayout.sol";
 // that drops the change note. A DvP message is a hash, never 1.
 uint256 constant WITHDRAW_MESSAGE = 1;
 
-// Offset of a receipt's output commitments, which depends only on its number
-// of inputs: every 1-input Payment-family layout puts them where Payment does,
-// and Payment2in is the only 2-input one. The payment entry points also settle
-// receipts from vaults whose circuits are not Payment-family (more inputs);
-// those share the joinsplit prefix [message, trees, roots, nullifiers], one
-// signal per input each.
+// Offset of a Payment-family receipt's output commitments, which depends only
+// on its number of inputs: every 1-input Payment-family layout puts them where
+// Payment does, and Payment2in is the only 2-input one. Any other input count
+// is not a Payment-family receipt.
 function paymentCommitmentsOutOffset(uint256 numberOfInputs) pure returns (uint256) {
     if (numberOfInputs == 1) return PaymentStatementLayout.PAYMENT_COMMITMENTS_OUT_OFFSET;
     if (numberOfInputs == 2) return PaymentStatementLayout.PAYMENT2IN_COMMITMENTS_OUT_OFFSET;
-    return 1 + 3 * numberOfInputs;
-}
-
-// Offset of a fee-carrying receipt's fee: PaymentFee's (1 input, 2 outputs) or
-// PaymentRelayerFee's (1 input, 3 outputs). Any other shape has no
-// Payment-family fee; for it this is the signal after the contract address
-// that follows the output commitments, as for those two.
-function paymentFeeOffset(uint256 numberOfInputs, uint256 numberOfOutputs) pure returns (uint256) {
-    if (numberOfInputs == 1 && numberOfOutputs == 2) return PaymentStatementLayout.PAYMENT_FEE_FEE_OFFSET;
-    if (numberOfInputs == 1 && numberOfOutputs == 3) return PaymentStatementLayout.PAYMENT_RELAYER_FEE_FEE_OFFSET;
-    return paymentCommitmentsOutOffset(numberOfInputs) + numberOfOutputs + 1;
+    revert IEnygmaDvp.InvalidStatementSize();
 }
 
 interface IEnygmaDvp {
@@ -500,7 +488,7 @@ interface IEnygmaDvp {
 
     // paymentWithFee is the fee-aware variant of payment().
     // The circuit enforces valueIn == Σ(valuesOut) + StFee; the on-chain call
-    // confirms statement[7] == protocolFee before accepting the proof.
+    // confirms the statement's fee == protocolFee before accepting the proof.
     function paymentWithFee(
         ProofReceipt memory receipt,
         uint256 vaultId,

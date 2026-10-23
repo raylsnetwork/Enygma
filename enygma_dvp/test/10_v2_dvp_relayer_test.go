@@ -153,7 +153,6 @@ func zeroPaymentReq(nIn, nOut, sigLen int) relayPaymentReq {
 }
 
 // dvpInitiatorToPayload converts a DvPInitiatorResult to a dvpReceiptPayload.
-// Statement is already in non-interleaved form (nIn=1, so interleaved == non-interleaved).
 func dvpInitiatorToPayload(t *testing.T, r *core.DvPInitiatorResult) dvpReceiptPayload {
 	t.Helper()
 	sig := make([]string, len(r.Statement))
