@@ -122,15 +122,16 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20PrivateMintProof: %v", err)
 	}
-	t.Logf("Step 2 — commitment: %s", mintResult.Commitment)
+	t.Logf("Step 2 — commitment: %s", mintResult.Commitment())
 
-	proof := proofStringsToPrivateMint(t,
-		mintResult.ProofResponse.Proof,
-		mintResult.ProofResponse.PublicSignal,
-	)
+	signals := make([]string, len(mintResult.ContractStatement()))
+	for i, v := range mintResult.ContractStatement() {
+		signals[i] = v.String()
+	}
+	proof := proofStringsToPrivateMint(t, mintResult.Proof, signals)
 
 	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain.
-	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment, proof)
+	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)
 	}
@@ -152,8 +153,8 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	if eventCommitment == nil {
 		t.Fatalf("PrivateMint event not found in transaction receipt")
 	}
-	if eventCommitment.Cmp(mintResult.Commitment) != 0 {
-		t.Errorf("event commitment: got %s, want %s", eventCommitment, mintResult.Commitment)
+	if eventCommitment.Cmp(mintResult.Commitment()) != 0 {
+		t.Errorf("event commitment: got %s, want %s", eventCommitment, mintResult.Commitment())
 	}
 
 	// Step 4 — Alice confirms the note is hers.

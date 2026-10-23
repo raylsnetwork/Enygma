@@ -141,7 +141,7 @@ contract SwapRelayer is ReentrancyGuard {
         // Verify the leg (proof, Merkle root, unspent nullifiers) before it can
         // lock anything. Without this a junk receipt could occupy a swap's slot
         // and lock arbitrary nullifiers until its expiry.
-        IAbstractCoinVault(dvp.vaultById(vaultId)).checkReceiptConditions(receipt);
+        IAbstractCoinVault(dvp.vaultById(vaultId)).checkDvpReceiptConditions(receipt);
 
         PendingSwap storage s = swaps[swapId];
 

@@ -3,9 +3,10 @@ package tests
 // Can a DvP swap's first leg be settled on its own, bypassing the swap?
 //
 // Erc20CoinVault.transfer() is public and only checks the proof, the roots and
-// the nullifiers. A DvP Initiator receipt (1 input, numberOfOutputs = 1, VK
-// slot 23) goes through the same checkReceiptConditions dispatch, so if
-// transfer() accepts it, anyone holding Alice's receipt can spend her input
+// the nullifiers. A DvP Initiator receipt is checked only by
+// checkDvpReceiptConditions, which transfer() does not call (see
+// 29_v2_vault_receipt_family_test.go), but if transfer() ever accepted one,
+// anyone holding Alice's receipt could spend her input
 // note and insert commitB (the note that pays Bob) without Bob delivering
 // anything. The receipt is public from the moment Alice broadcasts
 // submitPartialSettlement, and the counterparty has it off-chain.

@@ -13,7 +13,7 @@ package tests
 // from within this test suite.
 //
 // Exchange protocol note: exchange() requires both receipts to pass the
-// ERC-20 vault's checkReceiptConditions which reads a DvpInitiator statement,
+// ERC-20 vault's checkDvpReceiptConditions, which takes only a DvpInitiator leg,
 // so both parties must use DvPInitiatorProofFromSalts. Salts are
 // pre-agreed so the output commitments cross-reference each other without KEM.
 //
@@ -527,7 +527,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 //   Bob   deposits 15 tokens → Alice gets 15 tokens
 //
 // Since exchange() requires both receipts to be ERC-20 Initiator-style proofs
-// (the ERC-20 vault's checkReceiptConditions reads a DvpInitiator statement),
+// (the ERC-20 vault's checkDvpReceiptConditions takes only a DvpInitiator leg),
 // both parties use
 // DvPInitiatorProofFromSalts with pre-agreed salts so the output commitments
 // cross-reference each other:

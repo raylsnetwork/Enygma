@@ -139,9 +139,16 @@ abstract contract AbstractCoinVault is
         return true;
     }
 
+    // _insertCommitmentsFromReceipt and _nullifyFromReceipt walk the legacy
+    // joinsplit statement, [message, trees[nIn], roots[nIn], nullifiers[nIn],
+    // commitments[nOut], ...], by the caller-supplied numberOfInputs and
+    // numberOfOutputs. Only the legacy circuits with no generated layout use
+    // them: the ERC721 and ERC1155 transfers and EnygmaErc20CoinVault.
+    // Erc20CoinVault overrides both to read through its Payment-family
+    // layouts, and a DvP leg goes through the *FromDvpReceipt functions.
     function _insertCommitmentsFromReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) internal returns (bool) {
+    ) internal virtual returns (bool) {
         uint256 inputSize = receipt.numberOfInputs;
         uint256 outputSize = receipt.numberOfOutputs;
         uint nullifiersIndex = 1 + (2 * inputSize);
@@ -175,7 +182,7 @@ abstract contract AbstractCoinVault is
 
     function _nullifyFromReceipt(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) internal returns (bool) {
+    ) internal virtual returns (bool) {
         uint256 inputSize = receipt.numberOfInputs;
 
         uint rootsIndex = 1 + (1 * inputSize);
@@ -214,6 +221,14 @@ abstract contract AbstractCoinVault is
         IEnygmaDvp.ProofReceipt memory receipt
     ) public onlyRole(DEFAULT_DVP_ROLE) returns (bool) {
         return _nullifyFromReceipt(receipt);
+    }
+
+    // Checks a DvP leg (see IAbstractCoinVault). Only the vaults that settle
+    // one, Erc20CoinVault and Erc721CoinVault, override it.
+    function checkDvpReceiptConditions(
+        IEnygmaDvp.ProofReceipt memory
+    ) public view virtual returns (bool) {
+        revert DvpLegNotSupported();
     }
 
     // A DvP leg's receipt is read through DvpReceipt (which reverts with

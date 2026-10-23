@@ -93,6 +93,8 @@ interface IAbstractCoinVault {
     error CantSpendLockedCoin();
     error CoinAlreadyUnlocked();
     error InvalidStatmentSize();
+    // checkDvpReceiptConditions on a vault that settles no DvP leg.
+    error DvpLegNotSupported();
     error ZeroWithdrawAmount();
 
     error InvalidAuditorPublicKey();
@@ -179,7 +181,17 @@ interface IAbstractCoinVault {
         uint256[] memory assetIdentifiers
     ) external view returns (uint256);
 
+    // Checks a receipt that is not a DvP leg (for Erc20CoinVault, a
+    // Payment-family receipt): a DvP leg goes to checkDvpReceiptConditions.
     function checkReceiptConditions(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) external view returns (bool);
+
+    // Checks a DvP leg, read through DvpReceipt: its root, its unspent
+    // nullifier and its proof. Each vault takes only its own side's leg
+    // (Erc20CoinVault a DvpInitiator, Erc721CoinVault a DvpDestination);
+    // any other vault reverts with DvpLegNotSupported.
+    function checkDvpReceiptConditions(
         IEnygmaDvp.ProofReceipt memory receipt
     ) external view returns (bool);
 
