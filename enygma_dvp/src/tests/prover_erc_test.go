@@ -87,6 +87,8 @@ func TestErc20JoinSplitProof_Success(t *testing.T) {
 		t.Error("expected WtSpendPublicKeysOut in payload")
 	}
 
+	// The legacy ERC20 joinsplit circuit has no template in enygma_dvp and so
+	// no statement layout (#96), hence the literal indices below.
 	// Statement order: [message, tree[0], tree[1], root[0], root[1], null[0], null[1], commit[0], commit[1]]
 	// = 1 + 3*2 + 2 = 9
 	if len(result.Statement) != 9 {
@@ -363,6 +365,8 @@ func TestErc721OwnershipProof_Success(t *testing.T) {
 		t.Errorf("expected WtValues[0]=42 (raw tokenId), got %v", wtValues[0])
 	}
 
+	// The ERC721 ownership circuit has no template in enygma_dvp and so no
+	// statement layout (#96), hence the literal indices below.
 	// Statement: [message, treeNumber, merkleRoot, nullifier, commitmentOut]
 	if len(result.Statement) != 5 {
 		t.Errorf("expected 5 statement elements, got %d", len(result.Statement))
