@@ -10,8 +10,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset} from "../interfaces/IEnygmaDvp.sol";
-import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
+import {
+    PaymentStatementLayout as Psl,
+    PAYMENT_LEN,
+    PAYMENT2IN_LEN,
+    PAYMENT_FEE_LEN,
+    PAYMENT_RELAYER_FEE_LEN,
+    USDR_FEE_LEN
+} from "./PaymentStatementLayout.sol";
 import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "./DvpStatementLayout.sol";
 import {DvpReceipt} from "./DvpReceipt.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
@@ -589,14 +596,35 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //////////////////////////////////////////////
 
     // Offset of the output commitments in a receipt settled by the payment
-    // entry points. They settle against any registered vault: Erc20CoinVault
-    // takes only Payment-family receipts, but EnygmaErc20CoinVault and
-    // Erc1155CoinVault also take legacy joinsplit receipts with more inputs.
-    // Those circuits have no template in enygma_dvp, so no statement layout
-    // (#96); they share the joinsplit prefix [message, trees, roots,
+    // entry points, read from the circuit Erc20CoinVault._paymentCircuit
+    // would pick: by inputs and outputs, then by statement length where
+    // Payment, PaymentFee and UsdrFee all have 1 input and 2 outputs. The
+    // payment entry points settle against any registered vault, and
+    // EnygmaErc20CoinVault and Erc1155CoinVault also take legacy joinsplit
+    // receipts of other shapes; those fall through to
+    // _joinsplitCommitmentsOutOffset.
+    function _commitmentsOutOffset(ProofReceipt memory receipt) internal pure returns (uint256) {
+        uint256 numberOfInputs = receipt.numberOfInputs;
+        uint256 numberOfOutputs = receipt.numberOfOutputs;
+        uint256 length = receipt.statement.length;
+        if (numberOfInputs == 2 && numberOfOutputs == 2 && length == PAYMENT2IN_LEN) {
+            return Psl.PAYMENT2IN_COMMITMENTS_OUT_OFFSET;
+        }
+        if (numberOfInputs == 1 && numberOfOutputs == 3 && length == PAYMENT_RELAYER_FEE_LEN) {
+            return Psl.PAYMENT_RELAYER_FEE_COMMITMENTS_OUT_OFFSET;
+        }
+        if (numberOfInputs == 1 && numberOfOutputs == 2) {
+            if (length == PAYMENT_LEN) return Psl.PAYMENT_COMMITMENTS_OUT_OFFSET;
+            if (length == PAYMENT_FEE_LEN) return Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET;
+            if (length == USDR_FEE_LEN) return Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET;
+        }
+        return _joinsplitCommitmentsOutOffset(numberOfInputs);
+    }
+
+    // Legacy joinsplit circuits have no template in enygma_dvp, so no
+    // statement layout (#96); they share the prefix [message, trees, roots,
     // nullifiers], one signal per input each.
-    function _commitmentsOutOffset(uint256 numberOfInputs) internal pure returns (uint256) {
-        if (numberOfInputs == 1 || numberOfInputs == 2) return paymentCommitmentsOutOffset(numberOfInputs);
+    function _joinsplitCommitmentsOutOffset(uint256 numberOfInputs) internal pure returns (uint256) {
         return 1 + 3 * numberOfInputs;
     }
 
@@ -604,11 +632,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // or PaymentRelayerFee's (1 input, 3 outputs). Any other shape has no
     // Payment-family fee; for it this is the signal after the contract address
     // that follows the output commitments, as for those two. Only the legacy
-    // joinsplit receipts described at _commitmentsOutOffset reach it.
+    // joinsplit receipts described at _joinsplitCommitmentsOutOffset reach it.
     function _feeOffset(uint256 numberOfInputs, uint256 numberOfOutputs) internal pure returns (uint256) {
         if (numberOfInputs == 1 && numberOfOutputs == 2) return Psl.PAYMENT_FEE_FEE_OFFSET;
         if (numberOfInputs == 1 && numberOfOutputs == 3) return Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET;
-        return _commitmentsOutOffset(numberOfInputs) + numberOfOutputs + 1;
+        return _joinsplitCommitmentsOutOffset(numberOfInputs) + numberOfOutputs + 1;
     }
 
     modifier onlyRelayer() {
@@ -1098,7 +1126,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.insertCommitmentsFromReceipt(receipt);
 
         // Emit a Payment event for Bob's output (index 0) so he can scan and claim his note.
-        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt.numberOfInputs)];
+        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt)];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1135,7 +1163,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt.numberOfInputs)];
+        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt)];
         emit Payment(vaultId, commitmentOut, ctxt, encTxData);
 
         return true;
@@ -1173,7 +1201,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        uint256 commitmentBob = receipt.statement[_commitmentsOutOffset(receipt.numberOfInputs)];
+        uint256 commitmentBob = receipt.statement[_commitmentsOutOffset(receipt)];
         emit Payment(vaultId, commitmentBob, ctxt, encTxData);
 
         return true;
@@ -1216,6 +1244,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // The USDr leg must settle in the configured USDr vault, not one the
         // caller picks — see usdrFeeVaultId.
         if (!usdrFeeVaultSet || usdrVaultId != usdrFeeVaultId) revert InvalidUsdrVault();
+        // The USDr leg is read as a UsdrFee statement below; any other length
+        // is another circuit's receipt, refused before anything is read.
+        if (usdrReceipt.statement.length != USDR_FEE_LEN) revert InvalidStatementSize();
 
         // ── main leg — identical checks/settlement to payment() ──
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
@@ -1227,7 +1258,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
-        emit Payment(vaultId, receipt.statement[_commitmentsOutOffset(receipt.numberOfInputs)], ctxt, encTxData);
+        emit Payment(vaultId, receipt.statement[_commitmentsOutOffset(receipt)], ctxt, encTxData);
 
         // ── USDr leg — checked against relayerFixedFeeAmount's USDr counterpart ──
         if (usdrReceipt.numberOfOutputs != 2) revert InvalidNumberOfOutputs();
@@ -1242,7 +1273,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         usdrVault.nullifyFromReceipt(usdrReceipt);
         usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
 
-        emit Payment(usdrVaultId, usdrReceipt.statement[_commitmentsOutOffset(usdrReceipt.numberOfInputs)], usdrCtxt, usdrEncTxData);
+        emit Payment(usdrVaultId, usdrReceipt.statement[Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET], usdrCtxt, usdrEncTxData);
 
         return true;
     }
