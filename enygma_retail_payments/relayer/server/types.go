@@ -150,9 +150,12 @@ type parsedRelayerFee struct {
 // POST /relay/payment_usdr_fee.
 //
 // Settles two independent proofs atomically in one on-chain call
-// (EnygmaDvp.paymentWithUsdrFee): a normal payment (a Payment statement,
-// same shape as POST /relay/payment) and a UsdrFeeCircuit proof — a second,
-// independent relayer-fee asset with its own token/vault/circuit.
+// (EnygmaDvp.paymentWithUsdrFee): a normal payment and a UsdrFeeCircuit
+// proof — a second, independent relayer-fee asset with its own
+// token/vault/circuit.
+//
+// PublicSignal is a Payment statement (1 input) or a Payment2in statement
+// (2 inputs, merging two notes); its length says which.
 //
 // UsdrPublicSignal is a UsdrFee statement.
 //
@@ -162,12 +165,12 @@ type parsedRelayerFee struct {
 // since both are public there, unlike the same-asset relayer-fee mechanism
 // where TokenId had to be supplied separately because it was never public).
 type RelayPaymentUsdrFeeRequest struct {
-	// Main leg — identical shape to RelayPaymentRequest.
-	VaultId      string                    `json:"vaultId"      binding:"required"`
-	Proof        [8]string                 `json:"proof"        binding:"required"`
-	PublicSignal [layout.PaymentLen]string `json:"publicSignal" binding:"required"`
-	CipherText   string                    `json:"cipherText"   binding:"required"`
-	EncTxData    string                    `json:"encTxData"    binding:"required"`
+	// Main leg — RelayPaymentRequest's shape, with a Payment or Payment2in statement.
+	VaultId      string    `json:"vaultId"      binding:"required"`
+	Proof        [8]string `json:"proof"        binding:"required"`
+	PublicSignal []string  `json:"publicSignal" binding:"required"`
+	CipherText   string    `json:"cipherText"   binding:"required"`
+	EncTxData    string    `json:"encTxData"    binding:"required"`
 
 	// USDr leg.
 	UsdrVaultId      string                    `json:"usdrVaultId"      binding:"required"`
@@ -190,7 +193,8 @@ type RelayPaymentUsdrFeeResponse struct {
 type parsedUsdrFee struct {
 	vaultId      *big.Int
 	proof        [8]*big.Int
-	publicSignal [layout.PaymentLen]*big.Int
+	publicSignal []*big.Int
+	mainLayout   mainLegLayout // where publicSignal holds its inputs
 	cipherText   []byte
 	encTxData    []byte
 
@@ -200,6 +204,37 @@ type parsedUsdrFee struct {
 	usdrCipherText   []byte
 	usdrEncTxData    []byte
 	usdrFeeSalt      *big.Int
+}
+
+// mainLegLayout is the part of a USDr-fee route main leg's statement layout
+// the relayer reads: where it holds its inputs' tree numbers, Merkle roots and
+// nullifiers (inputs consecutive values from each offset), and how many inputs
+// and outputs its receipt declares.
+type mainLegLayout struct {
+	treeNumbersOffset int
+	merkleRootsOffset int
+	nullifiersOffset  int
+	inputs            int
+	outputs           int
+}
+
+// usdrFeeMainLegLayouts are the main-leg statements POST /relay/payment_usdr_fee
+// accepts, by statement length.
+var usdrFeeMainLegLayouts = map[int]mainLegLayout{
+	layout.PaymentLen: {
+		treeNumbersOffset: layout.PaymentTreeNumbersOffset,
+		merkleRootsOffset: layout.PaymentMerkleRootsOffset,
+		nullifiersOffset:  layout.PaymentNullifiersOffset,
+		inputs:            layout.PaymentNullifiersSize,
+		outputs:           layout.PaymentCommitmentsOutSize,
+	},
+	layout.Payment2inLen: {
+		treeNumbersOffset: layout.Payment2inTreeNumbersOffset,
+		merkleRootsOffset: layout.Payment2inMerkleRootsOffset,
+		nullifiersOffset:  layout.Payment2inNullifiersOffset,
+		inputs:            layout.Payment2inNullifiersSize,
+		outputs:           layout.Payment2inCommitmentsOutSize,
+	},
 }
 
 // ── Tag relay ─────────────────────────────────────────────────────────────────
