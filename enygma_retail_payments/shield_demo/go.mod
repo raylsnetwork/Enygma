@@ -5,6 +5,8 @@ go 1.26.8
 require (
 	enygma_retail_payments/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.8
+	github.com/raylsnetwork/enygma_dvp/src v0.0.0
+	github.com/raylsnetwork/enygma_retail_payments/private_tags/src v0.0.0
 	github.com/raylsnetwork/enygma_retail_payments/src v0.0.0
 )
 
@@ -29,7 +31,6 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/iden3/go-iden3-crypto v0.0.16 // indirect
-	github.com/raylsnetwork/enygma_dvp/src v0.0.0 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
 	github.com/supranational/blst v0.3.17 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
@@ -46,5 +47,6 @@ require (
 replace (
 	enygma_retail_payments/layout => ../layout
 	github.com/raylsnetwork/enygma_dvp/src => ../../enygma_dvp/src
+	github.com/raylsnetwork/enygma_retail_payments/private_tags/src => ../private_tags/src
 	github.com/raylsnetwork/enygma_retail_payments/src => ../src
 )

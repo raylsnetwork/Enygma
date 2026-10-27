@@ -108,9 +108,14 @@ func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount
 	if err != nil {
 		return err
 	}
+	if e.opts.Tags {
+		if err := e.publishTag(ctx, s, sender, p, t); err != nil {
+			return err
+		}
+	}
 	e.fanOut = append(e.fanOut, t.Settlement)
 
-	s.proto("fanout", t.row(n, e.usdrFixedFee))
+	s.proto("fanout", t.row(n, e.usdrFixedFee, ""))
 	s.actor(sender, "note", "0x"+sender.notes[len(sender.notes)-1].commitment.Text(16))
 	s.actor(sender, "balance", sender.notes.balance().String()+" RaylsERC20")
 	if t.UsdrFeeNote != nil {
@@ -144,12 +149,24 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 	}
 	s.log("chain", "%d encrypted notes on chain (Payment + EncryptedNote events)", len(events))
 	for _, p := range e.participants() {
-		found := p.scan(events, &p.notes)
-		s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, found)
+		if e.opts.Tags {
+			// Each participant was paid once in the fan-out.
+			if _, err := e.discoverByTag(ctx, s, p, 1); err != nil {
+				return err
+			}
+		} else {
+			found := p.scan(events, &p.notes)
+			s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, found)
+			s.actor(p, "scan", trialScan(len(events)))
+		}
 		s.actor(p, "balance", p.notes.balance().String()+" RaylsERC20")
 		if len(p.notes) > 0 {
 			s.actor(p, "note", "0x"+p.notes[len(p.notes)-1].commitment.Text(16))
 		}
+	}
+	if e.opts.Tags {
+		s.done("Each participant found their payment by its private tag, decrypting only that note instead of all %d", len(events))
+		return nil
 	}
 	s.done("Each participant found their payment by scanning the chain with their view key")
 	return nil

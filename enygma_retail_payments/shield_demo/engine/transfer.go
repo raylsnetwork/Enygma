@@ -147,6 +147,10 @@ type sent struct {
 	method           string
 	// merged is set when the transfer merged two notes (Payment2in).
 	merged bool
+	// payeeSalt opens the recipient's note; a private tag carries it.
+	payeeSalt *big.Int
+	// tagBlock is the block the transfer's tag was published in; 0 with tags off.
+	tagBlock uint64
 }
 
 // send pays to amount through the relayer, change back to from: from's
@@ -158,23 +162,9 @@ type sent struct {
 // no USDr for the fee — it refuses with ErrRefused before proving. It returns
 // once the transfer is mined, so from's change notes are already in the trees.
 func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big.Int, payUsdrFee bool) (*sent, error) {
-	if from == to {
-		return nil, refused("%s cannot pay themselves", from.Name)
-	}
-	if amount.Sign() <= 0 {
-		return nil, refused("the amount must be positive, got %s", amount)
-	}
-	ins, err := from.notes.inputs(from.Name, "RaylsERC20", amount)
+	ins, err := e.checkSend(from, to, amount, payUsdrFee)
 	if err != nil {
 		return nil, err
-	}
-	if payUsdrFee {
-		if e.relayerFeePk == nil {
-			return nil, fmt.Errorf("the relayer publishes no fee spend key (set RELAYER_FEE_SPEND_PRIVATE_KEY)")
-		}
-		if _, err := from.usdr.spendable(from.Name, "USDr", e.usdrFixedFee); err != nil {
-			return nil, fmt.Errorf("%w for the relayer's fee", err)
-		}
 	}
 	c := e.chain
 	change := new(big.Int).Sub(total(ins), amount)
@@ -279,6 +269,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	out := &sent{
 		Settlement: Settlement{From: from.Name, To: to.Name, Amount: amount, TxHash: common.HexToHash(tx.TxHash)},
 		change:     change, proveMs: proveMs, relayMs: relayMs, tx: tx, method: "payment", merged: len(ins) == 2,
+		payeeSalt: res.SaltB,
 	}
 	if fee != nil {
 		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) || !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.change.commitment) {
@@ -293,14 +284,44 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	return out, nil
 }
 
+// checkSend checks a transfer send would make before anything is proved or
+// sent, and returns the notes from would spend. It refuses with ErrRefused
+// paying oneself, a non-positive amount, an amount from's notes can't cover,
+// or no USDr note for the fee; it fails if the relayer takes no USDr fees.
+func (e *Engine) checkSend(from, to *Actor, amount *big.Int, payUsdrFee bool) ([]*note, error) {
+	if from == to {
+		return nil, refused("%s cannot pay themselves", from.Name)
+	}
+	if amount.Sign() <= 0 {
+		return nil, refused("the amount must be positive, got %s", amount)
+	}
+	ins, err := from.notes.inputs(from.Name, "RaylsERC20", amount)
+	if err != nil {
+		return nil, err
+	}
+	if payUsdrFee {
+		if e.relayerFeePk == nil {
+			return nil, fmt.Errorf("the relayer publishes no fee spend key (set RELAYER_FEE_SPEND_PRIVATE_KEY)")
+		}
+		if _, err := from.usdr.spendable(from.Name, "USDr", e.usdrFixedFee); err != nil {
+			return nil, fmt.Errorf("%w for the relayer's fee", err)
+		}
+	}
+	return ins, nil
+}
+
 // row is the transfer's line in one of the UI's transfer tables.
-func (t *sent) row(n int, feeAmount *big.Int) string {
-	fee := "—"
+// scan says how the recipient found it, if they have yet.
+func (t *sent) row(n int, feeAmount *big.Int, scan string) string {
+	fee, tag := "—", "—"
 	if t.UsdrFeeNote != nil {
 		fee = feeAmount.String() + " USDr"
 	}
+	if t.tagBlock != 0 {
+		tag = fmt.Sprintf("block %d", t.tagBlock)
+	}
 	row, _ := json.Marshal(map[string]any{
-		"n": n, "from": t.From, "to": t.To, "amount": t.Amount.String(), "fee": fee, "merged": t.merged,
+		"n": n, "from": t.From, "to": t.To, "amount": t.Amount.String(), "fee": fee, "merged": t.merged, "tag": tag, "scan": scan,
 		"proveMs": t.proveMs, "relayMs": t.relayMs, "gas": t.tx.GasUsed, "block": t.tx.BlockNumber, "tx": t.tx.TxHash,
 	})
 	return string(row)
@@ -320,24 +341,49 @@ func (e *Engine) payByName(ctx context.Context, s *step, t Transfer) error {
 }
 
 // payTransfer is one transfer between registered actors after the fan-out:
-// send it, then let the recipient find it by scanning the chain.
+// send it, then let the recipient find it by scanning the chain. With tags
+// on, the payer first opens a channel to the recipient if they have none,
+// then tags the payment, and the recipient finds it by its tag.
 func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amount *big.Int) error {
+	if e.opts.Tags {
+		// Refuse before opening a channel, so a refusal sends nothing.
+		if _, err := e.checkSend(from, to, amount, e.opts.UsdrFee); err != nil {
+			return err
+		}
+		if err := e.ensureChannel(ctx, s, from, to); err != nil {
+			return err
+		}
+	}
 	t, err := e.send(ctx, s, from, to, amount, e.opts.UsdrFee)
 	if err != nil {
 		return err
 	}
+	if e.opts.Tags {
+		if err := e.publishTag(ctx, s, from, to, t); err != nil {
+			return err
+		}
+	}
 	e.transfers = append(e.transfers, t.Settlement)
 
-	events, err := e.chain.noteEvents(ctx, e.chain.vaultAddr, erc20VaultId)
-	if err != nil {
-		return err
+	var scan string
+	if e.opts.Tags {
+		if scan, err = e.discoverByTag(ctx, s, to, 1); err != nil {
+			return err
+		}
+	} else {
+		events, err := e.chain.noteEvents(ctx, e.chain.vaultAddr, erc20VaultId)
+		if err != nil {
+			return err
+		}
+		if found := to.scan(events, &to.notes); found != 1 {
+			return fmt.Errorf("%s found %d new notes by scanning, want the payment", to.Name, found)
+		}
+		scan = trialScan(len(events))
+		s.log("key", "%s scanned %d encrypted notes and decrypted the payment with their ML-KEM view key", to.Name, len(events))
+		s.actor(to, "scan", scan)
 	}
-	if found := to.scan(events, &to.notes); found != 1 {
-		return fmt.Errorf("%s found %d new notes by scanning, want the payment", to.Name, found)
-	}
-	s.log("key", "%s scanned %d encrypted notes and decrypted the payment with their ML-KEM view key", to.Name, len(events))
 
-	s.proto("transfer", t.row(len(e.transfers), e.usdrFixedFee))
+	s.proto("transfer", t.row(len(e.transfers), e.usdrFixedFee, scan))
 	for _, a := range []*Actor{from, to} {
 		s.actor(a, "balance", a.notes.balance().String()+" RaylsERC20")
 		s.actor(a, "note", "0x"+a.notes[len(a.notes)-1].commitment.Text(16))
@@ -356,6 +402,11 @@ func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amou
 	s.done("%s paid %s %s privately%s (proof %d ms, relay %d ms, gas %s) — %s change back",
 		from.Name, to.Name, amount, merged, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
 	return nil
+}
+
+// trialScan describes a scan without tags: every note on chain tried.
+func trialScan(notes int) string {
+	return fmt.Sprintf("%d notes trial-decrypted", notes)
 }
 
 // Transfer makes a manual transfer between registered actors, by name, after
