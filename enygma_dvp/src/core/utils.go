@@ -674,6 +674,36 @@ func WithdrawChangeNote(sk, nullifier0, changeValue, tokenId *big.Int) (salt, co
 	return salt, commitment, err
 }
 
+// swapRevertDomain separates SwapRevertSalt from WithdrawChangeSalt, which
+// hashes the same (sk, nullifier) pair.
+var swapRevertDomain = new(big.Int).SetBytes([]byte("enygma.dvp.swapRevert"))
+
+// SwapRevertSalt is the salt of a DvP initiator's revert note (revertCommitA):
+// Poseidon(sk, nullifier, swapRevertDomain), where sk is the initiator's spend
+// key and nullifier the swap input's. claimSwapTimeout spends the input and
+// inserts revertCommitA in its place, so the refund is only reachable through
+// this salt; deriving it means a wallet never has to store it.
+func SwapRevertSalt(sk, nullifier *big.Int) (*big.Int, error) {
+	return poseidon.Hash([]*big.Int{sk, nullifier, swapRevertDomain})
+}
+
+// SwapRevertNote rebuilds a timed-out swap's refund note from the initiator's
+// spend key and public data: nullifier is statement[3] of the initiator's
+// receipt (the Nullifier event of its submission), value and tokenId those of
+// the swapped input. The commitment equals the receipt's revertCommitA.
+func SwapRevertNote(sk, nullifier, value, tokenId *big.Int) (salt, commitment *big.Int, err error) {
+	salt, err = SwapRevertSalt(sk, nullifier)
+	if err != nil {
+		return nil, nil, err
+	}
+	pk, err := GetPublicKey(sk)
+	if err != nil {
+		return nil, nil, err
+	}
+	commitment, err = Erc20CommitmentV2(pk, salt, value, tokenId)
+	return salt, commitment, err
+}
+
 // Erc721UniqueId computes the unique ID for an ERC-721 token commitment
 func Erc721UniqueId(contractAddress, tokenId *big.Int) (*big.Int, error) {
 	return poseidon.Hash([]*big.Int{contractAddress, tokenId})

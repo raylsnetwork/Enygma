@@ -19,6 +19,11 @@ type ZkDvpSwapInitResult struct {
 	// This is the commitment Alice receives (Bob's asset coming to Alice).
 	CommitmentA *big.Int
 
+	// RevertCommitA is the refund note claimSwapTimeout inserts for Alice, and
+	// RevertSalt its salt (SwapRevertSalt of AliceNullifier).
+	RevertCommitA *big.Int
+	RevertSalt    *big.Int
+
 	// CipherText is the ML-KEM capsule (1088 bytes) from Encapsulate(bobViewEncapKey).
 	// Bob decapsulates to recover saltB.
 	CipherText []byte
@@ -147,9 +152,9 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 	// payload shaped for the DvP Initiator circuit. The two circuits have different VKs
 	// and statement layouts — using the wrong endpoint either always reverts on-chain or
 	// silently accepts a semantically incorrect proof.
-	revertSalt, err := RandomInField()
+	revertSalt, err := SwapRevertSalt(aliceKey.PrivateKey, nullifier)
 	if err != nil {
-		return nil, fmt.Errorf("RandomInField revertSalt failed: %w", err)
+		return nil, fmt.Errorf("SwapRevertSalt failed: %w", err)
 	}
 	revertCommit, err := Erc20CommitmentV2(aliceKey.PublicKey, revertSalt, amountIn, tokenIdIn)
 	if err != nil {
@@ -211,6 +216,8 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		AliceNullifier: nullifier,
 		CommitmentB:    commitmentB,
 		CommitmentA:    commitmentA,
+		RevertCommitA:  revertCommit,
+		RevertSalt:     revertSalt,
 		CipherText:     cipherText,
 		EncTxData:      encTxData,
 		SaltStar:       saltStar,
@@ -230,6 +237,7 @@ type DvPInitiatorResult struct {
 	CommitB         *big.Int
 	CommitA         *big.Int
 	RevertCommitA   *big.Int
+	RevertSalt      *big.Int // opens RevertCommitA after claimSwapTimeout; SwapRevertSalt(sk, nf_A)
 	SaltA           *big.Int // passed to Bob's DvPDestinationProof
 }
 
@@ -289,17 +297,15 @@ func (c *GnarkClient) DvPInitiatorProof(
 		return nil, fmt.Errorf("EncryptPayload: %w", err)
 	}
 
-	revertSaltBytes, err := GenerateRandomValue(32)
-	if err != nil {
-		return nil, fmt.Errorf("RandomBytes (revert salt): %w", err)
-	}
-	revertSalt := SaltBToField(revertSaltBytes)
-
 	pathIndex := merkleProof.Indices
 	// HIGH-1 fix: incorporate tree number into the nullifier.
 	nf, err := GetNullifierWithTree(aliceKey.PrivateKey, stTreeNumber, pathIndex, merkleDepth)
 	if err != nil {
 		return nil, fmt.Errorf("GetNullifier: %w", err)
+	}
+	revertSalt, err := SwapRevertSalt(aliceKey.PrivateKey, nf)
+	if err != nil {
+		return nil, fmt.Errorf("SwapRevertSalt: %w", err)
 	}
 
 	commitB, err := Erc20CommitmentV2(bobSpendPk, saltB, valueIn, tokenIdIn)
@@ -378,6 +384,7 @@ func (c *GnarkClient) DvPInitiatorProof(
 		CommitB:         commitB,
 		CommitA:         commitA,
 		RevertCommitA:   revertCommitA,
+		RevertSalt:      revertSalt,
 		SaltA:           saltA,
 	}, nil
 }
@@ -425,11 +432,10 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 		return nil, fmt.Errorf("Erc20CommitmentV2 (commitA): %w", err)
 	}
 
-	revertSaltBytes, err := GenerateRandomValue(32)
+	revertSalt, err := SwapRevertSalt(aliceKey.PrivateKey, nf)
 	if err != nil {
-		return nil, fmt.Errorf("RandomBytes (revert salt): %w", err)
+		return nil, fmt.Errorf("SwapRevertSalt: %w", err)
 	}
-	revertSalt := SaltBToField(revertSaltBytes)
 	revertCommitA, err := Erc20CommitmentV2(aliceKey.PublicKey, revertSalt, valueIn, tokenIdIn)
 	if err != nil {
 		return nil, fmt.Errorf("Erc20CommitmentV2 (revertCommitA): %w", err)
@@ -490,6 +496,7 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 		CommitB:         commitB,
 		CommitA:         commitA,
 		RevertCommitA:   revertCommitA,
+		RevertSalt:      revertSalt,
 	}, nil
 }
 

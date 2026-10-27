@@ -7,10 +7,10 @@ package tests
 // Three sub-tests (each uses a fresh NFT tokenId to avoid minting conflicts):
 //
 //   FullSwap        — happy path: both legs submitted on time, swap settles atomically.
-//   DeadlineExpired — Alice submits, Bob never responds, deadline passes (1 min),
-//                     Alice calls claimSwapTimeout → revert commitment recoverable.
+//   DeadlineExpired — Alice submits, Bob never responds, deadline passes,
+//                     Alice calls claimSwapTimeout → she withdraws her refund note.
 //   InvalidProof    — Alice submits, Bob submits an all-zero (invalid) proof (rejected),
-//                     deadline passes, Alice calls claimSwapTimeout → revert commitment recoverable.
+//                     deadline passes, Alice calls claimSwapTimeout → she withdraws her refund note.
 //
 // Cross-commitment layout (matches EnygmaDvp.submitPartialSettlement cross-referencing):
 //
@@ -28,7 +28,10 @@ package tests
 //   → check: _pendingTransactions[commitB].targetReceiptId == commitA ✓ → settle
 //   → VK: VK_ID_DVP_DESTINATION (slot 24); ERC721 vault tries ownership VK, falls back to DvP VK
 //
-// claimSwapTimeout(commitB) is the revert entry point after deadline.
+// claimSwapTimeout(commitB) is the revert entry point after deadline. It spends
+// Alice's input note (nf_A) for good and inserts revertCommitA in its place, so
+// her only way back to the funds is the refund note, rebuilt from her spend key
+// and nf_A with core.SwapRevertNote.
 //
 // Prerequisites:
 //   1. npx hardhat node
@@ -682,7 +685,7 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 				t.Logf("  SwapTimedOut event — pendingReceiptId=%s (= commitB)", log.Topics[1].Big())
 			}
 			if log.Topics[0] == tc.nullifierSig {
-				t.Logf("  CoinUnlocked — nf=%s (Alice's nullifier is now free)", log.Topics[3].Big())
+				t.Logf("  Nullifier — nf=%s (Alice's input note is now spent)", log.Topics[3].Big())
 			}
 		}
 		if !timedOut {
@@ -697,19 +700,9 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 			t.Logf("  Second claimSwapTimeout correctly rejected (swap cleaned up): %v", errDouble)
 		}
 
-		// Alice's original commitment is still in the ERC20 Merkle tree.
-		// Now that nf_A is unlocked, Alice can spend her original note
-		// and output revertCommitA. We verify the tree still contains aliceCommitment.
-		mt20 := loadVaultMerkleTree(t, tc.client, tc.erc20VaultAddr, tc.merkleDepth)
-		aliceProofAgain, err := mt20.GenerateProof(d.aliceCommitment)
-		if err != nil {
-			t.Errorf("Alice's original commitment no longer provable in tree: %v", err)
-		} else {
-			t.Logf("  Alice's commitment still in ERC20 tree (root=%s) — funds recoverable via revertCommitA",
-				aliceProofAgain.Root)
-		}
+		withdrawRevertNote(t, tc, d, p)
 
-		t.Logf("=== DeadlineExpired COMPLETE: swap timed out, Alice's nullifier unlocked, revert commitment available ===")
+		t.Logf("=== DeadlineExpired COMPLETE: swap timed out, Alice withdrew her refund note ===")
 		t.Logf("    revertCommitA = %s", p.revertCommitA)
 	})
 
@@ -797,23 +790,108 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 				t.Logf("  SwapTimedOut event — pendingReceiptId=%s", log.Topics[1].Big())
 			}
 			if log.Topics[0] == tc.nullifierSig {
-				t.Logf("  CoinUnlocked — Alice's nullifier freed for re-use")
+				t.Logf("  Nullifier — Alice's input note spent; revertCommitA replaces it")
 			}
 		}
 		if !timedOut {
 			t.Error("SwapTimedOut event not found after invalid proof scenario")
 		}
 
-		// Alice's commitment is still in tree — she can spend with revertCommitA
-		mt20 := loadVaultMerkleTree(t, tc.client, tc.erc20VaultAddr, tc.merkleDepth)
-		_, err = mt20.GenerateProof(d.aliceCommitment)
-		if err != nil {
-			t.Errorf("Alice's commitment no longer provable in tree: %v", err)
-		} else {
-			t.Logf("  Alice's commitment still spendable — revertCommitA=%s recoverable", p.revertCommitA)
-		}
+		withdrawRevertNote(t, tc, d, p)
 
-		t.Logf("=== InvalidProof COMPLETE: Bob's proof rejected, swap timed out, Alice's funds recoverable ===")
+		t.Logf("=== InvalidProof COMPLETE: Bob's proof rejected, swap timed out, Alice withdrew her refund note ===")
 		t.Logf("    revertCommitA = %s", p.revertCommitA)
 	})
+}
+
+// withdrawRevertNote checks that Alice can recover her funds after
+// claimSwapTimeout: it rebuilds her refund note from her spend key and nf_A
+// (statement[3] of her receipt) alone, as a wallet that kept nothing from the
+// swap would, and withdraws it in full with withdrawV2.
+func withdrawRevertNote(t *testing.T, tc *dvpTestContext, d *dvpDeposits, p *dvpProofs) {
+	t.Helper()
+	sk, pk := d.aliceSpend.PrivateKey, d.aliceSpend.PublicKey
+	salt, commit, err := core.SwapRevertNote(sk, p.aliceReceipt.Statement[3], d.erc20Amount, d.erc20TokenId)
+	if err != nil {
+		t.Fatalf("SwapRevertNote: %v", err)
+	}
+	if commit.Cmp(p.revertCommitA) != 0 {
+		t.Fatalf("SwapRevertNote rebuilt %s, want revertCommitA %s", commit, p.revertCommitA)
+	}
+
+	mt := loadVaultMerkleTree(t, tc.client, tc.erc20VaultAddr, tc.merkleDepth)
+	mp, err := mt.GenerateProof(commit)
+	if err != nil {
+		t.Fatalf("revertCommitA not in the ERC20 tree after claimSwapTimeout: %v", err)
+	}
+	treeNumber := big.NewInt(int64(mp.TreeNumber))
+	nf, err := core.GetNullifierWithTree(sk, treeNumber, mp.Indices, tc.merkleDepth)
+	if err != nil {
+		t.Fatalf("GetNullifierWithTree: %v", err)
+	}
+
+	// A fresh recipient per run, so its balance is exactly what was withdrawn.
+	recipient := common.BytesToAddress(crypto.Keccak256(nf.Bytes())[:20])
+	recipientPk := new(big.Int).SetBytes(recipient.Bytes())
+	wdCmt, err := core.Erc20CommitmentV2(recipientPk, big.NewInt(0), d.erc20Amount, d.erc20TokenId)
+	if err != nil {
+		t.Fatalf("commitment (withdrawal): %v", err)
+	}
+	changeSalt, err := core.WithdrawChangeSalt(sk, nf)
+	if err != nil {
+		t.Fatalf("WithdrawChangeSalt: %v", err)
+	}
+	change, err := core.Erc20CommitmentV2(pk, changeSalt, big.NewInt(0), d.erc20TokenId)
+	if err != nil {
+		t.Fatalf("commitment (change): %v", err)
+	}
+	var pe [8]string
+	for j, e := range mp.Elements {
+		if j < 8 {
+			pe[j] = e.String()
+		}
+	}
+	wp := postPaymentGnarkProof(t, "/proof/payment", map[string]interface{}{
+		"stMessage":            "1", // WITHDRAW_MESSAGE
+		"stTreeNumbers":        [1]string{treeNumber.String()},
+		"stMerkleRoots":        [1]string{mp.Root.String()},
+		"stNullifiers":         [1]string{nf.String()},
+		"stCommitmentsOut":     [2]string{wdCmt.String(), change.String()},
+		"stContractAddress":    new(big.Int).SetBytes(tc.erc20VaultAddr.Bytes()).String(),
+		"wtPrivateKeysIn":      [1]string{sk.String()},
+		"wtValuesIn":           [1]string{d.erc20Amount.String()},
+		"wtSaltsIn":            [1]string{salt.String()},
+		"wtPathElements":       [1][8]string{pe},
+		"wtPathIndices":        [1]string{mp.Indices.String()},
+		"wtTokenId":            d.erc20TokenId.String(),
+		"wtSpendPublicKeysOut": [2]string{recipientPk.String(), pk.String()},
+		"wtValuesOut":          [2]string{d.erc20Amount.String(), "0"},
+		"wtSaltsOut":           [2]string{"0", changeSalt.String()},
+	})
+	wpStrs := make([]string, len(wp.Proof))
+	for i, v := range wp.Proof {
+		wpStrs[i] = v.String()
+	}
+	receipt := onchainProofReceipt{
+		Proof:           proofStringsToOnchain(t, wpStrs),
+		Statement:       wp.PublicSignal,
+		NumberOfInputs:  big.NewInt(1),
+		NumberOfOutputs: big.NewInt(2),
+	}
+	tx, err := tc.erc20Vault.Transact(tc.auth, "withdrawV2", []*big.Int{d.erc20Amount, d.erc20TokenId}, recipient, receipt)
+	if err != nil {
+		t.Fatalf("withdrawV2 (refund note): %v", err)
+	}
+	if m, err := bind.WaitMined(tc.ctx, tc.client, tx); err != nil || m.Status != 1 {
+		t.Fatalf("withdrawV2 (refund note) reverted (status=%v err=%v)", m, err)
+	}
+
+	var out []interface{}
+	if err := tc.erc20Token.Call(&bind.CallOpts{Context: tc.ctx}, &out, "balanceOf", recipient); err != nil {
+		t.Fatalf("balanceOf: %v", err)
+	}
+	if got := out[0].(*big.Int); got.Cmp(d.erc20Amount) != 0 {
+		t.Fatalf("recipient received %s, want the full refund %s", got, d.erc20Amount)
+	}
+	t.Logf("  Alice withdrew her refund note (revertCommitA=%s): %s tokens to %s", commit, d.erc20Amount, recipient)
 }
