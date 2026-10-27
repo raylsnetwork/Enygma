@@ -94,13 +94,14 @@ type Options struct {
 }
 
 // DefaultOptions pays the participants different amounts, leaves the sender
-// some change, plays five transfers between participants, and pays relayer
-// fees in USDr.
+// some change, plays the scripted transfers between participants (one a
+// merge), pays relayer fees in USDr and tags every transfer.
 func DefaultOptions() Options {
 	return Options{
 		ShieldTotal: 1000,
 		Payouts:     [K]int64{120, 90, 150, 60, 200, 80},
 		UsdrFee:     true,
+		Tags:        true,
 		Script:      append([]Transfer(nil), defaultScript...),
 	}
 }
@@ -190,6 +191,9 @@ type Engine struct {
 
 	fanOut    []Settlement
 	transfers []Settlement // the script's, then manual ones
+
+	// proving and relaying add up the transfers' proof and relay times (see Totals).
+	proving, relaying time.Duration
 
 	// startBlock and startChannel are the chain's next block and the channel
 	// registry's next record when the run started: the auditor scans from them.
@@ -288,7 +292,8 @@ func reachable(rawURL string) bool {
 // register the sender and participants, give them USDr fee credit, shield
 // the sender's public balance, fan it out to the participants one mined
 // transfer at a time, let each participant discover their note by
-// scanning, and play the scripted transfers between participants.
+// scanning, play the scripted transfers between participants, and show the
+// run's totals. A step that fails ends the run with its error.
 func (e *Engine) Run(ctx context.Context, opts Options) error {
 	if err := opts.Validate(); err != nil {
 		return e.fail("prereqs", "Check prerequisites", err)
@@ -337,7 +342,10 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 			func(ctx context.Context, s *step) error { return e.payByName(ctx, s, t) },
 		})
 	}
-	steps = append(steps, stepDef{"audit", "Audit", "Auditor reconciles every user's balances from the transactions it decrypted…", e.reconcile})
+	steps = append(steps,
+		stepDef{"audit", "Audit", "Auditor reconciles every user's balances from the transactions it decrypted…", e.reconcile},
+		stepDef{"totals", "Totals", "Adding up the run's transactions, gas, proving and relay time…", e.showTotals},
+	)
 	announced := make([]map[string]string, len(steps))
 	for i, s := range steps {
 		announced[i] = map[string]string{"id": s.id, "label": s.label}
@@ -348,7 +356,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	for _, s := range steps {
 		st := &step{e: e, id: s.id, label: s.label}
 		st.start(s.msg)
-		if err := s.run(ctx, st); err != nil {
+		if err := runStep(ctx, s, st); err != nil {
 			return e.fail(s.id, s.label, err)
 		}
 		// The auditor's view follows each step's transactions.
@@ -368,6 +376,17 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 type stepDef struct {
 	id, label, msg string
 	run            func(context.Context, *step) error
+}
+
+// runStep runs s, turning a panic into the step's error, so a bug fails the
+// run like any other error instead of taking the web server down with it.
+func runStep(ctx context.Context, s stepDef, st *step) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return s.run(ctx, st)
 }
 
 // Close releases the run's chain connection.
