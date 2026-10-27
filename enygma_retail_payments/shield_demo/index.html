@@ -110,6 +110,13 @@ td.num { text-align:right; }
 <div class="main">
   <div class="actors" id="actors"></div>
   <div class="side">
+    <div class="card">
+      <div class="card-hdr">Fan-out</div>
+      <table>
+        <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+        <tbody id="fanout"></tbody>
+      </table>
+    </div>
     <div class="card"><div class="card-hdr">Protocol</div><div id="proto"></div></div>
     <div class="log" id="log"></div>
   </div>
@@ -119,7 +126,7 @@ const K = 6;
 const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
 let steps = []; // [{id, label}], announced by the engine at the start of a run
 const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'participant'])];
-const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['balance','Private balance'], ['note','Note']];
+const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['public','Public balance'], ['balance','Private balance'], ['note','Note']];
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -141,6 +148,7 @@ function build() {
       <div class="a-fields">${FIELDS.map(([f, l]) =>
         `<div class="a-row"><div class="a-key">${l}</div><div class="a-val" id="a-${i}-${f}">—</div></div>`).join('')}
       </div></div>`).join('');
+  $('fanout').innerHTML = '';
   $('proto').innerHTML = '';
   $('log').innerHTML = '';
   $('progress').style.width = '0%';
@@ -161,6 +169,13 @@ function setActor(i, field, value) {
 }
 
 function setProto(field, value) {
+  if (field === 'fanout') {
+    const r = JSON.parse(value);
+    $('fanout').insertAdjacentHTML('beforeend',
+      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td>` +
+      `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
+    return;
+  }
   if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
   let row = $('proto-' + field);
   if (!row) {
