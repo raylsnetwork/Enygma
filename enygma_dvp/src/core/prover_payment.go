@@ -70,8 +70,9 @@ func paymentResponse(body []byte) (proof []string, statement []*big.Int, err err
 // contractAddress must be the uint160 representation of the Erc20CoinVault address
 // (i.e., new(big.Int).SetBytes(vaultAddr.Bytes())).
 //
-// Circuit config: 1 input / 2 outputs / Merkle depth 8.
-//   - Input 0: Alice's real note.
+// Circuit config: 1 input / 2 outputs / Merkle depth 8 (Payment), or with two
+// input notes 2 inputs / 2 outputs (Payment2in, merging two notes).
+//   - Inputs: Alice's real notes.
 //   - Output 0: payment to Bob; Output 1: change back to Alice.
 //
 // Salt derivation follows the protocol:
@@ -200,7 +201,11 @@ func (c *GnarkClient) BoundPaymentProof(
 		"wtSaltsOut":           bigIntSliceToStrings(wtSaltsOut),
 	}
 
-	body, err := c.PostProof("/proof/payment", payload)
+	endpoint := "/proof/payment"
+	if nIn == 2 {
+		endpoint = "/proof/payment2in"
+	}
+	body, err := c.PostProof(endpoint, payload)
 	if err != nil {
 		return nil, fmt.Errorf("bound payment proof request failed: %w", err)
 	}

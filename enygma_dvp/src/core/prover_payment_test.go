@@ -97,3 +97,22 @@ func TestBoundPaymentFeeProof_StatementIsTheServersPublicSignals(t *testing.T) {
 	}
 	assertStatement(t, r, signals)
 }
+
+// Two input notes (60 + 50 merged into 70 paid and 40 back) are proved by the
+// Payment2in circuit, so the request goes to its own route.
+func TestBoundPaymentProof_TwoInputsUsePayment2in(t *testing.T) {
+	signals := []int64{100, 101, 102, 103, 104, 105, 106, 107, 108, 109}
+	c := paymentServer(t, "/proof/payment2in", signals)
+	a := newPaymentArgs(t)
+	r, err := c.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
+		[]*big.Int{big.NewInt(60), big.NewInt(50)}, []KeyPair{a.keys[0], a.keys[0]}, []*big.Int{big.NewInt(1), big.NewInt(2)},
+		[]*big.Int{big.NewInt(70), big.NewInt(40)}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+		8, []*MerkleProof{a.proofs[0], a.proofs[0]}, []*big.Int{big.NewInt(0), big.NewInt(0)}, big.NewInt(7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.NumberOfInputs != 2 {
+		t.Errorf("NumberOfInputs = %d, want 2", r.NumberOfInputs)
+	}
+	assertStatement(t, r, signals)
+}

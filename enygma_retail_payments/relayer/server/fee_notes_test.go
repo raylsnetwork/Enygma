@@ -271,8 +271,8 @@ var proof8 = [8]string{"1", "2", "3", "4", "5", "6", "7", "8"}
 
 // paymentSignal is a Payment statement spending nullifier 55 of tree 0
 // (root 1) into outputs 6 and 7, bound to vault.
-func paymentSignal(vault common.Address) [layout.PaymentLen]string {
-	var s [layout.PaymentLen]string
+func paymentSignal(vault common.Address) []string {
+	s := make([]string, layout.PaymentLen)
 	s[layout.PaymentMessageOffset] = "0"
 	s[layout.PaymentTreeNumbersOffset] = "0"
 	s[layout.PaymentMerkleRootsOffset] = "1"
@@ -356,7 +356,6 @@ func TestRelayPartialWithdraw_KeepsTheFeeNoteOpening(t *testing.T) {
 func (f *feeFixture) usdrFeeRequest(t *testing.T, salt *big.Int) RelayPaymentUsdrFeeRequest {
 	fee, tokenId := big.NewInt(5), big.NewInt(0)
 	cmtFee := f.feeCmt(t, salt, fee, tokenId)
-	mainSig := paymentSignal(f.vaultAddr)
 	var usdr [layout.UsdrFeeLen]string
 	usdr[layout.UsdrFeeMessageOffset] = "0"
 	usdr[layout.UsdrFeeTreeNumbersOffset] = "0"
@@ -369,7 +368,7 @@ func (f *feeFixture) usdrFeeRequest(t *testing.T, salt *big.Int) RelayPaymentUsd
 	usdr[layout.UsdrFeeTokenIdOffset] = tokenId.String()
 	return RelayPaymentUsdrFeeRequest{
 		VaultId: "0", Proof: proof8,
-		PublicSignal: mainSig[:],
+		PublicSignal: paymentSignal(f.vaultAddr),
 		CipherText:   "0x00", EncTxData: "0x00",
 		UsdrVaultId: "4", UsdrProof: proof8,
 		UsdrPublicSignal: usdr,
@@ -520,16 +519,16 @@ func payment2inSignal(vault common.Address) []string {
 	return s
 }
 
-// sentMainReceipt decodes the main leg's receipt from the paymentWithUsdrFee
+// sentMainReceipt decodes the main leg's receipt from the EnygmaDvp method
 // call the relayer sent.
-func (f *feeFixture) sentMainReceipt(t *testing.T) proofReceipt {
+func (f *feeFixture) sentMainReceipt(t *testing.T, method string) proofReceipt {
 	t.Helper()
 	f.node.mu.Lock()
 	data := f.node.sent
 	f.node.mu.Unlock()
-	m := f.h.dvpABI.Methods["paymentWithUsdrFee"]
+	m := f.h.dvpABI.Methods[method]
 	if len(data) < 4 || !bytes.Equal(data[:4], m.ID) {
-		t.Fatal("no paymentWithUsdrFee transaction was sent")
+		t.Fatalf("no %s transaction was sent", method)
 	}
 	args, err := m.Inputs.Unpack(data[4:])
 	if err != nil {
@@ -547,8 +546,7 @@ func TestRelayPaymentUsdrFee_AcceptsAPaymentOrPayment2inMainLeg(t *testing.T) {
 		lastNullifier           int
 		wantSignals, wantInputs int
 	}{
-		"Payment": {func(v common.Address) []string { s := paymentSignal(v); return s[:] },
-			layout.PaymentNullifiersOffset, 7, 1},
+		"Payment":    {paymentSignal, layout.PaymentNullifiersOffset, 7, 1},
 		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 10, 2},
 	}
 	for name, tc := range cases {
@@ -559,7 +557,7 @@ func TestRelayPaymentUsdrFee_AcceptsAPaymentOrPayment2inMainLeg(t *testing.T) {
 			if w := postJSON(f.r, "/relay/payment_usdr_fee", req); w.Code != http.StatusOK {
 				t.Fatalf("relay: got %d: %s", w.Code, w.Body.String())
 			}
-			r := f.sentMainReceipt(t)
+			r := f.sentMainReceipt(t, "paymentWithUsdrFee")
 			if len(r.Statement) != tc.wantSignals || r.Statement[tc.lastNullifier].Cmp(big.NewInt(int64(54+tc.wantInputs))) != 0 ||
 				r.NumberOfInputs.Int64() != int64(tc.wantInputs) || r.NumberOfOutputs.Int64() != 2 {
 				t.Fatalf("main receipt: %d signals, %s inputs, %s outputs; want %d signals, %d inputs, 2 outputs",
@@ -622,4 +620,70 @@ func (f *feeFixture) checkNothingDone(t *testing.T) {
 	if held {
 		t.Fatal("a refused request left a nullifier claimed")
 	}
+}
+
+func paymentRequest(signal []string) RelayPaymentRequest {
+	return RelayPaymentRequest{VaultId: "0", Proof: proof8, PublicSignal: signal, CipherText: "0x00", EncTxData: "0x00"}
+}
+
+// A plain payment may be a Payment proof or, so a transfer without a fee can
+// merge two notes, a Payment2in proof; either is sent with its whole
+// statement and its own number of inputs.
+func TestRelayPayment_AcceptsAPaymentOrPayment2in(t *testing.T) {
+	cases := map[string]struct {
+		signal                  func(common.Address) []string
+		lastNullifier           int
+		wantSignals, wantInputs int
+	}{
+		"Payment":    {paymentSignal, layout.PaymentNullifiersOffset, 7, 1},
+		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 10, 2},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+			if w := postJSON(f.r, "/relay/payment", paymentRequest(tc.signal(f.vaultAddr))); w.Code != http.StatusOK {
+				t.Fatalf("relay: got %d: %s", w.Code, w.Body.String())
+			}
+			r := f.sentMainReceipt(t, "payment")
+			if len(r.Statement) != tc.wantSignals || r.Statement[tc.lastNullifier].Cmp(big.NewInt(int64(54+tc.wantInputs))) != 0 ||
+				r.NumberOfInputs.Int64() != int64(tc.wantInputs) || r.NumberOfOutputs.Int64() != 2 {
+				t.Fatalf("receipt: %d signals, %s inputs, %s outputs; want %d signals, %d inputs, 2 outputs",
+					len(r.Statement), r.NumberOfInputs, r.NumberOfOutputs, tc.wantSignals, tc.wantInputs)
+			}
+		})
+	}
+}
+
+// A Payment2in payment is refused before anything is claimed or sent when its
+// second input's root is unknown or its nullifier already spent.
+func TestRelayPayment_ChecksBothInputsOfAPayment2in(t *testing.T) {
+	cases := map[string]struct {
+		unknownRoots, spentNullifiers map[uint64]bool
+		want                          string
+	}{
+		"second root unknown":    {unknownRoots: map[uint64]bool{2: true}, want: "merkle root is not a known vault root"},
+		"second nullifier spent": {spentNullifiers: map[uint64]bool{56: true}, want: "nullifier already spent"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+			f.node.unknownRoots, f.node.spentNullifiers = tc.unknownRoots, tc.spentNullifiers
+			w := postJSON(f.r, "/relay/payment", paymentRequest(payment2inSignal(f.vaultAddr)))
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "input 1: "+tc.want) {
+				t.Fatalf("got %d, want 400 naming input 1: %s", w.Code, w.Body.String())
+			}
+			f.checkNothingDone(t)
+		})
+	}
+}
+
+// A payment that is neither a Payment nor a Payment2in statement is refused
+// with a 400, before anything is claimed or sent.
+func TestRelayPayment_RefusesAnotherStatementLength(t *testing.T) {
+	f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+	w := postJSON(f.r, "/relay/payment", paymentRequest(append(payment2inSignal(f.vaultAddr), "0"))) // 11 signals
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "publicSignal has 11 signals") {
+		t.Fatalf("got %d, want 400 naming the statement length: %s", w.Code, w.Body.String())
+	}
+	f.checkNothingDone(t)
 }

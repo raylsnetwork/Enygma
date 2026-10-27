@@ -27,15 +27,15 @@ type relayInfo struct {
 }
 
 type relayPaymentRequest struct {
-	VaultId      string                    `json:"vaultId"`
-	Proof        [8]string                 `json:"proof"`
-	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
-	CipherText   string                    `json:"cipherText"`
-	EncTxData    string                    `json:"encTxData"`
+	VaultId      string    `json:"vaultId"`
+	Proof        [8]string `json:"proof"`
+	PublicSignal []string  `json:"publicSignal"`
+	CipherText   string    `json:"cipherText"`
+	EncTxData    string    `json:"encTxData"`
 }
 
 // relayUsdrFeeRequest is POST /relay/payment_usdr_fee's body: the main
-// Payment leg plus the UsdrFee leg settled with it.
+// Payment or Payment2in leg plus the UsdrFee leg settled with it.
 type relayUsdrFeeRequest struct {
 	relayPaymentRequest
 	UsdrVaultId      string                    `json:"usdrVaultId"`
@@ -74,8 +74,8 @@ func (r *relayer) info(ctx context.Context) (*relayInfo, error) {
 	return &info, nil
 }
 
-// payment submits a Payment proof to POST /relay/payment and returns once the
-// relayer reports the transaction mined.
+// payment submits a Payment or Payment2in proof to POST /relay/payment and
+// returns once the relayer reports the transaction mined.
 func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*relayTxResponse, error) {
 	req, err := paymentRequest(res)
 	if err != nil {
@@ -88,7 +88,8 @@ func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*rela
 	return &out, nil
 }
 
-// paymentUsdrFee submits a Payment proof and the UsdrFee proof paying for it
+// paymentUsdrFee submits a Payment or Payment2in proof and the UsdrFee proof
+// paying for it
 // to POST /relay/payment_usdr_fee, which settles both in one transaction,
 // and returns once the relayer reports it mined. The USDr leg publishes no
 // ciphertext: its output 0 is the relayer's own note, opened by the salt.
@@ -113,16 +114,18 @@ func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult,
 	return &out, nil
 }
 
-// paymentRequest is the relay request body for a main-token Payment proof.
+// paymentRequest is the relay request body for a main-token Payment or
+// Payment2in proof.
 func paymentRequest(res *rpcore.PaymentResult) (relayPaymentRequest, error) {
 	stmt := res.ContractStatement()
-	if len(stmt) != layout.PaymentLen {
-		return relayPaymentRequest{}, fmt.Errorf("payment statement has %d signals, want %d", len(stmt), layout.PaymentLen)
+	if len(stmt) != layout.PaymentLen && len(stmt) != layout.Payment2inLen {
+		return relayPaymentRequest{}, fmt.Errorf("payment statement has %d signals, want %d or %d", len(stmt), layout.PaymentLen, layout.Payment2inLen)
 	}
 	req := relayPaymentRequest{
-		VaultId:    erc20VaultId.String(),
-		CipherText: "0x" + hex.EncodeToString(res.CipherText),
-		EncTxData:  "0x" + hex.EncodeToString(res.EncTxData),
+		VaultId:      erc20VaultId.String(),
+		PublicSignal: make([]string, len(stmt)),
+		CipherText:   "0x" + hex.EncodeToString(res.CipherText),
+		EncTxData:    "0x" + hex.EncodeToString(res.EncTxData),
 	}
 	copy(req.Proof[:], res.Proof)
 	for i, v := range stmt {
