@@ -16,6 +16,7 @@ package tests
 import (
 	"bytes"
 	"context"
+	"math/big"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"enygma_retail_payments/shield_demo/engine"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -96,6 +98,32 @@ func TestShieldDemoScenario(t *testing.T) {
 			if !bytes.Equal(recovered.EncapsulationKey().Bytes(), a.View.EncapsKey) {
 				t.Errorf("%s: auditor recovered a different view key", a.Name)
 			}
+		}
+	})
+
+	t.Run("sender shields the whole public balance", func(t *testing.T) {
+		erc20 := bindContract(t, client, common.HexToAddress(loadOnchainReceipts(t)["ERC20"].ContractAddress), loadOnchainABI(t, "RaylsERC20"))
+		var out []any
+		if err := erc20.Call(&bind.CallOpts{}, &out, "balanceOf", e.Sender().Address); err != nil {
+			t.Fatalf("balanceOf: %v", err)
+		}
+		if public := out[0].(*big.Int); public.Sign() != 0 {
+			t.Errorf("sender still holds %s public RaylsERC20, want 0", public)
+		}
+	})
+
+	t.Run("each participant scans the amount the sender assigned", func(t *testing.T) {
+		for i, p := range e.Participants() {
+			if got, want := e.Balance(p), big.NewInt(opts.Payouts[i]); got.Cmp(want) != 0 {
+				t.Errorf("%s: scanned balance %s, want %s", p.Name, got, want)
+			}
+		}
+	})
+
+	t.Run("sender keeps the shielded total minus the payouts", func(t *testing.T) {
+		// DefaultOptions: 1000 shielded, 120+90+150+60+200+80 = 700 paid out.
+		if got, want := e.Balance(e.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
+			t.Errorf("sender's private balance %s, want %s", got, want)
 		}
 	})
 }

@@ -204,3 +204,32 @@ func (c *chain) transact(ctx context.Context, keyHex string, contract *bind.Boun
 	}
 	return receipt, nil
 }
+
+// hasCommitmentLog reports whether logs include vault's Commitment event for commitment.
+func hasCommitmentLog(logs []*ethtypes.Log, vault common.Address, commitment *big.Int) bool {
+	for _, l := range logs {
+		if l.Address == vault && len(l.Topics) >= 3 && l.Topics[0] == commitmentTopic && l.Topics[2].Big().Cmp(commitment) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// abiBytesPair decodes the (bytes, bytes) data of a Payment or EncryptedNote event.
+func abiBytesPair() abi.Arguments {
+	bytesT, _ := abi.NewType("bytes", "", nil)
+	return abi.Arguments{{Type: bytesT}, {Type: bytesT}}
+}
+
+// formatNum formats n with comma separators, e.g. 243018 → "243,018".
+func formatNum(n uint64) string {
+	s := fmt.Sprint(n)
+	out := make([]byte, 0, len(s)+len(s)/3)
+	for i := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, s[i])
+	}
+	return string(out)
+}

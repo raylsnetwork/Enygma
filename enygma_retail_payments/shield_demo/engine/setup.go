@@ -103,7 +103,7 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 	}
 
 	var toFund []common.Address
-	for _, a := range e.actors[1:] {
+	for _, a := range e.registrable() {
 		toFund = append(toFund, a.Address)
 	}
 	if err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, toFund); err != nil {
@@ -117,7 +117,7 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 // register publishes the sender's and each participant's keys in the
 // UserRegistry, with their view key encrypted to the auditor.
 func (e *Engine) register(ctx context.Context, s *step) error {
-	for _, a := range e.actors[1:] {
+	for _, a := range e.registrable() {
 		mlKemCt, aesCt, err := rpcore.EncryptViewKeyForAuditor(e.auditor.EncapsKey, a.View.DecapsKey)
 		if err != nil {
 			return fmt.Errorf("%s: encrypt view key for auditor: %w", a.Name, err)

@@ -50,6 +50,9 @@ func (r *relayer) info(ctx context.Context) (*relayInfo, error) {
 		return nil, fmt.Errorf("GET /relay/info: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET /relay/info: relayer %d", resp.StatusCode)
+	}
 	var info relayInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return nil, fmt.Errorf("decode /relay/info: %w", err)

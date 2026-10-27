@@ -145,15 +145,24 @@ func New(cfg Config, sink Sink) *Engine {
 
 // Issuer, Sender and Participants return the run's actors; they are set
 // once Run has generated the keys.
-func (e *Engine) Issuer() Actor { return *e.actors[0] }
-func (e *Engine) Sender() Actor { return *e.actors[1] }
+func (e *Engine) Issuer() Actor { return *e.issuer() }
+func (e *Engine) Sender() Actor { return *e.sender() }
 func (e *Engine) Participants() []Actor {
 	out := make([]Actor, 0, K)
-	for _, a := range e.actors[2:] {
+	for _, a := range e.participants() {
 		out = append(out, *a)
 	}
 	return out
 }
+
+// actors holds the issuer, then the sender, then the K participants.
+func (e *Engine) issuer() *Actor         { return e.actors[0] }
+func (e *Engine) sender() *Actor         { return e.actors[1] }
+func (e *Engine) participants() []*Actor { return e.actors[2:] }
+
+// registrable are the actors registered in the UserRegistry: the sender and
+// the participants.
+func (e *Engine) registrable() []*Actor { return e.actors[1:] }
 
 // Auditor returns the key pair the actors' view keys are encrypted to.
 func (e *Engine) Auditor() *rpcore.AuditorKeyPair { return e.auditor }
@@ -203,20 +212,28 @@ func reachable(rawURL string) bool {
 
 // Run plays the scenario: check the services, generate every actor's keys,
 // register the sender and participants, shield the sender's public balance,
-// fan it out to the participants, and let each participant discover their
-// note by scanning.
+// fan it out to the participants one mined transfer at a time, and let each
+// participant discover their note by scanning.
 func (e *Engine) Run(ctx context.Context, opts Options) error {
 	if err := opts.validate(); err != nil {
 		return e.fail("prereqs", "Check prerequisites", err)
 	}
-	steps := []struct {
-		id, label, msg string
-		run            func(context.Context, *step) error
-	}{
+	steps := []stepDef{
 		{"prereqs", "Check prerequisites", "Probing chain · gnark server · relayer…", e.checkPrereqs},
 		{"keygen", "Generate keys", "Issuer, sender and participants generate spend and view keys…", e.generateKeys},
 		{"register", "Register in UserRegistry", "Sender and participants publish their keys…", e.register},
+		{"shield", "Shield", fmt.Sprintf("Sender gets %d public RaylsERC20 and shields it into one private note…", opts.ShieldTotal),
+			func(ctx context.Context, s *step) error { return e.shield(ctx, s, opts) }},
 	}
+	for i, name := range participantNames {
+		n, amount := i+1, big.NewInt(opts.Payouts[i])
+		steps = append(steps, stepDef{
+			fmt.Sprintf("fanout_%d", n), "Pay " + name,
+			fmt.Sprintf("Fan-out %d/%d: sender pays %s privately, change back to the sender…", n, K, name),
+			func(ctx context.Context, s *step) error { return e.fanOut(ctx, s, n, e.participants()[i], amount) },
+		})
+	}
+	steps = append(steps, stepDef{"discover", "Discover", "Participants scan the chain with their view keys…", e.discover})
 	announced := make([]map[string]string, len(steps))
 	for i, s := range steps {
 		announced[i] = map[string]string{"id": s.id, "label": s.label}
@@ -236,6 +253,11 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	}
 	e.sink.Emit(Event{Kind: RunDone, Msg: "Scenario complete"})
 	return nil
+}
+
+type stepDef struct {
+	id, label, msg string
+	run            func(context.Context, *step) error
 }
 
 // Close releases the run's chain connection.
