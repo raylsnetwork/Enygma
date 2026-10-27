@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strings"
 
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -49,6 +50,16 @@ func (e *Engine) checkPrereqs(ctx context.Context, s *step) error {
 	}
 	if e.usdrFixedFee, err = c.usdrFixedFee(); err != nil {
 		return err
+	}
+	if e.startBlock, err = c.client.BlockNumber(ctx); err != nil {
+		return err
+	}
+	e.startBlock++
+	e.startChannel = 0
+	if c.channelRegistryAddr != (common.Address{}) {
+		if e.startChannel, err = tags.GetChannelCount(c.client, c.channelRegistryAddr); err != nil {
+			return err
+		}
 	}
 
 	s.proto("relayerAddr", c.relayerAddr.Hex())

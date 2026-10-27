@@ -22,8 +22,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -324,6 +326,10 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("without tags the auditor sees every transaction it can open, payers hidden", func(t *testing.T) {
+		checkAudit(t, e, false)
+	})
+
 	t.Run("sender's USDr after the fan-out is the grant minus one fee per transfer", func(t *testing.T) {
 		// 20 granted − 6 transfers × 1 USDr fee.
 		if got := e.UsdrBalance(e.Sender()); got.Cmp(big.NewInt(14)) != 0 {
@@ -375,6 +381,7 @@ func TestShieldDemoScenario(t *testing.T) {
 				}
 			}
 			sameBalances(t, e, te)
+			checkAudit(t, te, true)
 		})
 	})
 
@@ -407,6 +414,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		manual := te.Transfers()
 		checkTagged(t, client, tagRegistryAddr, manual[len(manual)-1:])
+		checkAudit(t, te, true)
 	})
 }
 
@@ -428,6 +436,87 @@ func checkAfterScript(t *testing.T, e *engine.Engine) {
 		}
 		if got := e.UsdrBalance(p); got.Cmp(big.NewInt(w.usdr)) != 0 {
 			t.Errorf("%s: scanned USDr balance %s, want %d", p.Name, got, w.usdr)
+		}
+	}
+}
+
+// checkAudit checks the auditor's view of e's run: it recovers every
+// registered user's view key and lists the shield, each USDr grant, every
+// transfer and every USDr fee leg with its amount and parties. With tags the
+// auditor names each transfer's payer and reconstructs every user's balances,
+// which must equal the users' own scans; without tags payers stay hidden and
+// it reconstructs none.
+func checkAudit(t *testing.T, e *engine.Engine, tagged bool) {
+	t.Helper()
+	a, err := e.Audit(context.Background())
+	if err != nil {
+		t.Fatalf("Audit: %v", err)
+	}
+	registered := append([]engine.Actor{e.Sender()}, e.Participants()...)
+	if len(a.Users) != len(registered) {
+		t.Errorf("auditor recovered the view keys of %v, want the sender and %d participants", a.Users, engine.K)
+	}
+	for _, u := range registered {
+		if !slices.Contains(a.Users, u.Name) {
+			t.Errorf("auditor did not recover %s's view key", u.Name)
+		}
+	}
+
+	find := func(kind engine.AuditKind, match func(engine.AuditEntry) bool) *engine.AuditEntry {
+		for i, en := range a.Entries {
+			if en.Kind == kind && match(en) {
+				return &a.Entries[i]
+			}
+		}
+		return nil
+	}
+	check := func(what string, en *engine.AuditEntry, from, to string, amount int64) {
+		t.Helper()
+		if en == nil {
+			t.Errorf("%s: missing from the audit", what)
+			return
+		}
+		if en.From != from || en.To != to || en.Amount.Cmp(big.NewInt(amount)) != 0 {
+			t.Errorf("%s: audited %q → %q %s, want %q → %q %d", what, en.From, en.To, en.Amount, from, to, amount)
+		}
+	}
+	want := 0
+	check("shield", find(engine.AuditShield, func(engine.AuditEntry) bool { return true }), "Sender", "Sender", 1000)
+	want++
+	for _, u := range registered {
+		check(u.Name+"'s USDr grant", find(engine.AuditUsdrGrant, func(en engine.AuditEntry) bool { return en.To == u.Name }), "Issuer", u.Name, engine.UsdrGrant)
+		want++
+	}
+	for _, s := range append(e.FanOut(), e.Transfers()...) {
+		from := ""
+		if tagged {
+			from = s.From
+		}
+		what := fmt.Sprintf("%s→%s %s", s.From, s.To, s.Amount)
+		inTx := func(en engine.AuditEntry) bool { return en.TxHash == s.TxHash }
+		check(what, find(engine.AuditTransfer, inTx), from, s.To, s.Amount.Int64())
+		want++
+		if s.UsdrFeeNote != nil {
+			check(what+" USDr fee", find(engine.AuditUsdrFee, inTx), from, "Relayer", 1)
+			want++
+		}
+	}
+	if len(a.Entries) != want {
+		t.Errorf("audit lists %d transactions, want %d", len(a.Entries), want)
+	}
+
+	if !tagged {
+		if a.Balances != nil || a.UsdrBalances != nil {
+			t.Errorf("auditor reconstructed balances without knowing who paid")
+		}
+		return
+	}
+	for _, u := range registered {
+		if got, own := a.Balances[u.Name], e.Balance(u); got == nil || got.Cmp(own) != 0 {
+			t.Errorf("%s: auditor's RaylsERC20 balance %v, the user's own scan %s", u.Name, got, own)
+		}
+		if got, own := a.UsdrBalances[u.Name], e.UsdrBalance(u); got == nil || got.Cmp(own) != 0 {
+			t.Errorf("%s: auditor's USDr balance %v, the user's own scan %s", u.Name, got, own)
 		}
 	}
 }

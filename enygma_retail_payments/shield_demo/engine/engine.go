@@ -6,7 +6,8 @@
 // paying the relayer a USDr fee in the same transaction; each participant
 // finds their note by scanning the chain with their view key. A scripted
 // sequence of transfers between participants then plays, and Transfer makes
-// more by hand.
+// more by hand. Throughout, an auditor who recovered every user's view key
+// from the UserRegistry decrypts each transaction (see Audit).
 //
 // The engine does every step through the retail core library and the live
 // services (the UsdrFee proof, which has no core client, it requests from the
@@ -189,6 +190,12 @@ type Engine struct {
 
 	fanOut    []Settlement
 	transfers []Settlement // the script's, then manual ones
+
+	// startBlock and startChannel are the chain's next block and the channel
+	// registry's next record when the run started: the auditor scans from them.
+	startBlock, startChannel uint64
+	// auditUsers are the users whose view keys the auditor recovered.
+	auditUsers []auditUser
 }
 
 // New returns an engine that reports to sink.
@@ -291,6 +298,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 		{"prereqs", "Check prerequisites", "Probing chain · gnark server · relayer…", e.checkPrereqs},
 		{"keygen", "Generate keys", "Issuer, sender and participants generate spend and view keys…", e.generateKeys},
 		{"register", "Register in UserRegistry", "Sender and participants publish their keys…", e.register},
+		{"audit_keys", "Auditor keys", "Auditor opens each registered user's audit ciphertexts in the UserRegistry…", e.auditorKeysStep},
 	}
 	if opts.Tags {
 		steps = append(steps, stepDef{"channels", "Tag channels", "Each payer opens a private-tag channel to everyone they will pay, through the relayer…", e.openChannels})
@@ -329,6 +337,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 			func(ctx context.Context, s *step) error { return e.payByName(ctx, s, t) },
 		})
 	}
+	steps = append(steps, stepDef{"audit", "Audit", "Auditor reconciles every user's balances from the transactions it decrypted…", e.reconcile})
 	announced := make([]map[string]string, len(steps))
 	for i, s := range steps {
 		announced[i] = map[string]string{"id": s.id, "label": s.label}
@@ -341,6 +350,12 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 		st.start(s.msg)
 		if err := s.run(ctx, st); err != nil {
 			return e.fail(s.id, s.label, err)
+		}
+		// The auditor's view follows each step's transactions.
+		if e.auditUsers != nil {
+			if err := e.publishAudit(ctx, st); err != nil {
+				return e.fail(s.id, s.label, fmt.Errorf("audit: %w", err))
+			}
 		}
 		if e.cfg.StepPause > 0 {
 			time.Sleep(e.cfg.StepPause)
