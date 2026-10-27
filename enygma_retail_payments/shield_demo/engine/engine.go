@@ -304,7 +304,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	for i, t := range opts.Script {
 		steps = append(steps, stepDef{
 			fmt.Sprintf("transfer_%d", i+1), fmt.Sprintf("%s → %s", t.From, t.To),
-			fmt.Sprintf("Transfer %d/%d: %s pays %s %d privately from one note (%s)…", i+1, len(opts.Script), t.From, t.To, t.Amount, route),
+			fmt.Sprintf("Transfer %d/%d: %s pays %s %d privately (%s)…", i+1, len(opts.Script), t.From, t.To, t.Amount, route),
 			func(ctx context.Context, s *step) error { return e.payByName(ctx, s, t) },
 		})
 	}

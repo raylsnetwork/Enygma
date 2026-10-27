@@ -206,7 +206,7 @@ function setProto(field, value) {
   if (field === 'transfer') {
     const r = JSON.parse(value);
     $('transfers').insertAdjacentHTML('beforeend',
-      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.from)} → ${esc(r.to)}</td><td class="num">${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td>` +
+      `<tr title="block ${r.block} · ${esc(r.tx)}${r.merged ? ' · Payment2in: merged two notes' : ''}"><td>${r.n}</td><td>${esc(r.from)} → ${esc(r.to)}</td><td class="num">${r.merged ? '<small>2 notes · </small>' : ''}${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td>` +
       `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
     return;
   }

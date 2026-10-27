@@ -16,15 +16,17 @@ import (
 //
 //	[Ax, Ay, BX_imag, BX_real, BY_imag, BY_real, Cx, Cy]
 //
-// PublicSignal is a Payment circuit (1 input / 2 outputs) statement.
+// PublicSignal is a Payment circuit (1 input / 2 outputs) statement or a
+// Payment2in (2 inputs / 2 outputs, merging two notes) statement; its length
+// says which.
 type RelayPaymentRequest struct {
 	// VaultId identifies which Erc20CoinVault tree the input note belongs to.
 	VaultId string `json:"vaultId" binding:"required"`
 	// Proof is the 8-element Groth16 proof array (decimal strings).
 	Proof [8]string `json:"proof" binding:"required"`
-	// PublicSignal is the Payment statement (decimal strings), in the order
-	// of layout.Payment*Offset.
-	PublicSignal [layout.PaymentLen]string `json:"publicSignal" binding:"required"`
+	// PublicSignal is the Payment or Payment2in statement (decimal strings),
+	// in the order of layout.Payment*Offset / layout.Payment2in*Offset.
+	PublicSignal []string `json:"publicSignal" binding:"required"`
 	// CipherText is hex-encoded bytes passed opaquely to EnygmaDvp.payment().
 	// ML-KEM mode:    ML-KEM-768 capsule (1088 bytes).
 	// Channel mode:   32-byte channelId identifying the shared channel.
@@ -47,7 +49,8 @@ type RelayPaymentResponse struct {
 type parsed struct {
 	vaultId      *big.Int
 	proof        [8]*big.Int
-	publicSignal [layout.PaymentLen]*big.Int
+	publicSignal []*big.Int
+	layout       paymentLayout // where publicSignal holds its inputs
 	cipherText   []byte
 	encTxData    []byte
 }
@@ -194,7 +197,7 @@ type parsedUsdrFee struct {
 	vaultId      *big.Int
 	proof        [8]*big.Int
 	publicSignal []*big.Int
-	mainLayout   mainLegLayout // where publicSignal holds its inputs
+	mainLayout   paymentLayout // where publicSignal holds its inputs
 	cipherText   []byte
 	encTxData    []byte
 
@@ -206,11 +209,11 @@ type parsedUsdrFee struct {
 	usdrFeeSalt      *big.Int
 }
 
-// mainLegLayout is the part of a USDr-fee route main leg's statement layout
-// the relayer reads: where it holds its inputs' tree numbers, Merkle roots and
-// nullifiers (inputs consecutive values from each offset), and how many inputs
-// and outputs its receipt declares.
-type mainLegLayout struct {
+// paymentLayout is the part of a payment statement's layout the relayer
+// reads: where it holds its inputs' tree numbers, Merkle roots and nullifiers
+// (inputs consecutive values from each offset), and how many inputs and
+// outputs its receipt declares.
+type paymentLayout struct {
 	treeNumbersOffset int
 	merkleRootsOffset int
 	nullifiersOffset  int
@@ -218,9 +221,9 @@ type mainLegLayout struct {
 	outputs           int
 }
 
-// usdrFeeMainLegLayouts are the main-leg statements POST /relay/payment_usdr_fee
-// accepts, by statement length.
-var usdrFeeMainLegLayouts = map[int]mainLegLayout{
+// paymentLayouts are the payment statements POST /relay/payment and the main
+// leg of POST /relay/payment_usdr_fee accept, by statement length.
+var paymentLayouts = map[int]paymentLayout{
 	layout.PaymentLen: {
 		treeNumbersOffset: layout.PaymentTreeNumbersOffset,
 		merkleRootsOffset: layout.PaymentMerkleRootsOffset,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"enygma_retail_payments/layout"
@@ -28,13 +29,15 @@ type Transfer struct {
 
 // defaultScript is the transfers between participants played after the
 // fan-out of DefaultOptions' payouts. Each spends the payer's smallest note
-// that covers it.
+// that covers it; the last, bigger than either of Diego's notes (60 and 100),
+// merges them.
 var defaultScript = []Transfer{
 	{"Ana", "Bruno", 50},
 	{"Elena", "Carla", 120},
 	{"Carla", "Diego", 100},
 	{"Bruno", "Felipe", 70},
 	{"Felipe", "Ana", 30},
+	{"Diego", "Elena", 150},
 }
 
 func refused(format string, args ...any) error {
@@ -53,18 +56,76 @@ func (p purse) smallestCovering(amount *big.Int) *note {
 	return best
 }
 
-// spendable picks the note owner spends to pay amount from p: the smallest
-// single note that covers it. It refuses an amount over owner's balance, or
-// bigger than every note they hold, since a transfer spends one note.
-func (p purse) spendable(owner, unit string, amount *big.Int) (*note, error) {
+// covers refuses an amount over owner's balance in p.
+func (p purse) covers(owner, unit string, amount *big.Int) error {
 	if balance := p.balance(); balance.Cmp(amount) < 0 {
-		return nil, refused("%s holds %s %s privately, cannot pay %s", owner, balance, unit, amount)
+		return refused("%s holds %s %s privately, cannot pay %s", owner, balance, unit, amount)
+	}
+	return nil
+}
+
+// twoLargest returns the two largest unspent notes, largest first; b is nil
+// if there are fewer than two.
+func (p purse) twoLargest() (a, b *note) {
+	for _, n := range p.unspent() {
+		switch {
+		case a == nil || n.amount.Cmp(a.amount) > 0:
+			a, b = n, a
+		case b == nil || n.amount.Cmp(b.amount) > 0:
+			b = n
+		}
+	}
+	return a, b
+}
+
+// spendable picks the single note owner spends to pay amount from p (the
+// USDr fee leg spends one note): the smallest that covers it. It refuses an
+// amount over owner's balance, or bigger than every note they hold.
+func (p purse) spendable(owner, unit string, amount *big.Int) (*note, error) {
+	if err := p.covers(owner, unit, amount); err != nil {
+		return nil, err
 	}
 	n := p.smallestCovering(amount)
 	if n == nil {
-		return nil, refused("%s holds no single %s note of %s or more (a transfer spends one note)", owner, unit, amount)
+		return nil, refused("%s holds no single %s note of %s or more", owner, unit, amount)
 	}
 	return n, nil
+}
+
+// inputs picks the notes owner spends to pay amount from p: the smallest
+// single note that covers it, or else their two largest notes, merged. It
+// refuses an amount over owner's balance, or one even their two largest notes
+// can't cover, since a transfer merges at most two notes.
+func (p purse) inputs(owner, unit string, amount *big.Int) ([]*note, error) {
+	if err := p.covers(owner, unit, amount); err != nil {
+		return nil, err
+	}
+	if n := p.smallestCovering(amount); n != nil {
+		return []*note{n}, nil
+	}
+	a, b := p.twoLargest()
+	if b == nil || new(big.Int).Add(a.amount, b.amount).Cmp(amount) < 0 {
+		return nil, refused("%s's two largest %s notes cannot cover %s (a transfer merges at most two notes)", owner, unit, amount)
+	}
+	return []*note{a, b}, nil
+}
+
+// total is the sum of notes' amounts.
+func total(notes []*note) *big.Int {
+	sum := new(big.Int)
+	for _, n := range notes {
+		sum.Add(sum, n.amount)
+	}
+	return sum
+}
+
+// amounts lists notes' amounts, e.g. "100 + 60".
+func amounts(notes []*note) string {
+	parts := make([]string, len(notes))
+	for i, n := range notes {
+		parts[i] = n.amount.String()
+	}
+	return strings.Join(parts, " + ")
 }
 
 // actorNamed returns the registered actor (the sender or a participant) named name.
@@ -84,15 +145,18 @@ type sent struct {
 	proveMs, relayMs int64
 	tx               *relayTxResponse
 	method           string
+	// merged is set when the transfer merged two notes (Payment2in).
+	merged bool
 }
 
-// send pays to amount from from's smallest note that covers it with a
-// 1-in/2-out Payment transfer through the relayer, change back to from. With
-// payUsdrFee it also pays the relayer's USDr fee from from's USDr note in the
-// same transaction, USDr change back to from. Anything it can tell will fail
-// — over balance, no single covering note, no USDr for the fee — it refuses
-// with ErrRefused before proving. It returns once the transfer is mined, so
-// from's change notes are already in the trees.
+// send pays to amount through the relayer, change back to from: from's
+// smallest note that covers it with a 1-in/2-out Payment transfer, or, if no
+// single note does, their two largest notes merged with a 2-in/2-out
+// Payment2in transfer. With payUsdrFee it also pays the relayer's USDr fee
+// from from's USDr note in the same transaction, USDr change back to from.
+// Anything it can tell will fail — over balance, no two notes that cover it,
+// no USDr for the fee — it refuses with ErrRefused before proving. It returns
+// once the transfer is mined, so from's change notes are already in the trees.
 func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big.Int, payUsdrFee bool) (*sent, error) {
 	if from == to {
 		return nil, refused("%s cannot pay themselves", from.Name)
@@ -100,7 +164,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if amount.Sign() <= 0 {
 		return nil, refused("the amount must be positive, got %s", amount)
 	}
-	prev, err := from.notes.spendable(from.Name, "RaylsERC20", amount)
+	ins, err := from.notes.inputs(from.Name, "RaylsERC20", amount)
 	if err != nil {
 		return nil, err
 	}
@@ -113,31 +177,39 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		}
 	}
 	c := e.chain
-	change := new(big.Int).Sub(prev.amount, amount)
+	change := new(big.Int).Sub(total(ins), amount)
 
 	tree, err := c.vaultTree(ctx, c.vaultAddr)
 	if err != nil {
 		return nil, err
 	}
-	proof, err := tree.GenerateProof(prev.commitment)
-	if err != nil {
-		return nil, fmt.Errorf("merkle proof for %s's note: %w", from.Name, err)
+	var values, salts, treeNums []*big.Int
+	var keys []rpcore.KeyPair
+	var proofs []*rpcore.MerkleProof
+	for _, n := range ins {
+		proof, err := tree.GenerateProof(n.commitment)
+		if err != nil {
+			return nil, fmt.Errorf("merkle proof for %s's %s note: %w", from.Name, n.amount, err)
+		}
+		values, salts = append(values, n.amount), append(salts, n.salt)
+		keys = append(keys, rpcore.KeyPair{PrivateKey: from.Spend.PrivateKey, PublicKey: from.Spend.PublicKey})
+		proofs, treeNums = append(proofs, proof), append(treeNums, big.NewInt(int64(proof.TreeNumber)))
 	}
-	s.log("key", "rebuilt vault tree from %d Commitment events, root 0x%s…", len(tree.GetLeaves()), proof.Root.Text(16)[:12])
+	s.log("key", "rebuilt vault tree from %d Commitment events, root 0x%s…", len(tree.GetLeaves()), proofs[0].Root.Text(16)[:12])
 
 	proveStart := time.Now()
 	res, err := rpcore.NewPaymentClient(e.cfg.GnarkURL).BoundPaymentProof(
 		new(big.Int).SetBytes(c.vaultAddr.Bytes()),
 		big.NewInt(0),
-		[]*big.Int{prev.amount},
-		[]rpcore.KeyPair{{PrivateKey: from.Spend.PrivateKey, PublicKey: from.Spend.PublicKey}},
-		[]*big.Int{prev.salt},
+		values,
+		keys,
+		salts,
 		[]*big.Int{amount, change},
 		[]*big.Int{to.Spend.PublicKey, from.Spend.PublicKey},
 		[][]byte{to.View.EncapsKey, from.View.EncapsKey},
 		merkleDepth,
-		[]*rpcore.MerkleProof{proof},
-		[]*big.Int{big.NewInt(int64(proof.TreeNumber))},
+		proofs,
+		treeNums,
 		tokenId,
 	)
 	proveMs := time.Since(proveStart).Milliseconds()
@@ -145,8 +217,23 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		return nil, fmt.Errorf("prove payment: %w", err)
 	}
 	stmt := res.ContractStatement()
-	s.log("zk", "Payment proof in %d ms — spends %s's %s note, nullifier 0x%s…",
-		proveMs, from.Name, prev.amount, stmt[layout.PaymentNullifiersOffset].Text(16)[:12])
+	circuit, stmtLen, nullifiersOffset, commitmentsOutOffset := "Payment", layout.PaymentLen, layout.PaymentNullifiersOffset, layout.PaymentCommitmentsOutOffset
+	if len(ins) == 2 {
+		circuit, stmtLen, nullifiersOffset, commitmentsOutOffset = "Payment2in", layout.Payment2inLen, layout.Payment2inNullifiersOffset, layout.Payment2inCommitmentsOutOffset
+	}
+	if len(stmt) != stmtLen {
+		return nil, fmt.Errorf("%s statement has %d signals, want %d", circuit, len(stmt), stmtLen)
+	}
+	nullifiers := make([]string, len(ins))
+	for i := range ins {
+		nullifiers[i] = "0x" + stmt[nullifiersOffset+i].Text(16)[:12] + "…"
+	}
+	if len(ins) == 2 {
+		s.log("zk", "Payment2in proof in %d ms — merges %s's %s notes, nullifiers %s",
+			proveMs, from.Name, amounts(ins), strings.Join(nullifiers, ", "))
+	} else {
+		s.log("zk", "Payment proof in %d ms — spends %s's %s note, nullifier %s", proveMs, from.Name, ins[0].amount, nullifiers[0])
+	}
 
 	var fee *usdrFeeLeg
 	if payUsdrFee {
@@ -177,16 +264,21 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		return nil, fmt.Errorf("payment %s reverted", tx.TxHash)
 	}
 
-	prev.spent = true
-	changeNote := &note{commitment: stmt[layout.PaymentCommitmentsOutOffset+1], salt: res.SaltA, amount: change}
+	changeNote := &note{commitment: stmt[commitmentsOutOffset+1], salt: res.SaltA, amount: change}
 	if err := changeNote.check(from); err != nil {
 		return nil, err
+	}
+	if !hasCommitmentLog(receipt.Logs, c.vaultAddr, changeNote.commitment) {
+		return nil, fmt.Errorf("payment %s did not insert %s's change note", tx.TxHash, from.Name)
+	}
+	for _, n := range ins {
+		n.spent = true
 	}
 	from.notes = append(from.notes, changeNote)
 
 	out := &sent{
 		Settlement: Settlement{From: from.Name, To: to.Name, Amount: amount, TxHash: common.HexToHash(tx.TxHash)},
-		change:     change, proveMs: proveMs, relayMs: relayMs, tx: tx, method: "payment",
+		change:     change, proveMs: proveMs, relayMs: relayMs, tx: tx, method: "payment", merged: len(ins) == 2,
 	}
 	if fee != nil {
 		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) || !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.change.commitment) {
@@ -208,7 +300,7 @@ func (t *sent) row(n int, feeAmount *big.Int) string {
 		fee = feeAmount.String() + " USDr"
 	}
 	row, _ := json.Marshal(map[string]any{
-		"n": n, "from": t.From, "to": t.To, "amount": t.Amount.String(), "fee": fee,
+		"n": n, "from": t.From, "to": t.To, "amount": t.Amount.String(), "fee": fee, "merged": t.merged,
 		"proveMs": t.proveMs, "relayMs": t.relayMs, "gas": t.tx.GasUsed, "block": t.tx.BlockNumber, "tx": t.tx.TxHash,
 	})
 	return string(row)
@@ -250,15 +342,19 @@ func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amou
 		s.actor(a, "balance", a.notes.balance().String()+" RaylsERC20")
 		s.actor(a, "note", "0x"+a.notes[len(a.notes)-1].commitment.Text(16))
 	}
+	merged := ""
+	if t.merged {
+		merged = ", merging two notes"
+	}
 	if t.UsdrFeeNote != nil {
 		s.actor(from, "usdr", from.usdr.balance().String()+" USDr")
 		s.proto("relayerUsdrIncome", e.relayerIncome().String()+" USDr")
-		s.done("%s paid %s %s privately and the relayer %s USDr in one transaction (proof %d ms, relay %d ms, gas %s) — %s change back",
-			from.Name, to.Name, amount, e.usdrFixedFee, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
+		s.done("%s paid %s %s privately%s and the relayer %s USDr in one transaction (proof %d ms, relay %d ms, gas %s) — %s change back",
+			from.Name, to.Name, amount, merged, e.usdrFixedFee, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
 		return nil
 	}
-	s.done("%s paid %s %s privately (proof %d ms, relay %d ms, gas %s) — %s change back",
-		from.Name, to.Name, amount, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
+	s.done("%s paid %s %s privately%s (proof %d ms, relay %d ms, gas %s) — %s change back",
+		from.Name, to.Name, amount, merged, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
 	return nil
 }
 
@@ -284,7 +380,7 @@ func (e *Engine) Transfer(ctx context.Context, from, to string, amount int64) er
 
 // simulateScript checks the script against the fan-out's payouts before
 // anything runs: each transfer must name two different registered actors and
-// be payable from one of the payer's notes at that point.
+// be payable from one of the payer's notes, or two merged, at that point.
 func (o Options) simulateScript() error {
 	purses := map[string]*purse{"Sender": {{amount: big.NewInt(o.ShieldTotal)}}}
 	for _, name := range participantNames {
@@ -298,12 +394,14 @@ func (o Options) simulateScript() error {
 		if amount.Sign() <= 0 {
 			return refused("the amount must be positive, got %s", amount)
 		}
-		n, err := fp.spendable(from, "RaylsERC20", amount)
+		ins, err := fp.inputs(from, "RaylsERC20", amount)
 		if err != nil {
 			return err
 		}
-		n.spent = true
-		*fp = append(*fp, &note{amount: new(big.Int).Sub(n.amount, amount)})
+		for _, n := range ins {
+			n.spent = true
+		}
+		*fp = append(*fp, &note{amount: new(big.Int).Sub(total(ins), amount)})
 		*tp = append(*tp, &note{amount: amount})
 		return nil
 	}

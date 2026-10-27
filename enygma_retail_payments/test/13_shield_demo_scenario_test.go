@@ -119,6 +119,7 @@ func TestShieldDemoScenario(t *testing.T) {
 	defer client.Close()
 	receipts := loadOnchainReceipts(t)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 	usdrVaultAddr := common.HexToAddress(receipts["UsdrCoinVault"].ContractAddress)
 
 	t.Run("sender and participants are registered", func(t *testing.T) {
@@ -179,11 +180,12 @@ func TestShieldDemoScenario(t *testing.T) {
 	t.Run("after the scripted transfers each participant scans the expected balances", func(t *testing.T) {
 		// DefaultOptions pays out Ana 120, Bruno 90, Carla 150, Diego 60,
 		// Elena 200, Felipe 80, then plays Ana→Bruno 50, Elena→Carla 120,
-		// Carla→Diego 100, Bruno→Felipe 70, Felipe→Ana 30; each payer pays a
-		// 1 USDr fee per transfer.
+		// Carla→Diego 100, Bruno→Felipe 70, Felipe→Ana 30 and Diego→Elena 150
+		// (merging Diego's 60 and 100); each payer pays a 1 USDr fee per
+		// transfer.
 		want := map[string]struct{ erc20, usdr int64 }{
 			"Ana": {100, 19}, "Bruno": {70, 19}, "Carla": {170, 19},
-			"Diego": {160, 20}, "Elena": {80, 19}, "Felipe": {120, 19},
+			"Diego": {10, 19}, "Elena": {230, 19}, "Felipe": {120, 19},
 		}
 		for _, p := range e.Participants() {
 			w := want[p.Name]
@@ -214,6 +216,14 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("the scripted merge settles as one Payment2in transfer spending both notes", func(t *testing.T) {
+		merge := checkDiegoElenaMerge(t, client, e.Transfers(), vaultAddr, true)
+		o, ok := relayerFeeNoteOpenings(t)[merge.UsdrFeeNote.String()]
+		if !ok || o.Amount != "1" || !o.mined {
+			t.Errorf("the relayer kept no mined 1 USDr opening for the merge's fee note %s", merge.UsdrFeeNote)
+		}
+	})
+
 	participant := func(name string) engine.Actor {
 		for _, p := range e.Participants() {
 			if p.Name == name {
@@ -225,28 +235,30 @@ func TestShieldDemoScenario(t *testing.T) {
 	}
 
 	t.Run("a manual transfer settles and the recipient scans it", func(t *testing.T) {
-		// After the script Carla holds notes of 150 and 20, Diego 160.
+		// After the script Carla holds notes of 150 and 20, Diego one of 10.
 		if err := e.Transfer(context.Background(), "Carla", "Diego", 15); err != nil {
 			t.Fatalf("Transfer Carla→Diego 15: %v", err)
 		}
-		if got := e.Balance(participant("Diego")); got.Cmp(big.NewInt(175)) != 0 {
-			t.Errorf("Diego's balance %s after the transfer, want 175", got)
+		if got := e.Balance(participant("Diego")); got.Cmp(big.NewInt(25)) != 0 {
+			t.Errorf("Diego's balance %s after the transfer, want 25", got)
 		}
 		if got := e.Balance(participant("Carla")); got.Cmp(big.NewInt(155)) != 0 {
 			t.Errorf("Carla's balance %s after the transfer, want 155", got)
 		}
 	})
 
-	t.Run("an over-balance transfer is refused with no proof and no transaction", func(t *testing.T) {
+	// refusedWithNothingSent checks that from paying to amount is refused with
+	// no proof made and no transaction sent.
+	refusedWithNothingSent := func(t *testing.T, from, to string, amount int64) {
+		t.Helper()
 		blockBefore, err := client.BlockNumber(context.Background())
 		if err != nil {
 			t.Fatalf("BlockNumber: %v", err)
 		}
 		zkBefore := sink.zkLogs()
-		// Ana holds 100.
-		err = e.Transfer(context.Background(), "Ana", "Bruno", 1000)
+		err = e.Transfer(context.Background(), from, to, amount)
 		if !errors.Is(err, engine.ErrRefused) {
-			t.Fatalf("Transfer Ana→Bruno 1000: got %v, want a refusal", err)
+			t.Fatalf("Transfer %s→%s %d: got %v, want a refusal", from, to, amount, err)
 		}
 		blockAfter, err := client.BlockNumber(context.Background())
 		if err != nil {
@@ -258,8 +270,25 @@ func TestShieldDemoScenario(t *testing.T) {
 		if n := sink.zkLogs(); n != zkBefore {
 			t.Errorf("%d proofs made for a refused transfer", n-zkBefore)
 		}
+	}
+
+	t.Run("an over-balance transfer is refused with no proof and no transaction", func(t *testing.T) {
+		// Ana holds 100.
+		refusedWithNothingSent(t, "Ana", "Bruno", 1000)
 		if got := e.Balance(participant("Ana")); got.Cmp(big.NewInt(100)) != 0 {
 			t.Errorf("Ana's balance %s after the refusal, want 100 unchanged", got)
+		}
+	})
+
+	t.Run("a transfer two notes can't cover is refused with no proof and no transaction", func(t *testing.T) {
+		// Diego holds notes of 10 and 15; Ana's 5 makes a third, so 30 in all
+		// but 25 in his two largest.
+		if err := e.Transfer(context.Background(), "Ana", "Diego", 5); err != nil {
+			t.Fatalf("Transfer Ana→Diego 5: %v", err)
+		}
+		refusedWithNothingSent(t, "Diego", "Bruno", 28)
+		if got := e.Balance(participant("Diego")); got.Cmp(big.NewInt(30)) != 0 {
+			t.Errorf("Diego's balance %s after the refusal, want 30 unchanged", got)
 		}
 	})
 
@@ -341,6 +370,14 @@ func TestShieldDemoScenario(t *testing.T) {
 				t.Errorf("step %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
 			}
 		}
+		checkDiegoElenaMerge(t, client, e.Transfers(), vaultAddr, false)
+		for name, want := range map[string]int64{"Diego": 10, "Elena": 230} {
+			for _, p := range e.Participants() {
+				if got := e.Balance(p); p.Name == name && got.Cmp(big.NewInt(want)) != 0 {
+					t.Errorf("%s's balance %s after the merge with fees off, want %d", name, got, want)
+				}
+			}
+		}
 		if got := e.UsdrBalance(e.Sender()); got.Cmp(grant) != 0 {
 			t.Errorf("sender's USDr balance %s, want the untouched grant %s", got, grant)
 		}
@@ -350,6 +387,39 @@ func TestShieldDemoScenario(t *testing.T) {
 			}
 		}
 	})
+}
+
+// checkDiegoElenaMerge checks that the default script's Diego→Elena 150, bigger than
+// either of Diego's notes, settled as one transaction that spent both notes
+// (two nullifiers in the vault, plus the USDr fee note's with fees on) and
+// inserted the payment and Diego's change. It returns the merge.
+func checkDiegoElenaMerge(t *testing.T, client *ethclient.Client, settled []engine.Settlement, vault common.Address, usdrFee bool) engine.Settlement {
+	t.Helper()
+	for _, s := range settled {
+		if s.From != "Diego" || s.To != "Elena" {
+			continue
+		}
+		logs := txLogs(t, client, s.TxHash)
+		if n := countTopicAt(logs, vault, nullifierEventSig); n != 2 {
+			t.Errorf("merge: %d nullifiers spent in the vault, want 2 (both of Diego's notes)", n)
+		}
+		if n := countTopicAt(logs, vault, commitmentEventSig); n != 2 {
+			t.Errorf("merge: %d notes inserted in the vault, want 2 (Elena's and Diego's change)", n)
+		}
+		wantNullifiers := 2
+		if usdrFee {
+			wantNullifiers = 3
+		}
+		if n := countTopic(logs, nullifierEventSig); n != wantNullifiers {
+			t.Errorf("merge: %d nullifiers spent, want %d", n, wantNullifiers)
+		}
+		if (s.UsdrFeeNote != nil) != usdrFee {
+			t.Fatalf("merge: paid a USDr fee note = %v, want %v", s.UsdrFeeNote != nil, usdrFee)
+		}
+		return s
+	}
+	t.Fatal("no Diego→Elena transfer settled")
+	return engine.Settlement{}
 }
 
 func txLogs(t *testing.T, client *ethclient.Client, tx common.Hash) []*types.Log {
@@ -368,6 +438,17 @@ func countTopic(logs []*types.Log, topic common.Hash) int {
 	n := 0
 	for _, l := range logs {
 		if len(l.Topics) > 0 && l.Topics[0] == topic {
+			n++
+		}
+	}
+	return n
+}
+
+// countTopicAt counts the logs addr emitted with topic.
+func countTopicAt(logs []*types.Log, addr common.Address, topic common.Hash) int {
+	n := 0
+	for _, l := range logs {
+		if l.Address == addr && len(l.Topics) > 0 && l.Topics[0] == topic {
 			n++
 		}
 	}

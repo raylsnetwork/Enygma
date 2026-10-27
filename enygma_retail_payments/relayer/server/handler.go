@@ -306,9 +306,12 @@ func (h *Handler) Info(c *gin.Context) {
 //
 // Validation steps:
 //  1. Parse and decode all fields from the request body.
-//  2. Check the Merkle root is known to the vault (rootHistory).
-//  3. Check the nullifier has not been spent (nullifiers mapping).
+//  2. Check each input's Merkle root is known to the vault (rootHistory).
+//  3. Check each input's nullifier has not been spent (nullifiers mapping).
 //  4. Simulate the call, then sign and submit to EnygmaDvp.payment().
+//
+// The proof is a Payment (1 input) or a Payment2in (2 inputs, merging two
+// notes); its statement's length says which.
 func (h *Handler) RelayPayment(c *gin.Context) {
 	var req RelayPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -327,43 +330,50 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	treeNum := p.publicSignal[layout.PaymentTreeNumbersOffset]
-	root := p.publicSignal[layout.PaymentMerkleRootsOffset]
-	nullifier := p.publicSignal[layout.PaymentNullifiersOffset]
-
 	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
 
-	// Step 2 — Merkle root must be in the vault's rootHistory.
-	var rootResult []interface{}
-	if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("rootHistory check: %s", err)})
-		return
-	}
-	rootKnown, ok := rootResult[0].(bool)
-	if !ok || !rootKnown {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "merkle root is not a known vault root"})
-		return
+	// Steps 2 and 3 — every input's Merkle root must be in the vault's
+	// rootHistory and its nullifier unspent.
+	var nfKeys []string
+	for i := 0; i < p.layout.inputs; i++ {
+		treeNum := p.publicSignal[p.layout.treeNumbersOffset+i]
+		root := p.publicSignal[p.layout.merkleRootsOffset+i]
+		nullifier := p.publicSignal[p.layout.nullifiersOffset+i]
+		prefix := ""
+		if p.layout.inputs > 1 {
+			prefix = fmt.Sprintf("input %d: ", i)
+		}
+
+		var rootResult []interface{}
+		if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%srootHistory check: %s", prefix, err)})
+			return
+		}
+		rootKnown, ok := rootResult[0].(bool)
+		if !ok || !rootKnown {
+			c.JSON(http.StatusBadRequest, gin.H{"error": prefix + "merkle root is not a known vault root"})
+			return
+		}
+
+		var nfResult []interface{}
+		if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%snullifiers check: %s", prefix, err)})
+			return
+		}
+		nfSpent, ok := nfResult[0].(bool)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": prefix + "unexpected type from nullifiers()"})
+			return
+		}
+		if nfSpent {
+			c.JSON(http.StatusBadRequest, gin.H{"error": prefix + "nullifier already spent"})
+			return
+		}
+		nfKeys = append(nfKeys, nullifierKey(h.vaultAddr, treeNum, nullifier))
 	}
 
-	// Step 3 — Nullifier must not already be spent.
-	var nfResult []interface{}
-	if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("nullifiers check: %s", err)})
-		return
-	}
-	nfSpent, ok := nfResult[0].(bool)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected type from nullifiers()"})
-		return
-	}
-	if nfSpent {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nullifier already spent"})
-		return
-	}
-
-	// Step 4 — claim the note as in-flight to block concurrent duplicate
+	// Step 4 — claim the notes as in-flight to block concurrent duplicate
 	// submissions, on this route or any other (see nullifierKey).
-	nfKeys := []string{nullifierKey(h.vaultAddr, treeNum, nullifier)}
 	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
 		return
@@ -1366,13 +1376,9 @@ func parseRequest(req *RelayPaymentRequest) (*parsed, error) {
 		proof[i] = n
 	}
 
-	var sig [layout.PaymentLen]*big.Int
-	for i, s := range req.PublicSignal {
-		n, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			return nil, fmt.Errorf("invalid publicSignal[%d]: %q", i, s)
-		}
-		sig[i] = n
+	sig, sigLayout, err := parsePaymentSignal(req.PublicSignal)
+	if err != nil {
+		return nil, err
 	}
 
 	ctBytes, err := decodeHexField(req.CipherText, "cipherText")
@@ -1388,9 +1394,29 @@ func parseRequest(req *RelayPaymentRequest) (*parsed, error) {
 		vaultId:      vaultId,
 		proof:        proof,
 		publicSignal: sig,
+		layout:       sigLayout,
 		cipherText:   ctBytes,
 		encTxData:    encBytes,
 	}, nil
+}
+
+// parsePaymentSignal decodes a Payment or Payment2in statement and returns
+// its layout, chosen by its length.
+func parsePaymentSignal(signals []string) ([]*big.Int, paymentLayout, error) {
+	l, ok := paymentLayouts[len(signals)]
+	if !ok {
+		return nil, paymentLayout{}, fmt.Errorf("publicSignal has %d signals; want a Payment (%d) or Payment2in (%d) statement",
+			len(signals), layout.PaymentLen, layout.Payment2inLen)
+	}
+	sig := make([]*big.Int, len(signals))
+	for i, s := range signals {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			return nil, paymentLayout{}, fmt.Errorf("invalid publicSignal[%d]: %q", i, s)
+		}
+		sig[i] = n
+	}
+	return sig, l, nil
 }
 
 func parseRelayerFeeRequest(req *RelayPaymentRelayerFeeRequest) (*parsedRelayerFee, error) {
@@ -1473,18 +1499,9 @@ func parseUsdrFeeRequest(req *RelayPaymentUsdrFeeRequest) (*parsedUsdrFee, error
 		usdrProof[i] = n
 	}
 
-	mainLayout, ok := usdrFeeMainLegLayouts[len(req.PublicSignal)]
-	if !ok {
-		return nil, fmt.Errorf("publicSignal has %d signals; want a Payment (%d) or Payment2in (%d) statement",
-			len(req.PublicSignal), layout.PaymentLen, layout.Payment2inLen)
-	}
-	sig := make([]*big.Int, len(req.PublicSignal))
-	for i, s := range req.PublicSignal {
-		n, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			return nil, fmt.Errorf("invalid publicSignal[%d]: %q", i, s)
-		}
-		sig[i] = n
+	sig, mainLayout, err := parsePaymentSignal(req.PublicSignal)
+	if err != nil {
+		return nil, err
 	}
 	var usdrSig [layout.UsdrFeeLen]*big.Int
 	for i, s := range req.UsdrPublicSignal {
@@ -1557,9 +1574,9 @@ func buildProofReceipt(p *parsed) proofReceipt {
 	}
 	return proofReceipt{
 		Proof:           sp,
-		Statement:       append(make([]*big.Int, 0, layout.PaymentLen), p.publicSignal[:]...),
-		NumberOfInputs:  big.NewInt(layout.PaymentNullifiersSize),
-		NumberOfOutputs: big.NewInt(layout.PaymentCommitmentsOutSize),
+		Statement:       p.publicSignal,
+		NumberOfInputs:  big.NewInt(int64(p.layout.inputs)),
+		NumberOfOutputs: big.NewInt(int64(p.layout.outputs)),
 	}
 }
 
