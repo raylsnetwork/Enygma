@@ -11,6 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -229,25 +230,18 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, er
 	if err != nil {
 		return 0, 0, fmt.Errorf("TagPublished events: %w", err)
 	}
-	ctxtArg := abiBytes()
 	for _, l := range logs {
-		// Topics: [0] signature, [1] block number, [2] tag, [3] publisher.
 		if len(l.Topics) < 4 {
 			continue
 		}
 		checked++
 		for _, ch := range a.tags.in {
-			want, err := tags.DeriveTag(l.BlockNumber, ch.PkSpend, ch.SharedSecret)
-			if err != nil || common.Hash(want) != l.Topics[2] {
-				continue
-			}
-			vals, err := ctxtArg.Unpack(l.Data)
-			if err != nil || len(vals) != 1 {
-				return found, checked, fmt.Errorf("%s: decode the tag in block %d: %v", a.Name, l.BlockNumber, err)
-			}
-			pn, err := tags.DecryptPaymentNote(ch.SharedSecret, a.Spend.PublicKey, l.BlockNumber, vals[0].([]byte))
+			pn, err := openTag(l, ch)
 			if err != nil {
 				return found, checked, fmt.Errorf("%s: %w", a.Name, err)
+			}
+			if pn == nil {
+				continue
 			}
 			n, err := e.tagNote(ctx, a, pn)
 			if err != nil {
@@ -261,6 +255,24 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, er
 	}
 	a.tags.lastBlock = tip
 	return found, checked, nil
+}
+
+// openTag decrypts the payment note a TagPublished log carries if it is
+// ch's tag for its block, and returns nil if it is not.
+func openTag(l ethtypes.Log, ch tags.Channel) (*tags.PaymentNote, error) {
+	// Topics: [0] signature, [1] block number, [2] tag, [3] publisher.
+	if len(l.Topics) < 4 {
+		return nil, nil
+	}
+	want, err := tags.DeriveTag(l.BlockNumber, ch.PkSpend, ch.SharedSecret)
+	if err != nil || common.Hash(want) != l.Topics[2] {
+		return nil, nil
+	}
+	vals, err := abiBytes().Unpack(l.Data)
+	if err != nil || len(vals) != 1 {
+		return nil, fmt.Errorf("decode the tag in block %d: %v", l.BlockNumber, err)
+	}
+	return tags.DecryptPaymentNote(ch.SharedSecret, ch.PkSpend, l.BlockNumber, vals[0].([]byte))
 }
 
 // tagNote is the note a tag's payload opens for a, once its commitment is

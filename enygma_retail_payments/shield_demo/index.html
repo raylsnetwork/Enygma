@@ -49,6 +49,10 @@ html,body { background:var(--bg); color:var(--text); font-family:var(--sans); fo
 #sendBtn { background:var(--blue); color:#031020; border:none; border-radius:5px; padding:4px 12px; font-family:var(--mono); font-size:10px; font-weight:700; cursor:pointer; }
 #sendBtn:disabled { opacity:.3; cursor:not-allowed; }
 #sendError { padding:0 12px 6px; }
+#auditNote { padding:6px 12px; font-family:var(--mono); font-size:10px; color:var(--text2); border-bottom:1px solid var(--bd); }
+.audit-scroll { max-height:260px; overflow-y:auto; }
+.hidden { color:var(--muted); font-style:italic; }
+td.ok { color:var(--green); } td.pending { color:var(--amber); }
 
 .progress-wrap { height:2px; background:var(--bd); }
 .progress-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--teal),var(--blue)); transition:width .5s ease; }
@@ -142,6 +146,18 @@ td.num { text-align:right; }
         <tbody id="transfers"></tbody>
       </table>
     </div>
+    <div class="card">
+      <div class="card-hdr">Auditor</div>
+      <div id="auditNote"></div>
+      <table>
+        <thead><tr><th>User</th><th class="num">Received</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>vs own scan</th></tr></thead>
+        <tbody id="auditBalances"></tbody>
+      </table>
+      <div class="audit-scroll"><table>
+        <thead><tr><th>Block</th><th>Kind</th><th>From → To</th><th class="num">Amount</th></tr></thead>
+        <tbody id="auditEntries"></tbody>
+      </table></div>
+    </div>
     <div class="card"><div class="card-hdr">Protocol</div><div id="proto"></div></div>
     <div class="log" id="log"></div>
   </div>
@@ -177,6 +193,9 @@ function build() {
   $('transfers').innerHTML = '';
   $('sendError').textContent = '';
   $('proto').innerHTML = '';
+  $('auditBalances').innerHTML = '';
+  $('auditEntries').innerHTML = '';
+  $('auditNote').textContent = "The auditor recovers each user's view key once they register.";
   $('log').innerHTML = '';
   $('progress').style.width = '0%';
 }
@@ -211,6 +230,7 @@ function setProto(field, value) {
       `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
     return;
   }
+  if (field === 'audit') { showAudit(JSON.parse(value)); return; }
   if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
   let row = $('proto-' + field);
   if (!row) {
@@ -219,6 +239,25 @@ function setProto(field, value) {
   }
   row.lastChild.textContent = short(value);
   row.lastChild.title = value;
+}
+
+// showAudit renders the auditor's view: every transaction it decrypted and
+// the balances it reconstructs, beside each user's own scan.
+function showAudit(a) {
+  const tagged = a.balances !== null;
+  $('auditNote').textContent = `${a.users.length} view keys recovered · ${a.entries.length} transactions decrypted · ` +
+    (tagged ? 'balances = received − paid' : 'payers hidden: without tags only recipients\' notes are published');
+  $('auditBalances').innerHTML = a.users.map(u => {
+    const erc = tagged ? a.balances[u] : null, usdr = tagged ? a.usdrBalances[u] : null;
+    const ok = tagged && String(erc) === a.own[u] && String(usdr) === a.ownUsdr[u];
+    return `<tr><td>${esc(u)}</td><td class="num">${esc(a.received[u])}</td>` +
+      (tagged ? `<td class="num">${esc(erc)}</td><td class="num">${esc(usdr)}</td><td class="${ok ? 'ok' : 'pending'}">${ok ? '✓ matches' : 'not scanned yet'}</td>`
+              : '<td class="num hidden">—</td><td class="num hidden">—</td><td class="hidden">needs payers</td>') + '</tr>';
+  }).join('');
+  $('auditEntries').innerHTML = a.entries.map(en =>
+    `<tr title="${esc(en.tx)}"><td>${en.block}</td><td>${esc(en.kind)}</td>` +
+    `<td>${en.from ? esc(en.from) : '<span class="hidden">hidden</span>'} → ${esc(en.to)}</td>` +
+    `<td class="num">${esc(en.amount)} ${en.asset === 'USDr' ? 'USDr' : ''}</td></tr>`).join('');
 }
 
 function log(e) {

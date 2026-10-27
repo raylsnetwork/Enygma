@@ -426,6 +426,11 @@ func (e *Engine) Transfer(ctx context.Context, from, to string, amount int64) er
 		e.sink.Emit(Event{Kind: StepFailed, Step: st.id, Label: st.label, Msg: err.Error()})
 		return err
 	}
+	// The transfer has settled; a failed audit refresh only leaves the
+	// auditor's view behind.
+	if err := e.publishAudit(ctx, st); err != nil {
+		st.log("", "✗ auditor view not updated: %v", err)
+	}
 	return nil
 }
 
