@@ -22,6 +22,7 @@ type relayInfo struct {
 	RelayerAddr            string `json:"relayerAddr"`
 	TagRegistryAddr        string `json:"tagRegistryAddr"`
 	TagChannelRegistryAddr string `json:"tagChannelRegistryAddr"`
+	FeeSpendPubKey         string `json:"feeSpendPubKey"`
 	ChainID                int64  `json:"chainId"`
 }
 
@@ -31,6 +32,19 @@ type relayPaymentRequest struct {
 	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
 	CipherText   string                    `json:"cipherText"`
 	EncTxData    string                    `json:"encTxData"`
+}
+
+// relayUsdrFeeRequest is POST /relay/payment_usdr_fee's body: the main
+// Payment leg plus the UsdrFee leg settled with it.
+type relayUsdrFeeRequest struct {
+	relayPaymentRequest
+	UsdrVaultId      string                    `json:"usdrVaultId"`
+	UsdrProof        [8]string                 `json:"usdrProof"`
+	UsdrPublicSignal [layout.UsdrFeeLen]string `json:"usdrPublicSignal"`
+	UsdrCipherText   string                    `json:"usdrCipherText"`
+	UsdrEncTxData    string                    `json:"usdrEncTxData"`
+	// UsdrFeeSalt opens the relayer's fee note, so it can spend it.
+	UsdrFeeSalt string `json:"usdrFeeSalt"`
 }
 
 type relayTxResponse struct {
@@ -63,18 +77,9 @@ func (r *relayer) info(ctx context.Context) (*relayInfo, error) {
 // payment submits a Payment proof to POST /relay/payment and returns once the
 // relayer reports the transaction mined.
 func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*relayTxResponse, error) {
-	stmt := res.ContractStatement()
-	if len(stmt) != layout.PaymentLen {
-		return nil, fmt.Errorf("payment statement has %d signals, want %d", len(stmt), layout.PaymentLen)
-	}
-	req := relayPaymentRequest{
-		VaultId:    "0",
-		CipherText: "0x" + hex.EncodeToString(res.CipherText),
-		EncTxData:  "0x" + hex.EncodeToString(res.EncTxData),
-	}
-	copy(req.Proof[:], res.Proof)
-	for i, v := range stmt {
-		req.PublicSignal[i] = v.String()
+	req, err := paymentRequest(res)
+	if err != nil {
+		return nil, err
 	}
 	var out relayTxResponse
 	if err := r.post(ctx, "/relay/payment", req, &out); err != nil {
@@ -83,20 +88,71 @@ func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*rela
 	return &out, nil
 }
 
+// paymentUsdrFee submits a Payment proof and the UsdrFee proof paying for it
+// to POST /relay/payment_usdr_fee, which settles both in one transaction,
+// and returns once the relayer reports it mined. The USDr leg publishes no
+// ciphertext: its output 0 is the relayer's own note, opened by the salt.
+func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult, fee *usdrFeeLeg) (*relayTxResponse, error) {
+	main, err := paymentRequest(res)
+	if err != nil {
+		return nil, err
+	}
+	req := relayUsdrFeeRequest{
+		relayPaymentRequest: main,
+		UsdrVaultId:         usdrVaultId.String(),
+		UsdrProof:           fee.proof,
+		UsdrPublicSignal:    fee.signals,
+		UsdrCipherText:      "0x",
+		UsdrEncTxData:       "0x",
+		UsdrFeeSalt:         fee.feeSalt.String(),
+	}
+	var out relayTxResponse
+	if err := r.post(ctx, "/relay/payment_usdr_fee", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// paymentRequest is the relay request body for a main-token Payment proof.
+func paymentRequest(res *rpcore.PaymentResult) (relayPaymentRequest, error) {
+	stmt := res.ContractStatement()
+	if len(stmt) != layout.PaymentLen {
+		return relayPaymentRequest{}, fmt.Errorf("payment statement has %d signals, want %d", len(stmt), layout.PaymentLen)
+	}
+	req := relayPaymentRequest{
+		VaultId:    erc20VaultId.String(),
+		CipherText: "0x" + hex.EncodeToString(res.CipherText),
+		EncTxData:  "0x" + hex.EncodeToString(res.EncTxData),
+	}
+	copy(req.Proof[:], res.Proof)
+	for i, v := range stmt {
+		req.PublicSignal[i] = v.String()
+	}
+	return req, nil
+}
+
 func (r *relayer) post(ctx context.Context, path string, body, result any) error {
+	return postJSON(ctx, r.baseURL+path, map[string]string{"Authorization": "Bearer " + r.apiKey}, body, result)
+}
+
+// postJSON POSTs body to url as JSON with headers and decodes the response
+// into result; a non-200 response fails with its "error" field, or its body.
+func postJSON(ctx context.Context, url string, headers map[string]string, body, result any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", path, err)
+		return fmt.Errorf("POST %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
@@ -104,8 +160,10 @@ func (r *relayer) post(ctx context.Context, path string, body, result any) error
 		var e struct {
 			Error string `json:"error"`
 		}
-		_ = json.Unmarshal(raw, &e)
-		return fmt.Errorf("POST %s: relayer %d: %s", path, resp.StatusCode, e.Error)
+		if json.Unmarshal(raw, &e) != nil || e.Error == "" {
+			e.Error = string(raw)
+		}
+		return fmt.Errorf("POST %s: %d: %s", url, resp.StatusCode, e.Error)
 	}
 	return json.Unmarshal(raw, result)
 }

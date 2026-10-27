@@ -23,13 +23,18 @@ type chain struct {
 	client  *ethclient.Client
 	chainID *big.Int
 
-	dvpAddr      common.Address
-	vaultAddr    common.Address
-	erc20Addr    common.Address
-	registryAddr common.Address
+	dvpAddr       common.Address
+	vaultAddr     common.Address
+	erc20Addr     common.Address
+	usdrVaultAddr common.Address
+	usdrErc20Addr common.Address
+	registryAddr  common.Address
 
-	vault *bind.BoundContract
-	erc20 *bind.BoundContract
+	dvp       *bind.BoundContract
+	vault     *bind.BoundContract
+	erc20     *bind.BoundContract
+	usdrVault *bind.BoundContract
+	usdrErc20 *bind.BoundContract
 
 	relayerAddr common.Address
 }
@@ -51,6 +56,8 @@ func dialChain(cfg Config) (*chain, error) {
 		"EnygmaDvp":      &c.dvpAddr,
 		"Erc20CoinVault": &c.vaultAddr,
 		"ERC20":          &c.erc20Addr,
+		"UsdrCoinVault":  &c.usdrVaultAddr,
+		"UsdrERC20":      &c.usdrErc20Addr,
 		"UserRegistry":   &c.registryAddr,
 	} {
 		if *dst, err = addr(name); err != nil {
@@ -58,6 +65,10 @@ func dialChain(cfg Config) (*chain, error) {
 		}
 	}
 
+	dvpABI, err := loadABI(cfg.RetailRoot, "EnygmaDvp")
+	if err != nil {
+		return nil, err
+	}
 	vaultABI, err := loadABI(cfg.RetailRoot, "Erc20CoinVault")
 	if err != nil {
 		return nil, err
@@ -71,8 +82,12 @@ func dialChain(cfg Config) (*chain, error) {
 		return nil, fmt.Errorf("dial %s: %w", cfg.RPCURL, err)
 	}
 	c.client = client
+	c.dvp = bind.NewBoundContract(c.dvpAddr, dvpABI, client, client, client)
 	c.vault = bind.NewBoundContract(c.vaultAddr, vaultABI, client, client, client)
 	c.erc20 = bind.NewBoundContract(c.erc20Addr, erc20ABI, client, client, client)
+	// The USDr pair is a second deployment of the same vault and token contracts.
+	c.usdrVault = bind.NewBoundContract(c.usdrVaultAddr, vaultABI, client, client, client)
+	c.usdrErc20 = bind.NewBoundContract(c.usdrErc20Addr, erc20ABI, client, client, client)
 	return c, nil
 }
 

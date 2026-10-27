@@ -1,11 +1,14 @@
 // Package engine is the shield demo's scenario engine: an issuer, a sender
-// and K participants on a fresh retail deployment. The sender shields public
-// RaylsERC20 into one note and fans it out to the participants with chained
-// Payment transfers through the relayer; each participant finds their note
-// by scanning the chain with their view key.
+// and K participants on a fresh retail deployment. The issuer gives the
+// sender and each participant a shielded USDr note to pay relayer fees with.
+// The sender shields public RaylsERC20 into one note and fans it out to the
+// participants with chained Payment transfers through the relayer, each
+// paying the relayer a USDr fee in the same transaction; each participant
+// finds their note by scanning the chain with their view key.
 //
 // The engine does every step through the retail core library and the live
-// services, and reports progress only through a Sink, so the web UI and the
+// services (the UsdrFee proof, which has no core client, it requests from the
+// gnark server directly), and reports progress only through a Sink, so the web UI and the
 // integration test drive it the same way.
 package engine
 
@@ -28,6 +31,10 @@ const K = 6
 
 // merkleDepth is the vaults' Merkle tree depth (256 leaves per tree).
 const merkleDepth = 8
+
+// UsdrGrant is the shielded USDr the issuer gives the sender and each
+// participant to pay relayer fees with.
+const UsdrGrant = 20
 
 // participantNames are the K participants' display names, in order.
 var participantNames = [K]string{"Ana", "Bruno", "Carla", "Diego", "Elena", "Felipe"}
@@ -70,14 +77,19 @@ type Options struct {
 	ShieldTotal int64 `json:"shieldTotal"`
 	// Payouts[i] is what the sender pays participant i in the fan-out.
 	Payouts [K]int64 `json:"payouts"`
+	// UsdrFee sends each transfer through the relayer's USDr-fee route, paying
+	// the relayer the fixed USDr fee in the same transaction; off, transfers
+	// take the plain route and pay no fee.
+	UsdrFee bool `json:"usdrFee"`
 }
 
-// DefaultOptions pays the participants different amounts and leaves the
-// sender some change.
+// DefaultOptions pays the participants different amounts, leaves the sender
+// some change, and pays relayer fees in USDr.
 func DefaultOptions() Options {
 	return Options{
 		ShieldTotal: 1000,
 		Payouts:     [K]int64{120, 90, 150, 60, 200, 80},
+		UsdrFee:     true,
 	}
 }
 
@@ -115,7 +127,8 @@ type Actor struct {
 	View    *rpcore.ViewKeyPair
 
 	keyHex string
-	notes  []*note
+	notes  purse // RaylsERC20 vault notes
+	usdr   purse // USDr vault notes
 }
 
 // note is a vault note an actor can open.
@@ -124,6 +137,18 @@ type note struct {
 	salt       *big.Int
 	amount     *big.Int
 	spent      bool
+}
+
+// purse is the notes an actor can open in one vault.
+type purse []*note
+
+// Settlement is one fan-out transfer as it settled on chain.
+type Settlement struct {
+	To     string
+	TxHash common.Hash
+	// UsdrFeeNote is the relayer's USDr fee note the transfer paid; nil on
+	// the plain route.
+	UsdrFeeNote *big.Int
 }
 
 // Engine runs the scenario on one fresh deployment.
@@ -136,6 +161,13 @@ type Engine struct {
 
 	chain   *chain
 	relayer *relayer
+
+	// usdrFixedFee is EnygmaDvp's fixed USDr fee and relayerFeePk the
+	// relayer's fee spend key, both read when the run starts.
+	usdrFixedFee *big.Int
+	relayerFeePk *big.Int
+
+	fanOut []Settlement
 }
 
 // New returns an engine that reports to sink.
@@ -167,17 +199,25 @@ func (e *Engine) registrable() []*Actor { return e.actors[1:] }
 // Auditor returns the key pair the actors' view keys are encrypted to.
 func (e *Engine) Auditor() *rpcore.AuditorKeyPair { return e.auditor }
 
-// Balance is the total of the unspent notes the actor can open.
+// Balance is the total of the unspent RaylsERC20 notes the actor can open.
 func (e *Engine) Balance(a Actor) *big.Int {
-	return e.actors[a.ID].balance()
+	return e.actors[a.ID].notes.balance()
 }
 
-func (a *Actor) balance() *big.Int {
+// UsdrBalance is the total of the unspent USDr notes the actor can open.
+func (e *Engine) UsdrBalance(a Actor) *big.Int {
+	return e.actors[a.ID].usdr.balance()
+}
+
+// FanOut returns the run's fan-out transfers, in order.
+func (e *Engine) FanOut() []Settlement {
+	return append([]Settlement(nil), e.fanOut...)
+}
+
+func (p purse) balance() *big.Int {
 	sum := new(big.Int)
-	for _, n := range a.notes {
-		if !n.spent {
-			sum.Add(sum, n.amount)
-		}
+	for _, n := range p.unspent() {
+		sum.Add(sum, n.amount)
 	}
 	return sum
 }
@@ -211,9 +251,10 @@ func reachable(rawURL string) bool {
 }
 
 // Run plays the scenario: check the services, generate every actor's keys,
-// register the sender and participants, shield the sender's public balance,
-// fan it out to the participants one mined transfer at a time, and let each
-// participant discover their note by scanning.
+// register the sender and participants, give them USDr fee credit, shield
+// the sender's public balance, fan it out to the participants one mined
+// transfer at a time, and let each participant discover their note by
+// scanning.
 func (e *Engine) Run(ctx context.Context, opts Options) error {
 	if err := opts.validate(); err != nil {
 		return e.fail("prereqs", "Check prerequisites", err)
@@ -222,15 +263,22 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 		{"prereqs", "Check prerequisites", "Probing chain · gnark server · relayer…", e.checkPrereqs},
 		{"keygen", "Generate keys", "Issuer, sender and participants generate spend and view keys…", e.generateKeys},
 		{"register", "Register in UserRegistry", "Sender and participants publish their keys…", e.register},
+		{"usdr", "USDr fee credit", fmt.Sprintf("Issuer shields a %d USDr note to the sender and each participant…", UsdrGrant), e.grantUsdr},
 		{"shield", "Shield", fmt.Sprintf("Sender gets %d public RaylsERC20 and shields it into one private note…", opts.ShieldTotal),
 			func(ctx context.Context, s *step) error { return e.shield(ctx, s, opts) }},
+	}
+	route := "no fee"
+	if opts.UsdrFee {
+		route = "USDr fee to the relayer"
 	}
 	for i, name := range participantNames {
 		n, amount := i+1, big.NewInt(opts.Payouts[i])
 		steps = append(steps, stepDef{
 			fmt.Sprintf("fanout_%d", n), "Pay " + name,
-			fmt.Sprintf("Fan-out %d/%d: sender pays %s privately, change back to the sender…", n, K, name),
-			func(ctx context.Context, s *step) error { return e.fanOut(ctx, s, n, e.participants()[i], amount) },
+			fmt.Sprintf("Fan-out %d/%d: sender pays %s privately, change back to the sender (%s)…", n, K, name, route),
+			func(ctx context.Context, s *step) error {
+				return e.payFanOut(ctx, s, n, e.participants()[i], amount, opts.UsdrFee)
+			},
 		})
 	}
 	steps = append(steps, stepDef{"discover", "Discover", "Participants scan the chain with their view keys…", e.discover})

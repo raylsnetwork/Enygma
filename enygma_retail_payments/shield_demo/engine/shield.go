@@ -12,6 +12,7 @@ import (
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -20,8 +21,12 @@ import (
 // tokenId is the retail ERC20 vault's token id.
 var tokenId = big.NewInt(0)
 
-// erc20VaultId is the retail ERC20 vault's id on EnygmaDvp.
-var erc20VaultId = big.NewInt(0)
+// erc20VaultId and usdrVaultId are the retail ERC20 and USDr vaults' ids on
+// EnygmaDvp (scripts/cmd/init registers them in that order).
+var (
+	erc20VaultId = big.NewInt(0)
+	usdrVaultId  = big.NewInt(1)
+)
 
 var (
 	commitmentTopic    = crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
@@ -44,56 +49,69 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 	if _, err := c.transact(ctx, sender.keyHex, c.erc20, "approve", c.vaultAddr, total); err != nil {
 		return err
 	}
-
-	ss, capsule, err := rpcore.Encapsulate(sender.View.EncapsKey)
-	if err != nil {
-		return fmt.Errorf("encapsulate: %w", err)
-	}
-	saltB, err := rpcore.DerivePaymentSalt(ss)
+	n, receipt, err := c.depositNote(ctx, sender.keyHex, c.vault, c.vaultAddr, sender, total)
 	if err != nil {
 		return err
 	}
-	encKey, err := rpcore.DerivePaymentKey(ss)
-	if err != nil {
-		return err
-	}
-	salt := rpcore.SaltBToField(saltB)
-	commitment, err := rpcore.Erc20CommitmentV2(sender.Spend.PublicKey, salt, total, tokenId)
-	if err != nil {
-		return err
-	}
-	ctxt, err := rpcore.EncryptPayload(encKey, tokenId, total)
-	if err != nil {
-		return err
-	}
-	receipt, err := c.transact(ctx, sender.keyHex, c.vault, "depositV2",
-		[]*big.Int{total, sender.Spend.PublicKey, salt, tokenId}, capsule, ctxt)
-	if err != nil {
-		return err
-	}
-	// The vault computes the commitment on-chain; it must be the one we can open.
-	if !hasCommitmentLog(receipt.Logs, c.vaultAddr, commitment) {
-		return fmt.Errorf("depositV2 did not insert the sender's commitment 0x%s", commitment.Text(16))
-	}
-	sender.notes = append(sender.notes, &note{commitment: commitment, salt: salt, amount: total})
+	sender.notes = append(sender.notes, n)
 
 	s.log("chain", "Erc20CoinVault.depositV2(%s) → block %d  gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed))
-	s.log("key", "sender's note commitment 0x%s…", commitment.Text(16)[:16])
+	s.log("key", "sender's note commitment 0x%s…", n.commitment.Text(16)[:16])
 	s.proto("shieldGas", fmt.Sprint(receipt.GasUsed))
 	s.actor(sender, "public", "0 RaylsERC20")
-	s.actor(sender, "note", "0x"+commitment.Text(16))
-	s.actor(sender, "balance", sender.balance().String()+" RaylsERC20")
+	s.actor(sender, "note", "0x"+n.commitment.Text(16))
+	s.actor(sender, "balance", sender.notes.balance().String()+" RaylsERC20")
 	s.done("Sender shielded %s RaylsERC20 into one private note (block %d)", total, receipt.BlockNumber)
 	return nil
 }
 
-// fanOut pays participant p their amount from the sender's current note
+// depositNote deposits amount from payerKeyHex's account (which must have
+// approved vault for it) into a note owner can open, encrypted to owner's
+// view key, and returns the note.
+func (c *chain) depositNote(ctx context.Context, payerKeyHex string, vault *bind.BoundContract, vaultAddr common.Address,
+	owner *Actor, amount *big.Int) (*note, *ethtypes.Receipt, error) {
+	ss, capsule, err := rpcore.Encapsulate(owner.View.EncapsKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encapsulate: %w", err)
+	}
+	saltB, err := rpcore.DerivePaymentSalt(ss)
+	if err != nil {
+		return nil, nil, err
+	}
+	encKey, err := rpcore.DerivePaymentKey(ss)
+	if err != nil {
+		return nil, nil, err
+	}
+	salt := rpcore.SaltBToField(saltB)
+	commitment, err := rpcore.Erc20CommitmentV2(owner.Spend.PublicKey, salt, amount, tokenId)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctxt, err := rpcore.EncryptPayload(encKey, tokenId, amount)
+	if err != nil {
+		return nil, nil, err
+	}
+	receipt, err := c.transact(ctx, payerKeyHex, vault, "depositV2",
+		[]*big.Int{amount, owner.Spend.PublicKey, salt, tokenId}, capsule, ctxt)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The vault computes the commitment on-chain; it must be the one we can open.
+	if !hasCommitmentLog(receipt.Logs, vaultAddr, commitment) {
+		return nil, nil, fmt.Errorf("depositV2 did not insert %s's commitment 0x%s", owner.Name, commitment.Text(16))
+	}
+	return &note{commitment: commitment, salt: salt, amount: amount}, receipt, nil
+}
+
+// payFanOut pays participant p their amount from the sender's current note
 // with a 1-in/2-out Payment transfer through the relayer, change back to the
-// sender. It returns once the transfer is mined, so the next step's change
-// note is already in the tree.
-func (e *Engine) fanOut(ctx context.Context, s *step, n int, p *Actor, amount *big.Int) error {
+// sender. With payUsdrFee it also pays the relayer's USDr fee from the sender's
+// USDr note in the same transaction, USDr change back to the sender. It
+// returns once the transfer is mined, so the next step's change notes are
+// already in the trees.
+func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount *big.Int, payUsdrFee bool) error {
 	c, sender := e.chain, e.sender()
-	in := sender.unspent()
+	in := sender.notes.unspent()
 	if len(in) != 1 {
 		return fmt.Errorf("sender holds %d unspent notes, want 1", len(in))
 	}
@@ -103,7 +121,7 @@ func (e *Engine) fanOut(ctx context.Context, s *step, n int, p *Actor, amount *b
 		return fmt.Errorf("sender's note holds %s, cannot pay %s", prev.amount, amount)
 	}
 
-	tree, err := c.vaultTree(ctx)
+	tree, err := c.vaultTree(ctx, c.vaultAddr)
 	if err != nil {
 		return err
 	}
@@ -135,8 +153,23 @@ func (e *Engine) fanOut(ctx context.Context, s *step, n int, p *Actor, amount *b
 	stmt := res.ContractStatement()
 	s.log("zk", "Payment proof in %d ms — nullifier 0x%s…", proveMs, stmt[layout.PaymentNullifiersOffset].Text(16)[:12])
 
+	var fee *usdrFeeLeg
+	if payUsdrFee {
+		feeStart := time.Now()
+		if fee, err = e.proveUsdrFee(ctx, sender); err != nil {
+			return err
+		}
+		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to the sender",
+			time.Since(feeStart).Milliseconds(), e.usdrFixedFee, fee.change.amount)
+	}
+
 	relayStart := time.Now()
-	tx, err := e.relayer.payment(ctx, res)
+	var tx *relayTxResponse
+	if fee != nil {
+		tx, err = e.relayer.paymentUsdrFee(ctx, res, fee)
+	} else {
+		tx, err = e.relayer.payment(ctx, res)
+	}
 	relayMs := time.Since(relayStart).Milliseconds()
 	if err != nil {
 		return err
@@ -156,30 +189,61 @@ func (e *Engine) fanOut(ctx context.Context, s *step, n int, p *Actor, amount *b
 	}
 	sender.notes = append(sender.notes, changeNote)
 
+	settled := Settlement{To: p.Name, TxHash: common.HexToHash(tx.TxHash)}
+	method, feeCol := "payment", "—"
+	if fee != nil {
+		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) {
+			return fmt.Errorf("paymentWithUsdrFee %s did not insert the relayer's fee note", tx.TxHash)
+		}
+		fee.in.spent = true
+		sender.usdr = append(sender.usdr, fee.change)
+		settled.UsdrFeeNote = fee.feeNote
+		method, feeCol = "paymentWithUsdrFee", e.usdrFixedFee.String()+" USDr"
+	}
+	e.fanOut = append(e.fanOut, settled)
+
 	row, _ := json.Marshal(map[string]any{
-		"n": n, "to": p.Name, "amount": amount.String(),
+		"n": n, "to": p.Name, "amount": amount.String(), "fee": feeCol,
 		"proveMs": proveMs, "relayMs": relayMs, "gas": tx.GasUsed, "block": tx.BlockNumber, "tx": tx.TxHash,
 	})
 	s.proto("fanout", string(row))
-	s.log("chain", "EnygmaDvp.payment() via relayer → block %d  gas %s  round-trip %d ms", tx.BlockNumber, formatNum(tx.GasUsed), relayMs)
+	s.log("chain", "EnygmaDvp.%s() via relayer → block %d  gas %s  round-trip %d ms", method, tx.BlockNumber, formatNum(tx.GasUsed), relayMs)
 	s.actor(sender, "note", "0x"+changeNote.commitment.Text(16))
-	s.actor(sender, "balance", sender.balance().String()+" RaylsERC20")
+	s.actor(sender, "balance", sender.notes.balance().String()+" RaylsERC20")
+	if fee != nil {
+		s.actor(sender, "usdr", sender.usdr.balance().String()+" USDr")
+		s.proto("relayerUsdrIncome", e.relayerIncome().String()+" USDr")
+		s.done("Paid %s privately and the relayer %s USDr in one transaction (proof %d ms, relay %d ms, gas %s) — %s change back to the sender",
+			p.Name, e.usdrFixedFee, proveMs, relayMs, formatNum(tx.GasUsed), change)
+		return nil
+	}
 	s.done("Paid %s privately (proof %d ms, relay %d ms, gas %s) — %s change back to the sender",
 		p.Name, proveMs, relayMs, formatNum(tx.GasUsed), change)
 	return nil
 }
 
+// relayerIncome is the USDr the relayer has been paid in fee notes this run.
+func (e *Engine) relayerIncome() *big.Int {
+	income := new(big.Int)
+	for _, st := range e.fanOut {
+		if st.UsdrFeeNote != nil {
+			income.Add(income, e.usdrFixedFee)
+		}
+	}
+	return income
+}
+
 // discover has each participant scan the chain for notes addressed to them.
 func (e *Engine) discover(ctx context.Context, s *step) error {
-	events, err := e.chain.noteEvents(ctx)
+	events, err := e.chain.noteEvents(ctx, e.chain.vaultAddr, erc20VaultId)
 	if err != nil {
 		return err
 	}
 	s.log("chain", "%d encrypted notes on chain (Payment + EncryptedNote events)", len(events))
 	for _, p := range e.participants() {
-		found := p.scan(events)
+		found := p.scan(events, &p.notes)
 		s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, found)
-		s.actor(p, "balance", p.balance().String()+" RaylsERC20")
+		s.actor(p, "balance", p.notes.balance().String()+" RaylsERC20")
 		if len(p.notes) > 0 {
 			s.actor(p, "note", "0x"+p.notes[len(p.notes)-1].commitment.Text(16))
 		}
@@ -188,24 +252,24 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 	return nil
 }
 
-// scan adds the notes in events that a's view key opens, and returns how
-// many were new. An event that fails to open or to match its commitment is
-// someone else's.
-func (a *Actor) scan(events []dvpcore.OnChainErc20Event) int {
+// scan adds to into the notes in events (one vault's) that a's view key
+// opens, and returns how many were new. An event that fails to open or to
+// match its commitment is someone else's.
+func (a *Actor) scan(events []dvpcore.OnChainErc20Event, into *purse) int {
 	found := 0
 	for _, ev := range events {
 		owned, err := dvpcore.ScanForErc20Notes(a.View.DecapsKey, a.Spend.PublicKey, []dvpcore.OnChainErc20Event{ev})
-		if err != nil || len(owned) == 0 || a.hasNote(ev.Commitment) {
+		if err != nil || len(owned) == 0 || into.has(ev.Commitment) {
 			continue
 		}
-		a.notes = append(a.notes, &note{commitment: owned[0].Commitment, salt: owned[0].SaltBField, amount: owned[0].Amount})
+		*into = append(*into, &note{commitment: owned[0].Commitment, salt: owned[0].SaltBField, amount: owned[0].Amount})
 		found++
 	}
 	return found
 }
 
-func (a *Actor) hasNote(commitment *big.Int) bool {
-	for _, n := range a.notes {
+func (p purse) has(commitment *big.Int) bool {
+	for _, n := range p {
 		if n.commitment.Cmp(commitment) == 0 {
 			return true
 		}
@@ -213,9 +277,9 @@ func (a *Actor) hasNote(commitment *big.Int) bool {
 	return false
 }
 
-func (a *Actor) unspent() []*note {
+func (p purse) unspent() []*note {
 	var out []*note
-	for _, n := range a.notes {
+	for _, n := range p {
 		if !n.spent {
 			out = append(out, n)
 		}
@@ -235,10 +299,10 @@ func (n *note) check(owner *Actor) error {
 	return nil
 }
 
-// vaultTree rebuilds the ERC20 vault's Merkle tree from its Commitment events.
-func (c *chain) vaultTree(ctx context.Context) (*rpcore.MerkleTree, error) {
+// vaultTree rebuilds a vault's Merkle tree from its Commitment events.
+func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (*rpcore.MerkleTree, error) {
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		Addresses: []common.Address{c.vaultAddr},
+		Addresses: []common.Address{vaultAddr},
 		Topics:    [][]common.Hash{{commitmentTopic}},
 	})
 	if err != nil {
@@ -253,12 +317,12 @@ func (c *chain) vaultTree(ctx context.Context) (*rpcore.MerkleTree, error) {
 	return tree, nil
 }
 
-// noteEvents returns every encrypted note published for the ERC20 vault:
+// noteEvents returns every encrypted note published for one vault:
 // EnygmaDvp's Payment events and the vault's EncryptedNote (deposit) events.
-func (c *chain) noteEvents(ctx context.Context) ([]dvpcore.OnChainErc20Event, error) {
-	vaultIdTopic := common.BigToHash(erc20VaultId)
+func (c *chain) noteEvents(ctx context.Context, vaultAddr common.Address, vaultId *big.Int) ([]dvpcore.OnChainErc20Event, error) {
+	vaultIdTopic := common.BigToHash(vaultId)
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		Addresses: []common.Address{c.dvpAddr, c.vaultAddr},
+		Addresses: []common.Address{c.dvpAddr, vaultAddr},
 		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic}, {vaultIdTopic}},
 	})
 	if err != nil {
