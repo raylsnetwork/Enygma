@@ -36,15 +36,27 @@ func (e *Engine) checkPrereqs(ctx context.Context, s *step) error {
 		return fmt.Errorf("relayer /relay/info returned no relayer address")
 	}
 	c.relayerAddr = common.HexToAddress(info.RelayerAddr)
+	// The relayer takes USDr fees only if it publishes a fee spend key; the
+	// fan-out's USDr-fee route checks for it.
+	e.relayerFeePk = nil
+	if pk, ok := new(big.Int).SetString(info.FeeSpendPubKey, 10); ok {
+		e.relayerFeePk = pk
+	}
+	if e.usdrFixedFee, err = c.usdrFixedFee(); err != nil {
+		return err
+	}
 
 	s.proto("relayerAddr", c.relayerAddr.Hex())
 	s.proto("dvpAddr", c.dvpAddr.Hex())
 	s.proto("vaultAddr", c.vaultAddr.Hex())
 	s.proto("erc20Addr", c.erc20Addr.Hex())
 	s.proto("registryAddr", c.registryAddr.Hex())
+	s.proto("usdrVaultAddr", c.usdrVaultAddr.Hex())
+	s.proto("usdrFixedFee", e.usdrFixedFee.String()+" USDr")
 	s.log("chain", "EnygmaDvp:      %s", c.dvpAddr.Hex())
 	s.log("chain", "Erc20CoinVault: %s", c.vaultAddr.Hex())
 	s.log("chain", "UserRegistry:   %s", c.registryAddr.Hex())
+	s.log("chain", "UsdrCoinVault:  %s  (fixed fee %s USDr)", c.usdrVaultAddr.Hex(), e.usdrFixedFee)
 	s.log("chain", "relayer:        %s", c.relayerAddr.Hex())
 	s.done("Chain, gnark server and relayer are running")
 	return nil

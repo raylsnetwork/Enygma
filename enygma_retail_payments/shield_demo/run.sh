@@ -10,7 +10,9 @@
 #   cd enygma_retail_payments/shield_demo && bash run.sh
 #   bash run.sh --no-demo     # bring up the stack only (e.g. for the integration test)
 #
-# Service logs go to $LOG_DIR (default: a fresh temp directory).
+# Service logs go to $LOG_DIR (default: a fresh temp directory). The relayer
+# keeps its fee-note openings in build/relayer_fee_notes.jsonl, where the
+# integration test reads them; each run starts it afresh with the chain.
 
 set -euo pipefail
 
@@ -78,6 +80,9 @@ for port in 8545 8082 8090 9092; do
 done
 
 echo "[run.sh] logs: $LOG_DIR"
+FEE_NOTES="$ROOT/build/relayer_fee_notes.jsonl"
+mkdir -p "$ROOT/build"
+rm -f "$FEE_NOTES"
 
 echo "[run.sh] [1/7] starting a fresh Hardhat node…"
 start hardhat "$DVP_ROOT" npx hardhat node
@@ -119,7 +124,7 @@ start relayer "$ROOT/relayer" env \
     RELAYER_API_KEY="$RELAYER_API_KEY" \
     RELAYER_FEE_SPEND_PRIVATE_KEY=123456789 \
     RELAYER_MIN_FEE=1 \
-    RELAYER_FEE_NOTES_PATH="$LOG_DIR/fee_notes.jsonl" \
+    RELAYER_FEE_NOTES_PATH="$FEE_NOTES" \
     RELAYER_TAG_REGISTRY_ADDR="$(receipt_addr TagRegistry)" \
     RELAYER_TAG_CHANNEL_REGISTRY_ADDR="$(receipt_addr TagChannelRegistry)" \
     "$BIN_DIR/relayer"

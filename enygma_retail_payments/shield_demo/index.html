@@ -40,6 +40,8 @@ html,body { background:var(--bg); color:var(--text); font-family:var(--sans); fo
 .opt { display:flex; flex-direction:column; gap:2px; }
 .opt label { font-family:var(--mono); font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
 .opt input { width:84px; background:var(--s2); border:1px solid var(--bd2); color:var(--text); border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:11px; }
+.opt.toggle { flex-direction:row; align-items:center; gap:6px; padding-bottom:3px; }
+.opt.toggle input { width:auto; }
 #optError { font-family:var(--mono); font-size:10px; color:var(--red); }
 
 .progress-wrap { height:2px; background:var(--bd); }
@@ -72,6 +74,7 @@ html,body { background:var(--bg); color:var(--text); font-family:var(--sans); fo
 .a-key { font-family:var(--mono); font-size:8px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
 .a-val { font-family:var(--mono); font-size:10.5px; color:var(--label); word-break:break-all; }
 .a-val.set { color:var(--text); }
+.balance.usdr { background:rgba(255,204,64,.06); color:var(--amber); border-color:rgba(255,204,64,.3); }
 .balance { display:inline-block; padding:2px 8px; border-radius:4px; font-family:var(--mono); font-size:11px; background:var(--green-dim); color:var(--green); border:1px solid var(--green-glow); }
 
 .side { border-left:1px solid var(--bd); display:flex; flex-direction:column; }
@@ -102,6 +105,7 @@ td.num { text-align:right; }
 </div>
 <div class="options" id="options">
   <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
+  <div class="opt toggle"><input id="optUsdrFee" type="checkbox"><label for="optUsdrFee">USDr fee</label></div>
   <span id="optError"></span>
 </div>
 <div class="progress-wrap"><div class="progress-bar" id="progress"></div></div>
@@ -113,7 +117,7 @@ td.num { text-align:right; }
     <div class="card">
       <div class="card-hdr">Fan-out</div>
       <table>
-        <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+        <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
         <tbody id="fanout"></tbody>
       </table>
     </div>
@@ -126,7 +130,7 @@ const K = 6;
 const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
 let steps = []; // [{id, label}], announced by the engine at the start of a run
 const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'participant'])];
-const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['public','Public balance'], ['balance','Private balance'], ['note','Note']];
+const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['public','Public balance'], ['balance','RaylsERC20 (private)'], ['usdr','USDr (private)'], ['note','Note']];
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -165,14 +169,15 @@ function setActor(i, field, value) {
   if (!el) return;
   el.classList.add('set');
   el.title = value;
-  el.innerHTML = field === 'balance' ? `<span class="balance">${esc(value)}</span>` : esc(short(value));
+  el.innerHTML = field === 'balance' ? `<span class="balance">${esc(value)}</span>`
+    : field === 'usdr' ? `<span class="balance usdr">${esc(value)}</span>` : esc(short(value));
 }
 
 function setProto(field, value) {
   if (field === 'fanout') {
     const r = JSON.parse(value);
     $('fanout').insertAdjacentHTML('beforeend',
-      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td>` +
+      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td>` +
       `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
     return;
   }
@@ -219,12 +224,13 @@ function onEvent(e) {
 async function loadDefaults() {
   const d = await (await fetch('/defaults')).json();
   $('optTotal').value = d.shieldTotal;
+  $('optUsdrFee').checked = d.usdrFee;
   $('optError').insertAdjacentHTML('beforebegin', NAMES.map((n, i) =>
     `<div class="opt"><label for="optPay${i}">${esc(n)}</label><input id="optPay${i}" type="number" min="1" value="${d.payouts[i]}"></div>`).join(''));
 }
 
 $('runBtn').onclick = async () => {
-  const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)) };
+  const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked };
   $('optError').textContent = '';
   $('runBtn').disabled = true;
   const res = await fetch('/run', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(opts) });
