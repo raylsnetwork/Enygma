@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enygma Retail Shield · Live Demo</title>
+<style>
+:root {
+  --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
+  --teal:#3dd4b0; --teal-dim:rgba(61,212,176,.08); --teal-glow:#0d6b5a;
+  --blue:#52b8ff; --blue-dim:rgba(82,184,255,.09); --blue-glow:#1a5a9a;
+  --green:#3dcc75; --green-dim:rgba(61,204,117,.08); --green-glow:#0d5a2a;
+  --red:#ff5566; --red-dim:rgba(255,85,102,.07);
+  --amber:#ffcc40; --purple:#c3a0ff; --purple-dim:rgba(195,160,255,.08); --orange:#ff9040;
+  --text:#c0d8f0; --text2:#8ab0d0; --muted:#3a5e7a; --label:#6090b8;
+  --mono:'SF Mono','Fira Code',Consolas,'Courier New',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;
+  --r2:11px;
+}
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.55; min-height:100vh; overflow-x:hidden; }
+::-webkit-scrollbar { width:5px; height:5px; }
+::-webkit-scrollbar-thumb { background:var(--bd2); border-radius:3px; }
+
+.header { padding:9px 18px; border-bottom:1px solid var(--bd); background:var(--s1); display:flex; align-items:center; gap:14px; flex-wrap:wrap; position:sticky; top:0; z-index:100; }
+.brand { font-family:var(--mono); font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--teal); font-weight:700; }
+.title { font-size:13.5px; font-weight:700; flex:1; }
+.title small { font-weight:400; color:var(--label); font-size:11px; margin-left:6px; }
+.controls { display:flex; align-items:center; gap:10px; }
+.status-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+.status-dot.running { background:var(--blue); box-shadow:0 0 8px var(--blue); animation:pulse 1.2s infinite; }
+.status-dot.success { background:var(--green); box-shadow:0 0 8px var(--green); }
+.status-dot.error { background:var(--red); box-shadow:0 0 8px var(--red); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+#statusText { font-family:var(--mono); font-size:10px; color:var(--label); min-width:56px; }
+#runBtn { background:var(--teal); color:#031410; border:none; border-radius:5px; padding:6px 18px; font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.07em; cursor:pointer; }
+#runBtn:disabled { opacity:.3; cursor:not-allowed; }
+
+.options { padding:8px 18px; background:var(--s1); border-bottom:1px solid var(--bd); display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+.opt { display:flex; flex-direction:column; gap:2px; }
+.opt label { font-family:var(--mono); font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+.opt input { width:84px; background:var(--s2); border:1px solid var(--bd2); color:var(--text); border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:11px; }
+#optError { font-family:var(--mono); font-size:10px; color:var(--red); }
+
+.progress-wrap { height:2px; background:var(--bd); }
+.progress-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--teal),var(--blue)); transition:width .5s ease; }
+.steps-wrap { padding:10px 18px 9px; background:var(--s1); border-bottom:1px solid var(--bd); overflow-x:auto; }
+.steps { display:flex; align-items:center; min-width:max-content; }
+.step-item { display:flex; align-items:center; font-family:var(--mono); font-size:9px; }
+.step-pill { padding:3px 10px; border:1px solid var(--bd); border-radius:20px; color:var(--muted); background:var(--s2); white-space:nowrap; }
+.step-item.running .step-pill { border-color:var(--blue); color:var(--blue); background:var(--blue-dim); animation:pulse 1.4s infinite; }
+.step-item.success .step-pill { border-color:var(--teal); color:var(--teal); background:var(--teal-dim); }
+.step-item.error .step-pill { border-color:var(--red); color:var(--red); background:var(--red-dim); }
+.step-arrow { color:var(--bd2); padding:0 4px; font-size:10px; }
+#stepMsg { padding:6px 18px; font-size:11.5px; color:var(--text2); background:var(--s1); border-bottom:1px solid var(--bd); min-height:30px; }
+#stepMsg.error { color:var(--red); }
+
+.main { display:grid; grid-template-columns:1fr 380px; gap:0; }
+@media (max-width:1000px) { .main { grid-template-columns:1fr; } }
+.actors { padding:12px 14px; display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; align-content:start; }
+.actor { border:1px solid var(--bd); border-radius:var(--r2); background:var(--s2); overflow:hidden; }
+.actor-hdr { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--bd); background:var(--s1); }
+.avatar { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px; border:1px solid; }
+.actor.issuer .avatar { color:var(--amber); border-color:rgba(255,204,64,.3); background:rgba(255,204,64,.06); }
+.actor.sender .avatar { color:var(--teal); border-color:var(--teal-glow); background:var(--teal-dim); }
+.actor.participant .avatar { color:var(--blue); border-color:var(--blue-glow); background:var(--blue-dim); }
+.a-name { font-weight:700; }
+.a-role { font-family:var(--mono); font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+.a-status { margin-left:auto; font-family:var(--mono); font-size:8.5px; color:var(--green); }
+.a-fields { padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+.a-row { display:flex; flex-direction:column; gap:1px; }
+.a-key { font-family:var(--mono); font-size:8px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+.a-val { font-family:var(--mono); font-size:10.5px; color:var(--label); word-break:break-all; }
+.a-val.set { color:var(--text); }
+.balance { display:inline-block; padding:2px 8px; border-radius:4px; font-family:var(--mono); font-size:11px; background:var(--green-dim); color:var(--green); border:1px solid var(--green-glow); }
+
+.side { border-left:1px solid var(--bd); display:flex; flex-direction:column; }
+.card { margin:12px 14px 0; border:1px solid var(--bd2); border-radius:var(--r2); background:var(--s2); overflow:hidden; }
+.card-hdr { padding:7px 12px; border-bottom:1px solid var(--bd); font-family:var(--mono); font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--teal); font-weight:700; }
+table { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10px; }
+th { text-align:left; font-weight:400; color:var(--muted); font-size:8.5px; letter-spacing:.08em; text-transform:uppercase; padding:4px 8px; border-bottom:1px solid var(--bd); }
+td { padding:4px 8px; border-bottom:1px solid var(--bd); color:var(--text); }
+td.num { text-align:right; }
+.proto-row { display:flex; justify-content:space-between; gap:8px; padding:3px 12px; font-family:var(--mono); font-size:10px; }
+.proto-row span:first-child { color:var(--muted); }
+.proto-row span:last-child { color:var(--text); word-break:break-all; text-align:right; }
+.log { margin:12px 14px 14px; border:1px solid var(--bd2); border-radius:var(--r2); background:var(--s1); height:340px; overflow-y:auto; padding:6px 10px; font-family:var(--mono); font-size:10px; }
+.log-line { white-space:pre-wrap; color:var(--text2); }
+.log-line .ts { color:var(--muted); margin-right:6px; }
+.log-line.key { color:var(--purple); } .log-line.chain { color:var(--green); } .log-line.zk { color:var(--amber); } .log-line.tag { color:var(--orange); }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="brand">Enygma</div>
+  <div class="title">Retail Shield<small>shield public RaylsERC20 → private fan-out to 6 participants</small></div>
+  <div class="controls">
+    <div class="status-dot" id="statusDot"></div>
+    <div id="statusText">idle</div>
+    <button id="runBtn">RUN</button>
+  </div>
+</div>
+<div class="options" id="options">
+  <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
+  <span id="optError"></span>
+</div>
+<div class="progress-wrap"><div class="progress-bar" id="progress"></div></div>
+<div class="steps-wrap"><div class="steps" id="steps"></div></div>
+<div id="stepMsg">Press RUN to start a scenario on the fresh deployment.</div>
+<div class="main">
+  <div class="actors" id="actors"></div>
+  <div class="side">
+    <div class="card"><div class="card-hdr">Protocol</div><div id="proto"></div></div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script>
+const K = 6;
+const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
+let steps = []; // [{id, label}], announced by the engine at the start of a run
+const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'participant'])];
+const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['balance','Private balance'], ['note','Note']];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const short = v => v.length > 26 ? v.slice(0, 14) + '…' + v.slice(-8) : v;
+
+function buildSteps() {
+  $('steps').innerHTML = steps.map(({id, label}, i) =>
+    (i ? '<span class="step-arrow">›</span>' : '') +
+    `<div class="step-item" id="step-${id}"><span class="step-pill">${esc(label)}</span></div>`).join('');
+}
+
+function build() {
+  buildSteps();
+  $('actors').innerHTML = ACTORS.map(([name, role], i) => `
+    <div class="actor ${role}" id="actor-${i}">
+      <div class="actor-hdr"><div class="avatar">${name[0]}</div>
+        <div><div class="a-name">${esc(name)}</div><div class="a-role">${role}</div></div>
+        <div class="a-status" id="a-${i}-status"></div></div>
+      <div class="a-fields">${FIELDS.map(([f, l]) =>
+        `<div class="a-row"><div class="a-key">${l}</div><div class="a-val" id="a-${i}-${f}">—</div></div>`).join('')}
+      </div></div>`).join('');
+  $('proto').innerHTML = '';
+  $('log').innerHTML = '';
+  $('progress').style.width = '0%';
+}
+
+function setStatus(state, text) {
+  $('statusDot').className = 'status-dot ' + state;
+  $('statusText').textContent = text;
+}
+
+function setActor(i, field, value) {
+  if (field === 'status') { $(`a-${i}-status`).textContent = value; return; }
+  const el = $(`a-${i}-${field}`);
+  if (!el) return;
+  el.classList.add('set');
+  el.title = value;
+  el.innerHTML = field === 'balance' ? `<span class="balance">${esc(value)}</span>` : esc(short(value));
+}
+
+function setProto(field, value) {
+  if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
+  let row = $('proto-' + field);
+  if (!row) {
+    $('proto').insertAdjacentHTML('beforeend', `<div class="proto-row" id="proto-${field}"><span>${esc(field)}</span><span></span></div>`);
+    row = $('proto-' + field);
+  }
+  row.lastChild.textContent = short(value);
+  row.lastChild.title = value;
+}
+
+function log(e) {
+  const div = document.createElement('div');
+  div.className = 'log-line ' + (e.cat || '');
+  div.innerHTML = `<span class="ts">${esc(e.ts || '')}</span>${esc(e.msg)}`;
+  $('log').appendChild(div);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+let finished = 0;
+function onEvent(e) {
+  switch (e.kind) {
+  case 'reset': build(); finished = 0; setStatus('running', 'running'); break;
+  case 'step_started':
+    $('step-' + e.step)?.setAttribute('class', 'step-item running');
+    $('stepMsg').className = ''; $('stepMsg').textContent = e.msg || e.label; break;
+  case 'step_succeeded':
+    $('step-' + e.step)?.setAttribute('class', 'step-item success');
+    $('stepMsg').textContent = e.msg;
+    $('progress').style.width = (++finished / Math.max(steps.length, 1) * 100) + '%'; break;
+  case 'step_failed':
+    $('step-' + e.step)?.setAttribute('class', 'step-item error');
+    $('stepMsg').className = 'error'; $('stepMsg').textContent = e.label + ' failed: ' + e.msg; break;
+  case 'log': log(e); break;
+  case 'actor': setActor(e.actor, e.field, e.value); break;
+  case 'proto': setProto(e.field, e.value); break;
+  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; break;
+  case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; break;
+  }
+}
+
+async function loadDefaults() {
+  const d = await (await fetch('/defaults')).json();
+  $('optTotal').value = d.shieldTotal;
+  $('optError').insertAdjacentHTML('beforebegin', NAMES.map((n, i) =>
+    `<div class="opt"><label for="optPay${i}">${esc(n)}</label><input id="optPay${i}" type="number" min="1" value="${d.payouts[i]}"></div>`).join(''));
+}
+
+$('runBtn').onclick = async () => {
+  const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)) };
+  $('optError').textContent = '';
+  $('runBtn').disabled = true;
+  const res = await fetch('/run', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(opts) });
+  if (!res.ok) { $('optError').textContent = (await res.text()); $('runBtn').disabled = false; }
+};
+
+build();
+loadDefaults();
+new EventSource('/events').onmessage = m => onEvent(JSON.parse(m.data));
+</script>
+</body>
+</html>
