@@ -83,6 +83,11 @@ type Options struct {
 	// the relayer the fixed USDr fee in the same transaction; off, transfers
 	// take the plain route and pay no fee.
 	UsdrFee bool `json:"usdrFee"`
+	// Tags opens a private-tag channel between each pair that transacts and
+	// publishes a tag for every fan-out transfer and transfer between
+	// participants, so each recipient finds their notes by tag instead of
+	// trying to decrypt every note on chain.
+	Tags bool `json:"tags"`
 	// Script is the transfers between participants played after the fan-out.
 	Script []Transfer `json:"script"`
 }
@@ -137,6 +142,7 @@ type Actor struct {
 	keyHex string
 	notes  purse // RaylsERC20 vault notes
 	usdr   purse // USDr vault notes
+	tags   tagState
 }
 
 // note is a vault note an actor can open.
@@ -159,6 +165,9 @@ type Settlement struct {
 	// UsdrFeeNote is the relayer's USDr fee note the transfer paid; nil on
 	// the plain route.
 	UsdrFeeNote *big.Int
+	// TagTxHash is the transaction that published the transfer's private
+	// tag; zero with tags off.
+	TagTxHash common.Hash
 }
 
 // Engine runs the scenario on one fresh deployment.
@@ -282,13 +291,21 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 		{"prereqs", "Check prerequisites", "Probing chain · gnark server · relayer…", e.checkPrereqs},
 		{"keygen", "Generate keys", "Issuer, sender and participants generate spend and view keys…", e.generateKeys},
 		{"register", "Register in UserRegistry", "Sender and participants publish their keys…", e.register},
+	}
+	if opts.Tags {
+		steps = append(steps, stepDef{"channels", "Tag channels", "Each payer opens a private-tag channel to everyone they will pay, through the relayer…", e.openChannels})
+	}
+	steps = append(steps, []stepDef{
 		{"usdr", "USDr fee credit", fmt.Sprintf("Issuer shields a %d USDr note to the sender and each participant…", UsdrGrant), e.grantUsdr},
 		{"shield", "Shield", fmt.Sprintf("Sender gets %d public RaylsERC20 and shields it into one private note…", opts.ShieldTotal),
 			func(ctx context.Context, s *step) error { return e.shield(ctx, s, opts) }},
-	}
+	}...)
 	route := "no fee"
 	if opts.UsdrFee {
 		route = "USDr fee to the relayer"
+	}
+	if opts.Tags {
+		route += ", private tag"
 	}
 	for i, name := range participantNames {
 		n, amount := i+1, big.NewInt(opts.Payouts[i])
@@ -300,7 +317,11 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 			},
 		})
 	}
-	steps = append(steps, stepDef{"discover", "Discover", "Participants scan the chain with their view keys…", e.discover})
+	discoverMsg := "Participants scan the chain with their view keys…"
+	if opts.Tags {
+		discoverMsg = "Participants scan the tag registry for their tags…"
+	}
+	steps = append(steps, stepDef{"discover", "Discover", discoverMsg, e.discover})
 	for i, t := range opts.Script {
 		steps = append(steps, stepDef{
 			fmt.Sprintf("transfer_%d", i+1), fmt.Sprintf("%s → %s", t.From, t.To),

@@ -71,6 +71,7 @@ var (
 	nullifierEventSig  = crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	commitmentEventSig = crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
 	encryptedNoteSig   = crypto.Keccak256Hash([]byte("EncryptedNote(uint256,uint256,bytes,bytes)"))
+	tagPublishedSig    = crypto.Keccak256Hash([]byte("TagPublished(uint256,bytes32,address,bytes)"))
 )
 
 // zkLogs counts the proving log lines the engine has emitted.
@@ -121,6 +122,7 @@ func TestShieldDemoScenario(t *testing.T) {
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 	usdrVaultAddr := common.HexToAddress(receipts["UsdrCoinVault"].ContractAddress)
+	tagRegistryAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
 
 	t.Run("sender and participants are registered", func(t *testing.T) {
 		registered := append([]engine.Actor{e.Sender()}, e.Participants()...)
@@ -178,24 +180,7 @@ func TestShieldDemoScenario(t *testing.T) {
 	})
 
 	t.Run("after the scripted transfers each participant scans the expected balances", func(t *testing.T) {
-		// DefaultOptions pays out Ana 120, Bruno 90, Carla 150, Diego 60,
-		// Elena 200, Felipe 80, then plays Ana→Bruno 50, Elena→Carla 120,
-		// Carla→Diego 100, Bruno→Felipe 70, Felipe→Ana 30 and Diego→Elena 150
-		// (merging Diego's 60 and 100); each payer pays a 1 USDr fee per
-		// transfer.
-		want := map[string]struct{ erc20, usdr int64 }{
-			"Ana": {100, 19}, "Bruno": {70, 19}, "Carla": {170, 19},
-			"Diego": {10, 19}, "Elena": {230, 19}, "Felipe": {120, 19},
-		}
-		for _, p := range e.Participants() {
-			w := want[p.Name]
-			if got := e.Balance(p); got.Cmp(big.NewInt(w.erc20)) != 0 {
-				t.Errorf("%s: scanned RaylsERC20 balance %s, want %d", p.Name, got, w.erc20)
-			}
-			if got := e.UsdrBalance(p); got.Cmp(big.NewInt(w.usdr)) != 0 {
-				t.Errorf("%s: scanned USDr balance %s, want %d", p.Name, got, w.usdr)
-			}
-		}
+		checkAfterScript(t, e)
 	})
 
 	t.Run("each scripted transfer settles with its USDr fee through the relayer", func(t *testing.T) {
@@ -224,15 +209,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	participant := func(name string) engine.Actor {
-		for _, p := range e.Participants() {
-			if p.Name == name {
-				return p
-			}
-		}
-		t.Fatalf("no participant %s", name)
-		return engine.Actor{}
-	}
+	participant := func(name string) engine.Actor { return participantOf(t, e, name) }
 
 	t.Run("a manual transfer settles and the recipient scans it", func(t *testing.T) {
 		// After the script Carla holds notes of 150 and 20, Diego one of 10.
@@ -386,7 +363,118 @@ func TestShieldDemoScenario(t *testing.T) {
 				t.Errorf("%s's USDr balance %s, want the untouched grant %s", p.Name, got, grant)
 			}
 		}
+
+		t.Run("with tags on as well, recipients find every transfer by its tag and scan the same balances", func(t *testing.T) {
+			tagged := plain
+			tagged.Tags = true
+			te, _ := runShieldScenario(t, cfg, tagged)
+			checkTagged(t, client, tagRegistryAddr, append(te.FanOut(), te.Transfers()...))
+			for _, s := range te.Transfers() {
+				if s.UsdrFeeNote != nil {
+					t.Errorf("%s→%s: paid a USDr fee note with fees off", s.From, s.To)
+				}
+			}
+			sameBalances(t, e, te)
+		})
 	})
+
+	t.Run("with tags on, recipients find every transfer by its tag and scan the same balances", func(t *testing.T) {
+		tagged := engine.DefaultOptions()
+		tagged.Tags = true
+		te, _ := runShieldScenario(t, cfg, tagged)
+		checkTagged(t, client, tagRegistryAddr, append(te.FanOut(), te.Transfers()...))
+		for _, s := range append(te.FanOut(), te.Transfers()...) {
+			if s.UsdrFeeNote == nil {
+				t.Errorf("%s→%s: paid no USDr fee note with fees on", s.From, s.To)
+			}
+		}
+		// The tags-off run above scanned these same balances after the script.
+		checkAfterScript(t, te)
+		if got, want := te.Balance(te.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
+			t.Errorf("sender's private balance %s, want %s", got, want)
+		}
+		if got, want := te.UsdrBalance(te.Sender()), big.NewInt(14); got.Cmp(want) != 0 {
+			t.Errorf("sender's USDr balance %s, want %s", got, want)
+		}
+
+		// Ana and Elena have no channel yet: the transfer opens one first.
+		elenaBefore := te.Balance(participantOf(t, te, "Elena"))
+		if err := te.Transfer(context.Background(), "Ana", "Elena", 10); err != nil {
+			t.Fatalf("Transfer Ana→Elena 10: %v", err)
+		}
+		if got, want := te.Balance(participantOf(t, te, "Elena")), new(big.Int).Add(elenaBefore, big.NewInt(10)); got.Cmp(want) != 0 {
+			t.Errorf("Elena's balance %s after a tagged manual transfer, want %s", got, want)
+		}
+		manual := te.Transfers()
+		checkTagged(t, client, tagRegistryAddr, manual[len(manual)-1:])
+	})
+}
+
+// checkAfterScript checks every participant's scanned balances after
+// DefaultOptions' payouts and script. They pay out Ana 120, Bruno 90, Carla
+// 150, Diego 60, Elena 200, Felipe 80, then play Ana→Bruno 50, Elena→Carla
+// 120, Carla→Diego 100, Bruno→Felipe 70, Felipe→Ana 30 and Diego→Elena 150
+// (merging Diego's 60 and 100); each payer pays a 1 USDr fee per transfer.
+func checkAfterScript(t *testing.T, e *engine.Engine) {
+	t.Helper()
+	want := map[string]struct{ erc20, usdr int64 }{
+		"Ana": {100, 19}, "Bruno": {70, 19}, "Carla": {170, 19},
+		"Diego": {10, 19}, "Elena": {230, 19}, "Felipe": {120, 19},
+	}
+	for _, p := range e.Participants() {
+		w := want[p.Name]
+		if got := e.Balance(p); got.Cmp(big.NewInt(w.erc20)) != 0 {
+			t.Errorf("%s: scanned RaylsERC20 balance %s, want %d", p.Name, got, w.erc20)
+		}
+		if got := e.UsdrBalance(p); got.Cmp(big.NewInt(w.usdr)) != 0 {
+			t.Errorf("%s: scanned USDr balance %s, want %d", p.Name, got, w.usdr)
+		}
+	}
+}
+
+// sameBalances checks that two runs of one scenario left the sender and
+// every participant with the same scanned balances.
+func sameBalances(t *testing.T, want, got *engine.Engine) {
+	t.Helper()
+	pairs := [][2]engine.Actor{{want.Sender(), got.Sender()}}
+	for i, p := range want.Participants() {
+		pairs = append(pairs, [2]engine.Actor{p, got.Participants()[i]})
+	}
+	for _, p := range pairs {
+		if w, g := want.Balance(p[0]), got.Balance(p[1]); w.Cmp(g) != 0 {
+			t.Errorf("%s: RaylsERC20 balance %s, want %s as in the other run", p[1].Name, g, w)
+		}
+		if w, g := want.UsdrBalance(p[0]), got.UsdrBalance(p[1]); w.Cmp(g) != 0 {
+			t.Errorf("%s: USDr balance %s, want %s as in the other run", p[1].Name, g, w)
+		}
+	}
+}
+
+// checkTagged checks that each transfer's tag was published to the
+// TagRegistry in its own transaction.
+func checkTagged(t *testing.T, client *ethclient.Client, tagRegistry common.Address, settled []engine.Settlement) {
+	t.Helper()
+	for _, s := range settled {
+		if s.TagTxHash == (common.Hash{}) {
+			t.Errorf("%s→%s %s: published no tag", s.From, s.To, s.Amount)
+			continue
+		}
+		if n := countTopicAt(txLogs(t, client, s.TagTxHash), tagRegistry, tagPublishedSig); n != 1 {
+			t.Errorf("%s→%s %s: tag transaction published %d tags, want 1", s.From, s.To, s.Amount, n)
+		}
+	}
+}
+
+// participantOf returns e's participant named name.
+func participantOf(t *testing.T, e *engine.Engine, name string) engine.Actor {
+	t.Helper()
+	for _, p := range e.Participants() {
+		if p.Name == name {
+			return p
+		}
+	}
+	t.Fatalf("no participant %s", name)
+	return engine.Actor{}
 }
 
 // checkDiegoElenaMerge checks that the default script's Diego→Elena 150, bigger than

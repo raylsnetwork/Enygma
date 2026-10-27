@@ -112,6 +112,7 @@ td.num { text-align:right; }
 <div class="options" id="options">
   <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
   <div class="opt toggle"><input id="optUsdrFee" type="checkbox"><label for="optUsdrFee">USDr fee</label></div>
+  <div class="opt toggle"><input id="optTags" type="checkbox"><label for="optTags">with tag</label></div>
   <span id="optError"></span>
 </div>
 <div class="progress-wrap"><div class="progress-bar" id="progress"></div></div>
@@ -123,7 +124,7 @@ td.num { text-align:right; }
     <div class="card">
       <div class="card-hdr">Fan-out</div>
       <table>
-        <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+        <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
         <tbody id="fanout"></tbody>
       </table>
     </div>
@@ -137,7 +138,7 @@ td.num { text-align:right; }
       </div>
       <div id="sendError"></div>
       <table>
-        <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+        <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th>Recipient's scan</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
         <tbody id="transfers"></tbody>
       </table>
     </div>
@@ -150,7 +151,7 @@ const K = 6;
 const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
 let steps = []; // [{id, label}], announced by the engine at the start of a run
 const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'participant'])];
-const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['public','Public balance'], ['balance','RaylsERC20 (private)'], ['usdr','USDr (private)'], ['note','Note']];
+const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['public','Public balance'], ['balance','RaylsERC20 (private)'], ['usdr','USDr (private)'], ['note','Note'], ['channels','Tag channels'], ['scan','Last scan']];
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -199,14 +200,14 @@ function setProto(field, value) {
   if (field === 'fanout') {
     const r = JSON.parse(value);
     $('fanout').insertAdjacentHTML('beforeend',
-      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td>` +
+      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td><td>${esc(r.tag)}</td>` +
       `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
     return;
   }
   if (field === 'transfer') {
     const r = JSON.parse(value);
     $('transfers').insertAdjacentHTML('beforeend',
-      `<tr title="block ${r.block} · ${esc(r.tx)}${r.merged ? ' · Payment2in: merged two notes' : ''}"><td>${r.n}</td><td>${esc(r.from)} → ${esc(r.to)}</td><td class="num">${r.merged ? '<small>2 notes · </small>' : ''}${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td>` +
+      `<tr title="block ${r.block} · ${esc(r.tx)}${r.merged ? ' · Payment2in: merged two notes' : ''}"><td>${r.n}</td><td>${esc(r.from)} → ${esc(r.to)}</td><td class="num">${r.merged ? '<small>2 notes · </small>' : ''}${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td><td>${esc(r.tag)}</td><td>${esc(r.scan)}</td>` +
       `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
     return;
   }
@@ -254,6 +255,7 @@ async function loadDefaults() {
   const d = await (await fetch('/defaults')).json();
   $('optTotal').value = d.shieldTotal;
   $('optUsdrFee').checked = d.usdrFee;
+  $('optTags').checked = d.tags;
   $('optError').insertAdjacentHTML('beforebegin', NAMES.map((n, i) =>
     `<div class="opt"><label for="optPay${i}">${esc(n)}</label><input id="optPay${i}" type="number" min="1" value="${d.payouts[i]}"></div>`).join(''));
 }
@@ -281,7 +283,7 @@ $('sendBtn').onclick = async () => {
 };
 
 $('runBtn').onclick = async () => {
-  const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked };
+  const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked, tags: $('optTags').checked };
   $('optError').textContent = '';
   $('runBtn').disabled = true;
   const res = await fetch('/run', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(opts) });
