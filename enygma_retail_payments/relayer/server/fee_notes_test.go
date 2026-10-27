@@ -21,6 +21,7 @@ import (
 	"enygma_retail_payments/layout"
 	"enygma_retail_payments/relayer/config"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -86,6 +87,12 @@ type feeNode struct {
 	nullifiers  []byte
 	vaultById   []byte
 	vaults      map[uint64]common.Address
+	// unknownRoots and spentNullifiers make rootHistory / nullifiers answer
+	// "unknown" / "spent" for those values; every other root is known and
+	// every other nullifier unspent.
+	unknownRoots    map[uint64]bool
+	spentNullifiers map[uint64]bool
+	sent            []byte // calldata of the last transaction sent
 }
 
 func (n *feeNode) called(method string) bool {
@@ -140,10 +147,18 @@ func (n *feeNode) serve(t *testing.T) *httptest.Server {
 			_ = json.Unmarshal(req.Params[0], &msg)
 			data := common.FromHex(msg.Input + msg.Data)
 			switch {
-			case len(data) >= 4 && bytes.Equal(data[:4], n.rootHistory):
-				resp["result"] = word(1) // known root
-			case len(data) >= 4 && bytes.Equal(data[:4], n.nullifiers):
-				resp["result"] = word(0) // unspent
+			case len(data) >= 68 && bytes.Equal(data[:4], n.rootHistory):
+				if n.unknownRoots[new(big.Int).SetBytes(data[36:68]).Uint64()] {
+					resp["result"] = word(0)
+				} else {
+					resp["result"] = word(1) // known root
+				}
+			case len(data) >= 68 && bytes.Equal(data[:4], n.nullifiers):
+				if n.spentNullifiers[new(big.Int).SetBytes(data[36:68]).Uint64()] {
+					resp["result"] = word(1)
+				} else {
+					resp["result"] = word(0) // unspent
+				}
 			case len(data) >= 36 && bytes.Equal(data[:4], n.vaultById):
 				addr := n.vaults[new(big.Int).SetBytes(data[4:36]).Uint64()] // zero if unregistered
 				resp["result"] = "0x" + common.Bytes2Hex(common.LeftPadBytes(addr.Bytes(), 32))
@@ -157,6 +172,9 @@ func (n *feeNode) serve(t *testing.T) *httptest.Server {
 			_ = json.Unmarshal(req.Params[0], &raw)
 			var tx types.Transaction
 			_ = tx.UnmarshalBinary(common.FromHex(raw))
+			n.mu.Lock()
+			n.sent = tx.Data()
+			n.mu.Unlock()
 			resp["result"] = tx.Hash().Hex()
 		case "eth_getTransactionReceipt":
 			resp["result"] = map[string]interface{}{
@@ -338,6 +356,7 @@ func TestRelayPartialWithdraw_KeepsTheFeeNoteOpening(t *testing.T) {
 func (f *feeFixture) usdrFeeRequest(t *testing.T, salt *big.Int) RelayPaymentUsdrFeeRequest {
 	fee, tokenId := big.NewInt(5), big.NewInt(0)
 	cmtFee := f.feeCmt(t, salt, fee, tokenId)
+	mainSig := paymentSignal(f.vaultAddr)
 	var usdr [layout.UsdrFeeLen]string
 	usdr[layout.UsdrFeeMessageOffset] = "0"
 	usdr[layout.UsdrFeeTreeNumbersOffset] = "0"
@@ -350,7 +369,7 @@ func (f *feeFixture) usdrFeeRequest(t *testing.T, salt *big.Int) RelayPaymentUsd
 	usdr[layout.UsdrFeeTokenIdOffset] = tokenId.String()
 	return RelayPaymentUsdrFeeRequest{
 		VaultId: "0", Proof: proof8,
-		PublicSignal: paymentSignal(f.vaultAddr),
+		PublicSignal: mainSig[:],
 		CipherText:   "0x00", EncTxData: "0x00",
 		UsdrVaultId: "4", UsdrProof: proof8,
 		UsdrPublicSignal: usdr,
@@ -481,5 +500,126 @@ func TestRelayRoutes_RefuseAnotherVault(t *testing.T) {
 				t.Fatal("a refused request left a nullifier claimed")
 			}
 		})
+	}
+}
+
+// payment2inSignal is a Payment2in statement spending nullifiers 55 and 56 of
+// trees 0 and 1 (roots 1 and 2) into outputs 6 and 7, bound to vault.
+func payment2inSignal(vault common.Address) []string {
+	s := make([]string, layout.Payment2inLen)
+	s[layout.Payment2inMessageOffset] = "0"
+	s[layout.Payment2inTreeNumbersOffset] = "0"
+	s[layout.Payment2inTreeNumbersOffset+1] = "1"
+	s[layout.Payment2inMerkleRootsOffset] = "1"
+	s[layout.Payment2inMerkleRootsOffset+1] = "2"
+	s[layout.Payment2inNullifiersOffset] = "55"
+	s[layout.Payment2inNullifiersOffset+1] = "56"
+	s[layout.Payment2inCommitmentsOutOffset] = "6"
+	s[layout.Payment2inCommitmentsOutOffset+1] = "7"
+	s[layout.Payment2inContractAddressOffset] = new(big.Int).SetBytes(vault.Bytes()).String()
+	return s
+}
+
+// sentMainReceipt decodes the main leg's receipt from the paymentWithUsdrFee
+// call the relayer sent.
+func (f *feeFixture) sentMainReceipt(t *testing.T) proofReceipt {
+	t.Helper()
+	f.node.mu.Lock()
+	data := f.node.sent
+	f.node.mu.Unlock()
+	m := f.h.dvpABI.Methods["paymentWithUsdrFee"]
+	if len(data) < 4 || !bytes.Equal(data[:4], m.ID) {
+		t.Fatal("no paymentWithUsdrFee transaction was sent")
+	}
+	args, err := m.Inputs.Unpack(data[4:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *abi.ConvertType(args[0], new(proofReceipt)).(*proofReceipt)
+}
+
+// The main leg may be a Payment proof or, so a fee-paying transfer can merge
+// two notes, a Payment2in proof; either is sent with its whole statement and
+// its own number of inputs.
+func TestRelayPaymentUsdrFee_AcceptsAPaymentOrPayment2inMainLeg(t *testing.T) {
+	cases := map[string]struct {
+		signal                  func(common.Address) []string
+		lastNullifier           int
+		wantSignals, wantInputs int
+	}{
+		"Payment": {func(v common.Address) []string { s := paymentSignal(v); return s[:] },
+			layout.PaymentNullifiersOffset, 7, 1},
+		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 10, 2},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+			req := f.usdrFeeRequest(t, big.NewInt(42))
+			req.PublicSignal = tc.signal(f.vaultAddr)
+			if w := postJSON(f.r, "/relay/payment_usdr_fee", req); w.Code != http.StatusOK {
+				t.Fatalf("relay: got %d: %s", w.Code, w.Body.String())
+			}
+			r := f.sentMainReceipt(t)
+			if len(r.Statement) != tc.wantSignals || r.Statement[tc.lastNullifier].Cmp(big.NewInt(int64(54+tc.wantInputs))) != 0 ||
+				r.NumberOfInputs.Int64() != int64(tc.wantInputs) || r.NumberOfOutputs.Int64() != 2 {
+				t.Fatalf("main receipt: %d signals, %s inputs, %s outputs; want %d signals, %d inputs, 2 outputs",
+					len(r.Statement), r.NumberOfInputs, r.NumberOfOutputs, tc.wantSignals, tc.wantInputs)
+			}
+		})
+	}
+}
+
+// A 2-input main leg is refused before anything is claimed, recorded or sent
+// when its second input's root is unknown or its nullifier already spent.
+func TestRelayPaymentUsdrFee_ChecksBothInputsOfAPayment2inMainLeg(t *testing.T) {
+	cases := map[string]struct {
+		unknownRoots, spentNullifiers map[uint64]bool
+		want                          string
+	}{
+		"second root unknown":    {unknownRoots: map[uint64]bool{2: true}, want: "merkle root is not a known vault root"},
+		"second nullifier spent": {spentNullifiers: map[uint64]bool{56: true}, want: "nullifier already spent"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+			f.node.unknownRoots, f.node.spentNullifiers = tc.unknownRoots, tc.spentNullifiers
+			req := f.usdrFeeRequest(t, big.NewInt(42))
+			req.PublicSignal = payment2inSignal(f.vaultAddr)
+			w := postJSON(f.r, "/relay/payment_usdr_fee", req)
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "main input 1: "+tc.want) {
+				t.Fatalf("got %d, want 400 naming main input 1: %s", w.Code, w.Body.String())
+			}
+			f.checkNothingDone(t)
+		})
+	}
+}
+
+// A main leg that is neither a Payment nor a Payment2in statement is refused
+// with a 400, before anything is claimed, recorded or sent.
+func TestRelayPaymentUsdrFee_RefusesAnotherMainLegLength(t *testing.T) {
+	f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+	req := f.usdrFeeRequest(t, big.NewInt(42))
+	req.PublicSignal = append(payment2inSignal(f.vaultAddr), "0") // 11 signals
+	w := postJSON(f.r, "/relay/payment_usdr_fee", req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "publicSignal has 11 signals") {
+		t.Fatalf("got %d, want 400 naming the statement length: %s", w.Code, w.Body.String())
+	}
+	f.checkNothingDone(t)
+}
+
+// checkNothingDone checks a refused request sent nothing, recorded no fee note
+// and left no nullifier claimed.
+func (f *feeFixture) checkNothingDone(t *testing.T) {
+	t.Helper()
+	if f.node.called("eth_sendRawTransaction") {
+		t.Fatal("sent a refused request")
+	}
+	if notes := readFeeNotes(t, f.notesAt); len(notes) != 0 {
+		t.Fatalf("recorded a fee note for a refused request: %+v", notes)
+	}
+	held := false
+	f.h.inFlight.Range(func(_, _ interface{}) bool { held = true; return false })
+	if held {
+		t.Fatal("a refused request left a nullifier claimed")
 	}
 }

@@ -790,14 +790,17 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 // RelayPaymentUsdrFee is the gin handler for POST /relay/payment_usdr_fee.
 //
 // Settles two independent proofs atomically in one call
-// (EnygmaDvp.paymentWithUsdrFee): a normal payment against the main vault,
-// and a UsdrFeeCircuit proof — a second, independent relayer-fee asset with
-// its own token/vault/circuit — against the USDr vault.
+// (EnygmaDvp.paymentWithUsdrFee): a normal payment against the main vault —
+// a Payment or, merging two notes, a Payment2in proof — and a UsdrFeeCircuit
+// proof — a second, independent relayer-fee asset with its own
+// token/vault/circuit — against the USDr vault.
 //
 // Validation steps:
 //  1. Confirm the USDr vault is configured (503 if not).
-//  2. Parse and decode both legs' fields from the request body.
-//  3. Check both legs' Merkle roots are known and nullifiers unspent.
+//  2. Parse and decode both legs' fields from the request body; the main
+//     leg's statement length picks its layout (any other length is a 400).
+//  3. Check every input's Merkle root is known and nullifier unspent, on
+//     both legs.
 //  4. Enforce the configured minimum fee (RELAYER_MIN_FEE) against the USDr
 //     leg's public StFee.
 //  5. Confirm the USDr fee note is addressed to this relayer: recompute
@@ -838,10 +841,6 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	treeNum := p.publicSignal[layout.PaymentTreeNumbersOffset]
-	root := p.publicSignal[layout.PaymentMerkleRootsOffset]
-	nullifier := p.publicSignal[layout.PaymentNullifiersOffset]
-
 	usdrTreeNum := p.usdrPublicSignal[layout.UsdrFeeTreeNumbersOffset]
 	usdrRoot := p.usdrPublicSignal[layout.UsdrFeeMerkleRootsOffset]
 	usdrNullifier := p.usdrPublicSignal[layout.UsdrFeeNullifiersOffset]
@@ -852,39 +851,50 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
 	usdrVault := bind.NewBoundContract(h.usdrVaultAddr, h.vaultABI, h.client, h.client, h.client)
 
-	// Step 3 — root/nullifier checks, both legs.
-	for _, leg := range []struct {
+	// Step 3 — root/nullifier checks, every input of both legs.
+	type input struct {
 		name      string
 		vault     *bind.BoundContract
+		vaultAddr common.Address
 		treeNum   *big.Int
 		root      *big.Int
 		nullifier *big.Int
-	}{
-		{"main", vault, treeNum, root, nullifier},
-		{"usdr", usdrVault, usdrTreeNum, usdrRoot, usdrNullifier},
-	} {
+	}
+	var inputs []input
+	for i := 0; i < p.mainLayout.inputs; i++ {
+		name := "main"
+		if p.mainLayout.inputs > 1 {
+			name = fmt.Sprintf("main input %d", i)
+		}
+		inputs = append(inputs, input{name, vault, h.vaultAddr,
+			p.publicSignal[p.mainLayout.treeNumbersOffset+i],
+			p.publicSignal[p.mainLayout.merkleRootsOffset+i],
+			p.publicSignal[p.mainLayout.nullifiersOffset+i]})
+	}
+	inputs = append(inputs, input{"usdr", usdrVault, h.usdrVaultAddr, usdrTreeNum, usdrRoot, usdrNullifier})
+	for _, in := range inputs {
 		var rootResult []interface{}
-		if err := leg.vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", leg.treeNum, leg.root); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s rootHistory check: %s", leg.name, err)})
+		if err := in.vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", in.treeNum, in.root); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s rootHistory check: %s", in.name, err)})
 			return
 		}
 		if rootKnown, ok := rootResult[0].(bool); !ok || !rootKnown {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s: merkle root is not a known vault root", leg.name)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s: merkle root is not a known vault root", in.name)})
 			return
 		}
 
 		var nfResult []interface{}
-		if err := leg.vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", leg.treeNum, leg.nullifier); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s nullifiers check: %s", leg.name, err)})
+		if err := in.vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", in.treeNum, in.nullifier); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s nullifiers check: %s", in.name, err)})
 			return
 		}
 		nfSpent, ok := nfResult[0].(bool)
 		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s: unexpected type from nullifiers()", leg.name)})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s: unexpected type from nullifiers()", in.name)})
 			return
 		}
 		if nfSpent {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s: nullifier already spent", leg.name)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s: nullifier already spent", in.name)})
 			return
 		}
 	}
@@ -912,12 +922,12 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// Step (dedup) — claim both notes as in-flight, each in its own vault.
-	// One key per note (not one for the pair) so either note is also
+	// Step (dedup) — claim every note as in-flight, each in its own vault.
+	// One key per note (not one for the request) so each note is also
 	// blocked from being relayed concurrently through another route.
-	nfKeys := []string{
-		nullifierKey(h.vaultAddr, treeNum, nullifier),
-		nullifierKey(h.usdrVaultAddr, usdrTreeNum, usdrNullifier),
+	var nfKeys []string
+	for _, in := range inputs {
+		nfKeys = append(nfKeys, nullifierKey(in.vaultAddr, in.treeNum, in.nullifier))
 	}
 	if !h.claim(nfKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
@@ -1463,7 +1473,12 @@ func parseUsdrFeeRequest(req *RelayPaymentUsdrFeeRequest) (*parsedUsdrFee, error
 		usdrProof[i] = n
 	}
 
-	var sig [layout.PaymentLen]*big.Int
+	mainLayout, ok := usdrFeeMainLegLayouts[len(req.PublicSignal)]
+	if !ok {
+		return nil, fmt.Errorf("publicSignal has %d signals; want a Payment (%d) or Payment2in (%d) statement",
+			len(req.PublicSignal), layout.PaymentLen, layout.Payment2inLen)
+	}
+	sig := make([]*big.Int, len(req.PublicSignal))
 	for i, s := range req.PublicSignal {
 		n, ok := new(big.Int).SetString(s, 10)
 		if !ok {
@@ -1506,6 +1521,7 @@ func parseUsdrFeeRequest(req *RelayPaymentUsdrFeeRequest) (*parsedUsdrFee, error
 		vaultId:          vaultId,
 		proof:            proof,
 		publicSignal:     sig,
+		mainLayout:       mainLayout,
 		cipherText:       ctBytes,
 		encTxData:        encBytes,
 		usdrVaultId:      usdrVaultId,
@@ -1569,7 +1585,7 @@ func buildRelayerFeeProofReceipt(p *parsedRelayerFee) proofReceipt {
 
 // buildUsdrFeeProofReceipts maps a parsedUsdrFee into the two ProofReceipt
 // structs EnygmaDvp.paymentWithUsdrFee() expects — the main leg (a Payment
-// proof, as buildProofReceipt's) and the USDr leg (a UsdrFee proof).
+// or Payment2in proof, per p.mainLayout) and the USDr leg (a UsdrFee proof).
 func buildUsdrFeeProofReceipts(p *parsedUsdrFee) (receipt, usdrReceipt proofReceipt) {
 	sp := snarkProof{
 		A: g1Point{X: p.proof[0], Y: p.proof[1]},
@@ -1581,9 +1597,9 @@ func buildUsdrFeeProofReceipts(p *parsedUsdrFee) (receipt, usdrReceipt proofRece
 	}
 	receipt = proofReceipt{
 		Proof:           sp,
-		Statement:       append(make([]*big.Int, 0, layout.PaymentLen), p.publicSignal[:]...),
-		NumberOfInputs:  big.NewInt(layout.PaymentNullifiersSize),
-		NumberOfOutputs: big.NewInt(layout.PaymentCommitmentsOutSize),
+		Statement:       p.publicSignal,
+		NumberOfInputs:  big.NewInt(int64(p.mainLayout.inputs)),
+		NumberOfOutputs: big.NewInt(int64(p.mainLayout.outputs)),
 	}
 
 	usdrSp := snarkProof{
