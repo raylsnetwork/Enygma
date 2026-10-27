@@ -2,12 +2,9 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
-	"time"
 
-	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -104,128 +101,34 @@ func (c *chain) depositNote(ctx context.Context, payerKeyHex string, vault *bind
 }
 
 // payFanOut pays participant p their amount from the sender's current note
-// with a 1-in/2-out Payment transfer through the relayer, change back to the
-// sender. With payUsdrFee it also pays the relayer's USDr fee from the sender's
-// USDr note in the same transaction, USDr change back to the sender. It
-// returns once the transfer is mined, so the next step's change notes are
-// already in the trees.
+// (see send), change back to the sender.
 func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount *big.Int, payUsdrFee bool) error {
-	c, sender := e.chain, e.sender()
-	in := sender.notes.unspent()
-	if len(in) != 1 {
-		return fmt.Errorf("sender holds %d unspent notes, want 1", len(in))
-	}
-	prev := in[0]
-	change := new(big.Int).Sub(prev.amount, amount)
-	if change.Sign() < 0 {
-		return fmt.Errorf("sender's note holds %s, cannot pay %s", prev.amount, amount)
-	}
-
-	tree, err := c.vaultTree(ctx, c.vaultAddr)
+	sender := e.sender()
+	t, err := e.send(ctx, s, sender, p, amount, payUsdrFee)
 	if err != nil {
 		return err
 	}
-	proof, err := tree.GenerateProof(prev.commitment)
-	if err != nil {
-		return fmt.Errorf("merkle proof for the sender's note: %w", err)
-	}
-	s.log("key", "rebuilt vault tree from %d Commitment events, root 0x%s…", len(tree.GetLeaves()), proof.Root.Text(16)[:12])
+	e.fanOut = append(e.fanOut, t.Settlement)
 
-	proveStart := time.Now()
-	res, err := rpcore.NewPaymentClient(e.cfg.GnarkURL).BoundPaymentProof(
-		new(big.Int).SetBytes(c.vaultAddr.Bytes()),
-		big.NewInt(0),
-		[]*big.Int{prev.amount},
-		[]rpcore.KeyPair{{PrivateKey: sender.Spend.PrivateKey, PublicKey: sender.Spend.PublicKey}},
-		[]*big.Int{prev.salt},
-		[]*big.Int{amount, change},
-		[]*big.Int{p.Spend.PublicKey, sender.Spend.PublicKey},
-		[][]byte{p.View.EncapsKey, sender.View.EncapsKey},
-		merkleDepth,
-		[]*rpcore.MerkleProof{proof},
-		[]*big.Int{big.NewInt(int64(proof.TreeNumber))},
-		tokenId,
-	)
-	proveMs := time.Since(proveStart).Milliseconds()
-	if err != nil {
-		return fmt.Errorf("prove payment: %w", err)
-	}
-	stmt := res.ContractStatement()
-	s.log("zk", "Payment proof in %d ms — nullifier 0x%s…", proveMs, stmt[layout.PaymentNullifiersOffset].Text(16)[:12])
-
-	var fee *usdrFeeLeg
-	if payUsdrFee {
-		feeStart := time.Now()
-		if fee, err = e.proveUsdrFee(ctx, sender); err != nil {
-			return err
-		}
-		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to the sender",
-			time.Since(feeStart).Milliseconds(), e.usdrFixedFee, fee.change.amount)
-	}
-
-	relayStart := time.Now()
-	var tx *relayTxResponse
-	if fee != nil {
-		tx, err = e.relayer.paymentUsdrFee(ctx, res, fee)
-	} else {
-		tx, err = e.relayer.payment(ctx, res)
-	}
-	relayMs := time.Since(relayStart).Milliseconds()
-	if err != nil {
-		return err
-	}
-	receipt, err := c.client.TransactionReceipt(ctx, common.HexToHash(tx.TxHash))
-	if err != nil {
-		return fmt.Errorf("receipt for %s: %w", tx.TxHash, err)
-	}
-	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		return fmt.Errorf("payment %s reverted", tx.TxHash)
-	}
-
-	prev.spent = true
-	changeNote := &note{commitment: stmt[layout.PaymentCommitmentsOutOffset+1], salt: res.SaltA, amount: change}
-	if err := changeNote.check(sender); err != nil {
-		return err
-	}
-	sender.notes = append(sender.notes, changeNote)
-
-	settled := Settlement{To: p.Name, TxHash: common.HexToHash(tx.TxHash)}
-	method, feeCol := "payment", "—"
-	if fee != nil {
-		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) {
-			return fmt.Errorf("paymentWithUsdrFee %s did not insert the relayer's fee note", tx.TxHash)
-		}
-		fee.in.spent = true
-		sender.usdr = append(sender.usdr, fee.change)
-		settled.UsdrFeeNote = fee.feeNote
-		method, feeCol = "paymentWithUsdrFee", e.usdrFixedFee.String()+" USDr"
-	}
-	e.fanOut = append(e.fanOut, settled)
-
-	row, _ := json.Marshal(map[string]any{
-		"n": n, "to": p.Name, "amount": amount.String(), "fee": feeCol,
-		"proveMs": proveMs, "relayMs": relayMs, "gas": tx.GasUsed, "block": tx.BlockNumber, "tx": tx.TxHash,
-	})
-	s.proto("fanout", string(row))
-	s.log("chain", "EnygmaDvp.%s() via relayer → block %d  gas %s  round-trip %d ms", method, tx.BlockNumber, formatNum(tx.GasUsed), relayMs)
-	s.actor(sender, "note", "0x"+changeNote.commitment.Text(16))
+	s.proto("fanout", t.row(n, e.usdrFixedFee))
+	s.actor(sender, "note", "0x"+sender.notes[len(sender.notes)-1].commitment.Text(16))
 	s.actor(sender, "balance", sender.notes.balance().String()+" RaylsERC20")
-	if fee != nil {
+	if t.UsdrFeeNote != nil {
 		s.actor(sender, "usdr", sender.usdr.balance().String()+" USDr")
 		s.proto("relayerUsdrIncome", e.relayerIncome().String()+" USDr")
 		s.done("Paid %s privately and the relayer %s USDr in one transaction (proof %d ms, relay %d ms, gas %s) — %s change back to the sender",
-			p.Name, e.usdrFixedFee, proveMs, relayMs, formatNum(tx.GasUsed), change)
+			p.Name, e.usdrFixedFee, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
 		return nil
 	}
 	s.done("Paid %s privately (proof %d ms, relay %d ms, gas %s) — %s change back to the sender",
-		p.Name, proveMs, relayMs, formatNum(tx.GasUsed), change)
+		p.Name, t.proveMs, t.relayMs, formatNum(t.tx.GasUsed), t.change)
 	return nil
 }
 
 // relayerIncome is the USDr the relayer has been paid in fee notes this run.
 func (e *Engine) relayerIncome() *big.Int {
 	income := new(big.Int)
-	for _, st := range e.fanOut {
+	for _, st := range append(append([]Settlement(nil), e.fanOut...), e.transfers...) {
 		if st.UsdrFeeNote != nil {
 			income.Add(income, e.usdrFixedFee)
 		}

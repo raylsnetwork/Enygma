@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"os"
 	"strings"
@@ -72,8 +73,22 @@ var (
 	encryptedNoteSig   = crypto.Keccak256Hash([]byte("EncryptedNote(uint256,uint256,bytes,bytes)"))
 )
 
-// runShieldScenario plays one scenario with opts and returns its engine.
-func runShieldScenario(t *testing.T, cfg engine.Config, opts engine.Options) *engine.Engine {
+// zkLogs counts the proving log lines the engine has emitted.
+func (s *capturingSink) zkLogs() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, e := range s.events {
+		if e.Kind == engine.Log && e.Cat == "zk" {
+			n++
+		}
+	}
+	return n
+}
+
+// runShieldScenario plays one scenario with opts and returns its engine and
+// the sink that captured its events.
+func runShieldScenario(t *testing.T, cfg engine.Config, opts engine.Options) (*engine.Engine, *capturingSink) {
 	t.Helper()
 	sink := &capturingSink{}
 	e := engine.New(cfg, sink)
@@ -81,7 +96,7 @@ func runShieldScenario(t *testing.T, cfg engine.Config, opts engine.Options) *en
 	if err := e.Run(context.Background(), opts); err != nil {
 		t.Fatalf("Run: %v (failed steps: %s)", err, sink.failures())
 	}
-	return e
+	return e, sink
 }
 
 func TestShieldDemoScenario(t *testing.T) {
@@ -98,7 +113,7 @@ func TestShieldDemoScenario(t *testing.T) {
 	if !opts.UsdrFee {
 		t.Fatal("DefaultOptions should pay fees in USDr")
 	}
-	e := runShieldScenario(t, cfg, opts)
+	e, sink := runShieldScenario(t, cfg, opts)
 
 	client := mustDial(t)
 	defer client.Close()
@@ -161,11 +176,90 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	t.Run("each participant scans the amount the sender assigned", func(t *testing.T) {
-		for i, p := range e.Participants() {
-			if got, want := e.Balance(p), big.NewInt(opts.Payouts[i]); got.Cmp(want) != 0 {
-				t.Errorf("%s: scanned balance %s, want %s", p.Name, got, want)
+	t.Run("after the scripted transfers each participant scans the expected balances", func(t *testing.T) {
+		// DefaultOptions pays out Ana 120, Bruno 90, Carla 150, Diego 60,
+		// Elena 200, Felipe 80, then plays Ana→Bruno 50, Elena→Carla 120,
+		// Carla→Diego 100, Bruno→Felipe 70, Felipe→Ana 30; each payer pays a
+		// 1 USDr fee per transfer.
+		want := map[string]struct{ erc20, usdr int64 }{
+			"Ana": {100, 19}, "Bruno": {70, 19}, "Carla": {170, 19},
+			"Diego": {160, 20}, "Elena": {80, 19}, "Felipe": {120, 19},
+		}
+		for _, p := range e.Participants() {
+			w := want[p.Name]
+			if got := e.Balance(p); got.Cmp(big.NewInt(w.erc20)) != 0 {
+				t.Errorf("%s: scanned RaylsERC20 balance %s, want %d", p.Name, got, w.erc20)
 			}
+			if got := e.UsdrBalance(p); got.Cmp(big.NewInt(w.usdr)) != 0 {
+				t.Errorf("%s: scanned USDr balance %s, want %d", p.Name, got, w.usdr)
+			}
+		}
+	})
+
+	t.Run("each scripted transfer settles with its USDr fee through the relayer", func(t *testing.T) {
+		settled := e.Transfers()
+		if len(settled) != len(opts.Script) {
+			t.Fatalf("got %d transfers, want the script's %d", len(settled), len(opts.Script))
+		}
+		for i, s := range settled {
+			if s.From != opts.Script[i].From || s.To != opts.Script[i].To {
+				t.Errorf("transfer %d: %s→%s, want %s→%s", i+1, s.From, s.To, opts.Script[i].From, opts.Script[i].To)
+			}
+			if s.UsdrFeeNote == nil {
+				t.Errorf("transfer %d: paid no USDr fee note", i+1)
+			}
+			if n := countTopic(txLogs(t, client, s.TxHash), paymentEventSig); n != 2 {
+				t.Errorf("transfer %d: %d Payment events, want 2 (main + USDr)", i+1, n)
+			}
+		}
+	})
+
+	participant := func(name string) engine.Actor {
+		for _, p := range e.Participants() {
+			if p.Name == name {
+				return p
+			}
+		}
+		t.Fatalf("no participant %s", name)
+		return engine.Actor{}
+	}
+
+	t.Run("a manual transfer settles and the recipient scans it", func(t *testing.T) {
+		// After the script Carla holds notes of 150 and 20, Diego 160.
+		if err := e.Transfer(context.Background(), "Carla", "Diego", 15); err != nil {
+			t.Fatalf("Transfer Carla→Diego 15: %v", err)
+		}
+		if got := e.Balance(participant("Diego")); got.Cmp(big.NewInt(175)) != 0 {
+			t.Errorf("Diego's balance %s after the transfer, want 175", got)
+		}
+		if got := e.Balance(participant("Carla")); got.Cmp(big.NewInt(155)) != 0 {
+			t.Errorf("Carla's balance %s after the transfer, want 155", got)
+		}
+	})
+
+	t.Run("an over-balance transfer is refused with no proof and no transaction", func(t *testing.T) {
+		blockBefore, err := client.BlockNumber(context.Background())
+		if err != nil {
+			t.Fatalf("BlockNumber: %v", err)
+		}
+		zkBefore := sink.zkLogs()
+		// Ana holds 100.
+		err = e.Transfer(context.Background(), "Ana", "Bruno", 1000)
+		if !errors.Is(err, engine.ErrRefused) {
+			t.Fatalf("Transfer Ana→Bruno 1000: got %v, want a refusal", err)
+		}
+		blockAfter, err := client.BlockNumber(context.Background())
+		if err != nil {
+			t.Fatalf("BlockNumber: %v", err)
+		}
+		if blockAfter != blockBefore {
+			t.Errorf("chain moved from block %d to %d: a transaction was sent", blockBefore, blockAfter)
+		}
+		if n := sink.zkLogs(); n != zkBefore {
+			t.Errorf("%d proofs made for a refused transfer", n-zkBefore)
+		}
+		if got := e.Balance(participant("Ana")); got.Cmp(big.NewInt(100)) != 0 {
+			t.Errorf("Ana's balance %s after the refusal, want 100 unchanged", got)
 		}
 	})
 
@@ -231,11 +325,11 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	t.Run("with the fee toggle off the fan-out takes the plain route", func(t *testing.T) {
+	t.Run("with the fee toggle off the fan-out and the transfers take the plain route", func(t *testing.T) {
 		plain := engine.DefaultOptions()
 		plain.UsdrFee = false
-		e := runShieldScenario(t, cfg, plain)
-		for i, s := range e.FanOut() {
+		e, _ := runShieldScenario(t, cfg, plain)
+		for i, s := range append(e.FanOut(), e.Transfers()...) {
 			if s.UsdrFeeNote != nil {
 				t.Errorf("step %d: paid a USDr fee note with fees off", i+1)
 			}
@@ -249,6 +343,11 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		if got := e.UsdrBalance(e.Sender()); got.Cmp(grant) != 0 {
 			t.Errorf("sender's USDr balance %s, want the untouched grant %s", got, grant)
+		}
+		for _, p := range e.Participants() {
+			if got := e.UsdrBalance(p); got.Cmp(grant) != 0 {
+				t.Errorf("%s's USDr balance %s, want the untouched grant %s", p.Name, got, grant)
+			}
 		}
 	})
 }

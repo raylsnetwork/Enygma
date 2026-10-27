@@ -4,7 +4,9 @@
 // The sender shields public RaylsERC20 into one note and fans it out to the
 // participants with chained Payment transfers through the relayer, each
 // paying the relayer a USDr fee in the same transaction; each participant
-// finds their note by scanning the chain with their view key.
+// finds their note by scanning the chain with their view key. A scripted
+// sequence of transfers between participants then plays, and Transfer makes
+// more by hand.
 //
 // The engine does every step through the retail core library and the live
 // services (the UsdrFee proof, which has no core client, it requests from the
@@ -81,19 +83,25 @@ type Options struct {
 	// the relayer the fixed USDr fee in the same transaction; off, transfers
 	// take the plain route and pay no fee.
 	UsdrFee bool `json:"usdrFee"`
+	// Script is the transfers between participants played after the fan-out.
+	Script []Transfer `json:"script"`
 }
 
 // DefaultOptions pays the participants different amounts, leaves the sender
-// some change, and pays relayer fees in USDr.
+// some change, plays five transfers between participants, and pays relayer
+// fees in USDr.
 func DefaultOptions() Options {
 	return Options{
 		ShieldTotal: 1000,
 		Payouts:     [K]int64{120, 90, 150, 60, 200, 80},
 		UsdrFee:     true,
+		Script:      append([]Transfer(nil), defaultScript...),
 	}
 }
 
-func (o Options) validate() error {
+// Validate checks the options before a run: positive payouts the shielded
+// total covers, and a script each payer can pay from one note.
+func (o Options) Validate() error {
 	var sum int64
 	for i, p := range o.Payouts {
 		if p <= 0 {
@@ -104,7 +112,7 @@ func (o Options) validate() error {
 	if sum > o.ShieldTotal {
 		return fmt.Errorf("payouts total %d exceeds the shielded total %d", sum, o.ShieldTotal)
 	}
-	return nil
+	return o.simulateScript()
 }
 
 // Role is an actor's part in the scenario.
@@ -142,9 +150,11 @@ type note struct {
 // purse is the notes an actor can open in one vault.
 type purse []*note
 
-// Settlement is one fan-out transfer as it settled on chain.
+// Settlement is one transfer as it settled on chain.
 type Settlement struct {
+	From   string
 	To     string
+	Amount *big.Int
 	TxHash common.Hash
 	// UsdrFeeNote is the relayer's USDr fee note the transfer paid; nil on
 	// the plain route.
@@ -155,6 +165,7 @@ type Settlement struct {
 type Engine struct {
 	cfg  Config
 	sink Sink
+	opts Options
 
 	auditor *rpcore.AuditorKeyPair
 	actors  []*Actor // issuer, sender, participants
@@ -167,7 +178,8 @@ type Engine struct {
 	usdrFixedFee *big.Int
 	relayerFeePk *big.Int
 
-	fanOut []Settlement
+	fanOut    []Settlement
+	transfers []Settlement // the script's, then manual ones
 }
 
 // New returns an engine that reports to sink.
@@ -214,6 +226,12 @@ func (e *Engine) FanOut() []Settlement {
 	return append([]Settlement(nil), e.fanOut...)
 }
 
+// Transfers returns the transfers between participants after the fan-out —
+// the script's, then manual ones — in order.
+func (e *Engine) Transfers() []Settlement {
+	return append([]Settlement(nil), e.transfers...)
+}
+
 func (p purse) balance() *big.Int {
 	sum := new(big.Int)
 	for _, n := range p.unspent() {
@@ -253,12 +271,13 @@ func reachable(rawURL string) bool {
 // Run plays the scenario: check the services, generate every actor's keys,
 // register the sender and participants, give them USDr fee credit, shield
 // the sender's public balance, fan it out to the participants one mined
-// transfer at a time, and let each participant discover their note by
-// scanning.
+// transfer at a time, let each participant discover their note by
+// scanning, and play the scripted transfers between participants.
 func (e *Engine) Run(ctx context.Context, opts Options) error {
-	if err := opts.validate(); err != nil {
+	if err := opts.Validate(); err != nil {
 		return e.fail("prereqs", "Check prerequisites", err)
 	}
+	e.opts = opts
 	steps := []stepDef{
 		{"prereqs", "Check prerequisites", "Probing chain · gnark server · relayer…", e.checkPrereqs},
 		{"keygen", "Generate keys", "Issuer, sender and participants generate spend and view keys…", e.generateKeys},
@@ -282,6 +301,13 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 		})
 	}
 	steps = append(steps, stepDef{"discover", "Discover", "Participants scan the chain with their view keys…", e.discover})
+	for i, t := range opts.Script {
+		steps = append(steps, stepDef{
+			fmt.Sprintf("transfer_%d", i+1), fmt.Sprintf("%s → %s", t.From, t.To),
+			fmt.Sprintf("Transfer %d/%d: %s pays %s %d privately from one note (%s)…", i+1, len(opts.Script), t.From, t.To, t.Amount, route),
+			func(ctx context.Context, s *step) error { return e.payByName(ctx, s, t) },
+		})
+	}
 	announced := make([]map[string]string, len(steps))
 	for i, s := range steps {
 		announced[i] = map[string]string{"id": s.id, "label": s.label}

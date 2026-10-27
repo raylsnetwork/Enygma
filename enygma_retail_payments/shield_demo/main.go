@@ -12,6 +12,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -66,9 +67,12 @@ func (b *broker) Emit(e engine.Event) {
 }
 
 type server struct {
-	cfg     engine.Config
-	broker  *broker
+	cfg    engine.Config
+	broker *broker
+	// running is held by a run or a manual transfer; engine is the last run
+	// that completed, which manual transfers continue.
 	running sync.Mutex
+	engine  *engine.Engine
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +121,11 @@ func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	opts := engine.DefaultOptions()
 	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
-		http.Error(w, `{"error":"bad options"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "bad options")
+		return
+	}
+	if err := opts.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if !s.running.TryLock() {
@@ -126,15 +134,60 @@ func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		defer s.running.Unlock()
+		if s.engine != nil {
+			s.engine.Close()
+			s.engine = nil
+		}
 		s.broker.publish(map[string]string{"kind": "reset"})
 		e := engine.New(s.cfg, s.broker)
-		defer e.Close()
 		if err := e.Run(context.Background(), opts); err != nil {
 			log.Printf("run failed: %v", err)
+			e.Close()
+			return
 		}
+		s.engine = e
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"status":"started"}`)
+}
+
+// handleTransfer makes a manual transfer on the last completed run and
+// answers once it has settled, or with why it was refused.
+func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var t engine.Transfer
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		writeError(w, http.StatusBadRequest, "bad transfer")
+		return
+	}
+	if !s.running.TryLock() {
+		writeError(w, http.StatusConflict, "a run or transfer is already in progress")
+		return
+	}
+	defer s.running.Unlock()
+	if s.engine == nil {
+		writeError(w, http.StatusConflict, "run the scenario first")
+		return
+	}
+	if err := s.engine.Transfer(context.Background(), t.From, t.To, t.Amount); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, engine.ErrRefused) {
+			status = http.StatusUnprocessableEntity
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"status":"settled"}`)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func main() {
@@ -151,6 +204,7 @@ func main() {
 	mux.HandleFunc("/events", s.handleEvents)
 	mux.HandleFunc("/defaults", s.handleDefaults)
 	mux.HandleFunc("/run", s.handleRun)
+	mux.HandleFunc("/transfer", s.handleTransfer)
 
 	log.Printf("Enygma Retail Shield Demo listening on http://localhost%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))

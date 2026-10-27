@@ -61,22 +61,15 @@ type usdrFeeLeg struct {
 	change  *note
 }
 
-// proveUsdrFee proves payer spending their one unspent USDr note to pay the
-// relayer the fixed USDr fee, the rest back to payer as change.
+// proveUsdrFee proves payer spending their smallest USDr note that covers
+// the relayer's fixed USDr fee to pay it, the rest back to payer as change.
 func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, error) {
-	if e.relayerFeePk == nil {
-		return nil, fmt.Errorf("the relayer publishes no fee spend key (set RELAYER_FEE_SPEND_PRIVATE_KEY)")
-	}
 	c := e.chain
-	in := payer.usdr.unspent()
-	if len(in) != 1 {
-		return nil, fmt.Errorf("%s holds %d unspent USDr notes, want 1", payer.Name, len(in))
+	prev, err := payer.usdr.spendable(payer.Name, "USDr", e.usdrFixedFee)
+	if err != nil {
+		return nil, err
 	}
-	prev := in[0]
 	changeAmt := new(big.Int).Sub(prev.amount, e.usdrFixedFee)
-	if changeAmt.Sign() < 0 {
-		return nil, fmt.Errorf("%s's USDr note holds %s, cannot pay the %s USDr fee", payer.Name, prev.amount, e.usdrFixedFee)
-	}
 
 	tree, err := c.vaultTree(ctx, c.usdrVaultAddr)
 	if err != nil {

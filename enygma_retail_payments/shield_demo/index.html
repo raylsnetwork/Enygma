@@ -42,7 +42,13 @@ html,body { background:var(--bg); color:var(--text); font-family:var(--sans); fo
 .opt input { width:84px; background:var(--s2); border:1px solid var(--bd2); color:var(--text); border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:11px; }
 .opt.toggle { flex-direction:row; align-items:center; gap:6px; padding-bottom:3px; }
 .opt.toggle input { width:auto; }
-#optError { font-family:var(--mono); font-size:10px; color:var(--red); }
+#optError, #sendError { font-family:var(--mono); font-size:10px; color:var(--red); }
+.send { padding:8px 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; border-bottom:1px solid var(--bd); }
+.send select, .send input { background:var(--s1); border:1px solid var(--bd2); color:var(--text); border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:11px; }
+.send input { width:70px; }
+#sendBtn { background:var(--blue); color:#031020; border:none; border-radius:5px; padding:4px 12px; font-family:var(--mono); font-size:10px; font-weight:700; cursor:pointer; }
+#sendBtn:disabled { opacity:.3; cursor:not-allowed; }
+#sendError { padding:0 12px 6px; }
 
 .progress-wrap { height:2px; background:var(--bd); }
 .progress-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--teal),var(--blue)); transition:width .5s ease; }
@@ -96,7 +102,7 @@ td.num { text-align:right; }
 <body>
 <div class="header">
   <div class="brand">Enygma</div>
-  <div class="title">Retail Shield<small>shield public RaylsERC20 → private fan-out to 6 participants</small></div>
+  <div class="title">Retail Shield<small>shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</small></div>
   <div class="controls">
     <div class="status-dot" id="statusDot"></div>
     <div id="statusText">idle</div>
@@ -119,6 +125,20 @@ td.num { text-align:right; }
       <table>
         <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
         <tbody id="fanout"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-hdr">Transfers between participants</div>
+      <div class="send">
+        <div class="opt"><label for="sendFrom">From</label><select id="sendFrom"></select></div>
+        <div class="opt"><label for="sendTo">To</label><select id="sendTo"></select></div>
+        <div class="opt"><label for="sendAmount">Amount</label><input id="sendAmount" type="number" min="1" value="10"></div>
+        <button id="sendBtn" disabled>SEND</button>
+      </div>
+      <div id="sendError"></div>
+      <table>
+        <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+        <tbody id="transfers"></tbody>
       </table>
     </div>
     <div class="card"><div class="card-hdr">Protocol</div><div id="proto"></div></div>
@@ -153,6 +173,8 @@ function build() {
         `<div class="a-row"><div class="a-key">${l}</div><div class="a-val" id="a-${i}-${f}">—</div></div>`).join('')}
       </div></div>`).join('');
   $('fanout').innerHTML = '';
+  $('transfers').innerHTML = '';
+  $('sendError').textContent = '';
   $('proto').innerHTML = '';
   $('log').innerHTML = '';
   $('progress').style.width = '0%';
@@ -181,6 +203,13 @@ function setProto(field, value) {
       `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
     return;
   }
+  if (field === 'transfer') {
+    const r = JSON.parse(value);
+    $('transfers').insertAdjacentHTML('beforeend',
+      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.from)} → ${esc(r.to)}</td><td class="num">${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td>` +
+      `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
+    return;
+  }
   if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
   let row = $('proto-' + field);
   if (!row) {
@@ -202,21 +231,21 @@ function log(e) {
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': build(); finished = 0; setStatus('running', 'running'); break;
+  case 'reset': build(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     $('step-' + e.step)?.setAttribute('class', 'step-item running');
     $('stepMsg').className = ''; $('stepMsg').textContent = e.msg || e.label; break;
   case 'step_succeeded':
     $('step-' + e.step)?.setAttribute('class', 'step-item success');
     $('stepMsg').textContent = e.msg;
-    $('progress').style.width = (++finished / Math.max(steps.length, 1) * 100) + '%'; break;
+    $('progress').style.width = Math.min(++finished / Math.max(steps.length, 1) * 100, 100) + '%'; break;
   case 'step_failed':
     $('step-' + e.step)?.setAttribute('class', 'step-item error');
     $('stepMsg').className = 'error'; $('stepMsg').textContent = e.label + ' failed: ' + e.msg; break;
   case 'log': log(e); break;
   case 'actor': setActor(e.actor, e.field, e.value); break;
   case 'proto': setProto(e.field, e.value); break;
-  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; break;
+  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; break;
   case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; break;
   }
 }
@@ -229,12 +258,39 @@ async function loadDefaults() {
     `<div class="opt"><label for="optPay${i}">${esc(n)}</label><input id="optPay${i}" type="number" min="1" value="${d.payouts[i]}"></div>`).join(''));
 }
 
+// The sender and the participants can pay each other by hand once a run is done.
+const PAYERS = ['Sender', ...NAMES];
+for (const sel of ['sendFrom', 'sendTo'])
+  $(sel).innerHTML = PAYERS.map(n => `<option>${esc(n)}</option>`).join('');
+$('sendTo').value = NAMES[1];
+$('sendFrom').value = NAMES[0];
+
+$('sendBtn').onclick = async () => {
+  const t = { from: $('sendFrom').value, to: $('sendTo').value, amount: Number($('sendAmount').value) };
+  $('sendError').textContent = '';
+  $('sendBtn').disabled = true; $('runBtn').disabled = true;
+  try {
+    const res = await fetch('/transfer', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(t) });
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = body;
+      try { msg = JSON.parse(body).error || body; } catch (_) {}
+      $('sendError').textContent = msg;
+    }
+  } finally { $('sendBtn').disabled = false; $('runBtn').disabled = false; }
+};
+
 $('runBtn').onclick = async () => {
   const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked };
   $('optError').textContent = '';
   $('runBtn').disabled = true;
   const res = await fetch('/run', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(opts) });
-  if (!res.ok) { $('optError').textContent = (await res.text()); $('runBtn').disabled = false; }
+  if (!res.ok) {
+    const body = await res.text();
+    let msg = body;
+    try { msg = JSON.parse(body).error || body; } catch (_) {}
+    $('optError').textContent = msg; $('runBtn').disabled = false;
+  }
 };
 
 build();
