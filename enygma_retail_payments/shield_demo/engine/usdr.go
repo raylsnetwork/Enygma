@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
@@ -59,6 +60,8 @@ type usdrFeeLeg struct {
 	feeNote *big.Int
 	in      *note
 	change  *note
+	// proveTime is how long the gnark server took to prove it.
+	proveTime time.Duration
 }
 
 // proveUsdrFee proves payer spending their smallest USDr note that covers
@@ -127,14 +130,16 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		Proof        []*big.Int `json:"proof"`
 		PublicSignal []*big.Int `json:"publicSignal"`
 	}
+	proveStart := time.Now()
 	if err := postJSON(ctx, e.cfg.GnarkURL+"/proof/usdrFee", nil, req, &out); err != nil {
 		return nil, err
 	}
+	proveTime := time.Since(proveStart)
 	if len(out.Proof) != 8 || len(out.PublicSignal) != layout.UsdrFeeLen {
 		return nil, fmt.Errorf("usdrFee proof: got %d proof elements and %d signals, want 8 and %d",
 			len(out.Proof), len(out.PublicSignal), layout.UsdrFeeLen)
 	}
-	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change}
+	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, proveTime: proveTime}
 	for i, v := range out.Proof {
 		leg.proof[i] = v.String()
 	}

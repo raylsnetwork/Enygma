@@ -202,7 +202,8 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		treeNums,
 		tokenId,
 	)
-	proveMs := time.Since(proveStart).Milliseconds()
+	proveTime := time.Since(proveStart)
+	proveMs := proveTime.Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("prove payment: %w", err)
 	}
@@ -227,12 +228,11 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 
 	var fee *usdrFeeLeg
 	if payUsdrFee {
-		feeStart := time.Now()
 		if fee, err = e.proveUsdrFee(ctx, from); err != nil {
 			return nil, err
 		}
 		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to %s",
-			time.Since(feeStart).Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)
+			fee.proveTime.Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)
 	}
 
 	relayStart := time.Now()
@@ -242,10 +242,17 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	} else {
 		tx, err = e.relayer.payment(ctx, res)
 	}
-	relayMs := time.Since(relayStart).Milliseconds()
+	relayTime := time.Since(relayStart)
 	if err != nil {
 		return nil, err
 	}
+	// The transfer settled: its times go into the run's totals.
+	e.proving += proveTime
+	if fee != nil {
+		e.proving += fee.proveTime
+	}
+	e.relaying += relayTime
+	relayMs := relayTime.Milliseconds()
 	receipt, err := c.client.TransactionReceipt(ctx, common.HexToHash(tx.TxHash))
 	if err != nil {
 		return nil, fmt.Errorf("receipt for %s: %w", tx.TxHash, err)
@@ -430,6 +437,9 @@ func (e *Engine) Transfer(ctx context.Context, from, to string, amount int64) er
 	// auditor's view behind.
 	if err := e.publishAudit(ctx, st); err != nil {
 		st.log("", "✗ auditor view not updated: %v", err)
+	}
+	if _, err := e.publishTotals(ctx, st); err != nil {
+		st.log("", "✗ totals not updated: %v", err)
 	}
 	return nil
 }

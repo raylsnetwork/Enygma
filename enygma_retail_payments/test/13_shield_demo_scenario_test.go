@@ -24,10 +24,15 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"enygma_retail_payments/shield_demo/engine"
@@ -112,20 +117,45 @@ func TestShieldDemoScenario(t *testing.T) {
 		t.Fatalf("set the USDr fixed fee to 1: fee=%v err=%v", fee, err)
 	}
 
-	opts := engine.DefaultOptions()
-	if !opts.UsdrFee {
-		t.Fatal("DefaultOptions should pay fees in USDr")
-	}
-	e, sink := runShieldScenario(t, cfg, opts)
-
-	client := mustDial(t)
-	defer client.Close()
 	receipts := loadOnchainReceipts(t)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 	usdrVaultAddr := common.HexToAddress(receipts["UsdrCoinVault"].ContractAddress)
 	tagRegistryAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
 
+	opts := engine.DefaultOptions()
+	if !opts.UsdrFee || !opts.Tags {
+		t.Fatal("DefaultOptions should pay fees in USDr and tag every transfer")
+	}
+	client := mustDial(t)
+	defer client.Close()
+	runStart, err := client.BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	e, sink := runShieldScenario(t, cfg, opts)
+
+	t.Run("the run's totals count every transaction it put on chain", func(t *testing.T) {
+		totals, err := e.Totals(context.Background())
+		if err != nil {
+			t.Fatalf("Totals: %v", err)
+		}
+		txs, gas := chainActivitySince(t, client, runStart)
+		if totals.Txs != txs || totals.Gas != gas {
+			t.Errorf("totals report %d txs and %d gas, the chain shows %d txs and %d gas since the run started", totals.Txs, totals.Gas, txs, gas)
+		}
+		// At least the fan-out and the script, each one relayed transaction.
+		if min := engine.K + len(opts.Script); totals.Txs < min {
+			t.Errorf("totals report %d txs, want at least %d", totals.Txs, min)
+		}
+		if totals.ProveMs <= 0 || totals.RelayMs <= 0 {
+			t.Errorf("totals report %d ms proving and %d ms relaying, want both positive", totals.ProveMs, totals.RelayMs)
+		}
+	})
+
+	t.Run("every fan-out and scripted transfer is tagged", func(t *testing.T) {
+		checkTagged(t, client, tagRegistryAddr, append(e.FanOut(), e.Transfers()...))
+	})
 	t.Run("sender and participants are registered", func(t *testing.T) {
 		registered := append([]engine.Actor{e.Sender()}, e.Participants()...)
 		if len(registered) != 1+engine.K {
@@ -271,6 +301,15 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("manual transfers are tagged, opening a channel where the pair has none", func(t *testing.T) {
+		// Carla→Diego reuses the script's channel; Ana→Diego opened a new one.
+		manual := e.Transfers()[len(opts.Script):]
+		if len(manual) != 2 {
+			t.Fatalf("got %d manual transfers, want 2", len(manual))
+		}
+		checkTagged(t, client, tagRegistryAddr, manual)
+	})
+
 	t.Run("sender keeps the shielded total minus the payouts", func(t *testing.T) {
 		// DefaultOptions: 1000 shielded, 120+90+150+60+200+80 = 700 paid out.
 		if got, want := e.Balance(e.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
@@ -326,8 +365,8 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	t.Run("without tags the auditor sees every transaction it can open, payers hidden", func(t *testing.T) {
-		checkAudit(t, e, false)
+	t.Run("the auditor names every payer and its balances match the users' own", func(t *testing.T) {
+		checkAudit(t, e, true)
 	})
 
 	t.Run("sender's USDr after the fan-out is the grant minus one fee per transfer", func(t *testing.T) {
@@ -353,6 +392,7 @@ func TestShieldDemoScenario(t *testing.T) {
 				t.Errorf("step %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
 			}
 		}
+		checkTagged(t, client, tagRegistryAddr, append(e.FanOut(), e.Transfers()...))
 		checkDiegoElenaMerge(t, client, e.Transfers(), vaultAddr, false)
 		for name, want := range map[string]int64{"Diego": 10, "Elena": 230} {
 			for _, p := range e.Participants() {
@@ -369,53 +409,105 @@ func TestShieldDemoScenario(t *testing.T) {
 				t.Errorf("%s's USDr balance %s, want the untouched grant %s", p.Name, got, grant)
 			}
 		}
-
-		t.Run("with tags on as well, recipients find every transfer by its tag and scan the same balances", func(t *testing.T) {
-			tagged := plain
-			tagged.Tags = true
-			te, _ := runShieldScenario(t, cfg, tagged)
-			checkTagged(t, client, tagRegistryAddr, append(te.FanOut(), te.Transfers()...))
-			for _, s := range te.Transfers() {
-				if s.UsdrFeeNote != nil {
-					t.Errorf("%s→%s: paid a USDr fee note with fees off", s.From, s.To)
-				}
-			}
-			sameBalances(t, e, te)
-			checkAudit(t, te, true)
-		})
+		checkAudit(t, e, true)
 	})
 
-	t.Run("with tags on, recipients find every transfer by its tag and scan the same balances", func(t *testing.T) {
-		tagged := engine.DefaultOptions()
-		tagged.Tags = true
-		te, _ := runShieldScenario(t, cfg, tagged)
-		checkTagged(t, client, tagRegistryAddr, append(te.FanOut(), te.Transfers()...))
-		for _, s := range append(te.FanOut(), te.Transfers()...) {
+	t.Run("with the tag toggle off recipients find every transfer by trial decryption and payers stay hidden", func(t *testing.T) {
+		untagged := engine.DefaultOptions()
+		untagged.Tags = false
+		ue, _ := runShieldScenario(t, cfg, untagged)
+		for _, s := range append(ue.FanOut(), ue.Transfers()...) {
+			if s.TagTxHash != (common.Hash{}) {
+				t.Errorf("%s→%s: published a tag with tags off", s.From, s.To)
+			}
 			if s.UsdrFeeNote == nil {
 				t.Errorf("%s→%s: paid no USDr fee note with fees on", s.From, s.To)
 			}
 		}
-		// The tags-off run above scanned these same balances after the script.
-		checkAfterScript(t, te)
-		if got, want := te.Balance(te.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
+		checkAfterScript(t, ue)
+		if got, want := ue.Balance(ue.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
 			t.Errorf("sender's private balance %s, want %s", got, want)
 		}
-		if got, want := te.UsdrBalance(te.Sender()), big.NewInt(14); got.Cmp(want) != 0 {
-			t.Errorf("sender's USDr balance %s, want %s", got, want)
-		}
-
-		// Ana and Elena have no channel yet: the transfer opens one first.
-		elenaBefore := te.Balance(participantOf(t, te, "Elena"))
-		if err := te.Transfer(context.Background(), "Ana", "Elena", 10); err != nil {
-			t.Fatalf("Transfer Ana→Elena 10: %v", err)
-		}
-		if got, want := te.Balance(participantOf(t, te, "Elena")), new(big.Int).Add(elenaBefore, big.NewInt(10)); got.Cmp(want) != 0 {
-			t.Errorf("Elena's balance %s after a tagged manual transfer, want %s", got, want)
-		}
-		manual := te.Transfers()
-		checkTagged(t, client, tagRegistryAddr, manual[len(manual)-1:])
-		checkAudit(t, te, true)
+		checkAudit(t, ue, false)
 	})
+
+	t.Run("a relayer that stops mid-run fails the step with its error and ends the run", func(t *testing.T) {
+		relayer, err := url.Parse(cfg.RelayerURL)
+		if err != nil {
+			t.Fatalf("parse relayer URL: %v", err)
+		}
+		// The proxy passes requests to the relayer until the first fee-paying
+		// payment, then drops every connection, as a stopped relayer would.
+		var stopped atomic.Bool
+		forward := httputil.NewSingleHostReverseProxy(relayer)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/relay/payment_usdr_fee" {
+				stopped.Store(true)
+			}
+			if stopped.Load() {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					conn.Close()
+				}
+				return
+			}
+			forward.ServeHTTP(w, r)
+		}))
+		defer proxy.Close()
+
+		stopping := cfg
+		stopping.RelayerURL = proxy.URL
+		short := engine.DefaultOptions()
+		short.Script = nil
+		sink := &capturingSink{}
+		fe := engine.New(stopping, sink)
+		defer fe.Close()
+		if err := fe.Run(context.Background(), short); err == nil {
+			t.Fatal("Run succeeded with the relayer stopped")
+		}
+		if len(fe.FanOut()) != 0 {
+			t.Errorf("%d fan-out transfers settled with the relayer stopped, want none", len(fe.FanOut()))
+		}
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		failed := false
+		for _, ev := range sink.events {
+			switch ev.Kind {
+			case engine.StepFailed:
+				failed = true
+				if ev.Msg == "" {
+					t.Errorf("step %s failed with no error message", ev.Step)
+				}
+			case engine.RunDone:
+				t.Error("the run reported done after a failed step")
+			}
+		}
+		if !failed {
+			t.Error("no step reported the failure")
+		}
+		if last := sink.events[len(sink.events)-1]; last.Kind != engine.RunFailed || last.Msg == "" {
+			t.Errorf("last event %+v, want the run failing with its error", last)
+		}
+	})
+}
+
+// chainActivitySince counts the transactions and the gas they used in the
+// blocks after block from.
+func chainActivitySince(t *testing.T, client *ethclient.Client, from uint64) (txs int, gas uint64) {
+	t.Helper()
+	head, err := client.BlockNumber(context.Background())
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	for n := from + 1; n <= head; n++ {
+		b, err := client.BlockByNumber(context.Background(), new(big.Int).SetUint64(n))
+		if err != nil {
+			t.Fatalf("block %d: %v", n, err)
+		}
+		txs += len(b.Transactions())
+		gas += b.GasUsed()
+	}
+	return txs, gas
 }
 
 // checkAfterScript checks every participant's scanned balances after
@@ -517,24 +609,6 @@ func checkAudit(t *testing.T, e *engine.Engine, tagged bool) {
 		}
 		if got, own := a.UsdrBalances[u.Name], e.UsdrBalance(u); got == nil || got.Cmp(own) != 0 {
 			t.Errorf("%s: auditor's USDr balance %v, the user's own scan %s", u.Name, got, own)
-		}
-	}
-}
-
-// sameBalances checks that two runs of one scenario left the sender and
-// every participant with the same scanned balances.
-func sameBalances(t *testing.T, want, got *engine.Engine) {
-	t.Helper()
-	pairs := [][2]engine.Actor{{want.Sender(), got.Sender()}}
-	for i, p := range want.Participants() {
-		pairs = append(pairs, [2]engine.Actor{p, got.Participants()[i]})
-	}
-	for _, p := range pairs {
-		if w, g := want.Balance(p[0]), got.Balance(p[1]); w.Cmp(g) != 0 {
-			t.Errorf("%s: RaylsERC20 balance %s, want %s as in the other run", p[1].Name, g, w)
-		}
-		if w, g := want.UsdrBalance(p[0]), got.UsdrBalance(p[1]); w.Cmp(g) != 0 {
-			t.Errorf("%s: USDr balance %s, want %s as in the other run", p[1].Name, g, w)
 		}
 	}
 }
