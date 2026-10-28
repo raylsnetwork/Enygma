@@ -187,6 +187,11 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	}
 	s.log("key", "rebuilt vault tree from %d Commitment events, root 0x%s…", len(tree.GetLeaves()), proofs[0].Root.Text(16)[:12])
 
+	fromNode := ActorNode(from.ID)
+	circuit := "Payment"
+	if len(ins) == 2 {
+		circuit = "Payment2in"
+	}
 	proveStart := time.Now()
 	res, err := rpcore.NewPaymentClient(e.cfg.GnarkURL).BoundPaymentProof(
 		new(big.Int).SetBytes(c.vaultAddr.Bytes()),
@@ -205,12 +210,13 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	proveTime := time.Since(proveStart)
 	proveMs := proveTime.Milliseconds()
 	if err != nil {
+		s.hopFailed(fromNode, NodeGnark, "prove "+circuit, err)
 		return nil, fmt.Errorf("prove payment: %w", err)
 	}
 	stmt := res.ContractStatement()
-	circuit, stmtLen, nullifiersOffset, commitmentsOutOffset := "Payment", layout.PaymentLen, layout.PaymentNullifiersOffset, layout.PaymentCommitmentsOutOffset
+	stmtLen, nullifiersOffset, commitmentsOutOffset := layout.PaymentLen, layout.PaymentNullifiersOffset, layout.PaymentCommitmentsOutOffset
 	if len(ins) == 2 {
-		circuit, stmtLen, nullifiersOffset, commitmentsOutOffset = "Payment2in", layout.Payment2inLen, layout.Payment2inNullifiersOffset, layout.Payment2inCommitmentsOutOffset
+		stmtLen, nullifiersOffset, commitmentsOutOffset = layout.Payment2inLen, layout.Payment2inNullifiersOffset, layout.Payment2inCommitmentsOutOffset
 	}
 	if len(stmt) != stmtLen {
 		return nil, fmt.Errorf("%s statement has %d signals, want %d", circuit, len(stmt), stmtLen)
@@ -219,6 +225,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	for i := range ins {
 		nullifiers[i] = "0x" + stmt[nullifiersOffset+i].Text(16)[:12] + "…"
 	}
+	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)))
 	if len(ins) == 2 {
 		s.log("zk", "Payment2in proof in %d ms — merges %s's %s notes, nullifiers %s",
 			proveMs, from.Name, amounts(ins), strings.Join(nullifiers, ", "))
@@ -229,8 +236,10 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	var fee *usdrFeeLeg
 	if payUsdrFee {
 		if fee, err = e.proveUsdrFee(ctx, from); err != nil {
+			s.hopFailed(fromNode, NodeGnark, "prove UsdrFee", err)
 			return nil, err
 		}
+		s.hop(fromNode, NodeGnark, "prove UsdrFee", fmt.Sprintf("%d ms; %s USDr fee note to the relayer", fee.proveTime.Milliseconds(), e.usdrFixedFee))
 		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to %s",
 			fee.proveTime.Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)
 	}
@@ -244,6 +253,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	}
 	relayTime := time.Since(relayStart)
 	if err != nil {
+		s.hopFailed(fromNode, NodeRelayer, "relay", err)
 		return nil, err
 	}
 	// The transfer settled: its times go into the run's totals.
@@ -258,7 +268,9 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		return nil, fmt.Errorf("receipt for %s: %w", tx.TxHash, err)
 	}
 	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		return nil, fmt.Errorf("payment %s reverted", tx.TxHash)
+		err := fmt.Errorf("payment %s reverted", tx.TxHash)
+		s.hopFailed(NodeRelayer, NodeDvp, "settle", err)
+		return nil, err
 	}
 
 	changeNote := &note{commitment: stmt[commitmentsOutOffset+1], salt: res.SaltA, amount: change}
@@ -286,6 +298,16 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		from.usdr = append(from.usdr, fee.change)
 		out.UsdrFeeNote = fee.feeNote
 		out.method = "paymentWithUsdrFee"
+	}
+	s.hop(fromNode, NodeRelayer, "relay", fmt.Sprintf("the relayer, not %s, submits the transaction", from.Name))
+	settled := "the payment"
+	if fee != nil {
+		settled = "the payment and the USDr fee in one transaction"
+	}
+	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)))
+	s.hop(NodeDvp, NodeVault, "notes in", fmt.Sprintf("%s's payment and %s's change, tx %s…", to.Name, from.Name, tx.TxHash[:10]))
+	if fee != nil {
+		s.hop(NodeDvp, NodeUsdrVault, "fee note in", fmt.Sprintf("the relayer's %s USDr fee note, same tx %s…", e.usdrFixedFee, tx.TxHash[:10]))
 	}
 	s.log("chain", "EnygmaDvp.%s() via relayer → block %d  gas %s  round-trip %d ms", out.method, tx.BlockNumber, formatNum(tx.GasUsed), relayMs)
 	return out, nil
@@ -386,6 +408,7 @@ func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amou
 			return fmt.Errorf("%s found %d new notes by scanning, want the payment", to.Name, found)
 		}
 		scan = trialScan(len(events))
+		s.hop(NodeVault, ActorNode(to.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened the payment", to.Name, len(events)))
 		s.log("key", "%s scanned %d encrypted notes and decrypted the payment with their ML-KEM view key", to.Name, len(events))
 		s.actor(to, "scan", scan)
 	}

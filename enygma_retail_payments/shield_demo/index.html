@@ -69,7 +69,7 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #optError:empty { display:none; }
 
 /* ---- diagram: actors | services | contracts, one hop animated at a time --- */
-.diagram { margin:0 28px; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px 0; }
+.diagram { position:relative; margin:0 28px; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px 0; }
 .cols { display:grid; grid-template-columns:1fr 1fr 1fr; font:italic 13px var(--serif); color:var(--muted); }
 .cols span:nth-child(2) { text-align:center; } .cols span:nth-child(3) { text-align:right; }
 #diagram { display:block; width:100%; height:auto; max-height:36vh; font-family:var(--sans); }
@@ -85,6 +85,19 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #diagram .link.used { stroke:var(--bd); }
 #diagram .link.active { stroke:var(--accent); stroke-width:2.5; }
 #diagram .packet { fill:var(--accent); stroke:var(--s1); stroke-width:2; }
+#diagram .link.failed { stroke:var(--bad); stroke-width:2.5; stroke-dasharray:6 4; }
+#diagram .packet.failed { fill:var(--bad); }
+#diagram .node.bad rect { stroke:var(--bad); stroke-width:2.5; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--bad) 40%, transparent)); }
+#diagram .node[data-tip] { cursor:help; }
+.caption .lbl.bad { background:var(--bad); color:var(--on-bad); }
+.caption .err { color:var(--bad); }
+#nodeTip { position:absolute; z-index:50; width:340px; background:var(--s1); border:1px solid var(--bd2); border-radius:10px; padding:10px 12px; box-shadow:0 10px 30px var(--shadow); pointer-events:none; }
+#nodeTip[hidden] { display:none; }
+#nodeTip b { display:block; font:600 14px var(--serif); margin-bottom:4px; }
+#nodeTip .empty { color:var(--muted); font-size:12px; }
+.tip-row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; font:11px var(--mono); }
+.tip-row span:first-child { color:var(--muted); flex:none; }
+.tip-row span:last-child { word-break:break-all; text-align:right; }
 .caption { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-top:1px dashed var(--bd2); padding:10px 2px 12px; min-height:48px; font:16px var(--serif); color:var(--text2); }
 .caption .lbl { font:600 13px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 8px; border-radius:4px; }
 .caption small { font:12px var(--sans); color:var(--muted); }
@@ -138,10 +151,6 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
 .totals { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px 16px; }
 .totals div { font:600 18px var(--mono); }
 .totals small { display:block; font:11px var(--sans); color:var(--muted); }
-.proto-row { display:flex; justify-content:space-between; gap:8px; padding:2px 0; font:11px var(--mono); }
-.proto-row span:first-child { color:var(--muted); }
-.proto-row span:last-child { word-break:break-all; text-align:right; }
-#proto:empty::before { content:'Filled in as the run deploys and configures.'; color:var(--muted); font-size:12px; }
 
 /* ---- terminal drawer: dark in both themes, read-only --------------------- */
 #drawer { position:fixed; left:0; right:0; bottom:0; z-index:900; height:var(--drawer-h); background:var(--t-bg); color:var(--t-text); display:flex; flex-direction:column; border-top:1px solid var(--t-bd); box-shadow:0 -6px 20px var(--shadow); }
@@ -186,6 +195,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
 <section class="diagram">
   <div class="cols"><span>Off-chain parties</span><span>Services</span><span>On-chain contracts</span></div>
   <svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg>
+  <div id="nodeTip" hidden></div>
   <div class="caption"><span id="now">shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</span><span class="q" id="queued"></span></div>
 </section>
 
@@ -233,8 +243,6 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
           <div id="totProve">—<small>proving</small></div>
           <div id="totRelay">—<small>relaying</small></div>
         </div>
-        <h3>Protocol</h3>
-        <div class="box pad" id="proto"></div>
       </div>
     </div>
     <h3 class="spaced">Fan-out</h3>
@@ -270,6 +278,9 @@ const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'
 // The hover detail on an actor's ledger row.
 const DETAIL = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['note','Note'], ['channels','Tag channels'], ['scan','Last scan']];
 let actorFields = [];
+// The run-wide protocol fields (contract addresses, the fixed fee, …), shown
+// as hover detail on the diagram's nodes.
+let protoFields = {};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -325,7 +336,8 @@ function build() {
   $('fanout').innerHTML = '';
   $('transfers').innerHTML = '';
   $('sendError').textContent = '';
-  $('proto').innerHTML = '';
+  protoFields = {};
+  diagram.refreshTip();
   showTotals(null);
   $('auditBalances').innerHTML = '';
   $('auditEntries').innerHTML = '';
@@ -369,13 +381,8 @@ function setProto(field, value) {
   if (field === 'audit') { showAudit(JSON.parse(value)); return; }
   if (field === 'totals') { showTotals(JSON.parse(value)); return; }
   if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
-  let row = $('proto-' + field);
-  if (!row) {
-    $('proto').insertAdjacentHTML('beforeend', `<div class="proto-row" id="proto-${field}"><span>${esc(field)}</span><span></span></div>`);
-    row = $('proto-' + field);
-  }
-  row.lastChild.textContent = short(value);
-  row.lastChild.title = value;
+  protoFields[field] = value;
+  diagram.refreshTip();
 }
 
 // showTotals fills the totals card; null clears it.
@@ -426,6 +433,31 @@ const NODES = [
 ];
 const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
 
+// The protocol fields each node's hover detail shows, as [field, label]. A
+// field no node names shows on EnygmaDvp under its own name.
+const NODE_FIELDS = {
+  EnygmaDvp: [['dvpAddr', 'Address'], ['usdrFixedFee', 'Fixed USDr fee'], ['relayerAddr', 'Submitted by (relayer)']],
+  Erc20CoinVault: [['vaultAddr', 'Address'], ['erc20Addr', 'RaylsERC20 token'], ['shieldGas', 'Shield gas']],
+  UsdrCoinVault: [['usdrVaultAddr', 'Address'], ['usdrFixedFee', 'Fixed fee'], ['relayerUsdrIncome', 'Relayer fee income']],
+  UserRegistry: [['registryAddr', 'Address'], ['auditorPk', 'Auditor key (ML-KEM)']],
+  TagRegistry: [['tagRegistryAddr', 'Address']],
+  TagChannelRegistry: [['tagChannelAddr', 'Address']],
+  relayer: [['relayerAddr', 'Address'], ['relayerUsdrIncome', 'USDr fee income']],
+  auditor: [['auditorPk', 'pk (ML-KEM-768)']],
+};
+const NAMED_FIELDS = new Set(Object.values(NODE_FIELDS).flat().map(([f]) => f));
+
+// nodeTipRows is the hover detail of node id: its fields that are set so far.
+function nodeTipRows(id) {
+  const rows = (NODE_FIELDS[id] || []).filter(([f]) => protoFields[f] !== undefined);
+  if (id === 'EnygmaDvp')
+    for (const f in protoFields) if (!NAMED_FIELDS.has(f)) rows.push([f, f]);
+  return rows.map(([f, l]) => {
+    const v = protoFields[f];
+    return `<div class="tip-row"><span>${esc(l)}</span><span>${esc(v.length > 66 ? short(v) : v)}</span></div>`;
+  }).join('');
+}
+
 const SVGNS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs, parent) {
   const el = document.createElementNS(SVGNS, tag);
@@ -449,6 +481,24 @@ const diagram = (() => {
     svg('rect', { x: -p.w / 2, y: -p.h / 2, width: p.w, height: p.h, rx: n.group === 'service' ? 32 : 6 }, g);
     svg('text', { x: actor ? -p.w / 2 + 12 : 0, y: n.group === 'service' ? 5 : 4, class: 'nl', 'text-anchor': actor ? 'start' : 'middle' }, g).textContent = n.label;
     nodeEl[n.id] = g;
+    if (NODE_FIELDS[n.id]) {
+      g.dataset.tip = '';
+      g.onpointerenter = () => { tipFor = n.id; refreshTip(); };
+      g.onpointerleave = () => { tipFor = null; refreshTip(); };
+    }
+  }
+
+  // The hover card of the node under the pointer, kept up to date as fields arrive.
+  let tipFor = null;
+  function refreshTip() {
+    const tip = $('nodeTip');
+    tip.hidden = !tipFor;
+    if (!tipFor) return;
+    tip.innerHTML = `<b>${esc(NODE[tipFor].label)}</b>` + (nodeTipRows(tipFor) || '<div class="empty">Filled in as the run deploys and configures.</div>');
+    const box = tip.parentElement.getBoundingClientRect(), r = nodeEl[tipFor].getBoundingClientRect();
+    const left = r.left - box.left > box.width / 2 ? r.left - box.left - tip.offsetWidth - 10 : r.right - box.left + 10;
+    tip.style.left = Math.max(4, left) + 'px';
+    tip.style.top = Math.max(4, Math.min(r.top - box.top, box.height - tip.offsetHeight - 4)) + 'px';
   }
 
   // A link curves from the side of one node facing the other; a hop from a
@@ -467,24 +517,29 @@ const diagram = (() => {
   const links = {};
   const link = (a, b) => links[a + '>' + b] ||= svg('path', { d: path(a, b), class: 'link' }, gL);
 
-  // light highlights el for ms, unless it is lit again meanwhile.
+  // light highlights el with cls for ms, unless it is lit with cls again meanwhile.
   function light(el, cls, ms) {
     el.classList.add(cls);
-    clearTimeout(el._t);
-    el._t = setTimeout(() => el.classList.remove(cls), ms);
+    el._t ||= {};
+    clearTimeout(el._t[cls]);
+    el._t[cls] = setTimeout(() => el.classList.remove(cls), ms);
   }
 
+  // show plays one hop. A failed hop stays on its link, red, until the next
+  // run or a hop on the link succeeds; its caption carries the error.
   function show(h, hold) {
     const l = link(h.from, h.to);
     l.classList.add('used');
-    light(l, 'active', hold * 1.3);
-    light(nodeEl[h.from], 'lit', hold * 1.3);
-    light(nodeEl[h.to], 'lit', hold * 1.3);
-    const dot = svg('circle', { r: 6, class: 'packet' }, gP);
+    l.classList.toggle('failed', !!h.failed);
+    if (!h.failed) light(l, 'active', hold * 1.3);
+    const nodeCls = h.failed ? 'bad' : 'lit';
+    light(nodeEl[h.from], nodeCls, h.failed ? hold * 4 : hold * 1.3);
+    light(nodeEl[h.to], nodeCls, h.failed ? hold * 4 : hold * 1.3);
+    const dot = svg('circle', { r: 6, class: 'packet' + (h.failed ? ' failed' : '') }, gP);
     svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: l.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
-    setTimeout(() => dot.remove(), hold + 250);
+    setTimeout(() => dot.remove(), h.failed ? hold * 4 : hold + 250);
     $('now').innerHTML = `<b>${esc(NODE[h.from].label)}</b> ${h.from === h.to ? '' : `→ <b>${esc(NODE[h.to].label)}</b>`} ` +
-      `<span class="lbl">${esc(h.label)}</span> <small>${esc(h.detail || '')}</small>`;
+      `<span class="lbl${h.failed ? ' bad' : ''}">${h.failed ? '✗ ' : ''}${esc(h.label)}</span> <small${h.failed ? ' class="err"' : ''}>${esc(h.detail || '')}</small>`;
   }
 
   // Pacing is in the page only: the engine runs at full speed and each hop
@@ -510,11 +565,12 @@ const diagram = (() => {
       queue.push({ ...h, at: performance.now() });
       if (!timer) pump();
     },
+    refreshTip,
     reset() {
       queue.length = 0; clearTimeout(timer); timer = null;
       gL.innerHTML = ''; gP.innerHTML = '';
       for (const k in links) delete links[k];
-      for (const g of Object.values(nodeEl)) { clearTimeout(g._t); g.classList.remove('lit'); }
+      for (const g of Object.values(nodeEl)) { Object.values(g._t || {}).forEach(clearTimeout); g.classList.remove('lit', 'bad'); }
       $('queued').textContent = '';
     },
   };
