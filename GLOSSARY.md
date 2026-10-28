@@ -23,3 +23,13 @@
 **Statement layout field names** (DvP destination circuit, prefix `DvpDestination`): `Message` (equals the initiator's `CommitB`), `TreeNumber`, `MerkleRoot` and `Nullifier` (of the counterparty's one input note), `CommitA` (the initiator's `CommitA`, recomputed), `CounterVault` (the vault `CommitB` must be paid from).
 
 **Statement layout field names** (private mint circuit, prefix `PrivateMint`): `Commitment` (the minted note), `ContractAddress` (the deployment the proof is bound to), `TokenId`, `CipherText` (the note tag bound to that deployment).
+
+**Spend key**: a user's Poseidon key pair for owning notes; the public half (`pkSpend`) goes into every note commitment paid to them. _Avoid_: account key, address.
+
+**View key**: a user's ML-KEM-768 key pair for finding notes; senders encrypt each note's opening to its public half (`pkView`), and the user decrypts with the private half. _Avoid_: viewing key, scan key.
+
+**Audit ciphertexts**: the pair a user publishes at registration so the auditor can recover their view key: an ML-KEM-768 capsule to the auditor's public key (`mlKemAuditCt`) and the AES-256-GCM encryption of the view key's seed under the key derived from it (`aesAuditCt`).
+
+**Registration**: a user's one-time publication of their spend key, view key and audit ciphertexts in the `UserRegistry`, from their own address; it cannot be repeated for that address. _Avoid_: sign-up, onboarding.
+
+**Hop**: one interaction between two parts of the retail shield demo's system (an actor, the gnark server, the relayer or a contract), such as a proof request, a relay or a registration; the demo's architecture diagram animates one hop at a time. _Avoid_: edge, call, flow.
