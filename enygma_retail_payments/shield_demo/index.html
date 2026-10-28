@@ -132,14 +132,21 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
 #drawerGrip { height:5px; cursor:ns-resize; background:var(--t-bar); flex:none; touch-action:none; }
 #drawerGrip:hover { background:var(--t-hover); }
 #drawer .head { display:flex; align-items:center; gap:4px; padding:0 8px; height:29px; background:var(--t-bar); border-bottom:1px solid var(--t-bd); flex:none; font:12px var(--mono); }
-#drawer .tabs button { background:var(--t-bg); border:none; color:var(--t-text); padding:4px 10px; border-radius:5px 5px 0 0; cursor:pointer; }
+#drawer .tabs { display:flex; gap:2px; align-self:flex-end; }
+#drawer .tabs button { background:none; border:none; color:var(--t-dim); padding:4px 10px; border-radius:5px 5px 0 0; cursor:pointer; font:inherit; }
+#drawer .tabs button.on { background:var(--t-bg); color:var(--t-text); }
+#drawer .tabs button[hidden], #hideReadsOpt[hidden] { display:none; }
+#hideReadsOpt { color:var(--t-dim); font-size:11px; margin-left:10px; display:flex; align-items:center; gap:4px; cursor:pointer; }
 #drawer .count { font-size:10px; color:var(--t-dim); }
 #drawer .sp { flex:1; }
 #drawer .ro, #follow { color:var(--t-dim); font-size:10px; letter-spacing:.12em; margin-left:10px; }
 #follow { background:none; border:none; cursor:pointer; }
 #follow.paused { color:var(--t-zk); }
 #drawerToggle { background:none; border:none; color:var(--t-text); width:26px; cursor:pointer; }
-#termBody { flex:1; overflow:auto; padding:6px 12px; font:11.5px/1.45 var(--mono); white-space:pre-wrap; word-break:break-word; user-select:text; }
+#termBody { flex:1; position:relative; min-height:0; }
+#termBody .pane { position:absolute; inset:0; overflow:auto; padding:6px 12px; font:11.5px/1.45 var(--mono); white-space:pre-wrap; word-break:break-word; user-select:text; }
+#termBody .pane[hidden] { display:none; }
+#termBody .hide-reads .rpc-read { display:none; }
 #termBody .ts { color:var(--t-dim); }
 #termBody .c-key { color:var(--t-key); } #termBody .c-chain { color:var(--t-chain); } #termBody .c-zk { color:var(--t-zk); } #termBody .c-tag { color:var(--t-tag); }
 #termBody .c-step { color:var(--t-step); } #termBody .c-ok { color:var(--t-ok); } #termBody .c-bad { color:var(--t-bad); }
@@ -230,7 +237,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
 <div id="drawer">
   <div id="drawerGrip" title="Drag to resize"></div>
   <div class="head">
-    <div class="tabs"><button>engine <span class="count" id="termCount">0</span></button></div>
+    <div class="tabs" id="termTabs"></div>
+    <label id="hideReadsOpt" hidden title="Hide read-only RPC calls (eth_call, eth_getLogs, …); mined transactions stay"><input type="checkbox" id="hideReads" checked> hide RPC reads</label>
     <span class="sp"></span>
     <button id="follow" title="Jump to the newest line and follow">FOLLOWING</button>
     <span class="ro">READ-ONLY</span>
@@ -386,30 +394,89 @@ function showAudit(a) {
 // ---- terminal drawer: renders lines, never sends input anywhere ----------
 
 // The drawer's open height starts at the CSS default; collapsed, only its grip and tab bar show.
-const term = { lines: 0, follow: true, height: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--drawer-h')), open: true };
+const term = { height: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--drawer-h')), open: true, active: 'engine', tabs: {} };
 const collapsedHeight = () => $('drawerGrip').offsetHeight + $('drawer').querySelector('.head').offsetHeight;
 
-// termLine appends one line, keeping the view at the bottom only while the
-// reader hasn't scrolled up.
-function termLine(e, cls, text) {
-  const body = $('termBody');
-  if (!term.lines) body.innerHTML = '';
+// One tab per log: the engine's, then each service's. A service's tab
+// appears with its first line, so without the launcher's log directory only
+// the engine tab shows. Service tabs keep their newest SERVICE_LINES lines.
+const SERVICES = ['hardhat', 'gnark', 'relayer'];
+const SERVICE_LINES = 5000;
+for (const name of ['engine', ...SERVICES]) {
+  const btn = document.createElement('button');
+  btn.innerHTML = `${name} <span class="count">0</span>`;
+  btn.hidden = name !== 'engine';
+  btn.onclick = () => showTab(name);
+  $('termTabs').appendChild(btn);
+  const pane = document.createElement('div');
+  pane.className = 'pane' + (name === 'hardhat' ? ' hide-reads' : '');
+  pane.hidden = true;
+  pane.onscroll = () => { if (term.active === name) setFollow(pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 6); };
+  $('termBody').appendChild(pane);
+  term.tabs[name] = { btn, pane, lines: 0, follow: true };
+}
+
+function showTab(name) {
+  for (const [n, t] of Object.entries(term.tabs)) { t.btn.classList.toggle('on', n === name); t.pane.hidden = n !== name; }
+  term.active = name;
+  $('hideReadsOpt').hidden = name !== 'hardhat';
+  const t = term.tabs[name];
+  if (t.follow) t.pane.scrollTop = t.pane.scrollHeight;
+  setFollow(t.follow);
+}
+
+// addLine appends one line to a tab, keeping the view at the bottom only
+// while the reader hasn't scrolled up.
+function addLine(name, ts, cls, text) {
+  const t = term.tabs[name];
+  if (!t.lines) t.pane.innerHTML = '';
+  t.btn.hidden = false;
   const div = document.createElement('div');
-  div.innerHTML = `<span class="ts">${esc(e.ts || '')}</span> <span class="${cls}">${esc(text)}</span>`;
-  body.appendChild(div);
-  $('termCount').textContent = ++term.lines;
-  if (term.follow) body.scrollTop = body.scrollHeight;
+  if (cls) div.className = cls;
+  div.innerHTML = `<span class="ts">${esc(ts || '')}</span> ${esc(text)}`;
+  t.pane.appendChild(div);
+  if (name !== 'engine' && t.pane.childElementCount > SERVICE_LINES) t.pane.firstChild.remove();
+  t.btn.querySelector('.count').textContent = ++t.lines;
+  if (t.follow) t.pane.scrollTop = t.pane.scrollHeight;
+}
+
+const termLine = (e, cls, text) => addLine('engine', e.ts, cls, text);
+
+// Hardhat logs each RPC call by its method, a write's details indented
+// under it. A read is any eth_/net_/web3_ call but eth_send*; its own
+// indented lines (an eth_call's revert, say) go with it.
+const ANSI = /\x1b\[[0-9;]*m/g;
+let hardhatInRead = false;
+function isRpcRead(line) {
+  const m = line.match(/^(eth|net|web3)_\w+/);
+  if (m) return hardhatInRead = !m[0].startsWith('eth_send');
+  if (line === '' || /^\s/.test(line)) return hardhatInRead;
+  return hardhatInRead = false;
+}
+
+function serviceLine(e) {
+  if (!term.tabs[e.service]) return;
+  const line = e.line.replace(ANSI, '');
+  addLine(e.service, e.ts, e.service === 'hardhat' && isRpcRead(line) ? 'rpc-read' : '', line);
+}
+
+// clearServices empties the service tabs; the server replays their lines to
+// every new connection.
+function clearServices() {
+  for (const name of SERVICES) { const t = term.tabs[name]; t.lines = 0; t.pane.innerHTML = ''; t.btn.querySelector('.count').textContent = 0; }
+  hardhatInRead = false;
 }
 
 function termReset() {
-  term.lines = 0;
-  setFollow(true);
-  $('termCount').textContent = 0;
-  $('termBody').innerHTML = '<div class="empty">Engine log. Press RUN to start a scenario.</div>';
+  const t = term.tabs.engine;
+  t.lines = 0; t.follow = true;
+  t.btn.querySelector('.count').textContent = 0;
+  t.pane.innerHTML = '<div class="empty">Engine log. Press RUN to start a scenario.</div>';
+  if (term.active === 'engine') setFollow(true);
 }
 
 function setFollow(on) {
-  term.follow = on;
+  term.tabs[term.active].follow = on;
   $('follow').textContent = on ? 'FOLLOWING' : 'PAUSED · ↓ FOLLOW';
   $('follow').classList.toggle('paused', !on);
 }
@@ -419,11 +486,8 @@ function layoutDrawer() {
   $('drawerToggle').textContent = term.open ? '▾' : '▴';
 }
 
-$('termBody').onscroll = () => {
-  const b = $('termBody');
-  setFollow(b.scrollTop + b.clientHeight >= b.scrollHeight - 6);
-};
-$('follow').onclick = () => { $('termBody').scrollTop = $('termBody').scrollHeight; setFollow(true); };
+$('follow').onclick = () => { const p = term.tabs[term.active].pane; p.scrollTop = p.scrollHeight; setFollow(true); };
+$('hideReads').onchange = ev => term.tabs.hardhat.pane.classList.toggle('hide-reads', ev.target.checked);
 $('drawerToggle').onclick = () => { term.open = !term.open; layoutDrawer(); };
 $('drawerGrip').onpointerdown = e => {
   e.preventDefault();
@@ -450,6 +514,7 @@ function onEvent(e) {
   case 'proto': setProto(e.field, e.value); break;
   case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
   case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
+  case 'term': serviceLine(e); break;
   }
 }
 
@@ -499,9 +564,12 @@ $('runBtn').onclick = async () => {
 
 build();
 termReset();
+showTab('engine');
 layoutDrawer();
 loadDefaults();
-new EventSource('/events').onmessage = m => onEvent(JSON.parse(m.data));
+const events = new EventSource('/events');
+events.onopen = clearServices;
+events.onmessage = m => onEvent(JSON.parse(m.data));
 </script>
 </body>
 </html>

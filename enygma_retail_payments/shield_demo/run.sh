@@ -10,7 +10,8 @@
 #   cd enygma_retail_payments/shield_demo && bash run.sh
 #   bash run.sh --no-demo     # bring up the stack only (e.g. for the integration test)
 #
-# Service logs go to $LOG_DIR (default: a fresh temp directory). The relayer
+# Service logs go to $LOG_DIR (default: a fresh temp directory), which the
+# demo tails into its terminal's hardhat, gnark and relayer tabs. The relayer
 # keeps its fee-note openings in build/relayer_fee_notes.jsonl, where the
 # integration test reads them; each run starts it afresh with the chain.
 
@@ -138,7 +139,7 @@ fi
 
 echo "[run.sh] [7/7] building and starting the demo…"
 go build -C "$DEMO_DIR" -o "$BIN_DIR/shield_demo" .
-start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT"
+start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR"
 wait_port demo 9092
 echo "[run.sh] demo: http://localhost:9092  (Ctrl-C to stop everything)"
 command -v open >/dev/null && open http://localhost:9092 || true
