@@ -1,206 +1,303 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Enygma Retail Shield · Live Demo</title>
+<script>
+// The theme is picked before the page paints, so a dark choice doesn't flash light.
+const THEME_KEY = 'enygmaRetailShieldTheme';
+try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.dataset.theme = 'dark'; } catch (_) {}
+</script>
 <style>
+/* Every colour is a token. Light is the default; the dark set is behind the
+   toggle. The terminal keeps its own dark tokens in both themes. */
 :root {
-  --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
-  --teal:#3dd4b0; --teal-dim:rgba(61,212,176,.08); --teal-glow:#0d6b5a;
-  --blue:#52b8ff; --blue-dim:rgba(82,184,255,.09); --blue-glow:#1a5a9a;
-  --green:#3dcc75; --green-dim:rgba(61,204,117,.08); --green-glow:#0d5a2a;
-  --red:#ff5566; --red-dim:rgba(255,85,102,.07);
-  --amber:#ffcc40; --purple:#c3a0ff; --purple-dim:rgba(195,160,255,.08); --orange:#ff9040;
-  --text:#c0d8f0; --text2:#8ab0d0; --muted:#3a5e7a; --label:#6090b8;
+  --bg:#fbf8f2; --s1:#fffdf8; --s2:#f3eee3; --bd:#e7dfcf; --bd2:#d5c9b2;
+  --text:#2b2722; --text2:#5d554a; --muted:#9a8f7e;
+  --accent:#0f766e; --accent-dim:rgba(15,118,110,.10); --on-accent:#ffffff;
+  --ok:#15803d; --warn:#b45309; --bad:#dc2626; --on-bad:#ffffff; --bad-dim:rgba(220,38,38,.08);
+  --erc:#15803d; --erc-dim:rgba(21,128,61,.08); --usdr:#b45309; --usdr-dim:rgba(180,83,9,.08);
+  --shadow:rgba(43,39,34,.12);
   --mono:'SF Mono','Fira Code',Consolas,'Courier New',monospace;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;
-  --r2:11px;
+  --serif:'Iowan Old Style','Palatino Linotype',Georgia,serif;
+  --t-bg:#0b1220; --t-bar:#111a2c; --t-bd:#1e2a40; --t-hover:#2a3a58; --t-text:#c9d6ea; --t-dim:#6b7c96;
+  --t-key:#c3a0ff; --t-chain:#4ade80; --t-zk:#facc15; --t-tag:#ff9040; --t-step:#22d3ee; --t-ok:#4ade80; --t-bad:#f87171;
+  --drawer-h:240px;
+}
+:root[data-theme="dark"] {
+  --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
+  --text:#c0d8f0; --text2:#8ab0d0; --muted:#4f7394;
+  --accent:#3dd4b0; --accent-dim:rgba(61,212,176,.10); --on-accent:#031410;
+  --ok:#3dcc75; --warn:#ffcc40; --bad:#ff5566; --on-bad:#ffffff; --bad-dim:rgba(255,85,102,.07);
+  --erc:#3dcc75; --erc-dim:rgba(61,204,117,.08); --usdr:#ffcc40; --usdr-dim:rgba(255,204,64,.06);
+  --shadow:rgba(0,0,0,.4);
 }
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
-html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.55; min-height:100vh; overflow-x:hidden; }
-::-webkit-scrollbar { width:5px; height:5px; }
+html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.5; }
+body { min-height:100vh; overflow-x:hidden; padding-bottom:calc(var(--drawer-h) + 16px); }
+button, select, input { font:inherit; color:inherit; }
+::-webkit-scrollbar { width:6px; height:6px; }
 ::-webkit-scrollbar-thumb { background:var(--bd2); border-radius:3px; }
 
-.header { padding:9px 18px; border-bottom:1px solid var(--bd); background:var(--s1); display:flex; align-items:center; gap:14px; flex-wrap:wrap; position:sticky; top:0; z-index:100; }
-.brand { font-family:var(--mono); font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--teal); font-weight:700; }
-.title { font-size:13.5px; font-weight:700; flex:1; }
-.title small { font-weight:400; color:var(--label); font-size:11px; margin-left:6px; }
-.controls { display:flex; align-items:center; gap:10px; }
-.status-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
-.status-dot.running { background:var(--blue); box-shadow:0 0 8px var(--blue); animation:pulse 1.2s infinite; }
-.status-dot.success { background:var(--green); box-shadow:0 0 8px var(--green); }
-.status-dot.error { background:var(--red); box-shadow:0 0 8px var(--red); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-#statusText { font-family:var(--mono); font-size:10px; color:var(--label); min-width:56px; }
-#runBtn { background:var(--teal); color:#031410; border:none; border-radius:5px; padding:6px 18px; font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.07em; cursor:pointer; }
-#runBtn:disabled { opacity:.3; cursor:not-allowed; }
-
-.options { padding:8px 18px; background:var(--s1); border-bottom:1px solid var(--bd); display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+/* ---- control bar --------------------------------------------------------- */
+.bar { display:flex; align-items:center; gap:14px; padding:14px 28px; flex-wrap:wrap; }
+h1 { font:600 24px var(--serif); flex:1; white-space:nowrap; }
+h1 span { font:italic 400 16px var(--serif); color:var(--muted); margin-left:8px; }
 .opt { display:flex; flex-direction:column; gap:2px; }
-.opt label { font-family:var(--mono); font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
-.opt input { width:84px; background:var(--s2); border:1px solid var(--bd2); color:var(--text); border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:11px; }
-.opt.toggle { flex-direction:row; align-items:center; gap:6px; padding-bottom:3px; }
-.opt.toggle input { width:auto; }
-#optError, #sendError { font-family:var(--mono); font-size:10px; color:var(--red); }
-.send { padding:8px 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; border-bottom:1px solid var(--bd); }
-.send select, .send input { background:var(--s1); border:1px solid var(--bd2); color:var(--text); border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:11px; }
+.opt label { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+.opt input, .opt select { width:84px; background:var(--s2); border:1px solid var(--bd2); border-radius:6px; padding:3px 6px; font:11px var(--mono); }
+.opt select { width:auto; }
+.toggle { display:flex; gap:6px; align-items:center; color:var(--text2); font-size:12.5px; cursor:pointer; }
+details.opts { position:relative; }
+details.opts summary { cursor:pointer; color:var(--text2); list-style:none; border:1px solid var(--bd2); border-radius:999px; padding:5px 14px; background:var(--s1); }
+details.opts summary::-webkit-details-marker { display:none; }
+details.opts > div { position:absolute; right:0; top:38px; z-index:60; background:var(--s1); border:1px solid var(--bd2); border-radius:10px; padding:12px; display:flex; gap:12px; flex-wrap:wrap; width:max-content; max-width:min(560px, 90vw); box-shadow:0 10px 30px var(--shadow); }
+.chip { display:flex; align-items:center; gap:6px; font:12px var(--mono); padding:4px 10px; border-radius:999px; background:var(--s2); color:var(--text2); }
+.status-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+.chip.running { background:var(--accent-dim); color:var(--accent); } .chip.running .status-dot { background:var(--accent); animation:pulse 1.2s infinite; }
+.chip.success { color:var(--ok); } .chip.success .status-dot { background:var(--ok); }
+.chip.error { color:var(--bad); } .chip.error .status-dot { background:var(--bad); }
+@keyframes pulse { 50% { opacity:.3; } }
+#runBtn { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.1em; padding:7px 24px; border-radius:999px; cursor:pointer; }
+#runBtn:disabled, #sendBtn:disabled { opacity:.35; cursor:not-allowed; }
+#themeBtn { border:1px solid var(--bd2); background:var(--s1); border-radius:50%; width:32px; height:32px; cursor:pointer; }
+#optError, #sendError { font:11px var(--mono); color:var(--bad); }
+#optError:empty { display:none; }
+
+/* ---- diagram (its nodes and hops arrive with #127) ----------------------- */
+.diagram { margin:0 28px; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px 0; }
+.cols { display:grid; grid-template-columns:1fr 1fr 1fr; font:italic 13px var(--serif); color:var(--muted); }
+.cols span:nth-child(2) { text-align:center; } .cols span:nth-child(3) { text-align:right; }
+#diagram { display:block; width:100%; height:auto; max-height:36vh; }
+.caption { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-top:1px dashed var(--bd2); padding:10px 2px 12px; min-height:48px; font:16px var(--serif); color:var(--text2); }
+.caption .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
+
+/* ---- timeline and panels ------------------------------------------------- */
+main { display:grid; grid-template-columns:300px minmax(0,1fr); gap:22px; padding:20px 28px; }
+
+h3 { font:600 17px var(--serif); margin-bottom:6px; }
+.stepper { position:sticky; top:12px; align-self:start; max-height:calc(100vh - var(--drawer-h) - 24px); overflow-y:auto; }
+.stepper .count { font:600 28px var(--serif); margin-bottom:6px; }
+.st { display:flex; gap:12px; position:relative; padding-bottom:10px; color:var(--muted); }
+.st::before { content:''; position:absolute; left:12px; top:26px; bottom:0; width:2px; background:var(--bd); }
+.st:last-child::before { display:none; }
+.st.success::before { background:var(--accent); }
+.st .n { flex:none; width:26px; height:26px; border-radius:50%; border:2px solid var(--bd2); display:grid; place-items:center; font:600 11px var(--mono); background:var(--bg); z-index:1; }
+.st.success, .st.running, .st.error { color:var(--text); }
+.st.success .n { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+.st.running .n { border-color:var(--accent); color:var(--accent); animation:pulse 1.2s infinite; }
+.st.error .n { background:var(--bad); border-color:var(--bad); color:var(--on-bad); }
+.st b { font-weight:600; } .st p { font-size:12px; color:var(--text2); margin-top:2px; }
+.st.error p, #stepMsg.error { color:var(--bad); }
+#stepMsg { font-size:12px; color:var(--text2); margin-bottom:10px; }
+#stepMsg:empty { display:none; }
+
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th { text-align:left; font:italic 13px var(--serif); color:var(--muted); font-weight:400; padding:6px 10px; border-bottom:1px solid var(--bd2); }
+td { padding:5px 10px; border-bottom:1px solid var(--bd); }
+.num { text-align:right; font-variant-numeric:tabular-nums; }
+.box { background:var(--s1); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+.box.pad { padding:12px 14px; }
+.box + h3, .box + .box, h3.spaced { margin-top:18px; }
+.scroll { overflow-x:auto; }
+.ledger td { font-family:var(--mono); font-size:11.5px; }
+.ledger td.who { font-family:var(--sans); font-size:13px; }
+.ledger td.num { font:600 14px var(--mono); }
+.ledger td.erc { color:var(--erc); } .ledger td.usdr { color:var(--usdr); }
+.ledger .role { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+.ledger tr[title] { cursor:help; }
+.split { display:grid; grid-template-columns:1.4fr 1fr; gap:22px; margin-top:18px; }
+.split > div { min-width:0; }
+@media (max-width:1000px) { main, .split { grid-template-columns:minmax(0,1fr); } .stepper { position:static; max-height:none; } }
+.mono td { font-family:var(--mono); font-size:11px; }
+.send { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:6px; }
 .send input { width:70px; }
-#sendBtn { background:var(--blue); color:#031020; border:none; border-radius:5px; padding:4px 12px; font-family:var(--mono); font-size:10px; font-weight:700; cursor:pointer; }
-#sendBtn:disabled { opacity:.3; cursor:not-allowed; }
-#sendError { padding:0 12px 6px; }
-#auditNote { padding:6px 12px; font-family:var(--mono); font-size:10px; color:var(--text2); border-bottom:1px solid var(--bd); }
-.audit-scroll { max-height:260px; overflow-y:auto; }
+#sendBtn { border:none; background:var(--accent); color:var(--on-accent); border-radius:6px; padding:4px 14px; font-weight:700; cursor:pointer; }
+#auditNote { font-size:12px; color:var(--text2); margin-bottom:8px; }
+.audit-scroll { max-height:260px; overflow-y:auto; margin-top:10px; }
 .hidden { color:var(--muted); font-style:italic; }
-td.ok { color:var(--green); } td.pending { color:var(--amber); }
-
-.progress-wrap { height:2px; background:var(--bd); }
-.progress-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--teal),var(--blue)); transition:width .5s ease; }
-.steps-wrap { padding:10px 18px 9px; background:var(--s1); border-bottom:1px solid var(--bd); overflow-x:auto; }
-.steps { display:flex; align-items:center; min-width:max-content; }
-.step-item { display:flex; align-items:center; font-family:var(--mono); font-size:9px; }
-.step-pill { padding:3px 10px; border:1px solid var(--bd); border-radius:20px; color:var(--muted); background:var(--s2); white-space:nowrap; }
-.step-item.running .step-pill { border-color:var(--blue); color:var(--blue); background:var(--blue-dim); animation:pulse 1.4s infinite; }
-.step-item.success .step-pill { border-color:var(--teal); color:var(--teal); background:var(--teal-dim); }
-.step-item.error .step-pill { border-color:var(--red); color:var(--red); background:var(--red-dim); }
-.step-arrow { color:var(--bd2); padding:0 4px; font-size:10px; }
-#stepMsg { padding:6px 18px; font-size:11.5px; color:var(--text2); background:var(--s1); border-bottom:1px solid var(--bd); min-height:30px; }
-#stepMsg.error { color:var(--red); }
-
-.main { display:grid; grid-template-columns:1fr 380px; gap:0; }
-@media (max-width:1000px) { .main { grid-template-columns:1fr; } }
-.actors { padding:12px 14px; display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; align-content:start; }
-.actor { border:1px solid var(--bd); border-radius:var(--r2); background:var(--s2); overflow:hidden; }
-.actor-hdr { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--bd); background:var(--s1); }
-.avatar { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px; border:1px solid; }
-.actor.issuer .avatar { color:var(--amber); border-color:rgba(255,204,64,.3); background:rgba(255,204,64,.06); }
-.actor.sender .avatar { color:var(--teal); border-color:var(--teal-glow); background:var(--teal-dim); }
-.actor.participant .avatar { color:var(--blue); border-color:var(--blue-glow); background:var(--blue-dim); }
-.a-name { font-weight:700; }
-.a-role { font-family:var(--mono); font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
-.a-status { margin-left:auto; font-family:var(--mono); font-size:8.5px; color:var(--green); }
-.a-fields { padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
-.a-row { display:flex; flex-direction:column; gap:1px; }
-.a-key { font-family:var(--mono); font-size:8px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
-.a-val { font-family:var(--mono); font-size:10.5px; color:var(--label); word-break:break-all; }
-.a-val.set { color:var(--text); }
-.balance.usdr { background:rgba(255,204,64,.06); color:var(--amber); border-color:rgba(255,204,64,.3); }
-.balance { display:inline-block; padding:2px 8px; border-radius:4px; font-family:var(--mono); font-size:11px; background:var(--green-dim); color:var(--green); border:1px solid var(--green-glow); }
-
-.side { border-left:1px solid var(--bd); display:flex; flex-direction:column; }
-.card { margin:12px 14px 0; border:1px solid var(--bd2); border-radius:var(--r2); background:var(--s2); overflow:hidden; }
-.card-hdr { padding:7px 12px; border-bottom:1px solid var(--bd); font-family:var(--mono); font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--teal); font-weight:700; }
-table { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10px; }
-th { text-align:left; font-weight:400; color:var(--muted); font-size:8.5px; letter-spacing:.08em; text-transform:uppercase; padding:4px 8px; border-bottom:1px solid var(--bd); }
-td { padding:4px 8px; border-bottom:1px solid var(--bd); color:var(--text); }
-td.num { text-align:right; }
-.proto-row { display:flex; justify-content:space-between; gap:8px; padding:3px 12px; font-family:var(--mono); font-size:10px; }
+td.ok { color:var(--ok); } td.pending { color:var(--warn); }
+.totals { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px 16px; }
+.totals div { font:600 18px var(--mono); }
+.totals small { display:block; font:11px var(--sans); color:var(--muted); }
+.proto-row { display:flex; justify-content:space-between; gap:8px; padding:2px 0; font:11px var(--mono); }
 .proto-row span:first-child { color:var(--muted); }
-.proto-row span:last-child { color:var(--text); word-break:break-all; text-align:right; }
-.totals { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:8px 12px 12px; }
-.totals div { font-family:var(--mono); font-size:16px; color:var(--text); }
-.totals small { display:block; font-family:inherit; font-size:10px; color:var(--muted); margin-top:2px; }
-.log { margin:12px 14px 14px; border:1px solid var(--bd2); border-radius:var(--r2); background:var(--s1); height:340px; overflow-y:auto; padding:6px 10px; font-family:var(--mono); font-size:10px; }
-.log-line { white-space:pre-wrap; color:var(--text2); }
-.log-line .ts { color:var(--muted); margin-right:6px; }
-.log-line.key { color:var(--purple); } .log-line.chain { color:var(--green); } .log-line.zk { color:var(--amber); } .log-line.tag { color:var(--orange); }
+.proto-row span:last-child { word-break:break-all; text-align:right; }
+#proto:empty::before { content:'Filled in as the run deploys and configures.'; color:var(--muted); font-size:12px; }
+
+/* ---- terminal drawer: dark in both themes, read-only --------------------- */
+#drawer { position:fixed; left:0; right:0; bottom:0; z-index:900; height:var(--drawer-h); background:var(--t-bg); color:var(--t-text); display:flex; flex-direction:column; border-top:1px solid var(--t-bd); box-shadow:0 -6px 20px var(--shadow); }
+#drawerGrip { height:5px; cursor:ns-resize; background:var(--t-bar); flex:none; touch-action:none; }
+#drawerGrip:hover { background:var(--t-hover); }
+#drawer .head { display:flex; align-items:center; gap:4px; padding:0 8px; height:29px; background:var(--t-bar); border-bottom:1px solid var(--t-bd); flex:none; font:12px var(--mono); }
+#drawer .tabs button { background:var(--t-bg); border:none; color:var(--t-text); padding:4px 10px; border-radius:5px 5px 0 0; cursor:pointer; }
+#drawer .count { font-size:10px; color:var(--t-dim); }
+#drawer .sp { flex:1; }
+#drawer .ro, #follow { color:var(--t-dim); font-size:10px; letter-spacing:.12em; margin-left:10px; }
+#follow { background:none; border:none; cursor:pointer; }
+#follow.paused { color:var(--t-zk); }
+#drawerToggle { background:none; border:none; color:var(--t-text); width:26px; cursor:pointer; }
+#termBody { flex:1; overflow:auto; padding:6px 12px; font:11.5px/1.45 var(--mono); white-space:pre-wrap; word-break:break-word; user-select:text; }
+#termBody .ts { color:var(--t-dim); }
+#termBody .c-key { color:var(--t-key); } #termBody .c-chain { color:var(--t-chain); } #termBody .c-zk { color:var(--t-zk); } #termBody .c-tag { color:var(--t-tag); }
+#termBody .c-step { color:var(--t-step); } #termBody .c-ok { color:var(--t-ok); } #termBody .c-bad { color:var(--t-bad); }
+#termBody .empty { color:var(--t-dim); }
 </style>
 </head>
 <body>
-<div class="header">
-  <div class="brand">Enygma</div>
-  <div class="title">Retail Shield<small>shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</small></div>
-  <div class="controls">
-    <div class="status-dot" id="statusDot"></div>
-    <div id="statusText">idle</div>
-    <button id="runBtn">RUN</button>
-  </div>
-</div>
-<div class="options" id="options">
-  <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
-  <div class="opt toggle"><input id="optUsdrFee" type="checkbox"><label for="optUsdrFee">USDr fee</label></div>
-  <div class="opt toggle"><input id="optTags" type="checkbox"><label for="optTags">with tag</label></div>
+<header class="bar">
+  <h1>Enygma <span>retail shield · live</span></h1>
+  <label class="toggle"><input id="optUsdrFee" type="checkbox"> USDr fee</label>
+  <label class="toggle"><input id="optTags" type="checkbox"> with tag</label>
+  <details class="opts"><summary>Amounts</summary><div id="options">
+    <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
+  </div></details>
   <span id="optError"></span>
-</div>
-<div class="progress-wrap"><div class="progress-bar" id="progress"></div></div>
-<div class="steps-wrap"><div class="steps" id="steps"></div></div>
-<div id="stepMsg">Press RUN to start a scenario on the fresh deployment.</div>
-<div class="main">
-  <div class="actors" id="actors"></div>
-  <div class="side">
-    <div class="card">
-      <div class="card-hdr">Totals</div>
-      <div class="totals">
-        <div id="totTxs">—<small>transactions</small></div>
-        <div id="totGas">—<small>gas</small></div>
-        <div id="totProve">—<small>proving</small></div>
-        <div id="totRelay">—<small>relaying</small></div>
+  <span class="chip" id="status"><span class="status-dot"></span><span id="statusText">idle</span></span>
+  <button id="runBtn">RUN</button>
+  <button id="themeBtn" title="Light / dark theme" aria-label="Toggle light / dark theme">◐</button>
+</header>
+
+<section class="diagram">
+  <div class="cols"><span>Off-chain parties</span><span>Services</span><span>On-chain contracts</span></div>
+  <svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg>
+  <div class="caption"><span id="now">shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</span><span class="q" id="queued"></span></div>
+</section>
+
+<main>
+  <aside class="stepper" id="stepper">
+    <div class="count" id="stepCount">0 / 0</div>
+    <div id="stepMsg">Press RUN to start a scenario on the fresh deployment.</div>
+    <div id="steps"></div>
+  </aside>
+  <section>
+    <div class="box scroll ledger"><table>
+      <thead><tr><th>Actor</th><th>Status</th><th class="num">Public</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>Discovery</th></tr></thead>
+      <tbody id="actors"></tbody>
+    </table></div>
+    <div class="split">
+      <div>
+        <h3>Auditor’s view</h3>
+        <div class="box pad scroll">
+          <div id="auditNote"></div>
+          <table class="mono">
+            <thead><tr><th>User</th><th class="num">Received</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>vs own scan</th></tr></thead>
+            <tbody id="auditBalances"></tbody>
+          </table>
+          <div class="audit-scroll"><table class="mono">
+            <thead><tr><th>Block</th><th>Kind</th><th>From → To</th><th class="num">Amount</th></tr></thead>
+            <tbody id="auditEntries"></tbody>
+          </table></div>
+        </div>
+      </div>
+      <div>
+        <h3>Send</h3>
+        <div class="box pad">
+          <div class="send">
+            <div class="opt"><label for="sendFrom">From</label><select id="sendFrom"></select></div>
+            <div class="opt"><label for="sendTo">To</label><select id="sendTo"></select></div>
+            <div class="opt"><label for="sendAmount">Amount</label><input id="sendAmount" type="number" min="1" value="10"></div>
+            <button id="sendBtn" disabled>SEND</button>
+          </div>
+          <div id="sendError"></div>
+        </div>
+        <h3>Run totals</h3>
+        <div class="box pad totals">
+          <div id="totTxs">—<small>transactions</small></div>
+          <div id="totGas">—<small>gas</small></div>
+          <div id="totProve">—<small>proving</small></div>
+          <div id="totRelay">—<small>relaying</small></div>
+        </div>
+        <h3>Protocol</h3>
+        <div class="box pad" id="proto"></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-hdr">Fan-out</div>
-      <table>
-        <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
-        <tbody id="fanout"></tbody>
-      </table>
-    </div>
-    <div class="card">
-      <div class="card-hdr">Transfers between participants</div>
-      <div class="send">
-        <div class="opt"><label for="sendFrom">From</label><select id="sendFrom"></select></div>
-        <div class="opt"><label for="sendTo">To</label><select id="sendTo"></select></div>
-        <div class="opt"><label for="sendAmount">Amount</label><input id="sendAmount" type="number" min="1" value="10"></div>
-        <button id="sendBtn" disabled>SEND</button>
-      </div>
-      <div id="sendError"></div>
-      <table>
-        <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th>Recipient's scan</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
-        <tbody id="transfers"></tbody>
-      </table>
-    </div>
-    <div class="card">
-      <div class="card-hdr">Auditor</div>
-      <div id="auditNote"></div>
-      <table>
-        <thead><tr><th>User</th><th class="num">Received</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>vs own scan</th></tr></thead>
-        <tbody id="auditBalances"></tbody>
-      </table>
-      <div class="audit-scroll"><table>
-        <thead><tr><th>Block</th><th>Kind</th><th>From → To</th><th class="num">Amount</th></tr></thead>
-        <tbody id="auditEntries"></tbody>
-      </table></div>
-    </div>
-    <div class="card"><div class="card-hdr">Protocol</div><div id="proto"></div></div>
-    <div class="log" id="log"></div>
+    <h3 class="spaced">Fan-out</h3>
+    <div class="box scroll"><table class="mono">
+      <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+      <tbody id="fanout"></tbody>
+    </table></div>
+    <h3 class="spaced">Transfers between participants</h3>
+    <div class="box scroll"><table class="mono">
+      <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th>Recipient's scan</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+      <tbody id="transfers"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<div id="drawer">
+  <div id="drawerGrip" title="Drag to resize"></div>
+  <div class="head">
+    <div class="tabs"><button>engine <span class="count" id="termCount">0</span></button></div>
+    <span class="sp"></span>
+    <button id="follow" title="Jump to the newest line and follow">FOLLOWING</button>
+    <span class="ro">READ-ONLY</span>
+    <button id="drawerToggle" title="Collapse / expand" aria-label="Collapse / expand the terminal">▾</button>
   </div>
+  <div id="termBody"></div>
 </div>
 <script>
 const K = 6;
 const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
 let steps = []; // [{id, label}], announced by the engine at the start of a run
 const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'participant'])];
-const FIELDS = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['public','Public balance'], ['balance','RaylsERC20 (private)'], ['usdr','USDr (private)'], ['note','Note'], ['channels','Tag channels'], ['scan','Last scan']];
+// The hover detail on an actor's ledger row.
+const DETAIL = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['note','Note'], ['channels','Tag channels'], ['scan','Last scan']];
+let actorFields = [];
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const short = v => v.length > 26 ? v.slice(0, 14) + '…' + v.slice(-8) : v;
 
+$('themeBtn').onclick = () => {
+  const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch (_) {}
+};
+
 function buildSteps() {
   $('steps').innerHTML = steps.map(({id, label}, i) =>
-    (i ? '<span class="step-arrow">›</span>' : '') +
-    `<div class="step-item" id="step-${id}"><span class="step-pill">${esc(label)}</span></div>`).join('');
+    `<div class="st" id="step-${id}"><span class="n">${i + 1}</span><div><b>${esc(label)}</b><p></p></div></div>`).join('');
+  showProgress(0);
+}
+
+function showProgress(done) {
+  $('stepCount').textContent = `${done} / ${steps.length}`;
+}
+
+// setStep marks a step's state; only the running or failed step shows its
+// message. A step outside the scenario (a manual transfer) shows it above the
+// stepper instead. It reports whether the step is one of the scenario's.
+function setStep(id, state, msg) {
+  const el = $('step-' + id);
+  $('stepMsg').className = state === 'error' ? 'error' : '';
+  $('stepMsg').textContent = el ? '' : msg;
+  if (!el) return false;
+  el.className = 'st ' + state;
+  if (state === 'running') keepInView($('stepper'), el);
+  const i = steps.findIndex(s => s.id === id);
+  el.querySelector('.n').textContent = state === 'success' ? '✓' : state === 'error' ? '✗' : i + 1;
+  el.querySelector('p').textContent = state === 'success' ? '' : msg;
+  return true;
+}
+
+// keepInView scrolls only `box` (el's offsetParent), never the page, to keep
+// `el` in the top half of it: the bottom can sit under the terminal drawer.
+function keepInView(box, el) {
+  if (el.offsetTop < box.scrollTop || el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight / 2)
+    box.scrollTop = el.offsetTop - 2 * el.offsetHeight;
 }
 
 function build() {
   buildSteps();
+  actorFields = ACTORS.map(() => ({}));
   $('actors').innerHTML = ACTORS.map(([name, role], i) => `
-    <div class="actor ${role}" id="actor-${i}">
-      <div class="actor-hdr"><div class="avatar">${name[0]}</div>
-        <div><div class="a-name">${esc(name)}</div><div class="a-role">${role}</div></div>
-        <div class="a-status" id="a-${i}-status"></div></div>
-      <div class="a-fields">${FIELDS.map(([f, l]) =>
-        `<div class="a-row"><div class="a-key">${l}</div><div class="a-val" id="a-${i}-${f}">—</div></div>`).join('')}
-      </div></div>`).join('');
+    <tr id="actor-${i}"><td class="who"><b>${esc(name)}</b> <span class="role">${role}</span></td>
+      <td id="a-${i}-status">—</td><td class="num" id="a-${i}-public">—</td>
+      <td class="num erc" id="a-${i}-balance">—</td><td class="num usdr" id="a-${i}-usdr">—</td>
+      <td id="a-${i}-discovery"></td></tr>`).join('');
   $('fanout').innerHTML = '';
   $('transfers').innerHTML = '';
   $('sendError').textContent = '';
@@ -209,23 +306,25 @@ function build() {
   $('auditBalances').innerHTML = '';
   $('auditEntries').innerHTML = '';
   $('auditNote').textContent = "The auditor recovers each user's view key once they register.";
-  $('log').innerHTML = '';
-  $('progress').style.width = '0%';
 }
 
 function setStatus(state, text) {
-  $('statusDot').className = 'status-dot ' + state;
+  $('status').className = 'chip ' + state;
   $('statusText').textContent = text;
 }
 
 function setActor(i, field, value) {
-  if (field === 'status') { $(`a-${i}-status`).textContent = value; return; }
-  const el = $(`a-${i}-${field}`);
-  if (!el) return;
-  el.classList.add('set');
-  el.title = value;
-  el.innerHTML = field === 'balance' ? `<span class="balance">${esc(value)}</span>`
-    : field === 'usdr' ? `<span class="balance usdr">${esc(value)}</span>` : esc(short(value));
+  const f = actorFields[i];
+  if (!f) return;
+  f[field] = value;
+  const set = (id, v) => { const el = $(`a-${i}-${id}`); el.textContent = v; el.title = v; };
+  if (field === 'status') set('status', value);
+  else if (field === 'public') set('public', value.replace(' RaylsERC20', ''));
+  else if (field === 'balance') set('balance', value.replace(' RaylsERC20', ''));
+  else if (field === 'usdr') set('usdr', value.replace(' USDr', ''));
+  else if (field === 'scan' || field === 'channels') set('discovery', [f.channels, f.scan].filter(Boolean).join(' · '));
+  else if (field === 'pkSpend' && $(`a-${i}-status`).textContent === '—') set('status', 'keys made');
+  $('actor-' + i).title = DETAIL.filter(([k]) => f[k]).map(([k, l]) => `${l}: ${f[k]}`).join('\n');
 }
 
 function setProto(field, value) {
@@ -284,33 +383,73 @@ function showAudit(a) {
     `<td class="num">${esc(en.amount)} ${en.asset === 'USDr' ? 'USDr' : ''}</td></tr>`).join('');
 }
 
-function log(e) {
+// ---- terminal drawer: renders lines, never sends input anywhere ----------
+
+// The drawer's open height starts at the CSS default; collapsed, only its grip and tab bar show.
+const term = { lines: 0, follow: true, height: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--drawer-h')), open: true };
+const collapsedHeight = () => $('drawerGrip').offsetHeight + $('drawer').querySelector('.head').offsetHeight;
+
+// termLine appends one line, keeping the view at the bottom only while the
+// reader hasn't scrolled up.
+function termLine(e, cls, text) {
+  const body = $('termBody');
+  if (!term.lines) body.innerHTML = '';
   const div = document.createElement('div');
-  div.className = 'log-line ' + (e.cat || '');
-  div.innerHTML = `<span class="ts">${esc(e.ts || '')}</span>${esc(e.msg)}`;
-  $('log').appendChild(div);
-  $('log').scrollTop = $('log').scrollHeight;
+  div.innerHTML = `<span class="ts">${esc(e.ts || '')}</span> <span class="${cls}">${esc(text)}</span>`;
+  body.appendChild(div);
+  $('termCount').textContent = ++term.lines;
+  if (term.follow) body.scrollTop = body.scrollHeight;
 }
+
+function termReset() {
+  term.lines = 0;
+  setFollow(true);
+  $('termCount').textContent = 0;
+  $('termBody').innerHTML = '<div class="empty">Engine log. Press RUN to start a scenario.</div>';
+}
+
+function setFollow(on) {
+  term.follow = on;
+  $('follow').textContent = on ? 'FOLLOWING' : 'PAUSED · ↓ FOLLOW';
+  $('follow').classList.toggle('paused', !on);
+}
+
+function layoutDrawer() {
+  document.documentElement.style.setProperty('--drawer-h', (term.open ? term.height : collapsedHeight()) + 'px');
+  $('drawerToggle').textContent = term.open ? '▾' : '▴';
+}
+
+$('termBody').onscroll = () => {
+  const b = $('termBody');
+  setFollow(b.scrollTop + b.clientHeight >= b.scrollHeight - 6);
+};
+$('follow').onclick = () => { $('termBody').scrollTop = $('termBody').scrollHeight; setFollow(true); };
+$('drawerToggle').onclick = () => { term.open = !term.open; layoutDrawer(); };
+$('drawerGrip').onpointerdown = e => {
+  e.preventDefault();
+  const move = ev => { term.open = true; term.height = Math.max(80, Math.min(innerHeight - 120, innerHeight - ev.clientY)); layoutDrawer(); };
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+};
 
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': build(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': build(); termReset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
-    $('step-' + e.step)?.setAttribute('class', 'step-item running');
-    $('stepMsg').className = ''; $('stepMsg').textContent = e.msg || e.label; break;
+    setStep(e.step, 'running', e.msg || e.label);
+    termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
-    $('step-' + e.step)?.setAttribute('class', 'step-item success');
-    $('stepMsg').textContent = e.msg;
-    $('progress').style.width = Math.min(++finished / Math.max(steps.length, 1) * 100, 100) + '%'; break;
+    if (setStep(e.step, 'success', e.msg)) showProgress(++finished);
+    termLine(e, 'c-ok', `✓ ${e.label}  ${e.msg}`); break;
   case 'step_failed':
-    $('step-' + e.step)?.setAttribute('class', 'step-item error');
-    $('stepMsg').className = 'error'; $('stepMsg').textContent = e.label + ' failed: ' + e.msg; break;
-  case 'log': log(e); break;
+    setStep(e.step, 'error', e.label + ' failed: ' + e.msg);
+    termLine(e, 'c-bad', `✗ ${e.label} failed: ${e.msg}`); break;
+  case 'log': termLine(e, e.cat ? 'c-' + e.cat : '', `[${(e.cat || '·').padEnd(5)}] ${e.msg}`); break;
   case 'actor': setActor(e.actor, e.field, e.value); break;
   case 'proto': setProto(e.field, e.value); break;
-  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; break;
-  case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; break;
+  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
+  case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
   }
 }
 
@@ -319,7 +458,7 @@ async function loadDefaults() {
   $('optTotal').value = d.shieldTotal;
   $('optUsdrFee').checked = d.usdrFee;
   $('optTags').checked = d.tags;
-  $('optError').insertAdjacentHTML('beforebegin', NAMES.map((n, i) =>
+  $('options').insertAdjacentHTML('beforeend', NAMES.map((n, i) =>
     `<div class="opt"><label for="optPay${i}">${esc(n)}</label><input id="optPay${i}" type="number" min="1" value="${d.payouts[i]}"></div>`).join(''));
 }
 
@@ -359,6 +498,8 @@ $('runBtn').onclick = async () => {
 };
 
 build();
+termReset();
+layoutDrawer();
 loadDefaults();
 new EventSource('/events').onmessage = m => onEvent(JSON.parse(m.data));
 </script>
