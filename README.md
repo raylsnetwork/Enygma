@@ -47,6 +47,7 @@ The repo is ~25 independent Go modules (`git ls-files '*go.mod'` lists them) —
 
 ```bash
 make help       # list every target
+make hooks      # once per clone: gofmt + gitleaks checks before every commit
 make ci         # what CI runs: gofmt check + build + vet + unit tests, every module
 make ci MODULE=enygma_dvp/src   # the same, scoped to one module
 ```

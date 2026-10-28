@@ -27,14 +27,25 @@ mkdir -p "$BIN_DIR"
 START_DEMO=1
 [ "${1:-}" = "--no-demo" ] && START_DEMO=0
 
+# A shell that hasn't loaded nvm (an agent's, a fresh terminal) may be on an
+# old Node: switch to enygma_dvp's .nvmrc version with nvm when it's there.
+node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+if [ "$(node_major)" -lt 20 ] && [ -s "$NVM_SH" ]; then
+    set +u # nvm.sh isn't safe under set -u
+    . "$NVM_SH"
+    nvm use --silent "$(cat "$DVP_ROOT/.nvmrc")" >/dev/null 2>&1 || true
+    set -u
+fi
+
 # preflight — fails in a second, with the fix, on what otherwise fails minutes
 # in: an unsupported Node (Hardhat 2 runs on 20, 22 or 24), enygma_dvp's npm
 # packages not installed, or Groth16 keys still Git LFS pointers.
 preflight() {
     local ok=1 major
-    major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+    major=$(node_major)
     if [ "$major" -lt 20 ]; then
-        echo "[run.sh] Node $(node -v 2>/dev/null || echo missing) is too old for Hardhat; use 20 or later: cd $DVP_ROOT && nvm use" >&2
+        echo "[run.sh] Node $(node -v 2>/dev/null || echo missing) is too old for Hardhat; use 20 or later: cd $DVP_ROOT && nvm install && nvm use" >&2
         ok=0
     fi
     if [ ! -x "$DVP_ROOT/node_modules/.bin/hardhat" ]; then

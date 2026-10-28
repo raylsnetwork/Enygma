@@ -52,7 +52,7 @@ TEST_MODULES := $(filter-out $(TEST_SKIP_MODULES),$(MODULES))
 # Package list for one module, minus the skipped packages (never empty-fails).
 TEST_PKGS = pkgs=$$(go list ./... | grep -v -x $(foreach p,$(TEST_SKIP_PACKAGES),-e '$(p)') || true)
 
-.PHONY: help modules fmt fmt-check build vet check test-unit ci \
+.PHONY: help modules hooks fmt fmt-check build vet check test-unit ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test \
 	auctions-gnark auctions-keygen
@@ -64,6 +64,10 @@ modules: ## List the Go modules the targets below operate on
 	@printf '%s\n' $(MODULES)
 
 # ── Quality gates ─────────────────────────────────────────────────────────────
+
+hooks: ## Install the pre-commit hooks (gofmt, gitleaks) in this clone; needs pre-commit
+	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
+	pre-commit install
 
 fmt: ## Format all tracked Go files with gofmt
 	@$(GO_FILES) | xargs gofmt -w
