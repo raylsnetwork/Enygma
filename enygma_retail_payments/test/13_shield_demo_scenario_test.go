@@ -73,8 +73,21 @@ func (s *capturingSink) failures() string {
 	return strings.Join(out, "; ")
 }
 
+// hops returns the hops the engine has emitted, in order.
+func (s *capturingSink) hops() []engine.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []engine.Event
+	for _, e := range s.events {
+		if e.Kind == engine.Hop {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 var (
-	paymentEventSig    = crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	paymentEventSig   = crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
 	nullifierEventSig  = crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	commitmentEventSig = crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
 	encryptedNoteSig   = crypto.Keccak256Hash([]byte("EncryptedNote(uint256,uint256,bytes,bytes)"))
@@ -183,6 +196,36 @@ func TestShieldDemoScenario(t *testing.T) {
 			if !bytes.Equal(recovered.EncapsulationKey().Bytes(), a.View.EncapsKey) {
 				t.Errorf("%s: auditor recovered a different view key", a.Name)
 			}
+		}
+	})
+
+	t.Run("every hop names a known node; each registration and view-key recovery is a hop", func(t *testing.T) {
+		known := map[string]bool{}
+		for _, n := range engine.Nodes {
+			known[n.ID] = true
+		}
+		hops := sink.hops()
+		toRegistry := map[string]bool{}
+		recovered := 0
+		for _, h := range hops {
+			if !known[h.From] || !known[h.To] {
+				t.Errorf("hop %q (step %s) goes %q → %q, not both known nodes", h.Label, h.Step, h.From, h.To)
+			}
+			if h.To == engine.NodeUserRegistry {
+				toRegistry[h.From] = true
+			}
+			if h.From == engine.NodeUserRegistry && h.To == engine.NodeAuditor {
+				recovered++
+			}
+		}
+		registered := append([]engine.Actor{e.Sender()}, e.Participants()...)
+		for _, a := range registered {
+			if !toRegistry[engine.ActorNode(a.ID)] {
+				t.Errorf("%s's registration has no hop to the UserRegistry", a.Name)
+			}
+		}
+		if recovered != len(registered) {
+			t.Errorf("got %d view-key recovery hops from the UserRegistry to the auditor, want one per registered user (%d)", recovered, len(registered))
 		}
 	})
 

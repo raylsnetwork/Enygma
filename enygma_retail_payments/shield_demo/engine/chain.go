@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -204,6 +205,30 @@ func (c *chain) waitMined(ctx context.Context, tx *ethtypes.Transaction) (*ethty
 		return nil, fmt.Errorf("tx %s reverted (block %d)", tx.Hash().Hex(), receipt.BlockNumber)
 	}
 	return receipt, nil
+}
+
+// userRegisteredTopic is UserRegistry's UserRegistered event.
+var userRegisteredTopic = crypto.Keccak256Hash([]byte("UserRegistered(address,uint256,bytes,bytes,bytes)"))
+
+// registrationGas is the gas used by user's UserRegistry registration. It
+// finds the transaction by its UserRegistered event, as rpcore.Register
+// returns no receipt.
+func (c *chain) registrationGas(ctx context.Context, user common.Address) (uint64, error) {
+	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+		Addresses: []common.Address{c.registryAddr},
+		Topics:    [][]common.Hash{{userRegisteredTopic}, {common.BytesToHash(user.Bytes())}},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("UserRegistered events: %w", err)
+	}
+	if len(logs) == 0 {
+		return 0, fmt.Errorf("no UserRegistered event for %s", user.Hex())
+	}
+	receipt, err := c.client.TransactionReceipt(ctx, logs[len(logs)-1].TxHash)
+	if err != nil {
+		return 0, fmt.Errorf("registration receipt: %w", err)
+	}
+	return receipt.GasUsed, nil
 }
 
 // transact sends method on contract from the account keyHex controls and
