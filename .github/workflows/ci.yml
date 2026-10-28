@@ -1,6 +1,7 @@
 name: ci
 
-# Build, vet and unit-test every Go module, and enforce gofmt.
+# Build, vet and unit-test every Go module, enforce gofmt, and compile the
+# HTML pages' inline scripts.
 # Run the same checks locally with `make ci` (see the root Makefile).
 # Integration tests that need a chain or gnark server skip themselves and are
 # not exercised here.
@@ -53,6 +54,16 @@ jobs:
         with:
           go-version: "stable"
       - run: make fmt-check
+
+  pages:
+    name: page scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: make page-check
 
   go:
     name: go (${{ matrix.module }})

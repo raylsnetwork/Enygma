@@ -11,3 +11,9 @@ repos:
         entry: bash -c 'bad=$(gofmt -l "$@"); if [ -n "$bad" ]; then echo "Not gofmt-clean (run gofmt -w on):"; echo "$bad"; exit 1; fi' --
         language: system
         files: '\.go$'
+      - id: page-scripts
+        name: page scripts
+        # Compiles each HTML page's inline <script>, so a syntax error in a demo page fails here.
+        entry: node scripts/check_page_scripts.js
+        language: system
+        files: '\.html$'

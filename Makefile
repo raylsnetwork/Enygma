@@ -52,9 +52,9 @@ TEST_MODULES := $(filter-out $(TEST_SKIP_MODULES),$(MODULES))
 # Package list for one module, minus the skipped packages (never empty-fails).
 TEST_PKGS = pkgs=$$(go list ./... | grep -v -x $(foreach p,$(TEST_SKIP_PACKAGES),-e '$(p)') || true)
 
-.PHONY: help modules hooks fmt fmt-check build vet check test-unit ci \
+.PHONY: help modules hooks fmt fmt-check page-check build vet check test-unit ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test \
+	retail-setup retail-gnark retail-keygen retail-test shield-test \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -65,7 +65,7 @@ modules: ## List the Go modules the targets below operate on
 
 # ── Quality gates ─────────────────────────────────────────────────────────────
 
-hooks: ## Install the pre-commit hooks (gofmt, gitleaks) in this clone; needs pre-commit
+hooks: ## Install the pre-commit hooks (gofmt, page scripts, gitleaks) in this clone; needs pre-commit
 	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
 	pre-commit install
 
@@ -77,13 +77,17 @@ fmt-check: ## Fail if any tracked Go file is not gofmt-clean
 	if [ -n "$$bad" ]; then echo "Not gofmt-clean (run 'make fmt'):"; echo "$$bad"; exit 1; fi; \
 	echo "gofmt: clean"
 
+page-check: ## Fail if an inline <script> in a tracked HTML page has a syntax error; needs node
+	@command -v node >/dev/null || { echo "node not found (the demo pages' scripts need it to check)"; exit 1; }
+	@node scripts/check_page_scripts.js $$(git ls-files '*.html')
+
 build: ## go build ./... in every module
 	$(call each_module,go build ./...)
 
 vet: ## go vet ./... in every module
 	$(call each_module,go vet ./...)
 
-check: fmt-check build vet ## Static checks only (no tests)
+check: fmt-check page-check build vet ## Static checks only (no tests)
 
 test-unit: ## go test ./... in every module (chain-dependent tests skip themselves)
 	@echo "Not run (known red, see TEST_SKIP_* above): modules [$(TEST_SKIP_MODULES)], packages [$(TEST_SKIP_PACKAGES)]"
@@ -125,6 +129,11 @@ retail-gnark: ## Start the retail gnark proof server (keep running)
 
 retail-test: ## Retail integration tests (needs chain, setup and gnark server)
 	cd enygma_retail_payments/test && go test ./... -v -timeout 600s
+
+# The full shield demo scenario test plays three runs (~11 min); this plays only
+# the default-mode run (~4 min) and the subtests matching T, e.g. T=leavesIn.
+shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
+	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/$(T)' -v -timeout 1800s
 
 auctions-keygen: ## Generate auction proving/verifying keys
 	cd enygma_dvp_auctions/gnark_circuits && go run ./cmd/keygen
