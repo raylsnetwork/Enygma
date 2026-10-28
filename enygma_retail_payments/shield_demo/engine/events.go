@@ -1,6 +1,9 @@
 package engine
 
-import "fmt"
+import (
+	"fmt"
+	"math/big"
+)
 
 // EventKind says what an Event reports.
 type EventKind string
@@ -16,8 +19,9 @@ const (
 	// ProtocolField sets a run-wide Field (a contract address, a total, …).
 	ProtocolField EventKind = "proto"
 	// Hop is one interaction From one node To another (both Nodes IDs),
-	// with a short Label and an optional Detail; a key-material step is a
-	// hop from an actor to itself. A Failed hop is one that failed its
+	// with a short Label, an optional Detail (its caption) and optional
+	// HopDetail, what it does to the protocol state; a key-material step is
+	// a hop from an actor to itself. A Failed hop is one that failed its
 	// step, its Detail the error.
 	Hop       EventKind = "hop"
 	RunDone   EventKind = "done"
@@ -38,7 +42,65 @@ type Event struct {
 	To     string    `json:"to,omitempty"`
 	Detail string    `json:"detail,omitempty"`
 	Failed bool      `json:"failed,omitempty"`
+
+	HopDetail []HopDetail `json:"hopDetail,omitempty"`
 }
+
+// HopDetailKind says what a HopDetail shows.
+type HopDetailKind string
+
+// DetailLeavesIn is new commitments landing as leaves in a vault's tree.
+const DetailLeavesIn HopDetailKind = "leavesIn"
+
+// HopDetail is what a hop does to the protocol state. Field elements are
+// 0x-hex.
+type HopDetail struct {
+	Kind HopDetailKind `json:"kind"`
+	// Vault is the vault's node ID (NodeVault or NodeUsdrVault) and Tree
+	// the number of its tree the hop touches.
+	Vault string `json:"vault"`
+	Tree  int    `json:"tree"`
+
+	// leavesIn: the transaction that inserted the leaves, the leaves, and
+	// the tree's root before and after them. TreeStarted is set when the
+	// batch started a new tree, the previous one being too full for it;
+	// RootBefore is then the empty tree's root.
+	TxHash      string `json:"tx,omitempty"`
+	Leaves      []Leaf `json:"leaves,omitempty"`
+	RootBefore  string `json:"rootBefore,omitempty"`
+	RootAfter   string `json:"rootAfter,omitempty"`
+	TreeStarted bool   `json:"treeStarted,omitempty"`
+}
+
+// Leaf is one commitment in a vault's tree. Owner is the actor whose note
+// it is: the chain does not know it, the demo does, holding every key.
+type Leaf struct {
+	Index      int    `json:"index"`
+	Commitment string `json:"commitment"`
+	Owner      string `json:"owner,omitempty"`
+}
+
+// TreeSnapshot is one vault's Merkle trees when a run starts, sent as the
+// run's "trees" protocol field (a JSON list, one per vault): its current
+// tree's number, leaves and root, and its earlier, full trees.
+type TreeSnapshot struct {
+	Vault     string     `json:"vault"`
+	Tree      int        `json:"tree"`
+	LeafCount int        `json:"leafCount"`
+	Leaves    []Leaf     `json:"leaves"`
+	Root      string     `json:"root"`
+	FullTrees []FullTree `json:"fullTrees"`
+}
+
+// FullTree is a vault's tree that the vault has moved on from.
+type FullTree struct {
+	Tree      int    `json:"tree"`
+	LeafCount int    `json:"leafCount"`
+	Root      string `json:"root"`
+}
+
+// fieldHex is a field element as the hop details show it.
+func fieldHex(v *big.Int) string { return fmt.Sprintf("0x%064x", v) }
 
 // The diagram's node IDs other than the actors' (see ActorNode). The page
 // draws the same set.
@@ -108,9 +170,10 @@ func (s *step) actor(a *Actor, field, value string) {
 	s.e.sink.Emit(Event{Kind: ActorField, Actor: a.ID, Field: field, Value: value})
 }
 
-// hop reports an interaction from one node to another, both Nodes IDs.
-func (s *step) hop(from, to, label, detail string) {
-	s.e.sink.Emit(Event{Kind: Hop, Step: s.id, From: from, To: to, Label: label, Detail: detail})
+// hop reports an interaction from one node to another, both Nodes IDs,
+// with what it does to the protocol state, if anything.
+func (s *step) hop(from, to, label, detail string, hd ...HopDetail) {
+	s.e.sink.Emit(Event{Kind: Hop, Step: s.id, From: from, To: to, Label: label, Detail: detail, HopDetail: hd})
 }
 
 // hopFailed reports the interaction from one node to another that failed

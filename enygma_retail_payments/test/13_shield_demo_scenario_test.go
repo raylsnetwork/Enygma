@@ -191,7 +191,51 @@ func TestShieldDemoScenario(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BlockNumber: %v", err)
 	}
+	vaultABI := loadOnchainABI(t, "Erc20CoinVault")
+	vaults := map[string]*bind.BoundContract{
+		engine.NodeVault:     bindContract(t, client, vaultAddr, vaultABI),
+		engine.NodeUsdrVault: bindContract(t, client, usdrVaultAddr, vaultABI),
+	}
+	vaultAddrs := map[string]common.Address{engine.NodeVault: vaultAddr, engine.NodeUsdrVault: usdrVaultAddr}
+	type treeState struct {
+		tree int64
+		root *big.Int
+	}
+	atStart := map[string]treeState{}
+	for node, v := range vaults {
+		atStart[node] = treeState{vaultTreeNumber(t, v), vaultCurrentRoot(t, v)}
+	}
 	e, sink := runShieldScenario(t, cfg, opts)
+
+	t.Run("the run starts from each vault's tree as the chain holds it", func(t *testing.T) {
+		snaps := treeSnapshots(t, sink)
+		if len(snaps) != len(vaults) {
+			t.Fatalf("tree snapshot of %d vaults, want %d", len(snaps), len(vaults))
+		}
+		for _, snap := range snaps {
+			want, ok := atStart[snap.Vault]
+			if !ok {
+				t.Errorf("tree snapshot of unknown vault %q", snap.Vault)
+				continue
+			}
+			if int64(snap.Tree) != want.tree || hexField(t, snap.Root).Cmp(want.root) != 0 {
+				t.Errorf("%s: snapshot tree %d root %s, the vault was on tree %d root 0x%x", snap.Vault, snap.Tree, snap.Root, want.tree, want.root)
+			}
+			if len(snap.Leaves) != snap.LeafCount {
+				t.Errorf("%s: snapshot lists %d leaves, counts %d", snap.Vault, len(snap.Leaves), snap.LeafCount)
+			}
+		}
+	})
+
+	t.Run("every leavesIn leaf is one of the commitments its transaction inserted in that vault", func(t *testing.T) {
+		details := leavesInDetails(sink.hops(), "")
+		if want := 2 * (engine.K + len(opts.Script)); len(details) != want {
+			t.Errorf("%d leavesIn hop details, want one per vault per fan-out and scripted transfer (%d)", len(details), want)
+		}
+		for _, d := range details {
+			checkLeavesIn(t, client, vaultAddrs, d)
+		}
+	})
 
 	t.Run("the run's totals count every transaction it put on chain", func(t *testing.T) {
 		totals, err := e.Totals(context.Background())
@@ -208,6 +252,27 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		if totals.ProveMs <= 0 || totals.RelayMs <= 0 {
 			t.Errorf("totals report %d ms proving and %d ms relaying, want both positive", totals.ProveMs, totals.RelayMs)
+		}
+	})
+
+	// Before the manual transfers, so the run's last leaves are each vault's last.
+	t.Run("each vault's last leavesIn root and tree are the vault's on-chain current ones", func(t *testing.T) {
+		last := map[string]engine.HopDetail{}
+		for _, d := range leavesInDetails(sink.hops(), "") {
+			last[d.Vault] = d
+		}
+		for node, v := range vaults {
+			d, ok := last[node]
+			if !ok {
+				t.Errorf("no leavesIn hop detail lands leaves in the %s", node)
+				continue
+			}
+			if got := vaultCurrentRoot(t, v); got.Cmp(hexField(t, d.RootAfter)) != 0 {
+				t.Errorf("%s: last leavesIn root %s, the vault's current root 0x%x", node, d.RootAfter, got)
+			}
+			if got := vaultTreeNumber(t, v); got != int64(d.Tree) {
+				t.Errorf("%s: last leavesIn tree %d, the vault is on tree %d", node, d.Tree, got)
+			}
 		}
 	})
 
@@ -393,6 +458,15 @@ func TestShieldDemoScenario(t *testing.T) {
 		if got := e.Balance(participant("Carla")); got.Cmp(big.NewInt(155)) != 0 {
 			t.Errorf("Carla's balance %s after the transfer, want 155", got)
 		}
+		manual := fmt.Sprintf("manual_%d", len(e.Transfers()))
+		landed := map[string]bool{}
+		for _, d := range leavesInDetails(sink.hops(), manual) {
+			landed[d.Vault] = true
+			checkLeavesIn(t, client, vaultAddrs, d)
+		}
+		if !landed[engine.NodeVault] || !landed[engine.NodeUsdrVault] {
+			t.Errorf("manual transfer %s lands leaves in %v, want both vaults", manual, landed)
+		}
 	})
 
 	// refusedWithNothingSent checks that from paying to amount is refused with
@@ -520,6 +594,10 @@ func TestShieldDemoScenario(t *testing.T) {
 		plain.UsdrFee = false
 		e, psink := runShieldScenario(t, cfg, plain)
 		for step, hops := range transferSteps(psink.hops()) {
+			details := leavesInDetails(hops, step)
+			if len(details) != 1 || details[0].Vault != engine.NodeVault {
+				t.Errorf("step %s: leavesIn details %+v with fees off, want one, in the RaylsERC20 vault", step, details)
+			}
 			proofs := 0
 			for _, h := range hops {
 				if touches(h, engine.NodeUsdrVault) {
@@ -764,6 +842,87 @@ func vaultTreeNumber(t *testing.T, vault *bind.BoundContract) int64 {
 		t.Fatalf("treeNumber: %v", err)
 	}
 	return out[0].(*big.Int).Int64()
+}
+
+// vaultCurrentRoot is the root of vault's current Merkle tree.
+func vaultCurrentRoot(t *testing.T, vault *bind.BoundContract) *big.Int {
+	t.Helper()
+	var out []any
+	if err := vault.Call(&bind.CallOpts{}, &out, "currentRoot"); err != nil {
+		t.Fatalf("currentRoot: %v", err)
+	}
+	return out[0].(*big.Int)
+}
+
+// hexField parses a hop detail's 0x-hex field element.
+func hexField(t *testing.T, s string) *big.Int {
+	t.Helper()
+	v, ok := new(big.Int).SetString(strings.TrimPrefix(s, "0x"), 16)
+	if !ok || !strings.HasPrefix(s, "0x") {
+		t.Fatalf("hop detail value %q is not 0x-hex", s)
+	}
+	return v
+}
+
+// treeSnapshots returns the run's tree snapshot, from its "trees" protocol field.
+func treeSnapshots(t *testing.T, s *capturingSink) []engine.TreeSnapshot {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.events {
+		if e.Kind == engine.ProtocolField && e.Field == "trees" {
+			var snaps []engine.TreeSnapshot
+			if err := json.Unmarshal([]byte(e.Value), &snaps); err != nil {
+				t.Fatalf("parse the tree snapshot: %v", err)
+			}
+			return snaps
+		}
+	}
+	t.Fatal("the run sent no tree snapshot")
+	return nil
+}
+
+// checkLeavesIn checks that d's leaves are exactly the commitments its
+// transaction inserted in d's vault, in order.
+func checkLeavesIn(t *testing.T, client *ethclient.Client, vaultAddrs map[string]common.Address, d engine.HopDetail) {
+	t.Helper()
+	addr, ok := vaultAddrs[d.Vault]
+	if !ok {
+		t.Errorf("leavesIn detail names unknown vault %q", d.Vault)
+		return
+	}
+	var inserted []*big.Int
+	for _, l := range txLogs(t, client, common.HexToHash(d.TxHash)) {
+		if l.Address == addr && len(l.Topics) >= 3 && l.Topics[0] == commitmentEventSig {
+			inserted = append(inserted, l.Topics[2].Big())
+		}
+	}
+	if len(inserted) != len(d.Leaves) {
+		t.Errorf("%s tx %s: leavesIn lists %d leaves, the vault inserted %d", d.Vault, d.TxHash, len(d.Leaves), len(inserted))
+		return
+	}
+	for i, l := range d.Leaves {
+		if hexField(t, l.Commitment).Cmp(inserted[i]) != 0 {
+			t.Errorf("%s tx %s: leaf %d is %s, the vault inserted 0x%x", d.Vault, d.TxHash, i, l.Commitment, inserted[i])
+		}
+	}
+}
+
+// leavesInDetails returns the leavesIn hop details on hops, in order: of
+// step only, or of every step if step is "".
+func leavesInDetails(hops []engine.Event, step string) []engine.HopDetail {
+	var out []engine.HopDetail
+	for _, h := range hops {
+		if step != "" && h.Step != step {
+			continue
+		}
+		for _, d := range h.HopDetail {
+			if d.Kind == engine.DetailLeavesIn {
+				out = append(out, d)
+			}
+		}
+	}
+	return out
 }
 
 // chainActivitySince counts the transactions and the gas they used in the
