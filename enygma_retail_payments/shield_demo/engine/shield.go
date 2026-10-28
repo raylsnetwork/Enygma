@@ -222,7 +222,12 @@ func (n *note) check(owner *Actor) error {
 	return nil
 }
 
-// vaultTree rebuilds a vault's Merkle tree from its Commitment events.
+// vaultTree rebuilds a vault's Merkle trees from its Commitment events. The
+// vault inserts each transaction's commitments as one batch and starts a new
+// tree, numbered from 0, when that batch would fill the current one, so the
+// commitments are inserted a transaction at a time. (The event names the
+// vault, not the tree.) No path the demo uses inserts into one vault twice in
+// a transaction.
 func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (*rpcore.MerkleTree, error) {
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
 		Addresses: []common.Address{vaultAddr},
@@ -232,12 +237,40 @@ func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (*rpcor
 		return nil, fmt.Errorf("vault Commitment events: %w", err)
 	}
 	tree := rpcore.NewMerkleTree(merkleDepth)
-	for _, l := range logs {
+	var batch []*big.Int
+	for i, l := range logs {
 		if len(l.Topics) >= 3 {
-			tree.InsertLeaf(l.Topics[2].Big())
+			batch = append(batch, l.Topics[2].Big())
+		}
+		if (i == len(logs)-1 || logs[i+1].TxHash != l.TxHash) && len(batch) > 0 {
+			tree.InsertLeaves(batch)
+			batch = nil
 		}
 	}
 	return tree, nil
+}
+
+// merkleProof proves commitment is in vault's tree and checks, before any
+// proving, that the vault has had the proof's root in that tree, so a
+// rebuild that drifted from the vault fails here, naming the vault and tree,
+// rather than at the relayer.
+func merkleProof(ctx context.Context, tree *rpcore.MerkleTree, vault *bind.BoundContract, vaultName string, commitment *big.Int) (*rpcore.MerkleProof, error) {
+	proof, err := tree.GenerateProof(commitment)
+	if err != nil {
+		return nil, err
+	}
+	var out []any
+	if err := vault.Call(&bind.CallOpts{Context: ctx}, &out, "isValidRoot", big.NewInt(int64(proof.TreeNumber)), proof.Root); err != nil {
+		return nil, fmt.Errorf("%s vault isValidRoot: %w", vaultName, err)
+	}
+	if len(out) != 1 {
+		return nil, fmt.Errorf("%s vault isValidRoot returned %d values, want 1", vaultName, len(out))
+	}
+	if known, _ := out[0].(bool); !known {
+		return nil, fmt.Errorf("the %s vault has never had root 0x%s in tree %d: the engine's rebuilt tree differs from the vault's",
+			vaultName, proof.Root.Text(16), proof.TreeNumber)
+	}
+	return proof, nil
 }
 
 // noteEvents returns every encrypted note published for one vault:

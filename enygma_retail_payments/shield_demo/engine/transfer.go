@@ -177,7 +177,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	var keys []rpcore.KeyPair
 	var proofs []*rpcore.MerkleProof
 	for _, n := range ins {
-		proof, err := tree.GenerateProof(n.commitment)
+		proof, err := merkleProof(ctx, tree, c.vault, assetErc20, n.commitment)
 		if err != nil {
 			return nil, fmt.Errorf("merkle proof for %s's %s note: %w", from.Name, n.amount, err)
 		}
@@ -185,7 +185,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		keys = append(keys, rpcore.KeyPair{PrivateKey: from.Spend.PrivateKey, PublicKey: from.Spend.PublicKey})
 		proofs, treeNums = append(proofs, proof), append(treeNums, big.NewInt(int64(proof.TreeNumber)))
 	}
-	s.log("key", "rebuilt vault tree from %d Commitment events, root 0x%s…", len(tree.GetLeaves()), proofs[0].Root.Text(16)[:12])
+	s.log("key", "rebuilt the vault's Merkle trees from its Commitment events: tree %d, %d leaves, root 0x%s…", tree.TreeNumber(), len(tree.GetLeaves()), tree.Root().Text(16)[:12])
 
 	fromNode := ActorNode(from.ID)
 	circuit := "Payment"
