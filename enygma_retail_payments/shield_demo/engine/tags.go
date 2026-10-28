@@ -131,9 +131,12 @@ func (e *Engine) openChannel(ctx context.Context, s *step, from, to *Actor) erro
 	}
 	resp, err := e.relayer.channel(ctx, c1, c2, bitmap)
 	if err != nil {
+		s.hopFailed(ActorNode(from.ID), NodeRelayer, "open channel", err)
 		return fmt.Errorf("channel %s → %s: %w", from.Name, to.Name, err)
 	}
 	from.tags.out[to] = ss
+	s.hop(ActorNode(from.ID), NodeRelayer, "open channel", fmt.Sprintf("a shared secret encapsulated to %s's view key", to.Name))
+	s.hop(NodeRelayer, NodeTagChannelRegistry, "openChannel", fmt.Sprintf("channel #%d, block %d, gas %s; the relayer is its on-chain sender", resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed)))
 	s.log("tag", "TagChannelRegistry.openChannel(%s → %s) via relayer → channel #%d  block %d  gas %s",
 		from.Name, to.Name, resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed))
 	return nil
@@ -157,6 +160,7 @@ func (e *Engine) scanChannels(s *step, a *Actor) (int, error) {
 	checked := next.LastChannelIdx - a.tags.nextChannel
 	a.tags.nextChannel = next.LastChannelIdx
 	if len(found) > 0 {
+		s.hop(NodeTagChannelRegistry, ActorNode(a.ID), "scan channels", fmt.Sprintf("%d records checked, %d opened with %s's view key", checked, len(found), a.Name))
 		s.log("tag", "%s checked %d channel records, opened %d with their ML-KEM view key", a.Name, checked, len(found))
 		s.actor(a, "channels", fmt.Sprintf("%d incoming", len(a.tags.in)))
 	}
@@ -200,10 +204,13 @@ func (e *Engine) publishTag(ctx context.Context, s *step, from, to *Actor, t *se
 	}
 	resp, err := e.relayer.tag(ctx, req)
 	if err != nil {
+		s.hopFailed(ActorNode(from.ID), NodeRelayer, "tag", err)
 		return err
 	}
 	t.TagTxHash = common.HexToHash(resp.TxHash)
 	t.tagBlock = resp.BlockNumber
+	s.hop(ActorNode(from.ID), NodeRelayer, "tag", fmt.Sprintf("a tag only %s can recognise, carrying the note's opening", to.Name))
+	s.hop(NodeRelayer, NodeTagRegistry, "publishTag", fmt.Sprintf("block %d, gas %s", resp.BlockNumber, formatNum(resp.GasUsed)))
 	s.log("tag", "TagRegistry.publishTag() via relayer → %s's tag in block %d  gas %s", to.Name, resp.BlockNumber, formatNum(resp.GasUsed))
 	return nil
 }
@@ -309,6 +316,8 @@ func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int)
 		return "", fmt.Errorf("%s found %d new notes by their tags, want %d", a.Name, found, want)
 	}
 	scan := fmt.Sprintf("%d tags checked → %d decrypted", checked, found)
+	s.hop(NodeTagRegistry, ActorNode(a.ID), "scan tags", scan)
+	s.hop(NodeVault, ActorNode(a.ID), "open note", fmt.Sprintf("the tagged note's commitment confirmed in the vault; %s decrypts only it", a.Name))
 	s.log("tag", "%s checked %d tags, matched %d and decrypted only those notes", a.Name, checked, found)
 	s.actor(a, "scan", scan)
 	return scan, nil

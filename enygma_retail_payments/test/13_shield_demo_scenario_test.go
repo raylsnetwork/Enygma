@@ -86,8 +86,53 @@ func (s *capturingSink) hops() []engine.Event {
 	return out
 }
 
+// transferSteps groups the hops of the fan-out and scripted transfer steps
+// by step.
+func transferSteps(hops []engine.Event) map[string][]engine.Event {
+	out := map[string][]engine.Event{}
+	for _, h := range hops {
+		if strings.HasPrefix(h.Step, "fanout_") || strings.HasPrefix(h.Step, "transfer_") {
+			out[h.Step] = append(out[h.Step], h)
+		}
+	}
+	return out
+}
+
+// checkGrantShieldScanHops checks that the issuer's USDr grants, the
+// shield and each participant's discovery scan play as hops.
+func checkGrantShieldScanHops(t *testing.T, e *engine.Engine, hops []engine.Event) {
+	t.Helper()
+	issuer, sender := engine.ActorNode(e.Issuer().ID), engine.ActorNode(e.Sender().ID)
+	grants, shields := 0, 0
+	scanned := map[string]bool{}
+	for _, h := range hops {
+		switch {
+		case h.From == issuer && h.To == engine.NodeUsdrVault:
+			grants++
+		case h.From == sender && h.To == engine.NodeVault:
+			shields++
+		case h.Step == "discover" && h.From == engine.NodeVault:
+			scanned[h.To] = true
+		}
+	}
+	if want := 1 + engine.K; grants != want {
+		t.Errorf("%d grant hops from the issuer to the USDr vault, want one per registered user (%d)", grants, want)
+	}
+	if shields != 1 {
+		t.Errorf("%d shield hops from the sender to the RaylsERC20 vault, want 1", shields)
+	}
+	for _, p := range e.Participants() {
+		if !scanned[engine.ActorNode(p.ID)] {
+			t.Errorf("%s's discovery has no hop from the RaylsERC20 vault", p.Name)
+		}
+	}
+}
+
+// touches reports whether hop h goes from or to node.
+func touches(h engine.Event, node string) bool { return h.From == node || h.To == node }
+
 var (
-	paymentEventSig   = crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
+	paymentEventSig    = crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
 	nullifierEventSig  = crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	commitmentEventSig = crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
 	encryptedNoteSig   = crypto.Keccak256Hash([]byte("EncryptedNote(uint256,uint256,bytes,bytes)"))
@@ -227,6 +272,57 @@ func TestShieldDemoScenario(t *testing.T) {
 		if recovered != len(registered) {
 			t.Errorf("got %d view-key recovery hops from the UserRegistry to the auditor, want one per registered user (%d)", recovered, len(registered))
 		}
+	})
+
+	t.Run("each fee-paying transfer has one hop from the relayer to the contract it settles on", func(t *testing.T) {
+		settles := map[string]int{}
+		for _, h := range sink.hops() {
+			if h.From == engine.NodeRelayer && h.To == engine.NodeDvp {
+				settles[h.Step]++
+			}
+		}
+		var feeSteps []string
+		for i, s := range e.FanOut() {
+			if s.UsdrFeeNote != nil {
+				feeSteps = append(feeSteps, fmt.Sprintf("fanout_%d", i+1))
+			}
+		}
+		for i, s := range e.Transfers() {
+			if s.UsdrFeeNote != nil {
+				feeSteps = append(feeSteps, fmt.Sprintf("transfer_%d", i+1))
+			}
+		}
+		if len(feeSteps) != engine.K+len(opts.Script) {
+			t.Fatalf("got %d fee-paying transfers, want every fan-out and scripted one (%d)", len(feeSteps), engine.K+len(opts.Script))
+		}
+		steps := transferSteps(sink.hops())
+		for _, step := range feeSteps {
+			if n := settles[step]; n != 1 {
+				t.Errorf("step %s: %d hops from the relayer to EnygmaDvp, want 1", step, n)
+			}
+			if !slices.ContainsFunc(steps[step], func(h engine.Event) bool { return h.To == engine.NodeUsdrVault }) {
+				t.Errorf("step %s: no hop lands the fee leg on the USDr vault", step)
+			}
+		}
+	})
+
+	t.Run("tag mode opens channels and publishes each transfer's tag as hops to the tag registries", func(t *testing.T) {
+		toRegistry := map[string]int{}
+		for _, h := range sink.hops() {
+			if h.To == engine.NodeTagChannelRegistry || h.To == engine.NodeTagRegistry {
+				toRegistry[h.To]++
+			}
+		}
+		if toRegistry[engine.NodeTagChannelRegistry] == 0 {
+			t.Error("no hop opens a tag channel in the TagChannelRegistry")
+		}
+		if n, want := toRegistry[engine.NodeTagRegistry], engine.K+len(opts.Script); n != want {
+			t.Errorf("%d hops publish a tag to the TagRegistry, want one per fan-out and scripted transfer (%d)", n, want)
+		}
+	})
+
+	t.Run("the grants, the shield and each participant's scan are hops", func(t *testing.T) {
+		checkGrantShieldScanHops(t, e, sink.hops())
 	})
 
 	grant := big.NewInt(engine.UsdrGrant) // 20 USDr
@@ -422,7 +518,21 @@ func TestShieldDemoScenario(t *testing.T) {
 	t.Run("with the fee toggle off the fan-out and the transfers take the plain route", func(t *testing.T) {
 		plain := engine.DefaultOptions()
 		plain.UsdrFee = false
-		e, _ := runShieldScenario(t, cfg, plain)
+		e, psink := runShieldScenario(t, cfg, plain)
+		for step, hops := range transferSteps(psink.hops()) {
+			proofs := 0
+			for _, h := range hops {
+				if touches(h, engine.NodeUsdrVault) {
+					t.Errorf("step %s: hop %q goes %s → %s with fees off", step, h.Label, h.From, h.To)
+				}
+				if h.To == engine.NodeGnark {
+					proofs++
+				}
+			}
+			if proofs != 1 {
+				t.Errorf("step %s: %d proofs requested from the gnark server with fees off, want 1 (no UsdrFee proof)", step, proofs)
+			}
+		}
 		for i, s := range append(e.FanOut(), e.Transfers()...) {
 			if s.UsdrFeeNote != nil {
 				t.Errorf("step %d: paid a USDr fee note with fees off", i+1)
@@ -458,7 +568,12 @@ func TestShieldDemoScenario(t *testing.T) {
 	t.Run("with the tag toggle off recipients find every transfer by trial decryption and payers stay hidden", func(t *testing.T) {
 		untagged := engine.DefaultOptions()
 		untagged.Tags = false
-		ue, _ := runShieldScenario(t, cfg, untagged)
+		ue, usink := runShieldScenario(t, cfg, untagged)
+		for _, h := range usink.hops() {
+			if touches(h, engine.NodeTagChannelRegistry) || touches(h, engine.NodeTagRegistry) {
+				t.Errorf("hop %q (step %s) goes %s → %s with tags off", h.Label, h.Step, h.From, h.To)
+			}
+		}
 		for _, s := range append(ue.FanOut(), ue.Transfers()...) {
 			if s.TagTxHash != (common.Hash{}) {
 				t.Errorf("%s→%s: published a tag with tags off", s.From, s.To)
@@ -468,6 +583,7 @@ func TestShieldDemoScenario(t *testing.T) {
 			}
 		}
 		checkAfterScript(t, ue)
+		checkGrantShieldScanHops(t, ue, usink.hops())
 		if got, want := ue.Balance(ue.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
 			t.Errorf("sender's private balance %s, want %s", got, want)
 		}
@@ -513,11 +629,11 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		sink.mu.Lock()
 		defer sink.mu.Unlock()
-		failed := false
+		failed, failedStep := false, ""
 		for _, ev := range sink.events {
 			switch ev.Kind {
 			case engine.StepFailed:
-				failed = true
+				failed, failedStep = true, ev.Step
 				if ev.Msg == "" {
 					t.Errorf("step %s failed with no error message", ev.Step)
 				}
@@ -527,6 +643,12 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		if !failed {
 			t.Error("no step reported the failure")
+		}
+		failedHop := slices.ContainsFunc(sink.events, func(ev engine.Event) bool {
+			return ev.Kind == engine.Hop && ev.Failed && ev.Step == failedStep && ev.To == engine.NodeRelayer && ev.Detail != ""
+		})
+		if !failedHop {
+			t.Errorf("step %s shows no failed hop to the relayer with its error", failedStep)
 		}
 		if last := sink.events[len(sink.events)-1]; last.Kind != engine.RunFailed || last.Msg == "" {
 			t.Errorf("last event %+v, want the run failing with its error", last)

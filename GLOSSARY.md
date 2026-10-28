@@ -32,4 +32,4 @@
 
 **Registration**: a user's one-time publication of their spend key, view key and audit ciphertexts in the `UserRegistry`, from their own address; it cannot be repeated for that address. _Avoid_: sign-up, onboarding.
 
-**Hop**: one interaction between two parts of the retail shield demo's system (an actor, the gnark server, the relayer or a contract), such as a proof request, a relay or a registration; the demo's architecture diagram animates one hop at a time. _Avoid_: edge, call, flow.
+**Hop**: one interaction between two parts of the retail shield demo's system (an actor, the gnark server, the relayer or a contract), such as a proof request, a relay or a registration; the demo's architecture diagram animates one hop at a time. A **failed hop** is the one that failed its step; the diagram keeps it, in red, with the step's error. _Avoid_: edge, call, flow.

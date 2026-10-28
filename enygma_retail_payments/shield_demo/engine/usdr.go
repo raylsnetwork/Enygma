@@ -30,8 +30,10 @@ func (e *Engine) grantUsdr(ctx context.Context, s *step) error {
 	for _, a := range recipients {
 		n, receipt, err := c.depositNote(ctx, issuer.keyHex, c.usdrVault, c.usdrVaultAddr, a, grant)
 		if err != nil {
+			s.hopFailed(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", err)
 			return fmt.Errorf("USDr grant to %s: %w", a.Name, err)
 		}
+		s.hop(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", fmt.Sprintf("a %s USDr note for %s, encrypted to their view key, block %d", grant, a.Name, receipt.BlockNumber))
 		s.log("chain", "UsdrCoinVault.depositV2(%s) → %s's note 0x%s…  block %d", grant, a.Name, n.commitment.Text(16)[:12], receipt.BlockNumber)
 	}
 	s.actor(issuer, "public", "0 USDr ("+total.String()+" minted and shielded)")
@@ -44,6 +46,7 @@ func (e *Engine) grantUsdr(ctx context.Context, s *step) error {
 		if found := a.scan(events, &a.usdr); found != 1 {
 			return fmt.Errorf("%s found %d USDr notes by scanning, want 1", a.Name, found)
 		}
+		s.hop(NodeUsdrVault, ActorNode(a.ID), "scan", fmt.Sprintf("%s tried %d notes with their view key and opened their grant", a.Name, len(events)))
 		s.actor(a, "usdr", a.usdr.balance().String()+" USDr")
 	}
 	s.log("key", "sender and %d participants each decrypted their USDr note with their ML-KEM view key", K)

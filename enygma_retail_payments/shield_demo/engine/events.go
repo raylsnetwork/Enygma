@@ -17,7 +17,8 @@ const (
 	ProtocolField EventKind = "proto"
 	// Hop is one interaction From one node To another (both Nodes IDs),
 	// with a short Label and an optional Detail; a key-material step is a
-	// hop from an actor to itself.
+	// hop from an actor to itself. A Failed hop is one that failed its
+	// step, its Detail the error.
 	Hop       EventKind = "hop"
 	RunDone   EventKind = "done"
 	RunFailed EventKind = "failed"
@@ -36,6 +37,7 @@ type Event struct {
 	From   string    `json:"from,omitempty"`
 	To     string    `json:"to,omitempty"`
 	Detail string    `json:"detail,omitempty"`
+	Failed bool      `json:"failed,omitempty"`
 }
 
 // The diagram's node IDs other than the actors' (see ActorNode). The page
@@ -109,6 +111,12 @@ func (s *step) actor(a *Actor, field, value string) {
 // hop reports an interaction from one node to another, both Nodes IDs.
 func (s *step) hop(from, to, label, detail string) {
 	s.e.sink.Emit(Event{Kind: Hop, Step: s.id, From: from, To: to, Label: label, Detail: detail})
+}
+
+// hopFailed reports the interaction from one node to another that failed
+// the step with err.
+func (s *step) hopFailed(from, to, label string, err error) {
+	s.e.sink.Emit(Event{Kind: Hop, Step: s.id, From: from, To: to, Label: label, Detail: err.Error(), Failed: true})
 }
 
 func (s *step) proto(field, value string) {
