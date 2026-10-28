@@ -19,6 +19,7 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   --ok:#15803d; --warn:#b45309; --bad:#dc2626; --on-bad:#ffffff; --bad-dim:rgba(220,38,38,.08);
   --erc:#15803d; --erc-dim:rgba(21,128,61,.08); --usdr:#b45309; --usdr-dim:rgba(180,83,9,.08);
   --shadow:rgba(43,39,34,.12);
+  --actor:#0f766e; --service:#c2410c; --contract:#4338ca;
   --mono:'SF Mono','Fira Code',Consolas,'Courier New',monospace;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;
   --serif:'Iowan Old Style','Palatino Linotype',Georgia,serif;
@@ -33,6 +34,7 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   --ok:#3dcc75; --warn:#ffcc40; --bad:#ff5566; --on-bad:#ffffff; --bad-dim:rgba(255,85,102,.07);
   --erc:#3dcc75; --erc-dim:rgba(61,204,117,.08); --usdr:#ffcc40; --usdr-dim:rgba(255,204,64,.06);
   --shadow:rgba(0,0,0,.4);
+  --actor:#3dd4b0; --service:#ff9040; --contract:#8b9cff;
 }
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
 html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.5; }
@@ -66,12 +68,26 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #optError, #sendError { font:11px var(--mono); color:var(--bad); }
 #optError:empty { display:none; }
 
-/* ---- diagram (its nodes and hops arrive with #127) ----------------------- */
+/* ---- diagram: actors | services | contracts, one hop animated at a time --- */
 .diagram { margin:0 28px; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px 0; }
 .cols { display:grid; grid-template-columns:1fr 1fr 1fr; font:italic 13px var(--serif); color:var(--muted); }
 .cols span:nth-child(2) { text-align:center; } .cols span:nth-child(3) { text-align:right; }
-#diagram { display:block; width:100%; height:auto; max-height:36vh; }
+#diagram { display:block; width:100%; height:auto; max-height:36vh; font-family:var(--sans); }
+#diagram .node rect { fill:var(--s1); stroke:var(--bd2); stroke-width:1.2; transition:all .25s; }
+#diagram .node.actor rect { fill:color-mix(in srgb, var(--actor) 6%, var(--s1)); }
+#diagram .node.service rect { fill:color-mix(in srgb, var(--service) 8%, var(--s1)); stroke:var(--service); stroke-width:1.6; }
+#diagram .node.contract rect { fill:color-mix(in srgb, var(--contract) 6%, var(--s1)); stroke:color-mix(in srgb, var(--contract) 45%, var(--bd)); }
+#diagram .node.lit rect { stroke:var(--accent); stroke-width:2.5; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 40%, transparent)); }
+#diagram .nl { font-size:12px; font-weight:600; fill:var(--text); }
+#diagram .node.service .nl { font:600 16px var(--serif); }
+#diagram .ns { font:10px var(--mono); fill:var(--muted); }
+#diagram .link { fill:none; stroke:transparent; stroke-width:1.5; transition:stroke .4s, stroke-width .2s; }
+#diagram .link.used { stroke:var(--bd); }
+#diagram .link.active { stroke:var(--accent); stroke-width:2.5; }
+#diagram .packet { fill:var(--accent); stroke:var(--s1); stroke-width:2; }
 .caption { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-top:1px dashed var(--bd2); padding:10px 2px 12px; min-height:48px; font:16px var(--serif); color:var(--text2); }
+.caption .lbl { font:600 13px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 8px; border-radius:4px; }
+.caption small { font:12px var(--sans); color:var(--muted); }
 .caption .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
 
 /* ---- timeline and panels ------------------------------------------------- */
@@ -391,6 +407,119 @@ function showAudit(a) {
     `<td class="num">${esc(en.amount)} ${en.asset === 'USDr' ? 'USDr' : ''}</td></tr>`).join('');
 }
 
+// ---- diagram: every node, and each hop animated on the link it uses -------
+
+// The node IDs are the engine's (engine.Nodes): actors by their panel index,
+// then the auditor and gas funder, the services and the contracts.
+const NODES = [
+  ...ACTORS.map(([name], i) => ({ id: 'actor' + i, label: name, group: 'actor' })),
+  { id: 'auditor', label: 'Auditor', group: 'actor' },
+  { id: 'funder', label: 'Gas funder', group: 'actor' },
+  { id: 'gnark', label: 'gnark server', group: 'service' },
+  { id: 'relayer', label: 'Relayer', group: 'service' },
+  { id: 'UserRegistry', label: 'UserRegistry', group: 'contract' },
+  { id: 'Erc20CoinVault', label: 'RaylsERC20 vault', group: 'contract' },
+  { id: 'UsdrCoinVault', label: 'USDr vault', group: 'contract' },
+  { id: 'EnygmaDvp', label: 'EnygmaDvp', group: 'contract' },
+  { id: 'TagChannelRegistry', label: 'TagChannelRegistry', group: 'contract' },
+  { id: 'TagRegistry', label: 'TagRegistry', group: 'contract' },
+];
+const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svg(tag, attrs, parent) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  parent.appendChild(el);
+  return el;
+}
+
+const diagram = (() => {
+  const s = $('diagram');
+  const pos = {};
+  NODES.filter(n => n.group === 'actor').forEach((n, i) => pos[n.id] = { x: 120, y: 30 + i * 40, w: 170, h: 30 });
+  pos.gnark = { x: 600, y: 130, w: 200, h: 64 };
+  pos.relayer = { x: 600, y: 290, w: 200, h: 64 };
+  NODES.filter(n => n.group === 'contract').forEach((n, i) => pos[n.id] = { x: 1070, y: 45 + i * 66, w: 210, h: 40 });
+  const gL = svg('g', {}, s), gN = svg('g', {}, s), gP = svg('g', {}, s);
+  const nodeEl = {};
+  for (const n of NODES) {
+    const p = pos[n.id], actor = n.group === 'actor';
+    const g = svg('g', { class: 'node ' + n.group, transform: `translate(${p.x},${p.y})` }, gN);
+    svg('rect', { x: -p.w / 2, y: -p.h / 2, width: p.w, height: p.h, rx: n.group === 'service' ? 32 : 6 }, g);
+    svg('text', { x: actor ? -p.w / 2 + 12 : 0, y: n.group === 'service' ? 5 : 4, class: 'nl', 'text-anchor': actor ? 'start' : 'middle' }, g).textContent = n.label;
+    nodeEl[n.id] = g;
+  }
+
+  // A link curves from the side of one node facing the other; a hop from a
+  // node to itself loops on its right.
+  function path(a, b) {
+    const p = pos[a], q = pos[b];
+    if (a === b) {
+      const x = p.x + p.w / 2, y = p.y;
+      return `M${x},${y - 8} C${x + 46},${y - 30} ${x + 46},${y + 30} ${x},${y + 8}`;
+    }
+    const right = q.x > p.x, same = q.x === p.x;
+    const x1 = p.x + (same || right ? p.w / 2 : -p.w / 2), x2 = q.x + (same || !right ? q.w / 2 : -q.w / 2);
+    const bend = same ? 80 : Math.abs(x2 - x1) / 2;
+    return `M${x1},${p.y} C${x1 + (right || same ? bend : -bend)},${p.y} ${x2 + (right ? -bend : bend)},${q.y} ${x2},${q.y}`;
+  }
+  const links = {};
+  const link = (a, b) => links[a + '>' + b] ||= svg('path', { d: path(a, b), class: 'link' }, gL);
+
+  // light highlights el for ms, unless it is lit again meanwhile.
+  function light(el, cls, ms) {
+    el.classList.add(cls);
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove(cls), ms);
+  }
+
+  function show(h, hold) {
+    const l = link(h.from, h.to);
+    l.classList.add('used');
+    light(l, 'active', hold * 1.3);
+    light(nodeEl[h.from], 'lit', hold * 1.3);
+    light(nodeEl[h.to], 'lit', hold * 1.3);
+    const dot = svg('circle', { r: 6, class: 'packet' }, gP);
+    svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: l.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
+    setTimeout(() => dot.remove(), hold + 250);
+    $('now').innerHTML = `<b>${esc(NODE[h.from].label)}</b> ${h.from === h.to ? '' : `→ <b>${esc(NODE[h.to].label)}</b>`} ` +
+      `<span class="lbl">${esc(h.label)}</span> <small>${esc(h.detail || '')}</small>`;
+  }
+
+  // Pacing is in the page only: the engine runs at full speed and each hop
+  // holds for HOLD ms. Once the hop shown is more than CATCHUP ms behind the
+  // run (it arrived that long ago), holds shrink in proportion, so a burst
+  // still plays readably but a long backlog drains.
+  const HOLD = 600, CATCHUP = 3000, MIN_HOLD = 120;
+  const queue = [];
+  let timer = null;
+  function pump() {
+    timer = null;
+    if (!queue.length) { $('queued').textContent = ''; return; }
+    const h = queue.shift();
+    const behind = performance.now() - h.at;
+    const hold = behind > CATCHUP ? Math.max(MIN_HOLD, HOLD * CATCHUP / behind) : HOLD;
+    show(h, hold);
+    $('queued').textContent = queue.length ? `+${queue.length} queued` : '';
+    timer = setTimeout(pump, hold);
+  }
+  return {
+    hop(h) {
+      if (!NODE[h.from] || !NODE[h.to]) return;
+      queue.push({ ...h, at: performance.now() });
+      if (!timer) pump();
+    },
+    reset() {
+      queue.length = 0; clearTimeout(timer); timer = null;
+      gL.innerHTML = ''; gP.innerHTML = '';
+      for (const k in links) delete links[k];
+      for (const g of Object.values(nodeEl)) { clearTimeout(g._t); g.classList.remove('lit'); }
+      $('queued').textContent = '';
+    },
+  };
+})();
+
 // ---- terminal drawer: renders lines, never sends input anywhere ----------
 
 // The drawer's open height starts at the CSS default; collapsed, only its grip and tab bar show.
@@ -499,7 +628,7 @@ $('drawerGrip').onpointerdown = e => {
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': build(); termReset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': build(); termReset(); diagram.reset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     setStep(e.step, 'running', e.msg || e.label);
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
@@ -515,6 +644,7 @@ function onEvent(e) {
   case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
   case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
   case 'term': serviceLine(e); break;
+  case 'hop': diagram.hop(e); break;
   }
 }
 

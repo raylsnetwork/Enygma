@@ -137,6 +137,7 @@ func (e *Engine) auditorKeysStep(ctx context.Context, s *step) error {
 	}
 	e.auditUsers = users
 	for _, u := range users {
+		s.hop(NodeUserRegistry, NodeAuditor, "recover view key", "opens "+u.name+"'s audit ciphertexts")
 		s.log("key", "auditor opened %s's audit ciphertexts → ML-KEM view key, matches the registered one", u.name)
 	}
 	if others > 0 {
