@@ -136,7 +136,7 @@ function mountA(root) {
 }
 
 // ===========================================================================
-// B · Flow — left-to-right columns (off-chain → services → on-chain), curved
+// B · Columns — left-to-right columns (off-chain → services → on-chain), curved
 // edges with a travelling packet, a "now" caption; stepper + ledger table.
 // ===========================================================================
 function mountB(root) {
@@ -324,6 +324,6 @@ function mountC(root) {
 
 const VARIANTS = {
   A: { name: 'Lanes', mount: mountA },
-  B: { name: 'Flow', mount: mountB },
+  B: { name: 'Columns', mount: mountB },
   C: { name: 'Sequence', mount: mountC },
 };

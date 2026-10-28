@@ -67,12 +67,12 @@ function hopsFor(e) {
   if (e.kind !== 'log') return [];
   const m = e.msg, p = ctx.payer;
   let r;
-  if ((r = /^auditor ML-KEM-768 ek/.exec(m))) return [hop('auditor', 'auditor', 'view key', 'ML-KEM-768 key pair')];
+  if ((r = /^auditor ML-KEM-768 ek/.exec(m))) return [hop('auditor', 'auditor', 'auditor key pair', 'ML-KEM-768; users encrypt their audit ciphertexts to its public key')];
   if ((r = /^(\w+)\s+pk_spend (\S+)\s+ML-KEM ek (\S+)/.exec(m))) return [
-    hop(byName(r[1]), byName(r[1]), 'spend key', 'BabyJubJub · ' + r[2]),
+    hop(byName(r[1]), byName(r[1]), 'spend key', 'Poseidon key pair · pkSpend ' + r[2]),
     hop(byName(r[1]), byName(r[1]), 'view key', 'ML-KEM-768 · ek ' + r[3] + ' (1184 B)')];
   if ((r = /^funded (\d+) new accounts with ([\d.]+ ETH)/.exec(m)))
-    return NAMES.slice(0, +r[1]).map((_, i) => hop('funder', 'a' + i, 'fund gas', r[2] + ' to a fresh signing account', i > 0));
+    return ['a1', ...PARTICIPANTS].slice(0, +r[1]).map((a, i) => hop('funder', a, 'fund gas', r[2] + ' to a fresh signing account', i > 0));
   if ((r = /^UserRegistry\.register\((\w+)\).*\((\d+) \+ (\d+) bytes\)/.exec(m))) return [
     hop(byName(r[1]), byName(r[1]), 'audit ciphertexts', `ML-KEM capsule to the auditor (${r[2]} B) + AES-GCM of the view key's seed (${r[3]} B)`),
     hop(byName(r[1]), 'registry', 'register', 'gas is high: the 1184-byte ML-KEM view key is stored on chain')];
@@ -200,8 +200,8 @@ const replay = {
 
 // ---- rendering ------------------------------------------------------------
 
-let raf = 0;
-function dirty() { if (!raf) raf = setTimeout(() => { raf = 0; S.variant?.render(S.state); }, 16); }
+let renderTimer = 0;
+function dirty() { if (!renderTimer) renderTimer = setTimeout(() => { renderTimer = 0; S.variant?.render(S.state); }, 16); }
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const short = (h, n = 6) => h && h.length > 2 * n + 4 ? h.slice(0, n + 2) + '…' + h.slice(-n) : (h || '');
