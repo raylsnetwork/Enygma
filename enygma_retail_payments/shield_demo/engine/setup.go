@@ -14,8 +14,11 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// gasFunding is the ETH each new account gets for its public steps.
+// gasFunding is the ETH each new account gets for its public steps, in wei.
 var gasFunding = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+
+// gasFundingETH is gasFunding in ETH, for display.
+var gasFundingETH = new(big.Int).Div(gasFunding, big.NewInt(1e18))
 
 func (e *Engine) checkPrereqs(ctx context.Context, s *step) error {
 	if missing := Unreachable(e.cfg); len(missing) > 0 {
@@ -109,6 +112,9 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 		}
 		a := &Actor{ID: len(e.actors), Name: name, Role: role, Address: addr, Spend: spend, View: view, keyHex: keyHex}
 		e.actors = append(e.actors, a)
+		node := ActorNode(a.ID)
+		s.hop(node, node, "spend key", "Poseidon key pair; pk_spend goes into every note paid to "+name)
+		s.hop(node, node, "view key", fmt.Sprintf("ML-KEM-768 key pair; %d-byte pk_view, senders encrypt notes to it", len(view.EncapsKey)))
 		s.actor(a, "name", name)
 		s.actor(a, "role", string(role))
 		s.actor(a, "ethAddr", addr.Hex())
@@ -136,14 +142,15 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 		}
 	}
 
-	var toFund []common.Address
+	// Each run's accounts are fresh, so the funder pays for their gas; that
+	// is what lets the demo run again on the same node.
 	for _, a := range e.registrable() {
-		toFund = append(toFund, a.Address)
+		if err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, []common.Address{a.Address}); err != nil {
+			return err
+		}
+		s.hop(NodeFunder, ActorNode(a.ID), "fund gas", fmt.Sprintf("%s ETH to %s's fresh signing account", gasFundingETH, a.Name))
 	}
-	if err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, toFund); err != nil {
-		return err
-	}
-	s.log("chain", "funded %d new accounts with 1 ETH of gas each", len(toFund))
+	s.log("chain", "funded %d new accounts with %s ETH of gas each", len(e.registrable()), gasFundingETH)
 	s.done("BabyJubJub spend keys and ML-KEM-768 view keys for the issuer, the sender and %d participants", K)
 	return nil
 }
@@ -156,6 +163,8 @@ func (e *Engine) register(ctx context.Context, s *step) error {
 		if err != nil {
 			return fmt.Errorf("%s: encrypt view key for auditor: %w", a.Name, err)
 		}
+		node := ActorNode(a.ID)
+		s.hop(node, node, "audit ciphertexts", fmt.Sprintf("%d-byte ML-KEM capsule to the auditor + %d-byte AES-GCM encryption of the view key's seed", len(mlKemCt), len(aesCt)))
 		auth, err := e.chain.auth(a.keyHex)
 		if err != nil {
 			return err
@@ -164,6 +173,11 @@ func (e *Engine) register(ctx context.Context, s *step) error {
 			a.Spend.PublicKey, a.View.EncapsKey, mlKemCt, aesCt); err != nil {
 			return fmt.Errorf("%s: %w", a.Name, err)
 		}
+		gas, err := e.chain.registrationGas(ctx, a.Address)
+		if err != nil {
+			return fmt.Errorf("%s: %w", a.Name, err)
+		}
+		s.hop(node, NodeUserRegistry, "register", fmt.Sprintf("mined, %d gas: most of it stores the %d-byte view key on chain", gas, len(a.View.EncapsKey)))
 		s.actor(a, "status", "Registered")
 		s.log("chain", "UserRegistry.register(%s) — view key encrypted to the auditor (%d + %d bytes)", a.Name, len(mlKemCt), len(aesCt))
 	}
