@@ -171,6 +171,7 @@ func (e *Engine) register(ctx context.Context, s *step) error {
 		}
 		if err := rpcore.Register(e.chain.client, auth, e.chain.registryAddr,
 			a.Spend.PublicKey, a.View.EncapsKey, mlKemCt, aesCt); err != nil {
+			s.hopFailed(node, NodeUserRegistry, "register", err)
 			return fmt.Errorf("%s: %w", a.Name, err)
 		}
 		gas, err := e.chain.registrationGas(ctx, a.Address)

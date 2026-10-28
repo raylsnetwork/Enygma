@@ -48,10 +48,12 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 	}
 	n, receipt, err := c.depositNote(ctx, sender.keyHex, c.vault, c.vaultAddr, sender, total)
 	if err != nil {
+		s.hopFailed(ActorNode(sender.ID), NodeVault, "shield", err)
 		return err
 	}
 	sender.notes = append(sender.notes, n)
 
+	s.hop(ActorNode(sender.ID), NodeVault, "shield", fmt.Sprintf("%s public RaylsERC20 (just minted) into one private note, block %d, gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed)))
 	s.log("chain", "Erc20CoinVault.depositV2(%s) → block %d  gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed))
 	s.log("key", "sender's note commitment 0x%s…", n.commitment.Text(16)[:16])
 	s.proto("shieldGas", fmt.Sprint(receipt.GasUsed))
@@ -156,6 +158,7 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 			}
 		} else {
 			found := p.scan(events, &p.notes)
+			s.hop(NodeVault, ActorNode(p.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened %d", p.Name, len(events), found))
 			s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, found)
 			s.actor(p, "scan", trialScan(len(events)))
 		}
