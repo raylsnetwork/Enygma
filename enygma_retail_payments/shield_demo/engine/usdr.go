@@ -81,7 +81,7 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 	if err != nil {
 		return nil, err
 	}
-	mp, err := tree.GenerateProof(prev.commitment)
+	mp, err := merkleProof(ctx, tree, c.usdrVault, assetUsdr, prev.commitment)
 	if err != nil {
 		return nil, fmt.Errorf("merkle proof for %s's USDr note: %w", payer.Name, err)
 	}
