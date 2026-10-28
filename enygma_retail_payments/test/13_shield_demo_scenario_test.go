@@ -656,6 +656,116 @@ func TestShieldDemoScenario(t *testing.T) {
 	})
 }
 
+// TestShieldDemoScenarioPastOneTree fills both vaults with plain deposits so
+// that one of the run's two-note inserts in each would take the current tree
+// to its last leaf, which makes the vault start a new tree for the whole
+// batch, then checks that the run's transfers settle against both trees:
+// notes inserted before the new tree are spent after it.
+func TestShieldDemoScenarioPastOneTree(t *testing.T) {
+	cfg := engine.DefaultConfig("..")
+	if missing := engine.Unreachable(cfg); len(missing) > 0 {
+		t.Skipf("services not reachable: %s", strings.Join(missing, ", "))
+	}
+	if fee, err := engine.SetUsdrFixedFee(cfg, big.NewInt(1)); err != nil || fee.Int64() != 1 {
+		t.Fatalf("set the USDr fixed fee to 1: fee=%v err=%v", fee, err)
+	}
+	receipts := loadOnchainReceipts(t)
+	client := mustDial(t)
+	defer client.Close()
+	vaultABI, erc20ABI := loadOnchainABI(t, "Erc20CoinVault"), loadOnchainABI(t, "RaylsERC20")
+	bindAt := func(name string, a abi.ABI) *bind.BoundContract {
+		return bindContract(t, client, common.HexToAddress(receipts[name].ContractAddress), a)
+	}
+	vault, usdrVault := bindAt("Erc20CoinVault", vaultABI), bindAt("UsdrCoinVault", vaultABI)
+
+	// A run inserts the sender's shield into the RaylsERC20 vault and one
+	// USDr grant per registered user into the USDr vault, then each transfer
+	// inserts two notes into each. The second fan-out starts the RaylsERC20
+	// vault's new tree, so the first's notes (the sender's change and Ana's
+	// payout) are spent from the old one; the first fan-out starts the USDr
+	// vault's, so every participant's grant is spent from the old one.
+	erc20Tree := fillTreeTo(t, client, vault, bindAt("ERC20", erc20ABI), receipts["Erc20CoinVault"].ContractAddress, treeLeaves-2-(1+2))
+	usdrTree := fillTreeTo(t, client, usdrVault, bindAt("UsdrERC20", erc20ABI), receipts["UsdrCoinVault"].ContractAddress, treeLeaves-2-(1+engine.K))
+
+	opts := engine.DefaultOptions()
+	e, _ := runShieldScenario(t, cfg, opts)
+
+	if got := len(e.Transfers()); got != len(opts.Script) {
+		t.Errorf("%d scripted transfers settled, want %d", got, len(opts.Script))
+	}
+	checkAfterScript(t, e)
+	checkDiegoElenaMerge(t, client, e.Transfers(), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), true)
+	for name, v := range map[string]struct {
+		vault *bind.BoundContract
+		tree  int64
+	}{"RaylsERC20": {vault, erc20Tree}, "USDr": {usdrVault, usdrTree}} {
+		if got := vaultTreeNumber(t, v.vault); got != v.tree+1 {
+			t.Errorf("%s vault is on tree %d after the run, want %d: the run did not start a new tree", name, got, v.tree+1)
+		}
+	}
+}
+
+// treeLeaves is the leaf count of a vault's depth-8 Merkle tree.
+const treeLeaves = 1 << 8
+
+// fillTreeTo makes plain 1-unit deposits into vault, minting and approving
+// them with the token owner's key, until the vault's current tree holds
+// exactly leaves leaves, and returns that tree's number. It first deposits
+// until the vault starts a new tree: the deposit that starts it is that
+// tree's first leaf.
+func fillTreeTo(t *testing.T, client *ethclient.Client, vault, token *bind.BoundContract, vaultAddr string, leaves int) int64 {
+	t.Helper()
+	owner := hardhatAuth(t, client)
+	transact := func(c *bind.BoundContract, method string, args ...any) {
+		t.Helper()
+		tx, err := c.Transact(owner, method, args...)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		if r, err := bind.WaitMined(context.Background(), client, tx); err != nil || r.Status != types.ReceiptStatusSuccessful {
+			t.Fatalf("%s: not mined (%v)", method, err)
+		}
+	}
+	// At most a whole tree to reach the next one, then leaves-1 more.
+	allowance := big.NewInt(int64(treeLeaves + leaves))
+	transact(token, "mint", owner.From, allowance)
+	transact(token, "approve", common.HexToAddress(vaultAddr), allowance)
+	deposit := func() {
+		t.Helper()
+		pk, err := dvpcore.RandomInField()
+		if err != nil {
+			t.Fatal(err)
+		}
+		salt, err := dvpcore.RandomInField()
+		if err != nil {
+			t.Fatal(err)
+		}
+		transact(vault, "deposit", []*big.Int{big.NewInt(1), pk, salt, big.NewInt(0)})
+	}
+	start := vaultTreeNumber(t, vault)
+	for vaultTreeNumber(t, vault) == start {
+		deposit()
+	}
+	for range leaves - 1 {
+		deposit()
+	}
+	tree := vaultTreeNumber(t, vault)
+	if tree != start+1 {
+		t.Fatalf("vault %s went from tree %d to %d while filling, want %d", vaultAddr, start, tree, start+1)
+	}
+	return tree
+}
+
+// vaultTreeNumber is the number of vault's current Merkle tree.
+func vaultTreeNumber(t *testing.T, vault *bind.BoundContract) int64 {
+	t.Helper()
+	var out []any
+	if err := vault.Call(&bind.CallOpts{}, &out, "treeNumber"); err != nil {
+		t.Fatalf("treeNumber: %v", err)
+	}
+	return out[0].(*big.Int).Int64()
+}
+
 // chainActivitySince counts the transactions and the gas they used in the
 // blocks after block from.
 func chainActivitySince(t *testing.T, client *ethclient.Client, from uint64) (txs int, gas uint64) {
