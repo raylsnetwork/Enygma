@@ -27,6 +27,31 @@ mkdir -p "$BIN_DIR"
 START_DEMO=1
 [ "${1:-}" = "--no-demo" ] && START_DEMO=0
 
+# preflight — fails in a second, with the fix, on what otherwise fails minutes
+# in: an unsupported Node (Hardhat 2 runs on 20, 22 or 24), enygma_dvp's npm
+# packages not installed, or Groth16 keys still Git LFS pointers.
+preflight() {
+    local ok=1 major
+    major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+    if [ "$major" -lt 20 ]; then
+        echo "[run.sh] Node $(node -v 2>/dev/null || echo missing) is too old for Hardhat; use 20 or later: cd $DVP_ROOT && nvm use" >&2
+        ok=0
+    fi
+    if [ ! -x "$DVP_ROOT/node_modules/.bin/hardhat" ]; then
+        echo "[run.sh] enygma_dvp's npm packages are not installed: cd $DVP_ROOT && npm ci" >&2
+        ok=0
+    fi
+    local pointers
+    pointers=$(grep -l '^version https://git-lfs' "$ROOT"/gnark_circuits/scripts/keys/*.key 2>/dev/null || true)
+    if [ -n "$pointers" ]; then
+        echo "[run.sh] these keys are Git LFS pointers, not keys: git lfs pull --include='enygma_retail_payments/**'" >&2
+        echo "$pointers" | sed 's/^/    /' >&2
+        ok=0
+    fi
+    [ "$ok" = 1 ] || exit 1
+}
+preflight
+
 # go-ethereum needs CGo; Homebrew clang points at a missing macOS SDK.
 export CC=/usr/bin/clang
 
