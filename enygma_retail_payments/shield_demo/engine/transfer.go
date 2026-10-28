@@ -305,9 +305,19 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		settled = "the payment and the USDr fee in one transaction"
 	}
 	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)))
-	s.hop(NodeDvp, NodeVault, "notes in", fmt.Sprintf("%s's payment and %s's change, tx %s…", to.Name, from.Name, tx.TxHash[:10]))
+	owners := map[string]string{stmt[commitmentsOutOffset].String(): to.Name, changeNote.commitment.String(): from.Name}
+	notesIn, err := c.leavesIn(ctx, NodeVault, c.vaultAddr, out.TxHash, owners)
+	if err != nil {
+		return nil, err
+	}
+	s.hop(NodeDvp, NodeVault, "notes in", fmt.Sprintf("%s's payment and %s's change, tx %s…", to.Name, from.Name, tx.TxHash[:10]), notesIn)
 	if fee != nil {
-		s.hop(NodeDvp, NodeUsdrVault, "fee note in", fmt.Sprintf("the relayer's %s USDr fee note, same tx %s…", e.usdrFixedFee, tx.TxHash[:10]))
+		owners := map[string]string{fee.feeNote.String(): "Relayer", fee.change.commitment.String(): from.Name}
+		feeIn, err := c.leavesIn(ctx, NodeUsdrVault, c.usdrVaultAddr, out.TxHash, owners)
+		if err != nil {
+			return nil, err
+		}
+		s.hop(NodeDvp, NodeUsdrVault, "fee note in", fmt.Sprintf("the relayer's %s USDr fee note, same tx %s…", e.usdrFixedFee, tx.TxHash[:10]), feeIn)
 	}
 	s.log("chain", "EnygmaDvp.%s() via relayer → block %d  gas %s  round-trip %d ms", out.method, tx.BlockNumber, formatNum(tx.GasUsed), relayMs)
 	return out, nil

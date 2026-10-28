@@ -65,6 +65,10 @@ func (e *Engine) checkPrereqs(ctx context.Context, s *step) error {
 		}
 	}
 
+	// The tree view starts from the vaults' trees as earlier runs left them.
+	if err := e.publishTrees(ctx, s); err != nil {
+		return err
+	}
 	s.proto("relayerAddr", c.relayerAddr.Hex())
 	s.proto("dvpAddr", c.dvpAddr.Hex())
 	s.proto("vaultAddr", c.vaultAddr.Hex())

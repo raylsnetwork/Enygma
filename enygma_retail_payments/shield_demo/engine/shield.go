@@ -222,34 +222,6 @@ func (n *note) check(owner *Actor) error {
 	return nil
 }
 
-// vaultTree rebuilds a vault's Merkle trees from its Commitment events. The
-// vault inserts each transaction's commitments as one batch and starts a new
-// tree, numbered from 0, when that batch would fill the current one, so the
-// commitments are inserted a transaction at a time. (The event names the
-// vault, not the tree.) No path the demo uses inserts into one vault twice in
-// a transaction.
-func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (*rpcore.MerkleTree, error) {
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		Addresses: []common.Address{vaultAddr},
-		Topics:    [][]common.Hash{{commitmentTopic}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("vault Commitment events: %w", err)
-	}
-	tree := rpcore.NewMerkleTree(merkleDepth)
-	var batch []*big.Int
-	for i, l := range logs {
-		if len(l.Topics) >= 3 {
-			batch = append(batch, l.Topics[2].Big())
-		}
-		if (i == len(logs)-1 || logs[i+1].TxHash != l.TxHash) && len(batch) > 0 {
-			tree.InsertLeaves(batch)
-			batch = nil
-		}
-	}
-	return tree, nil
-}
-
 // merkleProof proves commitment is in vault's tree and checks, before any
 // proving, that the vault has had the proof's root in that tree, so a
 // rebuild that drifted from the vault fails here, naming the vault and tree,

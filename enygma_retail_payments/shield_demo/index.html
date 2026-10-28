@@ -26,6 +26,7 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   --t-bg:#0b1220; --t-bar:#111a2c; --t-bd:#1e2a40; --t-hover:#2a3a58; --t-text:#c9d6ea; --t-dim:#6b7c96;
   --t-key:#c3a0ff; --t-chain:#4ade80; --t-zk:#facc15; --t-tag:#ff9040; --t-step:#22d3ee; --t-ok:#4ade80; --t-bad:#f87171;
   --drawer-h:240px;
+  --leaf-before:#d9cfbd; --leaf-run:#8f8575;
 }
 :root[data-theme="dark"] {
   --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
@@ -35,6 +36,7 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   --erc:#3dcc75; --erc-dim:rgba(61,204,117,.08); --usdr:#ffcc40; --usdr-dim:rgba(255,204,64,.06);
   --shadow:rgba(0,0,0,.4);
   --actor:#3dd4b0; --service:#ff9040; --contract:#8b9cff;
+  --leaf-before:#1b3d66; --leaf-run:#5f86ad;
 }
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
 html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.5; }
@@ -102,6 +104,51 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .caption .lbl { font:600 13px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 8px; border-radius:4px; }
 .caption small { font:12px var(--sans); color:var(--muted); }
 .caption .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
+
+/* ---- stage: the diagram, and the hop detail panel at its full height ------ */
+.stage { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:16px; margin:0 28px; }
+.stage .diagram { margin:0; min-width:0; }
+@media (max-width:1000px) { .stage { grid-template-columns:minmax(0,1fr); } #hopPanel { min-height:520px; } }
+#hopPanel { position:relative; min-height:0; background:var(--s1); border:1px solid var(--bd); border-radius:16px; }
+#hopPanel .inner { position:absolute; inset:0; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:10px; }
+#hopPanel .sentence { font:16px/1.4 var(--serif); color:var(--text); }
+.hlbl { font:600 12px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 7px; border-radius:4px; }
+.hstep { font-size:12px; color:var(--muted); }
+.vcard { border:1px solid var(--bd); border-radius:10px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; }
+.vcard.back { opacity:.75; }
+.vhead { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; font-size:12px; }
+.vhead b { font:600 14px var(--serif); }
+.tnum { font:600 11px var(--mono); color:var(--contract); border:1px solid color-mix(in srgb, var(--contract) 40%, var(--bd)); border-radius:4px; padding:0 5px; }
+.fill { font:11px var(--mono); color:var(--muted); }
+.tchip { font:10px var(--mono); color:var(--muted); background:var(--s2); border-radius:999px; padding:0 7px; cursor:help; }
+.roots { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; font-size:11.5px; color:var(--muted); }
+svg.tree { display:block; overflow:visible; }
+svg.tree .e { stroke:var(--accent); stroke-width:2; }
+svg.tree .e.sib { stroke:var(--bd2); stroke-width:1.4; stroke-dasharray:3 3; }
+svg.tree .n.path { fill:var(--accent); }
+svg.tree .n.sibling { fill:var(--s1); stroke:var(--muted); stroke-width:1.3; stroke-dasharray:2 2; }
+svg.tree .n.root { fill:var(--contract); stroke:var(--s1); stroke-width:2; cursor:copy; }
+svg.tree .n.leaf { fill:var(--accent); cursor:copy; animation:pop .6s ease-out; }
+svg.tree .t { font:10px var(--mono); fill:var(--text2); }
+svg.tree .t.root { font-weight:600; fill:var(--contract); }
+svg.tree .t.idle { fill:var(--muted); font:italic 12px var(--serif); }
+@keyframes pop { 0% { transform:scale(.2); transform-origin:center; transform-box:fill-box; } }
+.strip { display:grid; grid-template-columns:repeat(var(--cols), 1fr); gap:1px; }
+.strip i { aspect-ratio:1/2.2; border-radius:1px; box-shadow:inset 0 0 0 1px var(--bd); }
+.strip.thin i { aspect-ratio:1/6; }
+.strip i.before { background:var(--leaf-before); box-shadow:none; }
+.strip i.run { background:var(--leaf-run); box-shadow:none; }
+.strip i.hot { background:var(--accent); box-shadow:0 0 0 1.5px var(--accent); position:relative; z-index:1; animation:pop .6s ease-out; }
+.legend { display:flex; gap:10px; font-size:11px; color:var(--muted); }
+.legend i { display:inline-block; width:8px; height:12px; border-radius:1px; margin-right:4px; vertical-align:-2px; box-shadow:inset 0 0 0 1px var(--bd); }
+.legend i.before { background:var(--leaf-before); box-shadow:none; } .legend i.run { background:var(--leaf-run); box-shadow:none; } .legend i.hot { background:var(--accent); box-shadow:none; }
+.hex { font:11px var(--mono); background:var(--s2); border-radius:3px; padding:0 4px; cursor:copy; white-space:nowrap; }
+.hex.copied { background:var(--accent); color:var(--on-accent); }
+#hopPanel details summary { cursor:pointer; font:600 12px var(--mono); color:var(--accent); }
+.rows { display:flex; flex-direction:column; gap:3px; margin-top:6px; }
+.row { display:grid; grid-template-columns:150px minmax(0,1fr); gap:8px; font-size:12px; }
+.row .k { color:var(--muted); font:11px var(--mono); }
+.started { color:var(--ok); font-size:11.5px; }
 
 /* ---- timeline and panels ------------------------------------------------- */
 main { display:grid; grid-template-columns:300px minmax(0,1fr); gap:22px; padding:20px 28px; }
@@ -192,12 +239,15 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <button id="themeBtn" title="Light / dark theme" aria-label="Toggle light / dark theme">◐</button>
 </header>
 
+<div class="stage">
 <section class="diagram">
   <div class="cols"><span>Off-chain parties</span><span>Services</span><span>On-chain contracts</span></div>
   <svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg>
   <div id="nodeTip" hidden></div>
   <div class="caption"><span id="now">shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</span><span class="q" id="queued"></span></div>
 </section>
+<aside id="hopPanel" aria-label="Hop detail"></aside>
+</div>
 
 <main>
   <aside class="stepper" id="stepper">
@@ -381,6 +431,7 @@ function setProto(field, value) {
   if (field === 'audit') { showAudit(JSON.parse(value)); return; }
   if (field === 'totals') { showTotals(JSON.parse(value)); return; }
   if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
+  if (field === 'trees') { hopPanel.snapshot(JSON.parse(value)); return; }
   protoFields[field] = value;
   diagram.refreshTip();
 }
@@ -538,15 +589,17 @@ const diagram = (() => {
     const dot = svg('circle', { r: 6, class: 'packet' + (h.failed ? ' failed' : '') }, gP);
     svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: l.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
     setTimeout(() => dot.remove(), h.failed ? hold * 4 : hold + 250);
+    hopPanel.shown(h);
     $('now').innerHTML = `<b>${esc(NODE[h.from].label)}</b> ${h.from === h.to ? '' : `→ <b>${esc(NODE[h.to].label)}</b>`} ` +
       `<span class="lbl${h.failed ? ' bad' : ''}">${h.failed ? '✗ ' : ''}${esc(h.label)}</span> <small${h.failed ? ' class="err"' : ''}>${esc(h.detail || '')}</small>`;
   }
 
   // Pacing is in the page only: the engine runs at full speed and each hop
-  // holds for HOLD ms. Once the hop shown is more than CATCHUP ms behind the
-  // run (it arrived that long ago), holds shrink in proportion, so a burst
-  // still plays readably but a long backlog drains.
-  const HOLD = 600, CATCHUP = 3000, MIN_HOLD = 120;
+  // holds for HOLD ms, DETAIL_HOLD if it has a hop detail to read. Once the
+  // hop shown is more than CATCHUP ms behind the run (it arrived that long
+  // ago), holds shrink in proportion, so a burst still plays readably but a
+  // long backlog drains.
+  const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120;
   const queue = [];
   let timer = null;
   function pump() {
@@ -554,7 +607,8 @@ const diagram = (() => {
     if (!queue.length) { $('queued').textContent = ''; return; }
     const h = queue.shift();
     const behind = performance.now() - h.at;
-    const hold = behind > CATCHUP ? Math.max(MIN_HOLD, HOLD * CATCHUP / behind) : HOLD;
+    const base = h.hopDetail ? DETAIL_HOLD : HOLD;
+    const hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
     show(h, hold);
     $('queued').textContent = queue.length ? `+${queue.length} queued` : '';
     timer = setTimeout(pump, hold);
@@ -573,6 +627,199 @@ const diagram = (() => {
       for (const g of Object.values(nodeEl)) { Object.values(g._t || {}).forEach(clearTimeout); g.classList.remove('lit', 'bad'); }
       $('queued').textContent = '';
     },
+  };
+})();
+
+// ---- hop detail panel: the latest hop detail, over both vaults' trees -----
+
+const VAULT_IDS = ['Erc20CoinVault', 'UsdrCoinVault'];
+const DEPTH = 8, TREE_LEAVES = 256;
+
+// Each hop detail kind's fixed plain-language sentence.
+const SENTENCE = {
+  leavesIn: d => `The new notes' commitments land as leaves in the ${NODE[d.vault].label}'s Merkle tree, all in this one transaction, and the tree gets a new root.`,
+};
+
+const shortHex = v => { v = String(v); return v.startsWith('0x') && v.length > 14 ? v.slice(0, 8) + '…' + v.slice(-4) : v; };
+// hex is a field element in short hex, the full value on hover, copied on click.
+const hex = v => `<span class="hex" data-copy="${esc(v)}" title="${esc(v)} (click to copy)">${esc(shortHex(v))}</span>`;
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-copy]');
+  if (!el) return;
+  navigator.clipboard?.writeText(el.dataset.copy).catch(() => {});
+  el.classList.add('copied');
+  setTimeout(() => el.classList.remove('copied'), 700);
+});
+
+// prunedTree lays out the part of a depth-8 tree above the touched leaves:
+// each touched leaf's path to the root, and the sibling beside each step of
+// it. x runs 0..1 across the drawn leaves; level 0 is the leaves, 8 the root.
+function prunedTree(touched) {
+  const path = new Set(), drawn = new Map();
+  for (const i of touched) for (let l = 0; l <= DEPTH; l++) path.add(`${l}:${i >> l}`);
+  if (!touched.length) path.add(`${DEPTH}:0`);
+  for (const k of path) {
+    const [l, i] = k.split(':').map(Number);
+    drawn.set(k, { level: l, index: i, kind: l === 0 ? 'leaf' : 'path' });
+    if (l < DEPTH && touched.length && !path.has(`${l}:${i ^ 1}`)) drawn.set(`${l}:${i ^ 1}`, { level: l, index: i ^ 1, kind: 'sibling' });
+  }
+  let slot = 0;
+  const edges = [];
+  (function place(l, i) {
+    const n = drawn.get(`${l}:${i}`);
+    const kids = l > 0 ? [2 * i, 2 * i + 1].filter(c => drawn.has(`${l - 1}:${c}`)) : [];
+    if (!kids.length) { n.x = slot++; return n.x; }
+    n.x = kids.map(c => { edges.push([n, drawn.get(`${l - 1}:${c}`)]); return place(l - 1, c); }).reduce((a, b) => a + b) / kids.length;
+    return n.x;
+  })(DEPTH, 0);
+  for (const n of drawn.values()) n.x = slot > 1 ? n.x / (slot - 1) : 0.5;
+  return { nodes: [...drawn.values()], edges };
+}
+
+const hopPanel = (() => {
+  // trees[vault] = { current, byNum: { n: { leaves: [{commitment, owner, before}], leafCount, root, full } } }:
+  // the run's tree snapshot, then each hop detail's leaves as the diagram plays it.
+  let trees = null, latest = null, front = VAULT_IDS[0], valuesOpen = false;
+  document.addEventListener('toggle', e => { if (e.target.id === 'hopValues') valuesOpen = e.target.open; }, true);
+
+  function snapshot(snaps) {
+    trees = {};
+    for (const v of snaps) {
+      const byNum = {};
+      for (const f of v.fullTrees) byNum[f.tree] = { leaves: null, leafCount: f.leafCount, root: f.root, full: true };
+      byNum[v.tree] = { leaves: v.leaves.map(l => ({ ...l, before: true })), leafCount: v.leafCount, root: v.root, full: false };
+      trees[v.vault] = { current: v.tree, byNum };
+    }
+    latest = null;
+    render();
+  }
+
+  function land(d) {
+    const t = trees?.[d.vault];
+    if (!t) return;
+    if (d.tree > t.current) {
+      t.byNum[t.current].full = true;
+      t.byNum[d.tree] = { leaves: [], leafCount: 0, root: null, full: false };
+      t.current = d.tree;
+    }
+    const tr = t.byNum[d.tree];
+    // Leaves this run added with no leavesIn detail (the shield, the grants) fill the gaps.
+    for (let i = 0; i < d.leaves[0].index; i++) tr.leaves[i] ||= { before: false };
+    for (const l of d.leaves) tr.leaves[l.index] = { commitment: l.commitment, owner: l.owner, before: false };
+    tr.leafCount = tr.leaves.length;
+    tr.root = d.rootAfter;
+  }
+
+  // focusOf is what a hop's details touch, per vault: the tree, the touched
+  // leaves and the roots before and after.
+  function focusOf(details) {
+    const f = {};
+    for (const d of details) {
+      if (d.kind !== 'leavesIn') continue;
+      const x = f[d.vault] ||= { tree: d.tree, touched: [] };
+      x.touched.push(...d.leaves.map(l => l.index));
+      Object.assign(x, { rootBefore: d.rootBefore, rootAfter: d.rootAfter, treeStarted: d.treeStarted });
+    }
+    return f;
+  }
+
+  const treeOf = (v, f) => { const t = trees[v], num = f?.tree ?? t.current; return { num, ...t.byNum[num] }; };
+
+  function treeSvg(v, f) {
+    const w = 380, h = 170, pad = 14, t = treeOf(v, f);
+    const { nodes, edges } = prunedTree(f ? f.touched : []);
+    const xy = n => [pad + n.x * (w - 2 * pad), 14 + (DEPTH - n.level) / DEPTH * (h - 30)];
+    const out = [`<svg class="tree" viewBox="0 0 ${w} ${h}" width="100%">`];
+    for (const [a, b] of edges) {
+      const [x1, y1] = xy(a), [x2, y2] = xy(b);
+      out.push(`<line class="e${b.kind === 'sibling' ? ' sib' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`);
+    }
+    for (const n of nodes) {
+      const [x, y] = xy(n);
+      if (n.level === DEPTH) {
+        out.push(`<circle class="n root" data-copy="${esc(t.root || '')}" cx="${x}" cy="${y}" r="7"><title>${esc(t.root || '')}</title></circle>` +
+          `<text class="t root" x="${x}" y="${y - 10}" text-anchor="middle">root</text>`);
+      } else if (n.kind === 'leaf') {
+        const c = t.leaves?.[n.index]?.commitment || '';
+        out.push(`<rect class="n leaf" data-copy="${esc(c)}" x="${x - 6}" y="${y - 6}" width="12" height="12" rx="2"><title>${esc(c)}</title></rect>` +
+          `<text class="t" x="${x}" y="${y + 18}" text-anchor="middle">#${n.index}</text>`);
+      } else out.push(`<circle class="n ${n.kind}" cx="${x}" cy="${y}" r="${n.kind === 'sibling' ? 3.5 : 4.5}"></circle>`);
+    }
+    if (!f) out.push(`<text class="t idle" x="${w / 2}" y="${h / 2 + 24}" text-anchor="middle">not touched by this hop</text>`);
+    out.push('</svg>');
+    return out.join('');
+  }
+
+  // strip is a vault tree's 256 leaves as cells: empty, before this run,
+  // this run, and landed in this hop.
+  function strip(v, f, cols, cls = '') {
+    const t = treeOf(v, f), hot = new Set(f ? f.touched : []), cells = [];
+    for (let i = 0; i < TREE_LEAVES; i++) {
+      const l = t.leaves ? t.leaves[i] : i < t.leafCount ? { before: true } : null;
+      const c = !l ? 'empty' : hot.has(i) ? 'hot' : l.before ? 'before' : 'run';
+      cells.push(`<i class="${c}" title="leaf #${i}${l?.commitment ? ' · ' + esc(l.commitment) : ''}${l?.before ? ' · before this run' : !l ? ' · empty' : ''}"></i>`);
+    }
+    return `<div class="strip ${cls}" style="--cols:${cols}">${cells.join('')}</div>`;
+  }
+
+  function vaultHead(v, f) {
+    const t = treeOf(v, f);
+    // More than two full trees collapse into one chip, their roots listed on hover.
+    const full = Object.entries(trees[v].byNum).filter(([n, x]) => x.full && +n !== t.num);
+    const tip = ([n, x]) => `tree ${n} is full: ${x.leafCount} leaves · root ${esc(x.root || '')}`;
+    const chips = full.length > 2
+      ? `<span class="tchip" title="${full.map(tip).join('&#10;')}">trees ${full[0][0]}–${full[full.length - 1][0]} · full</span>`
+      : full.map(f => `<span class="tchip" title="${tip(f)}">tree ${f[0]} · full</span>`).join('');
+    return `<div class="vhead"><b>${NODE[v].label}</b> <span class="tnum">tree ${t.num}</span> <span class="fill">${t.leafCount} / ${TREE_LEAVES}</span>${chips}</div>`;
+  }
+
+  // rowsOf is a detail's real values as [label, value html] rows.
+  function rowsOf(d) {
+    if (d.kind !== 'leavesIn') return [];
+    return [
+      ...d.leaves.map(l => [`new leaf · tree ${d.tree} #${l.index}`, hex(l.commitment)]),
+      ['root before', hex(d.rootBefore)], ['root after', hex(d.rootAfter)], ['transaction', hex(d.tx)],
+      ...(d.treeStarted ? [['tree', `<span class="started">tree ${d.tree} started: the batch would have filled tree ${d.tree - 1}</span>`]] : [])];
+  }
+  const rowsHtml = rows => `<div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join('')}</div>`;
+
+  function render() {
+    const el = $('hopPanel');
+    if (!trees) {
+      el.innerHTML = '<div class="inner"><p class="sentence">Press RUN. Each hop that changes the protocol state explains itself here, over both vaults’ real Merkle trees.</p></div>';
+      return;
+    }
+    const en = latest || { hop: null, details: [], focus: {} };
+    const back = VAULT_IDS.find(v => v !== front), f = en.focus[front];
+    const roots = f ? `<div class="roots">root ${hex(f.rootBefore)} → ${hex(f.rootAfter)}${f.treeStarted ? ` <span class="started">· tree ${f.tree} started</span>` : ''}</div>` : '';
+    el.innerHTML = `<div class="inner">
+      <div>${en.hop ? `<span class="hlbl">${esc(en.hop.label)}</span> <span class="hstep">${esc(NODE[en.hop.from].label)} → ${esc(NODE[en.hop.to].label)}</span>` : '<span class="hstep">Hop detail</span>'}</div>
+      <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0]) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
+      <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>
+      <div class="vcard back">${vaultHead(back, en.focus[back])}${en.focus[back] ? `<div class="roots">same transaction: root ${hex(en.focus[back].rootBefore)} → ${hex(en.focus[back].rootAfter)}</div>` : ''}${strip(back, en.focus[back], 256, 'thin')}</div>
+      <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span><span><i></i>empty</span></div>
+      ${en.hop ? `<details id="hopValues"${valuesOpen ? ' open' : ''}><summary>Real values</summary>${en.details.map(d => rowsHtml(rowsOf(d))).join('')}</details>` : ''}
+    </div>`;
+  }
+
+  return {
+    snapshot,
+    // shown takes the hop the diagram is playing: one with a hop detail
+    // lands its leaves and becomes the panel's latest.
+    // A hop whose leaves landed in the same transaction as the latest's (a
+    // paid fee's note, after the payment's) keeps the latest's in view too.
+    shown(h) {
+      if (!h.hopDetail || !trees) return;
+      h.hopDetail.forEach(land);
+      const tx = h.hopDetail.find(d => d.tx)?.tx;
+      const sameTx = tx && latest?.details.some(d => d.tx === tx) ? latest.details.filter(d => d.vault !== h.hopDetail[0].vault) : [];
+      const details = [...h.hopDetail, ...sameTx];
+      const focus = focusOf(details);
+      front = h.hopDetail[0]?.vault || front;
+      latest = { hop: h, details, focus };
+      render();
+    },
+    reset() { trees = null; latest = null; front = VAULT_IDS[0]; render(); },
   };
 })();
 
@@ -684,7 +931,7 @@ $('drawerGrip').onpointerdown = e => {
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': build(); termReset(); diagram.reset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     setStep(e.step, 'running', e.msg || e.label);
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
@@ -749,6 +996,7 @@ $('runBtn').onclick = async () => {
 };
 
 build();
+hopPanel.reset();
 termReset();
 showTab('engine');
 layoutDrawer();
