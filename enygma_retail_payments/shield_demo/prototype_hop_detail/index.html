@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<!-- PROTOTYPE (#131) — throwaway copy of ../index.html with a hop detail panel and tree view in three
+     variants (?variant=A|B|C), replaying recording.js instead of the engine. See README.md. -->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE · Hop detail</title>
+<script>
+// The theme is picked before the page paints, so a dark choice doesn't flash light.
+const THEME_KEY = 'enygmaRetailShieldTheme';
+try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.dataset.theme = 'dark'; } catch (_) {}
+</script>
+<style>
+/* Every colour is a token. Light is the default; the dark set is behind the
+   toggle. The terminal keeps its own dark tokens in both themes. */
+:root {
+  --bg:#fbf8f2; --s1:#fffdf8; --s2:#f3eee3; --bd:#e7dfcf; --bd2:#d5c9b2;
+  --text:#2b2722; --text2:#5d554a; --muted:#9a8f7e;
+  --accent:#0f766e; --accent-dim:rgba(15,118,110,.10); --on-accent:#ffffff;
+  --ok:#15803d; --warn:#b45309; --bad:#dc2626; --on-bad:#ffffff; --bad-dim:rgba(220,38,38,.08);
+  --erc:#15803d; --erc-dim:rgba(21,128,61,.08); --usdr:#b45309; --usdr-dim:rgba(180,83,9,.08);
+  --shadow:rgba(43,39,34,.12);
+  --actor:#0f766e; --service:#c2410c; --contract:#4338ca;
+  --mono:'SF Mono','Fira Code',Consolas,'Courier New',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;
+  --serif:'Iowan Old Style','Palatino Linotype',Georgia,serif;
+  --t-bg:#0b1220; --t-bar:#111a2c; --t-bd:#1e2a40; --t-hover:#2a3a58; --t-text:#c9d6ea; --t-dim:#6b7c96;
+  --t-key:#c3a0ff; --t-chain:#4ade80; --t-zk:#facc15; --t-tag:#ff9040; --t-step:#22d3ee; --t-ok:#4ade80; --t-bad:#f87171;
+  --drawer-h:240px;
+}
+:root[data-theme="dark"] {
+  --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
+  --text:#c0d8f0; --text2:#8ab0d0; --muted:#4f7394;
+  --accent:#3dd4b0; --accent-dim:rgba(61,212,176,.10); --on-accent:#031410;
+  --ok:#3dcc75; --warn:#ffcc40; --bad:#ff5566; --on-bad:#ffffff; --bad-dim:rgba(255,85,102,.07);
+  --erc:#3dcc75; --erc-dim:rgba(61,204,117,.08); --usdr:#ffcc40; --usdr-dim:rgba(255,204,64,.06);
+  --shadow:rgba(0,0,0,.4);
+  --actor:#3dd4b0; --service:#ff9040; --contract:#8b9cff;
+}
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.5; }
+body { min-height:100vh; overflow-x:hidden; padding-bottom:calc(var(--drawer-h) + 16px); }
+button, select, input { font:inherit; color:inherit; }
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-thumb { background:var(--bd2); border-radius:3px; }
+
+/* ---- control bar --------------------------------------------------------- */
+.bar { display:flex; align-items:center; gap:14px; padding:14px 28px; flex-wrap:wrap; }
+h1 { font:600 24px var(--serif); flex:1; white-space:nowrap; }
+h1 span { font:italic 400 16px var(--serif); color:var(--muted); margin-left:8px; }
+.opt { display:flex; flex-direction:column; gap:2px; }
+.opt label { font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+.opt input, .opt select { width:84px; background:var(--s2); border:1px solid var(--bd2); border-radius:6px; padding:3px 6px; font:11px var(--mono); }
+.opt select { width:auto; }
+.toggle { display:flex; gap:6px; align-items:center; color:var(--text2); font-size:12.5px; cursor:pointer; }
+details.opts { position:relative; }
+details.opts summary { cursor:pointer; color:var(--text2); list-style:none; border:1px solid var(--bd2); border-radius:999px; padding:5px 14px; background:var(--s1); }
+details.opts summary::-webkit-details-marker { display:none; }
+details.opts > div { position:absolute; right:0; top:38px; z-index:60; background:var(--s1); border:1px solid var(--bd2); border-radius:10px; padding:12px; display:flex; gap:12px; flex-wrap:wrap; width:max-content; max-width:min(560px, 90vw); box-shadow:0 10px 30px var(--shadow); }
+.chip { display:flex; align-items:center; gap:6px; font:12px var(--mono); padding:4px 10px; border-radius:999px; background:var(--s2); color:var(--text2); }
+.status-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+.chip.running { background:var(--accent-dim); color:var(--accent); } .chip.running .status-dot { background:var(--accent); animation:pulse 1.2s infinite; }
+.chip.success { color:var(--ok); } .chip.success .status-dot { background:var(--ok); }
+.chip.error { color:var(--bad); } .chip.error .status-dot { background:var(--bad); }
+@keyframes pulse { 50% { opacity:.3; } }
+#runBtn { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.1em; padding:7px 24px; border-radius:999px; cursor:pointer; }
+#runBtn:disabled, #sendBtn:disabled { opacity:.35; cursor:not-allowed; }
+#themeBtn { border:1px solid var(--bd2); background:var(--s1); border-radius:50%; width:32px; height:32px; cursor:pointer; }
+#optError, #sendError { font:11px var(--mono); color:var(--bad); }
+#optError:empty { display:none; }
+
+/* ---- diagram: actors | services | contracts, one hop animated at a time --- */
+.diagram { position:relative; margin:0 28px; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px 0; }
+.cols { display:grid; grid-template-columns:1fr 1fr 1fr; font:italic 13px var(--serif); color:var(--muted); }
+.cols span:nth-child(2) { text-align:center; } .cols span:nth-child(3) { text-align:right; }
+#diagram { display:block; width:100%; height:auto; max-height:36vh; font-family:var(--sans); }
+#diagram .node rect { fill:var(--s1); stroke:var(--bd2); stroke-width:1.2; transition:all .25s; }
+#diagram .node.actor rect { fill:color-mix(in srgb, var(--actor) 6%, var(--s1)); }
+#diagram .node.service rect { fill:color-mix(in srgb, var(--service) 8%, var(--s1)); stroke:var(--service); stroke-width:1.6; }
+#diagram .node.contract rect { fill:color-mix(in srgb, var(--contract) 6%, var(--s1)); stroke:color-mix(in srgb, var(--contract) 45%, var(--bd)); }
+#diagram .node.lit rect { stroke:var(--accent); stroke-width:2.5; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 40%, transparent)); }
+#diagram .nl { font-size:12px; font-weight:600; fill:var(--text); }
+#diagram .node.service .nl { font:600 16px var(--serif); }
+#diagram .ns { font:10px var(--mono); fill:var(--muted); }
+#diagram .link { fill:none; stroke:transparent; stroke-width:1.5; transition:stroke .4s, stroke-width .2s; }
+#diagram .link.used { stroke:var(--bd); }
+#diagram .link.active { stroke:var(--accent); stroke-width:2.5; }
+#diagram .packet { fill:var(--accent); stroke:var(--s1); stroke-width:2; }
+#diagram .link.failed { stroke:var(--bad); stroke-width:2.5; stroke-dasharray:6 4; }
+#diagram .packet.failed { fill:var(--bad); }
+#diagram .node.bad rect { stroke:var(--bad); stroke-width:2.5; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--bad) 40%, transparent)); }
+#diagram .node[data-tip] { cursor:help; }
+.caption .lbl.bad { background:var(--bad); color:var(--on-bad); }
+.caption .err { color:var(--bad); }
+#nodeTip { position:absolute; z-index:50; width:340px; background:var(--s1); border:1px solid var(--bd2); border-radius:10px; padding:10px 12px; box-shadow:0 10px 30px var(--shadow); pointer-events:none; }
+#nodeTip[hidden] { display:none; }
+#nodeTip b { display:block; font:600 14px var(--serif); margin-bottom:4px; }
+#nodeTip .empty { color:var(--muted); font-size:12px; }
+.tip-row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; font:11px var(--mono); }
+.tip-row span:first-child { color:var(--muted); flex:none; }
+.tip-row span:last-child { word-break:break-all; text-align:right; }
+.caption { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-top:1px dashed var(--bd2); padding:10px 2px 12px; min-height:48px; font:16px var(--serif); color:var(--text2); }
+.caption .lbl { font:600 13px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 8px; border-radius:4px; }
+.caption small { font:12px var(--sans); color:var(--muted); }
+.caption .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
+
+/* ---- timeline and panels ------------------------------------------------- */
+main { display:grid; grid-template-columns:300px minmax(0,1fr); gap:22px; padding:20px 28px; }
+
+h3 { font:600 17px var(--serif); margin-bottom:6px; }
+.stepper { position:sticky; top:12px; align-self:start; max-height:calc(100vh - var(--drawer-h) - 24px); overflow-y:auto; }
+.stepper .count { font:600 28px var(--serif); margin-bottom:6px; }
+.st { display:flex; gap:12px; position:relative; padding-bottom:10px; color:var(--muted); }
+.st::before { content:''; position:absolute; left:12px; top:26px; bottom:0; width:2px; background:var(--bd); }
+.st:last-child::before { display:none; }
+.st.success::before { background:var(--accent); }
+.st .n { flex:none; width:26px; height:26px; border-radius:50%; border:2px solid var(--bd2); display:grid; place-items:center; font:600 11px var(--mono); background:var(--bg); z-index:1; }
+.st.success, .st.running, .st.error { color:var(--text); }
+.st.success .n { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+.st.running .n { border-color:var(--accent); color:var(--accent); animation:pulse 1.2s infinite; }
+.st.error .n { background:var(--bad); border-color:var(--bad); color:var(--on-bad); }
+.st b { font-weight:600; } .st p { font-size:12px; color:var(--text2); margin-top:2px; }
+.st.error p, #stepMsg.error { color:var(--bad); }
+#stepMsg { font-size:12px; color:var(--text2); margin-bottom:10px; }
+#stepMsg:empty { display:none; }
+
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th { text-align:left; font:italic 13px var(--serif); color:var(--muted); font-weight:400; padding:6px 10px; border-bottom:1px solid var(--bd2); }
+td { padding:5px 10px; border-bottom:1px solid var(--bd); }
+.num { text-align:right; font-variant-numeric:tabular-nums; }
+.box { background:var(--s1); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+.box.pad { padding:12px 14px; }
+.box + h3, .box + .box, h3.spaced { margin-top:18px; }
+.scroll { overflow-x:auto; }
+.ledger td { font-family:var(--mono); font-size:11.5px; }
+.ledger td.who { font-family:var(--sans); font-size:13px; }
+.ledger td.num { font:600 14px var(--mono); }
+.ledger td.erc { color:var(--erc); } .ledger td.usdr { color:var(--usdr); }
+.ledger .role { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+.ledger tr[title] { cursor:help; }
+.split { display:grid; grid-template-columns:1.4fr 1fr; gap:22px; margin-top:18px; }
+.split > div { min-width:0; }
+@media (max-width:1000px) { main, .split { grid-template-columns:minmax(0,1fr); } .stepper { position:static; max-height:none; } }
+.mono td { font-family:var(--mono); font-size:11px; }
+.send { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:6px; }
+.send input { width:70px; }
+#sendBtn { border:none; background:var(--accent); color:var(--on-accent); border-radius:6px; padding:4px 14px; font-weight:700; cursor:pointer; }
+#auditNote { font-size:12px; color:var(--text2); margin-bottom:8px; }
+.audit-scroll { max-height:260px; overflow-y:auto; margin-top:10px; }
+.hidden { color:var(--muted); font-style:italic; }
+td.ok { color:var(--ok); } td.pending { color:var(--warn); }
+.totals { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px 16px; }
+.totals div { font:600 18px var(--mono); }
+.totals small { display:block; font:11px var(--sans); color:var(--muted); }
+
+/* ---- terminal drawer: dark in both themes, read-only --------------------- */
+#drawer { position:fixed; left:0; right:0; bottom:0; z-index:900; height:var(--drawer-h); background:var(--t-bg); color:var(--t-text); display:flex; flex-direction:column; border-top:1px solid var(--t-bd); box-shadow:0 -6px 20px var(--shadow); }
+#drawerGrip { height:5px; cursor:ns-resize; background:var(--t-bar); flex:none; touch-action:none; }
+#drawerGrip:hover { background:var(--t-hover); }
+#drawer .head { display:flex; align-items:center; gap:4px; padding:0 8px; height:29px; background:var(--t-bar); border-bottom:1px solid var(--t-bd); flex:none; font:12px var(--mono); }
+#drawer .tabs { display:flex; gap:2px; align-self:flex-end; }
+#drawer .tabs button { background:none; border:none; color:var(--t-dim); padding:4px 10px; border-radius:5px 5px 0 0; cursor:pointer; font:inherit; }
+#drawer .tabs button.on { background:var(--t-bg); color:var(--t-text); }
+#drawer .tabs button[hidden], #hideReadsOpt[hidden] { display:none; }
+#hideReadsOpt { color:var(--t-dim); font-size:11px; margin-left:10px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+#drawer .count { font-size:10px; color:var(--t-dim); }
+#drawer .sp { flex:1; }
+#drawer .ro, #follow { color:var(--t-dim); font-size:10px; letter-spacing:.12em; margin-left:10px; }
+#follow { background:none; border:none; cursor:pointer; }
+#follow.paused { color:var(--t-zk); }
+#drawerToggle { background:none; border:none; color:var(--t-text); width:26px; cursor:pointer; }
+#termBody { flex:1; position:relative; min-height:0; }
+#termBody .pane { position:absolute; inset:0; overflow:auto; padding:6px 12px; font:11.5px/1.45 var(--mono); white-space:pre-wrap; word-break:break-word; user-select:text; }
+#termBody .pane[hidden] { display:none; }
+#termBody .hide-reads .rpc-read { display:none; }
+#termBody .ts { color:var(--t-dim); }
+#termBody .c-key { color:var(--t-key); } #termBody .c-chain { color:var(--t-chain); } #termBody .c-zk { color:var(--t-zk); } #termBody .c-tag { color:var(--t-tag); }
+#termBody .c-step { color:var(--t-step); } #termBody .c-ok { color:var(--t-ok); } #termBody .c-bad { color:var(--t-bad); }
+#termBody .empty { color:var(--t-dim); }
+</style>
+<link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+<header class="bar">
+  <h1>Enygma <span>retail shield · hop detail prototype</span></h1>
+  <label class="toggle"><input id="optUsdrFee" type="checkbox"> USDr fee</label>
+  <label class="toggle"><input id="optTags" type="checkbox"> with tag</label>
+  <details class="opts"><summary>Amounts</summary><div id="options">
+    <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
+  </div></details>
+  <span id="optError"></span>
+  <span class="chip" id="status"><span class="status-dot"></span><span id="statusText">idle</span></span>
+  <button id="runBtn">RUN</button>
+  <button id="themeBtn" title="Light / dark theme" aria-label="Toggle light / dark theme">◐</button>
+</header>
+
+<div class="stage">
+<section class="diagram">
+  <div class="cols"><span>Off-chain parties</span><span>Services</span><span>On-chain contracts</span></div>
+  <svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg>
+  <div id="nodeTip" hidden></div>
+  <div class="caption"><span id="now">shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</span><span class="q" id="queued"></span></div>
+</section>
+<aside id="hopPanel" aria-label="Hop detail"></aside>
+</div>
+
+<main>
+  <aside class="stepper" id="stepper">
+    <div class="count" id="stepCount">0 / 0</div>
+    <div id="stepMsg">Press RUN to start a scenario on the fresh deployment.</div>
+    <div id="steps"></div>
+  </aside>
+  <section>
+    <div class="box scroll ledger"><table>
+      <thead><tr><th>Actor</th><th>Status</th><th class="num">Public</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>Discovery</th></tr></thead>
+      <tbody id="actors"></tbody>
+    </table></div>
+    <div class="split">
+      <div>
+        <h3>Auditor’s view</h3>
+        <div class="box pad scroll">
+          <div id="auditNote"></div>
+          <table class="mono">
+            <thead><tr><th>User</th><th class="num">Received</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>vs own scan</th></tr></thead>
+            <tbody id="auditBalances"></tbody>
+          </table>
+          <div class="audit-scroll"><table class="mono">
+            <thead><tr><th>Block</th><th>Kind</th><th>From → To</th><th class="num">Amount</th></tr></thead>
+            <tbody id="auditEntries"></tbody>
+          </table></div>
+        </div>
+      </div>
+      <div>
+        <h3>Send</h3>
+        <div class="box pad">
+          <div class="send">
+            <div class="opt"><label for="sendFrom">From</label><select id="sendFrom"></select></div>
+            <div class="opt"><label for="sendTo">To</label><select id="sendTo"></select></div>
+            <div class="opt"><label for="sendAmount">Amount</label><input id="sendAmount" type="number" min="1" value="10"></div>
+            <button id="sendBtn" disabled>SEND</button>
+          </div>
+          <div id="sendError"></div>
+        </div>
+        <h3>Run totals</h3>
+        <div class="box pad totals">
+          <div id="totTxs">—<small>transactions</small></div>
+          <div id="totGas">—<small>gas</small></div>
+          <div id="totProve">—<small>proving</small></div>
+          <div id="totRelay">—<small>relaying</small></div>
+        </div>
+      </div>
+    </div>
+    <h3 class="spaced">Fan-out</h3>
+    <div class="box scroll"><table class="mono">
+      <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+      <tbody id="fanout"></tbody>
+    </table></div>
+    <h3 class="spaced">Transfers between participants</h3>
+    <div class="box scroll"><table class="mono">
+      <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th>Recipient's scan</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+      <tbody id="transfers"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<div id="drawer">
+  <div id="drawerGrip" title="Drag to resize"></div>
+  <div class="head">
+    <div class="tabs" id="termTabs"></div>
+    <label id="hideReadsOpt" hidden title="Hide read-only RPC calls (eth_call, eth_getLogs, …); mined transactions stay"><input type="checkbox" id="hideReads" checked> hide RPC reads</label>
+    <span class="sp"></span>
+    <button id="follow" title="Jump to the newest line and follow">FOLLOWING</button>
+    <span class="ro">READ-ONLY</span>
+    <button id="drawerToggle" title="Collapse / expand" aria-label="Collapse / expand the terminal">▾</button>
+  </div>
+  <div id="termBody"></div>
+</div>
+<script>
+const K = 6;
+const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
+let steps = []; // [{id, label}], announced by the engine at the start of a run
+const ACTORS = [['Issuer','issuer'], ['Sender','sender'], ...NAMES.map(n => [n,'participant'])];
+// The hover detail on an actor's ledger row.
+const DETAIL = [['ethAddr','Address'], ['pkSpend','pk_spend'], ['pkView','pk_view (ML-KEM)'], ['note','Note'], ['channels','Tag channels'], ['scan','Last scan']];
+let actorFields = [];
+// The run-wide protocol fields (contract addresses, the fixed fee, …), shown
+// as hover detail on the diagram's nodes.
+let protoFields = {};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const short = v => v.length > 26 ? v.slice(0, 14) + '…' + v.slice(-8) : v;
+
+$('themeBtn').onclick = () => {
+  const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch (_) {}
+};
+
+function buildSteps() {
+  $('steps').innerHTML = steps.map(({id, label}, i) =>
+    `<div class="st" id="step-${id}"><span class="n">${i + 1}</span><div><b>${esc(label)}</b><p></p></div></div>`).join('');
+  showProgress(0);
+}
+
+function showProgress(done) {
+  $('stepCount').textContent = `${done} / ${steps.length}`;
+}
+
+// setStep marks a step's state; only the running or failed step shows its
+// message. A step outside the scenario (a manual transfer) shows it above the
+// stepper instead. It reports whether the step is one of the scenario's.
+function setStep(id, state, msg) {
+  const el = $('step-' + id);
+  $('stepMsg').className = state === 'error' ? 'error' : '';
+  $('stepMsg').textContent = el ? '' : msg;
+  if (!el) return false;
+  el.className = 'st ' + state;
+  if (state === 'running') keepInView($('stepper'), el);
+  const i = steps.findIndex(s => s.id === id);
+  el.querySelector('.n').textContent = state === 'success' ? '✓' : state === 'error' ? '✗' : i + 1;
+  el.querySelector('p').textContent = state === 'success' ? '' : msg;
+  return true;
+}
+
+// keepInView scrolls only `box` (el's offsetParent), never the page, to keep
+// `el` in the top half of it: the bottom can sit under the terminal drawer.
+function keepInView(box, el) {
+  if (el.offsetTop < box.scrollTop || el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight / 2)
+    box.scrollTop = el.offsetTop - 2 * el.offsetHeight;
+}
+
+function build() {
+  buildSteps();
+  actorFields = ACTORS.map(() => ({}));
+  $('actors').innerHTML = ACTORS.map(([name, role], i) => `
+    <tr id="actor-${i}"><td class="who"><b>${esc(name)}</b> <span class="role">${role}</span></td>
+      <td id="a-${i}-status">—</td><td class="num" id="a-${i}-public">—</td>
+      <td class="num erc" id="a-${i}-balance">—</td><td class="num usdr" id="a-${i}-usdr">—</td>
+      <td id="a-${i}-discovery"></td></tr>`).join('');
+  $('fanout').innerHTML = '';
+  $('transfers').innerHTML = '';
+  $('sendError').textContent = '';
+  protoFields = {};
+  diagram.refreshTip();
+  showTotals(null);
+  $('auditBalances').innerHTML = '';
+  $('auditEntries').innerHTML = '';
+  $('auditNote').textContent = "The auditor recovers each user's view key once they register.";
+}
+
+function setStatus(state, text) {
+  $('status').className = 'chip ' + state;
+  $('statusText').textContent = text;
+}
+
+function setActor(i, field, value) {
+  const f = actorFields[i];
+  if (!f) return;
+  f[field] = value;
+  const set = (id, v) => { const el = $(`a-${i}-${id}`); el.textContent = v; el.title = v; };
+  if (field === 'status') set('status', value);
+  else if (field === 'public') set('public', value.replace(' RaylsERC20', ''));
+  else if (field === 'balance') set('balance', value.replace(' RaylsERC20', ''));
+  else if (field === 'usdr') set('usdr', value.replace(' USDr', ''));
+  else if (field === 'scan' || field === 'channels') set('discovery', [f.channels, f.scan].filter(Boolean).join(' · '));
+  else if (field === 'pkSpend' && $(`a-${i}-status`).textContent === '—') set('status', 'keys made');
+  $('actor-' + i).title = DETAIL.filter(([k]) => f[k]).map(([k, l]) => `${l}: ${f[k]}`).join('\n');
+}
+
+function setProto(field, value) {
+  if (field === 'fanout') {
+    const r = JSON.parse(value);
+    $('fanout').insertAdjacentHTML('beforeend',
+      `<tr title="block ${r.block} · ${esc(r.tx)}"><td>${r.n}</td><td>${esc(r.to)}</td><td class="num">${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td><td>${esc(r.tag)}</td>` +
+      `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
+    return;
+  }
+  if (field === 'transfer') {
+    const r = JSON.parse(value);
+    $('transfers').insertAdjacentHTML('beforeend',
+      `<tr title="block ${r.block} · ${esc(r.tx)}${r.merged ? ' · Payment2in: merged two notes' : ''}"><td>${r.n}</td><td>${esc(r.from)} → ${esc(r.to)}</td><td class="num">${r.merged ? '<small>2 notes · </small>' : ''}${esc(r.amount)}</td><td class="num">${esc(r.fee)}</td><td>${esc(r.tag)}</td><td>${esc(r.scan)}</td>` +
+      `<td class="num">${r.proveMs}</td><td class="num">${r.relayMs}</td><td class="num">${Number(r.gas).toLocaleString()}</td></tr>`);
+    return;
+  }
+  if (field === 'audit') { showAudit(JSON.parse(value)); return; }
+  if (field === 'totals') { showTotals(JSON.parse(value)); return; }
+  if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
+  protoFields[field] = value;
+  diagram.refreshTip();
+}
+
+// showTotals fills the totals card; null clears it.
+function showTotals(t) {
+  const set = (id, v, label) => $(id).innerHTML = `${esc(v)}<small>${label}</small>`;
+  const secs = ms => (ms / 1000).toFixed(1) + ' s';
+  set('totTxs', t ? t.txs : '—', 'transactions');
+  set('totGas', t ? Number(t.gas).toLocaleString() : '—', 'gas');
+  set('totProve', t ? secs(t.proveMs) : '—', 'proving');
+  set('totRelay', t ? secs(t.relayMs) : '—', 'relaying');
+}
+
+// showAudit renders the auditor's view: every transaction it decrypted and
+// the balances it reconstructs, beside each user's own scan.
+function showAudit(a) {
+  const tagged = a.balances !== null;
+  $('auditNote').textContent = `${a.users.length} view keys recovered · ${a.entries.length} transactions decrypted · ` +
+    (tagged ? 'balances = received − paid' : 'payers hidden: without tags only recipients\' notes are published');
+  $('auditBalances').innerHTML = a.users.map(u => {
+    const erc = tagged ? a.balances[u] : null, usdr = tagged ? a.usdrBalances[u] : null;
+    const ok = tagged && String(erc) === a.own[u] && String(usdr) === a.ownUsdr[u];
+    return `<tr><td>${esc(u)}</td><td class="num">${esc(a.received[u])}</td>` +
+      (tagged ? `<td class="num">${esc(erc)}</td><td class="num">${esc(usdr)}</td><td class="${ok ? 'ok' : 'pending'}">${ok ? '✓ matches' : 'not scanned yet'}</td>`
+              : '<td class="num hidden">—</td><td class="num hidden">—</td><td class="hidden">needs payers</td>') + '</tr>';
+  }).join('');
+  $('auditEntries').innerHTML = a.entries.map(en =>
+    `<tr title="${esc(en.tx)}"><td>${en.block}</td><td>${esc(en.kind)}</td>` +
+    `<td>${en.from ? esc(en.from) : '<span class="hidden">hidden</span>'} → ${esc(en.to)}</td>` +
+    `<td class="num">${esc(en.amount)} ${en.asset === 'USDr' ? 'USDr' : ''}</td></tr>`).join('');
+}
+
+// ---- diagram: every node, and each hop animated on the link it uses -------
+
+// The node IDs are the engine's (engine.Nodes): actors by their panel index,
+// then the auditor and gas funder, the services and the contracts.
+const NODES = [
+  ...ACTORS.map(([name], i) => ({ id: 'actor' + i, label: name, group: 'actor' })),
+  { id: 'auditor', label: 'Auditor', group: 'actor' },
+  { id: 'funder', label: 'Gas funder', group: 'actor' },
+  { id: 'gnark', label: 'gnark server', group: 'service' },
+  { id: 'relayer', label: 'Relayer', group: 'service' },
+  { id: 'UserRegistry', label: 'UserRegistry', group: 'contract' },
+  { id: 'Erc20CoinVault', label: 'RaylsERC20 vault', group: 'contract' },
+  { id: 'UsdrCoinVault', label: 'USDr vault', group: 'contract' },
+  { id: 'EnygmaDvp', label: 'EnygmaDvp', group: 'contract' },
+  { id: 'TagChannelRegistry', label: 'TagChannelRegistry', group: 'contract' },
+  { id: 'TagRegistry', label: 'TagRegistry', group: 'contract' },
+];
+const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+
+// The protocol fields each node's hover detail shows, as [field, label]. A
+// field no node names shows on EnygmaDvp under its own name.
+const NODE_FIELDS = {
+  EnygmaDvp: [['dvpAddr', 'Address'], ['usdrFixedFee', 'Fixed USDr fee'], ['relayerAddr', 'Submitted by (relayer)']],
+  Erc20CoinVault: [['vaultAddr', 'Address'], ['erc20Addr', 'RaylsERC20 token'], ['shieldGas', 'Shield gas']],
+  UsdrCoinVault: [['usdrVaultAddr', 'Address'], ['usdrFixedFee', 'Fixed fee'], ['relayerUsdrIncome', 'Relayer fee income']],
+  UserRegistry: [['registryAddr', 'Address'], ['auditorPk', 'Auditor key (ML-KEM)']],
+  TagRegistry: [['tagRegistryAddr', 'Address']],
+  TagChannelRegistry: [['tagChannelAddr', 'Address']],
+  relayer: [['relayerAddr', 'Address'], ['relayerUsdrIncome', 'USDr fee income']],
+  auditor: [['auditorPk', 'pk (ML-KEM-768)']],
+};
+const NAMED_FIELDS = new Set(Object.values(NODE_FIELDS).flat().map(([f]) => f));
+
+// nodeTipRows is the hover detail of node id: its fields that are set so far.
+function nodeTipRows(id) {
+  const rows = (NODE_FIELDS[id] || []).filter(([f]) => protoFields[f] !== undefined);
+  if (id === 'EnygmaDvp')
+    for (const f in protoFields) if (!NAMED_FIELDS.has(f)) rows.push([f, f]);
+  return rows.map(([f, l]) => {
+    const v = protoFields[f];
+    return `<div class="tip-row"><span>${esc(l)}</span><span>${esc(v.length > 66 ? short(v) : v)}</span></div>`;
+  }).join('');
+}
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svg(tag, attrs, parent) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  parent.appendChild(el);
+  return el;
+}
+
+const diagram = (() => {
+  const s = $('diagram');
+  const pos = {};
+  NODES.filter(n => n.group === 'actor').forEach((n, i) => pos[n.id] = { x: 120, y: 30 + i * 40, w: 170, h: 30 });
+  pos.gnark = { x: 600, y: 130, w: 200, h: 64 };
+  pos.relayer = { x: 600, y: 290, w: 200, h: 64 };
+  NODES.filter(n => n.group === 'contract').forEach((n, i) => pos[n.id] = { x: 1070, y: 45 + i * 66, w: 210, h: 40 });
+  const gL = svg('g', {}, s), gN = svg('g', {}, s), gP = svg('g', {}, s);
+  const nodeEl = {};
+  for (const n of NODES) {
+    const p = pos[n.id], actor = n.group === 'actor';
+    const g = svg('g', { class: 'node ' + n.group, transform: `translate(${p.x},${p.y})` }, gN);
+    svg('rect', { x: -p.w / 2, y: -p.h / 2, width: p.w, height: p.h, rx: n.group === 'service' ? 32 : 6 }, g);
+    svg('text', { x: actor ? -p.w / 2 + 12 : 0, y: n.group === 'service' ? 5 : 4, class: 'nl', 'text-anchor': actor ? 'start' : 'middle' }, g).textContent = n.label;
+    nodeEl[n.id] = g;
+    if (NODE_FIELDS[n.id]) {
+      g.dataset.tip = '';
+      g.onpointerenter = () => { tipFor = n.id; refreshTip(); };
+      g.onpointerleave = () => { tipFor = null; refreshTip(); };
+    }
+  }
+
+  // The hover card of the node under the pointer, kept up to date as fields arrive.
+  let tipFor = null;
+  function refreshTip() {
+    const tip = $('nodeTip');
+    tip.hidden = !tipFor;
+    if (!tipFor) return;
+    tip.innerHTML = `<b>${esc(NODE[tipFor].label)}</b>` + (nodeTipRows(tipFor) || '<div class="empty">Filled in as the run deploys and configures.</div>');
+    const box = tip.parentElement.getBoundingClientRect(), r = nodeEl[tipFor].getBoundingClientRect();
+    const left = r.left - box.left > box.width / 2 ? r.left - box.left - tip.offsetWidth - 10 : r.right - box.left + 10;
+    tip.style.left = Math.max(4, left) + 'px';
+    tip.style.top = Math.max(4, Math.min(r.top - box.top, box.height - tip.offsetHeight - 4)) + 'px';
+  }
+
+  // A link curves from the side of one node facing the other; a hop from a
+  // node to itself loops on its right.
+  function path(a, b) {
+    const p = pos[a], q = pos[b];
+    if (a === b) {
+      const x = p.x + p.w / 2, y = p.y;
+      return `M${x},${y - 8} C${x + 46},${y - 30} ${x + 46},${y + 30} ${x},${y + 8}`;
+    }
+    const right = q.x > p.x, same = q.x === p.x;
+    const x1 = p.x + (same || right ? p.w / 2 : -p.w / 2), x2 = q.x + (same || !right ? q.w / 2 : -q.w / 2);
+    const bend = same ? 80 : Math.abs(x2 - x1) / 2;
+    return `M${x1},${p.y} C${x1 + (right || same ? bend : -bend)},${p.y} ${x2 + (right ? -bend : bend)},${q.y} ${x2},${q.y}`;
+  }
+  const links = {};
+  const link = (a, b) => links[a + '>' + b] ||= svg('path', { d: path(a, b), class: 'link' }, gL);
+
+  // light highlights el with cls for ms, unless it is lit with cls again meanwhile.
+  function light(el, cls, ms) {
+    el.classList.add(cls);
+    el._t ||= {};
+    clearTimeout(el._t[cls]);
+    el._t[cls] = setTimeout(() => el.classList.remove(cls), ms);
+  }
+
+  // show plays one hop. A failed hop stays on its link, red, until the next
+  // run or a hop on the link succeeds; its caption carries the error.
+  function show(h, hold) {
+    const l = link(h.from, h.to);
+    l.classList.add('used');
+    l.classList.toggle('failed', !!h.failed);
+    if (!h.failed) light(l, 'active', hold * 1.3);
+    const nodeCls = h.failed ? 'bad' : 'lit';
+    light(nodeEl[h.from], nodeCls, h.failed ? hold * 4 : hold * 1.3);
+    light(nodeEl[h.to], nodeCls, h.failed ? hold * 4 : hold * 1.3);
+    const dot = svg('circle', { r: 6, class: 'packet' + (h.failed ? ' failed' : '') }, gP);
+    svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: l.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
+    setTimeout(() => dot.remove(), h.failed ? hold * 4 : hold + 250);
+    $('now').innerHTML = `<b>${esc(NODE[h.from].label)}</b> ${h.from === h.to ? '' : `→ <b>${esc(NODE[h.to].label)}</b>`} ` +
+      `<span class="lbl${h.failed ? ' bad' : ''}">${h.failed ? '✗ ' : ''}${esc(h.label)}</span> <small${h.failed ? ' class="err"' : ''}>${esc(h.detail || '')}</small>`;
+  }
+
+  // Pacing is in the page only: the engine runs at full speed and each hop
+  // holds for HOLD ms. Once the hop shown is more than CATCHUP ms behind the
+  // run (it arrived that long ago), holds shrink in proportion, so a burst
+  // still plays readably but a long backlog drains.
+  const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120;
+  const queue = [];
+  let timer = null;
+  function pump() {
+    timer = null;
+    if (!queue.length) { $('queued').textContent = ''; return; }
+    const h = queue.shift();
+    const behind = performance.now() - h.at;
+    const base = h.hopDetail ? DETAIL_HOLD : HOLD;
+    const hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
+    show(h, hold);
+    panel.shown(h);
+    $('queued').textContent = queue.length ? `+${queue.length} queued` : '';
+    timer = setTimeout(pump, hold);
+  }
+  return {
+    hop(h) {
+      if (!NODE[h.from] || !NODE[h.to]) return;
+      queue.push({ ...h, at: performance.now() });
+      if (!timer) pump();
+    },
+    refreshTip,
+    reset() {
+      queue.length = 0; clearTimeout(timer); timer = null;
+      gL.innerHTML = ''; gP.innerHTML = '';
+      for (const k in links) delete links[k];
+      for (const g of Object.values(nodeEl)) { Object.values(g._t || {}).forEach(clearTimeout); g.classList.remove('lit', 'bad'); }
+      $('queued').textContent = '';
+    },
+  };
+})();
+
+// ---- terminal drawer: renders lines, never sends input anywhere ----------
+
+// The drawer's open height starts at the CSS default; collapsed, only its grip and tab bar show.
+const term = { height: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--drawer-h')), open: true, active: 'engine', tabs: {} };
+const collapsedHeight = () => $('drawerGrip').offsetHeight + $('drawer').querySelector('.head').offsetHeight;
+
+// One tab per log: the engine's, then each service's. A service's tab
+// appears with its first line, so without the launcher's log directory only
+// the engine tab shows. Service tabs keep their newest SERVICE_LINES lines.
+const SERVICES = ['hardhat', 'gnark', 'relayer'];
+const SERVICE_LINES = 5000;
+for (const name of ['engine', ...SERVICES]) {
+  const btn = document.createElement('button');
+  btn.innerHTML = `${name} <span class="count">0</span>`;
+  btn.hidden = name !== 'engine';
+  btn.onclick = () => showTab(name);
+  $('termTabs').appendChild(btn);
+  const pane = document.createElement('div');
+  pane.className = 'pane' + (name === 'hardhat' ? ' hide-reads' : '');
+  pane.hidden = true;
+  pane.onscroll = () => { if (term.active === name) setFollow(pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 6); };
+  $('termBody').appendChild(pane);
+  term.tabs[name] = { btn, pane, lines: 0, follow: true };
+}
+
+function showTab(name) {
+  for (const [n, t] of Object.entries(term.tabs)) { t.btn.classList.toggle('on', n === name); t.pane.hidden = n !== name; }
+  term.active = name;
+  $('hideReadsOpt').hidden = name !== 'hardhat';
+  const t = term.tabs[name];
+  if (t.follow) t.pane.scrollTop = t.pane.scrollHeight;
+  setFollow(t.follow);
+}
+
+// addLine appends one line to a tab, keeping the view at the bottom only
+// while the reader hasn't scrolled up.
+function addLine(name, ts, cls, text) {
+  const t = term.tabs[name];
+  if (!t.lines) t.pane.innerHTML = '';
+  t.btn.hidden = false;
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.innerHTML = `<span class="ts">${esc(ts || '')}</span> ${esc(text)}`;
+  t.pane.appendChild(div);
+  if (name !== 'engine' && t.pane.childElementCount > SERVICE_LINES) t.pane.firstChild.remove();
+  t.btn.querySelector('.count').textContent = ++t.lines;
+  if (t.follow) t.pane.scrollTop = t.pane.scrollHeight;
+}
+
+const termLine = (e, cls, text) => addLine('engine', e.ts, cls, text);
+
+// Hardhat logs each RPC call by its method, a write's details indented
+// under it. A read is any eth_/net_/web3_ call but eth_send*; its own
+// indented lines (an eth_call's revert, say) go with it.
+const ANSI = /\x1b\[[0-9;]*m/g;
+let hardhatInRead = false;
+function isRpcRead(line) {
+  const m = line.match(/^(eth|net|web3)_\w+/);
+  if (m) return hardhatInRead = !m[0].startsWith('eth_send');
+  if (line === '' || /^\s/.test(line)) return hardhatInRead;
+  return hardhatInRead = false;
+}
+
+function serviceLine(e) {
+  if (!term.tabs[e.service]) return;
+  const line = e.line.replace(ANSI, '');
+  addLine(e.service, e.ts, e.service === 'hardhat' && isRpcRead(line) ? 'rpc-read' : '', line);
+}
+
+// clearServices empties the service tabs; the server replays their lines to
+// every new connection.
+function clearServices() {
+  for (const name of SERVICES) { const t = term.tabs[name]; t.lines = 0; t.pane.innerHTML = ''; t.btn.querySelector('.count').textContent = 0; }
+  hardhatInRead = false;
+}
+
+function termReset() {
+  const t = term.tabs.engine;
+  t.lines = 0; t.follow = true;
+  t.btn.querySelector('.count').textContent = 0;
+  t.pane.innerHTML = '<div class="empty">Engine log. Press RUN to start a scenario.</div>';
+  if (term.active === 'engine') setFollow(true);
+}
+
+function setFollow(on) {
+  term.tabs[term.active].follow = on;
+  $('follow').textContent = on ? 'FOLLOWING' : 'PAUSED · ↓ FOLLOW';
+  $('follow').classList.toggle('paused', !on);
+}
+
+function layoutDrawer() {
+  document.documentElement.style.setProperty('--drawer-h', (term.open ? term.height : collapsedHeight()) + 'px');
+  $('drawerToggle').textContent = term.open ? '▾' : '▴';
+}
+
+$('follow').onclick = () => { const p = term.tabs[term.active].pane; p.scrollTop = p.scrollHeight; setFollow(true); };
+$('hideReads').onchange = ev => term.tabs.hardhat.pane.classList.toggle('hide-reads', ev.target.checked);
+$('drawerToggle').onclick = () => { term.open = !term.open; layoutDrawer(); };
+$('drawerGrip').onpointerdown = e => {
+  e.preventDefault();
+  const move = ev => { term.open = true; term.height = Math.max(80, Math.min(innerHeight - 120, innerHeight - ev.clientY)); layoutDrawer(); };
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+};
+
+let finished = 0;
+function onEvent(e) {
+  switch (e.kind) {
+  case 'reset': build(); termReset(); diagram.reset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'step_started':
+    setStep(e.step, 'running', e.msg || e.label);
+    termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
+  case 'step_succeeded':
+    if (setStep(e.step, 'success', e.msg)) showProgress(++finished);
+    termLine(e, 'c-ok', `✓ ${e.label}  ${e.msg}`); break;
+  case 'step_failed':
+    setStep(e.step, 'error', e.label + ' failed: ' + e.msg);
+    termLine(e, 'c-bad', `✗ ${e.label} failed: ${e.msg}`); break;
+  case 'log': termLine(e, e.cat ? 'c-' + e.cat : '', `[${(e.cat || '·').padEnd(5)}] ${e.msg}`); break;
+  case 'actor': setActor(e.actor, e.field, e.value); break;
+  case 'proto': setProto(e.field, e.value); break;
+  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
+  case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
+  case 'term': serviceLine(e); break;
+  case 'hop': diagram.hop(e); break;
+  }
+}
+
+async function loadDefaults() {
+  const d = { shieldTotal: 1000, payouts: [120, 90, 150, 60, 200, 80], usdrFee: true, tags: true }; // the recording's
+  $('optTotal').value = d.shieldTotal;
+  $('optUsdrFee').checked = d.usdrFee;
+  $('optTags').checked = d.tags;
+  $('options').insertAdjacentHTML('beforeend', NAMES.map((n, i) =>
+    `<div class="opt"><label for="optPay${i}">${esc(n)}</label><input id="optPay${i}" type="number" min="1" value="${d.payouts[i]}"></div>`).join(''));
+}
+
+// The sender and the participants can pay each other by hand once a run is done.
+const PAYERS = ['Sender', ...NAMES];
+for (const sel of ['sendFrom', 'sendTo'])
+  $(sel).innerHTML = PAYERS.map(n => `<option>${esc(n)}</option>`).join('');
+$('sendTo').value = NAMES[1];
+$('sendFrom').value = NAMES[0];
+
+// PROTOTYPE: RUN replays the recording (prototype.js); SEND is off.
+
+build();
+termReset();
+showTab('engine');
+layoutDrawer();
+loadDefaults();
+</script>
+<script src="recording.js"></script>
+<script src="prototype.js"></script>
+<script src="variants.js"></script>
+</body>
+</html>
