@@ -24,6 +24,18 @@
 
 **Statement layout field names** (private mint circuit, prefix `PrivateMint`): `Commitment` (the minted note), `ContractAddress` (the deployment the proof is bound to), `TokenId`, `CipherText` (the note tag bound to that deployment).
 
+**Note**: a private amount of one token, owned by a spend key. On chain it exists only as its commitment. A note is spent once and whole: a transfer spends one or two notes and creates new ones, the recipient's and the payer's change. _Avoid_: coin, UTXO.
+
+**Commitment**: the public hash of a note's opening (the owner's `pkSpend`, a salt, the amount and the token id). A vault stores it as a leaf of its Merkle tree. Without the opening it reveals nothing about the note.
+
+**Merkle tree**: a vault's append-only tree of commitments. When one fills, the vault starts the next, so each tree has a number counting up from 0. Spending a note proves its commitment is a leaf of the tree without revealing which leaf.
+
+**Merkle root**: the hash that sums up a Merkle tree at one moment. The vault accepts any root its tree has ever had, so a proof made against an older root is still valid.
+
+**Merkle path**: the sibling hashes from a commitment's leaf up to the Merkle root. The spender uses it privately, inside the proof, to show the note is in the tree.
+
+**Nullifier**: the value published when a note is spent. It is derived from the owner's spend private key and the note's leaf position. The vault refuses a nullifier it has already seen, so each note is spent only once, and nobody else can link a nullifier to its commitment.
+
 **Spend key**: a user's Poseidon key pair for owning notes; the public half (`pkSpend`) goes into every note commitment paid to them. _Avoid_: account key, address.
 
 **View key**: a user's ML-KEM-768 key pair for finding notes; senders encrypt each note's opening to its public half (`pkView`), and the user decrypts with the private half. _Avoid_: viewing key, scan key.
@@ -33,3 +45,5 @@
 **Registration**: a user's one-time publication of their spend key, view key and audit ciphertexts in the `UserRegistry`, from their own address; it cannot be repeated for that address. _Avoid_: sign-up, onboarding.
 
 **Hop**: one interaction between two parts of the retail shield demo's system (an actor, the gnark server, the relayer or a contract), such as a proof request, a relay or a registration; the demo's architecture diagram animates one hop at a time. A **failed hop** is the one that failed its step; the diagram keeps it, in red, with the step's error. _Avoid_: edge, call, flow.
+
+**Hop detail**: what a hop does to the protocol state (leaves added to a Merkle tree, a nullifier published, a proof's public inputs), shown on the retail shield demo's diagram as the hop plays. _Avoid_: component.
