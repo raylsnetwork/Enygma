@@ -1,11 +1,13 @@
 // Enygma Retail Shield Demo — the web UI over the shield demo's scenario
 // engine. It streams the engine's events to the page as Server-Sent Events
-// and starts runs from the page's options.
+// and starts runs from the page's options. Given the services' log
+// directory, it also streams their logs to the page's terminal.
 //
 // Start the whole stack with run.sh; this binary alone expects the chain, the
 // gnark server and the relayer to be up already.
 //
-//	go run . -root ..   # then open http://localhost:9092
+//	go run . -root ..                 # then open http://localhost:9092
+//	go run . -root .. -logs $LOG_DIR  # with run.sh's service logs
 package main
 
 import (
@@ -26,18 +28,34 @@ import (
 //go:embed index.html
 var indexHTML string
 
-// broker fans engine events out to every connected SSE client.
+// broker fans engine events and service-log lines out to every connected
+// SSE client, and keeps each service's last replayLines lines for new ones.
 type broker struct {
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
+	// replay holds each service's latest lines, oldest first.
+	replay map[string][][]byte
 }
 
-func (b *broker) subscribe() chan []byte {
+// replayLines is how many of each service's lines a new client is sent.
+const replayLines = 1000
+
+func newBroker() *broker {
+	return &broker{clients: map[chan []byte]struct{}{}, replay: map[string][][]byte{}}
+}
+
+// subscribe adds a client and returns the service lines to replay to it
+// first; lines published after it come on the channel.
+func (b *broker) subscribe() (chan []byte, [][]byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	ch := make(chan []byte, 512)
 	b.clients[ch] = struct{}{}
-	return ch
+	var replay [][]byte
+	for _, svc := range services {
+		replay = append(replay, b.replay[svc]...)
+	}
+	return ch, replay
 }
 
 func (b *broker) unsubscribe(ch chan []byte) {
@@ -50,6 +68,24 @@ func (b *broker) publish(v any) {
 	data, _ := json.Marshal(v)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.send(data)
+}
+
+// publishLine publishes one service-log line and keeps it for replay.
+func (b *broker) publishLine(e termEvent) {
+	data, _ := json.Marshal(e)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	r := append(b.replay[e.Service], data)
+	if len(r) > replayLines {
+		r = r[len(r)-replayLines:]
+	}
+	b.replay[e.Service] = r
+	b.send(data)
+}
+
+// send hands data to every client that has room for it; b.mu is held.
+func (b *broker) send(data []byte) {
 	for ch := range b.clients {
 		select {
 		case ch <- data:
@@ -63,8 +99,11 @@ func (b *broker) Emit(e engine.Event) {
 	b.publish(struct {
 		engine.Event
 		TS string `json:"ts"`
-	}{e, time.Now().Format("15:04:05.000")})
+	}{e, stamp()})
 }
+
+// stamp is the time the page shows beside a line.
+func stamp() string { return time.Now().Format("15:04:05.000") }
 
 type server struct {
 	cfg    engine.Config
@@ -73,6 +112,26 @@ type server struct {
 	// that completed, which manual transfers continue.
 	running sync.Mutex
 	engine  *engine.Engine
+}
+
+// newServer serves runs with cfg. With a logDir, it tails the services' logs
+// in it into the event stream until ctx ends.
+func newServer(ctx context.Context, cfg engine.Config, logDir string) *server {
+	s := &server{cfg: cfg, broker: newBroker()}
+	if logDir != "" {
+		s.broker.tailServiceLogs(ctx, logDir)
+	}
+	return s
+}
+
+func (s *server) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/events", s.handleEvents)
+	mux.HandleFunc("/defaults", s.handleDefaults)
+	mux.HandleFunc("/run", s.handleRun)
+	mux.HandleFunc("/transfer", s.handleTransfer)
+	return mux
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -90,8 +149,12 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := s.broker.subscribe()
+	ch, replay := s.broker.subscribe()
 	defer s.broker.unsubscribe(ch)
+	for _, msg := range replay {
+		fmt.Fprintf(w, "data: %s\n\n", msg)
+	}
+	fl.Flush()
 	tick := time.NewTicker(20 * time.Second)
 	defer tick.Stop()
 	for {
@@ -193,19 +256,13 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func main() {
 	root := flag.String("root", "..", "enygma_retail_payments directory")
 	addr := flag.String("addr", ":9092", "listen address")
+	logDir := flag.String("logs", "", "directory of the services' logs (hardhat.log, gnark.log, relayer.log) to show in the terminal; none if empty")
 	flag.Parse()
 
 	cfg := engine.DefaultConfig(*root)
 	cfg.StepPause = 1200 * time.Millisecond
-	s := &server{cfg: cfg, broker: &broker{clients: map[chan []byte]struct{}{}}}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/events", s.handleEvents)
-	mux.HandleFunc("/defaults", s.handleDefaults)
-	mux.HandleFunc("/run", s.handleRun)
-	mux.HandleFunc("/transfer", s.handleTransfer)
+	s := newServer(context.Background(), cfg, *logDir)
 
 	log.Printf("Enygma Retail Shield Demo listening on http://localhost%s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	log.Fatal(http.ListenAndServe(*addr, s.routes()))
 }
