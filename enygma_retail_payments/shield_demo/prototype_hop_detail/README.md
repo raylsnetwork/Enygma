@@ -3,7 +3,7 @@
 Throwaway. It answers one question for #129: **what should the hop detail panel and the tree view look like?**
 It is not the demo and is kept only on the `prototype/shield-demo-hop-detail` branch.
 
-**Open it:** double-click `index.html` (no server, no stack needed). Press **RUN** to replay.
+**Open it:** double-click `index.html` (no server, no stack needed) and press **RUN**. It opens on variant A; ← / → switch, and the URL keeps the choice (`index.html?variant=B`) for a reload or a bookmark.
 
 The page is a copy of `../index.html` (variant B of #124, as shipped in #123) with a hop detail panel next to the diagram. `?variant=A|B|C` (or ← / → and the bottom bar) switches the panel:
 

@@ -15,7 +15,7 @@ const SENTENCE = {
   merklePath: () => `To spend a note, the payer proves its leaf is in the tree: the hashes beside its path climb to a root the vault knows, without saying which leaf it is.`,
   publicInputs: () => `The proof makes public only roots, nullifiers and the new commitments. The spend key, amounts and salts never leave the payer.`,
   settleChecks: () => `Before it settles, EnygmaDvp checks each root is one its vault has had, each nullifier is unused and the proofs verify, then publishes the nullifiers so the notes can't be spent twice.`,
-  leavesIn: v => `The new notes land as leaves in the ${VAULT_LABEL[v]}'s tree, all in this one transaction, and the tree gets a new root.`,
+  leavesIn: v => `The new notes' commitments land as leaves in the ${VAULT_LABEL[v]}'s tree, all in this one transaction, and the tree gets a new root.`,
 };
 
 // ---- values ---------------------------------------------------------------
@@ -210,6 +210,7 @@ const replay = {
   // before it, then plays on from there.
   skipTo(t) {
     if (!this.gen) this.start();
+    diagram.takeQueued().forEach(h => panel.shown(h));
     diagram.reset();
     this.advance(t, true);
     this.clock = Math.max(this.clock, t);

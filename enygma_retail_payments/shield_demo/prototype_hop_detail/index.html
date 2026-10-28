@@ -574,6 +574,8 @@ const diagram = (() => {
       if (!timer) pump();
     },
     refreshTip,
+    // PROTOTYPE: takes the hops not yet drawn, so a skip can still apply them.
+    takeQueued() { return queue.splice(0); },
     reset() {
       queue.length = 0; clearTimeout(timer); timer = null;
       gL.innerHTML = ''; gP.innerHTML = '';
