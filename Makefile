@@ -21,6 +21,9 @@ endif
 GO_MODULES := $(sort $(patsubst %/go.mod,%,$(shell git ls-files '*go.mod')))
 SKIP_MODULES ?=
 MODULES := $(if $(MODULE),$(MODULE),$(filter-out $(SKIP_MODULES),$(GO_MODULES)))
+ifneq ($(filter-out $(GO_MODULES),$(MODULE)),)
+$(error MODULE=$(MODULE) is not a tracked Go module; `make modules` lists them)
+endif
 
 GO_FILES = git ls-files '*.go'
 
