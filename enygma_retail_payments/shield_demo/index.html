@@ -640,18 +640,31 @@ const diagram = (() => {
   // holds for HOLD ms, DETAIL_HOLD if it has a hop detail to read. Once the
   // hop shown is more than CATCHUP ms behind the run (it arrived that long
   // ago), holds shrink in proportion, so a burst still plays readably but a
-  // long backlog drains.
+  // long backlog drains. Opened as /?fast, every hop holds MIN_HOLD, so the
+  // queue keeps up with the run (for checking the end of a run quickly); a
+  // tick that comes late (a background tab's timers are throttled) plays
+  // every hop due since the last one.
   const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120;
+  const FAST = new URLSearchParams(location.search).has('fast');
   const queue = [];
-  let timer = null;
+  let timer = null, lastPump = 0;
   function pump() {
     timer = null;
     if (!queue.length) { $('queued').textContent = ''; return; }
-    const h = queue.shift();
-    const behind = performance.now() - h.at;
-    const base = h.hopDetail ? DETAIL_HOLD : HOLD;
-    const hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
-    show(h, hold);
+    let hold;
+    if (FAST) {
+      const now = performance.now();
+      const due = Math.max(1, Math.floor((now - lastPump) / MIN_HOLD));
+      lastPump = now;
+      hold = MIN_HOLD;
+      for (const h of queue.splice(0, due)) show(h, hold);
+    } else {
+      const h = queue.shift();
+      const behind = performance.now() - h.at;
+      const base = h.hopDetail ? DETAIL_HOLD : HOLD;
+      hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
+      show(h, hold);
+    }
     $('queued').textContent = queue.length ? `+${queue.length} queued` : '';
     timer = setTimeout(pump, hold);
   }

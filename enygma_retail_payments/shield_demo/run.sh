@@ -14,6 +14,12 @@
 # demo tails into its terminal's hardhat, gnark and relayer tabs. The relayer
 # keeps its fee-note openings in build/relayer_fee_notes.jsonl, where the
 # integration test reads them; each run starts it afresh with the chain.
+#
+# Checking a page change: the demo runs with -dev, so it serves index.html
+# from disk on every request — edit it and refresh the browser, no rebuild or
+# restart. Open http://localhost:9092/?fast to play every hop at the minimum
+# hold, so the hop queue keeps up with the run and its end (owner tints,
+# replaying a finished step) can be checked as soon as the engine finishes.
 
 set -euo pipefail
 
@@ -175,7 +181,7 @@ fi
 
 echo "[run.sh] [7/7] building and starting the demo…"
 go build -C "$DEMO_DIR" -o "$BIN_DIR/shield_demo" .
-start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR"
+start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR" -dev
 wait_port demo 9092
 echo "[run.sh] demo: http://localhost:9092  (Ctrl-C to stop everything)"
 command -v open >/dev/null && open http://localhost:9092 || true

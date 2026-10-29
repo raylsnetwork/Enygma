@@ -8,6 +8,7 @@
 //
 //	go run . -root ..                 # then open http://localhost:9092
 //	go run . -root .. -logs $LOG_DIR  # with run.sh's service logs
+//	go run . -root .. -dev            # serve index.html from disk: edit, refresh
 package main
 
 import (
@@ -19,6 +20,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -112,6 +115,9 @@ type server struct {
 	// that completed, which manual transfers continue.
 	running sync.Mutex
 	engine  *engine.Engine
+	// pageFile, if set, is read for the page on every request instead of
+	// the embedded copy (-dev).
+	pageFile string
 }
 
 // newServer serves runs with cfg. With a logDir, it tails the services' logs
@@ -135,8 +141,17 @@ func (s *server) routes() *http.ServeMux {
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	page := indexHTML
+	if s.pageFile != "" {
+		b, err := os.ReadFile(s.pageFile)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		page = string(b)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, indexHTML)
+	fmt.Fprint(w, page)
 }
 
 func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -257,11 +272,15 @@ func main() {
 	root := flag.String("root", "..", "enygma_retail_payments directory")
 	addr := flag.String("addr", ":9092", "listen address")
 	logDir := flag.String("logs", "", "directory of the services' logs (hardhat.log, gnark.log, relayer.log) to show in the terminal; none if empty")
+	dev := flag.Bool("dev", false, "serve <root>/shield_demo/index.html from disk on every request instead of the embedded copy, so a page edit needs only a refresh")
 	flag.Parse()
 
 	cfg := engine.DefaultConfig(*root)
 	cfg.StepPause = 1200 * time.Millisecond
 	s := newServer(context.Background(), cfg, *logDir)
+	if *dev {
+		s.pageFile = filepath.Join(*root, "shield_demo", "index.html")
+	}
 
 	log.Printf("Enygma Retail Shield Demo listening on http://localhost%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, s.routes()))

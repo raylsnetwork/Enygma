@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -191,5 +192,46 @@ func TestWithoutALogDirectoryOnlyEngineEventsAreSent(t *testing.T) {
 	}
 	if e, ok := page.within(3 * tailPoll); ok {
 		t.Fatalf("unexpected event %v", e)
+	}
+}
+
+// getPage returns the page the demo serves at /.
+func getPage(t *testing.T, url string) string {
+	t.Helper()
+	res, err := http.Get(url + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return string(b)
+}
+
+func writePage(t *testing.T, path, html string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDevModeServesThePageFromDiskOnEveryRequest(t *testing.T) {
+	page := filepath.Join(t.TempDir(), "index.html")
+	writePage(t, page, "<p>first</p>")
+	s, url := startDemo(t, "")
+	s.pageFile = page
+
+	if got := getPage(t, url); got != "<p>first</p>" {
+		t.Fatalf("got %q, want the file's page", got)
+	}
+	writePage(t, page, "<p>edited</p>")
+	if got := getPage(t, url); got != "<p>edited</p>" {
+		t.Fatalf("after an edit: got %q, want the edited page", got)
+	}
+}
+
+func TestWithoutDevModeTheEmbeddedPageIsServed(t *testing.T) {
+	_, url := startDemo(t, "")
+	if got := getPage(t, url); got != indexHTML {
+		t.Fatalf("got %d bytes, want the embedded page", len(got))
 	}
 }
