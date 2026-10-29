@@ -92,8 +92,10 @@ fmt-check: ## Fail if any tracked Go file is not gofmt-clean
 	if [ -n "$$bad" ]; then echo "Not gofmt-clean (run 'make fmt'):"; echo "$$bad"; exit 1; fi; \
 	echo "gofmt: clean"
 
-page-check: ## Fail if an inline <script> in a tracked HTML page has a syntax error; needs node
+page-check: ## Fail on a bad inline <script> or a duplicated <style> selector in a tracked HTML page; needs node
 	@command -v node >/dev/null || { echo "node not found (the demo pages' scripts need it to check)"; exit 1; }
+	@# The check's own tests, quiet unless they fail (then rerun to show why).
+	@node --test scripts/check_page_scripts.test.js >/dev/null || node --test scripts/check_page_scripts.test.js
 	@node scripts/check_page_scripts.js $$(git ls-files '*.html')
 
 build: ## go build ./... in every module
