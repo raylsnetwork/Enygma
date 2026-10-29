@@ -34,6 +34,7 @@ updates:
       - "/enygma_retail_payments/private_tags/test"
       - "/enygma_retail_payments/relayer"
       - "/enygma_retail_payments/scripts"
+      - "/enygma_retail_payments/shield_demo"
       - "/enygma_retail_payments/src"
       - "/enygma_retail_payments/test"
     schedule:
