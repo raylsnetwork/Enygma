@@ -70,9 +70,26 @@ const c = window.__chk;
 
 Extend the probe for what a ticket checks (a panel's content, say), keeping to observers and the event stream.
 
+## Layout checks
+
+The Side story layout (#150): a step strip on top, the diagram beside a story column (the narration card, public vs private, the hop detail fold), every other panel in one fold below, and the terminal drawer collapsed. Check it with `resize_window` at 1280×828 and again at 1600×1000, in both themes (the ◐ button), on a freshly loaded page and during a run. `resize_window` can fail to change the page's size when the screen is smaller (seen 2026-10-29: `innerWidth` stayed 1280 at 1600 and at 900), so read `innerWidth` and `innerHeight` after it, and leave a size it didn't reach to the user.
+
+1. **Above the drawer at 1280×828.** On load and at each step: the step strip, the whole diagram and the whole narration card show without scrolling, and none is under the drawer. Read it with
+   ```js
+   const dr = document.getElementById('drawer').getBoundingClientRect().top, b = s => document.querySelector(s).getBoundingClientRect().bottom;
+   ({ drawerTop: dr, strip: b('#stepper'), diagram: b('section.diagram'), card: b('.narr'), sides: b('#narrSides'), scrollY })
+   ```
+   Every bottom but `sides` is at most `drawerTop`, with `scrollY` 0. On a fan-out step, `sides` may run under the drawer; the criteria do not cover it, so note it.
+2. **The diagram fills its column.** No empty band under it: its bottom is within a few pixels of `drawerTop - 12`, and its rows spread to fill it, with the nodes and labels at their usual size. Its size stays the same from step to step.
+3. **Folds start closed.** On load, the hop detail fold, the fold below and the drawer are all closed: `[...document.querySelectorAll('details.fold')].map(d => d.open)` is all `false`, and the drawer shows only its tab bar. Each opens with one click. Opened mid-run, the ledger, the auditor's view, the run totals and the fan-out and transfers tables are up to date, and they keep updating.
+4. **Step strip.** Done steps show ✓, the running one its number and label, and a step's tooltip its message. All 22 markers fit on one line at 1280 wide, or the strip scrolls to keep the running one in view.
+5. **Replay.** Clicking a finished step that has hop details (Shield) unfolds the hop detail fold and replays them there; clicking one without (Check prerequisites) does nothing.
+6. **Themes.** Both themes look right: the cards, the public vs private boxes, the folds' summaries and the strip's markers take the theme's colours, with nothing left light in dark or dark in light.
+7. **Narrow window.** Under 1000px wide the story column drops under the diagram, and hovering a diagram node still puts its tooltip beside the node.
+
 ## Narration checks
 
-The step narration card under the diagram (#149). Install the probe extended with a recorder of what the card shows for each step (paste it before the probe's last line, which starts the run), and read `window.__chk.narr` after the run:
+The step narration card at the head of the story column (#149). Install the probe extended with a recorder of what the card shows for each step (paste it before the probe's last line, which starts the run), and read `window.__chk.narr` after the run:
 
 ```js
 // One entry per narration shown, in order; the card rewrites its kicker on each.
