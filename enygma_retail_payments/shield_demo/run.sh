@@ -20,6 +20,7 @@
 # restart. Open http://localhost:9092/?fast to play every hop at the minimum
 # hold, so the hop queue keeps up with the run and its end (owner tints,
 # replaying a finished step) can be checked as soon as the engine finishes.
+# Hand-checking a page ticket in the browser: see HAND_CHECK.md.
 
 set -euo pipefail
 
