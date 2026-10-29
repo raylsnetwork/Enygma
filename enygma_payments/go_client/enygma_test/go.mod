@@ -5,8 +5,8 @@ go 1.26.8
 require (
 	enygma_payments/go_client v0.0.0
 	enygma_payments/layout v0.0.0
-	github.com/ethereum/go-ethereum v1.17.8
-	github.com/iden3/go-iden3-crypto v0.0.16
+	github.com/ethereum/go-ethereum v1.17.10
+	github.com/iden3/go-iden3-crypto v0.0.17
 )
 
 require (
@@ -38,9 +38,9 @@ require (
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
 
 replace enygma_payments/go_client => ../
