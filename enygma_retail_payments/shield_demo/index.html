@@ -96,8 +96,6 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #diagram .packet.failed { fill:var(--bad); }
 #diagram .node.bad rect { stroke:var(--bad); stroke-width:2.5; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--bad) 40%, transparent)); }
 #diagram .node[data-tip] { cursor:help; }
-.caption .lbl.bad { background:var(--bad); color:var(--on-bad); }
-.caption .err { color:var(--bad); }
 #nodeTip { position:absolute; z-index:50; width:340px; background:var(--s1); border:1px solid var(--bd2); border-radius:10px; padding:10px 12px; box-shadow:0 10px 30px var(--shadow); pointer-events:none; }
 #nodeTip[hidden] { display:none; }
 #nodeTip b { display:block; font:600 14px var(--serif); margin-bottom:4px; }
@@ -105,10 +103,26 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .tip-row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; font:11px var(--mono); }
 .tip-row span:first-child { color:var(--muted); flex:none; }
 .tip-row span:last-child { word-break:break-all; text-align:right; }
-.caption { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-top:1px dashed var(--bd2); padding:10px 2px 12px; min-height:48px; font:16px var(--serif); color:var(--text2); }
-.caption .lbl { font:600 13px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 8px; border-radius:4px; }
-.caption small { font:12px var(--sans); color:var(--muted); }
-.caption .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
+/* The step narration card under the diagram: the step playing, in plain words. */
+.narr { border-top:1px dashed var(--bd2); padding:12px 2px 14px; display:flex; flex-direction:column; gap:8px; }
+.narr .top { display:flex; justify-content:space-between; gap:16px; }
+.narr .kicker { font:11px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+.narr .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
+.narr h2 { font:600 22px/1.25 var(--serif); color:var(--text); }
+.narr .body { font:16px/1.5 var(--serif); color:var(--text2); max-width:80ch; }
+.narr .sides { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.narr .sides:empty { display:none; }
+.narr .side b { display:block; font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px; }
+.narr .side ul { list-style:none; display:flex; flex-direction:column; gap:3px; font-size:14px; color:var(--text2); }
+.narr .side li::before { margin-right:6px; font-size:10px; }
+.narr .side.pub b, .narr .side.pub li::before { color:var(--accent); }
+.narr .side.pub li::before { content:'◉'; }
+.narr .side.priv b, .narr .side.priv li::before { color:var(--warn); }
+.narr .side.priv li::before { content:'■'; }
+#now { list-style:none; display:flex; flex-direction:column; gap:3px; font:13px var(--sans); color:var(--muted); }
+#now li::before { content:'→ '; color:var(--accent); }
+#now li:last-child { color:var(--text); font-weight:600; }
+#now li.bad, #now li.bad::before { color:var(--bad); }
 
 /* ---- stage: the diagram, and the hop detail panel at its full height ------ */
 .stage { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:16px; margin:0 28px; }
@@ -280,7 +294,13 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <div class="cols"><span>Off-chain parties</span><span>Services</span><span>On-chain contracts</span></div>
   <svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg>
   <div id="nodeTip" hidden></div>
-  <div class="caption"><span id="now">shield public RaylsERC20 → private fan-out to 6 participants → transfers between them</span><span class="q" id="queued"></span></div>
+  <div class="narr" aria-live="polite">
+    <div class="top"><span class="kicker" id="narrKicker"></span><span class="q" id="queued"></span></div>
+    <h2 id="narrHead"></h2>
+    <p class="body" id="narrBody"></p>
+    <div class="sides" id="narrSides"></div>
+    <ul id="now"></ul>
+  </div>
 </section>
 <aside id="hopPanel" aria-label="Hop detail"></aside>
 </div>
@@ -356,6 +376,157 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   </div>
   <div id="termBody"></div>
 </div>
+<!-- The step narration, as data. steps is keyed by step kind (the step id
+     without its _N suffix; manual is a manual transfer): a kicker, a headline
+     (h), a body and the "public chain sees" (pub) and "stays private" (priv)
+     lists. Each is a string or a list of parts; a part is a string or
+     {"when": "tags" | "!tags" | "usdrFee" | "!usdrFee", "text": …}, kept only
+     when the run's option holds. An entry with "like": kind takes that
+     kind's fields where it has none. {placeholders} are filled from the run:
+     n, k, users, shieldTotal, fee, count (the scripted transfers), and
+     from, to, amount for a payment. hops
+     is keyed by hop label, filled with from, to, label, detail and
+     detailHead (the detail up to its first comma or semicolon); a label
+     without a line shows as "from → to: label". -->
+<script type="application/json" id="narration">
+{
+  "steps": {
+    "prereqs": {
+      "h": "Getting ready",
+      "b": "The demo checks that the blockchain, the proof server and the relayer are running, and reads the contracts it will use."
+    },
+    "keygen": {
+      "h": "Everyone makes two keys",
+      "b": "Each person makes a spend key, which owns their private money, and a view key, which lets payers send them notes only they can open. The keys never leave their owner. Each also gets a little ETH to pay for gas.",
+      "pub": ["Nothing yet: keys are made on each person’s own machine"],
+      "priv": ["Every private key"]
+    },
+    "register": {
+      "h": "Joining the network",
+      "b": "Each user publishes the public halves of their keys, so others can pay them. They also seal a copy of their view key that only the auditor can open: that is how a regulator can see the payments while the public sees nothing.",
+      "pub": ["Who is registered, and their public keys", "A sealed box for the auditor, unreadable to anyone else"],
+      "priv": ["The private keys", "What is inside the sealed box"]
+    },
+    "audit_keys": {
+      "h": "The auditor gets its view",
+      "b": "The auditor opens each user’s sealed box and recovers their view key. From now on it can read every payment these users receive. Nobody else can.",
+      "pub": ["Nothing new: the auditor reads what is already on chain"],
+      "priv": ["The users’ view keys, now also held by the auditor"]
+    },
+    "channels": {
+      "h": "Private mailboxes",
+      "b": "Before paying, each payer opens a private channel to each person they will pay. A payment then comes with a small tag on that channel, so its recipient finds the money at once instead of trying every note on the chain, and the auditor can tell who paid.",
+      "pub": ["That a channel was opened, sent by the relayer"],
+      "priv": ["Who opened it, and for whom"]
+    },
+    "usdr": {
+      "h": "USDr credit",
+      "b": [
+        "An issuer gives each of the {users} users a private USDr note.",
+        {"when": "usdrFee", "text": "USDr pays the relayer’s fee, so a user never has to appear on chain with their own account to make a payment."},
+        {"when": "!usdrFee", "text": "This run’s relayer charges nothing, so the notes stay unspent."}
+      ],
+      "pub": ["The USDr vault received {users} new notes"],
+      "priv": ["Whose each note is, and how much it holds"]
+    },
+    "shield": {
+      "h": "Going private: shield",
+      "b": "The sender turns {shieldTotal} public RaylsERC20 tokens into one private note. This is the one moment the sender is visible: everyone sees the tokens go in. After this, nobody can follow them.",
+      "pub": ["The sender’s account deposited {shieldTotal} RaylsERC20 into the vault", "One commitment: a fingerprint of the note"],
+      "priv": ["That the note is the sender’s: it is hidden inside the fingerprint"]
+    },
+    "fanout": {
+      "kicker": "Private payment {n} of {k}",
+      "h": "{from} pays {to}",
+      "b": [
+        "{from} pays {to} {amount} RaylsERC20 from a private note and gets the change back as a new note. {from}’s computer makes a zero-knowledge proof, a mathematical receipt that the payment is valid without saying who or how much.",
+        {"when": "usdrFee", "text": "The relayer submits it for a {fee} fee, so {from}’s account never appears."},
+        {"when": "!usdrFee", "text": "The relayer submits it, so {from}’s account never appears."}
+      ],
+      "pub": [
+        "A valid proof, submitted by the relayer",
+        "Two new fingerprints: the payment and the change",
+        "A nullifier: marks the spent note used without saying which",
+        {"when": "usdrFee", "text": "The relayer earned {fee}"},
+        {"when": "tags", "text": "A tag only the recipient can recognise"}
+      ],
+      "priv": ["Who paid", "Who was paid", "How much", "Which note was spent"]
+    },
+    "discover": {
+      "h": "Finding the money",
+      "b": [
+        {"when": "tags", "text": "Each participant checks the tags on their private channels, finds the one meant for them and opens only that note."},
+        {"when": "!tags", "text": "Each participant tries every new note on the chain with their view key and keeps the ones that open."}
+      ],
+      "pub": ["Nothing: finding notes happens off chain"],
+      "priv": ["Who found which note"]
+    },
+    "transfer": {
+      "like": "fanout",
+      "kicker": "Payment between participants, {n} of {count}",
+      "h": "{from} pays {to}",
+      "b": [
+        "{from} pays {to} {amount} RaylsERC20 from the private notes they were paid, and gets the change back as a new note. The proof shows the payment is valid without saying who or how much.",
+        {"when": "usdrFee", "text": "The relayer submits it for a {fee} fee, so {from}’s account never appears."},
+        {"when": "!usdrFee", "text": "The relayer submits it, so {from}’s account never appears."}
+      ]
+    },
+    "manual": {
+      "like": "fanout",
+      "kicker": "Your payment",
+      "h": "{from} pays {to}",
+      "b": [
+        "A payment you asked for: {from} pays {to} {amount} RaylsERC20 privately, with a zero-knowledge proof that it is valid, and gets the change back as a new note.",
+        {"when": "usdrFee", "text": "The relayer submits it for a {fee} fee, so {from}’s account never appears."},
+        {"when": "!usdrFee", "text": "The relayer submits it, so {from}’s account never appears."}
+      ]
+    },
+    "audit": {
+      "h": "The auditor’s view",
+      "b": [
+        {"when": "tags", "text": "With the view keys it recovered, the auditor decrypts every payment and, through the tag channels, names every payer. It rebuilds each user’s balance exactly, while the public still sees only fingerprints."},
+        {"when": "!tags", "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, so it sees what each user received but can’t rebuild their balances."}
+      ],
+      "pub": ["Still only fingerprints, nullifiers and proofs"],
+      "priv": [
+        {"when": "tags", "text": "Every amount, payer and recipient: visible to the auditor only"},
+        {"when": "!tags", "text": "Every amount and recipient: visible to the auditor only"},
+        {"when": "!tags", "text": "Who paid: hidden even from the auditor"}
+      ]
+    },
+    "totals": {
+      "h": "What it cost",
+      "b": "The run’s transactions, gas, proving and relaying time, added up."
+    }
+  },
+  "hops": {
+    "spend key": "{from} makes a spend key: it owns their private money.",
+    "view key": "{from} makes a view key: payers encrypt notes to it.",
+    "fund gas": "{to} gets a little ETH to pay for gas.",
+    "audit ciphertexts": "{from} seals their view key for the auditor.",
+    "register": "{from} publishes their public keys in the UserRegistry.",
+    "recover view key": "The auditor {detail} and recovers their view key.",
+    "open channel": "{from} opens a private channel: {detail}.",
+    "openChannel": "The relayer puts the channel on chain under its own name.",
+    "scan channels": "{to} checks the new channels with their view key.",
+    "grant USDr": "The issuer shields {detailHead}.",
+    "scan": "{to} tries the new notes with their view key and opens theirs.",
+    "shield": "{from} deposits public tokens; the vault keeps one fingerprint.",
+    "prove Payment": "{from}’s computer proves the payment is valid ({detailHead}).",
+    "prove Payment2in": "{from} has no single note big enough, so the proof spends two at once.",
+    "prove UsdrFee": "A second proof pays the relayer its USDr fee.",
+    "relay": "{from} hands the transaction to the relayer: {from}’s own account stays off chain.",
+    "payment": "The relayer submits it; EnygmaDvp checks the proof and settles.",
+    "paymentWithUsdrFee": "The relayer submits them; EnygmaDvp checks both proofs and settles.",
+    "notes in": "The vault adds the new notes as fingerprints: {detailHead}.",
+    "fee note in": "The relayer’s fee note lands in the USDr vault.",
+    "tag": "{from} leaves a tag only the recipient can recognise.",
+    "publishTag": "The relayer posts the tag on chain.",
+    "scan tags": "{to} checks the tags: {detail}.",
+    "open note": "{to} opens the note meant for them."
+  }
+}
+</script>
 <script>
 const K = 6;
 const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
@@ -622,7 +793,7 @@ const diagram = (() => {
   }
 
   // show plays one hop. A failed hop stays on its link, red, until the next
-  // run or a hop on the link succeeds; its caption carries the error.
+  // run or a hop on the link succeeds; its hop line carries the error.
   function show(h, hold) {
     const l = link(h.from, h.to);
     l.classList.add('used');
@@ -635,8 +806,7 @@ const diagram = (() => {
     svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: l.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
     setTimeout(() => dot.remove(), h.failed ? hold * 4 : hold + 250);
     hopPanel.shown(h);
-    $('now').innerHTML = `<b>${esc(NODE[h.from].label)}</b> ${h.from === h.to ? '' : `→ <b>${esc(NODE[h.to].label)}</b>`} ` +
-      `<span class="lbl${h.failed ? ' bad' : ''}">${h.failed ? '✗ ' : ''}${esc(h.label)}</span> <small${h.failed ? ' class="err"' : ''}>${esc(h.detail || '')}</small>`;
+    narration.hop(h);
   }
 
   // Pacing is in the page only: the engine runs at full speed and each hop
@@ -1132,6 +1302,85 @@ $('drawerGrip').onpointerdown = e => {
   addEventListener('pointermove', move); addEventListener('pointerup', up);
 };
 
+// ---- step narration: the card under the diagram, from the narration block --
+
+const NARRATION = JSON.parse($('narration').textContent);
+// HOP_LINES is how many hop lines the card keeps, the newest last.
+const HOP_LINES = 4;
+let defaults = null;      // /defaults: the payouts and script a run starts from
+let runOpts = null;       // the options this page started the current run with
+let startingRun = false;  // this page asked for the run whose reset is next
+let sentTransfer = null;  // the manual transfer this page is sending
+
+const narration = (() => {
+  // holds says whether a part's condition holds for the run's options o.
+  const holds = (when, o) => !when || (when[0] === '!' ? !o[when.slice(1)] : !!o[when]);
+  // fill puts vars into text's {placeholders}, leaving unknown ones as they are.
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m);
+  // parts resolves a narration field to its texts for the run's options.
+  const parts = (v, o, vars) => [].concat(v ?? [])
+    .filter(p => typeof p === 'string' || holds(p.when, o))
+    .map(p => fill(typeof p === 'string' ? p : p.text, vars));
+  // side is one of the card's two lists, or nothing if it has no items.
+  const side = (cls, title, xs) => xs.length ? `<div class="side ${cls}"><b>${title}</b><ul>${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+
+  // options are the run's options: as this page started it, else as its form stands.
+  function options() {
+    const d = defaults || { payouts: [], script: [], shieldTotal: '' };
+    return runOpts || { usdrFee: $('optUsdrFee').checked, tags: $('optTags').checked, shieldTotal: $('optTotal').value || d.shieldTotal,
+      payouts: NAMES.map((_, i) => $('optPay' + i)?.value ?? d.payouts[i]), script: d.script };
+  }
+
+  // vars are a step's placeholder values: the run's, and its payment's.
+  function vars(kind, n, o) {
+    const v = { n, k: K, users: K + 1, shieldTotal: o.shieldTotal, fee: protoFields.usdrFixedFee || 'USDr', count: (o.script || []).length };
+    const pay = kind === 'fanout' ? { from: 'Sender', to: NAMES[n - 1], amount: o.payouts[n - 1] }
+      : kind === 'transfer' ? o.script?.[n - 1]
+      : kind === 'manual' ? sentTransfer : null;
+    return { ...v, ...pay };
+  }
+
+  // render shows a narration on the card, with no hop lines yet.
+  function render(kicker, head, body, pub = [], priv = []) {
+    $('narrKicker').textContent = kicker;
+    $('narrHead').textContent = head;
+    $('narrBody').textContent = body;
+    $('narrSides').innerHTML = side('pub', 'Public chain sees', pub) + side('priv', 'Stays private', priv);
+    $('now').innerHTML = '';
+  }
+
+  return {
+    // step shows step id's narration; label and msg stand in for a kind
+    // the block has none for.
+    step(id, label, msg) {
+      const kind = id.replace(/_\d+$/, ''), n = +(id.match(/_(\d+)$/)?.[1] || 0);
+      const own = NARRATION.steps[kind], entry = own && { ...NARRATION.steps[own.like], ...own }, o = options(), v = vars(kind, n, o);
+      const i = steps.findIndex(s => s.id === id);
+      const kicker = [i < 0 ? 'After the run' : `Step ${i + 1} of ${steps.length}`, ...parts(entry?.kicker, o, v)].join(' · ');
+      const [h, b, pub, priv] = entry ? [parts(entry.h, o, v).join(' '), parts(entry.b, o, v).join(' '), parts(entry.pub, o, v), parts(entry.priv, o, v)] : [];
+      // A placeholder left unfilled (a manual transfer another page sent) falls back too.
+      if (!entry || /\{\w+\}/.test([h, b, ...pub, ...priv].join(' '))) return render(kicker, label, msg || '');
+      render(kicker, h, b, pub, priv);
+    },
+    // hop adds hop h's line, dropping the oldest past HOP_LINES; a failed
+    // hop's line is red and carries its error.
+    hop(h) {
+      const v = { from: NODE[h.from].label, to: NODE[h.to].label, label: h.label, detail: h.detail || '', detailHead: (h.detail || '').split(/[,;] /)[0] };
+      const plain = `${v.from}${h.from === h.to ? '' : ' → ' + v.to}: ${v.label}`;
+      const li = document.createElement('li');
+      li.textContent = h.failed ? `✗ ${plain} failed: ${v.detail}` : fill(NARRATION.hops[h.label] ?? plain, v);
+      if (h.failed) li.className = 'bad';
+      $('now').appendChild(li);
+      while ($('now').children.length > HOP_LINES) $('now').firstElementChild.remove();
+    },
+    // reset shows the card's introduction, before a run.
+    reset() {
+      render('Enygma retail shield', 'Shield public tokens, then pay privately',
+        `The scenario shields public RaylsERC20 into one private note, pays ${K} participants privately, and lets them pay each other. Each step explains itself here as it plays.`);
+    },
+  };
+})();
+
 // The stepper and the status chip follow the diagram: a scenario step's state
 // (and the run's end) shows once the hops queued before it have played. The
 // terminal and the RUN and send buttons do not wait (a new run's reset drops
@@ -1141,9 +1390,12 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': if (!startingRun) runOpts = null; startingRun = false; narration.reset(); build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
+    // The narration waits for queued hops even for a manual transfer, whose
+    // stepper message does not: its card would take the run's last hop lines.
+    diagram.after(() => narration.step(e.step, e.label, e.msg));
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
     whenHopsPlayed(e.step, () => { if (setStep(e.step, 'success', e.msg)) showProgress(++finished); });
@@ -1162,7 +1414,7 @@ function onEvent(e) {
 }
 
 async function loadDefaults() {
-  const d = await (await fetch('/defaults')).json();
+  const d = defaults = await (await fetch('/defaults')).json();
   $('optTotal').value = d.shieldTotal;
   $('optUsdrFee').checked = d.usdrFee;
   $('optTags').checked = d.tags;
@@ -1178,7 +1430,7 @@ $('sendTo').value = NAMES[1];
 $('sendFrom').value = NAMES[0];
 
 $('sendBtn').onclick = async () => {
-  const t = { from: $('sendFrom').value, to: $('sendTo').value, amount: Number($('sendAmount').value) };
+  const t = sentTransfer = { from: $('sendFrom').value, to: $('sendTo').value, amount: Number($('sendAmount').value) };
   $('sendError').textContent = '';
   $('sendBtn').disabled = true; $('runBtn').disabled = true;
   try {
@@ -1189,11 +1441,12 @@ $('sendBtn').onclick = async () => {
       try { msg = JSON.parse(body).error || body; } catch (_) {}
       $('sendError').textContent = msg;
     }
-  } finally { $('sendBtn').disabled = false; $('runBtn').disabled = false; }
+  } finally { $('sendBtn').disabled = false; $('runBtn').disabled = false; sentTransfer = null; }
 };
 
 $('runBtn').onclick = async () => {
   const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked, tags: $('optTags').checked };
+  runOpts = { ...opts, script: defaults?.script || [] }; startingRun = true;
   $('optError').textContent = '';
   $('runBtn').disabled = true;
   const res = await fetch('/run', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(opts) });
@@ -1201,11 +1454,12 @@ $('runBtn').onclick = async () => {
     const body = await res.text();
     let msg = body;
     try { msg = JSON.parse(body).error || body; } catch (_) {}
-    $('optError').textContent = msg; $('runBtn').disabled = false;
+    $('optError').textContent = msg; $('runBtn').disabled = false; runOpts = null; startingRun = false;
   }
 };
 
 build();
+narration.reset();
 hopPanel.reset();
 termReset();
 showTab('engine');

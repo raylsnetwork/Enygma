@@ -30,7 +30,7 @@ c.hiddenNow = () => c.hiddenMs + (hidAt != null ? performance.now() - hidAt : 0)
 const $ = id => document.getElementById(id);
 new MutationObserver(() => { c.maxQueued = Math.max(c.maxQueued, +($('queued').textContent.match(/\d+/) || [0])[0]); })
   .observe($('queued'), { childList: true, characterData: true, subtree: true });
-// Every hop played rewrites the caption.
+// Every hop played adds a hop line to the narration card.
 new MutationObserver(recs => { for (const r of recs) if (r.addedNodes.length) c.shown++; })
   .observe($('now'), { childList: true });
 new MutationObserver(recs => {
@@ -69,3 +69,25 @@ const c = window.__chk;
 - The engine log in the terminal shows why a run stopped early.
 
 Extend the probe for what a ticket checks (a panel's content, say), keeping to observers and the event stream.
+
+## Narration checks
+
+The step narration card under the diagram (#149). Install the probe extended with a recorder of what the card shows for each step (paste it before the probe's last line, which starts the run), and read `window.__chk.narr` after the run:
+
+```js
+// One entry per narration shown, in order; the card rewrites its kicker on each.
+c.narr = [];
+new MutationObserver(() => c.narr.push({ kicker: $('narrKicker').textContent, head: $('narrHead').textContent,
+  body: $('narrBody').textContent, sides: $('narrSides').innerText, hops: [] }))
+  .observe($('narrKicker'), { childList: true, characterData: true, subtree: true });
+new MutationObserver(recs => { for (const r of recs) for (const n of r.addedNodes) c.narr.at(-1)?.hops.push((n.className ? '[' + n.className + '] ' : '') + n.textContent); })
+  .observe($('now'), { childList: true });
+```
+
+1. **Default run** (fees and tags on). Every step's kicker, headline and body read right for it; every scenario step but Check prerequisites and Totals has both lists; each hop adds one plain line (no `from → to: label` fallback). The audit step says the auditor names every payer.
+2. **Fees-off run.** `JSON.stringify(c.narr)` has no `fee` or `earned`. The hop labels are a subset of the narration's (`payment`, not `paymentWithUsdrFee`).
+3. **Tags-off run.** No Tag channels step; the discover step tries every note; the audit step says the auditor can't name the payer, and nothing claims it can.
+4. **Manual transfer**, after a run: the card shows "After the run · Your payment", the from, to and amount sent, and its hop lines.
+5. **Failed hop and replay.** A failed hop's line is red with its error, the newest too, and a failed self-hop has no arrow. No run fails on demand, so feed the page one with `onEvent({ kind: 'hop', step: 'manual_9', from: 'actor2', to: 'relayer', label: 'relay', detail: 'connection refused', failed: true })` after a run and read `$('now').lastElementChild`. Clicking a finished step with hop details (Shield) still replays them in the hop detail panel.
+
+A run on a stack `run.sh` has only just started can lose its first steps' events (the stepper stays empty and the card starts mid-run), seen once on 2026-10-29. Most likely the demo is still tailing the setup's log backlog, and the broker drops events for a page that falls behind. Run again once the logs are quiet.
