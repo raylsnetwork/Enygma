@@ -49,8 +49,18 @@ type Event struct {
 // HopDetailKind says what a HopDetail shows.
 type HopDetailKind string
 
-// DetailLeavesIn is new commitments landing as leaves in a vault's tree.
-const DetailLeavesIn HopDetailKind = "leavesIn"
+const (
+	// DetailLeavesIn is new commitments landing as leaves in a vault's tree.
+	DetailLeavesIn HopDetailKind = "leavesIn"
+	// DetailCommitment is a deposit's new note: its commitment, public, and
+	// its opening, private, landing as one leaf in the vault's tree.
+	DetailCommitment HopDetailKind = "commitment"
+)
+
+// noteOpening names the parts of a note's opening, in the order the
+// commitment hashes them. Only the names go to the page: the values are
+// private to the note's owner.
+var noteOpening = []string{"pk_spend", "salt", "amount", "token"}
 
 // HopDetail is what a hop does to the protocol state. Field elements are
 // 0x-hex.
@@ -61,15 +71,20 @@ type HopDetail struct {
 	Vault string `json:"vault"`
 	Tree  int    `json:"tree"`
 
-	// leavesIn: the transaction that inserted the leaves, the leaves, and
-	// the tree's root before and after them. TreeStarted is set when the
-	// batch started a new tree, the previous one being too full for it;
-	// RootBefore is then the empty tree's root.
+	// leavesIn and commitment: the transaction that inserted the leaves,
+	// the leaves, and the tree's root before and after them. TreeStarted is
+	// set when the batch started a new tree, the previous one being too
+	// full for it; RootBefore is then the empty tree's root.
 	TxHash      string `json:"tx,omitempty"`
 	Leaves      []Leaf `json:"leaves,omitempty"`
 	RootBefore  string `json:"rootBefore,omitempty"`
 	RootAfter   string `json:"rootAfter,omitempty"`
 	TreeStarted bool   `json:"treeStarted,omitempty"`
+
+	// commitment: the note's commitment (its one leaf) and the names of
+	// its opening's parts.
+	Commitment string   `json:"commitment,omitempty"`
+	Opening    []string `json:"opening,omitempty"`
 }
 
 // Leaf is one commitment in a vault's tree. Owner is the actor whose note

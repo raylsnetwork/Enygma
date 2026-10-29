@@ -92,6 +92,20 @@ func (c *chain) leavesIn(ctx context.Context, vault string, vaultAddr common.Add
 	return HopDetail{}, fmt.Errorf("%s inserted no commitments in tx %s", vault, tx.Hex())
 }
 
+// commitmentIn is the commitment hop detail of the note whose commitment
+// tx deposited into the vault at vaultAddr (node ID vault), owned by owner.
+func (c *chain) commitmentIn(ctx context.Context, vault string, vaultAddr common.Address, tx common.Hash, commitment *big.Int, owner string) (HopDetail, error) {
+	d, err := c.leavesIn(ctx, vault, vaultAddr, tx, map[string]string{commitment.String(): owner})
+	if err != nil {
+		return HopDetail{}, err
+	}
+	if len(d.Leaves) != 1 || d.Leaves[0].Commitment != fieldHex(commitment) {
+		return HopDetail{}, fmt.Errorf("%s: deposit tx %s inserted %d leaves, want its one note 0x%s", vault, tx.Hex(), len(d.Leaves), commitment.Text(16))
+	}
+	d.Kind, d.Commitment, d.Opening = DetailCommitment, fieldHex(commitment), noteOpening
+	return d, nil
+}
+
 // treeSnapshot is the vault at vaultAddr's trees as its Commitment events
 // leave them: the current tree's leaves and root, and each full tree's.
 func (c *chain) treeSnapshot(ctx context.Context, vault string, vaultAddr common.Address) (TreeSnapshot, error) {
