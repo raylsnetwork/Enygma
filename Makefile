@@ -52,7 +52,19 @@ TEST_MODULES := $(filter-out $(TEST_SKIP_MODULES),$(MODULES))
 # Package list for one module, minus the skipped packages (never empty-fails).
 TEST_PKGS = pkgs=$$(go list ./... | grep -v -x $(foreach p,$(TEST_SKIP_PACKAGES),-e '$(p)') || true)
 
-.PHONY: help modules hooks fmt fmt-check page-check build vet check test-unit ci \
+# errcheck fails on a dropped error, except the idioms in .errcheck-exclude.
+# Modules with unchecked errors when it was added (70 findings) are skipped so
+# CI starts green and catches new ones. Fix a module's, then delete its entry;
+# see them with:  make errcheck ERRCHECK_SKIP_MODULES= MODULE=<dir>
+ERRCHECK := go run github.com/kisielk/errcheck@v1.30.0 -exclude $(CURDIR)/.errcheck-exclude
+ERRCHECK_SKIP_MODULES ?= \
+	enygma_dvp/gnark_circuits enygma_dvp/relayer enygma_dvp/src enygma_dvp/test \
+	enygma_payments/demo enygma_payments/gnark-server enygma_payments/go_client/enygma_test \
+	enygma_payments/test enygma_retail_payments/demo enygma_retail_payments/gnark_circuits \
+	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
+	enygma_retail_payments/src enygma_retail_payments/test
+
+.PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test \
 	auctions-gnark auctions-keygen
@@ -87,7 +99,10 @@ build: ## go build ./... in every module
 vet: ## go vet ./... in every module
 	$(call each_module,go vet ./...)
 
-check: fmt-check page-check build vet ## Static checks only (no tests)
+errcheck: ## Fail on a dropped error (idioms in .errcheck-exclude allowed) in every module not known-red
+	$(call each_in,$(filter-out $(ERRCHECK_SKIP_MODULES),$(MODULES)),$(ERRCHECK) ./...)
+
+check: fmt-check page-check build vet errcheck ## Static checks only (no tests)
 
 test-unit: ## go test ./... in every module (chain-dependent tests skip themselves)
 	@echo "Not run (known red, see TEST_SKIP_* above): modules [$(TEST_SKIP_MODULES)], packages [$(TEST_SKIP_PACKAGES)]"
