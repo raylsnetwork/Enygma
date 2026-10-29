@@ -27,6 +27,9 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   --t-key:#c3a0ff; --t-chain:#4ade80; --t-zk:#facc15; --t-tag:#ff9040; --t-step:#22d3ee; --t-ok:#4ade80; --t-bad:#f87171;
   --drawer-h:240px;
   --leaf-before:#d9cfbd; --leaf-run:#8f8575;
+  /* The "show owners" tints, one per note owner: Issuer, Sender, the six participants, the relayer. */
+  --own0:#64748b; --own1:#be123c; --own2:#2563eb; --own3:#9333ea; --own4:#db2777;
+  --own5:#ca8a04; --own6:#0891b2; --own7:#65a30d; --own8:#c2410c; --own9:#7c2d12;
 }
 :root[data-theme="dark"] {
   --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
@@ -37,6 +40,8 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   --shadow:rgba(0,0,0,.4);
   --actor:#3dd4b0; --service:#ff9040; --contract:#8b9cff;
   --leaf-before:#1b3d66; --leaf-run:#5f86ad;
+  --own0:#94a3b8; --own1:#fb7185; --own2:#60a5fa; --own3:#c084fc; --own4:#f472b6;
+  --own5:#facc15; --own6:#22d3ee; --own7:#a3e635; --own8:#ff9040; --own9:#d6a77a;
 }
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
 html,body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.5; }
@@ -141,10 +146,22 @@ svg.tree .t.idle { fill:var(--muted); font:italic 12px var(--serif); }
 .strip i.run { background:var(--leaf-run); box-shadow:none; }
 .strip i.spent { box-shadow:0 0 0 1.5px var(--accent); position:relative; z-index:1; }
 .strip i.hot { background:var(--accent); box-shadow:0 0 0 1.5px var(--accent); position:relative; z-index:1; animation:pop .6s ease-out; }
-.legend { display:flex; gap:10px; font-size:11px; color:var(--muted); }
+.legend { display:flex; flex-wrap:wrap; gap:10px; font-size:11px; color:var(--muted); }
 .legend i { display:inline-block; width:8px; height:12px; border-radius:1px; margin-right:4px; vertical-align:-2px; box-shadow:inset 0 0 0 1px var(--bd); }
 .legend i.spent { box-shadow:0 0 0 1.5px var(--accent); }
 .legend i.before { background:var(--leaf-before); box-shadow:none; } .legend i.run { background:var(--leaf-run); box-shadow:none; } .legend i.hot { background:var(--accent); box-shadow:none; }
+/* "show owners": a leaf from this run tinted by its note's owner, this hop's still ringed. */
+.strip i.own, .legend i.own { background:var(--own); box-shadow:none; }
+.strip i.own.hot, .strip i.own.spent { box-shadow:0 0 0 1.5px var(--accent); }
+svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; }
+.owners { display:flex; gap:6px; align-items:flex-start; font-size:12px; color:var(--text2); cursor:pointer; }
+.owners input { margin-top:3px; }
+.owners small { display:block; font-size:11px; color:var(--muted); }
+.replay { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12px; color:var(--warn); border:1px dashed color-mix(in srgb, var(--warn) 50%, var(--bd)); border-radius:8px; padding:4px 8px; }
+.replay b { font-weight:600; }
+.replay button { border:1px solid var(--bd2); background:var(--s1); border-radius:999px; padding:0 9px; cursor:pointer; font-size:11.5px; }
+.replay button:disabled { opacity:.35; cursor:default; }
+.replay .live { margin-left:auto; color:var(--accent); border-color:var(--accent); }
 .hex { font:11px var(--mono); background:var(--s2); border-radius:3px; padding:0 4px; cursor:copy; white-space:nowrap; }
 .hex.copied { background:var(--accent); color:var(--on-accent); }
 #hopPanel details summary { cursor:pointer; font:600 12px var(--mono); color:var(--accent); }
@@ -181,6 +198,9 @@ h3 { font:600 17px var(--serif); margin-bottom:6px; }
 .st.success .n { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
 .st.running .n { border-color:var(--accent); color:var(--accent); animation:pulse 1.2s infinite; }
 .st.error .n { background:var(--bad); border-color:var(--bad); color:var(--on-bad); }
+.st[data-detail].success, .st[data-detail].error { cursor:pointer; }
+.st[data-detail].success:hover b, .st[data-detail].error:hover b { text-decoration:underline dotted; }
+.st.replaying b { color:var(--warn); }
 .st b { font-weight:600; } .st p { font-size:12px; color:var(--text2); margin-top:2px; }
 .st.error p, #stepMsg.error { color:var(--bad); }
 #stepMsg { font-size:12px; color:var(--text2); margin-bottom:10px; }
@@ -363,6 +383,12 @@ function buildSteps() {
     `<div class="st" id="step-${id}"><span class="n">${i + 1}</span><div><b>${esc(label)}</b><p></p></div></div>`).join('');
   showProgress(0);
 }
+
+// Clicking a finished step shows its hop details again in the hop detail panel.
+$('steps').onclick = e => {
+  const el = e.target.closest('.st.success, .st.error');
+  if (el) hopPanel.replayStep(el.id.slice('step-'.length));
+};
 
 function showProgress(done) {
   $('stepCount').textContent = `${done} / ${steps.length}`;
@@ -711,11 +737,41 @@ function prunedTree(touched) {
   return { nodes: [...drawn.values()], edges };
 }
 
+// The note owners the "show owners" toggle tints by, each its own --ownN; an
+// owner not listed is added at the end, and past ten the tints repeat.
+const OWNERS = [...ACTORS.map(([name]) => name), 'Relayer'];
+const ownTint = o => {
+  if (!OWNERS.includes(o)) OWNERS.push(o);
+  return `--own:var(--own${OWNERS.indexOf(o) % 10})`;
+};
+
 const hopPanel = (() => {
   // trees[vault] = { current, byNum: { n: { leaves: [{commitment, owner, before}], leafCount, root, full } } }:
   // the run's tree snapshot, then each hop detail's leaves as the diagram plays it.
-  let trees = null, latest = null, front = VAULT_IDS[0], valuesOpen = false;
+  // Each hop detail shown is kept in history, with the trees as they were
+  // then, so a finished step's can be replayed; replay is the index into
+  // history being replayed, null while live.
+  let trees = null, latest = null, valuesOpen = false, showOwners = false;
+  let history = [], replay = null;
   document.addEventListener('toggle', e => { if (e.target.id === 'hopValues') valuesOpen = e.target.open; }, true);
+  document.addEventListener('change', e => { if (e.target.id === 'showOwners') { showOwners = e.target.checked; render(); } });
+  // The replay bar's buttons: the step's previous or next hop detail, or back to live.
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-replay]');
+    if (!b) return;
+    const a = b.dataset.replay, mine = stepHops(history[replay].hop.step);
+    if (a === 'live') replayAt(null);
+    else replayAt(mine[mine.indexOf(replay) + (a === 'next' ? 1 : -1)]);
+  });
+  // stepHops is the history indices of step's hop details, in order.
+  const stepHops = step => history.flatMap((en, i) => en.hop.step === step ? [i] : []);
+  // replayAt shows history[i] in the panel, marking its step in the stepper; null goes back to live.
+  function replayAt(i) {
+    document.querySelectorAll('.st.replaying').forEach(el => el.classList.remove('replaying'));
+    replay = i ?? null;
+    if (replay !== null) $('step-' + history[replay].hop.step)?.classList.add('replaying');
+    render();
+  }
 
   function snapshot(snaps) {
     trees = {};
@@ -725,7 +781,7 @@ const hopPanel = (() => {
       byNum[v.tree] = { leaves: v.leaves.map(l => ({ ...l, before: true })), leafCount: v.leafCount, root: v.root, full: false };
       trees[v.vault] = { current: v.tree, byNum };
     }
-    latest = null;
+    latest = null; history = []; replay = null;
     render();
   }
 
@@ -766,7 +822,11 @@ const hopPanel = (() => {
     return f;
   }
 
-  const treeOf = (v, f) => { const t = trees[v], num = f?.tree ?? t.current; return { num, ...t.byNum[num] }; };
+  // drawn is the trees render draws: as they are, or as they were at the hop being replayed.
+  let drawn = null;
+  const treeOf = (v, f) => { const t = drawn[v], num = f?.tree ?? t.current; return { num, ...t.byNum[num] }; };
+  // ownOf is the tint of a leaf from this run with the toggle on, if its owner is known.
+  const ownOf = l => showOwners && l && !l.before && l.owner ? ownTint(l.owner) : '';
 
   function treeSvg(v, f) {
     const w = 380, h = 170, pad = 14, t = treeOf(v, f);
@@ -784,8 +844,8 @@ const hopPanel = (() => {
         out.push(`<circle class="n root" data-copy="${esc(root)}" cx="${x}" cy="${y}" r="7"><title>${esc(root)}</title></circle>` +
           `<text class="t root" x="${x}" y="${y - 10}" text-anchor="middle">root</text>`);
       } else if (n.kind === 'leaf') {
-        const c = t.leaves?.[n.index]?.commitment || '';
-        out.push(`<rect class="n leaf" data-copy="${esc(c)}" x="${x - 6}" y="${y - 6}" width="12" height="12" rx="2"><title>${esc(c)}</title></rect>` +
+        const l = t.leaves?.[n.index], c = l?.commitment || '', own = ownOf(l);
+        out.push(`<rect class="n leaf${own ? ' own' : ''}"${own ? ` style="${own}"` : ''} data-copy="${esc(c)}" x="${x - 6}" y="${y - 6}" width="12" height="12" rx="2"><title>${esc(c)}${own ? ` · ${esc(l.owner)}’s note (demo’s view)` : ''}</title></rect>` +
           `<text class="t" x="${x}" y="${y + 18}" text-anchor="middle">#${n.index}</text>`);
       } else if (n.kind === 'sibling' && f?.sibs?.[`${n.level}:${n.index}`]) {
         // A path's sibling that is a node on the other spent note's path stays a path node.
@@ -804,8 +864,9 @@ const hopPanel = (() => {
     const t = treeOf(v, f), hot = new Set(f ? f.touched : []), cells = [];
     for (let i = 0; i < TREE_LEAVES; i++) {
       const l = t.leaves ? t.leaves[i] : i < t.leafCount ? { before: true } : null;
-      const c = (!l ? 'empty' : hot.has(i) && !f.spent ? 'hot' : l.before ? 'before' : 'run') + (f?.spent && hot.has(i) ? ' spent' : '');
-      cells.push(`<i class="${c}" title="leaf #${i}${l?.commitment ? ' · ' + esc(l.commitment) : ''}${l?.before ? ' · before this run' : !l ? ' · empty' : ''}"></i>`);
+      const own = ownOf(l);
+      const c = (!l ? 'empty' : hot.has(i) && !f.spent ? 'hot' : l.before ? 'before' : 'run') + (f?.spent && hot.has(i) ? ' spent' : '') + (own ? ' own' : '');
+      cells.push(`<i class="${c}"${own ? ` style="${own}"` : ''} title="leaf #${i}${l?.commitment ? ' · ' + esc(l.commitment) : ''}${l?.before ? ' · before this run' : !l ? ' · empty' : ''}${own ? ` · ${esc(l.owner)}’s note (demo’s view)` : ''}"></i>`);
     }
     return `<div class="strip ${cls}" style="--cols:${cols}">${cells.join('')}</div>`;
   }
@@ -813,7 +874,7 @@ const hopPanel = (() => {
   function vaultHead(v, f) {
     const t = treeOf(v, f);
     // More than two full trees collapse into one chip, their roots listed on hover.
-    const full = Object.entries(trees[v].byNum).filter(([n, x]) => x.full && +n !== t.num);
+    const full = Object.entries(drawn[v].byNum).filter(([n, x]) => x.full && +n !== t.num);
     const tip = ([n, x]) => `tree ${n} is full: ${x.leafCount} leaves · root ${esc(x.root || '')}`;
     const chips = full.length > 2
       ? `<span class="tchip" title="${full.map(tip).join('&#10;')}">trees ${full[0][0]}–${full[full.length - 1][0]} · full</span>`
@@ -877,12 +938,24 @@ const hopPanel = (() => {
       el.innerHTML = '<div class="inner"><p class="sentence">Press RUN. Each hop that changes the protocol state explains itself here, over both vaults’ real Merkle trees.</p></div>';
       return;
     }
-    const en = latest || { hop: null, details: [], focus: {} };
-    const back = VAULT_IDS.find(v => v !== front), f = en.focus[front];
+    const en = (replay !== null ? history[replay] : latest) || { hop: null, details: [], focus: {}, trees, front: VAULT_IDS[0] };
+    drawn = en.trees;
+    const front = en.front, back = VAULT_IDS.find(v => v !== front), f = en.focus[front];
+    let replayBar = '';
+    if (replay !== null) {
+      const mine = stepHops(en.hop.step), at = mine.indexOf(replay), n = steps.findIndex(s => s.id === en.hop.step);
+      replayBar = `<div class="replay"><b>Replaying step ${n + 1}</b> · hop detail ${at + 1} of ${mine.length}
+        <button data-replay="prev"${at ? '' : ' disabled'}>‹</button><button data-replay="next"${at < mine.length - 1 ? '' : ' disabled'}>›</button>
+        <button class="live" data-replay="live">back to live</button></div>`;
+    }
+    // The owners with a leaf from this run in view, in OWNERS order, for the toggle's legend.
+    const seen = new Set(Object.values(drawn).flatMap(t => Object.values(t.byNum).flatMap(x => (x.leaves || []).filter(l => l && !l.before && l.owner).map(l => l.owner))));
+    const ownLegend = showOwners ? OWNERS.filter(o => seen.has(o)).map(o => `<span><i class="own" style="${ownTint(o)}"></i>${esc(o)}</span>`).join('') : '';
     const roots = !f ? '' : f.spent
       ? `<div class="roots">${[...f.touched].sort((a, b) => a - b).map(i => `leaf #${i}`).join(' and ')} → path → root ${hex(f.root)} <span>· a root the vault has had</span></div>`
       : `<div class="roots">root ${hex(f.rootBefore)} → ${hex(f.rootAfter)}${f.treeStarted ? ` <span class="started">· tree ${f.tree} started</span>` : ''}</div>`;
     el.innerHTML = `<div class="inner">
+      ${replayBar}
       <div>${en.hop ? `<span class="hlbl">${esc(en.hop.label)}</span> <span class="hstep">${esc(NODE[en.hop.from].label)} → ${esc(NODE[en.hop.to].label)}</span>` : '<span class="hstep">Hop detail</span>'}</div>
       <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0], en.details) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
@@ -890,7 +963,9 @@ const hopPanel = (() => {
       ${en.details.filter(d => d.kind === 'settleChecks').map(checksHtml).join('')}
       <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>
       <div class="vcard back">${vaultHead(back, en.focus[back])}${en.focus[back] ? `<div class="roots">same transaction: root ${hex(en.focus[back].rootBefore)} → ${hex(en.focus[back].rootAfter)}</div>` : ''}${strip(back, en.focus[back], 256, 'thin')}</div>
-      <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span>${f?.spent ? '<span><i class="spent"></i>spent in this proof</span>' : ''}<span><i></i>empty</span></div>
+      <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span>${f?.spent ? '<span><i class="spent"></i>spent in this proof</span>' : ''}<span><i></i>empty</span>${ownLegend}</div>
+      <label class="owners"><input type="checkbox" id="showOwners"${showOwners ? ' checked' : ''}><span>Demo’s view: show owners
+        <small>Tints each leaf from this run by whose note it is. Only the demo knows this, holding every actor’s keys: the chain sees unmarked leaves.</small></span></label>
       ${en.hop ? `<details id="hopValues"${valuesOpen ? ' open' : ''}><summary>Real values</summary>${en.details.map(d => rowsHtml(rowsOf(d))).join('')}</details>` : ''}
     </div>`;
   }
@@ -908,11 +983,19 @@ const hopPanel = (() => {
       const sameTx = tx && latest?.details.some(d => d.tx === tx) ? latest.details.filter(d => LANDS.has(d.kind) && d.vault !== h.hopDetail[0].vault) : [];
       const details = [...h.hopDetail, ...sameTx];
       const focus = focusOf(details);
-      front = h.hopDetail[0]?.vault || front;
-      latest = { hop: h, details, focus };
-      render();
+      const front = h.hopDetail[0]?.vault || latest?.front || VAULT_IDS[0];
+      latest = { hop: h, details, focus, front, trees: structuredClone(trees) };
+      history.push(latest);
+      if (h.step) $('step-' + h.step)?.setAttribute('data-detail', '');
+      // A new hop detail playing takes the panel back to live.
+      replayAt(null);
     },
-    reset() { trees = null; latest = null; front = VAULT_IDS[0]; render(); },
+    // replayStep shows a finished step's first hop detail again, if it had any.
+    replayStep(step) {
+      const mine = stepHops(step);
+      if (mine.length) replayAt(mine[0]);
+    },
+    reset() { trees = null; latest = null; history = []; replay = null; render(); },
   };
 })();
 
