@@ -72,6 +72,8 @@ type usdrFeeLeg struct {
 	// details are its proof hop's: the spent note's Merkle path and the
 	// proof's public inputs.
 	details []HopDetail
+	// statement is its proof's public signals.
+	statement []*big.Int
 }
 
 // proveUsdrFee proves payer spending their smallest USDr note that covers
@@ -154,7 +156,7 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		return nil, err
 	}
 	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, proveTime: proveTime,
-		details: []HopDetail{merklePath(NodeUsdrVault, payer.Name, mp), inputs}}
+		details: []HopDetail{merklePath(NodeUsdrVault, payer.Name, mp), inputs}, statement: out.PublicSignal}
 	for i, v := range out.Proof {
 		leg.proof[i] = v.String()
 	}

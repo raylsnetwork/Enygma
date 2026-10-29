@@ -5,6 +5,7 @@ import (
 	"math/big"
 
 	"enygma_retail_payments/layout"
+	"github.com/ethereum/go-ethereum/common"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 )
 
@@ -87,4 +88,22 @@ func publicInputs(circuit, vault string, tree int, stmt []*big.Int) (HopDetail, 
 		}
 	}
 	return d, nil
+}
+
+// settleChecks is the settleChecks hop detail of a circuit proof with
+// public signals stmt (already length-checked by publicInputs), spending from
+// the vault with node ID vault and settled in transaction tx.
+func settleChecks(circuit, vault string, stmt []*big.Int, tx common.Hash) HopDetail {
+	field := map[string]statementField{}
+	for _, f := range statements[circuit].fields {
+		field[f.name] = f
+	}
+	trees, roots, nullifiers := field["TreeNumbers"], field["MerkleRoots"], field["Nullifiers"]
+	d := HopDetail{Kind: DetailSettleChecks, Vault: vault, Tree: int(stmt[trees.offset].Int64()), Circuit: circuit, TxHash: tx.Hex()}
+	// One tree number, root and nullifier per spent note.
+	for i := range nullifiers.size {
+		d.Spent = append(d.Spent, SpentNote{Tree: int(stmt[trees.offset+i].Int64()),
+			Root: fieldHex(stmt[roots.offset+i]), Nullifier: fieldHex(stmt[nullifiers.offset+i])})
+	}
+	return d
 }

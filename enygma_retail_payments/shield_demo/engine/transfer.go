@@ -308,7 +308,11 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if fee != nil {
 		settled = "the payment and the USDr fee in one transaction"
 	}
-	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)))
+	settleDetails := []HopDetail{settleChecks(circuit, NodeVault, stmt, out.TxHash)}
+	if fee != nil {
+		settleDetails = append(settleDetails, settleChecks("UsdrFee", NodeUsdrVault, fee.statement, out.TxHash))
+	}
+	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)), settleDetails...)
 	owners := map[string]string{stmt[commitmentsOutOffset].String(): to.Name, changeNote.commitment.String(): from.Name}
 	notesIn, err := c.leavesIn(ctx, NodeVault, c.vaultAddr, out.TxHash, owners)
 	if err != nil {

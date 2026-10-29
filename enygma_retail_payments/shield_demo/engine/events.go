@@ -61,6 +61,11 @@ const (
 	// DetailPublicInputs is a proof's public inputs, named as in its
 	// circuit's statement layout, and the names of what stays private.
 	DetailPublicInputs HopDetailKind = "publicInputs"
+	// DetailSettleChecks is what EnygmaDvp has the vault check of one proof
+	// before it settles it: each spent note's Merkle root is one the vault
+	// has had, its nullifier is unused, and the proof verifies; then the
+	// nullifiers the vault publishes, one per spent note.
+	DetailSettleChecks HopDetailKind = "settleChecks"
 )
 
 // noteOpening names the parts of a note's opening, in the order the
@@ -105,6 +110,20 @@ type HopDetail struct {
 	Circuit string        `json:"circuit,omitempty"`
 	Inputs  []PublicInput `json:"inputs,omitempty"`
 	Private []string      `json:"private,omitempty"`
+
+	// settleChecks: the circuit whose proof is checked and the transaction
+	// that settles it (TxHash), and its spent notes. Vault is the vault it
+	// spends from and Tree its first spent note's tree.
+	Spent []SpentNote `json:"spent,omitempty"`
+}
+
+// SpentNote is one note a settled proof spends, as EnygmaDvp checks it: its
+// Merkle root, checked as one the vault has had in tree Tree, and its
+// nullifier, checked unused, then published.
+type SpentNote struct {
+	Tree      int    `json:"tree"`
+	Root      string `json:"root"`
+	Nullifier string `json:"nullifier"`
 }
 
 // PublicInput is one public signal of a proof: element Index of its

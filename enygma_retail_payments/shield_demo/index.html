@@ -158,6 +158,10 @@ svg.tree .t.idle { fill:var(--muted); font:italic 12px var(--serif); }
 .opening .side.pub { border-style:solid; border-color:color-mix(in srgb, var(--accent) 45%, var(--bd)); }
 .opening .part { font:11px var(--mono); color:var(--text2); background:var(--s2); border-radius:3px; padding:0 5px; }
 .opening .arrow { font:11px var(--mono); color:var(--muted); }
+.checks { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
+.checks b { font:600 13px var(--serif); }
+.checks .ok { color:var(--ok); font-weight:600; margin-right:4px; }
+.checks .published { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
 .vis { font:600 9.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; border-radius:3px; padding:0 4px; }
 .vis.priv { color:var(--warn); background:color-mix(in srgb, var(--warn) 12%, transparent); }
 .vis.pub { color:var(--accent); background:var(--accent-dim); }
@@ -656,6 +660,7 @@ const SENTENCE = {
   merklePath: (d, all) => all.filter(x => x.kind === 'merklePath').length > 1
     ? `${d.leaf.owner || 'The payer'} proves both notes this transfer merges are leaves of the ${NODE[d.vault].label}'s Merkle tree: each leaf, hashed with one sibling per level, gives a root the vault has had. The proof shows this without saying which leaves.`
     : `${d.leaf.owner || 'The payer'} proves the note being spent is a leaf of the ${NODE[d.vault].label}'s Merkle tree: the leaf, hashed with one sibling at each of the ${DEPTH} levels, gives a root the vault has had. The proof shows this without saying which leaf.`,
+  settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
 // What each public input and private witness of a proof is, named as in the
@@ -827,6 +832,11 @@ const hopPanel = (() => {
       return [...d.inputs.map(x => [`${x.name}${size(x.name) > 1 ? `[${x.index}]` : ''} · public`, hex(x.value)]),
         ...d.private.map(p => [`${p} · private`, '<span class="muted">not sent to this page</span>'])];
     }
+    if (d.kind === 'settleChecks') return [
+      ...d.spent.flatMap((n, i) => [
+        [`${d.circuit} · root ${i} · tree ${n.tree} · known`, hex(n.root)],
+        [`${d.circuit} · nullifier ${i} · unused → published`, hex(n.nullifier)]]),
+      ['transaction', hex(d.tx)]];
     if (!LANDS.has(d.kind)) return [];
     return [
       ...(d.kind === 'commitment'
@@ -849,6 +859,16 @@ const hopPanel = (() => {
       <div class="side pub" title="On chain, in the ${esc(d.circuit)} proof's statement"><span class="vis pub">public</span>${[...new Set(d.inputs.map(x => x.name))].map(n => `<span class="part" title="${esc(PUBLIC_HINT[n] || '')}">${esc(n)}</span>`).join('')}</div>
       <div class="side" title="Known only to the prover: never on chain, never sent to this page"><span class="vis priv">private</span>${d.private.map(p => `<span class="part" title="${esc(PRIVATE_HINT[p] || '')}">${esc(p)}</span>`).join('')}</div>
     </div>`;
+  // checksHtml is a settleChecks detail: what EnygmaDvp checks of one proof,
+  // then the nullifiers it publishes. It shows each distinct root once: a
+  // merge's two notes often share one.
+  const checksHtml = d => `<div class="checks" title="The vault makes these checks on EnygmaDvp’s call; if any fails, the whole transaction reverts">
+      <div><b>${esc(NODE[d.vault].label)}</b> <span class="hstep">· ${esc(d.circuit)} proof</span></div>
+      ${[...new Map(d.spent.map(n => [`${n.tree}:${n.root}`, n])).values()].map(n => `<div><span class="ok">✓</span>root ${hex(n.root)} is one the vault has had in tree ${n.tree}${d.spent.length > 1 && d.spent.every(m => m.tree === n.tree && m.root === n.root) ? ', both paths’ root' : ''}</div>`).join('')}
+      ${d.spent.map(n => `<div><span class="ok">✓</span>nullifier ${hex(n.nullifier)} is unused</div>`).join('')}
+      <div><span class="ok">✓</span>the ${esc(d.circuit)} proof verifies</div>
+      <div class="published">publishes ${d.spent.length > 1 ? `${d.spent.length} nullifiers` : 'its nullifier'}: ${d.spent.map(n => hex(n.nullifier)).join(' ')}</div>
+    </div>`;
   const rowsHtml = rows => `<div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join('')}</div>`;
 
   function render() {
@@ -867,6 +887,7 @@ const hopPanel = (() => {
       <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0], en.details) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
       ${en.details.filter(d => d.kind === 'publicInputs').map(inputsHtml).join('')}
+      ${en.details.filter(d => d.kind === 'settleChecks').map(checksHtml).join('')}
       <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>
       <div class="vcard back">${vaultHead(back, en.focus[back])}${en.focus[back] ? `<div class="roots">same transaction: root ${hex(en.focus[back].rootBefore)} → ${hex(en.focus[back].rootAfter)}</div>` : ''}${strip(back, en.focus[back], 256, 'thin')}</div>
       <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span>${f?.spent ? '<span><i class="spent"></i>spent in this proof</span>' : ''}<span><i></i>empty</span></div>
@@ -879,12 +900,12 @@ const hopPanel = (() => {
     // shown takes the hop the diagram is playing: one with a hop detail
     // lands its leaves and becomes the panel's latest.
     // A hop whose leaves landed in the same transaction as the latest's (a
-    // paid fee's note, after the payment's) keeps the latest's in view too.
+    // paid fee's note, after the payment's) keeps the latest's leaves in view too.
     shown(h) {
       if (!h.hopDetail || !trees) return;
       h.hopDetail.filter(d => LANDS.has(d.kind)).forEach(land);
       const tx = h.hopDetail.find(d => d.tx)?.tx;
-      const sameTx = tx && latest?.details.some(d => d.tx === tx) ? latest.details.filter(d => d.vault !== h.hopDetail[0].vault) : [];
+      const sameTx = tx && latest?.details.some(d => d.tx === tx) ? latest.details.filter(d => LANDS.has(d.kind) && d.vault !== h.hopDetail[0].vault) : [];
       const details = [...h.hopDetail, ...sameTx];
       const focus = focusOf(details);
       front = h.hopDetail[0]?.vault || front;
