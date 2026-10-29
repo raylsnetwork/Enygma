@@ -107,4 +107,25 @@ new MutationObserver(recs => { for (const r of recs) for (const n of r.addedNode
 4. **Manual transfer**, after a run: the card shows "After the run · Your payment", the from, to and amount sent, and its hop lines.
 5. **Failed hop and replay.** A failed hop's line is red with its error, the newest too, and a failed self-hop has no arrow. No run fails on demand, so feed the page one with `onEvent({ kind: 'hop', step: 'manual_9', from: 'actor2', to: 'relayer', label: 'relay', detail: 'connection refused', failed: true })` after a run and read `$('now').lastElementChild`. Clicking a finished step with hop details (Shield) still replays them in the hop detail panel.
 
+## Pausing checks
+
+Presenter pacing (#151): with "pause after each step" on, playback holds at a gate after each step but the last until Next or Space. Extend the probe with a recorder of the gates (paste it before the probe's last line), and release gates from `javascript_tool` with `document.getElementById('nextBtn').click()` or a dispatched Space:
+
+```js
+// One entry per gate: when playback reached it and was released, the step last shown finished, and the hops queued behind it.
+c.gates = [];
+new MutationObserver(() => {
+  if ($('nextBtn').disabled) { const g = c.gates.at(-1); if (g && g.releasedAt == null) g.releasedAt = performance.now(); return; }
+  c.gates.push({ at: performance.now(), step: [...document.querySelectorAll('#steps .st.success')].at(-1)?.id, queued: $('queued').textContent });
+}).observe($('nextBtn'), { attributes: true, attributeFilter: ['disabled'] });
+c.space = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+```
+
+1. **Default run, pausing on.** Release each gate as it comes (poll for `!$('nextBtn').disabled`). The run ends after 21 Nexts, with `c.gates.length` 21, none at the last step; the probe's `early` is empty and `shownAtEnd` equals `hops`.
+2. **The run keeps going.** At a gate, the engine's events keep arriving (`c.hops` grows, `+N queued` grows) and its steps finish in the terminal; Next plays the next step's hops at once.
+3. **Long pause.** Hold one gate two minutes, then Next. The hops after it play at their normal hold (about 600 ms, 1.5 s with a hop detail), not at the 120 ms minimum: time them with the `#now` observer.
+4. **Space.** `c.space()` releases a gate. With focus in the send form's amount box (`$('sendAmount').focus()`, then a keydown dispatched on it), Space does not.
+5. **Pausing off.** Unchecking the toggle while playback waits releases it, and the rest of the run plays straight through; a reload keeps it off (localStorage), and a run with it off has no gates.
+6. **?fast** stops at gates too.
+
 A run on a stack `run.sh` has only just started can lose its first steps' events (the stepper stays empty and the card starts mid-run), seen once on 2026-10-29. Most likely the demo is still tailing the setup's log backlog, and the broker drops events for a page that falls behind. Run again once the logs are quiet.
