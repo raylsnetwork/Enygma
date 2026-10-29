@@ -113,6 +113,11 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .narr .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
 .narr h2 { font:600 22px/1.25 var(--serif); color:var(--text); }
 .narr .body { font:16px/1.5 var(--serif); color:var(--text2); }
+.narr .next { display:flex; gap:10px; align-items:center; }
+#nextBtn { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.06em; padding:6px 20px; border-radius:999px; cursor:pointer; }
+#nextBtn:disabled { opacity:.25; cursor:default; }
+#nextBtn.ready { animation:pulse 1.4s infinite; }
+.narr .hint { font:11px var(--mono); color:var(--muted); }
 /* What the public chain sees against what stays private, side by side under the card. */
 .sides { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .sides:empty { display:none; }
@@ -300,6 +305,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <details class="opts"><summary>Amounts</summary><div id="options">
     <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
   </div></details>
+  <label class="toggle" title="Hold playback after each step until Next or Space"><input id="optPause" type="checkbox"> pause after each step</label>
   <span id="optError"></span>
   <span class="chip" id="status"><span class="status-dot"></span><span id="statusText">idle</span></span>
   <button id="runBtn">RUN</button>
@@ -324,6 +330,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     <h2 id="narrHead"></h2>
     <p class="body" id="narrBody"></p>
     <ul id="now"></ul>
+    <div class="next"><button id="nextBtn" disabled>NEXT ▸</button><span class="hint" id="nextHint"></span></div>
   </div>
   <div class="sides" id="narrSides"></div>
   <details class="fold hops card" id="hopFold"><summary>Proof and Merkle tree details</summary>
@@ -865,7 +872,9 @@ const diagram = (() => {
   // tick that comes late (a background tab's timers are throttled) plays
   // every hop due since the last one.
   // The queue also holds marks ({ run }) that `after` queues: a mark runs, and
-  // takes no time, once every hop queued before it has played its hold.
+  // takes no time, once every hop queued before it has played its hold. A gate
+  // ({ gate }) that `gate` queues stops playback, even in /?fast: what queues
+  // behind it waits until `next` releases it.
   const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120;
   const FAST = new URLSearchParams(location.search).has('fast');
   const queue = [];
@@ -873,6 +882,7 @@ const diagram = (() => {
   function pump() {
     timer = null;
     while (queue[0]?.run) queue.shift().run();
+    if (queue[0]?.gate) { pacing.showHeld(true); showQueued(); return; }
     if (!queue.length) { $('queued').textContent = ''; return; }
     let hold;
     if (FAST) {
@@ -880,7 +890,7 @@ const diagram = (() => {
       let due = Math.max(1, Math.floor((now - lastPump) / MIN_HOLD));
       lastPump = now;
       hold = MIN_HOLD;
-      while (due && queue.length) {
+      while (due && queue.length && !queue[0].gate) {
         const h = queue.shift();
         if (h.run) h.run(); else { show(h, hold); due--; }
       }
@@ -891,24 +901,49 @@ const diagram = (() => {
       hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
       show(h, hold);
     }
-    const hops = queue.filter(h => !h.run).length;
-    $('queued').textContent = hops ? `+${hops} queued` : '';
+    showQueued();
     timer = setTimeout(pump, hold);
   }
+  function showQueued() {
+    const hops = queue.filter(h => h.from).length;
+    $('queued').textContent = hops ? `+${hops} queued` : '';
+  }
+  // Playback is idle with nothing queued, or waits at a gate with the rest
+  // queued behind it.
+  const waiting = () => !timer && !!queue[0]?.gate;
   return {
     hop(h) {
       if (!NODE[h.from] || !NODE[h.to]) return;
       queue.push({ ...h, at: performance.now() });
-      if (!timer) pump();
+      if (waiting()) showQueued(); else if (!timer) pump();
     },
     // after runs fn once the hops queued so far have played: now, if the
-    // diagram is idle.
+    // diagram is idle, and never while it waits at a gate.
     after(fn) {
-      if (timer) queue.push({ run: fn }); else fn();
+      if (timer || queue.length) queue.push({ run: fn }); else fn();
+    },
+    // gate stops playback once the hops queued so far have played.
+    gate() {
+      queue.push({ gate: true });
+      if (!timer && queue.length === 1) pump();
+    },
+    // next releases the gate playback waits at; with all, it also drops every
+    // gate still queued. The hops held behind it count as arriving now, so the
+    // catch-up does not play the pause off as lag.
+    next(all) {
+      const held = waiting();
+      if (all) { for (let i = queue.length; i--;) if (queue[i].gate) queue.splice(i, 1); } else if (held) queue.shift();
+      if (!held) return;
+      const now = performance.now();
+      for (const h of queue) if (h.at) h.at = now;
+      lastPump = now;
+      pacing.showHeld(false);
+      pump();
     },
     refreshTip,
     reset() {
       queue.length = 0; clearTimeout(timer); timer = null;
+      pacing.showHeld(false);
       gL.innerHTML = ''; gP.innerHTML = '';
       for (const k in links) delete links[k];
       for (const g of Object.values(nodeEl)) { Object.values(g._t || {}).forEach(clearTimeout); g.classList.remove('lit', 'bad'); }
@@ -1431,6 +1466,47 @@ const narration = (() => {
   };
 })();
 
+// ---- presenter pacing: playback holds after each step until Next -------------
+
+// With pausing on, each successful scenario step but the last queues a gate in
+// the diagram's hop queue after its finished mark; Next or Space releases it.
+// The engine does not pause: its events queue behind the gate meanwhile.
+const PAUSE_KEY = 'enygmaRetailShieldPause';
+const pacing = (() => {
+  let on = true, held = false;
+  try { on = localStorage.getItem(PAUSE_KEY) !== 'off'; } catch (_) {}
+  function show() {
+    $('nextBtn').disabled = !held;
+    $('nextBtn').classList.toggle('ready', held);
+    $('nextHint').textContent = on ? 'or press Space' : 'pausing is off';
+  }
+  $('optPause').checked = on;
+  $('optPause').onchange = ev => {
+    on = ev.target.checked;
+    try { localStorage.setItem(PAUSE_KEY, on ? 'on' : 'off'); } catch (_) {}
+    if (!on) diagram.next(true);
+    show();
+    // Space on the focused checkbox would toggle it instead of meaning Next.
+    ev.target.blur();
+  };
+  $('nextBtn').onclick = () => diagram.next();
+  addEventListener('keydown', e => {
+    if (e.key !== ' ' || !held || e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    // Keeps Space from also pressing the focused button or scrolling the page.
+    e.preventDefault();
+    if (!e.repeat) diagram.next();
+  });
+  show();
+  return {
+    // stepDone queues a gate after scenario step id, unless it is the last.
+    stepDone(id) {
+      if (on && $('step-' + id) && id !== steps.at(-1)?.id) diagram.gate();
+    },
+    // showHeld shows whether playback waits at a gate.
+    showHeld(w) { if (held !== w) { held = w; show(); } },
+  };
+})();
+
 // The stepper and the status chip follow the diagram: a scenario step's state
 // (and the run's end) shows once the hops queued before it have played. The
 // terminal and the RUN and send buttons do not wait (a new run's reset drops
@@ -1449,6 +1525,7 @@ function onEvent(e) {
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
     whenHopsPlayed(e.step, () => { if (setStep(e.step, 'success', e.msg)) showProgress(++finished); });
+    pacing.stepDone(e.step);
     termLine(e, 'c-ok', `✓ ${e.label}  ${e.msg}`); break;
   case 'step_failed':
     whenHopsPlayed(e.step, () => setStep(e.step, 'error', e.label + ' failed: ' + e.msg));
