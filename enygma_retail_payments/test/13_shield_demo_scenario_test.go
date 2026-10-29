@@ -237,6 +237,31 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("the shield and each grant carry a commitment detail: the deposit's commitment, as the leaf it inserted", func(t *testing.T) {
+		issuer, sender := engine.ActorNode(e.Issuer().ID), engine.ActorNode(e.Sender().ID)
+		perVault := map[string]int{}
+		for _, h := range sink.hops() {
+			deposit := h.From == issuer && h.To == engine.NodeUsdrVault || h.From == sender && h.To == engine.NodeVault
+			for _, d := range h.HopDetail {
+				if d.Kind != engine.DetailCommitment {
+					continue
+				}
+				if !deposit || d.Vault != h.To {
+					t.Errorf("step %s: commitment detail in the %s on hop %s → %s, want it only on a deposit into that vault", h.Step, d.Vault, h.From, h.To)
+					continue
+				}
+				perVault[d.Vault]++
+				checkCommitment(t, client, vaults, vaultAddrs, d)
+			}
+		}
+		if got, want := perVault[engine.NodeUsdrVault], 1+engine.K; got != want {
+			t.Errorf("%d commitment details in the USDr vault, want one per grant (%d)", got, want)
+		}
+		if got := perVault[engine.NodeVault]; got != 1 {
+			t.Errorf("%d commitment details in the RaylsERC20 vault, want the shield's (1)", got)
+		}
+	})
+
 	t.Run("the run's totals count every transaction it put on chain", func(t *testing.T) {
 		totals, err := e.Totals(context.Background())
 		if err != nil {
@@ -905,6 +930,30 @@ func checkLeavesIn(t *testing.T, client *ethclient.Client, vaultAddrs map[string
 		if hexField(t, l.Commitment).Cmp(inserted[i]) != 0 {
 			t.Errorf("%s tx %s: leaf %d is %s, the vault inserted 0x%x", d.Vault, d.TxHash, i, l.Commitment, inserted[i])
 		}
+	}
+}
+
+// checkCommitment checks that commitment detail d's commitment is the one
+// leaf its deposit inserted in d's vault, that the vault has had its root
+// after in its tree, and that it names the opening's parts, not their values.
+func checkCommitment(t *testing.T, client *ethclient.Client, vaults map[string]*bind.BoundContract, vaultAddrs map[string]common.Address, d engine.HopDetail) {
+	t.Helper()
+	checkLeavesIn(t, client, vaultAddrs, d)
+	if len(d.Leaves) != 1 || d.Leaves[0].Commitment != d.Commitment {
+		t.Errorf("%s tx %s: commitment %s, leaves %+v, want the deposit's one leaf", d.Vault, d.TxHash, d.Commitment, d.Leaves)
+	}
+	var out []any
+	if err := vaults[d.Vault].Call(&bind.CallOpts{}, &out, "isValidRoot", big.NewInt(int64(d.Tree)), hexField(t, d.RootAfter)); err != nil {
+		t.Fatalf("%s isValidRoot: %v", d.Vault, err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("%s isValidRoot returned %d values, want 1", d.Vault, len(out))
+	}
+	if known, _ := out[0].(bool); !known {
+		t.Errorf("%s tx %s: root after %s is not one the vault has had in tree %d", d.Vault, d.TxHash, d.RootAfter, d.Tree)
+	}
+	if want := []string{"pk_spend", "salt", "amount", "token"}; !slices.Equal(d.Opening, want) {
+		t.Errorf("%s tx %s: opening %v, want the parts' names %v", d.Vault, d.TxHash, d.Opening, want)
 	}
 }
 

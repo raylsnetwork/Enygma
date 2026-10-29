@@ -33,7 +33,11 @@ func (e *Engine) grantUsdr(ctx context.Context, s *step) error {
 			s.hopFailed(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", err)
 			return fmt.Errorf("USDr grant to %s: %w", a.Name, err)
 		}
-		s.hop(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", fmt.Sprintf("a %s USDr note for %s, encrypted to their view key, block %d", grant, a.Name, receipt.BlockNumber))
+		cd, err := c.commitmentIn(ctx, NodeUsdrVault, c.usdrVaultAddr, receipt.TxHash, n.commitment, a.Name)
+		if err != nil {
+			return fmt.Errorf("USDr grant to %s: %w", a.Name, err)
+		}
+		s.hop(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", fmt.Sprintf("a %s USDr note for %s, encrypted to their view key, block %d", grant, a.Name, receipt.BlockNumber), cd)
 		s.log("chain", "UsdrCoinVault.depositV2(%s) → %s's note 0x%s…  block %d", grant, a.Name, n.commitment.Text(16)[:12], receipt.BlockNumber)
 	}
 	s.actor(issuer, "public", "0 USDr ("+total.String()+" minted and shielded)")

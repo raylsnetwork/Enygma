@@ -148,7 +148,16 @@ svg.tree .t.idle { fill:var(--muted); font:italic 12px var(--serif); }
 .rows { display:flex; flex-direction:column; gap:3px; margin-top:6px; }
 .row { display:grid; grid-template-columns:150px minmax(0,1fr); gap:8px; font-size:12px; }
 .row .k { color:var(--muted); font:11px var(--mono); }
+.row .muted { color:var(--muted); font:italic 12px var(--serif); }
 .started { color:var(--ok); font-size:11.5px; }
+.opening { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; font-size:12px; }
+.opening .side { display:flex; flex-wrap:wrap; align-items:center; gap:4px; border:1px dashed var(--bd2); border-radius:8px; padding:5px 8px; }
+.opening .side.pub { border-style:solid; border-color:color-mix(in srgb, var(--accent) 45%, var(--bd)); }
+.opening .part { font:11px var(--mono); color:var(--text2); background:var(--s2); border-radius:3px; padding:0 5px; }
+.opening .arrow { font:11px var(--mono); color:var(--muted); }
+.vis { font:600 9.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; border-radius:3px; padding:0 4px; }
+.vis.priv { color:var(--warn); background:color-mix(in srgb, var(--warn) 12%, transparent); }
+.vis.pub { color:var(--accent); background:var(--accent-dim); }
 
 /* ---- timeline and panels ------------------------------------------------- */
 main { display:grid; grid-template-columns:300px minmax(0,1fr); gap:22px; padding:20px 28px; }
@@ -636,8 +645,11 @@ const VAULT_IDS = ['Erc20CoinVault', 'UsdrCoinVault'];
 const DEPTH = 8, TREE_LEAVES = 256;
 
 // Each hop detail kind's fixed plain-language sentence.
+// Kinds whose leaves land in a vault's tree: the panel's tree view follows them.
+const LANDS = new Set(['leavesIn', 'commitment']);
 const SENTENCE = {
   leavesIn: d => `The new notes' commitments land as leaves in the ${NODE[d.vault].label}'s Merkle tree, all in this one transaction, and the tree gets a new root.`,
+  commitment: d => `A new note for ${d.leaves[0].owner || 'its owner'}: the chain stores only its commitment, a hash, as a leaf in the ${NODE[d.vault].label}'s Merkle tree; what it hashes stays with the owner.`,
 };
 
 const shortHex = v => { v = String(v); return v.startsWith('0x') && v.length > 14 ? v.slice(0, 8) + '…' + v.slice(-4) : v; };
@@ -703,7 +715,7 @@ const hopPanel = (() => {
       t.current = d.tree;
     }
     const tr = t.byNum[d.tree];
-    // Leaves this run added with no leavesIn detail (the shield, the grants) fill the gaps.
+    // Leaves this run added with no hop detail (a fee-less run's change, say) fill the gaps.
     for (let i = 0; i < d.leaves[0].index; i++) tr.leaves[i] ||= { before: false };
     for (const l of d.leaves) tr.leaves[l.index] = { commitment: l.commitment, owner: l.owner, before: false };
     tr.leafCount = tr.leaves.length;
@@ -715,7 +727,7 @@ const hopPanel = (() => {
   function focusOf(details) {
     const f = {};
     for (const d of details) {
-      if (d.kind !== 'leavesIn') continue;
+      if (!LANDS.has(d.kind)) continue;
       const x = f[d.vault] ||= { tree: d.tree, touched: [] };
       x.touched.push(...d.leaves.map(l => l.index));
       Object.assign(x, { rootBefore: d.rootBefore, rootAfter: d.rootAfter, treeStarted: d.treeStarted });
@@ -775,12 +787,22 @@ const hopPanel = (() => {
 
   // rowsOf is a detail's real values as [label, value html] rows.
   function rowsOf(d) {
-    if (d.kind !== 'leavesIn') return [];
+    if (!LANDS.has(d.kind)) return [];
     return [
-      ...d.leaves.map(l => [`new leaf · tree ${d.tree} #${l.index}`, hex(l.commitment)]),
+      ...(d.kind === 'commitment'
+        ? [[`commitment · public · tree ${d.tree} #${d.leaves[0].index}`, hex(d.commitment)], ...d.opening.map(p => [`${p} · private`, '<span class="muted">not sent to this page</span>'])]
+        : d.leaves.map(l => [`new leaf · tree ${d.tree} #${l.index}`, hex(l.commitment)])),
       ['root before', hex(d.rootBefore)], ['root after', hex(d.rootAfter)], ['transaction', hex(d.tx)],
       ...(d.treeStarted ? [['tree', `<span class="started">tree ${d.tree} started: the batch would have filled tree ${d.tree - 1}</span>`]] : [])];
   }
+  // openingHtml is a commitment detail's opening, private, hashed into its
+  // commitment, public. Only the parts' names reach the page.
+  const openingHtml = d => `<div class="opening">
+      <div class="side" title="Known only to the note's owner (and to whoever made the note): never on chain, never sent to this page"><span class="vis priv">private</span>${d.opening.map(p => `<span class="part">${esc(p)}</span>`).join('')}</div>
+      <span class="arrow">Poseidon →</span>
+      <div class="side pub" title="On chain, in the vault's Commitment event"><span class="vis pub">public</span>${hex(d.commitment)}</div>
+      <span class="arrow">→ leaf #${d.leaves[0].index}</span>
+    </div>`;
   const rowsHtml = rows => `<div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join('')}</div>`;
 
   function render() {
@@ -795,6 +817,7 @@ const hopPanel = (() => {
     el.innerHTML = `<div class="inner">
       <div>${en.hop ? `<span class="hlbl">${esc(en.hop.label)}</span> <span class="hstep">${esc(NODE[en.hop.from].label)} → ${esc(NODE[en.hop.to].label)}</span>` : '<span class="hstep">Hop detail</span>'}</div>
       <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0]) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
+      ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
       <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>
       <div class="vcard back">${vaultHead(back, en.focus[back])}${en.focus[back] ? `<div class="roots">same transaction: root ${hex(en.focus[back].rootBefore)} → ${hex(en.focus[back].rootAfter)}</div>` : ''}${strip(back, en.focus[back], 256, 'thin')}</div>
       <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span><span><i></i>empty</span></div>
@@ -810,7 +833,7 @@ const hopPanel = (() => {
     // paid fee's note, after the payment's) keeps the latest's in view too.
     shown(h) {
       if (!h.hopDetail || !trees) return;
-      h.hopDetail.forEach(land);
+      h.hopDetail.filter(d => LANDS.has(d.kind)).forEach(land);
       const tx = h.hopDetail.find(d => d.tx)?.tx;
       const sameTx = tx && latest?.details.some(d => d.tx === tx) ? latest.details.filter(d => d.vault !== h.hopDetail[0].vault) : [];
       const details = [...h.hopDetail, ...sameTx];
