@@ -299,53 +299,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 		return e.fail("prereqs", "Check prerequisites", err)
 	}
 	e.opts = opts
-	steps := []stepDef{
-		{"prereqs", "Check prerequisites", "Probing chain · gnark server · relayer…", e.checkPrereqs},
-		{"keygen", "Generate keys", "Issuer, sender and participants generate spend and view keys…", e.generateKeys},
-		{"register", "Register in UserRegistry", "Sender and participants publish their keys…", e.register},
-		{"audit_keys", "Auditor keys", "Auditor opens each registered user's audit ciphertexts in the UserRegistry…", e.auditorKeysStep},
-	}
-	if opts.Tags {
-		steps = append(steps, stepDef{"channels", "Tag channels", "Each payer opens a private-tag channel to everyone they will pay, through the relayer…", e.openChannels})
-	}
-	steps = append(steps, []stepDef{
-		{"usdr", "USDr fee credit", fmt.Sprintf("Issuer shields a %d USDr note to the sender and each participant…", UsdrGrant), e.grantUsdr},
-		{"shield", "Shield", fmt.Sprintf("Sender gets %d public RaylsERC20 and shields it into one private note…", opts.ShieldTotal),
-			func(ctx context.Context, s *step) error { return e.shield(ctx, s, opts) }},
-	}...)
-	route := "no fee"
-	if opts.UsdrFee {
-		route = "USDr fee to the relayer"
-	}
-	if opts.Tags {
-		route += ", private tag"
-	}
-	for i, name := range participantNames {
-		n, amount := i+1, big.NewInt(opts.Payouts[i])
-		steps = append(steps, stepDef{
-			fmt.Sprintf("fanout_%d", n), "Pay " + name,
-			fmt.Sprintf("Fan-out %d/%d: sender pays %s privately, change back to the sender (%s)…", n, K, name, route),
-			func(ctx context.Context, s *step) error {
-				return e.payFanOut(ctx, s, n, e.participants()[i], amount, opts.UsdrFee)
-			},
-		})
-	}
-	discoverMsg := "Participants scan the chain with their view keys…"
-	if opts.Tags {
-		discoverMsg = "Participants scan the tag registry for their tags…"
-	}
-	steps = append(steps, stepDef{"discover", "Discover", discoverMsg, e.discover})
-	for i, t := range opts.Script {
-		steps = append(steps, stepDef{
-			fmt.Sprintf("transfer_%d", i+1), fmt.Sprintf("%s → %s", t.From, t.To),
-			fmt.Sprintf("Transfer %d/%d: %s pays %s %d privately (%s)…", i+1, len(opts.Script), t.From, t.To, t.Amount, route),
-			func(ctx context.Context, s *step) error { return e.payByName(ctx, s, t) },
-		})
-	}
-	steps = append(steps,
-		stepDef{"audit", "Audit", "Auditor reconciles every user's balances from the transactions it decrypted…", e.reconcile},
-		stepDef{"totals", "Totals", "Adding up the run's transactions, gas, proving and relay time…", e.showTotals},
-	)
+	steps := plan(opts)
 	announced := make([]map[string]string, len(steps))
 	for i, s := range steps {
 		announced[i] = map[string]string{"id": s.id, "label": s.label}
@@ -356,7 +310,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	for _, s := range steps {
 		st := &step{e: e, id: s.id, label: s.label}
 		st.start(s.msg)
-		if err := runStep(ctx, s, st); err != nil {
+		if err := runStep(ctx, e, s, st); err != nil {
 			return e.fail(s.id, s.label, err)
 		}
 		// The auditor's view follows each step's transactions.
@@ -373,20 +327,15 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
-type stepDef struct {
-	id, label, msg string
-	run            func(context.Context, *step) error
-}
-
-// runStep runs s, turning a panic into the step's error, so a bug fails the
-// run like any other error instead of taking the web server down with it.
-func runStep(ctx context.Context, s stepDef, st *step) (err error) {
+// runStep runs s on e, turning a panic into the step's error, so a bug fails
+// the run like any other error instead of taking the web server down with it.
+func runStep(ctx context.Context, e *Engine, s stepDef, st *step) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v", r)
 		}
 	}()
-	return s.run(ctx, st)
+	return s.run(e, ctx, st)
 }
 
 // Close releases the run's chain connection.
