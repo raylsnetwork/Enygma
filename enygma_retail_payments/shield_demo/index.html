@@ -396,12 +396,15 @@ function showProgress(done) {
 
 // setStep marks a step's state; only the running or failed step shows its
 // message. A step outside the scenario (a manual transfer) shows it above the
-// stepper instead. It reports whether the step is one of the scenario's.
+// stepper instead, where a run's reset clears it. It reports whether the step
+// is one of the scenario's.
 function setStep(id, state, msg) {
   const el = $('step-' + id);
-  $('stepMsg').className = state === 'error' ? 'error' : '';
-  $('stepMsg').textContent = el ? '' : msg;
-  if (!el) return false;
+  if (!el) {
+    $('stepMsg').className = state === 'error' ? 'error' : '';
+    $('stepMsg').textContent = msg;
+    return false;
+  }
   el.className = 'st ' + state;
   if (state === 'running') keepInView($('stepper'), el);
   const i = steps.findIndex(s => s.id === id);
@@ -644,20 +647,26 @@ const diagram = (() => {
   // queue keeps up with the run (for checking the end of a run quickly); a
   // tick that comes late (a background tab's timers are throttled) plays
   // every hop due since the last one.
+  // The queue also holds marks ({ run }) that `after` queues: a mark runs, and
+  // takes no time, once every hop queued before it has played its hold.
   const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120;
   const FAST = new URLSearchParams(location.search).has('fast');
   const queue = [];
   let timer = null, lastPump = 0;
   function pump() {
     timer = null;
+    while (queue[0]?.run) queue.shift().run();
     if (!queue.length) { $('queued').textContent = ''; return; }
     let hold;
     if (FAST) {
       const now = performance.now();
-      const due = Math.max(1, Math.floor((now - lastPump) / MIN_HOLD));
+      let due = Math.max(1, Math.floor((now - lastPump) / MIN_HOLD));
       lastPump = now;
       hold = MIN_HOLD;
-      for (const h of queue.splice(0, due)) show(h, hold);
+      while (due && queue.length) {
+        const h = queue.shift();
+        if (h.run) h.run(); else { show(h, hold); due--; }
+      }
     } else {
       const h = queue.shift();
       const behind = performance.now() - h.at;
@@ -665,7 +674,8 @@ const diagram = (() => {
       hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
       show(h, hold);
     }
-    $('queued').textContent = queue.length ? `+${queue.length} queued` : '';
+    const hops = queue.filter(h => !h.run).length;
+    $('queued').textContent = hops ? `+${hops} queued` : '';
     timer = setTimeout(pump, hold);
   }
   return {
@@ -673,6 +683,11 @@ const diagram = (() => {
       if (!NODE[h.from] || !NODE[h.to]) return;
       queue.push({ ...h, at: performance.now() });
       if (!timer) pump();
+    },
+    // after runs fn once the hops queued so far have played: now, if the
+    // diagram is idle.
+    after(fn) {
+      if (timer) queue.push({ run: fn }); else fn();
     },
     refreshTip,
     reset() {
@@ -1117,24 +1132,30 @@ $('drawerGrip').onpointerdown = e => {
   addEventListener('pointermove', move); addEventListener('pointerup', up);
 };
 
+// The stepper and the status chip follow the diagram: a scenario step's state
+// (and the run's end) shows once the hops queued before it have played. The
+// terminal and the RUN and send buttons do not wait (a new run's reset drops
+// what is still queued), and a step outside the scenario shows at once.
+const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
+
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
-    setStep(e.step, 'running', e.msg || e.label);
+    whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
-    if (setStep(e.step, 'success', e.msg)) showProgress(++finished);
+    whenHopsPlayed(e.step, () => { if (setStep(e.step, 'success', e.msg)) showProgress(++finished); });
     termLine(e, 'c-ok', `✓ ${e.label}  ${e.msg}`); break;
   case 'step_failed':
-    setStep(e.step, 'error', e.label + ' failed: ' + e.msg);
+    whenHopsPlayed(e.step, () => setStep(e.step, 'error', e.label + ' failed: ' + e.msg));
     termLine(e, 'c-bad', `✗ ${e.label} failed: ${e.msg}`); break;
   case 'log': termLine(e, e.cat ? 'c-' + e.cat : '', `[${(e.cat || '·').padEnd(5)}] ${e.msg}`); break;
   case 'actor': setActor(e.actor, e.field, e.value); break;
   case 'proto': setProto(e.field, e.value); break;
-  case 'done': setStatus('success', 'done'); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
-  case 'failed': setStatus('error', 'failed'); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
+  case 'done': diagram.after(() => setStatus('success', 'done')); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
+  case 'failed': diagram.after(() => setStatus('error', 'failed')); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
   case 'term': serviceLine(e); break;
   case 'hop': diagram.hop(e); break;
   }
