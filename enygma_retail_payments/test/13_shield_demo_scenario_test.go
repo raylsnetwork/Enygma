@@ -270,6 +270,10 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("each settle hop carries its proofs' settle checks, and every nullifier it publishes is in that transaction's Nullifier events", func(t *testing.T) {
+		checkSettleChecks(t, client, vaults, vaultAddrs, sink.hops(), true)
+	})
+
 	t.Run("the run's totals count every transaction it put on chain", func(t *testing.T) {
 		totals, err := e.Totals(context.Background())
 		if err != nil {
@@ -647,6 +651,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		if n := checkProofDetails(t, vaults, vaultAddrs, psink.hops())[engine.NodeUsdrVault]; n != 0 {
 			t.Errorf("%d Merkle paths in the USDr vault with fees off, want none (no UsdrFee proof)", n)
 		}
+		checkSettleChecks(t, client, vaults, vaultAddrs, psink.hops(), false)
 		for i, s := range append(e.FanOut(), e.Transfers()...) {
 			if s.UsdrFeeNote != nil {
 				t.Errorf("step %d: paid a USDr fee note with fees off", i+1)
@@ -763,6 +768,11 @@ func TestShieldDemoScenario(t *testing.T) {
 		})
 		if !failedHop {
 			t.Errorf("step %s shows no failed hop to the relayer with its error", failedStep)
+		}
+		for _, ev := range sink.events {
+			if ev.Kind == engine.Hop && ev.Failed && len(ev.HopDetail) > 0 {
+				t.Errorf("step %s: failed hop %q carries %d hop details, want only its error", ev.Step, ev.Label, len(ev.HopDetail))
+			}
 		}
 		if last := sink.events[len(sink.events)-1]; last.Kind != engine.RunFailed || last.Msg == "" {
 			t.Errorf("last event %+v, want the run failing with its error", last)
@@ -1150,6 +1160,76 @@ func checkPublicInputs(t *testing.T, vaultAddr common.Address, step, circuit str
 	}
 	if len(d.Private) == 0 {
 		t.Errorf("step %s: %s publicInputs names nothing that stays private", step, circuit)
+	}
+}
+
+// checkSettleChecks checks every settle hop's hop details: one settleChecks
+// detail per proof it settles, the payment's in the RaylsERC20 vault and,
+// with usdrFee, then the UsdrFee one's in the USDr vault, all for the one
+// transaction. Each lists one spent note per note its circuit spends, each
+// with a root the vault has had in its tree; and the nullifiers they
+// publish are exactly that vault's Nullifier events in the transaction.
+// At least one settle hop settles a Payment2in proof, publishing two.
+func checkSettleChecks(t *testing.T, client *ethclient.Client, vaults map[string]*bind.BoundContract, vaultAddrs map[string]common.Address, hops []engine.Event, usdrFee bool) {
+	t.Helper()
+	want := []string{engine.NodeVault}
+	if usdrFee {
+		want = append(want, engine.NodeUsdrVault)
+	}
+	settles, merges := 0, 0
+	for _, h := range hops {
+		if h.From != engine.NodeRelayer || h.To != engine.NodeDvp || h.Failed {
+			continue
+		}
+		settles++
+		var got []string
+		for _, d := range h.HopDetail {
+			if d.Kind != engine.DetailSettleChecks {
+				t.Errorf("step %s: settle hop carries a %q detail", h.Step, d.Kind)
+				continue
+			}
+			got = append(got, d.Vault)
+			st, ok := proofStatements[d.Circuit]
+			if !ok || st.vault != d.Vault {
+				t.Errorf("step %s: settle checks for circuit %q in the %s, want a circuit the demo proves in its vault", h.Step, d.Circuit, d.Vault)
+				continue
+			}
+			if d.Circuit == "Payment2in" {
+				merges++
+			}
+			if d.TxHash == "" || d.TxHash != h.HopDetail[0].TxHash {
+				t.Errorf("step %s: %s settle checks name tx %q, the hop's first %q", h.Step, d.Circuit, d.TxHash, h.HopDetail[0].TxHash)
+				continue
+			}
+			if len(d.Spent) != st.spends {
+				t.Errorf("step %s: %s settle checks list %d spent notes, want %d", h.Step, d.Circuit, len(d.Spent), st.spends)
+			}
+			logs := txLogs(t, client, common.HexToHash(d.TxHash))
+			for _, s := range d.Spent {
+				if !vaultHasRoot(t, vaults[d.Vault], s.Tree, s.Root) {
+					t.Errorf("step %s: %s settle checks root %s, not one the %s has had in tree %d", h.Step, d.Circuit, s.Root, d.Vault, s.Tree)
+				}
+				published := slices.ContainsFunc(logs, func(l *types.Log) bool {
+					return l.Address == vaultAddrs[d.Vault] && len(l.Topics) == 4 && l.Topics[0] == nullifierEventSig &&
+						l.Topics[2].Big().Cmp(big.NewInt(int64(s.Tree))) == 0 && l.Topics[3].Big().Cmp(hexField(t, s.Nullifier)) == 0
+				})
+				if !published {
+					t.Errorf("step %s: %s settle checks publish nullifier %s in tree %d, not in tx %s's %s Nullifier events", h.Step, d.Circuit, s.Nullifier, s.Tree, d.TxHash, d.Vault)
+				}
+			}
+			if n := countTopicAt(logs, vaultAddrs[d.Vault], nullifierEventSig); n != len(d.Spent) {
+				t.Errorf("step %s: tx %s has %d %s Nullifier events, its settle checks publish %d", h.Step, d.TxHash, n, d.Vault, len(d.Spent))
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("step %s: settle checks in %v, want %v", h.Step, got, want)
+		}
+	}
+	if settles == 0 {
+		t.Error("no settle hops")
+	}
+	if merges == 0 {
+		t.Error("no settle hop settles a Payment2in proof")
 	}
 }
 
