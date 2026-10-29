@@ -48,8 +48,14 @@ func tail(ctx context.Context, path string, emit func(line string)) {
 		if f != nil {
 			if st, err := f.Stat(); err == nil && st.Size() < offset {
 				offset, partial = 0, nil
-				f.Seek(0, io.SeekStart)
+				if _, err := f.Seek(0, io.SeekStart); err != nil {
+					// Reopened from the start on the next poll.
+					f.Close()
+					f = nil
+				}
 			}
+		}
+		if f != nil {
 			for {
 				n, err := f.Read(buf)
 				offset += int64(n)

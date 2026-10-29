@@ -1,0 +1,11 @@
+// Calls whose dropped error is idiomatic: errcheck (make errcheck) allows them.
+// Cleanup closes: the work that mattered already succeeded or failed.
+(io.Closer).Close
+(*os.File).Close
+(net.Conn).Close
+// Writes to a client or an HTTP response: a failure means the client went away.
+fmt.Fprint
+fmt.Fprintf
+fmt.Fprintln
+(net/http.ResponseWriter).Write
+(*encoding/json.Encoder).Encode

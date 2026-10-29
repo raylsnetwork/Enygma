@@ -82,5 +82,5 @@ jobs:
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
-      - name: build, vet, test
-        run: make build vet test-unit MODULE=${{ matrix.module }}
+      - name: build, vet, errcheck, test
+        run: make build vet errcheck test-unit MODULE=${{ matrix.module }}
