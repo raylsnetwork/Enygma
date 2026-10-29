@@ -76,10 +76,12 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #optError:empty { display:none; }
 
 /* ---- diagram: actors | services | contracts, one hop animated at a time --- */
-.diagram { position:relative; margin:0 28px; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px 0; }
+.diagram { position:relative; background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:10px 22px; display:flex; flex-direction:column; }
 .cols { display:grid; grid-template-columns:1fr 1fr 1fr; font:italic 13px var(--serif); color:var(--muted); }
 .cols span:nth-child(2) { text-align:center; } .cols span:nth-child(3) { text-align:right; }
-#diagram { display:block; width:100%; height:auto; max-height:36vh; font-family:var(--sans); }
+/* The canvas fills what the story column leaves it; the diagram spreads its rows to fit. */
+.canvas { position:relative; flex:1; min-height:0; }
+#diagram { position:absolute; inset:0; width:100%; height:100%; font-family:var(--sans); }
 #diagram .node rect { fill:var(--s1); stroke:var(--bd2); stroke-width:1.2; transition:all .25s; }
 #diagram .node.actor rect { fill:color-mix(in srgb, var(--actor) 6%, var(--s1)); }
 #diagram .node.service rect { fill:color-mix(in srgb, var(--service) 8%, var(--s1)); stroke:var(--service); stroke-width:1.6; }
@@ -103,32 +105,45 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .tip-row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; font:11px var(--mono); }
 .tip-row span:first-child { color:var(--muted); flex:none; }
 .tip-row span:last-child { word-break:break-all; text-align:right; }
-/* The step narration card under the diagram: the step playing, in plain words. */
-.narr { border-top:1px dashed var(--bd2); padding:12px 2px 14px; display:flex; flex-direction:column; gap:8px; }
+/* The step narration card heads the story column: the step playing, in plain words. */
+.card { background:var(--s1); border:1px solid var(--bd); border-radius:16px; padding:14px 18px; }
+.narr { display:flex; flex-direction:column; gap:8px; }
 .narr .top { display:flex; justify-content:space-between; gap:16px; }
 .narr .kicker { font:11px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
 .narr .q { font:12px var(--mono); color:var(--muted); white-space:nowrap; }
 .narr h2 { font:600 22px/1.25 var(--serif); color:var(--text); }
-.narr .body { font:16px/1.5 var(--serif); color:var(--text2); max-width:80ch; }
-.narr .sides { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-.narr .sides:empty { display:none; }
-.narr .side b { display:block; font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px; }
-.narr .side ul { list-style:none; display:flex; flex-direction:column; gap:3px; font-size:14px; color:var(--text2); }
-.narr .side li::before { margin-right:6px; font-size:10px; }
-.narr .side.pub b, .narr .side.pub li::before { color:var(--accent); }
-.narr .side.pub li::before { content:'◉'; }
-.narr .side.priv b, .narr .side.priv li::before { color:var(--warn); }
-.narr .side.priv li::before { content:'■'; }
+.narr .body { font:16px/1.5 var(--serif); color:var(--text2); }
+/* What the public chain sees against what stays private, side by side under the card. */
+.sides { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.sides:empty { display:none; }
+.sides .side { background:var(--s1); border:1px solid var(--bd); border-radius:12px; padding:10px 12px; }
+.sides .side b { display:block; font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px; }
+.sides .side ul { list-style:none; display:flex; flex-direction:column; gap:3px; font-size:14px; color:var(--text2); }
+.sides .side li::before { margin-right:6px; font-size:10px; }
+.sides .side.pub b, .sides .side.pub li::before { color:var(--accent); }
+.sides .side.pub li::before { content:'◉'; }
+.sides .side.priv b, .sides .side.priv li::before { color:var(--warn); }
+.sides .side.priv li::before { content:'■'; }
 #now { list-style:none; display:flex; flex-direction:column; gap:3px; font:13px var(--sans); color:var(--muted); }
 #now li::before { content:'→ '; color:var(--accent); }
 #now li:last-child { color:var(--text); font-weight:600; }
 #now li.bad, #now li.bad::before { color:var(--bad); }
 
-/* ---- stage: the diagram, and the hop detail panel at its full height ------ */
-.stage { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:16px; margin:0 28px; }
-.stage .diagram { margin:0; min-width:0; }
-@media (max-width:1000px) { .stage { grid-template-columns:minmax(0,1fr); } #hopPanel { min-height:520px; } }
-#hopPanel { position:relative; min-height:0; background:var(--s1); border:1px solid var(--bd); border-radius:16px; }
+/* ---- stage: the diagram beside the story column ---------------------------
+   The diagram takes the window's height from the stage down to the drawer
+   (--stage-top is where the stage starts), so it stays the same size from
+   step to step, and stays in view while a long story column scrolls past. */
+.stage { display:grid; grid-template-columns:minmax(0,1fr) 440px; gap:16px; margin:0 28px; align-items:start; }
+.stage .diagram { min-width:0; position:sticky; top:8px; height:calc(100vh - var(--drawer-h) - var(--stage-top, 110px) - 12px); }
+.story { display:flex; flex-direction:column; gap:12px; min-width:0; }
+@media (max-width:1000px) { .stage { grid-template-columns:minmax(0,1fr); } .stage .diagram { position:relative; top:auto; height:auto; } }
+details.fold > summary { cursor:pointer; list-style:none; font:600 13px var(--mono); color:var(--accent); }
+details.fold > summary::-webkit-details-marker { display:none; }
+details.fold > summary::before { content:'▸ '; }
+details.fold[open] > summary::before { content:'▾ '; }
+details.fold[open] > summary { margin-bottom:10px; }
+.hops { padding:10px 14px; }
+#hopPanel { position:relative; height:620px; background:var(--s1); border:1px solid var(--bd); border-radius:12px; }
 #hopPanel .inner { position:absolute; inset:0; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:10px; }
 #hopPanel .sentence { font:16px/1.4 var(--serif); color:var(--text); }
 .hlbl { font:600 12px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 7px; border-radius:4px; }
@@ -197,28 +212,30 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .vis.priv { color:var(--warn); background:color-mix(in srgb, var(--warn) 12%, transparent); }
 .vis.pub { color:var(--accent); background:var(--accent-dim); }
 
-/* ---- timeline and panels ------------------------------------------------- */
-main { display:grid; grid-template-columns:300px minmax(0,1fr); gap:22px; padding:20px 28px; }
-
-h3 { font:600 17px var(--serif); margin-bottom:6px; }
-.stepper { position:sticky; top:12px; align-self:start; max-height:calc(100vh - var(--drawer-h) - 24px); overflow-y:auto; }
-.stepper .count { font:600 28px var(--serif); margin-bottom:6px; }
-.st { display:flex; gap:12px; position:relative; padding-bottom:10px; color:var(--muted); }
-.st::before { content:''; position:absolute; left:12px; top:26px; bottom:0; width:2px; background:var(--bd); }
-.st:last-child::before { display:none; }
-.st.success::before { background:var(--accent); }
-.st .n { flex:none; width:26px; height:26px; border-radius:50%; border:2px solid var(--bd2); display:grid; place-items:center; font:600 11px var(--mono); background:var(--bg); z-index:1; }
+/* ---- step strip: one numbered marker per step, the running one labelled -- */
+.stepper { display:flex; align-items:center; gap:12px; margin:0 28px 12px; flex-wrap:wrap; }
+.stepper .count { font:600 18px var(--serif); flex:none; }
+/* As tall empty as with its markers, so the diagram keeps its size when a run starts. */
+#steps { position:relative; flex:1; min-width:0; min-height:32px; display:flex; gap:4px; overflow-x:auto; padding:2px 0 4px; }
+.st { flex:none; display:flex; align-items:center; gap:6px; color:var(--muted); }
+.st .n { flex:none; width:26px; height:26px; border-radius:50%; border:2px solid var(--bd2); display:grid; place-items:center; font:600 11px var(--mono); background:var(--bg); }
 .st.success, .st.running, .st.error { color:var(--text); }
 .st.success .n { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
 .st.running .n { border-color:var(--accent); color:var(--accent); animation:pulse 1.2s infinite; }
 .st.error .n { background:var(--bad); border-color:var(--bad); color:var(--on-bad); }
 .st[data-detail].success, .st[data-detail].error { cursor:pointer; }
-.st[data-detail].success:hover b, .st[data-detail].error:hover b { text-decoration:underline dotted; }
-.st.replaying b { color:var(--warn); }
-.st b { font-weight:600; } .st p { font-size:12px; color:var(--text2); margin-top:2px; }
-.st.error p, #stepMsg.error { color:var(--bad); }
-#stepMsg { font-size:12px; color:var(--text2); margin-bottom:10px; }
-#stepMsg:empty { display:none; }
+.st[data-detail].success:hover .n, .st[data-detail].error:hover .n, .st.replaying .n { box-shadow:0 0 0 2px var(--warn); }
+.st b { display:none; font-weight:600; font-size:12px; white-space:nowrap; padding-right:6px; }
+.st.running b { display:inline; }
+/* Only a failed step's message shows, on its own line; the others are in each marker's tooltip. */
+#stepMsg { flex-basis:100%; font-size:12px; }
+#stepMsg:not(.error) { display:none; }
+#stepMsg.error { color:var(--bad); }
+
+/* ---- the fold below: every other panel, closed by default ---------------- */
+details.more { margin:16px 28px 0; }
+details.more > summary { font:600 15px var(--serif); color:var(--text2); padding:10px 14px; border:1px dashed var(--bd2); border-radius:12px; }
+h3 { font:600 17px var(--serif); margin-bottom:6px; }
 
 table { width:100%; border-collapse:collapse; font-size:12px; }
 th { text-align:left; font:italic 13px var(--serif); color:var(--muted); font-weight:400; padding:6px 10px; border-bottom:1px solid var(--bd2); }
@@ -236,7 +253,7 @@ td { padding:5px 10px; border-bottom:1px solid var(--bd); }
 .ledger tr[title] { cursor:help; }
 .split { display:grid; grid-template-columns:1.4fr 1fr; gap:22px; margin-top:18px; }
 .split > div { min-width:0; }
-@media (max-width:1000px) { main, .split { grid-template-columns:minmax(0,1fr); } .stepper { position:static; max-height:none; } }
+@media (max-width:1000px) { .split { grid-template-columns:minmax(0,1fr); } }
 .mono td { font-family:var(--mono); font-size:11px; }
 .send { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:6px; }
 .send input { width:70px; }
@@ -289,80 +306,83 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <button id="themeBtn" title="Light / dark theme" aria-label="Toggle light / dark theme">◐</button>
 </header>
 
+<nav class="stepper" id="stepper" aria-label="Steps">
+  <span class="count" id="stepCount">0 / 0</span>
+  <div id="steps"></div>
+  <div id="stepMsg"></div>
+</nav>
+
 <div class="stage">
 <section class="diagram">
   <div class="cols"><span>Off-chain parties</span><span>Services</span><span>On-chain contracts</span></div>
-  <svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg>
+  <div class="canvas"><svg id="diagram" viewBox="0 0 1200 420" role="img" aria-label="Architecture diagram"></svg></div>
   <div id="nodeTip" hidden></div>
-  <div class="narr" aria-live="polite">
+</section>
+<div class="story">
+  <div class="narr card" aria-live="polite">
     <div class="top"><span class="kicker" id="narrKicker"></span><span class="q" id="queued"></span></div>
     <h2 id="narrHead"></h2>
     <p class="body" id="narrBody"></p>
-    <div class="sides" id="narrSides"></div>
     <ul id="now"></ul>
   </div>
-</section>
-<aside id="hopPanel" aria-label="Hop detail"></aside>
+  <div class="sides" id="narrSides"></div>
+  <details class="fold hops card" id="hopFold"><summary>Proof and Merkle tree details</summary>
+    <aside id="hopPanel" aria-label="Hop detail"></aside>
+  </details>
+</div>
 </div>
 
-<main>
-  <aside class="stepper" id="stepper">
-    <div class="count" id="stepCount">0 / 0</div>
-    <div id="stepMsg">Press RUN to start a scenario on the fresh deployment.</div>
-    <div id="steps"></div>
-  </aside>
-  <section>
-    <div class="box scroll ledger"><table>
-      <thead><tr><th>Actor</th><th>Status</th><th class="num">Public</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>Discovery</th></tr></thead>
-      <tbody id="actors"></tbody>
-    </table></div>
-    <div class="split">
-      <div>
-        <h3>Auditor’s view</h3>
-        <div class="box pad scroll">
-          <div id="auditNote"></div>
-          <table class="mono">
-            <thead><tr><th>User</th><th class="num">Received</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>vs own scan</th></tr></thead>
-            <tbody id="auditBalances"></tbody>
-          </table>
-          <div class="audit-scroll"><table class="mono">
-            <thead><tr><th>Block</th><th>Kind</th><th>From → To</th><th class="num">Amount</th></tr></thead>
-            <tbody id="auditEntries"></tbody>
-          </table></div>
-        </div>
-      </div>
-      <div>
-        <h3>Send</h3>
-        <div class="box pad">
-          <div class="send">
-            <div class="opt"><label for="sendFrom">From</label><select id="sendFrom"></select></div>
-            <div class="opt"><label for="sendTo">To</label><select id="sendTo"></select></div>
-            <div class="opt"><label for="sendAmount">Amount</label><input id="sendAmount" type="number" min="1" value="10"></div>
-            <button id="sendBtn" disabled>SEND</button>
-          </div>
-          <div id="sendError"></div>
-        </div>
-        <h3>Run totals</h3>
-        <div class="box pad totals">
-          <div id="totTxs">—<small>transactions</small></div>
-          <div id="totGas">—<small>gas</small></div>
-          <div id="totProve">—<small>proving</small></div>
-          <div id="totRelay">—<small>relaying</small></div>
-        </div>
+<details class="fold more"><summary>Balances, auditor’s view, send, run totals, fan-out and transfers</summary>
+  <div class="box scroll ledger"><table>
+    <thead><tr><th>Actor</th><th>Status</th><th class="num">Public</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>Discovery</th></tr></thead>
+    <tbody id="actors"></tbody>
+  </table></div>
+  <div class="split">
+    <div>
+      <h3>Auditor’s view</h3>
+      <div class="box pad scroll">
+        <div id="auditNote"></div>
+        <table class="mono">
+          <thead><tr><th>User</th><th class="num">Received</th><th class="num">RaylsERC20</th><th class="num">USDr</th><th>vs own scan</th></tr></thead>
+          <tbody id="auditBalances"></tbody>
+        </table>
+        <div class="audit-scroll"><table class="mono">
+          <thead><tr><th>Block</th><th>Kind</th><th>From → To</th><th class="num">Amount</th></tr></thead>
+          <tbody id="auditEntries"></tbody>
+        </table></div>
       </div>
     </div>
-    <h3 class="spaced">Fan-out</h3>
-    <div class="box scroll"><table class="mono">
-      <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
-      <tbody id="fanout"></tbody>
-    </table></div>
-    <h3 class="spaced">Transfers between participants</h3>
-    <div class="box scroll"><table class="mono">
-      <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th>Recipient's scan</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
-      <tbody id="transfers"></tbody>
-    </table></div>
-  </section>
-</main>
+    <div>
+      <h3>Send</h3>
+      <div class="box pad">
+        <div class="send">
+          <div class="opt"><label for="sendFrom">From</label><select id="sendFrom"></select></div>
+          <div class="opt"><label for="sendTo">To</label><select id="sendTo"></select></div>
+          <div class="opt"><label for="sendAmount">Amount</label><input id="sendAmount" type="number" min="1" value="10"></div>
+          <button id="sendBtn" disabled>SEND</button>
+        </div>
+        <div id="sendError"></div>
+      </div>
+      <h3>Run totals</h3>
+      <div class="box pad totals">
+        <div id="totTxs">—<small>transactions</small></div>
+        <div id="totGas">—<small>gas</small></div>
+        <div id="totProve">—<small>proving</small></div>
+        <div id="totRelay">—<small>relaying</small></div>
+      </div>
+    </div>
+  </div>
+  <h3 class="spaced">Fan-out</h3>
+  <div class="box scroll"><table class="mono">
+    <thead><tr><th>#</th><th>To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+    <tbody id="fanout"></tbody>
+  </table></div>
+  <h3 class="spaced">Transfers between participants</h3>
+  <div class="box scroll"><table class="mono">
+    <thead><tr><th>#</th><th>From → To</th><th class="num">Amount</th><th class="num">Fee</th><th>Tag</th><th>Recipient's scan</th><th class="num">Prove ms</th><th class="num">Relay ms</th><th class="num">Gas</th></tr></thead>
+    <tbody id="transfers"></tbody>
+  </table></div>
+</details>
 
 <div id="drawer">
   <div id="drawerGrip" title="Drag to resize"></div>
@@ -551,44 +571,46 @@ $('themeBtn').onclick = () => {
 
 function buildSteps() {
   $('steps').innerHTML = steps.map(({id, label}, i) =>
-    `<div class="st" id="step-${id}"><span class="n">${i + 1}</span><div><b>${esc(label)}</b><p></p></div></div>`).join('');
+    `<div class="st" id="step-${id}" title="${esc(label)}"><span class="n">${i + 1}</span><b>${esc(label)}</b></div>`).join('');
   showProgress(0);
 }
 
-// Clicking a finished step shows its hop details again in the hop detail panel.
+// Clicking a finished step shows its hop details again in the hop detail
+// panel, unfolding it.
 $('steps').onclick = e => {
   const el = e.target.closest('.st.success, .st.error');
-  if (el) hopPanel.replayStep(el.id.slice('step-'.length));
+  if (el && hopPanel.replayStep(el.id.slice('step-'.length))) $('hopFold').open = true;
 };
 
 function showProgress(done) {
   $('stepCount').textContent = `${done} / ${steps.length}`;
 }
 
-// setStep marks a step's state; only the running or failed step shows its
-// message. A step outside the scenario (a manual transfer) shows it above the
-// stepper instead, where a run's reset clears it. It reports whether the step
-// is one of the scenario's.
+// setStep marks a step's state; the running or failed step's message is its
+// marker's tooltip. A failed step's message, and any message of a step outside
+// the scenario (a manual transfer), also goes under the strip, which shows it
+// only when it is an error and is cleared by a run's reset. It reports whether
+// the step is one of the scenario's.
 function setStep(id, state, msg) {
   const el = $('step-' + id);
-  if (!el) {
+  if (!el || state === 'error') {
     $('stepMsg').className = state === 'error' ? 'error' : '';
     $('stepMsg').textContent = msg;
-    return false;
   }
+  if (!el) return false;
   el.className = 'st ' + state;
-  if (state === 'running') keepInView($('stepper'), el);
+  if (state === 'running') keepInView($('steps'), el);
   const i = steps.findIndex(s => s.id === id);
   el.querySelector('.n').textContent = state === 'success' ? '✓' : state === 'error' ? '✗' : i + 1;
-  el.querySelector('p').textContent = state === 'success' ? '' : msg;
+  el.title = steps[i].label + (state === 'success' || !msg ? '' : ': ' + msg);
   return true;
 }
 
-// keepInView scrolls only `box` (el's offsetParent), never the page, to keep
-// `el` in the top half of it: the bottom can sit under the terminal drawer.
+// keepInView scrolls only the strip `box` (el's offsetParent), never the
+// page, to bring `el` into view.
 function keepInView(box, el) {
-  if (el.offsetTop < box.scrollTop || el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight / 2)
-    box.scrollTop = el.offsetTop - 2 * el.offsetHeight;
+  if (el.offsetLeft < box.scrollLeft || el.offsetLeft + el.offsetWidth > box.scrollLeft + box.clientWidth)
+    box.scrollLeft = el.offsetLeft - box.clientWidth / 3;
 }
 
 function build() {
@@ -783,6 +805,31 @@ const diagram = (() => {
   }
   const links = {};
   const link = (a, b) => links[a + '>' + b] ||= svg('path', { d: path(a, b), class: 'link' }, gL);
+
+  // fit spreads the diagram's rows over its canvas, which is at least the
+  // drawing's own shape and grows with the window: the viewBox keeps its
+  // width and takes the canvas's shape, and every node's y moves in
+  // proportion between fixed margins, so nodes and labels keep their size.
+  const { width: W, height: H } = s.viewBox.baseVal, MARGIN = 15;
+  const baseY = Object.fromEntries(Object.entries(pos).map(([id, p]) => [id, p.y]));
+  function fit() {
+    const canvas = s.parentElement, w = canvas.clientWidth;
+    if (!w) return;
+    canvas.style.minHeight = w * H / W + 'px';
+    const h = Math.max(H, W * canvas.clientHeight / w);
+    s.setAttribute('viewBox', `0 0 ${W} ${h}`);
+    for (const id in pos) {
+      pos[id].y = MARGIN + (baseY[id] - MARGIN) * (h - 2 * MARGIN) / (H - 2 * MARGIN);
+      nodeEl[id].setAttribute('transform', `translate(${pos[id].x},${pos[id].y})`);
+    }
+    for (const k in links) links[k].setAttribute('d', path(...k.split('>')));
+  }
+  new ResizeObserver(fit).observe(s.parentElement);
+  // The stage starts under the header and the step strip, whose heights change as they wrap.
+  const placeStage = () => document.documentElement.style.setProperty('--stage-top', document.querySelector('.stage').getBoundingClientRect().top + scrollY + 'px');
+  const stageAbove = new ResizeObserver(placeStage);
+  stageAbove.observe(document.querySelector('header.bar'));
+  stageAbove.observe($('stepper'));
 
   // light highlights el with cls for ms, unless it is lit with cls again meanwhile.
   function light(el, cls, ms) {
@@ -1188,10 +1235,12 @@ const hopPanel = (() => {
       // A new hop detail playing takes the panel back to live.
       replayAt(null);
     },
-    // replayStep shows a finished step's first hop detail again, if it had any.
+    // replayStep shows a finished step's first hop detail again, if it had
+    // any, and reports whether it had.
     replayStep(step) {
       const mine = stepHops(step);
       if (mine.length) replayAt(mine[0]);
+      return mine.length > 0;
     },
     reset() { trees = null; latest = null; history = []; replay = null; render(); },
   };
@@ -1199,8 +1248,9 @@ const hopPanel = (() => {
 
 // ---- terminal drawer: renders lines, never sends input anywhere ----------
 
-// The drawer's open height starts at the CSS default; collapsed, only its grip and tab bar show.
-const term = { height: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--drawer-h')), open: true, active: 'engine', tabs: {} };
+// The drawer starts collapsed, at the CSS default height once opened;
+// collapsed, only its grip and tab bar show.
+const term = { height: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--drawer-h')), open: false, active: 'engine', tabs: {} };
 const collapsedHeight = () => $('drawerGrip').offsetHeight + $('drawer').querySelector('.head').offsetHeight;
 
 // One tab per log: the engine's, then each service's. A service's tab
@@ -1302,7 +1352,7 @@ $('drawerGrip').onpointerdown = e => {
   addEventListener('pointermove', move); addEventListener('pointerup', up);
 };
 
-// ---- step narration: the card under the diagram, from the narration block --
+// ---- step narration: the card heading the story column, from the narration block --
 
 const NARRATION = JSON.parse($('narration').textContent);
 // HOP_LINES is how many hop lines the card keeps, the newest last.
