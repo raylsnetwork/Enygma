@@ -176,6 +176,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	var values, salts, treeNums []*big.Int
 	var keys []rpcore.KeyPair
 	var proofs []*rpcore.MerkleProof
+	var proveDetails []HopDetail
 	for _, n := range ins {
 		proof, err := merkleProof(ctx, tree, c.vault, assetErc20, n.commitment)
 		if err != nil {
@@ -184,6 +185,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		values, salts = append(values, n.amount), append(salts, n.salt)
 		keys = append(keys, rpcore.KeyPair{PrivateKey: from.Spend.PrivateKey, PublicKey: from.Spend.PublicKey})
 		proofs, treeNums = append(proofs, proof), append(treeNums, big.NewInt(int64(proof.TreeNumber)))
+		proveDetails = append(proveDetails, merklePath(NodeVault, from.Name, proof))
 	}
 	s.log("key", "rebuilt the vault's Merkle trees from its Commitment events: tree %d, %d leaves, root 0x%s…", tree.TreeNumber(), len(tree.GetLeaves()), tree.Root().Text(16)[:12])
 
@@ -214,18 +216,20 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		return nil, fmt.Errorf("prove payment: %w", err)
 	}
 	stmt := res.ContractStatement()
-	stmtLen, nullifiersOffset, commitmentsOutOffset := layout.PaymentLen, layout.PaymentNullifiersOffset, layout.PaymentCommitmentsOutOffset
+	nullifiersOffset, commitmentsOutOffset := layout.PaymentNullifiersOffset, layout.PaymentCommitmentsOutOffset
 	if len(ins) == 2 {
-		stmtLen, nullifiersOffset, commitmentsOutOffset = layout.Payment2inLen, layout.Payment2inNullifiersOffset, layout.Payment2inCommitmentsOutOffset
+		nullifiersOffset, commitmentsOutOffset = layout.Payment2inNullifiersOffset, layout.Payment2inCommitmentsOutOffset
 	}
-	if len(stmt) != stmtLen {
-		return nil, fmt.Errorf("%s statement has %d signals, want %d", circuit, len(stmt), stmtLen)
+	// publicInputs also checks the statement's length.
+	inputs, err := publicInputs(circuit, NodeVault, proofs[0].TreeNumber, stmt)
+	if err != nil {
+		return nil, err
 	}
 	nullifiers := make([]string, len(ins))
 	for i := range ins {
 		nullifiers[i] = "0x" + stmt[nullifiersOffset+i].Text(16)[:12] + "…"
 	}
-	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)))
+	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs)...)
 	if len(ins) == 2 {
 		s.log("zk", "Payment2in proof in %d ms — merges %s's %s notes, nullifiers %s",
 			proveMs, from.Name, amounts(ins), strings.Join(nullifiers, ", "))
@@ -239,7 +243,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 			s.hopFailed(fromNode, NodeGnark, "prove UsdrFee", err)
 			return nil, err
 		}
-		s.hop(fromNode, NodeGnark, "prove UsdrFee", fmt.Sprintf("%d ms; %s USDr fee note to the relayer", fee.proveTime.Milliseconds(), e.usdrFixedFee))
+		s.hop(fromNode, NodeGnark, "prove UsdrFee", fmt.Sprintf("%d ms; %s USDr fee note to the relayer", fee.proveTime.Milliseconds(), e.usdrFixedFee), fee.details...)
 		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to %s",
 			fee.proveTime.Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)
 	}

@@ -55,6 +55,12 @@ const (
 	// DetailCommitment is a deposit's new note: its commitment, public, and
 	// its opening, private, landing as one leaf in the vault's tree.
 	DetailCommitment HopDetailKind = "commitment"
+	// DetailMerklePath is a spent note's Merkle path: its leaf, hashed up
+	// through one sibling per level to a root the vault has had.
+	DetailMerklePath HopDetailKind = "merklePath"
+	// DetailPublicInputs is a proof's public inputs, named as in its
+	// circuit's statement layout, and the names of what stays private.
+	DetailPublicInputs HopDetailKind = "publicInputs"
 )
 
 // noteOpening names the parts of a note's opening, in the order the
@@ -85,6 +91,28 @@ type HopDetail struct {
 	// its opening's parts.
 	Commitment string   `json:"commitment,omitempty"`
 	Opening    []string `json:"opening,omitempty"`
+
+	// merklePath: the spent note's leaf, the sibling at each level from the
+	// leaf up (on the right where the path's node at that level is even,
+	// i.e. where the leaf index's bit is 0), and the root they hash to.
+	Leaf     *Leaf    `json:"leaf,omitempty"`
+	Siblings []string `json:"siblings,omitempty"`
+	Root     string   `json:"root,omitempty"`
+
+	// publicInputs: the circuit, its public signals in statement order, and
+	// the names of its private witnesses. Vault is the vault it spends from
+	// and Tree its first spent note's tree.
+	Circuit string        `json:"circuit,omitempty"`
+	Inputs  []PublicInput `json:"inputs,omitempty"`
+	Private []string      `json:"private,omitempty"`
+}
+
+// PublicInput is one public signal of a proof: element Index of its
+// statement layout's field Name.
+type PublicInput struct {
+	Name  string `json:"name"`
+	Index int    `json:"index"`
+	Value string `json:"value"`
 }
 
 // Leaf is one commitment in a vault's tree. Owner is the actor whose note
