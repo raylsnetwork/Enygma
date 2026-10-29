@@ -13,7 +13,7 @@ repos:
         files: '\.go$'
       - id: page-scripts
         name: page scripts
-        # Compiles each HTML page's inline <script>, so a syntax error in a demo page fails here.
+        # Checks each HTML page's inline <script> (syntax) and <style> (a selector defined twice).
         entry: node scripts/check_page_scripts.js
         language: system
         files: '\.html$'

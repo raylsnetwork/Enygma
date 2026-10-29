@@ -164,7 +164,7 @@ body.presentation-mode { zoom: 1.3 }
 
 /* ── Content area ───────────────────────────────────────────────────────── */
 .tabs-wrap { flex: 1; overflow: hidden; position: relative }
-.tab-panel { position: absolute; inset: 0; overflow-y: auto; display: none }
+.tab-panel { position: absolute; inset: 0; overflow-y: auto; overflow-x: auto; display: none }
 .tab-panel.active { display: block }
 
 /* ── Section header ─────────────────────────────────────────────────────── */
@@ -645,7 +645,6 @@ body.presentation-mode { zoom: 1.3 }
 code { font-family: var(--mono); color: var(--teal); background: rgba(46,196,182,.08); padding: 0 3px; border-radius: 3px; font-size: .9em }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
-.tab-panel { overflow-x: auto }
 @media (max-width: 1100px) {
   .bank-grid, .dash-grid, .ka-bank-grid { grid-template-columns: repeat(3, 1fr) }
   .vbal-grid, .rv-cards { grid-template-columns: repeat(2, 1fr) }
