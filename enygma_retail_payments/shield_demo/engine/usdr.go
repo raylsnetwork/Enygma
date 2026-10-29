@@ -69,6 +69,9 @@ type usdrFeeLeg struct {
 	change  *note
 	// proveTime is how long the gnark server took to prove it.
 	proveTime time.Duration
+	// details are its proof hop's: the spent note's Merkle path and the
+	// proof's public inputs.
+	details []HopDetail
 }
 
 // proveUsdrFee proves payer spending their smallest USDr note that covers
@@ -146,7 +149,12 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		return nil, fmt.Errorf("usdrFee proof: got %d proof elements and %d signals, want 8 and %d",
 			len(out.Proof), len(out.PublicSignal), layout.UsdrFeeLen)
 	}
-	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, proveTime: proveTime}
+	inputs, err := publicInputs("UsdrFee", NodeUsdrVault, mp.TreeNumber, out.PublicSignal)
+	if err != nil {
+		return nil, err
+	}
+	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, proveTime: proveTime,
+		details: []HopDetail{merklePath(NodeUsdrVault, payer.Name, mp), inputs}}
 	for i, v := range out.Proof {
 		leg.proof[i] = v.String()
 	}

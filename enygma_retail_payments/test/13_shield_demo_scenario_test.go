@@ -35,6 +35,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"enygma_retail_payments/layout"
 	"enygma_retail_payments/shield_demo/engine"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
@@ -259,6 +260,13 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		if got := perVault[engine.NodeVault]; got != 1 {
 			t.Errorf("%d commitment details in the RaylsERC20 vault, want the shield's (1)", got)
+		}
+	})
+
+	t.Run("each proof hop carries its spent notes' Merkle paths, each to a root its vault has had, and its named public inputs", func(t *testing.T) {
+		perVault := checkProofDetails(t, vaults, vaultAddrs, sink.hops())
+		if perVault[engine.NodeUsdrVault] == 0 {
+			t.Error("no Merkle path in the USDr vault with fees on, want one per UsdrFee proof")
 		}
 	})
 
@@ -636,6 +644,9 @@ func TestShieldDemoScenario(t *testing.T) {
 				t.Errorf("step %s: %d proofs requested from the gnark server with fees off, want 1 (no UsdrFee proof)", step, proofs)
 			}
 		}
+		if n := checkProofDetails(t, vaults, vaultAddrs, psink.hops())[engine.NodeUsdrVault]; n != 0 {
+			t.Errorf("%d Merkle paths in the USDr vault with fees off, want none (no UsdrFee proof)", n)
+		}
 		for i, s := range append(e.FanOut(), e.Transfers()...) {
 			if s.UsdrFeeNote != nil {
 				t.Errorf("step %d: paid a USDr fee note with fees off", i+1)
@@ -942,18 +953,203 @@ func checkCommitment(t *testing.T, client *ethclient.Client, vaults map[string]*
 	if len(d.Leaves) != 1 || d.Leaves[0].Commitment != d.Commitment {
 		t.Errorf("%s tx %s: commitment %s, leaves %+v, want the deposit's one leaf", d.Vault, d.TxHash, d.Commitment, d.Leaves)
 	}
-	var out []any
-	if err := vaults[d.Vault].Call(&bind.CallOpts{}, &out, "isValidRoot", big.NewInt(int64(d.Tree)), hexField(t, d.RootAfter)); err != nil {
-		t.Fatalf("%s isValidRoot: %v", d.Vault, err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("%s isValidRoot returned %d values, want 1", d.Vault, len(out))
-	}
-	if known, _ := out[0].(bool); !known {
+	if !vaultHasRoot(t, vaults[d.Vault], d.Tree, d.RootAfter) {
 		t.Errorf("%s tx %s: root after %s is not one the vault has had in tree %d", d.Vault, d.TxHash, d.RootAfter, d.Tree)
 	}
 	if want := []string{"pk_spend", "salt", "amount", "token"}; !slices.Equal(d.Opening, want) {
 		t.Errorf("%s tx %s: opening %v, want the parts' names %v", d.Vault, d.TxHash, d.Opening, want)
+	}
+}
+
+// vaultHasRoot reports whether vault has had root (0x-hex) in its tree.
+func vaultHasRoot(t *testing.T, vault *bind.BoundContract, tree int, root string) bool {
+	t.Helper()
+	var out []any
+	if err := vault.Call(&bind.CallOpts{}, &out, "isValidRoot", big.NewInt(int64(tree)), hexField(t, root)); err != nil {
+		t.Fatalf("isValidRoot: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("isValidRoot returned %d values, want 1", len(out))
+	}
+	known, _ := out[0].(bool)
+	return known
+}
+
+// statementField is one named field of a circuit's statement layout.
+type statementField struct {
+	name         string
+	offset, size int
+}
+
+// proofStatement is what a proof hop's circuit spends and publishes: how
+// many notes, from which vault, and its statement layout.
+type proofStatement struct {
+	spends int
+	vault  string
+	len    int
+	fields []statementField
+}
+
+// proofStatements are the circuits the demo proves, by name, their layouts
+// as enygma_retail_payments/layout has them.
+var proofStatements = map[string]proofStatement{
+	"Payment": {1, engine.NodeVault, layout.PaymentLen, []statementField{
+		{"Message", layout.PaymentMessageOffset, layout.PaymentMessageSize},
+		{"TreeNumbers", layout.PaymentTreeNumbersOffset, layout.PaymentTreeNumbersSize},
+		{"MerkleRoots", layout.PaymentMerkleRootsOffset, layout.PaymentMerkleRootsSize},
+		{"Nullifiers", layout.PaymentNullifiersOffset, layout.PaymentNullifiersSize},
+		{"CommitmentsOut", layout.PaymentCommitmentsOutOffset, layout.PaymentCommitmentsOutSize},
+		{"ContractAddress", layout.PaymentContractAddressOffset, layout.PaymentContractAddressSize},
+	}},
+	"Payment2in": {2, engine.NodeVault, layout.Payment2inLen, []statementField{
+		{"Message", layout.Payment2inMessageOffset, layout.Payment2inMessageSize},
+		{"TreeNumbers", layout.Payment2inTreeNumbersOffset, layout.Payment2inTreeNumbersSize},
+		{"MerkleRoots", layout.Payment2inMerkleRootsOffset, layout.Payment2inMerkleRootsSize},
+		{"Nullifiers", layout.Payment2inNullifiersOffset, layout.Payment2inNullifiersSize},
+		{"CommitmentsOut", layout.Payment2inCommitmentsOutOffset, layout.Payment2inCommitmentsOutSize},
+		{"ContractAddress", layout.Payment2inContractAddressOffset, layout.Payment2inContractAddressSize},
+	}},
+	"UsdrFee": {1, engine.NodeUsdrVault, layout.UsdrFeeLen, []statementField{
+		{"Message", layout.UsdrFeeMessageOffset, layout.UsdrFeeMessageSize},
+		{"TreeNumbers", layout.UsdrFeeTreeNumbersOffset, layout.UsdrFeeTreeNumbersSize},
+		{"MerkleRoots", layout.UsdrFeeMerkleRootsOffset, layout.UsdrFeeMerkleRootsSize},
+		{"Nullifiers", layout.UsdrFeeNullifiersOffset, layout.UsdrFeeNullifiersSize},
+		{"CommitmentsOut", layout.UsdrFeeCommitmentsOutOffset, layout.UsdrFeeCommitmentsOutSize},
+		{"ContractAddress", layout.UsdrFeeContractAddressOffset, layout.UsdrFeeContractAddressSize},
+		{"Fee", layout.UsdrFeeFeeOffset, layout.UsdrFeeFeeSize},
+		{"TokenId", layout.UsdrFeeTokenIdOffset, layout.UsdrFeeTokenIdSize},
+	}},
+}
+
+// checkProofDetails checks every proof hop's hop details: one Merkle path
+// per note its circuit spends (one for Payment and UsdrFee, two for
+// Payment2in), in the vault it spends from, each checked by checkMerklePath;
+// and one publicInputs detail, checked by checkPublicInputs. It returns the
+// number of Merkle paths in each vault.
+func checkProofDetails(t *testing.T, vaults map[string]*bind.BoundContract, vaultAddrs map[string]common.Address, hops []engine.Event) map[string]int {
+	t.Helper()
+	perVault, proofs := map[string]int{}, 0
+	for _, h := range hops {
+		if h.To != engine.NodeGnark || h.Failed {
+			continue
+		}
+		proofs++
+		circuit := strings.TrimPrefix(h.Label, "prove ")
+		st, ok := proofStatements[circuit]
+		if !ok {
+			t.Errorf("step %s: proof hop %q proves no circuit the demo knows", h.Step, h.Label)
+			continue
+		}
+		var paths, inputs []engine.HopDetail
+		for _, d := range h.HopDetail {
+			switch d.Kind {
+			case engine.DetailMerklePath:
+				paths = append(paths, d)
+			case engine.DetailPublicInputs:
+				inputs = append(inputs, d)
+			default:
+				t.Errorf("step %s: %s proof hop carries a %q detail", h.Step, circuit, d.Kind)
+			}
+		}
+		if len(paths) != st.spends {
+			t.Errorf("step %s: %s proof hop carries %d Merkle paths, want one per spent note (%d)", h.Step, circuit, len(paths), st.spends)
+		}
+		for _, d := range paths {
+			if d.Vault != st.vault {
+				t.Errorf("step %s: %s proof's Merkle path is in the %s, want the %s", h.Step, circuit, d.Vault, st.vault)
+			}
+			perVault[d.Vault]++
+			checkMerklePath(t, vaults[d.Vault], h.Step, d)
+		}
+		if len(inputs) != 1 {
+			t.Errorf("step %s: %s proof hop carries %d publicInputs details, want 1", h.Step, circuit, len(inputs))
+			continue
+		}
+		checkPublicInputs(t, vaultAddrs[st.vault], h.Step, circuit, st, inputs[0], paths)
+	}
+	if proofs == 0 {
+		t.Error("no proof hops")
+	}
+	return perVault
+}
+
+// checkMerklePath checks that merklePath detail d hashes, with Poseidon,
+// from its leaf up through one sibling per level to its root, and that
+// vault has had that root in d's tree.
+func checkMerklePath(t *testing.T, vault *bind.BoundContract, step string, d engine.HopDetail) {
+	t.Helper()
+	if d.Leaf == nil || len(d.Siblings) != 8 {
+		t.Errorf("step %s: Merkle path %+v, want a leaf and 8 siblings (depth 8)", step, d)
+		return
+	}
+	node, index := hexField(t, d.Leaf.Commitment), d.Leaf.Index
+	for _, s := range d.Siblings {
+		if index%2 == 0 {
+			node = dvpcore.HashLeftRight(node, hexField(t, s))
+		} else {
+			node = dvpcore.HashLeftRight(hexField(t, s), node)
+		}
+		index /= 2
+	}
+	if index != 0 || d.Leaf.Index < 0 {
+		t.Errorf("step %s: Merkle path's leaf #%d is outside a depth-8 tree", step, d.Leaf.Index)
+	}
+	if node.Cmp(hexField(t, d.Root)) != 0 {
+		t.Errorf("step %s: %s leaf #%d hashes up its path to 0x%x, the path names root %s", step, d.Vault, d.Leaf.Index, node, d.Root)
+	}
+	if !vaultHasRoot(t, vault, d.Tree, d.Root) {
+		t.Errorf("step %s: Merkle path root %s is not one the %s has had in tree %d", step, d.Root, d.Vault, d.Tree)
+	}
+}
+
+// checkPublicInputs checks that publicInputs detail d names each of the
+// circuit's public signals as its statement layout does, in order; that its
+// roots and tree numbers are its Merkle paths', its contract address the
+// vault's at vaultAddr, and UsdrFee's fee and token id the demo's (1 USDr,
+// token 0); and that it names what stays private.
+func checkPublicInputs(t *testing.T, vaultAddr common.Address, step, circuit string, st proofStatement, d engine.HopDetail, paths []engine.HopDetail) {
+	t.Helper()
+	if d.Circuit != circuit || d.Vault != st.vault {
+		t.Errorf("step %s: %s proof's publicInputs detail is for circuit %q in the %s", step, circuit, d.Circuit, d.Vault)
+	}
+	if len(d.Inputs) != st.len {
+		t.Errorf("step %s: %s publicInputs lists %d signals, its statement has %d", step, circuit, len(d.Inputs), st.len)
+		return
+	}
+	value := func(name string, i int) *big.Int {
+		for _, f := range st.fields {
+			if f.name == name {
+				return hexField(t, d.Inputs[f.offset+i].Value)
+			}
+		}
+		t.Fatalf("%s has no %s field", circuit, name)
+		return nil
+	}
+	for _, f := range st.fields {
+		for i := range f.size {
+			if in := d.Inputs[f.offset+i]; in.Name != f.name || in.Index != i {
+				t.Errorf("step %s: %s signal %d is named %s[%d], its statement layout names it %s[%d]", step, circuit, f.offset+i, in.Name, in.Index, f.name, i)
+			}
+		}
+	}
+	for i, p := range paths {
+		if got := value("MerkleRoots", i); got.Cmp(hexField(t, p.Root)) != 0 {
+			t.Errorf("step %s: %s MerkleRoots[%d] 0x%x, its Merkle path's root %s", step, circuit, i, got, p.Root)
+		}
+		if got := value("TreeNumbers", i); got.Cmp(big.NewInt(int64(p.Tree))) != 0 {
+			t.Errorf("step %s: %s TreeNumbers[%d] %s, its Merkle path's tree %d", step, circuit, i, got, p.Tree)
+		}
+	}
+	if got := value("ContractAddress", 0); got.Cmp(new(big.Int).SetBytes(vaultAddr.Bytes())) != 0 {
+		t.Errorf("step %s: %s ContractAddress 0x%x, want the %s %s", step, circuit, got, st.vault, vaultAddr)
+	}
+	if circuit == "UsdrFee" {
+		if fee, token := value("Fee", 0), value("TokenId", 0); fee.Int64() != 1 || token.Sign() != 0 {
+			t.Errorf("step %s: UsdrFee Fee %s TokenId %s, want 1 and 0", step, fee, token)
+		}
+	}
+	if len(d.Private) == 0 {
+		t.Errorf("step %s: %s publicInputs names nothing that stays private", step, circuit)
 	}
 }
 

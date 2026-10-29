@@ -127,6 +127,7 @@ svg.tree .e { stroke:var(--accent); stroke-width:2; }
 svg.tree .e.sib { stroke:var(--bd2); stroke-width:1.4; stroke-dasharray:3 3; }
 svg.tree .n.path { fill:var(--accent); }
 svg.tree .n.sibling { fill:var(--s1); stroke:var(--muted); stroke-width:1.3; stroke-dasharray:2 2; }
+svg.tree .n.sibling.known { stroke-dasharray:none; cursor:copy; }
 svg.tree .n.root { fill:var(--contract); stroke:var(--s1); stroke-width:2; cursor:copy; }
 svg.tree .n.leaf { fill:var(--accent); cursor:copy; animation:pop .6s ease-out; }
 svg.tree .t { font:10px var(--mono); fill:var(--text2); }
@@ -138,9 +139,11 @@ svg.tree .t.idle { fill:var(--muted); font:italic 12px var(--serif); }
 .strip.thin i { aspect-ratio:1/6; }
 .strip i.before { background:var(--leaf-before); box-shadow:none; }
 .strip i.run { background:var(--leaf-run); box-shadow:none; }
+.strip i.spent { box-shadow:0 0 0 1.5px var(--accent); position:relative; z-index:1; }
 .strip i.hot { background:var(--accent); box-shadow:0 0 0 1.5px var(--accent); position:relative; z-index:1; animation:pop .6s ease-out; }
 .legend { display:flex; gap:10px; font-size:11px; color:var(--muted); }
 .legend i { display:inline-block; width:8px; height:12px; border-radius:1px; margin-right:4px; vertical-align:-2px; box-shadow:inset 0 0 0 1px var(--bd); }
+.legend i.spent { box-shadow:0 0 0 1.5px var(--accent); }
 .legend i.before { background:var(--leaf-before); box-shadow:none; } .legend i.run { background:var(--leaf-run); box-shadow:none; } .legend i.hot { background:var(--accent); box-shadow:none; }
 .hex { font:11px var(--mono); background:var(--s2); border-radius:3px; padding:0 4px; cursor:copy; white-space:nowrap; }
 .hex.copied { background:var(--accent); color:var(--on-accent); }
@@ -650,6 +653,21 @@ const LANDS = new Set(['leavesIn', 'commitment']);
 const SENTENCE = {
   leavesIn: d => `The new notes' commitments land as leaves in the ${NODE[d.vault].label}'s Merkle tree, all in this one transaction, and the tree gets a new root.`,
   commitment: d => `A new note for ${d.leaves[0].owner || 'its owner'}: the chain stores only its commitment, a hash, as a leaf in the ${NODE[d.vault].label}'s Merkle tree; what it hashes stays with the owner.`,
+  merklePath: (d, all) => all.filter(x => x.kind === 'merklePath').length > 1
+    ? `${d.leaf.owner || 'The payer'} proves both notes this transfer merges are leaves of the ${NODE[d.vault].label}'s Merkle tree: each leaf, hashed with one sibling per level, gives a root the vault has had. The proof shows this without saying which leaves.`
+    : `${d.leaf.owner || 'The payer'} proves the note being spent is a leaf of the ${NODE[d.vault].label}'s Merkle tree: the leaf, hashed with one sibling at each of the ${DEPTH} levels, gives a root the vault has had. The proof shows this without saying which leaf.`,
+};
+
+// What each public input and private witness of a proof is, named as in the
+// circuit's statement layout and witness.
+const PUBLIC_HINT = {
+  Message: '0: a payment', TreeNumbers: 'which of the vault’s trees each spent note is in', MerkleRoots: 'the root each spent note’s path hashes to',
+  Nullifiers: 'one per spent note, published so it cannot be spent twice', CommitmentsOut: 'the new notes', ContractAddress: 'the vault',
+  Fee: 'the relayer’s fee', TokenId: 'USDr’s token id',
+};
+const PRIVATE_HINT = {
+  PrivateKeysIn: 'the spend key', ValuesIn: 'the spent notes’ amounts', SaltsIn: 'their salts', PathElements: 'the Merkle path’s siblings',
+  PathIndices: 'the leaf’s position', TokenId: 'the token', SpendPublicKeysOut: 'the new notes’ owners', ValuesOut: 'their amounts', SaltsOut: 'their salts',
 };
 
 const shortHex = v => { v = String(v); return v.startsWith('0x') && v.length > 14 ? v.slice(0, 8) + '…' + v.slice(-4) : v; };
@@ -723,10 +741,18 @@ const hopPanel = (() => {
   }
 
   // focusOf is what a hop's details touch, per vault: the tree, the touched
-  // leaves and the roots before and after.
+  // leaves and the roots before and after; or, for a proof, the spent
+  // leaves, the root their paths hash to and each path's siblings, by
+  // "level:index".
   function focusOf(details) {
     const f = {};
     for (const d of details) {
+      if (d.kind === 'merklePath') {
+        const x = f[d.vault] ||= { tree: d.tree, touched: [], spent: true, root: d.root, sibs: {} };
+        x.touched.push(d.leaf.index);
+        d.siblings.forEach((s, l) => { x.sibs[`${l}:${(d.leaf.index >> l) ^ 1}`] = s; });
+        continue;
+      }
       if (!LANDS.has(d.kind)) continue;
       const x = f[d.vault] ||= { tree: d.tree, touched: [] };
       x.touched.push(...d.leaves.map(l => l.index));
@@ -749,12 +775,17 @@ const hopPanel = (() => {
     for (const n of nodes) {
       const [x, y] = xy(n);
       if (n.level === DEPTH) {
-        out.push(`<circle class="n root" data-copy="${esc(t.root || '')}" cx="${x}" cy="${y}" r="7"><title>${esc(t.root || '')}</title></circle>` +
+        const root = f?.root || t.root || '';
+        out.push(`<circle class="n root" data-copy="${esc(root)}" cx="${x}" cy="${y}" r="7"><title>${esc(root)}</title></circle>` +
           `<text class="t root" x="${x}" y="${y - 10}" text-anchor="middle">root</text>`);
       } else if (n.kind === 'leaf') {
         const c = t.leaves?.[n.index]?.commitment || '';
         out.push(`<rect class="n leaf" data-copy="${esc(c)}" x="${x - 6}" y="${y - 6}" width="12" height="12" rx="2"><title>${esc(c)}</title></rect>` +
           `<text class="t" x="${x}" y="${y + 18}" text-anchor="middle">#${n.index}</text>`);
+      } else if (n.kind === 'sibling' && f?.sibs?.[`${n.level}:${n.index}`]) {
+        // A path's sibling that is a node on the other spent note's path stays a path node.
+        const s = f.sibs[`${n.level}:${n.index}`];
+        out.push(`<circle class="n sibling known" data-copy="${esc(s)}" cx="${x}" cy="${y}" r="3.5"><title>sibling at level ${n.level}: ${esc(s)}</title></circle>`);
       } else out.push(`<circle class="n ${n.kind}" cx="${x}" cy="${y}" r="${n.kind === 'sibling' ? 3.5 : 4.5}"></circle>`);
     }
     if (!f) out.push(`<text class="t idle" x="${w / 2}" y="${h / 2 + 24}" text-anchor="middle">not touched by this hop</text>`);
@@ -768,7 +799,7 @@ const hopPanel = (() => {
     const t = treeOf(v, f), hot = new Set(f ? f.touched : []), cells = [];
     for (let i = 0; i < TREE_LEAVES; i++) {
       const l = t.leaves ? t.leaves[i] : i < t.leafCount ? { before: true } : null;
-      const c = !l ? 'empty' : hot.has(i) ? 'hot' : l.before ? 'before' : 'run';
+      const c = (!l ? 'empty' : hot.has(i) && !f.spent ? 'hot' : l.before ? 'before' : 'run') + (f?.spent && hot.has(i) ? ' spent' : '');
       cells.push(`<i class="${c}" title="leaf #${i}${l?.commitment ? ' · ' + esc(l.commitment) : ''}${l?.before ? ' · before this run' : !l ? ' · empty' : ''}"></i>`);
     }
     return `<div class="strip ${cls}" style="--cols:${cols}">${cells.join('')}</div>`;
@@ -787,6 +818,15 @@ const hopPanel = (() => {
 
   // rowsOf is a detail's real values as [label, value html] rows.
   function rowsOf(d) {
+    if (d.kind === 'merklePath') return [
+      [`spent leaf · tree ${d.tree} #${d.leaf.index}`, hex(d.leaf.commitment)],
+      ...d.siblings.map((s, l) => [`sibling · level ${l} · ${(d.leaf.index >> l) & 1 ? 'left' : 'right'}`, hex(s)]),
+      ['root · the vault has had it', hex(d.root)]];
+    if (d.kind === 'publicInputs') {
+      const size = n => d.inputs.filter(x => x.name === n).length;
+      return [...d.inputs.map(x => [`${x.name}${size(x.name) > 1 ? `[${x.index}]` : ''} · public`, hex(x.value)]),
+        ...d.private.map(p => [`${p} · private`, '<span class="muted">not sent to this page</span>'])];
+    }
     if (!LANDS.has(d.kind)) return [];
     return [
       ...(d.kind === 'commitment'
@@ -803,6 +843,12 @@ const hopPanel = (() => {
       <div class="side pub" title="On chain, in the vault's Commitment event"><span class="vis pub">public</span>${hex(d.commitment)}</div>
       <span class="arrow">→ leaf #${d.leaves[0].index}</span>
     </div>`;
+  // inputsHtml is a publicInputs detail's statement, public, beside the
+  // witnesses that stay private. Only the private parts' names reach the page.
+  const inputsHtml = d => `<div class="opening">
+      <div class="side pub" title="On chain, in the ${esc(d.circuit)} proof's statement"><span class="vis pub">public</span>${[...new Set(d.inputs.map(x => x.name))].map(n => `<span class="part" title="${esc(PUBLIC_HINT[n] || '')}">${esc(n)}</span>`).join('')}</div>
+      <div class="side" title="Known only to the prover: never on chain, never sent to this page"><span class="vis priv">private</span>${d.private.map(p => `<span class="part" title="${esc(PRIVATE_HINT[p] || '')}">${esc(p)}</span>`).join('')}</div>
+    </div>`;
   const rowsHtml = rows => `<div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join('')}</div>`;
 
   function render() {
@@ -813,14 +859,17 @@ const hopPanel = (() => {
     }
     const en = latest || { hop: null, details: [], focus: {} };
     const back = VAULT_IDS.find(v => v !== front), f = en.focus[front];
-    const roots = f ? `<div class="roots">root ${hex(f.rootBefore)} → ${hex(f.rootAfter)}${f.treeStarted ? ` <span class="started">· tree ${f.tree} started</span>` : ''}</div>` : '';
+    const roots = !f ? '' : f.spent
+      ? `<div class="roots">${[...f.touched].sort((a, b) => a - b).map(i => `leaf #${i}`).join(' and ')} → path → root ${hex(f.root)} <span>· a root the vault has had</span></div>`
+      : `<div class="roots">root ${hex(f.rootBefore)} → ${hex(f.rootAfter)}${f.treeStarted ? ` <span class="started">· tree ${f.tree} started</span>` : ''}</div>`;
     el.innerHTML = `<div class="inner">
       <div>${en.hop ? `<span class="hlbl">${esc(en.hop.label)}</span> <span class="hstep">${esc(NODE[en.hop.from].label)} → ${esc(NODE[en.hop.to].label)}</span>` : '<span class="hstep">Hop detail</span>'}</div>
-      <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0]) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
+      <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0], en.details) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
+      ${en.details.filter(d => d.kind === 'publicInputs').map(inputsHtml).join('')}
       <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>
       <div class="vcard back">${vaultHead(back, en.focus[back])}${en.focus[back] ? `<div class="roots">same transaction: root ${hex(en.focus[back].rootBefore)} → ${hex(en.focus[back].rootAfter)}</div>` : ''}${strip(back, en.focus[back], 256, 'thin')}</div>
-      <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span><span><i></i>empty</span></div>
+      <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span>${f?.spent ? '<span><i class="spent"></i>spent in this proof</span>' : ''}<span><i></i>empty</span></div>
       ${en.hop ? `<details id="hopValues"${valuesOpen ? ' open' : ''}><summary>Real values</summary>${en.details.map(d => rowsHtml(rowsOf(d))).join('')}</details>` : ''}
     </div>`;
   }
