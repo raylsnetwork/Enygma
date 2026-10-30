@@ -52,4 +52,6 @@
 
 **Privacy line**: the boundary on the retail shield demo's diagram between the wallets, whose contents are private, and the network and chain, which see only what crosses it. _Avoid_: trust boundary, divider.
 
+**Data chip**: the label a hop carries on the retail shield demo's diagram, naming what it moves (a key, gas, a proof, a commitment, a ciphertext, a nullifier, a private note); a chip that stays inside a wallet is marked private. _Avoid_: badge, tag (a tag is a protocol object).
+
 **Concept moment**: a short illustration of one privacy idea (hidden on chain, proof, relayer, finding your notes, auditor) that the retail shield demo plays once, before the step where the idea first happens, and holds until the presenter moves on. _Avoid_: explainer, intro, tutorial.

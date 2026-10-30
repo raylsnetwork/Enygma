@@ -14,10 +14,20 @@ import (
 var narrationBlock = regexp.MustCompile(`(?s)<script type="application/json" id="narration">(.*?)</script>`)
 
 // narration is the page's narration block: the step narration by step kind,
-// and the concept moments by the step id each plays before.
+// the concept moments by the step id each plays before, and the data chips
+// by hop label.
 type narration struct {
 	Steps   map[string]json.RawMessage   `json:"steps"`
 	Moments map[string][]json.RawMessage `json:"moments"`
+	Chips   map[string]chip              `json:"chips"`
+}
+
+// chip is a data chip: what a hop moves, its kinds, and whether it stays
+// inside a wallet.
+type chip struct {
+	Text    string   `json:"text"`
+	Kinds   []string `json:"kinds"`
+	Private bool     `json:"private"`
 }
 
 // servedNarration returns the served page's narration block.
@@ -175,6 +185,34 @@ func TestNoConceptMomentMentionsAFeeOnAFeesOffRun(t *testing.T) {
 						t.Errorf("tags %v, moment before %s: %q mentions a fee", tags, id, s)
 					}
 				}
+			}
+		}
+	}
+}
+
+// chipKinds is the closed set of things a hop can move.
+var chipKinds = map[string]bool{
+	"key": true, "gas": true, "ciphertext": true, "commitment": true,
+	"note": true, "proof": true, "nullifier": true,
+}
+
+// Every data chip has text and only known chip kinds: the chip vocabulary
+// stays closed.
+func TestEveryDataChipHasAKnownKind(t *testing.T) {
+	chips := servedNarration(t).Chips
+	if len(chips) == 0 {
+		t.Fatal("the narration block has no data chips")
+	}
+	for label, c := range chips {
+		if c.Text == "" {
+			t.Errorf("hop %q: chip has no text", label)
+		}
+		if len(c.Kinds) == 0 {
+			t.Errorf("hop %q: chip has no kind", label)
+		}
+		for _, k := range c.Kinds {
+			if !chipKinds[k] {
+				t.Errorf("hop %q: unknown chip kind %q", label, k)
 			}
 		}
 	}
