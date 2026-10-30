@@ -150,6 +150,41 @@ new MutationObserver(() => {
    `cardRight` is less than `line`, `cardBottom` less than `prover`, and both overflows 0.
 5. **Reset.** Starting a new run closes the card (`$('wallet').hidden` is `true` straight after RUN), and the next card opened shows only that run's values, with no notes until the run's own hops play.
 
+## Concept moment checks
+
+The concept moments heading the story column (#157). Install the probe with the pausing recorder below, extended with this one (paste it before the probe's last line). It records each moment shown, its beats lit over time, and the Shield hop's hop detail to compare with:
+
+```js
+// One entry per moment shown: its kicker, when each beat lit (ms after it showed), and its text when hidden.
+c.moments = [];
+new MutationObserver(() => {
+  const m = $('moment');
+  if (m.hidden) { const x = c.moments.at(-1); if (x && x.hiddenAt == null) { x.hiddenAt = performance.now(); x.text = x.last; } return; }
+  let x = c.moments.at(-1);
+  if (!x || x.hiddenAt != null) c.moments.push(x = { at: performance.now(), kicker: m.querySelector('.kicker')?.textContent, lit: [] });
+  x.last = m.innerText;
+  while (x.lit.length < m.querySelectorAll('.beat.on').length) x.lit.push(Math.round(performance.now() - x.at));
+}).observe($('moment'), { attributes: true, childList: true, subtree: true, characterData: true });
+// The Shield hop's commitment and leaf, as the hop detail panel shows them.
+new EventSource('/events').onmessage = m => {
+  const e = JSON.parse(m.data), d = e.kind === 'hop' && e.step === 'shield' && e.hopDetail?.find(d => d.kind === 'commitment');
+  if (d) c.shieldLeaf = { commitment: shortHex(d.commitment), leaf: d.leaves[0].index, tree: d.tree };
+};
+// Hops the diagram played while a moment showed.
+new MutationObserver(recs => { if (!$('moment').hidden) for (const r of recs) c.hopsInMoment = (c.hopsInMoment || 0) + r.addedNodes.length; })
+  .observe($('now'), { childList: true });
+```
+
+Read the moment itself with `$('moment').innerText` while it holds.
+
+1. **Holds before Shield, pausing on.** On a default run, release each gate as it comes. Releasing USDr credit's gate shows the moment "Idea 1 of 1 · Hidden on chain" (until #158 adds the rest) with the Shield step's narration under it, and no Shield hop has played: `c.hopsInMoment` stays unset. Its three beats light in turn, about 1.8 s apart (`lit` about `[0, 1800, 3600]`). The run ends after 22 Nexts: `c.gates.length` 22, one of them with the moment showing.
+2. **Every way out.** On three runs (or by re-checking the toggle between runs), release the moment with its own NEXT (`$('momentNext').click()`), the card's NEXT and `c.space()`: each hides it and the Shield hops play.
+3. **The run's values.** While the moment holds, its text shows the run's shield total, `c.shieldLeaf.commitment` and leaf `#c.shieldLeaf.leaf` in tree `c.shieldLeaf.tree`, the same as the hop detail fold's Shield entry (commitment row and `tree N #L`). A `…` shows only until the Shield hop arrives.
+4. **Rerun.** After the run, the "concept moments" toggle is off. A second RUN shows no moment (`c.moments` empty, 21 gates). Check the toggle and RUN again: the moment holds before Shield. A reload checks it again.
+5. **Pausing off.** With pausing off, the moment still shows, its hint saying it plays on by itself, and hides about 8 s later (`hiddenAt - at` about 8000) with no Next; the run plays straight through. Unchecking pausing while the moment holds changes its hint and releases it about 8 s later; unchecking it at an earlier step's gate, with the moment already queued, still shows the moment for about 8 s. Checking pausing again while it waits to release itself makes it hold until Next.
+6. **?fast** stops at the moment too; starting a new run while it holds hides it (`$('moment').hidden` straight after RUN).
+7. **Layout.** At 1280×828 in both themes, during the moment: it heads the story column, the public vs private lists are hidden, its NEXT is above the drawer, and nothing in it is cut off.
+
 ## Pausing checks
 
 Presenter pacing (#151): with "pause after each step" on, playback holds at a gate after each step but the last until Next or Space. Extend the probe with a recorder of the gates (paste it before the probe's last line), and release gates from `javascript_tool` with `document.getElementById('nextBtn').click()` or a dispatched Space:
@@ -168,7 +203,7 @@ c.space = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', 
 2. **The run keeps going.** At a gate, the engine's events keep arriving (`c.hops` grows, `+N queued` grows) and its steps finish in the terminal; Next plays the next step's hops at once.
 3. **Long pause.** Hold one gate two minutes, then Next. The hops after it play at their normal hold (about 600 ms, 1.5 s with a hop detail), not at the 120 ms minimum: time them with the `#now` observer.
 4. **Space.** `c.space()` releases a gate. With focus in the send form's amount box (`$('sendAmount').focus()`, then a keydown dispatched on it), Space does not.
-5. **Pausing off.** Unchecking the toggle while playback waits releases it, and the rest of the run plays straight through; a reload keeps it off (localStorage), and a run with it off has no gates.
+5. **Pausing off.** Unchecking the toggle while playback waits releases it, and the rest of the run plays straight through; a reload keeps it off (localStorage), and a run with it off has no step gates (a concept moment still holds about 8 s).
 6. **?fast** stops at gates too.
 
 A run on a stack `run.sh` has only just started can lose its first steps' events (the stepper stays empty and the card starts mid-run), seen once on 2026-10-29. Most likely the demo is still tailing the setup's log backlog, and the broker drops events for a page that falls behind. Run again once the logs are quiet.

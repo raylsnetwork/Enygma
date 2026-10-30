@@ -51,3 +51,5 @@
 **Hop detail**: what a hop does to the protocol state (leaves added to a Merkle tree, a nullifier published, a proof's public inputs), shown on the retail shield demo's diagram as the hop plays. _Avoid_: component.
 
 **Privacy line**: the boundary on the retail shield demo's diagram between the wallets, whose contents are private, and the network and chain, which see only what crosses it. _Avoid_: trust boundary, divider.
+
+**Concept moment**: a short illustration of one privacy idea (hidden on chain, proof, relayer, finding your notes, auditor) that the retail shield demo plays once, before the step where the idea first happens, and holds until the presenter moves on. _Avoid_: explainer, intro, tutorial.
