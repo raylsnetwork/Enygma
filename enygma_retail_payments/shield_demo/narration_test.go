@@ -14,12 +14,13 @@ import (
 var narrationBlock = regexp.MustCompile(`(?s)<script type="application/json" id="narration">(.*?)</script>`)
 
 // narration is the page's narration block: the step narration by step kind,
-// the concept moments by the step id each plays before, and the data chips
-// by hop label.
+// the concept moments by the step id each plays before, the data chips by
+// hop label, and the step kinds whose repeated hops collapse.
 type narration struct {
-	Steps   map[string]json.RawMessage   `json:"steps"`
-	Moments map[string][]json.RawMessage `json:"moments"`
-	Chips   map[string]chip              `json:"chips"`
+	Steps    map[string]json.RawMessage   `json:"steps"`
+	Moments  map[string][]json.RawMessage `json:"moments"`
+	Chips    map[string]chip              `json:"chips"`
+	Collapse []string                     `json:"collapse"`
 }
 
 // chip is a data chip: what a hop moves, its kinds, and whether it stays
@@ -103,6 +104,24 @@ func TestEveryConceptMomentPlaysBeforeAnAnnouncedStep(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Every step kind whose repeated hops collapse is one a default run (fee and
+// tags) announces: a renamed step can't silently stop collapsing.
+func TestEveryCollapsingStepKindIsAnnounced(t *testing.T) {
+	collapse := servedNarration(t).Collapse
+	if len(collapse) == 0 {
+		t.Fatal("the narration block names no step kinds to collapse")
+	}
+	announced := map[string]bool{}
+	for _, id := range engine.StepIDs(engine.DefaultOptions()) {
+		announced[stepSuffix.ReplaceAllString(id, "")] = true
+	}
+	for _, kind := range collapse {
+		if !announced[kind] {
+			t.Errorf("collapse names step kind %q, which a default run doesn't announce", kind)
+		}
 	}
 }
 
