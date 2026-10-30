@@ -554,6 +554,371 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   }
 }
 </script>
+<!-- PROTOTYPE (privacy story) — spliced into index.html before the page's main script. Throwaway: lives only on prototype/shield-demo-privacy-story. -->
+<style>
+/* ---- PROTOTYPE: wallet zones, data chips, open wallet, Shield concept moment ---- */
+.proto .cols { display:none; }
+#diagram .zones .zone { stroke:none; }
+#diagram .zones .z-wallet { fill:color-mix(in srgb, var(--actor) 7%, transparent); }
+#diagram .zones .z-net { fill:color-mix(in srgb, var(--service) 5%, transparent); }
+#diagram .zones .z-chain { fill:color-mix(in srgb, var(--contract) 6%, transparent); }
+#diagram .zones .pline { stroke:var(--text2); stroke-width:2; stroke-dasharray:7 6; }
+#diagram .zones .zl { font:700 19px var(--mono); letter-spacing:.12em; fill:var(--text2); }
+#diagram .zones .pl { font:italic 18px var(--serif); fill:var(--text2); }
+#diagram .chip rect { stroke-width:1.4; }
+#diagram .chip text { font:600 19px var(--mono); }
+#diagram .chip.priv rect { fill:color-mix(in srgb, var(--actor) 18%, var(--s1)); stroke:var(--actor); }
+#diagram .chip.priv text { fill:var(--actor); }
+#diagram .chip.pub rect { fill:color-mix(in srgb, var(--contract) 16%, var(--s1)); stroke:var(--contract); }
+#diagram .chip.pub text { fill:var(--contract); }
+#diagram .node.current rect { stroke:var(--actor); stroke-width:2.5; }
+#diagram .ns2 { font:italic 10px var(--serif); fill:var(--muted); }
+
+.wallet { position:absolute; z-index:3; background:var(--s1); border:2px solid var(--actor); border-radius:12px; box-shadow:0 8px 24px var(--shadow); padding:10px 12px; font:12px var(--sans); color:var(--text); display:flex; flex-direction:column; gap:6px; transition:top .3s; }
+.wallet[hidden] { display:none; }
+.wallet .wh { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.wallet .wh b { font:600 15px var(--serif); }
+.wallet .wh span { font:700 10px var(--mono); letter-spacing:.1em; color:var(--actor); }
+.wallet .row { display:flex; justify-content:space-between; gap:8px; }
+.wallet .row .k { color:var(--text2); }
+.wallet .row .v { font:11px var(--mono); }
+.wallet .notes { display:flex; flex-direction:column; gap:4px; }
+.wallet .note { border:1px dashed var(--actor); border-radius:8px; padding:4px 8px; background:color-mix(in srgb, var(--actor) 6%, var(--s1)); display:flex; justify-content:space-between; gap:8px; }
+.wallet .note .amt { font-weight:700; }
+.wallet .note.erc .amt { color:var(--erc); } .wallet .note.usdr .amt { color:var(--usdr); }
+.wallet .pub { border-top:1px solid var(--bd); padding-top:6px; color:var(--text2); }
+.wallet .prover { border:1.6px solid var(--service); border-radius:20px; padding:4px 10px; text-align:center; font:600 13px var(--serif); background:color-mix(in srgb, var(--service) 8%, var(--s1)); }
+.wallet .prover small { display:block; font:italic 10px var(--serif); color:var(--muted); }
+.wallet .prover.busy { box-shadow:0 0 0 4px color-mix(in srgb, var(--service) 30%, transparent); }
+.wallet .prover .pchip { display:inline-block; margin-top:3px; font:600 11px var(--mono); color:var(--actor); }
+.wallet .tabs { display:flex; flex-wrap:wrap; gap:4px; }
+.wallet .tabs button { font:11px var(--sans); border:1px solid var(--bd2); background:var(--s2); color:var(--text2); border-radius:10px; padding:2px 8px; cursor:pointer; }
+.wallet .tabs button.on { background:var(--actor); color:var(--on-accent); border-color:var(--actor); }
+.wallet.strip { flex-direction:row; align-items:stretch; gap:14px; }
+.wallet.strip > div { display:flex; flex-direction:column; gap:4px; min-width:0; }
+
+/* The concept moment: note → commitment → leaf, three beats played in turn. */
+.mom { background:var(--s1); border:2px solid var(--accent); border-radius:16px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+.mom[hidden] { display:none; }
+.mom .mk { font:11px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }
+.mom h3 { font:600 20px/1.25 var(--serif); color:var(--text); }
+.mom .beats { display:flex; gap:10px; align-items:stretch; position:relative; }
+.mom.vert .beats { flex-direction:column; }
+.mom .beat { flex:1; border-radius:12px; padding:10px 12px; opacity:.12; transform:translateY(6px); transition:opacity .6s, transform .6s; display:flex; flex-direction:column; gap:6px; }
+.mom .beat.on { opacity:1; transform:none; }
+.mom .beat .where { font:700 10px var(--mono); letter-spacing:.1em; }
+.mom .b1 { background:color-mix(in srgb, var(--actor) 8%, var(--s1)); border:1.5px dashed var(--actor); }
+.mom .b1 .where { color:var(--actor); }
+.mom .b2 { background:var(--s2); border:1.5px solid var(--bd2); }
+.mom .b2 .where { color:var(--text2); }
+.mom .b3 { background:color-mix(in srgb, var(--contract) 8%, var(--s1)); border:1.5px solid var(--contract); }
+.mom .b3 .where { color:var(--contract); }
+.mom .notecard { font:13px var(--sans); display:grid; grid-template-columns:auto 1fr; gap:2px 10px; }
+.mom .notecard .k { color:var(--text2); }
+.mom .notecard .v { font:12px var(--mono); }
+.mom .hash { font:700 14px var(--mono); color:var(--text); word-break:break-all; }
+.mom .cap { font:14px/1.45 var(--serif); color:var(--text2); }
+.mom .tree { display:flex; gap:3px; align-items:flex-end; flex-wrap:wrap; }
+.mom .tree i { width:12px; height:12px; border-radius:3px; background:var(--leaf-before); }
+.mom .tree i.new { background:var(--contract); box-shadow:0 0 0 3px color-mix(in srgb, var(--contract) 30%, transparent); }
+.mom .line { font:italic 12px var(--serif); color:var(--text2); text-align:center; border-top:2px dashed var(--text2); padding-top:3px; }
+.mom .next { display:flex; gap:10px; align-items:center; }
+.mom .momNext { font:600 13px var(--mono); background:var(--accent); color:var(--on-accent); border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
+.mom .next .hint { font:12px var(--mono); color:var(--muted); }
+/* A: the moment heads the story column. */
+.vA.moment .story #narrSides { display:none; }
+/* B: the moment covers the diagram, across the privacy line. */
+.vB .diagram .mom { position:absolute; z-index:5; left:8%; right:8%; top:12%; box-shadow:0 12px 40px var(--shadow); }
+/* C: the moment takes the stage; the diagram steps aside until Next. */
+.vC.moment .diagram .canvas { visibility:hidden; }
+.vC .diagram .mom { position:absolute; z-index:5; inset:10px 22px; justify-content:center; }
+.vC .mom h3 { font-size:26px; } .vC .mom .cap { font-size:16px; } .vC .mom .hash { font-size:18px; }
+
+#protoBar { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:100; display:flex; align-items:center; gap:10px; background:#111; color:#fff; border-radius:999px; padding:6px 10px; box-shadow:0 6px 20px rgba(0,0,0,.35); font:13px var(--sans); }
+#protoBar button { background:#333; color:#fff; border:0; border-radius:999px; width:28px; height:28px; cursor:pointer; font-size:14px; }
+#protoBar b { min-width:220px; text-align:center; }
+#protoBar small { color:#aaa; }
+</style>
+<script>
+// ---- PROTOTYPE: privacy story ------------------------------------------------
+// Answers: what should the wallet / privacy line, the data chips, the open
+// wallet and a concept moment look like? ?variant=A (Zones), B (Wallet window)
+// or C (Lanes). RUN replays a recorded default run (prototype/events.jsonl);
+// ?live connects to a real engine instead.
+const PROTO = (() => {
+  const P = new URLSearchParams(location.search);
+  const VARIANTS = { A: 'Zones', B: 'Wallet window', C: 'Lanes' };
+  const V = VARIANTS[P.get('variant')] ? P.get('variant') : 'A';
+  const g = id => document.getElementById(id);
+  const short = v => { v = String(v || ''); return v.length > 16 ? v.slice(0, 8) + '…' + v.slice(-4) : v; };
+  const S = 'http://www.w3.org/2000/svg';
+  const mk = (tag, attrs, parent) => { const e = document.createElementNS(S, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent?.appendChild(e); return e; };
+
+  // What each hop carries, from its label: [chip, private?]. A chip is
+  // private while it stays in a wallet.
+  const CHIP = {
+    'spend key': ['spend key', 1], 'view key': ['view key', 1], 'audit ciphertexts': ['audit ciphertexts', 1],
+    'fund gas': ['ETH for gas', 0], 'register': ['public keys + ciphertexts', 0], 'recover view key': ['audit ciphertexts', 0],
+    'open channel': ['ciphertext', 0], 'openChannel': ['ciphertext', 0], 'scan channels': ['ciphertexts', 0],
+    'grant USDr': ['commitment', 0], 'scan': ['commitments', 0], 'shield': ['commitment', 0],
+    'prove Payment': ['note (private)', 1], 'prove Payment2in': ['notes (private)', 1], 'prove UsdrFee': ['fee note (private)', 1],
+    'relay': ['proof', 0], 'tag': ['tag ciphertext', 0], 'paymentWithUsdrFee': ['proof + nullifiers', 0],
+    'notes in': ['commitments', 0], 'fee note in': ['commitment', 0], 'publishTag': ['tag ciphertext', 0],
+    'scan tags': ['tag ciphertexts', 0], 'open note': ['ciphertext → note', 0],
+  };
+
+  // ---- layouts: each variant places the nodes in its own zones ----
+  // Every node's base position is in the 1200×420 viewBox; fit spreads the y's.
+  let zonesOf = null;
+  function layout(pos) {
+    document.documentElement.classList.add('proto', 'v' + V);
+    NODE.gnark.label = 'Wallet prover';
+    const actors = NODES.filter(n => n.group === 'actor' && n.id !== 'funder');
+    const contracts = NODES.filter(n => n.group === 'contract');
+    if (V === 'A') {
+      actors.forEach((n, i) => pos[n.id] = { x: 95, y: 40 + i * 34, w: 150, h: 26 });
+      pos.gnark = { x: 330, y: 360, w: 150, h: 50 };
+      pos.funder = { x: 590, y: 70, w: 160, h: 30 };
+      pos.relayer = { x: 590, y: 230, w: 180, h: 60 };
+      contracts.forEach((n, i) => pos[n.id] = { x: 1060, y: 50 + i * 62, w: 210, h: 38 });
+      zonesOf = { dir: 'v', cuts: [430, 760], labels: ['WALLETS · PRIVATE 🔒', 'NETWORK', 'CHAIN · PUBLIC'] };
+    } else if (V === 'B') {
+      // The wallet card is the whole zone: the users and the prover are points under it.
+      actors.forEach(n => { pos[n.id] = { x: 430, y: 200, w: 0, h: 0 }; n.label = ''; });
+      pos.gnark = { x: 300, y: 380, w: 0, h: 0 }; NODE.gnark.label = '';
+      pos.funder = { x: 610, y: 70, w: 160, h: 30 };
+      pos.relayer = { x: 610, y: 230, w: 180, h: 60 };
+      contracts.forEach((n, i) => pos[n.id] = { x: 1060, y: 50 + i * 62, w: 210, h: 38 });
+      zonesOf = { dir: 'v', cuts: [445, 775], labels: ['WALLET · PRIVATE 🔒', 'NETWORK', 'CHAIN · PUBLIC'] };
+    } else {
+      actors.forEach((n, i) => pos[n.id] = { x: 62 + i * 106, y: 42, w: 96, h: 26 });
+      pos.gnark = { x: 1110, y: 118, w: 150, h: 40 };
+      pos.funder = { x: 260, y: 220, w: 160, h: 30 };
+      pos.relayer = { x: 600, y: 220, w: 180, h: 46 };
+      contracts.forEach((n, i) => pos[n.id] = { x: 110 + i * 196, y: 360, w: 182, h: 38 });
+      zonesOf = { dir: 'h', cuts: [170, 275], labels: ['WALLETS · PRIVATE 🔒', 'NETWORK', 'CHAIN · PUBLIC'] };
+    }
+  }
+  // C's links run between rows, so they leave a node's top or bottom.
+  function path(p, q, a, b) {
+    if (V !== 'C' || a === b) return null;
+    if (Math.abs(p.y - q.y) < 10) {
+      const y = p.y + p.h / 2, bend = 40 + Math.abs(q.x - p.x) / 10;
+      return `M${p.x},${y} C${p.x},${y + bend} ${q.x},${y + bend} ${q.x},${y}`;
+    }
+    const down = q.y > p.y, y1 = p.y + (down ? p.h / 2 : -p.h / 2), y2 = q.y + (down ? -q.h / 2 : q.h / 2), m = (y1 + y2) / 2;
+    return `M${p.x},${y1} C${p.x},${m} ${q.x},${m} ${q.x},${y2}`;
+  }
+  let lastFit = null;
+  function fit(gZ, W, h, sy, pos) {
+    lastFit = { W, h, sy, pos };
+    gZ.innerHTML = '';
+    const z = zonesOf, cls = ['z-wallet', 'z-net', 'z-chain'];
+    if (z.dir === 'v') {
+      const xs = [0, ...z.cuts, W];
+      for (let i = 0; i < 3; i++) {
+        mk('rect', { class: 'zone ' + cls[i], x: xs[i] + 3, y: 2, width: xs[i + 1] - xs[i] - 6, height: h - 4, rx: 12 }, gZ);
+        mk('text', { class: 'zl', x: xs[i] + 14, y: 26 }, gZ).textContent = z.labels[i];
+      }
+      const x = z.cuts[0];
+      mk('line', { class: 'pline', x1: x, y1: 4, x2: x, y2: h - 4 }, gZ);
+      mk('text', { class: 'pl', x: x + 8, y: h - 12 }, gZ).textContent = '← private stays left of this line';
+    } else {
+      const ys = [0, ...z.cuts.map(sy), h];
+      for (let i = 0; i < 3; i++) {
+        mk('rect', { class: 'zone ' + cls[i], x: 2, y: ys[i] + 3, width: W - 4, height: ys[i + 1] - ys[i] - 6, rx: 12 }, gZ);
+        mk('text', { class: 'zl', x: 12, y: ys[i] + 26 }, gZ).textContent = z.labels[i];
+      }
+      const y = ys[1];
+      mk('line', { class: 'pline', x1: 4, y1: y, x2: W - 4, y2: y }, gZ);
+      mk('text', { class: 'pl', x: W - 330, y: y - 8 }, gZ).textContent = '↑ private stays above this line';
+    }
+    placeWallet();
+  }
+
+  // ---- wallets: what each user's wallet holds, as the diagram has played it ----
+  const wallets = {};
+  let current = null;
+  const W0 = () => ({ name: '', notes: {}, keys: {} });
+  function actor(i, field, value) {
+    const w = wallets[i] ||= W0();
+    if (field === 'name') w.name = value;
+    else if (field === 'pkSpend') w.keys.spend = value;
+    else if (field === 'pkView') w.keys.view = value;
+    else if (field === 'balance') w.notes.erc = { amt: value.replace(' RaylsERC20', ''), c: w.notes.erc?.c };
+    else if (field === 'note') w.notes.erc = { ...(w.notes.erc || {}), c: value };
+    else if (field === 'usdr') w.notes.usdr = { amt: value.replace(' USDr', '') };
+    else if (field === 'public') w.pub = value;
+    if (current === i || current == null && V === 'B' && i === 1) renderWallet();
+  }
+  const actorOf = h => [h.from, h.to].find(n => /^actor\d+$/.test(n));
+  let card = null, proverBusy = null;
+  function ensureCard() {
+    if (card) return card;
+    card = document.createElement('div');
+    card.className = 'wallet' + (V === 'C' ? ' strip' : '');
+    card.hidden = true;
+    document.querySelector('.diagram .canvas').appendChild(card);
+    return card;
+  }
+  function walletHtml(i) {
+    const w = wallets[i] || W0();
+    const notes = [
+      w.notes.erc?.amt && w.notes.erc.amt !== '0' ? `<div class="note erc"><span>RaylsERC20 note</span><span class="amt">${w.notes.erc.amt}</span></div>` : '',
+      w.notes.usdr?.amt && w.notes.usdr.amt !== '0' ? `<div class="note usdr"><span>USDr fee note</span><span class="amt">${w.notes.usdr.amt}</span></div>` : '',
+    ].join('') || '<div class="row"><span class="k">no notes yet</span></div>';
+    const keys = `<div class="row"><span class="k">🔑 spend key</span><span class="v">${short(w.keys.spend) || '—'}</span></div>
+      <div class="row"><span class="k">🔑 view key</span><span class="v">${short(w.keys.view) || '—'}</span></div>`;
+    const prover = `<div class="prover${proverBusy ? ' busy' : ''}">Prover<small>a separate service in this demo; in the wallet in production</small>${proverBusy ? `<span class="pchip">🔒 ${proverBusy}</span>` : ''}</div>`;
+    const pub = `<div class="pub">Public balance (visible): ${w.pub || '—'}</div>`;
+    const head = `<div class="wh"><b>${w.name || ACTORS[i]?.[0] || '—'}’s wallet</b><span>PRIVATE 🔒</span></div>`;
+    const tabs = V === 'B' ? `<div class="tabs">${Object.entries(wallets).filter(([, x]) => x.name).map(([j, x]) => `<button data-i="${j}" class="${+j === i ? 'on' : ''}">${x.name}</button>`).join('')}</div>` : '';
+    if (V === 'C') return `<div>${head}${keys}</div><div style="flex:1"><div class="k">Notes</div><div class="notes">${notes}</div></div><div>${pub}</div>`;
+    return tabs + head + keys + `<div class="notes">${notes}</div>` + (V === 'B' ? prover : '') + pub;
+  }
+  function renderWallet() {
+    const c = ensureCard();
+    const i = current ?? (V === 'B' ? 1 : null);
+    if (i == null) { c.hidden = true; return; }
+    c.hidden = false;
+    c.innerHTML = walletHtml(i);
+    c.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { current = +b.dataset.i; renderWallet(); });
+    document.querySelectorAll('#diagram .node.current').forEach(n => n.classList.remove('current'));
+    placeWallet();
+  }
+  // The card sits in the wallet zone: A beside the acting user's row, B as the
+  // whole zone, C as a strip under the users' row.
+  function placeWallet() {
+    if (!card || card.hidden || !lastFit) return;
+    const canvas = card.parentElement, k = canvas.clientWidth / lastFit.W, { pos } = lastFit;
+    const i = current ?? 1, p = pos['actor' + i] || pos.auditor;
+    if (V === 'A') {
+      card.style.left = 178 * k + 'px'; card.style.width = Math.max(230, 240 * k) + 'px';
+      const top = Math.max(26 * k, Math.min(p.y * k - 30, canvas.clientHeight - card.offsetHeight - (lastFit.pos.gnark.h + 20) * k));
+      card.style.top = top + 'px';
+    } else if (V === 'B') {
+      card.style.left = 10 * k + 'px'; card.style.width = 420 * k + 'px';
+      card.style.top = 30 * k + 'px'; card.style.maxHeight = (canvas.clientHeight - 40 * k) + 'px'; card.style.overflow = 'auto';
+    } else {
+      card.style.left = 10 * k + 'px'; card.style.width = 1020 * k + 'px';
+      card.style.top = (p.y + 22) * k + 'px';
+    }
+  }
+  // A hop's acting user opens their wallet; its chip rides the packet.
+  function hop(h, hold, link, gP) {
+    const a = actorOf(h);
+    if (a && h.from !== 'funder') { const i = +a.slice(5); if (i !== current) { current = i; renderWallet(); } }
+    const [text, priv] = CHIP[h.label] || [h.label, 0];
+    if (V === 'B' && h.to === 'gnark') { proverBusy = text; renderWallet(); setTimeout(() => { proverBusy = null; renderWallet(); }, hold); return; }
+    const chip = mk('g', { class: 'chip ' + (priv ? 'priv' : 'pub') }, gP);
+    const t = mk('text', { x: 0, y: 7, 'text-anchor': 'middle' }, chip);
+    t.textContent = (priv ? '🔒 ' : '') + text;
+    const w = text.length * 11.5 + (priv ? 44 : 24);
+    chip.insertBefore(mk('rect', { x: -w / 2, y: -16, width: w, height: 32, rx: 16 }), t);
+    const m = mk('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: link.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, chip);
+    m.beginElement();
+    setTimeout(() => chip.remove(), hold + 250);
+  }
+
+  // ---- the Shield concept moment: note → commitment → leaf ----
+  const MOMENTS = { shield: true };
+  let shieldHop = null, mom = null, beatTimers = [];
+  function arrive(h) { if (h.step === 'shield' && h.label === 'shield') { shieldHop = h; fillMoment(); } }
+  function momentHtml() {
+    const d = shieldHop?.hopDetail?.[0], leaf = d?.leaves?.[0];
+    const amt = (shieldHop?.detail || '').match(/^(\d+)/)?.[1] || (typeof runOpts !== 'undefined' && runOpts?.shieldTotal) || '1000';
+    const idx = leaf?.index ?? 25;
+    const tree = Array.from({ length: Math.min(idx + 1, 40) }, (_, j) => `<i class="${j === idx ? 'new' : ''}"></i>`).join('');
+    return `<div class="mk">Idea 1 of 5 · Hidden on chain</div>
+      <h3>The chain stores a fingerprint of the note, never the note</h3>
+      <div class="beats">
+        <div class="beat b1"><span class="where">IN THE SENDER’S WALLET · PRIVATE 🔒</span>
+          <div class="notecard"><span class="k">amount</span><span class="v">${amt} RaylsERC20</span><span class="k">owner</span><span class="v">Sender’s spend key</span><span class="k">salt</span><span class="v">random secret</span></div>
+          <span class="cap">The note: what Sender owns, known only to Sender’s wallet.</span></div>
+        <div class="beat b2"><span class="where">HASHED · CROSSES THE LINE</span>
+          <span class="hash">${leaf?.commitment ? leaf.commitment.slice(0, 18) + '…' + leaf.commitment.slice(-6) : '0x…'}</span>
+          <span class="cap">Its commitment: a hash of the note. Only this leaves the wallet.</span>${V === 'A' ? '' : '<span class="line">privacy line</span>'}</div>
+        <div class="beat b3"><span class="where">IN THE RAYLSERC20 VAULT · PUBLIC</span>
+          <div class="tree">${tree}</div>
+          <span class="cap">Leaf #${idx} in the vault’s Merkle tree. Everyone sees it; nobody can tell the amount or the owner.</span></div>
+      </div>
+      <div class="next"><button class="momNext">NEXT ▸</button><span class="hint">plays the Shield step’s hops · or press Space</span></div>`;
+  }
+  function fillMoment() { if (mom && !mom.hidden) { mom.innerHTML = momentHtml(); mom.querySelectorAll('.beat').forEach((b, j) => b.classList.toggle('on', j < shownBeats)); } }
+  let shownBeats = 0;
+  function showMoment(id) {
+    if (!MOMENTS[id]) return;
+    if (!mom) {
+      mom = document.createElement('div');
+      mom.className = 'mom card' + (V === 'A' ? ' vert' : '');
+      if (V === 'A') document.querySelector('.story').prepend(mom); else document.querySelector('section.diagram').appendChild(mom);
+    }
+    mom.hidden = false; shownBeats = 0;
+    current = 1; renderWallet(); // the moment is about the Sender's note
+    document.documentElement.classList.add('moment');
+    mom.innerHTML = momentHtml();
+    mom.onclick = e => { if (e.target.closest('.momNext')) diagram.next(); };
+    const beats = [...mom.querySelectorAll('.beat')];
+    beatTimers = [0, 1800, 3600].map((t, j) => setTimeout(() => { shownBeats = j + 1; beats[j]?.classList.add('on'); mom.querySelectorAll('.beat')[j]?.classList.add('on'); }, t));
+    if (!slow()) setTimeout(() => diagram.next(), 8000);
+  }
+  function release() {
+    if (!mom || mom.hidden) return;
+    beatTimers.forEach(clearTimeout);
+    mom.hidden = true;
+    document.documentElement.classList.remove('moment');
+  }
+
+  // ---- the canned run: the recorded events, at their recorded pace ----
+  const live = P.has('live');
+  let canned = null;
+  const tsMs = ts => { const [h, m, s] = ts.split(':').map(Number); return ((h * 60 + m) * 60 + s) * 1000; };
+  function cannedRun() {
+    if (!canned) return;
+    g('runBtn').disabled = true;
+    let i = 0, last = null;
+    (function tick() {
+      while (i < canned.length) {
+        const e = canned[i];
+        if (e.ts && last !== null && tsMs(e.ts) - last > 5) { const d = Math.min(tsMs(e.ts) - last, 1500); last = tsMs(e.ts); setTimeout(tick, d); return; }
+        if (e.ts) last = tsMs(e.ts);
+        onEvent(e); i++;
+      }
+      g('sendBtn').disabled = true; g('sendBtn').title = 'prototype: the canned run has no engine behind it';
+    })();
+  }
+  function startCanned() {
+    fetch('/prototype/events.jsonl').then(r => r.text()).then(t => canned = t.trim().split('\n').map(l => JSON.parse(l)));
+    g('runBtn').onclick = cannedRun;
+  }
+
+  // ---- the variant switcher ----
+  function bar() {
+    const ks = Object.keys(VARIANTS), go = d => { P.set('variant', ks[(ks.indexOf(V) + d + ks.length) % ks.length]); location.search = P.toString(); };
+    const b = document.createElement('div');
+    b.id = 'protoBar';
+    b.innerHTML = `<button aria-label="previous variant">◀</button><b>${V} · ${VARIANTS[V]} <small>PROTOTYPE${live ? ' · live' : ' · replay'}</small></b><button aria-label="next variant">▶</button>`;
+    const [prev, next] = b.querySelectorAll('button');
+    prev.onclick = () => go(-1); next.onclick = () => go(1);
+    document.body.appendChild(b);
+    addEventListener('keydown', e => {
+      if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+      if (e.key === 'ArrowLeft') go(-1); else if (e.key === 'ArrowRight') go(1);
+    });
+  }
+  addEventListener('DOMContentLoaded', bar);
+  addEventListener('resize', placeWallet);
+
+  const slow = () => !!g('optPause')?.checked;
+  return {
+    live, layout, path, fit, hop, arrive, actor, slow, release, showMoment, _w: wallets,
+    hasMoment: id => !!MOMENTS[id],
+    canned: startCanned,
+    reset() { for (const k in wallets) delete wallets[k]; current = null; shieldHop = null; release(); if (card) card.hidden = true; },
+  };
+})();
+</script>
+
 <script>
 const K = 6;
 const NAMES = ['Ana','Bruno','Carla','Diego','Elena','Felipe'];
@@ -769,6 +1134,8 @@ const diagram = (() => {
   pos.gnark = { x: 600, y: 130, w: 200, h: 64 };
   pos.relayer = { x: 600, y: 290, w: 200, h: 64 };
   NODES.filter(n => n.group === 'contract').forEach((n, i) => pos[n.id] = { x: 1070, y: 45 + i * 66, w: 210, h: 40 });
+  PROTO.layout(pos); // PROTOTYPE: the variant's zones place the nodes
+  const gZ = svg('g', { class: 'zones' }, s); // PROTOTYPE
   const gL = svg('g', {}, s), gN = svg('g', {}, s), gP = svg('g', {}, s);
   const nodeEl = {};
   for (const n of NODES) {
@@ -801,6 +1168,7 @@ const diagram = (() => {
   // node to itself loops on its right.
   function path(a, b) {
     const p = pos[a], q = pos[b];
+    const pp = PROTO.path(p, q, a, b); if (pp) return pp; // PROTOTYPE
     if (a === b) {
       const x = p.x + p.w / 2, y = p.y;
       return `M${x},${y - 8} C${x + 46},${y - 30} ${x + 46},${y + 30} ${x},${y + 8}`;
@@ -830,6 +1198,7 @@ const diagram = (() => {
       nodeEl[id].setAttribute('transform', `translate(${pos[id].x},${pos[id].y})`);
     }
     for (const k in links) links[k].setAttribute('d', path(...k.split('>')));
+    PROTO.fit(gZ, W, h, y => MARGIN + (y - MARGIN) * (h - 2 * MARGIN) / (H - 2 * MARGIN), pos); // PROTOTYPE
   }
   new ResizeObserver(fit).observe(s.parentElement);
   // The stage starts under the header and the step strip, whose heights change as they wrap.
@@ -860,6 +1229,7 @@ const diagram = (() => {
     svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: l.getAttribute('d'), fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
     setTimeout(() => dot.remove(), h.failed ? hold * 4 : hold + 250);
     hopPanel.shown(h);
+    PROTO.hop(h, hold, l, gP); // PROTOTYPE: the hop's data chip
     narration.hop(h);
   }
 
@@ -897,8 +1267,10 @@ const diagram = (() => {
     } else {
       const h = queue.shift();
       const behind = performance.now() - h.at;
-      const base = h.hopDetail ? DETAIL_HOLD : HOLD;
-      hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
+      // PROTOTYPE: with pausing on, no catch-up and longer holds.
+      const slow = PROTO.slow();
+      const base = h.hopDetail ? (slow ? 3000 : DETAIL_HOLD) : (slow ? 1500 : HOLD);
+      hold = !slow && behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
       show(h, hold);
     }
     showQueued();
@@ -914,6 +1286,7 @@ const diagram = (() => {
   return {
     hop(h) {
       if (!NODE[h.from] || !NODE[h.to]) return;
+      PROTO.arrive(h); // PROTOTYPE
       queue.push({ ...h, at: performance.now() });
       if (waiting()) showQueued(); else if (!timer) pump();
     },
@@ -937,6 +1310,7 @@ const diagram = (() => {
       const now = performance.now();
       for (const h of queue) if (h.at) h.at = now;
       lastPump = now;
+      PROTO.release(); // PROTOTYPE
       pacing.showHeld(false);
       pump();
     },
@@ -1516,12 +1890,14 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; narration.reset(); build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': PROTO.reset(); if (!startingRun) runOpts = null; startingRun = false; narration.reset(); build(); termReset(); diagram.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose
     // stepper message does not: its card would take the run's last hop lines.
     diagram.after(() => narration.step(e.step, e.label, e.msg));
+    // PROTOTYPE: a concept moment holds behind its own gate before the step's hops.
+    if (PROTO.hasMoment(e.step)) { diagram.after(() => PROTO.showMoment(e.step)); diagram.gate(); }
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
     whenHopsPlayed(e.step, () => { if (setStep(e.step, 'success', e.msg)) showProgress(++finished); });
@@ -1531,7 +1907,7 @@ function onEvent(e) {
     whenHopsPlayed(e.step, () => setStep(e.step, 'error', e.label + ' failed: ' + e.msg));
     termLine(e, 'c-bad', `✗ ${e.label} failed: ${e.msg}`); break;
   case 'log': termLine(e, e.cat ? 'c-' + e.cat : '', `[${(e.cat || '·').padEnd(5)}] ${e.msg}`); break;
-  case 'actor': setActor(e.actor, e.field, e.value); break;
+  case 'actor': setActor(e.actor, e.field, e.value); diagram.after(() => PROTO.actor(e.actor, e.field, e.value)); break;
   case 'proto': setProto(e.field, e.value); break;
   case 'done': diagram.after(() => setStatus('success', 'done')); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
   case 'failed': diagram.after(() => setStatus('error', 'failed')); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
@@ -1592,9 +1968,12 @@ termReset();
 showTab('engine');
 layoutDrawer();
 loadDefaults();
-const events = new EventSource('/events');
-events.onopen = clearServices;
-events.onmessage = m => onEvent(JSON.parse(m.data));
+// PROTOTYPE: connects live only with ?live; otherwise RUN replays prototype/events.jsonl.
+if (PROTO.live) {
+  const events = new EventSource('/events');
+  events.onopen = clearServices;
+  events.onmessage = m => onEvent(JSON.parse(m.data));
+} else PROTO.canned();
 </script>
 </body>
 </html>

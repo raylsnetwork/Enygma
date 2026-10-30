@@ -137,6 +137,8 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("/defaults", s.handleDefaults)
 	mux.HandleFunc("/run", s.handleRun)
 	mux.HandleFunc("/transfer", s.handleTransfer)
+	// PROTOTYPE (privacy story): serves prototype/events.jsonl, a recorded run the page replays.
+	mux.Handle("/prototype/", http.StripPrefix("/prototype/", http.FileServer(http.Dir("prototype"))))
 	return mux
 }
 
