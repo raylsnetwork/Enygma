@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"enygma_retail_payments/shield_demo/engine"
@@ -91,5 +93,89 @@ func TestEveryConceptMomentPlaysBeforeAnAnnouncedStep(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// momentKicker is the part of a concept moment the tests read.
+type momentKicker struct {
+	Kicker string `json:"kicker"`
+}
+
+// A run plays the five concept moments, in the spec's order, for each USDr
+// fee × tags combination.
+func TestARunPlaysTheFiveConceptMoments(t *testing.T) {
+	moments := servedNarration(t).Moments
+	want := []string{"Hidden on chain", "Proof", "Relayer", "Finding your notes", "Auditor"}
+	for _, tc := range combos {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, id := range engine.StepIDs(comboOptions(tc.usdrFee, tc.tags)) {
+				for _, raw := range moments[id] {
+					var m momentKicker
+					if err := json.Unmarshal(raw, &m); err != nil {
+						t.Fatalf("moment before %s: %v", id, err)
+					}
+					got = append(got, m.Kicker)
+				}
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("moments %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// momentTexts are the texts of raw, a narration value, that a run with the
+// given USDr fee and tags shows: a {"when", "text"} part is kept only when
+// its option holds, as the page does.
+func momentTexts(t *testing.T, raw any, usdrFee, tags bool) []string {
+	t.Helper()
+	switch v := raw.(type) {
+	case string:
+		return []string{v}
+	case []any:
+		var out []string
+		for _, x := range v {
+			out = append(out, momentTexts(t, x, usdrFee, tags)...)
+		}
+		return out
+	case map[string]any:
+		if when, ok := v["when"].(string); ok {
+			holds := map[string]bool{"usdrFee": usdrFee, "!usdrFee": !usdrFee, "tags": tags, "!tags": !tags}
+			h, known := holds[when]
+			if !known {
+				t.Errorf("unknown condition %q", when)
+			}
+			if !h {
+				return nil
+			}
+			return momentTexts(t, v["text"], usdrFee, tags)
+		}
+		var out []string
+		for _, x := range v {
+			out = append(out, momentTexts(t, x, usdrFee, tags)...)
+		}
+		return out
+	}
+	return nil
+}
+
+// On a run without the USDr fee, no concept moment mentions a fee.
+func TestNoConceptMomentMentionsAFeeOnAFeesOffRun(t *testing.T) {
+	moments := servedNarration(t).Moments
+	for _, tags := range []bool{true, false} {
+		for id, ms := range moments {
+			for _, raw := range ms {
+				var m any
+				if err := json.Unmarshal(raw, &m); err != nil {
+					t.Fatalf("moment before %s: %v", id, err)
+				}
+				for _, s := range momentTexts(t, m, false, tags) {
+					if strings.Contains(strings.ToLower(s), "fee") {
+						t.Errorf("tags %v, moment before %s: %q mentions a fee", tags, id, s)
+					}
+				}
+			}
+		}
 	}
 }

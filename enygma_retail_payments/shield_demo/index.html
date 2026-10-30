@@ -163,6 +163,8 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .moment .beat.wallet .where { color:var(--actor); }
 .moment .beat.chain { background:color-mix(in srgb, var(--contract) 8%, var(--s1)); border-color:var(--contract); }
 .moment .beat.chain .where { color:var(--contract); }
+.moment .beat.network { background:color-mix(in srgb, var(--service) 8%, var(--s1)); border-color:var(--service); }
+.moment .beat.network .where { color:var(--service); }
 .moment dl { display:grid; grid-template-columns:auto 1fr; gap:1px 10px; font-size:13px; }
 .moment dt { color:var(--text2); }
 .moment dd { font:12px var(--mono); }
@@ -465,10 +467,11 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
      without a line shows as "from → to: label". moments is keyed by the
      step id each concept moment plays before, a list in the order they
      play: a kicker, a headline (h) and beats, each with where it happens,
-     its zone ("wallet", "line" or "chain"), what (a string, or a list of
-     [name, value] rows), an optional leaf (a leaf number, drawn as the
-     newest of a tree's leaves) and a caption (cap). Their texts take parts
-     and the run's placeholders as step narration does, and also commitment,
+     its zone ("wallet", "line", "network" or "chain"), what (a string,
+     or a list of [name, value] rows), an optional leaf (a leaf number,
+     drawn as the newest of a tree's leaves) and a caption (cap). Their texts take parts
+     and the placeholders of the step they play before as step narration
+     does (from, to and amount for a fan-out), and also commitment,
      leaf and tree, from the step's commitment hop detail once its hop
      arrives; until then a placeholder shows as …. -->
 <script type="application/json" id="narration">
@@ -631,6 +634,133 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
             "zone": "chain",
             "leaf": "{leaf}",
             "cap": "Leaf #{leaf} in the vault’s tree {tree}. Everyone sees it; nobody can tell the amount or the owner."
+          }
+        ]
+      }
+    ],
+    "fanout_1": [
+      {
+        "kicker": "Proof",
+        "h": "The chain checks the payment without seeing it",
+        "beats": [
+          {
+            "where": "In the Sender’s wallet · private",
+            "zone": "wallet",
+            "what": [["spends", "the {shieldTotal} RaylsERC20 note"], ["pays", "{to} {amount} RaylsERC20"], ["change", "the rest, back to the Sender"]],
+            "cap": "The payment as only the Sender’s wallet knows it."
+          },
+          {
+            "where": "The wallet’s prover · private",
+            "zone": "wallet",
+            "what": "note + spend key → sealed proof",
+            "cap": [
+              "The prover seals the note and the spend key into a zero-knowledge proof: the payment adds up, and the note is the Sender’s.",
+              {"when": "usdrFee", "text": "A second proof pays the relayer’s USDr fee the same way."}
+            ]
+          },
+          {
+            "where": "In EnygmaDvp · public",
+            "zone": "chain",
+            "what": [["sees", [{"when": "!usdrFee", "text": "a tree root, a nullifier, two new commitments"}, {"when": "usdrFee", "text": "for each proof, a tree root, a nullifier and two new commitments"}]], ["never sees", "the note, {to}, the amount"]],
+            "cap": "EnygmaDvp checks the proof without opening it. The nullifier marks the note spent without saying which."
+          }
+        ]
+      },
+      {
+        "kicker": "Relayer",
+        "h": "Someone else submits the payment",
+        "beats": [
+          {
+            "where": "From the Sender’s wallet · crosses the privacy line",
+            "zone": "line",
+            "what": "proof + new commitments",
+            "cap": "The wallet hands the sealed proof to the relayer, off chain. The Sender sends no transaction of their own."
+          },
+          {
+            "where": "The relayer · network",
+            "zone": "network",
+            "what": [
+              ["submits", "from its own account, paying the gas"],
+              ["paid", [{"when": "usdrFee", "text": "{fee}, from a private USDr note"}, {"when": "!usdrFee", "text": "nothing: this run’s relayer is free"}]]
+            ],
+            "cap": [
+              "The relayer can’t change the payment: the proof would no longer check.",
+              {"when": "tags", "text": "It posts {to}’s tag too."}
+            ]
+          },
+          {
+            "where": "On chain · public",
+            "zone": "chain",
+            "what": [["transaction from", "the relayer"], ["Sender’s address", "nowhere"]],
+            "cap": "Everyone sees that the relayer submitted a payment. The transaction doesn’t show who made it."
+          }
+        ]
+      }
+    ],
+    "discover": [
+      {
+        "kicker": "Finding your notes",
+        "h": "Only the recipient’s view key opens their note",
+        "beats": [
+          {
+            "where": "On chain · public",
+            "zone": "chain",
+            "what": "ciphertext, sealed to Ana’s view key",
+            "cap": [
+              "Each payment leaves the recipient’s note on chain as a ciphertext, next to its commitment.",
+              {"when": "tags", "text": "Ana’s tag on her private channel points her to it."},
+              {"when": "!tags", "text": "Nothing says whom it is for."}
+            ]
+          },
+          {
+            "where": "In Bruno’s wallet · private",
+            "zone": "wallet",
+            "what": "Bruno’s view key → nothing",
+            "cap": [
+              {"when": "tags", "text": "Bruno checks the tags too: Ana’s isn’t on his channel, so he never tries her note. His view key couldn’t open it anyway."},
+              {"when": "!tags", "text": "Bruno tries it with his view key, and it doesn’t open: it isn’t his."}
+            ]
+          },
+          {
+            "where": "In Ana’s wallet · private",
+            "zone": "wallet",
+            "what": "Ana’s view key → her note",
+            "cap": "Ana’s view key opens it into her note: the amount, and what she needs to spend it. Apart from the auditor, nobody learns she was paid."
+          }
+        ]
+      }
+    ],
+    "audit": [
+      {
+        "kicker": "Auditor",
+        "h": "The auditor sees what the public can’t",
+        "beats": [
+          {
+            "where": "In the UserRegistry · public",
+            "zone": "chain",
+            "what": "audit ciphertexts, one set per user",
+            "cap": "When they registered, each user sealed their view key for the auditor. Anyone can see the sealed boxes; only the auditor can open them."
+          },
+          {
+            "where": "In the Auditor’s wallet · private",
+            "zone": "wallet",
+            "what": "auditor’s key → {users} view keys",
+            "cap": "At Auditor keys, right after they registered, the auditor’s key opened each user’s audit ciphertexts and recovered their view key."
+          },
+          {
+            "where": "The auditor’s view · private",
+            "zone": "wallet",
+            "what": [
+              ["amounts", "every payment’s"],
+              ["recipients", "every payment’s"],
+              ["payers", [{"when": "tags", "text": "every payment’s, through the tag channels"}, {"when": "!tags", "text": "hidden, even from the auditor: this run has no tags"}]]
+            ],
+            "cap": [
+              "With those view keys it opens every note, as each recipient can.",
+              {"when": "tags", "text": "It rebuilds each user’s balance exactly."},
+              {"when": "!tags", "text": "It sees what each user received, but can’t rebuild their balances."},
+              "None of this is public."
+            ]
           }
         ]
       }
@@ -1595,6 +1725,9 @@ const narration = (() => {
       payouts: NAMES.map((_, i) => $('optPay' + i)?.value ?? d.payouts[i]), script: d.script };
   }
 
+  // stepOf splits a step id into its kind and its _N number (0 without one).
+  const stepOf = id => ({ kind: id.replace(/_\d+$/, ''), n: +(id.match(/_(\d+)$/)?.[1] || 0) });
+
   // vars are a step's placeholder values: the run's, and its payment's.
   function vars(kind, n, o) {
     const v = { n, k: K, users: K + 1, shieldTotal: o.shieldTotal, fee: protoFields.usdrFixedFee || 'USDr', count: (o.script || []).length };
@@ -1617,7 +1750,7 @@ const narration = (() => {
     // step shows step id's narration; label and msg stand in for a kind
     // the block has none for.
     step(id, label, msg) {
-      const kind = id.replace(/_\d+$/, ''), n = +(id.match(/_(\d+)$/)?.[1] || 0);
+      const { kind, n } = stepOf(id);
       const own = NARRATION.steps[kind], entry = own && { ...NARRATION.steps[own.like], ...own }, o = options(), v = vars(kind, n, o);
       const i = steps.findIndex(s => s.id === id);
       const kicker = [i < 0 ? 'After the run' : `Step ${i + 1} of ${steps.length}`, ...parts(entry?.kicker, o, v)].join(' · ');
@@ -1638,10 +1771,10 @@ const narration = (() => {
       while ($('now').children.length > HOP_LINES) $('now').firstElementChild.remove();
     },
     // text resolves a narration field to one text for the run's options,
-    // with the run's placeholders and extra's filled.
-    text(v, extra = {}) {
-      const o = options();
-      return parts(v, o, { ...vars('', 0, o), ...extra }).join(' ');
+    // with step id's placeholders and extra's filled.
+    text(v, id, extra = {}) {
+      const o = options(), { kind, n } = stepOf(id);
+      return parts(v, o, { ...vars(kind, n, o), ...extra }).join(' ');
     },
     // reset shows the card's introduction, before a run.
     reset() {
@@ -1707,7 +1840,7 @@ const moments = (() => {
   const card = $('moment');
   let play = true, values = {}, at = null, lit = 0, timers = [], auto = null;
   // t resolves a moment's text, a placeholder not known yet showing as ….
-  const t = (v, id) => narration.text(v, values[id]).replace(/\{\w+\}/g, '…');
+  const t = (v, id) => narration.text(v, id, values[id]).replace(/\{\w+\}/g, '…');
   function beatHtml(b, id) {
     const what = Array.isArray(b.what)
       ? `<dl>${b.what.map(([k, v]) => `<dt>${esc(t(k, id))}</dt><dd>${esc(t(v, id))}</dd>`).join('')}</dl>`
