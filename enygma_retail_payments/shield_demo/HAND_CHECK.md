@@ -30,8 +30,8 @@ c.hiddenNow = () => c.hiddenMs + (hidAt != null ? performance.now() - hidAt : 0)
 const $ = id => document.getElementById(id);
 new MutationObserver(() => { c.maxQueued = Math.max(c.maxQueued, +($('queued').textContent.match(/\d+/) || [0])[0]); })
   .observe($('queued'), { childList: true, characterData: true, subtree: true });
-// Every hop played adds a hop line to the narration card.
-new MutationObserver(recs => { for (const r of recs) if (r.addedNodes.length) c.shown++; })
+// Every hop played adds a hop line to the narration card, or is one of the repeats a line stands for ("…and N more").
+new MutationObserver(recs => { for (const r of recs) for (const n of r.addedNodes) c.shown += +n.dataset.hops || 1; })
   .observe($('now'), { childList: true });
 new MutationObserver(recs => {
   for (const { target: el } of recs) {
@@ -234,9 +234,43 @@ c.space = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', 
 
 1. **Default run, pausing on.** Release each gate as it comes (poll for `!$('nextBtn').disabled`). The run ends after 21 Nexts, with `c.gates.length` 21, none at the last step; the probe's `early` is empty and `shownAtEnd` equals `hops`.
 2. **The run keeps going.** At a gate, the engine's events keep arriving (`c.hops` grows, `+N queued` grows) and its steps finish in the terminal; Next plays the next step's hops at once.
-3. **Long pause.** Hold one gate two minutes, then Next. The hops after it play at their normal hold (about 600 ms, 1.5 s with a hop detail), not at the 120 ms minimum: time them with the `#now` observer.
+3. **Long pause.** Hold one gate two minutes, then Next. The hops after it play at the full hold for pausing on (1.5 s, 3 s with a hop detail; see the pace checks), not at the 120 ms minimum.
 4. **Space.** `c.space()` releases a gate. With focus in the send form's amount box (`$('sendAmount').focus()`, then a keydown dispatched on it), Space does not.
-5. **Pausing off.** Unchecking the toggle while playback waits releases it, and the rest of the run plays straight through; a reload keeps it off (localStorage), and a run with it off has no step gates (a concept moment still holds about 8 s).
+5. **Pausing off.** Unchecking the toggle while playback waits releases it, and the rest of the run plays straight through at the pausing-off pace; a reload keeps it off (localStorage), and a run with it off has no step gates (a concept moment still holds about 8 s).
 6. **?fast** stops at gates too.
 
 A run on a stack `run.sh` has only just started can lose its first steps' events (the stepper stays empty and the card starts mid-run), seen once on 2026-10-29. Most likely the demo is still tailing the setup's log backlog, and the broker drops events for a page that falls behind. Run again once the logs are quiet.
+
+## Pace checks
+
+The hop pace (#159): with pausing on, every hop holds 1.5 s, or 3 s with a hop detail, with no catch-up, and queued hops repeating a hop, or a pair of hops, in a row within its step (`open channel`, `openChannel`, `open channel`, …) play together after the first pair at the 120 ms minimum, under the first hop's line, which ends "…and N more" (N more of that hop). With pausing off, the pace is as before: 600 ms (1.5 s with a hop detail), shrinking once playback is more than 3 s behind. Timing checks need the tab visible: ask the user to bring Chrome to the front first. Install the probe with the pausing recorder, extended with this one (paste it before the probe's last line). It times each hop line until the next, outside the gates:
+
+```js
+// Whether each hop, in arrival order, has a hop detail; the diagram plays them in that order.
+c.hasDetail = [];
+new EventSource('/events').onmessage = m => { const e = JSON.parse(m.data); if (e.kind === 'hop') c.hasDetail.push(!!e.hopDetail); };
+// One entry per hop line: its text, how many hops it stands for, whether its first has a hop detail, whether the tab was hidden, and how long until the next line (unset across a gate).
+c.lines = []; c.played = 0;
+new MutationObserver(recs => { for (const r of recs) for (const n of r.addedNodes) {
+  const now = performance.now(), x = c.lines.at(-1), hops = +n.dataset.hops || 1;
+  if (x && x.ms == null && !x.gated) x.ms = Math.round(now - x.at);
+  c.lines.push({ at: now, text: n.textContent, hops, detail: c.hasDetail[c.played], hidden: document.hidden });
+  c.played += hops;
+} }).observe($('now'), { childList: true });
+// A gate between two lines leaves the first untimed.
+new MutationObserver(() => { if (!$('nextBtn').disabled && c.lines.at(-1)) c.lines.at(-1).gated = true; })
+  .observe($('nextBtn'), { attributes: true, attributeFilter: ['disabled'] });
+// Timed lines that held less than their hold (1500, or 3000 with a hop detail) less 100.
+c.want = x => x.detail ? 3000 : 1500;
+c.offPace = () => c.lines.filter(x => x.ms != null && x.ms < c.want(x) - 100);
+// How many timed lines held their hold, give or take 100 ms (220 over, for the 120 ms of repeats), of how many timed.
+c.onPace = () => [c.lines.filter(x => x.ms != null && x.ms - c.want(x) >= -100 && x.ms - c.want(x) <= 220).length, c.lines.filter(x => x.ms != null).length];
+```
+
+The 120 ms the repeats take falls on the line before them: a collapsed line's own, or, for a pair, the pair's second line. `detail` lines up with the hops only while `shown` keeps pace with `hops` (no hop dropped for an unknown node). A line can last longer than its hold when the queue ran dry behind it (the engine had not sent the next hop yet), so only short lines count against the pace; with gates released a few seconds after they hold, `c.onPace()` should be nearly all of them.
+
+1. **Pausing on, in a step.** On a default run, release each gate a few seconds after it holds. `c.offPace()` is empty and `c.onPace()` is nearly all lines: every timed line held 1.5 s, or 3 s when its hop has a hop detail. Lines timed with the tab hidden (each line's `hidden`) run long, to whole seconds.
+2. **After a two-minute pause.** Hold one gate (a fan-out's) two minutes, so the engine's backlog is a whole step or more, then Next. The step's lines still hold 1.5 s / 3 s each, with no catch-up: `c.offPace()` stays empty.
+3. **After a long backlog.** Hold USDr credit's gate (or an earlier one) until `+N queued` shows 100 or more, then release it and the rest. The lines after it hold 1.5 s / 3 s each, from the first to the last: `c.offPace()` stays empty.
+4. **"…and N more".** On a default run, Tag channels shows two lines: the first `open channel` ending "…and N more", with `hops` 2N + 1 (it and the N later pairs; N is 11 when the run opens 12 channels), and the first `openChannel`. Make keys and Register collapse their per-user pairs the same way, and `fund gas` its run of single hops. Collapsing never spans a gate or another step, and a failed hop is never collapsed. The probe's `shownAtEnd` equals `hops` and `early` is empty.
+5. **Pausing off.** With pausing off, lines hold about 600 ms (1.5 s with a hop detail) and none ends "…and N more"; a burst more than 3 s behind plays faster, down to 120 ms. `?fast` still holds 120 ms.
