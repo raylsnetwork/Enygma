@@ -113,6 +113,43 @@ new MutationObserver(recs => { for (const r of recs) for (const n of r.addedNode
 4. **Manual transfer**, after a run: the card shows "After the run · Your payment", the from, to and amount sent, and its hop lines.
 5. **Failed hop and replay.** A failed hop's line is red with its error, the newest too, and a failed self-hop has no arrow. No run fails on demand, so feed the page one with `onEvent({ kind: 'hop', step: 'manual_9', from: 'actor2', to: 'relayer', label: 'relay', detail: 'connection refused', failed: true })` after a run and read `$('now').lastElementChild`. Clicking a finished step with hop details (Shield) still replays them in the hop detail panel.
 
+## Open wallet checks
+
+The acting user's wallet card on the diagram (#156). Install the probe with pausing on, extended with this recorder (paste it before the probe's last line). It folds the run's actor events as they arrive and keeps a copy of the fold at each step's end. At each gate, playback has just finished a step while the engine has usually run ahead, so the card must match that step's fold and not a later one:
+
+```js
+// The engine's actor fields, folded as they arrive, and a copy at each step's end.
+c.fold = {}; c.foldAt = {}; c.cards = [];
+new EventSource('/events').onmessage = m => {
+  const e = JSON.parse(m.data);
+  if (e.kind === 'actor') (c.fold[e.actor] ||= {})[e.field] = e.value;
+  if (e.kind === 'step_succeeded') c.foldAt[e.step] = JSON.parse(JSON.stringify(c.fold));
+};
+c.card = () => { const w = $('wallet'); return w.hidden ? null : { head: w.querySelector('.wh b').textContent,
+  keys: [...w.querySelectorAll('.wkey code')].map(k => k.textContent),
+  notes: [...w.querySelectorAll('.wnote')].map(n => n.textContent), pub: w.querySelector('.wpub b').textContent }; };
+// At each gate: the step last finished, the card, and that step's fold for the user it names.
+new MutationObserver(() => {
+  if ($('nextBtn').disabled) return;
+  const step = [...document.querySelectorAll('#steps .st.success')].at(-1)?.id.slice('step-'.length), card = c.card();
+  const i = card && ACTORS.findIndex(([n]) => card.head.startsWith(n)), f = c.foldAt[step]?.[i] || {};
+  const amt = v => v ? v.split(' ')[0] : null, key = v => v ? v.slice(0, 6) + '…' + v.slice(-4) : '—';
+  const want = { keys: [key(f.pkSpend), key(f.pkView)], notes: [amt(f.balance) && amt(f.balance) !== '0' && amt(f.balance) + 'RaylsERC20', amt(f.usdr) && amt(f.usdr) !== '0' && amt(f.usdr) + 'USDr'].filter(Boolean), pub: amt(f.public) || '—' };
+  c.cards.push({ step, card, ok: !!card && JSON.stringify([card.keys, card.notes, card.pub]) === JSON.stringify([want.keys, want.notes, want.pub]) });
+}).observe($('nextBtn'), { attributes: true, attributeFilter: ['disabled'] });
+```
+
+1. **Follows and names the acting user.** On a default run, release each gate and read `c.cards.map(x => x.step + ': ' + x.card?.head)`. From Make keys on, every gate shows a card naming the user at either end of the step's last user hop (the Sender through the fan-out, then each payer), never "—’s wallet" and never the gas funder's or the auditor's. Watched during USDr credit, the card opens on the issuer for its grants.
+2. **Matches the fold, never ahead.** Every entry of `c.cards` that has a card has `ok: true`: its keys, notes and public balance are the fold at the end of the step played, even when `+N queued` shows the engine ahead. Spot-check against the ledger fold below the stage after the run: the last card's notes and public balance equal that user's RaylsERC20, USDr and Public cells.
+3. **A note shows when its hop plays.** During a fan-out step, watch the card through the step's hops with pausing on: the payer's RaylsERC20 amount changes only after the step's last hop has played, not when the step starts.
+4. **Layout.** At 1280×828 in both themes, and during a run: the card sits right of the acting user's row inside the wallet zone (its right edge left of the privacy line) and its bottom above the Wallet's prover; nothing in it is cut off or overflows. Read it with
+   ```js
+   const r = s => document.querySelector(s).getBoundingClientRect(), w = r('#wallet'), el = $('wallet');
+   ({ cardRight: w.right, line: r('#diagram .pline').left, cardBottom: w.bottom, prover: r('#diagram .node.service rect').top, overflow: [el.scrollWidth - el.clientWidth, el.scrollHeight - el.clientHeight] })
+   ```
+   `cardRight` is less than `line`, `cardBottom` less than `prover`, and both overflows 0.
+5. **Reset.** Starting a new run closes the card (`$('wallet').hidden` is `true` straight after RUN), and the next card opened shows only that run's values, with no notes until the run's own hops play.
+
 ## Pausing checks
 
 Presenter pacing (#151): with "pause after each step" on, playback holds at a gate after each step but the last until Next or Space. Extend the probe with a recorder of the gates (paste it before the probe's last line), and release gates from `javascript_tool` with `document.getElementById('nextBtn').click()` or a dispatched Space:
