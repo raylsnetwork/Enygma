@@ -484,7 +484,10 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
      and the placeholders of the step they play before as step narration
      does (from, to and amount for a fan-out), and also commitment,
      leaf and tree, from the step's commitment hop detail once its hop
-     arrives; until then a placeholder shows as …. -->
+     arrives; until then a placeholder shows as …. collapse lists the step
+     kinds whose repeated hops collapse under one hop line while pausing is
+     on: steps that repeat one thing many times, not the ones where each
+     person's wallet fills in turn. -->
 <script type="application/json" id="narration">
 {
   "steps": {
@@ -622,6 +625,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "scan tags": "{to} checks the tags: {detail}.",
     "open note": "{to} opens the note meant for them."
   },
+  "collapse": ["audit_keys", "channels", "usdr"],
   "chips": {
     "spend key": { "text": "spend key", "kinds": ["key"], "private": true },
     "view key": { "text": "view key", "kinds": ["key"], "private": true },
@@ -1176,8 +1180,9 @@ const diagram = (() => {
   // ago), holds shrink in proportion, so a burst still plays readably but a
   // long backlog drains. With pausing on, the presenter sets the pace: each
   // hop holds PAUSED_HOLD ms, PAUSED_DETAIL_HOLD with a hop detail, with no
-  // catch-up. The queued hops that repeat a hop, or a pair of hops, in a
-  // row within its step are marked to play together at MIN_HOLD after it,
+  // catch-up. In the steps the narration block lists in collapse, the
+  // queued hops that repeat a hop, or a pair of hops, in a row within its
+  // step are marked to play together at MIN_HOLD after it,
   // under its hop line, the marks among them running with them. Hops still to
   // arrive never join them, and repeats already marked play together even
   // once pausing is off. Opened as /?fast, every hop holds MIN_HOLD, so the
@@ -1233,11 +1238,12 @@ const diagram = (() => {
   // repeat it (open channel, open channel, …) or repeat it and the hop after
   // it (open channel, openChannel, open channel, …), up to a gate or the
   // first hop that breaks the cycle. It says how many of them repeat h
-  // (more) and how many hops h's line stands for (hops); a failed hop, one
-  // outside a step, and one already in a run of repeats have none.
+  // (more) and how many hops h's line stands for (hops). Only a step whose
+  // kind the narration block lists in collapse has repeats; a failed hop and
+  // one already in a run of repeats have none.
   function markRepeats(h) {
     const none = { more: 0, hops: 1 };
-    if (h.failed || !h.step) return none;
+    if (h.failed || !NARRATION.collapse.includes(h.step?.replace(/_\d+$/, ''))) return none;
     const next = [];
     for (const x of queue) {
       if (x.run) continue;
