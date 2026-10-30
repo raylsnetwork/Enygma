@@ -150,6 +150,25 @@ new MutationObserver(() => {
    `cardRight` is less than `line`, `cardBottom` less than `prover`, and both overflows 0.
 5. **Reset.** Starting a new run closes the card (`$('wallet').hidden` is `true` straight after RUN), and the next card opened shows only that run's values, with no notes until the run's own hops play.
 
+## Data chip checks
+
+The chip each hop carries on the diagram (#155), from its label in the narration block's `chips`. Chips ride above their packet in their own drawing (`#chips`), over the open wallet. Count the chips the diagram draws against the hops it plays (paste before the probe's last line, or on its own with pausing off and `/?fast`):
+
+```js
+c.chipTally = { labels: {}, noChip: {}, chips: 0, packets: 0 };
+new MutationObserver(rs => rs.forEach(r => r.addedNodes.forEach(n => n.classList?.contains('chip') && c.chipTally.chips++))).observe($('chips'), { childList: true });
+new MutationObserver(rs => rs.forEach(r => r.addedNodes.forEach(n => n.classList?.contains('packet') && c.chipTally.packets++))).observe($('diagram'), { childList: true, subtree: true });
+new EventSource('/events').onmessage = m => { const e = JSON.parse(m.data);
+  if (e.kind === 'hop') { c.chipTally.labels[e.label] = (c.chipTally.labels[e.label] || 0) + 1; if (!NARRATION.chips[e.label]) c.chipTally.noChip[e.label] = 1; } };
+```
+
+To look at one chip without a run, close the page's stream (`events.close()`) and feed a hop: `onEvent({ kind: 'reset' })`, `onEvent({ kind: 'step_started', step: 'setup', label: 'Setup' })`, then `onEvent({ kind: 'hop', step: 'setup', from, to, label, detail: 'x' })`. To freeze it for a screenshot, stub `setTimeout` for delays of 300 ms and more just before the hop, and `pauseAnimations()` both `#diagram` and `#chips` about 450 ms after it.
+
+1. **Every hop has a chip.** On a default, a fees-off and a tags-off run, `c.chipTally.noChip` is empty and, once the queue drains, `chips` equals `packets`. Between them the three runs see every label in `chips` but `settle` (a failed settlement only); `payment` only on the fees-off run.
+2. **Private stays in the wallet.** The private chips (🔒, the user's colour) are `spend key`, `view key` and `audit ciphertexts`, which loop on the user's own row, and the `prove …` hops, from the user to the Wallet's prover: none crosses the privacy line. Every chip on a link that crosses it, or lies right of it, is public (the contracts' colour).
+3. **Readable.** At 1280×828 in both themes, chip text is 19px in viewBox units, readable without zooming: a self-loop chip (`spend key`) over the open wallet, a chip on a link that bends right of the contracts (`notes in`, `fee note in`) inside the drawing's right edge, and a top-row chip (the Issuer's) inside its top.
+4. **Failed hop.** A failed hop (feed one with `failed: true`, as in narration check 5, e.g. `relayer` → `EnygmaDvp`, `settle`) shows its chip with a red outline, riding its red link.
+
 ## Concept moment checks
 
 The five concept moments heading the story column (#157, #158). Install the probe with the pausing recorder below, extended with this one (paste it before the probe's last line). It records each moment shown, its beats lit over time, and the Shield hop's hop detail to compare with:
