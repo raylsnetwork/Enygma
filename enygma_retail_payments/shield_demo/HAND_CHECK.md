@@ -152,7 +152,7 @@ new MutationObserver(() => {
 
 ## Concept moment checks
 
-The concept moments heading the story column (#157). Install the probe with the pausing recorder below, extended with this one (paste it before the probe's last line). It records each moment shown, its beats lit over time, and the Shield hop's hop detail to compare with:
+The five concept moments heading the story column (#157, #158). Install the probe with the pausing recorder below, extended with this one (paste it before the probe's last line). It records each moment shown, its beats lit over time, and the Shield hop's hop detail to compare with:
 
 ```js
 // One entry per moment shown: its kicker, when each beat lit (ms after it showed), and its text when hidden.
@@ -160,8 +160,10 @@ c.moments = [];
 new MutationObserver(() => {
   const m = $('moment');
   if (m.hidden) { const x = c.moments.at(-1); if (x && x.hiddenAt == null) { x.hiddenAt = performance.now(); x.text = x.last; } return; }
-  let x = c.moments.at(-1);
-  if (!x || x.hiddenAt != null) c.moments.push(x = { at: performance.now(), kicker: m.querySelector('.kicker')?.textContent, lit: [] });
+  // Proof and Relayer show back to back, so a new kicker starts a new entry too.
+  let x = c.moments.at(-1); const kicker = m.querySelector('.kicker')?.textContent;
+  if (x && x.hiddenAt == null && x.kicker !== kicker) { x.hiddenAt = performance.now(); x.text = x.last; }
+  if (!x || x.hiddenAt != null) c.moments.push(x = { at: performance.now(), kicker, lit: [] });
   x.last = m.innerText;
   while (x.lit.length < m.querySelectorAll('.beat.on').length) x.lit.push(Math.round(performance.now() - x.at));
 }).observe($('moment'), { attributes: true, childList: true, subtree: true, characterData: true });
@@ -177,13 +179,25 @@ new MutationObserver(recs => { if (!$('moment').hidden) for (const r of recs) c.
 
 Read the moment itself with `$('moment').innerText` while it holds.
 
-1. **Holds before Shield, pausing on.** On a default run, release each gate as it comes. Releasing USDr credit's gate shows the moment "Idea 1 of 1 · Hidden on chain" (until #158 adds the rest) with the Shield step's narration under it, and no Shield hop has played: `c.hopsInMoment` stays unset. Its three beats light in turn, about 1.8 s apart (`lit` about `[0, 1800, 3600]`). The run ends after 22 Nexts: `c.gates.length` 22, one of them with the moment showing.
-2. **Every way out.** On three runs (or by re-checking the toggle between runs), release the moment with its own NEXT (`$('momentNext').click()`), the card's NEXT and `c.space()`: each hides it and the Shield hops play.
-3. **The run's values.** While the moment holds, its text shows the run's shield total, `c.shieldLeaf.commitment` and leaf `#c.shieldLeaf.leaf` in tree `c.shieldLeaf.tree`, the same as the hop detail fold's Shield entry (commitment row and `tree N #L`). A `…` shows only until the Shield hop arrives.
-4. **Rerun.** After the run, the "concept moments" toggle is off. A second RUN shows no moment (`c.moments` empty, 21 gates). Check the toggle and RUN again: the moment holds before Shield. A reload checks it again.
-5. **Pausing off.** With pausing off, the moment still shows, its hint saying it plays on by itself, and hides about 8 s later (`hiddenAt - at` about 8000) with no Next; the run plays straight through. Unchecking pausing while the moment holds changes its hint and releases it about 8 s later; unchecking it at an earlier step's gate, with the moment already queued, still shows the moment for about 8 s. Checking pausing again while it waits to release itself makes it hold until Next.
-6. **?fast** stops at the moment too; starting a new run while it holds hides it (`$('moment').hidden` straight after RUN).
-7. **Layout.** At 1280×828 in both themes, during the moment: it heads the story column, the public vs private lists are hidden, its NEXT is above the drawer, and nothing in it is cut off.
+1. **Each holds before its step, pausing on.** On a default run, release each gate as it comes. The moments show in this order, each with its step's narration under it and none of that step's hops played (`c.hopsInMoment` stays unset):
+   - "Idea 1 of 5 · Hidden on chain" after USDr credit's gate, before Shield;
+   - "Idea 2 of 5 · Proof", then "Idea 3 of 5 · Relayer", after Shield's gate, before Pay Ana (Fan-out 1);
+   - "Idea 4 of 5 · Finding your notes" before Discover;
+   - "Idea 5 of 5 · Auditor" before Audit.
+
+   Each one's three beats light in turn, about 1.8 s apart (`lit` about `[0, 1800, 3600]`). The run ends after 26 Nexts: `c.gates.length` 26, five of them with a moment showing.
+2. **Every way out.** On three runs (or by re-checking the toggle between runs), release the moment with its own NEXT (`$('momentNext').click()`), the card's NEXT and `c.space()`: each releases it (Proof's release shows Relayer; the others' hide the card and their step's hops play). One default run can cover all three by rotating them over its five moments.
+3. **Wording.** Read each moment's text with all its beats lit (`c.moments[i].text`):
+   - Proof names Ana and Pay Ana's amount (the payouts' first) and the Sender's shield total.
+   - On a default run, Proof says a second proof pays the relayer's USDr fee, Relayer's "paid" row shows the fixed fee once ("1 USDr, from a private USDr note", not "USDr USDr") and says it posts Ana's tag, Finding your notes says Ana's tag points her to it, and Auditor's "payers" row names every payment's payer through the tag channels.
+   - On a fees-off run nothing in any moment mentions a fee: Relayer's "paid" row says the relayer is free. `TestNoConceptMomentMentionsAFeeOnAFeesOffRun` guards this too.
+   - On a tags-off run nothing claims a payer is named (`payment()` publishes only output 0's ciphertext): no tag in Relayer or Finding your notes, Bruno tries the note and it doesn't open, and Auditor's "payers" row says payers stay hidden even from the auditor, with no balances rebuilt.
+
+4. **The run's values.** While Hidden on chain holds, its text shows the run's shield total, `c.shieldLeaf.commitment` and leaf `#c.shieldLeaf.leaf` in tree `c.shieldLeaf.tree`, the same as the hop detail fold's Shield entry (commitment row and `tree N #L`). A `…` shows only until the Shield hop arrives.
+5. **Rerun.** After the run, the "concept moments" toggle is off. A second RUN shows no moment (`c.moments` empty, 21 gates). Check the toggle and RUN again: the moments hold again. A reload checks it again.
+6. **Pausing off.** With pausing off, each moment still shows, its hint saying it plays on by itself, and hides about 8 s later (`hiddenAt - at` about 8000) with no Next; the run plays straight through. Unchecking pausing while the moment holds changes its hint and releases it about 8 s later; unchecking it at an earlier step's gate, with the moment already queued, still shows the moment for about 8 s. Checking pausing again while it waits to release itself makes it hold until Next.
+7. **?fast** stops at the moments too; starting a new run while it holds hides it (`$('moment').hidden` straight after RUN).
+8. **Layout.** At 1280×828 in both themes, during each moment (Proof is the tallest): it heads the story column, the public vs private lists are hidden, its NEXT is above the drawer, and nothing in it is cut off.
 
 ## Pausing checks
 
