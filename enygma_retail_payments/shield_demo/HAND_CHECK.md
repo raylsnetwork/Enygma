@@ -86,6 +86,12 @@ The Side story layout (#150): a step strip on top, the diagram beside a story co
 5. **Replay.** Clicking a finished step that has hop details (Shield) unfolds the hop detail fold and replays them there; clicking one without (Check prerequisites) does nothing.
 6. **Themes.** Both themes look right: the cards, the public vs private boxes, the folds' summaries and the strip's markers take the theme's colours, with nothing left light in dark or dark in light.
 7. **Narrow window.** Under 1000px wide the story column drops under the diagram, and hovering a diagram node still puts its tooltip beside the node.
+8. **Zones** (#154). At both sizes and in both themes, the diagram shows three zones, labelled WALLETS · PRIVATE, NETWORK and CHAIN · PUBLIC (19px in viewBox units), with the dashed privacy line between the first two and its caption at the line's foot; there is no column header above the diagram. The users and the Auditor are one column in the wallet zone, with the Wallet's prover at its bottom and its line "a separate service in this demo, part of the wallet in production" readable; the gas funder and the Relayer are in the network zone, and every contract is in the chain zone. The zones span the canvas's full height after every refit (resize the window, open and close the drawer). Hops still light their links over the zones, a failed hop is still red (feed one as in narration check 5), node hover cards still show, and the hop detail fold still fills and replays. Read the zones with
+   ```js
+   const z = [...document.querySelectorAll('#diagram .zone')].map(r => r.getBBox()), vb = document.getElementById('diagram').viewBox.baseVal;
+   ({ zones: z.map(b => [b.x, b.width, b.height]), viewBoxH: vb.height, labels: [...document.querySelectorAll('#diagram .zl')].map(t => t.textContent) })
+   ```
+   Each zone's height is the viewBox's height less 4.
 
 ## Narration checks
 
