@@ -44,6 +44,10 @@
 
 **Registration**: a user's one-time publication of their spend key, view key and audit ciphertexts in the `UserRegistry`, from their own address; it cannot be repeated for that address. _Avoid_: sign-up, onboarding.
 
+**Wallet**: a user's own software, which holds their spend key, view key and notes, makes their proofs, and builds their transactions. Private data never leaves it; only proofs, commitments, nullifiers and ciphertexts do. _Avoid_: frontend, client, app.
+
 **Hop**: one interaction between two parts of the retail shield demo's system (an actor, the gnark server, the relayer or a contract), such as a proof request, a relay or a registration; the demo's architecture diagram animates one hop at a time. A **failed hop** is the one that failed its step; the diagram keeps it, in red, with the step's error. _Avoid_: edge, call, flow.
 
 **Hop detail**: what a hop does to the protocol state (leaves added to a Merkle tree, a nullifier published, a proof's public inputs), shown on the retail shield demo's diagram as the hop plays. _Avoid_: component.
+
+**Privacy line**: the boundary on the retail shield demo's diagram between the wallets, whose contents are private, and the network and chain, which see only what crosses it. _Avoid_: trust boundary, divider.
