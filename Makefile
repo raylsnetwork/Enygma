@@ -1,8 +1,9 @@
 # Enygma monorepo — quality gates and shortcuts.
 #
 #   make help          list every target
-#   make ci            what CI runs: fmt-check + build + vet + unit tests, all modules
-#   make ci MODULE=enygma_dvp/src        the same, for one module
+#   make ci            what CI runs: fmt-check + build + vet + unit tests, all modules,
+#                      and the Hardhat projects' install, compile and tests
+#   make ci MODULE=enygma_dvp/src        the same, for one Go module (no Hardhat)
 #
 # The repo is 25 independent Go modules (see `make modules`); there is no
 # single `go build ./...` at the root, so these targets loop over them.
@@ -67,7 +68,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
 	enygma_retail_payments/src enygma_retail_payments/test
 
-.PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit ci \
+.PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test \
 	auctions-gnark auctions-keygen
@@ -113,7 +114,17 @@ test-unit: ## go test ./... in every module (chain-dependent tests skip themselv
 	@echo "Not run (known red, see TEST_SKIP_* above): modules [$(TEST_SKIP_MODULES)], packages [$(TEST_SKIP_PACKAGES)]"
 	$(call each_in,$(TEST_MODULES),$(TEST_PKGS); if [ -n "$$pkgs" ]; then go test -count=1 $$pkgs; fi)
 
-ci: check test-unit ## Everything CI runs
+# The Hardhat (npm) projects. CI's Go jobs never touch them, so a dependency
+# bump that breaks `hardhat compile` would otherwise go unnoticed (#110).
+HARDHAT_PROJECTS := enygma_dvp enygma_dvp_auctions enygma_payments/contracts/enygma
+
+hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat project; needs node 22
+	@command -v node >/dev/null || { echo "node not found (nvm use 22)"; exit 1; }
+	@# Compiling overwrites the real Poseidon artifacts with the placeholder's;
+	@# regen_poseidon.js puts them back where a project has one.
+	$(call each_in,$(HARDHAT_PROJECTS),npm ci --no-audit --no-fund && npx hardhat compile && { [ ! -f scripts/regen_poseidon.js ] || node scripts/regen_poseidon.js; } && npx hardhat test)
+
+ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
 # ── Local development shortcuts (thin wrappers over the existing scripts) ─────
 # Full local flow for DvP:  dvp-chain (own terminal) -> dvp-keygen (once) ->

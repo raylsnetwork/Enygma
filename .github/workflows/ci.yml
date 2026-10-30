@@ -1,7 +1,7 @@
 name: ci
 
-# Build, vet and unit-test every Go module, enforce gofmt, and compile the
-# HTML pages' inline scripts.
+# Build, vet and unit-test every Go module, enforce gofmt, compile the HTML
+# pages' inline scripts, and install, compile and test the Hardhat projects.
 # Run the same checks locally with `make ci` (see the root Makefile).
 # Integration tests that need a chain or gnark server skip themselves and are
 # not exercised here.
@@ -64,6 +64,22 @@ jobs:
         with:
           node-version: "20"
       - run: make page-check
+
+  hardhat:
+    name: hardhat projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            enygma_dvp/package-lock.json
+            enygma_dvp_auctions/package-lock.json
+            enygma_payments/contracts/enygma/package-lock.json
+      - run: make hardhat-check
 
   go:
     name: go (${{ matrix.module }})

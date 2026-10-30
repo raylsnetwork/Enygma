@@ -40,6 +40,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # A gnark or gnark-crypto bump changes the proofs, which then no longer
+    # verify against the committed keys (gnark 0.14 -> 0.16 broke the payments
+    # gnark server's self-verification, #145). Upgrade them by hand, with
+    # new keys.
+    ignore:
+      - dependency-name: "github.com/consensys/gnark"
+      - dependency-name: "github.com/consensys/gnark-crypto"
     groups:
       go-security:
         applies-to: security-updates
@@ -58,6 +65,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # The projects are on Hardhat 2; Hardhat 3 and hardhat-toolbox 6+ need a
+    # migration (config, plugins, scripts), not a bump (#142-#144, #161).
+    # Pin a vulnerable transitive dependency with `overrides` in package.json
+    # instead; `make hardhat-check` (CI's hardhat job) checks the projects
+    # still build.
+    ignore:
+      - dependency-name: "hardhat"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nomicfoundation/hardhat-toolbox"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-security:
         applies-to: security-updates
