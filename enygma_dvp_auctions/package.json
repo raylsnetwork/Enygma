@@ -5,7 +5,7 @@
     "test": "hardhat test"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "hardhat": "^2.22.0"
   },
   "dependencies": {
@@ -27,6 +27,7 @@
     "hardhat": {
       "ws": "7.5.13",
       "undici": "5.29.0"
-    }
+    },
+    "bn.js@4.11.6": "4.12.3"
   }
 }
