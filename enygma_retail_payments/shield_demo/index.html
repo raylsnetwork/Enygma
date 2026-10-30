@@ -150,6 +150,31 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .sides .side.pub li::before { content:'◉'; }
 .sides .side.priv b, .sides .side.priv li::before { color:var(--warn); }
 .sides .side.priv li::before { content:'■'; }
+/* A concept moment heads the story column while it holds: its beats light in turn. */
+.moment { border:2px solid var(--accent); display:flex; flex-direction:column; gap:10px; }
+.moment[hidden] { display:none; }
+.moment .kicker { font:11px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }
+.moment h2 { font:600 20px/1.25 var(--serif); color:var(--text); }
+.moment .beats { display:flex; flex-direction:column; gap:8px; }
+.moment .beat { border-radius:12px; padding:8px 12px; display:flex; flex-direction:column; gap:4px; opacity:.12; transform:translateY(6px); transition:opacity .6s, transform .6s; background:var(--s2); border:1.5px solid var(--bd2); }
+.moment .beat.on { opacity:1; transform:none; }
+.moment .where { font:700 10px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--text2); }
+.moment .beat.wallet { background:color-mix(in srgb, var(--actor) 8%, var(--s1)); border:1.5px dashed var(--actor); }
+.moment .beat.wallet .where { color:var(--actor); }
+.moment .beat.chain { background:color-mix(in srgb, var(--contract) 8%, var(--s1)); border-color:var(--contract); }
+.moment .beat.chain .where { color:var(--contract); }
+.moment dl { display:grid; grid-template-columns:auto 1fr; gap:1px 10px; font-size:13px; }
+.moment dt { color:var(--text2); }
+.moment dd { font:12px var(--mono); }
+.moment code { font:700 14px var(--mono); color:var(--text); word-break:break-all; }
+.moment .leaves { display:flex; gap:3px; flex-wrap:wrap; }
+.moment .leaves i { width:12px; height:12px; border-radius:3px; background:var(--leaf-before); }
+.moment .leaves i.new { background:var(--contract); box-shadow:0 0 0 3px color-mix(in srgb, var(--contract) 30%, transparent); }
+.moment .cap { font:14px/1.45 var(--serif); color:var(--text2); }
+.moment .next { display:flex; gap:10px; align-items:center; }
+#momentNext { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.06em; padding:6px 20px; border-radius:999px; cursor:pointer; }
+.moment .hint { font:11px var(--mono); color:var(--muted); }
+.story.moment-on #narrSides { display:none; }
 #now { list-style:none; display:flex; flex-direction:column; gap:3px; font:13px var(--sans); color:var(--muted); }
 #now li::before { content:'→ '; color:var(--accent); }
 #now li:last-child { color:var(--text); font-weight:600; }
@@ -327,6 +352,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     <div class="opt"><label for="optTotal">Shield total</label><input id="optTotal" type="number" min="1"></div>
   </div></details>
   <label class="toggle" title="Hold playback after each step until Next or Space"><input id="optPause" type="checkbox"> pause after each step</label>
+  <label class="toggle" title="Play the concept moments on the next run. On for this page's first run; each run turns it off."><input id="optMoments" type="checkbox" autocomplete="off" checked> concept moments</label>
   <span id="optError"></span>
   <span class="chip" id="status"><span class="status-dot"></span><span id="statusText">idle</span></span>
   <button id="runBtn">RUN</button>
@@ -346,6 +372,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <div id="nodeTip" hidden></div>
 </section>
 <div class="story">
+  <div class="moment card" id="moment" aria-live="polite" hidden></div>
   <div class="narr card" aria-live="polite">
     <div class="top"><span class="kicker" id="narrKicker"></span><span class="q" id="queued"></span></div>
     <h2 id="narrHead"></h2>
@@ -435,7 +462,15 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
      from, to, amount for a payment. hops
      is keyed by hop label, filled with from, to, label, detail and
      detailHead (the detail up to its first comma or semicolon); a label
-     without a line shows as "from → to: label". -->
+     without a line shows as "from → to: label". moments is keyed by the
+     step id each concept moment plays before, a list in the order they
+     play: a kicker, a headline (h) and beats, each with where it happens,
+     its zone ("wallet", "line" or "chain"), what (a string, or a list of
+     [name, value] rows), an optional leaf (a leaf number, drawn as the
+     newest of a tree's leaves) and a caption (cap). Their texts take parts
+     and the run's placeholders as step narration does, and also commitment,
+     leaf and tree, from the step's commitment hop detail once its hop
+     arrives; until then a placeholder shows as …. -->
 <script type="application/json" id="narration">
 {
   "steps": {
@@ -572,6 +607,34 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "publishTag": "The relayer posts the tag on chain.",
     "scan tags": "{to} checks the tags: {detail}.",
     "open note": "{to} opens the note meant for them."
+  },
+  "moments": {
+    "shield": [
+      {
+        "kicker": "Hidden on chain",
+        "h": "The chain stores a fingerprint of the note, never the note",
+        "beats": [
+          {
+            "where": "In the Sender’s wallet · private",
+            "zone": "wallet",
+            "what": [["amount", "{shieldTotal} RaylsERC20"], ["owner", "the Sender’s spend key"], ["salt", "a random secret"]],
+            "cap": "The note: what the Sender owns, known only to the Sender’s wallet."
+          },
+          {
+            "where": "Hashed · crosses the privacy line",
+            "zone": "line",
+            "what": "{commitment}",
+            "cap": "Its commitment: a hash of the note. Only this leaves the wallet."
+          },
+          {
+            "where": "In the RaylsERC20 vault · public",
+            "zone": "chain",
+            "leaf": "{leaf}",
+            "cap": "Leaf #{leaf} in the vault’s tree {tree}. Everyone sees it; nobody can tell the amount or the owner."
+          }
+        ]
+      }
+    ]
   }
 }
 </script>
@@ -928,7 +991,8 @@ const diagram = (() => {
   // The queue also holds marks ({ run }) that `after` queues: a mark runs, and
   // takes no time, once every hop queued before it has played its hold. A gate
   // ({ gate }) that `gate` queues stops playback, even in /?fast: what queues
-  // behind it waits until `next` releases it.
+  // behind it waits until `next` releases it. A concept moment's gate
+  // ({ gate, moment }) stays when `next` drops the step gates.
   const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120;
   const FAST = new URLSearchParams(location.search).has('fast');
   const queue = [];
@@ -976,17 +1040,19 @@ const diagram = (() => {
     after(fn) {
       if (timer || queue.length) queue.push({ run: fn }); else fn();
     },
-    // gate stops playback once the hops queued so far have played.
-    gate() {
-      queue.push({ gate: true });
+    // gate stops playback once the hops queued so far have played; moment
+    // marks a concept moment's gate.
+    gate(moment = false) {
+      queue.push({ gate: true, moment });
       if (!timer && queue.length === 1) pump();
     },
-    // next releases the gate playback waits at; with all, it also drops every
-    // gate still queued. The hops held behind it count as arriving now, so the
-    // catch-up does not play the pause off as lag.
+    // next releases the gate playback waits at; with all, it instead drops
+    // every step gate, held or queued, and keeps the concept moments'. The
+    // hops held behind it count as arriving now, so the catch-up does not
+    // play the pause off as lag.
     next(all) {
       const held = waiting();
-      if (all) { for (let i = queue.length; i--;) if (queue[i].gate) queue.splice(i, 1); } else if (held) queue.shift();
+      if (all) { for (let i = queue.length; i--;) if (queue[i].gate && !queue[i].moment) queue.splice(i, 1); } else if (held) queue.shift();
       if (!held) return;
       const now = performance.now();
       for (const h of queue) if (h.at) h.at = now;
@@ -1571,6 +1637,12 @@ const narration = (() => {
       $('now').appendChild(li);
       while ($('now').children.length > HOP_LINES) $('now').firstElementChild.remove();
     },
+    // text resolves a narration field to one text for the run's options,
+    // with the run's placeholders and extra's filled.
+    text(v, extra = {}) {
+      const o = options();
+      return parts(v, o, { ...vars('', 0, o), ...extra }).join(' ');
+    },
     // reset shows the card's introduction, before a run.
     reset() {
       render('Enygma retail shield', 'Shield public tokens, then pay privately',
@@ -1599,6 +1671,7 @@ const pacing = (() => {
     try { localStorage.setItem(PAUSE_KEY, on ? 'on' : 'off'); } catch (_) {}
     if (!on) diagram.next(true);
     show();
+    moments.pausing();
     // Space on the focused checkbox would toggle it instead of meaning Next.
     ev.target.blur();
   };
@@ -1617,6 +1690,95 @@ const pacing = (() => {
     },
     // showHeld shows whether playback waits at a gate.
     showHeld(w) { if (held !== w) { held = w; show(); } },
+    // on says whether pausing is on.
+    on: () => on,
+  };
+})();
+
+// ---- concept moments: one privacy idea, held before the step it happens in --
+
+// When a step with concept moments starts, each is queued behind the hops
+// so far with its own gate, so it holds before the step's hops; releasing
+// the last gate hides the card. Its beats light MOMENT_BEAT ms apart. With
+// pausing off, a moment releases itself after MOMENT_AUTO ms. The moments
+// play on a run started with the toggle on, which each run turns off.
+const MOMENT_BEAT = 1800, MOMENT_AUTO = 8000, MOMENT_LEAVES = 24;
+const moments = (() => {
+  const card = $('moment');
+  let play = true, values = {}, at = null, lit = 0, timers = [], auto = null;
+  // t resolves a moment's text, a placeholder not known yet showing as ….
+  const t = (v, id) => narration.text(v, values[id]).replace(/\{\w+\}/g, '…');
+  function beatHtml(b, id) {
+    const what = Array.isArray(b.what)
+      ? `<dl>${b.what.map(([k, v]) => `<dt>${esc(t(k, id))}</dt><dd>${esc(t(v, id))}</dd>`).join('')}</dl>`
+      : b.what ? `<code>${esc(t(b.what, id))}</code>` : '';
+    // The newest of a tree's leaves, with up to MOMENT_LEAVES - 1 before it.
+    const n = b.leaf && Number.parseInt(t(b.leaf, id)), last = Math.min(n, MOMENT_LEAVES - 1);
+    const leaves = !b.leaf ? '' : `<div class="leaves">${Number.isInteger(n)
+      ? Array.from({ length: last + 1 }, (_, j) => `<i${j === last ? ' class="new"' : ''}></i>`).join('')
+      : '<i></i>'.repeat(MOMENT_LEAVES)}</div>`;
+    return `<div class="beat ${esc(b.zone || '')}"><span class="where">${esc(t(b.where, id))}</span>${what}${leaves}<span class="cap">${esc(t(b.cap, id))}</span></div>`;
+  }
+  card.innerHTML = '<div class="text"></div><div class="next"><button id="momentNext">NEXT ▸</button><span class="hint"></span></div>';
+  const text = card.querySelector('.text'), hint = card.querySelector('.hint');
+  // render draws the moment showing, keeping the beats lit so far. The Next
+  // button stays, so it keeps the focus.
+  function render() {
+    const { m, id, i, of } = at;
+    text.innerHTML = `<span class="kicker">Idea ${i} of ${of} · ${esc(t(m.kicker, id))}</span><h2>${esc(t(m.h, id))}</h2>` +
+      `<div class="beats">${m.beats.map(b => beatHtml(b, id)).join('')}</div>`;
+    text.querySelectorAll('.beat').forEach((el, j) => el.classList.toggle('on', j < lit));
+  }
+  // pace follows pausing: off, the moment releases itself MOMENT_AUTO ms
+  // after it showed or pausing went off; on, it holds until Next.
+  function pace() {
+    hint.textContent = pacing.on() ? 'or press Space' : `plays on by itself in ${MOMENT_AUTO / 1000} s`;
+    clearTimeout(auto);
+    auto = pacing.on() ? null : setTimeout(() => diagram.next(), MOMENT_AUTO);
+  }
+  function show(next) {
+    clear();
+    at = next; lit = 0;
+    card.hidden = false;
+    card.parentElement.classList.add('moment-on');
+    render();
+    at.m.beats.forEach((_, j) => timers.push(setTimeout(() => { lit = j + 1; text.querySelectorAll('.beat')[j]?.classList.add('on'); }, j * MOMENT_BEAT)));
+    pace();
+  }
+  function clear() { timers.forEach(clearTimeout); timers = []; clearTimeout(auto); auto = null; }
+  function hide() {
+    clear();
+    at = null;
+    card.hidden = true;
+    card.parentElement.classList.remove('moment-on');
+  }
+  card.addEventListener('click', e => { if (e.target.closest('#momentNext')) diagram.next(); });
+  return {
+    // queue queues step id's moments, if this run plays them.
+    queue(id) {
+      const ms = play && NARRATION.moments[id];
+      if (!ms) return;
+      const run = Object.entries(NARRATION.moments).filter(([s]) => $('step-' + s)).flatMap(([, x]) => x);
+      for (const m of ms) { const i = run.indexOf(m) + 1; diagram.after(() => show({ m, id, i, of: run.length })); diagram.gate(true); }
+      diagram.after(hide);
+    },
+    // arrive takes a hop as it arrives: a commitment hop detail in a step
+    // with moments gives their commitment, leaf and tree.
+    arrive(h) {
+      const d = NARRATION.moments[h.step] && h.hopDetail?.find(d => d.kind === 'commitment');
+      if (!d) return;
+      values[h.step] = { commitment: shortHex(d.commitment), leaf: d.leaves[0].index, tree: d.tree };
+      if (at?.id === h.step) render();
+    },
+    // pausing follows a change of pausing in the moment showing.
+    pausing() { if (at) pace(); },
+    // reset hides the card and decides whether the new run plays moments.
+    reset() {
+      hide();
+      values = {};
+      play = $('optMoments').checked;
+      $('optMoments').checked = false;
+    },
   };
 })();
 
@@ -1629,12 +1791,13 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; narration.reset(); build(); termReset(); diagram.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': if (!startingRun) runOpts = null; startingRun = false; narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose
     // stepper message does not: its card would take the run's last hop lines.
     diagram.after(() => narration.step(e.step, e.label, e.msg));
+    moments.queue(e.step);
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
     whenHopsPlayed(e.step, () => { if (setStep(e.step, 'success', e.msg)) showProgress(++finished); });
@@ -1649,7 +1812,7 @@ function onEvent(e) {
   case 'done': diagram.after(() => setStatus('success', 'done')); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
   case 'failed': diagram.after(() => setStatus('error', 'failed')); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
   case 'term': serviceLine(e); break;
-  case 'hop': diagram.hop(e); break;
+  case 'hop': diagram.hop(e); moments.arrive(e); break;
   }
 }
 
