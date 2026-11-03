@@ -91,6 +91,9 @@ type Options struct {
 	Tags bool `json:"tags"`
 	// Script is the transfers between participants played after the fan-out.
 	Script []Transfer `json:"script"`
+	// Walkthrough plays the Sender's path, with no USDr fee, no tags and no
+	// script, and holds before each action until the Gate releases it.
+	Walkthrough bool `json:"walkthrough"`
 }
 
 // DefaultOptions pays the participants different amounts, leaves the sender
@@ -200,12 +203,18 @@ type Engine struct {
 	startBlock, startChannel uint64
 	// auditUsers are the users whose view keys the auditor recovered.
 	auditUsers []auditUser
+
+	// gate holds a walkthrough before each action.
+	gate *Gate
 }
 
 // New returns an engine that reports to sink.
 func New(cfg Config, sink Sink) *Engine {
-	return &Engine{cfg: cfg, sink: sink, relayer: &relayer{baseURL: cfg.RelayerURL, apiKey: cfg.RelayerAPIKey}}
+	return &Engine{cfg: cfg, sink: sink, relayer: &relayer{baseURL: cfg.RelayerURL, apiKey: cfg.RelayerAPIKey}, gate: newGate()}
 }
+
+// Gate is what releases a walkthrough's actions, one per Release.
+func (e *Engine) Gate() *Gate { return e.gate }
 
 // Issuer, Sender and Participants return the run's actors; they are set
 // once Run has generated the keys.
@@ -294,7 +303,11 @@ func reachable(rawURL string) bool {
 // transfer at a time, let each participant discover their note by
 // scanning, play the scripted transfers between participants, and show the
 // run's totals. A step that fails ends the run with its error.
+//
+// A walkthrough plays only the Sender's path (see walkthroughPlan) and waits
+// before each action until Gate releases it, or ctx ends.
 func (e *Engine) Run(ctx context.Context, opts Options) error {
+	opts = opts.effective()
 	if err := opts.Validate(); err != nil {
 		return e.fail("prereqs", "Check prerequisites", err)
 	}
@@ -308,18 +321,24 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	e.sink.Emit(Event{Kind: ProtocolField, Field: "steps", Value: string(stepsJSON)})
 
 	for _, s := range steps {
-		st := &step{e: e, id: s.id, label: s.label}
+		st := &step{e: e, id: s.id, label: s.label, gated: len(s.actions) > 0}
 		st.start(s.msg)
+		if s.pre != "" {
+			if err := e.awaitAction(ctx, s.id, s.pre, ""); err != nil {
+				return e.fail(s.id, s.label, err)
+			}
+		}
 		if err := runStep(ctx, e, s, st); err != nil {
 			return e.fail(s.id, s.label, err)
 		}
-		// The auditor's view follows each step's transactions.
-		if e.auditUsers != nil {
+		// The auditor's view follows each step's transactions; a
+		// walkthrough's auditor decrypts only at its audit step, as an action.
+		if e.auditUsers != nil && (!opts.Walkthrough || s.id == "audit") {
 			if err := e.publishAudit(ctx, st); err != nil {
 				return e.fail(s.id, s.label, fmt.Errorf("audit: %w", err))
 			}
 		}
-		if e.cfg.StepPause > 0 {
+		if e.cfg.StepPause > 0 && !opts.Walkthrough {
 			time.Sleep(e.cfg.StepPause)
 		}
 	}

@@ -58,3 +58,26 @@ func TestStepIDsFollowTheScript(t *testing.T) {
 		t.Errorf("transfer steps %v, want %v", transfers, want)
 	}
 }
+
+// A walkthrough follows the Sender's path, with no USDr fee and no tags,
+// whatever the other options say: no prereqs, channels, usdr, transfers or
+// totals step.
+func TestAWalkthroughPlaysTheSendersPath(t *testing.T) {
+	want := []string{
+		"keygen", "register", "audit_keys", "shield",
+		"fanout_1", "fanout_2", "fanout_3", "fanout_4", "fanout_5", "fanout_6",
+		"discover", "audit",
+	}
+	for _, tc := range []struct {
+		name          string
+		usdrFee, tags bool
+	}{{"fee and tags asked for", true, true}, {"neither asked for", false, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := DefaultOptions()
+			opts.UsdrFee, opts.Tags, opts.Walkthrough = tc.usdrFee, tc.tags, true
+			if got := StepIDs(opts); !slices.Equal(got, want) {
+				t.Errorf("StepIDs:\n got %v\nwant %v", got, want)
+			}
+		})
+	}
+}

@@ -68,6 +68,9 @@ type Audit struct {
 	// what they kept from what they paid.
 	Balances     map[string]*big.Int `json:"balances"`
 	UsdrBalances map[string]*big.Int `json:"usdrBalances"`
+	// Inferred says the auditor could not name the payers and inferred the
+	// balances by conservation instead (a walkthrough, see conserve).
+	Inferred bool `json:"inferred,omitempty"`
 }
 
 // auditUser is a registered user as the auditor knows them: their public
@@ -233,7 +236,45 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 		}
 	}
 	a.reconstructBalances()
+	if a.Balances == nil && e.opts.Walkthrough {
+		a.conserve()
+	}
 	return a, nil
+}
+
+// conserve infers the balances of a walkthrough, which has no tags to name
+// payers by: every note in it comes from one user's shield, and only that
+// user pays, so they keep what they shielded less what the others
+// received, and each other user holds what they received. It infers none
+// if more than one user shielded.
+func (a *Audit) conserve() {
+	shielder := ""
+	for _, en := range a.Entries {
+		if en.Kind == AuditShield {
+			if shielder != "" && en.To != shielder {
+				return
+			}
+			shielder = en.To
+		}
+	}
+	if shielder == "" {
+		return
+	}
+	a.Balances, a.UsdrBalances = map[string]*big.Int{}, map[string]*big.Int{}
+	for _, u := range a.Users {
+		a.Balances[u], a.UsdrBalances[u] = new(big.Int).Set(a.Received[u]), new(big.Int)
+	}
+	for _, en := range a.Entries {
+		switch {
+		case en.Asset == assetUsdr:
+			if to := a.UsdrBalances[en.To]; to != nil && !en.Kind.paidPrivately() {
+				to.Add(to, en.Amount)
+			}
+		case en.Kind == AuditTransfer && en.To != shielder:
+			a.Balances[shielder].Sub(a.Balances[shielder], en.Amount)
+		}
+	}
+	a.Inferred = true
 }
 
 // reconstructBalances sets each user's balances to what they received less
@@ -383,6 +424,9 @@ func (e *Engine) reconcile(ctx context.Context, s *step) error {
 		return err
 	}
 	s.log("key", "auditor decrypted %d transactions across both vaults with the recovered view keys", len(a.Entries))
+	if e.opts.Walkthrough {
+		s.hop(NodeVault, NodeAuditor, "audit", fmt.Sprintf("opens %d notes with the %d view keys it recovered", len(a.Entries), len(a.Users)))
+	}
 	if a.Balances == nil {
 		s.done("Auditor sees all %d transactions and what each user received; without tags the payers stay hidden, so it cannot reconstruct balances", len(a.Entries))
 		return nil
@@ -394,6 +438,10 @@ func (e *Engine) reconcile(ctx context.Context, s *step) error {
 		if own := u.usdr.balance(); a.UsdrBalances[u.Name].Cmp(own) != 0 {
 			return fmt.Errorf("auditor reconstructs %s USDr for %s, who scans %s", a.UsdrBalances[u.Name], u.Name, own)
 		}
+	}
+	if a.Inferred {
+		s.done("Auditor saw all %d transactions and, with no tags to name payers, inferred every user's balance by conservation: each matches their own scan", len(a.Entries))
+		return nil
 	}
 	s.done("Auditor saw all %d transactions, named every payer from the tag channels, and reconstructs every user's balances exactly", len(a.Entries))
 	return nil

@@ -115,6 +115,11 @@ type server struct {
 	// that completed, which manual transfers continue.
 	running sync.Mutex
 	engine  *engine.Engine
+	// live is the run in progress, whose gate /release opens, and
+	// endWalk ends it if it is a walkthrough; both are nil between runs.
+	mu      sync.Mutex
+	live    *engine.Engine
+	endWalk context.CancelFunc
 	// pageFile, if set, is read for the page on every request instead of
 	// the embedded copy (-dev).
 	pageFile string
@@ -137,6 +142,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("/defaults", s.handleDefaults)
 	mux.HandleFunc("/run", s.handleRun)
 	mux.HandleFunc("/transfer", s.handleTransfer)
+	mux.HandleFunc("/release", s.handleRelease)
 	return mux
 }
 
@@ -207,18 +213,37 @@ func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.running.TryLock() {
-		http.Error(w, `{"error":"a run is already in progress"}`, http.StatusConflict)
-		return
+		// A walkthrough waits on its presenter, who may have left it: a
+		// new run ends it, at its gate or in its current action (whose
+		// transaction may still mine; the new run's actors are fresh).
+		if !s.endWalkthrough() {
+			http.Error(w, `{"error":"a run is already in progress"}`, http.StatusConflict)
+			return
+		}
+		s.running.Lock()
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	e := engine.New(s.cfg, s.broker)
+	s.mu.Lock()
+	s.live, s.endWalk = e, nil
+	if opts.Walkthrough {
+		s.endWalk = cancel
+	}
+	s.mu.Unlock()
 	go func() {
 		defer s.running.Unlock()
+		defer func() {
+			s.mu.Lock()
+			s.live, s.endWalk = nil, nil
+			s.mu.Unlock()
+			cancel()
+		}()
 		if s.engine != nil {
 			s.engine.Close()
 			s.engine = nil
 		}
 		s.broker.publish(map[string]string{"kind": "reset"})
-		e := engine.New(s.cfg, s.broker)
-		if err := e.Run(context.Background(), opts); err != nil {
+		if err := e.Run(ctx, opts); err != nil {
 			log.Printf("run failed: %v", err)
 			e.Close()
 			return
@@ -227,6 +252,35 @@ func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"status":"started"}`)
+}
+
+// endWalkthrough ends the run in progress if it is a walkthrough, and
+// reports whether it was.
+func (s *server) endWalkthrough() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.endWalk == nil {
+		return false
+	}
+	s.endWalk()
+	return true
+}
+
+// handleRelease lets a waiting walkthrough perform its next action.
+func (s *server) handleRelease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.Lock()
+	e := s.live
+	s.mu.Unlock()
+	if e == nil || !e.Gate().Release() {
+		writeError(w, http.StatusConflict, "no walkthrough is waiting for Next")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"status":"released"}`)
 }
 
 // handleTransfer makes a manual transfer on the last completed run and

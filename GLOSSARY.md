@@ -55,3 +55,7 @@
 **Data chip**: the label a hop carries on the retail shield demo's diagram, naming what it moves (a key, gas, a proof, a commitment, a ciphertext, a nullifier, a private note); a chip that stays inside a wallet is marked private. _Avoid_: badge, tag (a tag is a protocol object).
 
 **Concept moment**: a short illustration of one privacy idea (hidden on chain, proof, relayer, finding your notes, auditor) that the retail shield demo plays once, before the step where the idea first happens, and holds until the presenter moves on. _Avoid_: explainer, intro, tutorial.
+
+**Fan-out**: the retail shield demo's K payments from the Sender's one shielded note to the K participants, made one after another: each spends the change note of the payment before it, because the deployed Payment circuit has one input note and two output notes. _Avoid_: batch payment, split, airdrop.
+
+**Walkthrough**: a presenter-paced way to play the retail shield demo, before the full run: the Sender's path (keygen, register, auditor keys, shield, the fan-out, discover, audit) with no USDr fee and no tags. The engine waits before each **action** (one real call: a key generation, a transaction such as a registration or the shield, a proof request, a relay, a scan, one of the auditor's decryptions) until the presenter presses Next. It is a run option of the same page, not a second layout. _Avoid_: tutorial, replay, demo mode, step-through.
