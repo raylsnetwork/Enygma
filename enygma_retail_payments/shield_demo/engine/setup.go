@@ -21,6 +21,16 @@ var gasFunding = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
 var gasFundingETH = new(big.Int).Div(gasFunding, big.NewInt(1e18))
 
 func (e *Engine) checkPrereqs(ctx context.Context, s *step) error {
+	if err := e.connect(ctx, s); err != nil {
+		return err
+	}
+	s.done("Chain, gnark server and relayer are running")
+	return nil
+}
+
+// connect checks the services are up, connects to the chain and the
+// relayer, and reads the deployment and the vaults' trees. It only reads.
+func (e *Engine) connect(ctx context.Context, s *step) error {
 	if missing := Unreachable(e.cfg); len(missing) > 0 {
 		return fmt.Errorf("services not reachable: %s", strings.Join(missing, ", "))
 	}
@@ -87,11 +97,13 @@ func (e *Engine) checkPrereqs(ctx context.Context, s *step) error {
 		s.log("chain", "TagRegistry:    %s", c.tagRegistryAddr.Hex())
 		s.log("chain", "TagChannelReg.: %s", c.channelRegistryAddr.Hex())
 	}
-	s.done("Chain, gnark server and relayer are running")
 	return nil
 }
 
 func (e *Engine) generateKeys(ctx context.Context, s *step) error {
+	if err := s.await(ctx, "auditor", "Auditor"); err != nil {
+		return err
+	}
 	auditor, err := rpcore.NewAuditorKeyPair()
 	if err != nil {
 		return err
@@ -99,13 +111,27 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 	e.auditor = auditor
 	s.proto("auditorPk", "0x"+hex.EncodeToString(auditor.EncapsKey))
 	s.log("key", "auditor ML-KEM-768 ek: 0x%s…", hex.EncodeToString(auditor.EncapsKey)[:16])
+	if s.gated {
+		// A walkthrough's click shows the key it made.
+		s.hop(NodeAuditor, NodeAuditor, "auditor key", fmt.Sprintf("ML-KEM-768 key pair; users seal their view keys to its %d-byte public key", len(auditor.EncapsKey)))
+	}
 
 	funder, err := crypto.HexToECDSA(e.cfg.FunderKeyHex)
 	if err != nil {
 		return fmt.Errorf("parse funder key: %w", err)
 	}
 	e.actors = nil
+	fund := func(a *Actor) error {
+		if err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, []common.Address{a.Address}); err != nil {
+			return err
+		}
+		s.hop(NodeFunder, ActorNode(a.ID), "fund gas", fmt.Sprintf("%s ETH to %s's fresh signing account", gasFundingETH, a.Name))
+		return nil
+	}
 	newActor := func(name string, role Role, keyHex string, addr common.Address) error {
+		if err := s.await(ctx, "keys", name); err != nil {
+			return err
+		}
 		spend, err := rpcore.NewSpendKeyPair()
 		if err != nil {
 			return err
@@ -144,15 +170,22 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 		if err := newActor(name, role, keyHex, addr); err != nil {
 			return err
 		}
+		// A walkthrough funds each account with its keys, in the same click.
+		if s.gated {
+			if err := fund(e.actors[len(e.actors)-1]); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Each run's accounts are fresh, so the funder pays for their gas; that
 	// is what lets the demo run again on the same node.
-	for _, a := range e.registrable() {
-		if err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, []common.Address{a.Address}); err != nil {
-			return err
+	if !s.gated {
+		for _, a := range e.registrable() {
+			if err := fund(a); err != nil {
+				return err
+			}
 		}
-		s.hop(NodeFunder, ActorNode(a.ID), "fund gas", fmt.Sprintf("%s ETH to %s's fresh signing account", gasFundingETH, a.Name))
 	}
 	s.log("chain", "funded %d new accounts with %s ETH of gas each", len(e.registrable()), gasFundingETH)
 	s.done("BabyJubJub spend keys and ML-KEM-768 view keys for the issuer, the sender and %d participants", K)
@@ -163,6 +196,9 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 // UserRegistry, with their view key encrypted to the auditor.
 func (e *Engine) register(ctx context.Context, s *step) error {
 	for _, a := range e.registrable() {
+		if err := s.await(ctx, "register", a.Name); err != nil {
+			return err
+		}
 		mlKemCt, aesCt, err := rpcore.EncryptViewKeyForAuditor(e.auditor.EncapsKey, a.View.DecapsKey)
 		if err != nil {
 			return fmt.Errorf("%s: encrypt view key for auditor: %w", a.Name, err)

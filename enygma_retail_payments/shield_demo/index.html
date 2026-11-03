@@ -70,7 +70,8 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .chip.error { color:var(--bad); } .chip.error .status-dot { background:var(--bad); }
 @keyframes pulse { 50% { opacity:.3; } }
 #runBtn { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.1em; padding:7px 24px; border-radius:999px; cursor:pointer; }
-#runBtn:disabled, #sendBtn:disabled { opacity:.35; cursor:not-allowed; }
+#runBtn:disabled, #sendBtn:disabled, #walkBtn:disabled { opacity:.35; cursor:not-allowed; }
+#walkBtn { border:1.5px solid var(--accent); background:none; color:var(--accent); font-weight:700; letter-spacing:.1em; padding:6px 18px; border-radius:999px; cursor:pointer; }
 #themeBtn { border:1px solid var(--bd2); background:var(--s1); border-radius:50%; width:32px; height:32px; cursor:pointer; }
 #optError, #sendError { font:11px var(--mono); color:var(--bad); }
 #optError:empty { display:none; }
@@ -149,6 +150,11 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #nextBtn:disabled { opacity:.25; cursor:default; }
 #nextBtn.ready { animation:pulse 1.4s infinite; }
 .narr .hint { font:11px var(--mono); color:var(--muted); }
+.narr .act { font:15px/1.45 var(--serif); color:var(--text); border-left:3px solid var(--accent); padding:2px 0 2px 10px; }
+.narr .act[hidden] { display:none; }
+.narr .act b { font:700 10px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--accent); display:block; }
+#fullRunBtn { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.06em; padding:6px 20px; border-radius:999px; cursor:pointer; }
+#fullRunBtn[hidden] { display:none; }
 /* What the public chain sees against what stays private, side by side under the card. */
 .sides { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .sides:empty { display:none; }
@@ -367,7 +373,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <label class="toggle" title="Play the concept moments on the next run. On for this page's first run; each run turns it off."><input id="optMoments" type="checkbox" autocomplete="off" checked> concept moments</label>
   <span id="optError"></span>
   <span class="chip" id="status"><span class="status-dot"></span><span id="statusText">idle</span></span>
-  <button id="runBtn">RUN</button>
+  <button id="walkBtn" title="Play the Sender's path live, the engine doing one real action per Next">WALKTHROUGH</button>
+  <button id="runBtn" title="Play the full scenario">RUN</button>
   <button id="themeBtn" title="Light / dark theme" aria-label="Toggle light / dark theme">◐</button>
 </header>
 
@@ -390,8 +397,9 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     <div class="top"><span class="kicker" id="narrKicker"></span><span class="q" id="queued"></span></div>
     <h2 id="narrHead"></h2>
     <p class="body" id="narrBody"></p>
+    <p class="act" id="narrAct" aria-live="polite" hidden></p>
     <ul id="now"></ul>
-    <div class="next"><button id="nextBtn" disabled>NEXT ▸</button><span class="hint" id="nextHint"></span></div>
+    <div class="next"><button id="nextBtn" disabled>NEXT ▸</button><span class="hint" id="nextHint"></span><button id="fullRunBtn" hidden>RUN THE FULL DEMO ▸</button></div>
   </div>
   <div class="sides" id="narrSides"></div>
   <details class="fold hops card" id="hopFold"><summary>Proof and Merkle tree details</summary>
@@ -468,8 +476,9 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
      without its _N suffix; manual is a manual transfer): a kicker, a headline
      (h), a body and the "public chain sees" (pub) and "stays private" (priv)
      lists. Each is a string or a list of parts; a part is a string or
-     {"when": "tags" | "!tags" | "usdrFee" | "!usdrFee", "text": …}, kept only
-     when the run's option holds. An entry with "like": kind takes that
+     {"when": "tags" | "!tags" | "usdrFee" | "!usdrFee" | "walkthrough" |
+     "!walkthrough", "text": …}, kept only when the run's option holds (a
+     list of them: when each holds). An entry with "like": kind takes that
      kind's fields where it has none. {placeholders} are filled from the run:
      n, k, users, shieldTotal, fee, count (the scripted transfers), and
      from, to, amount for a payment. hops
@@ -480,7 +489,11 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
      play: a kicker, a headline (h) and beats, each with where it happens,
      its zone ("wallet", "line", "network" or "chain"), what (a string,
      or a list of [name, value] rows), an optional leaf (a leaf number,
-     drawn as the newest of a tree's leaves) and a caption (cap). Their texts take parts
+     drawn as the newest of a tree's leaves) and a caption (cap). walkthrough
+     is keyed by step kind, then by the action the engine waits before
+     (engine.StepActions): the plain-language text the card shows while the
+     engine waits for Next, with the step's placeholders and who (the person
+     the action is about). Their texts take parts
      and the placeholders of the step they play before as step narration
      does (from, to and amount for a fan-out), and also commitment,
      leaf and tree, from the step's commitment hop detail once its hop
@@ -585,7 +598,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
       "h": "The auditor’s view",
       "b": [
         {"when": "tags", "text": "With the view keys it recovered, the auditor decrypts every payment and, through the tag channels, names every payer. It rebuilds each user’s balance exactly, while the public still sees only fingerprints."},
-        {"when": "!tags", "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, so it sees what each user received but can’t rebuild their balances."}
+        {"when": ["!tags", "!walkthrough"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, so it sees what each user received but can’t rebuild their balances."},
+        {"when": "walkthrough", "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, but every note here comes from the Sender’s one shield, so it infers each balance by conservation: the Sender keeps what they shielded less what the others received. Each matches the user’s own scan."}
       ],
       "pub": ["Still only fingerprints, nullifiers and proofs"],
       "priv": [
@@ -599,7 +613,35 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
       "b": "The run’s transactions, gas, proving and relaying time, added up."
     }
   },
+  "walkthrough": {
+    "keygen": {
+      "auditor": "The auditor makes its key pair, ML-KEM-768. Users will seal a copy of their view key to its public half.",
+      "keys": "{who} makes a spend key (Poseidon), which owns their private money, and a view key (ML-KEM-768), which opens the notes paid to them. Both are made on {who}’s own machine."
+    },
+    "register": {
+      "register": "{who} seals their view key for the auditor and sends one real transaction to the UserRegistry: their public keys and the sealed box."
+    },
+    "audit_keys": {
+      "recover": "The auditor reads every registration from the UserRegistry and opens each sealed box with its own key, recovering each user’s view key."
+    },
+    "shield": {
+      "shield": "The issuer mints {shieldTotal} public RaylsERC20 to the Sender, who deposits all of it into the vault: one transaction, one new commitment."
+    },
+    "fanout": {
+      "prove": "The Sender’s wallet asks its prover for a zero-knowledge proof that paying {to} {amount} is valid. The prover does this now, for real: the hop line says how many milliseconds it took.",
+      "relay": "The Sender hands the proof to the relayer, which submits it from its own account. EnygmaDvp checks it, and the vault adds {to}’s note and the Sender’s change.",
+      "payment": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now."
+    },
+    "discover": {
+      "scan": "{who} tries every new note on chain with their view key and keeps the one that opens."
+    },
+    "audit": {
+      "audit": "The auditor opens every note of the walkthrough with the view keys it recovered, then checks each user’s balance against their own scan."
+    }
+  },
   "hops": {
+    "auditor key": "The auditor makes its ML-KEM-768 key pair.",
+    "audit": "The auditor {detail}.",
     "spend key": "{from} makes a spend key: it owns their private money.",
     "view key": "{from} makes a view key: payers encrypt notes to it.",
     "fund gas": "{to} gets a little ETH to pay for gas.",
@@ -627,6 +669,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   },
   "collapse": ["audit_keys", "channels", "usdr"],
   "chips": {
+    "auditor key": { "text": "auditor key", "kinds": ["key"], "private": true },
+    "audit": { "text": "ciphertexts → notes", "kinds": ["ciphertext", "note"], "private": true },
     "spend key": { "text": "spend key", "kinds": ["key"], "private": true },
     "view key": { "text": "view key", "kinds": ["key"], "private": true },
     "audit ciphertexts": { "text": "audit ciphertexts", "kinds": ["ciphertext"], "private": true },
@@ -800,7 +844,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
             "cap": [
               "With those view keys it opens every note, as each recipient can.",
               {"when": "tags", "text": "It rebuilds each user’s balance exactly."},
-              {"when": "!tags", "text": "It sees what each user received, but can’t rebuild their balances."},
+              {"when": ["!tags", "!walkthrough"], "text": "It sees what each user received, but can’t rebuild their balances."},
+              {"when": "walkthrough", "text": "Every note here comes from the Sender’s one shield, so it infers each balance by conservation."},
               "None of this is public."
             ]
           }
@@ -1192,8 +1237,9 @@ const diagram = (() => {
   // The queue also holds marks ({ run }) that `after` queues: a mark runs, and
   // takes no time, once every hop queued before it has played its hold. A gate
   // ({ gate }) that `gate` queues stops playback, even in /?fast: what queues
-  // behind it waits until `next` releases it. A concept moment's gate
-  // ({ gate, moment }) stays when `next` drops the step gates.
+  // behind it waits until `next` releases it, calling its onRelease. A concept
+  // moment's gate ({ gate, moment }) and a walkthrough action's ({ gate,
+  // keep }) stay when `next` drops the step gates.
   const HOLD = 600, DETAIL_HOLD = 1500, CATCHUP = 3000, MIN_HOLD = 120, PAUSED_HOLD = 1500, PAUSED_DETAIL_HOLD = 3000;
   const FAST = new URLSearchParams(location.search).has('fast');
   const queue = [];
@@ -1280,9 +1326,10 @@ const diagram = (() => {
       if (timer || queue.length) queue.push({ run: fn }); else fn();
     },
     // gate stops playback once the hops queued so far have played; moment
-    // marks a concept moment's gate.
-    gate(moment = false) {
-      queue.push({ gate: true, moment });
+    // marks a concept moment's gate, keep one `next(true)` keeps too, and
+    // onRelease runs when `next` releases it.
+    gate({ moment = false, keep = false, onRelease = null } = {}) {
+      queue.push({ gate: true, moment, keep, onRelease });
       if (!timer && queue.length === 1) pump();
     },
     // next releases the gate playback waits at; with all, it instead drops
@@ -1291,7 +1338,7 @@ const diagram = (() => {
     // play the pause off as lag.
     next(all) {
       const held = waiting();
-      if (all) { for (let i = queue.length; i--;) if (queue[i].gate && !queue[i].moment) queue.splice(i, 1); } else if (held) queue.shift();
+      if (all) { for (let i = queue.length; i--;) if (queue[i].gate && !queue[i].moment && !queue[i].keep) queue.splice(i, 1); } else if (held) queue.shift().onRelease?.();
       if (!held) return;
       const now = performance.now();
       for (const h of queue) if (h.at) h.at = now;
@@ -1817,7 +1864,8 @@ let sentTransfer = null;  // the manual transfer this page is sending
 
 const narration = (() => {
   // holds says whether a part's condition holds for the run's options o.
-  const holds = (when, o) => !when || (when[0] === '!' ? !o[when.slice(1)] : !!o[when]);
+  // A list of conditions holds when each of them does.
+  const holds = (when, o) => [].concat(when ?? []).every(w => w[0] === '!' ? !o[w.slice(1)] : !!o[w]);
   // fill puts vars into text's {placeholders}, leaving unknown ones as they are.
   const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m);
   // parts resolves a narration field to its texts for the run's options.
@@ -1853,6 +1901,7 @@ const narration = (() => {
     $('narrBody').textContent = body;
     $('narrSides').innerHTML = side('pub', 'Public chain sees', pub) + side('priv', 'Stays private', priv);
     $('now').innerHTML = '';
+    $('narrAct').hidden = true;
   }
 
   return {
@@ -1862,7 +1911,7 @@ const narration = (() => {
       const { kind, n } = stepOf(id);
       const own = NARRATION.steps[kind], entry = own && { ...NARRATION.steps[own.like], ...own }, o = options(), v = vars(kind, n, o);
       const i = steps.findIndex(s => s.id === id);
-      const kicker = [i < 0 ? 'After the run' : `Step ${i + 1} of ${steps.length}`, ...parts(entry?.kicker, o, v)].join(' · ');
+      const kicker = [...(o.walkthrough ? ['Walkthrough'] : []), i < 0 ? 'After the run' : `Step ${i + 1} of ${steps.length}`, ...parts(entry?.kicker, o, v)].join(' · ');
       const [h, b, pub, priv] = entry ? [parts(entry.h, o, v).join(' '), parts(entry.b, o, v).join(' '), parts(entry.pub, o, v), parts(entry.priv, o, v)] : [];
       // A placeholder left unfilled (a manual transfer another page sent) falls back too.
       if (!entry || /\{\w+\}/.test([h, b, ...pub, ...priv].join(' '))) return render(kicker, label, msg || '');
@@ -1888,6 +1937,15 @@ const narration = (() => {
       const o = options(), { kind, n } = stepOf(id);
       return parts(v, o, { ...vars(kind, n, o), ...extra }).join(' ');
     },
+    // action shows what the walkthrough's engine does on the next Next: the
+    // walkthrough narration of action e (an action event), and, once it is
+    // released (doing), that it is doing it.
+    action(e, doing = false) {
+      const v = NARRATION.walkthrough[stepOf(e.step).kind]?.[e.action];
+      const el = $('narrAct');
+      el.innerHTML = `<b>${doing ? 'Now, for real' : 'On Next'}</b>${esc(v ? this.text(v, e.step, { who: e.value }) : e.action)}`;
+      el.hidden = false;
+    },
     // reset shows the card's introduction, before a run.
     reset() {
       render('Enygma retail shield', 'Shield public tokens, then pay privately',
@@ -1896,11 +1954,56 @@ const narration = (() => {
   };
 })();
 
+// ---- walkthrough: the engine waits before each action until Next ----------
+
+// In a walkthrough this page started, the engine announces each action and
+// waits until /release. The announcement queues behind the hops so far, then
+// a gate: once playback reaches it, the card says what Next will do, and Next
+// or Space releases the gate and the engine, whose hops then play. The step
+// gates of pausing stay off: the actions set the pace.
+const walk = (() => {
+  // release has the engine perform action e. If the request doesn't reach
+  // the server, the engine still waits, so its gate comes back; a refusal
+  // (no walkthrough waiting) only shows.
+  async function release(e) {
+    narration.action(e, true);
+    let res;
+    try { res = await fetch('/release', { method: 'POST' }); } catch (err) {
+      $('optError').textContent = String(err);
+      return gate(e);
+    }
+    if (!res.ok) $('optError').textContent = await errorOf(res);
+  }
+  // gate queues action e's gate.
+  const gate = e => diagram.gate({ keep: true, onRelease: () => release(e) });
+  return {
+    // on says whether this page's run is a walkthrough.
+    on: () => !!runOpts?.walkthrough,
+    // action queues action event e: what it does, then its gate.
+    action(e) {
+      diagram.after(() => narration.action(e));
+      gate(e);
+    },
+    // done offers the full run, once the walkthrough's last hop has played.
+    done() { diagram.after(() => { $('fullRunBtn').hidden = false; }); },
+    // reset takes the handover away, for a new run.
+    reset() { $('fullRunBtn').hidden = true; },
+  };
+})();
+
+// errorOf is a failed request's error message.
+async function errorOf(res) {
+  const body = await res.text();
+  try { return JSON.parse(body).error || body; } catch (_) { return body; }
+}
+
 // ---- presenter pacing: playback holds after each step until Next -------------
 
 // With pausing on, each successful scenario step but the last queues a gate in
 // the diagram's hop queue after its finished mark; Next or Space releases it.
-// The engine does not pause: its events queue behind the gate meanwhile.
+// The engine does not pause: its events queue behind the gate meanwhile. A
+// walkthrough queues no step gates: the engine waits at its action gates
+// instead (see walk), which Next and Space release the same way.
 const PAUSE_KEY = 'enygmaRetailShieldPause';
 const pacing = (() => {
   let on = true, held = false;
@@ -1908,7 +2011,7 @@ const pacing = (() => {
   function show() {
     $('nextBtn').disabled = !held;
     $('nextBtn').classList.toggle('ready', held);
-    $('nextHint').textContent = on ? 'or press Space' : 'pausing is off';
+    $('nextHint').textContent = walk.on() ? (held ? 'or press Space · the engine waits for you' : '') : on ? 'or press Space' : 'pausing is off';
   }
   $('optPause').checked = on;
   $('optPause').onchange = ev => {
@@ -1931,7 +2034,7 @@ const pacing = (() => {
   return {
     // stepDone queues a gate after scenario step id, unless it is the last.
     stepDone(id) {
-      if (on && $('step-' + id) && id !== steps.at(-1)?.id) diagram.gate();
+      if (on && !walk.on() && $('step-' + id) && id !== steps.at(-1)?.id) diagram.gate();
     },
     // showHeld shows whether playback waits at a gate.
     showHeld(w) { if (held !== w) { held = w; show(); } },
@@ -2004,7 +2107,7 @@ const moments = (() => {
       const ms = play && NARRATION.moments[id];
       if (!ms) return;
       const run = Object.entries(NARRATION.moments).filter(([s]) => $('step-' + s)).flatMap(([, x]) => x);
-      for (const m of ms) { const i = run.indexOf(m) + 1; diagram.after(() => show({ m, id, i, of: run.length })); diagram.gate(true); }
+      for (const m of ms) { const i = run.indexOf(m) + 1; diagram.after(() => show({ m, id, i, of: run.length })); diagram.gate({ moment: true }); }
       diagram.after(hide);
     },
     // arrive takes a hop as it arrives: a commitment hop detail in a step
@@ -2036,7 +2139,7 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose
@@ -2054,8 +2157,9 @@ function onEvent(e) {
   case 'log': termLine(e, e.cat ? 'c-' + e.cat : '', `[${(e.cat || '·').padEnd(5)}] ${e.msg}`); break;
   case 'actor': setActor(e.actor, e.field, e.value); diagram.after(() => wallet.set(e.actor, e.field, e.value)); break;
   case 'proto': setProto(e.field, e.value); break;
-  case 'done': diagram.after(() => setStatus('success', 'done')); $('runBtn').disabled = false; $('sendBtn').disabled = false; termLine(e, 'c-ok', e.msg); break;
-  case 'failed': diagram.after(() => setStatus('error', 'failed')); $('runBtn').disabled = false; termLine(e, 'c-bad', e.msg); break;
+  case 'done': diagram.after(() => setStatus('success', 'done')); startable(true); $('sendBtn').disabled = false; if (walk.on()) walk.done(); termLine(e, 'c-ok', e.msg); break;
+  case 'failed': diagram.after(() => setStatus('error', 'failed')); startable(true); termLine(e, 'c-bad', e.msg); break;
+  case 'action': if (walk.on()) walk.action(e); termLine(e, 'c-step', `⏸ waiting for Next: ${e.action}${e.value ? ' · ' + e.value : ''}`); break;
   case 'term': serviceLine(e); break;
   case 'hop': diagram.hop(e); moments.arrive(e); break;
   }
@@ -2080,30 +2184,37 @@ $('sendFrom').value = NAMES[0];
 $('sendBtn').onclick = async () => {
   const t = sentTransfer = { from: $('sendFrom').value, to: $('sendTo').value, amount: Number($('sendAmount').value) };
   $('sendError').textContent = '';
-  $('sendBtn').disabled = true; $('runBtn').disabled = true;
+  $('sendBtn').disabled = true; startable(false);
   try {
     const res = await fetch('/transfer', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(t) });
-    if (!res.ok) {
-      const body = await res.text();
-      let msg = body;
-      try { msg = JSON.parse(body).error || body; } catch (_) {}
-      $('sendError').textContent = msg;
-    }
-  } finally { $('sendBtn').disabled = false; $('runBtn').disabled = false; sentTransfer = null; }
+    if (!res.ok) $('sendError').textContent = await errorOf(res);
+  } finally { $('sendBtn').disabled = false; startable(true); sentTransfer = null; }
 };
 
-$('runBtn').onclick = async () => {
-  const opts = { shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked, tags: $('optTags').checked };
-  runOpts = { ...opts, script: defaults?.script || [] }; startingRun = true;
+// startable turns the Run and Walkthrough buttons on or off.
+function startable(on) { $('runBtn').disabled = $('walkBtn').disabled = !on; }
+
+// start asks for a run with opts. A walkthrough waits on its presenter, so
+// the buttons stay on during one: a new run or walkthrough ends it.
+async function start(opts) {
+  runOpts = { ...opts, script: opts.walkthrough ? [] : defaults?.script || [] }; startingRun = true;
   $('optError').textContent = '';
-  $('runBtn').disabled = true;
+  startable(!!opts.walkthrough);
   const res = await fetch('/run', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(opts) });
   if (!res.ok) {
-    const body = await res.text();
-    let msg = body;
-    try { msg = JSON.parse(body).error || body; } catch (_) {}
-    $('optError').textContent = msg; $('runBtn').disabled = false; runOpts = null; startingRun = false;
+    $('optError').textContent = await errorOf(res); startable(true); runOpts = null; startingRun = false;
   }
+}
+// formOptions are the run options as the header's form stands.
+const formOptions = () => ({ shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked, tags: $('optTags').checked });
+// RUN plays the full scenario with the form's options.
+$('runBtn').onclick = () => start(formOptions());
+// A walkthrough takes the form's amounts, never a fee or tags.
+$('walkBtn').onclick = () => start({ ...formOptions(), usdrFee: false, tags: false, walkthrough: true });
+// The handover: a normal run with the default options, fresh actors, same stack.
+$('fullRunBtn').onclick = () => {
+  if (!defaults) { $('optError').textContent = 'the default options have not loaded; reload the page'; return; }
+  start({ shieldTotal: defaults.shieldTotal, payouts: defaults.payouts, usdrFee: defaults.usdrFee, tags: defaults.tags });
 };
 
 build();

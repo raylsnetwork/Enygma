@@ -155,6 +155,9 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 	}
 	s.log("chain", "%d encrypted notes on chain (Payment + EncryptedNote events)", len(events))
 	for _, p := range e.participants() {
+		if err := s.await(ctx, "scan", p.Name); err != nil {
+			return err
+		}
 		if e.opts.Tags {
 			// Each participant was paid once in the fan-out.
 			if _, err := e.discoverByTag(ctx, s, p, 1); err != nil {

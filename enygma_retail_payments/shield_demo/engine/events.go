@@ -23,9 +23,12 @@ const (
 	// HopDetail, what it does to the protocol state; a key-material step is
 	// a hop from an actor to itself. A Failed hop is one that failed its
 	// step, its Detail the error.
-	Hop       EventKind = "hop"
-	RunDone   EventKind = "done"
-	RunFailed EventKind = "failed"
+	Hop EventKind = "hop"
+	// ActionWaiting is a walkthrough's engine waiting, before Action of
+	// step Step, about the person Value names (or no one), for its Gate.
+	ActionWaiting EventKind = "action"
+	RunDone       EventKind = "done"
+	RunFailed     EventKind = "failed"
 )
 
 // Event is one progress report from the engine.
@@ -42,6 +45,7 @@ type Event struct {
 	To     string    `json:"to,omitempty"`
 	Detail string    `json:"detail,omitempty"`
 	Failed bool      `json:"failed,omitempty"`
+	Action string    `json:"action,omitempty"`
 
 	HopDetail []HopDetail `json:"hopDetail,omitempty"`
 }
@@ -214,6 +218,8 @@ type Sink interface {
 type step struct {
 	e         *Engine
 	id, label string
+	// gated releases each action inside the step on its own (see await).
+	gated bool
 }
 
 func (s *step) start(msg string) {

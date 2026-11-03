@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,13 +15,15 @@ import (
 var narrationBlock = regexp.MustCompile(`(?s)<script type="application/json" id="narration">(.*?)</script>`)
 
 // narration is the page's narration block: the step narration by step kind,
+// the walkthrough's action narration by step kind and action,
 // the concept moments by the step id each plays before, the data chips by
 // hop label, and the step kinds whose repeated hops collapse.
 type narration struct {
-	Steps    map[string]json.RawMessage   `json:"steps"`
-	Moments  map[string][]json.RawMessage `json:"moments"`
-	Chips    map[string]chip              `json:"chips"`
-	Collapse []string                     `json:"collapse"`
+	Steps       map[string]json.RawMessage            `json:"steps"`
+	Walkthrough map[string]map[string]json.RawMessage `json:"walkthrough"`
+	Moments     map[string][]json.RawMessage          `json:"moments"`
+	Chips       map[string]chip                       `json:"chips"`
+	Collapse    []string                              `json:"collapse"`
 }
 
 // chip is a data chip: what a hop moves, its kinds, and whether it stays
@@ -155,8 +158,8 @@ func TestARunPlaysTheFiveConceptMoments(t *testing.T) {
 }
 
 // momentTexts are the texts of raw, a narration value, that a run with the
-// given USDr fee and tags shows: a {"when", "text"} part is kept only when
-// its option holds, as the page does.
+// given USDr fee and tags, and no walkthrough, shows: a {"when", "text"}
+// part is kept only when its options hold, as the page does.
 func momentTexts(t *testing.T, raw any, usdrFee, tags bool) []string {
 	t.Helper()
 	switch v := raw.(type) {
@@ -169,14 +172,22 @@ func momentTexts(t *testing.T, raw any, usdrFee, tags bool) []string {
 		}
 		return out
 	case map[string]any:
-		if when, ok := v["when"].(string); ok {
-			holds := map[string]bool{"usdrFee": usdrFee, "!usdrFee": !usdrFee, "tags": tags, "!tags": !tags}
-			h, known := holds[when]
-			if !known {
-				t.Errorf("unknown condition %q", when)
+		if when, ok := v["when"]; ok {
+			holds := map[string]bool{"usdrFee": usdrFee, "!usdrFee": !usdrFee, "tags": tags, "!tags": !tags, "walkthrough": false, "!walkthrough": true}
+			var conds []any
+			if c, ok := when.(string); ok {
+				conds = []any{c}
+			} else {
+				conds, _ = when.([]any)
 			}
-			if !h {
-				return nil
+			for _, c := range conds {
+				h, known := holds[fmt.Sprint(c)]
+				if !known {
+					t.Errorf("unknown condition %q", c)
+				}
+				if !h {
+					return nil
+				}
 			}
 			return momentTexts(t, v["text"], usdrFee, tags)
 		}
@@ -232,6 +243,35 @@ func TestEveryDataChipHasAKnownKind(t *testing.T) {
 		for _, k := range c.Kinds {
 			if !chipKinds[k] {
 				t.Errorf("hop %q: unknown chip kind %q", label, k)
+			}
+		}
+	}
+}
+
+// walkthroughOptions are the options of a walkthrough.
+func walkthroughOptions() engine.Options {
+	opts := engine.DefaultOptions()
+	opts.Walkthrough = true
+	return opts
+}
+
+// Every action a walkthrough's gate releases, in every step it announces,
+// has its narration in the page's walkthrough section, and so does every
+// step: a new action can't ship without its explanation.
+func TestEveryWalkthroughActionHasANarration(t *testing.T) {
+	n := servedNarration(t)
+	actions := engine.StepActions(walkthroughOptions())
+	for _, id := range engine.StepIDs(walkthroughOptions()) {
+		kind := stepSuffix.ReplaceAllString(id, "")
+		if n.Steps[kind] == nil {
+			t.Errorf("walkthrough step %s: no step narration for kind %q", id, kind)
+		}
+		if len(actions[id]) == 0 {
+			t.Errorf("walkthrough step %s releases no action", id)
+		}
+		for _, a := range actions[id] {
+			if v := n.Walkthrough[kind][a]; len(v) == 0 || string(v) == `""` {
+				t.Errorf("walkthrough step %s: no narration for action %q of kind %q", id, a, kind)
 			}
 		}
 	}

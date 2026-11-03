@@ -194,6 +194,9 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if len(ins) == 2 {
 		circuit = "Payment2in"
 	}
+	if err := s.await(ctx, "prove", to.Name); err != nil {
+		return nil, err
+	}
 	proveStart := time.Now()
 	res, err := rpcore.NewPaymentClient(e.cfg.GnarkURL).BoundPaymentProof(
 		new(big.Int).SetBytes(c.vaultAddr.Bytes()),
@@ -248,6 +251,9 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 			fee.proveTime.Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)
 	}
 
+	if err := s.await(ctx, "relay", to.Name); err != nil {
+		return nil, err
+	}
 	relayStart := time.Now()
 	var tx *relayTxResponse
 	if fee != nil {
