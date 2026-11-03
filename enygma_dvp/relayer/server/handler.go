@@ -62,9 +62,15 @@ type Handler struct {
 	// vault directly rather than through EnygmaDvp.
 	erc20VaultABI abi.ABI
 	dvpAddr       common.Address
-	auth          *bind.TransactOpts
-	client        *ethclient.Client
-	txMu          sync.Mutex // serializes on-chain submissions — prevents nonce races
+
+	// DvpAgreementRegistry; agreementAddr is the zero address when it is not
+	// deployed, and the /relay/offer and /relay/reply routes then return 503.
+	agreementABI  abi.ABI
+	agreementAddr common.Address
+
+	auth   *bind.TransactOpts
+	client *ethclient.Client
+	txMu   sync.Mutex // serializes on-chain submissions — prevents nonce races
 	// txTimeout bounds how long transact waits for a receipt (0 = defaultTxTimeout).
 	txTimeout time.Duration
 	inFlight  sync.Map // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
@@ -92,13 +98,17 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 	}
 	auth.GasLimit = 8_000_000
 
+	receipts, receiptsErr := loadReceipts(cfg.ReceiptsPath)
 	dvpAddrStr := cfg.EnygmaDvpAddr
 	if dvpAddrStr == "" {
-		receipts, err := loadReceipts(cfg.ReceiptsPath)
-		if err != nil {
-			return nil, fmt.Errorf("load receipts: %w", err)
+		if receiptsErr != nil {
+			return nil, fmt.Errorf("load receipts: %w", receiptsErr)
 		}
 		dvpAddrStr = receipts["EnygmaDvp"].ContractAddress
+	}
+	agreementAddrStr := cfg.AgreementRegistryAddr
+	if agreementAddrStr == "" && receiptsErr == nil {
+		agreementAddrStr = receipts["DvpAgreementRegistry"].ContractAddress
 	}
 	if dvpAddrStr == "" {
 		return nil, fmt.Errorf("EnygmaDvp address must be set via RELAYER_DVP_ADDR or receipts.json")
@@ -115,6 +125,14 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 	erc20VaultABI, err := loadABIFromArtifact("../artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
 	if err != nil {
 		return nil, fmt.Errorf("load Erc20CoinVault ABI: %w", err)
+	}
+
+	var agreementABI abi.ABI
+	if agreementAddrStr != "" {
+		agreementABI, err = loadABIFromArtifact("../artifacts/contracts/core/contracts/DvpAgreementRegistry.sol/DvpAgreementRegistry.json")
+		if err != nil {
+			return nil, fmt.Errorf("load DvpAgreementRegistry ABI: %w", err)
+		}
 	}
 
 	// RELAYER_FEE_SPEND_PRIVATE_KEY is optional — derive the relayer's fee-note
@@ -134,6 +152,8 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 		vaultABI:       vaultABI,
 		erc20VaultABI:  erc20VaultABI,
 		dvpAddr:        common.HexToAddress(dvpAddrStr),
+		agreementABI:   agreementABI,
+		agreementAddr:  common.HexToAddress(agreementAddrStr),
 		auth:           auth,
 		client:         client,
 		txTimeout:      cfg.TxTimeout,

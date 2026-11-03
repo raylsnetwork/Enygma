@@ -23,6 +23,10 @@ type Config struct {
 	// EnygmaDvpAddr — address of the deployed EnygmaDvp contract.
 	// If empty, read from ReceiptsPath.
 	EnygmaDvpAddr string
+	// AgreementRegistryAddr — address of the DvpAgreementRegistry (on-chain
+	// trade agreement: POST /relay/offer and /relay/reply). If empty, read from
+	// ReceiptsPath; if absent there too, those routes return 503.
+	AgreementRegistryAddr string
 	// ReceiptsPath — path to build/receipts.json.
 	ReceiptsPath string
 	// Port — HTTP listen port. Defaults to 8091.
@@ -56,13 +60,14 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		RPCURL:               getenv("RELAYER_RPC_URL", "http://localhost:8545"),
-		RelayerPrivateKeyHex: strings.TrimPrefix(getenv("RELAYER_PRIVATE_KEY", ""), "0x"),
-		APIKey:               getenv("RELAYER_API_KEY", ""),
-		EnygmaDvpAddr:        getenv("RELAYER_DVP_ADDR", ""),
-		ReceiptsPath:         getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),
-		Port:                 getenv("RELAYER_PORT", "8091"),
-		FeeNotesPath:         getenv("RELAYER_FEE_NOTES_PATH", "fee_notes.jsonl"),
+		RPCURL:                getenv("RELAYER_RPC_URL", "http://localhost:8545"),
+		RelayerPrivateKeyHex:  strings.TrimPrefix(getenv("RELAYER_PRIVATE_KEY", ""), "0x"),
+		APIKey:                getenv("RELAYER_API_KEY", ""),
+		EnygmaDvpAddr:         getenv("RELAYER_DVP_ADDR", ""),
+		AgreementRegistryAddr: getenv("RELAYER_AGREEMENT_ADDR", ""),
+		ReceiptsPath:          getenv("RELAYER_RECEIPTS_PATH", "../build/receipts.json"),
+		Port:                  getenv("RELAYER_PORT", "8091"),
+		FeeNotesPath:          getenv("RELAYER_FEE_NOTES_PATH", "fee_notes.jsonl"),
 	}
 
 	chainIDStr := getenv("RELAYER_CHAIN_ID", "1337")

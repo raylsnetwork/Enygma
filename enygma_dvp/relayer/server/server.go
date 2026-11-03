@@ -76,6 +76,8 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 		relay.POST("/partial_withdraw", h.RelayPartialWithdraw)
 		relay.POST("/swap", h.RelaySwap)
 		relay.POST("/exchange", h.RelayExchange)
+		relay.POST("/offer", h.RelayOffer)
+		relay.POST("/reply", h.RelayReply)
 	}
 
 	return r, nil

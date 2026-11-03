@@ -139,6 +139,44 @@ The protocol enforces **atomic Delivery-versus-Payment (DvP)**:
 
 ---
 
+## On-chain Agreement (DvpAgreementRegistry)
+
+The trade parameters above can be agreed on-chain instead of off-chain, using the channel setup and private tags from Enygma Retail Payments. The contract only sees ciphertexts, and offers and replies should be submitted through the relayer (`POST /relay/offer`, `POST /relay/reply`) so that `msg.sender` does not reveal the traders.
+
+**1. Offer (Alice).** Alice reads Bob's keys and user index from `UserRegistry` and publishes:
+
+$$
+(ss,\ c_1) \longleftarrow \mathrm{ML\text{-}KEM.Encaps}(pk_B^{\text{view}}), \qquad k = \mathrm{HKDF}(ss,\ \text{"enygma-dvp-channel-key-v1"})
+$$
+
+$$
+c_2 = \mathrm{AES\text{-}GCM}(k,\ Offer,\ aad = \text{"dvp-offer-v1"} \parallel c_1)
+$$
+
+with $Offer = (offer_{id},\ vault_1,\ token_{id_1},\ amount_1,\ vault_2,\ token_{id_2},\ amount_2,\ deadline,\ pk_A^{\text{spend}})$, through `openOffer(c1, c2, bitmap)`. The bitmap is an anonymity set over `UserRegistry` indices containing Bob. The offer is emitted as an event, not stored (about 83k gas).
+
+**2. Discovery (Bob).** Bob skips offers whose bitmap excludes his index, decapsulates $c_1$ and decrypts $c_2$. A failed decryption means the offer is for someone else.
+
+**3. Reply (Bob).** Bob answers `Accept`, `Reject` or `Counter` under a private tag addressed to Alice:
+
+$$
+t = \mathrm{Poseidon}(block,\ pk_A^{\text{spend}},\ ss \bmod p), \qquad ctxt = \mathrm{AES\text{-}GCM}(k,\ Reply,\ aad = \text{"dvp-reply-v1"} \parallel pk_A^{\text{spend}} \parallel c_1)
+$$
+
+The block is unknown in advance, so `publishReply(startBlock, tags[], ctxt)` takes a window of up to 16 tags and publishes the one for the current block (about 51k gas). Alice recomputes $t$ for each open offer and decrypts on a match.
+
+**4. Swap salts (both).** Both parties derive the output salts from the channel secret instead of a new encapsulation:
+
+$$
+s = \mathrm{HKDF}(ss,\ \text{"dvp-swap"} \parallel offer_{id}), \quad salt_B^{\text{out}} = \mathrm{HKDF}(s,\ \text{"Bob salt"}), \quad salt_A^{\text{out}} = \mathrm{HKDF}(s,\ \text{"Alice salt"})
+$$
+
+Alice then proves and submits her leg as usual with the offered deadline, and no CTXT or ENC_TX_DATA is handed to Bob. Bob recomputes $C^{\text{out}}_B$ and $C^{\text{out}}_A$, finds the `SwapInitiated` event keyed by $C^{\text{out}}_B$, and checks that $C^{\text{out}}_A$ and the deadline match the offer before completing. If Alice changed the terms, the commitments do not match, Bob does not complete, and Alice recovers her note through the timeout path.
+
+The circuits and `EnygmaDvp` are unchanged. Go helpers are in `src/core/agreement.go` and `src/core/agreement_chain.go`; the end-to-end flow is `test/16_v2_dvp_onchain_agreement_test.go`.
+
+---
+
 ## Transaction Structure (Alice → Blockchain)
 
 <div align="center">

@@ -306,6 +306,24 @@ func deploy() error {
 	fmt.Printf("NonFungibleAssetGroup has been deployed to %s\n", nonFungibleGroupAddress.Hex())
 	receipts["NonFungibleAssetGroup"] = receiptToData(receipt, nonFungibleGroupAddress)
 
+	// Deploy UserRegistry (spend + ML-KEM view keys; indices for anonymity sets)
+	fmt.Println("Deploying UserRegistry smart contract...")
+	userRegistryAddress, receipt, err := deployContract(client, owner, "core/contracts/UserRegistry.sol/UserRegistry")
+	if err != nil {
+		return fmt.Errorf("failed to deploy UserRegistry: %w", err)
+	}
+	fmt.Printf("UserRegistry has been deployed to %s\n", userRegistryAddress.Hex())
+	receipts["UserRegistry"] = receiptToData(receipt, userRegistryAddress)
+
+	// Deploy DvpAgreementRegistry (on-chain trade agreement: offers and replies)
+	fmt.Println("Deploying DvpAgreementRegistry smart contract...")
+	agreementRegistryAddress, receipt, err := deployContract(client, owner, "core/contracts/DvpAgreementRegistry.sol/DvpAgreementRegistry")
+	if err != nil {
+		return fmt.Errorf("failed to deploy DvpAgreementRegistry: %w", err)
+	}
+	fmt.Printf("DvpAgreementRegistry has been deployed to %s\n", agreementRegistryAddress.Hex())
+	receipts["DvpAgreementRegistry"] = receiptToData(receipt, agreementRegistryAddress)
+
 	// Save receipts to JSON
 	if err := saveReceipts(receipts); err != nil {
 		return fmt.Errorf("failed to save receipts: %w", err)
