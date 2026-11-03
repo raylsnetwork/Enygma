@@ -57,7 +57,7 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 		return err
 	}
 
-	s.hop(ActorNode(sender.ID), NodeVault, "shield", fmt.Sprintf("%s public RaylsERC20 (just minted) into one private note, block %d, gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed)), cd)
+	s.hop(ActorNode(sender.ID), NodeVault, "shield", fmt.Sprintf("%s public RaylsERC20 (just minted) into one private note, block %d, gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed)), cd, c.receipt(receipt))
 	s.log("chain", "Erc20CoinVault.depositV2(%s) → block %d  gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed))
 	s.log("key", "sender's note commitment 0x%s…", n.commitment.Text(16)[:16])
 	s.proto("shieldGas", fmt.Sprint(receipt.GasUsed))

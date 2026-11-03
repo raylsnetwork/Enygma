@@ -197,8 +197,10 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if err := s.await(ctx, "prove", to.Name); err != nil {
 		return nil, err
 	}
+	gnark, rec := rpcore.NewPaymentClient(e.cfg.GnarkURL), &recorder{}
+	gnark.Client = rec.client(gnark.Client.Timeout)
 	proveStart := time.Now()
-	res, err := rpcore.NewPaymentClient(e.cfg.GnarkURL).BoundPaymentProof(
+	res, err := gnark.BoundPaymentProof(
 		new(big.Int).SetBytes(c.vaultAddr.Bytes()),
 		big.NewInt(0),
 		values,
@@ -232,7 +234,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	for i := range ins {
 		nullifiers[i] = "0x" + stmt[nullifiersOffset+i].Text(16)[:12] + "…"
 	}
-	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs)...)
+	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs, rec.exchange())...)
 	if len(ins) == 2 {
 		s.log("zk", "Payment2in proof in %d ms — merges %s's %s notes, nullifiers %s",
 			proveMs, from.Name, amounts(ins), strings.Join(nullifiers, ", "))
@@ -256,10 +258,11 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	}
 	relayStart := time.Now()
 	var tx *relayTxResponse
+	var relayed HopDetail
 	if fee != nil {
-		tx, err = e.relayer.paymentUsdrFee(ctx, res, fee)
+		tx, relayed, err = e.relayer.paymentUsdrFee(ctx, res, fee)
 	} else {
-		tx, err = e.relayer.payment(ctx, res)
+		tx, relayed, err = e.relayer.payment(ctx, res)
 	}
 	relayTime := time.Since(relayStart)
 	if err != nil {
@@ -309,7 +312,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		out.UsdrFeeNote = fee.feeNote
 		out.method = "paymentWithUsdrFee"
 	}
-	s.hop(fromNode, NodeRelayer, "relay", fmt.Sprintf("the relayer, not %s, submits the transaction", from.Name))
+	s.hop(fromNode, NodeRelayer, "relay", fmt.Sprintf("the relayer, not %s, submits the transaction", from.Name), relayed)
 	settled := "the payment"
 	if fee != nil {
 		settled = "the payment and the USDr fee in one transaction"
@@ -318,6 +321,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if fee != nil {
 		settleDetails = append(settleDetails, settleChecks("UsdrFee", NodeUsdrVault, fee.statement, out.TxHash))
 	}
+	settleDetails = append(settleDetails, c.receipt(receipt))
 	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)), settleDetails...)
 	owners := map[string]string{stmt[commitmentsOutOffset].String(): to.Name, changeNote.commitment.String(): from.Name}
 	notesIn, err := c.leavesIn(ctx, NodeVault, c.vaultAddr, out.TxHash, owners)

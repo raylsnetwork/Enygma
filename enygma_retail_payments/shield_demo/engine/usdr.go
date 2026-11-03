@@ -37,7 +37,7 @@ func (e *Engine) grantUsdr(ctx context.Context, s *step) error {
 		if err != nil {
 			return fmt.Errorf("USDr grant to %s: %w", a.Name, err)
 		}
-		s.hop(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", fmt.Sprintf("a %s USDr note for %s, encrypted to their view key, block %d", grant, a.Name, receipt.BlockNumber), cd)
+		s.hop(ActorNode(issuer.ID), NodeUsdrVault, "grant USDr", fmt.Sprintf("a %s USDr note for %s, encrypted to their view key, block %d", grant, a.Name, receipt.BlockNumber), cd, c.receipt(receipt))
 		s.log("chain", "UsdrCoinVault.depositV2(%s) → %s's note 0x%s…  block %d", grant, a.Name, n.commitment.Text(16)[:12], receipt.BlockNumber)
 	}
 	s.actor(issuer, "public", "0 USDr ("+total.String()+" minted and shielded)")
@@ -143,7 +143,8 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		PublicSignal []*big.Int `json:"publicSignal"`
 	}
 	proveStart := time.Now()
-	if err := postJSON(ctx, e.cfg.GnarkURL+"/proof/usdrFee", nil, req, &out); err != nil {
+	rec := &recorder{}
+	if err := postJSON(ctx, rec.client(0), e.cfg.GnarkURL+"/proof/usdrFee", nil, req, &out); err != nil {
 		return nil, err
 	}
 	proveTime := time.Since(proveStart)
@@ -156,7 +157,7 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		return nil, err
 	}
 	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, proveTime: proveTime,
-		details: []HopDetail{merklePath(NodeUsdrVault, payer.Name, mp), inputs}, statement: out.PublicSignal}
+		details: []HopDetail{merklePath(NodeUsdrVault, payer.Name, mp), inputs, rec.exchange()}, statement: out.PublicSignal}
 	for i, v := range out.Proof {
 		leg.proof[i] = v.String()
 	}

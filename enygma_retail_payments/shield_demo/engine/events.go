@@ -70,6 +70,13 @@ const (
 	// has had, its nullifier is unused, and the proof verifies; then the
 	// nullifiers the vault publishes, one per spent note.
 	DetailSettleChecks HopDetailKind = "settleChecks"
+	// DetailHTTP is one HTTP request a hop sent, to the gnark server or the
+	// relayer, and the response it got back, both bodies as they went over
+	// the wire.
+	DetailHTTP HopDetailKind = "http"
+	// DetailReceipt is the receipt of the transaction a hop mined: its hash,
+	// block, gas and the events it logged.
+	DetailReceipt HopDetailKind = "receipt"
 )
 
 // noteOpening names the parts of a note's opening, in the order the
@@ -77,8 +84,9 @@ const (
 // private to the note's owner.
 var noteOpening = []string{"pk_spend", "salt", "amount", "token"}
 
-// HopDetail is what a hop does to the protocol state. Field elements are
-// 0x-hex.
+// HopDetail is what a hop does to the protocol state or, for the http and
+// receipt kinds, what it sent over the wire or mined on chain. Field
+// elements are 0x-hex.
 type HopDetail struct {
 	Kind HopDetailKind `json:"kind"`
 	// Vault is the vault's node ID (NodeVault or NodeUsdrVault) and Tree
@@ -119,6 +127,35 @@ type HopDetail struct {
 	// that settles it (TxHash), and its spent notes. Vault is the vault it
 	// spends from and Tree its first spent note's tree.
 	Spent []SpentNote `json:"spent,omitempty"`
+
+	// http: the request's method and URL, the response's status, and both
+	// bodies as sent. Headers are left out.
+	Method   string `json:"method,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Status   int    `json:"status,omitempty"`
+	Request  string `json:"request,omitempty"`
+	Response string `json:"response,omitempty"`
+
+	// receipt: the transaction (TxHash), its block, its gas and its logs.
+	Block   uint64        `json:"block,omitempty"`
+	GasUsed uint64        `json:"gas,omitempty"`
+	Events  []LoggedEvent `json:"events,omitempty"`
+}
+
+// LoggedEvent is one log of a transaction's receipt: the contract that
+// logged it (a diagram node, a token's name, or its address), its address,
+// and its event's name and arguments in declaration order.
+type LoggedEvent struct {
+	Contract string     `json:"contract"`
+	Address  string     `json:"address"`
+	Name     string     `json:"name"`
+	Args     []EventArg `json:"args"`
+}
+
+// EventArg is one argument of a logged event.
+type EventArg struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // SpentNote is one note a settled proof spends, as EnygmaDvp checks it: its
