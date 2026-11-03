@@ -997,7 +997,8 @@ function showTotals(t) {
 function showAudit(a) {
   const tagged = a.balances !== null;
   $('auditNote').textContent = `${a.users.length} view keys recovered · ${a.entries.length} transactions decrypted · ` +
-    (tagged ? 'balances = received − paid' : 'payers hidden: without tags only recipients\' notes are published');
+    (a.inferred ? 'payers hidden (no tags): balances inferred by conservation from the Sender\'s one shield'
+      : tagged ? 'balances = received − paid' : 'payers hidden: without tags only recipients\' notes are published');
   $('auditBalances').innerHTML = a.users.map(u => {
     const erc = tagged ? a.balances[u] : null, usdr = tagged ? a.usdrBalances[u] : null;
     const ok = tagged && String(erc) === a.own[u] && String(usdr) === a.ownUsdr[u];
