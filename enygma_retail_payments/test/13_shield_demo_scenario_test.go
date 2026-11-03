@@ -274,6 +274,11 @@ func TestShieldDemoScenario(t *testing.T) {
 		checkSettleChecks(t, client, vaults, vaultAddrs, sink.hops(), true)
 	})
 
+	t.Run("each proof and relayer call hop carries its HTTP request and response, and each mining hop its receipt", func(t *testing.T) {
+		relayed := checkWireDetails(t, sink.hops())
+		checkReceiptDetails(t, client, sink.hops(), relayed)
+	})
+
 	t.Run("the run's totals count every transaction it put on chain", func(t *testing.T) {
 		totals, err := e.Totals(context.Background())
 		if err != nil {
@@ -1057,6 +1062,7 @@ func checkProofDetails(t *testing.T, vaults map[string]*bind.BoundContract, vaul
 				paths = append(paths, d)
 			case engine.DetailPublicInputs:
 				inputs = append(inputs, d)
+			case engine.DetailHTTP: // checked by checkWireDetails
 			default:
 				t.Errorf("step %s: %s proof hop carries a %q detail", h.Step, circuit, d.Kind)
 			}
@@ -1184,6 +1190,9 @@ func checkSettleChecks(t *testing.T, client *ethclient.Client, vaults map[string
 		settles++
 		var got []string
 		for _, d := range h.HopDetail {
+			if d.Kind == engine.DetailReceipt { // checked by checkReceiptDetails
+				continue
+			}
 			if d.Kind != engine.DetailSettleChecks {
 				t.Errorf("step %s: settle hop carries a %q detail", h.Step, d.Kind)
 				continue
@@ -1544,4 +1553,144 @@ func relayerFeeNoteOpenings(t *testing.T) map[string]*feeNoteOpening {
 		t.Fatalf("read the relayer's fee-note store: %v", err)
 	}
 	return out
+}
+
+// detailsOf returns h's hop details of kind.
+func detailsOf(h engine.Event, kind engine.HopDetailKind) []engine.HopDetail {
+	var out []engine.HopDetail
+	for _, d := range h.HopDetail {
+		if d.Kind == kind {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// checkWireDetails checks that every proof hop to the gnark server and every
+// call hop to the relayer carries exactly one http hop detail: a POST to the
+// service's route that got a 200, with both bodies as JSON. A proof
+// request's body is the statement whose output commitments the hop's
+// publicInputs detail names, and its response holds an 8-element proof; a
+// relayer call's response names the transaction it mined. It returns those
+// transactions.
+func checkWireDetails(t *testing.T, hops []engine.Event) []string {
+	t.Helper()
+	cfg := engine.DefaultConfig("..")
+	proofs, relays, relayed := 0, 0, []string{}
+	for _, h := range hops {
+		if h.Failed || (h.To != engine.NodeGnark && h.To != engine.NodeRelayer) {
+			continue
+		}
+		ds := detailsOf(h, engine.DetailHTTP)
+		if len(ds) != 1 {
+			t.Errorf("step %s: %s hop %q carries %d http details, want 1", h.Step, h.To, h.Label, len(ds))
+			continue
+		}
+		d := ds[0]
+		base, route := cfg.GnarkURL+"/proof/", "/proof/"
+		if h.To == engine.NodeRelayer {
+			base, route = cfg.RelayerURL+"/relay/", "/relay/"
+		}
+		if d.Method != http.MethodPost || !strings.HasPrefix(d.URL, base) || d.Status != http.StatusOK {
+			t.Errorf("step %s: %q http detail is %s %s → %d, want POST %s… → 200", h.Step, h.Label, d.Method, d.URL, d.Status, route)
+		}
+		var req, resp map[string]any
+		if err := json.Unmarshal([]byte(d.Request), &req); err != nil {
+			t.Errorf("step %s: %q request body is not JSON: %v", h.Step, h.Label, err)
+			continue
+		}
+		if err := json.Unmarshal([]byte(d.Response), &resp); err != nil {
+			t.Errorf("step %s: %q response body is not JSON: %v", h.Step, h.Label, err)
+			continue
+		}
+		if h.To == engine.NodeRelayer {
+			relays++
+			tx, _ := resp["txHash"].(string)
+			if !strings.HasPrefix(tx, "0x") || len(tx) != 66 {
+				t.Errorf("step %s: %q response names tx %q, want a tx hash", h.Step, h.Label, tx)
+			}
+			relayed = append(relayed, tx)
+			continue
+		}
+		proofs++
+		if p, _ := resp["proof"].([]any); len(p) != 8 {
+			t.Errorf("step %s: %q response holds %d proof elements, want 8", h.Step, h.Label, len(p))
+		}
+		// The request's stCommitmentsOut are the proof's public CommitmentsOut.
+		sent, _ := req["stCommitmentsOut"].([]any)
+		var public []*big.Int
+		for _, d := range h.HopDetail {
+			if d.Kind != engine.DetailPublicInputs {
+				continue
+			}
+			for _, in := range d.Inputs {
+				if in.Name == "CommitmentsOut" {
+					public = append(public, hexField(t, in.Value))
+				}
+			}
+		}
+		if len(sent) != len(public) || len(sent) == 0 {
+			t.Errorf("step %s: %q request sends %d output commitments, its public inputs name %d", h.Step, h.Label, len(sent), len(public))
+			continue
+		}
+		for i, v := range sent {
+			s, _ := v.(string)
+			if n, ok := new(big.Int).SetString(s, 10); !ok || n.Cmp(public[i]) != 0 {
+				t.Errorf("step %s: %q request's stCommitmentsOut[%d] is %v, its public input 0x%x", h.Step, h.Label, i, v, public[i])
+			}
+		}
+	}
+	if proofs == 0 || relays == 0 {
+		t.Errorf("%d proof hops and %d relayer call hops with http details, want both", proofs, relays)
+	}
+	return relayed
+}
+
+// miningHops are the labels of the hops that mine a transaction.
+var miningHops = map[string]bool{"fund gas": true, "register": true, "shield": true, "grant USDr": true,
+	"payment": true, "paymentWithUsdrFee": true, "openChannel": true, "publishTag": true}
+
+// checkReceiptDetails checks that every hop that mines a transaction carries
+// one receipt hop detail, and that each receipt detail names a transaction
+// mined successfully in its block, with as many events as the receipt's logs,
+// each at the address that logged it. Each transaction in relayed, whatever
+// its hop's label, must have a receipt detail.
+func checkReceiptDetails(t *testing.T, client *ethclient.Client, hops []engine.Event, relayed []string) {
+	t.Helper()
+	receipts, shown := 0, map[string]bool{}
+	for _, h := range hops {
+		ds := detailsOf(h, engine.DetailReceipt)
+		if want := miningHops[h.Label] && !h.Failed; want != (len(ds) == 1) {
+			t.Errorf("step %s: hop %q carries %d receipt details, want %d", h.Step, h.Label, len(ds), map[bool]int{true: 1}[want])
+		}
+		for _, d := range ds {
+			receipts++
+			shown[strings.ToLower(d.TxHash)] = true
+			r, err := client.TransactionReceipt(context.Background(), common.HexToHash(d.TxHash))
+			if err != nil {
+				t.Errorf("step %s: %q receipt detail names tx %s, not mined: %v", h.Step, h.Label, d.TxHash, err)
+				continue
+			}
+			if r.Status != types.ReceiptStatusSuccessful || r.BlockNumber.Uint64() != d.Block || r.GasUsed != d.GasUsed {
+				t.Errorf("step %s: %q receipt detail says block %d gas %d; the chain has status %d block %d gas %d", h.Step, h.Label, d.Block, d.GasUsed, r.Status, r.BlockNumber, r.GasUsed)
+			}
+			if len(d.Events) != len(r.Logs) {
+				t.Errorf("step %s: %q receipt detail lists %d events, the receipt %d logs", h.Step, h.Label, len(d.Events), len(r.Logs))
+				continue
+			}
+			for i, ev := range d.Events {
+				if !strings.EqualFold(ev.Address, r.Logs[i].Address.Hex()) || ev.Name == "" {
+					t.Errorf("step %s: %q event %d is %q at %s, the log is at %s", h.Step, h.Label, i, ev.Name, ev.Address, r.Logs[i].Address.Hex())
+				}
+			}
+		}
+	}
+	if receipts == 0 {
+		t.Error("no receipt hop details")
+	}
+	for _, tx := range relayed {
+		if !shown[strings.ToLower(tx)] {
+			t.Errorf("the relayer mined tx %s, but no hop carries its receipt detail", tx)
+		}
+	}
 }

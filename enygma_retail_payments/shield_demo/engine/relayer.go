@@ -100,16 +100,17 @@ func (r *relayer) info(ctx context.Context) (*relayInfo, error) {
 
 // payment submits a Payment or Payment2in proof to POST /relay/payment and
 // returns once the relayer reports the transaction mined.
-func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*relayTxResponse, error) {
+func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*relayTxResponse, HopDetail, error) {
 	req, err := paymentRequest(res)
 	if err != nil {
-		return nil, err
+		return nil, HopDetail{}, err
 	}
 	var out relayTxResponse
-	if err := r.post(ctx, "/relay/payment", req, &out); err != nil {
-		return nil, err
+	ex, err := r.post(ctx, "/relay/payment", req, &out)
+	if err != nil {
+		return nil, HopDetail{}, err
 	}
-	return &out, nil
+	return &out, ex, nil
 }
 
 // paymentUsdrFee submits a Payment or Payment2in proof and the UsdrFee proof
@@ -117,10 +118,10 @@ func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*rela
 // to POST /relay/payment_usdr_fee, which settles both in one transaction,
 // and returns once the relayer reports it mined. The USDr leg publishes no
 // ciphertext: its output 0 is the relayer's own note, opened by the salt.
-func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult, fee *usdrFeeLeg) (*relayTxResponse, error) {
+func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult, fee *usdrFeeLeg) (*relayTxResponse, HopDetail, error) {
 	main, err := paymentRequest(res)
 	if err != nil {
-		return nil, err
+		return nil, HopDetail{}, err
 	}
 	req := relayUsdrFeeRequest{
 		relayPaymentRequest: main,
@@ -132,35 +133,38 @@ func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult,
 		UsdrFeeSalt:         fee.feeSalt.String(),
 	}
 	var out relayTxResponse
-	if err := r.post(ctx, "/relay/payment_usdr_fee", req, &out); err != nil {
-		return nil, err
+	ex, err := r.post(ctx, "/relay/payment_usdr_fee", req, &out)
+	if err != nil {
+		return nil, HopDetail{}, err
 	}
-	return &out, nil
+	return &out, ex, nil
 }
 
 // tag publishes a private tag window to POST /relay/tag and returns once the
 // relayer reports it mined.
-func (r *relayer) tag(ctx context.Context, req relayTagRequest) (*relayTxResponse, error) {
+func (r *relayer) tag(ctx context.Context, req relayTagRequest) (*relayTxResponse, HopDetail, error) {
 	var out relayTxResponse
-	if err := r.post(ctx, "/relay/tag", req, &out); err != nil {
-		return nil, err
+	ex, err := r.post(ctx, "/relay/tag", req, &out)
+	if err != nil {
+		return nil, HopDetail{}, err
 	}
-	return &out, nil
+	return &out, ex, nil
 }
 
 // channel opens a tag channel through POST /relay/channel, so the relayer is
 // its on-chain sender, and returns once it is mined.
-func (r *relayer) channel(ctx context.Context, c1, c2, bitmap []byte) (*relayChannelResponse, error) {
+func (r *relayer) channel(ctx context.Context, c1, c2, bitmap []byte) (*relayChannelResponse, HopDetail, error) {
 	req := relayChannelRequest{
 		C1:     "0x" + hex.EncodeToString(c1),
 		C2:     "0x" + hex.EncodeToString(c2),
 		Bitmap: "0x" + hex.EncodeToString(bitmap),
 	}
 	var out relayChannelResponse
-	if err := r.post(ctx, "/relay/channel", req, &out); err != nil {
-		return nil, err
+	ex, err := r.post(ctx, "/relay/channel", req, &out)
+	if err != nil {
+		return nil, HopDetail{}, err
 	}
-	return &out, nil
+	return &out, ex, nil
 }
 
 // paymentRequest is the relay request body for a main-token Payment or
@@ -190,21 +194,23 @@ const (
 	rateLimitRetries = 20
 )
 
-// post sends body to the relayer's path. The relayer rate-limits each
-// client (5 requests/s), and the run's channel and tag requests can come
-// faster than that on an automining chain; a 429 is answered before the
-// relayer does anything, so post waits and sends the request again.
-func (r *relayer) post(ctx context.Context, path string, body, result any) error {
+// post sends body to the relayer's path and returns the http hop detail of
+// the request that was answered. The relayer rate-limits each client (5
+// requests/s), and the run's channel and tag requests can come faster than
+// that on an automining chain; a 429 is answered before the relayer does
+// anything, so post waits and sends the request again.
+func (r *relayer) post(ctx context.Context, path string, body, result any) (HopDetail, error) {
 	headers := map[string]string{"Authorization": "Bearer " + r.apiKey}
+	rec := &recorder{}
 	for retry := 0; ; retry++ {
-		err := postJSON(ctx, r.baseURL+path, headers, body, result)
+		err := postJSON(ctx, rec.client(0), r.baseURL+path, headers, body, result)
 		var he *httpError
 		if !errors.As(err, &he) || he.status != http.StatusTooManyRequests || retry == rateLimitRetries {
-			return err
+			return rec.exchange(), err
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return HopDetail{}, ctx.Err()
 		case <-time.After(rateLimitWait):
 		}
 	}
@@ -221,9 +227,10 @@ func (e *httpError) Error() string {
 	return fmt.Sprintf("POST %s: %d: %s", e.url, e.status, e.msg)
 }
 
-// postJSON POSTs body to url as JSON with headers and decodes the response
-// into result; a non-200 response fails with its "error" field, or its body.
-func postJSON(ctx context.Context, url string, headers map[string]string, body, result any) error {
+// postJSON POSTs body to url as JSON with headers through client and
+// decodes the response into result; a non-200 response fails with its
+// "error" field, or its body.
+func postJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body, result any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -236,7 +243,7 @@ func postJSON(ctx context.Context, url string, headers map[string]string, body, 
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)
 	}

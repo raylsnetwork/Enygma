@@ -246,9 +246,9 @@ A run on a stack `run.sh` has only just started can lose its first steps' events
 The hop pace (#159): with pausing on, every hop holds 1.5 s, or 3 s with a hop detail, with no catch-up, and, in the steps the narration block lists in `collapse` (Audit keys, Tag channels, USDr credit), queued hops repeating a hop, or a pair of hops, in a row within its step (`open channel`, `openChannel`, `open channel`, …) play together after the first pair at the 120 ms minimum, under the first hop's line, which ends "…and N more" (N more of that hop). With pausing off, the pace is as before: 600 ms (1.5 s with a hop detail), shrinking once playback is more than 3 s behind. Timing checks need the tab visible: ask the user to bring Chrome to the front first. Install the probe with the pausing recorder, extended with this one (paste it before the probe's last line). It times each hop line until the next, outside the gates:
 
 ```js
-// Whether each hop, in arrival order, has a hop detail; the diagram plays them in that order.
+// Whether each hop, in arrival order, has a hop detail other than http and receipt (those don't lengthen its hold); the diagram plays them in that order.
 c.hasDetail = [];
-new EventSource('/events').onmessage = m => { const e = JSON.parse(m.data); if (e.kind === 'hop') c.hasDetail.push(!!e.hopDetail); };
+new EventSource('/events').onmessage = m => { const e = JSON.parse(m.data); if (e.kind === 'hop') c.hasDetail.push(!!e.hopDetail?.some(d => d.kind !== 'http' && d.kind !== 'receipt')); };
 // One entry per hop line: its text, how many hops it stands for, whether its first has a hop detail, whether the tab was hidden, and how long until the next line (unset across a gate).
 c.lines = []; c.played = 0;
 new MutationObserver(recs => { for (const r of recs) for (const n of r.addedNodes) {
@@ -291,3 +291,14 @@ Measured 2026-11-03: a walkthrough is **32 engine releases** (auditor 1, keys 8,
 8. **Leaving a walkthrough.** At any gate, RUN or WALKTHROUGH starts a new run: the old walkthrough's step fails ("context canceled") and the new one resets the page. A reload mid-walkthrough leaves the engine waiting; starting again from the reloaded page ends it.
 9. **A failure.** Stop the relayer during a walkthrough, then Next on Pay Ana's relay: the relay hop shows red with its error, the walkthrough ends, and WALKTHROUGH or RUN starts again once the relayer is back.
 10. **Both themes at 1280×828.** The "On Next" paragraph and the RUN THE FULL DEMO button show above the drawer, in both themes.
+
+## Wire and receipt checks
+
+Since #171, each proof request and relayer call hop carries an http hop detail (the request the engine sent and the response it got back, bodies as sent), and each hop that mines a transaction carries a receipt hop detail (its tx hash, block, gas and logged events). They show in the hop detail panel under **Request and response** or **Receipt**, one click below the hop's sentence. An http or receipt detail alone doesn't lengthen a hop's hold: a hop whose only detail is one of them (fund gas, register, relay, open channel, tag, openChannel, publishTag) holds as a hop without details.
+
+1. **Proof request.** On a default run, replay Pay Ana (click its step): its `prove Payment` entry's **Request and response** shows `POST http://localhost:8082/proof/payment → 200`, the request body with its `st…` and `wt…` fields, and the response body with the proof shortened (each element `12345678…123456`). **proof shortened · show the body in full** opens the response exactly as sent. The `prove UsdrFee` entry shows `/proof/usdrFee` the same way. Real values' private rows say "only in the request to the gnark server".
+2. **Relayer call.** The `relay` entry shows `POST http://localhost:8090/relay/payment_usdr_fee → 200` (`/relay/payment` on a fees-off run), the request with its shortened `proof` and `usdrProof`, and the response's `txHash`. Tag channels' `open channel` and a transfer's `tag` show `/relay/channel` and `/relay/tag`, with no proof to shorten (no "show in full").
+3. **Receipt.** The `paymentWithUsdrFee` entry's **Receipt** shows the tx hash (the same as the relay response's `txHash`), its block and gas, and each logged event named by contract (`Erc20CoinVault.Commitment(…)`, `EnygmaDvp…`, …), none "unknown event". The tx hash copies on click; `cast receipt <hash> --rpc-url http://localhost:8545` (or `eth_getTransactionReceipt`) shows the same block, gas and as many logs. Fund gas, Register, Shield, USDr credit's grants, `openChannel` and `publishTag` carry a receipt too.
+4. **Walkthrough.** In a walkthrough, payment 1's prove click and relay click each show their request and response, and its settle hop its receipt.
+5. **Pace unchanged.** The pace checks still pass with the probe above (its `hasDetail` ignores http and receipt details).
+6. **Both themes at 1280×828.** The request line, the bodies (scrolling inside their box, never widening the panel) and the event lines read in both themes.

@@ -129,14 +129,18 @@ func (e *Engine) openChannel(ctx context.Context, s *step, from, to *Actor) erro
 	if err != nil {
 		return fmt.Errorf("channel %s → %s: %w", from.Name, to.Name, err)
 	}
-	resp, err := e.relayer.channel(ctx, c1, c2, bitmap)
+	resp, ex, err := e.relayer.channel(ctx, c1, c2, bitmap)
 	if err != nil {
 		s.hopFailed(ActorNode(from.ID), NodeRelayer, "open channel", err)
 		return fmt.Errorf("channel %s → %s: %w", from.Name, to.Name, err)
 	}
 	from.tags.out[to] = ss
-	s.hop(ActorNode(from.ID), NodeRelayer, "open channel", fmt.Sprintf("a shared secret encapsulated to %s's view key", to.Name))
-	s.hop(NodeRelayer, NodeTagChannelRegistry, "openChannel", fmt.Sprintf("channel #%d, block %d, gas %s; the relayer is its on-chain sender", resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed)))
+	receipt, err := e.chain.receiptOf(ctx, common.HexToHash(resp.TxHash))
+	if err != nil {
+		return fmt.Errorf("channel %s → %s: %w", from.Name, to.Name, err)
+	}
+	s.hop(ActorNode(from.ID), NodeRelayer, "open channel", fmt.Sprintf("a shared secret encapsulated to %s's view key", to.Name), ex)
+	s.hop(NodeRelayer, NodeTagChannelRegistry, "openChannel", fmt.Sprintf("channel #%d, block %d, gas %s; the relayer is its on-chain sender", resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed)), receipt)
 	s.log("tag", "TagChannelRegistry.openChannel(%s → %s) via relayer → channel #%d  block %d  gas %s",
 		from.Name, to.Name, resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed))
 	return nil
@@ -202,15 +206,19 @@ func (e *Engine) publishTag(ctx context.Context, s *step, from, to *Actor, t *se
 		req.Tags = append(req.Tags, "0x"+hex.EncodeToString(window[i][:]))
 		req.Ctxts = append(req.Ctxts, "0x"+hex.EncodeToString(ctxts[i]))
 	}
-	resp, err := e.relayer.tag(ctx, req)
+	resp, ex, err := e.relayer.tag(ctx, req)
 	if err != nil {
 		s.hopFailed(ActorNode(from.ID), NodeRelayer, "tag", err)
 		return err
 	}
 	t.TagTxHash = common.HexToHash(resp.TxHash)
 	t.tagBlock = resp.BlockNumber
-	s.hop(ActorNode(from.ID), NodeRelayer, "tag", fmt.Sprintf("a tag only %s can recognise, carrying the note's opening", to.Name))
-	s.hop(NodeRelayer, NodeTagRegistry, "publishTag", fmt.Sprintf("block %d, gas %s", resp.BlockNumber, formatNum(resp.GasUsed)))
+	receipt, err := e.chain.receiptOf(ctx, t.TagTxHash)
+	if err != nil {
+		return err
+	}
+	s.hop(ActorNode(from.ID), NodeRelayer, "tag", fmt.Sprintf("a tag only %s can recognise, carrying the note's opening", to.Name), ex)
+	s.hop(NodeRelayer, NodeTagRegistry, "publishTag", fmt.Sprintf("block %d, gas %s", resp.BlockNumber, formatNum(resp.GasUsed)), receipt)
 	s.log("tag", "TagRegistry.publishTag() via relayer → %s's tag in block %d  gas %s", to.Name, resp.BlockNumber, formatNum(resp.GasUsed))
 	return nil
 }

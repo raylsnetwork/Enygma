@@ -42,6 +42,10 @@ type chain struct {
 	// the relayer publishes to, from its info route.
 	tagRegistryAddr     common.Address
 	channelRegistryAddr common.Address
+
+	// events is every event the demo's contracts declare, by topic, to
+	// decode receipts' logs.
+	events map[common.Hash]abi.Event
 }
 
 func dialChain(cfg Config) (*chain, error) {
@@ -82,6 +86,15 @@ func dialChain(cfg Config) (*chain, error) {
 	if err != nil {
 		return nil, err
 	}
+	registryABI, err := loadABI(cfg.RetailRoot, "UserRegistry")
+	if err != nil {
+		return nil, err
+	}
+	tagsABI, err := abi.JSON(strings.NewReader(tagEventsABI))
+	if err != nil {
+		return nil, err
+	}
+	c.events = eventsByTopic(dvpABI, vaultABI, erc20ABI, registryABI, tagsABI)
 	client, err := ethclient.Dial(cfg.RPCURL)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", cfg.RPCURL, err)
@@ -156,43 +169,41 @@ func newAccount() (keyHex string, addr common.Address, err error) {
 	return common.Bytes2Hex(crypto.FromECDSA(key)), crypto.PubkeyToAddress(key.PublicKey), nil
 }
 
-// fund sends wei from the funder's account to each of to, one mined
-// transaction at a time.
-func (c *chain) fund(ctx context.Context, funderHex string, wei *big.Int, to []common.Address) error {
+// fund sends wei from the funder's account to to and returns the mined
+// transaction's receipt.
+func (c *chain) fund(ctx context.Context, funderHex string, wei *big.Int, to common.Address) (*ethtypes.Receipt, error) {
 	key, err := crypto.HexToECDSA(funderHex)
 	if err != nil {
-		return fmt.Errorf("parse funder key: %w", err)
+		return nil, fmt.Errorf("parse funder key: %w", err)
 	}
 	from := crypto.PubkeyToAddress(key.PublicKey)
 	signer := ethtypes.LatestSignerForChainID(c.chainID)
-	for _, addr := range to {
-		if err := c.sendValue(ctx, key, from, signer, addr, wei); err != nil {
-			return fmt.Errorf("fund %s: %w", addr.Hex(), err)
-		}
+	r, err := c.sendValue(ctx, key, from, signer, to, wei)
+	if err != nil {
+		return nil, fmt.Errorf("fund %s: %w", to.Hex(), err)
 	}
-	return nil
+	return r, nil
 }
 
-func (c *chain) sendValue(ctx context.Context, key *ecdsa.PrivateKey, from common.Address, signer ethtypes.Signer, to common.Address, wei *big.Int) error {
+func (c *chain) sendValue(ctx context.Context, key *ecdsa.PrivateKey, from common.Address, signer ethtypes.Signer, to common.Address, wei *big.Int) (*ethtypes.Receipt, error) {
 	nonce, err := c.client.PendingNonceAt(ctx, from)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	gasPrice, err := c.client.SuggestGasPrice(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tx, err := ethtypes.SignNewTx(key, signer, &ethtypes.LegacyTx{
 		Nonce: nonce, To: &to, Value: wei, Gas: 21_000, GasPrice: gasPrice,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := c.client.SendTransaction(ctx, tx); err != nil {
-		return err
+		return nil, err
 	}
-	_, err = c.waitMined(ctx, tx)
-	return err
+	return c.waitMined(ctx, tx)
 }
 
 // waitMined waits for tx and fails if it reverted.
@@ -210,25 +221,25 @@ func (c *chain) waitMined(ctx context.Context, tx *ethtypes.Transaction) (*ethty
 // userRegisteredTopic is UserRegistry's UserRegistered event.
 var userRegisteredTopic = crypto.Keccak256Hash([]byte("UserRegistered(address,uint256,bytes,bytes,bytes)"))
 
-// registrationGas is the gas used by user's UserRegistry registration. It
+// registration is the receipt of user's UserRegistry registration. It
 // finds the transaction by its UserRegistered event, as rpcore.Register
 // returns no receipt.
-func (c *chain) registrationGas(ctx context.Context, user common.Address) (uint64, error) {
+func (c *chain) registration(ctx context.Context, user common.Address) (*ethtypes.Receipt, error) {
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
 		Addresses: []common.Address{c.registryAddr},
 		Topics:    [][]common.Hash{{userRegisteredTopic}, {common.BytesToHash(user.Bytes())}},
 	})
 	if err != nil {
-		return 0, fmt.Errorf("UserRegistered events: %w", err)
+		return nil, fmt.Errorf("UserRegistered events: %w", err)
 	}
 	if len(logs) == 0 {
-		return 0, fmt.Errorf("no UserRegistered event for %s", user.Hex())
+		return nil, fmt.Errorf("no UserRegistered event for %s", user.Hex())
 	}
 	receipt, err := c.client.TransactionReceipt(ctx, logs[len(logs)-1].TxHash)
 	if err != nil {
-		return 0, fmt.Errorf("registration receipt: %w", err)
+		return nil, fmt.Errorf("registration receipt: %w", err)
 	}
-	return receipt.GasUsed, nil
+	return receipt, nil
 }
 
 // transact sends method on contract from the account keyHex controls and

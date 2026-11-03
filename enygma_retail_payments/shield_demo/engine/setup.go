@@ -122,10 +122,11 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 	}
 	e.actors = nil
 	fund := func(a *Actor) error {
-		if err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, []common.Address{a.Address}); err != nil {
+		receipt, err := e.chain.fund(ctx, e.cfg.FunderKeyHex, gasFunding, a.Address)
+		if err != nil {
 			return err
 		}
-		s.hop(NodeFunder, ActorNode(a.ID), "fund gas", fmt.Sprintf("%s ETH to %s's fresh signing account", gasFundingETH, a.Name))
+		s.hop(NodeFunder, ActorNode(a.ID), "fund gas", fmt.Sprintf("%s ETH to %s's fresh signing account", gasFundingETH, a.Name), e.chain.receipt(receipt))
 		return nil
 	}
 	newActor := func(name string, role Role, keyHex string, addr common.Address) error {
@@ -214,11 +215,11 @@ func (e *Engine) register(ctx context.Context, s *step) error {
 			s.hopFailed(node, NodeUserRegistry, "register", err)
 			return fmt.Errorf("%s: %w", a.Name, err)
 		}
-		gas, err := e.chain.registrationGas(ctx, a.Address)
+		receipt, err := e.chain.registration(ctx, a.Address)
 		if err != nil {
 			return fmt.Errorf("%s: %w", a.Name, err)
 		}
-		s.hop(node, NodeUserRegistry, "register", fmt.Sprintf("mined, %d gas: most of it stores the %d-byte view key on chain", gas, len(a.View.EncapsKey)))
+		s.hop(node, NodeUserRegistry, "register", fmt.Sprintf("mined, %d gas: most of it stores the %d-byte view key on chain", receipt.GasUsed, len(a.View.EncapsKey)), e.chain.receipt(receipt))
 		s.actor(a, "status", "Registered")
 		s.log("chain", "UserRegistry.register(%s) — view key encrypted to the auditor (%d + %d bytes)", a.Name, len(mlKemCt), len(aesCt))
 	}

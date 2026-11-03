@@ -277,6 +277,15 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .checks b { font:600 13px var(--serif); }
 .checks .ok { color:var(--ok); font-weight:600; margin-right:4px; }
 .checks .published { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
+.wire { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; font-size:12px; margin-top:6px; }
+.wire .line { font:600 12px var(--mono); color:var(--text); overflow-wrap:anywhere; }
+.wire .line .st2 { color:var(--ok); }
+.wire .line .st2.bad { color:var(--bad); }
+.wire .lbl { font:600 10.5px var(--mono); color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
+.wire pre { margin:0; max-height:220px; overflow:auto; background:var(--s2); border-radius:6px; padding:6px 8px; font:11px/1.4 var(--mono); color:var(--text2); white-space:pre-wrap; overflow-wrap:anywhere; }
+.wire details summary { font:500 11px var(--mono); color:var(--accent); }
+.wire .ev { font:11.5px var(--mono); color:var(--text2); overflow-wrap:anywhere; }
+.wire .ev b { color:var(--text); font-weight:600; }
 .vis { font:600 9.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; border-radius:3px; padding:0 4px; }
 .vis.priv { color:var(--warn); background:color-mix(in srgb, var(--warn) 12%, transparent); }
 .vis.pub { color:var(--accent); background:var(--accent-dim); }
@@ -1221,7 +1230,8 @@ const diagram = (() => {
   }
 
   // Pacing is in the page only: the engine runs at full speed and each hop
-  // holds for HOLD ms, DETAIL_HOLD if it has a hop detail to read. Once the
+  // holds for HOLD ms, DETAIL_HOLD if it has a hop detail to read (an http
+  // or receipt detail alone doesn't count: those wait one click below). Once the
   // hop shown is more than CATCHUP ms behind the run (it arrived that long
   // ago), holds shrink in proportion, so a burst still plays readably but a
   // long backlog drains. With pausing on, the presenter sets the pace: each
@@ -1269,11 +1279,11 @@ const diagram = (() => {
     } else {
       const h = queue.shift();
       if (pacing.on()) {
-        hold = h.hopDetail ? PAUSED_DETAIL_HOLD : PAUSED_HOLD;
+        hold = hasStateDetail(h) ? PAUSED_DETAIL_HOLD : PAUSED_HOLD;
         show(h, hold, markRepeats(h));
       } else {
         const behind = performance.now() - h.at;
-        const base = h.hopDetail ? DETAIL_HOLD : HOLD;
+        const base = hasStateDetail(h) ? DETAIL_HOLD : HOLD;
         hold = behind > CATCHUP ? Math.max(MIN_HOLD, base * CATCHUP / behind) : base;
         show(h, hold);
       }
@@ -1423,15 +1433,23 @@ const wallet = (() => {
 const VAULT_IDS = ['Erc20CoinVault', 'UsdrCoinVault'];
 const DEPTH = 8, TREE_LEAVES = 256;
 
-// Each hop detail kind's fixed plain-language sentence.
 // Kinds whose leaves land in a vault's tree: the panel's tree view follows them.
 const LANDS = new Set(['leavesIn', 'commitment']);
+// WIRE_KINDS show what went over the wire or on chain, one click below the
+// hop line: they don't slow the hop down (see hasStateDetail).
+const WIRE_KINDS = new Set(['http', 'receipt']);
+// hasStateDetail says whether hop h has a hop detail about the protocol
+// state to read, one that holds it longer.
+const hasStateDetail = h => !!h.hopDetail?.some(d => !WIRE_KINDS.has(d.kind));
+// Each hop detail kind's fixed plain-language sentence.
 const SENTENCE = {
   leavesIn: d => `The new notes' commitments land as leaves in the ${NODE[d.vault].label}'s Merkle tree, all in this one transaction, and the tree gets a new root.`,
   commitment: d => `A new note for ${d.leaves[0].owner || 'its owner'}: the chain stores only its commitment, a hash, as a leaf in the ${NODE[d.vault].label}'s Merkle tree; what it hashes stays with the owner.`,
   merklePath: (d, all) => all.filter(x => x.kind === 'merklePath').length > 1
     ? `${d.leaf.owner || 'The payer'} proves both notes this transfer merges are leaves of the ${NODE[d.vault].label}'s Merkle tree: each leaf, hashed with one sibling per level, gives a root the vault has had. The proof shows this without saying which leaves.`
     : `${d.leaf.owner || 'The payer'} proves the note being spent is a leaf of the ${NODE[d.vault].label}'s Merkle tree: the leaf, hashed with one sibling at each of the ${DEPTH} levels, gives a root the vault has had. The proof shows this without saying which leaf.`,
+  http: d => `The exact request sent to the ${/\/relay\//.test(d.url) ? 'relayer' : 'gnark server'} and the response it got back, as they went over the wire.`,
+  receipt: d => `The transaction is mined: its hash, and the ${d.events.length === 1 ? 'event' : `${d.events.length} events`} its receipt logged.`,
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
@@ -1497,9 +1515,13 @@ const hopPanel = (() => {
   // Each hop detail shown is kept in history, with the trees as they were
   // then, so a finished step's can be replayed; replay is the index into
   // history being replayed, null while live.
-  let trees = null, latest = null, valuesOpen = false, showOwners = false;
+  let trees = null, latest = null, valuesOpen = false, wireOpen = false, showOwners = false;
   let history = [], replay = null;
-  document.addEventListener('toggle', e => { if (e.target.id === 'hopValues') valuesOpen = e.target.open; }, true);
+  // The values and wire folds stay open or closed from one hop to the next.
+  document.addEventListener('toggle', e => {
+    if (e.target.id === 'hopValues') valuesOpen = e.target.open;
+    if (e.target.id === 'hopWire') wireOpen = e.target.open;
+  }, true);
   document.addEventListener('change', e => { if (e.target.id === 'showOwners') { showOwners = e.target.checked; render(); } });
   // The replay bar's buttons: the step's previous or next hop detail, or back to live.
   document.addEventListener('click', e => {
@@ -1629,7 +1651,7 @@ const hopPanel = (() => {
   }
 
   // rowsOf is a detail's real values as [label, value html] rows.
-  function rowsOf(d) {
+  function rowsOf(d, all = []) {
     if (d.kind === 'merklePath') return [
       [`spent leaf · tree ${d.tree} #${d.leaf.index}`, hex(d.leaf.commitment)],
       ...d.siblings.map((s, l) => [`sibling · level ${l} · ${(d.leaf.index >> l) & 1 ? 'left' : 'right'}`, hex(s)]),
@@ -1637,7 +1659,7 @@ const hopPanel = (() => {
     if (d.kind === 'publicInputs') {
       const size = n => d.inputs.filter(x => x.name === n).length;
       return [...d.inputs.map(x => [`${x.name}${size(x.name) > 1 ? `[${x.index}]` : ''} · public`, hex(x.value)]),
-        ...d.private.map(p => [`${p} · private`, '<span class="muted">not sent to this page</span>'])];
+        ...d.private.map(p => [`${p} · private`, `<span class="muted">${all.some(x => x.kind === 'http') ? 'never on chain: only in the request to the gnark server' : 'not sent to this page'}</span>`])];
     }
     if (d.kind === 'settleChecks') return [
       ...d.spent.flatMap((n, i) => [
@@ -1661,10 +1683,11 @@ const hopPanel = (() => {
       <span class="arrow">→ leaf #${d.leaves[0].index}</span>
     </div>`;
   // inputsHtml is a publicInputs detail's statement, public, beside the
-  // witnesses that stay private. Only the private parts' names reach the page.
+  // witnesses that stay private. Only the private parts' names are drawn
+  // here; their values are in the proof hop's request to the gnark server.
   const inputsHtml = d => `<div class="opening">
       <div class="side pub" title="On chain, in the ${esc(d.circuit)} proof's statement"><span class="vis pub">public</span>${[...new Set(d.inputs.map(x => x.name))].map(n => `<span class="part" title="${esc(PUBLIC_HINT[n] || '')}">${esc(n)}</span>`).join('')}</div>
-      <div class="side" title="Known only to the prover: never on chain, never sent to this page"><span class="vis priv">private</span>${d.private.map(p => `<span class="part" title="${esc(PRIVATE_HINT[p] || '')}">${esc(p)}</span>`).join('')}</div>
+      <div class="side" title="Known only to the prover, and sent only to the gnark server that proves for it (see Request and response): never on chain"><span class="vis priv">private</span>${d.private.map(p => `<span class="part" title="${esc(PRIVATE_HINT[p] || '')}">${esc(p)}</span>`).join('')}</div>
     </div>`;
   // checksHtml is a settleChecks detail: what EnygmaDvp checks of one proof,
   // then the nullifiers it publishes. It shows each distinct root once: a
@@ -1676,6 +1699,44 @@ const hopPanel = (() => {
       <div><span class="ok">✓</span>the ${esc(d.circuit)} proof verifies</div>
       <div class="published">publishes ${d.spent.length > 1 ? `${d.spent.length} nullifiers` : 'its nullifier'}: ${d.spent.map(n => hex(n.nullifier)).join(' ')}</div>
     </div>`;
+  // proofKey is a body's key holding a proof, the one value shortened for display.
+  const proofKey = k => /^(usdr)?proof$/i.test(k);
+  // BIG marks a number too long for a JS number (the gnark server sends
+  // field elements as bare 77-digit numbers), kept as its digits.
+  const BIG = '\u2063big:';
+  // shortVal is a proof element shortened for display: its first 8 and last 6 characters.
+  const shortVal = v => {
+    const big = typeof v === 'string' && v.startsWith(BIG), t = big ? v.slice(BIG.length) : String(v);
+    const cut = t.length > 16 ? t.slice(0, 8) + '…' + t.slice(-6) : t;
+    return big ? BIG + cut : cut;
+  };
+  // body is an HTTP body as sent, pretty-printed if it is JSON, its proof
+  // shortened; when it is, the body as sent is one click further. Long
+  // numbers are kept digit for digit, never rounded by JSON.parse.
+  function body(raw) {
+    let j;
+    try { j = JSON.parse(raw.replace(/([:[,]\s*)(-?\d{16,})(?=\s*[,\]}])/g, `$1"${BIG}$2"`)); } catch { return `<pre>${esc(raw)}</pre>`; }
+    let cut = false;
+    const short = JSON.stringify(j, (k, v) => {
+      if (proofKey(k) && Array.isArray(v)) { cut = true; return v.map(shortVal); }
+      return v;
+    }, 2).replace(/"\u2063big:([^"]*)"/g, '$1');
+    return `<pre>${esc(short)}</pre>` + (cut ? `<details><summary>proof shortened · show the body in full</summary><pre>${esc(raw)}</pre></details>` : '');
+  }
+  // wireHtml is an http detail: the request line, then each body.
+  const wireHtml = d => `<div class="wire">
+      <div class="line" title="Headers are left out: the relayer's carry its API key">${esc(d.method)} ${esc(d.url)} → <span class="st2${d.status === 200 ? '' : ' bad'}">${d.status}</span></div>
+      <div class="lbl">request body</div>${body(d.request || '')}
+      <div class="lbl">response body</div>${body(d.response || '')}
+    </div>`;
+  // receiptHtml is a receipt detail: the transaction, then each logged event.
+  const receiptHtml = d => `<div class="wire">
+      <div class="line">tx ${hex(d.tx)} · block ${d.block} · gas ${Number(d.gas).toLocaleString('en-US')}</div>
+      <div class="lbl">${d.events.length} logged event${d.events.length === 1 ? '' : 's'}</div>
+      ${d.events.map(ev => `<div class="ev"><b>${esc(NODE[ev.contract]?.label || ev.contract)}.${esc(ev.name)}</b>(${ev.args.map(a => `${esc(a.name)}: ${a.value.startsWith('0x') && a.value.length > 14 ? hex(a.value) : esc(a.value)}`).join(', ')})</div>`).join('')}
+    </div>`;
+  // WIRE is each wire kind's fold title and renderer.
+  const WIRE = { http: { title: 'Request and response', html: wireHtml }, receipt: { title: 'Receipt', html: receiptHtml } };
   const rowsHtml = rows => `<div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join('')}</div>`;
 
   function render() {
@@ -1685,6 +1746,7 @@ const hopPanel = (() => {
       return;
     }
     const en = (replay !== null ? history[replay] : latest) || { hop: null, details: [], focus: {}, trees, front: VAULT_IDS[0] };
+    const wire = en.details.filter(d => WIRE_KINDS.has(d.kind));
     drawn = en.trees;
     const front = en.front, back = VAULT_IDS.find(v => v !== front), f = en.focus[front];
     let replayBar = '';
@@ -1712,7 +1774,8 @@ const hopPanel = (() => {
       <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span>${f?.spent ? '<span><i class="spent"></i>spent in this proof</span>' : ''}<span><i></i>empty</span>${ownLegend}</div>
       <label class="owners"><input type="checkbox" id="showOwners"${showOwners ? ' checked' : ''}><span>Demo’s view: show owners
         <small>Tints each leaf from this run by whose note it is. Only the demo knows this, holding every actor’s keys: the chain sees unmarked leaves.</small></span></label>
-      ${en.hop ? `<details id="hopValues"${valuesOpen ? ' open' : ''}><summary>Real values</summary>${en.details.map(d => rowsHtml(rowsOf(d))).join('')}</details>` : ''}
+      ${en.hop ? `<details id="hopValues"${valuesOpen ? ' open' : ''}><summary>Real values</summary>${en.details.map(d => rowsHtml(rowsOf(d, en.details))).join('')}</details>` : ''}
+      ${wire.length ? `<details id="hopWire"${wireOpen ? ' open' : ''}><summary>${wire.map(d => WIRE[d.kind].title).join(' · ')}</summary>${wire.map(d => WIRE[d.kind].html(d)).join('')}</details>` : ''}
     </div>`;
   }
 
