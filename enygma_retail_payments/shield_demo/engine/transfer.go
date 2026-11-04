@@ -151,9 +151,11 @@ type sent struct {
 	payeeSalt *big.Int
 	// tagBlock is the block the transfer's tag was published in; 0 with tags off.
 	tagBlock uint64
-	// proof and stmt are the main proof as the vault checked it.
+	// proof and stmt are the main proof as the vault checked it, and res
+	// the prover's whole result, from which its relay request is built.
 	proof []string
 	stmt  []*big.Int
+	res   *rpcore.PaymentResult
 }
 
 // send pays to amount through the relayer, change back to from: from's
@@ -316,7 +318,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	out := &sent{
 		Settlement: Settlement{From: from.Name, To: to.Name, Amount: amount, TxHash: common.HexToHash(tx.TxHash)},
 		change:     change, proveMs: proveMs, relayMs: relayMs, tx: tx, method: "payment", merged: len(ins) == 2,
-		payeeSalt: res.SaltB, proof: res.Proof, stmt: stmt,
+		payeeSalt: res.SaltB, proof: res.Proof, stmt: stmt, res: res,
 	}
 	if fee != nil {
 		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) || !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.change.commitment) {

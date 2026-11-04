@@ -206,6 +206,9 @@ type Engine struct {
 
 	// gate holds a walkthrough before each action.
 	gate *Gate
+	// payment1 is a walkthrough's first payment, once settled: payment 2
+	// replays it.
+	payment1 *sent
 }
 
 // New returns an engine that reports to sink.
@@ -321,7 +324,7 @@ func (e *Engine) Run(ctx context.Context, opts Options) error {
 	e.sink.Emit(Event{Kind: ProtocolField, Field: "steps", Value: string(stepsJSON)})
 
 	for _, s := range steps {
-		st := &step{e: e, id: s.id, label: s.label, gated: len(s.actions) > 0}
+		st := &step{e: e, id: s.id, label: s.label, gated: len(s.actions) > 0, then: s.then}
 		st.start(s.msg)
 		if s.pre != "" {
 			if err := e.awaitAction(ctx, s.id, s.pre, ""); err != nil {

@@ -61,6 +61,7 @@ var actionHops = map[string][]string{
 	"relay":    {"relay"},
 	"settle":   {"payment", "notes in"},
 	"payment":  {"prove Payment", "relay", "payment", "notes in"},
+	"replay":   {"replay payment 1"},
 	"scan":     {"scan"},
 	"audit":    {"audit"},
 }
@@ -226,7 +227,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			count[a.at.Action]++
 		}
 		want := map[string]int{"auditor": 1, "keys": 2 + engine.K, "register": 1 + engine.K, "recover": 1, "shield": 1,
-			"prove": 1, "proof": 1, "relay": 1, "settle": 1, "payment": engine.K - 1, "scan": engine.K, "audit": 1}
+			"prove": 1, "proof": 1, "relay": 1, "settle": 1, "payment": engine.K - 1, "replay": 1, "scan": engine.K, "audit": 1}
 		for action, n := range want {
 			if count[action] != n {
 				t.Errorf("%d releases of %q, want %d", count[action], action, n)
@@ -510,6 +511,90 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		if got := ethCall(call.Tamper.Data); got != isFalse {
 			t.Errorf("verifyProof(payment 1, tampered) = %s, want false", got)
+		}
+	})
+
+	t.Run("replaying payment 1 after payment 2 is refused for its spent nullifier, and changes nothing on chain", func(t *testing.T) {
+		// The replay is released once, right after payment 2 settles.
+		at := slices.IndexFunc(acts, func(a released) bool { return a.at.Action == "replay" })
+		if at < 1 {
+			t.Fatalf("replay released at %d, want after payment 2", at)
+		}
+		if a, prev := acts[at].at, acts[at-1].at; a.Step != "fanout_2" || prev.Step != "fanout_2" || prev.Action != "payment" {
+			t.Errorf("replay released as %s/%s after %s/%s, want fanout_2/replay right after fanout_2/payment", a.Step, a.Action, prev.Step, prev.Action)
+		}
+		if who := acts[at].at.Value; who != e.Participants()[0].Name {
+			t.Errorf("the replay is about %q, want payment 1's payee %s", who, e.Participants()[0].Name)
+		}
+		hops := acts[at].hops
+		if len(hops) != 1 || hops[0].Failed {
+			t.Fatalf("replay hops %v, want one refused (not failed) hop", hops)
+		}
+		h := hops[0]
+		if h.From != engine.ActorNode(e.Sender().ID) || h.To != engine.NodeRelayer {
+			t.Errorf("replay hop goes %s → %s, want Sender → relayer", h.From, h.To)
+		}
+
+		// It resubmits payment 1's exact relay request.
+		var relay1 []engine.HopDetail
+		for _, x := range sink.hops() {
+			if x.Step == "fanout_1" && x.Label == "relay" {
+				relay1 = detailsOf(x, engine.DetailHTTP)
+			}
+		}
+		wire := detailsOf(h, engine.DetailHTTP)
+		if len(relay1) != 1 || len(wire) != 1 {
+			t.Fatalf("%d http details on payment 1's relay and %d on the replay, want one each", len(relay1), len(wire))
+		}
+		if wire[0].URL != relay1[0].URL || wire[0].Request != relay1[0].Request {
+			t.Errorf("replay sent %s %q, want payment 1's request %s %q", wire[0].URL, wire[0].Request, relay1[0].URL, relay1[0].Request)
+		}
+		if wire[0].Status < 400 || wire[0].Status >= 500 {
+			t.Errorf("relayer answered the replay %d, want a refusal (4xx)", wire[0].Status)
+		}
+
+		// The refusal names the relayer and the spent nullifier.
+		rs := detailsOf(h, engine.DetailRefusal)
+		if len(rs) != 1 {
+			t.Fatalf("replay hop carries %d refusal details, want 1", len(rs))
+		}
+		r := rs[0]
+		if r.RefusedBy != engine.NodeRelayer || !strings.Contains(r.Reason, "nullifier already spent") {
+			t.Errorf("refused by %q because %q, want the relayer because the nullifier is already spent", r.RefusedBy, r.Reason)
+		}
+		var nullifier string
+		for _, x := range sink.hops() {
+			if x.Step == "fanout_1" && x.Label == "prove Payment" {
+				for _, d := range detailsOf(x, engine.DetailPublicInputs) {
+					for _, in := range d.Inputs {
+						if in.Name == "Nullifiers" {
+							nullifier = in.Value
+						}
+					}
+				}
+			}
+		}
+		if nullifier == "" || r.Nullifier != nullifier || r.TxHash != e.FanOut()[0].TxHash.Hex() {
+			t.Errorf("refusal names nullifier %s spent by %s, want payment 1's %s spent by %s", r.Nullifier, r.TxHash, nullifier, e.FanOut()[0].TxHash.Hex())
+		}
+
+		// The trees and every balance are unchanged: as the engine read them,
+		// and on chain, where nothing was mined between payments 2 and 3.
+		if r.Before == nil || r.After == nil || len(r.Before.Trees) != 2 || len(r.Before.Balances) != 2+2+engine.K {
+			t.Fatalf("refusal's chain state %+v → %+v, want both vaults' trees and the vault's, the relayer's and every actor's balance", r.Before, r.After)
+		}
+		if !slices.Equal(r.Before.Trees, r.After.Trees) || !slices.Equal(r.Before.Balances, r.After.Balances) {
+			t.Errorf("chain state changed: %+v → %+v", r.Before, r.After)
+		}
+		block := func(tx common.Hash) uint64 {
+			rc, err := client.TransactionReceipt(context.Background(), tx)
+			if err != nil {
+				t.Fatalf("receipt %s: %v", tx.Hex(), err)
+			}
+			return rc.BlockNumber.Uint64()
+		}
+		if b2, b3 := block(e.FanOut()[1].TxHash), block(e.FanOut()[2].TxHash); b3 != b2+1 {
+			t.Errorf("payment 2 in block %d, payment 3 in %d: a transaction was mined between them", b2, b3)
 		}
 	})
 

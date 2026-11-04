@@ -174,6 +174,13 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .verify .ins .tampered { color:var(--bad); font-weight:600; }
 .verify .curl { display:flex; gap:8px; align-items:flex-start; }
 .verify .curl pre { flex:1; }
+/* A walkthrough's replay of payment 1, refused: who refused it and why, and the chain unchanged. */
+.refusal { display:flex; flex-direction:column; gap:8px; }
+.refusal[hidden] { display:none; }
+.refusal h3 { font:600 17px/1.3 var(--serif); color:var(--text); }
+.refusal .say { font:15px/1.45 var(--serif); color:var(--text2); }
+.refusal .checks .no { color:var(--bad); font-weight:600; margin-right:4px; }
+.refusal .checks .v { font-family:var(--mono); overflow-wrap:anywhere; }
 /* Payment 1's witness, staying in the Sender's wallet, beside its public inputs, going on chain. */
 .columns { display:flex; flex-direction:column; gap:8px; }
 .columns[hidden] { display:none; }
@@ -448,6 +455,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     <div class="next"><button id="nextBtn" disabled>NEXT ▸</button><span class="hint" id="nextHint"></span><button id="fullRunBtn" hidden>RUN THE FULL DEMO ▸</button></div>
   </div>
   <section class="columns card" id="columns" aria-live="polite" hidden></section>
+  <section class="refusal card" id="refusal" aria-live="polite" hidden></section>
   <section class="verify card" id="verify" aria-live="polite" hidden></section>
   <div class="sides" id="narrSides"></div>
   <details class="fold hops card" id="hopFold"><summary>Proof and Merkle tree details</summary>
@@ -680,7 +688,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
       "proof": "The proof comes back to the Sender’s wallet: eight numbers, and the public inputs they were made for. Nothing in them opens a note.",
       "relay": "The Sender hands the proof to the relayer, which submits it from its own account, so the Sender’s address never appears on chain.",
       "settle": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had the vault check the proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies), then the vault published the nullifier and added {to}’s note and the Sender’s change.",
-      "payment": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now."
+      "payment": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now.",
+      "replay": "Now try to spend the same money twice. The Sender resubmits payment 1, the very request that paid {who}, byte for byte, through the relayer, as a real payment would go. Its proof is genuine, but the note it spends is already spent: payment 1 published its nullifier."
     },
     "discover": {
       "scan": "{who} tries every new note on chain with their view key and keeps the one that opens."
@@ -691,6 +700,10 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "witness": {
       "stays": "The witness: the note being spent (its amount and salt), the spend key that owns it, its Merkle path, and the openings of the two new notes, {to}’s and the Sender’s change. The prover is part of the Sender’s wallet (here the gnark server stands in for it), so none of these values leaves the wallet.",
       "chain": "The public inputs, named as in the Payment statement. The proof convinces the vault that the hidden values fit them: a Merkle root the vault has had, the spent note’s nullifier, and the two new notes’ commitments, the very commitments the vault logs."
+    },
+    "refusal": {
+      "refused": "Refused by {by}: “{reason}”. The proof is valid, but the nullifier it publishes is already on chain, so the note behind it can’t be spent again.",
+      "unchanged": "Nothing changed: the vault’s Merkle trees and every RaylsERC20 balance, read before and after the replay, are the same. No new leaves, no money moved."
     },
     "verifyProof": {
       "check": "Don’t take the demo’s word for it: this page asks the chain itself. It calls the Verifier’s verifyProof with payment 1’s proof, its public inputs and slot {vk}, the Payment verifying key the vault checked it against. It is a read (eth_call): nothing is sent and no gas is paid.",
@@ -717,6 +730,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "prove UsdrFee": "A second proof pays the relayer its USDr fee.",
     "proof": "The prover hands the proof back to {to}’s wallet: {detail}.",
     "relay": "{from} hands the transaction to the relayer: {from}’s own account stays off chain.",
+    "replay payment 1": "{from} sends payment 1 again, exactly as before: {detail}.",
     "payment": "The relayer submits it; EnygmaDvp checks the proof and settles.",
     "paymentWithUsdrFee": "The relayer submits them; EnygmaDvp checks both proofs and settles.",
     "notes in": "The vault adds the new notes as fingerprints: {detailHead}.",
@@ -747,6 +761,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "prove UsdrFee": { "text": "fee note", "kinds": ["note"], "private": true },
     "proof": { "text": "proof", "kinds": ["proof"] },
     "relay": { "text": "proof", "kinds": ["proof"] },
+    "replay payment 1": { "text": "spent proof", "kinds": ["proof", "nullifier"] },
     "settle": { "text": "proof + nullifiers", "kinds": ["proof", "nullifier"] },
     "payment": { "text": "proof + nullifiers", "kinds": ["proof", "nullifier"] },
     "paymentWithUsdrFee": { "text": "proofs + nullifiers", "kinds": ["proof", "nullifier"] },
@@ -1278,6 +1293,7 @@ const diagram = (() => {
     }
     hopPanel.shown(h);
     columns.shown(h);
+    refusal.shown(h);
     if (!h.repeat) narration.hop(h, rep);
     wallet.follow(h);
   }
@@ -1507,6 +1523,7 @@ const SENTENCE = {
     const n = d.events?.length || 0;
     return n ? `The transaction is mined: its hash, and the ${n === 1 ? 'event' : `${n} events`} its receipt logged.` : 'The transaction is mined: its hash. Its receipt logged no events.';
   },
+  refusal: d => `Payment 1’s exact request, sent again, is refused by the ${NODE[d.refusedBy]?.label || d.refusedBy}: ${d.reason}. Its nullifier is already on chain, and the vault’s trees and every balance are as they were.`,
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
@@ -1723,6 +1740,10 @@ const hopPanel = (() => {
         [`${d.circuit} · root ${i} · tree ${n.tree} · known`, hex(n.root)],
         [`${d.circuit} · nullifier ${i} · unused → published`, hex(n.nullifier)]]),
       ['transaction', hex(d.tx)]];
+    if (d.kind === 'refusal') return [
+      ['refused by', esc(NODE[d.refusedBy]?.label || d.refusedBy)], ['reason', esc(d.reason)],
+      [`nullifier · already spent · tree ${d.tree}`, hex(d.nullifier)], ['spent by payment 1 · transaction', hex(d.tx)],
+      ...refusal.unchanged(d).map(([k, b, a]) => [`${k} · unchanged`, `${esc(b)} → ${esc(a)}`])];
     if (!LANDS.has(d.kind)) return [];
     return [
       ...(d.kind === 'commitment'
@@ -2131,6 +2152,55 @@ const columns = (() => {
   };
 })();
 
+// ---- Replay payment 1: its double-spend refusal ------------------------------
+
+// When the replay's hop plays in a walkthrough, its refusal hop detail shows
+// in a card: who refused it and why, the nullifier already spent, and each
+// vault tree and balance before and after, the same. The card stays while
+// payment 2's step plays.
+const refusal = (() => {
+  const card = $('refusal');
+  let step = null;
+  // unchanged lists refusal d's trees and balances as [what, before, after].
+  const unchanged = d => {
+    const b = d.before || {}, a = d.after || {};
+    // tree is one vault tree's state as a line.
+    const tree = t => t ? `tree ${t.tree}: ${t.leafCount} leaves, root ${shortHex(t.root)}` : '—';
+    return [
+      ...(b.trees || []).map((t, i) => [`${NODE[t.vault]?.label || t.vault} tree`, tree(t), tree(a.trees?.[i])]),
+      ...(b.balances || []).map((x, i) => [`${NODE[x.owner]?.label || x.owner} · RaylsERC20`, x.value, a.balances?.[i]?.value ?? '—'])];
+  };
+  // render draws the card for replay hop h's refusal detail d.
+  function render(h, d) {
+    const by = NODE[d.refusedBy]?.label || d.refusedBy;
+    // say is the walkthrough narration of one part of the card (refused or unchanged).
+    const say = part => esc(narration.text(NARRATION.walkthrough.refusal[part], h.step, { by: `the ${by}`, reason: d.reason }));
+    card.innerHTML = `<h3>Payment 1, sent again: refused</h3>
+      <p class="say">${say('refused')}</p>
+      <div class="checks">
+        <div><span class="no">✗</span>refused by <b>${esc(by)}</b>: ${esc(d.reason)}</div>
+        <div><span class="ok">✓</span>nullifier ${hex(d.nullifier)} was already spent, by payment 1 (tx ${hex(d.tx)})</div>
+      </div>
+      <p class="say">${say('unchanged')}</p>
+      <div class="checks">${unchanged(d).map(([k, b, a]) => `<div><span class="ok">${b === a ? '✓' : '✗'}</span>${esc(k)}: <span class="v">${esc(b)}${b === a ? ', unchanged' : ` → ${esc(a)}`}</span></div>`).join('')}</div>`;
+  }
+  return {
+    unchanged,
+    // shown takes the hop the diagram is playing: a refused replay shows
+    // the card; a hop of a later step takes it away.
+    shown(h) {
+      const d = h.hopDetail?.find(x => x.kind === 'refusal');
+      if (d) {
+        step = h.step;
+        render(h, d);
+        card.hidden = false;
+      } else if (step && h.step !== step) this.reset();
+    },
+    // reset takes the card away, for a new run.
+    reset() { step = null; card.hidden = true; card.innerHTML = ''; },
+  };
+})();
+
 // ---- the on-chain proof check: payment 1's proof, checked by the page -------
 
 // Once payment 1 of a walkthrough settles, the engine sends its
@@ -2220,6 +2290,7 @@ const walk = (() => {
   // the server, the engine still waits, so its gate comes back; a refusal
   // (no walkthrough waiting) only shows.
   async function release(e) {
+    label(null);
     narration.action(e, true);
     let res;
     try { res = await fetch('/release', { method: 'POST' }); } catch (err) {
@@ -2230,18 +2301,20 @@ const walk = (() => {
   }
   // gate queues action e's gate.
   const gate = e => diagram.gate({ keep: true, onRelease: () => release(e) });
+  // label names what Next does at action e's gate: the replay has its own name.
+  const label = e => { $('nextBtn').textContent = e?.action === 'replay' ? 'REPLAY PAYMENT 1 ▸' : 'NEXT ▸'; };
   return {
     // on says whether this page's run is a walkthrough.
     on: () => !!runOpts?.walkthrough,
     // action queues action event e: what it does, then its gate.
     action(e) {
-      diagram.after(() => narration.action(e));
+      diagram.after(() => { narration.action(e); label(e); });
       gate(e);
     },
     // done offers the full run, once the walkthrough's last hop has played.
     done() { diagram.after(() => { $('fullRunBtn').hidden = false; }); },
     // reset takes the handover away, for a new run.
-    reset() { $('fullRunBtn').hidden = true; },
+    reset() { $('fullRunBtn').hidden = true; label(null); },
   };
 })();
 
@@ -2393,7 +2466,7 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); verify.reset(); columns.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); verify.reset(); columns.reset(); refusal.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose

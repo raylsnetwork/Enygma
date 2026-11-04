@@ -302,3 +302,21 @@ func TestTheWitnessAndPublicColumnsHaveANarration(t *testing.T) {
 		}
 	}
 }
+
+// Replay payment 1's refusal has its narration in the walkthrough section,
+// keyed by the refusal hop detail kind: why it was refused, and that the
+// chain is unchanged. The click itself is fanout's replay action, which
+// TestEveryWalkthroughActionHasANarration covers.
+func TestTheReplayRefusalHasANarration(t *testing.T) {
+	n := servedNarration(t)
+	refusal := n.Walkthrough[string(engine.DetailRefusal)]
+	for _, part := range []string{"refused", "unchanged"} {
+		var text string
+		if err := json.Unmarshal(refusal[part], &text); err != nil || strings.TrimSpace(text) == "" {
+			t.Errorf("walkthrough.%s.%s: no narration text (%s)", engine.DetailRefusal, part, refusal[part])
+		}
+	}
+	if v := n.Walkthrough["fanout"]["replay"]; len(v) == 0 {
+		t.Error("walkthrough.fanout.replay: no narration for the Replay payment 1 click")
+	}
+}
