@@ -50,6 +50,11 @@ new EventSource('/events').onmessage = m => {
   if (e.kind === 'step_succeeded' || e.kind === 'step_failed') c.endedAt[e.step] = performance.now();
   if (e.kind === 'done' || e.kind === 'failed') c.done = performance.now();
 };
+// Elements in the hop panel or a story card that hold text and are rendered, yet drawn 0 px tall
+// (a scrolling flex child shrunk to nothing), each the outermost such; their text is in the DOM either way.
+c.collapsed = () => [...document.querySelectorAll('#hopPanel *, .card *')]
+  .filter(el => el.checkVisibility() && el.innerText?.trim() && el.getBoundingClientRect().height === 0 && el.parentElement.getBoundingClientRect().height > 0)
+  .map(el => `${el.tagName.toLowerCase()}.${el.className}: ${el.innerText.trim().slice(0, 40)}`);
 $('runBtn').click(); 'started'
 ```
 
@@ -60,12 +65,13 @@ const c = window.__chk;
 ({ hiddenMs: Math.round(c.hiddenNow()), hidden: document.hidden, hops: c.hops, shown: c.shown, maxQueued: c.maxQueued,
    lag: c.drained - c.done, shownAtEnd: c.shownAtEnd,
    early: Object.keys(c.shownAtFinish).filter(s => c.shownAtFinish[s] < (c.lastHop[s] ?? 0)),
-   maxStepLag: Math.max(0, ...Object.values(c.stepLag)), status: document.getElementById('statusText').textContent })
+   maxStepLag: Math.max(0, ...Object.values(c.stepLag)), status: document.getElementById('statusText').textContent, collapsed: c.collapsed() })
 ```
 
 - `lag` is how long the page kept playing hops after the engine's run ended (about one hold when it had kept up). `drained` is unset while it is still playing.
 - `early` lists steps that showed finished before their last hop played; it should be empty.
 - `shownAtEnd` should equal `hops`.
+- `collapsed` should be empty. It reads the page as it is now, so a check of a card or panel calls `c.collapsed()` while that card shows (each replayed step's hop detail too, with the Proof and Merkle tree details fold open: a closed fold renders nothing, so nothing in it counts): a card's text being in the DOM does not mean it is drawn. #172's decryption card passed every test and review at 0 px.
 - The engine log in the terminal shows why a run stopped early.
 
 Extend the probe for what a ticket checks (a panel's content, say), keeping to observers and the event stream.
