@@ -1449,7 +1449,11 @@ const SENTENCE = {
     ? `${d.leaf.owner || 'The payer'} proves both notes this transfer merges are leaves of the ${NODE[d.vault].label}'s Merkle tree: each leaf, hashed with one sibling per level, gives a root the vault has had. The proof shows this without saying which leaves.`
     : `${d.leaf.owner || 'The payer'} proves the note being spent is a leaf of the ${NODE[d.vault].label}'s Merkle tree: the leaf, hashed with one sibling at each of the ${DEPTH} levels, gives a root the vault has had. The proof shows this without saying which leaf.`,
   http: d => `The exact request sent to the ${/\/relay\//.test(d.url) ? 'relayer' : 'gnark server'} and the response it got back, as they went over the wire.`,
-  receipt: d => `The transaction is mined: its hash, and the ${d.events.length === 1 ? 'event' : `${d.events.length} events`} its receipt logged.`,
+  receipt: d => {
+    // A transaction that logged nothing (a plain ETH transfer) comes with no events list.
+    const n = d.events?.length || 0;
+    return n ? `The transaction is mined: its hash, and the ${n === 1 ? 'event' : `${n} events`} its receipt logged.` : 'The transaction is mined: its hash. Its receipt logged no events.';
+  },
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
@@ -1730,10 +1734,11 @@ const hopPanel = (() => {
       <div class="lbl">response body</div>${body(d.response || '')}
     </div>`;
   // receiptHtml is a receipt detail: the transaction, then each logged event.
-  const receiptHtml = d => `<div class="wire">
+  // A transaction that logged nothing comes with no events list, an event with no arguments with no args.
+  const receiptHtml = (d, evs = d.events || []) => `<div class="wire">
       <div class="line">tx ${hex(d.tx)} · block ${d.block} · gas ${Number(d.gas).toLocaleString('en-US')}</div>
-      <div class="lbl">${d.events.length} logged event${d.events.length === 1 ? '' : 's'}</div>
-      ${d.events.map(ev => `<div class="ev"><b>${esc(NODE[ev.contract]?.label || ev.contract)}.${esc(ev.name)}</b>(${ev.args.map(a => `${esc(a.name)}: ${a.value.startsWith('0x') && a.value.length > 14 ? hex(a.value) : esc(a.value)}`).join(', ')})</div>`).join('')}
+      <div class="lbl">${evs.length} logged event${evs.length === 1 ? '' : 's'}</div>
+      ${evs.map(ev => `<div class="ev"><b>${esc(NODE[ev.contract]?.label || ev.contract)}.${esc(ev.name)}</b>(${(ev.args || []).map(a => `${esc(a.name)}: ${a.value.startsWith('0x') && a.value.length > 14 ? hex(a.value) : esc(a.value)}`).join(', ')})</div>`).join('')}
     </div>`;
   // WIRE is each wire kind's fold title and renderer.
   const WIRE = { http: { title: 'Request and response', html: wireHtml }, receipt: { title: 'Receipt', html: receiptHtml } };
