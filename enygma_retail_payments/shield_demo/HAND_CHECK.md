@@ -302,3 +302,15 @@ Since #171, each proof request and relayer call hop carries an http hop detail (
 4. **Walkthrough.** In a walkthrough, payment 1's prove click and relay click each show their request and response, and its settle hop its receipt.
 5. **Pace unchanged.** The pace checks still pass with the probe above (its `hasDetail` ignores http and receipt details).
 6. **Both themes at 1280×828.** The request line, the bodies (scrolling inside their box, never widening the panel) and the event lines read in both themes.
+
+## On-chain proof check
+
+Since #174, once payment 1 of a walkthrough settles, the engine sends its `Verifier.verifyProof(vkIndex, proof, inputs)` call (the `verifyProof` protocol field: slot, proof, public inputs and the ABI-encoded data, and the same with `CommitmentsOut[0]` plus one). `/defaults` names the node's RPC URL, the deployment's Verifier and the Payment verifying key's slot (0, Erc20CoinVault's `VK_ID_ERC20_JOINSPLIT`). `TestShieldDemoWalkthrough` sends the same `eth_call` and asserts true, then false with the tampered input.
+
+**The call goes direct.** The page sends the `eth_call` straight to the Hardhat node (`http://127.0.0.1:8545`), not through the demo server: the node answers the page's cross-origin call (checked 2026-11-04 from `localhost:9092`), so there is no pass-through endpoint. The card says so under its buttons.
+
+1. **True.** In a walkthrough, once Pay Ana's relay hops have played, a card under the narration shows "Check payment 1’s proof on chain", its narration, `verifyProof → true`, the proof (a, b, c), the public inputs, the JSON-RPC request body (`eth_call` to the Verifier, `"latest"`) and a curl command. The browser's network panel shows the POST going to `127.0.0.1:8545`, not `:9092`.
+2. **Tamper.** TAMPER changes the heading, adds the Tamper narration, marks `CommitmentsOut[0]` red as `old → new`, and shows `verifyProof → false`. CHECK THE PROOF goes back to true.
+3. **curl.** COPY copies the command; run in a terminal, it prints `"result":"0x…01"` for the genuine call and `"0x…00"` after Tamper (copy again after pressing TAMPER).
+4. **Stays until the end.** The card and both buttons stay through payments 2–6, Discover and Audit, and after the walkthrough's last hop; a new run or walkthrough takes it away. A full RUN never shows it.
+5. **Both themes at 1280×828**, and under 1000px wide: the body and curl boxes scroll inside the card, never widening the story column.

@@ -235,3 +235,57 @@ func TestWithoutDevModeTheEmbeddedPageIsServed(t *testing.T) {
 		t.Fatalf("got %d bytes, want the embedded page", len(got))
 	}
 }
+
+// getDefaults returns the demo's /defaults, decoded.
+func getDefaults(t *testing.T, url string) map[string]any {
+	t.Helper()
+	res, err := http.Get(url + "/defaults")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var d map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&d); err != nil {
+		t.Fatalf("decode /defaults: %v", err)
+	}
+	return d
+}
+
+// /defaults gives the page what its on-chain proof check calls: the node's
+// RPC URL, the deployment's Verifier and the Payment verifying key's slot
+// (0, Erc20CoinVault's VK_ID_ERC20_JOINSPLIT).
+func TestDefaultsNameTheVerifierThePageCalls(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePage(t, filepath.Join(root, "build", "receipts.json"),
+		`{"Verifier": {"contractAddress": "0x6b01819C927b66eB1ED17a276fC60359B502d3De"}}`)
+	s := newServer(context.Background(), engine.DefaultConfig(root), "")
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+
+	d := getDefaults(t, ts.URL)
+	chain, _ := d["chain"].(map[string]any)
+	want := map[string]any{"rpcUrl": "http://127.0.0.1:8545", "verifier": "0x6b01819C927b66eB1ED17a276fC60359B502d3De", "paymentVk": float64(0)}
+	for k, v := range want {
+		if chain[k] != v {
+			t.Errorf("/defaults chain.%s = %v, want %v (chain %v)", k, chain[k], v, d["chain"])
+		}
+	}
+	if d["shieldTotal"] != float64(engine.DefaultOptions().ShieldTotal) {
+		t.Errorf("/defaults lost the run options: shieldTotal %v", d["shieldTotal"])
+	}
+}
+
+// Without a deployment, /defaults still gives the run options, and no chain.
+func TestDefaultsWithoutADeploymentHaveNoChain(t *testing.T) {
+	_, url := startDemo(t, "")
+	d := getDefaults(t, url)
+	if _, ok := d["chain"]; ok {
+		t.Errorf("/defaults chain = %v with no build/receipts.json, want none", d["chain"])
+	}
+	if d["shieldTotal"] == nil {
+		t.Error("/defaults has no run options")
+	}
+}

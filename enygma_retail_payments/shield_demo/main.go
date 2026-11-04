@@ -192,10 +192,22 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleDefaults returns the default run options for the page's form.
+// defaults is /defaults' body: the default run options for the page's
+// form and, with a deployment, the Verifier its on-chain proof check calls.
+type defaults struct {
+	engine.Options
+	Chain *engine.Verifier `json:"chain,omitempty"`
+}
+
+// handleDefaults returns the default run options and the deployment's
+// Verifier, if build/receipts.json names one.
 func (s *server) handleDefaults(w http.ResponseWriter, r *http.Request) {
+	d := defaults{Options: engine.DefaultOptions()}
+	if v, err := engine.DeployedVerifier(s.cfg); err == nil {
+		d.Chain = &v
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(engine.DefaultOptions())
+	json.NewEncoder(w).Encode(d)
 }
 
 func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {

@@ -155,6 +155,25 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .narr .act b { font:700 10px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--accent); display:block; }
 #fullRunBtn { border:none; background:var(--accent); color:var(--on-accent); font-weight:700; letter-spacing:.06em; padding:6px 20px; border-radius:999px; cursor:pointer; }
 #fullRunBtn[hidden] { display:none; }
+/* The walkthrough's on-chain proof check: payment 1's proof, checked by the page against the Verifier. */
+.verify { display:flex; flex-direction:column; gap:8px; }
+.verify[hidden] { display:none; }
+.verify h3 { font:600 17px/1.3 var(--serif); color:var(--text); }
+.verify .say { font:15px/1.45 var(--serif); color:var(--text2); }
+.verify .route { font:11px var(--mono); color:var(--muted); }
+.verify .acts { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.verify .acts button { border:1.5px solid var(--accent); background:none; color:var(--accent); font:700 11px var(--mono); letter-spacing:.08em; padding:5px 14px; border-radius:999px; cursor:pointer; }
+.verify .acts button.on { background:var(--accent); color:var(--on-accent); }
+.verify .acts button:disabled { opacity:.35; cursor:default; }
+.verify .result { font:600 14px var(--mono); }
+.verify .result.true { color:var(--ok); }
+.verify .result.false, .verify .result.err { color:var(--bad); }
+.verify .lbl { font:600 10.5px var(--mono); color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.verify pre { margin:0; max-height:180px; overflow:auto; background:var(--s2); border-radius:6px; padding:6px 8px; font:11px/1.4 var(--mono); color:var(--text2); white-space:pre-wrap; overflow-wrap:anywhere; }
+.verify .ins { font:11px var(--mono); color:var(--text2); display:grid; grid-template-columns:auto 1fr; gap:1px 10px; }
+.verify .ins .tampered { color:var(--bad); font-weight:600; }
+.verify .curl { display:flex; gap:8px; align-items:flex-start; }
+.verify .curl pre { flex:1; }
 /* What the public chain sees against what stays private, side by side under the card. */
 .sides { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .sides:empty { display:none; }
@@ -410,6 +429,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     <ul id="now"></ul>
     <div class="next"><button id="nextBtn" disabled>NEXT ▸</button><span class="hint" id="nextHint"></span><button id="fullRunBtn" hidden>RUN THE FULL DEMO ▸</button></div>
   </div>
+  <section class="verify card" id="verify" aria-live="polite" hidden></section>
   <div class="sides" id="narrSides"></div>
   <details class="fold hops card" id="hopFold"><summary>Proof and Merkle tree details</summary>
     <aside id="hopPanel" aria-label="Hop detail"></aside>
@@ -646,6 +666,10 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     },
     "audit": {
       "audit": "The auditor opens every note of the walkthrough with the view keys it recovered, then checks each user’s balance against their own scan."
+    },
+    "verifyProof": {
+      "check": "Don’t take the demo’s word for it: this page asks the chain itself. It calls the Verifier’s verifyProof with payment 1’s proof, its public inputs and slot {vk}, the Payment verifying key the vault checked it against. It is a read (eth_call): nothing is sent and no gas is paid.",
+      "tamper": "Tamper adds one to a single public input, {to}’s output commitment, and asks the same Verifier again. The proof was made for the original inputs, so now it says false: no one can swap the note a proof pays for another."
     }
   },
   "hops": {
@@ -987,6 +1011,7 @@ function setProto(field, value) {
   if (field === 'totals') { showTotals(JSON.parse(value)); return; }
   if (field === 'steps') { steps = JSON.parse(value); buildSteps(); return; }
   if (field === 'trees') { hopPanel.snapshot(JSON.parse(value)); return; }
+  if (field === 'verifyProof') { const c = JSON.parse(value); diagram.after(() => verify.show(c)); return; }
   protoFields[field] = value;
   diagram.refreshTip();
 }
@@ -2023,6 +2048,83 @@ const narration = (() => {
   };
 })();
 
+// ---- the on-chain proof check: payment 1's proof, checked by the page -------
+
+// Once payment 1 of a walkthrough settles, the engine sends its
+// Verifier.verifyProof call (the verifyProof protocol field): the slot, the
+// proof, the public inputs and the call's data, and the same with one
+// output commitment tampered. The page sends the eth_call itself, straight
+// to the node /defaults names (it answers cross-origin calls), and shows the
+// JSON-RPC body, the answer and a curl command that sends the same body.
+const verify = (() => {
+  const card = $('verify');
+  let call = null, tampered = false, seq = 0;
+  // rpcBody is the JSON-RPC body that calls verifyProof with data.
+  const rpcBody = data => JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: defaults.chain.verifier, data }, 'latest'] });
+  // data is the call the page sends now: the genuine one, or the tampered one.
+  const data = () => tampered ? call.tamper.data : call.data;
+  // narrate is the walkthrough narration of part (check or tamper).
+  const narrate = part => narration.text(NARRATION.walkthrough.verifyProof[part], 'fanout_1', { vk: call.vk });
+  // render draws the card for the call the page sends now, and its answer
+  // (null while it is on its way, or { error }).
+  function render(answer) {
+    const chain = defaults?.chain;
+    if (!chain) {
+      card.innerHTML = '<h3>Check payment 1’s proof on chain</h3><p class="result err">/defaults names no Verifier: deploy and reload the page.</p>';
+      return;
+    }
+    const body = rpcBody(data());
+    const curl = `curl -s -X POST -H 'Content-Type: application/json' --data '${body}' ${chain.rpcUrl}`;
+    const res = !answer ? '<span class="result">asking the Verifier…</span>'
+      : answer.error ? `<span class="result err">${esc(answer.error)}</span>`
+      : `<span class="result ${answer.ok}">verifyProof → ${answer.ok}</span>`;
+    const ins = (call.inputs || []).map((p, i) => {
+      const t = tampered && i === call.tamper.index;
+      return `<span>${esc(p.name)}[${esc(p.index)}]</span><span${t ? ' class="tampered"' : ''}>${t ? `${esc(shortHex(call.tamper.from))} → ${esc(shortHex(call.tamper.to))}` : esc(shortHex(p.value))}</span>`;
+    }).join('');
+    card.innerHTML = `<h3>${tampered ? 'Tampered: one output commitment changed' : 'Check payment 1’s proof on chain'}</h3>
+      <p class="say">${esc(narrate('check'))}</p>${tampered ? `<p class="say">${esc(narrate('tamper'))}</p>` : ''}
+      <div class="acts"><button data-v="check"${tampered ? '' : ' class="on"'}>CHECK THE PROOF</button><button data-v="tamper"${tampered ? ' class="on"' : ''}>TAMPER</button>${res}</div>
+      <div class="route">The page sends this eth_call straight to the Hardhat node at ${esc(chain.rpcUrl)}, not through the demo server: Verifier ${esc(chain.verifier)}, slot ${esc(call.vk)}.</div>
+      <div class="lbl">proof (a, b, c)</div><div class="ins">${(call.proof || []).map((v, i) => `<span>${['a.x', 'a.y', 'b.x[0]', 'b.x[1]', 'b.y[0]', 'b.y[1]', 'c.x', 'c.y'][i]}</span><span>${hex(v)}</span>`).join('')}</div>
+      <div class="lbl">public inputs</div><div class="ins">${ins}</div>
+      <div class="lbl">JSON-RPC request body</div><pre>${esc(JSON.stringify(JSON.parse(body), null, 2))}</pre>
+      <div class="lbl">the same call from your terminal</div><div class="curl"><pre>${esc(curl)}</pre><button data-v="copy" data-copy="${esc(curl)}">COPY</button></div>`;
+  }
+  // send makes the eth_call for the current call and shows its answer; an
+  // answer that comes after a newer call is dropped.
+  async function send() {
+    const mine = ++seq;
+    render(null);
+    let answer;
+    try {
+      const res = await fetch(defaults.chain.rpcUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: rpcBody(data()) });
+      const j = await res.json();
+      answer = j.error ? { error: j.error.message || JSON.stringify(j.error) } : { ok: BigInt(j.result) === 1n };
+    } catch (err) { answer = { error: `the node did not answer: ${err}` }; }
+    if (mine === seq && call) render(answer);
+  }
+  // A click on the card checks the genuine call or the tampered one; COPY
+  // is copied by the page's data-copy handler, and says so.
+  card.addEventListener('click', ev => {
+    const b = ev.target.closest('button');
+    if (!b || !call) return;
+    if (b.dataset.v === 'copy') { b.textContent = 'COPIED'; return; }
+    tampered = b.dataset.v === 'tamper';
+    if (defaults?.chain) send();
+  });
+  return {
+    // show offers the check of call c, a VerifyCall, and makes it once.
+    show(c) {
+      call = c; tampered = false;
+      card.hidden = false;
+      if (defaults?.chain) send(); else render(null);
+    },
+    // reset takes the check away, for a new run.
+    reset() { call = null; seq++; card.hidden = true; card.innerHTML = ''; },
+  };
+})();
+
 // ---- walkthrough: the engine waits before each action until Next ----------
 
 // In a walkthrough this page started, the engine announces each action and
@@ -2208,7 +2310,7 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); verify.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose

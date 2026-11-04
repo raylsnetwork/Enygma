@@ -276,3 +276,16 @@ func TestEveryWalkthroughActionHasANarration(t *testing.T) {
 		}
 	}
 }
+
+// The on-chain proof check a walkthrough offers once payment 1 settles has
+// its narration in the walkthrough section, keyed by its protocol field:
+// the check itself, and Tamper.
+func TestTheOnChainProofCheckHasANarration(t *testing.T) {
+	check := servedNarration(t).Walkthrough[engine.VerifyProofField]
+	for _, part := range []string{"check", "tamper"} {
+		var text string
+		if err := json.Unmarshal(check[part], &text); err != nil || strings.TrimSpace(text) == "" {
+			t.Errorf("walkthrough.%s.%s: no narration text (%s)", engine.VerifyProofField, part, check[part])
+		}
+	}
+}
