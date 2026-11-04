@@ -174,6 +174,24 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 .verify .ins .tampered { color:var(--bad); font-weight:600; }
 .verify .curl { display:flex; gap:8px; align-items:flex-start; }
 .verify .curl pre { flex:1; }
+/* Payment 1's witness, staying in the Sender's wallet, beside its public inputs, going on chain. */
+.columns { display:flex; flex-direction:column; gap:8px; }
+.columns[hidden] { display:none; }
+.columns h3 { font:600 17px/1.3 var(--serif); color:var(--text); }
+.columns .two { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; align-items:start; }
+@media (max-width:480px) { .columns .two { grid-template-columns:minmax(0,1fr); } }
+.columns .col { border:1px dashed var(--bd2); border-radius:10px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; min-width:0; }
+.columns .col.pub { border-style:solid; border-color:color-mix(in srgb, var(--accent) 45%, var(--bd)); }
+.columns .col > b { font:600 11px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--warn); }
+.columns .col.pub > b { color:var(--accent); }
+.columns .say { font:14px/1.4 var(--serif); color:var(--text2); }
+.columns .val { display:flex; flex-direction:column; gap:1px; padding-top:4px; border-top:1px solid var(--bd); font-size:12px; }
+.columns .val .k { font:11px var(--mono); color:var(--muted); }
+.columns .val .v { font:12px var(--mono); color:var(--text); overflow-wrap:anywhere; }
+.columns .val .v .hex + .hex { margin-left:6px; }
+.columns .val .tag { font:600 9.5px var(--mono); letter-spacing:.04em; text-transform:uppercase; }
+.columns .col.priv .val .tag { color:var(--warn); }
+.columns .col.pub .val .tag { color:var(--accent); }
 /* What the public chain sees against what stays private, side by side under the card. */
 .sides { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .sides:empty { display:none; }
@@ -429,6 +447,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     <ul id="now"></ul>
     <div class="next"><button id="nextBtn" disabled>NEXT ▸</button><span class="hint" id="nextHint"></span><button id="fullRunBtn" hidden>RUN THE FULL DEMO ▸</button></div>
   </div>
+  <section class="columns card" id="columns" aria-live="polite" hidden></section>
   <section class="verify card" id="verify" aria-live="polite" hidden></section>
   <div class="sides" id="narrSides"></div>
   <details class="fold hops card" id="hopFold"><summary>Proof and Merkle tree details</summary>
@@ -658,7 +677,9 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     },
     "fanout": {
       "prove": "The Sender’s wallet asks its prover for a zero-knowledge proof that paying {to} {amount} is valid. The prover does this now, for real: the hop line says how many milliseconds it took.",
-      "relay": "The Sender hands the proof to the relayer, which submits it from its own account. EnygmaDvp checks it, and the vault adds {to}’s note and the Sender’s change.",
+      "proof": "The proof comes back to the Sender’s wallet: eight numbers, and the public inputs they were made for. Nothing in them opens a note.",
+      "relay": "The Sender hands the proof to the relayer, which submits it from its own account, so the Sender’s address never appears on chain.",
+      "settle": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had the vault check the proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies), then the vault published the nullifier and added {to}’s note and the Sender’s change.",
       "payment": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now."
     },
     "discover": {
@@ -666,6 +687,10 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     },
     "audit": {
       "audit": "The auditor opens every note of the walkthrough with the view keys it recovered, then checks each user’s balance against their own scan."
+    },
+    "witness": {
+      "stays": "The witness: the note being spent (its amount and salt), the spend key that owns it, its Merkle path, and the openings of the two new notes, {to}’s and the Sender’s change. The prover is part of the Sender’s wallet (here the gnark server stands in for it), so none of these values leaves the wallet.",
+      "chain": "The public inputs, named as in the Payment statement. The proof convinces the vault that the hidden values fit them: a Merkle root the vault has had, the spent note’s nullifier, and the two new notes’ commitments, the very commitments the vault logs."
     },
     "verifyProof": {
       "check": "Don’t take the demo’s word for it: this page asks the chain itself. It calls the Verifier’s verifyProof with payment 1’s proof, its public inputs and slot {vk}, the Payment verifying key the vault checked it against. It is a read (eth_call): nothing is sent and no gas is paid.",
@@ -690,6 +715,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "prove Payment": "{from}’s computer proves the payment is valid ({detailHead}).",
     "prove Payment2in": "{from} has no single note big enough, so the proof spends two at once.",
     "prove UsdrFee": "A second proof pays the relayer its USDr fee.",
+    "proof": "The prover hands the proof back to {to}’s wallet: {detail}.",
     "relay": "{from} hands the transaction to the relayer: {from}’s own account stays off chain.",
     "payment": "The relayer submits it; EnygmaDvp checks the proof and settles.",
     "paymentWithUsdrFee": "The relayer submits them; EnygmaDvp checks both proofs and settles.",
@@ -719,6 +745,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "prove Payment": { "text": "note", "kinds": ["note"], "private": true },
     "prove Payment2in": { "text": "notes", "kinds": ["note"], "private": true },
     "prove UsdrFee": { "text": "fee note", "kinds": ["note"], "private": true },
+    "proof": { "text": "proof", "kinds": ["proof"] },
     "relay": { "text": "proof", "kinds": ["proof"] },
     "settle": { "text": "proof + nullifiers", "kinds": ["proof", "nullifier"] },
     "payment": { "text": "proof + nullifiers", "kinds": ["proof", "nullifier"] },
@@ -1250,6 +1277,7 @@ const diagram = (() => {
       setTimeout(() => el.remove(), h.failed ? hold * 4 : hold + 250);
     }
     hopPanel.shown(h);
+    columns.shown(h);
     if (!h.repeat) narration.hop(h, rep);
     wallet.follow(h);
   }
@@ -2048,6 +2076,61 @@ const narration = (() => {
   };
 })();
 
+// ---- payment 1's two columns: what stays in the wallet, what goes on chain ---
+
+// When payment 1's proof request plays in a walkthrough, its witness hop
+// detail and its publicInputs detail show side by side: each witness value
+// stays in the Sender's wallet, each public input goes on chain, named by
+// its Payment statement field. The card stays while payment 1's hops play.
+const columns = (() => {
+  const card = $('columns');
+  let step = null;
+  const NEVER = '<span class="tag">never leaves the Sender’s wallet</span>';
+  // val is one value of a column: its label, its value html and its tag.
+  const val = (k, v, tag) => `<div class="val"><span class="k">${esc(k)}</span><span class="v">${v}</span>${tag}</div>`;
+  // whose names a new note's owner: the change is the Sender's own.
+  const whose = (n, i) => i ? `${n.owner}’s change` : `${n.owner}’s new note`;
+  // render draws the card for proof request hop h: witness w beside publicInputs detail pub.
+  function render(h, w, pub) {
+    // say is the walkthrough narration of one column (stays or chain).
+    const say = part => esc(narration.text(NARRATION.walkthrough.witness[part], h.step));
+    const stays = [
+      val('spend private key · PrivateKeysIn', hex(w.spendKey), NEVER),
+      ...(w.in || []).flatMap(n => [
+        val(`${n.owner}’s spent note · amount · ValuesIn`, esc(n.amount), NEVER),
+        val(`${n.owner}’s spent note · salt · SaltsIn`, hex(n.salt), NEVER),
+        val(`Merkle path · leaf #${n.path?.index} of tree ${n.path?.tree} · PathIndices, PathElements`, (n.path?.siblings || []).map(hex).join(''), NEVER)]),
+      ...(w.out || []).flatMap((n, i) => [
+        val(`${whose(n, i)} · amount · ValuesOut[${i}]`, esc(n.amount), NEVER),
+        val(`${whose(n, i)} · salt · SaltsOut[${i}]`, hex(n.salt), NEVER),
+        val(`${whose(n, i)} · owner’s spend public key · SpendPublicKeysOut[${i}]`, hex(n.pkSpend), NEVER)]),
+      val('token id · TokenId', hex(w.token), NEVER)];
+    // size is how many public inputs statement field name holds: an index shows only for more than one.
+    const inputs = pub.inputs || [], size = name => inputs.filter(x => x.name === name).length;
+    const chain = inputs.map(x => val(`${x.name}${size(x.name) > 1 ? `[${x.index}]` : ''}`, hex(x.value),
+      `<span class="tag" title="${esc(PUBLIC_HINT[x.name] || '')}">${esc(pub.circuit)} statement · ${esc(x.name)}</span>`));
+    card.innerHTML = `<h3>Payment 1: what stays with the Sender, what goes on chain</h3>
+      <div class="two">
+        <div class="col priv"><b>Stays with the Sender</b><p class="say">${say('stays')}</p>${stays.join('')}</div>
+        <div class="col pub"><b>Goes on chain</b><p class="say">${say('chain')}</p>${chain.join('')}</div>
+      </div>`;
+  }
+  return {
+    // shown takes the hop the diagram is playing: a proof request with a
+    // witness shows the columns; a hop of a later step takes them away.
+    shown(h) {
+      const w = h.hopDetail?.find(d => d.kind === 'witness'), pub = h.hopDetail?.find(d => d.kind === 'publicInputs');
+      if (w && pub) {
+        step = h.step;
+        render(h, w.witness, pub);
+        card.hidden = false;
+      } else if (step && h.step !== step) this.reset();
+    },
+    // reset takes the columns away, for a new run.
+    reset() { step = null; card.hidden = true; card.innerHTML = ''; },
+  };
+})();
+
 // ---- the on-chain proof check: payment 1's proof, checked by the page -------
 
 // Once payment 1 of a walkthrough settles, the engine sends its
@@ -2310,7 +2393,7 @@ const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 let finished = 0;
 function onEvent(e) {
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); verify.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); verify.reset(); columns.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose

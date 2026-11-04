@@ -8,7 +8,10 @@ import (
 // Gate holds a walkthrough's engine before each action until the presenter
 // releases it. An action is one real call: a key generation, a transaction
 // (a registration, the shield), a proof request, a relay, a scan or one of
-// the auditor's decryptions. A full run never waits on it.
+// the auditor's decryptions. Payment 1 of a walkthrough also holds the hops
+// that report a call already made, one per release: the proof coming back
+// after its request, the settlement after the relay (the relayer answers once
+// the transaction is mined). A full run never waits on it.
 type Gate struct {
 	mu      sync.Mutex
 	waiting bool

@@ -70,14 +70,15 @@ type gating struct {
 
 // walkGates are the actions of each walkthrough step, by step id, or by
 // step kind for the fan-out's later payments: keygen, register, the first
-// payment and discover release each action inside them on its own; the
+// payment (one hop per click: proof request, proof back, relay, settle) and
+// discover release each action inside them on its own; the
 // other steps release once, as a whole. A step with none is not walked.
 var walkGates = map[string]gating{
 	"keygen":     {actions: []string{"auditor", "keys"}},
 	"register":   {actions: []string{"register"}},
 	"audit_keys": {pre: "recover"},
 	"shield":     {pre: "shield"},
-	"fanout_1":   {actions: []string{"prove", "relay"}},
+	"fanout_1":   {actions: []string{"prove", "proof", "relay", "settle"}},
 	"fanout":     {pre: "payment"},
 	"discover":   {actions: []string{"scan"}},
 	"audit":      {pre: "audit"},

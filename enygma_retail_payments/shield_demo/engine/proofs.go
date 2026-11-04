@@ -64,10 +64,32 @@ func merklePath(vault, owner string, p *rpcore.MerkleProof) HopDetail {
 		// The path's indices are the leaf's index: bit i says the path's node
 		// at level i is a right child.
 		Leaf: &Leaf{Index: int(p.Indices.Int64()), Commitment: fieldHex(p.Element), Owner: owner}}
-	for _, s := range p.Elements {
-		d.Siblings = append(d.Siblings, fieldHex(s))
-	}
+	d.Siblings = siblings(p)
 	return d
+}
+
+// siblings are Merkle proof p's siblings, from the leaf up.
+func siblings(p *rpcore.MerkleProof) []string {
+	out := make([]string, len(p.Elements))
+	for i, s := range p.Elements {
+		out[i] = fieldHex(s)
+	}
+	return out
+}
+
+// witness is the witness hop detail of payment proof res by from, spending
+// ins along proofs, paying to amount and the change back to from.
+func witness(circuit string, from, to *Actor, ins []*note, proofs []*rpcore.MerkleProof, amount, change *big.Int, res *rpcore.PaymentResult) HopDetail {
+	w := &Witness{SpendKey: fieldHex(from.Spend.PrivateKey), Token: fieldHex(tokenId),
+		Out: []NoteOpening{
+			{Owner: to.Name, PkSpend: fieldHex(to.Spend.PublicKey), Amount: amount.String(), Salt: fieldHex(res.SaltB)},
+			{Owner: from.Name, PkSpend: fieldHex(from.Spend.PublicKey), Amount: change.String(), Salt: fieldHex(res.SaltA)},
+		}}
+	for i, n := range ins {
+		p := &NotePath{Tree: proofs[i].TreeNumber, Index: int(proofs[i].Indices.Int64()), Siblings: siblings(proofs[i])}
+		w.In = append(w.In, NoteOpening{Owner: from.Name, Amount: n.amount.String(), Salt: fieldHex(n.salt), Path: p})
+	}
+	return HopDetail{Kind: DetailWitness, Vault: NodeVault, Tree: proofs[0].TreeNumber, Circuit: circuit, Witness: w}
 }
 
 // publicInputs is the publicInputs hop detail of a circuit proof spending
