@@ -119,11 +119,43 @@ const (
 	// to. A participant's discovery opens their payment; the audit opens
 	// every note it can.
 	DetailDecryption HopDetailKind = "decryption"
+	// DetailFormula is one of the protocol's equations with a run's real
+	// values plugged in, checked against what the chain holds (see
+	// Formula). Only a walkthrough carries one, on its shield's hop: its
+	// values are the shield's opening, public in the deposit's calldata.
+	DetailFormula HopDetailKind = "formula"
 )
 
+// FormulaName names the equation a formula hop detail shows.
+type FormulaName string
+
+// FormulaCommitment is a note's commitment, Poseidon(pk_spend, salt,
+// amount, token), the leaf its vault inserts.
+const FormulaCommitment FormulaName = "commitment"
+
+// Formula is one equation with its real inputs, in the order the equation
+// takes them, its real result, and the value the chain holds to check the
+// result against. OK says whether the result equals it. Field elements are
+// 0x-hex, amounts decimal.
+type Formula struct {
+	Name   FormulaName    `json:"name"`
+	Inputs []FormulaValue `json:"inputs"`
+	Result string         `json:"result"`
+	Chain  FormulaValue   `json:"chain"`
+	OK     bool           `json:"ok"`
+}
+
+// FormulaValue is one named value of a formula: an input, or what the chain
+// holds (Name then says where, e.g. "leaf #3, the vault's Commitment event").
+type FormulaValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 // noteOpening names the parts of a note's opening, in the order the
-// commitment hashes them. Only the names go to the page: the values are
-// private to the note's owner.
+// commitment hashes them. A commitment detail sends only the names: the
+// values are private to the note's owner (a walkthrough's shield sends them
+// in a commitment formula, public in its calldata anyway).
 var noteOpening = []string{"pk_spend", "salt", "amount", "token"}
 
 // HopDetail is what a hop does to the protocol state or, for the http and
@@ -202,6 +234,10 @@ type HopDetail struct {
 	Key          *KeyPair         `json:"key,omitempty"`
 	Registration *Registration    `json:"registration,omitempty"`
 	Recovery     *ViewKeyRecovery `json:"recovery,omitempty"`
+
+	// formula: the equation and its values. Vault and Tree are where the
+	// chain holds the value it is checked against.
+	Formula *Formula `json:"formula,omitempty"`
 
 	// decryption: the notes opened. Vault is the RaylsERC20 vault, even for
 	// an audit's, which opens USDr notes too: each note names its asset.

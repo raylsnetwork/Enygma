@@ -30,6 +30,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
 // snapshot is every event the sink has captured so far.
@@ -420,6 +421,62 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			if c.Cmp(logged[i]) != 0 {
 				t.Errorf("new note %d's opening hashes to 0x%x, the vault logged 0x%x", i, c, logged[i])
 			}
+		}
+	})
+
+	t.Run("the shield's hop carries the commitment formula: Poseidon of the Sender's opening, the leaf its Commitment event inserted", func(t *testing.T) {
+		var shield []engine.Event
+		for _, h := range sink.hops() {
+			if h.Step == "shield" && h.Label == "shield" {
+				shield = append(shield, h)
+			}
+		}
+		if len(shield) != 1 {
+			t.Fatalf("%d shield hops, want 1", len(shield))
+		}
+		fs, cs := detailsOf(shield[0], engine.DetailFormula), detailsOf(shield[0], engine.DetailCommitment)
+		if len(fs) != 1 || fs[0].Formula == nil || len(cs) != 1 {
+			t.Fatalf("the shield hop carries %d formula and %d commitment details, want one each", len(fs), len(cs))
+		}
+		f := fs[0].Formula
+		if f.Name != engine.FormulaCommitment {
+			t.Errorf("formula %q, want %q", f.Name, engine.FormulaCommitment)
+		}
+		var names []string
+		in := map[string]string{}
+		for _, x := range f.Inputs {
+			names = append(names, x.Name)
+			in[x.Name] = x.Value
+		}
+		if want := []string{"pk_spend", "salt", "amount", "token"}; !slices.Equal(names, want) {
+			t.Fatalf("inputs %v, want %v, in the order the commitment hashes them", names, want)
+		}
+		pk, salt, token := hexField(t, in["pk_spend"]), hexField(t, in["salt"]), hexField(t, in["token"])
+		amount, ok := new(big.Int).SetString(in["amount"], 10)
+		if !ok {
+			t.Fatalf("amount %q is not decimal", in["amount"])
+		}
+		// The opening is the Sender's: their spend public key, the total shielded, RaylsERC20's token id 0.
+		if pk.Cmp(e.Sender().Spend.PublicKey) != 0 || amount.Int64() != opts.ShieldTotal || token.Sign() != 0 {
+			t.Errorf("opening (pk_spend %s, amount %s, token %s), want the Sender's %s, %d, 0", pk, amount, token, e.Sender().Spend.PublicKey, opts.ShieldTotal)
+		}
+		// Recomputed independently of the engine, with the client library's Poseidon.
+		want, err := poseidon.Hash([]*big.Int{pk, salt, amount, token})
+		if err != nil {
+			t.Fatalf("poseidon.Hash: %v", err)
+		}
+		if got := hexField(t, f.Result); got.Cmp(want) != 0 {
+			t.Errorf("result 0x%x, Poseidon(pk_spend, salt, amount, token) is 0x%x", got, want)
+		}
+		logged := commitmentsIn(txLogs(t, client, common.HexToHash(cs[0].TxHash)), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
+		if len(logged) != 1 || logged[0].Cmp(want) != 0 {
+			t.Fatalf("the deposit's Commitment events logged %v, want one, 0x%x", logged, want)
+		}
+		if got := hexField(t, f.Chain.Value); got.Cmp(logged[0]) != 0 || !f.OK {
+			t.Errorf("the chain's value 0x%x (ok %v), want the logged leaf 0x%x, ok", got, f.OK, logged[0])
+		}
+		if !strings.Contains(f.Chain.Name, fmt.Sprintf("#%d", cs[0].Leaves[0].Index)) {
+			t.Errorf("the chain's value is %q, want it to name leaf #%d", f.Chain.Name, cs[0].Leaves[0].Index)
 		}
 	})
 

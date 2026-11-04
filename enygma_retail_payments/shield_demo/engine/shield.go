@@ -58,7 +58,13 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 		return err
 	}
 
-	s.hop(ActorNode(sender.ID), NodeVault, "shield", fmt.Sprintf("%s public RaylsERC20 (just minted) into one private note, block %d, gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed)), cd, c.receipt(receipt))
+	details := []HopDetail{cd}
+	if e.opts.Walkthrough {
+		// A walkthrough shows the commitment as the vault computed it, from
+		// the deposit's public calldata.
+		details = append(details, commitmentFormula(cd, sender, n))
+	}
+	s.hop(ActorNode(sender.ID), NodeVault, "shield", fmt.Sprintf("%s public RaylsERC20 (just minted) into one private note, block %d, gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed)), append(details, c.receipt(receipt))...)
 	s.log("chain", "Erc20CoinVault.depositV2(%s) → block %d  gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed))
 	s.log("key", "sender's note commitment 0x%s…", n.commitment.Text(16)[:16])
 	s.proto("shieldGas", fmt.Sprint(receipt.GasUsed))
@@ -67,6 +73,26 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 	s.actor(sender, "balance", sender.notes.balance().String()+" RaylsERC20")
 	s.done("Sender shielded %s RaylsERC20 into one private note (block %d)", total, receipt.BlockNumber)
 	return nil
+}
+
+// commitmentFormula is the commitment formula of note n, owner's, which
+// deposit cd inserted as its one leaf: its opening hashed, checked against
+// that leaf as the vault's Commitment event logged it.
+func commitmentFormula(cd HopDetail, owner *Actor, n *note) HopDetail {
+	leaf := cd.Leaves[0]
+	result := fieldHex(n.commitment)
+	return HopDetail{Kind: DetailFormula, Vault: cd.Vault, Tree: cd.Tree, Formula: &Formula{
+		Name: FormulaCommitment,
+		Inputs: []FormulaValue{
+			{Name: noteOpening[0], Value: fieldHex(owner.Spend.PublicKey)},
+			{Name: noteOpening[1], Value: fieldHex(n.salt)},
+			{Name: noteOpening[2], Value: n.amount.String()},
+			{Name: noteOpening[3], Value: fieldHex(tokenId)},
+		},
+		Result: result,
+		Chain:  FormulaValue{Name: fmt.Sprintf("leaf #%d of tree %d, the vault's Commitment event", leaf.Index, cd.Tree), Value: leaf.Commitment},
+		OK:     result == leaf.Commitment,
+	}}
 }
 
 // depositNote deposits amount from payerKeyHex's account (which must have

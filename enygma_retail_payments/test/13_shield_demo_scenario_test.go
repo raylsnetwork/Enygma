@@ -322,6 +322,14 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("a full run carries no formula detail: those are a walkthrough's", func(t *testing.T) {
+		for _, h := range sink.hops() {
+			if n := len(detailsOf(h, engine.DetailFormula)); n > 0 {
+				t.Errorf("step %s: hop %q carries %d formula details", h.Step, h.Label, n)
+			}
+		}
+	})
+
 	t.Run("each proof hop carries its spent notes' Merkle paths, each to a root its vault has had, and its named public inputs", func(t *testing.T) {
 		perVault := checkProofDetails(t, vaults, vaultAddrs, sink.hops())
 		if perVault[engine.NodeUsdrVault] == 0 {
