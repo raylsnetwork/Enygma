@@ -292,6 +292,8 @@ Measured 2026-11-03, updated for #173 and #175: a walkthrough is **35 engine rel
 9. **A failure.** Stop the relayer during a walkthrough, then Next on Pay Ana's relay: the relay hop shows red with its error, the walkthrough ends, and WALKTHROUGH or RUN starts again once the relayer is back.
 10. **Both themes at 1280×828.** The "On Next" paragraph and the RUN THE FULL DEMO button show above the drawer, in both themes.
 
+Check 9 run 2026-11-04: with the relayer stopped at Pay Ana’s relay gate, Next showed the relay hop red with `connection refused`, step 5 ✗ and the walkthrough failed. Restarted with run.sh’s command and env, a new walkthrough ran to the end. Stopping only the relayer leaves run.sh and the other services up.
+
 ## Wire and receipt checks
 
 Since #171, each proof request and relayer call hop carries an http hop detail (the request the engine sent and the response it got back, bodies as sent), and each hop that mines a transaction carries a receipt hop detail (its tx hash, block, gas and logged events). They show in the hop detail panel under **Request and response** or **Receipt**, one click below the hop's sentence. An http or receipt detail alone doesn't lengthen a hop's hold: a hop whose only detail is one of them (fund gas, relay, open channel, tag, openChannel, publishTag) holds as a hop without details. Register holds longer since #172: it carries a registration detail too.
@@ -303,6 +305,8 @@ Since #171, each proof request and relayer call hop carries an http hop detail (
 5. **Pace unchanged.** The pace checks still pass with the probe above (its `hasDetail` ignores http and receipt details).
 6. **Both themes at 1280×828.** The request line, the bodies (scrolling inside their box, never widening the panel) and the event lines read in both themes.
 
+Check 4 run 2026-11-04: in a walkthrough, payment 1’s prove and relay hops each carried their `POST … → 200` http detail, and its settle hop its receipt.
+
 ## Witness and public columns
 
 Since #173, payment 1's proof request hop in a walkthrough carries a witness hop detail: the private inputs the Sender's wallet sent its prover (the spend key, the spent note's amount, salt and Merkle path, the token id, and the two new notes' amounts, salts and owners' spend public keys). A card under the narration shows it beside the hop's publicInputs detail. `TestShieldDemoWalkthrough` checks the witness against the request body sent to the gnark server, and that the new notes' openings hash to the public `CommitmentsOut`, the commitments the vault logged.
@@ -311,6 +315,8 @@ Since #173, payment 1's proof request hop in a walkthrough carries a witness hop
 2. **Real values.** The new notes' amounts are Ana's payout and the Sender's shield less it (defaults: 120 and 880; the spent note is the 1000 shielded); hex values show the full value on hover and copy on click. `CommitmentsOut[0]` and `[1]` match the two `new leaf` values of Pay Ana's `notes in` entry in the hop detail panel, and the `Erc20CoinVault.Commitment` events of the `payment` hop's Receipt.
 3. **How long it stays.** The card stays through payment 1's proof back, relay and settle clicks, and goes when Pay Bruno's hop plays. A new run or walkthrough takes it away; a full RUN never shows it.
 4. **Both themes at 1280×828.** The two columns sit side by side in the story column, the siblings wrap inside their column, nothing widens the column or scrolls sideways, and the warn (stays) and accent (chain) tags read in both themes.
+
+Run 2026-11-04 at 1280×707, all four passed: outputs 120 (Ana) and 880 (change) from the 1000 spent, `CommitmentsOut` equal to `notes in`’s two leaves, the card through proof, relay and settle and gone at Pay Bruno, no sideways scroll.
 
 ## On-chain proof check
 
@@ -324,6 +330,8 @@ Since #174, once payment 1 of a walkthrough settles, the engine sends its `Verif
 4. **Stays until the end.** The card and both buttons stay through payments 2–6, Discover and Audit, and after the walkthrough's last hop; a new run or walkthrough takes it away. A full RUN never shows it.
 5. **Both themes at 1280×828**, and under 1000px wide: the body and curl boxes scroll inside the card, never widening the story column.
 
+Run 2026-11-04, all five passed: the eth_call went to `127.0.0.1:8545`; Tamper changed exactly one calldata digit; COPY then the terminal gave `…01` genuine, `…00` tampered; the card stayed to the end. Run the copied command from the clipboard (`pbpaste`): the browser tool can’t return the long calldata.
+
 ## Replay payment 1
 
 Since #175, once payment 2 of a walkthrough has settled, the engine waits at one more gate in Pay Bruno: Replay payment 1. Released, it resubmits payment 1's exact `/relay/payment` request through the relayer. The relayer refuses it (`400`, "nullifier already spent": payment 1 published that nullifier), and the `replay payment 1` hop (Sender → Relayer) carries a refusal hop detail: who refused it, the reason, the nullifier, payment 1's transaction, and both vaults' trees and the vault's, the relayer's and every actor's RaylsERC20 balance, read before and after the replay. The engine fails the walkthrough if the replay is accepted or changes any of them. `TestShieldDemoWalkthrough` checks the request is payment 1's byte for byte, the refusal, the unchanged state, and that no block was mined between payments 2 and 3.
@@ -334,6 +342,8 @@ Since #175, once payment 2 of a walkthrough has settled, the engine waits at one
 4. **Raw artifacts.** The hop detail panel's entry for the replay shows its sentence, the refusal in Real values, and **Request and response**: `POST http://localhost:8090/relay/payment → 400` (the status in red), the request body identical to Pay Ana's relay request (compare the two), and the response `{"error":"nullifier already spent"}`.
 5. **How long it stays.** The card stays until Pay Carla's hop plays; a new run or walkthrough takes it away, and a full RUN never shows it or the REPLAY label.
 6. **Both themes at 1280×828.** The card's lines wrap inside the story column, and the ✗ (bad) and ✓ (ok) marks read in both themes.
+
+Run 2026-11-04, all six passed: REPLAY PAYMENT 1 ▸ only after Pay Bruno’s `notes in`, refused by the relayer (`400`, `{"error":"nullifier already spent"}`) with payment 1’s nullifier and its relay request byte for byte, 78 leaves unchanged (Pay Bruno’s last leaf #77), the card gone at Pay Carla. The replay hop can take more than 10 s after Next to arrive.
 
 ## Key, registration and decryption values
 
