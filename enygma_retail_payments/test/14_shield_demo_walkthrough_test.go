@@ -480,6 +480,178 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
+	// payment1Formula is the one formula detail of payment 1's one hop
+	// that is, from → to.
+	payment1Formula := func(t *testing.T, what, from, to string) *engine.Formula {
+		t.Helper()
+		var hs []engine.Event
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.From == from && h.To == to && !h.Failed {
+				hs = append(hs, h)
+			}
+		}
+		if len(hs) != 1 {
+			t.Fatalf("%d %s hops in payment 1, want 1", len(hs), what)
+		}
+		fs := detailsOf(hs[0], engine.DetailFormula)
+		if len(fs) != 1 || fs[0].Formula == nil {
+			t.Fatalf("payment 1's %s hop carries %d formula details, want 1", what, len(fs))
+		}
+		return fs[0].Formula
+	}
+	// payment1Request is payment 1's proof request as sent to the prover.
+	payment1Request := func(t *testing.T) map[string]any {
+		t.Helper()
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.Label == "prove Payment" {
+				if wire := detailsOf(h, engine.DetailHTTP); len(wire) == 1 {
+					var req map[string]any
+					if err := json.Unmarshal([]byte(wire[0].Request), &req); err != nil {
+						t.Fatalf("payment 1's proof request body: %v", err)
+					}
+					return req
+				}
+			}
+		}
+		t.Fatal("no proof request in payment 1")
+		return nil
+	}
+	decimal := func(t *testing.T, v any) *big.Int {
+		t.Helper()
+		n, ok := new(big.Int).SetString(fmt.Sprint(v), 10)
+		if !ok {
+			t.Fatalf("value %v is not a decimal integer", v)
+		}
+		return n
+	}
+	vault := bindContract(t, client, common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), loadOnchainABI(t, "Erc20CoinVault"))
+
+	t.Run("payment 1's proof hop carries its Merkle path formula: the shielded leaf hashed up its 8 levels to a root the vault has had", func(t *testing.T) {
+		f := payment1Formula(t, "proof", engine.NodeGnark, engine.ActorNode(e.Sender().ID))
+		if f.Name != engine.FormulaMerklePath {
+			t.Fatalf("formula %q, want %q", f.Name, engine.FormulaMerklePath)
+		}
+		// leaf, then per level its sibling and (below the root) the node it makes.
+		if len(f.Inputs) != 1+8+7 {
+			t.Fatalf("%d inputs, want the leaf, 8 siblings and 7 nodes below the root", len(f.Inputs))
+		}
+		// Independently of the engine: the leaf the shield's Commitment
+		// event logged, the siblings and leaf index the prover was sent.
+		var shieldTx string
+		for _, h := range sink.hops() {
+			if cs := detailsOf(h, engine.DetailCommitment); h.Step == "shield" && len(cs) == 1 {
+				shieldTx = cs[0].TxHash
+			}
+		}
+		leaves := commitmentsIn(txLogs(t, client, common.HexToHash(shieldTx)), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
+		if len(leaves) != 1 {
+			t.Fatalf("the shield logged %d commitments, want 1", len(leaves))
+		}
+		req := payment1Request(t)
+		index := int(decimal(t, req["wtPathIndices"].([]any)[0]).Int64())
+		sent, _ := req["wtPathElements"].([]any)[0].([]any)
+		if len(sent) != 8 {
+			t.Fatalf("the prover was sent %d siblings, want 8", len(sent))
+		}
+		want := []string{fmt.Sprintf("0x%064x", leaves[0])}
+		node := leaves[0]
+		for level, s := range sent {
+			sib := decimal(t, s)
+			want = append(want, fmt.Sprintf("0x%064x", sib))
+			pair := []*big.Int{node, sib}
+			if index>>level&1 == 1 {
+				pair = []*big.Int{sib, node}
+			}
+			var err error
+			if node, err = poseidon.Hash(pair); err != nil {
+				t.Fatalf("poseidon.Hash: %v", err)
+			}
+			if level < 7 {
+				want = append(want, fmt.Sprintf("0x%064x", node))
+			}
+		}
+		for i, x := range f.Inputs {
+			if hexField(t, x.Value).Cmp(hexField(t, want[i])) != 0 {
+				t.Errorf("input %d (%s) %s, recomputed %s", i, x.Name, x.Value, want[i])
+			}
+		}
+		if !strings.Contains(f.Inputs[0].Name, fmt.Sprintf("#%d", index)) {
+			t.Errorf("the leaf is named %q, want leaf #%d", f.Inputs[0].Name, index)
+		}
+		for level := range 8 {
+			side := "right"
+			if index>>level&1 == 1 {
+				side = "left"
+			}
+			if name := f.Inputs[1+2*level].Name; !strings.HasSuffix(name, side) {
+				t.Errorf("sibling at level %d is named %q, want it on the %s (leaf #%d)", level, name, side, index)
+			}
+		}
+		if got := hexField(t, f.Result); got.Cmp(node) != 0 {
+			t.Errorf("result %s, the path hashes up to 0x%x", f.Result, node)
+		}
+		// The root is the one the proof publishes, and one the vault has had.
+		tree := int(decimal(t, req["stTreeNumbers"].([]any)[0]).Int64())
+		if public := decimal(t, req["stMerkleRoots"].([]any)[0]); public.Cmp(node) != 0 {
+			t.Errorf("the path hashes up to 0x%x, the proof publishes root 0x%x", node, public)
+		}
+		if !vaultHasRoot(t, vault, tree, fmt.Sprintf("0x%x", node)) {
+			t.Errorf("root 0x%x is not one the vault has had in tree %d", node, tree)
+		}
+		if hexField(t, f.Chain.Value).Cmp(node) != 0 || !f.OK {
+			t.Errorf("the chain's root %s (ok %v), want 0x%x, ok", f.Chain.Value, f.OK, node)
+		}
+		if !strings.Contains(f.Chain.Name, "isValidRoot") || !strings.Contains(f.Chain.Name, fmt.Sprintf("tree %d", tree)) {
+			t.Errorf("the chain's value is %q, want it to name isValidRoot and tree %d", f.Chain.Name, tree)
+		}
+	})
+
+	t.Run("payment 1's settle hop carries its nullifier formula: Poseidon of the Sender's spend key and the leaf's position, the Nullifier event the receipt logged", func(t *testing.T) {
+		f := payment1Formula(t, "settle", engine.NodeRelayer, engine.NodeDvp)
+		if f.Name != engine.FormulaNullifier {
+			t.Fatalf("formula %q, want %q", f.Name, engine.FormulaNullifier)
+		}
+		in := map[string]string{}
+		var names []string
+		for _, x := range f.Inputs {
+			names = append(names, x.Name)
+			in[x.Name] = x.Value
+		}
+		if want := []string{"sk_spend", "tree", "leaf index", "tree · 2⁸ + leaf index"}; !slices.Equal(names, want) {
+			t.Fatalf("inputs %v, want %v", names, want)
+		}
+		req := payment1Request(t)
+		sk, index := e.Sender().Spend.PrivateKey, decimal(t, req["wtPathIndices"].([]any)[0])
+		tree := decimal(t, req["stTreeNumbers"].([]any)[0])
+		if hexField(t, in["sk_spend"]).Cmp(sk) != 0 || decimal(t, in["tree"]).Cmp(tree) != 0 || decimal(t, in["leaf index"]).Cmp(index) != 0 {
+			t.Errorf("inputs %v, want the Sender's spend key, tree %s and leaf index %s, as sent to the prover", in, tree, index)
+		}
+		global := new(big.Int).Add(new(big.Int).Mul(tree, big.NewInt(256)), index)
+		if decimal(t, in["tree · 2⁸ + leaf index"]).Cmp(global) != 0 {
+			t.Errorf("tree · 2⁸ + leaf index %s, want %s", in["tree · 2⁸ + leaf index"], global)
+		}
+		want, err := poseidon.Hash([]*big.Int{sk, global})
+		if err != nil {
+			t.Fatalf("poseidon.Hash: %v", err)
+		}
+		if hexField(t, f.Result).Cmp(want) != 0 {
+			t.Errorf("result %s, Poseidon(sk_spend, tree · 2⁸ + leaf index) is 0x%x", f.Result, want)
+		}
+		// Payment 1's settlement logged it: the vault's one Nullifier event.
+		var logged []*big.Int
+		for _, l := range txLogs(t, client, e.FanOut()[0].TxHash) {
+			if l.Address == common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress) && len(l.Topics) == 4 && l.Topics[0] == nullifierEventSig {
+				logged = append(logged, l.Topics[3].Big())
+			}
+		}
+		if len(logged) != 1 || logged[0].Cmp(want) != 0 {
+			t.Fatalf("payment 1's receipt logged the vault's nullifiers %v, want one, 0x%x", logged, want)
+		}
+		if hexField(t, f.Chain.Value).Cmp(want) != 0 || !f.OK {
+			t.Errorf("the chain's value %s (ok %v), want the logged nullifier 0x%x, ok", f.Chain.Value, f.OK, want)
+		}
+	})
+
 	t.Run("payment 1's proof checks true on the Verifier the vault uses, and false with a tampered output commitment", func(t *testing.T) {
 		var call *engine.VerifyCall
 		var sentIn string // the release the call arrived in

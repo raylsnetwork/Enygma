@@ -121,17 +121,29 @@ const (
 	DetailDecryption HopDetailKind = "decryption"
 	// DetailFormula is one of the protocol's equations with a run's real
 	// values plugged in, checked against what the chain holds (see
-	// Formula). Only a walkthrough carries one, on its shield's hop: its
-	// values are the shield's opening, public in the deposit's calldata.
+	// Formula). Only a walkthrough carries them, on its shield's hop (the
+	// commitment: its values are the shield's opening, public in the
+	// deposit's calldata) and payment 1's (the Merkle path on the proof
+	// coming back, the nullifier on the settlement): values the page shows
+	// there anyway, in payment 1's witness.
 	DetailFormula HopDetailKind = "formula"
 )
 
 // FormulaName names the equation a formula hop detail shows.
 type FormulaName string
 
-// FormulaCommitment is a note's commitment, Poseidon(pk_spend, salt,
-// amount, token), the leaf its vault inserts.
-const FormulaCommitment FormulaName = "commitment"
+const (
+	// FormulaCommitment is a note's commitment, Poseidon(pk_spend, salt,
+	// amount, token), the leaf its vault inserts.
+	FormulaCommitment FormulaName = "commitment"
+	// FormulaMerklePath is a spent note's path: its leaf hashed with one
+	// sibling per level, Poseidon(left, right) ordered by the leaf index's
+	// bit at that level, up to a root its vault has had.
+	FormulaMerklePath FormulaName = "merklePath"
+	// FormulaNullifier is a spent note's nullifier, Poseidon(sk_spend,
+	// tree·2^depth + leaf index), as its vault publishes it.
+	FormulaNullifier FormulaName = "nullifier"
+)
 
 // Formula is one equation with its real inputs, in the order the equation
 // takes them, its real result, and the value the chain holds to check the

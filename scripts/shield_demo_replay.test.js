@@ -187,6 +187,7 @@ function checkFormulas(doc, h, where) {
     for (const x of f.inputs) assert.ok(text.includes(x.name), `${where}, ${f.name} formula: input ${x.name} unnamed`);
     assert.ok(text.includes(f.ok ? '✓' : '✗'), `${where}, ${f.name} formula: no ${f.ok ? '✓' : '✗'}`);
     if (f.name === 'commitment') assert.match(text, /opening is public on chain[^.]*\. Privacy starts at the first spend/, `${where}: the public-opening line`);
+    if (f.name === 'nullifier') assert.match(text, /inputs are private[^.]*no one but the Sender can link this nullifier to the note/, `${where}: the unlinkable line`);
   });
   return n;
 }
@@ -288,6 +289,8 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   const details = WALKTHROUGH.events.flatMap(e => e.hopDetail || []);
   for (const kind of ['witness', 'publicInputs', 'refusal']) assert.ok(details.some(d => d.kind === kind), `no ${kind} hop detail`);
   assert.ok(details.some(d => d.kind === 'formula' && d.formula.name === 'commitment'), 'no commitment formula on the shield');
+  for (const name of ['merklePath', 'nullifier'])
+    assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
   const chain = WALKTHROUGH.defaults.chain;
   assert.ok(chain?.rpcUrl && chain.verifier, '/defaults names no Verifier: the on-chain check would not call it');
   const call = verifyProofCall(), one = '0x' + '0'.repeat(63) + '1', zero = '0x' + '0'.repeat(64);

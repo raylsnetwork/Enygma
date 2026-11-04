@@ -250,7 +250,17 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		if err := s.await(ctx, "proof", to.Name); err != nil {
 			return nil, err
 		}
-		s.hop(NodeGnark, fromNode, "proof", fmt.Sprintf("%d proof elements and %d public inputs", len(res.Proof), len(stmt)))
+		// Its formulas: each spent note's path, hashed up to a root the
+		// vault has had.
+		var paths []HopDetail
+		for _, p := range proofs {
+			d, err := merklePathFormula(ctx, c.vault, NodeVault, from.Name, p)
+			if err != nil {
+				return nil, err
+			}
+			paths = append(paths, d)
+		}
+		s.hop(NodeGnark, fromNode, "proof", fmt.Sprintf("%d proof elements and %d public inputs", len(res.Proof), len(stmt)), paths...)
 	}
 	if len(ins) == 2 {
 		s.log("zk", "Payment2in proof in %d ms — merges %s's %s notes, nullifiers %s",
@@ -340,6 +350,17 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	settleDetails := []HopDetail{settleChecks(circuit, NodeVault, stmt, out.TxHash)}
 	if fee != nil {
 		settleDetails = append(settleDetails, settleChecks("UsdrFee", NodeUsdrVault, fee.statement, out.TxHash))
+	}
+	if s.gated {
+		// A walkthrough's payment 1 shows each nullifier the vault just
+		// published as the spend key and the note's position hash to it.
+		for i, p := range proofs {
+			d, err := nullifierFormula(from.Spend.PrivateKey, NodeVault, c.vaultAddr, p, i, receipt)
+			if err != nil {
+				return nil, err
+			}
+			settleDetails = append(settleDetails, d)
+		}
 	}
 	settleDetails = append(settleDetails, c.receipt(receipt))
 	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)), settleDetails...)
