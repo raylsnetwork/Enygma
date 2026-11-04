@@ -120,6 +120,11 @@ func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount
 		}
 	}
 	e.fanOut = append(e.fanOut, t.Settlement)
+	if e.opts.Walkthrough && n == 1 {
+		if err := e.sendVerifyCall(s, t); err != nil {
+			return err
+		}
+	}
 
 	s.proto("fanout", t.row(n, e.usdrFixedFee, ""))
 	s.actor(sender, "note", "0x"+sender.notes[len(sender.notes)-1].commitment.Text(16))

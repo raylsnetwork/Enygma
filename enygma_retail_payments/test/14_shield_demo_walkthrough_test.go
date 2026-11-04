@@ -15,8 +15,11 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +28,7 @@ import (
 	"enygma_retail_payments/shield_demo/engine"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 // snapshot is every event the sink has captured so far.
@@ -287,6 +291,126 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		if got, want := e.Balance(e.Sender()), new(big.Int).Sub(big.NewInt(opts.ShieldTotal), paid); got.Cmp(want) != 0 {
 			t.Errorf("Sender keeps %s, want the shielded %d less the payouts, %s", got, opts.ShieldTotal, want)
+		}
+	})
+
+	t.Run("payment 1's proof checks true on the Verifier the vault uses, and false with a tampered output commitment", func(t *testing.T) {
+		var call *engine.VerifyCall
+		var sentIn string // the release the call arrived in
+		for _, ev := range sink.snapshot() {
+			if ev.Kind == engine.ActionWaiting {
+				sentIn = ev.Step + "/" + ev.Action
+			}
+			if ev.Kind == engine.ProtocolField && ev.Field == engine.VerifyProofField {
+				if call != nil {
+					t.Fatal("more than one verifyProof field: only payment 1's is checked")
+				}
+				call = &engine.VerifyCall{}
+				if err := json.Unmarshal([]byte(ev.Value), call); err != nil {
+					t.Fatalf("verifyProof field: %v", err)
+				}
+				if sentIn != "fanout_1/relay" {
+					t.Errorf("verifyProof field sent in release %s, want once payment 1 settles (fanout_1/relay)", sentIn)
+				}
+			}
+		}
+		if call == nil {
+			t.Fatal("the walkthrough sent no verifyProof field")
+		}
+
+		v, err := engine.DeployedVerifier(cfg)
+		if err != nil {
+			t.Fatalf("DeployedVerifier: %v", err)
+		}
+		if v.Address != common.HexToAddress(receipts["Verifier"].ContractAddress).Hex() || v.RPCURL != cfg.RPCURL {
+			t.Errorf("DeployedVerifier %+v, want the receipts' Verifier at %s", v, cfg.RPCURL)
+		}
+		vault := bindContract(t, client, common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), loadOnchainABI(t, "Erc20CoinVault"))
+		var slot []any
+		if err := vault.Call(nil, &slot, "VK_ID_ERC20_JOINSPLIT"); err != nil {
+			t.Fatalf("VK_ID_ERC20_JOINSPLIT: %v", err)
+		}
+		if got := slot[0].(*big.Int); got.Int64() != int64(v.PaymentVK) || call.VK != v.PaymentVK {
+			t.Errorf("the vault checks Payment proofs against slot %s; /defaults says %d, the call uses %d", got, v.PaymentVK, call.VK)
+		}
+
+		// The call's inputs are the ones payment 1 was proved with.
+		var proved []engine.PublicInput
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.Label == "prove Payment" {
+				for _, d := range detailsOf(h, engine.DetailPublicInputs) {
+					proved = d.Inputs
+				}
+			}
+		}
+		if len(proved) == 0 || !slices.Equal(call.Inputs, proved) {
+			t.Errorf("call inputs %v, want payment 1's public inputs %v", call.Inputs, proved)
+		}
+		if tm := call.Tamper; tm.Name != "CommitmentsOut[0]" || tm.From != proved[tm.Index].Value || tm.To == tm.From {
+			t.Errorf("tamper %+v, want CommitmentsOut[0] changed from payment 1's %s", tm, proved[tm.Index].Value)
+		}
+
+		// The data encodes the slot, the proof and the inputs the page shows.
+		verifierABI := loadOnchainABI(t, "Verifier")
+		args, err := verifierABI.Methods["verifyProof"].Inputs.Unpack(hexutil.MustDecode(call.Data)[4:])
+		if err != nil {
+			t.Fatalf("unpack the call's data: %v", err)
+		}
+		packed, _ := json.Marshal(args[1])
+		var proof struct {
+			A struct{ X, Y *big.Int }
+			B struct{ X, Y [2]*big.Int }
+			C struct{ X, Y *big.Int }
+		}
+		if err := json.Unmarshal(packed, &proof); err != nil {
+			t.Fatalf("the call's proof: %v", err)
+		}
+		gotProof := []*big.Int{proof.A.X, proof.A.Y, proof.B.X[0], proof.B.X[1], proof.B.Y[0], proof.B.Y[1], proof.C.X, proof.C.Y}
+		for i, p := range gotProof {
+			if p.Cmp(hexField(t, call.Proof[i])) != 0 {
+				t.Errorf("the call's data has proof[%d] %s, the page shows %s", i, p, call.Proof[i])
+			}
+		}
+		if slot := args[0].(*big.Int); slot.Int64() != int64(call.VK) {
+			t.Errorf("the call's data uses slot %s, the page shows %d", slot, call.VK)
+		}
+		gotInputs := args[2].([]*big.Int)
+		if len(gotInputs) != len(call.Inputs) {
+			t.Fatalf("the call's data has %d inputs, the page shows %d", len(gotInputs), len(call.Inputs))
+		}
+		for i, in := range call.Inputs {
+			if gotInputs[i].Cmp(hexField(t, in.Value)) != 0 {
+				t.Errorf("the call's data has input %d %s, the page shows %s", i, gotInputs[i], in.Value)
+			}
+		}
+
+		// The page's (and curl's) JSON-RPC request, byte for byte as the
+		// page's JSON.stringify writes it.
+		ethCall := func(data string) string {
+			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"%s","data":"%s"},"latest"]}`, v.Address, data)
+			res, err := http.Post(v.RPCURL, "application/json", strings.NewReader(body))
+			if err != nil {
+				t.Fatalf("eth_call: %v", err)
+			}
+			defer res.Body.Close()
+			var out struct {
+				Result string          `json:"result"`
+				Error  json.RawMessage `json:"error"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&out); err != nil || out.Error != nil {
+				t.Fatalf("eth_call: %v %s", err, out.Error)
+			}
+			return out.Result
+		}
+		const (
+			isTrue  = "0x0000000000000000000000000000000000000000000000000000000000000001"
+			isFalse = "0x0000000000000000000000000000000000000000000000000000000000000000"
+		)
+		if got := ethCall(call.Data); got != isTrue {
+			t.Errorf("verifyProof(payment 1) = %s, want true", got)
+		}
+		if got := ethCall(call.Tamper.Data); got != isFalse {
+			t.Errorf("verifyProof(payment 1, tampered) = %s, want false", got)
 		}
 	})
 
