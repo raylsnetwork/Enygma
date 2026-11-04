@@ -62,6 +62,7 @@ updates:
       - "/enygma_dvp"
       - "/enygma_dvp_auctions"
       - "/enygma_payments/contracts/enygma"
+      - "/scripts"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

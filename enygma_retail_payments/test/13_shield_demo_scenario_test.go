@@ -87,6 +87,47 @@ func (s *capturingSink) hops() []engine.Event {
 	return out
 }
 
+// replayFixture is the shield demo page's replay test fixture
+// (scripts/shield_demo_replay.test.js, run by make page-check).
+const replayFixture = "../shield_demo/testdata/default_run.events.json"
+
+// writeReplayFixtureIfPassed writes the events captured so far (the run's),
+// as /events sends them (after the reset the server sends before a run,
+// main.go's handleRun, less their ts stamps), with the options the run
+// used as /defaults sends them, to replayFixture, one event per line, once
+// t has passed. Every passing live run refreshes it, so a change to what
+// the engine sends shows up as a diff of the fixture; a failing run leaves
+// it as it was.
+func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, opts engine.Options) {
+	t.Helper()
+	s.mu.Lock()
+	events := slices.Clone(s.events)
+	s.mu.Unlock()
+	var b bytes.Buffer
+	o, err := json.Marshal(opts)
+	if err != nil {
+		t.Fatalf("marshal the options: %v", err)
+	}
+	fmt.Fprintf(&b, "{\"defaults\": %s,\n\"events\": [\n{\"kind\":\"reset\"}", o)
+	for i, e := range events {
+		line, err := json.Marshal(e)
+		if err != nil {
+			t.Fatalf("marshal event %d: %v", i, err)
+		}
+		b.WriteString(",\n")
+		b.Write(line)
+	}
+	b.WriteString("\n]}\n")
+	t.Cleanup(func() {
+		if t.Failed() {
+			return
+		}
+		if err := os.WriteFile(replayFixture, b.Bytes(), 0o644); err != nil {
+			t.Errorf("write the replay fixture: %v", err)
+		}
+	})
+}
+
 // transferSteps groups the hops of the fan-out and scripted transfer steps
 // by step.
 func transferSteps(hops []engine.Event) map[string][]engine.Event {
@@ -207,6 +248,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		atStart[node] = treeState{vaultTreeNumber(t, v), vaultCurrentRoot(t, v)}
 	}
 	e, sink := runShieldScenario(t, cfg, opts)
+	sink.writeReplayFixtureIfPassed(t, opts)
 
 	t.Run("the run starts from each vault's tree as the chain holds it", func(t *testing.T) {
 		snaps := treeSnapshots(t, sink)
