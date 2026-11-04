@@ -1,6 +1,16 @@
 # Hand-checking a shield demo page change
 
-The demo page has no automated UI tests, so a page ticket's acceptance is checked by hand in Chrome against the `run.sh` stack. A scenario run takes 3–5 minutes, so each wasted run is expensive.
+A page ticket's acceptance is checked by hand in Chrome against the `run.sh` stack. A scenario run takes 3–5 minutes, so each wasted run is expensive.
+
+## What the replay test covers
+
+`make page-check` (and CI) runs `scripts/shield_demo_replay.test.js`. It loads `index.html` in jsdom as `/?fast` with pausing off, feeds it every event of a real default run (`testdata/default_run.events.json`, which `TestShieldDemoScenario` rewrites on every live run: commit it with an engine change), plays the run out on a virtual clock, then clicks each finished step and steps through all its hop details with the Real values and Request and response / Receipt folds open. It fails on:
+
+- any exception the page throws while it plays or replays the run (an empty receipt's missing `events` list, say);
+- a step not shown as succeeded at the end, or a step whose replay has a different number of hop details than the run sent;
+- a field element (a run of 16+ digits) of an HTTP request or response body that the panel's body does not show digit for digit, proofs aside; and a body with a proof not shown in full behind "show in full".
+
+jsdom does no layout, timing or theming, and the fixture is the default run only. So the hand check is still needed for layout, themes, sizes and collapsed cards, timing and pacing, hidden tabs, pausing on, the walkthrough and the fees-off and tags-off runs; it need not look for console exceptions on a default run or check bodies digit for digit.
 
 ## Steps
 
