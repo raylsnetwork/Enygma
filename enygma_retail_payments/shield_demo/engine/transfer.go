@@ -237,7 +237,19 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	for i := range ins {
 		nullifiers[i] = "0x" + stmt[nullifiersOffset+i].Text(16)[:12] + "…"
 	}
+	if s.gated {
+		// A walkthrough's payment 1 shows what stays in the wallet beside
+		// what goes on chain.
+		proveDetails = append(proveDetails, witness(circuit, from, to, ins, proofs, amount, change, res))
+	}
 	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs, rec.exchange())...)
+	if s.gated {
+		// One hop per click: the proof coming back is a click of its own.
+		if err := s.await(ctx, "proof", to.Name); err != nil {
+			return nil, err
+		}
+		s.hop(NodeGnark, fromNode, "proof", fmt.Sprintf("%d proof elements and %d public inputs", len(res.Proof), len(stmt)))
+	}
 	if len(ins) == 2 {
 		s.log("zk", "Payment2in proof in %d ms — merges %s's %s notes, nullifiers %s",
 			proveMs, from.Name, amounts(ins), strings.Join(nullifiers, ", "))
@@ -316,6 +328,9 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		out.method = "paymentWithUsdrFee"
 	}
 	s.hop(fromNode, NodeRelayer, "relay", fmt.Sprintf("the relayer, not %s, submits the transaction", from.Name), relayed)
+	if err := s.await(ctx, "settle", to.Name); err != nil {
+		return nil, err
+	}
 	settled := "the payment"
 	if fee != nil {
 		settled = "the payment and the USDr fee in one transaction"

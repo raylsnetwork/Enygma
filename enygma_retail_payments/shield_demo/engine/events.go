@@ -57,7 +57,8 @@ type Event struct {
 //     checkSettleChecks fail on a kind they don't list;
 //   - index.html: SENTENCE (keyed by a hop's first detail), WIRE_KINDS
 //     (kinds that don't lengthen a hop's hold), and rowsOf or WIRE (how the
-//     hop detail panel draws it);
+//     hop detail panel draws it), and columns if it belongs beside
+//     payment 1's public inputs (the witness);
 //   - HAND_CHECK.md: the pace probe's hasDetail, which mirrors WIRE_KINDS.
 type HopDetailKind string
 
@@ -78,6 +79,11 @@ const (
 	// has had, its nullifier is unused, and the proof verifies; then the
 	// nullifiers the vault publishes, one per spent note.
 	DetailSettleChecks HopDetailKind = "settleChecks"
+	// DetailWitness is a proof request's witness: the private inputs the
+	// payer's wallet sent its prover, with their values. Only payment 1 of a
+	// walkthrough carries one, beside its publicInputs; every walkthrough key
+	// is a throwaway demo key.
+	DetailWitness HopDetailKind = "witness"
 	// DetailHTTP is one HTTP request a hop sent, to the gnark server or the
 	// relayer, and the response it got back, both bodies as they went over
 	// the wire.
@@ -131,6 +137,10 @@ type HopDetail struct {
 	Inputs  []PublicInput `json:"inputs,omitempty"`
 	Private []string      `json:"private,omitempty"`
 
+	// witness: the circuit and its private inputs' values. Vault is the
+	// vault it spends from and Tree its first spent note's tree.
+	Witness *Witness `json:"witness,omitempty"`
+
 	// settleChecks: the circuit whose proof is checked and the transaction
 	// that settles it (TxHash), and its spent notes. Vault is the vault it
 	// spends from and Tree its first spent note's tree.
@@ -148,6 +158,43 @@ type HopDetail struct {
 	Block   uint64        `json:"block,omitempty"`
 	GasUsed uint64        `json:"gas,omitempty"`
 	Events  []LoggedEvent `json:"events,omitempty"`
+}
+
+// Witness is a payment proof's private inputs as the payer's wallet sent
+// them to its prover, grouped by note. Field elements are 0x-hex, amounts
+// decimal.
+type Witness struct {
+	// SpendKey is the payer's spend private key (PrivateKeysIn), the same
+	// for every spent note.
+	SpendKey string `json:"spendKey"`
+	// Token is the token id (TokenId) every note's commitment hashes.
+	Token string `json:"token"`
+	// In are the spent notes (ValuesIn, SaltsIn, PathElements, PathIndices).
+	In []NoteOpening `json:"in"`
+	// Out are the new notes, in CommitmentsOut order: the payee's, then the
+	// payer's change (SpendPublicKeysOut, ValuesOut, SaltsOut).
+	Out []NoteOpening `json:"out"`
+}
+
+// NoteOpening is one note of a witness: whose it is, its amount and salt,
+// and, for a new note, its owner's spend public key (a spent note's is
+// derived in the circuit from the spend key) or, for a spent note, its
+// Merkle path.
+type NoteOpening struct {
+	Owner   string    `json:"owner"`
+	PkSpend string    `json:"pkSpend,omitempty"`
+	Amount  string    `json:"amount"`
+	Salt    string    `json:"salt"`
+	Path    *NotePath `json:"path,omitempty"`
+}
+
+// NotePath is a spent note's Merkle path in its tree: its leaf index
+// (PathIndices) and the sibling at each level from the leaf up
+// (PathElements).
+type NotePath struct {
+	Tree     int      `json:"tree"`
+	Index    int      `json:"index"`
+	Siblings []string `json:"siblings"`
 }
 
 // LoggedEvent is one log of a transaction's receipt: the contract that

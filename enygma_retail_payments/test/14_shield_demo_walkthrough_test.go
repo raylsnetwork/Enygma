@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"enygma_retail_payments/shield_demo/engine"
+	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -56,7 +57,9 @@ var actionHops = map[string][]string{
 	"recover":  slices.Repeat([]string{"recover view key"}, 1+engine.K),
 	"shield":   {"shield"},
 	"prove":    {"prove Payment"},
-	"relay":    {"relay", "payment", "notes in"},
+	"proof":    {"proof"},
+	"relay":    {"relay"},
+	"settle":   {"payment", "notes in"},
 	"payment":  {"prove Payment", "relay", "payment", "notes in"},
 	"scan":     {"scan"},
 	"audit":    {"audit"},
@@ -217,13 +220,13 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			}
 		}
 		// One per person for keys, registration and scans; one per payment
-		// after the first; the first payment's proof and relay apart.
+		// after the first; the first payment's four hops apart.
 		count := map[string]int{}
 		for _, a := range acts {
 			count[a.at.Action]++
 		}
 		want := map[string]int{"auditor": 1, "keys": 2 + engine.K, "register": 1 + engine.K, "recover": 1, "shield": 1,
-			"prove": 1, "relay": 1, "payment": engine.K - 1, "scan": engine.K, "audit": 1}
+			"prove": 1, "proof": 1, "relay": 1, "settle": 1, "payment": engine.K - 1, "scan": engine.K, "audit": 1}
 		for action, n := range want {
 			if count[action] != n {
 				t.Errorf("%d releases of %q, want %d", count[action], action, n)
@@ -274,7 +277,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			if n := countTopic(logs, paymentEventSig); n != 1 {
 				t.Errorf("payment %d: %d Payment events, want exactly one proof's", i+1, n)
 			}
-			if inserted := usdrCommitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
+			if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
 				t.Errorf("payment %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
 			}
 		}
@@ -294,6 +297,102 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
+	t.Run("payment 1's proof request carries its witness, as sent to the prover, its output openings hashing to the commitments the vault logged", func(t *testing.T) {
+		var prove []engine.Event
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.Label == "prove Payment" {
+				prove = append(prove, h)
+			}
+		}
+		if len(prove) != 1 {
+			t.Fatalf("%d proof request hops in payment 1, want 1", len(prove))
+		}
+		ws, ins, wire := detailsOf(prove[0], engine.DetailWitness), detailsOf(prove[0], engine.DetailPublicInputs), detailsOf(prove[0], engine.DetailHTTP)
+		if len(ws) != 1 || ws[0].Witness == nil || len(ins) != 1 || len(wire) != 1 {
+			t.Fatalf("payment 1's proof request carries %d witness, %d publicInputs and %d http details, want one each", len(ws), len(ins), len(wire))
+		}
+		w := ws[0].Witness
+		sender, payee := e.Sender(), e.Participants()[0]
+
+		// The witness is what the Sender's wallet sent its prover.
+		var req map[string]any
+		if err := json.Unmarshal([]byte(wire[0].Request), &req); err != nil {
+			t.Fatalf("payment 1's proof request body: %v", err)
+		}
+		dec := func(v any) *big.Int {
+			n, ok := new(big.Int).SetString(fmt.Sprint(v), 10)
+			if !ok {
+				t.Fatalf("request value %v is not a decimal integer", v)
+			}
+			return n
+		}
+		list := func(k string) []any { l, _ := req[k].([]any); return l }
+		eq := func(what, witness string, sent any) {
+			if hexField(t, witness).Cmp(dec(sent)) != 0 {
+				t.Errorf("witness %s %s, the request sent %v", what, witness, sent)
+			}
+		}
+		if len(w.In) != 1 || len(w.Out) != 2 {
+			t.Fatalf("witness has %d spent and %d new notes, want 1 and 2", len(w.In), len(w.Out))
+		}
+		eq("spend key", w.SpendKey, list("wtPrivateKeysIn")[0])
+		eq("token", w.Token, req["wtTokenId"])
+		in := w.In[0]
+		if in.Owner != sender.Name || in.Amount != fmt.Sprint(opts.ShieldTotal) || dec(list("wtValuesIn")[0]).String() != in.Amount {
+			t.Errorf("spent note %+v, want the Sender's shielded %d, as sent (%v)", in, opts.ShieldTotal, list("wtValuesIn")[0])
+		}
+		eq("spent salt", in.Salt, list("wtSaltsIn")[0])
+		if in.Path == nil || len(in.Path.Siblings) != 8 {
+			t.Fatalf("spent note's Merkle path %+v, want 8 siblings", in.Path)
+		}
+		eq("leaf index", fmt.Sprintf("0x%x", in.Path.Index), list("wtPathIndices")[0])
+		sentPath, _ := list("wtPathElements")[0].([]any)
+		for i, s := range in.Path.Siblings {
+			eq(fmt.Sprintf("sibling %d", i), s, sentPath[i])
+		}
+		for i, want := range []struct {
+			owner  string
+			pk     *big.Int
+			amount int64
+		}{{payee.Name, payee.Spend.PublicKey, opts.Payouts[0]}, {sender.Name, sender.Spend.PublicKey, opts.ShieldTotal - opts.Payouts[0]}} {
+			o := w.Out[i]
+			if o.Owner != want.owner || o.Amount != fmt.Sprint(want.amount) || hexField(t, o.PkSpend).Cmp(want.pk) != 0 {
+				t.Errorf("new note %d %+v, want %s's %d", i, o, want.owner, want.amount)
+			}
+			eq(fmt.Sprintf("new note %d's spend public key", i), o.PkSpend, list("wtSpendPublicKeysOut")[i])
+			eq(fmt.Sprintf("new note %d's salt", i), o.Salt, list("wtSaltsOut")[i])
+			if dec(list("wtValuesOut")[i]).String() != o.Amount {
+				t.Errorf("new note %d's amount %s, the request sent %v", i, o.Amount, list("wtValuesOut")[i])
+			}
+		}
+
+		// Each new note's opening hashes to its public CommitmentsOut, and
+		// those are the commitments the vault logged for payment 1.
+		var public []*big.Int
+		for _, x := range ins[0].Inputs {
+			if x.Name == "CommitmentsOut" {
+				public = append(public, hexField(t, x.Value))
+			}
+		}
+		logged := commitmentsIn(txLogs(t, client, e.FanOut()[0].TxHash), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
+		if len(public) != 2 || len(logged) != 2 {
+			t.Fatalf("%d public CommitmentsOut and %d logged commitments, want 2 each", len(public), len(logged))
+		}
+		for i, o := range w.Out {
+			amount, _ := new(big.Int).SetString(o.Amount, 10)
+			c, err := rpcore.Erc20CommitmentV2(hexField(t, o.PkSpend), hexField(t, o.Salt), amount, hexField(t, w.Token))
+			if err != nil {
+				t.Fatalf("Erc20CommitmentV2: %v", err)
+			}
+			if c.Cmp(public[i]) != 0 {
+				t.Errorf("new note %d's opening hashes to 0x%x, public CommitmentsOut[%d] is 0x%x", i, c, i, public[i])
+			}
+			if c.Cmp(logged[i]) != 0 {
+				t.Errorf("new note %d's opening hashes to 0x%x, the vault logged 0x%x", i, c, logged[i])
+			}
+		}
+	})
+
 	t.Run("payment 1's proof checks true on the Verifier the vault uses, and false with a tampered output commitment", func(t *testing.T) {
 		var call *engine.VerifyCall
 		var sentIn string // the release the call arrived in
@@ -309,8 +408,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 				if err := json.Unmarshal([]byte(ev.Value), call); err != nil {
 					t.Fatalf("verifyProof field: %v", err)
 				}
-				if sentIn != "fanout_1/relay" {
-					t.Errorf("verifyProof field sent in release %s, want once payment 1 settles (fanout_1/relay)", sentIn)
+				if sentIn != "fanout_1/settle" {
+					t.Errorf("verifyProof field sent in release %s, want once payment 1 settles (fanout_1/settle)", sentIn)
 				}
 			}
 		}

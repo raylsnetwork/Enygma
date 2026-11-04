@@ -289,3 +289,16 @@ func TestTheOnChainProofCheckHasANarration(t *testing.T) {
 		}
 	}
 }
+
+// Payment 1's two columns, what stays in the Sender's wallet (its witness)
+// and what goes on chain (its public inputs), have their narration in the
+// walkthrough section, keyed by the witness hop detail kind.
+func TestTheWitnessAndPublicColumnsHaveANarration(t *testing.T) {
+	columns := servedNarration(t).Walkthrough[string(engine.DetailWitness)]
+	for _, part := range []string{"stays", "chain"} {
+		var text string
+		if err := json.Unmarshal(columns[part], &text); err != nil || strings.TrimSpace(text) == "" {
+			t.Errorf("walkthrough.%s.%s: no narration text (%s)", engine.DetailWitness, part, columns[part])
+		}
+	}
+}

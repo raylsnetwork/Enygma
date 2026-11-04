@@ -599,7 +599,7 @@ func TestShieldDemoScenario(t *testing.T) {
 			if s.UsdrFeeNote == nil {
 				t.Fatalf("step %d: no USDr fee note", i+1)
 			}
-			inserted := usdrCommitmentsIn(txLogs(t, client, s.TxHash), usdrVaultAddr)
+			inserted := commitmentsIn(txLogs(t, client, s.TxHash), usdrVaultAddr)
 			if len(inserted) != 2 || inserted[0].Cmp(s.UsdrFeeNote) != 0 {
 				t.Errorf("step %d: USDr vault inserted %v, want [fee note %s, sender's change]", i+1, inserted, s.UsdrFeeNote)
 				continue
@@ -665,7 +665,7 @@ func TestShieldDemoScenario(t *testing.T) {
 			if n := countTopic(logs, paymentEventSig); n != 1 {
 				t.Errorf("step %d: %d Payment events, want 1", i+1, n)
 			}
-			if inserted := usdrCommitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
+			if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
 				t.Errorf("step %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
 			}
 		}
@@ -1063,6 +1063,7 @@ func checkProofDetails(t *testing.T, vaults map[string]*bind.BoundContract, vaul
 			case engine.DetailPublicInputs:
 				inputs = append(inputs, d)
 			case engine.DetailHTTP: // checked by checkWireDetails
+			case engine.DetailWitness: // payment 1 of a walkthrough: checked by TestShieldDemoWalkthrough
 			default:
 				t.Errorf("step %s: %s proof hop carries a %q detail", h.Step, circuit, d.Kind)
 			}
@@ -1474,11 +1475,11 @@ func countTopicAt(logs []*types.Log, addr common.Address, topic common.Hash) int
 	return n
 }
 
-// usdrCommitmentsIn returns the commitments the USDr vault inserted, in order.
-func usdrCommitmentsIn(logs []*types.Log, usdrVault common.Address) []*big.Int {
+// commitmentsIn returns the commitments vault inserted in logs, in log order.
+func commitmentsIn(logs []*types.Log, vault common.Address) []*big.Int {
 	var out []*big.Int
 	for _, l := range logs {
-		if l.Address == usdrVault && len(l.Topics) >= 3 && l.Topics[0] == commitmentEventSig {
+		if l.Address == vault && len(l.Topics) >= 3 && l.Topics[0] == commitmentEventSig {
 			out = append(out, l.Topics[2].Big())
 		}
 	}
