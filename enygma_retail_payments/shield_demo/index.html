@@ -321,7 +321,8 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .blob { display:block; max-height:64px; overflow:auto; font:10.5px/1.35 var(--mono); color:var(--text2); background:var(--s2); border-radius:4px; padding:2px 5px; overflow-wrap:anywhere; cursor:copy; }
 .blob.copied { background:var(--accent); color:var(--on-accent); }
 .secret { font:11px var(--mono); color:var(--warn); }
-.opened { display:flex; flex-direction:column; gap:4px; max-height:260px; overflow:auto; }
+/* flex-shrink:0: as a scrolling flex child it would otherwise shrink to nothing in the panel's column. */
+.opened { display:flex; flex-direction:column; gap:4px; max-height:260px; overflow:auto; flex-shrink:0; }
 .opening .ok { color:var(--ok); font-weight:600; }
 .checks { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
 .checks b { font:600 13px var(--serif); }
