@@ -317,6 +317,12 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .opening .side.pub { border-style:solid; border-color:color-mix(in srgb, var(--accent) 45%, var(--bd)); }
 .opening .part { font:11px var(--mono); color:var(--text2); background:var(--s2); border-radius:3px; padding:0 5px; }
 .opening .arrow { font:11px var(--mono); color:var(--muted); }
+/* A long public value (a 1184-byte ML-KEM key, a ciphertext) in full, scrolling, copied on click. */
+.blob { display:block; max-height:64px; overflow:auto; font:10.5px/1.35 var(--mono); color:var(--text2); background:var(--s2); border-radius:4px; padding:2px 5px; overflow-wrap:anywhere; cursor:copy; }
+.blob.copied { background:var(--accent); color:var(--on-accent); }
+.secret { font:11px var(--mono); color:var(--warn); }
+.opened { display:flex; flex-direction:column; gap:4px; max-height:260px; overflow:auto; }
+.opening .ok { color:var(--ok); font-weight:600; }
 .checks { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
 .checks b { font:600 13px var(--serif); }
 .checks .ok { color:var(--ok); font-weight:600; margin-right:4px; }
@@ -1524,6 +1530,19 @@ const SENTENCE = {
     return n ? `The transaction is mined: its hash, and the ${n === 1 ? 'event' : `${n} events`} its receipt logged.` : 'The transaction is mined: its hash. Its receipt logged no events.';
   },
   refusal: d => `Payment 1’s exact request, sent again, is refused by the ${NODE[d.refusedBy]?.label || d.refusedBy}: ${d.reason}. Its nullifier is already on chain, and the vault’s trees and every balance are as they were.`,
+  key: d => ({
+    'spend key': `${d.key.owner}’s spend key, a Poseidon key pair: the public half, pk_spend, goes into every note paid to ${d.key.owner}; the private half proves ${d.key.owner} owns a note when spending it.`,
+    'view key': `${d.key.owner}’s view key, an ML-KEM-768 key pair: anyone paying ${d.key.owner} encrypts the note to the public half, pk_view; only the private half opens it.`,
+    'auditor key': 'The auditor’s ML-KEM-768 key pair: every user seals their view key to its public half when they register; only its private half opens them.',
+  })[d.key.name] + ' The private half never leaves its owner: it is shown shortened, and these are throwaway demo keys.',
+  registration: d => `${d.registration.owner} registers: the UserRegistry stores their spend public key, their view public key, and their view key sealed to the auditor, an ML-KEM capsule and an AES-GCM ciphertext. All of it is public on chain; only the auditor can open the last two.`,
+  viewKeyRecovery: d => `The auditor reads ${d.recovery.owner}’s audit ciphertexts from the UserRegistry and opens them with its private key: out comes ${d.recovery.owner}’s view key, whose public half is the one ${d.recovery.owner} registered.`,
+  decryption: (d, all, n = d.notes || []) => n.length > 1 || n[0]?.kind
+    ? `With the view keys it recovered, the auditor opens ${n.length} notes’ ciphertexts, as the chain holds them, to their openings: amount, salt and token. Each hashes, with its owner’s pk_spend, to the note’s commitment.`
+    : !n.length ? 'No new note opened.'
+    : n[0].via === 'tag'
+    ? `${n[0].owner} opens the tag’s payload with the key of the channel it came on and gets the note’s opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to a commitment in the vault.`
+    : `${n[0].owner}’s view key opens one note’s ciphertext, as the chain holds it, to its opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to the note’s commitment. Every other note fails to open.`,
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
@@ -1542,6 +1561,10 @@ const PRIVATE_HINT = {
 const shortHex = v => { v = String(v); return v.startsWith('0x') && v.length > 14 ? v.slice(0, 8) + '…' + v.slice(-4) : v; };
 // hex is a field element in short hex, the full value on hover, copied on click.
 const hex = v => `<span class="hex" data-copy="${esc(v)}" title="${esc(v)} (click to copy)">${esc(shortHex(v))}</span>`;
+// blob is a long public value in full, copied on click.
+const blob = v => `<span class="blob" data-copy="${esc(v)}" title="${esc((v.length - 2) / 2)} bytes (click to copy)">${esc(v)}</span>`;
+// secret is a private key as the engine sent it: shortened, never in full.
+const secret = v => `<span class="secret" title="Shortened by the engine: the full private key never reaches this page">${esc(v)}</span>`;
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-copy]');
   if (!el) return;
@@ -1744,6 +1767,24 @@ const hopPanel = (() => {
       ['refused by', esc(NODE[d.refusedBy]?.label || d.refusedBy)], ['reason', esc(d.reason)],
       [`nullifier · already spent · tree ${d.tree}`, hex(d.nullifier)], ['spent by payment 1 · transaction', hex(d.tx)],
       ...refusal.unchanged(d).map(([k, b, a]) => [`${k} · unchanged`, `${esc(b)} → ${esc(a)}`])];
+    if (d.kind === 'key') return [
+      [`${d.key.name} · ${d.key.scheme} · public`, blob(d.key.public)],
+      [`${d.key.name} · private · shortened`, secret(d.key.private)]];
+    if (d.kind === 'registration') return [
+      ['pk_spend · public', blob(d.registration.spendPk)], ['pk_view · public', blob(d.registration.viewPk)],
+      ['audit capsule · to the auditor', blob(d.registration.audit.capsule)], ['audit sealed view key', blob(d.registration.audit.sealed)]];
+    if (d.kind === 'viewKeyRecovery') return [
+      ['audit capsule · from the registry', blob(d.recovery.audit.capsule)], ['audit sealed view key', blob(d.recovery.audit.sealed)],
+      ['recovered pk_view · = registered', blob(d.recovery.viewPk)], ['recovered view key · private · shortened', secret(d.recovery.viewKey)]];
+    if (d.kind === 'decryption') return (d.notes || []).flatMap(n => {
+      const who = `${n.owner}${n.kind ? ` · ${n.kind}` : ''}`;
+      return [
+        [`${who} · commitment`, hex(n.commitment)],
+        ...(n.capsule ? [[`${who} · ML-KEM capsule`, blob(n.capsule)]] : []),
+        [`${who} · ${n.via === 'tag' ? 'tag payload' : 'sealed amount'}`, blob(n.sealed)],
+        [`${who} · opens to`, `${esc(n.amount)} ${esc(n.asset)} · salt ${hex(n.salt)} · token ${hex(n.token)}`],
+        ...(n.tx ? [[`${who} · transaction`, hex(n.tx)]] : [])];
+    });
     if (!LANDS.has(d.kind)) return [];
     return [
       ...(d.kind === 'commitment'
@@ -1777,6 +1818,39 @@ const hopPanel = (() => {
       <div><span class="ok">✓</span>the ${esc(d.circuit)} proof verifies</div>
       <div class="published">publishes ${d.spent.length > 1 ? `${d.spent.length} nullifiers` : 'its nullifier'}: ${d.spent.map(n => hex(n.nullifier)).join(' ')}</div>
     </div>`;
+  // sideOf is one side of a secretHtml card: its parts, tagged public or private.
+  const sideOf = (pub, title, parts) => `<div class="side${pub ? ' pub' : ''}" title="${esc(title)}"><span class="vis ${pub ? 'pub' : 'priv'}">${pub ? 'public' : 'private'}</span>${parts.join('')}</div>`;
+  // part is a named part of a side, with its value if shown.
+  const part = (name, v) => `<span class="part">${esc(name)}</span>${v || ''}`;
+  // sizeOf is a 0x-hex byte string's length, "1184 B", for a value too long for a card.
+  const sizeOf = v => `<span class="arrow">${(v.length - 2) / 2} B</span>`;
+  // secretHtml is a key, registration, recovery or decryption detail at a
+  // glance: what is public beside what stays private. Values are in full
+  // under Real values.
+  function secretHtml(d) {
+    if (d.kind === 'key') return `<div class="opening">
+      ${sideOf(false, 'Never leaves its owner; the engine sends this page only a shortened form', [part(d.key.name === 'spend key' ? 'sk_spend' : 'sk', secret(d.key.private))])}
+      <span class="arrow">${esc(d.key.scheme)} →</span>
+      ${sideOf(true, 'Published in the UserRegistry', [part(d.key.name === 'spend key' ? 'pk_spend' : d.key.name === 'view key' ? 'pk_view' : 'auditor pk', d.key.scheme === 'Poseidon' ? hex(d.key.public) : sizeOf(d.key.public))])}
+    </div>`;
+    if (d.kind === 'registration') return `<div class="opening">${sideOf(true, 'What UserRegistry.register received, all public on chain', [
+      part('pk_spend', hex(d.registration.spendPk)), part('pk_view', sizeOf(d.registration.viewPk)),
+      part('audit capsule', sizeOf(d.registration.audit.capsule)), part('sealed view key', sizeOf(d.registration.audit.sealed))])}</div>`;
+    if (d.kind === 'viewKeyRecovery') return `<div class="opening">
+      ${sideOf(true, 'As the UserRegistry holds them', [part('audit capsule', sizeOf(d.recovery.audit.capsule)), part('sealed view key', sizeOf(d.recovery.audit.sealed))])}
+      <span class="arrow">auditor’s key →</span>
+      ${sideOf(false, 'Known to the user and now to the auditor; shown shortened', [part(`${d.recovery.owner}’s view key`, secret(d.recovery.viewKey))])}
+      <span class="arrow">= the registered pk_view <span class="ok">✓</span></span>
+    </div>`;
+    if (d.kind === 'decryption') return `<div class="opened">${(d.notes || []).map(n => `<div class="opening">
+      ${sideOf(true, 'On chain, in the ' + (n.via === 'tag' ? 'TagPublished event' : 'note’s Payment or EncryptedNote event'), n.capsule
+        ? [part('capsule', sizeOf(n.capsule)), part('sealed', sizeOf(n.sealed))] : [part('tag payload', sizeOf(n.sealed))])}
+      <span class="arrow">${n.via === 'tag' ? 'channel key' : `${esc(n.owner)}’s view key`} →</span>
+      ${sideOf(false, 'Only the owner (and, with the recovered view key, the auditor) can see this', [part('amount', `<b>${esc(n.amount)}</b> ${esc(n.asset)}`), part('salt', hex(n.salt)), part('token', hex(n.token))])}
+      <span class="arrow">Poseidon → ${hex(n.commitment)}</span>
+    </div>`).join('')}</div>`;
+    return '';
+  }
   // proofKey is a body's key holding a proof, the one value shortened for display.
   const proofKey = k => /^(usdr)?proof$/i.test(k);
   // BIG marks a number too long for a JS number (the gnark server sends
@@ -1848,6 +1922,7 @@ const hopPanel = (() => {
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
       ${en.details.filter(d => d.kind === 'publicInputs').map(inputsHtml).join('')}
       ${en.details.filter(d => d.kind === 'settleChecks').map(checksHtml).join('')}
+      ${en.details.map(secretHtml).join('')}
       <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>
       <div class="vcard back">${vaultHead(back, en.focus[back])}${en.focus[back] ? `<div class="roots">same transaction: root ${hex(en.focus[back].rootBefore)} → ${hex(en.focus[back].rootAfter)}</div>` : ''}${strip(back, en.focus[back], 256, 'thin')}</div>
       <div class="legend"><span><i class="before"></i>before this run</span><span><i class="run"></i>this run</span><span><i class="hot"></i>this hop</span>${f?.spent ? '<span><i class="spent"></i>spent in this proof</span>' : ''}<span><i></i>empty</span>${ownLegend}</div>

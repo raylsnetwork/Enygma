@@ -176,9 +176,9 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 				return err
 			}
 		} else {
-			found := p.scan(events, &p.notes)
-			s.hop(NodeVault, ActorNode(p.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened %d", p.Name, len(events), found))
-			s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, found)
+			found := p.scan(events, &p.notes, assetErc20)
+			s.hop(NodeVault, ActorNode(p.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened %d", p.Name, len(events), len(found)), decryption(found))
+			s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, len(found))
 			s.actor(p, "scan", trialScan(len(events)))
 		}
 		s.actor(p, "balance", p.notes.balance().String()+" RaylsERC20")
@@ -194,20 +194,33 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 	return nil
 }
 
-// scan adds to into the notes in events (one vault's) that a's view key
-// opens, and returns how many were new. An event that fails to open or to
-// match its commitment is someone else's.
-func (a *Actor) scan(events []dvpcore.OnChainErc20Event, into *purse) int {
-	found := 0
+// scan adds to into the notes of asset in events (one vault's) that a's
+// view key opens, and returns the new ones as decrypted. An event that fails
+// to open or to match its commitment is someone else's.
+func (a *Actor) scan(events []dvpcore.OnChainErc20Event, into *purse, asset string) []DecryptedNote {
+	var found []DecryptedNote
 	for _, ev := range events {
 		owned, err := dvpcore.ScanForErc20Notes(a.View.DecapsKey, a.Spend.PublicKey, []dvpcore.OnChainErc20Event{ev})
 		if err != nil || len(owned) == 0 || into.has(ev.Commitment) {
 			continue
 		}
 		*into = append(*into, &note{commitment: owned[0].Commitment, salt: owned[0].SaltBField, amount: owned[0].Amount})
-		found++
+		found = append(found, decrypted(a.Name, asset, ev, owned[0]))
 	}
 	return found
+}
+
+// decrypted is note event ev, which view key opened to owned, as a
+// decryption hop detail shows it.
+func decrypted(owner, asset string, ev dvpcore.OnChainErc20Event, owned dvpcore.OwnedErc20Note) DecryptedNote {
+	return DecryptedNote{Owner: owner, Asset: asset, Commitment: fieldHex(ev.Commitment), Via: viaViewKey,
+		Capsule: bytesHex(ev.CipherText), Sealed: bytesHex(ev.EncTxData),
+		Amount: owned.Amount.String(), Salt: fieldHex(owned.SaltBField), Token: fieldHex(owned.TokenId)}
+}
+
+// decryption is a decryption hop detail of notes in the RaylsERC20 vault.
+func decryption(notes []DecryptedNote) HopDetail {
+	return HopDetail{Kind: DetailDecryption, Vault: NodeVault, Notes: notes}
 }
 
 func (p purse) has(commitment *big.Int) bool {

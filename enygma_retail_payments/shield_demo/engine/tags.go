@@ -225,16 +225,16 @@ func (e *Engine) publishTag(ctx context.Context, s *step, from, to *Actor, t *se
 
 // scanTags has a check every tag published since their last scan against
 // their channels, decrypt only the notes whose tags match, and keep each
-// that opens to a commitment in the vault. It returns how many notes it
-// found and how many tags it checked.
-func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, err error) {
+// that opens to a commitment in the vault. It returns the new notes, as
+// decrypted from their tags, and how many tags it checked.
+func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []DecryptedNote, checked int, err error) {
 	c := e.chain
 	tip, err := c.client.BlockNumber(ctx)
 	if err != nil {
-		return 0, 0, err
+		return nil, 0, err
 	}
 	if tip <= a.tags.lastBlock {
-		return 0, 0, nil
+		return nil, 0, nil
 	}
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(a.tags.lastBlock + 1),
@@ -243,7 +243,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, er
 		Topics:    [][]common.Hash{{tagPublishedTopic}},
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("TagPublished events: %w", err)
+		return nil, 0, fmt.Errorf("TagPublished events: %w", err)
 	}
 	for _, l := range logs {
 		if len(l.Topics) < 4 {
@@ -251,7 +251,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, er
 		}
 		checked++
 		for _, ch := range a.tags.in {
-			pn, err := openTag(l, ch)
+			pn, payload, err := openTag(l, ch)
 			if err != nil {
 				return found, checked, fmt.Errorf("%s: %w", a.Name, err)
 			}
@@ -264,7 +264,9 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, er
 			}
 			if !a.notes.has(n.commitment) {
 				a.notes = append(a.notes, n)
-				found++
+				found = append(found, DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: l.TxHash.Hex(),
+					Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(payload),
+					Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(pn.TokenId)})
 			}
 		}
 	}
@@ -273,21 +275,24 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found, checked int, er
 }
 
 // openTag decrypts the payment note a TagPublished log carries if it is
-// ch's tag for its block, and returns nil if it is not.
-func openTag(l ethtypes.Log, ch tags.Channel) (*tags.PaymentNote, error) {
+// ch's tag for its block, and returns it with the payload it decrypted, or
+// nil if it is not.
+func openTag(l ethtypes.Log, ch tags.Channel) (*tags.PaymentNote, []byte, error) {
 	// Topics: [0] signature, [1] block number, [2] tag, [3] publisher.
 	if len(l.Topics) < 4 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	want, err := tags.DeriveTag(l.BlockNumber, ch.PkSpend, ch.SharedSecret)
 	if err != nil || common.Hash(want) != l.Topics[2] {
-		return nil, nil
+		return nil, nil, nil
 	}
 	vals, err := abiBytes().Unpack(l.Data)
 	if err != nil || len(vals) != 1 {
-		return nil, fmt.Errorf("decode the tag in block %d: %v", l.BlockNumber, err)
+		return nil, nil, fmt.Errorf("decode the tag in block %d: %v", l.BlockNumber, err)
 	}
-	return tags.DecryptPaymentNote(ch.SharedSecret, ch.PkSpend, l.BlockNumber, vals[0].([]byte))
+	payload := vals[0].([]byte)
+	pn, err := tags.DecryptPaymentNote(ch.SharedSecret, ch.PkSpend, l.BlockNumber, payload)
+	return pn, payload, err
 }
 
 // tagNote is the note a tag's payload opens for a, once its commitment is
@@ -320,13 +325,13 @@ func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int)
 	if err != nil {
 		return "", err
 	}
-	if found != want {
-		return "", fmt.Errorf("%s found %d new notes by their tags, want %d", a.Name, found, want)
+	if len(found) != want {
+		return "", fmt.Errorf("%s found %d new notes by their tags, want %d", a.Name, len(found), want)
 	}
-	scan := fmt.Sprintf("%d tags checked → %d decrypted", checked, found)
+	scan := fmt.Sprintf("%d tags checked → %d decrypted", checked, len(found))
 	s.hop(NodeTagRegistry, ActorNode(a.ID), "scan tags", scan)
-	s.hop(NodeVault, ActorNode(a.ID), "open note", fmt.Sprintf("the tagged note's commitment confirmed in the vault; %s decrypts only it", a.Name))
-	s.log("tag", "%s checked %d tags, matched %d and decrypted only those notes", a.Name, checked, found)
+	s.hop(NodeVault, ActorNode(a.ID), "open note", fmt.Sprintf("the tagged note's commitment confirmed in the vault; %s decrypts only it", a.Name), decryption(found))
+	s.log("tag", "%s checked %d tags, matched %d and decrypted only those notes", a.Name, checked, len(found))
 	s.actor(a, "scan", scan)
 	return scan, nil
 }

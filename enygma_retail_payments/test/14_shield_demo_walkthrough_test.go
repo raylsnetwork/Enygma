@@ -298,6 +298,15 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
+	t.Run("keygen shows every key pair, the auditor's too, registration what the UserRegistry got, and each recovery the view key the auditor opened", func(t *testing.T) {
+		checkKeyDetails(t, e, sink.hops(), true)
+		checkRegistryDetails(t, client, e, sink.hops())
+	})
+
+	t.Run("each participant's scan shows the note their view key opened: their payout, hashing to their payment's commitment", func(t *testing.T) {
+		checkDiscoverDetails(t, client, e, sink.hops(), false)
+	})
+
 	t.Run("payment 1's proof request carries its witness, as sent to the prover, its output openings hashing to the commitments the vault logged", func(t *testing.T) {
 		var prove []engine.Event
 		for _, h := range sink.hops() {
@@ -596,6 +605,10 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if b2, b3 := block(e.FanOut()[1].TxHash), block(e.FanOut()[2].TxHash); b3 != b2+1 {
 			t.Errorf("payment 2 in block %d, payment 3 in %d: a transaction was mined between them", b2, b3)
 		}
+	})
+
+	t.Run("the audit hop shows every note the auditor decrypted, each the ciphertext on chain and its owner's opening", func(t *testing.T) {
+		checkAuditDetails(t, client, e, sink.hops())
 	})
 
 	t.Run("the audit reconciles every balance", func(t *testing.T) {
