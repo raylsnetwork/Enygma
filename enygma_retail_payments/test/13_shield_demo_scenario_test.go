@@ -87,42 +87,59 @@ func (s *capturingSink) hops() []engine.Event {
 	return out
 }
 
-// replayFixture is the shield demo page's replay test fixture
-// (scripts/shield_demo_replay.test.js, run by make page-check).
-const replayFixture = "../shield_demo/testdata/default_run.events.json"
+// The shield demo page's replay test fixtures (scripts/shield_demo_replay.test.js,
+// run by make page-check): TestShieldDemoScenario's default run, and
+// TestShieldDemoWalkthrough's walkthrough.
+const (
+	replayFixture      = "../shield_demo/testdata/default_run.events.json"
+	walkthroughFixture = "../shield_demo/testdata/walkthrough.events.json"
+)
+
+// fixtureField is one top-level field of a replay fixture, written before
+// its events.
+type fixtureField struct {
+	name  string
+	value any
+}
 
 // writeReplayFixtureIfPassed writes the events captured so far (the run's),
 // as /events sends them (after the reset the server sends before a run,
-// main.go's handleRun, less their ts stamps), with the options the run
-// used as /defaults sends them, to replayFixture, one event per line, once
-// t has passed. Every passing live run refreshes it, so a change to what
-// the engine sends shows up as a diff of the fixture; a failing run leaves
-// it as it was.
-func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, opts engine.Options) {
+// main.go's handleRun, less their ts stamps), to path, one event per line,
+// after fields (the options the run used, say), once t has passed. The
+// fields are marshalled then, so a subtest may still fill them in. Every
+// passing live run refreshes the fixture, so a change to what the engine
+// sends shows up as a diff of it; a failing run leaves it as it was.
+func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, path string, fields ...fixtureField) {
 	t.Helper()
 	s.mu.Lock()
 	events := slices.Clone(s.events)
 	s.mu.Unlock()
-	var b bytes.Buffer
-	o, err := json.Marshal(opts)
-	if err != nil {
-		t.Fatalf("marshal the options: %v", err)
-	}
-	fmt.Fprintf(&b, "{\"defaults\": %s,\n\"events\": [\n{\"kind\":\"reset\"}", o)
-	for i, e := range events {
-		line, err := json.Marshal(e)
-		if err != nil {
-			t.Fatalf("marshal event %d: %v", i, err)
-		}
-		b.WriteString(",\n")
-		b.Write(line)
-	}
-	b.WriteString("\n]}\n")
 	t.Cleanup(func() {
 		if t.Failed() {
 			return
 		}
-		if err := os.WriteFile(replayFixture, b.Bytes(), 0o644); err != nil {
+		var b bytes.Buffer
+		b.WriteString("{")
+		for _, f := range fields {
+			v, err := json.Marshal(f.value)
+			if err != nil {
+				t.Errorf("marshal the fixture's %s: %v", f.name, err)
+				return
+			}
+			fmt.Fprintf(&b, "%q: %s,\n", f.name, v)
+		}
+		b.WriteString("\"events\": [\n{\"kind\":\"reset\"}")
+		for i, e := range events {
+			line, err := json.Marshal(e)
+			if err != nil {
+				t.Errorf("marshal event %d: %v", i, err)
+				return
+			}
+			b.WriteString(",\n")
+			b.Write(line)
+		}
+		b.WriteString("\n]}\n")
+		if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
 			t.Errorf("write the replay fixture: %v", err)
 		}
 	})
@@ -248,7 +265,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		atStart[node] = treeState{vaultTreeNumber(t, v), vaultCurrentRoot(t, v)}
 	}
 	e, sink := runShieldScenario(t, cfg, opts)
-	sink.writeReplayFixtureIfPassed(t, opts)
+	sink.writeReplayFixtureIfPassed(t, replayFixture, fixtureField{"defaults", opts})
 
 	t.Run("the run starts from each vault's tree as the chain holds it", func(t *testing.T) {
 		snaps := treeSnapshots(t, sink)
