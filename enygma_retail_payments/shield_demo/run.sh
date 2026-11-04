@@ -82,7 +82,8 @@ cleanup() {
     trap - EXIT INT TERM
     echo ""
     echo "[run.sh] stopping services…"
-    for pid in "${PIDS[@]}"; do
+    # ${PIDS[@]+…}: bash 3.2 (macOS) calls an empty array unbound under set -u.
+    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
         # Each service runs in its own process group; kill the whole group so
         # children (npx → node) go too.
         kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
