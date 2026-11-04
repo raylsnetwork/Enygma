@@ -66,10 +66,13 @@ var actionHops = map[string][]string{
 	"audit":    {"audit"},
 }
 
-// walkthroughOpts are the default options with the walkthrough on.
+// walkthroughOpts are the options the page's Walkthrough button sends with
+// the form as /defaults fills it: the default amounts, no USDr fee, no tags
+// and the walkthrough on (the server keeps the default script, which a
+// walkthrough does not play).
 func walkthroughOpts() engine.Options {
 	opts := engine.DefaultOptions()
-	opts.Walkthrough = true
+	opts.UsdrFee, opts.Tags, opts.Walkthrough = false, false, true
 	return opts
 }
 
@@ -181,6 +184,23 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 	opts := walkthroughOpts()
 	e, sink, acts := walk(t, cfg, opts)
 	t.Logf("a walkthrough takes %d releases (the page's Nexts, before concept moments)", len(acts))
+
+	// The walkthrough's replay fixture: /defaults as the page got it (with
+	// the Verifier its on-chain proof check calls), the options it ran with,
+	// and the node's answer to each verifyProof eth_call the check makes,
+	// which the on-chain check subtest fills in.
+	verifier, err := engine.DeployedVerifier(cfg)
+	if err != nil {
+		t.Fatalf("DeployedVerifier: %v", err)
+	}
+	ethCalls := map[string]string{} // call data → the node's result
+	sink.writeReplayFixtureIfPassed(t, walkthroughFixture,
+		fixtureField{"defaults", struct {
+			engine.Options
+			Chain engine.Verifier `json:"chain"`
+		}{engine.DefaultOptions(), verifier}},
+		fixtureField{"run", opts},
+		fixtureField{"ethCall", ethCalls})
 
 	t.Run("the steps are the Sender's path, in order", func(t *testing.T) {
 		var started []string
@@ -509,6 +529,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			if err := json.NewDecoder(res.Body).Decode(&out); err != nil || out.Error != nil {
 				t.Fatalf("eth_call: %v %s", err, out.Error)
 			}
+			ethCalls[data] = out.Result
 			return out.Result
 		}
 		const (

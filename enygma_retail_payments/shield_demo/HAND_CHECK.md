@@ -4,13 +4,14 @@ A page ticket's acceptance is checked by hand in Chrome against the `run.sh` sta
 
 ## What the replay test covers
 
-`make page-check` (and CI) runs `scripts/shield_demo_replay.test.js`. It loads `index.html` in jsdom as `/?fast` with pausing off, feeds it every event of a real default run (`testdata/default_run.events.json`, which `TestShieldDemoScenario` rewrites on every live run: commit it with an engine change), plays the run out on a virtual clock, then clicks each finished step and steps through all its hop details with the Real values and Request and response / Receipt folds open. It fails on:
+`make page-check` (and CI) runs `scripts/shield_demo_replay.test.js`. It loads `index.html` in jsdom as `/?fast` with pausing off and plays two real runs on a virtual clock: a default run (`testdata/default_run.events.json`, which a passing `TestShieldDemoScenario` rewrites, `make shield-test` too) and a walkthrough (`testdata/walkthrough.events.json`, which a passing `TestShieldDemoWalkthrough` rewrites: `cd test && CC=/usr/bin/clang go test -run 'TestShieldDemoWalkthrough$' -v`, under a minute). Commit both with an engine change. The default run's events are fed as `/events` sends them. The walkthrough is one the page starts: its Walkthrough button sends the fixture's run options, the test presses Next at every gate and feeds each release's events only after it, and `/release` and the on-chain proof check's `eth_call` are answered as the fixture's run answered them. After each run the test clicks each finished step and steps through all its hop details with the Real values and Request and response / Receipt folds open. It fails on:
 
-- any exception the page throws while it plays or replays the run (an empty receipt's missing `events` list, say);
+- any exception the page throws while it plays or replays a run (an empty receipt's missing `events` list, say);
 - a step not shown as succeeded at the end, or a step whose replay has a different number of hop details than the run sent;
-- a field element (a run of 16+ digits) of an HTTP request or response body that the panel's body does not show digit for digit, proofs aside; and a body with a proof not shown in full behind "show in full".
+- a field element (a run of 16+ digits) of an HTTP request or response body that the panel's body does not show digit for digit, proofs aside; and a body with a proof not shown in full behind "show in full";
+- in the walkthrough, Next pressed (or `/release` sent) a different number of times than the run had gates; payment 1's columns, the replay's refusal or the on-chain proof check card never showing; and the check not showing `verifyProof → true`, then `false` once tampered.
 
-jsdom does no layout, timing or theming, and the fixture is the default run only. So the hand check is still needed for layout, themes, sizes and collapsed cards, timing and pacing, hidden tabs, pausing on, the walkthrough and the fees-off and tags-off runs; it need not look for console exceptions on a default run or check bodies digit for digit.
+jsdom does no layout, timing or theming, and the fixtures are a default run and a walkthrough with the form's amounts. So the hand check is still needed for layout, themes, sizes and collapsed cards, timing and pacing, hidden tabs, pausing on, the walkthrough's Space key, handover and leaving it, and full runs with fees or tags off; it need not look for console exceptions on a default run or a walkthrough, or check bodies digit for digit.
 
 ## Steps
 
