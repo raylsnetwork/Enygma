@@ -328,6 +328,17 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .checks b { font:600 13px var(--serif); }
 .checks .ok { color:var(--ok); font-weight:600; margin-right:4px; }
 .checks .published { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
+/* A formula card: an equation, its real values in full, and its check against the chain; flex-shrink:0 as .opened. */
+.formula { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; flex-shrink:0; }
+.formula b { font:600 13px var(--serif); }
+.formula .feq { font:600 12px var(--mono); color:var(--text); margin:2px 0; overflow-wrap:anywhere; }
+.formula .fin { display:grid; grid-template-columns:96px minmax(0,1fr); gap:8px; align-items:baseline; }
+.formula .fin .k { color:var(--muted); font:11px var(--mono); }
+.formula .fin.res { padding-top:3px; border-top:1px dashed var(--bd2); }
+.formula .fv { font:10.5px/1.35 var(--mono); color:var(--text2); overflow-wrap:anywhere; cursor:copy; }
+.formula .ok { color:var(--ok); font-weight:600; margin-right:4px; }
+.formula .no { color:var(--bad); font-weight:600; margin-right:4px; }
+.formula .fnote { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
 .wire { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; font-size:12px; margin-top:6px; }
 .wire .line { font:600 12px var(--mono); color:var(--text); overflow-wrap:anywhere; }
 .wire .line .st2 { color:var(--ok); }
@@ -1544,7 +1555,18 @@ const SENTENCE = {
     : n[0].via === 'tag'
     ? `${n[0].owner} opens the tag’s payload with the key of the channel it came on and gets the note’s opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to a commitment in the vault.`
     : `${n[0].owner}’s view key opens one note’s ciphertext, as the chain holds it, to its opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to the note’s commitment. Every other note fails to open.`,
+  formula: d => `${FORMULA[d.formula.name]?.title || d.formula.name}, computed with this run’s real values and checked against what the chain holds.`,
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
+};
+
+// FORMULA is each formula hop detail's card by its name: its title, its
+// equation as the protocol computes it, the name of its result and a line
+// on what it shows.
+const FORMULA = {
+  commitment: {
+    title: 'The note commitment', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)', result: 'commitment',
+    note: 'The shield is the one note whose opening is public on chain: the vault computes this commitment itself, from the deposit’s calldata. Privacy starts at the first spend.',
+  },
 };
 
 // What each public input and private witness of a proof is, named as in the
@@ -1786,10 +1808,16 @@ const hopPanel = (() => {
         [`${who} · opens to`, `${esc(n.amount)} ${esc(n.asset)} · salt ${hex(n.salt)} · token ${hex(n.token)}`],
         ...(n.tx ? [[`${who} · transaction`, hex(n.tx)]] : [])];
     });
+    if (d.kind === 'formula') return [
+      ...(d.formula.inputs || []).map(x => [`${d.formula.name} · ${x.name}`, /^0x/.test(x.value) ? hex(x.value) : esc(x.value)]),
+      [`${d.formula.name} · result`, hex(d.formula.result)],
+      [`chain · ${d.formula.ok ? 'equal' : 'differs'}`, `${hex(d.formula.chain.value)} <span class="muted">${esc(d.formula.chain.name)}</span>`]];
     if (!LANDS.has(d.kind)) return [];
+    // A walkthrough's shield sends the opening, public in its calldata, in a commitment formula.
+    const opened = all.some(x => x.kind === 'formula' && x.formula.name === 'commitment');
     return [
       ...(d.kind === 'commitment'
-        ? [[`commitment · public · tree ${d.tree} #${d.leaves[0].index}`, hex(d.commitment)], ...d.opening.map(p => [`${p} · private`, '<span class="muted">not sent to this page</span>'])]
+        ? [[`commitment · public · tree ${d.tree} #${d.leaves[0].index}`, hex(d.commitment)], ...d.opening.map(p => [`${p} · private`, `<span class="muted">${opened ? 'in the formula below: public in this deposit’s calldata' : 'not sent to this page'}</span>`])]
         : d.leaves.map(l => [`new leaf · tree ${d.tree} #${l.index}`, hex(l.commitment)])),
       ['root before', hex(d.rootBefore)], ['root after', hex(d.rootAfter)], ['transaction', hex(d.tx)],
       ...(d.treeStarted ? [['tree', `<span class="started">tree ${d.tree} started: the batch would have filled tree ${d.tree - 1}</span>`]] : [])];
@@ -1802,6 +1830,21 @@ const hopPanel = (() => {
       <div class="side pub" title="On chain, in the vault's Commitment event"><span class="vis pub">public</span>${hex(d.commitment)}</div>
       <span class="arrow">→ leaf #${d.leaves[0].index}</span>
     </div>`;
+  // fval is a formula's value in full, digit for digit, copied on click.
+  const fval = v => `<span class="fv" data-copy="${esc(v)}" title="click to copy">${esc(v)}</span>`;
+  // formulaHtml is a formula detail's card: its equation, each real input,
+  // the result, and ✓ (or ✗) against the value the chain holds.
+  function formulaHtml(d) {
+    const f = d.formula, c = FORMULA[f.name] || { title: f.name, eq: '', result: 'result', note: '' };
+    return `<div class="formula" title="Computed by the engine with this run’s real values; the check compares it with the chain">
+      <div><b>${esc(c.title)}</b> <span class="hstep">· real values</span></div>
+      ${c.eq ? `<div class="feq">${esc(c.eq)}</div>` : ''}
+      ${(f.inputs || []).map(x => `<div class="fin"><span class="k">${esc(x.name)}</span>${fval(x.value)}</div>`).join('')}
+      <div class="fin res"><span class="k">= ${esc(c.result)}</span>${fval(f.result)}</div>
+      <div class="fchk">${f.ok ? '<span class="ok">✓</span>equals' : '<span class="no">✗</span>differs from'} ${esc(f.chain.name)}: ${fval(f.chain.value)}</div>
+      ${c.note ? `<div class="fnote">${esc(c.note)}</div>` : ''}
+    </div>`;
+  }
   // inputsHtml is a publicInputs detail's statement, public, beside the
   // witnesses that stay private. Only the private parts' names are drawn
   // here; their values are in the proof hop's request to the gnark server.
@@ -1921,6 +1964,7 @@ const hopPanel = (() => {
       <div>${en.hop ? `<span class="hlbl">${esc(en.hop.label)}</span> <span class="hstep">${esc(NODE[en.hop.from].label)} → ${esc(NODE[en.hop.to].label)}</span>` : '<span class="hstep">Hop detail</span>'}</div>
       <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0], en.details) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
+      ${en.details.filter(d => d.kind === 'formula').map(formulaHtml).join('')}
       ${en.details.filter(d => d.kind === 'publicInputs').map(inputsHtml).join('')}
       ${en.details.filter(d => d.kind === 'settleChecks').map(checksHtml).join('')}
       ${en.details.map(secretHtml).join('')}

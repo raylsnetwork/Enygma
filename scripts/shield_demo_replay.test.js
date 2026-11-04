@@ -17,7 +17,8 @@
 // not shown in full behind "show in full"; and, for the walkthrough, on Next
 // pressed a different number of times than the run had gates, or a
 // walkthrough card (payment 1's columns, the replay's refusal, the on-chain
-// proof check) that never showed while it played, and on the check not
+// proof check, a formula card) that never showed while it played, a formula
+// card's value not shown digit for digit, and on the check not
 // showing verifyProof → true, then false once tampered. The cards show only
 // as their hops play; replaying a step shows the same hop details (the
 // witness, the refusal) in the hop detail panel. Two first tests check the
@@ -168,6 +169,28 @@ const stripProofs = raw => raw.replace(/"(usdr)?proof"\s*:\s*\[[^\]]*\]/gi, '');
 const fieldElements = raw => stripProofs(raw).match(/\d{16,}/g) || [];
 const hasProof = raw => stripProofs(raw) !== raw;
 
+// checkFormulas fails unless the hop detail panel shows one formula card
+// per formula detail of hop h, each with every input, its result and the
+// chain's value digit for digit, its ✓ (or ✗), and, for the commitment, the
+// public-opening line; it returns how many values it checked.
+function checkFormulas(doc, h, where) {
+  const fs = (h.hopDetail || []).filter(d => d.kind === 'formula');
+  const shown = [...doc.querySelectorAll('#hopPanel .formula')];
+  assert.strictEqual(shown.length, fs.length, `${where}: formula cards shown`);
+  let n = 0;
+  fs.forEach(({ formula: f }, i) => {
+    const text = shown[i].textContent, values = [...shown[i].querySelectorAll('.fv')].map(v => v.textContent);
+    // In card order: each input, the result, then the chain's value.
+    const want = [...f.inputs.map(x => x.value), f.result, f.chain.value];
+    assert.deepStrictEqual(values, want, `${where}, ${f.name} formula: its values, digit for digit, in order`);
+    n += want.length;
+    for (const x of f.inputs) assert.ok(text.includes(x.name), `${where}, ${f.name} formula: input ${x.name} unnamed`);
+    assert.ok(text.includes(f.ok ? '✓' : '✗'), `${where}, ${f.name} formula: no ${f.ok ? '✓' : '✗'}`);
+    if (f.name === 'commitment') assert.match(text, /opening is public on chain[^.]*\. Privacy starts at the first spend/, `${where}: the public-opening line`);
+  });
+  return n;
+}
+
 // detailHopsOf is fixture f's hops with a hop detail, per step, in the order the panel keeps them.
 function detailHopsOf(f) {
   const out = {};
@@ -183,7 +206,7 @@ async function replayAll(page, f, all) {
   const { doc, timers, errors } = page;
   const $ = id => doc.getElementById(id);
   const detailHops = detailHopsOf(f);
-  let replayed = 0, checkedElements = 0, fullProofs = 0;
+  let replayed = 0, checkedElements = 0, fullProofs = 0, formulaValues = 0;
   for (const el of all) {
     const step = el.id.slice('step-'.length), hops = detailHops[step] || [];
     // Back to live first: a step with no hop details leaves the panel as it was.
@@ -217,6 +240,7 @@ async function replayAll(page, f, all) {
           if (hasProof(raw)) { assert.ok(full.includes(raw), `${step} hop detail ${i + 1}, ${d.url} ${part}: the body in full`); fullProofs++; }
         });
       });
+      formulaValues += checkFormulas(doc, hops[i], `${step} hop detail ${i + 1}`);
       replayed++;
       const next = doc.querySelector('#hopPanel [data-replay="next"]');
       if (i < hops.length - 1) { assert.ok(!next.disabled, `${step}: › disabled at ${i + 1} of ${hops.length}`); next.click(); await tick(); }
@@ -225,6 +249,7 @@ async function replayAll(page, f, all) {
   }
   assert.strictEqual(replayed, Object.values(detailHops).flat().length, 'hop details replayed');
   assert.ok(checkedElements > 0 && fullProofs > 0, `checked ${checkedElements} field elements and ${fullProofs} full bodies`);
+  return { formulaValues };
 }
 
 test('the default run fixture is a real default run, with the cases the replay is there for', () => {
@@ -262,6 +287,7 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   assert.ok(WALKTHROUGH.run.walkthrough && GATES > 0, 'not a walkthrough');
   const details = WALKTHROUGH.events.flatMap(e => e.hopDetail || []);
   for (const kind of ['witness', 'publicInputs', 'refusal']) assert.ok(details.some(d => d.kind === kind), `no ${kind} hop detail`);
+  assert.ok(details.some(d => d.kind === 'formula' && d.formula.name === 'commitment'), 'no commitment formula on the shield');
   const chain = WALKTHROUGH.defaults.chain;
   assert.ok(chain?.rpcUrl && chain.verifier, '/defaults names no Verifier: the on-chain check would not call it');
   const call = verifyProofCall(), one = '0x' + '0'.repeat(63) + '1', zero = '0x' + '0'.repeat(64);
@@ -283,6 +309,7 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
 
   // Each release's events reach the page only once Next has released it.
   const cards = { columns: false, refusal: false, verify: false };
+  let formulaLive = false;
   const evs = WALKTHROUGH.events;
   let nexts = 0;
   for (let at = 0; at < evs.length;) {
@@ -293,6 +320,9 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
     await playOut(page);
     failOn(errors, `playing up to gate ${nexts + 1}`);
     for (const id of Object.keys(cards)) if (!$(id).hidden && $(id).innerHTML) cards[id] = true;
+    // A formula card shows in the hop detail panel as its hop plays.
+    const latest = evs.slice(0, at).findLast(e => e.kind === 'hop' && e.hopDetail);
+    if (latest?.hopDetail.some(d => d.kind === 'formula')) { checkFormulas(doc, latest, `gate ${nexts + 1}, live`); formulaLive = true; }
     if (gate < 0) break;
     const { action, step } = evs[gate];
     assert.ok(!$('nextBtn').disabled, `gate ${nexts + 1} (${step}/${action}): Next is off`);
@@ -305,6 +335,7 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
   assert.strictEqual(nexts, GATES, 'Next pressed once per gate');
   assert.ok($('nextBtn').disabled, 'Next still on after the last gate');
   for (const [id, seen] of Object.entries(cards)) assert.ok(seen, `the ${id} card never showed`);
+  assert.ok(formulaLive, 'no formula card showed while its hop played');
   const all = finished(page);
 
   // The on-chain proof check asked the fixture's node, and shows its answers.
@@ -316,6 +347,7 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
   assert.strictEqual(verdict(), 'verifyProof → false', 'the tampered call');
   failOn(errors, 'checking the proof on chain');
 
-  await replayAll(page, WALKTHROUGH, all);
+  const { formulaValues } = await replayAll(page, WALKTHROUGH, all);
+  assert.ok(formulaValues > 0, 'no formula card value checked');
   failOn(errors, 'at the end');
 });
