@@ -11,3 +11,7 @@ The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html
 - **Every function and event handler has a one-line comment** above it saying what it does, in the page's plain-English style.
 - **Comments state what the code does now**, and change with it: a comment that describes an earlier version of its code is a finding.
 - **Engine and service JSON is read for its real shape.** A list field may be absent (Go's `omitempty` drops an empty list), so lists are read as `x || []`. A service body with bare big numbers (the gnark server's field elements) goes through the hop panel's `body()`, which keeps them digit for digit, never plain `JSON.parse` into numbers.
+
+## Tests and checks
+
+- **A new check is shown red.** A change that adds a test or check names the mutation of the code under test that makes it fail (in the commit message or PR), and says it was run. A check with no stated red is a finding.

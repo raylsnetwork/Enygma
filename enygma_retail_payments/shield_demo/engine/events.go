@@ -62,7 +62,10 @@ type Event struct {
 //     hop detail panel draws it), columns if it belongs beside payment 1's
 //     public inputs (the witness), and refusal if a card shows it (the
 //     replay's refusal);
-//   - HAND_CHECK.md: the pace probe's hasDetail, which mirrors WIRE_KINDS.
+//   - HAND_CHECK.md: the pace probe's hasDetail, which mirrors WIRE_KINDS;
+//   - testdata/default_run.events.json: a passing make shield-test rewrites
+//     it; commit it, or the replay test (scripts/shield_demo_replay.test.js)
+//     never plays the new kind.
 type HopDetailKind string
 
 const (
