@@ -51,6 +51,14 @@ type Event struct {
 }
 
 // HopDetailKind says what a HopDetail shows.
+//
+// A new kind is also handled where nothing will make the compiler point:
+//   - test/13_shield_demo_scenario_test.go: checkProofDetails and
+//     checkSettleChecks fail on a kind they don't list;
+//   - index.html: SENTENCE (keyed by a hop's first detail), WIRE_KINDS
+//     (kinds that don't lengthen a hop's hold), and rowsOf or WIRE (how the
+//     hop detail panel draws it);
+//   - HAND_CHECK.md: the pace probe's hasDetail, which mirrors WIRE_KINDS.
 type HopDetailKind string
 
 const (
