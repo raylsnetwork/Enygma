@@ -329,7 +329,7 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .checks .ok { color:var(--ok); font-weight:600; margin-right:4px; }
 .checks .published { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
 /* A formula card: an equation, its real values in full, and its check against the chain; flex-shrink:0 as .opened. */
-.formula { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; flex-shrink:0; }
+.formula { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; flex-shrink:0; overflow-wrap:anywhere; }
 .formula b { font:600 13px var(--serif); }
 .formula .feq { font:600 12px var(--mono); color:var(--text); margin:2px 0; overflow-wrap:anywhere; }
 .formula .fin { display:grid; grid-template-columns:96px minmax(0,1fr); gap:8px; align-items:baseline; }
@@ -1566,6 +1566,14 @@ const FORMULA = {
   commitment: {
     title: 'The note commitment', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)', result: 'commitment',
     note: 'The shield is the one note whose opening is public on chain: the vault computes this commitment itself, from the deposit’s calldata. Privacy starts at the first spend.',
+  },
+  merklePath: {
+    title: 'The Merkle path', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈', result: 'root',
+    note: 'The circuit hashes these same levels, privately: the proof shows the note is a leaf under a root the vault has had, without saying which leaf.',
+  },
+  nullifier: {
+    title: 'The nullifier', eq: 'nullifier = Poseidon(sk_spend, tree · 2⁸ + leaf index)', result: 'nullifier',
+    note: 'Its inputs are private, the spend key and the note’s position, so no one but the Sender can link this nullifier to the note it spends. Once published, the same note can never be spent again.',
   },
 };
 

@@ -75,26 +75,6 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 	return nil
 }
 
-// commitmentFormula is the commitment formula of note n, owner's, which
-// deposit cd inserted as its one leaf: its opening hashed, checked against
-// that leaf as the vault's Commitment event logged it.
-func commitmentFormula(cd HopDetail, owner *Actor, n *note) HopDetail {
-	leaf := cd.Leaves[0]
-	result := fieldHex(n.commitment)
-	return HopDetail{Kind: DetailFormula, Vault: cd.Vault, Tree: cd.Tree, Formula: &Formula{
-		Name: FormulaCommitment,
-		Inputs: []FormulaValue{
-			{Name: noteOpening[0], Value: fieldHex(owner.Spend.PublicKey)},
-			{Name: noteOpening[1], Value: fieldHex(n.salt)},
-			{Name: noteOpening[2], Value: n.amount.String()},
-			{Name: noteOpening[3], Value: fieldHex(tokenId)},
-		},
-		Result: result,
-		Chain:  FormulaValue{Name: fmt.Sprintf("leaf #%d of tree %d, the vault's Commitment event", leaf.Index, cd.Tree), Value: leaf.Commitment},
-		OK:     result == leaf.Commitment,
-	}}
-}
-
 // depositNote deposits amount from payerKeyHex's account (which must have
 // approved vault for it) into a note owner can open, encrypted to owner's
 // view key, and returns the note.
@@ -289,18 +269,29 @@ func merkleProof(ctx context.Context, tree *rpcore.MerkleTree, vault *bind.Bound
 	if err != nil {
 		return nil, err
 	}
-	var out []any
-	if err := vault.Call(&bind.CallOpts{Context: ctx}, &out, "isValidRoot", big.NewInt(int64(proof.TreeNumber)), proof.Root); err != nil {
-		return nil, fmt.Errorf("%s vault isValidRoot: %w", vaultName, err)
+	known, err := hadRoot(ctx, vault, vaultName, proof.TreeNumber, proof.Root)
+	if err != nil {
+		return nil, err
 	}
-	if len(out) != 1 {
-		return nil, fmt.Errorf("%s vault isValidRoot returned %d values, want 1", vaultName, len(out))
-	}
-	if known, _ := out[0].(bool); !known {
+	if !known {
 		return nil, fmt.Errorf("the %s vault has never had root 0x%s in tree %d: the engine's rebuilt tree differs from the vault's",
 			vaultName, proof.Root.Text(16), proof.TreeNumber)
 	}
 	return proof, nil
+}
+
+// hadRoot asks vault, named vaultName, whether it has had root in tree tree
+// (its isValidRoot).
+func hadRoot(ctx context.Context, vault *bind.BoundContract, vaultName string, tree int, root *big.Int) (bool, error) {
+	var out []any
+	if err := vault.Call(&bind.CallOpts{Context: ctx}, &out, "isValidRoot", big.NewInt(int64(tree)), root); err != nil {
+		return false, fmt.Errorf("%s vault isValidRoot: %w", vaultName, err)
+	}
+	if len(out) != 1 {
+		return false, fmt.Errorf("%s vault isValidRoot returned %d values, want 1", vaultName, len(out))
+	}
+	known, _ := out[0].(bool)
+	return known, nil
 }
 
 // noteEvents returns every encrypted note published for one vault:
