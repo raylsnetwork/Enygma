@@ -164,7 +164,8 @@ retail-test: ## Retail integration tests (needs chain, setup and gnark server)
 # The full shield demo scenario test plays three runs (~11 min); this plays only
 # the default-mode run (~4 min) and the subtests matching T, e.g. T=leavesIn.
 shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
-	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/$(T)' -v -timeout 1800s
+	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
+	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
 
 auctions-keygen: ## Generate auction proving/verifying keys
 	cd enygma_dvp_auctions/gnark_circuits && go run ./cmd/keygen
