@@ -50,12 +50,18 @@
 
 **Hop detail**: what a hop does to the protocol state (leaves added to a Merkle tree, a nullifier published, a proof's public inputs), shown on the retail shield demo's diagram as the hop plays. _Avoid_: component.
 
+**Step narration**: the retail shield demo's plain-language explanation of a step, for an audience that is not reading the hop details: what happens and why, and what the public chain sees against what stays private. It shows as the step's hops play. _Avoid_: caption, tooltip, description.
+
 **Privacy line**: the boundary on the retail shield demo's diagram between the wallets, whose contents are private, and the network and chain, which see only what crosses it. _Avoid_: trust boundary, divider.
 
 **Data chip**: the label a hop carries on the retail shield demo's diagram, naming what it moves (a key, gas, a proof, a commitment, a ciphertext, a nullifier, a private note); a chip that stays inside a wallet is marked private. _Avoid_: badge, tag (a tag is a protocol object).
 
 **Concept moment**: a short illustration of one privacy idea (hidden on chain, proof, relayer, finding your notes, auditor) that the retail shield demo plays once, before the step where the idea first happens, and holds until the presenter moves on. _Avoid_: explainer, intro, tutorial.
 
+**Prover card**: what the gnark server does on a proof hop of the retail shield demo: the circuit, its constraint count, the witness it receives, the proof and public signals it returns, how long compiling, proving and verifying took, and that whoever proves sees the whole witness. _Avoid_: gnark card, proof panel.
+
+**Formula card**: one equation of the protocol (a note commitment, a Merkle path, a nullifier, value conservation, the Groth16 check) shown on the retail shield demo with a walkthrough's real values plugged in, and a check of the result against the chain. _Avoid_: math card, crypto panel.
+
 **Fan-out**: the retail shield demo's K payments from the Sender's one shielded note to the K participants, made one after another: each spends the change note of the payment before it, because the deployed Payment circuit has one input note and two output notes. _Avoid_: batch payment, split, airdrop.
 
-**Walkthrough**: a presenter-paced way to play the retail shield demo, before the full run: the Sender's path (keygen, register, auditor keys, shield, the fan-out, discover, audit) with no USDr fee and no tags. The engine waits before each **action** (one real call: a key generation, a transaction such as a registration or the shield, a proof request, a relay, a scan, one of the auditor's decryptions) until the presenter presses Next. It is a run option of the same page, not a second layout. _Avoid_: tutorial, replay, demo mode, step-through.
+**Walkthrough**: a presenter-paced way to play the retail shield demo, before the full run: the Sender's path (keygen, register, auditor keys, shield, the fan-out, discover, audit), with the USDr fee and tags as the run's options set them. The engine waits before each **action** (one real call: a key generation, a transaction such as a registration or the shield, a proof request, a relay, a scan, one of the auditor's decryptions) until the presenter presses Next. It is a run option of the same page, not a second layout. _Avoid_: tutorial, replay, demo mode, step-through.
