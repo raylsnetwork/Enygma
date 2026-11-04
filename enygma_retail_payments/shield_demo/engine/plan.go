@@ -9,13 +9,15 @@ import (
 
 // stepDef is one step a run plays: its id and label, the message it starts
 // with, and what it does. In a walkthrough, pre is the action the whole step
-// is released as, and actions are the actions inside it, each released on
-// its own (see Gate).
+// is released as, actions are the actions inside it, each released on its
+// own (see Gate), and then are the actions released once the step's own
+// work is done, before it finishes.
 type stepDef struct {
 	id, label, msg string
 	run            func(*Engine, context.Context, *step) error
 	pre            string
 	actions        []string
+	then           []string
 }
 
 // StepIDs are the ids of the steps a run with opts announces, in order.
@@ -37,7 +39,7 @@ func StepActions(opts Options) map[string][]string {
 		if s.pre != "" {
 			as = append(as, s.pre)
 		}
-		if as = append(as, s.actions...); len(as) > 0 {
+		if as = append(append(as, s.actions...), s.then...); len(as) > 0 {
 			out[s.id] = as
 		}
 	}
@@ -62,23 +64,26 @@ func (o Options) effective() Options {
 }
 
 // gating is how a walkthrough step's gate releases it: as a whole (pre),
-// or each of its actions on its own.
+// or each of its actions on its own; then, the actions after it.
 type gating struct {
 	pre     string
 	actions []string
+	then    []string
 }
 
 // walkGates are the actions of each walkthrough step, by step id, or by
 // step kind for the fan-out's later payments: keygen, register, the first
 // payment (one hop per click: proof request, proof back, relay, settle) and
 // discover release each action inside them on its own; the
-// other steps release once, as a whole. A step with none is not walked.
+// other steps release once, as a whole. Payment 2 then replays payment 1,
+// once it has settled. A step with none is not walked.
 var walkGates = map[string]gating{
 	"keygen":     {actions: []string{"auditor", "keys"}},
 	"register":   {actions: []string{"register"}},
 	"audit_keys": {pre: "recover"},
 	"shield":     {pre: "shield"},
 	"fanout_1":   {actions: []string{"prove", "proof", "relay", "settle"}},
+	"fanout_2":   {pre: "payment", then: []string{"replay"}},
 	"fanout":     {pre: "payment"},
 	"discover":   {actions: []string{"scan"}},
 	"audit":      {pre: "audit"},
@@ -101,7 +106,7 @@ func walkthroughPlan(opts Options) []stepDef {
 		if !ok {
 			continue
 		}
-		s.pre, s.actions = g.pre, g.actions
+		s.pre, s.actions, s.then = g.pre, g.actions, g.then
 		if s.id == "keygen" {
 			s.msg = "The auditor, the issuer, the sender and the participants make their keys, one per click…"
 			s.run = func(e *Engine, ctx context.Context, st *step) error {

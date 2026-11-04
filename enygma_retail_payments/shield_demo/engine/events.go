@@ -55,10 +55,12 @@ type Event struct {
 // A new kind is also handled where nothing will make the compiler point:
 //   - test/13_shield_demo_scenario_test.go: checkProofDetails and
 //     checkSettleChecks fail on a kind they don't list;
+//   - test/14_shield_demo_walkthrough_test.go, for a walkthrough-only kind;
 //   - index.html: SENTENCE (keyed by a hop's first detail), WIRE_KINDS
 //     (kinds that don't lengthen a hop's hold), and rowsOf or WIRE (how the
-//     hop detail panel draws it), and columns if it belongs beside
-//     payment 1's public inputs (the witness);
+//     hop detail panel draws it), columns if it belongs beside payment 1's
+//     public inputs (the witness), and refusal if a card shows it (the
+//     replay's refusal);
 //   - HAND_CHECK.md: the pace probe's hasDetail, which mirrors WIRE_KINDS.
 type HopDetailKind string
 
@@ -91,6 +93,10 @@ const (
 	// DetailReceipt is the receipt of the transaction a hop mined: its hash,
 	// block, gas and the events it logged.
 	DetailReceipt HopDetailKind = "receipt"
+	// DetailRefusal is a walkthrough's replay of payment 1 refused: who
+	// refused it (the relayer or the vault) and why, the spent nullifier it
+	// reused, and the chain state before and after it, unchanged.
+	DetailRefusal HopDetailKind = "refusal"
 )
 
 // noteOpening names the parts of a note's opening, in the order the
@@ -158,6 +164,16 @@ type HopDetail struct {
 	Block   uint64        `json:"block,omitempty"`
 	GasUsed uint64        `json:"gas,omitempty"`
 	Events  []LoggedEvent `json:"events,omitempty"`
+
+	// refusal: who refused the replay (NodeRelayer or NodeVault) and the
+	// reason they gave, the nullifier it reused, payment 1's transaction
+	// (TxHash), which spent it, and the chain state before and after the
+	// replay. Vault and Tree are the vault and tree of the spent note.
+	RefusedBy string      `json:"refusedBy,omitempty"`
+	Reason    string      `json:"reason,omitempty"`
+	Nullifier string      `json:"nullifier,omitempty"`
+	Before    *ChainState `json:"before,omitempty"`
+	After     *ChainState `json:"after,omitempty"`
 }
 
 // Witness is a payment proof's private inputs as the payer's wallet sent
@@ -312,6 +328,8 @@ type step struct {
 	id, label string
 	// gated releases each action inside the step on its own (see await).
 	gated bool
+	// then are the actions released once the step's own work is done.
+	then []string
 }
 
 func (s *step) start(msg string) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"slices"
 
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
@@ -121,6 +122,7 @@ func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount
 	}
 	e.fanOut = append(e.fanOut, t.Settlement)
 	if e.opts.Walkthrough && n == 1 {
+		e.payment1 = t
 		if err := e.sendVerifyCall(s, t); err != nil {
 			return err
 		}
@@ -129,6 +131,11 @@ func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount
 	s.proto("fanout", t.row(n, e.usdrFixedFee, ""))
 	s.actor(sender, "note", "0x"+sender.notes[len(sender.notes)-1].commitment.Text(16))
 	s.actor(sender, "balance", sender.notes.balance().String()+" RaylsERC20")
+	if slices.Contains(s.then, "replay") {
+		if err := e.replayPayment1(ctx, s); err != nil {
+			return err
+		}
+	}
 	if t.UsdrFeeNote != nil {
 		s.actor(sender, "usdr", sender.usdr.balance().String()+" USDr")
 		s.proto("relayerUsdrIncome", e.relayerIncome().String()+" USDr")
