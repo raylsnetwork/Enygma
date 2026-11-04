@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math/big"
 )
@@ -97,6 +98,23 @@ const (
 	// refused it (the relayer or the vault) and why, the spent nullifier it
 	// reused, and the chain state before and after it, unchanged.
 	DetailRefusal HopDetailKind = "refusal"
+	// DetailKey is a key pair an actor or the auditor made: its scheme, its
+	// public half in full and its private half shortened. Every key the demo
+	// makes is a throwaway demo key.
+	DetailKey HopDetailKind = "key"
+	// DetailRegistration is what a user's registration sent the
+	// UserRegistry: their spend and view public keys and the audit
+	// ciphertexts that carry their view key to the auditor.
+	DetailRegistration HopDetailKind = "registration"
+	// DetailViewKeyRecovery is the auditor opening a user's audit
+	// ciphertexts: the ciphertexts, as the UserRegistry holds them, and the
+	// view key they open to, the one the user registered.
+	DetailViewKeyRecovery HopDetailKind = "viewKeyRecovery"
+	// DetailDecryption is notes a view key opened: each note's ciphertext as
+	// the chain holds it and the opening (amount, salt, token) it decrypts
+	// to. A participant's discovery opens their payment; the audit opens
+	// every note it can.
+	DetailDecryption HopDetailKind = "decryption"
 )
 
 // noteOpening names the parts of a note's opening, in the order the
@@ -174,6 +192,94 @@ type HopDetail struct {
 	Nullifier string      `json:"nullifier,omitempty"`
 	Before    *ChainState `json:"before,omitempty"`
 	After     *ChainState `json:"after,omitempty"`
+
+	// key, registration, viewKeyRecovery: the key pair, the registration
+	// and the recovery.
+	Key          *KeyPair         `json:"key,omitempty"`
+	Registration *Registration    `json:"registration,omitempty"`
+	Recovery     *ViewKeyRecovery `json:"recovery,omitempty"`
+
+	// decryption: the notes opened. Vault is the RaylsERC20 vault, even for
+	// an audit's, which opens USDr notes too: each note names its asset.
+	Notes []DecryptedNote `json:"notes,omitempty"`
+}
+
+// KeyPair is one key pair as a key hop shows it: whose it is, what it is
+// for, its scheme, its public half in 0x-hex in full and its private half
+// shortened (see shortSecret), never sent in full.
+type KeyPair struct {
+	Owner   string `json:"owner"`
+	Name    string `json:"name"`
+	Scheme  string `json:"scheme"`
+	Public  string `json:"public"`
+	Private string `json:"private"`
+}
+
+// Registration is what UserRegistry.register received from one user, all
+// 0x-hex: the spend public key, the view public key (ML-KEM-768
+// encapsulation key) and the audit ciphertexts (see AuditCiphertexts).
+type Registration struct {
+	Owner   string           `json:"owner"`
+	SpendPk string           `json:"spendPk"`
+	ViewPk  string           `json:"viewPk"`
+	Audit   AuditCiphertexts `json:"audit"`
+}
+
+// AuditCiphertexts carry a user's view key to the auditor: an ML-KEM-768
+// capsule to the auditor's key and the AES-256-GCM encryption, under the
+// key it encapsulates, of the view key's 64-byte seed. Both 0x-hex.
+type AuditCiphertexts struct {
+	Capsule string `json:"capsule"`
+	Sealed  string `json:"sealed"`
+}
+
+// ViewKeyRecovery is the auditor opening one user's audit ciphertexts, as
+// the UserRegistry holds them, to the user's view key: its public half in
+// full, matching the one the user registered, and its private half
+// shortened.
+type ViewKeyRecovery struct {
+	Owner   string           `json:"owner"`
+	Audit   AuditCiphertexts `json:"audit"`
+	ViewPk  string           `json:"viewPk"`
+	ViewKey string           `json:"viewKey"`
+}
+
+// DecryptedNote is one note a view key opened: its owner, its asset, the
+// transaction that published it and its commitment; the ciphertext opened,
+// either a Payment or EncryptedNote event's capsule and sealed amount (Via
+// "view key") or, with tags, a TagPublished event's payload, in Sealed (Via
+// "tag"); and its opening. Byte strings and field elements are 0x-hex, the
+// amount decimal.
+type DecryptedNote struct {
+	Owner      string `json:"owner"`
+	Asset      string `json:"asset"`
+	Kind       string `json:"kind,omitempty"`
+	Tx         string `json:"tx,omitempty"`
+	Commitment string `json:"commitment"`
+	Via        string `json:"via"`
+	Capsule    string `json:"capsule,omitempty"`
+	Sealed     string `json:"sealed"`
+	Amount     string `json:"amount"`
+	Salt       string `json:"salt"`
+	Token      string `json:"token"`
+}
+
+// The ways a DecryptedNote's ciphertext reached its owner.
+const (
+	viaViewKey = "view key"
+	viaTag     = "tag"
+)
+
+// bytesHex is a byte string as the hop details show it.
+func bytesHex(b []byte) string { return "0x" + hex.EncodeToString(b) }
+
+// shortSecret is a private key's 0x-hex shortened to its first 6 and last 4
+// hex digits, all a key hop sends of it.
+func shortSecret(h string) string {
+	if len(h) <= 2+6+4 {
+		return h
+	}
+	return h[:2+6] + "…" + h[len(h)-4:]
 }
 
 // Witness is a payment proof's private inputs as the payer's wallet sent

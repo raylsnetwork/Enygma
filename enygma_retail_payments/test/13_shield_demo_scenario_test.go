@@ -432,6 +432,19 @@ func TestShieldDemoScenario(t *testing.T) {
 		checkGrantShieldScanHops(t, e, sink.hops())
 	})
 
+	t.Run("keygen shows every actor's key pairs, registration what the UserRegistry got, and each recovery the view key the auditor opened", func(t *testing.T) {
+		checkKeyDetails(t, e, sink.hops(), false)
+		checkRegistryDetails(t, client, e, sink.hops())
+	})
+
+	t.Run("each participant's discovery shows the note their key opened: their payout, hashing to their payment's commitment", func(t *testing.T) {
+		checkDiscoverDetails(t, client, e, sink.hops(), true)
+	})
+
+	t.Run("the audit hop shows every note the auditor decrypted, each the ciphertext on chain and its owner's opening", func(t *testing.T) {
+		checkAuditDetails(t, client, e, sink.hops())
+	})
+
 	grant := big.NewInt(engine.UsdrGrant) // 20 USDr
 	t.Run("sender and every participant scan a USDr grant note from the issuer", func(t *testing.T) {
 		events := usdrVaultNoteEvents(t, client, usdrVaultAddr)

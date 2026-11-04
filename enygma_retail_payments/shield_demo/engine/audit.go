@@ -71,6 +71,10 @@ type Audit struct {
 	// Inferred says the auditor could not name the payers and inferred the
 	// balances by conservation instead (a walkthrough, see conserve).
 	Inferred bool `json:"inferred,omitempty"`
+
+	// opened are the notes the auditor decrypted, one per entry but the fee
+	// legs, which carry no ciphertext; the audit hop shows them.
+	opened []DecryptedNote
 }
 
 // auditUser is a registered user as the auditor knows them: their public
@@ -79,6 +83,8 @@ type auditUser struct {
 	name    string
 	spendPk *big.Int
 	view    *mlkem.DecapsulationKey768
+	// audit are the audit ciphertexts it opened the view key from.
+	audit AuditCiphertexts
 }
 
 // recoverViewKeys has the auditor open the audit ciphertexts of every user
@@ -113,7 +119,7 @@ func (e *Engine) recoverViewKeys() (users []auditUser, others int, err error) {
 		if !bytes.Equal(view.EncapsulationKey().Bytes(), keys.ViewKey) {
 			return nil, 0, fmt.Errorf("%s registered a view key other than the one encrypted to the auditor", e.nameOf(addr))
 		}
-		users = append(users, auditUser{name: e.nameOf(addr), spendPk: keys.SpendKey, view: view})
+		users = append(users, auditUser{name: e.nameOf(addr), spendPk: keys.SpendKey, view: view, audit: auditCiphertexts(mlKemCt, aesCt)})
 	}
 	return users, others, nil
 }
@@ -140,7 +146,9 @@ func (e *Engine) auditorKeysStep(ctx context.Context, s *step) error {
 	}
 	e.auditUsers = users
 	for _, u := range users {
-		s.hop(NodeUserRegistry, NodeAuditor, "recover view key", "opens "+u.name+"'s audit ciphertexts")
+		s.hop(NodeUserRegistry, NodeAuditor, "recover view key", "opens "+u.name+"'s audit ciphertexts",
+			HopDetail{Kind: DetailViewKeyRecovery, Recovery: &ViewKeyRecovery{Owner: u.name, Audit: u.audit,
+				ViewPk: bytesHex(u.view.EncapsulationKey().Bytes()), ViewKey: shortSecret(bytesHex(u.view.Bytes()))}})
 		s.log("key", "auditor opened %s's audit ciphertexts → ML-KEM view key, matches the registered one", u.name)
 	}
 	if others > 0 {
@@ -198,7 +206,11 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 			asset = assetUsdr
 		}
 		en := AuditEntry{Asset: asset, TxHash: l.TxHash, Block: l.BlockNumber}
-		owner, amount := e.auditOpen(ev)
+		owner, owned := e.auditOpen(ev)
+		var amount *big.Int
+		if owner != "" {
+			amount = owned.Amount
+		}
 
 		switch {
 		case l.Topics[0] == encryptedNoteTopic && owner != "":
@@ -222,6 +234,9 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 			continue // a note of an earlier run's users
 		}
 		a.Entries = append(a.Entries, en)
+		n := decrypted(owner, asset, ev, owned)
+		n.Kind, n.Tx = string(en.Kind), l.TxHash.Hex()
+		a.opened = append(a.opened, n)
 		if en.Kind == AuditTransfer {
 			payerIn[l.TxHash] = en.From
 		}
@@ -304,15 +319,15 @@ func (a *Audit) reconstructBalances() {
 }
 
 // auditOpen tries every recovered view key on ev and returns the user it
-// opens for and the amount, or "" if it opens for none.
-func (e *Engine) auditOpen(ev dvpcore.OnChainErc20Event) (string, *big.Int) {
+// opens for and the note it opens to, or "" if it opens for none.
+func (e *Engine) auditOpen(ev dvpcore.OnChainErc20Event) (string, dvpcore.OwnedErc20Note) {
 	for _, u := range e.auditUsers {
 		owned, err := dvpcore.ScanForErc20Notes(u.view, u.spendPk, []dvpcore.OnChainErc20Event{ev})
 		if err == nil && len(owned) == 1 {
-			return u.name, owned[0].Amount
+			return u.name, owned[0]
 		}
 	}
-	return "", nil
+	return "", dvpcore.OwnedErc20Note{}
 }
 
 // txSender names the account that signed tx: a deposit is public.
@@ -372,7 +387,7 @@ func (e *Engine) auditPayers(ctx context.Context) (map[string]string, error) {
 	}
 	for _, l := range logs {
 		for _, ch := range channels {
-			pn, err := openTag(l, ch.Channel)
+			pn, _, err := openTag(l, ch.Channel)
 			if err != nil {
 				return nil, fmt.Errorf("auditor: %w", err)
 			}
@@ -424,9 +439,7 @@ func (e *Engine) reconcile(ctx context.Context, s *step) error {
 		return err
 	}
 	s.log("key", "auditor decrypted %d transactions across both vaults with the recovered view keys", len(a.Entries))
-	if e.opts.Walkthrough {
-		s.hop(NodeVault, NodeAuditor, "audit", fmt.Sprintf("opens %d notes with the %d view keys it recovered", len(a.Entries), len(a.Users)))
-	}
+	s.hop(NodeVault, NodeAuditor, "audit", fmt.Sprintf("opens %d notes with the %d view keys it recovered", len(a.opened), len(a.Users)), decryption(a.opened))
 	if a.Balances == nil {
 		s.done("Auditor sees all %d transactions and what each user received; without tags the payers stay hidden, so it cannot reconstruct balances", len(a.Entries))
 		return nil

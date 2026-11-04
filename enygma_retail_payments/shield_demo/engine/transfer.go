@@ -452,11 +452,12 @@ func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amou
 		if err != nil {
 			return err
 		}
-		if found := to.scan(events, &to.notes); found != 1 {
-			return fmt.Errorf("%s found %d new notes by scanning, want the payment", to.Name, found)
+		found := to.scan(events, &to.notes, assetErc20)
+		if len(found) != 1 {
+			return fmt.Errorf("%s found %d new notes by scanning, want the payment", to.Name, len(found))
 		}
 		scan = trialScan(len(events))
-		s.hop(NodeVault, ActorNode(to.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened the payment", to.Name, len(events)))
+		s.hop(NodeVault, ActorNode(to.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened the payment", to.Name, len(events)), decryption(found))
 		s.log("key", "%s scanned %d encrypted notes and decrypted the payment with their ML-KEM view key", to.Name, len(events))
 		s.actor(to, "scan", scan)
 	}

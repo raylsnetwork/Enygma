@@ -113,7 +113,8 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 	s.log("key", "auditor ML-KEM-768 ek: 0x%s…", hex.EncodeToString(auditor.EncapsKey)[:16])
 	if s.gated {
 		// A walkthrough's click shows the key it made.
-		s.hop(NodeAuditor, NodeAuditor, "auditor key", fmt.Sprintf("ML-KEM-768 key pair; users seal their view keys to its %d-byte public key", len(auditor.EncapsKey)))
+		s.hop(NodeAuditor, NodeAuditor, "auditor key", fmt.Sprintf("ML-KEM-768 key pair; users seal their view keys to its %d-byte public key", len(auditor.EncapsKey)),
+			mlKemKeyDetail("Auditor", "auditor key", auditor.EncapsKey, auditor.DecapsKey.Bytes()))
 	}
 
 	funder, err := crypto.HexToECDSA(e.cfg.FunderKeyHex)
@@ -144,8 +145,11 @@ func (e *Engine) generateKeys(ctx context.Context, s *step) error {
 		a := &Actor{ID: len(e.actors), Name: name, Role: role, Address: addr, Spend: spend, View: view, keyHex: keyHex}
 		e.actors = append(e.actors, a)
 		node := ActorNode(a.ID)
-		s.hop(node, node, "spend key", "Poseidon key pair; pk_spend goes into every note paid to "+name)
-		s.hop(node, node, "view key", fmt.Sprintf("ML-KEM-768 key pair; %d-byte pk_view, senders encrypt notes to it", len(view.EncapsKey)))
+		s.hop(node, node, "spend key", "Poseidon key pair; pk_spend goes into every note paid to "+name,
+			HopDetail{Kind: DetailKey, Key: &KeyPair{Owner: name, Name: "spend key", Scheme: "Poseidon",
+				Public: fieldHex(spend.PublicKey), Private: shortSecret(fieldHex(spend.PrivateKey))}})
+		s.hop(node, node, "view key", fmt.Sprintf("ML-KEM-768 key pair; %d-byte pk_view, senders encrypt notes to it", len(view.EncapsKey)),
+			mlKemKeyDetail(name, "view key", view.EncapsKey, view.DecapsKey.Bytes()))
 		s.actor(a, "name", name)
 		s.actor(a, "role", string(role))
 		s.actor(a, "ethAddr", addr.Hex())
@@ -219,10 +223,24 @@ func (e *Engine) register(ctx context.Context, s *step) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", a.Name, err)
 		}
-		s.hop(node, NodeUserRegistry, "register", fmt.Sprintf("mined, %d gas: most of it stores the %d-byte view key on chain", receipt.GasUsed, len(a.View.EncapsKey)), e.chain.receipt(receipt))
+		s.hop(node, NodeUserRegistry, "register", fmt.Sprintf("mined, %d gas: most of it stores the %d-byte view key on chain", receipt.GasUsed, len(a.View.EncapsKey)),
+			HopDetail{Kind: DetailRegistration, Registration: &Registration{Owner: a.Name, SpendPk: fieldHex(a.Spend.PublicKey),
+				ViewPk: bytesHex(a.View.EncapsKey), Audit: auditCiphertexts(mlKemCt, aesCt)}},
+			e.chain.receipt(receipt))
 		s.actor(a, "status", "Registered")
 		s.log("chain", "UserRegistry.register(%s) — view key encrypted to the auditor (%d + %d bytes)", a.Name, len(mlKemCt), len(aesCt))
 	}
 	s.done("Sender and %d participants registered, view keys encrypted to the auditor", K)
 	return nil
+}
+
+// mlKemKeyDetail is a key hop detail for an ML-KEM-768 key pair: its
+// encapsulation key in full and its decapsulation key's seed shortened.
+func mlKemKeyDetail(owner, name string, public, private []byte) HopDetail {
+	return HopDetail{Kind: DetailKey, Key: &KeyPair{Owner: owner, Name: name, Scheme: "ML-KEM-768", Public: bytesHex(public), Private: shortSecret(bytesHex(private))}}
+}
+
+// auditCiphertexts are a registration's audit ciphertexts as hop details show them.
+func auditCiphertexts(mlKemCt, aesCt []byte) AuditCiphertexts {
+	return AuditCiphertexts{Capsule: bytesHex(mlKemCt), Sealed: bytesHex(aesCt)}
 }

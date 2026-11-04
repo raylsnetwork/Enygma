@@ -47,8 +47,8 @@ func (e *Engine) grantUsdr(ctx context.Context, s *step) error {
 		return err
 	}
 	for _, a := range recipients {
-		if found := a.scan(events, &a.usdr); found != 1 {
-			return fmt.Errorf("%s found %d USDr notes by scanning, want 1", a.Name, found)
+		if found := a.scan(events, &a.usdr, assetUsdr); len(found) != 1 {
+			return fmt.Errorf("%s found %d USDr notes by scanning, want 1", a.Name, len(found))
 		}
 		s.hop(NodeUsdrVault, ActorNode(a.ID), "scan", fmt.Sprintf("%s tried %d notes with their view key and opened their grant", a.Name, len(events)))
 		s.actor(a, "usdr", a.usdr.balance().String()+" USDr")
