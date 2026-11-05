@@ -91,8 +91,8 @@ type Options struct {
 	Tags bool `json:"tags"`
 	// Script is the transfers between participants played after the fan-out.
 	Script []Transfer `json:"script"`
-	// Walkthrough plays the Sender's path, with no USDr fee, no tags and no
-	// script, and holds before each action until the Gate releases it.
+	// Walkthrough plays the Sender's path, with the USDr fee and tags as set
+	// but no script, and holds before each action until the Gate releases it.
 	Walkthrough bool `json:"walkthrough"`
 }
 

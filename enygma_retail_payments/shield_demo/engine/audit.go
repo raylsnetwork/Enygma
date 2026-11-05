@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/mlkem"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
+
+	"enygma_retail_payments/layout"
 
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
@@ -442,10 +445,21 @@ func (e *Engine) reconcile(ctx context.Context, s *step) error {
 	details := []HopDetail{decryption(a.opened)}
 	// With tags, each participant opens their note with the tag channel's
 	// key, so the audit is the run's first hop a view key opens a note's
-	// ciphertext by: it carries the note encryption card, by name only (a
-	// walkthrough has no tags).
+	// ciphertext by: it carries the note encryption card, a walkthrough's
+	// opening payment 1's note with its payee's view key, which the auditor
+	// recovered, a full run's by name only.
 	if e.opts.Tags {
-		details = append(details, formulaNamed(FormulaNoteEncryption, NodeVault, 0))
+		d := formulaNamed(FormulaNoteEncryption, NodeVault, 0)
+		if e.opts.Walkthrough {
+			if e.payment1 == nil {
+				return errors.New("note encryption card: payment 1 has not settled")
+			}
+			cm := e.payment1.stmt[layout.PaymentCommitmentsOutOffset]
+			if d, err = e.chain.noteEncryptionFormula(ctx, e.participants()[0], cm); err != nil {
+				return err
+			}
+		}
+		details = append(details, d)
 	}
 	s.hop(NodeVault, NodeAuditor, "audit", fmt.Sprintf("opens %d notes with the %d view keys it recovered", len(a.opened), len(a.Users)), details...)
 	if a.Balances == nil {

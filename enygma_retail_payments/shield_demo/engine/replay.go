@@ -134,16 +134,12 @@ func (e *Engine) replayPayment1(ctx context.Context, s *step) error {
 		return err
 	}
 	sender := ActorNode(e.sender().ID)
-	req, err := paymentRequest(p1.res)
-	if err != nil {
-		return err
-	}
 	before, err := e.chainState(ctx)
 	if err != nil {
 		return err
 	}
 	var out relayTxResponse
-	exchange, posted := e.relayer.post(ctx, "/relay/payment", req, &out)
+	exchange, posted := e.relayer.post(ctx, p1.relayReq.path, p1.relayReq.body, &out)
 	by, reason, err := refusalOf(posted)
 	if err != nil {
 		if posted == nil {

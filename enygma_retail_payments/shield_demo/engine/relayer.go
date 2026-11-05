@@ -98,32 +98,27 @@ func (r *relayer) info(ctx context.Context) (*relayInfo, error) {
 	return &info, nil
 }
 
-// payment submits a Payment or Payment2in proof to POST /relay/payment and
-// returns once the relayer reports the transaction mined.
-func (r *relayer) payment(ctx context.Context, res *rpcore.PaymentResult) (*relayTxResponse, HopDetail, error) {
-	req, err := paymentRequest(res)
-	if err != nil {
-		return nil, HopDetail{}, err
-	}
-	var out relayTxResponse
-	ex, err := r.post(ctx, "/relay/payment", req, &out)
-	if err != nil {
-		return nil, HopDetail{}, err
-	}
-	return &out, ex, nil
+// relayRequest is a transfer's relay request: its path and body. A Payment
+// or Payment2in proof alone goes to POST /relay/payment; with the UsdrFee
+// proof paying for it (fee not nil), both go to POST
+// /relay/payment_usdr_fee, which settles them in one transaction. The USDr
+// leg publishes no ciphertext: its output 0 is the relayer's own note,
+// opened by the salt.
+type relayRequest struct {
+	path string
+	body any
 }
 
-// paymentUsdrFee submits a Payment or Payment2in proof and the UsdrFee proof
-// paying for it
-// to POST /relay/payment_usdr_fee, which settles both in one transaction,
-// and returns once the relayer reports it mined. The USDr leg publishes no
-// ciphertext: its output 0 is the relayer's own note, opened by the salt.
-func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult, fee *usdrFeeLeg) (*relayTxResponse, HopDetail, error) {
+// newRelayRequest is the relay request of the proof in res, with fee's.
+func newRelayRequest(res *rpcore.PaymentResult, fee *usdrFeeLeg) (relayRequest, error) {
 	main, err := paymentRequest(res)
 	if err != nil {
-		return nil, HopDetail{}, err
+		return relayRequest{}, err
 	}
-	req := relayUsdrFeeRequest{
+	if fee == nil {
+		return relayRequest{"/relay/payment", main}, nil
+	}
+	return relayRequest{"/relay/payment_usdr_fee", relayUsdrFeeRequest{
 		relayPaymentRequest: main,
 		UsdrVaultId:         usdrVaultId.String(),
 		UsdrProof:           fee.proof,
@@ -131,9 +126,14 @@ func (r *relayer) paymentUsdrFee(ctx context.Context, res *rpcore.PaymentResult,
 		UsdrCipherText:      "0x",
 		UsdrEncTxData:       "0x",
 		UsdrFeeSalt:         fee.feeSalt.String(),
-	}
+	}}, nil
+}
+
+// relay submits req and returns once the relayer reports its transaction
+// mined.
+func (r *relayer) relay(ctx context.Context, req relayRequest) (*relayTxResponse, HopDetail, error) {
 	var out relayTxResponse
-	ex, err := r.post(ctx, "/relay/payment_usdr_fee", req, &out)
+	ex, err := r.post(ctx, req.path, req.body, &out)
 	if err != nil {
 		return nil, HopDetail{}, err
 	}

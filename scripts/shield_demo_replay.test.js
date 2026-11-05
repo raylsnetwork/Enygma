@@ -411,9 +411,15 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   assert.strictEqual(groth16.length, 1, 'no Groth16 formula on payment 1’s settlement');
   assert.deepStrictEqual(groth16[0].formula.inputs.map(x => x.value), [...check.proof, ...check.inputs.map(x => x.value)],
     'the Groth16 card’s values: the proof and the public inputs the on-chain check sends');
-  // Tags off, the first participant's scan is the first hop a view key opens a note's ciphertext by.
-  assert.ok(WALKTHROUGH.events.some(e => e.step === 'discover' && e.label === 'scan' && e.from === 'Erc20CoinVault' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'noteEncryption' && d.formula.chain)),
-    'no note encryption formula, with its values, on the first participant’s scan');
+  // It pays the USDr fee and tags every payment, as the Walkthrough button sends the form's defaults.
+  assert.ok(WALKTHROUGH.run.usdrFee && WALKTHROUGH.run.tags, 'not a fee-paying, tagged walkthrough');
+  for (const action of ['credit', 'channel', 'fee', 'tag'])
+    assert.ok(WALKTHROUGH.events.some(e => e.kind === 'action' && e.action === action), `no ${action} gate`);
+  for (const label of ['prove UsdrFee', 'paymentWithUsdrFee', 'publishTag', 'scan tags'])
+    assert.ok(WALKTHROUGH.events.some(e => e.kind === 'hop' && e.label === label), `no ${label} hop`);
+  // Tags on, the participants open their notes by tag, so the audit is the first hop a view key opens a note's ciphertext by.
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'audit' && e.label === 'audit' && e.from === 'Erc20CoinVault' && e.to === 'auditor' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'noteEncryption' && d.formula.chain)),
+    'no note encryption formula, with its values, on the audit');
   for (const name of ['merklePath', 'nullifier'])
     assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
   // The Merkle path card names its crowd: at least the leaves up to the spent one.

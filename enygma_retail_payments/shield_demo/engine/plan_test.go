@@ -59,24 +59,53 @@ func TestStepIDsFollowTheScript(t *testing.T) {
 	}
 }
 
-// A walkthrough follows the Sender's path, with no USDr fee and no tags,
-// whatever the other options say: no prereqs, channels, usdr, transfers or
-// totals step.
-func TestAWalkthroughPlaysTheSendersPath(t *testing.T) {
-	want := []string{
-		"keygen", "register", "audit_keys", "shield",
-		"fanout_1", "fanout_2", "fanout_3", "fanout_4", "fanout_5", "fanout_6",
-		"discover", "audit",
-	}
+// A walkthrough follows the Sender's path, with the USDr fee and tags as
+// the options set them: no prereqs, channels, transfers or totals step, and
+// a usdr step only with the fee on. Payment 1 opens its tag channel, proves
+// its fee and publishes its tag as actions of their own; with both off, the
+// gates are the ones a walkthrough had before it followed them.
+func TestAWalkthroughFollowsTheFeeAndTagsOptions(t *testing.T) {
+	head := []string{"keygen", "register", "audit_keys"}
+	tail := []string{"fanout_1", "fanout_2", "fanout_3", "fanout_4", "fanout_5", "fanout_6", "discover", "audit"}
 	for _, tc := range []struct {
 		name          string
 		usdrFee, tags bool
-	}{{"fee and tags asked for", true, true}, {"neither asked for", false, false}} {
+		usdr          bool
+		payment1      []string
+	}{
+		{"fee and tags", true, true, true, []string{"channel", "prove", "proof", "fee", "relay", "settle", "tag"}},
+		{"fee, no tags", true, false, true, []string{"prove", "proof", "fee", "relay", "settle"}},
+		{"tags, no fee", false, true, false, []string{"channel", "prove", "proof", "relay", "settle", "tag"}},
+		{"neither", false, false, false, []string{"prove", "proof", "relay", "settle"}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := DefaultOptions()
 			opts.UsdrFee, opts.Tags, opts.Walkthrough = tc.usdrFee, tc.tags, true
+			want := slices.Clone(head)
+			if tc.usdr {
+				want = append(want, "usdr")
+			}
+			want = append(append(want, "shield"), tail...)
 			if got := StepIDs(opts); !slices.Equal(got, want) {
 				t.Errorf("StepIDs:\n got %v\nwant %v", got, want)
+			}
+			actions := StepActions(opts)
+			wantActions := map[string][]string{
+				"keygen": {"auditor", "keys"}, "register": {"register"}, "audit_keys": {"recover"}, "shield": {"shield"},
+				"fanout_1": tc.payment1, "fanout_2": {"payment", "replay"},
+				"fanout_3": {"payment"}, "fanout_4": {"payment"}, "fanout_5": {"payment"}, "fanout_6": {"payment"},
+				"discover": {"scan"}, "audit": {"audit"},
+			}
+			if tc.usdr {
+				wantActions["usdr"] = []string{"credit"}
+			}
+			if len(actions) != len(wantActions) {
+				t.Errorf("StepActions has %d steps %v, want %d", len(actions), actions, len(wantActions))
+			}
+			for id, as := range wantActions {
+				if !slices.Equal(actions[id], as) {
+					t.Errorf("%s's actions %v, want %v", id, actions[id], as)
+				}
 			}
 		})
 	}

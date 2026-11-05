@@ -54,11 +54,11 @@ func plan(opts Options) []stepDef {
 	return fullPlan(opts)
 }
 
-// effective is opts as a run plays them: a walkthrough has no USDr fee, no
-// tags and no scripted transfers.
+// effective is opts as a run plays them: a walkthrough has no scripted
+// transfers.
 func (o Options) effective() Options {
 	if o.Walkthrough {
-		o.UsdrFee, o.Tags, o.Script = false, false, nil
+		o.Script = nil
 	}
 	return o
 }
@@ -73,35 +73,62 @@ type gating struct {
 
 // walkGates are the actions of each walkthrough step, by step id, or by
 // step kind for the fan-out's later payments: keygen, register, the first
-// payment (one hop per click: proof request, proof back, relay, settle) and
-// discover release each action inside them on its own; the
-// other steps release once, as a whole. Payment 2 then replays payment 1,
-// once it has settled. A step with none is not walked.
+// payment (one hop per click, see payment1Gates) and discover release each
+// action inside them on its own; the other steps release once, as a whole.
+// Payment 2 then replays payment 1, once it has settled. A step with none
+// is not walked.
 var walkGates = map[string]gating{
 	"keygen":     {actions: []string{"auditor", "keys"}},
 	"register":   {actions: []string{"register"}},
 	"audit_keys": {pre: "recover"},
+	"usdr":       {pre: "credit"},
 	"shield":     {pre: "shield"},
-	"fanout_1":   {actions: []string{"prove", "proof", "relay", "settle"}},
 	"fanout_2":   {pre: "payment", then: []string{"replay"}},
 	"fanout":     {pre: "payment"},
 	"discover":   {actions: []string{"scan"}},
 	"audit":      {pre: "audit"},
 }
 
+// payment1Gates are the actions of a walkthrough's first payment with opts,
+// one hop per click: with tags, the channel to its payee; the proof request,
+// the proof back; with the USDr fee, the fee's own proof request; the
+// relay, the settlement; with tags, its tag.
+func payment1Gates(opts Options) gating {
+	var as []string
+	if opts.Tags {
+		as = append(as, "channel")
+	}
+	as = append(as, "prove", "proof")
+	if opts.UsdrFee {
+		as = append(as, "fee")
+	}
+	as = append(as, "relay", "settle")
+	if opts.Tags {
+		as = append(as, "tag")
+	}
+	return gating{actions: as}
+}
+
 // stepKind is a step id without its _N suffix.
 var stepKind = regexp.MustCompile(`_\d+$`)
 
 // walkthroughPlan is the Sender's path through the full plan of opts:
-// keygen, register, auditor keys, shield, the fan-out, discover and audit.
-// It drops prereqs, folding its connection to the services into keygen,
-// which reads but sends nothing.
+// keygen, register, auditor keys, with the USDr fee the issuer's credit,
+// shield, the fan-out, discover and audit. It drops prereqs, folding its
+// connection to the services into keygen, which reads but sends nothing,
+// and the tag channels, which each payment opens itself.
 func walkthroughPlan(opts Options) []stepDef {
 	var steps []stepDef
 	for _, s := range fullPlan(opts) {
 		g, ok := walkGates[s.id]
 		if !ok {
 			g, ok = walkGates[stepKind.ReplaceAllString(s.id, "")]
+		}
+		switch {
+		case s.id == "fanout_1":
+			g = payment1Gates(opts)
+		case s.id == "usdr" && !opts.UsdrFee:
+			ok = false
 		}
 		if !ok {
 			continue
