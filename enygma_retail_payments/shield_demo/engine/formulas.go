@@ -43,9 +43,10 @@ func commitmentFormula(cd HopDetail, owner *Actor, n *note) HopDetail {
 }
 
 // merklePathFormula is the Merkle path formula of p, owner's note in the
-// vault with node ID vaultNode, bound as vault: the leaf hashed up with each
-// sibling, every level's node named, checked against vault's isValidRoot.
-func merklePathFormula(ctx context.Context, vault *bind.BoundContract, vaultNode, owner string, p *rpcore.MerkleProof) (HopDetail, error) {
+// vault with node ID vaultNode, bound as vault, whose tree held leaves
+// leaves when p's root was taken: the leaf hashed up with each sibling, every
+// level's node named, checked against vault's isValidRoot.
+func merklePathFormula(ctx context.Context, vault *bind.BoundContract, vaultNode, owner string, p *rpcore.MerkleProof, leaves int) (HopDetail, error) {
 	index := int(p.Indices.Int64())
 	node := p.Element
 	inputs := []FormulaValue{{Name: fmt.Sprintf("leaf #%d · node₀", index), Value: fieldHex(node)}}
@@ -77,7 +78,8 @@ func merklePathFormula(ctx context.Context, vault *bind.BoundContract, vaultNode
 		Result: result,
 		Chain: &FormulaValue{Name: fmt.Sprintf("the root %s's proof publishes, one the vault has had in tree %d (isValidRoot → %v)", owner, p.TreeNumber, known),
 			Value: fieldHex(p.Root)},
-		OK: known && result == fieldHex(p.Root),
+		OK:     known && result == fieldHex(p.Root),
+		Leaves: leaves,
 	}}, nil
 }
 

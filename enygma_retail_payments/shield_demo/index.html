@@ -1574,8 +1574,8 @@ const hasValues = f => !!f.chain;
 // privacy property it gives (property), its equation as the protocol
 // computes it, what the chain sees (sees), what stays private (hidden), why
 // the one does not reveal the other (why), the name of its result and a line
-// on what it shows. A card without a property is not yet laid out as a
-// privacy argument (#191): it shows its title, equation and line.
+// on what it shows (note). A text that depends on the detail is a function
+// of it.
 const FORMULA = {
   commitment: {
     title: 'The note commitment', property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)', result: 'commitment',
@@ -1585,12 +1585,20 @@ const FORMULA = {
     note: 'The shield is the one note whose opening is public on chain: the vault computes this commitment itself, from the deposit’s calldata. Privacy starts at the first spend.',
   },
   merklePath: {
-    title: 'The Merkle path', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈', result: 'root',
-    note: 'The circuit hashes these same levels, privately: the proof shows the note is a leaf under a root the vault has had, without saying which leaf.',
+    title: 'The Merkle path', property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈', result: 'root',
+    sees: d => `the root and the tree number, tree ${d.tree}`,
+    hidden: 'the leaf and its position: the leaf index, and the siblings along its path',
+    // A walkthrough's carries the crowd: how many leaves the note's tree held when its root was taken.
+    why: d => `The circuit hashes these levels privately, and only the root comes out: the proof shows the note is one of ${d.formula.leaves ? `the ${d.formula.leaves} leaves` : 'the leaves'} of tree ${d.tree}, not which. A deeper tree means a larger crowd to hide in: 8 levels give 2⁸ = 256 leaf slots.`,
   },
   nullifier: {
-    title: 'The nullifier', eq: 'nullifier = Poseidon(sk_spend, tree · 2⁸ + leaf index)', result: 'nullifier',
-    note: 'Its inputs are private, the spend key and the note’s position, so no one but the Sender can link this nullifier to the note it spends. Once published, the same note can never be spent again.',
+    title: 'The nullifier', property: 'Unlinkable, spend-once', eq: 'nullifier = Poseidon(sk_spend, tree · 2⁸ + leaf index)', result: 'nullifier',
+    sees: 'the nullifier, published at the settlement',
+    hidden: 'sk_spend and the leaf’s position, tree · 2⁸ + leaf index',
+    why: 'Linking a nullifier to its note needs sk_spend: without it, no one can hash a leaf’s position to its nullifier, so no one can tell which note was spent. Yet the same note always gives the same nullifier, so the vault refuses a second spend.',
+    note: d => hasValues(d.formula)
+      ? 'The replay shows that refusal: after payment 2, the walkthrough sends payment 1 again, and it is refused for this nullifier, already on chain.'
+      : 'A walkthrough’s replay shows that refusal: after payment 2, it sends payment 1 again, and it is refused for its nullifier, already on chain.',
   },
 };
 
@@ -1864,10 +1872,10 @@ const hopPanel = (() => {
   // the value the chain holds and a closed fold with every real input, the
   // result and that value.
   function formulaHtml(d) {
-    const f = d.formula, c = FORMULA[f.name] || { title: f.name, eq: '', result: 'result', note: '' };
-    const head = c.property
-      ? `<div><b class="fprop">${esc(c.property)}</b> <span class="hstep">· ${esc(c.title.replace(/^The /, 'the '))}</span></div>`
-      : `<div><b>${esc(c.title)}</b>${hasValues(f) ? ' <span class="hstep">· real values</span>' : ''}</div>`;
+    const f = d.formula, card = FORMULA[f.name] || { title: f.name, property: f.name, eq: '', result: 'result' };
+    // c is the card's texts for d: a text that depends on the detail is a function of it.
+    const c = Object.fromEntries(Object.entries(card).map(([k, v]) => [k, typeof v === 'function' ? v(d) : v]));
+    const head = `<div><b class="fprop">${esc(c.property)}</b> <span class="hstep">· ${esc(c.title.replace(/^The /, 'the '))}</span></div>`;
     const values = !hasValues(f) ? '' : `
       <div class="fchk">${f.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} checked against the chain with this run’s values: ${f.ok ? 'equals' : 'differs from'} ${esc(f.chain.name)}</div>
       <details class="fvals"><summary>this run’s values</summary>

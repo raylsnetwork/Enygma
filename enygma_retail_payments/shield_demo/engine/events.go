@@ -122,12 +122,15 @@ const (
 	// DetailFormula is one of the protocol's equations, which the page
 	// draws by its name as the privacy property it gives (see Formula). A
 	// full run's carries only the name, once per run on the formula's first
-	// hop: the commitment on the shield. A walkthrough's carries the run's
-	// real values too, checked against what the chain holds, on its shield's
-	// hop (the commitment: its values are the shield's opening, public in
-	// the deposit's calldata) and payment 1's (the Merkle path on the proof
-	// coming back, the nullifier on the settlement): values the page shows
-	// there anyway, in payment 1's witness.
+	// hop: the commitment on the shield, the Merkle path on payment 1's
+	// proof request (a full run has no hop of its own for the proof coming
+	// back), the nullifier on payment 1's settlement. A walkthrough's
+	// carries the run's real values too, checked against what the chain
+	// holds, on its shield's hop (the commitment: its values are the
+	// shield's opening, public in the deposit's calldata) and payment 1's
+	// (the Merkle path on the proof coming back, the nullifier on the
+	// settlement): values the page shows there anyway, in payment 1's
+	// witness.
 	DetailFormula HopDetailKind = "formula"
 )
 
@@ -158,6 +161,9 @@ type Formula struct {
 	Result string         `json:"result,omitempty"`
 	Chain  *FormulaValue  `json:"chain,omitempty"`
 	OK     bool           `json:"ok,omitempty"`
+	// Leaves, for a Merkle path, is how many leaves its tree held when its
+	// root was taken: the crowd the spent note hides in.
+	Leaves int `json:"leaves,omitempty"`
 }
 
 // FormulaValue is one named value of a formula: an input, or what the chain
