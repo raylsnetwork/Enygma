@@ -1603,6 +1603,14 @@ const FORMULA = {
       ? `the amounts sum, each is in range, and the chain answers ${d.formula.chain.value} to ${d.formula.chain.name}`
       : `not all hold of the amounts summing, each in range, and the chain answering true to ${d.formula.chain.name} (it answers ${d.formula.chain.value})`,
   },
+  noteEncryption: {
+    title: 'Note encryption', property: 'Only the recipient (and the auditor) can read it',
+    eq: '(capsule, ss) = ML-KEM-768.Encaps(view key) → salt, k = HKDF(ss) → sealed = AES-GCM_k(token, amount); the recipient: ss = Decaps(view key, capsule), the same salt and k, opens sealed, and Poseidon(pk_spend, salt, amount, token) = commitment',
+    result: 'commitment',
+    sees: 'the capsule and the sealed payload, beside the note’s commitment',
+    hidden: 'the shared secret ss, the salt, the amount, the token',
+    why: 'Only the view key’s holder can decapsulate the capsule to the shared secret, and ML-KEM-768 is post-quantum: even a quantum computer can’t recover it from the capsule. AES-GCM fails to open under any other key, so every other wallet’s trial decryption just fails. The auditor reads the note too: it recovers every user’s view key from the audit ciphertexts they registered.',
+  },
   merklePath: {
     title: 'The Merkle path', property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈', result: 'root',
     sees: d => `the root and the tree number, tree ${d.tree}`,

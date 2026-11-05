@@ -15,6 +15,10 @@ package tests
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/iden3/go-iden3-crypto/constants"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
@@ -853,6 +858,109 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
+	t.Run("the first participant's scan carries the note encryption formula: their view key decapsulates the capsule on chain, HKDF and AES-GCM open the payload, and the opening hashes to the commitment payment 1 logged", func(t *testing.T) {
+		payee := e.Participants()[0]
+		var scans []engine.Event
+		for _, h := range sink.hops() {
+			for _, d := range detailsOf(h, engine.DetailFormula) {
+				if d.Formula != nil && d.Formula.Name == engine.FormulaNoteEncryption {
+					scans = append(scans, h)
+				}
+			}
+		}
+		if len(scans) != 1 {
+			t.Fatalf("%d hops carry the note encryption formula, want one", len(scans))
+		}
+		if h := scans[0]; h.Step != "discover" || h.Label != "scan" || h.From != engine.NodeVault || h.To != engine.ActorNode(payee.ID) {
+			t.Fatalf("the note encryption formula is on %s's hop %q (%s → %s), want %s's scan, the first hop a view key opens a note's ciphertext by (tags off)", h.Step, h.Label, h.From, h.To, payee.Name)
+		}
+		fs := detailsOf(scans[0], engine.DetailFormula)
+		if len(fs) != 1 {
+			t.Fatalf("%s's scan carries %d formula details, want 1", payee.Name, len(fs))
+		}
+		f := fs[0].Formula
+		if f.Chain == nil {
+			t.Fatal("the note encryption formula carries no chain value: a full run's, by name only")
+		}
+		if fs[0].Vault != engine.NodeVault {
+			t.Errorf("the note encryption formula is in the %s, want the %s", fs[0].Vault, engine.NodeVault)
+		}
+		in := map[string]string{}
+		var names []string
+		for _, x := range f.Inputs {
+			names = append(names, x.Name)
+			in[x.Name] = x.Value
+		}
+		if want := []string{"capsule · ML-KEM-768", "sealed · AES-GCM", "amount · opened", "salt · opened", "token · opened"}; !slices.Equal(names, want) {
+			t.Fatalf("inputs %v, want %v", names, want)
+		}
+		capsule, sealed := hexBytes(t, in["capsule · ML-KEM-768"]), hexBytes(t, in["sealed · AES-GCM"])
+
+		// The ciphertext is the one payment 1's Payment event published, with
+		// the commitment payment 1 inserted for the payee.
+		pay := e.FanOut()[0]
+		logged := commitmentsIn(txLogs(t, client, pay.TxHash), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
+		if len(logged) != 2 {
+			t.Fatalf("payment 1 logged %d commitments, want 2", len(logged))
+		}
+		if !noteEventCarries(t, client, pay.TxHash, logged[0], capsule, sealed) {
+			t.Fatalf("the card's capsule and sealed payload are not what payment 1's Payment event published with %s's commitment 0x%x", payee.Name, logged[0])
+		}
+
+		// Open it independently, with the standard library: ML-KEM-768
+		// decapsulation with the payee's view key, HKDF-SHA256 to the salt
+		// and the AES key, AES-256-GCM (nonce || ciphertext) to token || amount.
+		ss, err := payee.View.DecapsKey.Decapsulate(capsule)
+		if err != nil {
+			t.Fatalf("decapsulate: %v", err)
+		}
+		saltB, err := hkdf.Key(sha256.New, ss, nil, "note salt", 32)
+		if err != nil {
+			t.Fatalf("HKDF salt: %v", err)
+		}
+		plain, err := openSealed(t, ss, sealed)
+		if err != nil || len(plain) != 64 {
+			t.Fatalf("AES-GCM open with %s's derived key: %d bytes (%v), want token || amount", payee.Name, len(plain), err)
+		}
+		token, amount := new(big.Int).SetBytes(plain[:32]), new(big.Int).SetBytes(plain[32:])
+		salt := new(big.Int).Mod(new(big.Int).SetBytes(saltB), constants.Q)
+		if decimal(t, in["amount · opened"]).Cmp(amount) != 0 || amount.Int64() != opts.Payouts[0] {
+			t.Errorf("the card's amount %s, the payload opens to %s, want %s's payout %d", in["amount · opened"], amount, payee.Name, opts.Payouts[0])
+		}
+		if hexField(t, in["salt · opened"]).Cmp(salt) != 0 || hexField(t, in["token · opened"]).Cmp(token) != 0 {
+			t.Errorf("the card's salt %s and token %s, the payload opens to 0x%x and 0x%x", in["salt · opened"], in["token · opened"], salt, token)
+		}
+		// Another participant's view key decapsulates to some other secret,
+		// under whose key AES-GCM fails to open the payload.
+		other := e.Participants()[1]
+		oss, err := other.View.DecapsKey.Decapsulate(capsule)
+		if err != nil {
+			t.Fatalf("decapsulate with %s's view key: %v", other.Name, err)
+		}
+		if _, err := openSealed(t, oss, sealed); err == nil {
+			t.Errorf("%s's view key opens %s's note too", other.Name, payee.Name)
+		}
+
+		// The opening hashes, with the payee's pk_spend, to the commitment
+		// payment 1 logged: the card's ✓.
+		want, err := poseidon.Hash([]*big.Int{payee.Spend.PublicKey, salt, amount, token})
+		if err != nil {
+			t.Fatalf("poseidon.Hash: %v", err)
+		}
+		if want.Cmp(logged[0]) != 0 {
+			t.Fatalf("Poseidon(pk_spend, salt, amount, token) is 0x%x, payment 1 logged 0x%x for %s", want, logged[0], payee.Name)
+		}
+		if hexField(t, f.Result).Cmp(want) != 0 {
+			t.Errorf("result %s, the opening hashes to 0x%x", f.Result, want)
+		}
+		if hexField(t, f.Chain.Value).Cmp(logged[0]) != 0 || !f.OK {
+			t.Errorf("the chain's value %s (ok %v), want the logged commitment 0x%x, ok", f.Chain.Value, f.OK, logged[0])
+		}
+		if !strings.Contains(f.Chain.Name, pay.TxHash.Hex()) {
+			t.Errorf("the chain's value is %q, want it to name payment 1's tx %s", f.Chain.Name, pay.TxHash.Hex())
+		}
+	})
+
 	t.Run("payment 1's proof checks true on the Verifier the vault uses, and false with a tampered output commitment", func(t *testing.T) {
 		var call *engine.VerifyCall
 		var sentIn string // the release the call arrived in
@@ -1117,4 +1225,28 @@ func treeSizes(t *testing.T, client *ethclient.Client, vaultAddr common.Address,
 		sizes[len(sizes)-1] += n
 	}
 	return sizes
+}
+
+// openSealed opens a note's sealed payload (AES-256-GCM, nonce ||
+// ciphertext) under the key HKDF-SHA256 derives from shared secret ss, as
+// the note's encryption does, with the standard library alone. It returns
+// AES-GCM's error when the key is not the one the payload was sealed under.
+func openSealed(t *testing.T, ss, sealed []byte) ([]byte, error) {
+	t.Helper()
+	key, err := hkdf.Key(sha256.New, ss, nil, "encryption key", 32)
+	if err != nil {
+		t.Fatalf("HKDF key: %v", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("AES: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("GCM: %v", err)
+	}
+	if len(sealed) < gcm.NonceSize() {
+		t.Fatalf("sealed payload of %d bytes, shorter than its nonce", len(sealed))
+	}
+	return gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], nil)
 }

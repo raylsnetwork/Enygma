@@ -439,7 +439,15 @@ func (e *Engine) reconcile(ctx context.Context, s *step) error {
 		return err
 	}
 	s.log("key", "auditor decrypted %d transactions across both vaults with the recovered view keys", len(a.Entries))
-	s.hop(NodeVault, NodeAuditor, "audit", fmt.Sprintf("opens %d notes with the %d view keys it recovered", len(a.opened), len(a.Users)), decryption(a.opened))
+	details := []HopDetail{decryption(a.opened)}
+	// With tags, each participant opens their note with the tag channel's
+	// key, so the audit is the run's first hop a view key opens a note's
+	// ciphertext by: it carries the note encryption card, by name only (a
+	// walkthrough has no tags).
+	if e.opts.Tags {
+		details = append(details, formulaNamed(FormulaNoteEncryption, NodeVault, 0))
+	}
+	s.hop(NodeVault, NodeAuditor, "audit", fmt.Sprintf("opens %d notes with the %d view keys it recovered", len(a.opened), len(a.Users)), details...)
 	if a.Balances == nil {
 		s.done("Auditor sees all %d transactions and what each user received; without tags the payers stay hidden, so it cannot reconstruct balances", len(a.Entries))
 		return nil

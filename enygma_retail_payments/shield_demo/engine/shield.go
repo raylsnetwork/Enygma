@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"strings"
 
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
@@ -174,7 +175,7 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 		return err
 	}
 	s.log("chain", "%d encrypted notes on chain (Payment + EncryptedNote events)", len(events))
-	for _, p := range e.participants() {
+	for i, p := range e.participants() {
 		if err := s.await(ctx, "scan", p.Name); err != nil {
 			return err
 		}
@@ -185,7 +186,25 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 			}
 		} else {
 			found := p.scan(events, &p.notes, assetErc20)
-			s.hop(NodeVault, ActorNode(p.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened %d", p.Name, len(events), len(found)), decryption(found))
+			details := []HopDetail{decryption(found)}
+			// The first participant's scan is the run's first hop a view
+			// key opens a note's ciphertext by: it carries the note
+			// encryption card, a walkthrough's opening that participant's
+			// payment, a full run's by name only.
+			if i == 0 && len(found) > 0 {
+				d := formulaNamed(FormulaNoteEncryption, NodeVault, 0)
+				if s.gated {
+					cm, ok := new(big.Int).SetString(strings.TrimPrefix(found[0].Commitment, "0x"), 16)
+					if !ok {
+						return fmt.Errorf("%s's note commitment %q", p.Name, found[0].Commitment)
+					}
+					if d, err = e.chain.noteEncryptionFormula(ctx, p, cm); err != nil {
+						return err
+					}
+				}
+				details = append(details, d)
+			}
+			s.hop(NodeVault, ActorNode(p.ID), "scan", fmt.Sprintf("%s trial-decrypted %d notes, opened %d", p.Name, len(events), len(found)), details...)
 			s.log("key", "%s decrypted %d note(s) with their ML-KEM view key, commitments recomputed", p.Name, len(found))
 			s.actor(p, "scan", trialScan(len(events)))
 		}
