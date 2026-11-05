@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
 var nullifierTopic = crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
@@ -20,6 +21,28 @@ var nullifierTopic = crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint
 // and tree whose chain holds its value.
 func formulaNamed(name FormulaName, vault string, tree int) HopDetail {
 	return HopDetail{Kind: DetailFormula, Vault: vault, Tree: tree, Formula: &Formula{Name: name}}
+}
+
+// spendKeyFormula is the spend key formula of owner, whose spend public key
+// the UserRegistry holds as registered: sk_spend hashed, checked against
+// what the registry's getKeys returns for owner.
+func (c *chain) spendKeyFormula(owner *Actor) (HopDetail, error) {
+	pk, err := poseidon.Hash([]*big.Int{owner.Spend.PrivateKey})
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("%s: Poseidon(sk_spend): %w", owner.Name, err)
+	}
+	keys, err := rpcore.LookupKeys(c.client, c.registryAddr, owner.Address)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("%s: %w", owner.Name, err)
+	}
+	result, chain := fieldHex(pk), fieldHex(keys.SpendKey)
+	return HopDetail{Kind: DetailFormula, Vault: NodeUserRegistry, Formula: &Formula{
+		Name:   FormulaSpendKey,
+		Inputs: []FormulaValue{{Name: "sk_spend", Value: fieldHex(owner.Spend.PrivateKey)}},
+		Result: result,
+		Chain:  &FormulaValue{Name: fmt.Sprintf("the pk_spend the UserRegistry holds for the %s (getKeys)", owner.Name), Value: chain},
+		OK:     result == chain,
+	}}, nil
 }
 
 // commitmentFormula is the commitment formula of note n, owner's, which

@@ -325,10 +325,15 @@ func TestShieldDemoScenario(t *testing.T) {
 
 	t.Run("a full run carries each formula's detail once, by name only, on its first hop: a full run never sends an opening", func(t *testing.T) {
 		sender := engine.ActorNode(e.Sender().ID)
-		// Each formula's first hop: the commitment on the shield; the Merkle
-		// path on payment 1's proof request, a full run having no hop for
-		// the proof coming back; the nullifier on payment 1's settlement.
+		// Each formula's first hop: the spend key on the Sender's
+		// registration, the first hop the UserRegistry holds it by; the
+		// commitment on the shield; the Merkle path on payment 1's proof
+		// request, a full run having no hop for the proof coming back; the
+		// nullifier on payment 1's settlement.
 		first := map[engine.FormulaName]func(engine.Event) bool{
+			engine.FormulaSpendKey: func(h engine.Event) bool {
+				return h.Step == "register" && h.Label == "register" && h.From == sender && h.To == engine.NodeUserRegistry
+			},
 			engine.FormulaCommitment: func(h engine.Event) bool {
 				return h.Step == "shield" && h.Label == "shield" && h.From == sender && h.To == engine.NodeVault
 			},
@@ -354,8 +359,14 @@ func TestShieldDemoScenario(t *testing.T) {
 				if want := (engine.Formula{Name: name}); !reflect.DeepEqual(*d.Formula, want) {
 					t.Errorf("step %s: the %s formula is %+v, want %+v: its name only", h.Step, name, *d.Formula, want)
 				}
-				if d.Vault != engine.NodeVault {
-					t.Errorf("step %s: the %s formula is in the %s, want the %s", h.Step, name, d.Vault, engine.NodeVault)
+				// Where the chain holds the value a walkthrough's is checked
+				// against: the spend key's in the UserRegistry.
+				holder := engine.NodeVault
+				if name == engine.FormulaSpendKey {
+					holder = engine.NodeUserRegistry
+				}
+				if d.Vault != holder {
+					t.Errorf("step %s: the %s formula is in the %s, want the %s", h.Step, name, d.Vault, holder)
 				}
 			}
 		}

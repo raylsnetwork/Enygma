@@ -223,10 +223,24 @@ func (e *Engine) register(ctx context.Context, s *step) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", a.Name, err)
 		}
+		details := []HopDetail{{Kind: DetailRegistration, Registration: &Registration{Owner: a.Name, SpendPk: fieldHex(a.Spend.PublicKey),
+			ViewPk: bytesHex(a.View.EncapsKey), Audit: auditCiphertexts(mlKemCt, aesCt)}}}
+		// The Sender's registration carries the spend key card: a
+		// walkthrough's checked against the pk_spend the UserRegistry now
+		// holds, a full run's by name only. Its keygen hop comes before
+		// the registry holds the key, and a hop's details are fixed when it
+		// plays.
+		if a.Role == Sender {
+			d := formulaNamed(FormulaSpendKey, NodeUserRegistry, 0)
+			if s.gated {
+				if d, err = e.chain.spendKeyFormula(a); err != nil {
+					return err
+				}
+			}
+			details = append(details, d)
+		}
 		s.hop(node, NodeUserRegistry, "register", fmt.Sprintf("mined, %d gas: most of it stores the %d-byte view key on chain", receipt.GasUsed, len(a.View.EncapsKey)),
-			HopDetail{Kind: DetailRegistration, Registration: &Registration{Owner: a.Name, SpendPk: fieldHex(a.Spend.PublicKey),
-				ViewPk: bytesHex(a.View.EncapsKey), Audit: auditCiphertexts(mlKemCt, aesCt)}},
-			e.chain.receipt(receipt))
+			append(details, e.chain.receipt(receipt))...)
 		s.actor(a, "status", "Registered")
 		s.log("chain", "UserRegistry.register(%s) — view key encrypted to the auditor (%d + %d bytes)", a.Name, len(mlKemCt), len(aesCt))
 	}

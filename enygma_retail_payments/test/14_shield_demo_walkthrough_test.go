@@ -326,6 +326,67 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		checkRegistryDetails(t, client, e, sink.hops())
 	})
 
+	t.Run("the Sender's registration carries the spend key formula: Poseidon of their sk_spend, the pk_spend the UserRegistry holds for them", func(t *testing.T) {
+		sender := e.Sender()
+		var reg []engine.Event
+		for _, h := range sink.hops() {
+			if h.Step == "register" && h.Label == "register" && h.From == engine.ActorNode(sender.ID) && h.To == engine.NodeUserRegistry && !h.Failed {
+				reg = append(reg, h)
+			}
+		}
+		if len(reg) != 1 {
+			t.Fatalf("%d registration hops for the Sender, want 1", len(reg))
+		}
+		fs := detailsOf(reg[0], engine.DetailFormula)
+		if len(fs) != 1 || fs[0].Formula == nil {
+			t.Fatalf("the Sender's registration carries %d formula details, want one", len(fs))
+		}
+		if fs[0].Vault != engine.NodeUserRegistry {
+			t.Errorf("the spend key formula is in the %s, want the %s", fs[0].Vault, engine.NodeUserRegistry)
+		}
+		f := fs[0].Formula
+		if f.Chain == nil {
+			t.Fatal("the spend key formula carries no chain value: a full run's, by name only")
+		}
+		if f.Name != engine.FormulaSpendKey {
+			t.Errorf("formula %q, want %q", f.Name, engine.FormulaSpendKey)
+		}
+		if len(f.Inputs) != 1 || f.Inputs[0].Name != "sk_spend" {
+			t.Fatalf("inputs %+v, want sk_spend alone", f.Inputs)
+		}
+		sk := hexField(t, f.Inputs[0].Value)
+		if sk.Cmp(sender.Spend.PrivateKey) != 0 {
+			t.Errorf("sk_spend 0x%x, want the Sender's 0x%x", sk, sender.Spend.PrivateKey)
+		}
+		// Recomputed independently of the engine, with the client library's Poseidon.
+		want, err := poseidon.Hash([]*big.Int{sk})
+		if err != nil {
+			t.Fatalf("poseidon.Hash: %v", err)
+		}
+		if got := hexField(t, f.Result); got.Cmp(want) != 0 {
+			t.Errorf("result 0x%x, Poseidon(sk_spend) is 0x%x", got, want)
+		}
+		keys, err := rpcore.LookupKeys(client, common.HexToAddress(receipts["UserRegistry"].ContractAddress), sender.Address)
+		if err != nil {
+			t.Fatalf("LookupKeys: %v", err)
+		}
+		if keys.SpendKey.Cmp(want) != 0 {
+			t.Fatalf("the UserRegistry holds pk_spend 0x%x for the Sender, Poseidon(sk_spend) is 0x%x", keys.SpendKey, want)
+		}
+		if got := hexField(t, f.Chain.Value); got.Cmp(keys.SpendKey) != 0 || !f.OK {
+			t.Errorf("the chain's value 0x%x (ok %v), want the registered pk_spend 0x%x, ok", got, f.OK, keys.SpendKey)
+		}
+		if !strings.Contains(f.Chain.Name, "UserRegistry") {
+			t.Errorf("the chain's value is %q, want it to name the UserRegistry", f.Chain.Name)
+		}
+		// Only the Sender's registration carries it.
+		for _, h := range sink.hops() {
+			if h.Step == "register" && h.From != engine.ActorNode(sender.ID) && len(detailsOf(h, engine.DetailFormula)) > 0 {
+				t.Errorf("%s's register hop %q carries a formula, want only the Sender's", h.From, h.Label)
+			}
+		}
+	})
+
 	t.Run("each participant's scan shows the note their view key opened: their payout, hashing to their payment's commitment", func(t *testing.T) {
 		checkDiscoverDetails(t, client, e, sink.hops(), false)
 	})

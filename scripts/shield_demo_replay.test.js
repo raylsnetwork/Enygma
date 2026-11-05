@@ -177,6 +177,13 @@ const hasProof = raw => stripProofs(raw) !== raw;
 // private, why it holds, and its line (note). A part that depends on the
 // formula detail d is a function of it.
 const ARGUMENT = {
+  spendKey: {
+    property: 'Only the owner can spend', eq: 'pk_spend = Poseidon(sk_spend)',
+    sees: /pk_spend, in the UserRegistry and inside every commitment to the Sender/, private: /^stays private\s*sk_spend$/,
+    why: /Poseidon is one-way, so pk_spend reveals nothing about sk_spend\..*needs sk_spend inside the proof.*nullifier’s key.*only its holder can spend the notes sent to pk_spend/,
+    // A walkthrough's says its fold holds a throwaway demo key; a full run's has no fold to say it of.
+    note: d => d.formula.chain ? /throwaway/ : /^$/,
+  },
   commitment: {
     property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)',
     sees: /the commitment/, private: /pk_spend.*salt.*amount.*token/, why: /Poseidon is one-way.*random salt.*guessed amount can’t be checked/,
@@ -317,12 +324,13 @@ test('the default run fixture is a real default run, with the cases the replay i
   assert.ok(http.some(d => /[:[,]\s*\d{16,}\s*[,\]}]/.test(stripProofs(d.request + d.response))),
     'no bare field element outside a proof: the digit-for-digit check would check nothing');
   // A full run's formula details carry only their name, each once on its
-  // first hop: the commitment on the shield, the Merkle path on payment 1's
-  // proof request, the nullifier on its settlement.
+  // first hop: the spend key on the Sender's registration, the commitment on
+  // the shield, the Merkle path on payment 1's proof request, the nullifier
+  // on its settlement.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier']],
-    'formula details: the commitment on the shield, the Merkle path and the nullifier on payment 1');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier']],
+    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path and the nullifier on payment 1');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
 });
 
@@ -360,6 +368,8 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   const details = WALKTHROUGH.events.flatMap(e => e.hopDetail || []);
   for (const kind of ['witness', 'publicInputs', 'refusal']) assert.ok(details.some(d => d.kind === kind), `no ${kind} hop detail`);
   assert.ok(details.some(d => d.kind === 'formula' && d.formula.name === 'commitment'), 'no commitment formula on the shield');
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'register' && e.label === 'register' && e.from === 'actor1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'spendKey' && d.formula.chain)),
+    'no spend key formula, with its values, on the Sender’s registration');
   for (const name of ['merklePath', 'nullifier'])
     assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
   // The Merkle path card names its crowd: at least the leaves up to the spent one.
