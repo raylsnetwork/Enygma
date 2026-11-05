@@ -198,6 +198,13 @@ const ARGUMENT = {
     // A walkthrough's ✓ is the amounts summing, in range, and the Verifier accepting the proof.
     check: d => d.formula.ok ? /: the amounts sum, each is in range, and the chain answers true to the Verifier.s verifyProof/ : /: not all hold of the amounts summing/,
   },
+  feeConservation: {
+    property: 'Amounts hidden, the fee exact', eq: 'Σin = out₀ + out₁: in₀ = out₀ + out₁, with out₀ = Fee, the public fixed fee; and every value 0 ≤ v < 10³⁶',
+    sees: /^chain sees\s*the public Fee, and only commitments: the spent USDr note’s, behind its nullifier, the relayer’s fee note and the change$/, private: /^stays private\s*the spent USDr note’s amount and the change$/,
+    why: /As on the payment’s conservation card, the amounts sit inside the commitments, the circuit proves Σin = out₀ \+ out₁ over them.*range check rules out a “negative” change\. One more constraint pins out₀, the relayer’s fee note, to Fee, a public input EnygmaDvp checks equals its fixed fee: the relayer is paid exactly the fee, no more and no less, while the payer’s USDr balance stays hidden\.$/,
+    // A walkthrough's ✓ is the amounts summing, in range, and out₀ the public Fee EnygmaDvp requires.
+    check: d => d.formula.ok ? new RegExp(`: the amounts sum, each is in range, and out₀ equals the public Fee, ${d.formula.chain.value}, EnygmaDvp.s usdrFixedFeeAmount`) : /: not all hold of the amounts summing/,
+  },
   noteEncryption: {
     property: 'Only the recipient (and the auditor) can read it',
     eq: '(capsule, ss) = ML-KEM-768.Encaps(view key) → salt, k = HKDF(ss) → sealed = AES-GCM_k(token, amount); the recipient: ss = Decaps(view key, capsule), the same salt and k, opens sealed, and Poseidon(pk_spend, salt, amount, token) = commitment',
@@ -229,6 +236,24 @@ const ARGUMENT = {
     note: d => d.formula.chain ? /^The replay shows that refusal: after payment 2/ : /^A walkthrough’s replay shows that refusal: after payment 2/,
   },
 };
+
+// TIE_LINE is the relay hop's line on how a USDr fee is tied to its payment.
+const TIE_LINE = /^How the fee is tied to the payment: the fee proof and the payment proof share no public input, so nothing in either proof points at the other\. They are tied only by settling in one transaction, both or neither\. And the relayer checks off chain, from the fee note’s opening sent with the request, that the fee note is its own\.$/;
+
+// firstTie is run f's first hop relaying a payment with its USDr fee (its
+// request goes to /relay/payment_usdr_fee): the one hop the tie line shows on.
+const firstTie = f => f.events.find(e => e.kind === 'hop' && e.label === 'relay' && (e.hopDetail || []).some(d => d.kind === 'http' && /\/relay\/payment_usdr_fee$/.test(d.url)));
+
+// checkTie fails unless the hop detail panel shows the fee's tie line on
+// hop h exactly when h is run f's first fee-paying relay, and nowhere else.
+// It returns 1 if it showed.
+function checkTie(doc, f, h, where) {
+  const ties = h === firstTie(f);
+  const shown = [...doc.querySelectorAll('#hopPanel .tie')];
+  assert.strictEqual(shown.length, ties ? 1 : 0, `${where}: the fee's tie line ${ties ? 'missing on a fee-paying relay' : `on ${h.label}`}`);
+  if (ties) assert.match(shown[0].textContent, TIE_LINE, `${where}: the fee's tie line`);
+  return ties ? 1 : 0;
+}
 
 // tampered says whether the walkthrough's on-chain proof check was last
 // sent tampered: the Groth16 card's ✓ follows it.
@@ -298,7 +323,7 @@ async function replayAll(page, f, all) {
   const { doc, timers, errors } = page;
   const $ = id => doc.getElementById(id);
   const detailHops = detailHopsOf(f);
-  let replayed = 0, checkedElements = 0, fullProofs = 0, formulaValues = 0;
+  let replayed = 0, checkedElements = 0, fullProofs = 0, formulaValues = 0, ties = 0;
   for (const el of all) {
     const step = el.id.slice('step-'.length), hops = detailHops[step] || [];
     // Back to live first: a step with no hop details leaves the panel as it was.
@@ -333,6 +358,7 @@ async function replayAll(page, f, all) {
         });
       });
       formulaValues += checkFormulas(doc, hops[i], `${step} hop detail ${i + 1}`);
+      ties += checkTie(doc, f, hops[i], `${step} hop detail ${i + 1}`);
       replayed++;
       const next = doc.querySelector('#hopPanel [data-replay="next"]');
       if (i < hops.length - 1) { assert.ok(!next.disabled, `${step}: › disabled at ${i + 1} of ${hops.length}`); next.click(); await tick(); }
@@ -341,7 +367,8 @@ async function replayAll(page, f, all) {
   }
   assert.strictEqual(replayed, Object.values(detailHops).flat().length, 'hop details replayed');
   assert.ok(checkedElements > 0 && fullProofs > 0, `checked ${checkedElements} field elements and ${fullProofs} full bodies`);
-  return { formulaValues };
+  assert.strictEqual(ties, (f.run || f.defaults)?.usdrFee ? 1 : 0, 'relay hops replayed with the fee’s tie line: one in a fee-paying run');
+  return { formulaValues, ties };
 }
 
 test('the default run fixture is a real default run, with the cases the replay is there for', () => {
@@ -362,8 +389,8 @@ test('the default run fixture is a real default run, with the cases the replay i
   // the audit: each participant opens their note with a tag channel's key.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
-    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation, the nullifier and the Groth16 check on payment 1, note encryption on the audit');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'actor1 → gnark', 'feeConservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
+    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation, the fee’s value conservation, the nullifier and the Groth16 check on payment 1, note encryption on the audit');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
 });
 
@@ -405,6 +432,8 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
     'no spend key formula, with its values, on the Sender’s registration');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'prove Payment' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'conservation' && d.formula.chain)),
     'no value conservation formula, with its values, on payment 1’s proof request');
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'prove UsdrFee' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'feeConservation' && d.formula.chain)),
+    'no fee value conservation formula, with its values, on payment 1’s USDr fee proof request');
   // Payment 1's settlement carries the Groth16 card with the proof and public inputs the on-chain check sends.
   const check = verifyProofCall();
   const groth16 = WALKTHROUGH.events.filter(e => e.step === 'fanout_1' && e.from === 'relayer' && e.to === 'EnygmaDvp').flatMap(e => (e.hopDetail || []).filter(d => d.kind === 'formula' && d.formula.name === 'groth16'));
@@ -446,7 +475,7 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
 
   // Each release's events reach the page only once Next has released it.
   const cards = { columns: false, refusal: false, verify: false };
-  let formulaLive = false;
+  let formulaLive = false, tieLive = 0;
   const evs = WALKTHROUGH.events;
   let nexts = 0;
   for (let at = 0; at < evs.length;) {
@@ -459,6 +488,8 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
     for (const id of Object.keys(cards)) if (!$(id).hidden && $(id).innerHTML) cards[id] = true;
     // A formula card shows in the hop detail panel as its hop plays.
     const latest = evs.slice(0, at).findLast(e => e.kind === 'hop' && e.hopDetail);
+    // The relay of a payment with its USDr fee shows how the fee is tied, as it plays.
+    if (latest) tieLive += checkTie(doc, WALKTHROUGH, latest, `gate ${nexts + 1}, live`);
     if (latest?.hopDetail.some(d => d.kind === 'formula')) {
       checkFormulas(doc, latest, `gate ${nexts + 1}, live`);
       formulaLive = true;
@@ -481,6 +512,7 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
   assert.ok($('nextBtn').disabled, 'Next still on after the last gate');
   for (const [id, seen] of Object.entries(cards)) assert.ok(seen, `the ${id} card never showed`);
   assert.ok(formulaLive, 'no formula card showed while its hop played');
+  assert.strictEqual(tieLive, 1, 'relays of a fee-paying payment that showed the fee’s tie line as they played');
   const all = finished(page);
 
   // The on-chain proof check asked the fixture's node, and shows its answers.

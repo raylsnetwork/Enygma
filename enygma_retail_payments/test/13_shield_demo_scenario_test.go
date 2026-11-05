@@ -329,8 +329,9 @@ func TestShieldDemoScenario(t *testing.T) {
 		// registration, the first hop the UserRegistry holds it by; the
 		// commitment on the shield; the Merkle path on payment 1's proof
 		// request, a full run having no hop for the proof coming back; value
-		// conservation on that proof request too; the nullifier on payment
-		// 1's settlement, and its Groth16 check there too; note encryption,
+		// conservation on that proof request too, and the fee's on payment
+		// 1's USDr fee proof request; the nullifier on payment 1's
+		// settlement, and its Groth16 check there too; note encryption,
 		// tags on, on the audit: each participant opens their note with a
 		// tag channel's key, so the audit is the first hop a view key opens
 		// a note's ciphertext by.
@@ -346,6 +347,9 @@ func TestShieldDemoScenario(t *testing.T) {
 			},
 			engine.FormulaConservation: func(h engine.Event) bool {
 				return h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && strings.HasPrefix(h.Label, "prove Payment")
+			},
+			engine.FormulaFeeConservation: func(h engine.Event) bool {
+				return h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && h.Label == "prove UsdrFee"
 			},
 			engine.FormulaNullifier: func(h engine.Event) bool {
 				return h.Step == "fanout_1" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp
@@ -373,10 +377,14 @@ func TestShieldDemoScenario(t *testing.T) {
 					t.Errorf("step %s: the %s formula is %+v, want %+v: its name only", h.Step, name, *d.Formula, want)
 				}
 				// Where the chain holds the value a walkthrough's is checked
-				// against: the spend key's in the UserRegistry.
+				// against: the spend key's in the UserRegistry, the fee's
+				// in the USDr vault.
 				holder := engine.NodeVault
-				if name == engine.FormulaSpendKey {
+				switch name {
+				case engine.FormulaSpendKey:
 					holder = engine.NodeUserRegistry
+				case engine.FormulaFeeConservation:
+					holder = engine.NodeUsdrVault
 				}
 				if d.Vault != holder {
 					t.Errorf("step %s: the %s formula is in the %s, want the %s", h.Step, name, d.Vault, holder)

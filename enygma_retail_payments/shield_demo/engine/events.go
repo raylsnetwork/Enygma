@@ -125,7 +125,8 @@ const (
 	// hop: the spend key on the Sender's registration (the first hop the
 	// UserRegistry holds it by), the commitment on the shield, the Merkle
 	// path and value conservation on payment 1's proof request (a full run
-	// has no hop of its own for the proof coming back), the nullifier and
+	// has no hop of its own for the proof coming back), the fee's value
+	// conservation on payment 1's USDr fee proof request, the nullifier and
 	// the Groth16 check on payment 1's settlement, and note encryption on
 	// the first hop a view key opens a note's ciphertext by (the first
 	// participant's scan; with tags, a participant opens their note with
@@ -135,7 +136,9 @@ const (
 	// demo key); the commitment on the shield (its values are the shield's
 	// opening, public in the deposit's calldata); on payment 1, value
 	// conservation on the proof request (checked against the Verifier's
-	// verifyProof), the Merkle path on the proof coming back, and the
+	// verifyProof), the fee's on the USDr fee proof request (checked
+	// against EnygmaDvp's fixed USDr fee), the Merkle path on the proof
+	// coming back, and the
 	// nullifier and the Groth16 check (its proof and public inputs, checked
 	// by verifyProof) on the settlement, values the page shows there anyway
 	// in payment 1's witness and on-chain check; and note encryption on the
@@ -165,6 +168,10 @@ const (
 	// Σout with no fee in the circuit, and its range check: every amount
 	// 0 ≤ v < 10³⁶.
 	FormulaConservation FormulaName = "conservation"
+	// FormulaFeeConservation is a UsdrFee proof's value conservation, Σin =
+	// out₀ + out₁ with out₀, the relayer's fee note, equal to the proof's
+	// public Fee, and its range check: every amount 0 ≤ v < 10³⁶.
+	FormulaFeeConservation FormulaName = "feeConservation"
 	// FormulaNoteEncryption is a note's encryption to its recipient's view
 	// key: ML-KEM-768 encapsulation gives a capsule and a shared secret,
 	// HKDF derives the note's salt and an AES key from the secret, and
