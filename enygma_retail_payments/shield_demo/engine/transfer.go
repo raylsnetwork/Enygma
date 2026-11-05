@@ -301,7 +301,21 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 			s.hopFailed(fromNode, NodeGnark, "prove UsdrFee", err)
 			return nil, err
 		}
-		s.hop(fromNode, NodeGnark, "prove UsdrFee", fmt.Sprintf("%d ms; %s USDr fee note to the relayer", fee.proveTime.Milliseconds(), e.usdrFixedFee), fee.details...)
+		// Payment 1's fee proof carries its value conservation card, out₀
+		// pinned to the public Fee: a walkthrough's with the amounts, checked
+		// against the fee EnygmaDvp requires, a full run's by name only.
+		feeDetails := []HopDetail{fee.path}
+		if payment1 {
+			d := formulaNamed(FormulaFeeConservation, NodeUsdrVault, fee.tree)
+			if s.gated {
+				if d, err = c.feeConservationFormula(from, fee); err != nil {
+					return nil, err
+				}
+			}
+			feeDetails = append(feeDetails, d)
+		}
+		feeDetails = append(feeDetails, fee.inputs, fee.wire)
+		s.hop(fromNode, NodeGnark, "prove UsdrFee", fmt.Sprintf("%d ms; %s USDr fee note to the relayer", fee.proveTime.Milliseconds(), e.usdrFixedFee), feeDetails...)
 		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to %s",
 			fee.proveTime.Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -146,6 +147,16 @@ func nullifierFormula(sk *big.Int, vaultNode string, vaultAddr common.Address, p
 // amount a proof spends or makes is 0 ≤ v < 10³⁶.
 var valueRange = new(big.Int).Exp(big.NewInt(10), big.NewInt(36), nil)
 
+// balance is in − (out₀ + out₁), 0 when a 1-in, 2-out proof conserves
+// value, and whether each amount passes the range check.
+func balance(in, out0, out1 *big.Int) (*big.Int, bool) {
+	inRange := true
+	for _, x := range []*big.Int{in, out0, out1} {
+		inRange = inRange && x.Sign() >= 0 && x.Cmp(valueRange) < 0
+	}
+	return new(big.Int).Sub(in, new(big.Int).Add(out0, out1)), inRange
+}
+
 // conservationFormula is the value conservation formula of a 1-in Payment
 // proof res, from's note ins[0] (in tree tree) spent into amount for to
 // and change back:
@@ -160,12 +171,7 @@ func (c *chain) conservationFormula(ctx context.Context, cfg Config, from, to *A
 		return HopDetail{}, fmt.Errorf("value conservation card: %w", err)
 	}
 
-	values := []*big.Int{ins[0].amount, amount, change}
-	inRange := true
-	for _, x := range values {
-		inRange = inRange && x.Sign() >= 0 && x.Cmp(valueRange) < 0
-	}
-	diff := new(big.Int).Sub(ins[0].amount, new(big.Int).Add(amount, change))
+	diff, inRange := balance(ins[0].amount, amount, change)
 	return HopDetail{Kind: DetailFormula, Vault: NodeVault, Tree: tree, Formula: &Formula{
 		Name: FormulaConservation,
 		Inputs: []FormulaValue{
@@ -176,6 +182,36 @@ func (c *chain) conservationFormula(ctx context.Context, cfg Config, from, to *A
 		Result: diff.String(),
 		Chain:  &FormulaValue{Name: verifyProofName, Value: fmt.Sprint(verified)},
 		OK:     diff.Sign() == 0 && inRange && verified,
+	}}, nil
+}
+
+// feeConservationFormula is the value conservation formula of payer's
+// UsdrFee proof fee: their USDr note spent into the relayer's fee note
+// (out₀) and their USDr change (out₁), Σin − Σout, each amount
+// range-checked, and out₀ pinned to the proof's public Fee. It is checked
+// against the fee EnygmaDvp's settlement requires that Fee to equal, its
+// usdrFixedFeeAmount, read now.
+func (c *chain) feeConservationFormula(payer *Actor, fee *usdrFeeLeg) (HopDetail, error) {
+	fixed, err := c.usdrFixedFee()
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("fee conservation card: %w", err)
+	}
+	if len(fee.statement) != layout.UsdrFeeLen {
+		return HopDetail{}, fmt.Errorf("fee conservation card: %d public inputs, want %d", len(fee.statement), layout.UsdrFeeLen)
+	}
+	in, out0, out1, feeInput := fee.in.amount, fee.feeAmount, fee.change.amount, fee.statement[layout.UsdrFeeFeeOffset]
+	diff, inRange := balance(in, out0, out1)
+	return HopDetail{Kind: DetailFormula, Vault: NodeUsdrVault, Tree: fee.tree, Formula: &Formula{
+		Name: FormulaFeeConservation,
+		Inputs: []FormulaValue{
+			{Name: fmt.Sprintf("in₀ · the %s's USDr note", payer.Name), Value: in.String()},
+			{Name: "out₀ · the relayer's fee note", Value: out0.String()},
+			{Name: fmt.Sprintf("out₁ · the %s's USDr change", payer.Name), Value: out1.String()},
+			{Name: "Fee · the proof's public input", Value: feeInput.String()},
+		},
+		Result: diff.String(),
+		Chain:  &FormulaValue{Name: "EnygmaDvp's usdrFixedFeeAmount, the fee its settlement requires the public Fee to equal", Value: fixed.String()},
+		OK:     diff.Sign() == 0 && inRange && out0.Cmp(feeInput) == 0 && feeInput.Cmp(fixed) == 0,
 	}}, nil
 }
 

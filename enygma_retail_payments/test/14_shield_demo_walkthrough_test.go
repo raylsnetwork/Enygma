@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"enygma_retail_payments/layout"
 	"enygma_retail_payments/shield_demo/engine"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -934,6 +935,140 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		if !strings.Contains(f.Chain.Name, "verifyProof") {
 			t.Errorf("the chain's value is %q, want it to name verifyProof", f.Chain.Name)
+		}
+	})
+
+	t.Run("payment 1's USDr fee proof request carries the fee's value conservation formula: the amounts sent to the prover, summing, in range, out₀ the public Fee EnygmaDvp requires, and the fee note the one the receipt logged", func(t *testing.T) {
+		sender := engine.ActorNode(e.Sender().ID)
+		var prove []engine.Event
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && h.Label == "prove UsdrFee" && !h.Failed {
+				prove = append(prove, h)
+			}
+		}
+		if len(prove) != 1 {
+			t.Fatalf("%d USDr fee proof request hops in payment 1, want 1", len(prove))
+		}
+		fs := detailsOf(prove[0], engine.DetailFormula)
+		if len(fs) != 1 || fs[0].Formula == nil {
+			t.Fatalf("payment 1's USDr fee proof request carries %d formula details, want 1", len(fs))
+		}
+		f := fs[0].Formula
+		if f.Name != engine.FormulaFeeConservation {
+			t.Fatalf("formula %q, want %q", f.Name, engine.FormulaFeeConservation)
+		}
+		if f.Chain == nil {
+			t.Fatal("the fee conservation formula carries no chain value: a full run's, by name only")
+		}
+		if fs[0].Vault != engine.NodeUsdrVault {
+			t.Errorf("the fee conservation formula is in the %s, want the %s", fs[0].Vault, engine.NodeUsdrVault)
+		}
+		if len(f.Inputs) != 4 {
+			t.Fatalf("inputs %+v, want the USDr note, the fee note, the change and the public Fee", f.Inputs)
+		}
+		card := make([]*big.Int, 4)
+		for i, x := range f.Inputs {
+			card[i] = decimal(t, x.Value)
+		}
+
+		// The amounts are the UsdrFee witness the Sender's wallet sent its
+		// prover: the Sender's USDr grant, spent into the fixed fee and the
+		// rest back.
+		wire := detailsOf(prove[0], engine.DetailHTTP)
+		if len(wire) != 1 {
+			t.Fatalf("payment 1's USDr fee proof request carries %d http details, want 1", len(wire))
+		}
+		var req map[string]any
+		if err := json.Unmarshal([]byte(wire[0].Request), &req); err != nil {
+			t.Fatalf("payment 1's USDr fee proof request body: %v", err)
+		}
+		ins, outs := req["wtValuesIn"].([]any), req["wtValuesOut"].([]any)
+		if len(ins) != 1 || len(outs) != 2 {
+			t.Fatalf("the UsdrFee witness spends %d notes into %d, want 1 into 2, as in₀ = out₀ + out₁", len(ins), len(outs))
+		}
+		sent := []any{ins[0], outs[0], outs[1]}
+		given := []int64{engine.UsdrGrant, 1, engine.UsdrGrant - 1}
+		for i := range 3 {
+			if card[i].Cmp(decimal(t, sent[i])) != 0 || card[i].Int64() != given[i] {
+				t.Errorf("%s is %s, the prover was sent %v, want %d", f.Inputs[i].Name, f.Inputs[i].Value, sent[i], given[i])
+			}
+		}
+		// They sum: in₀ − out₀ − out₁ is 0.
+		diff := new(big.Int).Sub(card[0], new(big.Int).Add(card[1], card[2]))
+		if diff.Sign() != 0 || f.Result != "0" {
+			t.Errorf("Σin − Σout is %s, the card says %s, want 0", diff, f.Result)
+		}
+		// Each is in the circuit's range, 0 ≤ v < 10³⁶.
+		bound, _ := new(big.Int).SetString("1000000000000000000000000000000000000", 10)
+		for i, v := range card[:3] {
+			if v.Sign() < 0 || v.Cmp(bound) >= 0 {
+				t.Errorf("%s is %s, out of range [0, 10³⁶)", f.Inputs[i].Name, v)
+			}
+		}
+
+		// out₀ is the public Fee: the stFee sent, the Fee public input the
+		// prover returned, the card's Fee, and the fixed fee EnygmaDvp's
+		// settlement requires it to equal.
+		var resp struct {
+			PublicSignal []json.Number `json:"publicSignal"`
+		}
+		dec := json.NewDecoder(strings.NewReader(wire[0].Response))
+		dec.UseNumber()
+		if err := dec.Decode(&resp); err != nil || len(resp.PublicSignal) != layout.UsdrFeeLen {
+			t.Fatalf("payment 1's USDr fee proof response %q (%v): want %d public inputs", wire[0].Response, err, layout.UsdrFeeLen)
+		}
+		dvpABI := loadOnchainABI(t, "EnygmaDvp")
+		data, err := dvpABI.Pack("usdrFixedFeeAmount")
+		if err != nil {
+			t.Fatalf("pack usdrFixedFeeAmount: %v", err)
+		}
+		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+		out, err := client.CallContract(context.Background(), ethereum.CallMsg{To: &dvpAddr, Data: data}, nil)
+		if err != nil {
+			t.Fatalf("usdrFixedFeeAmount eth_call: %v", err)
+		}
+		answer, err := dvpABI.Unpack("usdrFixedFeeAmount", out)
+		if err != nil || len(answer) != 1 {
+			t.Fatalf("usdrFixedFeeAmount = %v (%v)", answer, err)
+		}
+		fixed := answer[0].(*big.Int)
+		for what, v := range map[string]*big.Int{
+			"the stFee sent to the prover":     decimal(t, req["stFee"]),
+			"the Fee public input it returned": decimal(t, resp.PublicSignal[layout.UsdrFeeFeeOffset].String()),
+			"the card's Fee":                   card[3],
+			"EnygmaDvp's usdrFixedFeeAmount":   fixed,
+			"the card's chain value":           decimal(t, f.Chain.Value),
+		} {
+			if card[1].Cmp(v) != 0 {
+				t.Errorf("out₀ is %s, %s is %s, want them equal", card[1], what, v)
+			}
+		}
+		if !f.OK {
+			t.Error("the fee conservation formula is not ok")
+		}
+		if !strings.Contains(f.Chain.Name, "usdrFixedFeeAmount") {
+			t.Errorf("the chain's value is %q, want it to name EnygmaDvp's usdrFixedFeeAmount", f.Chain.Name)
+		}
+
+		// The fee note out₀ opens is the one payment 1's receipt logged in
+		// the USDr vault, the relayer's, and the change the other.
+		token := decimal(t, req["stTokenId"])
+		commitmentsOut := req["stCommitmentsOut"].([]any)
+		logged := commitmentsIn(txLogs(t, client, e.FanOut()[0].TxHash), usdrVaultAddr)
+		if len(logged) != 2 {
+			t.Fatalf("payment 1 logged %d commitments in the USDr vault, want 2", len(logged))
+		}
+		for i := range 2 {
+			c, err := rpcore.Erc20CommitmentV2(decimal(t, req["wtSpendPublicKeysOut"].([]any)[i]), decimal(t, req["wtSaltsOut"].([]any)[i]), card[1+i], token)
+			if err != nil {
+				t.Fatalf("Erc20CommitmentV2: %v", err)
+			}
+			if c.Cmp(decimal(t, commitmentsOut[i])) != 0 || c.Cmp(logged[i]) != 0 {
+				t.Errorf("%s opens to 0x%x, the proof's output %d is %v, the receipt logged 0x%x", f.Inputs[1+i].Name, c, i, commitmentsOut[i], logged[i])
+			}
+		}
+		if fee := e.FanOut()[0].UsdrFeeNote; fee == nil || fee.Cmp(logged[0]) != 0 {
+			t.Errorf("payment 1's fee note is %v, the receipt logged 0x%x first", fee, logged[0])
 		}
 	})
 

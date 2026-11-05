@@ -67,11 +67,15 @@ type usdrFeeLeg struct {
 	feeNote *big.Int
 	in      *note
 	change  *note
+	// feeAmount is the fee note's amount, the fixed fee, and tree the tree
+	// of the spent note.
+	feeAmount *big.Int
+	tree      int
 	// proveTime is how long the gnark server took to prove it.
 	proveTime time.Duration
-	// details are its proof hop's: the spent note's Merkle path and the
-	// proof's public inputs.
-	details []HopDetail
+	// path, inputs and wire are its proof hop's details: the spent note's
+	// Merkle path, the proof's public inputs and the request to the prover.
+	path, inputs, wire HopDetail
 	// statement is its proof's public signals.
 	statement []*big.Int
 }
@@ -156,8 +160,8 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 	if err != nil {
 		return nil, err
 	}
-	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, proveTime: proveTime,
-		details: []HopDetail{merklePath(NodeUsdrVault, payer.Name, mp), inputs, rec.exchange()}, statement: out.PublicSignal}
+	leg := &usdrFeeLeg{feeSalt: feeSalt, feeNote: feeNote, in: prev, change: change, feeAmount: e.usdrFixedFee, tree: mp.TreeNumber, proveTime: proveTime,
+		path: merklePath(NodeUsdrVault, payer.Name, mp), inputs: inputs, wire: rec.exchange(), statement: out.PublicSignal}
 	for i, v := range out.Proof {
 		leg.proof[i] = v.String()
 	}

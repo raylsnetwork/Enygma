@@ -259,6 +259,7 @@ details.fold[open] > summary { margin-bottom:10px; }
 #hopPanel { position:relative; height:620px; background:var(--s1); border:1px solid var(--bd); border-radius:12px; }
 #hopPanel .inner { position:absolute; inset:0; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:10px; }
 #hopPanel .sentence { font:16px/1.4 var(--serif); color:var(--text); }
+#hopPanel .tie { font-size:13px; color:var(--text2); border-left:3px solid var(--accent); padding:2px 8px; flex-shrink:0; }
 .hlbl { font:600 12px var(--mono); color:var(--on-accent); background:var(--accent); padding:1px 7px; border-radius:4px; }
 .hstep { font-size:12px; color:var(--muted); }
 .vcard { border:1px solid var(--bd); border-radius:10px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; }
@@ -1593,6 +1594,13 @@ const SENTENCE = {
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
+// TIE is the line on how a USDr fee is tied to its payment, shown once per
+// run, like a formula card, on the first relay hop that hands the relayer
+// both proofs.
+const TIE = 'How the fee is tied to the payment: the fee proof and the payment proof share no public input, so nothing in either proof points at the other. They are tied only by settling in one transaction, both or neither. And the relayer checks off chain, from the fee note’s opening sent with the request, that the fee note is its own.';
+// tiesFee says whether hop h relays a payment with its USDr fee: its request goes to /relay/payment_usdr_fee.
+const tiesFee = (h, details) => h.label === 'relay' && details.some(d => d.kind === 'http' && /\/relay\/payment_usdr_fee$/.test(d.url));
+
 // hasValues says whether formula f carries a run's values (a walkthrough's):
 // a full run's carries its name only.
 const hasValues = f => !!f.chain;
@@ -1630,6 +1638,16 @@ const FORMULA = {
     check: d => !hasValues(d.formula) ? '' : d.formula.ok
       ? `the amounts sum, each is in range, and the chain answers ${d.formula.chain.value} to ${d.formula.chain.name}`
       : `not all hold of the amounts summing, each in range, and the chain answering true to ${d.formula.chain.name} (it answers ${d.formula.chain.value})`,
+  },
+  feeConservation: {
+    title: 'The fee’s value conservation', property: 'Amounts hidden, the fee exact', eq: 'Σin = out₀ + out₁: in₀ = out₀ + out₁, with out₀ = Fee, the public fixed fee; and every value 0 ≤ v < 10³⁶', result: 'Σin − Σout',
+    sees: 'the public Fee, and only commitments: the spent USDr note’s, behind its nullifier, the relayer’s fee note and the change',
+    hidden: 'the spent USDr note’s amount and the change',
+    why: 'As on the payment’s conservation card, the amounts sit inside the commitments, the circuit proves Σin = out₀ + out₁ over them, and the range check rules out a “negative” change. One more constraint pins out₀, the relayer’s fee note, to Fee, a public input EnygmaDvp checks equals its fixed fee: the relayer is paid exactly the fee, no more and no less, while the payer’s USDr balance stays hidden.',
+    // Only a walkthrough's (one with values) has a check line.
+    check: d => !hasValues(d.formula) ? '' : d.formula.ok
+      ? `the amounts sum, each is in range, and out₀ equals the public Fee, ${d.formula.chain.value}, ${d.formula.chain.name}`
+      : `not all hold of the amounts summing, each in range, and out₀ equalling the public Fee and ${d.formula.chain.name} (${d.formula.chain.value})`,
   },
   noteEncryption: {
     title: 'Note encryption', property: 'Only the recipient (and the auditor) can read it',
@@ -2084,6 +2102,7 @@ const hopPanel = (() => {
       ${replayBar}
       <div>${en.hop ? `<span class="hlbl">${esc(en.hop.label)}</span> <span class="hstep">${esc(NODE[en.hop.from].label)} → ${esc(NODE[en.hop.to].label)}</span>` : '<span class="hstep">Hop detail</span>'}</div>
       <p class="sentence">${en.hop ? esc(SENTENCE[en.details[0].kind]?.(en.details[0], en.details) || '') : 'Both vaults’ Merkle trees as the run found them. Each hop that changes them explains itself here.'}</p>
+      ${en.tie ? `<p class="tie">${esc(TIE)}</p>` : ''}
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
       ${en.details.filter(d => d.kind === 'formula').map(formulaHtml).join('')}
       ${en.details.filter(d => d.kind === 'publicInputs').map(inputsHtml).join('')}
@@ -2113,7 +2132,9 @@ const hopPanel = (() => {
       const details = [...h.hopDetail, ...sameTx];
       const focus = focusOf(details);
       const front = h.hopDetail[0]?.vault || latest?.front || VAULT_IDS[0];
-      latest = { hop: h, details, focus, front, trees: structuredClone(trees) };
+      // The run's first fee-paying relay carries the tie line.
+      const tie = tiesFee(h, h.hopDetail) && !history.some(en => en.tie);
+      latest = { hop: h, details, focus, front, tie, trees: structuredClone(trees) };
       history.push(latest);
       // A walkthrough opens the hop detail fold for a formula card; the presenter can close it again.
       if (walk.on() && h.hopDetail.some(d => d.kind === 'formula')) $('hopFold').open = true;
