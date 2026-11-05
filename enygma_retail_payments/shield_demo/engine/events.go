@@ -148,6 +148,21 @@ const (
 )
 
 // FormulaName names the equation a formula hop detail shows.
+//
+// A new formula is also handled where nothing will make the compiler point:
+//   - here: DetailFormula's doc, which lists each formula's hop;
+//   - formulas.go for its walkthrough builder, and the hop that emits it
+//     (formulaNamed for a full run's), e.g. transfer.go's send;
+//   - index.html: FORMULA, its card's texts by name;
+//   - test/13_shield_demo_scenario_test.go: the full-run subtest's first
+//     map (its first hop) and the vault holding its chain value;
+//   - test/14_shield_demo_walkthrough_test.go: a subtest recomputing its
+//     values against the chain;
+//   - scripts/shield_demo_replay.test.js: ARGUMENT, and both fixture tests'
+//     formula lists;
+//   - HAND_CHECK.md's Formula cards section;
+//   - both testdata fixtures, refreshed by passing unfiltered runs (see
+//     HopDetailKind).
 type FormulaName string
 
 const (

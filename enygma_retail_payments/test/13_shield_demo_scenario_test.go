@@ -101,6 +101,10 @@ const (
 type fixtureField struct {
 	name  string
 	value any
+	// filledBy, when set, names the subtest that fills value in (a map or
+	// slice). A run that leaves value empty (a -run filter skipping that
+	// subtest) writes no fixture: a fixture without it fails the replay test.
+	filledBy string
 }
 
 // writeReplayFixtureIfPassed writes the events captured so far (the run's),
@@ -109,7 +113,8 @@ type fixtureField struct {
 // after fields (the options the run used, say), once t has passed. The
 // fields are marshalled then, so a subtest may still fill them in. Every
 // passing live run refreshes the fixture, so a change to what the engine
-// sends shows up as a diff of it; a failing run leaves it as it was.
+// sends shows up as a diff of it; a failing run leaves it as it was, and so
+// does one that leaves a field's filledBy subtest unrun.
 func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, path string, fields ...fixtureField) {
 	t.Helper()
 	s.mu.Lock()
@@ -118,6 +123,12 @@ func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, path string, fi
 	t.Cleanup(func() {
 		if t.Failed() {
 			return
+		}
+		for _, f := range fields {
+			if f.filledBy != "" && reflect.ValueOf(f.value).Len() == 0 {
+				t.Logf("replay fixture %s not written: its %s is empty, as the subtest %q did not run; refresh it with an unfiltered run", path, f.name, f.filledBy)
+				return
+			}
 		}
 		var b bytes.Buffer
 		b.WriteString("{")
@@ -266,7 +277,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		atStart[node] = treeState{vaultTreeNumber(t, v), vaultCurrentRoot(t, v)}
 	}
 	e, sink := runShieldScenario(t, cfg, opts)
-	sink.writeReplayFixtureIfPassed(t, replayFixture, fixtureField{"defaults", opts})
+	sink.writeReplayFixtureIfPassed(t, replayFixture, fixtureField{name: "defaults", value: opts})
 
 	t.Run("the run starts from each vault's tree as the chain holds it", func(t *testing.T) {
 		snaps := treeSnapshots(t, sink)
