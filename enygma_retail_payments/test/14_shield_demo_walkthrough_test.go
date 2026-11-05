@@ -686,6 +686,127 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
+	t.Run("payment 1's proof request carries its value conservation formula: the amounts sent to the prover, summing, in range, opening the logged commitments, and a proof the Verifier accepts", func(t *testing.T) {
+		sender := engine.ActorNode(e.Sender().ID)
+		var prove []engine.Event
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && !h.Failed {
+				prove = append(prove, h)
+			}
+		}
+		if len(prove) != 1 {
+			t.Fatalf("%d proof request hops in payment 1, want 1", len(prove))
+		}
+		fs := detailsOf(prove[0], engine.DetailFormula)
+		if len(fs) != 1 || fs[0].Formula == nil {
+			t.Fatalf("payment 1's proof request carries %d formula details, want 1", len(fs))
+		}
+		f := fs[0].Formula
+		if f.Name != engine.FormulaConservation {
+			t.Fatalf("formula %q, want %q", f.Name, engine.FormulaConservation)
+		}
+		if f.Chain == nil {
+			t.Fatal("the conservation formula carries no chain value: a full run's, by name only")
+		}
+		if fs[0].Vault != engine.NodeVault {
+			t.Errorf("the conservation formula is in the %s, want the %s", fs[0].Vault, engine.NodeVault)
+		}
+		if len(f.Inputs) != 3 {
+			t.Fatalf("inputs %+v, want the spent note, the payee's note and the change", f.Inputs)
+		}
+		card := make([]*big.Int, 3)
+		for i, x := range f.Inputs {
+			card[i] = decimal(t, x.Value)
+		}
+
+		// The amounts are the witness the Sender's wallet sent its prover,
+		// the shield and payout the walkthrough was given.
+		req := payment1Request(t)
+		sent := []any{req["wtValuesIn"].([]any)[0], req["wtValuesOut"].([]any)[0], req["wtValuesOut"].([]any)[1]}
+		given := []int64{opts.ShieldTotal, opts.Payouts[0], opts.ShieldTotal - opts.Payouts[0]}
+		for i, x := range f.Inputs {
+			if card[i].Cmp(decimal(t, sent[i])) != 0 || card[i].Int64() != given[i] {
+				t.Errorf("%s is %s, the prover was sent %v, want %d", x.Name, x.Value, sent[i], given[i])
+			}
+		}
+		// They sum: in₀ − out₀ − out₁ is 0.
+		diff := new(big.Int).Sub(card[0], new(big.Int).Add(card[1], card[2]))
+		if diff.Sign() != 0 || f.Result != "0" {
+			t.Errorf("Σin − Σout is %s, the card says %s, want 0", diff, f.Result)
+		}
+		// Each is in the circuit's range, 0 ≤ v < 10³⁶.
+		bound, _ := new(big.Int).SetString("1000000000000000000000000000000000000", 10)
+		for i, v := range card {
+			if v.Sign() < 0 || v.Cmp(bound) >= 0 {
+				t.Errorf("%s is %s, out of range [0, 10³⁶)", f.Inputs[i].Name, v)
+			}
+		}
+		// The output amounts open the commitments the vault logged for
+		// payment 1, with the owners and salts the prover was sent.
+		logged := commitmentsIn(txLogs(t, client, e.FanOut()[0].TxHash), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
+		if len(logged) != 2 {
+			t.Fatalf("payment 1 logged %d commitments, want 2", len(logged))
+		}
+		for i := range 2 {
+			c, err := rpcore.Erc20CommitmentV2(decimal(t, req["wtSpendPublicKeysOut"].([]any)[i]), decimal(t, req["wtSaltsOut"].([]any)[i]), card[1+i], decimal(t, req["wtTokenId"]))
+			if err != nil {
+				t.Fatalf("Erc20CommitmentV2: %v", err)
+			}
+			if c.Cmp(logged[i]) != 0 {
+				t.Errorf("%s opens to 0x%x, the vault logged 0x%x", f.Inputs[1+i].Name, c, logged[i])
+			}
+		}
+
+		// The Verifier accepts the proof the prover returned, with its
+		// public inputs, as the card's chain value says.
+		wire := detailsOf(prove[0], engine.DetailHTTP)
+		if len(wire) != 1 {
+			t.Fatalf("payment 1's proof request carries %d http details, want 1", len(wire))
+		}
+		var resp struct {
+			Proof        []json.Number `json:"proof"`
+			PublicSignal []json.Number `json:"publicSignal"`
+		}
+		dec := json.NewDecoder(strings.NewReader(wire[0].Response))
+		dec.UseNumber()
+		if err := dec.Decode(&resp); err != nil || len(resp.Proof) != 8 {
+			t.Fatalf("payment 1's proof response %q (%v): want 8 proof elements", wire[0].Response, err)
+		}
+		num := func(n json.Number) *big.Int { return decimal(t, n.String()) }
+		var proof struct {
+			A struct{ X, Y *big.Int }
+			B struct{ X, Y [2]*big.Int }
+			C struct{ X, Y *big.Int }
+		}
+		proof.A.X, proof.A.Y = num(resp.Proof[0]), num(resp.Proof[1])
+		proof.B.X, proof.B.Y = [2]*big.Int{num(resp.Proof[2]), num(resp.Proof[3])}, [2]*big.Int{num(resp.Proof[4]), num(resp.Proof[5])}
+		proof.C.X, proof.C.Y = num(resp.Proof[6]), num(resp.Proof[7])
+		var inputs []*big.Int
+		for _, n := range resp.PublicSignal {
+			inputs = append(inputs, num(n))
+		}
+		verifierABI := loadOnchainABI(t, "Verifier")
+		data, err := verifierABI.Pack("verifyProof", big.NewInt(engine.PaymentVKSlot), proof, inputs)
+		if err != nil {
+			t.Fatalf("pack verifyProof: %v", err)
+		}
+		verifier := common.HexToAddress(receipts["Verifier"].ContractAddress)
+		out, err := client.CallContract(context.Background(), ethereum.CallMsg{To: &verifier, Data: data}, nil)
+		if err != nil {
+			t.Fatalf("verifyProof eth_call: %v", err)
+		}
+		answer, err := verifierABI.Unpack("verifyProof", out)
+		if err != nil || len(answer) != 1 || answer[0] != true {
+			t.Fatalf("verifyProof(payment 1's proof) = %v (%v), want true", answer, err)
+		}
+		if f.Chain.Value != "true" || !f.OK {
+			t.Errorf("the chain's value %q (ok %v), want verifyProof's true, ok", f.Chain.Value, f.OK)
+		}
+		if !strings.Contains(f.Chain.Name, "verifyProof") {
+			t.Errorf("the chain's value is %q, want it to name verifyProof", f.Chain.Name)
+		}
+	})
+
 	t.Run("payment 1's settle hop carries its nullifier formula: Poseidon of the Sender's spend key and the leaf's position, the Nullifier event the receipt logged", func(t *testing.T) {
 		f := payment1Formula(t, "settle", engine.NodeRelayer, engine.NodeDvp)
 		if f.Name != engine.FormulaNullifier {

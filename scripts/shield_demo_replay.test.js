@@ -174,8 +174,9 @@ const hasProof = raw => stripProofs(raw) !== raw;
 
 // ARGUMENT is each formula card's privacy argument, as checkFormulas expects
 // it: its property (the title), its equation, what the chain sees, what stays
-// private, why it holds, and its line (note). A part that depends on the
-// formula detail d is a function of it.
+// private, why it holds, its line (note) and, for a card whose ✓ says what it
+// checked rather than "equals" the chain's value, what it says (check). A
+// part that depends on the formula detail d is a function of it.
 const ARGUMENT = {
   spendKey: {
     property: 'Only the owner can spend', eq: 'pk_spend = Poseidon(sk_spend)',
@@ -188,6 +189,13 @@ const ARGUMENT = {
     property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)',
     sees: /the commitment/, private: /pk_spend.*salt.*amount.*token/, why: /Poseidon is one-way.*random salt.*guessed amount can’t be checked/,
     note: /opening is public on chain[^.]*\. Privacy starts at the first spend/,
+  },
+  conservation: {
+    property: 'Amounts hidden, yet balanced', eq: 'Σin = Σout: in₀ = out₀ + out₁, with no fee in the circuit; and every value 0 ≤ v < 10³⁶',
+    sees: /only commitments: the spent note’s, behind its nullifier, and the two new ones/, private: /^stays private\s*every amount: the spent note’s, the payment’s, the change$/,
+    why: /amounts sit inside the commitments, hidden as the commitment card’s Hiding says\..*circuit proves Σin = Σout over these hidden amounts.*range check is why no one can mint.*“negative” amount.*0 ≤ v < 10³⁶ rules that out/,
+    // A walkthrough's ✓ is the amounts summing, in range, and the Verifier accepting the proof.
+    check: d => d.formula.ok ? /: the amounts sum, each is in range, and the chain answers true to the Verifier.s verifyProof/ : /: not all hold of the amounts summing/,
   },
   merklePath: {
     property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈',
@@ -237,6 +245,7 @@ function checkFormulas(doc, h, where) {
     assert.ok(chk, `${at}: no check line`);
     assert.match(chk.textContent, new RegExp(`^${f.ok ? '✓' : '✗'} checked against the chain with this run’s values`), `${at}: the check line`);
     assert.ok(chk.textContent.includes(f.chain.name), `${at}: the check line names the chain's value`);
+    assert.match(chk.textContent, a.check ? part(a.check) : new RegExp(`: ${f.ok ? 'equals' : 'differs from'} `), `${at}: what the check line says it checked`);
     assert.ok(fold, `${at}: no "this run's values" fold`);
     assert.strictEqual(fold.querySelector('summary')?.textContent, 'this run’s values', `${at}: the values fold's summary`);
     assert.ok(!fold.open, `${at}: the values fold is open, want it closed`);
@@ -325,12 +334,12 @@ test('the default run fixture is a real default run, with the cases the replay i
     'no bare field element outside a proof: the digit-for-digit check would check nothing');
   // A full run's formula details carry only their name, each once on its
   // first hop: the spend key on the Sender's registration, the commitment on
-  // the shield, the Merkle path on payment 1's proof request, the nullifier
-  // on its settlement.
+  // the shield, the Merkle path and value conservation on payment 1's proof
+  // request, the nullifier on its settlement.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier']],
-    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path and the nullifier on payment 1');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier']],
+    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation and the nullifier on payment 1');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
 });
 
@@ -370,6 +379,8 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   assert.ok(details.some(d => d.kind === 'formula' && d.formula.name === 'commitment'), 'no commitment formula on the shield');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'register' && e.label === 'register' && e.from === 'actor1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'spendKey' && d.formula.chain)),
     'no spend key formula, with its values, on the Sender’s registration');
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'prove Payment' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'conservation' && d.formula.chain)),
+    'no value conservation formula, with its values, on payment 1’s proof request');
   for (const name of ['merklePath', 'nullifier'])
     assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
   // The Merkle path card names its crowd: at least the leaves up to the spent one.
