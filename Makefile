@@ -170,8 +170,9 @@ retail-gnark: ## Start the retail gnark proof server (keep running)
 retail-test: ## Retail integration tests (needs chain, setup and gnark server)
 	cd enygma_retail_payments/test && go test ./... -v -timeout 600s
 
-# The full shield demo scenario test plays three runs (~11 min); this plays only
-# the default-mode run (~4 min) and the subtests matching T, e.g. T=leavesIn.
+# The full shield demo scenario test plays three runs (~11 min); this plays the
+# default-mode run (~4 min) and the subtests matching T, e.g. T=leavesIn. A mode's
+# own run is a subtest too, so T=with_the_tag_toggle_off adds the tags-off run (~8 min).
 shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
 	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s

@@ -87,6 +87,29 @@ const c = window.__chk;
 
 Extend the probe for what a ticket checks (a panel's content, say), keeping to observers and the event stream.
 
+To get to one hop in a run with pausing on (a walkthrough, say), paste this before the probe's last line, and call `c.advanceUntil(find)` once the run has started. It presses whichever NEXT shows, a concept moment's or a step gate's, until `find()` returns an element. Then it stops pressing, and keeps that element's text and the time in `c.reached`. Wait in the background and read `c.reached`. Hops still due in that release play on, and a later one can replace the card. When `c.reached.text` is all you need, read it; otherwise click the step to replay it.
+
+```js
+// advanceUntil presses the NEXT that shows until find() returns an element, then keeps its text in c.reached.
+c.advanceUntil = find => {
+  c.reached = null;
+  const press = () => {
+    const el = find();
+    if (el) { c.reached = { at: performance.now(), text: el.innerText }; obs.disconnect(); return; }
+    [$('momentNext'), $('nextBtn')].find(b => b?.checkVisibility() && !b.disabled)?.click();
+  };
+  const obs = new MutationObserver(press);
+  obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'class', 'hidden'] });
+  press();
+};
+// card(property) finds the hop panel's formula card titled property, for advanceUntil.
+c.card = property => () => [...document.querySelectorAll('#hopPanel .formula')].find(f => f.querySelector('.fprop')?.textContent === property);
+```
+
+For example, `c.advanceUntil(c.card('Hiding'))` presses on until the shield's commitment card shows.
+
+`javascript_tool` withholds text in its output that looks like a raw hex value or a query string. Compare values inside the page instead (return `a === b`, and the lengths), and read them on a screenshot.
+
 ## Layout checks
 
 The Side story layout (#150): a step strip on top, the diagram beside a story column (the narration card, public vs private, the hop detail fold), every other panel in one fold below, and the terminal drawer collapsed. Check it with `resize_window` at 1280×828 and again at 1600×1000, in both themes (the ◐ button), on a freshly loaded page and during a run. `resize_window` can fail to change the page's size when the screen is smaller (seen 2026-10-29: `innerWidth` stayed 1280 at 1600 and at 900), so read `innerWidth` and `innerHeight` after it, and leave a size it didn't reach to the user.
