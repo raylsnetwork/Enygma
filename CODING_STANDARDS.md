@@ -14,4 +14,4 @@ The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html
 
 ## Tests and checks
 
-- **A new check is shown red.** A change that adds a test or check names the mutation of the code under test that makes it fail (in the commit message or PR), and says it was run. A check with no stated red is a finding.
+- **A new check is shown red.** A change that adds a test or check names the mutation of the code under test that makes it fail (in the commit message or PR), and says it was run. A commit or PR with a check that has no stated red is a finding. In review of an uncommitted diff, list each new check and the mutation its commit must name, rather than reporting the message missing.
