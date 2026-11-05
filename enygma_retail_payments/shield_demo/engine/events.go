@@ -172,7 +172,9 @@ var noteOpening = []string{"pk_spend", "salt", "amount", "token"}
 
 // HopDetail is what a hop does to the protocol state or, for the http and
 // receipt kinds, what it sent over the wire or mined on chain. Field
-// elements are 0x-hex.
+// elements are 0x-hex. A hop's details are fixed when it plays, so a detail
+// can show only what exists by then: a transaction's receipt exists from its
+// settle hop on, never on the proof hops before it.
 type HopDetail struct {
 	Kind HopDetailKind `json:"kind"`
 	// Vault is the vault's node ID (NodeVault or NodeUsdrVault) and Tree
