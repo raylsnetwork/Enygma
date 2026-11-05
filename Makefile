@@ -70,7 +70,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test \
+	retail-setup retail-gnark retail-keygen retail-test shield-test shield-demo-restart \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -175,6 +175,20 @@ retail-test: ## Retail integration tests (needs chain, setup and gnark server)
 shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
 	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
+
+# run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
+# demo binary rebuilt: this rebuilds it and relaunches it on the running stack,
+# with that demo's -logs dir, detached as run.sh starts it.
+shield-demo-restart: ## Rebuild the shield demo and restart it on the running run.sh stack (after an engine change)
+	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
+	logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); \
+	[ -d "$$logs" ] || { echo "the demo on :9092 (pid $$pid) has no -logs dir: restart the stack with run.sh"; exit 1; }; \
+	root=$(CURDIR)/enygma_retail_payments; \
+	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && kill $$pid && \
+	while lsof -tiTCP:9092 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
+	(cd $$root/shield_demo && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
+	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo restarted on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
+	echo "the demo did not come back on :9092: see $$logs/demo.log"; exit 1
 
 auctions-keygen: ## Generate auction proving/verifying keys
 	cd enygma_dvp_auctions/gnark_circuits && go run ./cmd/keygen
