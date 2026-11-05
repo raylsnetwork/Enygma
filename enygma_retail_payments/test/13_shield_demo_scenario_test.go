@@ -330,7 +330,9 @@ func TestShieldDemoScenario(t *testing.T) {
 		// commitment on the shield; the Merkle path on payment 1's proof
 		// request, a full run having no hop for the proof coming back; value
 		// conservation on that proof request too; the nullifier on payment
-		// 1's settlement.
+		// 1's settlement; note encryption, tags on, on the audit: each
+		// participant opens their note with a tag channel's key, so the
+		// audit is the first hop a view key opens a note's ciphertext by.
 		first := map[engine.FormulaName]func(engine.Event) bool{
 			engine.FormulaSpendKey: func(h engine.Event) bool {
 				return h.Step == "register" && h.Label == "register" && h.From == sender && h.To == engine.NodeUserRegistry
@@ -346,6 +348,9 @@ func TestShieldDemoScenario(t *testing.T) {
 			},
 			engine.FormulaNullifier: func(h engine.Event) bool {
 				return h.Step == "fanout_1" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp
+			},
+			engine.FormulaNoteEncryption: func(h engine.Event) bool {
+				return h.Step == "audit" && h.Label == "audit" && h.From == engine.NodeVault && h.To == engine.NodeAuditor
 			},
 		}
 		seen := map[engine.FormulaName]int{}
@@ -839,6 +844,28 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		checkAfterScript(t, ue)
 		checkGrantShieldScanHops(t, ue, usink.hops())
+		// Tags off, the first participant's scan is the first hop a view key
+		// opens a note's ciphertext by: it, and no other hop, carries the
+		// note encryption formula, by name only.
+		firstScan := engine.ActorNode(ue.Participants()[0].ID)
+		cards := 0
+		for _, h := range usink.hops() {
+			for _, d := range detailsOf(h, engine.DetailFormula) {
+				if d.Formula == nil || d.Formula.Name != engine.FormulaNoteEncryption {
+					continue
+				}
+				cards++
+				if h.Step != "discover" || h.Label != "scan" || h.From != engine.NodeVault || h.To != firstScan {
+					t.Errorf("step %s: hop %q (%s → %s) carries the note encryption formula, want it on the first participant's scan (%s → %s)", h.Step, h.Label, h.From, h.To, engine.NodeVault, firstScan)
+				}
+				if want := (engine.Formula{Name: engine.FormulaNoteEncryption}); !reflect.DeepEqual(*d.Formula, want) || d.Vault != engine.NodeVault {
+					t.Errorf("the note encryption formula is %+v in the %s, want %+v in the %s: its name only", *d.Formula, d.Vault, want, engine.NodeVault)
+				}
+			}
+		}
+		if cards != 1 {
+			t.Errorf("%d note encryption formula details with tags off, want one", cards)
+		}
 		if got, want := ue.Balance(ue.Sender()), big.NewInt(300); got.Cmp(want) != 0 {
 			t.Errorf("sender's private balance %s, want %s", got, want)
 		}

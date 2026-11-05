@@ -204,6 +204,73 @@ func (c *chain) conservationFormula(ctx context.Context, cfg Config, from, to *A
 	}}, nil
 }
 
+// noteEncryptionFormula is the note encryption formula of the note with
+// commitment cm, owner's, as the vault's Payment (or EncryptedNote) event
+// published it: its capsule decapsulated with owner's view key, the salt
+// and AES key derived from the shared secret, the payload opened, and the
+// opening hashed with owner's pk_spend, checked against the commitment the
+// event published with the ciphertext.
+func (c *chain) noteEncryptionFormula(ctx context.Context, owner *Actor, cm *big.Int) (HopDetail, error) {
+	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+		Addresses: []common.Address{c.dvpAddr, c.vaultAddr},
+		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic}, {common.BigToHash(erc20VaultId)}, {common.BigToHash(cm)}},
+	})
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("note encryption card: note events: %w", err)
+	}
+	if len(logs) != 1 {
+		return HopDetail{}, fmt.Errorf("note encryption card: %d note events for %s's note 0x%s, want 1", len(logs), owner.Name, cm.Text(16))
+	}
+	l := logs[0]
+	vals, err := abiBytesPair().Unpack(l.Data)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("note encryption card: decode the note event in tx %s: %w", l.TxHash.Hex(), err)
+	}
+	if len(vals) != 2 {
+		return HopDetail{}, fmt.Errorf("note encryption card: the note event in tx %s carries %d values, want the capsule and the sealed payload", l.TxHash.Hex(), len(vals))
+	}
+	capsule, sealed := vals[0].([]byte), vals[1].([]byte)
+	ss, err := dvpcore.Decapsulate(owner.View.DecapsKey, capsule)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("note encryption card: %s: %w", owner.Name, err)
+	}
+	saltB, err := dvpcore.DerivePaymentSalt(ss)
+	if err != nil {
+		return HopDetail{}, err
+	}
+	key, err := dvpcore.DerivePaymentKey(ss)
+	if err != nil {
+		return HopDetail{}, err
+	}
+	token, amount, err := dvpcore.DecryptPayload(key, sealed)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("note encryption card: %s's view key does not open the note in tx %s: %w", owner.Name, l.TxHash.Hex(), err)
+	}
+	salt := dvpcore.SaltBToField(saltB)
+	opened, err := rpcore.Erc20CommitmentV2(owner.Spend.PublicKey, salt, amount, token)
+	if err != nil {
+		return HopDetail{}, err
+	}
+	event := "Payment"
+	if l.Topics[0] == encryptedNoteTopic {
+		event = "EncryptedNote"
+	}
+	result, chain := fieldHex(opened), fieldHex(l.Topics[2].Big())
+	return HopDetail{Kind: DetailFormula, Vault: NodeVault, Formula: &Formula{
+		Name: FormulaNoteEncryption,
+		Inputs: []FormulaValue{
+			{Name: "capsule · ML-KEM-768", Value: bytesHex(capsule)},
+			{Name: "sealed · AES-GCM", Value: bytesHex(sealed)},
+			{Name: "amount · opened", Value: amount.String()},
+			{Name: "salt · opened", Value: fieldHex(salt)},
+			{Name: "token · opened", Value: fieldHex(token)},
+		},
+		Result: result,
+		Chain:  &FormulaValue{Name: fmt.Sprintf("the commitment the vault's %s event published with this ciphertext, tx %s", event, l.TxHash.Hex()), Value: chain},
+		OK:     result == chain,
+	}}, nil
+}
+
 // subscript is n in subscript digits, e.g. "₁₂".
 func subscript(n int) string { return digits(n, "₀₁₂₃₄₅₆₇₈₉") }
 

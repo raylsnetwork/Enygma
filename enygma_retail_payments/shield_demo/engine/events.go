@@ -126,15 +126,20 @@ const (
 	// UserRegistry holds it by), the commitment on the shield, the Merkle
 	// path on payment 1's proof request (a full run has no hop of its own
 	// for the proof coming back), value conservation on that proof request
-	// too, the nullifier on payment 1's settlement. A walkthrough's carries
+	// too, the nullifier on payment 1's settlement, and note encryption on
+	// the first hop a view key opens a note's ciphertext by (the first
+	// participant's scan; with tags, a participant opens their note with
+	// the tag channel's key, so the audit's). A walkthrough's carries
 	// the run's real values too, checked against what the chain holds, on
 	// the Sender's registration (the spend key: its sk_spend is a throwaway
 	// demo key), its shield's hop (the commitment: its values are the
-	// shield's opening, public in the deposit's calldata) and payment 1's
+	// shield's opening, public in the deposit's calldata), payment 1's
 	// (value conservation on the proof request, checked against the
 	// Verifier's verifyProof; the Merkle path on the proof coming back; the
 	// nullifier on the settlement): values the page shows there anyway, in
-	// payment 1's witness.
+	// payment 1's witness; and on its first participant's scan (note
+	// encryption: the ciphertext the scan's decryption detail shows, and
+	// its opening).
 	DetailFormula HopDetailKind = "formula"
 )
 
@@ -159,6 +164,13 @@ const (
 	// Σout with no fee in the circuit, and its range check: every amount
 	// 0 ≤ v < 10³⁶.
 	FormulaConservation FormulaName = "conservation"
+	// FormulaNoteEncryption is a note's encryption to its recipient's view
+	// key: ML-KEM-768 encapsulation gives a capsule and a shared secret,
+	// HKDF derives the note's salt and an AES key from the secret, and
+	// AES-GCM seals the token and amount. The recipient decapsulates, derives
+	// the same salt and key, opens the payload, and the opening hashes to
+	// the note's commitment.
+	FormulaNoteEncryption FormulaName = "noteEncryption"
 )
 
 // Formula is one equation with its real inputs, in the order the equation

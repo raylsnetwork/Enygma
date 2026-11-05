@@ -197,6 +197,12 @@ const ARGUMENT = {
     // A walkthrough's ✓ is the amounts summing, in range, and the Verifier accepting the proof.
     check: d => d.formula.ok ? /: the amounts sum, each is in range, and the chain answers true to the Verifier.s verifyProof/ : /: not all hold of the amounts summing/,
   },
+  noteEncryption: {
+    property: 'Only the recipient (and the auditor) can read it',
+    eq: '(capsule, ss) = ML-KEM-768.Encaps(view key) → salt, k = HKDF(ss) → sealed = AES-GCM_k(token, amount); the recipient: ss = Decaps(view key, capsule), the same salt and k, opens sealed, and Poseidon(pk_spend, salt, amount, token) = commitment',
+    sees: /the capsule and the sealed payload/, private: /^stays private\s*the shared secret ss, the salt, the amount, the token$/,
+    why: /Only the view key’s holder can decapsulate the capsule to the shared secret.*ML-KEM-768 is post-quantum.*AES-GCM fails to open under any other key.*The auditor reads the note too: it recovers every user’s view key/,
+  },
   merklePath: {
     property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈',
     sees: d => new RegExp(`the root and the tree number, tree ${d.tree}$`), private: /the leaf and its position/,
@@ -335,11 +341,12 @@ test('the default run fixture is a real default run, with the cases the replay i
   // A full run's formula details carry only their name, each once on its
   // first hop: the spend key on the Sender's registration, the commitment on
   // the shield, the Merkle path and value conservation on payment 1's proof
-  // request, the nullifier on its settlement.
+  // request, the nullifier on its settlement, and, tags on, note encryption on
+  // the audit: each participant opens their note with a tag channel's key.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier']],
-    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation and the nullifier on payment 1');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
+    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation and the nullifier on payment 1, note encryption on the audit');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
 });
 
@@ -381,6 +388,9 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
     'no spend key formula, with its values, on the Sender’s registration');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'prove Payment' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'conservation' && d.formula.chain)),
     'no value conservation formula, with its values, on payment 1’s proof request');
+  // Tags off, the first participant's scan is the first hop a view key opens a note's ciphertext by.
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'discover' && e.label === 'scan' && e.from === 'Erc20CoinVault' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'noteEncryption' && d.formula.chain)),
+    'no note encryption formula, with its values, on the first participant’s scan');
   for (const name of ['merklePath', 'nullifier'])
     assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
   // The Merkle path card names its crowd: at least the leaves up to the spent one.
