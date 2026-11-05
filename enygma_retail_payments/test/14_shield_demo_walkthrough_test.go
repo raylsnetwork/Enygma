@@ -329,12 +329,12 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 	}
 	ethCalls := map[string]string{} // call data → the node's result
 	sink.writeReplayFixtureIfPassed(t, walkthroughFixture,
-		fixtureField{"defaults", struct {
+		fixtureField{name: "defaults", value: struct {
 			engine.Options
 			Chain engine.Verifier `json:"chain"`
 		}{engine.DefaultOptions(), verifier}},
-		fixtureField{"run", opts},
-		fixtureField{"ethCall", ethCalls})
+		fixtureField{name: "run", value: opts},
+		fixtureField{name: "ethCall", value: ethCalls, filledBy: "payment 1's proof checks true on the Verifier the vault uses, and false with a tampered output commitment"})
 
 	t.Run("the steps are the Sender's path, in order", func(t *testing.T) {
 		var started []string
