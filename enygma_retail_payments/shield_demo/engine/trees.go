@@ -46,17 +46,24 @@ func (c *chain) commitmentBatches(ctx context.Context, vaultAddr common.Address)
 // vaultTree rebuilds a vault's Merkle trees from its Commitment events. The
 // vault inserts each transaction's commitments as one batch and starts a new
 // tree, numbered from 0, when that batch would fill the current one, so the
-// commitments are inserted a transaction at a time.
-func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (*rpcore.MerkleTree, error) {
+// commitments are inserted a transaction at a time. sizes[i] is how many
+// leaves tree i holds: a spent note's crowd, the leaves its proof hides it
+// among.
+func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (tree *rpcore.MerkleTree, sizes []int, err error) {
 	batches, err := c.commitmentBatches(ctx, vaultAddr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	tree := rpcore.NewMerkleTree(merkleDepth)
+	tree = rpcore.NewMerkleTree(merkleDepth)
+	sizes = []int{0}
 	for _, b := range batches {
 		tree.InsertLeaves(b.leaves)
+		for len(sizes) <= tree.TreeNumber() {
+			sizes = append(sizes, 0)
+		}
+		sizes[tree.TreeNumber()] = len(tree.GetLeaves())
 	}
-	return tree, nil
+	return tree, sizes, nil
 }
 
 // emptyRoot is the root of a tree with no leaves.

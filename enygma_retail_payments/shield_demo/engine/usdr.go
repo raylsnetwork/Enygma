@@ -86,7 +86,7 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 	}
 	changeAmt := new(big.Int).Sub(prev.amount, e.usdrFixedFee)
 
-	tree, err := c.vaultTree(ctx, c.usdrVaultAddr)
+	tree, _, err := c.vaultTree(ctx, c.usdrVaultAddr)
 	if err != nil {
 		return nil, err
 	}

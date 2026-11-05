@@ -28,8 +28,10 @@ import (
 	"enygma_retail_payments/shield_demo/engine"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
@@ -607,6 +609,20 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if !strings.Contains(f.Chain.Name, "isValidRoot") || !strings.Contains(f.Chain.Name, fmt.Sprintf("tree %d", tree)) {
 			t.Errorf("the chain's value is %q, want it to name isValidRoot and tree %d", f.Chain.Name, tree)
 		}
+		// The crowd: the leaves tree T held when the root was taken, before
+		// payment 1's settlement inserted its notes, counted from the
+		// vault's Commitment events.
+		settled, err := client.TransactionReceipt(context.Background(), e.FanOut()[0].TxHash)
+		if err != nil {
+			t.Fatalf("payment 1's receipt: %v", err)
+		}
+		sizes := treeSizes(t, client, common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), settled.BlockNumber.Uint64())
+		if tree >= len(sizes) || f.Leaves != sizes[tree] {
+			t.Errorf("the formula's crowd is %d leaves, the vault's Commitment events put %v leaves in its trees, want tree %d's", f.Leaves, sizes, tree)
+		}
+		if f.Leaves <= index {
+			t.Errorf("%d leaves in tree %d, but the spent note is leaf #%d", f.Leaves, tree, index)
+		}
 	})
 
 	t.Run("payment 1's settle hop carries its nullifier formula: Poseidon of the Sender's spend key and the leaf's position, the Nullifier event the receipt logged", func(t *testing.T) {
@@ -884,4 +900,39 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			t.Error("the walkthrough did not finish")
 		}
 	})
+}
+
+// treeSizes counts the leaves in each of the vault at vaultAddr's trees,
+// from its Commitment events in blocks before block before. As Merkle.sol
+// does, it inserts a transaction's commitments as one batch and starts a
+// new tree when the batch would fill the current one (count + batch ≥ 2⁸).
+// It repeats the engine's rule on purpose: the test's own count, from the
+// chain's events, is what the engine's crowd is checked against.
+func treeSizes(t *testing.T, client *ethclient.Client, vaultAddr common.Address, before uint64) []int {
+	t.Helper()
+	logs, err := client.FilterLogs(context.Background(), ethereum.FilterQuery{
+		Addresses: []common.Address{vaultAddr},
+		Topics:    [][]common.Hash{{commitmentEventSig}},
+		ToBlock:   new(big.Int).SetUint64(before - 1),
+	})
+	if err != nil {
+		t.Fatalf("vault Commitment events: %v", err)
+	}
+	var batches []int
+	var last common.Hash
+	for i, l := range logs {
+		if i == 0 || l.TxHash != last {
+			batches = append(batches, 0)
+		}
+		batches[len(batches)-1]++
+		last = l.TxHash
+	}
+	sizes := []int{0}
+	for _, n := range batches {
+		if sizes[len(sizes)-1]+n >= 1<<8 {
+			sizes = append(sizes, 0)
+		}
+		sizes[len(sizes)-1] += n
+	}
+	return sizes
 }

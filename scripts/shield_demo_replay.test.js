@@ -174,46 +174,54 @@ const hasProof = raw => stripProofs(raw) !== raw;
 
 // ARGUMENT is each formula card's privacy argument, as checkFormulas expects
 // it: its property (the title), its equation, what the chain sees, what stays
-// private and why it holds. A card laid out before the argument (#191) has
-// none yet and is checked by its old line (LINE).
+// private, why it holds, and its line (note). A part that depends on the
+// formula detail d is a function of it.
 const ARGUMENT = {
   commitment: {
     property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)',
     sees: /the commitment/, private: /pk_spend.*salt.*amount.*token/, why: /Poseidon is one-way.*random salt.*guessed amount can’t be checked/,
+    note: /opening is public on chain[^.]*\. Privacy starts at the first spend/,
   },
-};
-const LINE = {
-  commitment: /opening is public on chain[^.]*\. Privacy starts at the first spend/,
-  nullifier: /inputs are private[^.]*no one but the Sender can link this nullifier to the note/,
+  merklePath: {
+    property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈',
+    sees: d => new RegExp(`the root and the tree number, tree ${d.tree}$`), private: /the leaf and its position/,
+    // A walkthrough's names the crowd: the leaves its tree held when the root was taken.
+    why: d => new RegExp(`the note is one of the ${d.formula.leaves ? `${d.formula.leaves} ` : ''}leaves of tree ${d.tree}, not which\\. A deeper tree means a larger crowd to hide in`),
+  },
+  nullifier: {
+    property: 'Unlinkable, spend-once', eq: 'nullifier = Poseidon(sk_spend, tree · 2⁸ + leaf index)',
+    sees: /the nullifier/, private: /sk_spend.*position/,
+    why: /Linking a nullifier to its note needs sk_spend.*same note always gives the same nullifier, so the vault refuses a second spend/,
+    // A walkthrough's points at its own replay; a full run's at a walkthrough's.
+    note: d => d.formula.chain ? /^The replay shows that refusal: after payment 2/ : /^A walkthrough’s replay shows that refusal: after payment 2/,
+  },
 };
 
 // checkFormulas fails unless the hop detail panel shows one formula card
-// per formula detail of hop h, each with its privacy argument (ARGUMENT) and
-// its own line (LINE), and, only when the detail carries values (a
-// walkthrough's), one line with its ✓ (or ✗) naming the chain's value and a
-// closed "this run's values" fold with every input, the result and the
-// chain's value digit for digit, in order. A value-less detail (a full
-// run's) shows no value, check or fold. It returns how many values it
-// checked.
+// per formula detail of hop h, each with its privacy argument (ARGUMENT),
+// and, only when the detail carries values (a walkthrough's), one line with
+// its ✓ (or ✗) naming the chain's value and a closed "this run's values"
+// fold with every input, the result and the chain's value digit for digit,
+// in order. A value-less detail (a full run's) shows no value, check or
+// fold. It returns how many values it checked.
 function checkFormulas(doc, h, where) {
   const fs = (h.hopDetail || []).filter(d => d.kind === 'formula');
   const shown = [...doc.querySelectorAll('#hopPanel .formula')];
   assert.strictEqual(shown.length, fs.length, `${where}: formula cards shown`);
   let n = 0;
   fs.forEach(({ formula: f }, i) => {
-    const card = shown[i], text = card.textContent, at = `${where}, ${f.name} formula`;
-    const a = ARGUMENT[f.name];
-    if (a) {
-      assert.strictEqual(card.querySelector('.fprop')?.textContent, a.property, `${at}: its property as the title`);
-      assert.strictEqual(card.querySelector('.feq')?.textContent, a.eq, `${at}: its equation`);
-      const sees = card.querySelector('.farg.sees'), priv = card.querySelector('.farg.priv');
-      assert.ok(sees?.querySelector('.vis.pub'), `${at}: a chain-sees line with the public tag`);
-      assert.match(sees.textContent, a.sees, `${at}: what the chain sees`);
-      assert.ok(priv?.querySelector('.vis.priv'), `${at}: a stays-private line with the private tag`);
-      assert.match(priv.textContent, a.private, `${at}: what stays private`);
-      assert.match(card.querySelector('.fwhy')?.textContent || '', a.why, `${at}: why it holds`);
-    }
-    if (LINE[f.name]) assert.match(text, LINE[f.name], `${at}: its line`);
+    const card = shown[i], at = `${where}, ${f.name} formula`;
+    const a = ARGUMENT[f.name], part = v => typeof v === 'function' ? v(fs[i]) : v;
+    assert.ok(a, `${at}: a formula the replay test has no argument for`);
+    assert.strictEqual(card.querySelector('.fprop')?.textContent, a.property, `${at}: its property as the title`);
+    assert.strictEqual(card.querySelector('.feq')?.textContent, a.eq, `${at}: its equation`);
+    const sees = card.querySelector('.farg.sees'), priv = card.querySelector('.farg.priv');
+    assert.ok(sees?.querySelector('.vis.pub'), `${at}: a chain-sees line with the public tag`);
+    assert.match(sees.textContent, part(a.sees), `${at}: what the chain sees`);
+    assert.ok(priv?.querySelector('.vis.priv'), `${at}: a stays-private line with the private tag`);
+    assert.match(priv.textContent, part(a.private), `${at}: what stays private`);
+    assert.match(card.querySelector('.fwhy')?.textContent || '', part(a.why), `${at}: why it holds`);
+    if (a.note) assert.match(card.querySelector('.fnote')?.textContent || '', part(a.note), `${at}: its line`);
     const fold = card.querySelector('details.fvals'), chk = card.querySelector('.fchk');
     if (!f.chain) {
       assert.ok(!fold && !chk && !card.querySelector('.fv'), `${at}: a value-less (full run) card shows a value, check or values fold`);
@@ -308,20 +316,29 @@ test('the default run fixture is a real default run, with the cases the replay i
   assert.ok(http.some(d => hasProof(d.response || '')), 'no proof in an HTTP response');
   assert.ok(http.some(d => /[:[,]\s*\d{16,}\s*[,\]}]/.test(stripProofs(d.request + d.response))),
     'no bare field element outside a proof: the digit-for-digit check would check nothing');
-  // A full run's formula details carry only their name: here the commitment's, on the shield.
+  // A full run's formula details carry only their name, each once on its
+  // first hop: the commitment on the shield, the Merkle path on payment 1's
+  // proof request, the nullifier on its settlement.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
-  assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, hop.label, detail.formula.name]), [['shield', 'shield', 'commitment']], 'formula details: one commitment, on the shield');
-  assert.deepStrictEqual(Object.keys(formulas[0].detail.formula), ['name'], 'a full run’s formula detail carries values');
+  assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
+    [['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier']],
+    'formula details: the commitment on the shield, the Merkle path and the nullifier on payment 1');
+  for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
 });
 
 test('the page plays the whole default run and replays every step’s hop details without an exception, showing every field element digit for digit', async () => {
   const page = await open(DEFAULT_RUN);
-  // Up to the shield's hop: its value-less commitment card shows as it plays.
-  const shield = DEFAULT_RUN.events.findIndex(e => e.kind === 'hop' && e.step === 'shield' && e.label === 'shield');
-  feed(page, DEFAULT_RUN.events.slice(0, shield + 1));
-  await playOut(page);
-  checkFormulas(page.doc, DEFAULT_RUN.events[shield], 'the shield, live');
-  feed(page, DEFAULT_RUN.events.slice(shield + 1), shield + 1);
+  // Up to each hop with a formula: its value-less card shows as it plays.
+  let fed = 0;
+  for (const [at, e] of DEFAULT_RUN.events.entries()) {
+    if (e.kind !== 'hop' || !(e.hopDetail || []).some(d => d.kind === 'formula')) continue;
+    feed(page, DEFAULT_RUN.events.slice(fed, at + 1), fed);
+    fed = at + 1;
+    await playOut(page);
+    checkFormulas(page.doc, e, `${e.step} ${e.label}, live`);
+  }
+  assert.ok(fed > 0, 'no formula card played');
+  feed(page, DEFAULT_RUN.events.slice(fed), fed);
   await playOut(page);
   failOn(page.errors, 'while playing the run');
   assert.ok(!page.doc.getElementById('hopFold').open, 'a full run opened the hop detail fold by itself');
@@ -345,6 +362,9 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   assert.ok(details.some(d => d.kind === 'formula' && d.formula.name === 'commitment'), 'no commitment formula on the shield');
   for (const name of ['merklePath', 'nullifier'])
     assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
+  // The Merkle path card names its crowd: at least the leaves up to the spent one.
+  for (const { formula: f } of details.filter(d => d.kind === 'formula' && d.formula.name === 'merklePath'))
+    assert.ok(f.leaves > Number(f.inputs[0].name.match(/#(\d+)/)[1]), `the Merkle path's crowd is ${f.leaves} leaves, want more than its leaf index`);
   const chain = WALKTHROUGH.defaults.chain;
   assert.ok(chain?.rpcUrl && chain.verifier, '/defaults names no Verifier: the on-chain check would not call it');
   const call = verifyProofCall(), one = '0x' + '0'.repeat(63) + '1', zero = '0x' + '0'.repeat(64);

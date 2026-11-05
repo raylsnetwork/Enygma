@@ -174,7 +174,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	c := e.chain
 	change := new(big.Int).Sub(total(ins), amount)
 
-	tree, err := c.vaultTree(ctx, c.vaultAddr)
+	tree, sizes, err := c.vaultTree(ctx, c.vaultAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -239,10 +239,17 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	for i := range ins {
 		nullifiers[i] = "0x" + stmt[nullifiersOffset+i].Text(16)[:12] + "…"
 	}
+	// Payment 1 is the first spend of a run, so it carries the cards of the
+	// Merkle path and the nullifier: a walkthrough's with their values (see
+	// below), a full run's by name only. A full run has no hop for the proof
+	// coming back, so its Merkle path card goes on the proof request.
+	payment1 := s.id == "fanout_1"
 	if s.gated {
 		// A walkthrough's payment 1 shows what stays in the wallet beside
 		// what goes on chain.
 		proveDetails = append(proveDetails, witness(circuit, from, to, ins, proofs, amount, change, res))
+	} else if payment1 {
+		proveDetails = append(proveDetails, formulaNamed(FormulaMerklePath, NodeVault, proofs[0].TreeNumber))
 	}
 	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs, rec.exchange())...)
 	if s.gated {
@@ -254,7 +261,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		// vault has had.
 		var paths []HopDetail
 		for _, p := range proofs {
-			d, err := merklePathFormula(ctx, c.vault, NodeVault, from.Name, p)
+			d, err := merklePathFormula(ctx, c.vault, NodeVault, from.Name, p, sizes[p.TreeNumber])
 			if err != nil {
 				return nil, err
 			}
@@ -361,6 +368,8 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 			}
 			settleDetails = append(settleDetails, d)
 		}
+	} else if payment1 {
+		settleDetails = append(settleDetails, formulaNamed(FormulaNullifier, NodeVault, proofs[0].TreeNumber))
 	}
 	settleDetails = append(settleDetails, c.receipt(receipt))
 	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)), settleDetails...)

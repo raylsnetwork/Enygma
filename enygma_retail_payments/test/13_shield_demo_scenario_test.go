@@ -323,32 +323,46 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	t.Run("a full run's shield carries the one commitment formula detail, by name only: a full run never sends an opening", func(t *testing.T) {
+	t.Run("a full run carries each formula's detail once, by name only, on its first hop: a full run never sends an opening", func(t *testing.T) {
 		sender := engine.ActorNode(e.Sender().ID)
-		var shields int
+		// Each formula's first hop: the commitment on the shield; the Merkle
+		// path on payment 1's proof request, a full run having no hop for
+		// the proof coming back; the nullifier on payment 1's settlement.
+		first := map[engine.FormulaName]func(engine.Event) bool{
+			engine.FormulaCommitment: func(h engine.Event) bool {
+				return h.Step == "shield" && h.Label == "shield" && h.From == sender && h.To == engine.NodeVault
+			},
+			engine.FormulaMerklePath: func(h engine.Event) bool {
+				return h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && strings.HasPrefix(h.Label, "prove Payment")
+			},
+			engine.FormulaNullifier: func(h engine.Event) bool {
+				return h.Step == "fanout_1" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp
+			},
+		}
+		seen := map[engine.FormulaName]int{}
 		for _, h := range sink.hops() {
-			fs := detailsOf(h, engine.DetailFormula)
-			shield := h.Step == "shield" && h.Label == "shield" && h.From == sender && h.To == engine.NodeVault
-			if !shield {
-				if len(fs) > 0 {
-					t.Errorf("step %s: hop %q carries %d formula details, want them only on the shield", h.Step, h.Label, len(fs))
+			for _, d := range detailsOf(h, engine.DetailFormula) {
+				if d.Formula == nil {
+					t.Errorf("step %s: hop %q carries a formula detail with no formula", h.Step, h.Label)
+					continue
 				}
-				continue
-			}
-			shields++
-			if len(fs) != 1 || fs[0].Formula == nil {
-				t.Errorf("the shield hop carries %d formula details, want one", len(fs))
-				continue
-			}
-			if want := (engine.Formula{Name: engine.FormulaCommitment}); !reflect.DeepEqual(*fs[0].Formula, want) {
-				t.Errorf("the shield's formula is %+v, want %+v: its name only", *fs[0].Formula, want)
-			}
-			if fs[0].Vault != engine.NodeVault {
-				t.Errorf("the shield's formula is in the %s, want the %s", fs[0].Vault, engine.NodeVault)
+				name := d.Formula.Name
+				seen[name]++
+				if on, ok := first[name]; !ok || !on(h) || h.Failed {
+					t.Errorf("step %s: hop %q (%s → %s) carries the %s formula, want it only on its first hop", h.Step, h.Label, h.From, h.To, name)
+				}
+				if want := (engine.Formula{Name: name}); !reflect.DeepEqual(*d.Formula, want) {
+					t.Errorf("step %s: the %s formula is %+v, want %+v: its name only", h.Step, name, *d.Formula, want)
+				}
+				if d.Vault != engine.NodeVault {
+					t.Errorf("step %s: the %s formula is in the %s, want the %s", h.Step, name, d.Vault, engine.NodeVault)
+				}
 			}
 		}
-		if shields != 1 {
-			t.Errorf("%d shield hops, want 1", shields)
+		for name := range first {
+			if seen[name] != 1 {
+				t.Errorf("%d %s formula details, want one", seen[name], name)
+			}
 		}
 	})
 
@@ -1166,6 +1180,7 @@ func checkProofDetails(t *testing.T, vaults map[string]*bind.BoundContract, vaul
 				inputs = append(inputs, d)
 			case engine.DetailHTTP: // checked by checkWireDetails
 			case engine.DetailWitness: // payment 1 of a walkthrough: checked by TestShieldDemoWalkthrough
+			case engine.DetailFormula: // payment 1 of a full run: checked by its own subtest
 			default:
 				t.Errorf("step %s: %s proof hop carries a %q detail", h.Step, circuit, d.Kind)
 			}
@@ -1293,7 +1308,7 @@ func checkSettleChecks(t *testing.T, client *ethclient.Client, vaults map[string
 		settles++
 		var got []string
 		for _, d := range h.HopDetail {
-			if d.Kind == engine.DetailReceipt { // checked by checkReceiptDetails
+			if d.Kind == engine.DetailReceipt || d.Kind == engine.DetailFormula { // checked by checkReceiptDetails; payment 1's nullifier card
 				continue
 			}
 			if d.Kind != engine.DetailSettleChecks {
