@@ -328,9 +328,16 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .checks b { font:600 13px var(--serif); }
 .checks .ok { color:var(--ok); font-weight:600; margin-right:4px; }
 .checks .published { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
-/* A formula card: an equation, its real values in full, and its check against the chain; flex-shrink:0 as .opened. */
+/* A formula card: the privacy property an equation gives, the equation, what the chain sees and what stays private, why it holds,
+   and in a walkthrough its check against the chain and its real values in full, folded; flex-shrink:0 as .opened. */
 .formula { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; flex-shrink:0; overflow-wrap:anywhere; }
 .formula b { font:600 13px var(--serif); }
+.formula .farg { display:flex; gap:6px; align-items:baseline; color:var(--text2); }
+.formula .farg .vis { flex-shrink:0; }
+.formula .fwhy { color:var(--text2); }
+.formula .fwhy .k { color:var(--muted); font:11px var(--mono); margin-right:4px; }
+.formula .fvals summary { cursor:pointer; color:var(--muted); font:11px var(--mono); }
+.formula .fvals[open] { display:flex; flex-direction:column; gap:3px; }
 .formula .feq { font:600 12px var(--mono); color:var(--text); margin:2px 0; overflow-wrap:anywhere; }
 .formula .fin { display:grid; grid-template-columns:96px minmax(0,1fr); gap:8px; align-items:baseline; }
 .formula .fin .k { color:var(--muted); font:11px var(--mono); }
@@ -1555,16 +1562,26 @@ const SENTENCE = {
     : n[0].via === 'tag'
     ? `${n[0].owner} opens the tag’s payload with the key of the channel it came on and gets the note’s opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to a commitment in the vault.`
     : `${n[0].owner}’s view key opens one note’s ciphertext, as the chain holds it, to its opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to the note’s commitment. Every other note fails to open.`,
-  formula: d => `${FORMULA[d.formula.name]?.title || d.formula.name}, computed with this run’s real values and checked against what the chain holds.`,
+  formula: d => `${FORMULA[d.formula.name]?.title || d.formula.name}${hasValues(d.formula) ? ', computed with this run’s real values and checked against what the chain holds' : ': the equation, and why it keeps the protocol private'}.`,
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
 
-// FORMULA is each formula hop detail's card by its name: its title, its
-// equation as the protocol computes it, the name of its result and a line
-// on what it shows.
+// hasValues says whether formula f carries a run's values (a walkthrough's):
+// a full run's carries its name only.
+const hasValues = f => !!f.chain;
+
+// FORMULA is each formula hop detail's card by its name: its title, the
+// privacy property it gives (property), its equation as the protocol
+// computes it, what the chain sees (sees), what stays private (hidden), why
+// the one does not reveal the other (why), the name of its result and a line
+// on what it shows. A card without a property is not yet laid out as a
+// privacy argument (#191): it shows its title, equation and line.
 const FORMULA = {
   commitment: {
-    title: 'The note commitment', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)', result: 'commitment',
+    title: 'The note commitment', property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)', result: 'commitment',
+    sees: 'the commitment, one leaf in the vault’s tree',
+    hidden: 'the owner’s pk_spend, the salt, the amount, the token',
+    why: 'Poseidon is one-way: no one can work back from the commitment to what was hashed. And the random salt means even a guessed amount can’t be checked: hashing a guess without the salt gives some other commitment.',
     note: 'The shield is the one note whose opening is public on chain: the vault computes this commitment itself, from the deposit’s calldata. Privacy starts at the first spend.',
   },
   merklePath: {
@@ -1816,13 +1833,14 @@ const hopPanel = (() => {
         [`${who} · opens to`, `${esc(n.amount)} ${esc(n.asset)} · salt ${hex(n.salt)} · token ${hex(n.token)}`],
         ...(n.tx ? [[`${who} · transaction`, hex(n.tx)]] : [])];
     });
-    if (d.kind === 'formula') return [
+    // A full run's formula detail carries its name only: no values.
+    if (d.kind === 'formula') return !hasValues(d.formula) ? [] : [
       ...(d.formula.inputs || []).map(x => [`${d.formula.name} · ${x.name}`, /^0x/.test(x.value) ? hex(x.value) : esc(x.value)]),
       [`${d.formula.name} · result`, hex(d.formula.result)],
       [`chain · ${d.formula.ok ? 'equal' : 'differs'}`, `${hex(d.formula.chain.value)} <span class="muted">${esc(d.formula.chain.name)}</span>`]];
     if (!LANDS.has(d.kind)) return [];
     // A walkthrough's shield sends the opening, public in its calldata, in a commitment formula.
-    const opened = all.some(x => x.kind === 'formula' && x.formula.name === 'commitment');
+    const opened = all.some(x => x.kind === 'formula' && x.formula.name === 'commitment' && hasValues(x.formula));
     return [
       ...(d.kind === 'commitment'
         ? [[`commitment · public · tree ${d.tree} #${d.leaves[0].index}`, hex(d.commitment)], ...d.opening.map(p => [`${p} · private`, `<span class="muted">${opened ? 'in the formula below: public in this deposit’s calldata' : 'not sent to this page'}</span>`])]
@@ -1840,17 +1858,31 @@ const hopPanel = (() => {
     </div>`;
   // fval is a formula's value in full, digit for digit, copied on click.
   const fval = v => `<span class="fv" data-copy="${esc(v)}" title="click to copy">${esc(v)}</span>`;
-  // formulaHtml is a formula detail's card: its equation, each real input,
-  // the result, and ✓ (or ✗) against the value the chain holds.
+  // formulaHtml is a formula detail's card: the privacy property it gives,
+  // its equation, what the chain sees, what stays private and why, its
+  // line, and, for a walkthrough's (one with values), its ✓ (or ✗) against
+  // the value the chain holds and a closed fold with every real input, the
+  // result and that value.
   function formulaHtml(d) {
     const f = d.formula, c = FORMULA[f.name] || { title: f.name, eq: '', result: 'result', note: '' };
-    return `<div class="formula" title="Computed by the engine with this run’s real values; the check compares it with the chain">
-      <div><b>${esc(c.title)}</b> <span class="hstep">· real values</span></div>
+    const head = c.property
+      ? `<div><b class="fprop">${esc(c.property)}</b> <span class="hstep">· ${esc(c.title.replace(/^The /, 'the '))}</span></div>`
+      : `<div><b>${esc(c.title)}</b>${hasValues(f) ? ' <span class="hstep">· real values</span>' : ''}</div>`;
+    const values = !hasValues(f) ? '' : `
+      <div class="fchk">${f.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} checked against the chain with this run’s values: ${f.ok ? 'equals' : 'differs from'} ${esc(f.chain.name)}</div>
+      <details class="fvals"><summary>this run’s values</summary>
+        ${(f.inputs || []).map(x => `<div class="fin"><span class="k">${esc(x.name)}</span>${fval(x.value)}</div>`).join('')}
+        <div class="fin res"><span class="k">= ${esc(c.result)}</span>${fval(f.result)}</div>
+        <div class="fin res"><span class="k" title="${esc(f.chain.name)}">on chain</span>${fval(f.chain.value)}</div>
+      </details>`;
+    return `<div class="formula" title="${hasValues(f) ? 'Computed by the engine with this run’s real values; the check compares it with the chain' : 'The equation and its privacy argument: a full run sends no values'}">
+      ${head}
       ${c.eq ? `<div class="feq">${esc(c.eq)}</div>` : ''}
-      ${(f.inputs || []).map(x => `<div class="fin"><span class="k">${esc(x.name)}</span>${fval(x.value)}</div>`).join('')}
-      <div class="fin res"><span class="k">= ${esc(c.result)}</span>${fval(f.result)}</div>
-      <div class="fchk">${f.ok ? '<span class="ok">✓</span>equals' : '<span class="no">✗</span>differs from'} ${esc(f.chain.name)}: ${fval(f.chain.value)}</div>
+      ${c.sees ? `<div class="farg sees"><span class="vis pub">chain sees</span><span>${esc(c.sees)}</span></div>` : ''}
+      ${c.hidden ? `<div class="farg priv"><span class="vis priv">stays private</span><span>${esc(c.hidden)}</span></div>` : ''}
+      ${c.why ? `<div class="fwhy"><span class="k">why it holds</span>${esc(c.why)}</div>` : ''}
       ${c.note ? `<div class="fnote">${esc(c.note)}</div>` : ''}
+      ${values}
     </div>`;
   }
   // inputsHtml is a publicInputs detail's statement, public, beside the
@@ -2002,6 +2034,8 @@ const hopPanel = (() => {
       const front = h.hopDetail[0]?.vault || latest?.front || VAULT_IDS[0];
       latest = { hop: h, details, focus, front, trees: structuredClone(trees) };
       history.push(latest);
+      // A walkthrough opens the hop detail fold for a formula card; the presenter can close it again.
+      if (walk.on() && h.hopDetail.some(d => d.kind === 'formula')) $('hopFold').open = true;
       if (h.step) $('step-' + h.step)?.setAttribute('data-detail', '');
       // A new hop detail playing takes the panel back to live.
       replayAt(null);

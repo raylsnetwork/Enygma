@@ -16,6 +16,12 @@ import (
 
 var nullifierTopic = crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 
+// formulaNamed is a full run's formula detail: name only, with the vault
+// and tree whose chain holds its value.
+func formulaNamed(name FormulaName, vault string, tree int) HopDetail {
+	return HopDetail{Kind: DetailFormula, Vault: vault, Tree: tree, Formula: &Formula{Name: name}}
+}
+
 // commitmentFormula is the commitment formula of note n, owner's, which
 // deposit cd inserted as its one leaf: its opening hashed, checked against
 // that leaf as the vault's Commitment event logged it.
@@ -31,7 +37,7 @@ func commitmentFormula(cd HopDetail, owner *Actor, n *note) HopDetail {
 			{Name: noteOpening[3], Value: fieldHex(tokenId)},
 		},
 		Result: result,
-		Chain:  FormulaValue{Name: fmt.Sprintf("leaf #%d of tree %d, the vault's Commitment event", leaf.Index, cd.Tree), Value: leaf.Commitment},
+		Chain:  &FormulaValue{Name: fmt.Sprintf("leaf #%d of tree %d, the vault's Commitment event", leaf.Index, cd.Tree), Value: leaf.Commitment},
 		OK:     result == leaf.Commitment,
 	}}
 }
@@ -69,7 +75,7 @@ func merklePathFormula(ctx context.Context, vault *bind.BoundContract, vaultNode
 		Name:   FormulaMerklePath,
 		Inputs: inputs,
 		Result: result,
-		Chain: FormulaValue{Name: fmt.Sprintf("the root %s's proof publishes, one the vault has had in tree %d (isValidRoot → %v)", owner, p.TreeNumber, known),
+		Chain: &FormulaValue{Name: fmt.Sprintf("the root %s's proof publishes, one the vault has had in tree %d (isValidRoot → %v)", owner, p.TreeNumber, known),
 			Value: fieldHex(p.Root)},
 		OK: known && result == fieldHex(p.Root),
 	}}, nil
@@ -104,7 +110,7 @@ func nullifierFormula(sk *big.Int, vaultNode string, vaultAddr common.Address, p
 			{Name: fmt.Sprintf("tree · 2%s + leaf index", superscript(merkleDepth)), Value: position.String()},
 		},
 		Result: result,
-		Chain:  FormulaValue{Name: fmt.Sprintf("the vault's Nullifier event in the settlement, tx %s", receipt.TxHash.Hex()), Value: chain},
+		Chain:  &FormulaValue{Name: fmt.Sprintf("the vault's Nullifier event in the settlement, tx %s", receipt.TxHash.Hex()), Value: chain},
 		OK:     result == chain,
 	}}, nil
 }

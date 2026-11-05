@@ -29,6 +29,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -322,11 +323,32 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	t.Run("a full run carries no formula detail: those are a walkthrough's", func(t *testing.T) {
+	t.Run("a full run's shield carries the one commitment formula detail, by name only: a full run never sends an opening", func(t *testing.T) {
+		sender := engine.ActorNode(e.Sender().ID)
+		var shields int
 		for _, h := range sink.hops() {
-			if n := len(detailsOf(h, engine.DetailFormula)); n > 0 {
-				t.Errorf("step %s: hop %q carries %d formula details", h.Step, h.Label, n)
+			fs := detailsOf(h, engine.DetailFormula)
+			shield := h.Step == "shield" && h.Label == "shield" && h.From == sender && h.To == engine.NodeVault
+			if !shield {
+				if len(fs) > 0 {
+					t.Errorf("step %s: hop %q carries %d formula details, want them only on the shield", h.Step, h.Label, len(fs))
+				}
+				continue
 			}
+			shields++
+			if len(fs) != 1 || fs[0].Formula == nil {
+				t.Errorf("the shield hop carries %d formula details, want one", len(fs))
+				continue
+			}
+			if want := (engine.Formula{Name: engine.FormulaCommitment}); !reflect.DeepEqual(*fs[0].Formula, want) {
+				t.Errorf("the shield's formula is %+v, want %+v: its name only", *fs[0].Formula, want)
+			}
+			if fs[0].Vault != engine.NodeVault {
+				t.Errorf("the shield's formula is in the %s, want the %s", fs[0].Vault, engine.NodeVault)
+			}
+		}
+		if shields != 1 {
+			t.Errorf("%d shield hops, want 1", shields)
 		}
 	})
 

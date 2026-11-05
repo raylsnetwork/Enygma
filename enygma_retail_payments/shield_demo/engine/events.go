@@ -119,11 +119,13 @@ const (
 	// to. A participant's discovery opens their payment; the audit opens
 	// every note it can.
 	DetailDecryption HopDetailKind = "decryption"
-	// DetailFormula is one of the protocol's equations with a run's real
-	// values plugged in, checked against what the chain holds (see
-	// Formula). Only a walkthrough carries them, on its shield's hop (the
-	// commitment: its values are the shield's opening, public in the
-	// deposit's calldata) and payment 1's (the Merkle path on the proof
+	// DetailFormula is one of the protocol's equations, which the page
+	// draws by its name as the privacy property it gives (see Formula). A
+	// full run's carries only the name, once per run on the formula's first
+	// hop: the commitment on the shield. A walkthrough's carries the run's
+	// real values too, checked against what the chain holds, on its shield's
+	// hop (the commitment: its values are the shield's opening, public in
+	// the deposit's calldata) and payment 1's (the Merkle path on the proof
 	// coming back, the nullifier on the settlement): values the page shows
 	// there anyway, in payment 1's witness.
 	DetailFormula HopDetailKind = "formula"
@@ -148,13 +150,14 @@ const (
 // Formula is one equation with its real inputs, in the order the equation
 // takes them, its real result, and the value the chain holds to check the
 // result against. OK says whether the result equals it. Field elements are
-// 0x-hex, amounts decimal.
+// 0x-hex, amounts decimal. A full run's has only its Name: a full run never
+// sends a note's opening to the page.
 type Formula struct {
 	Name   FormulaName    `json:"name"`
-	Inputs []FormulaValue `json:"inputs"`
-	Result string         `json:"result"`
-	Chain  FormulaValue   `json:"chain"`
-	OK     bool           `json:"ok"`
+	Inputs []FormulaValue `json:"inputs,omitempty"`
+	Result string         `json:"result,omitempty"`
+	Chain  *FormulaValue  `json:"chain,omitempty"`
+	OK     bool           `json:"ok,omitempty"`
 }
 
 // FormulaValue is one named value of a formula: an input, or what the chain

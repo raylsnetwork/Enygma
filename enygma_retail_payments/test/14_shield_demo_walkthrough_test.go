@@ -439,6 +439,9 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			t.Fatalf("the shield hop carries %d formula and %d commitment details, want one each", len(fs), len(cs))
 		}
 		f := fs[0].Formula
+		if f.Chain == nil {
+			t.Fatal("the shield's commitment formula carries no chain value: a full run's, by name only")
+		}
 		if f.Name != engine.FormulaCommitment {
 			t.Errorf("formula %q, want %q", f.Name, engine.FormulaCommitment)
 		}
