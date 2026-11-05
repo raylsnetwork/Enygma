@@ -58,12 +58,14 @@ func (e *Engine) shield(ctx context.Context, s *step, opts Options) error {
 		return err
 	}
 
-	details := []HopDetail{cd}
+	// The commitment's card: a walkthrough's with the commitment as the
+	// vault computed it, from the deposit's public calldata; a full run's by
+	// name only.
+	formula := formulaNamed(FormulaCommitment, cd.Vault, cd.Tree)
 	if e.opts.Walkthrough {
-		// A walkthrough shows the commitment as the vault computed it, from
-		// the deposit's public calldata.
-		details = append(details, commitmentFormula(cd, sender, n))
+		formula = commitmentFormula(cd, sender, n)
 	}
+	details := []HopDetail{cd, formula}
 	s.hop(ActorNode(sender.ID), NodeVault, "shield", fmt.Sprintf("%s public RaylsERC20 (just minted) into one private note, block %d, gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed)), append(details, c.receipt(receipt))...)
 	s.log("chain", "Erc20CoinVault.depositV2(%s) → block %d  gas %s", total, receipt.BlockNumber, formatNum(receipt.GasUsed))
 	s.log("key", "sender's note commitment 0x%s…", n.commitment.Text(16)[:16])

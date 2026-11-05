@@ -60,7 +60,7 @@
 
 **Prover card**: what the gnark server does on a proof hop of the retail shield demo: the circuit, its constraint count, the witness it receives, the proof and public signals it returns, how long compiling, proving and verifying took, and that whoever proves sees the whole witness. _Avoid_: gnark card, proof panel.
 
-**Formula card**: one equation of the protocol (a note commitment, a Merkle path, a nullifier, value conservation, the Groth16 check) shown on the retail shield demo with a walkthrough's real values plugged in, and a check of the result against the chain. _Avoid_: math card, crypto panel.
+**Formula card**: one cryptographic equation of the protocol (a note commitment, a spend key, a Merkle path, a nullifier, value conservation, note encryption, the Groth16 check) shown on the retail shield demo as the privacy property it gives: what the chain sees, what stays private, and why the one does not reveal the other. A walkthrough adds the run's real values and a check of the result against the chain. _Avoid_: math card, crypto panel.
 
 **Fan-out**: the retail shield demo's K payments from the Sender's one shielded note to the K participants, made one after another: each spends the change note of the payment before it, because the deployed Payment circuit has one input note and two output notes. _Avoid_: batch payment, split, airdrop.
 

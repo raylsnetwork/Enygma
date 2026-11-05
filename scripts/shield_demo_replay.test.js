@@ -19,7 +19,10 @@
 // walkthrough card (payment 1's columns, the replay's refusal, the on-chain
 // proof check, a formula card) that never showed while it played, a formula
 // card's value not shown digit for digit, and on the check not
-// showing verifyProof → true, then false once tampered. The cards show only
+// showing verifyProof → true, then false once tampered. In both, a formula
+// card must show its privacy argument, and its values fold only with a
+// walkthrough's values; the hop detail fold must open by itself for a
+// formula card in the walkthrough, and never in the full run. The cards show only
 // as their hops play; replaying a step shows the same hop details (the
 // witness, the refusal) in the hop detail panel. Two first tests check the
 // fixtures still hold the cases this is there for.
@@ -169,25 +172,66 @@ const stripProofs = raw => raw.replace(/"(usdr)?proof"\s*:\s*\[[^\]]*\]/gi, '');
 const fieldElements = raw => stripProofs(raw).match(/\d{16,}/g) || [];
 const hasProof = raw => stripProofs(raw) !== raw;
 
+// ARGUMENT is each formula card's privacy argument, as checkFormulas expects
+// it: its property (the title), its equation, what the chain sees, what stays
+// private and why it holds. A card laid out before the argument (#191) has
+// none yet and is checked by its old line (LINE).
+const ARGUMENT = {
+  commitment: {
+    property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)',
+    sees: /the commitment/, private: /pk_spend.*salt.*amount.*token/, why: /Poseidon is one-way.*random salt.*guessed amount can’t be checked/,
+  },
+};
+const LINE = {
+  commitment: /opening is public on chain[^.]*\. Privacy starts at the first spend/,
+  nullifier: /inputs are private[^.]*no one but the Sender can link this nullifier to the note/,
+};
+
 // checkFormulas fails unless the hop detail panel shows one formula card
-// per formula detail of hop h, each with every input, its result and the
-// chain's value digit for digit, its ✓ (or ✗), and, for the commitment, the
-// public-opening line; it returns how many values it checked.
+// per formula detail of hop h, each with its privacy argument (ARGUMENT) and
+// its own line (LINE), and, only when the detail carries values (a
+// walkthrough's), one line with its ✓ (or ✗) naming the chain's value and a
+// closed "this run's values" fold with every input, the result and the
+// chain's value digit for digit, in order. A value-less detail (a full
+// run's) shows no value, check or fold. It returns how many values it
+// checked.
 function checkFormulas(doc, h, where) {
   const fs = (h.hopDetail || []).filter(d => d.kind === 'formula');
   const shown = [...doc.querySelectorAll('#hopPanel .formula')];
   assert.strictEqual(shown.length, fs.length, `${where}: formula cards shown`);
   let n = 0;
   fs.forEach(({ formula: f }, i) => {
-    const text = shown[i].textContent, values = [...shown[i].querySelectorAll('.fv')].map(v => v.textContent);
+    const card = shown[i], text = card.textContent, at = `${where}, ${f.name} formula`;
+    const a = ARGUMENT[f.name];
+    if (a) {
+      assert.strictEqual(card.querySelector('.fprop')?.textContent, a.property, `${at}: its property as the title`);
+      assert.strictEqual(card.querySelector('.feq')?.textContent, a.eq, `${at}: its equation`);
+      const sees = card.querySelector('.farg.sees'), priv = card.querySelector('.farg.priv');
+      assert.ok(sees?.querySelector('.vis.pub'), `${at}: a chain-sees line with the public tag`);
+      assert.match(sees.textContent, a.sees, `${at}: what the chain sees`);
+      assert.ok(priv?.querySelector('.vis.priv'), `${at}: a stays-private line with the private tag`);
+      assert.match(priv.textContent, a.private, `${at}: what stays private`);
+      assert.match(card.querySelector('.fwhy')?.textContent || '', a.why, `${at}: why it holds`);
+    }
+    if (LINE[f.name]) assert.match(text, LINE[f.name], `${at}: its line`);
+    const fold = card.querySelector('details.fvals'), chk = card.querySelector('.fchk');
+    if (!f.chain) {
+      assert.ok(!fold && !chk && !card.querySelector('.fv'), `${at}: a value-less (full run) card shows a value, check or values fold`);
+      return;
+    }
+    assert.ok(chk, `${at}: no check line`);
+    assert.match(chk.textContent, new RegExp(`^${f.ok ? '✓' : '✗'} checked against the chain with this run’s values`), `${at}: the check line`);
+    assert.ok(chk.textContent.includes(f.chain.name), `${at}: the check line names the chain's value`);
+    assert.ok(fold, `${at}: no "this run's values" fold`);
+    assert.strictEqual(fold.querySelector('summary')?.textContent, 'this run’s values', `${at}: the values fold's summary`);
+    assert.ok(!fold.open, `${at}: the values fold is open, want it closed`);
+    const values = [...card.querySelectorAll('.fv')];
+    assert.ok(values.every(v => fold.contains(v)), `${at}: a value outside the values fold`);
     // In card order: each input, the result, then the chain's value.
     const want = [...f.inputs.map(x => x.value), f.result, f.chain.value];
-    assert.deepStrictEqual(values, want, `${where}, ${f.name} formula: its values, digit for digit, in order`);
+    assert.deepStrictEqual(values.map(v => v.textContent), want, `${at}: its values, digit for digit, in order`);
     n += want.length;
-    for (const x of f.inputs) assert.ok(text.includes(x.name), `${where}, ${f.name} formula: input ${x.name} unnamed`);
-    assert.ok(text.includes(f.ok ? '✓' : '✗'), `${where}, ${f.name} formula: no ${f.ok ? '✓' : '✗'}`);
-    if (f.name === 'commitment') assert.match(text, /opening is public on chain[^.]*\. Privacy starts at the first spend/, `${where}: the public-opening line`);
-    if (f.name === 'nullifier') assert.match(text, /inputs are private[^.]*no one but the Sender can link this nullifier to the note/, `${where}: the unlinkable line`);
+    for (const x of f.inputs) assert.ok(fold.textContent.includes(x.name), `${at}: input ${x.name} unnamed`);
   });
   return n;
 }
@@ -264,13 +308,23 @@ test('the default run fixture is a real default run, with the cases the replay i
   assert.ok(http.some(d => hasProof(d.response || '')), 'no proof in an HTTP response');
   assert.ok(http.some(d => /[:[,]\s*\d{16,}\s*[,\]}]/.test(stripProofs(d.request + d.response))),
     'no bare field element outside a proof: the digit-for-digit check would check nothing');
+  // A full run's formula details carry only their name: here the commitment's, on the shield.
+  const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
+  assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, hop.label, detail.formula.name]), [['shield', 'shield', 'commitment']], 'formula details: one commitment, on the shield');
+  assert.deepStrictEqual(Object.keys(formulas[0].detail.formula), ['name'], 'a full run’s formula detail carries values');
 });
 
 test('the page plays the whole default run and replays every step’s hop details without an exception, showing every field element digit for digit', async () => {
   const page = await open(DEFAULT_RUN);
-  feed(page, DEFAULT_RUN.events);
+  // Up to the shield's hop: its value-less commitment card shows as it plays.
+  const shield = DEFAULT_RUN.events.findIndex(e => e.kind === 'hop' && e.step === 'shield' && e.label === 'shield');
+  feed(page, DEFAULT_RUN.events.slice(0, shield + 1));
+  await playOut(page);
+  checkFormulas(page.doc, DEFAULT_RUN.events[shield], 'the shield, live');
+  feed(page, DEFAULT_RUN.events.slice(shield + 1), shield + 1);
   await playOut(page);
   failOn(page.errors, 'while playing the run');
+  assert.ok(!page.doc.getElementById('hopFold').open, 'a full run opened the hop detail fold by itself');
   const all = finished(page);
   await replayAll(page, DEFAULT_RUN, all);
   failOn(page.errors, 'at the end');
@@ -325,7 +379,15 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
     for (const id of Object.keys(cards)) if (!$(id).hidden && $(id).innerHTML) cards[id] = true;
     // A formula card shows in the hop detail panel as its hop plays.
     const latest = evs.slice(0, at).findLast(e => e.kind === 'hop' && e.hopDetail);
-    if (latest?.hopDetail.some(d => d.kind === 'formula')) { checkFormulas(doc, latest, `gate ${nexts + 1}, live`); formulaLive = true; }
+    if (latest?.hopDetail.some(d => d.kind === 'formula')) {
+      checkFormulas(doc, latest, `gate ${nexts + 1}, live`);
+      formulaLive = true;
+      // The hop detail fold opened by itself; the presenter closes it, and it stays closed until the next formula hop.
+      assert.ok($('hopFold').open, `gate ${nexts + 1}: the hop detail fold did not open by itself for ${latest.label}'s formula card`);
+      $('hopFold').open = false;
+      await tick();
+      assert.ok(!$('hopFold').open, `gate ${nexts + 1}: the presenter could not close the hop detail fold`);
+    }
     if (gate < 0) break;
     const { action, step } = evs[gate];
     assert.ok(!$('nextBtn').disabled, `gate ${nexts + 1} (${step}/${action}): Next is off`);
