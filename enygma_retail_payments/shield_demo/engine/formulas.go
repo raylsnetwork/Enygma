@@ -8,8 +8,10 @@ import (
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/iden3/go-iden3-crypto/poseidon"
@@ -137,6 +139,68 @@ func nullifierFormula(sk *big.Int, vaultNode string, vaultAddr common.Address, p
 		Result: result,
 		Chain:  &FormulaValue{Name: fmt.Sprintf("the vault's Nullifier event in the settlement, tx %s", receipt.TxHash.Hex()), Value: chain},
 		OK:     result == chain,
+	}}, nil
+}
+
+// valueRange is the bound of the circuits' range check, TmRange: every
+// amount a proof spends or makes is 0 ≤ v < 10³⁶.
+var valueRange = new(big.Int).Exp(big.NewInt(10), big.NewInt(36), nil)
+
+// conservationFormula is the value conservation formula of a 1-in Payment
+// proof res, from's note ins[0] (in tree tree) spent into amount for to
+// and change back:
+// Σin − Σout, each amount range-checked, and checked against the Verifier's
+// verifyProof for res's proof and public inputs, an eth_call.
+func (c *chain) conservationFormula(ctx context.Context, cfg Config, from, to *Actor, ins []*note, tree int, amount, change *big.Int, res *rpcore.PaymentResult) (HopDetail, error) {
+	if len(ins) != 1 {
+		return HopDetail{}, fmt.Errorf("value conservation card: %d spent notes, want a 1-in Payment", len(ins))
+	}
+	v, err := DeployedVerifier(cfg)
+	if err != nil {
+		return HopDetail{}, err
+	}
+	verifierABI, err := loadABI(cfg.RetailRoot, "Verifier")
+	if err != nil {
+		return HopDetail{}, err
+	}
+	call, err := verifyCall(verifierABI, res.Proof, res.ContractStatement())
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("value conservation card: %w", err)
+	}
+	addr := common.HexToAddress(v.Address)
+	data, err := hexutil.Decode(call.Data)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("verifyProof call data: %w", err)
+	}
+	out, err := c.client.CallContract(ctx, ethereum.CallMsg{To: &addr, Data: data}, nil)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("verifyProof eth_call: %w", err)
+	}
+	answer, err := verifierABI.Unpack("verifyProof", out)
+	if err != nil || len(answer) != 1 {
+		return HopDetail{}, fmt.Errorf("verifyProof answer %x: %v", out, err)
+	}
+	verified, ok := answer[0].(bool)
+	if !ok {
+		return HopDetail{}, fmt.Errorf("verifyProof answered %v, not a bool", answer[0])
+	}
+
+	values := []*big.Int{ins[0].amount, amount, change}
+	inRange := true
+	for _, x := range values {
+		inRange = inRange && x.Sign() >= 0 && x.Cmp(valueRange) < 0
+	}
+	diff := new(big.Int).Sub(ins[0].amount, new(big.Int).Add(amount, change))
+	return HopDetail{Kind: DetailFormula, Vault: NodeVault, Tree: tree, Formula: &Formula{
+		Name: FormulaConservation,
+		Inputs: []FormulaValue{
+			{Name: fmt.Sprintf("in₀ · the %s's spent note", from.Name), Value: ins[0].amount.String()},
+			{Name: fmt.Sprintf("out₀ · %s's note", to.Name), Value: amount.String()},
+			{Name: fmt.Sprintf("out₁ · the %s's change", from.Name), Value: change.String()},
+		},
+		Result: diff.String(),
+		Chain:  &FormulaValue{Name: "the Verifier's verifyProof, for this proof with these public inputs (eth_call)", Value: fmt.Sprint(verified)},
+		OK:     diff.Sign() == 0 && inRange && verified,
 	}}, nil
 }
 

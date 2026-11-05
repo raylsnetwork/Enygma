@@ -328,8 +328,9 @@ func TestShieldDemoScenario(t *testing.T) {
 		// Each formula's first hop: the spend key on the Sender's
 		// registration, the first hop the UserRegistry holds it by; the
 		// commitment on the shield; the Merkle path on payment 1's proof
-		// request, a full run having no hop for the proof coming back; the
-		// nullifier on payment 1's settlement.
+		// request, a full run having no hop for the proof coming back; value
+		// conservation on that proof request too; the nullifier on payment
+		// 1's settlement.
 		first := map[engine.FormulaName]func(engine.Event) bool{
 			engine.FormulaSpendKey: func(h engine.Event) bool {
 				return h.Step == "register" && h.Label == "register" && h.From == sender && h.To == engine.NodeUserRegistry
@@ -338,6 +339,9 @@ func TestShieldDemoScenario(t *testing.T) {
 				return h.Step == "shield" && h.Label == "shield" && h.From == sender && h.To == engine.NodeVault
 			},
 			engine.FormulaMerklePath: func(h engine.Event) bool {
+				return h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && strings.HasPrefix(h.Label, "prove Payment")
+			},
+			engine.FormulaConservation: func(h engine.Event) bool {
 				return h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && strings.HasPrefix(h.Label, "prove Payment")
 			},
 			engine.FormulaNullifier: func(h engine.Event) bool {

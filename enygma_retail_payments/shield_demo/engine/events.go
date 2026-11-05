@@ -125,14 +125,16 @@ const (
 	// hop: the spend key on the Sender's registration (the first hop the
 	// UserRegistry holds it by), the commitment on the shield, the Merkle
 	// path on payment 1's proof request (a full run has no hop of its own
-	// for the proof coming back), the nullifier on payment 1's settlement.
-	// A walkthrough's carries the run's real values too, checked against
-	// what the chain holds, on the Sender's registration (the spend key:
-	// its sk_spend is a throwaway demo key), its shield's hop (the
-	// commitment: its values are the shield's opening, public in the
-	// deposit's calldata) and payment 1's (the Merkle path on the proof
-	// coming back, the nullifier on the settlement): values the page shows
-	// there anyway, in payment 1's witness.
+	// for the proof coming back), value conservation on that proof request
+	// too, the nullifier on payment 1's settlement. A walkthrough's carries
+	// the run's real values too, checked against what the chain holds, on
+	// the Sender's registration (the spend key: its sk_spend is a throwaway
+	// demo key), its shield's hop (the commitment: its values are the
+	// shield's opening, public in the deposit's calldata) and payment 1's
+	// (value conservation on the proof request, checked against the
+	// Verifier's verifyProof; the Merkle path on the proof coming back; the
+	// nullifier on the settlement): values the page shows there anyway, in
+	// payment 1's witness.
 	DetailFormula HopDetailKind = "formula"
 )
 
@@ -153,6 +155,10 @@ const (
 	// FormulaNullifier is a spent note's nullifier, Poseidon(sk_spend,
 	// tree·2^depth + leaf index), as its vault publishes it.
 	FormulaNullifier FormulaName = "nullifier"
+	// FormulaConservation is a Payment proof's value conservation, Σin =
+	// Σout with no fee in the circuit, and its range check: every amount
+	// 0 ≤ v < 10³⁶.
+	FormulaConservation FormulaName = "conservation"
 )
 
 // Formula is one equation with its real inputs, in the order the equation

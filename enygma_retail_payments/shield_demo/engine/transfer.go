@@ -251,6 +251,18 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	} else if payment1 {
 		proveDetails = append(proveDetails, formulaNamed(FormulaMerklePath, NodeVault, proofs[0].TreeNumber))
 	}
+	// Payment 1's proof request also carries its value conservation card: a
+	// walkthrough's with the amounts, checked against the Verifier, a full
+	// run's by name only.
+	if payment1 {
+		d := formulaNamed(FormulaConservation, NodeVault, proofs[0].TreeNumber)
+		if s.gated {
+			if d, err = c.conservationFormula(ctx, e.cfg, from, to, ins, proofs[0].TreeNumber, amount, change, res); err != nil {
+				return nil, err
+			}
+		}
+		proveDetails = append(proveDetails, d)
+	}
 	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs, rec.exchange())...)
 	if s.gated {
 		// One hop per click: the proof coming back is a click of its own.

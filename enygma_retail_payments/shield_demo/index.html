@@ -1573,9 +1573,10 @@ const hasValues = f => !!f.chain;
 // FORMULA is each formula hop detail's card by its name: its title, the
 // privacy property it gives (property), its equation as the protocol
 // computes it, what the chain sees (sees), what stays private (hidden), why
-// the one does not reveal the other (why), the name of its result and a line
-// on what it shows (note). A text that depends on the detail is a function
-// of it.
+// the one does not reveal the other (why), the name of its result, a line
+// on what it shows (note) and, where "equals the chain's value" would not
+// say what a walkthrough's ✓ checked, what it did (check). A text that
+// depends on the detail is a function of it.
 const FORMULA = {
   spendKey: {
     title: 'The spend key', property: 'Only the owner can spend', eq: 'pk_spend = Poseidon(sk_spend)', result: 'pk_spend',
@@ -1591,6 +1592,16 @@ const FORMULA = {
     hidden: 'the owner’s pk_spend, the salt, the amount, the token',
     why: 'Poseidon is one-way: no one can work back from the commitment to what was hashed. And the random salt means even a guessed amount can’t be checked: hashing a guess without the salt gives some other commitment.',
     note: 'The shield is the one note whose opening is public on chain: the vault computes this commitment itself, from the deposit’s calldata. Privacy starts at the first spend.',
+  },
+  conservation: {
+    title: 'Value conservation and the range check', property: 'Amounts hidden, yet balanced', eq: 'Σin = Σout: in₀ = out₀ + out₁, with no fee in the circuit; and every value 0 ≤ v < 10³⁶', result: 'Σin − Σout',
+    sees: 'only commitments: the spent note’s, behind its nullifier, and the two new ones',
+    hidden: 'every amount: the spent note’s, the payment’s, the change',
+    why: 'The amounts sit inside the commitments, hidden as the commitment card’s Hiding says. The circuit proves Σin = Σout over these hidden amounts, so the proof shows they balance without showing them. The range check is why no one can mint: in the circuit’s field a “negative” amount is a huge number, so a payer could pay out more than they spent and keep a “negative” change. 0 ≤ v < 10³⁶ rules that out.',
+    // Only a walkthrough's (one with values) has a check line.
+    check: d => !hasValues(d.formula) ? '' : d.formula.ok
+      ? `the amounts sum, each is in range, and the chain answers ${d.formula.chain.value} to ${d.formula.chain.name}`
+      : `not all hold of the amounts summing, each in range, and the chain answering true to ${d.formula.chain.name} (it answers ${d.formula.chain.value})`,
   },
   merklePath: {
     title: 'The Merkle path', property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈', result: 'root',
@@ -1885,7 +1896,7 @@ const hopPanel = (() => {
     const c = Object.fromEntries(Object.entries(card).map(([k, v]) => [k, typeof v === 'function' ? v(d) : v]));
     const head = `<div><b class="fprop">${esc(c.property)}</b> <span class="hstep">· ${esc(c.title.replace(/^The /, 'the '))}</span></div>`;
     const values = !hasValues(f) ? '' : `
-      <div class="fchk">${f.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} checked against the chain with this run’s values: ${f.ok ? 'equals' : 'differs from'} ${esc(f.chain.name)}</div>
+      <div class="fchk">${f.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} checked against the chain with this run’s values: ${esc(c.check || `${f.ok ? 'equals' : 'differs from'} ${f.chain.name}`)}</div>
       <details class="fvals"><summary>this run’s values</summary>
         ${(f.inputs || []).map(x => `<div class="fin"><span class="k">${esc(x.name)}</span>${fval(x.value)}</div>`).join('')}
         <div class="fin res"><span class="k">= ${esc(c.result)}</span>${fval(f.result)}</div>
