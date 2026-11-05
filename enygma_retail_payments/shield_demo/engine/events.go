@@ -124,22 +124,23 @@ const (
 	// full run's carries only the name, once per run on the formula's first
 	// hop: the spend key on the Sender's registration (the first hop the
 	// UserRegistry holds it by), the commitment on the shield, the Merkle
-	// path on payment 1's proof request (a full run has no hop of its own
-	// for the proof coming back), value conservation on that proof request
-	// too, the nullifier on payment 1's settlement, and note encryption on
+	// path and value conservation on payment 1's proof request (a full run
+	// has no hop of its own for the proof coming back), the nullifier and
+	// the Groth16 check on payment 1's settlement, and note encryption on
 	// the first hop a view key opens a note's ciphertext by (the first
 	// participant's scan; with tags, a participant opens their note with
-	// the tag channel's key, so the audit's). A walkthrough's carries
-	// the run's real values too, checked against what the chain holds, on
-	// the Sender's registration (the spend key: its sk_spend is a throwaway
-	// demo key), its shield's hop (the commitment: its values are the
-	// shield's opening, public in the deposit's calldata), payment 1's
-	// (value conservation on the proof request, checked against the
-	// Verifier's verifyProof; the Merkle path on the proof coming back; the
-	// nullifier on the settlement): values the page shows there anyway, in
-	// payment 1's witness; and on its first participant's scan (note
-	// encryption: the ciphertext the scan's decryption detail shows, and
-	// its opening).
+	// the tag channel's key, so the audit's). A walkthrough's carries the
+	// run's real values too, checked against what the chain holds: the
+	// spend key on the Sender's registration (its sk_spend is a throwaway
+	// demo key); the commitment on the shield (its values are the shield's
+	// opening, public in the deposit's calldata); on payment 1, value
+	// conservation on the proof request (checked against the Verifier's
+	// verifyProof), the Merkle path on the proof coming back, and the
+	// nullifier and the Groth16 check (its proof and public inputs, checked
+	// by verifyProof) on the settlement, values the page shows there anyway
+	// in payment 1's witness and on-chain check; and note encryption on the
+	// first participant's scan (the ciphertext the scan's decryption detail
+	// shows, and its opening).
 	DetailFormula HopDetailKind = "formula"
 )
 
@@ -171,6 +172,10 @@ const (
 	// the same salt and key, opens the payload, and the opening hashes to
 	// the note's commitment.
 	FormulaNoteEncryption FormulaName = "noteEncryption"
+	// FormulaGroth16 is a proof's Groth16 check on BN254, e(A,B) =
+	// e(α,β)·e(L,γ)·e(C,δ) with L = IC₀ + Σ xᵢ·ICᵢ, as the Verifier's
+	// verifyProof makes it.
+	FormulaGroth16 FormulaName = "groth16"
 )
 
 // Formula is one equation with its real inputs, in the order the equation

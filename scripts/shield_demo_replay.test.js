@@ -174,8 +174,9 @@ const hasProof = raw => stripProofs(raw) !== raw;
 
 // ARGUMENT is each formula card's privacy argument, as checkFormulas expects
 // it: its property (the title), its equation, what the chain sees, what stays
-// private, why it holds, its line (note) and, for a card whose ✓ says what it
-// checked rather than "equals" the chain's value, what it says (check). A
+// private, why it holds, its line (note), for a card whose ✓ says what it
+// checked rather than "equals" the chain's value, what it says (check) and,
+// for a card whose ✓ (or ✗) is not the engine's, whether it shows ✓ (ok). A
 // part that depends on the formula detail d is a function of it.
 const ARGUMENT = {
   spendKey: {
@@ -203,6 +204,17 @@ const ARGUMENT = {
     sees: /the capsule and the sealed payload/, private: /^stays private\s*the shared secret ss, the salt, the amount, the token$/,
     why: /Only the view key’s holder can decapsulate the capsule to the shared secret.*ML-KEM-768 is post-quantum.*AES-GCM fails to open under any other key.*The auditor reads the note too: it recovers every user’s view key/,
   },
+  groth16: {
+    property: 'Zero-knowledge and soundness', eq: 'on BN254: e(A, B) = e(α, β) · e(L, γ) · e(C, δ), with L = IC₀ + Σ xᵢ · ICᵢ',
+    sees: /^chain sees\s*the proof \(A, B, C\) and the public inputs$/, private: /the whole witness/,
+    why: /^why it holdsZero-knowledge: the proof reveals nothing beyond its public inputs.*Soundness: no one can make a proof that checks without a valid witness, so the chain can trust a proof it can’t look inside\.$/,
+    note: /A, B and C are the proof.*L is the public inputs xᵢ folded into one point/,
+    // A walkthrough's ✓ is the chain's answer to the page's on-chain check: ✗ once TAMPER changed an input.
+    ok: d => d.formula.ok && !tampered,
+    check: d => tampered
+      ? new RegExp(`: TAMPER changed one public input, ${verifyProofCall().tamper.name.replace(/[[\]]/g, '\\$&')} 0x.* → 0x.*, and the chain answers false to the Verifier.s verifyProof`)
+      : /: the chain answers true to the Verifier.s verifyProof/,
+  },
   merklePath: {
     property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈',
     sees: d => new RegExp(`the root and the tree number, tree ${d.tree}$`), private: /the leaf and its position/,
@@ -217,6 +229,10 @@ const ARGUMENT = {
     note: d => d.formula.chain ? /^The replay shows that refusal: after payment 2/ : /^A walkthrough’s replay shows that refusal: after payment 2/,
   },
 };
+
+// tampered says whether the walkthrough's on-chain proof check was last
+// sent tampered: the Groth16 card's ✓ follows it.
+let tampered = false;
 
 // checkFormulas fails unless the hop detail panel shows one formula card
 // per formula detail of hop h, each with its privacy argument (ARGUMENT),
@@ -249,9 +265,10 @@ function checkFormulas(doc, h, where) {
       return;
     }
     assert.ok(chk, `${at}: no check line`);
-    assert.match(chk.textContent, new RegExp(`^${f.ok ? '✓' : '✗'} checked against the chain with this run’s values`), `${at}: the check line`);
+    const ok = a.ok ? part(a.ok) : f.ok;
+    assert.match(chk.textContent, new RegExp(`^${ok ? '✓' : '✗'} checked against the chain with this run’s values`), `${at}: the check line`);
     assert.ok(chk.textContent.includes(f.chain.name), `${at}: the check line names the chain's value`);
-    assert.match(chk.textContent, a.check ? part(a.check) : new RegExp(`: ${f.ok ? 'equals' : 'differs from'} `), `${at}: what the check line says it checked`);
+    assert.match(chk.textContent, a.check ? part(a.check) : new RegExp(`: ${ok ? 'equals' : 'differs from'} `), `${at}: what the check line says it checked`);
     assert.ok(fold, `${at}: no "this run's values" fold`);
     assert.strictEqual(fold.querySelector('summary')?.textContent, 'this run’s values', `${at}: the values fold's summary`);
     assert.ok(!fold.open, `${at}: the values fold is open, want it closed`);
@@ -345,8 +362,8 @@ test('the default run fixture is a real default run, with the cases the replay i
   // the audit: each participant opens their note with a tag channel's key.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
-    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation and the nullifier on payment 1, note encryption on the audit');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
+    'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation, the nullifier and the Groth16 check on payment 1, note encryption on the audit');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
 });
 
@@ -388,6 +405,12 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
     'no spend key formula, with its values, on the Sender’s registration');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'prove Payment' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'conservation' && d.formula.chain)),
     'no value conservation formula, with its values, on payment 1’s proof request');
+  // Payment 1's settlement carries the Groth16 card with the proof and public inputs the on-chain check sends.
+  const check = verifyProofCall();
+  const groth16 = WALKTHROUGH.events.filter(e => e.step === 'fanout_1' && e.from === 'relayer' && e.to === 'EnygmaDvp').flatMap(e => (e.hopDetail || []).filter(d => d.kind === 'formula' && d.formula.name === 'groth16'));
+  assert.strictEqual(groth16.length, 1, 'no Groth16 formula on payment 1’s settlement');
+  assert.deepStrictEqual(groth16[0].formula.inputs.map(x => x.value), [...check.proof, ...check.inputs.map(x => x.value)],
+    'the Groth16 card’s values: the proof and the public inputs the on-chain check sends');
   // Tags off, the first participant's scan is the first hop a view key opens a note's ciphertext by.
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'discover' && e.label === 'scan' && e.from === 'Erc20CoinVault' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'noteEncryption' && d.formula.chain)),
     'no note encryption formula, with its values, on the first participant’s scan');
@@ -458,9 +481,27 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
   const call = verifyProofCall(), verdict = () => $('verify').querySelector('.result')?.textContent;
   assert.deepStrictEqual(requests.ethCall, [call.data], 'the check’s eth_call');
   assert.strictEqual(verdict(), 'verifyProof → true');
+  // The Groth16 card on payment 1's settlement follows the check: ✗ once tampered, ✓ again once checked.
+  const settle = WALKTHROUGH.events.find(e => e.kind === 'hop' && e.step === 'fanout_1' && e.from === 'relayer' && e.to === 'EnygmaDvp');
+  const groth16Mark = () => [...doc.querySelectorAll('#hopPanel .formula')].find(c => c.querySelector('.fprop')?.textContent === 'Zero-knowledge and soundness')?.querySelector('.fchk')?.textContent.slice(0, 1);
+  $('step-fanout_1').click();
+  await tick();
+  for (let i = 0; i < 12 && !groth16Mark(); i++) { doc.querySelector('#hopPanel [data-replay="next"]').click(); await tick(); }
+  assert.strictEqual(groth16Mark(), '✓', 'the Groth16 card on payment 1’s settlement, checked');
+  checkFormulas(doc, settle, 'payment 1’s settlement, checked');
   $('verify').querySelector('[data-v="tamper"]').click();
   await tick(); await tick();
   assert.strictEqual(verdict(), 'verifyProof → false', 'the tampered call');
+  tampered = true;
+  assert.strictEqual(groth16Mark(), '✗', 'the Groth16 card did not turn ✗ under TAMPER');
+  checkFormulas(doc, settle, 'payment 1’s settlement, tampered');
+  $('verify').querySelector('[data-v="check"]').click();
+  await tick(); await tick();
+  tampered = false;
+  assert.strictEqual(groth16Mark(), '✓', 'the Groth16 card did not turn ✓ again once checked');
+  $('verify').querySelector('[data-v="tamper"]').click();
+  await tick(); await tick();
+  tampered = true;
   failOn(errors, 'checking the proof on chain');
 
   const { formulaValues } = await replayAll(page, WALKTHROUGH, all);

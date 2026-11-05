@@ -330,9 +330,10 @@ func TestShieldDemoScenario(t *testing.T) {
 		// commitment on the shield; the Merkle path on payment 1's proof
 		// request, a full run having no hop for the proof coming back; value
 		// conservation on that proof request too; the nullifier on payment
-		// 1's settlement; note encryption, tags on, on the audit: each
-		// participant opens their note with a tag channel's key, so the
-		// audit is the first hop a view key opens a note's ciphertext by.
+		// 1's settlement, and its Groth16 check there too; note encryption,
+		// tags on, on the audit: each participant opens their note with a
+		// tag channel's key, so the audit is the first hop a view key opens
+		// a note's ciphertext by.
 		first := map[engine.FormulaName]func(engine.Event) bool{
 			engine.FormulaSpendKey: func(h engine.Event) bool {
 				return h.Step == "register" && h.Label == "register" && h.From == sender && h.To == engine.NodeUserRegistry
@@ -347,6 +348,9 @@ func TestShieldDemoScenario(t *testing.T) {
 				return h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && strings.HasPrefix(h.Label, "prove Payment")
 			},
 			engine.FormulaNullifier: func(h engine.Event) bool {
+				return h.Step == "fanout_1" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp
+			},
+			engine.FormulaGroth16: func(h engine.Event) bool {
 				return h.Step == "fanout_1" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp
 			},
 			engine.FormulaNoteEncryption: func(h engine.Event) bool {
