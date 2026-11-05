@@ -120,22 +120,34 @@ func (c *chain) depositNote(ctx context.Context, payerKeyHex string, vault *bind
 // (see send), change back to the sender.
 func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount *big.Int, payUsdrFee bool) error {
 	sender := e.sender()
+	if e.opts.Tags {
+		// A full run opened the channel in its channels step; a
+		// walkthrough opens it here.
+		if err := e.ensureChannel(ctx, s, sender, p); err != nil {
+			return err
+		}
+	}
 	t, err := e.send(ctx, s, sender, p, amount, payUsdrFee)
 	if err != nil {
 		return err
 	}
-	if e.opts.Tags {
-		if err := e.publishTag(ctx, s, sender, p, t); err != nil {
-			return err
-		}
-	}
-	e.fanOut = append(e.fanOut, t.Settlement)
+	// The page checks payment 1's proof on chain once it settles, before
+	// its tag.
 	if e.opts.Walkthrough && n == 1 {
 		e.payment1 = t
 		if err := e.sendVerifyCall(s, t); err != nil {
 			return err
 		}
 	}
+	if e.opts.Tags {
+		if err := s.await(ctx, "tag", p.Name); err != nil {
+			return err
+		}
+		if err := e.publishTag(ctx, s, sender, p, t); err != nil {
+			return err
+		}
+	}
+	e.fanOut = append(e.fanOut, t.Settlement)
 
 	s.proto("fanout", t.row(n, e.usdrFixedFee, ""))
 	s.actor(sender, "note", "0x"+sender.notes[len(sender.notes)-1].commitment.Text(16))

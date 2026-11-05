@@ -55,32 +55,157 @@ type released struct {
 	hops []engine.Event
 }
 
-// actionHops are the hop labels each walkthrough action plays, by action.
-// A person's keys fund their gas in the same click, except the issuer's,
-// whose account is the gas funder.
-var actionHops = map[string][]string{
-	"auditor":  {"auditor key"},
-	"keys":     {"spend key", "view key", "fund gas"},
-	"register": {"audit ciphertexts", "register"},
-	"recover":  slices.Repeat([]string{"recover view key"}, 1+engine.K),
-	"shield":   {"shield"},
-	"prove":    {"prove Payment"},
-	"proof":    {"proof"},
-	"relay":    {"relay"},
-	"settle":   {"payment", "notes in"},
-	"payment":  {"prove Payment", "relay", "payment", "notes in"},
-	"replay":   {"replay payment 1"},
-	"scan":     {"scan"},
-	"audit":    {"audit"},
+// actionHops are the hop labels a walkthrough's action plays with opts. A
+// person's keys fund their gas in the same click, except the issuer's, whose
+// account is the gas funder. With tags, a payment opens its channel to the
+// payee and publishes its tag; with the USDr fee, it proves the fee too and
+// settles both in one transaction.
+func actionHops(opts engine.Options, action string) []string {
+	channel, tag, fee, settle, feeIn := []string{}, []string{}, []string{}, "payment", []string{}
+	if opts.Tags {
+		channel, tag = []string{"open channel", "openChannel", "scan channels"}, []string{"tag", "publishTag"}
+	}
+	if opts.UsdrFee {
+		fee, settle, feeIn = []string{"prove UsdrFee"}, "paymentWithUsdrFee", []string{"fee note in"}
+	}
+	scan := []string{"scan"}
+	if opts.Tags {
+		scan = []string{"scan tags", "open note"}
+	}
+	return map[string][]string{
+		"auditor":  {"auditor key"},
+		"keys":     {"spend key", "view key", "fund gas"},
+		"register": {"audit ciphertexts", "register"},
+		"recover":  slices.Repeat([]string{"recover view key"}, 1+engine.K),
+		"credit":   slices.Concat(slices.Repeat([]string{"grant USDr"}, 1+engine.K), slices.Repeat([]string{"scan"}, 1+engine.K)),
+		"shield":   {"shield"},
+		"channel":  channel,
+		"prove":    {"prove Payment"},
+		"proof":    {"proof"},
+		"fee":      fee,
+		"relay":    {"relay"},
+		"settle":   slices.Concat([]string{settle, "notes in"}, feeIn),
+		"tag":      tag,
+		"payment":  slices.Concat(channel, []string{"prove Payment"}, fee, []string{"relay", settle, "notes in"}, feeIn, tag),
+		"replay":   {"replay payment 1"},
+		"scan":     scan,
+		"audit":    {"audit"},
+	}[action]
+}
+
+// wantGates are the actions a walkthrough with opts releases, in order, as
+// step/action/subject: the keys of the auditor, the issuer, the Sender and
+// each participant, each registration, the auditor's recovery, with the
+// USDr fee the issuer's credit, the shield, payment 1 one hop per click (with
+// tags its channel first and its tag last, with the fee its fee's proof
+// before the relay), payment 2 and its replay, payments 3–6, each
+// participant's scan and the audit.
+func wantGates(opts engine.Options) []string {
+	names := []string{"Issuer", "Sender", "Ana", "Bruno", "Carla", "Diego", "Elena", "Felipe"}
+	g := []string{"keygen/auditor/Auditor"}
+	for _, n := range names {
+		g = append(g, "keygen/keys/"+n)
+	}
+	for _, n := range names[1:] {
+		g = append(g, "register/register/"+n)
+	}
+	g = append(g, "audit_keys/recover/")
+	if opts.UsdrFee {
+		g = append(g, "usdr/credit/")
+	}
+	g = append(g, "shield/shield/")
+	var p1 []string
+	if opts.Tags {
+		p1 = append(p1, "channel")
+	}
+	p1 = append(p1, "prove", "proof")
+	if opts.UsdrFee {
+		p1 = append(p1, "fee")
+	}
+	p1 = append(p1, "relay", "settle")
+	if opts.Tags {
+		p1 = append(p1, "tag")
+	}
+	for _, a := range p1 {
+		g = append(g, "fanout_1/"+a+"/Ana")
+	}
+	g = append(g, "fanout_2/payment/", "fanout_2/replay/Ana")
+	for n := 3; n <= engine.K; n++ {
+		g = append(g, fmt.Sprintf("fanout_%d/payment/", n))
+	}
+	for _, n := range names[2:] {
+		g = append(g, "discover/scan/"+n)
+	}
+	return append(g, "audit/audit/")
+}
+
+// checkGates checks that a walkthrough with opts released exactly
+// wantGates, each declared by StepActions, and that each played its
+// actionHops, all in its own step.
+func checkGates(t *testing.T, opts engine.Options, acts []released) {
+	t.Helper()
+	var got []string
+	declared := engine.StepActions(opts)
+	for i, a := range acts {
+		got = append(got, a.at.Step+"/"+a.at.Action+"/"+a.at.Value)
+		if !slices.Contains(declared[a.at.Step], a.at.Action) {
+			t.Errorf("release %d: action %q of step %s, which StepActions doesn't declare (%v)", i+1, a.at.Action, a.at.Step, declared[a.at.Step])
+		}
+		want := actionHops(opts, a.at.Action)
+		if a.at.Action == "keys" && a.at.Value == "Issuer" {
+			want = want[:2]
+		}
+		var hops []string
+		for _, h := range a.hops {
+			hops = append(hops, h.Label)
+			if h.Step != a.at.Step {
+				t.Errorf("release %d (%s/%s): hop %q is step %s's", i+1, a.at.Step, a.at.Action, h.Label, h.Step)
+			}
+		}
+		if !slices.Equal(hops, want) {
+			t.Errorf("release %d (%s/%s %s): hops %q, want %q", i+1, a.at.Step, a.at.Action, a.at.Value, hops, want)
+		}
+	}
+	if want := wantGates(opts); !slices.Equal(got, want) {
+		t.Errorf("releases (%d):\n got %q\nwant %q (%d)", len(got), got, want, len(want))
+	}
+}
+
+// checkNoFeeNoTags checks that a walkthrough with both toggles off sent
+// nothing to the USDr vault or the tag registries, and settled each payment
+// as one proof's, alone.
+func checkNoFeeNoTags(t *testing.T, client *ethclient.Client, usdrVaultAddr common.Address, e *engine.Engine, hops []engine.Event) {
+	t.Helper()
+	for _, h := range hops {
+		if touches(h, engine.NodeUsdrVault) || touches(h, engine.NodeTagRegistry) || touches(h, engine.NodeTagChannelRegistry) {
+			t.Errorf("hop %q (step %s) goes %s → %s", h.Label, h.Step, h.From, h.To)
+		}
+	}
+	fanOut := e.FanOut()
+	if len(fanOut) != engine.K {
+		t.Fatalf("%d fan-out payments, want %d", len(fanOut), engine.K)
+	}
+	for i, s := range fanOut {
+		if s.UsdrFeeNote != nil || s.TagTxHash != (common.Hash{}) {
+			t.Errorf("payment %d to %s paid a USDr fee or published a tag", i+1, s.To)
+		}
+		logs := txLogs(t, client, s.TxHash)
+		if n := countTopic(logs, paymentEventSig); n != 1 {
+			t.Errorf("payment %d: %d Payment events, want exactly one proof's", i+1, n)
+		}
+		if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
+			t.Errorf("payment %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
+		}
+	}
 }
 
 // walkthroughOpts are the options the page's Walkthrough button sends with
-// the form as /defaults fills it: the default amounts, no USDr fee, no tags
-// and the walkthrough on (the server keeps the default script, which a
+// the form as /defaults fills it: the default amounts, the USDr fee and tags
+// on, and the walkthrough on (the server keeps the default script, which a
 // walkthrough does not play).
 func walkthroughOpts() engine.Options {
 	opts := engine.DefaultOptions()
-	opts.UsdrFee, opts.Tags, opts.Walkthrough = false, false, true
+	opts.Walkthrough = true
 	return opts
 }
 
@@ -217,7 +342,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 				started = append(started, ev.Step)
 			}
 		}
-		want := []string{"keygen", "register", "audit_keys", "shield",
+		want := []string{"keygen", "register", "audit_keys", "usdr", "shield",
 			"fanout_1", "fanout_2", "fanout_3", "fanout_4", "fanout_5", "fanout_6", "discover", "audit"}
 		if !slices.Equal(started, want) {
 			t.Errorf("steps started %v, want %v", started, want)
@@ -227,40 +352,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
-	t.Run("each release runs exactly one action, in its step", func(t *testing.T) {
-		declared := engine.StepActions(opts)
-		for i, a := range acts {
-			if !slices.Contains(declared[a.at.Step], a.at.Action) {
-				t.Errorf("release %d: action %q of step %s, which StepActions doesn't declare (%v)", i+1, a.at.Action, a.at.Step, declared[a.at.Step])
-			}
-			want := actionHops[a.at.Action]
-			if a.at.Action == "keys" && a.at.Value == "Issuer" {
-				want = want[:2]
-			}
-			var got []string
-			for _, h := range a.hops {
-				got = append(got, h.Label)
-				if h.Step != a.at.Step {
-					t.Errorf("release %d (%s/%s): hop %q is step %s's", i+1, a.at.Step, a.at.Action, h.Label, h.Step)
-				}
-			}
-			if !slices.Equal(got, want) {
-				t.Errorf("release %d (%s/%s %s): hops %q, want %q", i+1, a.at.Step, a.at.Action, a.at.Value, got, want)
-			}
-		}
-		// One per person for keys, registration and scans; one per payment
-		// after the first; the first payment's four hops apart.
-		count := map[string]int{}
-		for _, a := range acts {
-			count[a.at.Action]++
-		}
-		want := map[string]int{"auditor": 1, "keys": 2 + engine.K, "register": 1 + engine.K, "recover": 1, "shield": 1,
-			"prove": 1, "proof": 1, "relay": 1, "settle": 1, "payment": engine.K - 1, "replay": 1, "scan": engine.K, "audit": 1}
-		for action, n := range want {
-			if count[action] != n {
-				t.Errorf("%d releases of %q, want %d", count[action], action, n)
-			}
-		}
+	t.Run("the gate releases the fee-paying, tagged walkthrough's actions in order, each running its own hops", func(t *testing.T) {
+		checkGates(t, opts, acts)
 	})
 
 	t.Run("a person's action is about them", func(t *testing.T) {
@@ -285,12 +378,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
-	t.Run("no USDr fee and no tags", func(t *testing.T) {
-		for _, h := range sink.hops() {
-			if touches(h, engine.NodeUsdrVault) || touches(h, engine.NodeTagRegistry) || touches(h, engine.NodeTagChannelRegistry) {
-				t.Errorf("hop %q (step %s) goes %s → %s", h.Label, h.Step, h.From, h.To)
-			}
-		}
+	t.Run("each payment settles with its USDr fee in one transaction and publishes its tag", func(t *testing.T) {
 		if n := len(e.Transfers()); n != 0 {
 			t.Errorf("%d transfers between participants, want none", n)
 		}
@@ -298,16 +386,41 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if len(fanOut) != engine.K {
 			t.Fatalf("%d fan-out payments, want %d", len(fanOut), engine.K)
 		}
+		vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+		dvpABI := loadOnchainABI(t, "EnygmaDvp")
 		for i, s := range fanOut {
-			if s.UsdrFeeNote != nil || s.TagTxHash != (common.Hash{}) {
-				t.Errorf("payment %d to %s paid a USDr fee or published a tag", i+1, s.To)
+			if s.UsdrFeeNote == nil || s.TagTxHash == (common.Hash{}) {
+				t.Errorf("payment %d to %s paid no USDr fee or published no tag", i+1, s.To)
+				continue
+			}
+			tx, _, err := client.TransactionByHash(context.Background(), s.TxHash)
+			if err != nil {
+				t.Fatalf("payment %d: %v", i+1, err)
+			}
+			if m, err := dvpABI.MethodById(tx.Data()[:4]); err != nil || m.Name != "paymentWithUsdrFee" {
+				t.Errorf("payment %d settled by %v (%v), want EnygmaDvp.paymentWithUsdrFee", i+1, m, err)
 			}
 			logs := txLogs(t, client, s.TxHash)
-			if n := countTopic(logs, paymentEventSig); n != 1 {
-				t.Errorf("payment %d: %d Payment events, want exactly one proof's", i+1, n)
+			if n := countTopic(logs, paymentEventSig); n != 2 {
+				t.Errorf("payment %d: %d Payment events, want the payment's and the fee's, in one transaction", i+1, n)
 			}
-			if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
-				t.Errorf("payment %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
+			if inserted := commitmentsIn(logs, vaultAddr); len(inserted) != 2 {
+				t.Errorf("payment %d: the vault inserted %d notes, want the payee's and the change", i+1, len(inserted))
+			}
+			if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 2 || !slices.ContainsFunc(inserted, func(c *big.Int) bool { return c.Cmp(s.UsdrFeeNote) == 0 }) {
+				t.Errorf("payment %d: the USDr vault inserted %v, want the relayer's fee note 0x%x and the Sender's change", i+1, inserted, s.UsdrFeeNote)
+			}
+			if n := countTopic(txLogs(t, client, s.TagTxHash), tagPublishedSig); n != 1 {
+				t.Errorf("payment %d: its tag transaction logged %d TagPublished events, want 1", i+1, n)
+			}
+		}
+		// The Sender paid K fees of 1 from their grant; the participants paid none.
+		if got, want := e.UsdrBalance(e.Sender()), big.NewInt(engine.UsdrGrant-engine.K); got.Cmp(want) != 0 {
+			t.Errorf("Sender holds %s USDr, want the %d grant less %d fees of 1", got, engine.UsdrGrant, engine.K)
+		}
+		for _, p := range e.Participants() {
+			if got := e.UsdrBalance(p); got.Int64() != engine.UsdrGrant {
+				t.Errorf("%s holds %s USDr, want the %d grant", p.Name, got, engine.UsdrGrant)
 			}
 		}
 	})
@@ -393,7 +506,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 	})
 
 	t.Run("each participant's scan shows the note their view key opened: their payout, hashing to their payment's commitment", func(t *testing.T) {
-		checkDiscoverDetails(t, client, e, sink.hops(), false)
+		checkDiscoverDetails(t, client, e, sink.hops(), opts.Tags)
 	})
 
 	t.Run("payment 1's proof request carries its witness, as sent to the prover, its output openings hashing to the commitments the vault logged", func(t *testing.T) {
@@ -707,7 +820,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		sender := engine.ActorNode(e.Sender().ID)
 		var prove []engine.Event
 		for _, h := range sink.hops() {
-			if h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && !h.Failed {
+			if h.Step == "fanout_1" && h.From == sender && h.To == engine.NodeGnark && h.Label == "prove Payment" && !h.Failed {
 				prove = append(prove, h)
 			}
 		}
@@ -867,7 +980,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
-	t.Run("the first participant's scan carries the note encryption formula: their view key decapsulates the capsule on chain, HKDF and AES-GCM open the payload, and the opening hashes to the commitment payment 1 logged", func(t *testing.T) {
+	t.Run("the audit carries the note encryption formula (tags on: the participants open their notes by tag): payment 1's payee's view key decapsulates the capsule on chain, HKDF and AES-GCM open the payload, and the opening hashes to the commitment payment 1 logged", func(t *testing.T) {
 		payee := e.Participants()[0]
 		var scans []engine.Event
 		for _, h := range sink.hops() {
@@ -880,12 +993,12 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if len(scans) != 1 {
 			t.Fatalf("%d hops carry the note encryption formula, want one", len(scans))
 		}
-		if h := scans[0]; h.Step != "discover" || h.Label != "scan" || h.From != engine.NodeVault || h.To != engine.ActorNode(payee.ID) {
-			t.Fatalf("the note encryption formula is on %s's hop %q (%s → %s), want %s's scan, the first hop a view key opens a note's ciphertext by (tags off)", h.Step, h.Label, h.From, h.To, payee.Name)
+		if h := scans[0]; h.Step != "audit" || h.Label != "audit" || h.From != engine.NodeVault || h.To != engine.NodeAuditor {
+			t.Fatalf("the note encryption formula is on %s's hop %q (%s → %s), want the audit's, the first hop a view key opens a note's ciphertext by (tags on)", h.Step, h.Label, h.From, h.To)
 		}
 		fs := detailsOf(scans[0], engine.DetailFormula)
 		if len(fs) != 1 {
-			t.Fatalf("%s's scan carries %d formula details, want 1", payee.Name, len(fs))
+			t.Fatalf("the audit carries %d formula details, want 1", len(fs))
 		}
 		f := fs[0].Formula
 		if f.Chain == nil {
@@ -977,15 +1090,16 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 
 		// The proof and statement the vault verified: the settlement's
-		// calldata, EnygmaDvp.payment(transaction, …).
+		// calldata, EnygmaDvp.paymentWithUsdrFee(transaction, …), whose
+		// first argument is the payment's.
 		tx, _, err := client.TransactionByHash(context.Background(), e.FanOut()[0].TxHash)
 		if err != nil {
 			t.Fatalf("payment 1's settlement tx: %v", err)
 		}
 		dvpABI := loadOnchainABI(t, "EnygmaDvp")
 		method, err := dvpABI.MethodById(tx.Data()[:4])
-		if err != nil || method.Name != "payment" {
-			t.Fatalf("payment 1 settled by %v (%v), want EnygmaDvp.payment", method, err)
+		if err != nil || method.Name != "paymentWithUsdrFee" {
+			t.Fatalf("payment 1 settled by %v (%v), want EnygmaDvp.paymentWithUsdrFee", method, err)
 		}
 		args, err := method.Inputs.Unpack(tx.Data()[4:])
 		if err != nil {
@@ -1253,7 +1367,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 
 		// The trees and every balance are unchanged: as the engine read them,
-		// and on chain, where nothing was mined between payments 2 and 3.
+		// and on chain, where nothing was mined between payment 2's tag and
+		// payment 3's channel.
 		if r.Before == nil || r.After == nil || len(r.Before.Trees) != 2 || len(r.Before.Balances) != 2+2+engine.K {
 			t.Fatalf("refusal's chain state %+v → %+v, want both vaults' trees and the vault's, the relayer's and every actor's balance", r.Before, r.After)
 		}
@@ -1267,8 +1382,10 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			}
 			return rc.BlockNumber.Uint64()
 		}
-		if b2, b3 := block(e.FanOut()[1].TxHash), block(e.FanOut()[2].TxHash); b3 != b2+1 {
-			t.Errorf("payment 2 in block %d, payment 3 in %d: a transaction was mined between them", b2, b3)
+		// One transaction a block: payment 2, its tag, payment 3's channel,
+		// payment 3.
+		if b2, b3 := block(e.FanOut()[1].TxHash), block(e.FanOut()[2].TxHash); b3 != b2+3 {
+			t.Errorf("payment 2 in block %d, payment 3 in %d, want 3 blocks apart (its tag, payment 3's channel): another transaction was mined between them", b2, b3)
 		}
 	})
 
@@ -1281,19 +1398,55 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Audit: %v", err)
 		}
-		if !a.Inferred {
-			t.Error("the walkthrough's audit names payers it has no tags for")
+		if a.Inferred {
+			t.Error("the walkthrough's audit inferred balances by conservation, want them named from its tags")
 		}
-		if want := 1 + engine.K; len(a.Entries) != want {
-			t.Errorf("audit lists %d transactions, want the shield and %d payments", len(a.Entries), engine.K)
+		// The shield, the K payments, the 1+K USDr grants and the K fee legs.
+		if want := 1 + engine.K + (1 + engine.K) + engine.K; len(a.Entries) != want {
+			t.Errorf("audit lists %d transactions, want %d: the shield, %d payments, %d USDr grants and %d fees", len(a.Entries), want, engine.K, 1+engine.K, engine.K)
+		}
+		for _, en := range a.Entries {
+			if (en.Kind == engine.AuditTransfer || en.Kind == engine.AuditUsdrFee) && en.From != e.Sender().Name {
+				t.Errorf("%s of %s %s to %s (tx %s): payer %q, want the Sender", en.Kind, en.Amount, en.Asset, en.To, en.TxHash.Hex(), en.From)
+			}
+		}
+		for _, u := range append([]engine.Actor{e.Sender()}, e.Participants()...) {
+			if got, own := a.Balances[u.Name], e.Balance(u); got == nil || got.Cmp(own) != 0 {
+				t.Errorf("%s: auditor's balance %v, the user's own scan %s", u.Name, got, own)
+			}
+			if got, own := a.UsdrBalances[u.Name], e.UsdrBalance(u); got == nil || got.Cmp(own) != 0 {
+				t.Errorf("%s: auditor's USDr balance %v, the user's own scan %s", u.Name, got, own)
+			}
+		}
+		if !slices.ContainsFunc(sink.snapshot(), func(ev engine.Event) bool { return ev.Kind == engine.RunDone }) {
+			t.Error("the walkthrough did not finish")
+		}
+	})
+
+	t.Run("with the USDr fee and tags off, the walkthrough plays as before them: no credit, channel, fee or tag, the auditor inferring balances by conservation", func(t *testing.T) {
+		off := walkthroughOpts()
+		off.UsdrFee, off.Tags = false, false
+		e, sink, acts := walk(t, cfg, off)
+		checkGates(t, off, acts)
+		checkNoFeeNoTags(t, client, usdrVaultAddr, e, sink.hops())
+		a, err := e.Audit(context.Background())
+		if err != nil {
+			t.Fatalf("Audit: %v", err)
+		}
+		if !a.Inferred {
+			t.Error("the audit names payers it has no tags for")
 		}
 		for _, u := range append([]engine.Actor{e.Sender()}, e.Participants()...) {
 			if got, own := a.Balances[u.Name], e.Balance(u); got == nil || got.Cmp(own) != 0 {
 				t.Errorf("%s: auditor's balance %v, the user's own scan %s", u.Name, got, own)
 			}
 		}
-		if !slices.ContainsFunc(sink.snapshot(), func(ev engine.Event) bool { return ev.Kind == engine.RunDone }) {
-			t.Error("the walkthrough did not finish")
+		at := slices.IndexFunc(acts, func(a released) bool { return a.at.Action == "replay" })
+		if at < 0 || len(acts[at].hops) != 1 {
+			t.Fatal("no replay of payment 1 with one hop")
+		}
+		if rs := detailsOf(acts[at].hops[0], engine.DetailRefusal); len(rs) != 1 || !strings.Contains(rs[0].Reason, "nullifier already spent") {
+			t.Errorf("the replay's refusal %+v, want one, for its spent nullifier", rs)
 		}
 	})
 }

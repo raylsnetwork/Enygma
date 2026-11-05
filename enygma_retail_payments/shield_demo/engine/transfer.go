@@ -156,6 +156,9 @@ type sent struct {
 	proof []string
 	stmt  []*big.Int
 	res   *rpcore.PaymentResult
+	// relayReq is the relay request that settled it, as sent: a replay
+	// sends it again.
+	relayReq relayRequest
 }
 
 // send pays to amount through the relayer, change back to from: from's
@@ -290,6 +293,10 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 
 	var fee *usdrFeeLeg
 	if payUsdrFee {
+		// The fee's proof is a request of its own, a click of its own.
+		if err := s.await(ctx, "fee", to.Name); err != nil {
+			return nil, err
+		}
 		if fee, err = e.proveUsdrFee(ctx, from); err != nil {
 			s.hopFailed(fromNode, NodeGnark, "prove UsdrFee", err)
 			return nil, err
@@ -302,14 +309,12 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if err := s.await(ctx, "relay", to.Name); err != nil {
 		return nil, err
 	}
-	relayStart := time.Now()
-	var tx *relayTxResponse
-	var relayed HopDetail
-	if fee != nil {
-		tx, relayed, err = e.relayer.paymentUsdrFee(ctx, res, fee)
-	} else {
-		tx, relayed, err = e.relayer.payment(ctx, res)
+	req, err := newRelayRequest(res, fee)
+	if err != nil {
+		return nil, err
 	}
+	relayStart := time.Now()
+	tx, relayed, err := e.relayer.relay(ctx, req)
 	relayTime := time.Since(relayStart)
 	if err != nil {
 		s.hopFailed(fromNode, NodeRelayer, "relay", err)
@@ -347,7 +352,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	out := &sent{
 		Settlement: Settlement{From: from.Name, To: to.Name, Amount: amount, TxHash: common.HexToHash(tx.TxHash)},
 		change:     change, proveMs: proveMs, relayMs: relayMs, tx: tx, method: "payment", merged: len(ins) == 2,
-		payeeSalt: res.SaltB, proof: res.Proof, stmt: stmt, res: res,
+		payeeSalt: res.SaltB, proof: res.Proof, stmt: stmt, res: res, relayReq: req,
 	}
 	if fee != nil {
 		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) || !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.change.commitment) {

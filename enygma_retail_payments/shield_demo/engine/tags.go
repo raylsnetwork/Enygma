@@ -172,10 +172,20 @@ func (e *Engine) scanChannels(s *step, a *Actor) (int, error) {
 }
 
 // ensureChannel opens a channel from from to to if from has none yet (a
-// manual transfer between a new pair), and has to find it.
+// manual transfer between a new pair, or each payment of a walkthrough,
+// which has no channels step), and has to find it. The run's first opens
+// the actors' scan cursors.
 func (e *Engine) ensureChannel(ctx context.Context, s *step, from, to *Actor) error {
 	if _, ok := from.tags.out[to]; ok {
 		return nil
+	}
+	if err := s.await(ctx, "channel", to.Name); err != nil {
+		return err
+	}
+	if from.tags.out == nil {
+		if err := e.startTags(ctx); err != nil {
+			return err
+		}
 	}
 	if err := e.openChannel(ctx, s, from, to); err != nil {
 		return err

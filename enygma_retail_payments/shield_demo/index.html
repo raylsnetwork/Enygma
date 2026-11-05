@@ -680,7 +680,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
       "b": [
         {"when": "tags", "text": "With the view keys it recovered, the auditor decrypts every payment and, through the tag channels, names every payer. It rebuilds each user’s balance exactly, while the public still sees only fingerprints."},
         {"when": ["!tags", "!walkthrough"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, so it sees what each user received but can’t rebuild their balances."},
-        {"when": "walkthrough", "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, but every note here comes from the Sender’s one shield, so it infers each balance by conservation: the Sender keeps what they shielded less what the others received. Each matches the user’s own scan."}
+        {"when": ["!tags", "walkthrough"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, but every note here comes from the Sender’s one shield, so it infers each balance by conservation: the Sender keeps what they shielded less what the others received. Each matches the user’s own scan."}
       ],
       "pub": ["Still only fingerprints, nullifiers and proofs"],
       "priv": [
@@ -705,19 +705,46 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "audit_keys": {
       "recover": "The auditor reads every registration from the UserRegistry and opens each sealed box with its own key, recovering each user’s view key."
     },
+    "usdr": {
+      "credit": "The issuer gives each of the {users} users a private USDr note to pay the relayer’s fees with: it mints public USDr, then deposits one note for each user, sealed to their view key, all real transactions, now. Each user then tries the new USDr notes with their view key and opens theirs."
+    },
     "shield": {
       "shield": "The issuer mints {shieldTotal} public RaylsERC20 to the Sender, who deposits all of it into the vault: one transaction, one new commitment."
     },
     "fanout": {
+      "channel": "Before paying {to}, the Sender opens a private tag channel to them: a shared secret sealed to {to}’s view key, which the relayer puts on chain under its own name, a real transaction, now. {to} then checks the new channels with their view key and finds it.",
       "prove": "The Sender’s wallet asks its prover for a zero-knowledge proof that paying {to} {amount} is valid. The prover does this now, for real: the hop line says how many milliseconds it took.",
       "proof": "The proof comes back to the Sender’s wallet: eight numbers, and the public inputs they were made for. Nothing in them opens a note.",
-      "relay": "The Sender hands the proof to the relayer, which submits it from its own account, so the Sender’s address never appears on chain.",
-      "settle": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had the vault check the proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies), then the vault published the nullifier and added {to}’s note and the Sender’s change.",
-      "payment": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now.",
-      "replay": "Now try to spend the same money twice. The Sender resubmits payment 1, the very request that paid {who}, byte for byte, through the relayer, as a real payment would go. Its proof is genuine, but the note it spends is already spent: payment 1 published its nullifier."
+      "fee": "Now the relayer’s {fee} fee. The Sender’s wallet asks its prover for a second, separate proof: it spends the Sender’s private USDr note, pays the relayer a new note of {fee} and gives the Sender the rest back as change. It is its own request to the prover, made now, for real.",
+      "relay": [
+        {"when": "!usdrFee", "text": "The Sender hands the proof to the relayer, which submits it from its own account, so the Sender’s address never appears on chain."},
+        {"when": "usdrFee", "text": "The Sender hands both proofs, the payment and the fee, to the relayer in one request. The relayer checks that the fee note is addressed to it, then submits both in one transaction from its own account, so the Sender’s address never appears on chain."}
+      ],
+      "settle": [
+        {"when": "!usdrFee", "text": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had the vault check the proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies), then the vault published the nullifier and added {to}’s note and the Sender’s change."},
+        {"when": "usdrFee", "text": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had each vault check its proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies). The vault published its nullifier and added {to}’s note and the Sender’s change; the USDr vault did the same for the fee, adding the relayer’s fee note and the Sender’s USDr change. Both or neither: one transaction."}
+      ],
+      "tag": "Last, the Sender tells {to} where the money is, without telling anyone else. Through the relayer, it publishes a tag on their channel: a value only {to} can recognise for this block, carrying the new note’s opening, sealed with the channel’s key. {to} will find the payment by it instead of trying every note on chain.",
+      "payment": [
+        {"when": ["!tags", "!usdrFee"], "text": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now."},
+        {"when": "tags", "text": "Payment {n} of {k}, in one click, all for real, now. The Sender opens a tag channel to {to},"},
+        {"when": ["!tags", "usdrFee"], "text": "Payment {n} of {k}, in one click, all for real, now. The Sender"},
+        {"when": "tags", "text": "then"},
+        {"when": "usdrFee", "text": "spends last payment’s change note to prove paying {to} {amount}, and its USDr note to prove the relayer’s {fee} fee. The relayer submits both in one transaction."},
+        {"when": ["tags", "!usdrFee"], "text": "spends last payment’s change note to prove paying {to} {amount}, and the relayer submits it."},
+        {"when": "tags", "text": "A tag then tells {to} where the money is."}
+      ],
+      "replay": [
+        "Now try to spend the same money twice. The Sender resubmits payment 1, the very request that paid {who},",
+        {"when": "usdrFee", "text": "its fee proof included,"},
+        "byte for byte, through the relayer, as a real payment would go. Its proof is genuine, but the note it spends is already spent: payment 1 published its nullifier."
+      ]
     },
     "discover": {
-      "scan": "{who} tries every new note on chain with their view key and keeps the one that opens."
+      "scan": [
+        {"when": "!tags", "text": "{who} tries every new note on chain with their view key and keeps the one that opens."},
+        {"when": "tags", "text": "{who} checks the new tags against their channels, finds the one meant for them and opens only that note, once its commitment is confirmed in the vault."}
+      ]
     },
     "audit": {
       "audit": "The auditor opens every note of the walkthrough with the view keys it recovered, then checks each user’s balance against their own scan."
@@ -945,7 +972,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
               "With those view keys it opens every note, as each recipient can.",
               {"when": "tags", "text": "It rebuilds each user’s balance exactly."},
               {"when": ["!tags", "!walkthrough"], "text": "It sees what each user received, but can’t rebuild their balances."},
-              {"when": "walkthrough", "text": "Every note here comes from the Sender’s one shield, so it infers each balance by conservation."},
+              {"when": ["!tags", "walkthrough"], "text": "Every note here comes from the Sender’s one shield, so it infers each balance by conservation."},
               "None of this is public."
             ]
           }
@@ -2766,8 +2793,8 @@ async function start(opts) {
 const formOptions = () => ({ shieldTotal: Number($('optTotal').value), payouts: NAMES.map((_, i) => Number($('optPay' + i).value)), usdrFee: $('optUsdrFee').checked, tags: $('optTags').checked });
 // RUN plays the full scenario with the form's options.
 $('runBtn').onclick = () => start(formOptions());
-// A walkthrough takes the form's amounts, never a fee or tags.
-$('walkBtn').onclick = () => start({ ...formOptions(), usdrFee: false, tags: false, walkthrough: true });
+// A walkthrough takes the form's options: its amounts, the USDr fee and tags.
+$('walkBtn').onclick = () => start({ ...formOptions(), walkthrough: true });
 // The handover: a normal run with the default options, fresh actors, same stack.
 $('fullRunBtn').onclick = () => {
   if (!defaults) { $('optError').textContent = 'the default options have not loaded; reload the page'; return; }
