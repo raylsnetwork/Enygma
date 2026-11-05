@@ -551,9 +551,9 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
-	// payment1Formula is the one formula detail of payment 1's one hop
-	// that is, from → to.
-	payment1Formula := func(t *testing.T, what, from, to string) *engine.Formula {
+	// payment1Formula is the formula named name on payment 1's what hop,
+	// from → to: the one formula detail of that name it carries.
+	payment1Formula := func(t *testing.T, name engine.FormulaName, what, from, to string) *engine.Formula {
 		t.Helper()
 		var hs []engine.Event
 		for _, h := range sink.hops() {
@@ -564,11 +564,26 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if len(hs) != 1 {
 			t.Fatalf("%d %s hops in payment 1, want 1", len(hs), what)
 		}
-		fs := detailsOf(hs[0], engine.DetailFormula)
-		if len(fs) != 1 || fs[0].Formula == nil {
-			t.Fatalf("payment 1's %s hop carries %d formula details, want 1", what, len(fs))
+		var f *engine.Formula
+		for _, d := range detailsOf(hs[0], engine.DetailFormula) {
+			if d.Formula == nil {
+				t.Fatalf("payment 1's %s hop carries a formula detail with no formula", what)
+			}
+			if d.Formula.Name != name {
+				continue
+			}
+			if f != nil {
+				t.Fatalf("payment 1's %s hop carries two %s formulas", what, name)
+			}
+			if d.Vault != engine.NodeVault {
+				t.Errorf("the %s formula is in the %s, want the %s", name, d.Vault, engine.NodeVault)
+			}
+			f = d.Formula
 		}
-		return fs[0].Formula
+		if f == nil {
+			t.Fatalf("payment 1's %s hop carries no %s formula", what, name)
+		}
+		return f
 	}
 	// payment1Request is payment 1's proof request as sent to the prover.
 	payment1Request := func(t *testing.T) map[string]any {
@@ -598,10 +613,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 	vault := bindContract(t, client, common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), loadOnchainABI(t, "Erc20CoinVault"))
 
 	t.Run("payment 1's proof hop carries its Merkle path formula: the shielded leaf hashed up its 8 levels to a root the vault has had", func(t *testing.T) {
-		f := payment1Formula(t, "proof", engine.NodeGnark, engine.ActorNode(e.Sender().ID))
-		if f.Name != engine.FormulaMerklePath {
-			t.Fatalf("formula %q, want %q", f.Name, engine.FormulaMerklePath)
-		}
+		f := payment1Formula(t, engine.FormulaMerklePath, "proof", engine.NodeGnark, engine.ActorNode(e.Sender().ID))
 		// leaf, then per level its sibling and (below the root) the node it makes.
 		if len(f.Inputs) != 1+8+7 {
 			t.Fatalf("%d inputs, want the leaf, 8 siblings and 7 nodes below the root", len(f.Inputs))
@@ -813,10 +825,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 	})
 
 	t.Run("payment 1's settle hop carries its nullifier formula: Poseidon of the Sender's spend key and the leaf's position, the Nullifier event the receipt logged", func(t *testing.T) {
-		f := payment1Formula(t, "settle", engine.NodeRelayer, engine.NodeDvp)
-		if f.Name != engine.FormulaNullifier {
-			t.Fatalf("formula %q, want %q", f.Name, engine.FormulaNullifier)
-		}
+		f := payment1Formula(t, engine.FormulaNullifier, "settle", engine.NodeRelayer, engine.NodeDvp)
 		in := map[string]string{}
 		var names []string
 		for _, x := range f.Inputs {
@@ -958,6 +967,103 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		if !strings.Contains(f.Chain.Name, pay.TxHash.Hex()) {
 			t.Errorf("the chain's value is %q, want it to name payment 1's tx %s", f.Chain.Name, pay.TxHash.Hex())
+		}
+	})
+
+	t.Run("payment 1's settlement carries its Groth16 formula: the proof and public inputs the vault verified, verifyProof true, and false once tampered", func(t *testing.T) {
+		f := payment1Formula(t, engine.FormulaGroth16, "settle", engine.NodeRelayer, engine.NodeDvp)
+		if f.Chain == nil {
+			t.Fatal("the Groth16 formula carries no chain value: a full run's, by name only")
+		}
+
+		// The proof and statement the vault verified: the settlement's
+		// calldata, EnygmaDvp.payment(transaction, …).
+		tx, _, err := client.TransactionByHash(context.Background(), e.FanOut()[0].TxHash)
+		if err != nil {
+			t.Fatalf("payment 1's settlement tx: %v", err)
+		}
+		dvpABI := loadOnchainABI(t, "EnygmaDvp")
+		method, err := dvpABI.MethodById(tx.Data()[:4])
+		if err != nil || method.Name != "payment" {
+			t.Fatalf("payment 1 settled by %v (%v), want EnygmaDvp.payment", method, err)
+		}
+		args, err := method.Inputs.Unpack(tx.Data()[4:])
+		if err != nil {
+			t.Fatalf("unpack payment 1's calldata: %v", err)
+		}
+		packed, _ := json.Marshal(args[0])
+		var verified struct {
+			Proof struct {
+				A struct{ X, Y *big.Int }
+				B struct{ X, Y [2]*big.Int }
+				C struct{ X, Y *big.Int }
+			}
+			Statement []*big.Int
+		}
+		if err := json.Unmarshal(packed, &verified); err != nil {
+			t.Fatalf("payment 1's calldata: %v", err)
+		}
+		p := verified.Proof
+		want := []*big.Int{p.A.X, p.A.Y, p.B.X[0], p.B.X[1], p.B.Y[0], p.B.Y[1], p.C.X, p.C.Y}
+		want = append(want, verified.Statement...)
+		if len(f.Inputs) != len(want) {
+			t.Fatalf("the card has %d values, want the proof's 8 and the %d public inputs the vault verified", len(f.Inputs), len(verified.Statement))
+		}
+		for i, x := range f.Inputs {
+			if hexField(t, x.Value).Cmp(want[i]) != 0 {
+				t.Errorf("%s is %s, the vault verified 0x%x", x.Name, x.Value, want[i])
+			}
+		}
+		for i, name := range []string{"A.x", "A.y", "B.x₀", "B.x₁", "B.y₀", "B.y₁", "C.x", "C.y"} {
+			if f.Inputs[i].Name != name {
+				t.Errorf("value %d is named %q, want %q", i, f.Inputs[i].Name, name)
+			}
+		}
+
+		// verifyProof answers true for them, and false with one input
+		// changed: the card's ✓, and the ✗ TAMPER shows.
+		verifierABI := loadOnchainABI(t, "Verifier")
+		verifier := common.HexToAddress(receipts["Verifier"].ContractAddress)
+		ask := func(stmt []*big.Int) bool {
+			data, err := verifierABI.Pack("verifyProof", big.NewInt(engine.PaymentVKSlot), verified.Proof, stmt)
+			if err != nil {
+				t.Fatalf("pack verifyProof: %v", err)
+			}
+			out, err := client.CallContract(context.Background(), ethereum.CallMsg{To: &verifier, Data: data}, nil)
+			if err != nil {
+				t.Fatalf("verifyProof eth_call: %v", err)
+			}
+			answer, err := verifierABI.Unpack("verifyProof", out)
+			if err != nil || len(answer) != 1 {
+				t.Fatalf("verifyProof answer %x: %v", out, err)
+			}
+			return answer[0] == true
+		}
+		if !ask(verified.Statement) {
+			t.Error("verifyProof(payment 1's proof, its public inputs) = false, want true")
+		}
+		// The page's TAMPER changes CommitmentsOut[0], the payee's note.
+		at := -1
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.Label == "prove Payment" {
+				for _, d := range detailsOf(h, engine.DetailPublicInputs) {
+					at = slices.IndexFunc(d.Inputs, func(in engine.PublicInput) bool { return in.Name == "CommitmentsOut" && in.Index == 0 })
+				}
+			}
+		}
+		if at < 0 || at >= len(verified.Statement) {
+			t.Fatalf("CommitmentsOut[0] at %d in payment 1's %d public inputs", at, len(verified.Statement))
+		}
+		tampered := slices.Clone(verified.Statement)
+		tampered[at] = new(big.Int).Add(tampered[at], big.NewInt(1))
+		if ask(tampered) {
+			t.Error("verifyProof with CommitmentsOut[0] changed = true, want false")
+		}
+		if f.Result != "true" || f.Chain.Value != "true" || !f.OK {
+			t.Errorf("the card's result %q, chain value %q (ok %v), want verifyProof's true, ok", f.Result, f.Chain.Value, f.OK)
+		}
+		if !strings.Contains(f.Chain.Name, "verifyProof") {
+			t.Errorf("the chain's value is %q, want it to name verifyProof", f.Chain.Name)
 		}
 	})
 

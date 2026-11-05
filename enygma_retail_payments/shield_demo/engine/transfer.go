@@ -383,6 +383,18 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	} else if payment1 {
 		settleDetails = append(settleDetails, formulaNamed(FormulaNullifier, NodeVault, proofs[0].TreeNumber))
 	}
+	// Payment 1's settlement also carries its Groth16 card: a walkthrough's
+	// with the proof and public inputs the vault just verified, checked
+	// with the Verifier's verifyProof, a full run's by name only.
+	if payment1 {
+		d := formulaNamed(FormulaGroth16, NodeVault, proofs[0].TreeNumber)
+		if s.gated {
+			if d, err = c.groth16Formula(ctx, e.cfg, proofs[0].TreeNumber, res); err != nil {
+				return nil, err
+			}
+		}
+		settleDetails = append(settleDetails, d)
+	}
 	settleDetails = append(settleDetails, c.receipt(receipt))
 	s.hop(NodeRelayer, NodeDvp, out.method, fmt.Sprintf("settles %s, block %d, gas %s", settled, tx.BlockNumber, formatNum(tx.GasUsed)), settleDetails...)
 	owners := map[string]string{stmt[commitmentsOutOffset].String(): to.Name, changeNote.commitment.String(): from.Name}

@@ -1574,9 +1574,10 @@ const hasValues = f => !!f.chain;
 // privacy property it gives (property), its equation as the protocol
 // computes it, what the chain sees (sees), what stays private (hidden), why
 // the one does not reveal the other (why), the name of its result, a line
-// on what it shows (note) and, where "equals the chain's value" would not
-// say what a walkthrough's ✓ checked, what it did (check). A text that
-// depends on the detail is a function of it.
+// on what it shows (note), where "equals the chain's value" would not say
+// what a walkthrough's ✓ checked, what it did (check) and, where the ✓ (or
+// ✗) is not the one the engine sent, whether the check holds (ok). A text
+// that depends on the detail is a function of it.
 const FORMULA = {
   spendKey: {
     title: 'The spend key', property: 'Only the owner can spend', eq: 'pk_spend = Poseidon(sk_spend)', result: 'pk_spend',
@@ -1610,6 +1611,23 @@ const FORMULA = {
     sees: 'the capsule and the sealed payload, beside the note’s commitment',
     hidden: 'the shared secret ss, the salt, the amount, the token',
     why: 'Only the view key’s holder can decapsulate the capsule to the shared secret, and ML-KEM-768 is post-quantum: even a quantum computer can’t recover it from the capsule. AES-GCM fails to open under any other key, so every other wallet’s trial decryption just fails. The auditor reads the note too: it recovers every user’s view key from the audit ciphertexts they registered.',
+  },
+  groth16: {
+    title: 'The Groth16 check', property: 'Zero-knowledge and soundness', eq: 'on BN254: e(A, B) = e(α, β) · e(L, γ) · e(C, δ), with L = IC₀ + Σ xᵢ · ICᵢ', result: 'verifyProof',
+    sees: 'the proof (A, B, C) and the public inputs',
+    hidden: 'the whole witness: the spend key, the amounts, the salts, the Merkle path',
+    why: 'Zero-knowledge: the proof reveals nothing beyond its public inputs, so handing it to the chain leaks none of the witness. Soundness: no one can make a proof that checks without a valid witness, so the chain can trust a proof it can’t look inside.',
+    note: 'A, B and C are the proof: points the prover computed from the witness. L is the public inputs xᵢ folded into one point with the verifying key’s ICᵢ; α, β, γ and δ are the verifying key. The Verifier computes L and the pairings itself.',
+    // A walkthrough's ✓ is the chain's live answer to the page's own on-chain check, ✗ once it is tampered.
+    ok: d => { const v = hasValues(d.formula) && verify.verdict(); return v ? v.ok : d.formula.ok; },
+    // The check line names the chain's answer, and under TAMPER the input it changed; a full run's has none.
+    check: d => {
+      if (!hasValues(d.formula)) return '';
+      const v = verify.verdict(), chain = d.formula.chain.name;
+      return v?.tampered
+        ? `TAMPER changed one public input, ${v.tamper.name} ${shortHex(v.tamper.from)} → ${shortHex(v.tamper.to)}, and the chain answers ${v.ok} to ${chain}, with that input changed`
+        : `the chain answers ${v ? v.ok : d.formula.chain.value} to ${chain}`;
+    },
   },
   merklePath: {
     title: 'The Merkle path', property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈', result: 'root',
@@ -1903,8 +1921,9 @@ const hopPanel = (() => {
     // c is the card's texts for d: a text that depends on the detail is a function of it.
     const c = Object.fromEntries(Object.entries(card).map(([k, v]) => [k, typeof v === 'function' ? v(d) : v]));
     const head = `<div><b class="fprop">${esc(c.property)}</b> <span class="hstep">· ${esc(c.title.replace(/^The /, 'the '))}</span></div>`;
+    const ok = 'ok' in c ? c.ok : f.ok;
     const values = !hasValues(f) ? '' : `
-      <div class="fchk">${f.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} checked against the chain with this run’s values: ${esc(c.check || `${f.ok ? 'equals' : 'differs from'} ${f.chain.name}`)}</div>
+      <div class="fchk">${ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} checked against the chain with this run’s values: ${esc(c.check || `${ok ? 'equals' : 'differs from'} ${f.chain.name}`)}</div>
       <details class="fvals"><summary>this run’s values</summary>
         ${(f.inputs || []).map(x => `<div class="fin"><span class="k">${esc(x.name)}</span>${fval(x.value)}</div>`).join('')}
         <div class="fin res"><span class="k">= ${esc(c.result)}</span>${fval(f.result)}</div>
@@ -2081,6 +2100,12 @@ const hopPanel = (() => {
       const mine = stepHops(step);
       if (mine.length) replayAt(mine[0]);
       return mine.length > 0;
+    },
+    // refreshFormula draws the panel again if it shows a formula card named
+    // name, whose ✓ (or ✗) may have changed.
+    refreshFormula(name) {
+      const en = replay !== null ? history[replay] : latest;
+      if (en?.details.some(d => d.kind === 'formula' && d.formula.name === name)) render();
     },
     reset() { trees = null; latest = null; history = []; replay = null; render(); },
   };
@@ -2408,7 +2433,9 @@ const refusal = (() => {
 // JSON-RPC body, the answer and a curl command that sends the same body.
 const verify = (() => {
   const card = $('verify');
-  let call = null, tampered = false, seq = 0;
+  // answered is the chain's last answer to the call the card shows: { ok,
+  // tampered }, null until it answers.
+  let call = null, tampered = false, seq = 0, answered = null;
   // rpcBody is the JSON-RPC body that calls verifyProof with data.
   const rpcBody = data => JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: defaults.chain.verifier, data }, 'latest'] });
   // data is the call the page sends now: the genuine one, or the tampered one.
@@ -2452,7 +2479,10 @@ const verify = (() => {
       const j = await res.json();
       answer = j.error ? { error: j.error.message || JSON.stringify(j.error) } : { ok: BigInt(j.result) === 1n };
     } catch (err) { answer = { error: `the node did not answer: ${err}` }; }
-    if (mine === seq && call) render(answer);
+    if (mine !== seq || !call) return;
+    render(answer);
+    answered = answer.error ? null : { ok: answer.ok, tampered };
+    hopPanel.refreshFormula('groth16');
   }
   // A click on the card checks the genuine call or the tampered one; COPY
   // is copied by the page's data-copy handler, and says so.
@@ -2466,12 +2496,15 @@ const verify = (() => {
   return {
     // show offers the check of call c, a VerifyCall, and makes it once.
     show(c) {
-      call = c; tampered = false;
+      call = c; tampered = false; answered = null;
       card.hidden = false;
       if (defaults?.chain) send(); else render(null);
     },
     // reset takes the check away, for a new run.
-    reset() { call = null; seq++; card.hidden = true; card.innerHTML = ''; },
+    reset() { call = null; answered = null; seq++; card.hidden = true; card.innerHTML = ''; },
+    // verdict is the chain's last answer to payment 1's check, as the card
+    // shows it: { ok, tampered, tamper }, or null before it answers.
+    verdict: () => answered && { ...answered, tamper: call.tamper },
   };
 })();
 
