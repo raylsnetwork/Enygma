@@ -1577,6 +1577,14 @@ const hasValues = f => !!f.chain;
 // on what it shows (note). A text that depends on the detail is a function
 // of it.
 const FORMULA = {
+  spendKey: {
+    title: 'The spend key', property: 'Only the owner can spend', eq: 'pk_spend = Poseidon(sk_spend)', result: 'pk_spend',
+    sees: 'pk_spend, in the UserRegistry and inside every commitment to the Sender',
+    hidden: 'sk_spend',
+    why: 'Poseidon is one-way, so pk_spend reveals nothing about sk_spend. Spending a note needs sk_spend inside the proof (it is also the nullifier’s key), so only its holder can spend the notes sent to pk_spend.',
+    // A walkthrough's values fold holds the Sender's sk_spend in full.
+    note: d => hasValues(d.formula) ? 'This run’s sk_spend is a throwaway demo key, which the walkthrough shows anyway in payment 1’s witness. A real wallet never shows it.' : '',
+  },
   commitment: {
     title: 'The note commitment', property: 'Hiding', eq: 'commitment = Poseidon(pk_spend, salt, amount, token)', result: 'commitment',
     sees: 'the commitment, one leaf in the vault’s tree',
@@ -1620,7 +1628,7 @@ const hex = v => `<span class="hex" data-copy="${esc(v)}" title="${esc(v)} (clic
 // blob is a long public value in full, copied on click.
 const blob = v => `<span class="blob" data-copy="${esc(v)}" title="${esc((v.length - 2) / 2)} bytes (click to copy)">${esc(v)}</span>`;
 // secret is a private key as the engine sent it: shortened, never in full.
-const secret = v => `<span class="secret" title="Shortened by the engine: the full private key never reaches this page">${esc(v)}</span>`;
+const secret = v => `<span class="secret" title="Shortened by the engine: a full run never sends this page a full private key (a walkthrough shows the Sender’s sk_spend, a throwaway demo key, in its witness and formula cards)">${esc(v)}</span>`;
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-copy]');
   if (!el) return;
@@ -1921,7 +1929,7 @@ const hopPanel = (() => {
   // under Real values.
   function secretHtml(d) {
     if (d.kind === 'key') return `<div class="opening">
-      ${sideOf(false, 'Never leaves its owner; the engine sends this page only a shortened form', [part(d.key.name === 'spend key' ? 'sk_spend' : 'sk', secret(d.key.private))])}
+      ${sideOf(false, 'Never leaves its owner; the engine sends this key hop only a shortened form', [part(d.key.name === 'spend key' ? 'sk_spend' : 'sk', secret(d.key.private))])}
       <span class="arrow">${esc(d.key.scheme)} →</span>
       ${sideOf(true, 'Published in the UserRegistry', [part(d.key.name === 'spend key' ? 'pk_spend' : d.key.name === 'view key' ? 'pk_view' : 'auditor pk', d.key.scheme === 'Poseidon' ? hex(d.key.public) : sizeOf(d.key.public))])}
     </div>`;

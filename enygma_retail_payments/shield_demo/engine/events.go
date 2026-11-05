@@ -122,15 +122,17 @@ const (
 	// DetailFormula is one of the protocol's equations, which the page
 	// draws by its name as the privacy property it gives (see Formula). A
 	// full run's carries only the name, once per run on the formula's first
-	// hop: the commitment on the shield, the Merkle path on payment 1's
-	// proof request (a full run has no hop of its own for the proof coming
-	// back), the nullifier on payment 1's settlement. A walkthrough's
-	// carries the run's real values too, checked against what the chain
-	// holds, on its shield's hop (the commitment: its values are the
-	// shield's opening, public in the deposit's calldata) and payment 1's
-	// (the Merkle path on the proof coming back, the nullifier on the
-	// settlement): values the page shows there anyway, in payment 1's
-	// witness.
+	// hop: the spend key on the Sender's registration (the first hop the
+	// UserRegistry holds it by), the commitment on the shield, the Merkle
+	// path on payment 1's proof request (a full run has no hop of its own
+	// for the proof coming back), the nullifier on payment 1's settlement.
+	// A walkthrough's carries the run's real values too, checked against
+	// what the chain holds, on the Sender's registration (the spend key:
+	// its sk_spend is a throwaway demo key), its shield's hop (the
+	// commitment: its values are the shield's opening, public in the
+	// deposit's calldata) and payment 1's (the Merkle path on the proof
+	// coming back, the nullifier on the settlement): values the page shows
+	// there anyway, in payment 1's witness.
 	DetailFormula HopDetailKind = "formula"
 )
 
@@ -141,6 +143,9 @@ const (
 	// FormulaCommitment is a note's commitment, Poseidon(pk_spend, salt,
 	// amount, token), the leaf its vault inserts.
 	FormulaCommitment FormulaName = "commitment"
+	// FormulaSpendKey is an actor's spend public key, pk_spend =
+	// Poseidon(sk_spend), as the UserRegistry holds it.
+	FormulaSpendKey FormulaName = "spendKey"
 	// FormulaMerklePath is a spent note's path: its leaf hashed with one
 	// sibling per level, Poseidon(left, right) ordered by the leaf index's
 	// bit at that level, up to a root its vault has had.
@@ -187,7 +192,8 @@ var noteOpening = []string{"pk_spend", "salt", "amount", "token"}
 type HopDetail struct {
 	Kind HopDetailKind `json:"kind"`
 	// Vault is the vault's node ID (NodeVault or NodeUsdrVault) and Tree
-	// the number of its tree the hop touches.
+	// the number of its tree the hop touches. A spend key formula holds
+	// NodeUserRegistry there, where the chain keeps pk_spend, and tree 0.
 	Vault string `json:"vault"`
 	Tree  int    `json:"tree"`
 
