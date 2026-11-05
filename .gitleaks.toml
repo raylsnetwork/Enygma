@@ -55,6 +55,13 @@ paths = [
   '''^enygma_retail_payments/private_tags/test/tag_test\.go$''',
   '''^enygma_retail_payments/test/05_auditor_relayer_test\.go$''',
   '''^enygma_retail_payments/test/helpers_test\.go$''',
+  # The shield demo's walkthrough fixture: a real walkthrough's engine events,
+  # replayed by `make page-check`. Its witness and formula hop details carry
+  # the Sender's spend key and the notes' openings, which the replay test
+  # checks digit for digit. The engine generates those keys afresh on every
+  # walkthrough, for accounts on a local Hardhat node only: throwaway demo
+  # keys, not credentials.
+  '''^enygma_retail_payments/shield_demo/testdata/walkthrough\.events\.json$''',
 ]
 
 # Known, deliberately-public local-devnet keys. Neither of these is a live
