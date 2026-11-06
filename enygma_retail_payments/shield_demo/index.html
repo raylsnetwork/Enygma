@@ -73,6 +73,7 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #runBtn:disabled, #sendBtn:disabled, #walkBtn:disabled { opacity:.35; cursor:not-allowed; }
 #walkBtn { border:1.5px solid var(--accent); background:none; color:var(--accent); font-weight:700; letter-spacing:.1em; padding:6px 18px; border-radius:999px; cursor:pointer; }
 #themeBtn { border:1px solid var(--bd2); background:var(--s1); border-radius:50%; width:32px; height:32px; cursor:pointer; }
+#primerLink { border:1px solid var(--bd2); border-radius:999px; padding:5px 14px; background:var(--s1); color:var(--text2); text-decoration:none; white-space:nowrap; }
 #optError, #sendError { font:11px var(--mono); color:var(--bad); }
 #optError:empty { display:none; }
 
@@ -466,6 +467,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
   <span class="chip" id="status"><span class="status-dot"></span><span id="statusText">idle</span></span>
   <button id="walkBtn" title="Play the Sender's path live, the engine doing one real action per Next">WALKTHROUGH</button>
   <button id="runBtn" title="Play the full scenario">RUN</button>
+  <a id="primerLink" href="/protocol" target="_blank" rel="noopener" title="The protocol in cryptographic depth, on one payment (opens in a new tab, so a run here keeps playing)">protocol primer ↗</a>
   <button id="themeBtn" title="Light / dark theme" aria-label="Toggle light / dark theme">◐</button>
 </header>
 

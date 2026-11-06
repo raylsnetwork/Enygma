@@ -8,7 +8,9 @@
 //
 //	go run . -root ..                 # then open http://localhost:9092
 //	go run . -root .. -logs $LOG_DIR  # with run.sh's service logs
-//	go run . -root .. -dev            # serve index.html from disk: edit, refresh
+//	go run . -root .. -dev            # serve the pages from disk: edit, refresh
+//
+// It also serves the Protocol primer, a static page, at /protocol.
 package main
 
 import (
@@ -30,6 +32,12 @@ import (
 
 //go:embed index.html
 var indexHTML string
+
+// protocolHTML is the Protocol primer, served at /protocol: a static page
+// that makes no requests, so it also opens from disk.
+//
+//go:embed protocol.html
+var protocolHTML string
 
 // broker fans engine events and service-log lines out to every connected
 // SSE client, and keeps each service's last replayLines lines for new ones.
@@ -120,9 +128,9 @@ type server struct {
 	mu      sync.Mutex
 	live    *engine.Engine
 	endWalk context.CancelFunc
-	// pageFile, if set, is read for the page on every request instead of
-	// the embedded copy (-dev).
-	pageFile string
+	// pageFile and primerFile, if set, are read for the page and the
+	// primer on every request instead of the embedded copies (-dev).
+	pageFile, primerFile string
 }
 
 // newServer serves runs with cfg. With a logDir, it tails the services' logs
@@ -138,6 +146,7 @@ func newServer(ctx context.Context, cfg engine.Config, logDir string) *server {
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/protocol", s.handlePrimer)
 	mux.HandleFunc("/events", s.handleEvents)
 	mux.HandleFunc("/defaults", s.handleDefaults)
 	mux.HandleFunc("/run", s.handleRun)
@@ -147,9 +156,18 @@ func (s *server) routes() *http.ServeMux {
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	page := indexHTML
-	if s.pageFile != "" {
-		b, err := os.ReadFile(s.pageFile)
+	servePage(w, indexHTML, s.pageFile)
+}
+
+func (s *server) handlePrimer(w http.ResponseWriter, r *http.Request) {
+	servePage(w, protocolHTML, s.primerFile)
+}
+
+// servePage writes the embedded page, or the file's contents when file is set.
+func servePage(w http.ResponseWriter, embedded, file string) {
+	page := embedded
+	if file != "" {
+		b, err := os.ReadFile(file)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -338,7 +356,7 @@ func main() {
 	root := flag.String("root", "..", "enygma_retail_payments directory")
 	addr := flag.String("addr", ":9092", "listen address")
 	logDir := flag.String("logs", "", "directory of the services' logs (hardhat.log, gnark.log, relayer.log) to show in the terminal; none if empty")
-	dev := flag.Bool("dev", false, "serve <root>/shield_demo/index.html from disk on every request instead of the embedded copy, so a page edit needs only a refresh")
+	dev := flag.Bool("dev", false, "serve <root>/shield_demo/index.html and protocol.html from disk on every request instead of the embedded copies, so a page edit needs only a refresh")
 	flag.Parse()
 
 	cfg := engine.DefaultConfig(*root)
@@ -346,6 +364,7 @@ func main() {
 	s := newServer(context.Background(), cfg, *logDir)
 	if *dev {
 		s.pageFile = filepath.Join(*root, "shield_demo", "index.html")
+		s.primerFile = filepath.Join(*root, "shield_demo", "protocol.html")
 	}
 
 	log.Printf("Enygma Retail Shield Demo listening on http://localhost%s", *addr)
