@@ -143,6 +143,40 @@ mtable.align mtd { padding:.25em 0; }
 aside { border-left:3px solid var(--bd2); padding:4px 12px; margin:10px 0; color:var(--text2); font-size:13px; }
 aside b { color:var(--text); }
 aside.warn { border-left-color:var(--warn); }
+
+/* ---- the payment's circuit and its gates ------------------------------------ */
+/* Under 560px the diagram keeps its width and scrolls inside its panel, so its labels stay legible. */
+.circuit-panel { padding:8px; margin:8px 0; overflow-x:auto; }
+#circuit { display:block; width:100%; min-width:560px; height:auto; font-family:var(--sans); }
+#circuit .col { font:700 10px var(--mono); letter-spacing:.12em; fill:var(--text2); }
+#circuit .witness rect { fill:color-mix(in srgb, var(--actor) 14%, var(--s1)); stroke:var(--actor); stroke-width:1.1; }
+#circuit .witness text { font:600 10.5px var(--mono); fill:var(--actor); }
+#circuit .gate rect { fill:var(--s2); stroke:var(--bd2); stroke-width:1.1; transition:stroke .2s; }
+#circuit .gate text { font:10.5px var(--mono); fill:var(--text); }
+#circuit .gate .gn { font-weight:700; fill:var(--muted); }
+#circuit .pubin rect { fill:color-mix(in srgb, var(--contract) 14%, var(--s1)); stroke:var(--contract); stroke-width:1.1; }
+#circuit .pubin text { font:600 10.5px var(--mono); fill:var(--contract); }
+#circuit .verifier rect { fill:color-mix(in srgb, var(--contract) 6%, var(--s1)); stroke:color-mix(in srgb, var(--contract) 45%, var(--bd)); stroke-width:1.2; }
+#circuit .verifier text { font:600 12px var(--serif); fill:var(--text); }
+#circuit .boundary { fill:none; stroke:var(--bd2); stroke-dasharray:5 4; }
+#circuit .wire { fill:none; stroke-width:1; opacity:.35; transition:opacity .2s, stroke-width .2s; }
+#circuit .wire[data-kind="wg"] { stroke:var(--actor); }
+#circuit .wire[data-kind="gp"], #circuit .wire[data-kind="pv"] { stroke:var(--contract); }
+#circuit.hot .wire { opacity:.08; }
+#circuit.hot .wire.hot { opacity:1; stroke-width:1.8; }
+#circuit .gate.hot rect { stroke:var(--accent); stroke-width:2.2; }
+.gates { display:flex; flex-direction:column; gap:10px; margin:8px 0; }
+.gate-card { border:1px solid var(--bd); border-radius:12px; padding:8px 14px; transition:border-color .2s; }
+.gate-card.hot { border-color:var(--accent); }
+.gate-card h4 { font:600 14px var(--serif); }
+.gate-card h4 small { font:11px var(--mono); color:var(--muted); margin-right:6px; }
+.gate-card .stops { color:var(--text2); font-size:13px; }
+.gate-card .stops b { color:var(--text); }
+.levels { display:grid; grid-template-columns:max-content max-content minmax(0,1fr); gap:3px 12px; align-items:baseline; font-size:12px; margin:8px 0; }
+.levels .lh { font:700 10px var(--mono); letter-spacing:.08em; color:var(--muted); }
+.levels code { display:block; }
+.levels code.nd { color:var(--text2); }
+.levels code.nd::before { content:'→ '; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -155,19 +189,19 @@ aside.warn { border-left-color:var(--warn); }
 <main class="wrap">
   <div class="stage">
     <div class="panel">
-      <svg id="flow" viewBox="0 0 720 390" role="img" aria-labelledby="flowTitle">
+      <svg id="flow" viewBox="0 0 720 450" role="img" aria-labelledby="flowTitle">
         <title id="flowTitle">The Sender's, Ana's and the auditor's wallets, left of the privacy line; the chain, right of it</title>
-        <rect class="zone z-wallet" x="0" y="0" width="450" height="390" rx="14"/>
-        <rect class="zone z-chain" x="470" y="0" width="250" height="390" rx="14"/>
+        <rect class="zone z-wallet" x="0" y="0" width="450" height="450" rx="14"/>
+        <rect class="zone z-chain" x="470" y="0" width="250" height="450" rx="14"/>
         <text class="zl" x="14" y="20">WALLETS · PRIVATE</text>
         <text class="zl" x="484" y="20">CHAIN · PUBLIC</text>
-        <line class="pline" x1="460" y1="8" x2="460" y2="382"/>
+        <line class="pline" x1="460" y1="8" x2="460" y2="442"/>
         <text class="pl" transform="translate(455 300) rotate(-90)">privacy line</text>
         <g class="node actor" data-node="sender"><rect x="14" y="32" width="426" height="108" rx="12"/><text class="nl" x="28" y="52">Sender's wallet</text></g>
         <g class="node actor" data-node="ana"><rect x="14" y="150" width="426" height="108" rx="12"/><text class="nl" x="28" y="170">Ana's wallet</text></g>
         <g class="node actor" data-node="auditor"><rect x="14" y="268" width="426" height="108" rx="12"/><text class="nl" x="28" y="288">Auditor's wallet</text></g>
         <g class="node contract" data-node="registry"><rect x="482" y="32" width="226" height="226" rx="12"/><text class="nl" x="496" y="52">UserRegistry</text><text class="ns" x="496" y="66">one entry per user</text></g>
-        <g class="node contract" data-node="vault"><rect x="482" y="268" width="226" height="108" rx="12"/><text class="nl" x="496" y="288">Erc20CoinVault</text><text class="ns" x="496" y="302">depth-8 Merkle tree</text></g>
+        <g class="node contract" data-node="vault"><rect x="482" y="268" width="226" height="168" rx="12"/><text class="nl" x="496" y="288">Erc20CoinVault</text><text class="ns" x="496" y="302">depth-8 Merkle tree</text></g>
         <g id="chips"></g>
       </svg>
     </div>
@@ -395,6 +429,158 @@ aside.warn { border-left-color:var(--warn); }
       <p>The ledger adds the deposit: its msg.sender, its calldata in full (the opening, and the note's ciphertexts, which step 6 explains with Ana's note) and the leaf the <code>Commitment</code> event inserted. The mint and the approve before it are public transactions too, with the same account and amount; so are the token's <code>Transfer</code> events.</p>
       <aside class="warn"><b>msg.sender</b> names the Sender's account as the depositor. For a shield that link is not the leak, since pk_spend in the calldata names the Sender too. It matters on the payment, where the full protocol lets a relayer send the transaction for a fee.</aside>
     </section>
+    <section class="step" data-step="payment" id="payment">
+      <h2><small>5</small>The payment</h2>
+      <p class="lede">The Sender pays Ana <code class="v" data-v="valueOut0"></code> of the <code class="v" data-v="valueIn"></code> note and keeps <code class="v" data-v="valueOut1"></code> as change. It is one transaction, <code>EnygmaDvp.payment(receipt, vaultId, ctxt, encTxData)</code>, sent from the Sender's own account. The receipt holds one Groth16 proof π of the Payment circuit and the proof's seven public inputs. Everything else about the spend is the <b>witness</b>, and it stays in the Sender's wallet.</p>
+
+      <h3>The spend: one note in, two notes out</h3>
+      <div class="fm">
+        <math display="block"><mtable class="align" columnalign="right left">
+          <mtr><mtd><msub><mi>C</mi><mtext>in</mtext></msub></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>pk</mi><mtext>in</mtext></msub><mo separator="true">,</mo><msub><mi>salt</mi><mtext>in</mtext></msub><mo separator="true">,</mo><mn data-v="valueIn"></mn><mo separator="true">,</mo><mi>token</mi><mo stretchy="false">)</mo><mo>=</mo><mn data-v="commitmentIn"></mn></mtd></mtr>
+          <mtr><mtd><msub><mi>C</mi><mn>0</mn></msub></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>pk</mi><mtext>Ana</mtext></msub><mo separator="true">,</mo><msub><mi>salt</mi><mn>0</mn></msub><mo separator="true">,</mo><mn data-v="valueOut0"></mn><mo separator="true">,</mo><mi>token</mi><mo stretchy="false">)</mo><mo>=</mo><mn data-v="commitmentOut0"></mn></mtd></mtr>
+          <mtr><mtd><msub><mi>C</mi><mn>1</mn></msub></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>pk</mi><mtext>in</mtext></msub><mo separator="true">,</mo><msub><mi>salt</mi><mn>1</mn></msub><mo separator="true">,</mo><mn data-v="valueOut1"></mn><mo separator="true">,</mo><mi>token</mi><mo stretchy="false">)</mo><mo>=</mo><mn data-v="commitmentOut1"></mn></mtd></mtr>
+        </mtable></math>
+      </div>
+      <p>The input is the note the shield made: leaf <span data-v="leafIndex"></span> of tree <span data-v="tree"></span>. Output 0 is Ana's note. The Sender read Ana's pk_spend and ek_view from the UserRegistry (<code>getKeys</code>), and derived salt<sub>0</sub> from a fresh ML-KEM secret shared with Ana's ek_view, the way the shield's salt was made. The encryption step explains how Ana finds and opens it. Output 1 is the Sender's change. Its salt<sub>1</sub> is a random field element that the Sender keeps.</p>
+      <div class="vals">
+        <span class="who">Input note · the Sender's</span>
+        <math><msub><mi>sk</mi><mtext>spend</mtext></msub></math><code class="v" data-v="skSpend"></code>
+        <math><msub><mi>pk</mi><mtext>in</mtext></msub></math><code class="v" data-v="pkSpend"></code>
+        <math><msub><mi>salt</mi><mtext>in</mtext></msub></math><code class="v" data-v="saltIn"></code>
+        <math><msub><mi>v</mi><mtext>in</mtext></msub></math><code class="v" data-v="valueIn"></code>
+        <math><mi>token</mi></math><code class="v" data-v="token"></code>
+        <math><msub><mi>C</mi><mtext>in</mtext></msub></math><code class="v" data-v="commitmentIn"></code>
+        <span class="who">Output 0 · Ana's</span>
+        <math><msub><mi>pk</mi><mtext>Ana</mtext></msub></math><code class="v" data-v="anaPk"></code>
+        <math><msub><mi>salt</mi><mn>0</mn></msub></math><code class="v" data-v="saltOut0"></code>
+        <math><msub><mi>v</mi><mn>0</mn></msub></math><code class="v" data-v="valueOut0"></code>
+        <math><msub><mi>C</mi><mn>0</mn></msub></math><code class="v" data-v="commitmentOut0"></code>
+        <span class="who">Output 1 · the Sender's change</span>
+        <math><msub><mi>salt</mi><mn>1</mn></msub></math><code class="v" data-v="saltOut1"></code>
+        <math><msub><mi>v</mi><mn>1</mn></msub></math><code class="v" data-v="valueOut1"></code>
+        <math><msub><mi>C</mi><mn>1</mn></msub></math><code class="v" data-v="commitmentOut1"></code>
+      </div>
+
+      <h3>The circuit</h3>
+      <div class="panel circuit-panel">
+        <svg id="circuit" viewBox="0 0 720 420" role="img" aria-labelledby="circuitTitle">
+          <title id="circuitTitle">The Payment circuit: the witness enters on the left, private; every constraint is a gate; only the seven public inputs leave, to the Verifier</title>
+        </svg>
+      </div>
+      <p>The witness (teal, left) is what the Sender knows: the input note's opening and sk_spend, its Merkle path, and the two outputs' openings. It enters the circuit and never leaves it. Each gate is one of the circuit's constraints, where H is Poseidon: equations mod p that the witness must satisfy, all together. Only the seven public inputs (indigo, right) leave, to the Verifier. The proof π says that a witness satisfying every gate exists for these public inputs, and it says nothing more about that witness. The Groth16 step shows how. Point at a gate, or at a card below, to light up its wires.</p>
+      <aside>In this model the Sender's wallet makes the proof. In this deployment the wallet sends the witness to its gnark server on :8082, which makes the proof, so that server sees everything the witness holds. A production wallet would prove locally, or on a server it trusts with its keys.</aside>
+
+      <h3>Every gate, and what it stops</h3>
+      <div class="gates">
+        <div class="gate-card" data-gate="message">
+          <h4><small>G1</small>Message is 0 or 1</h4>
+          <div class="fm"><math display="block"><mi>M</mi><mo>·</mo><mo stretchy="false">(</mo><mi>M</mi><mo>−</mo><mn>1</mn><mo stretchy="false">)</mo><mo>=</mo><mn>0</mn><mo separator="true">,</mo><mspace width="1em"/><mi>M</mi><mo>=</mo><mn data-v="message"></mn></math></div>
+          <p class="stops"><b>Stops</b> a receipt being settled as the other kind. A payment carries Message 0 and a withdrawal carries 1, and each settlement function takes only its own value, so a withdrawal can't be settled as a payment or the other way round. <code>payment()</code> requires 0.</p>
+        </div>
+        <div class="gate-card" data-gate="range">
+          <h4><small>G2</small>The range check</h4>
+          <div class="fm"><math display="block"><mn>0</mn><mo>≤</mo><mi>v</mi><mo>&lt;</mo><msup><mn>10</mn><mn>36</mn></msup><mspace width="0.6em"/><mtext>for</mtext><mspace width="0.6em"/><mi>v</mi><mo>∈</mo><mo stretchy="false">{</mo><mn data-v="valueIn"></mn><mo separator="true">,</mo><mn data-v="valueOut0"></mn><mo separator="true">,</mo><mn data-v="valueOut1"></mn><mo stretchy="false">}</mo></math></div>
+          <p>10<sup>36</sup> = <code class="v" data-v="range"></code>. The bound is a comparison on the value's bits inside the circuit.</p>
+          <p class="stops"><b>Stops</b> minting through a "negative" change. In the field, −1 is p − 1. Without this gate, a 100 note could pay out 101 and p − 1: the sum is 100 mod p, so conservation would hold. That is a 101 note minted from a 100 note, and the change note would be worth a near-infinite amount. Three values under 10<sup>36</sup> add up to far less than p, so the sums can't wrap.</p>
+        </div>
+        <div class="gate-card" data-gate="ownership">
+          <h4><small>G3</small>Ownership</h4>
+          <div class="fm"><math display="block"><msub><mi>pk</mi><mtext>in</mtext></msub><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>sk</mi><mtext>in</mtext></msub><mo stretchy="false">)</mo><mo>=</mo><mn data-v="pkSpend"></mn></math></div>
+          <p>pk_in is not part of the witness. The circuit derives it from sk_in, and it is the Sender's registered pk_spend.</p>
+          <p class="stops"><b>Stops</b> spending someone else's note. A leaf opens only under a pk_in the prover computed from its secret, and pk_spend is public (registration publishes it) while sk_spend can't be recovered from it. Knowing a note's owner and opening is not enough to spend it.</p>
+        </div>
+        <div class="gate-card" data-gate="enable">
+          <h4><small>G4</small>The zero-value gating, <i>enable</i></h4>
+          <div class="fm"><math display="block"><mtable class="align" columnalign="right left">
+            <mtr><mtd><mi>z</mi></mtd><mtd><mo>=</mo><mtext>isZero</mtext><mo stretchy="false">(</mo><msub><mi>v</mi><mtext>in</mtext></msub><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="0.6em"/><mi>enable</mi><mo>=</mo><mn>1</mn><mo>−</mo><mi>z</mi><mo>=</mo><mn data-v="enable"></mn></mtd></mtr>
+            <mtr><mtd><mi>enable</mi><mo>·</mo><mo stretchy="false">(</mo><mi>R</mi><mo>−</mo><mi>root</mi><mo stretchy="false">)</mo><mo>=</mo><mn>0</mn></mtd><mtd><mspace width="1em"/><mi>z</mi><mo>·</mo><mi>R</mi><mo>=</mo><mn>0</mn></mtd></mtr>
+            <mtr><mtd><mi>enable</mi><mo>·</mo><mo stretchy="false">(</mo><mi>N</mi><mo>−</mo><mi>nf</mi><mo stretchy="false">)</mo><mo>=</mo><mn>0</mn></mtd><mtd><mspace width="1em"/><mi>z</mi><mo>·</mo><mi>N</mi><mo>=</mo><mn>0</mn></mtd></mtr>
+          </mtable></math></div>
+          <p>R and N are the public root and nullifier. root and nf are the values the circuit computes (G6, G7). A zero-value input is padding, so it needs no real note and its path and nullifier are not checked. This input is real: enable = 1, so R and N must be the computed ones.</p>
+          <p class="stops"><b>Stops</b> the on-chain checks being bypassed (VULN-3). The vault checks <code>isValidRoot</code> and spends a nullifier only for an input whose root is not 0. A zero-value input must therefore publish root 0 and nullifier 0, so that the vault skips exactly the inputs the circuit skipped. Without z·R = 0 and z·N = 0, a padding input could publish any valid root and a nullifier that no constraint computed. The vault would pass the root check and record that nullifier as spent. If it were another user's, their note would be burned.</p>
+        </div>
+        <div class="gate-card" data-gate="commitmentIn">
+          <h4><small>G5</small>The input commitment</h4>
+          <div class="fm"><math display="block"><msub><mi>C</mi><mtext>in</mtext></msub><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>pk</mi><mtext>in</mtext></msub><mo separator="true">,</mo><msub><mi>salt</mi><mtext>in</mtext></msub><mo separator="true">,</mo><msub><mi>v</mi><mtext>in</mtext></msub><mo separator="true">,</mo><mi>token</mi><mo stretchy="false">)</mo></math></div>
+          <p class="stops"><b>Stops</b> spending a value the note doesn't hold. C_in is the leaf whose membership G6 proves, so v_in, the value that conservation counts, is the one the depositor paid in. Poseidon is binding, so the same leaf can't be opened with a larger v_in.</p>
+        </div>
+        <div class="gate-card" data-gate="merkle">
+          <h4><small>G6</small>Merkle membership</h4>
+          <div class="fm"><math display="block"><mtable class="align" columnalign="right left">
+            <mtr><mtd><msub><mi>n</mi><mn>0</mn></msub></mtd><mtd><mo>=</mo><msub><mi>C</mi><mtext>in</mtext></msub><mo separator="true">,</mo><mspace width="0.6em"/><msub><mi>b</mi><mi>k</mi></msub><mo>=</mo><mtext>bit</mtext><mspace width="0.3em"/><mi>k</mi><mspace width="0.3em"/><mtext>of</mtext><mspace width="0.3em"/><mi>i</mi><mo>=</mo><mn data-v="leafIndex"></mn></mtd></mtr>
+            <mtr><mtd><msub><mi>n</mi><mrow><mi>k</mi><mo>+</mo><mn>1</mn></mrow></msub></mtd><mtd><mo>=</mo><mrow><mo>{</mo><mtable class="align" columnalign="left left"><mtr><mtd><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>n</mi><mi>k</mi></msub><mo separator="true">,</mo><msub><mi>s</mi><mi>k</mi></msub><mo stretchy="false">)</mo></mtd><mtd><mspace width="0.6em"/><msub><mi>b</mi><mi>k</mi></msub><mo>=</mo><mn>0</mn></mtd></mtr><mtr><mtd><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>s</mi><mi>k</mi></msub><mo separator="true">,</mo><msub><mi>n</mi><mi>k</mi></msub><mo stretchy="false">)</mo></mtd><mtd><mspace width="0.6em"/><msub><mi>b</mi><mi>k</mi></msub><mo>=</mo><mn>1</mn></mtd></mtr></mtable></mrow></mtd></mtr>
+            <mtr><mtd><mi>root</mi></mtd><mtd><mo>=</mo><msub><mi>n</mi><mn>8</mn></msub><mo>=</mo><mn data-v="root"></mn></mtd></mtr>
+          </mtable></math></div>
+          <p>s<sub>k</sub> is the sibling at level k, and the bits of the leaf index pick the side. Here are the eight levels, as this run hashed them:</p>
+          <div class="levels">
+            <span class="lh">k</span><span class="lh">b<sub>k</sub></span><span class="lh">sibling s<sub>k</sub> · node n<sub>k+1</sub></span>
+            <span>0</span><span data-v="path0.bit"></span><span><code class="v" data-v="path0.sibling"></code><code class="v nd" data-v="path0.node"></code></span>
+            <span>1</span><span data-v="path1.bit"></span><span><code class="v" data-v="path1.sibling"></code><code class="v nd" data-v="path1.node"></code></span>
+            <span>2</span><span data-v="path2.bit"></span><span><code class="v" data-v="path2.sibling"></code><code class="v nd" data-v="path2.node"></code></span>
+            <span>3</span><span data-v="path3.bit"></span><span><code class="v" data-v="path3.sibling"></code><code class="v nd" data-v="path3.node"></code></span>
+            <span>4</span><span data-v="path4.bit"></span><span><code class="v" data-v="path4.sibling"></code><code class="v nd" data-v="path4.node"></code></span>
+            <span>5</span><span data-v="path5.bit"></span><span><code class="v" data-v="path5.sibling"></code><code class="v nd" data-v="path5.node"></code></span>
+            <span>6</span><span data-v="path6.bit"></span><span><code class="v" data-v="path6.sibling"></code><code class="v nd" data-v="path6.node"></code></span>
+            <span>7</span><span data-v="path7.bit"></span><span><code class="v" data-v="path7.sibling"></code><code class="v nd" data-v="path7.node"></code></span>
+          </div>
+          <p>The run hashed these levels itself, found n<sub>8</sub> equal to the statement's MerkleRoot, and checked that the vault's <code>isValidRoot(<span data-v="tree"></span>, root)</code> holds for it.</p>
+          <p class="stops"><b>Stops</b> spending a note that was never deposited: root must be one the vault's tree has had. The path and the index are witness, so the proof shows that the note is <i>some</i> leaf under the root without saying which.</p>
+        </div>
+        <div class="gate-card" data-gate="nullifier">
+          <h4><small>G7</small>The nullifier</h4>
+          <div class="fm"><math display="block"><mtable class="align" columnalign="right left">
+            <mtr><mtd><mi>nf</mi></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>sk</mi><mtext>in</mtext></msub><mo separator="true">,</mo><mspace width="0.3em"/><mtext>tree</mtext><mo>·</mo><msup><mn>2</mn><mn>8</mn></msup><mo>+</mo><mi>i</mi><mo stretchy="false">)</mo></mtd></mtr>
+            <mtr><mtd></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>sk</mi><mtext>in</mtext></msub><mo separator="true">,</mo><mspace width="0.3em"/><mn data-v="globalIndex"></mn><mo stretchy="false">)</mo><mo>=</mo><mn data-v="nullifier"></mn></mtd></mtr>
+          </mtable></math></div>
+          <p>The run found this value in the settlement's <code>Nullifier</code> event. <code>isValidNullifier</code> was false the block before the payment and true from its block on. The same receipt, sent again, reverted.</p>
+          <p class="stops"><b>Stops</b> spending a note twice. The vault records nf and refuses it from then on, and one note has one nullifier, since sk and the leaf's position (an 8-bit index) fix it. The tree·2⁸ term is TreeNumber's only constraint: without it TreeNumber would be a free public input, so a proof could name a tree it wasn't made for. Every circuit that spends from the vault, the DvP circuits too, derives the same nullifier, so a note can't be spent once through each. It is also <b>unlinkable</b>: nf is a hash under sk, so no one without sk can tell which leaf it spends, or match it with the leaf's commitment.</p>
+        </div>
+        <div class="gate-card" data-gate="commitmentsOut">
+          <h4><small>G8</small>The output commitments</h4>
+          <div class="fm"><math display="block"><msub><mi>C</mi><mi>j</mi></msub><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>pk</mi><mi>j</mi></msub><mo separator="true">,</mo><msub><mi>salt</mi><mi>j</mi></msub><mo separator="true">,</mo><msub><mi>v</mi><mi>j</mi></msub><mo separator="true">,</mo><mi>token</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="0.6em"/><mi>j</mi><mo>∈</mo><mo stretchy="false">{</mo><mn>0</mn><mo separator="true">,</mo><mn>1</mn><mo stretchy="false">}</mo></math></div>
+          <p>Each must equal its public CommitmentOut[j]. The run recomputed both and found them, in order, in the settlement's two <code>Commitment</code> events. They landed at <span data-v="leafOut0"></span> and <span data-v="leafOut1"></span>.</p>
+          <p class="stops"><b>Stops</b> the new leaves holding other values than the ones the circuit counted. The v<sub>j</sub> that conservation and the range check see are the ones inside the published commitments. The same token sits in the input and both outputs, so a payment can't change the asset.</p>
+        </div>
+        <div class="gate-card" data-gate="changeOwner">
+          <h4><small>G9</small>Change ownership</h4>
+          <div class="fm"><math display="block"><msub><mi>pk</mi><mn>1</mn></msub><mo>=</mo><msub><mi>pk</mi><mtext>in</mtext></msub><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>sk</mi><mtext>in</mtext></msub><mo stretchy="false">)</mo></math></div>
+          <p class="stops"><b>Stops</b> output 1 paying anyone but the payer. Output 0 is the payment and has no owner constraint: anyone can be paid. Output 1 is change by construction, and it is the only output whose ciphertext is not published (the <code>Payment</code> event carries output 0's). The payer holds its opening, so no second payee can be hidden in it.</p>
+        </div>
+        <div class="gate-card" data-gate="conservation">
+          <h4><small>G10</small>Conservation</h4>
+          <div class="fm"><math display="block"><mo>∑</mo><msub><mi>v</mi><mtext>in</mtext></msub><mo>=</mo><mo>∑</mo><msub><mi>v</mi><mtext>out</mtext></msub><mo separator="true">,</mo><mspace width="1em"/><mn data-v="valueIn"></mn><mo>=</mo><mn data-v="valueOut0"></mn><mo>+</mo><mn data-v="valueOut1"></mn></math></div>
+          <p class="stops"><b>Stops</b> value made from nothing: the outputs hold exactly what the input held. With G2, the equation mod p is the equation over the integers.</p>
+        </div>
+        <div class="gate-card" data-gate="withdrawSalt">
+          <h4><small>G11</small>The withdrawal's change salt</h4>
+          <div class="fm"><math display="block"><mi>M</mi><mo>·</mo><mtext>isZero</mtext><mo stretchy="false">(</mo><mi>N</mi><mo stretchy="false">)</mo><mo>=</mo><mn>0</mn><mo separator="true">,</mo><mspace width="1em"/><mi>M</mi><mo>·</mo><mo stretchy="false">(</mo><msub><mi>salt</mi><mn>1</mn></msub><mo>−</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>sk</mi><mtext>in</mtext></msub><mo separator="true">,</mo><mi>N</mi><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>=</mo><mn>0</mn></math></div>
+          <p>With M = 0 both lines hold whatever the salt, so on a payment this gate is off. The partial withdrawal turns it on.</p>
+          <p class="stops"><b>Stops</b>, on a withdrawal, losing the change note. Whoever settles a withdrawal receipt can drop its change ciphertext, which the proof does not bind. So the change salt must be one the owner can derive again from sk and the public nullifier.</p>
+        </div>
+        <div class="gate-card" data-gate="contractAddress">
+          <h4><small>G12</small>ContractAddress ≠ 0</h4>
+          <div class="fm"><math display="block"><mtext>ContractAddress</mtext><mo>·</mo><mi>w</mi><mo>=</mo><mn>1</mn><mo separator="true">,</mo><mspace width="1em"/><mtext>ContractAddress</mtext><mo>=</mo><mn data-v="contractAddress"></mn></math></div>
+          <p>w is a witness inverse: the equation has a solution only when ContractAddress ≠ 0. The value is the vault's address <code class="v" data-v="vault"></code> as a uint160, and the vault requires it to be its own.</p>
+          <p class="stops"><b>Stops</b> replaying the proof against another vault. A public input that appears in no constraint is not bound by the proof, so anyone could rewrite it and the proof would still verify. The vault's <code>statement[ContractAddress] == this</code> check would then pass on any vault the proof was sent to. One constraint binds the input, so the proof is good for this vault only.</p>
+        </div>
+      </div>
+
+      <h3>What the vault checks, and settles</h3>
+      <p><code>payment()</code> requires Message = 0, then has the vault check the receipt: ContractAddress is the vault itself, C<sub>0</sub> ≠ C<sub>1</sub>, <code>isValidRoot(tree, root)</code>, and the nullifier not yet spent. The verifier contract checks π against the seven public inputs. The vault then records the nullifier, inserts C<sub>0</sub> and C<sub>1</sub> as two new leaves, and EnygmaDvp emits <code>Payment(vaultId, C₀, ctxt, encTxData)</code> for Ana.</p>
+      <div class="vals">
+        <math><mtext>msg.sender</mtext></math><code class="v" data-v="msgSender"></code>
+        <math><mtext>tx</mtext></math><code class="v" data-v="tx"></code>
+        <math><mtext>block</mtext></math><code class="v" data-v="block"></code>
+        <math><mtext>EnygmaDvp</mtext></math><code class="v" data-v="dvp"></code>
+        <math><msub><mi>C</mi><mn>0</mn></msub></math><code class="v" data-v="leafOut0"></code>
+        <math><msub><mi>C</mi><mn>1</mn></msub></math><code class="v" data-v="leafOut1"></code>
+      </div>
+      <aside>When the two new leaves would reach a tree's last slot, the vault opens the next tree, so the outputs can land in a different tree from the one the input was spent from. The input's root and nullifier still name the input's tree.</aside>
+
+      <h3>What the chain now holds</h3>
+      <p>The ledger adds the payment's calldata: the seven public inputs, π, and Ana's ciphertexts (ctxt and encTxData, which the encryption step explains). It also adds the events: the nullifier, the two new commitments, and the Payment event for Ana's. An observer learns that some note of tree <span data-v="tree"></span> was spent, though not which one, and that two new leaves exist. The amounts, Ana, and the link between the spent leaf and the new ones are all in the witness, which never left the wallet.</p>
+      <aside class="warn"><b>msg.sender, in amber,</b> names the Sender's account as the payer. That is what this model gives away. The full protocol lets a relayer send the transaction from its own account, for a fee, so the ledger names the relayer instead.</aside>
+    </section>
   </div>
 </main>
 
@@ -408,125 +594,275 @@ aside.warn { border-left-color:var(--warn); }
  "steps": {
   "auditor": {
    "values": {
-    "auditor.ek": "0x3e38be32a076faaccd0843b4a2975f7ab326f4f0b5bb2b365ec7562f451f7c217b122a2a0c3510ae4bb6f00003c2e77a36e5610db76cac922516829cd724c3371c8c374a57b22848d98a08d7bc87bab16ae062bbbff20001d468a0675ff6946653451871c6bd1e53adb72966c39a7d2f4bc475c291aa714e2cb89f57c0550aaa579a4478bad3b1b8d22d84252569535ba4a28ef045a16d1c2b9f3798ccd0a04833498b076d46826e3973b26716aa3fb66c5a95c39568bc670706bb2332d95b5237947840f66635501ecb0b4741585e3ef65104219d52c922c8135897a26216b73a7d86854005468ed9a4ef1795860539d985704a447a3d13b69f94b251dc2458b5a35591043f5a365ed12f0e69b4f584ce52a324e9286a2af9696a584d3230104512916ed01b02d5650b5235a0b494e7151cf32c5a19518c04fc336482711820bf23a157fa89159f524c70f5a53b6c3cec2006c72a3bbfa6c9f52711697538f4034a070b57c2b2a00e1b486251b377b19e542b5227a041846964b66956b3cb0ed51c7860b0bfcd1740700a43200a1a2a8bb07cf23cc51661c96139ad980a959890c214b2d1f35f7e008a18d9bd67b80831822238750d19072b501616a20a0e52c72681b9cc4cd72f80c7b3767b9d6527bff243ae70dc1981191fc2863f667484892908f8ca6427611696c56795824b2c3a145d522eca6bcaeef61baeb543fd39c4535a9d93e77b7fe773f1f85f5cbc93de29b23e96a80a4c922395c73461c629c1a57871408bc5c7b4839ad9242b3462252b4256bd41952df2b092d9c245902d755a1e64933f97c832356302d488582e71c720320f46d22938b503f664bb6237995d792e4a5a3f23a5c2fec0158d879356432058fc72a9201dbbfbaf5c85602ac87e81c09b401144f1f6481b2356a4758dac38658748332c0c0e45268aa1c936d307c16747136f46187e1023da19c41a975ff4cc60d6c18ab41162261c6a17126111e6c71ff490390778b358a22f1b39e55c3181e5959ba209acb3c3d7610a768075898697a04a19da288256963818324f140751e402159254bd9f594de825996bf216ac3c5bbaf5b404c6ccafea8b9c18b6317a499121c810a32a97da3070180eb945744fd8ba2c98580e466255716931ec2212c7963c001ac32096f0cc3b5a8884be230ffe55c7e17bb5c3d80eb2aac0ccc939b0b9708be529790b5a6ea30fb9a61523e085fc86c36777b6fb507b3a6527f0e510b5b48976279427f0375b69a847018b4f15ba5b1533eb337577260823513b4b0629a7602dd65097664556218baef5da59cb1b3072d10982263e6b36157f2682dd486abf2a010e627416319ddf1249f94c14b816c2e12780109cb1e1404443f427e76acd46960a8ce55de0ba2f52f76f2a56a76f389722ccc0769b3ef3c46a1de39440725599298f258286de02446d52385b41c02c423cafa846b04b8fb8e08bde608b30d8cead638a462c053b7a271d54c2afd97355dab8681366f01b5f614c513ab82a9df64696e765663b8e271b0681e51032e2114d42c5f07b511be13fcb0b61f36876e5117257928b19416e48d0c741331735ccad071905e597afe6e88c5ab21c5ee346dc0b724c990c714830b95a2b764713938c85cb8be85fd91c57ba78e83056781eaf0658363122",
-    "auditor.seed": "0x113f4a2aa2d9b7367f4a09cd119b5e5c8b9093856c2b680ea196d71a3c675944b6b56b818579ff40f8114510d944d8a23351b7767262b32f1a790def67a2e35d"
+    "auditor.ek": "0xb65a92c0871c2dc80c4478bdc85209dcb0ccf982824ae97499c5aaca74c9d43ccf46087987732d8103379d9cadd97a7976864ae371832848cc87e457c472c59a1872e56a4380c6642ef66f1ba869acb93a03107d3e460313bb05913a73fd51777e3243b5b6189d5c0fc4cc47f0fb0b82ba02a2799dd3fc3ad247068c998564e03500c4c10d8748c17c36458a35c6c827cf8555f4288722a9b056a95a94b50d324920269a65da5b4fb12c02253a468079aad34925e0c3b951c5613f6431325430bfd596f4d025994500aef87905e074509249d97682c551b3cc63c6bb393a0a6738d21579958b1d24b26dbe219a2c810ea71643f4b9340c5494706001bb320d81e611ac7c47a152c5f7bb3e28b7ce0ee784ae818fc0b168d4f87eaf140e2db14ecd8872e1bac18a395015c0634d35104a4344eb39cf8223b0eb61549f0b5288686f434189a8ea8b57ba6c31715dc6067c35f69831d78c39343e0d7516b82bba5b5909c9b2aeec0067fe88a2c305a376679ab727c2ece1a5c82864be9b35f5056f9e420265d04edfc62fff4698007c1ec0fcc74d67b4051ba1d43a7713b444d29ba5cc0794314cc4779745e40836910682ea022504b9bb1372a3555b5678306449165b83e8b678a81162e361c61863d8305760ab1bb9b53d4256c5acf5a8bd6811a11026e1b67ae7358705f5b72faab47b71c25629b7ab5c285c9495f5366d735b08667c5756f0a4c1f709cb24720b344aba3ab00d13726ac5a3bb71a8a5a87a6f4b681614cae956c3c7d2824e396768266e45e0a147601a40e721d27a520a824c87a8c1edeab08d5ac09cdc61c537b1a0979398750c70310dc4e74e97d0b74ee18a537c27ec3784402c0342f932a3db3a4545478b943c8e9c1233400f732bce5e55bfd070c262ab6180720c1a58781993bdbe4a1fb21caed9230d1556c682dc89de6b3976b2331f984316ea7e8754c4c3c5c3c45b0d31689187ec7dbe447c70362b8b93c8ddc52bfc97c6821075de3b0d790aa1dbd8ade96ac18696a0aef28b7bd439ec9b4cb0483d37e1508f0c8d2a818230853fd233cb43753c4ac3675c723176e71089a8bcbc474e082c52a31695e6b14aae963b752ccf2edc0b3e3b66f6b29112493f822bc6f4853eef53938e9ba54791742fe1003ad00c1c00a8053a0ccbe9155b039b2a0ac866c8331b73a6bfa20237c54b95486d59b415b9c23350c85826e4a0594114bd2213788398fd2c358bd483fbea5e1f59abb1170433273ebe1257b8a324461c245d7c7fac95451d530a68a51d2be652cca55f1e7612a7c46a1f66af02970e9bfc0a5c4acd5b024816db1e46b00a71c3456b78c767a57ce51468d59b4849e30ce329860949c36a7573931498e59a9336e496948bb15b115518d7c61103017f312a543b71d44b34ae67c2ceb03f55039b06045f57309e73b344af968e24565c4588b279d74b56792ef3d831400c6c5c58bf8a895a79001b98299ca0aca97905594a3c15d8178ff4747e1af1940084adfb497da8e4a1860a02d9c4a585ab8029c89d3d999430e10842b52d7f394a2445152c3a9d3e504b6d193ef7540d2cfc4b3acc1507777fa401af0218c0097a7f488a7ae4388886042ba311bc7c63dbf950cdaa33e88244c8ff80dad878daddcaaa83f177e2db4855085bb63d",
+    "auditor.seed": "0x726c5064b8a0efa1fee61207f2292f4f07af53de0efccf3411c401b4a06bb8133c353ab93e2edda5a9ed9e5b9bb0fbfa0803a2a2f8b97921dd5e36303b49c898"
    },
    "ledger": []
   },
   "keys": {
    "values": {
-    "ana.pkSpend": "14446470091419989577979811811359501344183048544487464605764784669780745324193",
-    "ana.skSpend": "8267092826037409877538733723152382574322567690702970640624626392576977657516",
-    "ana.viewEk": "0xb23b832e0c3f2d837d9c5160c5180cdfa2c53b6c8386acb101618e272725d42433a46b70474b28b3612e1faacf4f3698d342a78d301e0f7aa565b7c37854911a28828a610e8b477bb63a8cbea28f28c039fcc3631697998ba640ec53487f049ff7b5bfc4951650a02082d9457af20a2fa9956f068479c8cf8e4ab12fc66b50ab3bb27ab1511654368ccbfe8c3aac0944a4f0a8261756d5f8c4c2154c40a7a189f0ab27a026e227afea2c447c97903f02b704a49dbeb768b7f02adc587c0121865eb4c85808750bf7b6832ca64882a6a6c802e70b72c30c8aa6f2c1dd659f2a641ba63ac751f65fbf1852ccb7a400624ecc7ab63d5a0e53fc79ed16542c18486d69aeeee509450492782c060567c6fd55303b0b92911cabe1cbc59e97b6bdf521528545056888c9a09792f07ed0c7869088189c02706116b25046c4920c7c483601bd8783b6700d0c39984c9557be79ceed84647ee85b2a302aad540496d7a4615840222533038c3085fb4cac660318bab47cc57a15f482aafc9240a92123ea02edb313404b8848637ecbbac5df5b2327716fa1680aa62930141a550e511fd447b4e0ea7c24b42ba0e751e2085570fbca730a956e4155a5b0c05f819163943567b012748b3b26159039d70d385a7012e35128129bc42422fc2b793805bc75ca4a8e76c6c9a4c7e385ce4f482e11cab081011f8ef77d755195eb3275aee57d04288f8f273ed468174cd554fa70508c593b58e8bda5301148b25e5433112cb3189ec11418ab4bf130080a4ac4b25b35d16c3f6fbaae4c91acc25194a6e67120d37ac3f66ed381a851ba5b0bb06cd5fcc086a083ae8a65bb08a39a023ef193064cb15ed5ea499b370f5292a8dc85bee117519f8c38bc26c0151a3654d09e2e84008b016512a00ecad5ae21dba3c3a89846611922c76b8c589a99e174c5b892c01a510c3a7f06772f1cf01f21005eee3cbc282318cba73a6f5c371c6110a14576f94a34cc3217c3eb90f0f22cb4db0e2d6264e2a9915ddcc0dcfa8fe4e4a77343606a10056ef0cd25eb9263984ae3c35435c9665ac58555c65541236690284c06266657f03c164213dab486a749c1adb0528f9a11d692cdd5a3524d063f2bcc8aa298539be3268ff01b511433020b794d903131d5adcca3bb5e2abc2d0b0188c9af472b63d6567ce74ba4e0091b3dd1c532a6b9e64273cfabbc2f675878ac93735c0e95433096f69b977383c535b7c7f37dc7dca642f34e9dd37ef8abc2e84791f5d3c8f0d9ac6fd01af4d2579b6bbe04d63798e273784bc828001878ecaf98889d2f4091faba627fa19694d665a5b338d3c64520333b90d3091bc8ba1fa48b92017d6ffc68c94393c452499bf06ff3041385c3328872225de31535f82937cc9695c3436f236598d80a2164454a5c0e05e1216b52c8019173313ccfd7407d772867c7b666aba26ac60b121ac63a2d06852a60808981903f4077d8f23728a918b2c266009164530a3114b04190059a1af358a6d9a3f7e2288907539ae04f266419db58135c886ba5a507e3490cb6f33bf4996ca4e700eea7220b9027c1c6abe4136725e80954289bd0c58ae9b40f8a0b20a90bcb291288c0c3c681f7b499ba4d68307cc3dc4f7dc7a99e952169729e53cd93dc13d6b3db3c06eefcf7ddacf22fda746e",
-    "ana.viewSeed": "0xbe3a4b460a61adf96f63f9ce15d515f148c873e8beb9cfad3c17f11217ff49cf4ab3db3faace4540480d4288fc5a53eae1365367dfd4cc2315cf2d5c68a9fdeb",
+    "ana.pkSpend": "21213375600232356538031943078783620902520974228704578195350322034447519237956",
+    "ana.skSpend": "18110736765571002412658379614065937659079018567535754837547911556643544274182",
+    "ana.viewEk": "0xf7a530883471ea798bbef647d125bf87d89e64c41cf75430f90a22c2541c63723060f45a7314022fc128327477b5c84cf142b99a6c8545216ddc287749cc910eccb9de0c1b06131c3f263f0e622e3e22925e74b416e3728b47011c85c2925c547d16bc7f0b3f5b1c12ac00b03f74c66cca523f5248219856fec41c3935379f6621eebb9a5ee12291cc60d570911d4b3b47374396bc34cc7636843b87ff064cc1b2bc26141c1b920cf41404d594a30175578c306efd32cbdd321b824952fc098af0748649265e64d1a42084bfa7442ad8259fc224b370d0a92af1cb0b77156bb3450b6724c9d99b06571ee0b03663d978e5714e99d7abea9180472bcd7a275c136164218b0db753ca0eeb670f1cb66a4a0af5fc999b9c61512806d4684569123bcf019e70494bac39ba133a948b6b1790b5643714c740494ae5bb79a59811b6708b80155273da29b0e12f0fc8cab293af69b74cf45158ef6b9524f45da52c3e1d6905e3455cbfe116a2b97c5a372058eaad19d4929d751b62072cdf242360d798cc6cb5a57a14cf626708c8bb61e09ac1ea7b8cd3500105441b118861012a60fc9f0812aae7e3852eb82ea887c791a578609196fa359d18dbca5f88caae5b07b10b3c47f4199fb911412b2210a801a21133691c7d04636a79c4055cd4098b3218aa9b096bd048cd7413955933f40694eb294ca3a5445dc19b5b891d6e911fd82846e0bb58a9751ead38bba5575628496513308b296180e5202fbdea61c8b952fb4a42f04371ec7389296337dfc23a2bc58177394241fa392de101e510a1677380f3aaa37f16abe3a848fc397efd6025b28a927334a6e4a2c108871f1ed08aba10c85b5cb6b2d040f62c91cdf930dab3685a6657b09739aaf877b29761ed037bc103b3fccc4f32cc1208f88a600143bfe1442aba3a1f01cd6b4c22daa0c9cff71ced14232b4cce0e55a4e891964f4bb92082b03d298a26785b869cbcf450b983b630e1439624703a17357cf7080dcc46447ce01ca0c83e10cc58f7f48680d63f207c8338bbbb47fb05261697be89530b8826be7c761b788183aa4a59624fd82813e5b5353b293e15b94b8d6b2fb756a9d738ae5657be6e29712179c2110b4dee2c813ad201ea1c3684972d609a86c952cb593571c7cb0d6a7ac43931c823f118afe8c9fc6011600bd0f5db205015bf365c66ba546be8acac4cea25b43b8dfc5a9a10b05b566079baecaf1b353713745c1f3a393ebb6466a2b1b3603790f849d3c5452cc371b4345e09a39203e612eea2c9911909e457436d9794daea2a867a7b1e99034965ab05804e88cbcca4337f7d702ee071c40277bbecb63285847d8fb24bfc091e60da953e3b93aebb4d117c14680716adfa11c73c3302854ae367000ec7771cbb34b8b77b104350c94a56b36c216c994c1757b2db8b9c68bc00a995a98661465e92c36b0212400289feebbb5908cc01ec74be77b7571b261a173aa2fabf625acf4c5b971c0832072a8e6bf8cf01c68ffed425b0d2a180c500c483478326ccaaa103fd03144d1068cbb7bc9dc804c4811a5e673f46daba0f157c81252108366a966a7683d28bb59a5c408933fa313ad08a404c7235a6601a6c1b937d930dab1192b9ecaa054ecc85b2a559c9a86c2024534d58283c76035137491ccdd7db",
+    "ana.viewSeed": "0xa45a4fbb3f762d5f012f2fb20aba9045ce7eac046ee84f4c9e906bf30534f51f13d3d2cf0b3493ed87de7e8030f153338df440657ce6240bd5dfd3403525a842",
     "p": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
-    "sender.pkSpend": "6196339122007238999790760679666900522161319623394206643033515723164769696614",
-    "sender.skSpend": "8142551927768983070551199468980479901304106909129281869129079896727576177240",
-    "sender.viewEk": "0xec2c59a2037fd4fb1d1a6c99150b05b8590155919ade748d0070c0d04bc235ec5d0bd19785339f2ad11ab9db9b96979518886101454b04f7a1161a5cf4049b0f33430adb63aa2b296604971e266eea7cb58b12956825596e6c66d6d8895be527156109b14c299fc10bad744e1460bd6a28a1034c79778cc28fca3d625b2378d4bfa665569357404fe064a8f0b32ec32b76bb68d04caed4d945ae03c826b29846b1a95d857e08ab854d0b364b3534998b1f94559a2c3a4b7f6aa46d3c90ff64a89756824d7c589a917330642cf5a17e2ad474d84b35c550402d78820c0c05a1b05f1df877bf247fff666195c78d32877c948a81e989782652375e274584e4774397b4cbe12e7276167c477d41835b310570cf89b0000947dd6618b3c53a51283b2c1b18a5187f2f644fbb8b74b72789daaa202156259a87956c03bbef1c968dd0c4b7888eabbc4c96e241239a68d76a8f85077ca3b24a7c0a99f93527300990e37454872298ccec264c056c9a9c2e7678063409749179cc18e90eb12a8278965af1864a98a2c980cb7cf30a7860f1a1178c3a3d02994bfc5a71faa7610697682b050932863348045e24ab9d44248fea73c7d9602133a116f21f55d63cf4ba5d5384bad4845edfcb6a5a27088d722d0989a3f26485471697839c93de13a8f67030e35ab6b6704892555a7eb05ca6e1bebdc55710e2454fba916994434263978c18cd2b9113ae1c4404d03610b31c2e9448c8fa1f23bbc413e6a12e7868be71b9c832746eb8b1d8e34276614d8cccb922db1d9ab5600fd639d1130131d13104085c6c9a165f3b5d628a20fae056ac96871f3c499ca912d493715887b485f22fed7a6d8021ad16a334e62467ce82afea17c4921702098cb1b2abac8b362aef6650ed190308ea59b8eb22a4279f65e669f9303c28f7576385c822c849d7960caee627bcd1bfb67a7659839388851f9f47cf7f86844fc235d657889fc2a297091066f8a4b4d47b45496291b4adbaa33eef0931064c0b5fc775645a1a60d8294c94b9070b5137ec55495b7eaa7729d6023c6e6a797b9964e1d20e3499c2f483c4d4f9418056600a44170efa1ac3026d10e49fff625dcc736cef6bc2b5042e8773761ae2b90611a308e234e1d4cda8920f5cf07882013488836c58cc1f01358a51047539fc5b3f668e71cb188dcb7485a4ced0b56a7110cc6998b240362616872d22066a0419042f0836db91ca628b0371b52620a23d6e0b4ce92bcc63e678655792acf32b61123ab2e91caa467f0c53a749a6a701852c945605b9da9976f74eb8d45d9bd58416e3409a8039051514bfe85e452274e4918233f22ebfd12dc43b1170b0bf7b50c7681a940d016520acb6f3ec8e1df31bea117235521e23c287227b71d81ab64d218e305acf1bc76db2d8206cec2668063b77fa2192f8920371a44bfa5b299873e123270e549d57c34fee991a40c084db8cc1228c6545e12d1fba7bb645731fb61dff90886ee3ae0da0539aa1ba38d0ce81f003d30845bf54c498ba7e45e0ab82108a2d5a334a84a48e26ba060130063539f3fa0166b6b8a74b7d1656c9f4fc95f8194fc6d18ef32a64a741897da40b207a9c2326cb67b2ce04f394e8f136527ee173ec1e9fd982e7bd80cc0dd9df7b8bf6b6689d01491fb4f2ddef52d197",
-    "sender.viewSeed": "0x6f899c43f60db86184a746f116f9976a9abe84df15b0c0bd1604c5ebd7ef9c0a9aca370aa19dd49dfd4b152b399772e39d4ce3ce7f4262291bd44e3f98bbf19f"
+    "sender.pkSpend": "13764772798889477759772853366001082637399562522634024850797558799939966069543",
+    "sender.skSpend": "15967187691714238657125556133710954299262328656689187821713071674029726746748",
+    "sender.viewEk": "0x690452b77cac0e89268ad66c5a6203f44c6479f53b403278b4e31b07281088ab0272d316d1e76d7dec9a319b6a96893e8b12118f072d3d66b80925b8a71937f4d0bd44148bd42363ce293c486ba47d80abe21c1e193c42475a480ed51f93299351dc51d14b63fdd50dd33a9a2f3b19f7247ff7eb26f30aadf7e3b9dca943a1239766491894f04d2723c5beb87d9c0ac14ab3c8aad90edf31c7376b4b8d54c1a40a704764026f91bbad285c26cb1db5764b1d7b46e609288650622b670683b6a027d0b61797bfd1e04694f707b57649c957a055935f5ca94f7bd7cab24c3a16b323e86a38d851a66f30a6d1a3954bb6ceb25a91c5e45c3786707b731632db5b907121b4326a13a9b4c3f2a6644151379c5f234c118dc5029176b2980017744b674aa68051e82619018307d066e0a785214761e020c1a6e8bd95374880f93c091374e8b89a234997f2f22a8e99b7cd013ad35452845288563060d78b1afae56824283376baa98718c4a8a60372197a7fe1c69759b7b61473455c0506a04383c4b4b1950d131c7736298662845094c86dc6eab2d0ec8e23ec4dd8b55c13f54d60187c922c6c5e439220604fe1f9c08e677405c3ae52f45dbeccb25b953d6a1b12dfd8c72370555b870d828b281ca9c4c999571aa381925232e43a05b34ba52f5552fc67258bf71d6ed825b616bada990fc81c00a9c2c94cc5af6d33bda461aa9db54800a55bf1f3c43581aaf12c9d8d976f9579c0683742c4679208e1a6116a658412495842a2fc58b97b82bf1099932253b569f9694b23a4cb9bbcbd1b70e799b4aca8cfafc23f5c74b0e8432678553e78fb3930fa97b27307dba441a03314145b96ffc04d98a57820b7cd3e6554405136c9008d86ba111271c6a1629c065c30b459207e56ba42bc9c1fe3c62061a84de75fe87706ab8a9d5c748179c0505ea96bc6f0cfd18040fd3534553675d27c0919fac92d46cbb5442837052fcf5c8b952993bb87bc290304fd4b4a2d404c46168803528253c1c523c2a0a7c3939827544b7714e0ab6adc724a8e607565eb4b55f26f6fdca096b3c990db9cb0444fb75142913998b9a5766c559f20a7afba720321b292f408b36f783f3de91fd69c61a4e274d6d78f11458edfb086973a213de5b909c39e9639570f4560a3c114a8f7ba3f8bc83b9a55f6a570bce0c9a86ab47441a7c0459b5520bbbdf49e6129c95e734a19ca0267d9b85da14d00d099ed823d983a2cbf08bac5984879f7ce98747bd778992a203a6ad0669b9b126e7c13132130b995c12ab40659b7a5abe59a08984b5acb2401c2b411d88e025b597135352178683137737b027d39908518b3b1673bb6c6eb66bceaa198032a8a55760177ad1ffc69b983a4914727d8f5cbbf6192c9f0990cc2bdf8f7bb22f18e73279f73eac2e3d94d49c0b031fc6fad851530e045c955050a455f4e5b78722accd9e53979c2c4074173df0a1d4435804e650482b88e8d793a1ab80238c9abd5c7144a833e16c5022d8b7e8393213261a35ff4778bc21fc715b19181c9063a08bbea0280273bfc27aa5d25caec8263aba4cf7cacc57c50c4445a2bf2e052f1e3987f7448d2d69b4980463ef612f4e0c4453cafb875c1d5dcee2b4abbc7c968a3d4888b9425fdf59a06ca029001e4572c007656f0d8dc",
+    "sender.viewSeed": "0x7c5b9742c6c7f85d58ee36f6604fad265b9d92552beec84edc32c275c5a57f47966865df78ba122b99e0e45050b85a070fb022135e0b6765ee6d3cea84467f4a"
    },
    "ledger": []
   },
+  "payment": {
+   "values": {
+    "anaPk": "21213375600232356538031943078783620902520974228704578195350322034447519237956",
+    "block": "797",
+    "commitmentIn": "21730804815307254598637719228464920386902517694135607978501001682996315343010",
+    "commitmentOut0": "9714963760396758255461387883312443118259961381339039076123381924073837293233",
+    "commitmentOut1": "19488308039010622123062276746549102928754023378075300124193543594328169834365",
+    "contractAddress": "932239071683227935029502081705487684401212248220",
+    "dvp": "0x6b01819C927b66eB1ED17a276fC60359B502d3De",
+    "enable": "1",
+    "globalIndex": "261",
+    "leafIndex": "5",
+    "leafOut0": "tree 1 · leaf #6",
+    "leafOut1": "tree 1 · leaf #7",
+    "message": "0",
+    "msgSender": "0x78081F599fA38280dB8343c7F11Ec7A69723F5A1",
+    "nullifier": "20510169460108621777260841215301077833841145333229636177665742022227103804739",
+    "path0.bit": "1",
+    "path0.node": "5493271378378166468134436470522800743645485020996764997367351654955445893838",
+    "path0.sibling": "2543765546178560433587773998804688242425434395947613366736213231192403795334",
+    "path1.bit": "0",
+    "path1.node": "9139783405081723496843201721038193248032839542790589060293730590312900956789",
+    "path1.sibling": "18548196279604799461048000334259916142758522801444715662239164855577399482970",
+    "path2.bit": "1",
+    "path2.node": "19480884975363548240561003494995922838514934714560774156388088812817993153311",
+    "path2.sibling": "7761467325745654165170716978603855793104283264274647595289907591318327199304",
+    "path3.bit": "0",
+    "path3.node": "5194174960971051025214261786675881841244386831995308159780476199861518162627",
+    "path3.sibling": "20304752715056542815811329636342056767286663221745207495535784435548485430561",
+    "path4.bit": "0",
+    "path4.node": "2518823034241169624546514880458272276871140369215731924487873763922307315448",
+    "path4.sibling": "10123741241923738392878827949878021844799105553604491080266583922031272507954",
+    "path5.bit": "0",
+    "path5.node": "5767315310972479824816036754763196047488417465149972604926442471448679259464",
+    "path5.sibling": "7763070937946622828545897559398364952701415676360141127081877575944863661924",
+    "path6.bit": "0",
+    "path6.node": "18220881708399082111294003740856976205381265970557064061347617277503241320097",
+    "path6.sibling": "4336110172767843874572170947831826800762554433417721132971126558487413457970",
+    "path7.bit": "0",
+    "path7.node": "3195250942136752473123516837707399758502073890065538589347496976290125449950",
+    "path7.sibling": "17793516955206672117877101086466671169038346493482525475927531680188516206475",
+    "pkSpend": "13764772798889477759772853366001082637399562522634024850797558799939966069543",
+    "range": "1000000000000000000000000000000000000",
+    "root": "3195250942136752473123516837707399758502073890065538589347496976290125449950",
+    "saltIn": "14182222818002844731235134749407693023551915811215276874772870117409911680405",
+    "saltOut0": "1213106480882679227253778559838792832974180671960961080679189328940753829388",
+    "saltOut1": "2011769922374093337956158446999238986763884001742641398788249727855690294617",
+    "skSpend": "15967187691714238657125556133710954299262328656689187821713071674029726746748",
+    "token": "0",
+    "tree": "1",
+    "tx": "0xcf666b35b710d684b597c352d7609c518f15df4cd5218cb92a70fd2307c653b8",
+    "valueIn": "100",
+    "valueOut0": "60",
+    "valueOut1": "40",
+    "vault": "0xa34b0bB5F2d8C1674eB7cF53e06B813A31C5509C"
+   },
+   "ledger": [
+    {
+     "tx": "payment · Sender",
+     "field": "msg.sender",
+     "value": "0x78081F599fA38280dB8343c7F11Ec7A69723F5A1",
+     "msgSender": true
+    },
+    {
+     "tx": "payment · Sender",
+     "field": "vaultId",
+     "value": "0"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "Message",
+     "value": "0"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "TreeNumber",
+     "value": "1"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "MerkleRoot",
+     "value": "3195250942136752473123516837707399758502073890065538589347496976290125449950"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "Nullifier",
+     "value": "20510169460108621777260841215301077833841145333229636177665742022227103804739"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "CommitmentOut[0]",
+     "value": "9714963760396758255461387883312443118259961381339039076123381924073837293233"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "CommitmentOut[1]",
+     "value": "19488308039010622123062276746549102928754023378075300124193543594328169834365"
+    },
+    {
+     "tx": "payment · public inputs",
+     "field": "ContractAddress",
+     "value": "932239071683227935029502081705487684401212248220"
+    },
+    {
+     "tx": "payment · Sender",
+     "field": "proof",
+     "value": "5107918500901936882685523795640761309992268759462598993432112504758360174768 18947077986370122185227035255581184591691304487334736264685601252455937622981 17610791668062296932115160303050299870210031492046053116719358669538108555596 18245851007019439816926487649545281216894792664206625391435530310221211096952 6084017223352566263964010011802788581507291225143347345398433587351770251447 10311343749426831659093076006556933700164979215224594924894718094957413883607 1206753413575753754392912001533983115954604857431725309359677442079873777451 6982159423872615802131394526003843070856041091227330026957422585543825367438"
+    },
+    {
+     "tx": "payment · Sender",
+     "field": "ctxt",
+     "value": "0x60d909a043821ba3c06b26886d9fb2d8e7c451bebf2c5f77c6ec4597235edc3d86e48102b47c924ba5cbf5ed6f845d5c4ccb3b404da677418d2eb40fdc6edad085e643dfeead7e99d997e15fa6d4b8d848c8fdd505aa0810550c2d62d7a6c077d6026cbf3704efe7d59d5c452c1ec26bde5cf2484149799d3ba8b96af07034a9bcc3ca72fc16aecf345414512a40c324cc14d10e0b494a60e1da6c0d799f9aced90ca42174afc857f470a43300329b4453d30033c0a20d98e1437a62fe9a5c2ad7eb6f6a17d40a1c688af4e9bb833a0d6f1f30d656d0b64eca70bd447616a26a718c970fce251e91facd9f435a14a5e6fb18e567910fc33750529a6b1ede70dc9dd74849d148e0f8663e08296db2f09f81451f9d2100b4ff7f5a18487aef86da067eb44d1b4993dbea21e4b95027ce9b33b5e8f60cb7758bd85d65dfee6ab7eeba2d83e10f0d64c25a100c8667389ddef8f320b29965825f49fe26f84f502d85ecc56c6846ce2296edca8d429267aa4ec47fe009320d63b2f81e07005556d1ecf790b4d2751691f6c09d28b5831ed1e9ccbc6b053f1a11d85f4a6720209c6718717512c0d499aee6e5bbe95d4c5ddbe8d070075f510e80e25c9420f65ef03f95f36d993941693d8dcf35f038b59ab65f9eabab7d93ffe910ddbd6a6bd51d9bcba1c4c8da1cc98e04312d51c9b69558a21571ec349abbee68fb717b8fdb97e151d2f70c0e44746cb44ddf5374d2082744f3da852ad28936072ae2ca4d3a17e3b672a02c67242b91ba07f0182c0efaa49083d8228076ff3563988f85ca70457162210e1b4d642c8410004956f272cda4995eb556a39a2ba040f042d90c88b5a46cfd4f25fe2a9acc090e9f90f18c49319f41cd9033eacab20a40922eef94553c49a5e191604df58a75164911278ce918bd583a81651442f011149e3a7e47673acb94218d232d12e16d27de87929291459ba0764126e3ca172f69041c75459f46759f1f9f73dc72ddd47f3fff9da6d3debd7a6cab06eb22d4fdfa096ccae24405ba73b6d8da9f7ca1922a5d9d5bc7fd3420f9127fe663b85f8d2b683fcf8fa590776a57dda8c6cd5776ec93ed09cef61a63802581cb0a7e46455472fb507b220b515dcf06e3b901e0a5bb26dc9947452d516da41b94fde4faa5eb7c44bf4a2e5a013039607f730c4bf47b066915bae6c613109d6800fb9510df62e8aa195b5d33f79829fe17e8f1bc9394671548b0c26dd212a76d0f6d69429a910791cb2fe28166a0ea338e4b466d7fd29aa42fb26c0c27fea207980928de9d959f63f5b2f3d30c5206c1d553d4040af9443779548d607fb64aff8a4e255c577aacf6efb79bb9c0c495b4a9c1548572c2515e7afdef410c746d6417f42b4e83d0e7daa809393ea805000675f86ab4aaeed79d265057aa1f646b635f4f6fcecdb6f5b87f5e7b86a30c0e9db748afb2c62fdca3bf524bf75e3180e310f27ea287070581faa2a4fc55b5f204ff14aacc0c9982aeccb1e1fe8cc7a97d342b7c1cb90b51a6e2574f152d"
+    },
+    {
+     "tx": "payment · Sender",
+     "field": "encTxData",
+     "value": "0x18804c9caac1b0c47fc72cfab8d40660167956ae281501e9b8416e125daeb0cc3ae65c0f5e1849c487d10d13cc7fa567a50e104edd803a828a3d9c651de05756604a3ba8cf1f214c79c57064aa453a2ed95e71f52b9f15ee75cd1ce8"
+    },
+    {
+     "tx": "Nullifier event",
+     "field": "nullifier",
+     "value": "20510169460108621777260841215301077833841145333229636177665742022227103804739"
+    },
+    {
+     "tx": "Commitment event",
+     "field": "commitment",
+     "value": "9714963760396758255461387883312443118259961381339039076123381924073837293233"
+    },
+    {
+     "tx": "Commitment event",
+     "field": "leaf",
+     "value": "tree 1 · leaf #6"
+    },
+    {
+     "tx": "Commitment event",
+     "field": "commitment",
+     "value": "19488308039010622123062276746549102928754023378075300124193543594328169834365"
+    },
+    {
+     "tx": "Commitment event",
+     "field": "leaf",
+     "value": "tree 1 · leaf #7"
+    },
+    {
+     "tx": "Payment event",
+     "field": "commitmentOut",
+     "value": "9714963760396758255461387883312443118259961381339039076123381924073837293233"
+    }
+   ]
+  },
   "registration": {
    "values": {
-    "ana.address": "0x3c91dc67f905E104E79fA3cc8a975131C0720719",
-    "ana.aesCt": "0xbbf52d2296e72b23c951ec5c9b9b5c2751493308b252a70ce3bd8e145283afcec2b15c6240bcde7274bca7be110d1cf3a259b2ef2c50d10bfb151e1d4b831a1eb0b5515b07acd5a1d6e6319f6869c324e7f9aed1bbe15a8a9c18b931",
-    "ana.auditKey": "0xafccaf2b216f6efdffc534e1e21780ef501f4a2c17f828fef5a40a4e0cf3688b",
-    "ana.block": "770",
-    "ana.capsule": "0x30b0f60b82ed1dfd5b4ddc4664073e5cb81af49ca754bcd7f416d79ad54a15d930a2d7906ece8b3ba6c25cddda503a990cef1d61c8d002105454882b216712834b8427e2b65e961b968ef1eb761230d586b7441d5c32badb65b84e8f0e66ec8a16bb5ed9681a9d5b09186337b8018b668b9a57de13e2347fe95406a8d809b99693a3cc2c0bd2e1d113ddd0a5408aace6325f63c2a7f0ee900073fc5a7deb1064fc411dd6142d4a883743a926455e52e0689a18b954b77acbdbac9159cd2e95bf471a1f261e4f3f2c7c68cacffca272e07f9a41b52d9b0325f35d20bc9b8670e131d5344fb8fc5da28c9a2e6aeb6c7f6c8d57146354c1756c4a8cb3050ed9016f5e2cf68d2564c974da7ea81706c141d680c20e4957e45469b95a8a4757f24a51e80fa68c0ebe1b9de77aec643dc3172f7bf23a3ffb9787b2c9520b89f88ed46b8a987e38b9923cf2c61b2536423480eccab39827e8ca1e31043daa30aad1e953c8b9b8bf61ac2b7d6163f3d2f4b6250138718e217df605bc6230540a6b27474031c8c27c5ac16701f89e8d352fec3a3d6a68166a4db0e5731bbe886ad75ee229d1a8c16e278187546d98a6173a632b6fefeb43d9f3139dda7ba700c1e6754e7a5492ca93c19f5432b0a6451149a329a7316e893adf9a2028d630274266974cbed8b23f29e857ab9f034bc2301ae1a7c6a82e3c6a56b8b68cb56c56de3a0f803de97f304ded0bad10dae0ea24461312c1365c8205f257d4e7535e95fee7cbe7656a60da77df57c66c55b1d236beceaecf6869ee188886d0d0e2c8636fb969b9ee01f49e0a79391a48bb82239d95cd1e583860768c52f6e9e330218004c57a1b25899fbb04e794cea75e44f7d3c769b2bfd080714ab603aab751f82e93131479c7ea83c22277851aefa5ae2f6f2f42f15a585640bf104a1b16ba0307a447b1dd14a5c3d9ba67c219ed8efb29c5fd773f43b496f6db4440fda96207909b38052d0d588c04cbfceb04515d643a1229ffd6eeff822587481e8d37fc2915d18e2941f22df279aa6fe229c1308b566a001e772e5b5f5415703af4374f2fb5f8748cfd5bd0ce8db3395e518970bd2e6da77afa4f66d90b082ddbba774fa1565d7b4d03be4bf30047e303d15d2983e6f90ab24650c1b8adea056871125a4b5fb6b3d4097d51395682212727a097b5f3282896ad56470afdeffc0d6cfb7fe908ca679994a1c8c8399f549f31c90bca0b2a9206e3443bb00b340803305150efe2d7fd8c0aa4923e3a4e0a6c364464500a5a477f2faa022877df45697aa57038467dc76fb1ac8b2cb14ace051ca58a97ba06a7209b43de6115c3e9bfc6e93359e151a9f50a61b41c8b2e7b9e32492cfb38f02866724fd8cdd1b16a4cea29a65624dbb7c2ce7d0915a6a8cf523fb6667e8022af80cb7e16fbde25a9faef7ef6c01bdf9659ad845ea8db9d8b66a841f96dcd50489401c705cb5d7e18aa7c347434925b20c302e8362272aa137ee0a26cfb628c1d6013986015683148fd4e08ba2ec0c0582f59b0",
-    "ana.nonce": "0xbbf52d2296e72b23c951ec5c",
-    "ana.opened": "0xbe3a4b460a61adf96f63f9ce15d515f148c873e8beb9cfad3c17f11217ff49cf4ab3db3faace4540480d4288fc5a53eae1365367dfd4cc2315cf2d5c68a9fdeb",
-    "ana.sealed": "0x9b9b5c2751493308b252a70ce3bd8e145283afcec2b15c6240bcde7274bca7be110d1cf3a259b2ef2c50d10bfb151e1d4b831a1eb0b5515b07acd5a1d6e6319f6869c324e7f9aed1bbe15a8a9c18b931",
-    "ana.ss": "0x79a6e102b1a1fd2a242ac705720da4988eaffb5f679b0cbcff5aafe10dc48178",
-    "ana.tx": "0x585d3bd884c4d3dd940a164fb14f18cd70f301ba41623a22d0eb546fc4bfb14c",
+    "ana.address": "0x9e663374eA311d547dbA99495eEb01E8Fa8e6614",
+    "ana.aesCt": "0x350bf9b838f775122bd57145e8445bfb5362c3ee7b2dabde141c03d6d20692c39b0522bd0be86cf8f4a2b30c60406ad113188239918a050b1602625dacf17a59ec0e5d88bbc619af568a05538342d92c12abc0609ef1c5cd03a8df41",
+    "ana.auditKey": "0xf4bf04f99f10b762cc904f61aad34afef327cbd3bb616a1e8162e825ebdb56b5",
+    "ana.block": "793",
+    "ana.capsule": "0xe56e7505b249ea661613307f1b000dde27e37950c98b3caa0b12d81b2529097c27bc24bd1186d2f4a768f63bf8359130e9670218509665e93dab2749bfb67b8cabc7b09852d140125d77146414fd62c179b2286c29324432f697cfc9906448cda15bba2f78014fe06be330d8c23819a585653b755920dc791882d0783f8171e6c03158c4c95251907120fe6a48684611d947749e547dec82744447816f7aa7560c6a1fc7c26768815f3eff6679fbe38d8501e698483e0881ebba6c2b8c42c7fd64143651da470e964e06d1e31591012746feaf4db5a89518761d4111c2182483bfb874de41478377acb51590aaad4abab0779e91f363220a5d863beb0e363efce492f144e81bbaf776f2ef30378a2e07511534e1b014e4a9cf171b85d2a9090ce53e632cdd6bc6729706a381513e7729a79448862ae852a9680fdbe66b1124d650511541f8d0386bb18571975396f1e5878f507dda174247174bbb0eba71da31ede66f278d5e5117736356193e837e7d6387f16fe2776aef0c3d862ec16b3c76f334581d5006b8b111dfd07c4c031d8bbc4cd7254a1148828166030c2be89eb98e7f2d631aec386d4b756f3c0ac5b4b657688d031f371df7a3cad3772e3759ef66f4c1a04e6229390c2bba43f0b90cc79834246f64ba3c099fc931015983eb4f6f2b6186ab7e27a838d2a62bceb1d9af22524c206a348fb1ba09c871aeb32c9c52d6cb0a3985b8ec67b4e4bfe732f0d75e54c2a375e26acfd7fbaf4952105d00770826b9a11909868873c4ee543891c703137468b135ad87b7e799f350cfc0168527f0f93ddd7192663f37520eb6e10d9e222549c05afb4ef75baa11c840705f685e2c2c8eaa9d62e5c2a1a57f53ebce8269c2a83d486b3d807d971708937a45c83c4e53d82c3c2398d64d5555112f38928744e131d5dfe152acf9d6a71dccd74f3570a487aaef863ea9e6be58ff14af9f01172587a5d1c8514d5274d3ba689c267bda51748a43776d99aee5d58310fafc0432d7a9b1e19e532032c5350e54660c0e331443297f00caa086c879d7bb41e908fda308e63c1a089e79ee2363fa8776e53d4e7cb559e64c01f67b6d99dc3b704aff57c5b97922c84d28e5d5f0b9e8b039afb87ffc526a0789e25062d15c947914b1489cc191767debf47947dd6fcaec99668540371c45afcadca779ed182284132adad43210eaee293c9b666c0b9932cd0b8e831285d77a1e3f149fef945bfbe2b5ef39913e0d654f889ca2daf31c761424fd86dfd441db8f6d642e5aac4276d0286298071857e5da1d495e224181a52e66615d23be22c34e4194a527161395047cd80db94a2ba0702bfcd44350208ba963dedcc8967872f1bcabc249c45da20a5a2e42ccf01b792fcc866e1d01ddca6e5379d8a927fc894f5829e9cd3c448a71fe04f0e58b1af4883d66ed7615612c904ff24172a534e48561fd81a2e1990f577a2f7d8c3498c0227d41d20dec4ac859252cdb809dc78d0b1dbbc8906739a46dde562df09a8f75e62dad49ee7795",
+    "ana.nonce": "0x350bf9b838f775122bd57145",
+    "ana.opened": "0xa45a4fbb3f762d5f012f2fb20aba9045ce7eac046ee84f4c9e906bf30534f51f13d3d2cf0b3493ed87de7e8030f153338df440657ce6240bd5dfd3403525a842",
+    "ana.sealed": "0xe8445bfb5362c3ee7b2dabde141c03d6d20692c39b0522bd0be86cf8f4a2b30c60406ad113188239918a050b1602625dacf17a59ec0e5d88bbc619af568a05538342d92c12abc0609ef1c5cd03a8df41",
+    "ana.ss": "0x07e63fbb51642321ec8d5d0fb0849e54cc105ffdd3b131245f8d84f6ec2cdc1a",
+    "ana.tx": "0x880ef08e85b23f1bafdeb98360c3d6b6b0814041e6f0c83d3415a6f3d4978620",
     "hkdfInfo": "enygma-audit-view-key-v1",
-    "sender.address": "0xAEFb2F9a65c8f720CFa9BD0D4601135c6cD6176a",
-    "sender.aesCt": "0xeb91dee858251386a4ee705305f8d36f0d2a5b685091f05c4967500c269286ac84d1fee64c5a33b906e7a793f0d11d1ceb5ccbfa74f5aa8b117b1f960e2b31bf45c77bb81e0f72cc48a697456bde2f1387f56e2395a6da0c3877f848",
-    "sender.auditKey": "0x676acfcac517935050d32abbb1a6887ec51f14bda4fac446c4ed868004698086",
-    "sender.block": "769",
-    "sender.capsule": "0xb983c457344cc088bb9a268d00179dfe77de55707461c8f383b675b02153af9dd6df34be570f98c60cbcf934974ac7301590268a2d34790676cda29fd1cabde7d16de5bd1c71552128c78ee6baf56e6624e53d6d878ee8e2839057c96ef78670b7c74a72fbbd56d5858ad19255f8238bfcf6c76788bb97b2941c6066b4850746dbf4cbed5c4799664173376a423a71093986c634f54b4b00aebef66148a6ace45531247a47901571c00ff609f3f6eaa63ba2b9d8200a05c42c60b35aa60431f8f26938739ccb48a185962a86b476bbec9af3cf7544f45fcb25c9e94e67f26cf8df9a83bf2bcf5620fdc334c6c092ac4d187829e2524f4328c699fef7fca8607da1570af6204e975f2e88596759266bcd3e76ebfddf5b14288a2e440a6c7520a207660cd3644c54a4c5c4b16a8347acb310f2a1700e39203d7ff7ab664d7c4982b283c81a2300be99cc60074ad6ca4488e813fbfaa09f25f28ec901f88bf1dd99653c0a10b9eeda9659b19d21550d05ab6a23bc6cd4caa5059884ae408d38d6e03ba50c2197901dfefe5f2e1b3b80e84a2ad68ece4bbf5caacee80132851ac92764a87f1002e18cdc927ac2c2ea2fecedbfc635ac79915d682bd20df1dbe3a21c3ebb588a44fdfb905b871a245a0b73e9afb1a01cda715bed58d4bfed0bbec3b95b6de458b978ba1b943e2e3cdd2ad6bacb4ea26cd201cb065155dd59caedb9b49436afe3dbf0b31fc04e6bf72bb22b9f13e8e879fe71e999849809e9d5a0c43cfe2f7a82e646deec27b8c65c99061daa6b5871d6af8fbf6f17947946d52a882f46b24431dd3f2f704b04bd3c2c99b8d503a9472b8e18b451088cc31d4c3c966d7ad2645b5efb07d71ce50a77b121e86c650041334084867022ead5dd529225e6af8053414b82cd71e09c0d336234440f1de9443c2e80c378a9f809642d97d39e310165e4d2a637f52420cf4c8a3fa3d9387202e30db95da334d8735e8615b492d3cbb2ceeb6d88b7ecf37b3e4e3fd1f8e029498230f473f20ce0463fa0826c74395edc6276b3f21906bf315a33b9db3497f1c6a89dd0561a8f9055066f690e963c8340239fa5147522dc2d90534b1f4dc976df737e1c194b8e13f8a94fab01cf50f8fbd305b9edb741f98483a4147125e5f89c6eb678e7905a7e7ee84f1fab1dfa13a77c367da92a1d93f7cbe6304b039deb7d884f3899bbe2ded5f2d7c20b656a1d3a5a5ec393bbdf6ddd22d493074d9098bc351ff99e60cad82b375e2c54fc33ed1c2eebc22d5ef80850f616d9411b1b525673ea04db793e5ffa6f006333c9779a20c7714d2d83fbe94edd575269d5ce0a187e6b8d8fa7fc74058760cad86218afadce7db728111b6b8af20962e09eb695ad98de8ffe61dc9061fc28094f67c7edbe101ea3b0e3724b55a42c2bdd9b0d0f37c6ad11068985f2ddb82a5624af1e17706b1226ad5da86801ccfa8dcd3b25b39093c853495e65e317f6aeffc97499c8094bae2b6a43ecf1563e05717add9270df0ebbdb0f64bb20cba03aea060e",
-    "sender.nonce": "0xeb91dee858251386a4ee7053",
-    "sender.opened": "0x6f899c43f60db86184a746f116f9976a9abe84df15b0c0bd1604c5ebd7ef9c0a9aca370aa19dd49dfd4b152b399772e39d4ce3ce7f4262291bd44e3f98bbf19f",
-    "sender.sealed": "0x05f8d36f0d2a5b685091f05c4967500c269286ac84d1fee64c5a33b906e7a793f0d11d1ceb5ccbfa74f5aa8b117b1f960e2b31bf45c77bb81e0f72cc48a697456bde2f1387f56e2395a6da0c3877f848",
-    "sender.ss": "0x02ba789c9841c4960b5c3fb2e06836709bc36e0850b97646a99b9e8406a30222",
-    "sender.tx": "0xfe65f78f1964f187b403f6f0c44a7ade84fda93fc0b34bce606a9f258987b387"
+    "sender.address": "0x78081F599fA38280dB8343c7F11Ec7A69723F5A1",
+    "sender.aesCt": "0x9127831f824277333e23973f4873ddf430fc05394b8db92a5a5bc2402633992aef2e5c624119a5ad299b0d86d765db31d38f323ee7f74cb6d772b1208d616c3863ef1100aeb73417247e7eae9523df21f16661c05d3a2d9bd570f463",
+    "sender.auditKey": "0xc6f2e8fd0dd9c9e11a924b95abcdc27bab0ab83c2e3b7b4801cdd42858e88535",
+    "sender.block": "792",
+    "sender.capsule": "0x6bc785704c21d2741a29af2beb775bfe17d00bf3f7abf16c59b386dd9b050e8560d6bd1e3c500ff027f348d18039dad4fb1d92c40587670443f2eef861cd9a22d54fb70a69134937451f3dce18ec39ca1fa3af27572d2696c75b1168841814bf1cba3558dbd426848ff5f36c0c0b3764e652c63fbd90969911d5b3729e9312edfdedad56cfee379dd0a893e0ca01a5d65fa2a563346cb33b02767b45184c5714ae6db1279bdc56a920c2ec72672e6f83db898182feefc030f1d3232ffc04366c2418540ab5e9c76f39396ad5f06d86cb694dbd990d127892e4e555bd82d23d05ae98a555347a336061bf0c8537738ea899aa99e7f261065bf3948f561b042c571b50a9e191a3ff32df68106c1dfdc7fc125b37aabf9384874290e51cfb6d86b5d962cb425e5d36ae921661e9fa6e07ed65fe216f46f51a341c13ff894cd95f58a23b527f5f3b519ae6029d62a80a6885c4783eaef1b040c93740b498658eef3178db04059e99c27a15e6719936de4cbabb31d9e287502e29705d9e8fada412b4dcd97467258c55a29b8ff926cd309750fe3509e3075aecf76e0d15b1aecbf9558b3927d8489a1e1925a66f2d1561dde2e0f70ca6ffa70e89357d84da5a4716fb81ea4919df04680dbfdb7e6200965f661691a1970e074c2aa200e111dfb9369b4611544c211218bf6615aa587b336db1f2fdf6820d1d06c50370e5bfa30fb39a8e85deeae6ba3d90e26c68131faa73a6e221a6f790153ab3abc4bcdc2309f279d4e79a48a4007d3aea51f1ee9161ddcdedc5a177b54abf30649f00a37bbc971f8979702d8af64ac7f4a6a8ee49077438bfabd10d110c8595015342c21283eb6e27b463e825455ac7491ab0312f49cc46fa9ebf020f5cc4f192be1eb81c7719945eb12e2cbf74a7622a66656705997c6110696a292f9674d48b3df2aa362349a4444ef0f16c4da57bfe3e443d5358e88e8091ce28a4db0d1798dd62bbbae3a2c6d689037cf772a2f515ebbb72eb61a4e982e09e310465384edd72db3d8898465093df5d262329d48571ea83471c33a9c5483d011fb1970921067d91bbfea95eede7b9dcfe2d081bf891ec9210a032a12f6024a0e987a06332bb036d547c1bc92f0718cad33a48788bdbcfc4e562128175bb062d8496492e5a6f533590dd6f38aa9dd6bfeada0d5abc5b736fe5a7e71612d0528ef4c6e1d0202cd4d4d495ca3438f84dba74ccd59661d002a9a08c38827dd99159fb0e4c0ebd0ecdab91b1c108b7adc5a26d32fbeeaaf207c105daf8aa7494dc53c774151ae770737b5d7e3b276612b366dab1757d9e42681c9a87a21d830d31678d77f4e3a662d6eb951b129b03909c1e283a70f407ec1a812ace6468c4d3614a5814c386e70fbfe1b8e074f9948c0651c6857a7a3e51d19767ab4a8917b4cbebfe95da706a929a1e61d5daf35402660acefa2b555033a81acd11f98f4c99f6648031c934dca87e024eec8f6ad7aa9806496c423d01150ccf7fd5fb3ad5c3050f9e09dc57b80093b5d35da5e3c0",
+    "sender.nonce": "0x9127831f824277333e23973f",
+    "sender.opened": "0x7c5b9742c6c7f85d58ee36f6604fad265b9d92552beec84edc32c275c5a57f47966865df78ba122b99e0e45050b85a070fb022135e0b6765ee6d3cea84467f4a",
+    "sender.sealed": "0x4873ddf430fc05394b8db92a5a5bc2402633992aef2e5c624119a5ad299b0d86d765db31d38f323ee7f74cb6d772b1208d616c3863ef1100aeb73417247e7eae9523df21f16661c05d3a2d9bd570f463",
+    "sender.ss": "0x44320fd448727eae7d5e464c4658bd7d3e57bcb46c2ff2d53a1c40c691add5ef",
+    "sender.tx": "0x3257da3acdaf0870ed3a835c05c7530bf24b62b109d72569adf38581afe31e93"
    },
    "ledger": [
     {
      "tx": "register · Sender",
      "field": "msg.sender",
-     "value": "0xAEFb2F9a65c8f720CFa9BD0D4601135c6cD6176a",
+     "value": "0x78081F599fA38280dB8343c7F11Ec7A69723F5A1",
      "msgSender": true
     },
     {
      "tx": "register · Sender",
      "field": "pkSpend",
-     "value": "6196339122007238999790760679666900522161319623394206643033515723164769696614"
+     "value": "13764772798889477759772853366001082637399562522634024850797558799939966069543"
     },
     {
      "tx": "register · Sender",
      "field": "pkView",
-     "value": "0xec2c59a2037fd4fb1d1a6c99150b05b8590155919ade748d0070c0d04bc235ec5d0bd19785339f2ad11ab9db9b96979518886101454b04f7a1161a5cf4049b0f33430adb63aa2b296604971e266eea7cb58b12956825596e6c66d6d8895be527156109b14c299fc10bad744e1460bd6a28a1034c79778cc28fca3d625b2378d4bfa665569357404fe064a8f0b32ec32b76bb68d04caed4d945ae03c826b29846b1a95d857e08ab854d0b364b3534998b1f94559a2c3a4b7f6aa46d3c90ff64a89756824d7c589a917330642cf5a17e2ad474d84b35c550402d78820c0c05a1b05f1df877bf247fff666195c78d32877c948a81e989782652375e274584e4774397b4cbe12e7276167c477d41835b310570cf89b0000947dd6618b3c53a51283b2c1b18a5187f2f644fbb8b74b72789daaa202156259a87956c03bbef1c968dd0c4b7888eabbc4c96e241239a68d76a8f85077ca3b24a7c0a99f93527300990e37454872298ccec264c056c9a9c2e7678063409749179cc18e90eb12a8278965af1864a98a2c980cb7cf30a7860f1a1178c3a3d02994bfc5a71faa7610697682b050932863348045e24ab9d44248fea73c7d9602133a116f21f55d63cf4ba5d5384bad4845edfcb6a5a27088d722d0989a3f26485471697839c93de13a8f67030e35ab6b6704892555a7eb05ca6e1bebdc55710e2454fba916994434263978c18cd2b9113ae1c4404d03610b31c2e9448c8fa1f23bbc413e6a12e7868be71b9c832746eb8b1d8e34276614d8cccb922db1d9ab5600fd639d1130131d13104085c6c9a165f3b5d628a20fae056ac96871f3c499ca912d493715887b485f22fed7a6d8021ad16a334e62467ce82afea17c4921702098cb1b2abac8b362aef6650ed190308ea59b8eb22a4279f65e669f9303c28f7576385c822c849d7960caee627bcd1bfb67a7659839388851f9f47cf7f86844fc235d657889fc2a297091066f8a4b4d47b45496291b4adbaa33eef0931064c0b5fc775645a1a60d8294c94b9070b5137ec55495b7eaa7729d6023c6e6a797b9964e1d20e3499c2f483c4d4f9418056600a44170efa1ac3026d10e49fff625dcc736cef6bc2b5042e8773761ae2b90611a308e234e1d4cda8920f5cf07882013488836c58cc1f01358a51047539fc5b3f668e71cb188dcb7485a4ced0b56a7110cc6998b240362616872d22066a0419042f0836db91ca628b0371b52620a23d6e0b4ce92bcc63e678655792acf32b61123ab2e91caa467f0c53a749a6a701852c945605b9da9976f74eb8d45d9bd58416e3409a8039051514bfe85e452274e4918233f22ebfd12dc43b1170b0bf7b50c7681a940d016520acb6f3ec8e1df31bea117235521e23c287227b71d81ab64d218e305acf1bc76db2d8206cec2668063b77fa2192f8920371a44bfa5b299873e123270e549d57c34fee991a40c084db8cc1228c6545e12d1fba7bb645731fb61dff90886ee3ae0da0539aa1ba38d0ce81f003d30845bf54c498ba7e45e0ab82108a2d5a334a84a48e26ba060130063539f3fa0166b6b8a74b7d1656c9f4fc95f8194fc6d18ef32a64a741897da40b207a9c2326cb67b2ce04f394e8f136527ee173ec1e9fd982e7bd80cc0dd9df7b8bf6b6689d01491fb4f2ddef52d197"
+     "value": "0x690452b77cac0e89268ad66c5a6203f44c6479f53b403278b4e31b07281088ab0272d316d1e76d7dec9a319b6a96893e8b12118f072d3d66b80925b8a71937f4d0bd44148bd42363ce293c486ba47d80abe21c1e193c42475a480ed51f93299351dc51d14b63fdd50dd33a9a2f3b19f7247ff7eb26f30aadf7e3b9dca943a1239766491894f04d2723c5beb87d9c0ac14ab3c8aad90edf31c7376b4b8d54c1a40a704764026f91bbad285c26cb1db5764b1d7b46e609288650622b670683b6a027d0b61797bfd1e04694f707b57649c957a055935f5ca94f7bd7cab24c3a16b323e86a38d851a66f30a6d1a3954bb6ceb25a91c5e45c3786707b731632db5b907121b4326a13a9b4c3f2a6644151379c5f234c118dc5029176b2980017744b674aa68051e82619018307d066e0a785214761e020c1a6e8bd95374880f93c091374e8b89a234997f2f22a8e99b7cd013ad35452845288563060d78b1afae56824283376baa98718c4a8a60372197a7fe1c69759b7b61473455c0506a04383c4b4b1950d131c7736298662845094c86dc6eab2d0ec8e23ec4dd8b55c13f54d60187c922c6c5e439220604fe1f9c08e677405c3ae52f45dbeccb25b953d6a1b12dfd8c72370555b870d828b281ca9c4c999571aa381925232e43a05b34ba52f5552fc67258bf71d6ed825b616bada990fc81c00a9c2c94cc5af6d33bda461aa9db54800a55bf1f3c43581aaf12c9d8d976f9579c0683742c4679208e1a6116a658412495842a2fc58b97b82bf1099932253b569f9694b23a4cb9bbcbd1b70e799b4aca8cfafc23f5c74b0e8432678553e78fb3930fa97b27307dba441a03314145b96ffc04d98a57820b7cd3e6554405136c9008d86ba111271c6a1629c065c30b459207e56ba42bc9c1fe3c62061a84de75fe87706ab8a9d5c748179c0505ea96bc6f0cfd18040fd3534553675d27c0919fac92d46cbb5442837052fcf5c8b952993bb87bc290304fd4b4a2d404c46168803528253c1c523c2a0a7c3939827544b7714e0ab6adc724a8e607565eb4b55f26f6fdca096b3c990db9cb0444fb75142913998b9a5766c559f20a7afba720321b292f408b36f783f3de91fd69c61a4e274d6d78f11458edfb086973a213de5b909c39e9639570f4560a3c114a8f7ba3f8bc83b9a55f6a570bce0c9a86ab47441a7c0459b5520bbbdf49e6129c95e734a19ca0267d9b85da14d00d099ed823d983a2cbf08bac5984879f7ce98747bd778992a203a6ad0669b9b126e7c13132130b995c12ab40659b7a5abe59a08984b5acb2401c2b411d88e025b597135352178683137737b027d39908518b3b1673bb6c6eb66bceaa198032a8a55760177ad1ffc69b983a4914727d8f5cbbf6192c9f0990cc2bdf8f7bb22f18e73279f73eac2e3d94d49c0b031fc6fad851530e045c955050a455f4e5b78722accd9e53979c2c4074173df0a1d4435804e650482b88e8d793a1ab80238c9abd5c7144a833e16c5022d8b7e8393213261a35ff4778bc21fc715b19181c9063a08bbea0280273bfc27aa5d25caec8263aba4cf7cacc57c50c4445a2bf2e052f1e3987f7448d2d69b4980463ef612f4e0c4453cafb875c1d5dcee2b4abbc7c968a3d4888b9425fdf59a06ca029001e4572c007656f0d8dc"
     },
     {
      "tx": "register · Sender",
      "field": "mlKemAuditCt",
-     "value": "0xb983c457344cc088bb9a268d00179dfe77de55707461c8f383b675b02153af9dd6df34be570f98c60cbcf934974ac7301590268a2d34790676cda29fd1cabde7d16de5bd1c71552128c78ee6baf56e6624e53d6d878ee8e2839057c96ef78670b7c74a72fbbd56d5858ad19255f8238bfcf6c76788bb97b2941c6066b4850746dbf4cbed5c4799664173376a423a71093986c634f54b4b00aebef66148a6ace45531247a47901571c00ff609f3f6eaa63ba2b9d8200a05c42c60b35aa60431f8f26938739ccb48a185962a86b476bbec9af3cf7544f45fcb25c9e94e67f26cf8df9a83bf2bcf5620fdc334c6c092ac4d187829e2524f4328c699fef7fca8607da1570af6204e975f2e88596759266bcd3e76ebfddf5b14288a2e440a6c7520a207660cd3644c54a4c5c4b16a8347acb310f2a1700e39203d7ff7ab664d7c4982b283c81a2300be99cc60074ad6ca4488e813fbfaa09f25f28ec901f88bf1dd99653c0a10b9eeda9659b19d21550d05ab6a23bc6cd4caa5059884ae408d38d6e03ba50c2197901dfefe5f2e1b3b80e84a2ad68ece4bbf5caacee80132851ac92764a87f1002e18cdc927ac2c2ea2fecedbfc635ac79915d682bd20df1dbe3a21c3ebb588a44fdfb905b871a245a0b73e9afb1a01cda715bed58d4bfed0bbec3b95b6de458b978ba1b943e2e3cdd2ad6bacb4ea26cd201cb065155dd59caedb9b49436afe3dbf0b31fc04e6bf72bb22b9f13e8e879fe71e999849809e9d5a0c43cfe2f7a82e646deec27b8c65c99061daa6b5871d6af8fbf6f17947946d52a882f46b24431dd3f2f704b04bd3c2c99b8d503a9472b8e18b451088cc31d4c3c966d7ad2645b5efb07d71ce50a77b121e86c650041334084867022ead5dd529225e6af8053414b82cd71e09c0d336234440f1de9443c2e80c378a9f809642d97d39e310165e4d2a637f52420cf4c8a3fa3d9387202e30db95da334d8735e8615b492d3cbb2ceeb6d88b7ecf37b3e4e3fd1f8e029498230f473f20ce0463fa0826c74395edc6276b3f21906bf315a33b9db3497f1c6a89dd0561a8f9055066f690e963c8340239fa5147522dc2d90534b1f4dc976df737e1c194b8e13f8a94fab01cf50f8fbd305b9edb741f98483a4147125e5f89c6eb678e7905a7e7ee84f1fab1dfa13a77c367da92a1d93f7cbe6304b039deb7d884f3899bbe2ded5f2d7c20b656a1d3a5a5ec393bbdf6ddd22d493074d9098bc351ff99e60cad82b375e2c54fc33ed1c2eebc22d5ef80850f616d9411b1b525673ea04db793e5ffa6f006333c9779a20c7714d2d83fbe94edd575269d5ce0a187e6b8d8fa7fc74058760cad86218afadce7db728111b6b8af20962e09eb695ad98de8ffe61dc9061fc28094f67c7edbe101ea3b0e3724b55a42c2bdd9b0d0f37c6ad11068985f2ddb82a5624af1e17706b1226ad5da86801ccfa8dcd3b25b39093c853495e65e317f6aeffc97499c8094bae2b6a43ecf1563e05717add9270df0ebbdb0f64bb20cba03aea060e"
+     "value": "0x6bc785704c21d2741a29af2beb775bfe17d00bf3f7abf16c59b386dd9b050e8560d6bd1e3c500ff027f348d18039dad4fb1d92c40587670443f2eef861cd9a22d54fb70a69134937451f3dce18ec39ca1fa3af27572d2696c75b1168841814bf1cba3558dbd426848ff5f36c0c0b3764e652c63fbd90969911d5b3729e9312edfdedad56cfee379dd0a893e0ca01a5d65fa2a563346cb33b02767b45184c5714ae6db1279bdc56a920c2ec72672e6f83db898182feefc030f1d3232ffc04366c2418540ab5e9c76f39396ad5f06d86cb694dbd990d127892e4e555bd82d23d05ae98a555347a336061bf0c8537738ea899aa99e7f261065bf3948f561b042c571b50a9e191a3ff32df68106c1dfdc7fc125b37aabf9384874290e51cfb6d86b5d962cb425e5d36ae921661e9fa6e07ed65fe216f46f51a341c13ff894cd95f58a23b527f5f3b519ae6029d62a80a6885c4783eaef1b040c93740b498658eef3178db04059e99c27a15e6719936de4cbabb31d9e287502e29705d9e8fada412b4dcd97467258c55a29b8ff926cd309750fe3509e3075aecf76e0d15b1aecbf9558b3927d8489a1e1925a66f2d1561dde2e0f70ca6ffa70e89357d84da5a4716fb81ea4919df04680dbfdb7e6200965f661691a1970e074c2aa200e111dfb9369b4611544c211218bf6615aa587b336db1f2fdf6820d1d06c50370e5bfa30fb39a8e85deeae6ba3d90e26c68131faa73a6e221a6f790153ab3abc4bcdc2309f279d4e79a48a4007d3aea51f1ee9161ddcdedc5a177b54abf30649f00a37bbc971f8979702d8af64ac7f4a6a8ee49077438bfabd10d110c8595015342c21283eb6e27b463e825455ac7491ab0312f49cc46fa9ebf020f5cc4f192be1eb81c7719945eb12e2cbf74a7622a66656705997c6110696a292f9674d48b3df2aa362349a4444ef0f16c4da57bfe3e443d5358e88e8091ce28a4db0d1798dd62bbbae3a2c6d689037cf772a2f515ebbb72eb61a4e982e09e310465384edd72db3d8898465093df5d262329d48571ea83471c33a9c5483d011fb1970921067d91bbfea95eede7b9dcfe2d081bf891ec9210a032a12f6024a0e987a06332bb036d547c1bc92f0718cad33a48788bdbcfc4e562128175bb062d8496492e5a6f533590dd6f38aa9dd6bfeada0d5abc5b736fe5a7e71612d0528ef4c6e1d0202cd4d4d495ca3438f84dba74ccd59661d002a9a08c38827dd99159fb0e4c0ebd0ecdab91b1c108b7adc5a26d32fbeeaaf207c105daf8aa7494dc53c774151ae770737b5d7e3b276612b366dab1757d9e42681c9a87a21d830d31678d77f4e3a662d6eb951b129b03909c1e283a70f407ec1a812ace6468c4d3614a5814c386e70fbfe1b8e074f9948c0651c6857a7a3e51d19767ab4a8917b4cbebfe95da706a929a1e61d5daf35402660acefa2b555033a81acd11f98f4c99f6648031c934dca87e024eec8f6ad7aa9806496c423d01150ccf7fd5fb3ad5c3050f9e09dc57b80093b5d35da5e3c0"
     },
     {
      "tx": "register · Sender",
      "field": "aesAuditCt",
-     "value": "0xeb91dee858251386a4ee705305f8d36f0d2a5b685091f05c4967500c269286ac84d1fee64c5a33b906e7a793f0d11d1ceb5ccbfa74f5aa8b117b1f960e2b31bf45c77bb81e0f72cc48a697456bde2f1387f56e2395a6da0c3877f848"
+     "value": "0x9127831f824277333e23973f4873ddf430fc05394b8db92a5a5bc2402633992aef2e5c624119a5ad299b0d86d765db31d38f323ee7f74cb6d772b1208d616c3863ef1100aeb73417247e7eae9523df21f16661c05d3a2d9bd570f463"
     },
     {
      "tx": "register · Ana",
      "field": "msg.sender",
-     "value": "0x3c91dc67f905E104E79fA3cc8a975131C0720719",
+     "value": "0x9e663374eA311d547dbA99495eEb01E8Fa8e6614",
      "msgSender": true
     },
     {
      "tx": "register · Ana",
      "field": "pkSpend",
-     "value": "14446470091419989577979811811359501344183048544487464605764784669780745324193"
+     "value": "21213375600232356538031943078783620902520974228704578195350322034447519237956"
     },
     {
      "tx": "register · Ana",
      "field": "pkView",
-     "value": "0xb23b832e0c3f2d837d9c5160c5180cdfa2c53b6c8386acb101618e272725d42433a46b70474b28b3612e1faacf4f3698d342a78d301e0f7aa565b7c37854911a28828a610e8b477bb63a8cbea28f28c039fcc3631697998ba640ec53487f049ff7b5bfc4951650a02082d9457af20a2fa9956f068479c8cf8e4ab12fc66b50ab3bb27ab1511654368ccbfe8c3aac0944a4f0a8261756d5f8c4c2154c40a7a189f0ab27a026e227afea2c447c97903f02b704a49dbeb768b7f02adc587c0121865eb4c85808750bf7b6832ca64882a6a6c802e70b72c30c8aa6f2c1dd659f2a641ba63ac751f65fbf1852ccb7a400624ecc7ab63d5a0e53fc79ed16542c18486d69aeeee509450492782c060567c6fd55303b0b92911cabe1cbc59e97b6bdf521528545056888c9a09792f07ed0c7869088189c02706116b25046c4920c7c483601bd8783b6700d0c39984c9557be79ceed84647ee85b2a302aad540496d7a4615840222533038c3085fb4cac660318bab47cc57a15f482aafc9240a92123ea02edb313404b8848637ecbbac5df5b2327716fa1680aa62930141a550e511fd447b4e0ea7c24b42ba0e751e2085570fbca730a956e4155a5b0c05f819163943567b012748b3b26159039d70d385a7012e35128129bc42422fc2b793805bc75ca4a8e76c6c9a4c7e385ce4f482e11cab081011f8ef77d755195eb3275aee57d04288f8f273ed468174cd554fa70508c593b58e8bda5301148b25e5433112cb3189ec11418ab4bf130080a4ac4b25b35d16c3f6fbaae4c91acc25194a6e67120d37ac3f66ed381a851ba5b0bb06cd5fcc086a083ae8a65bb08a39a023ef193064cb15ed5ea499b370f5292a8dc85bee117519f8c38bc26c0151a3654d09e2e84008b016512a00ecad5ae21dba3c3a89846611922c76b8c589a99e174c5b892c01a510c3a7f06772f1cf01f21005eee3cbc282318cba73a6f5c371c6110a14576f94a34cc3217c3eb90f0f22cb4db0e2d6264e2a9915ddcc0dcfa8fe4e4a77343606a10056ef0cd25eb9263984ae3c35435c9665ac58555c65541236690284c06266657f03c164213dab486a749c1adb0528f9a11d692cdd5a3524d063f2bcc8aa298539be3268ff01b511433020b794d903131d5adcca3bb5e2abc2d0b0188c9af472b63d6567ce74ba4e0091b3dd1c532a6b9e64273cfabbc2f675878ac93735c0e95433096f69b977383c535b7c7f37dc7dca642f34e9dd37ef8abc2e84791f5d3c8f0d9ac6fd01af4d2579b6bbe04d63798e273784bc828001878ecaf98889d2f4091faba627fa19694d665a5b338d3c64520333b90d3091bc8ba1fa48b92017d6ffc68c94393c452499bf06ff3041385c3328872225de31535f82937cc9695c3436f236598d80a2164454a5c0e05e1216b52c8019173313ccfd7407d772867c7b666aba26ac60b121ac63a2d06852a60808981903f4077d8f23728a918b2c266009164530a3114b04190059a1af358a6d9a3f7e2288907539ae04f266419db58135c886ba5a507e3490cb6f33bf4996ca4e700eea7220b9027c1c6abe4136725e80954289bd0c58ae9b40f8a0b20a90bcb291288c0c3c681f7b499ba4d68307cc3dc4f7dc7a99e952169729e53cd93dc13d6b3db3c06eefcf7ddacf22fda746e"
+     "value": "0xf7a530883471ea798bbef647d125bf87d89e64c41cf75430f90a22c2541c63723060f45a7314022fc128327477b5c84cf142b99a6c8545216ddc287749cc910eccb9de0c1b06131c3f263f0e622e3e22925e74b416e3728b47011c85c2925c547d16bc7f0b3f5b1c12ac00b03f74c66cca523f5248219856fec41c3935379f6621eebb9a5ee12291cc60d570911d4b3b47374396bc34cc7636843b87ff064cc1b2bc26141c1b920cf41404d594a30175578c306efd32cbdd321b824952fc098af0748649265e64d1a42084bfa7442ad8259fc224b370d0a92af1cb0b77156bb3450b6724c9d99b06571ee0b03663d978e5714e99d7abea9180472bcd7a275c136164218b0db753ca0eeb670f1cb66a4a0af5fc999b9c61512806d4684569123bcf019e70494bac39ba133a948b6b1790b5643714c740494ae5bb79a59811b6708b80155273da29b0e12f0fc8cab293af69b74cf45158ef6b9524f45da52c3e1d6905e3455cbfe116a2b97c5a372058eaad19d4929d751b62072cdf242360d798cc6cb5a57a14cf626708c8bb61e09ac1ea7b8cd3500105441b118861012a60fc9f0812aae7e3852eb82ea887c791a578609196fa359d18dbca5f88caae5b07b10b3c47f4199fb911412b2210a801a21133691c7d04636a79c4055cd4098b3218aa9b096bd048cd7413955933f40694eb294ca3a5445dc19b5b891d6e911fd82846e0bb58a9751ead38bba5575628496513308b296180e5202fbdea61c8b952fb4a42f04371ec7389296337dfc23a2bc58177394241fa392de101e510a1677380f3aaa37f16abe3a848fc397efd6025b28a927334a6e4a2c108871f1ed08aba10c85b5cb6b2d040f62c91cdf930dab3685a6657b09739aaf877b29761ed037bc103b3fccc4f32cc1208f88a600143bfe1442aba3a1f01cd6b4c22daa0c9cff71ced14232b4cce0e55a4e891964f4bb92082b03d298a26785b869cbcf450b983b630e1439624703a17357cf7080dcc46447ce01ca0c83e10cc58f7f48680d63f207c8338bbbb47fb05261697be89530b8826be7c761b788183aa4a59624fd82813e5b5353b293e15b94b8d6b2fb756a9d738ae5657be6e29712179c2110b4dee2c813ad201ea1c3684972d609a86c952cb593571c7cb0d6a7ac43931c823f118afe8c9fc6011600bd0f5db205015bf365c66ba546be8acac4cea25b43b8dfc5a9a10b05b566079baecaf1b353713745c1f3a393ebb6466a2b1b3603790f849d3c5452cc371b4345e09a39203e612eea2c9911909e457436d9794daea2a867a7b1e99034965ab05804e88cbcca4337f7d702ee071c40277bbecb63285847d8fb24bfc091e60da953e3b93aebb4d117c14680716adfa11c73c3302854ae367000ec7771cbb34b8b77b104350c94a56b36c216c994c1757b2db8b9c68bc00a995a98661465e92c36b0212400289feebbb5908cc01ec74be77b7571b261a173aa2fabf625acf4c5b971c0832072a8e6bf8cf01c68ffed425b0d2a180c500c483478326ccaaa103fd03144d1068cbb7bc9dc804c4811a5e673f46daba0f157c81252108366a966a7683d28bb59a5c408933fa313ad08a404c7235a6601a6c1b937d930dab1192b9ecaa054ecc85b2a559c9a86c2024534d58283c76035137491ccdd7db"
     },
     {
      "tx": "register · Ana",
      "field": "mlKemAuditCt",
-     "value": "0x30b0f60b82ed1dfd5b4ddc4664073e5cb81af49ca754bcd7f416d79ad54a15d930a2d7906ece8b3ba6c25cddda503a990cef1d61c8d002105454882b216712834b8427e2b65e961b968ef1eb761230d586b7441d5c32badb65b84e8f0e66ec8a16bb5ed9681a9d5b09186337b8018b668b9a57de13e2347fe95406a8d809b99693a3cc2c0bd2e1d113ddd0a5408aace6325f63c2a7f0ee900073fc5a7deb1064fc411dd6142d4a883743a926455e52e0689a18b954b77acbdbac9159cd2e95bf471a1f261e4f3f2c7c68cacffca272e07f9a41b52d9b0325f35d20bc9b8670e131d5344fb8fc5da28c9a2e6aeb6c7f6c8d57146354c1756c4a8cb3050ed9016f5e2cf68d2564c974da7ea81706c141d680c20e4957e45469b95a8a4757f24a51e80fa68c0ebe1b9de77aec643dc3172f7bf23a3ffb9787b2c9520b89f88ed46b8a987e38b9923cf2c61b2536423480eccab39827e8ca1e31043daa30aad1e953c8b9b8bf61ac2b7d6163f3d2f4b6250138718e217df605bc6230540a6b27474031c8c27c5ac16701f89e8d352fec3a3d6a68166a4db0e5731bbe886ad75ee229d1a8c16e278187546d98a6173a632b6fefeb43d9f3139dda7ba700c1e6754e7a5492ca93c19f5432b0a6451149a329a7316e893adf9a2028d630274266974cbed8b23f29e857ab9f034bc2301ae1a7c6a82e3c6a56b8b68cb56c56de3a0f803de97f304ded0bad10dae0ea24461312c1365c8205f257d4e7535e95fee7cbe7656a60da77df57c66c55b1d236beceaecf6869ee188886d0d0e2c8636fb969b9ee01f49e0a79391a48bb82239d95cd1e583860768c52f6e9e330218004c57a1b25899fbb04e794cea75e44f7d3c769b2bfd080714ab603aab751f82e93131479c7ea83c22277851aefa5ae2f6f2f42f15a585640bf104a1b16ba0307a447b1dd14a5c3d9ba67c219ed8efb29c5fd773f43b496f6db4440fda96207909b38052d0d588c04cbfceb04515d643a1229ffd6eeff822587481e8d37fc2915d18e2941f22df279aa6fe229c1308b566a001e772e5b5f5415703af4374f2fb5f8748cfd5bd0ce8db3395e518970bd2e6da77afa4f66d90b082ddbba774fa1565d7b4d03be4bf30047e303d15d2983e6f90ab24650c1b8adea056871125a4b5fb6b3d4097d51395682212727a097b5f3282896ad56470afdeffc0d6cfb7fe908ca679994a1c8c8399f549f31c90bca0b2a9206e3443bb00b340803305150efe2d7fd8c0aa4923e3a4e0a6c364464500a5a477f2faa022877df45697aa57038467dc76fb1ac8b2cb14ace051ca58a97ba06a7209b43de6115c3e9bfc6e93359e151a9f50a61b41c8b2e7b9e32492cfb38f02866724fd8cdd1b16a4cea29a65624dbb7c2ce7d0915a6a8cf523fb6667e8022af80cb7e16fbde25a9faef7ef6c01bdf9659ad845ea8db9d8b66a841f96dcd50489401c705cb5d7e18aa7c347434925b20c302e8362272aa137ee0a26cfb628c1d6013986015683148fd4e08ba2ec0c0582f59b0"
+     "value": "0xe56e7505b249ea661613307f1b000dde27e37950c98b3caa0b12d81b2529097c27bc24bd1186d2f4a768f63bf8359130e9670218509665e93dab2749bfb67b8cabc7b09852d140125d77146414fd62c179b2286c29324432f697cfc9906448cda15bba2f78014fe06be330d8c23819a585653b755920dc791882d0783f8171e6c03158c4c95251907120fe6a48684611d947749e547dec82744447816f7aa7560c6a1fc7c26768815f3eff6679fbe38d8501e698483e0881ebba6c2b8c42c7fd64143651da470e964e06d1e31591012746feaf4db5a89518761d4111c2182483bfb874de41478377acb51590aaad4abab0779e91f363220a5d863beb0e363efce492f144e81bbaf776f2ef30378a2e07511534e1b014e4a9cf171b85d2a9090ce53e632cdd6bc6729706a381513e7729a79448862ae852a9680fdbe66b1124d650511541f8d0386bb18571975396f1e5878f507dda174247174bbb0eba71da31ede66f278d5e5117736356193e837e7d6387f16fe2776aef0c3d862ec16b3c76f334581d5006b8b111dfd07c4c031d8bbc4cd7254a1148828166030c2be89eb98e7f2d631aec386d4b756f3c0ac5b4b657688d031f371df7a3cad3772e3759ef66f4c1a04e6229390c2bba43f0b90cc79834246f64ba3c099fc931015983eb4f6f2b6186ab7e27a838d2a62bceb1d9af22524c206a348fb1ba09c871aeb32c9c52d6cb0a3985b8ec67b4e4bfe732f0d75e54c2a375e26acfd7fbaf4952105d00770826b9a11909868873c4ee543891c703137468b135ad87b7e799f350cfc0168527f0f93ddd7192663f37520eb6e10d9e222549c05afb4ef75baa11c840705f685e2c2c8eaa9d62e5c2a1a57f53ebce8269c2a83d486b3d807d971708937a45c83c4e53d82c3c2398d64d5555112f38928744e131d5dfe152acf9d6a71dccd74f3570a487aaef863ea9e6be58ff14af9f01172587a5d1c8514d5274d3ba689c267bda51748a43776d99aee5d58310fafc0432d7a9b1e19e532032c5350e54660c0e331443297f00caa086c879d7bb41e908fda308e63c1a089e79ee2363fa8776e53d4e7cb559e64c01f67b6d99dc3b704aff57c5b97922c84d28e5d5f0b9e8b039afb87ffc526a0789e25062d15c947914b1489cc191767debf47947dd6fcaec99668540371c45afcadca779ed182284132adad43210eaee293c9b666c0b9932cd0b8e831285d77a1e3f149fef945bfbe2b5ef39913e0d654f889ca2daf31c761424fd86dfd441db8f6d642e5aac4276d0286298071857e5da1d495e224181a52e66615d23be22c34e4194a527161395047cd80db94a2ba0702bfcd44350208ba963dedcc8967872f1bcabc249c45da20a5a2e42ccf01b792fcc866e1d01ddca6e5379d8a927fc894f5829e9cd3c448a71fe04f0e58b1af4883d66ed7615612c904ff24172a534e48561fd81a2e1990f577a2f7d8c3498c0227d41d20dec4ac859252cdb809dc78d0b1dbbc8906739a46dde562df09a8f75e62dad49ee7795"
     },
     {
      "tx": "register · Ana",
      "field": "aesAuditCt",
-     "value": "0xbbf52d2296e72b23c951ec5c9b9b5c2751493308b252a70ce3bd8e145283afcec2b15c6240bcde7274bca7be110d1cf3a259b2ef2c50d10bfb151e1d4b831a1eb0b5515b07acd5a1d6e6319f6869c324e7f9aed1bbe15a8a9c18b931"
+     "value": "0x350bf9b838f775122bd57145e8445bfb5362c3ee7b2dabde141c03d6d20692c39b0522bd0be86cf8f4a2b30c60406ad113188239918a050b1602625dacf17a59ec0e5d88bbc619af568a05538342d92c12abc0609ef1c5cd03a8df41"
     }
    ]
   },
   "shield": {
    "values": {
     "amount": "100",
-    "block": "773",
-    "commitment": "6735188738959357125290434534299296178272005713044702554715578842690502966752",
+    "block": "796",
+    "commitment": "21730804815307254598637719228464920386902517694135607978501001682996315343010",
     "depth": "8",
-    "leafIndex": "253",
-    "leaves": "254",
-    "msgSender": "0xAEFb2F9a65c8f720CFa9BD0D4601135c6cD6176a",
+    "leafIndex": "5",
+    "leaves": "6",
+    "msgSender": "0x78081F599fA38280dB8343c7F11Ec7A69723F5A1",
     "p": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
     "pBits": "254",
-    "pkSpend": "6196339122007238999790760679666900522161319623394206643033515723164769696614",
+    "pkSpend": "13764772798889477759772853366001082637399562522634024850797558799939966069543",
     "rf": "8",
-    "root": "19148873206840747185624044619680706624394880866380486578353970348527581841537",
+    "root": "3195250942136752473123516837707399758502073890065538589347496976290125449950",
     "rp2": "56",
     "rp3": "57",
     "rp5": "60",
-    "salt": "1555984769382179088529212468389991554236483369852219295283610326116484574156",
+    "salt": "14182222818002844731235134749407693023551915811215276874772870117409911680405",
     "token": "0",
-    "tree": "0",
-    "tx": "0x408f72016075a4fa574711cba57fedc45d4f2484970e3d2efeaebbfa047e7525",
+    "tree": "1",
+    "tx": "0xe8e9ac1117ea6257ab3dd532242cb5eefb92be1c2c8f249f1c6e09a3853525e8",
     "vault": "0xa34b0bB5F2d8C1674eB7cF53e06B813A31C5509C",
     "zero": "21786163348386038604960770631540184405176086071424084281943739401806009032442"
    },
@@ -534,7 +870,7 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "depositV2 · Sender",
      "field": "msg.sender",
-     "value": "0xAEFb2F9a65c8f720CFa9BD0D4601135c6cD6176a",
+     "value": "0x78081F599fA38280dB8343c7F11Ec7A69723F5A1",
      "msgSender": true
     },
     {
@@ -545,12 +881,12 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "depositV2 · Sender",
      "field": "pkSpend",
-     "value": "6196339122007238999790760679666900522161319623394206643033515723164769696614"
+     "value": "13764772798889477759772853366001082637399562522634024850797558799939966069543"
     },
     {
      "tx": "depositV2 · Sender",
      "field": "salt",
-     "value": "1555984769382179088529212468389991554236483369852219295283610326116484574156"
+     "value": "14182222818002844731235134749407693023551915811215276874772870117409911680405"
     },
     {
      "tx": "depositV2 · Sender",
@@ -560,22 +896,22 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "depositV2 · Sender",
      "field": "ciphertextI",
-     "value": "0xfb5526ea2429aca7690228b21a88b4968bdd58db929e7d1dffc9101f671841fa75e9e264016d68d93d971e99ee9d04f7c00b176b09dfa870677e055fb080ebb4c5b250aec3f730ea9a63c9de7fa1d00dab16399aee0b48bbe335a225e540472a6a309ab4223e348f2d800d0ce6f0a70dfdda0636f030314e8d35d5506ed6b4a7ea10d439d33751eadbba77a271e47da6be1729d26024f74da5c3bfa6d272d351f5d6a49b4331556eeac10d657519791ae0e5e3654dc9b181bad48ceed04257189b42f13d76b5af9706d21d7b24a776c41d6f6ac2e7a8e88efedb1ad200f03dd9e5873c42d4cc021bd10ab634c1677136431dbd2d577fc057162bf68f19aa67178755d89c402623f3cf2fa467d7c68349496d0df3f13fadb7ee9179582d1e8b171eb132d97429648740cad4f1f5d26c5a81e0db398f567248108383b61defeecc03b764f6400c593bd2b8d00cdc01d4030ba262cb21b68c1ed362a447cf3ca30e1711ffc3cc5276f5ae0be66e1d06b1799878bee36584eb6d01bc550f5f8b1645697a13ff2f8fb32f350be9b9c453bf4953da91196b173caf91c50b536ae615ded8dd17f1ce733eeabbc13a6e8b6452fd891d96d6dc86b88cf78a75723b00ef0576140a49357223465bf32c05e1a8cebfe73ee158c655b5448f46e111628f3d3aeeedd9651c84fa1994d44e753a5234210c7c15234bee569d72b0448835722ee2bd460f89556e4ae403de648d67205f64853d241fc0299d30e2031a8bf25fcda3f3bf853f088fdf08edc5886c8af0352424e95b40db5395b64c191df4b65f81b105830aa6cd7efe9b80b95913e31c9798683ebfa14e55bfcc32849c5665136f6a415714581ac65d75de88554274f202479897b64f544a27b47b9309672f0b8b15b022d844b17c2da3c095e8aa6864bee4321cfaa757401342209c83eee7f7a9b0bf364f02b432f5b47bd7b760a4f673fe8a015111625ecb247fa0ea7da1d19269d23feebd32a5bdfde2589df05962f3a7a8ded2cd46eb693f2a5daf48fe454ad87a054350d7b944aafb6deb7a91f819b56f800e3ef21c2315f5d47243199fe0449c4078f056cf023115e82384642e90e45919e2cc0969d958e1751440529c9833cd11c18405f65736c91e9d490002870addcde06873b1e8e660d60b76a8180b43961d7308560941ba2b9918cab6573cf98d80eac5bfe8ae717d93cb7302a7a48d7e55f93e3c4a197b6ffd7d0fed28517c12d94ce601db5f4102384d6677b5a09beee626d9f38a507ba6ce3322a6e722d8f26ab1968054124e8426ea391fbd289bfd361ca1335775f1a79b53640ef5c16ed66f256031725076fc70d53dd9614b72b636011707ca56ef8fad0c9b2fd0f6c373708a16a79352b5eb392c71096e9db5ab4e6aa745a76ead840e3f2e3e0678755020db2ee54ff43a95bfd18fb49cab1874badf48be4c70d8c294fb9f3e28150f4946fe3fb1bbc828de0a4c01277f61fca728c632ca59b361979e45505fb97320524bd28511ce6d07333bdb013a1f201f"
+     "value": "0xa375cb9c807e21f2d462e508b09240829463ae84674a30b7160fd89b165b1b27f5bd1363baefad54fe02f39b950e20b319502e7ba21e5070c441947249053fe66a3a27d6bf42496728a6b0118309cc9b6e1c496adc9696a12baf872e81991ea454ea78f03d8bfb579c8a1666877d97856dac997ac44b8d47fc2703b4e51836d5ef947b610380bbe8437dc44a230341510455b89222a30bc314dfd761bb89104931dac67f78e3b9e63febbd20996f296ea58bcd92d562a7099ed4091ae4818ef28771b25cfab53866c135d0dbf8f613fffe692c102785b0f80d0f563da146c442f67aa1be4039323a2e720c5de13af534ebc474f7beb81fec46ed3cd72465fc7e174ae4aa9f8c05d219857400ed41fdca0680b330109f6b687244e132c279ac702ad51e4d4709f53a4f6c98dc134f0287ada053a4d4dc15e285d384637ff3cb6fa6f72396b2fd4ec66802a752df1689e8a0f70456948b78379da4be8f605167d2d7e1303b8586c16fc0e7d85ed8d6b756507ed57ba8bd2a65da77323b248d917e7e4913b2106ccb4aae82605fa9d4a65a47457249fff88177e27388c7c0f3b6e3421698c955c18bfa3c9d75b5202d9ddf0941447c3b20bb1ae62bcda2a4868dce027626a2dd8d6932ad860cb7f4d35d4a55d8d5f3b03108cef21564be7136d886d4c59277f86bb3eaa9b641f5d94d117dbf86c0a7075be7a556b8e3fca3d83c7bf8efaee4ea4ff191f7c136b2605c3aab39c9784b1953c5ccd1af8fada48867cb629387eefa6062dfe48dbc2bd328885060e384eccbdb8251404452d25da6303d75b2cffe921a4471d40fd5d34ef2c9e2f89cbf0d61a394b56486519ec18196fae4b3265a61e2cffb87754ba647c2c8b23b0c3397525da802741092eb27350d9816416a3e6c89c115cba76836dcbff5c01a7fa917530e264546d080c0af2e2191904a6332d3afb7572b2e70449bcb80a4005aa6c268cda93298779e08bb463d44847dcbb5a7e0085ef5f2a5c39e6c1dfad43a46a47565f1623a25dfb936032b6de15669b9d67e3bc0d2d4634271ca28d764825ace90c0df506aef29594156823db2349cb7e1c4ecb7d47230075b718d649c195381b3d3e10919813bf15ad6e84679b6f3d53a27d5dad44ecf51c95bd37332d687ff77874b47d4775e98880c861ee4c3de4df09cc8911ed913fd29d498355b3cd9b8d43c30f48d0a209d251f675983153d856effd3ae5b01cb6ab6a17c0a65faa727f39d9e51e2a6c94fa7c67e43f837e7e8b8ed8e1af736a5e0e13bc262c3f5b699b6dbd356e7607a4eb93e4b1e4fadf130524ca244aed9f1da7ac11803fcbacbf340e82be9fc6f020ae8d27fb762b754d6382c5f9607caa7a62f9bb88a4d854553dbd79da56f33a206ba292713be81e2e3cfb103b78235996b128947c5702f14183e476a017129694c7558841a727090ba3a589e603bfe6f39a57f894e5f71cdfb27dbb936d011528c03c4c8aca8893ee341d974884a73c3c75d709f1996da29f86d79137c3cfb1799f6e38637"
     },
     {
      "tx": "depositV2 · Sender",
      "field": "ciphertextII",
-     "value": "0x2da7572cd0e380ad59e40623cd7cd7b41877e4dca968319c4bc8fb78e5cdc94494c075d38dc858de617b3f1720dc31ecd11ad78ffcc2d630dd80b26ba73bfcf09da79c9fc5bb274c326a6ac01a7eb5ab540c41d0384433a0146825c3"
+     "value": "0xc30791fc8cd9bcb90a8e22e09e04b6e2c89cc0e9fb1c2c8c67e0c4af1bc438cbded52417ea6cd552eb99803ef10737629471619114bcc8f8791c9c7bebe44c2f6fd889a4600808cfa74d2902e5ce1e6822f7e5edfea865dc2cd7e5a8"
     },
     {
      "tx": "Commitment event",
      "field": "commitment",
-     "value": "6735188738959357125290434534299296178272005713044702554715578842690502966752"
+     "value": "21730804815307254598637719228464920386902517694135607978501001682996315343010"
     },
     {
      "tx": "Commitment event",
      "field": "leaf",
-     "value": "tree 0 · leaf #253"
+     "value": "tree 1 · leaf #5"
     }
    ]
   }
@@ -673,9 +1009,19 @@ const CHIPS = [
   { step: 'shield', cls: 'pub', label: 'salt', at: [634, 312], from: [196, WALLET_TOP.sender + 70] },
   { step: 'shield', cls: 'pub', label: 'token', at: [496, 344], from: [246, WALLET_TOP.sender + 70] },
   { step: 'shield', cls: 'pub', label: 'C → leaf', at: [552, 344], from: [558, 312] },
+  // The payment: the witness stays in the Sender's wallet; the proof π and
+  // its public inputs cross to the vault, which spends N and inserts the
+  // two new leaves. Ana's wallet gets nothing yet.
+  { step: 'payment', cls: 'priv', label: 'witness', at: [304, WALLET_TOP.sender + 70] },
+  { step: 'payment', cls: 'pub', label: 'π', at: [374, WALLET_TOP.sender + 70] },
+  { step: 'payment', cls: 'pub', label: 'π', at: [496, 376], from: [374, WALLET_TOP.sender + 70] },
+  { step: 'payment', cls: 'pub', label: 'N', at: [524, 376], from: [374, WALLET_TOP.sender + 70] },
+  { step: 'payment', cls: 'pub', label: 'root', at: [552, 376], from: [374, WALLET_TOP.sender + 70] },
+  { step: 'payment', cls: 'pub', label: 'C₀ → leaf', at: [496, 408], from: [374, WALLET_TOP.sender + 70] },
+  { step: 'payment', cls: 'pub', label: 'C₁ → leaf', at: [580, 408], from: [374, WALLET_TOP.sender + 70] },
 ];
 // LIT names the diagram nodes each step lights up.
-const LIT = { keys: ['sender', 'ana'], auditor: ['auditor'], registration: ['sender', 'ana', 'registry'], shield: ['sender', 'vault'] };
+const LIT = { keys: ['sender', 'ana'], auditor: ['auditor'], registration: ['sender', 'ana', 'registry'], shield: ['sender', 'vault'], payment: ['sender', 'vault'] };
 
 const SVG = 'http://www.w3.org/2000/svg';
 // svgEl makes an SVG element with attrs.
@@ -771,8 +1117,101 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'ArrowLeft') showStep(current - 1);
 });
 
+// CIRCUIT is the Payment circuit (gnark_circuits/templates/Payment.go) as
+// the payment step draws it: the witness it takes, its gates in the order
+// it constrains them (each the card data-gate names), what each gate reads
+// of the witness and the public inputs it fixes, and the public inputs, in
+// the statement's order, which alone go to the Verifier. H is Poseidon.
+const CIRCUIT = {
+  witness: ['sk_in', 'v_in', 'salt_in', 'path[8]', 'index i', 'token', 'pk_0', 'pk_1', 'v_0', 'v_1', 'salt_0', 'salt_1'],
+  public: ['Message', 'TreeNumber', 'MerkleRoot', 'Nullifier', 'CommitmentOut[0]', 'CommitmentOut[1]', 'ContractAddress'],
+  gates: [
+    { id: 'message', label: 'M·(M − 1) = 0', reads: [], fixes: ['Message'] },
+    { id: 'range', label: '0 ≤ v < 10³⁶, in and out', reads: ['v_in', 'v_0', 'v_1'], fixes: [] },
+    { id: 'ownership', label: 'pk_in = H(sk_in)', reads: ['sk_in'], fixes: [] },
+    { id: 'enable', label: 'enable = 1 − isZero(v_in)', reads: ['v_in'], fixes: ['MerkleRoot', 'Nullifier'] },
+    { id: 'commitmentIn', label: 'C_in = H(pk_in, salt_in, v_in, token)', reads: ['salt_in', 'v_in', 'token'], fixes: [] },
+    { id: 'merkle', label: '8 × H(left, right) → root', reads: ['path[8]', 'index i'], fixes: ['MerkleRoot'] },
+    { id: 'nullifier', label: 'nf = H(sk_in, tree·2⁸ + i)', reads: ['sk_in', 'index i'], fixes: ['TreeNumber', 'Nullifier'] },
+    { id: 'commitmentsOut', label: 'C_j = H(pk_j, salt_j, v_j, token)', reads: ['pk_0', 'pk_1', 'v_0', 'v_1', 'salt_0', 'salt_1', 'token'], fixes: ['CommitmentOut[0]', 'CommitmentOut[1]'] },
+    { id: 'changeOwner', label: 'pk_1 = pk_in', reads: ['pk_1', 'sk_in'], fixes: [] },
+    { id: 'conservation', label: 'v_in = v_0 + v_1', reads: ['v_in', 'v_0', 'v_1'], fixes: [] },
+    { id: 'withdrawSalt', label: 'M·(salt_1 − H(sk_in, N)) = 0', reads: ['sk_in', 'salt_1'], fixes: ['Message', 'Nullifier'] },
+    { id: 'contractAddress', label: 'ContractAddress ≠ 0', reads: [], fixes: ['ContractAddress'] },
+  ],
+};
+
+// drawCircuit draws CIRCUIT into the payment step's #circuit: the witness
+// column, the gates inside the circuit's boundary, the public inputs, and
+// the Verifier; wires run witness → gate → public input → Verifier.
+function drawCircuit() {
+  const svg = $('circuit');
+  if (!svg) return;
+  const TOP = 40, ROW = 30, H = 22;
+  const WX = 8, WW = 78, GX = 150, GW = 268, PX = 476, PW = 128, VX = 640, VW = 72;
+  // gy is gate i's top; spread is the top of box i of n spread over the
+  // gates' height; wy and py are witness i's and public input i's.
+  const gy = i => TOP + i * ROW;
+  const spread = (n, i) => TOP + (i + 0.5) * (CIRCUIT.gates.length * ROW / n) - H / 2;
+  const wy = i => spread(CIRCUIT.witness.length, i);
+  const py = i => spread(CIRCUIT.public.length, i);
+  const wireG = svgEl('g', {}), boxes = svgEl('g', {});
+  // curve is a wire from (x1, y1) to (x2, y2).
+  const curve = (x1, y1, x2, y2, attrs) => {
+    const mx = (x1 + x2) / 2;
+    wireG.append(svgEl('path', { class: 'wire', d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, ...attrs }));
+  };
+  // box draws a labelled box of class cls at (x, y).
+  const box = (cls, x, y, w, label, attrs = {}) => {
+    const g = svgEl('g', { class: cls, ...attrs });
+    g.append(svgEl('rect', { x, y, width: w, height: H, rx: 6 }));
+    const t = svgEl('text', { x: x + 8, y: y + 15 });
+    t.textContent = label;
+    g.append(t);
+    boxes.append(g);
+    return g;
+  };
+  // col heads a column at x.
+  const col = (x, label) => { const t = svgEl('text', { class: 'col', x, y: 22 }); t.textContent = label; boxes.append(t); };
+  col(WX, 'WITNESS · PRIVATE'); col(GX + 8, 'PAYMENT CIRCUIT · ONE GATE PER CONSTRAINT'); col(PX, 'PUBLIC INPUTS');
+  boxes.append(svgEl('rect', { class: 'boundary', x: GX - 14, y: TOP - 10, width: GW + 28, height: CIRCUIT.gates.length * ROW + 12, rx: 12 }));
+  CIRCUIT.witness.forEach((w, i) => box('witness', WX, wy(i), WW, w, { 'data-name': w }));
+  CIRCUIT.gates.forEach((g, i) => {
+    const el = box('gate', GX, gy(i), GW, '', { 'data-gate': g.id });
+    const t = el.querySelector('text');
+    const n = svgEl('tspan', { class: 'gn' }); n.textContent = `G${i + 1}  `;
+    t.append(n, document.createTextNode(g.label));
+    for (const w of g.reads) curve(WX + WW, wy(CIRCUIT.witness.indexOf(w)) + H / 2, GX, gy(i) + H / 2, { 'data-kind': 'wg', 'data-gate': g.id });
+    for (const p of g.fixes) curve(GX + GW, gy(i) + H / 2, PX, py(CIRCUIT.public.indexOf(p)) + H / 2, { 'data-kind': 'gp', 'data-gate': g.id, 'data-to': p });
+  });
+  const vy = TOP + CIRCUIT.gates.length * ROW / 2 - 30;
+  CIRCUIT.public.forEach((p, i) => {
+    box('pubin', PX, py(i), PW, p, { 'data-name': p });
+    curve(PX + PW, py(i) + H / 2, VX, vy + 30, { 'data-kind': 'pv' });
+  });
+  const v = svgEl('g', { class: 'verifier' });
+  v.append(svgEl('rect', { x: VX, y: vy, width: VW, height: 60, rx: 10 }));
+  for (const [dy, s] of [[26, 'Verifier'], [44, 'with π']]) { const t = svgEl('text', { x: VX + VW / 2, y: vy + dy, 'text-anchor': 'middle' }); t.textContent = s; v.append(t); }
+  boxes.append(v);
+  svg.append(wireG, boxes);
+
+  // Pointing at a gate, or at its card, lights it, its wires and its card.
+  const light = id => {
+    svg.classList.toggle('hot', !!id);
+    for (const el of svg.querySelectorAll('.gate, .wire')) el.classList.toggle('hot', !!id && el.dataset.gate === id);
+    for (const c of document.querySelectorAll('.gate-card')) c.classList.toggle('hot', c.dataset.gate === id);
+  };
+  for (const el of [...svg.querySelectorAll('.gate'), ...document.querySelectorAll('.gate-card')]) {
+    // Entering a gate or a card lights that gate.
+    el.addEventListener('mouseenter', () => light(el.dataset.gate));
+    // Leaving it puts the diagram back.
+    el.addEventListener('mouseleave', () => light(null));
+  }
+}
+
 fillValues();
 drawChips();
+drawCircuit();
 showStep(Math.max(0, STEPS.indexOf(location.hash.slice(1))), false);
 </script>
 </body>

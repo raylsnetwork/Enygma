@@ -9,11 +9,13 @@ package tests
 // or failed run writes nothing.
 //
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
-// auditor's keys, the registration of both users, and the Sender's shield.
+// auditor's keys, the registration of both users, the Sender's shield, and
+// the Sender's payment to Ana (one Payment proof, sent from the Sender's own
+// account).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
-// chain and a deployment, with room in the vault's current tree; this test
-// calls neither the gnark server nor the relayer yet).
+// chain and a deployment, and the gnark server on :8082 for the payment's
+// proof; this test does not call the relayer).
 //
 // Run:
 //
@@ -30,11 +32,15 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/big"
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
+
+	"enygma_retail_payments/layout"
 
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -98,7 +104,7 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration", "shield"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment"}
 
 // shieldAmount is what the Sender shields: public RaylsERC20 the issuer
 // mints to them, deposited whole into one note.
@@ -106,6 +112,32 @@ const shieldAmount = 100
 
 // primerDepth is the vault's Merkle tree depth (scripts/cmd/init).
 const primerDepth = 8
+
+// payAmount is what the Sender pays Ana out of the shielded note; the rest
+// is the Sender's change.
+const payAmount = 60
+
+// paymentRange is the Payment circuit's exclusive bound on every value,
+// 10^36 (gnark_circuits/templates/deployed.go).
+var paymentRange = new(big.Int).Exp(big.NewInt(10), big.NewInt(36), nil)
+
+// paymentPublic names the Payment statement's public inputs, each at its
+// layout offset, in order; the primer's ledger lists them under these names.
+var paymentPublic = []struct {
+	name   string
+	offset int
+}{
+	{"Message", layout.PaymentMessageOffset},
+	{"TreeNumber", layout.PaymentTreeNumbersOffset},
+	{"MerkleRoot", layout.PaymentMerkleRootsOffset},
+	{"Nullifier", layout.PaymentNullifiersOffset},
+	{"CommitmentOut[0]", layout.PaymentCommitmentsOutOffset},
+	{"CommitmentOut[1]", layout.PaymentCommitmentsOutOffset + 1},
+	{"ContractAddress", layout.PaymentContractAddressOffset},
+}
+
+// shieldedNote is the opening of the Sender's shielded note.
+type shieldedNote struct{ commitment, salt, amount *big.Int }
 
 func TestProtocolPrimer(t *testing.T) {
 	if !chainAvailable() {
@@ -276,6 +308,9 @@ func TestProtocolPrimer(t *testing.T) {
 		data.Steps["registration"] = primerEntry{Values: v, Ledger: ledger}
 	})
 
+	// shielded is the note the shield made, which the payment spends.
+	var shielded *shieldedNote
+
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
 		vaultABI := loadOnchainABI(t, "Erc20CoinVault")
@@ -388,32 +423,10 @@ func TestProtocolPrimer(t *testing.T) {
 			t.Errorf("the vault gained %s and the Sender holds %s, want %s and 0", got, bal(sender.addr, at), amount)
 		}
 
-		// The tree: rebuilt with the client library from the vault's
-		// Commitment events up to the deposit, a transaction's commitments
-		// inserted as one batch, as Merkle.sol does.
 		// vcall calls a one-value vault view at the deposit's block.
-		vcall := func(method string, args ...any) any {
-			t.Helper()
-			var out []any
-			if err := vault.Call(&bind.CallOpts{BlockNumber: at}, &out, method, args...); err != nil || len(out) != 1 {
-				t.Fatalf("%s: %v (%d values)", method, err, len(out))
-			}
-			return out[0]
-		}
-		logs, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{vaultAddr},
-			Topics: [][]common.Hash{{commitmentEventSig}}, ToBlock: at})
-		if err != nil {
-			t.Fatal(err)
-		}
-		mt := rpcore.NewMerkleTree(primerDepth)
-		for i := 0; i < len(logs); {
-			var batch []*big.Int
-			for j := i; j < len(logs) && logs[j].TxHash == logs[i].TxHash; j++ {
-				batch = append(batch, logs[j].Topics[2].Big())
-			}
-			mt.InsertLeaves(batch)
-			i += len(batch)
-		}
+		vcall := func(method string, args ...any) any { t.Helper(); return vaultView(t, vault, at, method, args...) }
+		// The tree, rebuilt from the vault's Commitment events up to the deposit.
+		mt := rebuildVaultTree(t, client, vaultAddr, at)
 		proof, err := mt.GenerateProof(commitment)
 		if err != nil {
 			t.Fatalf("the commitment is not in the rebuilt tree: %v", err)
@@ -480,6 +493,7 @@ func TestProtocolPrimer(t *testing.T) {
 			"rp3": fmt.Sprint(poseidon.NROUNDSP[1]),
 			"rp5": fmt.Sprint(poseidon.NROUNDSP[3]),
 		}
+		shielded = &shieldedNote{commitment: commitment, salt: cdSalt, amount: cdAmount}
 		label := "depositV2 · Sender"
 		data.Steps["shield"] = primerEntry{Values: v, Ledger: []ledgerItem{
 			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
@@ -493,6 +507,322 @@ func TestProtocolPrimer(t *testing.T) {
 			{Tx: "Commitment event", Field: "leaf", Value: fmt.Sprintf("tree %s · leaf #%d", tree, index)},
 		}}
 	})
+
+	check("payment", "one Payment proof spends the Sender's note into Ana's and the change, and every constraint holds on the run's values and the chain", func(t *testing.T) {
+		if shielded == nil {
+			t.Fatal("no shielded note to spend: the shield check did not pass")
+		}
+		if !serverAvailable("localhost:8082") {
+			t.Fatal("the gnark server is not running on :8082 (shield_demo/run.sh --no-demo starts it)")
+		}
+		sender, ana := users[0], users[1]
+		vaultABI := loadOnchainABI(t, "Erc20CoinVault")
+		vault := bindContract(t, client, vaultAddr, vaultABI)
+		dvpABI := loadOnchainABI(t, "EnygmaDvp")
+		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+		token, vaultID := big.NewInt(0), big.NewInt(0)
+		valueIn := shielded.amount
+		valuesOut := []*big.Int{big.NewInt(payAmount), new(big.Int).Sub(valueIn, big.NewInt(payAmount))}
+		sk := sender.spend.PrivateKey
+
+		// The Sender finds Ana's keys in the registry, as any payer would.
+		anaKeys, err := rpcore.LookupKeys(client, registryAddr, ana.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if anaKeys.SpendKey.Cmp(ana.spend.PublicKey) != 0 || !bytes.Equal(anaKeys.ViewKey, ana.view.EncapsKey) {
+			t.Fatal("the registry's keys for Ana are not hers")
+		}
+		senderKeys, err := rpcore.LookupKeys(client, registryAddr, sender.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// The Sender's Merkle path, from the tree rebuilt from the vault's
+		// Commitment events.
+		head, err := client.BlockNumber(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mp, err := rebuildVaultTree(t, client, vaultAddr, new(big.Int).SetUint64(head)).GenerateProof(shielded.commitment)
+		if err != nil {
+			t.Fatalf("the shielded note is not in the vault's tree: %v", err)
+		}
+		tree := big.NewInt(int64(mp.TreeNumber))
+
+		// The proof, from the gnark server, bound to this vault.
+		res, err := rpcore.NewPaymentClient("").BoundPaymentProof(
+			new(big.Int).SetBytes(vaultAddr.Bytes()), big.NewInt(0),
+			[]*big.Int{valueIn}, []rpcore.KeyPair{{PrivateKey: sk, PublicKey: sender.spend.PublicKey}}, []*big.Int{shielded.salt},
+			valuesOut, []*big.Int{anaKeys.SpendKey, senderKeys.SpendKey}, [][]byte{anaKeys.ViewKey, sender.view.EncapsKey},
+			primerDepth, []*rpcore.MerkleProof{mp}, []*big.Int{tree}, token)
+		if err != nil {
+			t.Fatalf("BoundPaymentProof: %v", err)
+		}
+		pr := proofStringsToOnchain(t, res.Proof)
+		receipt := ProofReceipt{
+			Proof:     SnarkProof{A: G1Point{X: pr.A.X, Y: pr.A.Y}, B: G2Point{X: pr.B.X, Y: pr.B.Y}, C: G1Point{X: pr.C.X, Y: pr.C.Y}},
+			Statement: res.ContractStatement(), NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(2),
+		}
+
+		// The Sender sends it from their own account: no relayer.
+		auth, err := bind.NewKeyedTransactorWithChainID(sender.key, big.NewInt(hardhatChainID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mined, err := submitPayment(client, auth, dvpABI, dvpAddr, receipt, vaultID, res.CipherText, res.EncTxData)
+		if err != nil || mined.Status != types.ReceiptStatusSuccessful {
+			t.Fatalf("payment: receipt %v, err %v", mined, err)
+		}
+		block := mined.BlockNumber
+
+		// The payment as the chain holds it: its calldata's statement is the
+		// proof's public inputs, and nothing else of the witness.
+		_, from, args := calldataOf(t, client, dvpABI, mined.TxHash, "payment", sender.addr, dvpAddr)
+		cd := *abi.ConvertType(args[0], new(ProofReceipt)).(*ProofReceipt)
+		st := cd.Statement
+		if len(st) != layout.PaymentLen || len(st) != len(paymentPublic) {
+			t.Fatalf("statement has %d public inputs, want %d", len(st), layout.PaymentLen)
+		}
+		if !slices.EqualFunc(st, res.Statement, func(a, b *big.Int) bool { return a.Cmp(b) == 0 }) {
+			t.Error("the calldata's statement is not the proof's")
+		}
+		message, stTree, root, nf := st[layout.PaymentMessageOffset], st[layout.PaymentTreeNumbersOffset], st[layout.PaymentMerkleRootsOffset], st[layout.PaymentNullifiersOffset]
+		c0, c1, contract := st[layout.PaymentCommitmentsOutOffset], st[layout.PaymentCommitmentsOutOffset+1], st[layout.PaymentContractAddressOffset]
+		if !bytes.Equal(args[2].([]byte), res.CipherText) || !bytes.Equal(args[3].([]byte), res.EncTxData) || args[1].(*big.Int).Cmp(vaultID) != 0 {
+			t.Error("the calldata's vault id and Ana's ciphertexts are not the ones sent")
+		}
+
+		// hash is Poseidon, failing the test on an error.
+		hash := func(xs ...*big.Int) *big.Int {
+			t.Helper()
+			h, err := poseidon.Hash(xs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return h
+		}
+		// vcall calls a one-value vault view at block n.
+		vcall := func(n *big.Int, method string, args ...any) any {
+			t.Helper()
+			return vaultView(t, vault, n, method, args...)
+		}
+
+		// Message: a payment, 0 (the circuit allows 0 or 1; payment() only 0).
+		if message.Sign() != 0 {
+			t.Errorf("Message = %s, want 0", message)
+		}
+		// Range: every value 0 ≤ v < 10^36.
+		for _, v := range append([]*big.Int{valueIn}, valuesOut...) {
+			if v.Sign() < 0 || v.Cmp(paymentRange) >= 0 {
+				t.Errorf("value %s is outside [0, 10^36)", v)
+			}
+		}
+		// Ownership: pk derived from sk, the Sender's registered key.
+		pkIn := hash(sk)
+		if pkIn.Cmp(senderKeys.SpendKey) != 0 {
+			t.Errorf("Poseidon(sk_in) = %s, the Sender registered %s", pkIn, senderKeys.SpendKey)
+		}
+		// The input commitment is the shielded leaf.
+		cIn := hash(pkIn, shielded.salt, valueIn, token)
+		if cIn.Cmp(shielded.commitment) != 0 || cIn.Cmp(mp.Element) != 0 {
+			t.Errorf("Poseidon(pk, salt, v, token) = %s, the shielded leaf is %s", cIn, shielded.commitment)
+		}
+		// enable = 1 - isZero(v_in): the input is real, so its public root and
+		// nullifier are the computed ones (checked below) and neither is 0,
+		// which would make the vault skip its checks.
+		enable := 1 - boolInt(valueIn.Sign() == 0)
+		if valueIn.Sign() == 0 || root.Sign() == 0 || nf.Sign() == 0 {
+			t.Errorf("v_in %s, root %s, nullifier %s: a real input is non-zero, with both non-zero", valueIn, root, nf)
+		}
+		// Merkle membership: the eight levels of Poseidon(left, right) from
+		// the leaf to the root, the bit of the leaf index choosing the side.
+		if stTree.Cmp(tree) != 0 {
+			t.Errorf("TreeNumber %s, the note is in tree %s", stTree, tree)
+		}
+		v := map[string]string{}
+		node := cIn
+		for k := 0; k < primerDepth; k++ {
+			bit, sib := mp.Indices.Bit(k), mp.Elements[k]
+			left, right := node, sib
+			if bit == 1 {
+				left, right = sib, node
+			}
+			node = hash(left, right)
+			p := fmt.Sprintf("path%d.", k)
+			v[p+"bit"], v[p+"sibling"], v[p+"node"] = fmt.Sprint(bit), sib.String(), node.String()
+		}
+		if node.Cmp(root) != 0 || node.Cmp(mp.Root) != 0 {
+			t.Errorf("the path hashes to %s, the statement's root is %s", node, root)
+		}
+		if !vcall(block, "isValidRoot", stTree, root).(bool) {
+			t.Errorf("isValidRoot(%s, %s) = false", stTree, root)
+		}
+		// The nullifier: Poseidon(sk, tree·2^8 + leaf index), the one the
+		// vault's Nullifier event recorded, spent from this block on.
+		globalIndex := new(big.Int).Add(new(big.Int).Lsh(tree, primerDepth), mp.Indices)
+		if want := hash(sk, globalIndex); want.Cmp(nf) != 0 {
+			t.Errorf("Poseidon(sk, tree·2^8 + i) = %s, the statement's nullifier %s", want, nf)
+		}
+		var nfLogged []*big.Int
+		for _, l := range mined.Logs {
+			if l.Address == vaultAddr && len(l.Topics) == 4 && l.Topics[0] == nullifierEventSig {
+				if l.Topics[1].Big().Cmp(vaultID) != 0 || l.Topics[2].Big().Cmp(tree) != 0 {
+					t.Errorf("Nullifier event for vault %s tree %s, want %s and %s", l.Topics[1].Big(), l.Topics[2].Big(), vaultID, tree)
+				}
+				nfLogged = append(nfLogged, l.Topics[3].Big())
+			}
+		}
+		if len(nfLogged) != 1 || nfLogged[0].Cmp(nf) != 0 {
+			t.Errorf("the settlement's Nullifier events %v, want one, %s", nfLogged, nf)
+		}
+		if vcall(new(big.Int).Sub(block, big.NewInt(1)), "isValidNullifier", tree, nf).(bool) || !vcall(block, "isValidNullifier", tree, nf).(bool) {
+			t.Error("the nullifier is not unspent before the payment and spent after it")
+		}
+		// Spend-once: the same receipt, sent again, reverts.
+		if _, err := bindContract(t, client, dvpAddr, dvpABI).Transact(&bind.TransactOpts{From: auth.From, Signer: auth.Signer, NoSend: true, Context: ctx},
+			"payment", receipt, vaultID, res.CipherText, res.EncTxData); err == nil {
+			t.Error("the spent receipt would settle a second time")
+		}
+		// The output commitments: Ana's (output 0) and the Sender's change
+		// (output 1), both inserted by the settlement.
+		if want := hash(anaKeys.SpendKey, res.SaltB, valuesOut[0], token); want.Cmp(c0) != 0 {
+			t.Errorf("Poseidon(pk_Ana, salt0, v0, token) = %s, CommitmentOut[0] %s", want, c0)
+		}
+		if want := hash(pkIn, res.SaltA, valuesOut[1], token); want.Cmp(c1) != 0 {
+			t.Errorf("Poseidon(pk_in, salt1, v1, token) = %s, CommitmentOut[1] %s (change ownership)", want, c1)
+		}
+		if c0.Cmp(c1) == 0 {
+			t.Error("the two outputs share a commitment")
+		}
+		if logged := commitmentsIn(mined.Logs, vaultAddr); len(logged) != 2 || logged[0].Cmp(c0) != 0 || logged[1].Cmp(c1) != 0 {
+			t.Errorf("the settlement's Commitment events %v, want CommitmentOut[0] and [1]", logged)
+		}
+		var paid []*big.Int
+		for _, l := range mined.Logs {
+			if l.Address == dvpAddr && len(l.Topics) >= 3 && l.Topics[0] == paymentEventSig {
+				paid = append(paid, l.Topics[2].Big())
+			}
+		}
+		if len(paid) != 1 || paid[0].Cmp(c0) != 0 {
+			t.Errorf("Payment events %v, want one, for Ana's commitment", paid)
+		}
+		// Conservation.
+		if sum := new(big.Int).Add(valuesOut[0], valuesOut[1]); sum.Cmp(valueIn) != 0 {
+			t.Errorf("Σout = %s, Σin = %s", sum, valueIn)
+		}
+		// ContractAddress: this vault, and not 0.
+		if contract.Sign() == 0 || contract.Cmp(new(big.Int).SetBytes(vaultAddr.Bytes())) != 0 {
+			t.Errorf("ContractAddress %s, the vault is %s", contract, vaultAddr.Hex())
+		}
+		for _, x := range st {
+			inField(t, "a public input", x)
+		}
+
+		// Where the outputs landed (the tree may have rolled over).
+		mtAfter := rebuildVaultTree(t, client, vaultAddr, block)
+		leafOf := func(c *big.Int) string {
+			t.Helper()
+			p, err := mtAfter.GenerateProof(c)
+			if err != nil {
+				t.Fatalf("output %s is not in the vault's tree: %v", c, err)
+			}
+			return fmt.Sprintf("tree %d · leaf #%s", p.TreeNumber, p.Indices)
+		}
+
+		maps.Copy(v, map[string]string{
+			"msgSender":       from.Hex(),
+			"tx":              mined.TxHash.Hex(),
+			"block":           block.String(),
+			"dvp":             dvpAddr.Hex(),
+			"skSpend":         sk.String(),
+			"pkSpend":         pkIn.String(),
+			"valueIn":         valueIn.String(),
+			"saltIn":          shielded.salt.String(),
+			"token":           token.String(),
+			"commitmentIn":    cIn.String(),
+			"tree":            tree.String(),
+			"leafIndex":       mp.Indices.String(),
+			"globalIndex":     globalIndex.String(),
+			"root":            root.String(),
+			"nullifier":       nf.String(),
+			"anaPk":           anaKeys.SpendKey.String(),
+			"valueOut0":       valuesOut[0].String(),
+			"saltOut0":        res.SaltB.String(),
+			"commitmentOut0":  c0.String(),
+			"leafOut0":        leafOf(c0),
+			"valueOut1":       valuesOut[1].String(),
+			"saltOut1":        res.SaltA.String(),
+			"commitmentOut1":  c1.String(),
+			"leafOut1":        leafOf(c1),
+			"range":           paymentRange.String(),
+			"enable":          fmt.Sprint(enable),
+			"message":         message.String(),
+			"contractAddress": contract.String(),
+			"vault":           vaultAddr.Hex(),
+		})
+		label := "payment · Sender"
+		ledger := []ledgerItem{
+			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
+			{Tx: label, Field: "vaultId", Value: vaultID.String()},
+		}
+		for _, in := range paymentPublic {
+			ledger = append(ledger, ledgerItem{Tx: "payment · public inputs", Field: in.name, Value: st[in.offset].String()})
+		}
+		ledger = append(ledger,
+			ledgerItem{Tx: label, Field: "proof", Value: strings.Join(res.Proof, " ")},
+			ledgerItem{Tx: label, Field: "ctxt", Value: hexutil.Encode(res.CipherText)},
+			ledgerItem{Tx: label, Field: "encTxData", Value: hexutil.Encode(res.EncTxData)},
+			ledgerItem{Tx: "Nullifier event", Field: "nullifier", Value: nf.String()},
+			ledgerItem{Tx: "Commitment event", Field: "commitment", Value: c0.String()},
+			ledgerItem{Tx: "Commitment event", Field: "leaf", Value: leafOf(c0)},
+			ledgerItem{Tx: "Commitment event", Field: "commitment", Value: c1.String()},
+			ledgerItem{Tx: "Commitment event", Field: "leaf", Value: leafOf(c1)},
+			ledgerItem{Tx: "Payment event", Field: "commitmentOut", Value: c0.String()},
+		)
+		data.Steps["payment"] = primerEntry{Values: v, Ledger: ledger}
+	})
+}
+
+// vaultView calls the one-value view method of vault at block n.
+func vaultView(t *testing.T, vault *bind.BoundContract, n *big.Int, method string, args ...any) any {
+	t.Helper()
+	var out []any
+	if err := vault.Call(&bind.CallOpts{BlockNumber: n}, &out, method, args...); err != nil || len(out) != 1 {
+		t.Fatalf("%s: %v (%d values)", method, err, len(out))
+	}
+	return out[0]
+}
+
+// boolInt is 1 for true, 0 for false.
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// rebuildVaultTree rebuilds the vault's Merkle trees with the client library
+// from its Commitment events up to block to, a transaction's commitments
+// inserted as one batch, as Merkle.sol does (a batch that would reach a
+// tree's last slot opens the next tree).
+func rebuildVaultTree(t *testing.T, client *ethclient.Client, vault common.Address, to *big.Int) *rpcore.MerkleTree {
+	t.Helper()
+	logs, err := client.FilterLogs(context.Background(), ethereum.FilterQuery{Addresses: []common.Address{vault},
+		Topics: [][]common.Hash{{commitmentEventSig}}, ToBlock: to})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mt := rpcore.NewMerkleTree(primerDepth)
+	for i := 0; i < len(logs); {
+		var batch []*big.Int
+		for j := i; j < len(logs) && logs[j].TxHash == logs[i].TxHash; j++ {
+			batch = append(batch, logs[j].Topics[2].Big())
+		}
+		mt.InsertLeaves(batch)
+		i += len(batch)
+	}
+	return mt
 }
 
 // newPrimerUser makes a user with a fresh signing account and fresh keys.

@@ -110,8 +110,12 @@ function checkStep(doc, i) {
   }
   const mathValues = [...sec.querySelectorAll('math [data-v]')].length;
   assert.ok(step !== 'keys' || mathValues >= 4, `keys shows its values inside its formula (${mathValues} bound)`);
+  // The values a step shows inside its formulas, not only beside them.
+  const inMath = new Set([...sec.querySelectorAll('math [data-v]')].map(el => el.getAttribute('data-v')));
+  if (step === 'payment') {
+    for (const k of ['commitmentIn', 'nullifier', 'globalIndex', 'commitmentOut0', 'commitmentOut1', 'valueIn', 'valueOut0', 'valueOut1', 'root']) assert.ok(inMath.has(k), `payment shows ${k} inside a formula`);
+  }
   if (step === 'shield') {
-    const inMath = new Set([...sec.querySelectorAll('math [data-v]')].map(el => el.getAttribute('data-v')));
     for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment']) assert.ok(inMath.has(k), `shield shows ${k} inside the commitment's formula`);
   }
 
@@ -156,7 +160,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -178,6 +182,73 @@ test('the shield\'s ledger entries are the deposit\'s public calldata, its commi
   // The step names the bound the tree puts on the crowd: 2^8 leaf slots.
   assert.strictEqual(v.depth, '8');
   assert.ok(text(section(doc, 'shield')).includes('256'), 'the shield names the tree\'s 256 leaf slots');
+});
+
+// GATES are the deployed Payment circuit's constraints (gnark_circuits/
+// templates/Payment.go), each a gate of the payment step's circuit diagram
+// with a card naming what it stops.
+const GATES = ['message', 'range', 'ownership', 'enable', 'commitmentIn', 'merkle', 'nullifier', 'commitmentsOut', 'changeOwner', 'conservation', 'withdrawSalt', 'contractAddress'];
+// PUBLIC are the Payment statement's public inputs, in the layout's order
+// (enygma_retail_payments/layout: PaymentLen = 7).
+const PUBLIC = ['Message', 'TreeNumber', 'MerkleRoot', 'Nullifier', 'CommitmentOut[0]', 'CommitmentOut[1]', 'ContractAddress'];
+
+test('the payment\'s circuit diagram: the witness enters private, every constraint is a gate with a card, only the public inputs leave to the Verifier', () => {
+  const { doc } = open();
+  const sec = section(doc, 'payment');
+  const svg = sec.querySelector('svg#circuit');
+  assert.ok(svg, 'the payment step has a circuit diagram');
+  const drawn = [...svg.querySelectorAll('.gate')].map(g => g.dataset.gate);
+  assert.deepStrictEqual(drawn, GATES, 'each deployed constraint is drawn as a gate, in the circuit\'s order');
+  const cards = [...sec.querySelectorAll('.gate-card')].map(c => c.dataset.gate);
+  assert.deepStrictEqual(cards, GATES, 'each gate has a card');
+  for (const c of sec.querySelectorAll('.gate-card')) {
+    assert.ok(c.querySelector('math'), `${c.dataset.gate}: its constraint as MathML`);
+    assert.ok(text(c.querySelector('.stops')).trim().length > 20, `${c.dataset.gate}: one line on what it stops`);
+  }
+  const out = [...svg.querySelectorAll('.pubin')].map(n => n.dataset.name);
+  assert.deepStrictEqual(out, PUBLIC, 'the public inputs, and only they, leave the circuit');
+  assert.ok(svg.querySelectorAll('.witness').length >= 8, 'the witness enters on the private side');
+  // Wires run witness → gate → public input → Verifier: none from the
+  // witness past the gates.
+  for (const w of svg.querySelectorAll('.wire')) {
+    assert.ok(['wg', 'gp', 'pv'].includes(w.dataset.kind), `a wire is witness→gate, gate→public or public→Verifier (${w.dataset.kind})`);
+  }
+  // Every gate is wired in: it reads the witness, fixes a public input, or
+  // both (G1 and G12 constrain public inputs alone).
+  for (const g of GATES) assert.ok(svg.querySelector(`.wire[data-gate="${g}"]`), `${g} is wired in`);
+  for (const g of ['range', 'ownership', 'commitmentIn', 'merkle', 'nullifier', 'commitmentsOut', 'changeOwner', 'conservation']) assert.ok(svg.querySelector(`.wire[data-kind="wg"][data-gate="${g}"]`), `${g} reads the witness`);
+  for (const p of PUBLIC) assert.ok(svg.querySelector(`.wire[data-kind="gp"][data-to="${p}"]`), `a gate fixes ${p}`);
+  assert.strictEqual(svg.querySelectorAll('.wire[data-kind="pv"]').length, PUBLIC.length, 'each public input goes to the Verifier');
+  const cardText = text(sec);
+  for (const s of ['VULN-3', '10', 'another vault']) assert.ok(cardText.includes(s), `the cards name ${s}`);
+});
+
+test('the payment\'s ledger entries are its public inputs, the nullifier, the two new commitments and the Sender\'s msg.sender', () => {
+  const v = DATA.steps.payment.values, ledger = DATA.steps.payment.ledger;
+  const field = f => ledger.filter(i => i.field === f).map(i => i.value);
+  assert.deepStrictEqual(field('msg.sender'), [v.msgSender], 'the payment names its msg.sender');
+  assert.strictEqual(ledger.filter(i => i.msgSender).length, 1, 'only msg.sender is amber');
+  assert.strictEqual(v.msgSender, DATA.steps.shield.values.msgSender, 'the Sender sent it, from the account that shielded');
+  const pubs = ledger.filter(i => i.tx === 'payment · public inputs');
+  assert.deepStrictEqual(pubs.map(i => i.field), PUBLIC, 'the seven public inputs, in order');
+  assert.deepStrictEqual(pubs.map(i => i.value), [v.message, v.tree, v.root, v.nullifier, v.commitmentOut0, v.commitmentOut1, v.contractAddress]);
+  assert.deepStrictEqual(field('nullifier'), [v.nullifier], 'the Nullifier event');
+  assert.deepStrictEqual(field('commitment'), [v.commitmentOut0, v.commitmentOut1], 'the two Commitment events');
+  // No private value reaches the ledger.
+  const all = ledger.map(i => i.value).join(' ');
+  for (const k of ['skSpend', 'saltIn', 'saltOut0', 'saltOut1', 'anaPk']) assert.ok(!all.includes(v[k]), `${k} is not public`);
+  for (const k of ['valueIn', 'valueOut0', 'valueOut1']) assert.ok(!ledger.some(i => i.value === v[k]), `${k} is not public`);
+  // The values hold: conservation and range, as the run checked.
+  assert.strictEqual(BigInt(v.valueIn), BigInt(v.valueOut0) + BigInt(v.valueOut1), 'Σin = Σout');
+  for (const k of ['valueIn', 'valueOut0', 'valueOut1']) assert.ok(BigInt(v[k]) < 10n ** 36n, `${k} < 10^36`);
+  assert.strictEqual(v.valueIn, DATA.steps.shield.values.amount, 'the spent note is the shielded one');
+  assert.strictEqual(v.commitmentIn, DATA.steps.shield.values.commitment);
+  assert.strictEqual(BigInt(v.globalIndex), BigInt(v.tree) * 256n + BigInt(v.leafIndex), 'tree·2^8 + leaf index');
+  assert.strictEqual(v['path7.node'], v.root, 'the eighth level is the root');
+  const { doc } = open();
+  for (let i = 0; i < 4; i++) doc.getElementById('next').click();
+  const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
+  assert.ok(amber.some(t => t.includes('payment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
 });
 
 test('served by the demo, the primer steps through its run and links back to the demo', () => {
