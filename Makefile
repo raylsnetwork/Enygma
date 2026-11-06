@@ -70,7 +70,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test shield-demo-restart \
+	retail-setup retail-gnark retail-keygen retail-test shield-test shield-demo-restart shield-gnark-restart \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -190,6 +190,20 @@ shield-demo-restart: ## Rebuild the shield demo and restart it on the running ru
 	(cd $$root/shield_demo && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
 	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo restarted on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
 	echo "the demo did not come back on :9092: see $$logs/demo.log"; exit 1
+
+# The gnark server holds no chain state, so a gnark_circuits/server change needs
+# only that server rebuilt: this relaunches it on the running stack, logging to
+# the same gnark.log the demo tails.
+shield-gnark-restart: ## Rebuild the retail gnark server and restart it on the running run.sh stack (after a gnark_circuits change)
+	@pid=$$(lsof -tiTCP:8082 -sTCP:LISTEN) || { echo "no gnark server on :8082: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
+	bin=$$(ps -o args= -p $$pid | awk '{print $$1}'); logs=$$(dirname $$(dirname $$bin)); \
+	[ -f "$$logs/gnark.log" ] || { echo "the gnark server on :8082 (pid $$pid, $$bin) was not started by run.sh: restart the stack with run.sh"; exit 1; }; \
+	root=$(CURDIR)/enygma_retail_payments; \
+	go build -C $$root/gnark_circuits -o $$bin ./cmd/server && kill $$pid && \
+	while lsof -tiTCP:8082 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
+	(cd $$root/gnark_circuits && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$bin >>$$logs/gnark.log 2>&1) & \
+	for _ in $$(seq 1 300); do nc -z localhost 8082 2>/dev/null && { echo "gnark server restarted on :8082 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
+	echo "the gnark server did not come back on :8082: see $$logs/gnark.log"; exit 1
 
 auctions-keygen: ## Generate auction proving/verifying keys
 	cd enygma_dvp_auctions/gnark_circuits && go run ./cmd/keygen

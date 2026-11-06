@@ -21,6 +21,8 @@
 # hold, so the hop queue keeps up with the run and its end (owner tints,
 # replaying a finished step) can be checked as soon as the engine finishes.
 # Hand-checking a page ticket in the browser: see HAND_CHECK.md.
+# An engine (Go) change: make shield-demo-restart. A gnark_circuits/server
+# change: make shield-gnark-restart. Both keep the chain and the other services.
 
 set -euo pipefail
 
