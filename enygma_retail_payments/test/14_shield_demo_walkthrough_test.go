@@ -510,6 +510,10 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		checkDiscoverDetails(t, client, e, sink.hops(), opts.Tags)
 	})
 
+	t.Run("each proof hop carries a prover detail: the gnark server's stats, the witness it received as the request sent it, and the proof and public signals it returned", func(t *testing.T) {
+		checkProverDetails(t, sink.hops(), true)
+	})
+
 	t.Run("payment 1's proof request carries its witness, as sent to the prover, its output openings hashing to the commitments the vault logged", func(t *testing.T) {
 		var prove []engine.Event
 		for _, h := range sink.hops() {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
@@ -39,10 +40,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	// Compile once: the R1CS depends only on the circuit's shape, not on any
 	// request's values, and groth16.Prove only reads it, so every request
 	// (concurrent ones included) proves against this one.
+	compileStart := time.Now()
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
 		panic(fmt.Sprintf("compile payment circuit: %v", err))
 	}
+
+	compileMs := utils.Ms(time.Since(compileStart))
 
 	return func(c *gin.Context) {
 		var request PaymentRequest
@@ -85,7 +89,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
+		proveStart := time.Now()
 		proof, err := groth16.Prove(ccs, pk, witnessFull)
+		proveMs := utils.Ms(time.Since(proveStart))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("prove: %v", err)})
 			return
@@ -96,7 +102,10 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("build public witness: %v", err)})
 			return
 		}
-		if err := groth16.Verify(proof, vk, witnessPublic); err != nil {
+		verifyStart := time.Now()
+		err = groth16.Verify(proof, vk, witnessPublic)
+		verifyMs := utils.Ms(time.Since(verifyStart))
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("verify: %v", err)})
 			return
 		}
@@ -127,6 +136,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		c.JSON(http.StatusOK, PaymentOutput{
 			Proof:        proofRemix,
 			PublicSignal: publicSignal,
+			Stats: utils.ProveStats{Circuit: "Payment", Constraints: ccs.GetNbConstraints(),
+				CompileMs: compileMs, ProveMs: proveMs, VerifyMs: verifyMs},
 		})
 	}
 }

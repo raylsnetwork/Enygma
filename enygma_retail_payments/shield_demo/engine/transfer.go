@@ -266,7 +266,13 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		}
 		proveDetails = append(proveDetails, d)
 	}
-	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs, rec.exchange())...)
+	// What the gnark server did: its stats, and a walkthrough's witness.
+	wire := rec.exchange()
+	proverDetail, err := prover(circuit, NodeVault, proofs[0].TreeNumber, wire, e.opts.Walkthrough)
+	if err != nil {
+		return nil, err
+	}
+	s.hop(fromNode, NodeGnark, "prove "+circuit, fmt.Sprintf("%d ms; spends %s's %s note(s)", proveMs, from.Name, amounts(ins)), append(proveDetails, inputs, proverDetail, wire)...)
 	if s.gated {
 		// One hop per click: the proof coming back is a click of its own.
 		if err := s.await(ctx, "proof", to.Name); err != nil {
@@ -314,7 +320,11 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 			}
 			feeDetails = append(feeDetails, d)
 		}
-		feeDetails = append(feeDetails, fee.inputs, fee.wire)
+		proverDetail, err := prover("UsdrFee", NodeUsdrVault, fee.tree, fee.wire, e.opts.Walkthrough)
+		if err != nil {
+			return nil, err
+		}
+		feeDetails = append(feeDetails, fee.inputs, proverDetail, fee.wire)
 		s.hop(fromNode, NodeGnark, "prove UsdrFee", fmt.Sprintf("%d ms; %s USDr fee note to the relayer", fee.proveTime.Milliseconds(), e.usdrFixedFee), feeDetails...)
 		s.log("zk", "UsdrFee proof in %d ms — %s USDr fee note to the relayer, %s USDr change back to %s",
 			fee.proveTime.Milliseconds(), e.usdrFixedFee, fee.change.amount, from.Name)

@@ -27,6 +27,8 @@ import (
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/go-iden3-crypto/poseidon"
+
+	utils "enygma_retail_payments/gnark_circuits/utils"
 )
 
 // Keys compiles circuit, runs a throwaway setup and saves the keys where a
@@ -103,6 +105,42 @@ func AssertConcurrentProofs(t *testing.T, handler gin.HandlerFunc, vk groth16.Ve
 			t.Fatalf("request %d: %v", i, res.err)
 		}
 		AssertProvedWitness(t, cases[i].Assignment, vk, res.proof, res.signals)
+	}
+}
+
+// AssertStats sends request to handler and checks the stats its response
+// carries: they name the circuit, count as many constraints as circuit
+// compiles to, and time compiling, proving and verifying.
+func AssertStats(t *testing.T, handler gin.HandlerFunc, request any, name string, circuit frontend.Circuit) {
+	t.Helper()
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router(handler).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/proof", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Stats *utils.ProveStats `json:"stats"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Stats == nil {
+		t.Fatalf("response has no stats: %s", rec.Body)
+	}
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, circuit)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	s := out.Stats
+	if s.Circuit != name || s.Constraints != ccs.GetNbConstraints() {
+		t.Errorf("stats name %s with %d constraints, want %s with %d", s.Circuit, s.Constraints, name, ccs.GetNbConstraints())
+	}
+	if s.CompileMs <= 0 || s.ProveMs <= 0 || s.VerifyMs <= 0 {
+		t.Errorf("stats times compile %v ms, prove %v ms, verify %v ms; want each above 0", s.CompileMs, s.ProveMs, s.VerifyMs)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
@@ -38,10 +39,13 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	solver.RegisterHint(primitives.PoseidonNative)
 	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
+	compileStart := time.Now()
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
 		panic(fmt.Sprintf("compile usdrFee circuit: %v", err))
 	}
+
+	compileMs := utils.Ms(time.Since(compileStart))
 
 	return func(c *gin.Context) {
 		var request UsdrFeeRequest
@@ -85,7 +89,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
+		proveStart := time.Now()
 		proof, err := groth16.Prove(ccs, pk, witnessFull)
+		proveMs := utils.Ms(time.Since(proveStart))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("prove: %v", err)})
 			return
@@ -96,7 +102,10 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("build public witness: %v", err)})
 			return
 		}
-		if err := groth16.Verify(proof, vk, witnessPublic); err != nil {
+		verifyStart := time.Now()
+		err = groth16.Verify(proof, vk, witnessPublic)
+		verifyMs := utils.Ms(time.Since(verifyStart))
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("verify: %v", err)})
 			return
 		}
@@ -126,6 +135,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		c.JSON(http.StatusOK, UsdrFeeOutput{
 			Proof:        proofRemix,
 			PublicSignal: publicSignal,
+			Stats: utils.ProveStats{Circuit: "UsdrFee", Constraints: ccs.GetNbConstraints(),
+				CompileMs: compileMs, ProveMs: proveMs, VerifyMs: verifyMs},
 		})
 	}
 }
