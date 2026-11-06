@@ -11,7 +11,7 @@ package tests
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
 // auditor's keys, the registration of both users, the Sender's shield, and
 // the Sender's payment to Ana (one Payment proof, sent from the Sender's own
-// account).
+// account), and Ana's discovery of her note (her scan of the Payment events).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
 // chain and a deployment, and the gnark server on :8082 for the payment's
@@ -54,6 +54,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/iden3/go-iden3-crypto/constants"
 	"github.com/iden3/go-iden3-crypto/poseidon"
+	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 )
 
 // primerPage is the Protocol primer, whose data block this test rewrites.
@@ -104,7 +105,7 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "discovery"}
 
 // shieldAmount is what the Sender shields: public RaylsERC20 the issuer
 // mints to them, deposited whole into one note.
@@ -138,6 +139,13 @@ var paymentPublic = []struct {
 
 // shieldedNote is the opening of the Sender's shielded note.
 type shieldedNote struct{ commitment, salt, amount *big.Int }
+
+// paidNote is Ana's note as the payment made it: its commitment, the
+// Sender's view of its opening, and the block that settled it.
+type paidNote struct {
+	commitment, salt, amount, token *big.Int
+	block                           *big.Int
+}
 
 func TestProtocolPrimer(t *testing.T) {
 	if !chainAvailable() {
@@ -308,8 +316,10 @@ func TestProtocolPrimer(t *testing.T) {
 		data.Steps["registration"] = primerEntry{Values: v, Ledger: ledger}
 	})
 
-	// shielded is the note the shield made, which the payment spends.
+	// shielded is the note the shield made, which the payment spends; paid
+	// is Ana's note, which the payment made and her discovery finds.
 	var shielded *shieldedNote
+	var paid *paidNote
 
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
@@ -698,14 +708,12 @@ func TestProtocolPrimer(t *testing.T) {
 		if logged := commitmentsIn(mined.Logs, vaultAddr); len(logged) != 2 || logged[0].Cmp(c0) != 0 || logged[1].Cmp(c1) != 0 {
 			t.Errorf("the settlement's Commitment events %v, want CommitmentOut[0] and [1]", logged)
 		}
-		var paid []*big.Int
-		for _, l := range mined.Logs {
-			if l.Address == dvpAddr && len(l.Topics) >= 3 && l.Topics[0] == paymentEventSig {
-				paid = append(paid, l.Topics[2].Big())
-			}
-		}
-		if len(paid) != 1 || paid[0].Cmp(c0) != 0 {
-			t.Errorf("Payment events %v, want one, for Ana's commitment", paid)
+		// The Payment event for Ana: her commitment, beside the capsule and
+		// the sealed payload of the calldata.
+		events := paymentEventsIn(t, mined.Logs, dvpAddr)
+		if len(events) != 1 || events[0].Commitment.Cmp(c0) != 0 ||
+			!bytes.Equal(events[0].CipherText, res.CipherText) || !bytes.Equal(events[0].EncTxData, res.EncTxData) {
+			t.Errorf("Payment events %v, want one, for Ana's commitment with the calldata's ctxt and encTxData", events)
 		}
 		// Conservation.
 		if sum := new(big.Int).Add(valuesOut[0], valuesOut[1]); sum.Cmp(valueIn) != 0 {
@@ -779,9 +787,205 @@ func TestProtocolPrimer(t *testing.T) {
 			ledgerItem{Tx: "Commitment event", Field: "commitment", Value: c1.String()},
 			ledgerItem{Tx: "Commitment event", Field: "leaf", Value: leafOf(c1)},
 			ledgerItem{Tx: "Payment event", Field: "commitmentOut", Value: c0.String()},
+			ledgerItem{Tx: "Payment event", Field: "ctxt", Value: hexutil.Encode(res.CipherText)},
+			ledgerItem{Tx: "Payment event", Field: "encTxData", Value: hexutil.Encode(res.EncTxData)},
 		)
 		data.Steps["payment"] = primerEntry{Values: v, Ledger: ledger}
+		paid = &paidNote{commitment: c0, salt: res.SaltB, amount: valuesOut[0], token: token, block: block}
 	})
+
+	check("discovery", "Ana trial-decrypts every Payment event's ciphertext with her view key, opens exactly her note, and its opening hashes to its commitment", func(t *testing.T) {
+		if paid == nil {
+			t.Fatal("no note paid to Ana: the payment check did not pass")
+		}
+		sender, ana := users[0], users[1]
+		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+
+		// Every Payment event EnygmaDvp has emitted, up to the payment's block:
+		// Ana's wallet cannot tell which is hers, so it reads them all.
+		logs, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{dvpAddr},
+			Topics: [][]common.Hash{{paymentEventSig}}, ToBlock: paid.block})
+		if err != nil {
+			t.Fatal(err)
+		}
+		logPtrs := make([]*types.Log, len(logs))
+		for i := range logs {
+			logPtrs[i] = &logs[i]
+		}
+		events := paymentEventsIn(t, logPtrs, dvpAddr)
+		var mine *dvpcore.OnChainErc20Event
+		for i := range events {
+			if events[i].Commitment.Cmp(paid.commitment) == 0 {
+				mine = &events[i]
+			}
+		}
+		if mine == nil {
+			t.Fatalf("no Payment event for Ana's commitment %s among %d", paid.commitment, len(events))
+		}
+		capsule, payload := mine.CipherText, mine.EncTxData
+
+		// open is one trial decryption, as Ana's wallet makes it, with the
+		// standard library: Decaps, HKDF-SHA256 to the key, AES-256-GCM open
+		// with no associated data. ok is false when the tag does not check.
+		type opening struct {
+			ss, saltBytes, key, nonce, sealed, plain []byte
+			ok                                       bool
+		}
+		open := func(dk *mlkem.DecapsulationKey768, capsule, payload []byte) opening {
+			t.Helper()
+			var got opening
+			if len(capsule) != mlkem.CiphertextSize768 || len(payload) < 12 {
+				return got // not an ML-KEM-768 capsule and a sealed payload: not anyone's note (the library's scan stops here instead; checked below)
+			}
+			ss, err := dk.Decapsulate(capsule)
+			if err != nil {
+				t.Fatalf("Decaps: %v", err)
+			}
+			got.ss = ss
+			if got.saltBytes, err = hkdf.Key(sha256.New, ss, nil, "note salt", 32); err != nil {
+				t.Fatal(err)
+			}
+			if got.key, err = hkdf.Key(sha256.New, ss, nil, "encryption key", 32); err != nil {
+				t.Fatal(err)
+			}
+			gcm := newGCM(t, got.key)
+			got.nonce, got.sealed = payload[:gcm.NonceSize()], payload[gcm.NonceSize():]
+			got.plain, err = gcm.Open(nil, got.nonce, got.sealed, nil)
+			got.ok = err == nil
+			return got
+		}
+
+		// The encryption, undone with Ana's view key: the capsule gives back
+		// the Sender's shared secret, whose HKDF outputs are the note's salt
+		// and the payload's key; the payload is token ‖ amount.
+		if len(capsule) != mlkem.CiphertextSize768 {
+			t.Errorf("capsule is %d bytes, want %d", len(capsule), mlkem.CiphertextSize768)
+		}
+		anaOpen := open(ana.view.DecapsKey, capsule, payload)
+		if !anaOpen.ok {
+			t.Fatal("Ana's view key does not open the Payment event addressed to her")
+		}
+		if len(anaOpen.ss) != mlkem.SharedKeySize || len(anaOpen.sealed) != 64+16 || len(anaOpen.plain) != 64 {
+			t.Errorf("ss %d bytes, ct‖tag %d, plaintext %d: want 32, 80 and 64", len(anaOpen.ss), len(anaOpen.sealed), len(anaOpen.plain))
+		}
+		token, amount := new(big.Int).SetBytes(anaOpen.plain[:32]), new(big.Int).SetBytes(anaOpen.plain[32:])
+		if token.Cmp(paid.token) != 0 || amount.Cmp(paid.amount) != 0 {
+			t.Errorf("the payload opens to token %s, amount %s; the Sender paid token %s, amount %s", token, amount, paid.token, paid.amount)
+		}
+		salt := toField(anaOpen.saltBytes)
+		if salt.Cmp(paid.salt) != 0 {
+			t.Errorf("HKDF(ss, \"note salt\") mod p = %s, the Sender's salt_0 %s", salt, paid.salt)
+		}
+		// The client library's decryption agrees.
+		if libToken, libAmount, err := rpcore.DecryptPayload(anaOpen.key, payload); err != nil || libToken.Cmp(token) != 0 || libAmount.Cmp(amount) != 0 {
+			t.Errorf("DecryptPayload = (%v, %v, %v), want (%s, %s)", libToken, libAmount, err, token, amount)
+		}
+
+		// Ana checks the opening: Poseidon(pk_spend, salt, amount, token) is
+		// the commitment the Payment event published.
+		commitment, err := poseidon.Hash([]*big.Int{ana.spend.PublicKey, salt, amount, token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if commitment.Cmp(mine.Commitment) != 0 {
+			t.Errorf("Poseidon(pk_Ana, salt, amount, token) = %s, the event's commitment %s", commitment, mine.Commitment)
+		}
+
+		// The scan: every ciphertext tried with Ana's key, only hers opens.
+		// ML-KEM's Decaps rejects implicitly (a capsule made for another key
+		// gives a pseudorandom secret, not an error), so it is AES-GCM's tag
+		// that fails.
+		opened := 0
+		for _, e := range events {
+			if open(ana.view.DecapsKey, e.CipherText, e.EncTxData).ok {
+				opened++
+				if e.Commitment.Cmp(paid.commitment) != 0 {
+					t.Errorf("Ana's key opened the Payment event for %s, not hers", e.Commitment)
+				}
+			}
+		}
+		if opened != 1 {
+			t.Errorf("Ana's key opened %d of %d Payment events, want exactly hers", opened, len(events))
+		}
+		// Under any other key, her ciphertext fails too: the Sender's view key
+		// decapsulates it to another secret, and the tag does not check.
+		if senderTry := open(sender.view.DecapsKey, capsule, payload); senderTry.ok || bytes.Equal(senderTry.ss, anaOpen.ss) {
+			t.Error("the Sender's view key opens Ana's ciphertext")
+		}
+		// The client library's scan finds the same note, once.
+		owned, err := dvpcore.ScanForErc20Notes(ana.view.DecapsKey, ana.spend.PublicKey, []dvpcore.OnChainErc20Event{*mine})
+		if err != nil || len(owned) != 1 || owned[0].Amount.Cmp(amount) != 0 || owned[0].SaltBField.Cmp(salt) != 0 {
+			t.Errorf("ScanForErc20Notes = %v (err %v), want Ana's note of %s", owned, err, amount)
+		}
+
+		// A mismatched ciphertext can't fool her: a payload sealed under her
+		// key that claims one more than the note holds opens, but its opening
+		// hashes elsewhere, and the library's scan refuses it.
+		forged, err := rpcore.EncryptPayload(anaOpen.key, token, new(big.Int).Add(amount, big.NewInt(1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		forgedOpen := open(ana.view.DecapsKey, capsule, forged)
+		if !forgedOpen.ok {
+			t.Fatal("the forged payload, sealed under Ana's key, does not open")
+		}
+		claimed := new(big.Int).SetBytes(forgedOpen.plain[32:])
+		if h, _ := poseidon.Hash([]*big.Int{ana.spend.PublicKey, salt, claimed, token}); h.Cmp(mine.Commitment) == 0 {
+			t.Error("a payload claiming another amount hashes to the published commitment")
+		}
+		if owned, err := dvpcore.ScanForErc20Notes(ana.view.DecapsKey, ana.spend.PublicKey,
+			[]dvpcore.OnChainErc20Event{{Commitment: mine.Commitment, CipherText: capsule, EncTxData: forged}}); err == nil || len(owned) != 0 {
+			t.Errorf("ScanForErc20Notes accepted the mismatched ciphertext: %v", owned)
+		}
+		// A capsule of the wrong length stops the library's scan too, for any
+		// wallet: Decaps rejects it, and the scan returns the error instead
+		// of skipping the event. The page names this stall.
+		short := dvpcore.OnChainErc20Event{Commitment: big.NewInt(1), CipherText: capsule[:len(capsule)-1], EncTxData: payload}
+		if _, err := dvpcore.ScanForErc20Notes(sender.view.DecapsKey, sender.spend.PublicKey, []dvpcore.OnChainErc20Event{*mine, short}); err == nil {
+			t.Error("ScanForErc20Notes skipped a capsule of the wrong length; the page says it stops the scan")
+		}
+
+		data.Steps["discovery"] = primerEntry{Values: map[string]string{
+			"anaEk":      hexutil.Encode(ana.view.EncapsKey),
+			"capsule":    hexutil.Encode(capsule),
+			"ss":         hexutil.Encode(anaOpen.ss),
+			"saltBytes":  hexutil.Encode(anaOpen.saltBytes),
+			"salt":       salt.String(),
+			"key":        hexutil.Encode(anaOpen.key),
+			"nonce":      hexutil.Encode(anaOpen.nonce),
+			"sealed":     hexutil.Encode(anaOpen.sealed),
+			"encTxData":  hexutil.Encode(payload),
+			"plaintext":  hexutil.Encode(anaOpen.plain),
+			"token":      token.String(),
+			"amount":     amount.String(),
+			"pkSpend":    ana.spend.PublicKey.String(),
+			"commitment": commitment.String(),
+			"scanned":    fmt.Sprint(len(events)),
+			"opened":     fmt.Sprint(opened),
+			"forged":     claimed.String(),
+		}, Ledger: []ledgerItem{}}
+	})
+}
+
+// paymentEventsIn decodes EnygmaDvp's Payment events (vaultId and the
+// commitment indexed; the capsule ctxt and the sealed payload encTxData as
+// data) among logs.
+func paymentEventsIn(t *testing.T, logs []*types.Log, dvp common.Address) []dvpcore.OnChainErc20Event {
+	t.Helper()
+	bytesT, _ := abi.NewType("bytes", "", nil)
+	args := abi.Arguments{{Type: bytesT}, {Type: bytesT}}
+	var events []dvpcore.OnChainErc20Event
+	for _, l := range logs {
+		if l.Address != dvp || len(l.Topics) != 3 || l.Topics[0] != paymentEventSig {
+			continue
+		}
+		vals, err := args.Unpack(l.Data)
+		if err != nil {
+			t.Fatalf("decode Payment event: %v", err)
+		}
+		events = append(events, dvpcore.OnChainErc20Event{Commitment: l.Topics[2].Big(), CipherText: vals[0].([]byte), EncTxData: vals[1].([]byte)})
+	}
+	return events
 }
 
 // vaultView calls the one-value view method of vault at block n.

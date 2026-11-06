@@ -115,6 +115,9 @@ function checkStep(doc, i) {
   if (step === 'payment') {
     for (const k of ['commitmentIn', 'nullifier', 'globalIndex', 'commitmentOut0', 'commitmentOut1', 'valueIn', 'valueOut0', 'valueOut1', 'root']) assert.ok(inMath.has(k), `payment shows ${k} inside a formula`);
   }
+  if (step === 'discovery') {
+    for (const k of ['pkSpend', 'salt', 'saltBytes', 'amount', 'token', 'commitment', 'scanned', 'opened']) assert.ok(inMath.has(k), `discovery shows ${k} inside a formula`);
+  }
   if (step === 'shield') {
     for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment']) assert.ok(inMath.has(k), `shield shows ${k} inside the commitment's formula`);
   }
@@ -160,7 +163,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'discovery']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -249,6 +252,36 @@ test('the payment\'s ledger entries are its public inputs, the nullifier, the tw
   for (let i = 0; i < 4; i++) doc.getElementById('next').click();
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes('payment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
+});
+
+test('Ana\'s discovery opens the Payment event addressed to her, its opening hashes to her commitment, and her scan publishes nothing', () => {
+  const v = DATA.steps.discovery.values, pay = DATA.steps.payment.values;
+  // The scan is local: it reads the chain and adds nothing to the ledger.
+  assert.deepStrictEqual(DATA.steps.discovery.ledger, [], 'the scan publishes nothing');
+  // The ledger has the capsule and the sealed payload beside the commitment,
+  // in the payment's Payment event: the ciphertext Ana's key opens.
+  const event = DATA.steps.payment.ledger.filter(i => i.tx === 'Payment event');
+  assert.deepStrictEqual(event.map(i => [i.field, i.value]), [['commitmentOut', v.commitment], ['ctxt', v.capsule], ['encTxData', v.encTxData]]);
+  // What she opened is what the Sender paid her, to her keys.
+  assert.strictEqual(v.commitment, pay.commitmentOut0, 'her note is output 0');
+  assert.strictEqual(v.amount, pay.valueOut0);
+  assert.strictEqual(v.salt, pay.saltOut0, 'HKDF(ss, "note salt") mod p is the Sender\'s salt_0');
+  assert.strictEqual(v.pkSpend, DATA.steps.keys.values['ana.pkSpend']);
+  assert.strictEqual(v.anaEk, DATA.steps.keys.values['ana.viewEk']);
+  // The sizes the page names: a 1088-byte capsule, a 32-byte secret, salt and
+  // key, and nonce ‖ ct ‖ tag = 12 + 64 + 16 bytes over token ‖ amount.
+  const bytes = h => (h.length - 2) / 2;
+  assert.deepStrictEqual([v.capsule, v.ss, v.saltBytes, v.key, v.nonce, v.sealed, v.plaintext].map(bytes), [1088, 32, 32, 32, 12, 80, 64]);
+  assert.strictEqual(v.encTxData, v.nonce + v.sealed.slice(2), 'encTxData is nonce ‖ ct ‖ tag');
+  assert.strictEqual(BigInt(v.plaintext), (BigInt(v.token) << 256n) + BigInt(v.amount), 'the plaintext is token ‖ amount, 32 bytes each');
+  assert.strictEqual(BigInt(v.salt), BigInt(v.saltBytes) % BigInt(DATA.steps.keys.values.p), 'salt = HKDF output mod p');
+  // Exactly one of the events scanned opened; a forged amount was refused.
+  assert.strictEqual(v.opened, '1');
+  assert.ok(Number(v.scanned) >= 1);
+  assert.notStrictEqual(v.forged, v.amount);
+  const { doc } = open();
+  const body = text(section(doc, 'discovery'));
+  for (const s of ['module-LWE', 'quantum', 'AES-256-GCM', 'HKDF-SHA256']) assert.ok(body.includes(s), `discovery names ${s}`);
 });
 
 test('served by the demo, the primer steps through its run and links back to the demo', () => {
