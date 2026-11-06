@@ -9,11 +9,11 @@ package tests
 // or failed run writes nothing.
 //
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
-// auditor's keys, and the registration of both users.
+// auditor's keys, the registration of both users, and the Sender's shield.
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
-// chain and a deployment; this test calls neither the gnark server nor the
-// relayer yet).
+// chain and a deployment, with room in the vault's current tree; this test
+// calls neither the gnark server nor the relayer yet).
 //
 // Run:
 //
@@ -39,6 +39,7 @@ import (
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -66,6 +67,7 @@ type primerData struct {
 type primerRun struct {
 	ChainID      string `json:"chainId"`
 	UserRegistry string `json:"userRegistry"`
+	Vault        string `json:"vault"`
 }
 
 // primerEntry is one step's values and the public items it adds to the
@@ -96,7 +98,14 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield"}
+
+// shieldAmount is what the Sender shields: public RaylsERC20 the issuer
+// mints to them, deposited whole into one note.
+const shieldAmount = 100
+
+// primerDepth is the vault's Merkle tree depth (scripts/cmd/init).
+const primerDepth = 8
 
 func TestProtocolPrimer(t *testing.T) {
 	if !chainAvailable() {
@@ -107,10 +116,13 @@ func TestProtocolPrimer(t *testing.T) {
 	}
 	ctx := context.Background()
 	client := mustDial(t)
-	registryAddr := common.HexToAddress(loadOnchainReceipts(t)["UserRegistry"].ContractAddress)
+	receipts := loadOnchainReceipts(t)
+	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
+	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
+	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
 
 	data := primerData{
-		Run:   primerRun{ChainID: fmt.Sprint(hardhatChainID), UserRegistry: registryAddr.Hex()},
+		Run:   primerRun{ChainID: fmt.Sprint(hardhatChainID), UserRegistry: registryAddr.Hex(), Vault: vaultAddr.Hex()},
 		Steps: map[string]primerEntry{},
 	}
 	// check runs one of primerChecks as a subtest and records it as passed
@@ -191,25 +203,7 @@ func TestProtocolPrimer(t *testing.T) {
 			if err != nil || len(logs) != 1 {
 				t.Fatalf("%s: UserRegistered logs %d (err %v), want 1", u.name, len(logs), err)
 			}
-			tx, _, err := client.TransactionByHash(ctx, logs[0].TxHash)
-			if err != nil {
-				t.Fatal(err)
-			}
-			from, err := types.Sender(types.LatestSignerForChainID(tx.ChainId()), tx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if from != u.addr || *tx.To() != registryAddr {
-				t.Errorf("%s: registration sent by %s to %s, want %s to the UserRegistry", u.name, from.Hex(), tx.To().Hex(), u.addr.Hex())
-			}
-			method, err := registryABI.MethodById(tx.Data()[:4])
-			if err != nil || method.Name != "register" {
-				t.Fatalf("%s: registration calls %v (err %v), want register", u.name, method, err)
-			}
-			args, err := method.Inputs.Unpack(tx.Data()[4:])
-			if err != nil {
-				t.Fatal(err)
-			}
+			tx, from, args := calldataOf(t, client, registryABI, logs[0].TxHash, "register", u.addr, registryAddr)
 			pkSpend, pkView, calldataCapsule, calldataAesCt := args[0].(*big.Int), args[1].([]byte), args[2].([]byte), args[3].([]byte)
 			if pkSpend.Cmp(u.spend.PublicKey) != 0 || !bytes.Equal(pkView, u.view.EncapsKey) {
 				t.Errorf("%s: the calldata's keys are not the user's", u.name)
@@ -281,6 +275,224 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 		data.Steps["registration"] = primerEntry{Values: v, Ledger: ledger}
 	})
+
+	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
+		sender := users[0]
+		vaultABI := loadOnchainABI(t, "Erc20CoinVault")
+		vault := bindContract(t, client, vaultAddr, vaultABI)
+		erc20 := bindContract(t, client, erc20Addr, loadOnchainABI(t, "RaylsERC20"))
+		amount, token := big.NewInt(shieldAmount), big.NewInt(0)
+
+		// The issuer mints the Sender public RaylsERC20, which the Sender
+		// approves to the vault and deposits whole.
+		auth, err := bind.NewKeyedTransactorWithChainID(sender.key, big.NewInt(hardhatChainID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// mine(what)(tx, err) waits for a sent transaction to succeed.
+		mine := func(what string) func(*types.Transaction, error) *types.Receipt {
+			return func(tx *types.Transaction, err error) *types.Receipt {
+				t.Helper()
+				if err != nil {
+					t.Fatalf("%s: %v", what, err)
+				}
+				r, err := bind.WaitMined(ctx, client, tx)
+				if err != nil || r.Status != types.ReceiptStatusSuccessful {
+					t.Fatalf("%s: receipt %v, err %v", what, r, err)
+				}
+				return r
+			}
+		}
+		mine("mint")(erc20.Transact(hardhatAuth(t, client), "mint", sender.addr, amount))
+		mine("approve")(erc20.Transact(auth, "approve", vaultAddr, amount))
+
+		// The note's salt comes from an ML-KEM secret shared with its owner
+		// (here the Sender's own view key), so its owner can derive it again.
+		ss, capsule, err := rpcore.Encapsulate(sender.view.EncapsKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saltB, err := rpcore.DerivePaymentSalt(ss)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encKey, err := rpcore.DerivePaymentKey(ss)
+		if err != nil {
+			t.Fatal(err)
+		}
+		salt := rpcore.SaltBToField(saltB)
+		sealed, err := rpcore.EncryptPayload(encKey, token, amount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deposit := mine("depositV2")(vault.Transact(auth, "depositV2", []*big.Int{amount, sender.spend.PublicKey, salt, token}, capsule, sealed))
+		block := deposit.BlockNumber
+
+		// The deposit as the chain holds it: its calldata is the opening.
+		_, from, args := calldataOf(t, client, vaultABI, deposit.TxHash, "depositV2", sender.addr, vaultAddr)
+		params, ctI, ctII := args[0].([]*big.Int), args[1].([]byte), args[2].([]byte)
+		if len(params) != 4 {
+			t.Fatalf("depositV2 params %v, want amount, pkSpend, salt, tokenId", params)
+		}
+		cdAmount, cdPk, cdSalt, cdToken := params[0], params[1], params[2], params[3]
+		if cdAmount.Cmp(amount) != 0 || cdPk.Cmp(sender.spend.PublicKey) != 0 || cdSalt.Cmp(salt) != 0 || cdToken.Cmp(token) != 0 {
+			t.Errorf("calldata opening (%s, %s, %s, %s), want the Sender's", cdAmount, cdPk, cdSalt, cdToken)
+		}
+		if !bytes.Equal(ctI, capsule) || !bytes.Equal(ctII, sealed) {
+			t.Error("the calldata's ciphertexts are not the ones built")
+		}
+		for _, x := range params {
+			inField(t, "a calldata value", x)
+		}
+		// The salt is HKDF-SHA256(ss, "note salt") reduced into the field,
+		// recomputed here with the standard library.
+		hk, err := hkdf.Key(sha256.New, ss, nil, "note salt", 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if toField(hk).Cmp(cdSalt) != 0 {
+			t.Error("salt is not HKDF-SHA256(ss, \"note salt\") mod p")
+		}
+
+		// The commitment, recomputed with the client library's Poseidon from
+		// the public calldata, is the leaf the vault's Commitment event
+		// logged: the vault computed it from the same four values.
+		commitment, err := poseidon.Hash([]*big.Int{cdPk, cdSalt, cdAmount, cdToken})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lib, err := rpcore.Erc20CommitmentV2(cdPk, cdSalt, cdAmount, cdToken); err != nil || lib.Cmp(commitment) != 0 {
+			t.Errorf("Erc20CommitmentV2 = %v (err %v), want Poseidon(pk_spend, salt, amount, token) %s", lib, err, commitment)
+		}
+		logged := commitmentsIn(deposit.Logs, vaultAddr)
+		if len(logged) != 1 || logged[0].Cmp(commitment) != 0 {
+			t.Fatalf("the deposit's Commitment events logged %v, want one, %s", logged, commitment)
+		}
+		// A guessed amount, checked against the commitment, needs the salt:
+		// with any other salt the same amount hashes elsewhere.
+		if other, _ := poseidon.Hash([]*big.Int{cdPk, new(big.Int).Add(cdSalt, big.NewInt(1)), cdAmount, cdToken}); other.Cmp(commitment) == 0 {
+			t.Error("another salt hashes the same opening to the same commitment")
+		}
+
+		// The public RaylsERC20 moved into the vault.
+		before, at := new(big.Int).Sub(block, big.NewInt(1)), block
+		// bal is of's RaylsERC20 balance at block n.
+		bal := func(of common.Address, n *big.Int) *big.Int {
+			var out []any
+			if err := erc20.Call(&bind.CallOpts{BlockNumber: n}, &out, "balanceOf", of); err != nil {
+				t.Fatal(err)
+			}
+			return out[0].(*big.Int)
+		}
+		if got := new(big.Int).Sub(bal(vaultAddr, at), bal(vaultAddr, before)); got.Cmp(amount) != 0 || bal(sender.addr, at).Sign() != 0 {
+			t.Errorf("the vault gained %s and the Sender holds %s, want %s and 0", got, bal(sender.addr, at), amount)
+		}
+
+		// The tree: rebuilt with the client library from the vault's
+		// Commitment events up to the deposit, a transaction's commitments
+		// inserted as one batch, as Merkle.sol does.
+		// vcall calls a one-value vault view at the deposit's block.
+		vcall := func(method string, args ...any) any {
+			t.Helper()
+			var out []any
+			if err := vault.Call(&bind.CallOpts{BlockNumber: at}, &out, method, args...); err != nil || len(out) != 1 {
+				t.Fatalf("%s: %v (%d values)", method, err, len(out))
+			}
+			return out[0]
+		}
+		logs, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{vaultAddr},
+			Topics: [][]common.Hash{{commitmentEventSig}}, ToBlock: at})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mt := rpcore.NewMerkleTree(primerDepth)
+		for i := 0; i < len(logs); {
+			var batch []*big.Int
+			for j := i; j < len(logs) && logs[j].TxHash == logs[i].TxHash; j++ {
+				batch = append(batch, logs[j].Topics[2].Big())
+			}
+			mt.InsertLeaves(batch)
+			i += len(batch)
+		}
+		proof, err := mt.GenerateProof(commitment)
+		if err != nil {
+			t.Fatalf("the commitment is not in the rebuilt tree: %v", err)
+		}
+		tree := vcall("treeNumber").(*big.Int)
+		if proof.TreeNumber != mt.TreeNumber() || int64(proof.TreeNumber) != tree.Int64() {
+			t.Fatalf("leaf in rebuilt tree %d (current %d), the vault's tree is %s", proof.TreeNumber, mt.TreeNumber(), tree)
+		}
+		leaves := len(mt.GetLeaves())
+		index := proof.Indices.Int64()
+		if index != int64(leaves-1) || leaves >= 1<<primerDepth {
+			t.Errorf("leaf #%d of %d, want the last of fewer than 2^%d", index, leaves, primerDepth)
+		}
+		if root := vcall("merkleRoot").(*big.Int); root.Cmp(proof.Root) != 0 {
+			t.Errorf("the vault's merkleRoot %s, the rebuilt tree's %s", root, proof.Root)
+		}
+		if !vcall("isValidRoot", tree, proof.Root).(bool) {
+			t.Errorf("isValidRoot(%s, %s) = false", tree, proof.Root)
+		}
+		zero := toField(crypto.Keccak256([]byte("ZkDvp")))
+		if z := vcall("ZERO_VALUE").(*big.Int); z.Cmp(zero) != 0 {
+			t.Errorf("the vault's ZERO_VALUE %s, keccak256(\"ZkDvp\") mod p is %s", z, zero)
+		}
+
+		// Poseidon's deployed parameters, as the client library holds them:
+		// width t = inputs + 1, 8 full rounds, the partial rounds for t, and
+		// the S-box x^5, a permutation of the field since gcd(5, p-1) = 1.
+		pm1 := new(big.Int).Sub(constants.Q, big.NewInt(1))
+		if new(big.Int).GCD(nil, nil, big.NewInt(5), pm1).Cmp(big.NewInt(1)) != 0 {
+			t.Error("gcd(5, p-1) != 1: x^5 does not permute the field")
+		}
+		if poseidon.NROUNDSF != 8 {
+			t.Errorf("Poseidon full rounds %d, want 8", poseidon.NROUNDSF)
+		}
+		// The partial rounds for widths 2, 3 and 5, as the circuit's Poseidon
+		// (enygma_gnark_shared) and circomlib's on-chain contract use them.
+		for t2, want := range map[int]int{2: 56, 3: 57, 5: 60} {
+			if got := poseidon.NROUNDSP[t2-2]; got != want {
+				t.Errorf("Poseidon partial rounds for t = %d: %d, want %d", t2, got, want)
+			}
+		}
+
+		v := map[string]string{
+			"p":          constants.Q.String(),
+			"pBits":      fmt.Sprint(constants.Q.BitLen()),
+			"msgSender":  from.Hex(),
+			"tx":         deposit.TxHash.Hex(),
+			"block":      block.String(),
+			"vault":      vaultAddr.Hex(),
+			"amount":     cdAmount.String(),
+			"pkSpend":    cdPk.String(),
+			"salt":       cdSalt.String(),
+			"token":      cdToken.String(),
+			"commitment": commitment.String(),
+			"depth":      fmt.Sprint(primerDepth),
+			"tree":       tree.String(),
+			"leafIndex":  fmt.Sprint(index),
+			"leaves":     fmt.Sprint(leaves),
+			"root":       proof.Root.String(),
+			"zero":       zero.String(),
+			"rf":         fmt.Sprint(poseidon.NROUNDSF),
+			// rpT: the partial rounds of width t, NROUNDSP[t-2].
+			"rp2": fmt.Sprint(poseidon.NROUNDSP[0]),
+			"rp3": fmt.Sprint(poseidon.NROUNDSP[1]),
+			"rp5": fmt.Sprint(poseidon.NROUNDSP[3]),
+		}
+		label := "depositV2 · Sender"
+		data.Steps["shield"] = primerEntry{Values: v, Ledger: []ledgerItem{
+			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
+			{Tx: label, Field: "amount", Value: cdAmount.String()},
+			{Tx: label, Field: "pkSpend", Value: cdPk.String()},
+			{Tx: label, Field: "salt", Value: cdSalt.String()},
+			{Tx: label, Field: "tokenId", Value: cdToken.String()},
+			{Tx: label, Field: "ciphertextI", Value: hexutil.Encode(ctI)},
+			{Tx: label, Field: "ciphertextII", Value: hexutil.Encode(ctII)},
+			{Tx: "Commitment event", Field: "commitment", Value: commitment.String()},
+			{Tx: "Commitment event", Field: "leaf", Value: fmt.Sprintf("tree %s · leaf #%d", tree, index)},
+		}}
+	})
 }
 
 // newPrimerUser makes a user with a fresh signing account and fresh keys.
@@ -328,6 +540,38 @@ func fundAccount(t *testing.T, ctx context.Context, client *ethclient.Client, ad
 	if r, err := bind.WaitMined(ctx, client, tx); err != nil || r.Status != types.ReceiptStatusSuccessful {
 		t.Fatalf("fund %s: receipt %v, err %v", addr.Hex(), r, err)
 	}
+}
+
+// calldataOf reads the transaction txHash back from the chain and returns it,
+// its signer and its calldata's arguments, failing unless wantFrom sent it
+// to wantTo calling method of a.
+func calldataOf(t *testing.T, client *ethclient.Client, a abi.ABI, txHash common.Hash, method string, wantFrom, wantTo common.Address) (*types.Transaction, common.Address, []any) {
+	t.Helper()
+	tx, _, err := client.TransactionByHash(context.Background(), txHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := types.Sender(types.LatestSignerForChainID(tx.ChainId()), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from != wantFrom || *tx.To() != wantTo {
+		t.Errorf("%s sent by %s to %s, want %s to %s", method, from.Hex(), tx.To().Hex(), wantFrom.Hex(), wantTo.Hex())
+	}
+	m, err := a.MethodById(tx.Data()[:4])
+	if err != nil || m.Name != method {
+		t.Fatalf("tx %s calls %v (err %v), want %s", txHash.Hex(), m, err, method)
+	}
+	args, err := m.Inputs.Unpack(tx.Data()[4:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tx, from, args
+}
+
+// toField reduces big-endian bytes b into BN254's scalar field.
+func toField(b []byte) *big.Int {
+	return new(big.Int).Mod(new(big.Int).SetBytes(b), constants.Q)
 }
 
 // inField fails unless 0 ≤ x < p, BN254's scalar field modulus.

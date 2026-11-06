@@ -110,6 +110,10 @@ function checkStep(doc, i) {
   }
   const mathValues = [...sec.querySelectorAll('math [data-v]')].length;
   assert.ok(step !== 'keys' || mathValues >= 4, `keys shows its values inside its formula (${mathValues} bound)`);
+  if (step === 'shield') {
+    const inMath = new Set([...sec.querySelectorAll('math [data-v]')].map(el => el.getAttribute('data-v')));
+    for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment']) assert.ok(inMath.has(k), `shield shows ${k} inside the commitment's formula`);
+  }
 
   // The ledger: every public item so far, in order.
   const want = names.slice(0, i + 1).flatMap(n => DATA.steps[n].ledger);
@@ -152,9 +156,28 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
+});
+
+test('the shield\'s ledger entries are the deposit\'s public calldata, its commitment and its msg.sender', () => {
+  const v = DATA.steps.shield.values, ledger = DATA.steps.shield.ledger;
+  const field = f => ledger.filter(i => i.field === f).map(i => i.value);
+  assert.deepStrictEqual(field('msg.sender'), [v.msgSender], 'the deposit names its msg.sender');
+  assert.ok(ledger.find(i => i.field === 'msg.sender').msgSender, 'marked amber');
+  assert.deepStrictEqual(field('amount'), [v.amount], 'the entry amount is public');
+  for (const f of ['pkSpend', 'salt', 'tokenId']) assert.strictEqual(field(f).length, 1, `the calldata's ${f}`);
+  assert.deepStrictEqual(field('commitment'), [v.commitment], 'the Commitment event\'s leaf');
+  assert.strictEqual(ledger.filter(i => i.msgSender).length, 1, 'only msg.sender is amber');
+  const { doc } = open();
+  const ul = doc.getElementById('ledger');
+  for (let i = 0; i < 3; i++) doc.getElementById('next').click();
+  const amber = [...ul.querySelectorAll('li.msg-sender')].map(li => text(li));
+  assert.ok(amber.some(t => t.includes('depositV2') && t.includes(v.msgSender)), 'the deposit\'s msg.sender shows amber in the ledger');
+  // The step names the bound the tree puts on the crowd: 2^8 leaf slots.
+  assert.strictEqual(v.depth, '8');
+  assert.ok(text(section(doc, 'shield')).includes('256'), 'the shield names the tree\'s 256 leaf slots');
 });
 
 test('served by the demo, the primer steps through its run and links back to the demo', () => {
