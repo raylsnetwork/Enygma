@@ -145,6 +145,14 @@ const (
 	// first participant's scan (the ciphertext the scan's decryption detail
 	// shows, and its opening).
 	DetailFormula HopDetailKind = "formula"
+	// DetailProver is what the gnark server did for one proof request, on
+	// every proof hop: the circuit it ran and the stats it measured itself
+	// (constraint count, compile, prove and verify times). A walkthrough's
+	// adds the private witness it received, the proof and the public signals
+	// it returned: whoever proves sees the whole witness, and in this demo
+	// the gnark server stands in for proving inside the wallet. A full run's
+	// carries no witness values.
+	DetailProver HopDetailKind = "prover"
 )
 
 // FormulaName names the equation a formula hop detail shows.
@@ -313,9 +321,45 @@ type HopDetail struct {
 	// chain holds the value it is checked against.
 	Formula *Formula `json:"formula,omitempty"`
 
+	// prover: the gnark server's work for the proof (Circuit names it).
+	// Vault is the vault the proof spends from and Tree its first spent
+	// note's tree.
+	Prover *Prover `json:"prover,omitempty"`
+
 	// decryption: the notes opened. Vault is the RaylsERC20 vault, even for
 	// an audit's, which opens USDr notes too: each note names its asset.
 	Notes []DecryptedNote `json:"notes,omitempty"`
+}
+
+// Prover is what the gnark server did for one proof request: the stats it
+// reported in its response (nil if it sent none) and, in a walkthrough
+// only, the private witness it received, in the circuit's witness order,
+// and the proof and public signals it returned, all 0x-hex.
+type Prover struct {
+	Stats   *ProverStats   `json:"stats,omitempty"`
+	Witness []WitnessInput `json:"witness,omitempty"`
+	Proof   []string       `json:"proof,omitempty"`
+	Signals []string       `json:"signals,omitempty"`
+}
+
+// ProverStats is what the gnark server measured of one proof, as its
+// response's stats object has it: the circuit, its constraint count, how
+// long compiling it took (once, when the server built its handler) and how
+// long proving and verifying this proof took, in milliseconds.
+type ProverStats struct {
+	Circuit     string  `json:"circuit"`
+	Constraints int     `json:"constraints"`
+	CompileMs   float64 `json:"compileMs"`
+	ProveMs     float64 `json:"proveMs"`
+	VerifyMs    float64 `json:"verifyMs"`
+}
+
+// WitnessInput is one private witness of a proof request, named as in the
+// circuit's witness (its request field without the wt prefix), with its
+// values flattened in request order.
+type WitnessInput struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
 }
 
 // KeyPair is one key pair as a key hop shows it: whose it is, what it is

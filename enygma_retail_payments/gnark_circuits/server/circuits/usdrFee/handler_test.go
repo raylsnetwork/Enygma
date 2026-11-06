@@ -33,6 +33,14 @@ func TestHandler_ProvesConcurrentRequests(t *testing.T) {
 	ht.AssertConcurrentProofs(t, NewHandler(pkPath, vkPath), vk, cases)
 }
 
+// TestHandler_ReportsItsStats checks the response's stats: the UsdrFee
+// circuit, its constraint count, and its compile, prove and verify times.
+func TestHandler_ReportsItsStats(t *testing.T) {
+	pkPath, vkPath, _ := keys(t)
+	empty := templates.NewUsdrFeeCircuit(templates.UsdrFeeConfig)
+	ht.AssertStats(t, NewHandler(pkPath, vkPath), usdrFeeCase(t, 555).Request, "UsdrFee", &empty)
+}
+
 func keys(t *testing.T) (pkPath, vkPath string, vk groth16.VerifyingKey) {
 	t.Helper()
 	empty := templates.NewUsdrFeeCircuit(templates.UsdrFeeConfig)

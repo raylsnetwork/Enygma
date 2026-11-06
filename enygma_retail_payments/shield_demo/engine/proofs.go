@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"enygma_retail_payments/layout"
 	"github.com/ethereum/go-ethereum/common"
@@ -128,4 +130,90 @@ func settleChecks(circuit, vault string, stmt []*big.Int, tx common.Hash) HopDet
 			Root: fieldHex(stmt[roots.offset+i]), Nullifier: fieldHex(stmt[nullifiers.offset+i])})
 	}
 	return d
+}
+
+// prover is the prover hop detail of a circuit proof spending from the
+// vault with node ID vault, its first spent note in tree tree, read off
+// wire, the proof request's http detail: the stats the gnark server's
+// response carries and, in a walkthrough (withWitness), the private witness
+// the request sent, in the circuit's witness order, and the proof and
+// public signals the response returned.
+func prover(circuit, vault string, tree int, wire HopDetail, withWitness bool) (HopDetail, error) {
+	var resp struct {
+		Stats        *ProverStats  `json:"stats"`
+		Proof        []json.Number `json:"proof"`
+		PublicSignal []json.Number `json:"publicSignal"`
+	}
+	if err := decodeNumbers(wire.Response, &resp); err != nil {
+		return HopDetail{}, fmt.Errorf("%s proof response: %w", circuit, err)
+	}
+	p := &Prover{Stats: resp.Stats}
+	d := HopDetail{Kind: DetailProver, Vault: vault, Tree: tree, Circuit: circuit, Prover: p}
+	if !withWitness {
+		return d, nil
+	}
+	var req map[string]any
+	if err := decodeNumbers(wire.Request, &req); err != nil {
+		return HopDetail{}, fmt.Errorf("%s proof request: %w", circuit, err)
+	}
+	for _, name := range statements[circuit].private {
+		v, ok := req["wt"+name]
+		if !ok {
+			return HopDetail{}, fmt.Errorf("%s proof request has no wt%s", circuit, name)
+		}
+		values, err := flatHex(v)
+		if err != nil {
+			return HopDetail{}, fmt.Errorf("%s proof request's wt%s: %w", circuit, name, err)
+		}
+		p.Witness = append(p.Witness, WitnessInput{Name: name, Values: values})
+	}
+	var err error
+	if p.Proof, err = flatHex(numbers(resp.Proof)); err != nil {
+		return HopDetail{}, fmt.Errorf("%s proof: %w", circuit, err)
+	}
+	if p.Signals, err = flatHex(numbers(resp.PublicSignal)); err != nil {
+		return HopDetail{}, fmt.Errorf("%s public signals: %w", circuit, err)
+	}
+	return d, nil
+}
+
+// decodeNumbers decodes JSON body into v, numbers kept as json.Number: the
+// gnark server sends field elements as bare numbers too long for a float.
+func decodeNumbers(body string, v any) error {
+	dec := json.NewDecoder(strings.NewReader(body))
+	dec.UseNumber()
+	return dec.Decode(v)
+}
+
+// numbers is ns as a list of JSON values, for flatHex.
+func numbers(ns []json.Number) []any {
+	out := make([]any, len(ns))
+	for i, n := range ns {
+		out[i] = n
+	}
+	return out
+}
+
+// flatHex is a decoded JSON value (a decimal string or number, or a nested
+// list of them) as 0x-hex field elements, flattened in order.
+func flatHex(v any) ([]string, error) {
+	switch x := v.(type) {
+	case []any:
+		var out []string
+		for _, e := range x {
+			hs, err := flatHex(e)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, hs...)
+		}
+		return out, nil
+	case string, json.Number:
+		n, ok := new(big.Int).SetString(fmt.Sprint(x), 10)
+		if !ok {
+			return nil, fmt.Errorf("%q is not a decimal field element", x)
+		}
+		return []string{fieldHex(n)}, nil
+	}
+	return nil, fmt.Errorf("%v (%T) is not a field element or a list of them", v, v)
 }

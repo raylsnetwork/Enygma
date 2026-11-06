@@ -416,6 +416,10 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
+	t.Run("each proof hop carries a prover detail: its circuit, a constraint count and the gnark server's timings, and no witness values", func(t *testing.T) {
+		checkProverDetails(t, sink.hops(), false)
+	})
+
 	t.Run("each settle hop carries its proofs' settle checks, and every nullifier it publishes is in that transaction's Nullifier events", func(t *testing.T) {
 		checkSettleChecks(t, client, vaults, vaultAddrs, sink.hops(), true)
 	})
@@ -1246,6 +1250,7 @@ func checkProofDetails(t *testing.T, vaults map[string]*bind.BoundContract, vaul
 			case engine.DetailHTTP: // checked by checkWireDetails
 			case engine.DetailWitness: // payment 1 of a walkthrough: checked by TestShieldDemoWalkthrough
 			case engine.DetailFormula: // payment 1 of a full run: checked by its own subtest
+			case engine.DetailProver: // checked by checkProverDetails
 			default:
 				t.Errorf("step %s: %s proof hop carries a %q detail", h.Step, circuit, d.Kind)
 			}
@@ -1270,6 +1275,119 @@ func checkProofDetails(t *testing.T, vaults map[string]*bind.BoundContract, vaul
 		t.Error("no proof hops")
 	}
 	return perVault
+}
+
+// checkProverDetails checks that every proof hop carries one prover detail
+// naming the hop's circuit, with the gnark server's stats: that circuit, a
+// constraint count above zero, and compile, prove and verify times above
+// zero. A full run's (walkthrough false) carries no witness, proof or
+// signals; a walkthrough's carries every wt field of the request in the
+// hop's http detail, value for value, and the proof and public signals of
+// its response.
+func checkProverDetails(t *testing.T, hops []engine.Event, walkthrough bool) {
+	t.Helper()
+	proofs := 0
+	for _, h := range hops {
+		if h.To != engine.NodeGnark || h.Failed {
+			continue
+		}
+		proofs++
+		circuit := strings.TrimPrefix(h.Label, "prove ")
+		ds := detailsOf(h, engine.DetailProver)
+		if len(ds) != 1 || ds[0].Prover == nil {
+			t.Errorf("step %s: %s proof hop carries %d prover details, want 1 with its prover", h.Step, circuit, len(ds))
+			continue
+		}
+		d, p := ds[0], ds[0].Prover
+		if d.Circuit != circuit || p.Stats == nil || p.Stats.Circuit != circuit {
+			t.Errorf("step %s: prover detail of circuit %q with stats %+v, want the %s circuit's", h.Step, d.Circuit, p.Stats, circuit)
+			continue
+		}
+		if st := p.Stats; st.Constraints <= 0 || st.CompileMs <= 0 || st.ProveMs <= 0 || st.VerifyMs <= 0 {
+			t.Errorf("step %s: %s prover stats %+v, want constraints and compile, prove and verify times above 0", h.Step, circuit, *st)
+		}
+		if !walkthrough {
+			if len(p.Witness) != 0 || len(p.Proof) != 0 || len(p.Signals) != 0 {
+				t.Errorf("step %s: a full run's %s prover detail carries %d witness inputs, %d proof elements and %d signals, want none", h.Step, circuit, len(p.Witness), len(p.Proof), len(p.Signals))
+			}
+			continue
+		}
+		wire := detailsOf(h, engine.DetailHTTP)
+		if len(wire) != 1 {
+			t.Errorf("step %s: %s proof hop carries %d http details, want 1", h.Step, circuit, len(wire))
+			continue
+		}
+		var req map[string]any
+		dec := json.NewDecoder(strings.NewReader(wire[0].Request))
+		dec.UseNumber()
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("step %s: %s request body: %v", h.Step, circuit, err)
+			continue
+		}
+		// Compared as decimal strings: equal big.Ints need not be DeepEqual.
+		sent := map[string][]string{}
+		for k, v := range req {
+			if strings.HasPrefix(k, "wt") {
+				sent[strings.TrimPrefix(k, "wt")] = flatFields(t, v)
+			}
+		}
+		shown := map[string][]string{}
+		for _, in := range p.Witness {
+			for _, v := range in.Values {
+				shown[in.Name] = append(shown[in.Name], hexField(t, v).String())
+			}
+		}
+		if !reflect.DeepEqual(shown, sent) {
+			t.Errorf("step %s: %s prover witness %v, want the request's wt fields %v", h.Step, circuit, shown, sent)
+		}
+		var resp map[string]any
+		dec = json.NewDecoder(strings.NewReader(wire[0].Response))
+		dec.UseNumber()
+		if err := dec.Decode(&resp); err != nil {
+			t.Errorf("step %s: %s response body: %v", h.Step, circuit, err)
+			continue
+		}
+		for _, c := range []struct {
+			name  string
+			shown []string
+		}{{"proof", p.Proof}, {"publicSignal", p.Signals}} {
+			want := flatFields(t, resp[c.name])
+			got := make([]string, len(c.shown))
+			for i, v := range c.shown {
+				got[i] = hexField(t, v).String()
+			}
+			if len(want) == 0 || !reflect.DeepEqual(got, want) {
+				t.Errorf("step %s: %s prover %s %v, want the response's %v", h.Step, circuit, c.name, got, want)
+			}
+		}
+	}
+	if proofs == 0 {
+		t.Error("no proof hops")
+	}
+}
+
+// flatFields is a JSON value decoded with UseNumber (a decimal string or
+// number, or a nested list of them) as its field elements in decimal,
+// flattened in order.
+func flatFields(t *testing.T, v any) []string {
+	t.Helper()
+	switch x := v.(type) {
+	case []any:
+		var out []string
+		for _, e := range x {
+			out = append(out, flatFields(t, e)...)
+		}
+		return out
+	case string, json.Number:
+		n, ok := new(big.Int).SetString(fmt.Sprint(x), 10)
+		if !ok {
+			t.Errorf("%q is not a decimal field element", x)
+			return nil
+		}
+		return []string{n.String()}
+	}
+	t.Errorf("%v (%T) is not a field element or a list of them", v, v)
+	return nil
 }
 
 // checkMerklePath checks that merklePath detail d hashes, with Poseidon,

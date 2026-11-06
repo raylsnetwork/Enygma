@@ -347,6 +347,18 @@ svg.tree .n.leaf.own { fill:var(--own); stroke:var(--accent); stroke-width:1.5; 
 .formula .ok { color:var(--ok); font-weight:600; margin-right:4px; }
 .formula .no { color:var(--bad); font-weight:600; margin-right:4px; }
 .formula .fnote { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--muted); }
+/* The prover card: what the gnark server did for a proof request, its own stats, and a walkthrough's witness. */
+.prover { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:3px; font-size:12px; flex-shrink:0; overflow-wrap:anywhere; }
+.prover b { font:600 13px var(--serif); }
+.prover .pstats { display:flex; flex-wrap:wrap; gap:4px 12px; font:11px var(--mono); color:var(--text2); }
+.prover .pstats .k { color:var(--muted); margin-right:4px; }
+.prover .pnote { margin-top:3px; padding-top:4px; border-top:1px dashed var(--bd2); color:var(--text2); }
+.prover .pvals summary { cursor:pointer; color:var(--muted); font:11px var(--mono); }
+.prover .pvals[open] { display:flex; flex-direction:column; gap:3px; }
+.prover .pvals .lbl { margin-top:3px; color:var(--muted); font:11px var(--mono); }
+.prover .fin { display:grid; grid-template-columns:150px minmax(0,1fr); gap:8px; align-items:baseline; }
+.prover .fin .k { color:var(--muted); font:11px var(--mono); }
+.prover .fv { font:10.5px/1.35 var(--mono); color:var(--text2); overflow-wrap:anywhere; cursor:copy; }
 .wire { border:1px solid var(--bd); border-radius:10px; padding:7px 10px; display:flex; flex-direction:column; gap:4px; font-size:12px; margin-top:6px; }
 .wire .line { font:600 12px var(--mono); color:var(--text); overflow-wrap:anywhere; }
 .wire .line .st2 { color:var(--ok); }
@@ -1590,6 +1602,7 @@ const SENTENCE = {
     : n[0].via === 'tag'
     ? `${n[0].owner} opens the tag’s payload with the key of the channel it came on and gets the note’s opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to a commitment in the vault.`
     : `${n[0].owner}’s view key opens one note’s ciphertext, as the chain holds it, to its opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to the note’s commitment. Every other note fails to open.`,
+  prover: d => `The gnark server proves with the ${d.circuit} circuit: it gets the whole witness, private inputs included, and returns a proof that reveals none of it.`,
   formula: d => `${FORMULA[d.formula.name]?.title || d.formula.name}${hasValues(d.formula) ? ', computed with this run’s real values and checked against what the chain holds' : ': the equation, and why it keeps the protocol private'}.`,
   settleChecks: (d, all) => `Before it settles, EnygmaDvp has each vault check ${all.filter(x => x.kind === 'settleChecks').length > 1 ? 'both proofs, the payment’s and the USDr fee’s' : 'the proof'}: each Merkle root is one the vault has had, each nullifier is unused, and the proof verifies. Then the vault publishes the nullifiers, one per spent note, so no note can be spent twice.`,
 };
@@ -1931,6 +1944,11 @@ const hopPanel = (() => {
         [`${who} · opens to`, `${esc(n.amount)} ${esc(n.asset)} · salt ${hex(n.salt)} · token ${hex(n.token)}`],
         ...(n.tx ? [[`${who} · transaction`, hex(n.tx)]] : [])];
     });
+    // The prover's stats; its witness, proof and signals are in its card's fold.
+    if (d.kind === 'prover') return !d.prover.stats ? [['prover · stats', '<span class="muted">the gnark server sent none</span>']] : [
+      ['prover · circuit', esc(d.prover.stats.circuit)], ['prover · constraints', esc(d.prover.stats.constraints.toLocaleString('en-US'))],
+      ['prover · compile (once, at startup)', esc(ms(d.prover.stats.compileMs))], ['prover · prove', esc(ms(d.prover.stats.proveMs))],
+      ['prover · verify', esc(ms(d.prover.stats.verifyMs))]];
     // A full run's formula detail carries its name only: no values.
     if (d.kind === 'formula') return !hasValues(d.formula) ? [] : [
       ...(d.formula.inputs || []).map(x => [`${d.formula.name} · ${x.name}`, /^0x/.test(x.value) ? hex(x.value) : esc(x.value)]),
@@ -1982,6 +2000,40 @@ const hopPanel = (() => {
       ${c.why ? `<div class="fwhy"><span class="k">why it holds</span>${esc(c.why)}</div>` : ''}
       ${c.note ? `<div class="fnote">${esc(c.note)}</div>` : ''}
       ${values}
+    </div>`;
+  }
+  // ms is a time in milliseconds as the prover card shows it: 1 decimal below 10 ms, whole above.
+  const ms = v => `${v < 10 ? Number(v).toFixed(1) : Math.round(v).toLocaleString('en-US')} ms`;
+  // small is a 0x-hex field element's decimal when it is a small number (an amount, a leaf index, a token id), else ''.
+  const small = v => { try { const n = BigInt(v); return n < 10n ** 12n ? n.toString() : ''; } catch { return ''; } };
+  // valuesOf is a prover fold's named values as rows, each value in full: name[i]
+  // where there are several, and a small value's decimal beside its name.
+  const valuesOf = (name, vs) => vs.map((v, i) => `<div class="fin"><span class="k">${esc(vs.length > 1 ? `${name}[${i}]` : name)}${small(v) ? ` · ${esc(small(v))}` : ''}</span>${fval(v)}</div>`).join('');
+  // proverHtml is a prover detail's card: the circuit the gnark server ran,
+  // its constraint count and the times it measured itself, and, for a
+  // walkthrough's, who sees the witness and a closed fold with the witness
+  // it received and the proof and public signals it returned, in full.
+  function proverHtml(d) {
+    const p = d.prover, st = p.stats, witness = p.witness || [];
+    const stats = !st ? '<div class="pstats"><span class="muted">The gnark server sent no stats with this proof.</span></div>' : `<div class="pstats">
+        <span><span class="k">constraints</span>${esc(st.constraints.toLocaleString('en-US'))}</span>
+        <span title="The server compiles each circuit once, when it starts, and proves every request against it"><span class="k">compiled once</span>${esc(ms(st.compileMs))}</span>
+        <span><span class="k">proved in</span>${esc(ms(st.proveMs))}</span>
+        <span><span class="k">verified in</span>${esc(ms(st.verifyMs))}</span>
+      </div>`;
+    const values = !witness.length ? '' : `
+      <div class="pnote">Whoever proves sees the whole witness. In this demo the gnark server stands in for proving inside the wallet, so a real wallet keeps these values to itself.</div>
+      <details class="pvals"><summary>the witness it received · the proof it returned</summary>
+        <div class="lbl">private witness, as the request sent it</div>
+        ${witness.map(w => valuesOf(w.name, w.values)).join('')}
+        <div class="lbl">proof, as the response returned it</div>
+        ${valuesOf('proof', p.proof || [])}
+        <div class="lbl">public signals, as the response returned them</div>
+        ${valuesOf('signal', p.signals || [])}
+      </details>`;
+    return `<div class="prover" title="Measured by the gnark server itself and sent in its response's stats">
+      <div><b>Prover</b> <span class="hstep">· the gnark server ran the ${esc(d.circuit)} circuit</span></div>
+      ${stats}${values}
     </div>`;
   }
   // inputsHtml is a publicInputs detail's statement, public, beside the
@@ -2106,6 +2158,7 @@ const hopPanel = (() => {
       ${en.details.filter(d => d.kind === 'commitment').map(openingHtml).join('')}
       ${en.details.filter(d => d.kind === 'formula').map(formulaHtml).join('')}
       ${en.details.filter(d => d.kind === 'publicInputs').map(inputsHtml).join('')}
+      ${en.details.filter(d => d.kind === 'prover').map(proverHtml).join('')}
       ${en.details.filter(d => d.kind === 'settleChecks').map(checksHtml).join('')}
       ${en.details.map(secretHtml).join('')}
       <div class="vcard front">${vaultHead(front, f)}${treeSvg(front, f)}${roots}${strip(front, f, 64)}</div>

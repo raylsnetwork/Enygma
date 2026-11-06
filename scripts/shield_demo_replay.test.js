@@ -22,7 +22,9 @@
 // showing verifyProof → true, then false once tampered. In both, a formula
 // card must show its privacy argument, and its values fold only with a
 // walkthrough's values; the hop detail fold must open by itself for a
-// formula card in the walkthrough, and never in the full run. The cards show only
+// formula card in the walkthrough, and never in the full run. Each proof hop's
+// prover card must name its circuit and constraint count, and show its
+// witness, proof and signals digit for digit only in the walkthrough. The cards show only
 // as their hops play; replaying a step shows the same hop details (the
 // witness, the refusal) in the hop detail panel. Two first tests check the
 // fixtures still hold the cases this is there for.
@@ -308,6 +310,48 @@ function checkFormulas(doc, h, where) {
   return n;
 }
 
+// checkProvers fails unless the hop detail panel shows one prover card per
+// prover detail of hop h, each naming its circuit and its constraint count
+// as the gnark server's stats give them, and, only when the detail carries a
+// witness (a walkthrough's), the line on who sees the witness and a closed
+// fold with every witness value, then the proof and the public signals,
+// digit for digit, in order. A full run's shows no value, line or fold. It
+// returns how many cards it checked.
+function checkProvers(doc, h, where) {
+  const ps = (h.hopDetail || []).filter(d => d.kind === 'prover');
+  const shown = [...doc.querySelectorAll('#hopPanel .prover')];
+  assert.strictEqual(shown.length, ps.length, `${where}: prover cards shown`);
+  ps.forEach((d, i) => {
+    const card = shown[i], p = d.prover, at = `${where}, ${d.circuit} prover`;
+    assert.ok(p.stats, `${at}: no stats from the gnark server`);
+    assert.ok(card.textContent.includes(`ran the ${d.circuit} circuit`), `${at}: the circuit`);
+    assert.ok(card.querySelector('.pstats').textContent.includes(p.stats.constraints.toLocaleString('en-US')), `${at}: the constraint count`);
+    const fold = card.querySelector('details.pvals'), values = [...card.querySelectorAll('.fv')];
+    if (!(p.witness || []).length) {
+      assert.ok(!fold && !values.length && !card.querySelector('.pnote'), `${at}: a full run’s card shows a value, line or fold`);
+      return;
+    }
+    assert.match(card.querySelector('.pnote')?.textContent || '', /^Whoever proves sees the whole witness\. In this demo the gnark server stands in for proving inside the wallet/, `${at}: who sees the witness`);
+    assert.ok(fold && !fold.open, `${at}: no closed witness fold`);
+    assert.ok(values.every(v => fold.contains(v)), `${at}: a value outside the fold`);
+    assert.deepStrictEqual(values.map(v => v.textContent), [...p.witness.flatMap(w => w.values), ...p.proof, ...p.signals], `${at}: the witness, proof and signals, digit for digit, in order`);
+  });
+  return ps.length;
+}
+
+// proverDetails fails unless every proof hop of fixture f carries one prover
+// detail with the gnark server's stats, a witness exactly when withWitness.
+function proverDetails(f, withWitness) {
+  const proofs = f.events.filter(e => e.kind === 'hop' && e.to === 'gnark' && !e.failed);
+  assert.ok(proofs.length > 0, 'no proof hops');
+  for (const h of proofs) {
+    const ps = (h.hopDetail || []).filter(d => d.kind === 'prover');
+    assert.strictEqual(ps.length, 1, `${h.step} ${h.label}: prover details`);
+    assert.ok(ps[0].prover.stats?.constraints > 0, `${h.step} ${h.label}: no constraint count from the gnark server`);
+    assert.strictEqual(!!ps[0].prover.witness?.length, withWitness, `${h.step} ${h.label}: ${withWitness ? 'no witness in a walkthrough' : 'a witness in a full run'}`);
+  }
+}
+
 // detailHopsOf is fixture f's hops with a hop detail, per step, in the order the panel keeps them.
 function detailHopsOf(f) {
   const out = {};
@@ -323,7 +367,7 @@ async function replayAll(page, f, all) {
   const { doc, timers, errors } = page;
   const $ = id => doc.getElementById(id);
   const detailHops = detailHopsOf(f);
-  let replayed = 0, checkedElements = 0, fullProofs = 0, formulaValues = 0, ties = 0;
+  let replayed = 0, checkedElements = 0, fullProofs = 0, formulaValues = 0, ties = 0, provers = 0;
   for (const el of all) {
     const step = el.id.slice('step-'.length), hops = detailHops[step] || [];
     // Back to live first: a step with no hop details leaves the panel as it was.
@@ -359,6 +403,7 @@ async function replayAll(page, f, all) {
       });
       formulaValues += checkFormulas(doc, hops[i], `${step} hop detail ${i + 1}`);
       ties += checkTie(doc, f, hops[i], `${step} hop detail ${i + 1}`);
+      provers += checkProvers(doc, hops[i], `${step} hop detail ${i + 1}`);
       replayed++;
       const next = doc.querySelector('#hopPanel [data-replay="next"]');
       if (i < hops.length - 1) { assert.ok(!next.disabled, `${step}: › disabled at ${i + 1} of ${hops.length}`); next.click(); await tick(); }
@@ -368,6 +413,7 @@ async function replayAll(page, f, all) {
   assert.strictEqual(replayed, Object.values(detailHops).flat().length, 'hop details replayed');
   assert.ok(checkedElements > 0 && fullProofs > 0, `checked ${checkedElements} field elements and ${fullProofs} full bodies`);
   assert.strictEqual(ties, (f.run || f.defaults)?.usdrFee ? 1 : 0, 'relay hops replayed with the fee’s tie line: one in a fee-paying run');
+  assert.ok(provers > 0, 'no prover card replayed');
   return { formulaValues, ties };
 }
 
@@ -392,6 +438,8 @@ test('the default run fixture is a real default run, with the cases the replay i
     [['register', 'actor1 → UserRegistry', 'spendKey'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'actor1 → gnark', 'feeConservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
     'formula details: the spend key on the Sender’s registration, the commitment on the shield, the Merkle path, value conservation, the fee’s value conservation, the nullifier and the Groth16 check on payment 1, note encryption on the audit');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
+  // Every proof hop carries a prover card's stats, and no witness.
+  proverDetails(DEFAULT_RUN, false);
 });
 
 test('the page plays the whole default run and replays every step’s hop details without an exception, showing every field element digit for digit', async () => {
@@ -427,6 +475,8 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
   assert.ok(WALKTHROUGH.run.walkthrough && GATES > 0, 'not a walkthrough');
   const details = WALKTHROUGH.events.flatMap(e => e.hopDetail || []);
   for (const kind of ['witness', 'publicInputs', 'refusal']) assert.ok(details.some(d => d.kind === kind), `no ${kind} hop detail`);
+  // Every proof hop carries a prover card's stats and the witness the gnark server received.
+  proverDetails(WALKTHROUGH, true);
   assert.ok(details.some(d => d.kind === 'formula' && d.formula.name === 'commitment'), 'no commitment formula on the shield');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'register' && e.label === 'register' && e.from === 'actor1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'spendKey' && d.formula.chain)),
     'no spend key formula, with its values, on the Sender’s registration');

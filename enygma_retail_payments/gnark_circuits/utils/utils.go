@@ -4,12 +4,30 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/backend/witness"
 )
+
+// ProveStats is what a prove handler measured of its own work, sent in its
+// response's stats object: the circuit, its constraint count, how long
+// compiling it took (once, when the handler was built) and how long proving
+// and verifying this request's proof took, in milliseconds.
+type ProveStats struct {
+	Circuit     string  `json:"circuit"`
+	Constraints int     `json:"constraints"`
+	CompileMs   float64 `json:"compileMs"`
+	ProveMs     float64 `json:"proveMs"`
+	VerifyMs    float64 `json:"verifyMs"`
+}
+
+// Ms is d in milliseconds, to the microsecond.
+func Ms(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000
+}
 
 func LoadProvingKey(curve ecc.ID, filename string) (groth16.ProvingKey, error) {
 	file, err := os.Open(filename)

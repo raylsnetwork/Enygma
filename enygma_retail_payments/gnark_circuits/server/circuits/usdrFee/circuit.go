@@ -1,6 +1,10 @@
 package usdrFee
 
-import "math/big"
+import (
+	"math/big"
+
+	utils "enygma_retail_payments/gnark_circuits/utils"
+)
 
 // UsdrFeeRequest is the JSON body for POST /proof/usdrFee.
 //
@@ -41,4 +45,6 @@ type UsdrFeeRequest struct {
 type UsdrFeeOutput struct {
 	Proof        []*big.Int `json:"proof"`
 	PublicSignal []*big.Int `json:"publicSignal"`
+	// Stats is what the handler measured of this proof (see utils.ProveStats).
+	Stats utils.ProveStats `json:"stats"`
 }

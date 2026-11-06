@@ -33,6 +33,14 @@ func TestHandler_ProvesConcurrentRequests(t *testing.T) {
 	ht.AssertConcurrentProofs(t, NewHandler(pkPath, vkPath), vk, cases)
 }
 
+// TestHandler_ReportsItsStats checks the response's stats: the Payment
+// circuit, its constraint count, and its compile, prove and verify times.
+func TestHandler_ReportsItsStats(t *testing.T) {
+	pkPath, vkPath, _ := keys(t)
+	empty := templates.NewPaymentCircuit(templates.PaymentConfig)
+	ht.AssertStats(t, NewHandler(pkPath, vkPath), paymentCase(t, 555).Request, "Payment", &empty)
+}
+
 func keys(t *testing.T) (pkPath, vkPath string, vk groth16.VerifyingKey) {
 	t.Helper()
 	empty := templates.NewPaymentCircuit(templates.PaymentConfig)

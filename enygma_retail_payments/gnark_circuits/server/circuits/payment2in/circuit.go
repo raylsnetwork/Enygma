@@ -1,6 +1,10 @@
 package payment2in
 
-import "math/big"
+import (
+	"math/big"
+
+	utils "enygma_retail_payments/gnark_circuits/utils"
+)
 
 // PaymentRequest2in is the JSON body accepted by the /proof/payment2in endpoint.
 //
@@ -31,4 +35,6 @@ type PaymentRequest2in struct {
 type PaymentOutput2in struct {
 	Proof        []*big.Int `json:"proof"`
 	PublicSignal []*big.Int `json:"publicSignal"`
+	// Stats is what the handler measured of this proof (see utils.ProveStats).
+	Stats utils.ProveStats `json:"stats"`
 }
