@@ -9,6 +9,10 @@
 // screenshot of each step in the output directory (made if missing; default:
 // the system's temporary directory). Read the screenshots against the served page.
 //
+// Then, at a 390 px phone width, it measures each diagram's smallest rendered
+// label (an SVG <text>'s font size times its <svg>'s scale) and exits 1 when
+// one is under MIN_LABEL_PX: a diagram scaled down until it can't be read.
+//
 //   (cd scripts && npm ci)   # once: ws comes with jsdom, make page-check's dependency
 //   node scripts/primer_from_disk.js [outdir]
 //
@@ -26,6 +30,21 @@ const OUT = process.argv[2] || os.tmpdir();
 fs.mkdirSync(OUT, { recursive: true });
 const PORT = 9333;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// MIN_LABEL_PX is the smallest label, in CSS px, a diagram may render at 390 px wide.
+const MIN_LABEL_PX = 7;
+
+// LABELS is, per <svg> with an id, its smallest drawn label's rendered size
+// in px, and that label's text.
+const LABELS = `(() => Object.fromEntries([...document.querySelectorAll('svg[id]')].map(svg => {
+  const scale = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+  let min = { px: Infinity, text: '' };
+  for (const t of svg.querySelectorAll('text')) {
+    if (getComputedStyle(t).display === 'none' || t.closest('[style*="display: none"], .later')) continue;
+    const px = parseFloat(getComputedStyle(t).fontSize) * scale;
+    if (px < min.px) min = { px: Math.round(px * 10) / 10, text: t.textContent.slice(0, 30) };
+  }
+  return [svg.id, min];
+})))()`;
 
 // STATE is what the stepper shows, read in the page.
 const STATE = `(() => ({
@@ -89,6 +108,14 @@ const STATE = `(() => ({
     while (s.next) { await click('next'); s = await record('next'); }
     while (s.back) { await click('back'); s = await record('back'); }
 
+    // The phone width: the last step drawn, so every diagram has its labels.
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await evaluate("location.hash = 'payment'; showStep(STEPS.length - 1, false)");
+    await sleep(800);
+    result.phone = { scrollWidth: await evaluate('document.documentElement.scrollWidth'), innerWidth: await evaluate('innerWidth'), labels: await evaluate(LABELS) };
+    result.screenshots.push(await shot('primer-from-disk-phone.png'));
+    result.tooSmall = Object.entries(result.phone.labels).filter(([, m]) => m.px < MIN_LABEL_PX).map(([svg, m]) => `${svg}: ${m.px} px ("${m.text}")`);
+
     result.network = events.filter(e => e.method === 'Network.requestWillBeSent').map(e => e.params.request.url.slice(0, 120));
     result.console = events.filter(e => e.method === 'Runtime.consoleAPICalled')
       .map(e => `${e.params.type}: ${e.params.args.map(a => a.value ?? a.description).join(' ')}`);
@@ -97,6 +124,10 @@ const STATE = `(() => ({
     result.logErrors = events.filter(e => e.method === 'Log.entryAdded' && e.params.entry.level === 'error').map(e => e.params.entry.text);
     console.log(JSON.stringify(result, null, 1));
     ws.close();
+    if (result.tooSmall.length) {
+      console.error(`labels under ${MIN_LABEL_PX} px at 390 px wide: ${result.tooSmall.join('; ')}`);
+      process.exitCode = 1;
+    }
   } finally {
     chrome.kill();
     await sleep(500);
