@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
+<!-- Read this page with `node scripts/primer_page.js`: the data block summarised, lines numbered as here (`node scripts/primer_page.js <step>` prints one step's values). -->
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -59,6 +60,9 @@ h1 span { font:italic 400 16px var(--serif); color:var(--muted); margin-left:8px
 @media (max-width: 900px) {
   .wrap { grid-template-columns:minmax(0,1fr); padding:0 16px 40px; }
   .stage { position:static; max-height:none; overflow:visible; }
+  /* One column, under 560px the diagram keeps its width and scrolls inside its panel, so its labels stay legible. */
+  .flow-panel { overflow-x:auto; }
+  #flow { min-width:560px; }
   .bar { padding:12px 16px; }
   h1 { white-space:normal; }
 }
@@ -145,10 +149,10 @@ aside b { color:var(--text); }
 aside.warn { border-left-color:var(--warn); }
 
 /* ---- the payment's circuit and its gates ------------------------------------ */
-/* Under 560px the diagram keeps its width and scrolls inside its panel, so its labels stay legible. */
-.circuit-panel { padding:8px; margin:8px 0; overflow-x:auto; }
-#circuit { display:block; width:100%; min-width:560px; height:auto; font-family:var(--sans); }
-#circuit .col { font:700 10px var(--mono); letter-spacing:.12em; fill:var(--text2); }
+/* Under 512px the diagram keeps its width and scrolls inside its panel, so its labels stay legible. */
+.circuit-panel { padding:4px; margin:8px 0; overflow-x:auto; }
+#circuit { display:block; width:100%; min-width:512px; height:auto; font-family:var(--sans); }
+#circuit .col { font:700 10.5px var(--mono); letter-spacing:.1em; fill:var(--text2); }
 #circuit .witness rect { fill:color-mix(in srgb, var(--actor) 14%, var(--s1)); stroke:var(--actor); stroke-width:1.1; }
 #circuit .witness text { font:600 10.5px var(--mono); fill:var(--actor); }
 #circuit .gate rect { fill:var(--s2); stroke:var(--bd2); stroke-width:1.1; transition:stroke .2s; }
@@ -188,7 +192,7 @@ aside.warn { border-left-color:var(--warn); }
 
 <main class="wrap">
   <div class="stage">
-    <div class="panel">
+    <div class="panel flow-panel">
       <svg id="flow" viewBox="0 0 720 450" role="img" aria-labelledby="flowTitle">
         <title id="flowTitle">The Sender's, Ana's and the auditor's wallets, left of the privacy line; the chain, right of it</title>
         <rect class="zone z-wallet" x="0" y="0" width="450" height="450" rx="14"/>
