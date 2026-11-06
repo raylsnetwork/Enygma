@@ -21,12 +21,28 @@ import (
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
 // Payment circuit (2-in / 2-out, Merkle depth 8).
 //
-// Keys are loaded once at startup from pkPath / vkPath and reused for every request.
+// The circuit is compiled and its keys loaded from pkPath / vkPath once, when
+// the handler is built, and reused for every request.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	curve := ecc.BN254
 
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
+
+	cfg := templates.Payment2inConfig
+	circuit := templates.NewPaymentCircuit(cfg)
+
+	solver.RegisterHint(primitives.ModHint)
+	solver.RegisterHint(primitives.PoseidonNative)
+	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
+
+	// Compile once: the R1CS depends only on the circuit's shape, not on any
+	// request's values, and groth16.Prove only reads it, so every request
+	// (concurrent ones included) proves against this one.
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+	if err != nil {
+		panic(fmt.Sprintf("compile payment2in circuit: %v", err))
+	}
 
 	return func(c *gin.Context) {
 		var request PaymentRequest2in
@@ -35,9 +51,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
-		cfg := templates.Payment2inConfig
-
-		circuit := templates.NewPaymentCircuit(cfg)
 		witness := templates.NewPaymentCircuit(cfg)
 
 		witness.StMessage = frontend.Variable(request.StMessage)
@@ -65,16 +78,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 
 		witness.Config = cfg
-
-		solver.RegisterHint(primitives.ModHint)
-		solver.RegisterHint(primitives.PoseidonNative)
-		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
-
-		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})
-			return
-		}
 
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {

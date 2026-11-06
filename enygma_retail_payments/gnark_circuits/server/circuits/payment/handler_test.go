@@ -4,6 +4,8 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/consensys/gnark/backend/groth16"
+
 	ht "enygma_retail_payments/gnark_circuits/server/circuits/internal/handlertest"
 	"enygma_retail_payments/gnark_circuits/templates"
 )
@@ -13,15 +15,40 @@ import (
 // public witness, as many as its statement length, and the proof must verify
 // against them.
 func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
-	cfg := templates.PaymentConfig
-	empty := templates.NewPaymentCircuit(cfg)
-	pkPath, vkPath, vk := ht.Keys(t, &empty)
+	pkPath, vkPath, vk := keys(t)
+	c := paymentCase(t, 555)
+	proof, signals := ht.Post(t, NewHandler(pkPath, vkPath), c.Request)
+	ht.AssertStatementLen(t, signals, templates.PaymentStatementLayout())
+	ht.AssertProvedWitness(t, c.Assignment, vk, proof, signals)
+}
 
+// TestHandler_ProvesConcurrentRequests sends distinct payments to one
+// handler at once: each must come back proving its own payment.
+func TestHandler_ProvesConcurrentRequests(t *testing.T) {
+	pkPath, vkPath, vk := keys(t)
+	var cases []ht.Case
+	for salt := int64(1); salt <= 6; salt++ {
+		cases = append(cases, paymentCase(t, salt))
+	}
+	ht.AssertConcurrentProofs(t, NewHandler(pkPath, vkPath), vk, cases)
+}
+
+func keys(t *testing.T) (pkPath, vkPath string, vk groth16.VerifyingKey) {
+	t.Helper()
+	empty := templates.NewPaymentCircuit(templates.PaymentConfig)
+	return ht.Keys(t, &empty)
+}
+
+// paymentCase pays 60 of a 100 note to Bob and 40 back as change, the change
+// note salted with changeSalt.
+func paymentCase(t *testing.T, changeSalt int64) ht.Case {
+	t.Helper()
+	cfg := templates.PaymentConfig
 	in := ht.NewNote(t, 12345, 100, 7, cfg.TmMerkleTreeDepth)
 	bobPk := ht.Hash(t, big.NewInt(999))
 	values := []*big.Int{big.NewInt(60), big.NewInt(40)}
 	pks := []*big.Int{bobPk, in.Pk}
-	salts := []*big.Int{big.NewInt(444), big.NewInt(555)}
+	salts := []*big.Int{big.NewInt(444), big.NewInt(changeSalt)}
 	cmts := []*big.Int{
 		ht.Commitment(t, pks[0], salts[0], values[0], in.TokenId),
 		ht.Commitment(t, pks[1], salts[1], values[1], in.TokenId),
@@ -46,8 +73,6 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		WtValuesOut:          [2]string(ht.Strings(values...)),
 		WtSaltsOut:           [2]string(ht.Strings(salts...)),
 	}
-	proof, signals := ht.Post(t, NewHandler(pkPath, vkPath), request)
-	ht.AssertStatementLen(t, signals, templates.PaymentStatementLayout())
 
 	w := templates.NewPaymentCircuit(cfg)
 	w.StMessage = 0
@@ -56,5 +81,5 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		w.StCommitmentsOut[i] = cmts[i]
 	}
 	w.StContractAddress = ht.Vault
-	ht.AssertProvedWitness(t, &w, vk, proof, signals)
+	return ht.Case{Request: request, Assignment: &w}
 }

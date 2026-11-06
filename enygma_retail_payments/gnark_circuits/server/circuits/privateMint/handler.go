@@ -20,12 +20,31 @@ import (
 	"enygma_retail_payments/gnark_circuits/templates"
 )
 
+// NewHandler returns a gin.HandlerFunc for POST /proof/privateMint. The
+// circuit is compiled and its keys loaded once, when the handler is built.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
-
 	curve := ecc.BN254
 
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
+
+	range_ := frontend.Variable("1000000000000000000000000000000000000")
+	circuitPrivateMint := templates.PrivateMintCircuit{
+		Config: templates.PrivateMintConfig{TmRange: range_},
+	}
+
+	solver.RegisterHint(primitives.ModHint)
+	solver.RegisterHint(primitives.ERC155UniqueIdNative)
+	solver.RegisterHint(primitives.PoseidonNative)
+
+	// Compile once: the R1CS depends only on the circuit's shape, not on any
+	// request's values, and groth16.Prove only reads it, so every request
+	// (concurrent ones included) proves against this one.
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitPrivateMint)
+	if err != nil {
+		panic(fmt.Sprintf("compile privateMint circuit: %v", err))
+	}
+
 	return func(c *gin.Context) {
 		var request PrivateMintRequest
 
@@ -35,10 +54,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 		// fmt.Println(request)
 
-		range_ := frontend.Variable("1000000000000000000000000000000000000")
-		circuitPrivateMint := templates.PrivateMintCircuit{
-			Config: templates.PrivateMintConfig{TmRange: range_},
-		}
 		witness := templates.PrivateMintCircuit{}
 
 		witness.Commitment = frontend.Variable(request.Commitment)
@@ -48,16 +63,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.Amount = frontend.Variable(request.Amount)
 		witness.PublicKey = frontend.Variable(request.PublicKey)
 		witness.CipherText = frontend.Variable(request.CipherText)
-
-		solver.RegisterHint(primitives.ModHint)
-		solver.RegisterHint(primitives.ERC155UniqueIdNative)
-		solver.RegisterHint(primitives.PoseidonNative)
-
-		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitPrivateMint)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})
-			return
-		}
 
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {
