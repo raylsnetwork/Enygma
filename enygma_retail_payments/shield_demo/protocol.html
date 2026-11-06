@@ -195,7 +195,7 @@ aside.warn { border-left-color:var(--warn); }
       </div>
       <p>With this run's values:</p>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.6em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><msubsup><mi>pk</mi><mtext>spend</mtext><mtext>Sender</mtext></msubsup></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><mn data-v="sender.skSpend"></mn><mo stretchy="false">)</mo><mo>=</mo><mn data-v="sender.pkSpend"></mn></mtd></mtr>
           <mtr><mtd><msubsup><mi>pk</mi><mtext>spend</mtext><mtext>Ana</mtext></msubsup></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><mn data-v="ana.skSpend"></mn><mo stretchy="false">)</mo><mo>=</mo><mn data-v="ana.pkSpend"></mn></mtd></mtr>
         </mtable></math>
@@ -252,7 +252,7 @@ aside.warn { border-left-color:var(--warn); }
 
       <h3>The audit ciphertexts</h3>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.5em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><mo stretchy="false">(</mo><mi>ss</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo></mtd><mtd><mo>=</mo><mtext>ML-KEM-768.Encaps</mtext><mo stretchy="false">(</mo><msub><mi>ek</mi><mi>A</mi></msub><mo stretchy="false">)</mo></mtd></mtr>
           <mtr><mtd><mi>k</mi></mtd><mtd><mo>=</mo><mtext>HKDF-SHA256</mtext><mo stretchy="false">(</mo><mi>ss</mi><mo separator="true">,</mo><mtext>info</mtext><mo>=</mo><mtext>“</mtext><mtext data-v="hkdfInfo"></mtext><mtext>”</mtext><mo stretchy="false">)</mo></mtd></mtr>
           <mtr><mtd><mi>ct</mi></mtd><mtd><mo>=</mo><msub><mtext>AES-256-GCM.Seal</mtext><mi>k</mi></msub><mo stretchy="false">(</mo><mi>nonce</mi><mo separator="true">,</mo><msub><mi>seed</mi><mtext>view</mtext></msub><mo separator="true">,</mo><mtext>AAD</mtext><mo>=</mo><mi>c</mi><mo stretchy="false">)</mo></mtd></mtr>
@@ -262,7 +262,7 @@ aside.warn { border-left-color:var(--warn); }
 
       <h3>The auditor's opening</h3>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.5em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><mi>ss</mi></mtd><mtd><mo>=</mo><mtext>ML-KEM-768.Decaps</mtext><mo stretchy="false">(</mo><msub><mi>dk</mi><mi>A</mi></msub><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo></mtd></mtr>
           <mtr><mtd><msub><mi>seed</mi><mtext>view</mtext></msub></mtd><mtd><mo>=</mo><msub><mtext>AES-256-GCM.Open</mtext><mi>k</mi></msub><mo stretchy="false">(</mo><mi>nonce</mi><mo separator="true">,</mo><mi>ct</mi><mo separator="true">,</mo><mtext>AAD</mtext><mo>=</mo><mi>c</mi><mo stretchy="false">)</mo></mtd></mtr>
         </mtable></math>
@@ -323,7 +323,7 @@ aside.warn { border-left-color:var(--warn); }
       </div>
       <p>The vault does not take a commitment from the depositor: it computes C on chain, in <code>depositV2</code>, from the four values in the calldata, after pulling <code>amount</code> tokens from <code>msg.sender</code>. So the note it inserts is bound to the tokens it actually received; a deposit cannot mint a note worth more than it paid. With this run's calldata:</p>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.6em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><mi>C</mi></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><mn data-v="pkSpend"></mn><mo separator="true">,</mo></mtd></mtr>
           <mtr><mtd></mtd><mtd><mspace width="2em"/><mn data-v="salt"></mn><mo separator="true">,</mo><mspace width="0.4em"/><mn data-v="amount"></mn><mo separator="true">,</mo><mspace width="0.4em"/><mn data-v="token"></mn><mo stretchy="false">)</mo></mtd></mtr>
           <mtr><mtd></mtd><mtd><mo>=</mo><mn data-v="commitment"></mn></mtd></mtr>
@@ -346,7 +346,7 @@ aside.warn { border-left-color:var(--warn); }
       <h3>What a commitment hides, and what this one does not</h3>
       <p>A commitment published on its own is <b>hiding</b>: from C nobody learns the amount or the owner. Two properties give that. Poseidon is one-way, so C cannot be run backwards to its inputs. And the salt is random: without it, C would be Poseidon(pk_spend, amount, token), and anyone could hash the owner's public key with amount = 1, 2, 3, … until one matched. With a salt drawn from the field, each guessed amount must come with a guessed salt, one chance in p ≈ 2<sup>254</sup>. It is also <b>binding</b>: Poseidon is collision-resistant, so no one can find a second opening of C with another amount.</p>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.5em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><mo stretchy="false">(</mo><mi>ss</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo></mtd><mtd><mo>=</mo><mtext>ML-KEM-768.Encaps</mtext><mo stretchy="false">(</mo><msubsup><mi>ek</mi><mtext>view</mtext><mtext>owner</mtext></msubsup><mo stretchy="false">)</mo></mtd></mtr>
           <mtr><mtd><mi>salt</mi></mtd><mtd><mo>=</mo><mtext>HKDF-SHA256</mtext><mo stretchy="false">(</mo><mi>ss</mi><mo separator="true">,</mo><mtext>info</mtext><mo>=</mo><mtext>“note salt”</mtext><mo stretchy="false">)</mo><mspace width="0.4em"/><mo lspace="0.2em">mod</mo><mspace width="0.3em"/><mi>p</mi></mtd></mtr>
         </mtable></math>
@@ -356,7 +356,7 @@ aside.warn { border-left-color:var(--warn); }
 
       <h3>Poseidon, as a sponge</h3>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.5em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><mtext>absorb</mtext></mtd><mtd><mspace width="1em"/><mi>s</mi><mo>=</mo><mo stretchy="false">(</mo><mn>0</mn><mo separator="true">,</mo><msub><mi>x</mi><mn>1</mn></msub><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><msub><mi>x</mi><mi>n</mi></msub><mo stretchy="false">)</mo><mo>∈</mo><msubsup><mi>𝔽</mi><mi>p</mi><mi>t</mi></msubsup><mo separator="true">,</mo><mspace width="0.6em"/><mi>t</mi><mo>=</mo><mi>n</mi><mo>+</mo><mn>1</mn></mtd></mtr>
           <mtr><mtd><mtext>permute</mtext></mtd><mtd><mspace width="1em"/><mi>s</mi><mo>←</mo><mi>π</mi><mo stretchy="false">(</mo><mi>s</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="0.6em"/><mi>π</mi><mo>=</mo><msub><mi>R</mi><mi>F</mi></msub><mo>/</mo><mn>2</mn><mspace width="0.3em"/><mtext>full</mtext><mspace width="0.3em"/><mo>∘</mo><msub><mi>R</mi><mi>P</mi></msub><mspace width="0.3em"/><mtext>partial</mtext><mspace width="0.3em"/><mo>∘</mo><msub><mi>R</mi><mi>F</mi></msub><mo>/</mo><mn>2</mn><mspace width="0.3em"/><mtext>full rounds</mtext></mtd></mtr>
           <mtr><mtd><mtext>squeeze</mtext></mtd><mtd><mspace width="1em"/><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>x</mi><mn>1</mn></msub><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><msub><mi>x</mi><mi>n</mi></msub><mo stretchy="false">)</mo><mo>=</mo><msub><mi>s</mi><mn>0</mn></msub></mtd></mtr>
@@ -374,7 +374,7 @@ aside.warn { border-left-color:var(--warn); }
 
       <h3>The leaf joins the tree</h3>
       <div class="fm">
-        <math display="block"><mtable class="align" columnalign="right left" rowspacing="0.5em">
+        <math display="block"><mtable class="align" columnalign="right left">
           <mtr><mtd><msub><mi>n</mi><mrow><mn>0</mn><mo separator="true">,</mo><mi>i</mi></mrow></msub></mtd><mtd><mo>=</mo><msub><mi>C</mi><mi>i</mi></msub><mspace width="0.6em"/><mtext>(leaf</mtext><mspace width="0.3em"/><mi>i</mi><mtext>;</mtext><mspace width="0.3em"/><mtext>an empty slot is</mtext><mspace width="0.3em"/><mi>z</mi><mtext>)</mtext></mtd></mtr>
           <mtr><mtd><msub><mi>n</mi><mrow><mi>k</mi><mo>+</mo><mn>1</mn><mo separator="true">,</mo><mi>j</mi></mrow></msub></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>n</mi><mrow><mi>k</mi><mo separator="true">,</mo><mn>2</mn><mi>j</mi></mrow></msub><mo separator="true">,</mo><msub><mi>n</mi><mrow><mi>k</mi><mo separator="true">,</mo><mn>2</mn><mi>j</mi><mo>+</mo><mn>1</mn></mrow></msub><mo stretchy="false">)</mo></mtd></mtr>
           <mtr><mtd><mi>root</mi></mtd><mtd><mo>=</mo><msub><mi>n</mi><mrow><mn data-v="depth"></mn><mo separator="true">,</mo><mn>0</mn></mrow></msub><mo separator="true">,</mo><mspace width="0.6em"/><mi>z</mi><mo>=</mo><mtext>keccak256(“ZkDvp”)</mtext><mspace width="0.4em"/><mo lspace="0.2em">mod</mo><mspace width="0.3em"/><mi>p</mi></mtd></mtr>

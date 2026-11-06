@@ -6,8 +6,8 @@
 // step and Back to the first, and prints as JSON: the demo link, the page's
 // scroll and width, each step's state (step, chips shown, ledger items, Back
 // and Next), every network request, console message and exception. It saves a
-// screenshot of each step in the output directory (default: the system's
-// temporary directory). Read the screenshots against the served page.
+// screenshot of each step in the output directory (made if missing; default:
+// the system's temporary directory). Read the screenshots against the served page.
 //
 //   (cd scripts && npm ci)   # once: ws comes with jsdom, make page-check's dependency
 //   node scripts/primer_from_disk.js [outdir]
@@ -23,6 +23,7 @@ const WebSocket = require('ws');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PRIMER = path.join(__dirname, '..', 'enygma_retail_payments', 'shield_demo', 'protocol.html');
 const OUT = process.argv[2] || os.tmpdir();
+fs.mkdirSync(OUT, { recursive: true });
 const PORT = 9333;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
