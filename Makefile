@@ -109,6 +109,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/shield_demo_replay.test.js >/dev/null || node --test scripts/shield_demo_replay.test.js
 	@# The Protocol primer steps through the run its data block holds.
 	@node --test scripts/protocol_primer_replay.test.js >/dev/null || node --test scripts/protocol_primer_replay.test.js
+	@# primer_page.js, the primer's reader, still finds and summarises the data block.
+	@node --test scripts/primer_page.test.js >/dev/null || node --test scripts/primer_page.test.js
 
 build: ## go build ./... in every module
 	$(call each_module,go build ./...)
