@@ -13,7 +13,7 @@ repos:
         files: '\.go$'
       - id: page-scripts
         name: page scripts
-        # Checks each HTML page's inline <script> (syntax) and <style> (a selector defined twice).
+        # Checks each HTML page's inline <script> (syntax), <style> (a selector defined twice) and MathML (what Chrome drops).
         entry: node scripts/check_page_scripts.js
         language: system
         files: '\.html$'

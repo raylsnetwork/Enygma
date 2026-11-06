@@ -80,3 +80,31 @@ test('a script syntax error still fails', () => {
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /<script> at line 1: SyntaxError/);
 });
+
+// MathML that Chrome's MathML Core drops without an error, each caught by
+// hand in Chrome first (HAND_CHECK.md, Protocol primer).
+const math = body => `<html><body>\n<math>${body}</math>\n</body></html>`;
+
+test('a mathvariant other than normal fails, naming the line and the fix', () => {
+  const r = check(math('<mi mathvariant="double-struck">F</mi>'));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, new RegExp(`${r.files[0]}: line 2: mathvariant="double-struck".*𝔽`));
+});
+
+test('an <ms> fails: Chrome draws it without its quotes', () => {
+  const r = check(math('<ms>enygma</ms>'));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /line 2: <ms>.*mtext/);
+});
+
+test('columnalign on an mtable without class "align" fails: Chrome ignores it', () => {
+  const r = check(math('<mtable columnalign="right left"><mtr><mtd><mi>a</mi></mtd></mtr></mtable>'));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /line 2: columnalign.*class="align"/);
+});
+
+test('MathML Chrome draws passes: mathvariant="normal", columnalign with class "align", and markup in a script or comment', () => {
+  const r = check(math('<mi mathvariant="normal">x</mi><mtable class="align" columnalign="right left"><mtr><mtd><mi>a</mi></mtd></mtr></mtable>') +
+    '\n<!-- <ms>x</ms> -->\n<script>const s = \'<mi mathvariant="bold">x</mi>\';</script>');
+  assert.strictEqual(r.status, 0, r.stderr);
+});

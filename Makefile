@@ -100,7 +100,7 @@ $(PAGE_DEPS): scripts/package-lock.json
 	@command -v node >/dev/null && command -v npm >/dev/null || { echo "node or npm not found (page-check needs node 18+ and npm)"; exit 1; }
 	cd scripts && npm ci --no-audit --no-fund
 
-page-check: $(PAGE_DEPS) ## Fail on a bad inline <script> or a duplicated <style> selector in a tracked HTML page, or on the shield demo page failing to play a real run, or on the Protocol primer failing to step through its run; needs node
+page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> selector or MathML Chrome draws wrong in a tracked HTML page, or on the shield demo page failing to play a real run, or on the Protocol primer failing to step through its run; needs node
 	@command -v node >/dev/null || { echo "node not found (the demo pages' scripts need it to check)"; exit 1; }
 	@# The checks' own tests, quiet unless they fail (then rerun to show why).
 	@node --test scripts/check_page_scripts.test.js >/dev/null || node --test scripts/check_page_scripts.test.js

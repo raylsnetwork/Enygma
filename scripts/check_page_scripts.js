@@ -3,7 +3,10 @@
 //   - a <script> with a syntax error (compiled, without running);
 //   - a selector a <style> defines twice at the same level: the same selector
 //     list in the same @media / at-rule (or nesting) context, whether in one
-//     block or two blocks with the same at-rule.
+//     block or two blocks with the same at-rule;
+//   - MathML that Chrome's MathML Core drops without an error: a mathvariant
+//     other than "normal", an <ms>, a columnalign on an mtable that lacks the
+//     class "align" the pages' CSS aligns by.
 // The demo pages carry their whole UI inline, which no Go check sees.
 //
 //   node scripts/check_page_scripts.js <page.html>...   (make page-check)
@@ -60,6 +63,25 @@ function duplicateSelectors(html, css, offset) {
   return dups;
 }
 
+// unsupportedMath lists the MathML in markup (scripts and comments blanked)
+// that Chrome would draw wrong, each with its line and what to write instead.
+function unsupportedMath(markup) {
+  const found = [];
+  const at = (i, msg) => found.push(`line ${lineAt(markup, i)}: ${msg}`);
+  for (let m, re = /mathvariant\s*=\s*["']([^"']*)["']/gi; (m = re.exec(markup)); ) {
+    if (m[1] !== 'normal') at(m.index, `mathvariant="${m[1]}": Chrome ignores it; write the letter itself (𝔽, not double-struck F)`);
+  }
+  for (let m, re = /<ms[\s>]/gi; (m = re.exec(markup)); ) {
+    at(m.index, '<ms>: Chrome draws it without its quotes; write <mtext>"</mtext><mtext>…</mtext><mtext>"</mtext>');
+  }
+  for (let m, re = /<mtable\b([^>]*)>/gi; (m = re.exec(markup)); ) {
+    if (/\bcolumnalign\s*=/i.test(m[1]) && !/\bclass\s*=\s*["'][^"']*\balign\b/i.test(m[1])) {
+      at(m.index, 'columnalign: Chrome ignores it; add class="align" so the CSS aligns the columns');
+    }
+  }
+  return found;
+}
+
 let bad = 0;
 for (const page of process.argv.slice(2)) {
   const html = fs.readFileSync(page, 'utf8');
@@ -71,6 +93,10 @@ for (const page of process.argv.slice(2)) {
       bad++;
       console.error(`${page}: selector "${d.selector}"${d.context ? ` in ${d.context}` : ''} defined at lines ${d.lines[0]} and ${d.lines[1]}`);
     }
+  }
+  for (const msg of unsupportedMath(markup)) {
+    bad++;
+    console.error(`${page}: ${msg}`);
   }
   // Inline classic scripts only: no src, and no type other than JavaScript.
   const re = /<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi;
@@ -89,4 +115,4 @@ for (const page of process.argv.slice(2)) {
   }
 }
 if (bad) process.exit(1);
-console.log(`page scripts and styles: ${process.argv.length - 2} pages clean`);
+console.log(`page scripts, styles and MathML: ${process.argv.length - 2} pages clean`);
