@@ -590,7 +590,8 @@ type Sink interface {
 type step struct {
 	e         *Engine
 	id, label string
-	// gated releases each action inside the step on its own (see await).
+	// gated releases each action inside the step on its own (see await): set
+	// per step (payment 1 only), not per run. A walkthrough is e.opts.Walkthrough.
 	gated bool
 	// then are the actions released once the step's own work is done.
 	then []string
