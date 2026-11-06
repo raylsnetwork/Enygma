@@ -6,12 +6,14 @@ package handlertest
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"enygma_gnark_shared/statement"
@@ -62,39 +64,91 @@ func writeKey(t *testing.T, path string, key io.WriterTo) {
 // responds with. Both are accepted as JSON numbers or decimal strings.
 func Post(t *testing.T, handler gin.HandlerFunc, request any) (proof, signals []*big.Int) {
 	t.Helper()
+	proof, signals, err := tryPost(router(handler), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proof, signals
+}
+
+// Case is one prove request and the assignment whose public witness its
+// proof must carry.
+type Case struct {
+	Request    any
+	Assignment frontend.Circuit
+}
+
+// AssertConcurrentProofs sends every case's request to one handler at the
+// same time, and checks each response proves its own case's witness: the
+// handler's shared compiled circuit and keys must not mix up requests.
+func AssertConcurrentProofs(t *testing.T, handler gin.HandlerFunc, vk groth16.VerifyingKey, cases []Case) {
+	t.Helper()
+	r := router(handler)
+	type result struct {
+		proof, signals []*big.Int
+		err            error
+	}
+	results := make([]result, len(cases))
+	var wg sync.WaitGroup
+	for i := range cases {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i].proof, results[i].signals, results[i].err = tryPost(r, cases[i].Request)
+		}(i)
+	}
+	wg.Wait()
+	for i, res := range results {
+		if res.err != nil {
+			t.Fatalf("request %d: %v", i, res.err)
+		}
+		AssertProvedWitness(t, cases[i].Assignment, vk, res.proof, res.signals)
+	}
+}
+
+func router(handler gin.HandlerFunc) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/proof", handler)
+	return r
+}
+
+func tryPost(r *gin.Engine, request any) (proof, signals []*big.Int, err error) {
 	body, err := json.Marshal(request)
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		return nil, nil, fmt.Errorf("marshal request: %w", err)
 	}
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.POST("/proof", handler)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/proof", bytes.NewReader(body)))
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/proof", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		return nil, nil, fmt.Errorf("status %d: %s", rec.Code, rec.Body)
 	}
 	var out struct {
 		Proof        []json.Number `json:"proof"`
 		PublicSignal []json.Number `json:"publicSignal"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode response %s: %v", rec.Body, err)
+		return nil, nil, fmt.Errorf("decode response %s: %w", rec.Body, err)
 	}
-	return bigInts(t, out.Proof), bigInts(t, out.PublicSignal)
+	if proof, err = bigInts(out.Proof); err != nil {
+		return nil, nil, fmt.Errorf("proof: %w", err)
+	}
+	if signals, err = bigInts(out.PublicSignal); err != nil {
+		return nil, nil, fmt.Errorf("public signal: %w", err)
+	}
+	return proof, signals, nil
 }
 
-func bigInts(t *testing.T, ns []json.Number) []*big.Int {
-	t.Helper()
+func bigInts(ns []json.Number) ([]*big.Int, error) {
 	out := make([]*big.Int, len(ns))
 	for i, n := range ns {
 		v, ok := new(big.Int).SetString(n.String(), 10)
 		if !ok {
-			t.Fatalf("element %d: %q is not a decimal integer", i, n)
+			return nil, fmt.Errorf("element %d: %q is not a decimal integer", i, n)
 		}
 		out[i] = v
 	}
-	return out
+	return out, nil
 }
 
 // AssertProvedWitness checks that signals are exactly assignment's public
