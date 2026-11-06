@@ -100,13 +100,15 @@ $(PAGE_DEPS): scripts/package-lock.json
 	@command -v node >/dev/null && command -v npm >/dev/null || { echo "node or npm not found (page-check needs node 18+ and npm)"; exit 1; }
 	cd scripts && npm ci --no-audit --no-fund
 
-page-check: $(PAGE_DEPS) ## Fail on a bad inline <script> or a duplicated <style> selector in a tracked HTML page, or on the shield demo page failing to play a real run; needs node
+page-check: $(PAGE_DEPS) ## Fail on a bad inline <script> or a duplicated <style> selector in a tracked HTML page, or on the shield demo page failing to play a real run, or on the Protocol primer failing to step through its run; needs node
 	@command -v node >/dev/null || { echo "node not found (the demo pages' scripts need it to check)"; exit 1; }
 	@# The checks' own tests, quiet unless they fail (then rerun to show why).
 	@node --test scripts/check_page_scripts.test.js >/dev/null || node --test scripts/check_page_scripts.test.js
 	@node scripts/check_page_scripts.js $$(git ls-files '*.html')
 	@# The shield demo page plays and replays a real run's events (shield_demo/testdata).
 	@node --test scripts/shield_demo_replay.test.js >/dev/null || node --test scripts/shield_demo_replay.test.js
+	@# The Protocol primer steps through the run its data block holds.
+	@node --test scripts/protocol_primer_replay.test.js >/dev/null || node --test scripts/protocol_primer_replay.test.js
 
 build: ## go build ./... in every module
 	$(call each_module,go build ./...)

@@ -198,11 +198,21 @@ func TestWithoutALogDirectoryOnlyEngineEventsAreSent(t *testing.T) {
 // getPage returns the page the demo serves at /.
 func getPage(t *testing.T, url string) string {
 	t.Helper()
-	res, err := http.Get(url + "/")
+	return getPath(t, url, "/")
+}
+
+// getPath returns what the demo serves at path, failing on a status other
+// than 200 or a body that is not HTML.
+func getPath(t *testing.T, url, path string) string {
+	t.Helper()
+	res, err := http.Get(url + path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("GET %s: %s, %s", path, res.Status, res.Header.Get("Content-Type"))
+	}
 	b, _ := io.ReadAll(res.Body)
 	return string(b)
 }
@@ -233,6 +243,34 @@ func TestWithoutDevModeTheEmbeddedPageIsServed(t *testing.T) {
 	_, url := startDemo(t, "")
 	if got := getPage(t, url); got != indexHTML {
 		t.Fatalf("got %d bytes, want the embedded page", len(got))
+	}
+}
+
+// The Protocol primer is served at /protocol like the demo page at /: the
+// embedded copy normally, the file on disk on every request in -dev mode.
+func TestDevModeServesThePrimerFromDiskOnEveryRequest(t *testing.T) {
+	primer := filepath.Join(t.TempDir(), "protocol.html")
+	writePage(t, primer, "<p>first</p>")
+	s, url := startDemo(t, "")
+	s.primerFile = primer
+
+	if got := getPath(t, url, "/protocol"); got != "<p>first</p>" {
+		t.Fatalf("got %q, want the file's primer", got)
+	}
+	writePage(t, primer, "<p>edited</p>")
+	if got := getPath(t, url, "/protocol"); got != "<p>edited</p>" {
+		t.Fatalf("after an edit: got %q, want the edited primer", got)
+	}
+}
+
+func TestWithoutDevModeTheEmbeddedPrimerIsServed(t *testing.T) {
+	_, url := startDemo(t, "")
+	got := getPath(t, url, "/protocol")
+	if got != protocolHTML {
+		t.Fatalf("got %d bytes, want the embedded primer", len(got))
+	}
+	if !strings.Contains(got, "<title>Protocol primer") {
+		t.Fatalf("the embedded primer has no Protocol primer title")
 	}
 }
 
