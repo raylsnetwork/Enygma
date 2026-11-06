@@ -6,7 +6,8 @@
 //     block or two blocks with the same at-rule;
 //   - MathML that Chrome's MathML Core drops without an error: a mathvariant
 //     other than "normal", an <ms>, a columnalign on an mtable that lacks the
-//     class "align" the pages' CSS aligns by.
+//     class "align" the pages' CSS aligns by, a rowspacing, and a space at
+//     the start or end of an <mtext>.
 // The demo pages carry their whole UI inline, which no Go check sees.
 //
 //   node scripts/check_page_scripts.js <page.html>...   (make page-check)
@@ -78,6 +79,12 @@ function unsupportedMath(markup) {
     if (/\bcolumnalign\s*=/i.test(m[1]) && !/\bclass\s*=\s*["'][^"']*\balign\b/i.test(m[1])) {
       at(m.index, 'columnalign: Chrome ignores it; add class="align" so the CSS aligns the columns');
     }
+    if (/\browspacing\s*=/i.test(m[1])) {
+      at(m.index, 'rowspacing: Chrome ignores it; drop it and space the rows by CSS (the pages pad mtable.align cells)');
+    }
+  }
+  for (let m, re = /<mtext\b[^>]*>([^<]*)<\/mtext>/gi; (m = re.exec(markup)); ) {
+    if (/^\s|\s$/.test(m[1])) at(m.index, `<mtext> "${m[1]}": Chrome drops the space at its edge; write <mspace width="0.3em"/> beside it`);
   }
   return found;
 }

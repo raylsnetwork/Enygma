@@ -103,8 +103,21 @@ test('columnalign on an mtable without class "align" fails: Chrome ignores it', 
   assert.match(r.stderr, /line 2: columnalign.*class="align"/);
 });
 
+test('an <mtext> starting or ending with a space fails: Chrome drops the space', () => {
+  const r = check(math('<mtext> full</mtext><mi>i</mi><mtext>leaf </mtext>'));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /line 2: <mtext> " full".*mspace/);
+  assert.match(r.stderr, /line 2: <mtext> "leaf ".*mspace/);
+});
+
+test('rowspacing on an mtable fails: Chrome ignores it', () => {
+  const r = check(math('<mtable class="align" rowspacing="0.5em"><mtr><mtd><mi>a</mi></mtd></mtr></mtable>'));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /line 2: rowspacing.*CSS/);
+});
+
 test('MathML Chrome draws passes: mathvariant="normal", columnalign with class "align", and markup in a script or comment', () => {
-  const r = check(math('<mi mathvariant="normal">x</mi><mtable class="align" columnalign="right left"><mtr><mtd><mi>a</mi></mtd></mtr></mtable>') +
+  const r = check(math('<mi mathvariant="normal">x</mi><mtable class="align" columnalign="right left"><mtr><mtd><mi>a</mi></mtd></mtr></mtable><mtext>full rounds</mtext><mspace width="0.3em"/>') +
     '\n<!-- <ms>x</ms> -->\n<script>const s = \'<mi mathvariant="bold">x</mi>\';</script>');
   assert.strictEqual(r.status, 0, r.stderr);
 });
