@@ -62,6 +62,13 @@ paths = [
   # walkthrough, for accounts on a local Hardhat node only: throwaway demo
   # keys, not credentials.
   '''^enygma_retail_payments/shield_demo/testdata/walkthrough\.events\.json$''',
+  # The Protocol primer's data block: one live run's values, written by a
+  # passing TestProtocolPrimer (test/15_protocol_primer_test.go) and checked
+  # digit for digit by `make page-check`. It shows each wallet's keys and the
+  # AES key HKDF derives for the auditor, because showing them is the page's
+  # job. The run generates those keys afresh, for accounts on a local Hardhat
+  # node only: throwaway demo keys, not credentials.
+  '''^enygma_retail_payments/shield_demo/protocol\.html$''',
 ]
 
 # Known, deliberately-public local-devnet keys. Neither of these is a live
