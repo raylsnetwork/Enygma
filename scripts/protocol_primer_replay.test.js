@@ -497,6 +497,19 @@ test('the primer\'s hand check names the page\'s steps', () => {
   });
 });
 
+test('the primer\'s hand check counts each step\'s amber asides', () => {
+  const { doc } = open();
+  const hand = fs.readFileSync(path.join(DEMO, 'HAND_CHECK.md'), 'utf8').split('\n## Protocol primer')[1]?.split('\n## ')[0];
+  const words = { two: 2, three: 3, four: 4 };
+  const claims = [...hand.matchAll(/[Ss]tep (\d+)'s (?:(two|three|four) )?amber[^,.]*?asides?\b/g)];
+  assert.ok(claims.length > 0, 'the section names the amber asides it checks');
+  const names = steps(doc);
+  claims.forEach(([claim, n, word]) => {
+    const onPage = section(doc, names[n - 1]).querySelectorAll('aside.warn').length;
+    assert.strictEqual(onPage, word ? words[word] : 1, `"${claim}": step ${n} has ${onPage} on the page`);
+  });
+});
+
 test('the demo\'s header links to the primer', () => {
   const demo = new JSDOM(fs.readFileSync(path.join(DEMO, 'index.html'), 'utf8')).window.document;
   assert.ok(demo.querySelector('header a[href="/protocol"]'), 'the demo header has a link to /protocol');
