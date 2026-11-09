@@ -12,8 +12,9 @@ package tests
 // auditor's keys, the registration of both users, the Sender's shield, and
 // the Sender's payment to Ana (one Payment proof, sent from the Sender's own
 // account), its Groth16 proof opened up (L and the pairing check, and the
-// Verifier's answer), and Ana's discovery of her note (her scan of the
-// Payment events).
+// Verifier's answer), Ana's discovery of her note (her scan of the Payment
+// events), and her partial withdrawal from that note (the same Payment
+// circuit with Message = 1).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
 // chain and a deployment, and the gnark server on :8082 for the payment's
@@ -111,7 +112,7 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "proof", "discovery"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "proof", "discovery", "withdrawal"}
 
 // shieldAmount is what the Sender shields: public RaylsERC20 the issuer
 // mints to them, deposited whole into one note.
@@ -123,6 +124,10 @@ const primerDepth = 8
 // payAmount is what the Sender pays Ana out of the shielded note; the rest
 // is the Sender's change.
 const payAmount = 60
+
+// withdrawAmount is what Ana takes out of the pool from her note of
+// payAmount; the rest stays hers, as a change note.
+const withdrawAmount = 25
 
 // paymentRange is the Payment circuit's exclusive bound on every value,
 // 10^36 (gnark_circuits/templates/deployed.go).
@@ -336,6 +341,8 @@ func TestProtocolPrimer(t *testing.T) {
 	var paid *paidNote
 	// proved is the payment's proof, which the proof check verifies.
 	var proved *provedPayment
+	// discovered is Ana's note as her scan opened it, which she withdraws from.
+	var discovered *paidNote
 
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
@@ -620,14 +627,7 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 
 		// hash is Poseidon, failing the test on an error.
-		hash := func(xs ...*big.Int) *big.Int {
-			t.Helper()
-			h, err := poseidon.Hash(xs)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return h
-		}
+		hash := func(xs ...*big.Int) *big.Int { t.Helper(); return poseidonOf(t, xs...) }
 		// vcall calls a one-value vault view at block n.
 		vcall := func(n *big.Int, method string, args ...any) any {
 			t.Helper()
@@ -667,17 +667,12 @@ func TestProtocolPrimer(t *testing.T) {
 			t.Errorf("TreeNumber %s, the note is in tree %s", stTree, tree)
 		}
 		v := map[string]string{}
-		node := cIn
-		for k := 0; k < primerDepth; k++ {
-			bit, sib := mp.Indices.Bit(k), mp.Elements[k]
-			left, right := node, sib
-			if bit == 1 {
-				left, right = sib, node
-			}
-			node = hash(left, right)
+		nodes := pathNodes(t, cIn, mp)
+		for k, n := range nodes {
 			p := fmt.Sprintf("path%d.", k)
-			v[p+"bit"], v[p+"sibling"], v[p+"node"] = fmt.Sprint(bit), sib.String(), node.String()
+			v[p+"bit"], v[p+"sibling"], v[p+"node"] = fmt.Sprint(mp.Indices.Bit(k)), mp.Elements[k].String(), n.String()
 		}
+		node := nodes[len(nodes)-1]
 		if node.Cmp(root) != 0 || node.Cmp(mp.Root) != 0 {
 			t.Errorf("the path hashes to %s, the statement's root is %s", node, root)
 		}
@@ -690,18 +685,7 @@ func TestProtocolPrimer(t *testing.T) {
 		if want := hash(sk, globalIndex); want.Cmp(nf) != 0 {
 			t.Errorf("Poseidon(sk, tree·2^8 + i) = %s, the statement's nullifier %s", want, nf)
 		}
-		var nfLogged []*big.Int
-		for _, l := range mined.Logs {
-			if l.Address == vaultAddr && len(l.Topics) == 4 && l.Topics[0] == nullifierEventSig {
-				if l.Topics[1].Big().Cmp(vaultID) != 0 || l.Topics[2].Big().Cmp(tree) != 0 {
-					t.Errorf("Nullifier event for vault %s tree %s, want %s and %s", l.Topics[1].Big(), l.Topics[2].Big(), vaultID, tree)
-				}
-				nfLogged = append(nfLogged, l.Topics[3].Big())
-			}
-		}
-		if len(nfLogged) != 1 || nfLogged[0].Cmp(nf) != 0 {
-			t.Errorf("the settlement's Nullifier events %v, want one, %s", nfLogged, nf)
-		}
+		checkOneNullifierEvent(t, mined.Logs, vaultAddr, vaultID, tree, nf)
 		if vcall(new(big.Int).Sub(block, big.NewInt(1)), "isValidNullifier", tree, nf).(bool) || !vcall(block, "isValidNullifier", tree, nf).(bool) {
 			t.Error("the nullifier is not unspent before the payment and spent after it")
 		}
@@ -1107,7 +1091,297 @@ func TestProtocolPrimer(t *testing.T) {
 			"opened":     fmt.Sprint(opened),
 			"forged":     claimed.String(),
 		}, Ledger: []ledgerItem{}}
+		discovered = &paidNote{commitment: commitment, salt: salt, amount: amount, token: token, block: paid.block}
 	})
+
+	check("withdrawal", "Ana's partial withdrawal from her discovered note: the Payment circuit with Message = 1, its amount and recipient public, her change a private note, and every equation holds on the run's values and the chain", func(t *testing.T) {
+		if discovered == nil {
+			t.Fatal("no note for Ana to withdraw from: the discovery check did not pass")
+		}
+		if !serverAvailable("localhost:8082") {
+			t.Fatal("the gnark server is not running on :8082 (shield_demo/run.sh --no-demo starts it)")
+		}
+		sender, ana := users[0], users[1]
+		e := newPartialWithdrawEnv(t)
+		sk, pk := ana.spend.PrivateKey, ana.spend.PublicKey
+		token, valueIn := discovered.token, discovered.amount
+		amount := big.NewInt(withdrawAmount)
+		change := new(big.Int).Sub(valueIn, amount)
+		recipient := ana.addr
+		recipientField := new(big.Int).SetBytes(recipient.Bytes())
+		vaultID := big.NewInt(0)
+		hash := func(xs ...*big.Int) *big.Int { t.Helper(); return poseidonOf(t, xs...) }
+
+		// The note she opened, and its path in the tree the vault holds now.
+		head, err := client.BlockNumber(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mp, err := rebuildVaultTree(t, client, vaultAddr, new(big.Int).SetUint64(head)).GenerateProof(discovered.commitment)
+		if err != nil {
+			t.Fatalf("Ana's note is not in the vault's tree: %v", err)
+		}
+		tree := big.NewInt(int64(mp.TreeNumber))
+
+		// The proof, from the gnark server, as the retail withdrawal path makes it.
+		s := e.mustProveWithdraw(t, pwNote{spend: ana.spend, view: ana.view, salt: discovered.salt, value: valueIn, commit: discovered.commitment}, amount, change, recipient)
+
+		// The receipt fixes the exit, and fits no other route.
+		e.expectRevert(t, "InvalidOpening", amount, sender.addr, s.receipt, s.ctI, s.ctII)
+		e.expectRevert(t, "InvalidOpening", new(big.Int).Add(amount, big.NewInt(1)), recipient, s.receipt, s.ctI, s.ctII)
+		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+		dvp := bindContract(t, client, dvpAddr, loadOnchainABI(t, "EnygmaDvp"))
+		if _, err := dvp.Transact(&bind.TransactOpts{From: e.owner.From, Signer: e.owner.Signer, NoSend: true, Context: ctx}, "payment", s.receipt, vaultID, s.ctI, s.ctII); err == nil || !strings.Contains(err.Error(), "InvalidPaymentMessage") {
+			t.Errorf("payment() with a withdrawal receipt: %v, want InvalidPaymentMessage", err)
+		}
+
+		// Ana sends it from her own account: no relayer.
+		balanceBefore, vaultBefore := e.balanceOf(t, recipient), e.balanceOf(t, vaultAddr)
+		auth, err := bind.NewKeyedTransactorWithChainID(ana.key, big.NewInt(hardhatChainID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := e.vault.Transact(auth, "partialWithdraw", []*big.Int{amount, token}, recipient, s.receipt, s.ctI, s.ctII)
+		if err != nil {
+			t.Fatalf("partialWithdraw: %v", err)
+		}
+		mined, err := bind.WaitMined(ctx, client, tx)
+		if err != nil || mined.Status != types.ReceiptStatusSuccessful {
+			t.Fatalf("partialWithdraw: receipt %v, err %v", mined, err)
+		}
+		block := mined.BlockNumber
+
+		// The events, the change note's ciphertexts opening for Ana, and the
+		// change note rebuilt from her key and the events alone.
+		e.checkSettled(t, mined, s)
+
+		// The withdrawal as the chain holds it: its calldata.
+		_, from, args := calldataOf(t, client, e.vaultABI, mined.TxHash, "partialWithdraw", ana.addr, vaultAddr)
+		params, cdRecipient := args[0].([]*big.Int), args[1].(common.Address)
+		cd := *abi.ConvertType(args[2], new(ProofReceipt)).(*ProofReceipt)
+		ctI, ctII := args[3].([]byte), args[4].([]byte)
+		if len(params) != 2 || params[0].Cmp(amount) != 0 || params[1].Cmp(token) != 0 || cdRecipient != recipient {
+			t.Errorf("calldata params %v to %s, want amount %s, token %s to %s", params, cdRecipient.Hex(), amount, token, recipient.Hex())
+		}
+		if !bytes.Equal(ctI, s.ctI) || !bytes.Equal(ctII, s.ctII) {
+			t.Error("the calldata's ciphertexts are not the ones sent")
+		}
+		st := cd.Statement
+		if len(st) != layout.PaymentLen || len(st) != len(paymentPublic) {
+			t.Fatalf("statement has %d public inputs, want %d", len(st), layout.PaymentLen)
+		}
+		message, stTree, root, nf := st[layout.PaymentMessageOffset], st[layout.PaymentTreeNumbersOffset], st[layout.PaymentMerkleRootsOffset], st[layout.PaymentNullifiersOffset]
+		c0, c1, contract := st[layout.PaymentCommitmentsOutOffset], st[layout.PaymentCommitmentsOutOffset+1], st[layout.PaymentContractAddressOffset]
+		for _, x := range st {
+			inField(t, "a public input", x)
+		}
+
+		// Message: a withdrawal, 1 (WITHDRAW_MESSAGE).
+		if message.Cmp(big.NewInt(1)) != 0 {
+			t.Errorf("Message = %s, want 1", message)
+		}
+		// The same circuit: the Payment key, in the Verifier's slot 0.
+		verified := e.verifiesAt(t, paymentVKSlot, s.receipt)
+		if !verified {
+			t.Errorf("verifyProof(%d, π, x) = false for the settled withdrawal", paymentVKSlot)
+		}
+		// Range, and conservation.
+		for _, x := range []*big.Int{valueIn, amount, change} {
+			if x.Sign() < 0 || x.Cmp(paymentRange) >= 0 {
+				t.Errorf("value %s is outside [0, 10^36)", x)
+			}
+		}
+		if sum := new(big.Int).Add(amount, change); sum.Cmp(valueIn) != 0 || change.Sign() <= 0 {
+			t.Errorf("amount + change = %s, the note holds %s, change %s: want equal, with change left", sum, valueIn, change)
+		}
+		// Ownership, and the input commitment, which is the note she discovered.
+		if got := hash(sk); got.Cmp(pk) != 0 {
+			t.Errorf("Poseidon(sk_in) = %s, Ana registered %s", got, pk)
+		}
+		cIn := hash(pk, discovered.salt, valueIn, token)
+		if cIn.Cmp(discovered.commitment) != 0 || cIn.Cmp(mp.Element) != 0 {
+			t.Errorf("Poseidon(pk, salt, v, token) = %s, Ana's leaf is %s", cIn, discovered.commitment)
+		}
+		// Merkle membership: the eight levels, up to a root the vault knows.
+		nodes := pathNodes(t, cIn, mp)
+		if got := nodes[len(nodes)-1]; got.Cmp(root) != 0 || stTree.Cmp(tree) != 0 {
+			t.Errorf("the path hashes to %s in tree %s, the statement's root is %s in tree %s", got, tree, root, stTree)
+		}
+		if !vaultView(t, e.vault, block, "isValidRoot", stTree, root).(bool) {
+			t.Errorf("isValidRoot(%s, %s) = false", stTree, root)
+		}
+		// The nullifier, spent by this block and not before it.
+		globalIndex := new(big.Int).Add(new(big.Int).Lsh(tree, primerDepth), mp.Indices)
+		if want := hash(sk, globalIndex); want.Cmp(nf) != 0 || nf.Sign() == 0 {
+			t.Errorf("Poseidon(sk, tree·2^8 + i) = %s, the statement's nullifier %s", want, nf)
+		}
+		checkOneNullifierEvent(t, mined.Logs, vaultAddr, vaultID, tree, nf)
+		if vaultView(t, e.vault, new(big.Int).Sub(block, big.NewInt(1)), "isValidNullifier", tree, nf).(bool) || !vaultView(t, e.vault, block, "isValidNullifier", tree, nf).(bool) {
+			t.Error("the nullifier is not unspent before the withdrawal and spent after it")
+		}
+		// Output 0 is the withdrawal: the recipient as its owner, salt 0. The
+		// vault recomputes it and never inserts it.
+		if want := hash(recipientField, big.NewInt(0), amount, token); want.Cmp(c0) != 0 {
+			t.Errorf("Poseidon(recipient, 0, amount, token) = %s, CommitmentOut[0] %s", want, c0)
+		}
+		// Output 1 is the change: Ana's key, the salt G11 fixes.
+		saltChange := hash(sk, nf)
+		if saltChange.Cmp(s.change.salt) != 0 {
+			t.Errorf("Poseidon(sk, N) = %s, the change salt %s", saltChange, s.change.salt)
+		}
+		if want := hash(pk, saltChange, change, token); want.Cmp(c1) != 0 {
+			t.Errorf("Poseidon(pk, salt_1, change, token) = %s, CommitmentOut[1] %s", want, c1)
+		}
+		logged := commitmentsIn(mined.Logs, vaultAddr)
+		if len(logged) != 1 || logged[0].Cmp(c1) != 0 {
+			t.Errorf("the settlement's Commitment events %v, want only the change, %s", logged, c1)
+		}
+		mtAfter := rebuildVaultTree(t, client, vaultAddr, block)
+		changeProof, err := mtAfter.GenerateProof(c1)
+		if err != nil {
+			t.Fatalf("the change note is not in the vault's tree: %v", err)
+		}
+		if _, err := mtAfter.GenerateProof(c0); err == nil {
+			t.Error("the withdrawal's output 0 is in the vault's tree")
+		}
+		// The change, rebuilt with what Ana needs and nothing the ciphertexts
+		// carry: her key, the Nullifier event's N (checked above), and her
+		// note's value less the PartialWithdrawal event's amount.
+		var pwEvents []*types.Log
+		pwEvent := e.vaultABI.Events["PartialWithdrawal"]
+		for _, l := range mined.Logs {
+			if l.Address == vaultAddr && l.Topics[0] == pwEvent.ID {
+				pwEvents = append(pwEvents, l)
+			}
+		}
+		if len(pwEvents) != 1 {
+			t.Fatalf("%d PartialWithdrawal events, want 1", len(pwEvents))
+		}
+		eventVals, err := pwEvent.Inputs.NonIndexed().Unpack(pwEvents[0].Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, rebuilt, err := dvpcore.WithdrawChangeNote(sk, nf, new(big.Int).Sub(valueIn, eventVals[0].(*big.Int)), token)
+		if err != nil || rebuilt.Cmp(pwEvents[0].Topics[3].Big()) != 0 || rebuilt.Cmp(c1) != 0 {
+			t.Errorf("the change rebuilt from the events is %v (err %v), the event's changeCommitment %s", rebuilt, err, pwEvents[0].Topics[3].Big())
+		}
+		// ContractAddress: this vault.
+		if contract.Cmp(new(big.Int).SetBytes(vaultAddr.Bytes())) != 0 {
+			t.Errorf("ContractAddress %s, the vault is %s", contract, vaultAddr.Hex())
+		}
+		// The exit: public tokens moved from the vault to the recipient.
+		balanceAfter := e.balanceOf(t, recipient)
+		if got := new(big.Int).Sub(balanceAfter, balanceBefore); got.Cmp(amount) != 0 {
+			t.Errorf("the recipient gained %s, want %s", got, amount)
+		}
+		if got := new(big.Int).Sub(vaultBefore, e.balanceOf(t, vaultAddr)); got.Cmp(amount) != 0 {
+			t.Errorf("the vault lost %s, want %s", got, amount)
+		}
+		// Spend-once: the same receipt, sent again, reverts.
+		e.expectRevert(t, "InvalidNullifier", amount, recipient, s.receipt, s.ctI, s.ctII)
+
+		leafChange := fmt.Sprintf("tree %d · leaf #%s", changeProof.TreeNumber, changeProof.Indices)
+		label := "partialWithdraw · Ana"
+		ledger := []ledgerItem{
+			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
+			{Tx: label, Field: "amount", Value: amount.String()},
+			{Tx: label, Field: "recipient", Value: recipient.Hex()},
+			{Tx: label, Field: "tokenId", Value: token.String()},
+		}
+		for _, in := range paymentPublic {
+			ledger = append(ledger, ledgerItem{Tx: "partialWithdraw · public inputs", Field: in.name, Value: st[in.offset].String()})
+		}
+		ledger = append(ledger,
+			ledgerItem{Tx: label, Field: "proof", Value: strings.Join(s.proofStrs, " ")},
+			ledgerItem{Tx: label, Field: "ciphertextI", Value: hexutil.Encode(ctI)},
+			ledgerItem{Tx: label, Field: "ciphertextII", Value: hexutil.Encode(ctII)},
+			ledgerItem{Tx: "Nullifier event", Field: "nullifier", Value: nf.String()},
+			ledgerItem{Tx: "Commitment event", Field: "commitment", Value: c1.String()},
+			ledgerItem{Tx: "Commitment event", Field: "leaf", Value: leafChange},
+			ledgerItem{Tx: "EncryptedNote event", Field: "commitment", Value: c1.String()},
+			ledgerItem{Tx: "EncryptedNote event", Field: "ciphertextI", Value: hexutil.Encode(ctI)},
+			ledgerItem{Tx: "EncryptedNote event", Field: "ciphertextII", Value: hexutil.Encode(ctII)},
+			ledgerItem{Tx: "PartialWithdrawal event", Field: "recipient", Value: recipient.Hex()},
+			ledgerItem{Tx: "PartialWithdrawal event", Field: "amount", Value: amount.String()},
+			ledgerItem{Tx: "PartialWithdrawal event", Field: "changeCommitment", Value: c1.String()},
+		)
+		data.Steps["withdrawal"] = primerEntry{Values: map[string]string{
+			"msgSender":        from.Hex(),
+			"tx":               mined.TxHash.Hex(),
+			"block":            block.String(),
+			"skSpend":          sk.String(),
+			"pkSpend":          pk.String(),
+			"valueIn":          valueIn.String(),
+			"saltIn":           discovered.salt.String(),
+			"token":            token.String(),
+			"commitmentIn":     cIn.String(),
+			"tree":             tree.String(),
+			"leafIndex":        mp.Indices.String(),
+			"globalIndex":      globalIndex.String(),
+			"root":             root.String(),
+			"nullifier":        nf.String(),
+			"message":          message.String(),
+			"recipient":        recipient.Hex(),
+			"recipientField":   recipientField.String(),
+			"amount":           amount.String(),
+			"commitment0":      c0.String(),
+			"change":           change.String(),
+			"saltChange":       saltChange.String(),
+			"commitmentChange": c1.String(),
+			"leafChange":       leafChange,
+			"contractAddress":  contract.String(),
+			"vkSlot":           fmt.Sprint(paymentVKSlot),
+			"verifyProof":      fmt.Sprint(verified),
+			"balanceBefore":    balanceBefore.String(),
+			"balanceAfter":     balanceAfter.String(),
+		}, Ledger: ledger}
+	})
+}
+
+// poseidonOf is Poseidon of xs, failing the test on an error.
+func poseidonOf(t *testing.T, xs ...*big.Int) *big.Int {
+	t.Helper()
+	h, err := poseidon.Hash(xs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// pathNodes hashes leaf up its Merkle path, Poseidon(left, right) at each
+// level with the leaf index's bit choosing the side; nodes[k] is level k's
+// output, the last one the root.
+func pathNodes(t *testing.T, leaf *big.Int, mp *rpcore.MerkleProof) []*big.Int {
+	t.Helper()
+	nodes := make([]*big.Int, primerDepth)
+	node := leaf
+	for k := range nodes {
+		left, right := node, mp.Elements[k]
+		if mp.Indices.Bit(k) == 1 {
+			left, right = right, left
+		}
+		node = poseidonOf(t, left, right)
+		nodes[k] = node
+	}
+	return nodes
+}
+
+// checkOneNullifierEvent fails unless logs hold exactly one Nullifier event
+// of vault, for vaultID, tree and nf.
+func checkOneNullifierEvent(t *testing.T, logs []*types.Log, vault common.Address, vaultID, tree, nf *big.Int) {
+	t.Helper()
+	var logged []*big.Int
+	for _, l := range logs {
+		if l.Address == vault && len(l.Topics) == 4 && l.Topics[0] == nullifierEventSig {
+			if l.Topics[1].Big().Cmp(vaultID) != 0 || l.Topics[2].Big().Cmp(tree) != 0 {
+				t.Errorf("Nullifier event for vault %s tree %s, want %s and %s", l.Topics[1].Big(), l.Topics[2].Big(), vaultID, tree)
+			}
+			logged = append(logged, l.Topics[3].Big())
+		}
+	}
+	if len(logged) != 1 || logged[0].Cmp(nf) != 0 {
+		t.Errorf("the settlement's Nullifier events %v, want one, %s", logged, nf)
+	}
 }
 
 // paymentVKSlot is the Verifier's slot for the Payment circuit's key
