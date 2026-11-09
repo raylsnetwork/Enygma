@@ -124,6 +124,12 @@ function checkStep(doc, i) {
   if (step === 'withdrawal') {
     for (const k of ['message', 'recipientField', 'amount', 'token', 'commitment0', 'pkSpend', 'saltChange', 'change', 'commitmentChange', 'skSpend', 'nullifier', 'globalIndex', 'valueIn']) assert.ok(inMath.has(k), `withdrawal shows ${k} inside a formula`);
   }
+  if (step === 'verdict') {
+    for (const k of ['payer', 'withdrawer', 'shieldAmount', 'withdrawAmount', 'poolLeft']) assert.ok(inMath.has(k), `verdict shows ${k} inside a formula`);
+  }
+  if (step === 'audit') {
+    for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment', 'changeAmount', 'withdrawn']) assert.ok(inMath.has(k), `audit shows ${k} inside a formula`);
+  }
   if (step === 'shield') {
     for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment']) assert.ok(inMath.has(k), `shield shows ${k} inside the commitment's formula`);
   }
@@ -169,7 +175,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'proof', 'discovery', 'withdrawal']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'proof', 'discovery', 'withdrawal', 'audit', 'verdict']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -361,6 +367,90 @@ test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount 
   assert.ok(amber.some(t => t.includes(call) && t.includes(v.msgSender)), 'her msg.sender shows amber in the ledger');
   const body = text(section(doc, 'withdrawal'));
   for (const s of ['Message = 1', 'mirror', 'G11', 'partialWithdrawWithRelayerFee']) assert.ok(body.includes(s), `the withdrawal names ${s}`);
+});
+
+test('the audit recovers Ana\'s view key from what she registered, opens her notes with it, and publishes nothing', () => {
+  const v = DATA.steps.audit.values, reg = DATA.steps.registration.values, keys = DATA.steps.keys.values;
+  const found = DATA.steps.discovery.values, exit = DATA.steps.withdrawal;
+  assert.deepStrictEqual(DATA.steps.audit.ledger, [], 'the audit only reads the chain');
+  // The ciphertexts are the ones Ana registered, and they open to her view key.
+  assert.strictEqual(v.capsule, reg['ana.capsule']);
+  assert.strictEqual(v.aesCt, reg['ana.aesCt']);
+  assert.strictEqual(v.aesCt, v.nonce + v.sealed.slice(2), 'aesAuditCt is nonce ‖ ct ‖ tag');
+  assert.strictEqual(v.seed, keys['ana.viewSeed'], 'the recovered seed is her view key\'s');
+  assert.strictEqual(v.ek, keys['ana.viewEk'], 'the recovered key is the one she registered');
+  assert.strictEqual(v.otherAuditor, 'refused', 'another auditor\'s key opens nothing');
+  // Her note, opened from the Payment event on the ledger.
+  assert.strictEqual(v.noteCapsule, found.capsule);
+  assert.strictEqual(v.noteEncTxData, found.encTxData);
+  assert.strictEqual(v.commitment, found.commitment);
+  assert.strictEqual(v.amount, found.amount);
+  assert.strictEqual(v.salt, found.salt);
+  assert.strictEqual(v.pkSpend, keys['ana.pkSpend'], 'the commitment is checked against her registered key');
+  // Her change, opened from the EncryptedNote event, agrees with the public amount.
+  const field = f => exit.ledger.filter(i => i.tx === 'EncryptedNote event' && i.field === f).map(i => i.value);
+  assert.deepStrictEqual(field('ciphertextI'), [v.changeCapsule]);
+  assert.deepStrictEqual(field('ciphertextII'), [v.changeSealed]);
+  assert.strictEqual(v.changeAmount, exit.values.change);
+  assert.strictEqual(v.withdrawn, exit.values.amount);
+  assert.strictEqual(BigInt(v.amount) - BigInt(v.withdrawn), BigInt(v.changeAmount), 'her note less the public amount is her change');
+  // The Sender's change has no ciphertext: their recovered key opens no Payment event.
+  assert.strictEqual(v.senderOpened, '0');
+  assert.ok(Number(v.scanned) >= 1);
+  const { doc } = open();
+  const body = text(section(doc, 'audit'));
+  for (const s of ['sk_spend', 'cannot spend', 'nullifier', 'never published']) assert.ok(body.includes(s), `the audit names ${s}`);
+});
+
+test('the last step\'s ledger shows who spent, but holds no amount besides the shield\'s and the withdrawal\'s, and never names Ana on the payment', () => {
+  const v = DATA.steps.verdict.values;
+  const { payment: pay, shield, withdrawal: exit, audit, keys, registration: reg } = DATA.steps;
+  assert.deepStrictEqual(DATA.steps.verdict.ledger, [], 'the verdict adds nothing: it reads the ledger');
+  const { doc } = open();
+  const names = steps(doc);
+  assert.strictEqual(names[names.length - 1], 'verdict', 'the verdict is the last step');
+  const all = names.flatMap(n => DATA.steps[n].ledger);
+  // Every amount on the ledger: the shield's, and the withdrawal's in its
+  // calldata and its event.
+  assert.deepStrictEqual(all.filter(i => /amount|value/i.test(i.field)).map(i => [i.tx, i.field, i.value]), [
+    ['depositV2 · Sender', 'amount', shield.values.amount],
+    ['partialWithdraw · Ana', 'amount', exit.values.amount],
+    ['PartialWithdrawal event', 'amount', exit.values.amount],
+  ], 'the only amounts on the ledger are the public two');
+  // No private amount sits under another field's name, in decimal or as a
+  // 32-byte word, and no note's opening does.
+  const values = new Set(all.map(i => i.value));
+  const word = x => BigInt(x).toString(16).padStart(64, '0');
+  for (const [what, x] of Object.entries({ 'Ana\'s note': pay.values.valueOut0, 'the Sender\'s change': pay.values.valueOut1, 'Ana\'s change': exit.values.change, 'the audited change': audit.values.changeAmount })) {
+    assert.ok(!values.has(x), `${what} (${x}) is not on the ledger`);
+    assert.ok(![...values].some(l => l.includes(word(x))), `${what} is not on the ledger as a 32-byte word`);
+  }
+  for (const x of [pay.values.saltOut0, pay.values.saltOut1, exit.values.saltIn, exit.values.saltChange, DATA.steps.discovery.values.plaintext]) {
+    assert.ok(![...values].some(l => l.includes(x)), `the opening ${x.slice(0, 20)}… is not on the ledger`);
+  }
+  // Who spent: the payment and the withdrawal each name their msg.sender.
+  assert.strictEqual(v.payer, pay.values.msgSender);
+  assert.strictEqual(v.payer, reg.values['sender.address'], 'the payer is the Sender');
+  assert.strictEqual(v.withdrawer, exit.values.msgSender);
+  assert.strictEqual(v.withdrawer, reg.values['ana.address'], 'the withdrawer is Ana');
+  assert.strictEqual(v.recipient, exit.values.recipient);
+  // To whom: nothing the payment published names Ana.
+  const payment = pay.ledger.map(i => i.value);
+  for (const x of [reg.values['ana.address'], keys.values['ana.pkSpend'], keys.values['ana.viewEk']]) {
+    assert.ok(!payment.some(l => l.includes(x)), `the payment does not name Ana (${x.slice(0, 20)}…)`);
+  }
+  // The public amounts the page reads off, and the pool left between them.
+  assert.strictEqual(v.shieldAmount, shield.values.amount);
+  assert.strictEqual(v.withdrawAmount, exit.values.amount);
+  assert.strictEqual(BigInt(v.poolLeft), BigInt(v.shieldAmount) - BigInt(v.withdrawAmount));
+  // The nullifiers and the note commitments the page points at are the ledger's.
+  for (const k of ['payNullifier', 'withdrawNullifier', 'commitmentOut0', 'commitmentOut1']) assert.ok(values.has(v[k]), `${k} is on the ledger`);
+  // The last step's page shows that ledger, whole.
+  for (let i = 1; i < names.length; i++) doc.getElementById('next').click();
+  assert.strictEqual(doc.querySelectorAll('#ledger li').length, all.length, 'the last step lists every public item');
+  assert.strictEqual([...doc.querySelectorAll('#ledger li .lf')].filter(f => f.textContent === 'amount').length, 3, 'three amount rows');
+  const body = text(section(doc, 'verdict'));
+  for (const s of ['who spent', 'to whom', 'how much', 'relayer', 'msg.sender', 'USDr', 'tags']) assert.ok(body.includes(s), `the verdict names ${s}`);
 });
 
 test('served by the demo, the primer steps through its run and links back to the demo', () => {

@@ -13,8 +13,9 @@ package tests
 // the Sender's payment to Ana (one Payment proof, sent from the Sender's own
 // account), its Groth16 proof opened up (L and the pairing check, and the
 // Verifier's answer), Ana's discovery of her note (her scan of the Payment
-// events), and her partial withdrawal from that note (the same Payment
-// circuit with Message = 1).
+// events), her partial withdrawal from that note (the same Payment circuit
+// with Message = 1), the auditor's recovery of her view key and opening of
+// her notes, and the observer's verdict (what the chain's bytes name).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
 // chain and a deployment, and the gnark server on :8082 for the payment's
@@ -112,7 +113,7 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "proof", "discovery", "withdrawal"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "proof", "discovery", "withdrawal", "audit", "verdict"}
 
 // shieldAmount is what the Sender shields: public RaylsERC20 the issuer
 // mints to them, deposited whole into one note.
@@ -149,7 +150,7 @@ var paymentPublic = []struct {
 }
 
 // shieldedNote is the opening of the Sender's shielded note.
-type shieldedNote struct{ commitment, salt, amount *big.Int }
+type shieldedNote struct{ commitment, salt, amount, block *big.Int }
 
 // provedPayment is the payment's proof and public inputs, as its calldata
 // carried them, and the block that settled it.
@@ -164,6 +165,24 @@ type provedPayment struct {
 type paidNote struct {
 	commitment, salt, amount, token *big.Int
 	block                           *big.Int
+	capsule, payload                []byte // the Payment event's ciphertexts, once the note is discovered
+}
+
+// exitedNote is Ana's withdrawal as it settled: what left the pool, her
+// change, and the ciphertexts published for it.
+type exitedNote struct {
+	amount, change, commitment, nullifier *big.Int
+	ctI, ctII                             []byte
+	tx                                    common.Hash
+	block                                 *big.Int
+}
+
+// noteOpening is one trial decryption of a note's ciphertexts: the shared
+// secret, the two HKDF outputs and the payload's parts. ok is false when
+// the AES-GCM tag does not check.
+type noteOpening struct {
+	ss, saltBytes, key, nonce, sealed, plain []byte
+	ok                                       bool
 }
 
 func TestProtocolPrimer(t *testing.T) {
@@ -343,6 +362,8 @@ func TestProtocolPrimer(t *testing.T) {
 	var proved *provedPayment
 	// discovered is Ana's note as her scan opened it, which she withdraws from.
 	var discovered *paidNote
+	// exit is Ana's settled withdrawal, whose change note the audit opens.
+	var exit *exitedNote
 
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
@@ -526,7 +547,7 @@ func TestProtocolPrimer(t *testing.T) {
 			"rp3": fmt.Sprint(poseidon.NROUNDSP[1]),
 			"rp5": fmt.Sprint(poseidon.NROUNDSP[3]),
 		}
-		shielded = &shieldedNote{commitment: commitment, salt: cdSalt, amount: cdAmount}
+		shielded = &shieldedNote{commitment: commitment, salt: cdSalt, amount: cdAmount, block: block}
 		label := "depositV2 · Sender"
 		data.Steps["shield"] = primerEntry{Values: v, Ledger: []ledgerItem{
 			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
@@ -930,16 +951,7 @@ func TestProtocolPrimer(t *testing.T) {
 
 		// Every Payment event EnygmaDvp has emitted, up to the payment's block:
 		// Ana's wallet cannot tell which is hers, so it reads them all.
-		logs, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{dvpAddr},
-			Topics: [][]common.Hash{{paymentEventSig}}, ToBlock: paid.block})
-		if err != nil {
-			t.Fatal(err)
-		}
-		logPtrs := make([]*types.Log, len(logs))
-		for i := range logs {
-			logPtrs[i] = &logs[i]
-		}
-		events := paymentEventsIn(t, logPtrs, dvpAddr)
+		events := paymentEventsUpTo(t, ctx, client, dvpAddr, paid.block)
 		var mine *dvpcore.OnChainErc20Event
 		for i := range events {
 			if events[i].Commitment.Cmp(paid.commitment) == 0 {
@@ -951,51 +963,20 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 		capsule, payload := mine.CipherText, mine.EncTxData
 
-		// open is one trial decryption, as Ana's wallet makes it, with the
-		// standard library: Decaps, HKDF-SHA256 to the key, AES-256-GCM open
-		// with no associated data. ok is false when the tag does not check.
-		type opening struct {
-			ss, saltBytes, key, nonce, sealed, plain []byte
-			ok                                       bool
-		}
-		open := func(dk *mlkem.DecapsulationKey768, capsule, payload []byte) opening {
-			t.Helper()
-			var got opening
-			if len(capsule) != mlkem.CiphertextSize768 || len(payload) < 12 {
-				return got // not an ML-KEM-768 capsule and a sealed payload: not anyone's note (the library's scan stops here instead; checked below)
-			}
-			ss, err := dk.Decapsulate(capsule)
-			if err != nil {
-				t.Fatalf("Decaps: %v", err)
-			}
-			got.ss = ss
-			if got.saltBytes, err = hkdf.Key(sha256.New, ss, nil, "note salt", 32); err != nil {
-				t.Fatal(err)
-			}
-			if got.key, err = hkdf.Key(sha256.New, ss, nil, "encryption key", 32); err != nil {
-				t.Fatal(err)
-			}
-			gcm := newGCM(t, got.key)
-			got.nonce, got.sealed = payload[:gcm.NonceSize()], payload[gcm.NonceSize():]
-			got.plain, err = gcm.Open(nil, got.nonce, got.sealed, nil)
-			got.ok = err == nil
-			return got
-		}
-
 		// The encryption, undone with Ana's view key: the capsule gives back
 		// the Sender's shared secret, whose HKDF outputs are the note's salt
 		// and the payload's key; the payload is token ‖ amount.
 		if len(capsule) != mlkem.CiphertextSize768 {
 			t.Errorf("capsule is %d bytes, want %d", len(capsule), mlkem.CiphertextSize768)
 		}
-		anaOpen := open(ana.view.DecapsKey, capsule, payload)
+		anaOpen := trialOpen(t, ana.view.DecapsKey, capsule, payload)
 		if !anaOpen.ok {
 			t.Fatal("Ana's view key does not open the Payment event addressed to her")
 		}
 		if len(anaOpen.ss) != mlkem.SharedKeySize || len(anaOpen.sealed) != 64+16 || len(anaOpen.plain) != 64 {
 			t.Errorf("ss %d bytes, ct‖tag %d, plaintext %d: want 32, 80 and 64", len(anaOpen.ss), len(anaOpen.sealed), len(anaOpen.plain))
 		}
-		token, amount := new(big.Int).SetBytes(anaOpen.plain[:32]), new(big.Int).SetBytes(anaOpen.plain[32:])
+		token, amount := anaOpen.tokenAmount()
 		if token.Cmp(paid.token) != 0 || amount.Cmp(paid.amount) != 0 {
 			t.Errorf("the payload opens to token %s, amount %s; the Sender paid token %s, amount %s", token, amount, paid.token, paid.amount)
 		}
@@ -1024,7 +1005,7 @@ func TestProtocolPrimer(t *testing.T) {
 		// that fails.
 		opened := 0
 		for _, e := range events {
-			if open(ana.view.DecapsKey, e.CipherText, e.EncTxData).ok {
+			if trialOpen(t, ana.view.DecapsKey, e.CipherText, e.EncTxData).ok {
 				opened++
 				if e.Commitment.Cmp(paid.commitment) != 0 {
 					t.Errorf("Ana's key opened the Payment event for %s, not hers", e.Commitment)
@@ -1036,7 +1017,7 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 		// Under any other key, her ciphertext fails too: the Sender's view key
 		// decapsulates it to another secret, and the tag does not check.
-		if senderTry := open(sender.view.DecapsKey, capsule, payload); senderTry.ok || bytes.Equal(senderTry.ss, anaOpen.ss) {
+		if senderTry := trialOpen(t, sender.view.DecapsKey, capsule, payload); senderTry.ok || bytes.Equal(senderTry.ss, anaOpen.ss) {
 			t.Error("the Sender's view key opens Ana's ciphertext")
 		}
 		// The client library's scan finds the same note, once.
@@ -1052,7 +1033,7 @@ func TestProtocolPrimer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		forgedOpen := open(ana.view.DecapsKey, capsule, forged)
+		forgedOpen := trialOpen(t, ana.view.DecapsKey, capsule, forged)
 		if !forgedOpen.ok {
 			t.Fatal("the forged payload, sealed under Ana's key, does not open")
 		}
@@ -1091,7 +1072,7 @@ func TestProtocolPrimer(t *testing.T) {
 			"opened":     fmt.Sprint(opened),
 			"forged":     claimed.String(),
 		}, Ledger: []ledgerItem{}}
-		discovered = &paidNote{commitment: commitment, salt: salt, amount: amount, token: token, block: paid.block}
+		discovered = &paidNote{commitment: commitment, salt: salt, amount: amount, token: token, block: paid.block, capsule: capsule, payload: payload}
 	})
 
 	check("withdrawal", "Ana's partial withdrawal from her discovered note: the Payment circuit with Message = 1, its amount and recipient public, her change a private note, and every equation holds on the run's values and the chain", func(t *testing.T) {
@@ -1335,7 +1316,345 @@ func TestProtocolPrimer(t *testing.T) {
 			"balanceBefore":    balanceBefore.String(),
 			"balanceAfter":     balanceAfter.String(),
 		}, Ledger: ledger}
+		exit = &exitedNote{amount: amount, change: change, commitment: c1, nullifier: nf, ctI: ctI, ctII: ctII, tx: mined.TxHash, block: block}
 	})
+
+	check("audit", "the auditor recovers Ana's view key from the UserRegistry's audit ciphertexts, opens her notes with it, and finds no ciphertext for the Sender's change", func(t *testing.T) {
+		if discovered == nil || exit == nil {
+			t.Fatal("no notes to audit: the discovery or withdrawal check did not pass")
+		}
+		sender, ana := users[0], users[1]
+		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
+
+		// All the auditor reads: what Ana registered, as the chain holds it.
+		capsule, aesCt, err := rpcore.LookupAuditCiphertexts(client, registryAddr, ana.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys, err := rpcore.LookupKeys(client, registryAddr, ana.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := rpcore.AuditorDecryptViewKey(auditor.DecapsKey, capsule, aesCt)
+		if err != nil {
+			t.Fatalf("the auditor cannot open Ana's audit ciphertexts: %v", err)
+		}
+
+		// The recovery, recomputed with the standard library: Decaps,
+		// HKDF-SHA256, then AES-256-GCM with the capsule as AAD.
+		ss, err := auditor.DecapsKey.Decapsulate(capsule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		k, err := hkdf.Key(sha256.New, ss, nil, auditHKDFInfo, 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gcm := newGCM(t, k)
+		nonce, sealed := aesCt[:gcm.NonceSize()], aesCt[gcm.NonceSize():]
+		seed, err := gcm.Open(nil, nonce, sealed, capsule)
+		if err != nil {
+			t.Fatalf("AES-GCM open: %v", err)
+		}
+		if !bytes.Equal(seed, recovered.Bytes()) || !bytes.Equal(seed, ana.view.DecapsKey.Bytes()) {
+			t.Errorf("the seed opened (%x) is not the library's, or not Ana's view key's", seed)
+		}
+		// The auditor's own check: the key it recovered is the one registered.
+		ek := recovered.EncapsulationKey().Bytes()
+		if !bytes.Equal(ek, keys.ViewKey) {
+			t.Error("the recovered view key is not the one the UserRegistry holds for Ana")
+		}
+		// The audit ciphertexts open for this auditor only.
+		other, err := rpcore.NewAuditorKeyPair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rpcore.AuditorDecryptViewKey(other.DecapsKey, capsule, aesCt); err == nil {
+			t.Error("another auditor's key opened Ana's audit ciphertexts")
+		}
+
+		// Her note, opened from the Payment event with the recovered key and
+		// checked against the commitment with her public, registered pk_spend.
+		note := trialOpen(t, recovered, discovered.capsule, discovered.payload)
+		if !note.ok {
+			t.Fatal("the recovered view key does not open the payment's note")
+		}
+		token, amount := note.tokenAmount()
+		salt := toField(note.saltBytes)
+		if token.Cmp(discovered.token) != 0 || amount.Cmp(discovered.amount) != 0 || salt.Cmp(discovered.salt) != 0 {
+			t.Errorf("the auditor opened (%s, %s, salt %s), Ana's note is (%s, %s, salt %s)", token, amount, salt, discovered.token, discovered.amount, discovered.salt)
+		}
+		commitment := poseidonOf(t, keys.SpendKey, salt, amount, token)
+		if commitment.Cmp(discovered.commitment) != 0 {
+			t.Errorf("Poseidon(registered pk_spend, salt, amount, token) = %s, the event's commitment %s", commitment, discovered.commitment)
+		}
+
+		// Her change, opened from the withdrawal's EncryptedNote ciphertexts.
+		// The auditor cross-checks it against the public amount; it cannot
+		// check it against C₁, whose salt needs her spend key.
+		changeOpen := trialOpen(t, recovered, exit.ctI, exit.ctII)
+		if !changeOpen.ok {
+			t.Fatal("the recovered view key does not open the change note's ciphertexts")
+		}
+		changeToken, changeAmount := changeOpen.tokenAmount()
+		if changeAmount.Cmp(exit.change) != 0 {
+			t.Errorf("the change note opens to %s, Ana kept %s", changeAmount, exit.change)
+		}
+		if got := new(big.Int).Sub(amount, exit.amount); got.Cmp(changeAmount) != 0 {
+			t.Errorf("her note less the public amount is %s, the change opened to %s", got, changeAmount)
+		}
+		if poseidonOf(t, keys.SpendKey, toField(changeOpen.saltBytes), changeAmount, changeToken).Cmp(exit.commitment) == 0 {
+			t.Error("the change commitment opens from the capsule's salt; the page says its salt needs sk_spend")
+		}
+
+		// The Sender's change is never published: the payment emits no
+		// EncryptedNote, and the Sender's own recovered key opens no Payment
+		// event, so the auditor has nothing of theirs to decrypt.
+		senderCapsule, senderAesCt, err := rpcore.LookupAuditCiphertexts(client, registryAddr, sender.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		senderKey, err := rpcore.AuditorDecryptViewKey(auditor.DecapsKey, senderCapsule, senderAesCt)
+		if err != nil {
+			t.Fatalf("the auditor cannot open the Sender's audit ciphertexts: %v", err)
+		}
+		events := paymentEventsUpTo(t, ctx, client, dvpAddr, discovered.block)
+		senderOpened := 0
+		for _, e := range events {
+			if trialOpen(t, senderKey, e.CipherText, e.EncTxData).ok {
+				senderOpened++
+			}
+		}
+		if senderOpened != 0 {
+			t.Errorf("the Sender's view key opened %d Payment events, want none", senderOpened)
+		}
+		payment, err := client.TransactionReceipt(ctx, common.HexToHash(data.Steps["payment"].Values["tx"]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range payment.Logs {
+			if len(l.Topics) > 0 && l.Topics[0] == encryptedNoteSig {
+				t.Error("the payment emitted an EncryptedNote event; the page says the Sender's change is never published")
+			}
+		}
+
+		data.Steps["audit"] = primerEntry{Values: map[string]string{
+			"address":       ana.addr.Hex(),
+			"capsule":       hexutil.Encode(capsule),
+			"aesCt":         hexutil.Encode(aesCt),
+			"ss":            hexutil.Encode(ss),
+			"auditKey":      hexutil.Encode(k),
+			"nonce":         hexutil.Encode(nonce),
+			"sealed":        hexutil.Encode(sealed),
+			"seed":          hexutil.Encode(seed),
+			"ek":            hexutil.Encode(ek),
+			"otherAuditor":  "refused",
+			"noteCapsule":   hexutil.Encode(discovered.capsule),
+			"noteEncTxData": hexutil.Encode(discovered.payload),
+			"noteSs":        hexutil.Encode(note.ss),
+			"pkSpend":       keys.SpendKey.String(),
+			"salt":          salt.String(),
+			"token":         token.String(),
+			"amount":        amount.String(),
+			"commitment":    commitment.String(),
+			"changeCapsule": hexutil.Encode(exit.ctI),
+			"changeSealed":  hexutil.Encode(exit.ctII),
+			"changeAmount":  changeAmount.String(),
+			"withdrawn":     exit.amount.String(),
+			"senderOpened":  fmt.Sprint(senderOpened),
+			"scanned":       fmt.Sprint(len(events)),
+		}, Ledger: []ledgerItem{}}
+	})
+
+	check("verdict", "every byte the payment and the withdrawal put on chain names who spent, but not whom the Sender paid, how much, or which note was spent", func(t *testing.T) {
+		if shielded == nil || paid == nil || discovered == nil || exit == nil {
+			t.Fatal("no story to judge: an earlier check did not pass")
+		}
+		sender, ana := users[0], users[1]
+		payValues, exitValues := data.Steps["payment"].Values, data.Steps["withdrawal"].Values
+		decimal := func(s string) *big.Int {
+			t.Helper()
+			x, ok := new(big.Int).SetString(s, 10)
+			if !ok {
+				t.Fatalf("%q is not a number", s)
+			}
+			return x
+		}
+		// hidden fails if b names any of xs, each a 32-byte word of its
+		// calldata or logs.
+		hidden := func(what string, b chainBytes, xs map[string]*big.Int) {
+			t.Helper()
+			for name, x := range xs {
+				if b.words[common.BigToHash(x)] {
+					t.Errorf("the %s's bytes on chain name %s (%s)", what, name, x)
+				}
+			}
+		}
+		anaAsWord, senderAsWord := new(big.Int).SetBytes(ana.addr.Bytes()), new(big.Int).SetBytes(sender.addr.Bytes())
+
+		// The payment names the Sender, and neither Ana, nor an amount, nor
+		// the note it spent. A word search of its nullifier shows the bytes
+		// searched are the transaction's.
+		payer, paidOnChain := chainBytesOf(t, ctx, client, common.HexToHash(payValues["tx"]))
+		if payer != sender.addr {
+			t.Errorf("the payment's msg.sender is %s, want the Sender's %s", payer.Hex(), sender.addr.Hex())
+		}
+		payNullifier := decimal(payValues["nullifier"])
+		if !paidOnChain.words[common.BigToHash(payNullifier)] {
+			t.Error("the payment's bytes do not hold its nullifier: the search reads the wrong bytes")
+		}
+		senderChange := new(big.Int).Sub(shielded.amount, paid.amount)
+		hidden("payment", paidOnChain, map[string]*big.Int{
+			"Ana's address":         anaAsWord,
+			"Ana's pk_spend":        ana.spend.PublicKey,
+			"the spent note":        shielded.commitment,
+			"the spent note's salt": shielded.salt,
+			"Ana's salt":            paid.salt,
+			"the change's salt":     decimal(payValues["saltOut1"]),
+			"the note's value":      shielded.amount,
+			"Ana's amount":          paid.amount,
+			"the Sender's change":   senderChange,
+		})
+		if bytes.Contains(paidOnChain.raw, ana.view.EncapsKey) {
+			t.Error("the payment's bytes on chain hold Ana's view key")
+		}
+
+		// The withdrawal names Ana and its public amount, and neither the
+		// Sender, nor what her note held, nor which note that was.
+		withdrawer, exitOnChain := chainBytesOf(t, ctx, client, exit.tx)
+		if withdrawer != ana.addr {
+			t.Errorf("the withdrawal's msg.sender is %s, want Ana's %s", withdrawer.Hex(), ana.addr.Hex())
+		}
+		if !exitOnChain.words[common.BigToHash(exit.amount)] || !exitOnChain.words[common.BigToHash(anaAsWord)] {
+			t.Error("the withdrawal's bytes do not hold its public amount and recipient: the search reads the wrong bytes")
+		}
+		hidden("withdrawal", exitOnChain, map[string]*big.Int{
+			"the Sender's address":  senderAsWord,
+			"the Sender's pk_spend": sender.spend.PublicKey,
+			"the note spent":        discovered.commitment,
+			"its salt":              discovered.salt,
+			"the note's value":      discovered.amount,
+			"Ana's change":          exit.change,
+			"the change's salt":     decimal(exitValues["saltChange"]),
+		})
+
+		// The one sum an observer can do: the pool holds what came in less
+		// what went out, as the vault's public balance says.
+		erc20 := bindContract(t, client, erc20Addr, loadOnchainABI(t, "RaylsERC20"))
+		balanceAt := func(block *big.Int) *big.Int {
+			t.Helper()
+			var got []any
+			if err := erc20.Call(&bind.CallOpts{BlockNumber: block, Context: ctx}, &got, "balanceOf", vaultAddr); err != nil {
+				t.Fatal(err)
+			}
+			return got[0].(*big.Int)
+		}
+		poolLeft := new(big.Int).Sub(balanceAt(exit.block), balanceAt(new(big.Int).Sub(shielded.block, big.NewInt(1))))
+		if want := new(big.Int).Sub(shielded.amount, exit.amount); poolLeft.Cmp(want) != 0 {
+			t.Errorf("the vault's balance grew by %s over the story, want %s", poolLeft, want)
+		}
+
+		data.Steps["verdict"] = primerEntry{Values: map[string]string{
+			"payer":             payer.Hex(),
+			"payNullifier":      payNullifier.String(),
+			"commitmentOut0":    payValues["commitmentOut0"],
+			"commitmentOut1":    payValues["commitmentOut1"],
+			"withdrawer":        withdrawer.Hex(),
+			"recipient":         exitValues["recipient"],
+			"withdrawNullifier": exit.nullifier.String(),
+			"shieldAmount":      shielded.amount.String(),
+			"withdrawAmount":    exit.amount.String(),
+			"poolLeft":          poolLeft.String(),
+		}, Ledger: []ledgerItem{}}
+	})
+}
+
+// chainBytes is everything a transaction put on the chain besides its
+// selector and event IDs: its calldata and its logs' topics and data. Both
+// are ABI-encoded in 32-byte words, so words holds each word whole; a run of
+// zeros across two words can't pass for a small number.
+type chainBytes struct {
+	raw   []byte
+	words map[common.Hash]bool
+}
+
+// chainBytesOf reads a mined transaction's sender and its chainBytes.
+func chainBytesOf(t *testing.T, ctx context.Context, client *ethclient.Client, hash common.Hash) (common.Address, chainBytes) {
+	t.Helper()
+	tx, _, err := client.TransactionByHash(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := client.TransactionReceipt(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := types.Sender(types.LatestSignerForChainID(tx.ChainId()), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := chainBytes{words: map[common.Hash]bool{}}
+	add := func(p []byte) {
+		b.raw = append(b.raw, p...)
+		for ; len(p) >= common.HashLength; p = p[common.HashLength:] {
+			b.words[common.BytesToHash(p[:common.HashLength])] = true
+		}
+	}
+	add(tx.Data()[4:])
+	for _, l := range receipt.Logs {
+		for _, topic := range l.Topics[1:] {
+			add(topic.Bytes())
+		}
+		add(l.Data)
+	}
+	return from, b
+}
+
+// trialOpen is one trial decryption of a note, as a wallet or the auditor
+// makes it, with the standard library: Decaps, HKDF-SHA256 to the salt and
+// the key, AES-256-GCM open with no associated data.
+func trialOpen(t *testing.T, dk *mlkem.DecapsulationKey768, capsule, payload []byte) noteOpening {
+	t.Helper()
+	var got noteOpening
+	if len(capsule) != mlkem.CiphertextSize768 || len(payload) < 12 {
+		return got // not an ML-KEM-768 capsule and a sealed payload: not anyone's note (the library's scan stops here instead; the discovery check shows it)
+	}
+	ss, err := dk.Decapsulate(capsule)
+	if err != nil {
+		t.Fatalf("Decaps: %v", err)
+	}
+	got.ss = ss
+	if got.saltBytes, err = hkdf.Key(sha256.New, ss, nil, "note salt", 32); err != nil {
+		t.Fatal(err)
+	}
+	if got.key, err = hkdf.Key(sha256.New, ss, nil, "encryption key", 32); err != nil {
+		t.Fatal(err)
+	}
+	gcm := newGCM(t, got.key)
+	got.nonce, got.sealed = payload[:gcm.NonceSize()], payload[gcm.NonceSize():]
+	got.plain, err = gcm.Open(nil, got.nonce, got.sealed, nil)
+	got.ok = err == nil
+	return got
+}
+
+// tokenAmount is the opened plaintext's token ‖ amount, 32 bytes each.
+func (o noteOpening) tokenAmount() (token, amount *big.Int) {
+	return new(big.Int).SetBytes(o.plain[:32]), new(big.Int).SetBytes(o.plain[32:])
+}
+
+// paymentEventsUpTo is every Payment event EnygmaDvp has emitted up to block.
+func paymentEventsUpTo(t *testing.T, ctx context.Context, client *ethclient.Client, dvp common.Address, block *big.Int) []dvpcore.OnChainErc20Event {
+	t.Helper()
+	logs, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{dvp},
+		Topics: [][]common.Hash{{paymentEventSig}}, ToBlock: block})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPtrs := make([]*types.Log, len(logs))
+	for i := range logs {
+		logPtrs[i] = &logs[i]
+	}
+	return paymentEventsIn(t, logPtrs, dvp)
 }
 
 // poseidonOf is Poseidon of xs, failing the test on an error.
