@@ -7,6 +7,8 @@
 //
 //   node scripts/primer_page.js            # the page, data block summarised
 //   node scripts/primer_page.js <step>     # one step's values and ledger, in full
+//   node scripts/primer_page.js --section <step>   # one step's <section>, numbered
+//   node scripts/primer_page.js --script   # the page's script (CHIPS, LIT, CIRCUIT), numbered
 
 const fs = require('fs');
 const path = require('path');
@@ -45,9 +47,32 @@ function stepData(page, step) {
   return JSON.stringify(data.steps[step], null, 1);
 }
 
-if (require.main === module) {
-  const page = fs.readFileSync(PRIMER, 'utf8');
-  console.log(process.argv[2] ? stepData(page, process.argv[2]) : summarise(page));
+// numbered returns lines[from..to] of the page, each with its line number in the file.
+function numbered(lines, from, to) {
+  return lines.slice(from, to + 1).map((l, i) => `${String(from + 1 + i).padStart(6)}\t${l}`).join('\n');
 }
 
-module.exports = { summarise, stepData, PRIMER };
+// sectionLines returns step's <section> in page, numbered as in the file.
+function sectionLines(page, step) {
+  const lines = page.split('\n');
+  const start = lines.findIndex(l => l.includes('<section') && l.includes(`data-step="${step}"`));
+  if (start < 0) throw new Error(`no section ${step}`);
+  return numbered(lines, start, lines.findIndex((l, i) => i > start && l.includes('</section>')));
+}
+
+// scriptLines returns the page's main <script>, the one after the data block,
+// numbered as in the file.
+function scriptLines(page) {
+  const lines = page.split('\n');
+  const block = lines.indexOf(OPEN);
+  const start = lines.findIndex((l, i) => i > block && l.trim() === '<script>');
+  return numbered(lines, start, lines.indexOf('</script>', start));
+}
+
+if (require.main === module) {
+  const page = fs.readFileSync(PRIMER, 'utf8');
+  const [arg, step] = process.argv.slice(2);
+  console.log(arg === '--section' ? sectionLines(page, step) : arg === '--script' ? scriptLines(page) : arg ? stepData(page, arg) : summarise(page));
+}
+
+module.exports = { summarise, stepData, sectionLines, scriptLines, PRIMER };

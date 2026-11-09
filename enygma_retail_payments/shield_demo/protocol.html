@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
-<!-- Read this page with `node scripts/primer_page.js`: the data block summarised, lines numbered as here (`node scripts/primer_page.js <step>` prints one step's values). -->
+<!-- Read this page with `node scripts/primer_page.js`: the data block summarised, lines numbered as here (`<step>` prints one step's values, `--section <step>` its markup, `--script` the script). Adding a step: a section.step here with its CHIPS and LIT entries; a check and a primerChecks entry in test/15_protocol_primer_test.go; the step list and a values test in scripts/protocol_primer_replay.test.js; the step's checks in HAND_CHECK.md's primer section. -->
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -125,8 +125,8 @@ h1 span { font:italic 400 16px var(--serif); color:var(--muted); margin-left:8px
 .step p { margin:6px 0; color:var(--text); }
 .step .lede { color:var(--text2); }
 math[display="block"] { margin:10px 0; font-size:17px; }
-/* Chrome's MathML ignores columnalign: an aligned table's names sit right, their equations left. */
-mtable.align mtd:first-child { text-align:right; }
+/* Chrome's MathML ignores columnalign: an aligned table's names sit right, their equations left. A cell holds block-level math, which plain text-align:right leaves at the left; -webkit-right moves it. */
+mtable.align mtd:first-child { text-align:right; text-align:-webkit-right; }
 mtable.align mtd:last-child { text-align:left; }
 /* …and rowspacing: the rows get their room from padding. */
 mtable.align mtd { padding:.25em 0; }

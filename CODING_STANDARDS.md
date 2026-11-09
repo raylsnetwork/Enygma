@@ -11,6 +11,8 @@ The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html
 - **Every function and event handler has a one-line comment** above it saying what it does, in the page's plain-English style; one comment may cover a run of related one-line definitions.
 - **Comments state what the code does now**, and change with it: a comment that describes an earlier version of its code is a finding.
 - **A security claim matches the deployed code.** Any text saying what a constraint or contract check stops names the mechanism by which the deployed circuit or contract stops it; a claim the code doesn't bear out, or a reason the code doesn't use, is a finding.
+- **A security claim states its reach.** A bound says whom it holds against (an honest sender, any payer), and a stated weakness gives its widest reach, read from the deployed code.
+- **The primer's "the run checked" matches a real assertion.** Text on the Protocol primer saying the run checked or found something matches an assertion in `TestProtocolPrimer`: a sentence with no such assertion is a finding.
 - **Engine and service JSON is read for its real shape.** A list field may be absent (Go's `omitempty` drops an empty list), so lists are read as `x || []`. A service body with bare big numbers (the gnark server's field elements) goes through the hop panel's `body()`, which keeps them digit for digit, never plain `JSON.parse` into numbers.
 
 ## Tests and checks
