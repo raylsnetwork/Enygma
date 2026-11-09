@@ -1,3 +1,5 @@
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
@@ -17,3 +19,10 @@ repos:
         entry: node scripts/check_page_scripts.js
         language: system
         files: '\.html$'
+      - id: merged-branch
+        name: branch's PR not already merged
+        entry: scripts/refuse_merged_branch.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
