@@ -70,7 +70,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop shield-demo-restart shield-gnark-restart \
+	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-gnark-restart \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -212,6 +212,18 @@ shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 3
 # run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
 # demo binary rebuilt: this rebuilds it and relaunches it on the running stack,
 # with that demo's -logs dir, detached as run.sh starts it.
+# The suite runs first so the primer's scans cover other payments: a fresh
+# chain holds only the story's own, and the replay check refuses that block.
+PRIMER_REFRESH_SKIP := TestRetailThroughput|TestRetailLoad|TestRetailScanRate|TestRetailChainTPS|TestShieldDemoScenario|TestShieldDemoWalkthrough|TestProtocolPrimer$$
+primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewrites the primer's data block); prints pass/fail/skip counts, stops the stack
+	@$(MAKE) --no-print-directory shield-stack
+	@log=$$(mktemp -t primer_refresh); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
+	go test -count=1 -v . -timeout 900s -skip '$(PRIMER_REFRESH_SKIP)' >$$log 2>&1 || status=1; \
+	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
+	grep -E '^--- (FAIL|SKIP)' $$log; \
+	if [ $$status = 0 ]; then go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
+	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; exit $$status
+
 shield-demo-restart: ## Rebuild the shield demo and restart it on the running run.sh stack (after an engine change)
 	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
 	logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); \
