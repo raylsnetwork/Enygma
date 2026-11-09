@@ -11,7 +11,9 @@ package tests
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
 // auditor's keys, the registration of both users, the Sender's shield, and
 // the Sender's payment to Ana (one Payment proof, sent from the Sender's own
-// account), and Ana's discovery of her note (her scan of the Payment events).
+// account), its Groth16 proof opened up (L and the pairing check, and the
+// Verifier's answer), and Ana's discovery of her note (her scan of the
+// Payment events).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
 // chain and a deployment, and the gnark server on :8082 for the payment's
@@ -34,6 +36,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"math/bits"
 	"os"
 	"regexp"
 	"slices"
@@ -44,6 +47,9 @@ import (
 
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
+	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr/fft"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -105,7 +111,7 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "discovery"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "proof", "discovery"}
 
 // shieldAmount is what the Sender shields: public RaylsERC20 the issuer
 // mints to them, deposited whole into one note.
@@ -139,6 +145,14 @@ var paymentPublic = []struct {
 
 // shieldedNote is the opening of the Sender's shielded note.
 type shieldedNote struct{ commitment, salt, amount *big.Int }
+
+// provedPayment is the payment's proof and public inputs, as its calldata
+// carried them, and the block that settled it.
+type provedPayment struct {
+	proof     SnarkProof
+	statement []*big.Int
+	block     *big.Int
+}
 
 // paidNote is Ana's note as the payment made it: its commitment, the
 // Sender's view of its opening, and the block that settled it.
@@ -320,6 +334,8 @@ func TestProtocolPrimer(t *testing.T) {
 	// is Ana's note, which the payment made and her discovery finds.
 	var shielded *shieldedNote
 	var paid *paidNote
+	// proved is the payment's proof, which the proof check verifies.
+	var proved *provedPayment
 
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
@@ -792,6 +808,133 @@ func TestProtocolPrimer(t *testing.T) {
 		)
 		data.Steps["payment"] = primerEntry{Values: v, Ledger: ledger}
 		paid = &paidNote{commitment: c0, salt: res.SaltB, amount: valuesOut[0], token: token, block: block}
+		proved = &provedPayment{proof: cd.Proof, statement: st, block: block}
+	})
+
+	check("proof", "L = IC₀ + Σ xᵢ·ICᵢ from the verifying key and the payment's public inputs, e(A, B) = e(α, β)·e(L, γ)·e(C, δ), and the Verifier's verifyProof answers true", func(t *testing.T) {
+		if proved == nil {
+			t.Fatal("no payment proof: the payment check did not pass")
+		}
+		vk := loadPaymentVK(t)
+		if len(vk.ic) != len(proved.statement)+1 {
+			t.Fatalf("the verifying key has %d IC points for %d public inputs", len(vk.ic), len(proved.statement))
+		}
+
+		// The QAP's domain and the proving key's sizes, read from the proving
+		// key the gnark server proves with. Its α, β and δ are the verifying
+		// key's: the two halves of one setup.
+		pk := readPaymentPK(t)
+		n := pk.domain.Cardinality
+		omega := pk.domain.Generator
+		var omegaPow fr.Element
+		if omegaPow.Exp(omega, new(big.Int).SetUint64(n)); !omegaPow.IsOne() {
+			t.Error("ω^n ≠ 1")
+		}
+		if omegaPow.Exp(omega, new(big.Int).SetUint64(n/2)); omegaPow.IsOne() {
+			t.Error("ω^(n/2) = 1: ω is not a primitive n-th root of unity")
+		}
+		if n&(n-1) != 0 {
+			t.Errorf("the domain has %d points, not a power of 2", n)
+		}
+		if !pk.alpha.Equal(&vk.alpha) || !pk.beta2.Equal(&vk.beta) || !pk.delta2.Equal(&vk.delta) {
+			t.Error("the proving key's α, β, δ are not the verifying key's")
+		}
+		if pk.commitments != 0 || pk.nbWires != uint64(len(pk.k)+len(vk.ic)) {
+			t.Errorf("wires %d = private %d + public and one %d, with %d commitments: want the sum and none", pk.nbWires, len(pk.k), len(vk.ic), pk.commitments)
+		}
+
+		// L = IC₀ + Σ xᵢ·ICᵢ, the public inputs folded into one G1 point.
+		xs := proved.statement
+		var acc bn254.G1Jac
+		acc.FromAffine(&vk.ic[0])
+		for i, x := range xs {
+			inField(t, fmt.Sprintf("x%d", i+1), x)
+			var term bn254.G1Jac
+			term.ScalarMultiplication(new(bn254.G1Jac).FromAffine(&vk.ic[i+1]), x)
+			acc.AddAssign(&term)
+		}
+		var L bn254.G1Affine
+		L.FromJacobian(&acc)
+
+		// The proof, as the payment's calldata carried it.
+		A, B, C := g1Of(proved.proof.A), g2Of(proved.proof.B), g1Of(proved.proof.C)
+		for name, ok := range map[string]bool{"A": A.IsOnCurve() && A.IsInSubGroup(), "B": B.IsOnCurve() && B.IsInSubGroup(), "C": C.IsOnCurve() && C.IsInSubGroup()} {
+			if !ok {
+				t.Errorf("%s is not a point of its prime-order group", name)
+			}
+		}
+
+		// The pairing check, both sides computed: e(A, B) and
+		// e(α, β)·e(L, γ)·e(C, δ).
+		lhs, err := bn254.Pair([]bn254.G1Affine{A}, []bn254.G2Affine{B})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rhs, err := bn254.Pair([]bn254.G1Affine{vk.alpha, L, C}, []bn254.G2Affine{vk.beta, vk.gamma, vk.delta})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !lhs.Equal(&rhs) {
+			t.Error("e(A, B) ≠ e(α, β)·e(L, γ)·e(C, δ)")
+		}
+		// With one public input changed, L moves and the equation fails.
+		var Lbad bn254.G1Affine
+		Lbad.Add(&L, &vk.ic[1+layout.PaymentNullifiersOffset])
+		if bad, _ := bn254.Pair([]bn254.G1Affine{vk.alpha, Lbad, C}, []bn254.G2Affine{vk.beta, vk.gamma, vk.delta}); lhs.Equal(&bad) {
+			t.Error("the pairing check holds with Nullifier + 1")
+		}
+
+		// The Verifier on chain, asked about the same proof and inputs.
+		verifierAddr := common.HexToAddress(receipts["Verifier"].ContractAddress)
+		verifier := bindContract(t, client, verifierAddr, loadOnchainABI(t, "Verifier"))
+		ask := func(st []*big.Int) bool {
+			t.Helper()
+			var out []any
+			if err := verifier.Call(&bind.CallOpts{BlockNumber: proved.block}, &out, "verifyProof", big.NewInt(paymentVKSlot), proved.proof, st); err != nil {
+				t.Fatalf("verifyProof: %v", err)
+			}
+			return out[0].(bool)
+		}
+		accepted := ask(xs)
+		if !accepted {
+			t.Error("verifyProof(0, π, x) = false for the settled payment")
+		}
+		tampered := slices.Clone(xs)
+		tampered[layout.PaymentNullifiersOffset] = new(big.Int).Add(xs[layout.PaymentNullifiersOffset], big.NewInt(1))
+		acceptedTampered := ask(tampered)
+		if acceptedTampered {
+			t.Error("verifyProof accepts the proof with Nullifier + 1")
+		}
+
+		v := map[string]string{
+			"n":           fmt.Sprint(n),
+			"log2n":       fmt.Sprint(bits.TrailingZeros64(n)),
+			"halfN":       fmt.Sprint(n / 2),
+			"omega":       omega.String(),
+			"nbWires":     fmt.Sprint(pk.nbWires),
+			"nbPrivate":   fmt.Sprint(len(pk.k)),
+			"nbPublic":    fmt.Sprint(len(xs)),
+			"alpha":       g1String(vk.alpha),
+			"beta":        g2String(vk.beta),
+			"gamma":       g2String(vk.gamma),
+			"delta":       g2String(vk.delta),
+			"L":           g1String(L),
+			"A":           g1String(A),
+			"B":           g2String(B),
+			"C":           g1String(C),
+			"vkSlot":      fmt.Sprint(paymentVKSlot),
+			"verifier":    verifierAddr.Hex(),
+			"verifyProof": fmt.Sprint(accepted),
+			"tampered":    fmt.Sprint(acceptedTampered),
+		}
+		for i := range vk.ic {
+			v[fmt.Sprintf("ic%d", i)] = g1String(vk.ic[i])
+		}
+		for i, in := range paymentPublic {
+			v[fmt.Sprintf("x%d", i+1)] = xs[in.offset].String()
+			v[fmt.Sprintf("x%d.name", i+1)] = in.name
+		}
+		data.Steps["proof"] = primerEntry{Values: v, Ledger: []ledgerItem{}}
 	})
 
 	check("discovery", "Ana trial-decrypts every Payment event's ciphertext with her view key, opens exactly her note, and its opening hashes to its commitment", func(t *testing.T) {
@@ -965,6 +1108,130 @@ func TestProtocolPrimer(t *testing.T) {
 			"forged":     claimed.String(),
 		}, Ledger: []ledgerItem{}}
 	})
+}
+
+// paymentVKSlot is the Verifier's slot for the Payment circuit's key
+// (Erc20CoinVault.VK_ID_ERC20_JOINSPLIT; scripts/cmd/init registers
+// build/Payment.json first).
+const paymentVKSlot = 0
+
+// paymentVK is the Payment circuit's Groth16 verifying key.
+type paymentVK struct {
+	alpha              bn254.G1Affine
+	beta, gamma, delta bn254.G2Affine
+	ic                 []bn254.G1Affine
+}
+
+// loadPaymentVK reads build/Payment.json, the verifying key init registered
+// with the Verifier (G2 coordinates in EIP-197 order: imaginary first).
+func loadPaymentVK(t *testing.T) paymentVK {
+	t.Helper()
+	raw, err := os.ReadFile("../build/Payment.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j struct {
+		Alpha []string   `json:"vk_alpha_1"`
+		Beta  [][]string `json:"vk_beta_2"`
+		Gamma [][]string `json:"vk_gamma_2"`
+		Delta [][]string `json:"vk_delta_2"`
+		IC    [][]string `json:"IC"`
+	}
+	if err := json.Unmarshal(raw, &j); err != nil {
+		t.Fatal(err)
+	}
+	// num parses a decimal coordinate.
+	num := func(s string) *big.Int {
+		n, ok := new(big.Int).SetString(s, 10)
+		if !ok {
+			t.Fatalf("bad coordinate %q", s)
+		}
+		return n
+	}
+	g1 := func(p []string) bn254.G1Affine { return g1Of(G1Point{X: num(p[0]), Y: num(p[1])}) }
+	g2 := func(p [][]string) bn254.G2Affine {
+		return g2Of(G2Point{X: [2]*big.Int{num(p[0][0]), num(p[0][1])}, Y: [2]*big.Int{num(p[1][0]), num(p[1][1])}})
+	}
+	vk := paymentVK{alpha: g1(j.Alpha), beta: g2(j.Beta), gamma: g2(j.Gamma), delta: g2(j.Delta)}
+	for _, p := range j.IC {
+		vk.ic = append(vk.ic, g1(p))
+	}
+	return vk
+}
+
+// paymentPK is what the primer reads of the Payment circuit's proving key:
+// the QAP's evaluation domain, the α, β, δ it shares with the verifying
+// key, the private wires' K points, the wire count and the number of
+// commitment keys (gnark's commitment extension; none here).
+type paymentPK struct {
+	domain        fft.Domain
+	alpha         bn254.G1Affine
+	beta2, delta2 bn254.G2Affine
+	k             []bn254.G1Affine
+	nbWires       uint64
+	commitments   uint32
+}
+
+// readPaymentPK decodes the gnark server's proving key
+// (gnark_circuits/scripts/keys/PaymentPK.key) as far as the commitment-key
+// count. The field order copies gnark's ProvingKey.writeTo (backend/groth16/
+// bn254/marshal.go): the test module has gnark-crypto but not gnark. A
+// layout change would fail the Z-count check here and the α, β, δ check in
+// the proof check, not pass silently.
+func readPaymentPK(t *testing.T) paymentPK {
+	t.Helper()
+	f, err := os.Open("../gnark_circuits/scripts/keys/PaymentPK.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var pk paymentPK
+	if _, err := pk.domain.ReadFrom(f); err != nil {
+		t.Fatalf("the proving key's domain: %v", err)
+	}
+	var beta1, delta1 bn254.G1Affine
+	var a, b, z []bn254.G1Affine
+	var b2 []bn254.G2Affine
+	var nbInfA, nbInfB uint64
+	var infA, infB []bool
+	dec := bn254.NewDecoder(f)
+	for _, v := range []any{&pk.alpha, &beta1, &delta1, &a, &b, &z, &pk.k, &pk.beta2, &pk.delta2, &b2, &pk.nbWires, &nbInfA, &nbInfB, &infA, &infB, &pk.commitments} {
+		if err := dec.Decode(v); err != nil {
+			t.Fatalf("the proving key: %v", err)
+		}
+	}
+	if uint64(len(z)) != pk.domain.Cardinality-1 {
+		t.Errorf("the proving key has %d Z points for a domain of %d", len(z), pk.domain.Cardinality)
+	}
+	return pk
+}
+
+// g1Of and g2Of turn the ABI's points into gnark-crypto's (a G2 coordinate
+// is [imaginary, real], as EIP-197 orders it).
+func g1Of(p G1Point) bn254.G1Affine {
+	var q bn254.G1Affine
+	q.X.SetBigInt(p.X)
+	q.Y.SetBigInt(p.Y)
+	return q
+}
+
+func g2Of(p G2Point) bn254.G2Affine {
+	var q bn254.G2Affine
+	q.X.A1.SetBigInt(p.X[0])
+	q.X.A0.SetBigInt(p.X[1])
+	q.Y.A1.SetBigInt(p.Y[0])
+	q.Y.A0.SetBigInt(p.Y[1])
+	return q
+}
+
+// g1String and g2String show a point as the primer does: (x, y), a G2
+// coordinate as re + im·u in 𝔽_q[u]/(u² + 1).
+func g1String(p bn254.G1Affine) string {
+	return fmt.Sprintf("(%s, %s)", p.X.String(), p.Y.String())
+}
+
+func g2String(p bn254.G2Affine) string {
+	return fmt.Sprintf("(%s + %s·u, %s + %s·u)", p.X.A0.String(), p.X.A1.String(), p.Y.A0.String(), p.Y.A1.String())
 }
 
 // paymentEventsIn decodes EnygmaDvp's Payment events (vaultId and the
