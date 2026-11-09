@@ -115,6 +115,9 @@ function checkStep(doc, i) {
   if (step === 'payment') {
     for (const k of ['commitmentIn', 'nullifier', 'globalIndex', 'commitmentOut0', 'commitmentOut1', 'valueIn', 'valueOut0', 'valueOut1', 'root']) assert.ok(inMath.has(k), `payment shows ${k} inside a formula`);
   }
+  if (step === 'proof') {
+    for (const k of ['L', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'n', 'omega', 'nbWires', 'nbPublic', 'nbPrivate', 'verifyProof']) assert.ok(inMath.has(k), `proof shows ${k} inside a formula`);
+  }
   if (step === 'discovery') {
     for (const k of ['pkSpend', 'salt', 'saltBytes', 'amount', 'token', 'commitment', 'scanned', 'opened']) assert.ok(inMath.has(k), `discovery shows ${k} inside a formula`);
   }
@@ -163,7 +166,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'discovery']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'proof', 'discovery']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -252,6 +255,35 @@ test('the payment\'s ledger entries are its public inputs, the nullifier, the tw
   for (let i = 0; i < 4; i++) doc.getElementById('next').click();
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes('payment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
+});
+
+test('the proof step folds the payment\'s public inputs into L, and the Verifier accepted the payment\'s proof and refused it with a tampered input', () => {
+  const v = DATA.steps.proof.values, pay = DATA.steps.payment;
+  // Verifying is a view call: nothing new on the ledger.
+  assert.deepStrictEqual(DATA.steps.proof.ledger, [], 'verifying publishes nothing');
+  // x₁…x₇ are the payment's public inputs, in the statement's order.
+  const pubs = pay.ledger.filter(i => i.tx === 'payment · public inputs');
+  PUBLIC.forEach((name, i) => {
+    assert.strictEqual(v[`x${i + 1}.name`], name);
+    assert.strictEqual(v[`x${i + 1}`], pubs[i].value, `x${i + 1} is the payment's ${name}`);
+  });
+  // The verifying key: IC₀ and one IC point per public input.
+  assert.strictEqual(v.nbPublic, String(PUBLIC.length));
+  for (let i = 0; i <= PUBLIC.length; i++) assert.match(v[`ic${i}`], /^\(\d+, \d+\)$/, `IC${i} is a G1 point`);
+  assert.ok(!(`ic${PUBLIC.length + 1}` in v), 'no IC point past the public inputs');
+  for (const k of ['alpha', 'L', 'A', 'C']) assert.match(v[k], /^\(\d+, \d+\)$/, `${k} is a G1 point`);
+  for (const k of ['beta', 'gamma', 'delta', 'B']) assert.match(v[k], /^\(\d+ \+ \d+·u, \d+ \+ \d+·u\)$/, `${k} is a G2 point`);
+  // The QAP's domain: n = 2^log2n points, holding between n/2 and n constraints.
+  assert.strictEqual(BigInt(v.n), 1n << BigInt(v.log2n));
+  assert.strictEqual(BigInt(v.halfN) * 2n, BigInt(v.n));
+  assert.strictEqual(Number(v.nbWires), 1 + Number(v.nbPublic) + Number(v.nbPrivate), 'm = 1 + public + private');
+  // The Verifier's answers: true for the settled proof, false with Nullifier + 1.
+  assert.strictEqual(v.verifyProof, 'true');
+  assert.strictEqual(v.tampered, 'false');
+  assert.strictEqual(v.vkSlot, '0');
+  const { doc } = open();
+  const body = text(section(doc, 'proof'));
+  for (const s of ['R1CS', 'QAP', 'toxic waste', 'single', 'ceremony', 'one honest participant', 'gnark server', 'generic group', 'zero-knowledge']) assert.ok(body.includes(s), `the proof step names ${s}`);
 });
 
 test('Ana\'s discovery opens the Payment event addressed to her, its opening hashes to her commitment, and her scan publishes nothing', () => {
