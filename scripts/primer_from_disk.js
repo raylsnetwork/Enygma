@@ -12,6 +12,10 @@
 // Then, at a 390 px phone width, it measures each diagram's smallest rendered
 // label (an SVG <text>'s font size times its <svg>'s scale) and exits 1 when
 // one is under MIN_LABEL_PX: a diagram scaled down until it can't be read.
+// With every step's chips drawn, it also exits 1 on a layout fault: two chips
+// overlapping, a chip outside every wallet and contract box, a label past its
+// chip or box, a MathML table cell drawn over the next one, or a table's
+// first column not sitting right.
 //
 //   (cd scripts && npm ci)   # once: ws comes with jsdom, make page-check's dependency
 //   node scripts/primer_from_disk.js [outdir]
@@ -45,6 +49,43 @@ const LABELS = `(() => Object.fromEntries([...document.querySelectorAll('svg[id]
   }
   return [svg.id, min];
 })))()`;
+
+// LAYOUT lists the page's layout faults, the chips measured in the SVG's own
+// units so the animation and the width don't move them.
+const LAYOUT = `(() => {
+  const faults = [];
+  const chips = [...document.querySelectorAll('#flow .chip')].map(c => {
+    const m = c.transform.baseVal[0].matrix, b = c.querySelector('rect').getBBox();
+    return { name: c.textContent + ' (' + c.dataset.step + ')', left: m.e, top: m.f, right: m.e + b.width, bottom: m.f + b.height };
+  });
+  const nodes = [...document.querySelectorAll('#flow .node rect')].map(n => n.getBBox());
+  chips.forEach((chip, i) => {
+    if (!nodes.some(n => chip.left >= n.x && chip.top >= n.y && chip.right <= n.x + n.width && chip.bottom <= n.y + n.height)) faults.push('chip ' + chip.name + ' is outside every box');
+    for (const other of chips.slice(i + 1)) if (chip.left < other.right && other.left < chip.right && chip.top < other.bottom && other.top < chip.bottom) faults.push('chips ' + chip.name + ' and ' + other.name + ' overlap');
+  });
+  for (const g of document.querySelectorAll('#flow .chip, #flow .node, #circuit .witness, #circuit .gate, #circuit .pubin, #circuit .verifier')) {
+    const box = g.querySelector('rect').getBBox();
+    for (const t of g.querySelectorAll('text')) {
+      const b = t.getBBox();
+      if (b.x < box.x || b.x + b.width > box.x + box.width || b.y < box.y || b.y + b.height > box.y + box.height) faults.push('label ' + t.textContent.slice(0, 30) + ' is past its box');
+    }
+  }
+  for (const tr of document.querySelectorAll('section.step mtr')) {
+    [...tr.children].forEach((td, i) => {
+      const next = tr.children[i + 1];
+      if (!next) return;
+      const right = Math.max(0, ...[...td.querySelectorAll('*')].map(e => e.getBoundingClientRect().right));
+      if (right > next.getBoundingClientRect().left + 1) faults.push(tr.closest('section').id + ': a table cell is over the next (' + tr.textContent.slice(0, 40) + ')');
+    });
+  }
+  for (const tr of document.querySelectorAll('mtable.align > mtr')) {
+    const td = tr.children[0];
+    if (tr.children.length < 2 || !td.childElementCount) continue;
+    const contentRight = Math.max(...[...td.children].map(e => e.getBoundingClientRect().right));
+    if (Math.abs(td.getBoundingClientRect().right - contentRight) > 1.5) faults.push(tr.closest('section').id + ': a first column does not sit right (' + tr.textContent.slice(0, 40) + ')');
+  }
+  return faults;
+})()`;
 
 // STATE is what the stepper shows, read in the page.
 const STATE = `(() => ({
@@ -115,6 +156,7 @@ const STATE = `(() => ({
     result.phone = { scrollWidth: await evaluate('document.documentElement.scrollWidth'), innerWidth: await evaluate('innerWidth'), labels: await evaluate(LABELS) };
     result.screenshots.push(await shot('primer-from-disk-phone.png'));
     result.tooSmall = Object.entries(result.phone.labels).filter(([, m]) => m.px < MIN_LABEL_PX).map(([svg, m]) => `${svg}: ${m.px} px ("${m.text}")`);
+    result.layout = await evaluate(LAYOUT);
 
     result.network = events.filter(e => e.method === 'Network.requestWillBeSent').map(e => e.params.request.url.slice(0, 120));
     result.console = events.filter(e => e.method === 'Runtime.consoleAPICalled')
@@ -126,6 +168,10 @@ const STATE = `(() => ({
     ws.close();
     if (result.tooSmall.length) {
       console.error(`labels under ${MIN_LABEL_PX} px at 390 px wide: ${result.tooSmall.join('; ')}`);
+      process.exitCode = 1;
+    }
+    if (result.layout.length) {
+      console.error(`layout faults: ${result.layout.join('; ')}`);
       process.exitCode = 1;
     }
   } finally {

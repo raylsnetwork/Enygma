@@ -1,4 +1,6 @@
-// Package core re-exports payment symbols from src/core/payment.
+// Package core re-exports payment symbols from src/core/payment, which
+// re-exports most of them from enygma_dvp/src/core (utils.go has the KEM,
+// HKDF and AES-GCM; scan.go the note scan).
 package core
 
 import pay "github.com/raylsnetwork/enygma_retail_payments/src/core/payment"

@@ -81,8 +81,7 @@ test('a script syntax error still fails', () => {
   assert.match(r.stderr, /<script> at line 1: SyntaxError/);
 });
 
-// MathML that Chrome's MathML Core drops without an error, each caught by
-// hand in Chrome first (HAND_CHECK.md, Protocol primer).
+// MathML that Chrome's MathML Core drops without an error.
 const math = body => `<html><body>\n<math>${body}</math>\n</body></html>`;
 
 test('a mathvariant other than normal fails, naming the line and the fix', () => {
@@ -114,6 +113,16 @@ test('rowspacing on an mtable fails: Chrome ignores it', () => {
   const r = check(math('<mtable class="align" rowspacing="0.5em"><mtr><mtd><mi>a</mi></mtd></mtr></mtable>'));
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /line 2: rowspacing.*CSS/);
+});
+
+test('a ‖ operator that may stretch fails: Chrome draws it as a tall fence', () => {
+  const r = check(math('<mi>a</mi><mo>‖</mo><mi>b</mi><mo lspace="0.2em">‖</mo><mi>c</mi>'));
+  assert.notStrictEqual(r.status, 0);
+  assert.strictEqual(r.stderr.match(/line 2: ‖.*stretchy="false"/g).length, 2, 'both operators are named');
+});
+
+test('a ‖ operator with stretchy="false" passes', () => {
+  assert.strictEqual(check(math('<mi>a</mi><mo stretchy="false" lspace="0.25em">‖</mo><mi>b</mi>')).status, 0);
 });
 
 test('MathML Chrome draws passes: mathvariant="normal", columnalign with class "align", and markup in a script or comment', () => {
