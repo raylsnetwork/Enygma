@@ -318,7 +318,7 @@ test('Ana\'s discovery opens the Payment event addressed to her, its opening has
   assert.strictEqual(BigInt(v.salt), BigInt(v.saltBytes) % BigInt(DATA.steps.keys.values.p), 'salt = HKDF output mod p');
   // Exactly one of the events scanned opened; a forged amount was refused.
   assert.strictEqual(v.opened, '1');
-  assert.ok(Number(v.scanned) >= 1);
+  assert.ok(Number(v.scanned) >= 2, 'the scan covered another Payment event: refresh the block with make primer-refresh');
   assert.notStrictEqual(v.forged, v.amount);
   const { doc } = open();
   const body = text(section(doc, 'discovery'));
@@ -396,7 +396,7 @@ test('the audit recovers Ana\'s view key from what she registered, opens her not
   assert.strictEqual(BigInt(v.amount) - BigInt(v.withdrawn), BigInt(v.changeAmount), 'her note less the public amount is her change');
   // The Sender's change has no ciphertext: their recovered key opens no Payment event.
   assert.strictEqual(v.senderOpened, '0');
-  assert.ok(Number(v.scanned) >= 1);
+  assert.ok(Number(v.scanned) >= 2, 'the scan covered another Payment event: refresh the block with make primer-refresh');
   const { doc } = open();
   const body = text(section(doc, 'audit'));
   for (const s of ['sk_spend', 'cannot spend', 'nullifier', 'never published']) assert.ok(body.includes(s), `the audit names ${s}`);

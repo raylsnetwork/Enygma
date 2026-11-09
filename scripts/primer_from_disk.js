@@ -11,7 +11,9 @@
 //
 // At 1200 × 785, with the last step scrolled into view as Next leaves it, it
 // exits 1 when the page or a diagram's panel scrolls sideways, the stage is
-// clipped or ends past the window, or the ledger is left under MIN_LEDGER_PX.
+// clipped or ends past the window, the ledger is left under MIN_LEDGER_PX, or a
+// formula's value runs past its grey box with no value over MAX_SCROLLING_VALUE
+// characters in its row to excuse it: a 77-digit value may scroll, an account may not.
 //
 // Then, at a 390 px phone width, it measures each diagram's smallest rendered
 // label (an SVG <text>'s font size times its <svg>'s scale) and exits 1 when
@@ -42,6 +44,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const MIN_LABEL_PX = 7;
 // MIN_LEDGER_PX is the least height, at 1200 × 785, the diagram and stepper may leave the ledger.
 const MIN_LEDGER_PX = 120;
+// MAX_SCROLLING_VALUE is the longest value, in characters, that must still fit
+// its formula's box (an account is 42); a longer one excuses its row.
+const MAX_SCROLLING_VALUE = 44;
 
 // LABELS is, per <svg> with an id, its smallest drawn label's rendered size
 // in px, and that label's text.
@@ -106,6 +111,14 @@ const DESKTOP = `(() => {
   for (const id of ['flow', 'circuit']) {
     const panel = document.getElementById(id).parentElement;
     if (panel.scrollWidth > panel.clientWidth) faults.push('the panel of #' + id + ' scrolls sideways');
+  }
+  for (const box of document.querySelectorAll('section.step .fm')) {
+    const edge = box.getBoundingClientRect().right;
+    for (const value of box.querySelectorAll('[data-v]')) {
+      if (value.getBoundingClientRect().right <= edge + 1) continue;
+      const row = value.closest('mtr') || box;
+      if (![...row.querySelectorAll('[data-v]')].some(v => v.textContent.length > ${MAX_SCROLLING_VALUE})) faults.push(box.closest('section').id + ': the value ' + value.getAttribute('data-v') + ' is cut off at its box');
+    }
   }
   return faults;
 })()`;
