@@ -393,6 +393,20 @@ test('the page shows the data block\'s values, not values of its own', () => {
   assert.deepStrictEqual(errors, []);
 });
 
+test('the primer\'s hand check names the page\'s steps', () => {
+  const { doc } = open();
+  const hand = fs.readFileSync(path.join(DEMO, 'HAND_CHECK.md'), 'utf8').split('\n## Protocol primer')[1]?.split('\n## ')[0];
+  assert.ok(hand, 'HAND_CHECK.md has a Protocol primer section');
+  const names = steps(doc);
+  assert.ok(hand.includes(`(N = ${names.length})`), `its step count is N = ${names.length}`);
+  names.forEach((step, i) => {
+    const title = section(doc, step).querySelector('h2').lastChild.textContent.trim();
+    assert.ok(hand.includes(`${i + 1} ${title}`), `its list of steps has ${i + 1} ${title}`);
+    // Keys is the page's opening step, with no hash.
+    if (i >= 1) assert.ok(hand.includes(`/protocol#${step}`), `it opens /protocol#${step}`);
+  });
+});
+
 test('the demo\'s header links to the primer', () => {
   const demo = new JSDOM(fs.readFileSync(path.join(DEMO, 'index.html'), 'utf8')).window.document;
   assert.ok(demo.querySelector('header a[href="/protocol"]'), 'the demo header has a link to /protocol');

@@ -282,7 +282,7 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ethclient.Dial: %v", err)
 	}
-	defer client.Close()
+	t.Cleanup(client.Close) // after the cleanup below that restores the fee
 
 	receipts := loadOnchainReceipts(t)
 	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
@@ -307,6 +307,22 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 
 	tokenId := big.NewInt(0) // fixed convention value — see EnygmaDvp.sol's usdrTokenId doc comment
 	fixedFee := big.NewInt(7)
+
+	// The fee is the node's, and later tests run on run.sh's: put it back.
+	var previousFee []interface{}
+	if err := dvp.Call(&bind.CallOpts{Context: ctx}, &previousFee, "usdrFixedFeeAmount"); err != nil {
+		t.Fatalf("usdrFixedFeeAmount: %v", err)
+	}
+	t.Cleanup(func() {
+		tx, err := dvp.Transact(hardhatAuth(t, client), "setUsdrFixedFee", previousFee[0].(*big.Int))
+		if err != nil {
+			t.Errorf("restore usdrFixedFeeAmount: %v", err)
+			return
+		}
+		if r, err := bind.WaitMined(ctx, client, tx); err != nil || r.Status != types.ReceiptStatusSuccessful {
+			t.Errorf("restore usdrFixedFeeAmount: receipt=%+v err=%v", r, err)
+		}
+	})
 
 	t.Logf("Setup — owner sets usdrFixedFeeAmount = %s (usdrTokenId already 0 from scripts/cmd/init)", fixedFee)
 	setFeeTx, err := dvp.Transact(ownerAuth, "setUsdrFixedFee", fixedFee)

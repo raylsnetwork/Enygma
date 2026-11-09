@@ -70,7 +70,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test shield-demo-restart shield-gnark-restart \
+	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop shield-demo-restart shield-gnark-restart \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -81,7 +81,9 @@ modules: ## List the Go modules the targets below operate on
 
 # ── Quality gates ─────────────────────────────────────────────────────────────
 
-hooks: ## Install the pre-commit hooks (gofmt, page scripts, gitleaks) in this clone; needs pre-commit
+hooks: ## Install the pre-commit hooks (gofmt, page scripts, gitleaks) and the primer's git diff driver in this clone; needs pre-commit
+	@# git diff shows the primer's data block as its step and value names (.gitattributes).
+	@git config diff.primer.textconv 'node "$$(git rev-parse --show-toplevel)/scripts/primer_page.js" --textconv'
 	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
 	pre-commit install
 
@@ -180,6 +182,32 @@ retail-test: ## Retail integration tests (needs chain, setup and gnark server)
 shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
 	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
+
+# run.sh stays in the foreground for the stack's whole life, so anything waiting
+# on it (a pipe, the next command) waits forever: this detaches it and returns
+# once the stack is up, or with run.sh's error.
+# Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
+SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
+
+shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relayer :8090), detached; returns when it is up
+	@logs=$$(mktemp -d -t shield_demo); \
+	(cd enygma_retail_payments/shield_demo && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash run.sh --no-demo >$$logs/run.log 2>&1) & \
+	pid=$$!; \
+	while kill -0 $$pid 2>/dev/null; do \
+		grep -q 'stack is up' $$logs/run.log && { echo $$pid >$(SHIELD_STACK_PID); echo "stack is up (logs $$logs); stop it with make shield-stack-stop"; exit 0; }; \
+		sleep 1; \
+	done; \
+	echo "run.sh exited before the stack came up:"; tail -5 $$logs/run.log; exit 1
+
+shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 30 s for its ports to free
+	@pid=$$(cat $(SHIELD_STACK_PID) 2>/dev/null); \
+	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'run.sh --no-demo' || { echo "no stack started by make shield-stack"; exit 1; }; \
+	kill -TERM $$pid; \
+	for _ in $$(seq 1 110); do \
+		lsof -tiTCP:8545,8082,8090 -sTCP:LISTEN >/dev/null || { echo "stack stopped"; exit 0; }; \
+		sleep 0.2; \
+	done; \
+	echo "still listening after about 30 s:"; lsof -iTCP:8545,8082,8090 -sTCP:LISTEN; exit 1
 
 # run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
 # demo binary rebuilt: this rebuilds it and relaunches it on the running stack,

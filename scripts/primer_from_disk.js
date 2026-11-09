@@ -9,6 +9,10 @@
 // screenshot of each step in the output directory (made if missing; default:
 // the system's temporary directory). Read the screenshots against the served page.
 //
+// At 1200 × 785, with the last step scrolled into view as Next leaves it, it
+// exits 1 when the page or a diagram's panel scrolls sideways, the stage is
+// clipped or ends past the window, or the ledger is left under MIN_LEDGER_PX.
+//
 // Then, at a 390 px phone width, it measures each diagram's smallest rendered
 // label (an SVG <text>'s font size times its <svg>'s scale) and exits 1 when
 // one is under MIN_LABEL_PX: a diagram scaled down until it can't be read.
@@ -36,6 +40,8 @@ const PORT = 9333;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // MIN_LABEL_PX is the smallest label, in CSS px, a diagram may render at 390 px wide.
 const MIN_LABEL_PX = 7;
+// MIN_LEDGER_PX is the least height, at 1200 × 785, the diagram and stepper may leave the ledger.
+const MIN_LEDGER_PX = 120;
 
 // LABELS is, per <svg> with an id, its smallest drawn label's rendered size
 // in px, and that label's text.
@@ -83,6 +89,23 @@ const LAYOUT = `(() => {
     if (tr.children.length < 2 || !td.childElementCount) continue;
     const contentRight = Math.max(...[...td.children].map(e => e.getBoundingClientRect().right));
     if (Math.abs(td.getBoundingClientRect().right - contentRight) > 1.5) faults.push(tr.closest('section').id + ': a first column does not sit right (' + tr.textContent.slice(0, 40) + ')');
+  }
+  return faults;
+})()`;
+
+// DESKTOP lists what is wrong with the stage at a desktop width, the current
+// section scrolled to where Next leaves it. (At scrollY 0, as a deep link
+// opens, the header sits above the stage and a full one ends past the window.)
+const DESKTOP = `(() => {
+  document.querySelector('section.step.current').scrollIntoView({ behavior: 'instant', block: 'start' });
+  const faults = [], stage = document.querySelector('.stage'), ledger = stage.querySelector('.ledger');
+  if (stage.getBoundingClientRect().bottom > innerHeight) faults.push('the stage ends at ' + Math.round(stage.getBoundingClientRect().bottom) + ' px, past the window');
+  if (document.documentElement.scrollWidth > innerWidth) faults.push('the page scrolls sideways');
+  if (stage.scrollHeight > stage.clientHeight) faults.push('the stage is clipped: ' + stage.scrollHeight + ' px in ' + stage.clientHeight);
+  if (ledger.getBoundingClientRect().height < ${MIN_LEDGER_PX}) faults.push('the ledger is ' + Math.round(ledger.getBoundingClientRect().height) + ' px tall');
+  for (const id of ['flow', 'circuit']) {
+    const panel = document.getElementById(id).parentElement;
+    if (panel.scrollWidth > panel.clientWidth) faults.push('the panel of #' + id + ' scrolls sideways');
   }
   return faults;
 })()`;
@@ -149,6 +172,12 @@ const STATE = `(() => ({
     while (s.next) { await click('next'); s = await record('next'); }
     while (s.back) { await click('back'); s = await record('back'); }
 
+    // A desktop width, on the last step: the ledger at its longest.
+    await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 785, deviceScaleFactor: 1, mobile: false });
+    await evaluate('showStep(STEPS.length - 1, false)');
+    await sleep(800);
+    result.desktop = await evaluate(DESKTOP);
+
     // The phone width: the last step drawn, so every diagram has its labels.
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await evaluate("location.hash = 'payment'; showStep(STEPS.length - 1, false)");
@@ -168,6 +197,10 @@ const STATE = `(() => ({
     ws.close();
     if (result.tooSmall.length) {
       console.error(`labels under ${MIN_LABEL_PX} px at 390 px wide: ${result.tooSmall.join('; ')}`);
+      process.exitCode = 1;
+    }
+    if (result.desktop.length) {
+      console.error(`at 1200 × 785: ${result.desktop.join('; ')}`);
       process.exitCode = 1;
     }
     if (result.layout.length) {

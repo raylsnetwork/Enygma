@@ -9,6 +9,7 @@
 # Usage:
 #   cd enygma_retail_payments/shield_demo && bash run.sh
 #   bash run.sh --no-demo     # bring up the stack only (e.g. for the integration test)
+#   make shield-stack         # the same, detached: returns once the stack is up
 #
 # Service logs go to $LOG_DIR (default: a fresh temp directory), which the
 # demo tails into its terminal's hardhat, gnark and relayer tabs. The relayer
