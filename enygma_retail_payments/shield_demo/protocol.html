@@ -851,6 +851,102 @@ aside.warn { border-left-color:var(--warn); }
       <aside class="warn">The run withdrew to the account Ana registered with and sent the transaction from it, so msg.sender and the recipient are the same address, one the UserRegistry ties to her keys. Anyone watching can see that Ana took these tokens out. The recipient can be any address, but it is public whichever one she picks.</aside>
       <aside>The full protocol has a relayer path, <code>partialWithdrawWithRelayerFee</code>: a relayer sends the transaction and is paid from the note, by a PaymentRelayerFeePublic proof, so msg.sender is the relayer's. That removes only the msg.sender link. The amount and the recipient are still calldata, and the relayer's fee is a public input of that proof.</aside>
     </section>
+    <section class="step" data-step="audit" id="audit">
+      <h2><small>9</small>The audit</h2>
+      <p class="lede">The auditor needs nothing from Ana. It reads the audit ciphertexts she published at registration, recovers her view key, and with that key opens the notes addressed to her. It only reads the chain, so this step adds nothing to the ledger, and it cannot spend.</p>
+
+      <h3>Recovering the view key</h3>
+      <div class="fm">
+        <math display="block"><mtable class="align" columnalign="right left">
+          <mtr><mtd><mi>ss</mi></mtd><mtd><mo>=</mo><mtext>ML-KEM-768.Decaps</mtext><mo stretchy="false">(</mo><msub><mi>dk</mi><mi>A</mi></msub><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo></mtd></mtr>
+          <mtr><mtd><mi>k</mi></mtd><mtd><mo>=</mo><mtext>HKDF-SHA256</mtext><mo stretchy="false">(</mo><mi>ss</mi><mo separator="true">,</mo><mtext>info</mtext><mo>=</mo><mtext>“enygma-audit-view-key-v1”</mtext><mo stretchy="false">)</mo></mtd></mtr>
+          <mtr><mtd><msub><mi>seed</mi><mtext>view</mtext></msub></mtd><mtd><mo>=</mo><msub><mtext>AES-256-GCM.Open</mtext><mi>k</mi></msub><mo stretchy="false">(</mo><mi>nonce</mi><mo separator="true">,</mo><mi>ct</mi><mo separator="true">,</mo><mtext>AAD</mtext><mo>=</mo><mi>c</mi><mo stretchy="false">)</mo></mtd></mtr>
+          <mtr><mtd><msub><mi>ek</mi><mtext>view</mtext></msub></mtd><mtd><mo>=</mo><mtext>ML-KEM-768.KeyGen</mtext><mo stretchy="false">(</mo><msub><mi>seed</mi><mtext>view</mtext></msub><mo stretchy="false">)</mo><mover><mo>=</mo><mo>?</mo></mover><mtext>the registered key</mtext></mtd></mtr>
+        </mtable></math>
+      </div>
+      <p>c and nonce ‖ ct are the two ciphertexts of step 3, read back from <code>getAuditCiphertexts</code>. The seed is the view key: ML-KEM-768 expands it to both halves. The last line is the auditor's own check, and it is needed: the UserRegistry checks only the ciphertexts' lengths, so a user could register ciphertexts that open to something else, or to nothing. The run recovered Ana's key, compared its public half with the one the UserRegistry holds, and tried the same ciphertexts under a second auditor's key: <span data-v="otherAuditor"></span>.</p>
+      <div class="vals">
+        <span class="who">Read from the UserRegistry</span>
+        <math><mtext>user</mtext></math><code class="v" data-v="address"></code>
+        <math><mi>c</mi></math><code class="v" data-v="capsule"></code>
+        <math><mtext>aesAuditCt</mtext></math><code class="v" data-v="aesCt"></code>
+        <span class="who">The auditor's recovery</span>
+        <math><mi>ss</mi></math><code class="v" data-v="ss"></code>
+        <math><mi>k</mi></math><code class="v" data-v="auditKey"></code>
+        <math><mi>nonce</mi></math><code class="v" data-v="nonce"></code>
+        <math><mi>ct</mi></math><code class="v" data-v="sealed"></code>
+        <math><msub><mi>seed</mi><mtext>view</mtext></msub></math><code class="v" data-v="seed"></code>
+        <math><msub><mi>ek</mi><mtext>view</mtext></msub></math><code class="v" data-v="ek"></code>
+      </div>
+
+      <h3>Opening her notes</h3>
+      <p>With seed_view the auditor is in Ana's position in step 7. It tries the Payment events and her key opens the one addressed to her. The commitment check uses only public inputs and what the ciphertext gave up: the pk_spend Ana registered, and the salt, amount and token just recovered.</p>
+      <div class="fm">
+        <math display="block"><mtable class="align" columnalign="right left">
+          <mtr><mtd><msub><mi>C</mi><mn>0</mn></msub></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><msub><mi>pk</mi><mtext>spend</mtext></msub><mo separator="true">,</mo><msub><mi>salt</mi><mn>0</mn></msub><mo separator="true">,</mo><mi>amount</mi><mo separator="true">,</mo><mi>token</mi><mo stretchy="false">)</mo></mtd></mtr>
+          <mtr><mtd></mtd><mtd><mo>=</mo><mi>Poseidon</mi><mo stretchy="false">(</mo><mn data-v="pkSpend"></mn><mo separator="true">,</mo></mtd></mtr>
+          <mtr><mtd></mtd><mtd><mspace width="2em"/><mn data-v="salt"></mn><mo separator="true">,</mo></mtd></mtr>
+          <mtr><mtd></mtd><mtd><mspace width="2em"/><mn data-v="amount"></mn><mo separator="true">,</mo><mspace width="0.4em"/><mn data-v="token"></mn><mo stretchy="false">)</mo></mtd></mtr>
+          <mtr><mtd></mtd><mtd><mo>=</mo><mn data-v="commitment"></mn></mtd></mtr>
+          <mtr><mtd><mi>change</mi></mtd><mtd><mo>=</mo><mn data-v="changeAmount"></mn><mo>=</mo><mn data-v="amount"></mn><mo>−</mo><mn data-v="withdrawn"></mn></mtd></mtr>
+        </mtable></math>
+      </div>
+      <p>Her change note opens too, from the withdrawal's EncryptedNote event, to <span data-v="changeAmount"></span>. The auditor checks that differently. C<sub>1</sub>'s salt is Poseidon(sk<sub>in</sub>, N), which needs sk_spend, so it cannot recompute C<sub>1</sub>, and the capsule's salt does not open it. It can take the note it did verify, less the public amount of the withdrawal, and that gives the same <span data-v="changeAmount"></span>.</p>
+      <div class="vals">
+        <span class="who">Ana's note, from the Payment event</span>
+        <math><mi>c</mi></math><code class="v" data-v="noteCapsule"></code>
+        <math><mtext>encTxData</mtext></math><code class="v" data-v="noteEncTxData"></code>
+        <math><mi>ss</mi></math><code class="v" data-v="noteSs"></code>
+        <span class="who">Her change note, from the EncryptedNote event</span>
+        <math><mtext>ciphertextI</mtext></math><code class="v" data-v="changeCapsule"></code>
+        <math><mtext>ciphertextII</mtext></math><code class="v" data-v="changeSealed"></code>
+      </div>
+
+      <h3>What the auditor cannot do</h3>
+      <p>The audit ciphertexts hold the view key and nothing else. Spending needs sk_spend, a separate key that the audit ciphertexts do not hold, so the auditor cannot spend. For the same reason it cannot compute a nullifier, Poseidon(sk_spend, tree·2<sup>8</sup> + i), so the view key alone does not tell it which of Ana's notes are spent. A withdrawal gives one away: the change note it can open sits in the same transaction as the nullifier, and the public amount plus that change is the value of the note it opened.</p>
+      <p>It sees only what was encrypted to a key it holds. The Sender's change note is never published: the payment carries one ciphertext, for Ana, and emits no EncryptedNote event. The run recovered the Sender's key as well and tried it on every Payment event so far (<span data-v="scanned"></span>): it opened <span data-v="senderOpened"></span>. Here, msg.sender names the Sender as the payer, so an auditor can take Ana's note from the Sender's public shield and infer the change. A payment sent through a relayer would not name them, which is what tags are for (step 10).</p>
+      <p>And it reads only what was really published. The proof does not bind a note's ciphertexts (steps 7 and 8), so a sender can publish junk in place of a real ciphertext, and whoever settles a withdrawal can drop or replace the change note's. The note stays valid and spendable, and the auditor cannot read it. Its view of the notes holds against honest senders only.</p>
+      <aside class="warn">Whoever holds dk<sub>A</sub> can read the notes of every user who registered under this auditor's key, past and future, and the tag channels those users' view keys open. The UserRegistry has no way to replace a registration, so a leaked key can't be rotated away. It is a single key with no threshold and no record of its use, so the audit's privacy rests on one party keeping it safe.</aside>
+    </section>
+    <section class="step" data-step="verdict" id="verdict">
+      <h2><small>10</small>The observer's verdict</h2>
+      <p class="lede">Can you link the Sender to Ana? The ledger beside this text lists what the story's registrations, shield, payment and withdrawal published. Read it for yourself. It shows who spent, but not to whom or how much, apart from the two amounts that were public from the start: the shield's and the withdrawal's.</p>
+
+      <h3>What the ledger does show</h3>
+      <div class="fm">
+        <math display="block"><mtable class="align" columnalign="right left">
+          <mtr><mtd><mtext>who paid</mtext></mtd><mtd><mspace width="1em"/><mn data-v="payer"></mn></mtd></mtr>
+          <mtr><mtd><mtext>who withdrew</mtext></mtd><mtd><mspace width="1em"/><mn data-v="withdrawer"></mn></mtd></mtr>
+          <mtr><mtd><mtext>into the pool</mtext></mtd><mtd><mspace width="1em"/><mi>amount</mi><mo>=</mo><mn data-v="shieldAmount"></mn></mtd></mtr>
+          <mtr><mtd><mtext>out of the pool</mtext></mtd><mtd><mspace width="1em"/><mi>amount</mi><mo>=</mo><mn data-v="withdrawAmount"></mn></mtd></mtr>
+          <mtr><mtd><mtext>still in the pool</mtext></mtd><mtd><mspace width="1em"/><mn data-v="shieldAmount"></mn><mo>−</mo><mn data-v="withdrawAmount"></mn><mo>=</mo><mn data-v="poolLeft"></mn></mtd></mtr>
+        </mtable></math>
+      </div>
+      <p>The two accounts are the amber msg.sender rows of <code>payment · Sender</code> and <code>partialWithdraw · Ana</code>. The same accounts appear on the registrations, which is what puts a name to them. The sum is the only one an observer can do. The run read it from the vault's public token balance, which grew by <span data-v="poolLeft"></span> across the story.</p>
+      <div class="vals">
+        <span class="who">The payment, as the chain holds it</span>
+        <math><mtext>nullifier</mtext></math><code class="v" data-v="payNullifier"></code>
+        <math><msub><mi>C</mi><mn>0</mn></msub></math><code class="v" data-v="commitmentOut0"></code>
+        <math><msub><mi>C</mi><mn>1</mn></msub></math><code class="v" data-v="commitmentOut1"></code>
+        <span class="who">The withdrawal, as the chain holds it</span>
+        <math><mtext>nullifier</mtext></math><code class="v" data-v="withdrawNullifier"></code>
+        <math><mtext>recipient</mtext></math><code class="v" data-v="recipient"></code>
+      </div>
+
+      <h3>What it does not show</h3>
+      <p><b>Not to whom.</b> The payment publishes two commitments and one ciphertext. A commitment hides its owner's pk_spend behind a salt, and the capsule has no field naming the key it was made for. So nothing says that either output is Ana's. The run searched every word of the payment's calldata and logs for Ana's address and her pk_spend, and every byte for her view key, and found none.</p>
+      <p><b>Not how much.</b> The payment publishes no amount: not what the spent note held, not Ana's, and not the change. The shield's amount is on the ledger, but nothing says that is the note the payment spent. The run searched the payment's words for all three of its amounts and the withdrawal's for what Ana's note held and what she kept, and found none. The withdrawal does give one bound: the note it spent held at least the amount it took out.</p>
+      <p><b>Not which note.</b> A nullifier is Poseidon(sk_spend, tree·2<sup>8</sup> + i), and without sk_spend it can't be matched to a leaf. Neither transaction holds the commitment of the note it spent, and the run searched for both. So Ana's withdrawal can't be tied to the payment's C<sub>0</sub>: nothing says that the note she spent is the one the Sender made.</p>
+
+      <h3>So: can you link them?</h3>
+      <p>Not from what the protocol publishes. The ledger holds a payment by the Sender to someone, and later a withdrawal by Ana from something, with no item that joins the two.</p>
+      <aside class="warn">That is a claim about what the protocol publishes, and it has limits. Every transaction also shows its gas, its nonce and its block time, and the token transfers around the shield and the withdrawal repeat their public amounts. The spent note can be any leaf under the root shown, which is never more than 256 notes and can be far fewer on a quiet vault. With so few users and notes, as in this story, timing and the public amounts make a guess easy, and a good guess needs no cryptography. The UserRegistry also lists everyone who could be a payee. This covers observers of the chain only: step 6 says who else sees the witness in this deployment, and step 9 who can read the notes.</aside>
+
+      <h3>What the full protocol adds</h3>
+      <aside><b>The relayer.</b> Here the amber rows are the one direct link that remains: each spender sent their own transaction. In the full protocol a relayer sends it from its own account, so msg.sender is the relayer's and no longer names who spent. That is what the relayer buys, at the cost of a fee.</aside>
+      <aside><b>The USDr fee.</b> On a payment the relayer is paid in USDr, so that a user never has to appear on chain to pay it. (A withdrawal through a relayer is paid from the note instead: see step 8.) A second proof, UsdrFee, spends a USDr note into the relayer's fee note beside the payment. The fee is a public input of that proof, so it is one more public amount.</aside>
+      <aside><b>Tags.</b> Without tags a payee tries every note on the chain, as Ana did in step 7, and the auditor cannot name a payer once a relayer hides msg.sender. With tags, each payer opens a private channel to each person they will pay, and each payment comes with a small tag on that channel. Its recipient finds the money at once, and the auditor, through the channels its recovered view keys open, reads the identity each payer gave. The payer declares that identity itself, so it names an honest payer; a dishonest one can give none, or someone else's.</aside>
+    </section>
   </div>
 </main>
 
@@ -862,100 +958,129 @@ aside.warn { border-left-color:var(--warn); }
   "vault": "0xa34b0bB5F2d8C1674eB7cF53e06B813A31C5509C"
  },
  "steps": {
+  "audit": {
+   "values": {
+    "address": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
+    "aesCt": "0x546e696a49bd3a2652fe814241079bc655b6044d06873ba093a996467c9ed1f11525c5a9b1f5b92ec9999d24c5252daea1a2b90883f11c0ca9acf41f5e68d54f9d8ef1a6c7a84c9fd962ef5de8032590646e25bd247842db8b2f416c",
+    "amount": "60",
+    "auditKey": "0x4bbc68f72d1443821aee7cf9043c270c3608b1b24abc4d2d04b74e9cc578de47",
+    "capsule": "0x5195f285a7852bf943d8abb0461962b25fc374173b8a54cb919a3e4278d1f5d49b515e50e38b799479ec061afe795cbcc58cf6243b8067c2a64999ea6b016bd7f81907f3941935846c5828f0df5da9c8eb3cf3cf84dc9d9d884e9120cb4b5aa64ef92a7d595ec83503d707712480c94f9b96aac15a93010a3c6c942535a998af8e5a5e8917531a49c139998dc34d9ea17402a12787578196f4376966d4504ae6e86178d82ddbdf039466e5bdbdd9ba6fe4f22241ec528ee6ed8d8c46c706b08f7cfde9cff81f66745ec03850ac5e98a036c8a839e0d21b69adc6c2a7e558a0fdd737e62bde8fe9a5f43319d7e5e76f29dfc0668bb8bb0f07b1796f7591727e413765c2a2e488558615fbb87774c524c4f4379f5c2a60f325240c263b5af2eae9fb103905838a9464ac5946b8338cf71f61305043dd44a824f3029021a346f8bf288f8f951c2d07a3c4cd5043004185ccef0134caeb5bfb0c679f371306f76e9e7f240fbd962080943361c2fcec6d626ce7df94c9a89379972657b3fed9fe5ad2fe54bbb6dc1795c5a4a38055dc4e5b9009b50708b8a8cd44f51ae1ec6a28f6cdc2a791d129f5eb1c5f33f65dd11df3c15ca21e0756e3ca31d1d1fad9a06f535dfaf5c7f199b3478926362b30805bc522011d8b5593f2305f7d336d17bb95fdc5b9584e5c531a5ca731e248316af629f7decd978fefd6e6128f6376e5e42fe10efe435f135cfb1767b1de7ee1d493d301d98b128eacf07867f21eca7060567fdb66d72f26ff3ba9124cd78f684f2b068f12ad43f20dbdde46f19fb0390ff9a09995c4f89ff3f27420f108b88da6569fd48dd959df5ed264e7aecb7f37b1bde013efa3b0d233bd1cd7b60891bf2d8bb786ee806b483b7cc78ca94f482205138771d3012d5cc8a28eff56dce1adea52ce7d2a5386162222f19215aef37c726e1add1df6bcc1b90b5f82d79333ed42ca66cfeedd8bca0a10f90efd09764218c438a09cb40423f60dc9f837368ef4e3991e04561230e955d75360208f56da322d5597846e8f9d28832d3dab216a84d98adef8b17a6a1318a4f6ced9a550f2fda4747794ebf6b49403f6c322cbffa76ba5a34b99f876ad6aad5e81889c5ac660a748e9ba1130c7ebcdd4035fa7378e6646fb0f88fcb73b1dbeb260a9076b38d5a85c328a937baf3e62065dabbe04a6e8332fda9d104080e32059f195b42f6e78d9c87d9b3d453ac9caec4505b8976d4c28ca39b45c4084b885feb7eb05cdc0a43e83a9dc1721c43cfe94c803b96c2b1a5a4e219d47730e3eba6f5aad456bd39bc53a5f2235ebe6761688540eee98fe2c7ae9fa5f95d41cdd3c7b7375dda6a630b373a75a22e62095ec07ba8a2037a4c23af995bb8090c8a66b864cf5f5901bc29f828eeb5785b45567ca4c12ecb902c6169623e1863391c36df848e4ebf9481608216e23f92a04bebed7b9903822399dc6e7100c77ee99470378f2a897a3c842f3df44b62843981750ae515db8954034050baa0cad42347788df1a47bff86735200d64",
+    "changeAmount": "35",
+    "changeCapsule": "0x0bb8cae0cf988c8a947719eaf25f27e804caade6e6e8cb9273ce76f07b56903cd01442b099d232c9f9e580b97bf6bcebaf38ef83acd3e02bb74f24cc863a6c17f213982ba82de0554f8f22b17704e362c6750617690f7beebadeb20249675b54f8c183effedd7de81a0c3e41c65ced38c30581890c261a8c67deac0327e3ef32f86c2365214e2d8dabbc1426d4dd0b2d66383a69a9fcb520ba6898bfe6094a33ecebde6eb187af23454f687c5b9e0de0f7c91716a60a7e6348c53cba5ad00605aa7d280887dc3e0d399c5d3e1a44ef69c618e3f5777eeda87674346c1c1aae2fc81b4479422cc28cd95145e52b2ebb643649ab38d91d980e5ab08525ff46f3f8ef93db72e06247bbbac2fab18be6b9d7201eac441e98ee3c8ea4b56a2f15ea2073f78b6a7d38e0c350536f3c7bc9d099be697ec498829c37628651b2ea5b4908e6abc0ed946f1ffbfead1381b0abe306160491a6b3b2d7a30fae481af8133e1705a073d30f81f1c597e1f5df7aef04ab46ed67bac9040565e2ed809c6c7cc59f1a7d1194a0f3d635342e96504c1bc17664d07eb694aa2108ec54cdd3445cf88024e64319dc37ff599e3cda2d8204ac7db034860f965c705de0cb32d0ae5c2ed46896aab8042b7ae03ea83d1c27fe5d5a7978e5e5d257b68a2fb81e2d764b541631f731b0fe66c28f5969a3c26795fba63c8df80c8351937ae5ecc4f291ab1ec82bb2faa5feb3345e62a1e40a2d59d9d1e148eb46d35405f8afbd29c8bba51383cfe46aad8ebe523433db5630f807ac35c87e7f4bcd29f96f5e8f4588cb74a8c56cd7c1850a60f6023458328efd6a7c476484ecd2ab1b06b6d5bcdca18e04457251d55ee63fdf52d0c4c910142e6312dface5cf538955c56c7023f8892ef8fe0aa019534e353122d7320f5bd494e8ffd6a09b112110f53e237a2260181561b55037dbb558f211f54a77f15b01992a079dae26b0aaaeecba9307f608a2cc4c703622538763bb21a1ab6984ca15ec2caa0ca69d5c7404a2edcc1647b269268dfe1ba8561d6b5d5a49636bb04f623d531324d35939bdb0d533a4f7a386c14f307a8913eee4387a277daf12b8a06347c68d1ad7767365128bbc2fc98fccfe94cd916da900aa4bcd289d7bf68b334a5c6f274936d98e1a70e5a03b3a4de1c1b092371f35ea180f3fb335805ddd5772e32ad267cae6d7890ef29605175427d1ae66efa5ff86adbb7c930d529cfd46dd628b4fd7bab2de59d92fc70b5c1352e94462f8a704b4b410499fcf5e17fc5cc3d4f4a3055fc4cbb769615478cc7272289b769d48dbcce0a5bddbd43729a2094094c3c5229903ab78d3308922576048ff20fb68ab4d2c6dcc4eb413075f476d6d13c3fba2675dda27918f684769a3223cd0929bb8ae3625cb5b44af952d02e665a0973057cb50444708794022908116a3980ae7b288787bd9f0ab9fcb1227abca27456cd274047a5a72ba44320dfa5ac89e642b93db4ebcda7cbe263a7d6438f1de334cac587b401f8540807757d7e7d9d2ba9d30",
+    "changeSealed": "0xa3ba8b93c798fe58d3fd54a58581cf67bc08317cae6d924c2a9d0f761c43d0601ab4a2175c7fb58cb8c738a424ff3c45c7f22d94b0ffb447ac2fda8729b42301eca0d45f585d8acaed6f7df652612c2c39907363f2bf6258ffe5f6e4",
+    "commitment": "3247351366383618404575860298711471673532902777225617713059856448401393332415",
+    "ek": "0x449848bc13a64d1821bec794debc7006f3b5c2247f32e27b14120ac603a9c0911e1ac6320fd9a66d19759be925d5e21363440b0942830c234f2853b62032037593449e002b2d36b89b23af9b064192e6236548776d378d7b78c43c42307d381ebb0828ac69acb95192c5d87e3ea14885f96617c55ed3e6a308679a41625411e799c2a679d13870dfb545a66583ce6927312cae7a2737da160915c79596d48d209815dcea0a04f62876f7c2ab40cac5d32d69446d486621ec7399ebf2843af303653369efc4927deb49dae8c5daa85cbd541d05e427b7918b01e86d7f9b7f060a47b8dc1fd6e0a0a01bc00110b12ec8adf12453e53685dac6c4d50a61e86951144258d4f888a38a0c2d12390d95c16fac87bd443802e6851ef40be927c1dd29603ef285429835fed99933658cd24aa874f1ae790ba4e96cbe4ac3a1862576fb0a231f201fdb8b1534568c5e9aa1347c92127ba7169528f4205026c63db9f31a62abcae9591958900f01e09c7221b37f552c82630cdfe6a82fd68dfddb84da37b50fc24bb6ea240e343c181349d243062942bdc47bafb7e460adc13303a7475476345d8786ac8772f2b86366447b01a98657e54c05e594393599da8738e4024b85b8420129245e57a796e24c90b7963d6b1363f6b162f59410019b1541c75443a9af65002545044fbb1235f19f6ab1bbb0c67383c36d624b38287662dc312569c051718b90cda328d55c8882a782002c8b5f199c7ed31f17c405aab3c333d80fdd204bf3956df04132e17ab40d7b375a1b7f85ab56f87c911b8665d1f86ce7796490b67612a5b55325520145758dc002d1a0544ee07f3cbc0a07c6c0cab2011a16738a41cb75940c5228ce9b888f4c920fe9963b0be07ed136cd0c4b1bc26c745dc951d8452edcf9146bd22a5e0c6353931c333572c04784b56c156cd7a722625676bb8f36797aee9bcaaf4088207799c0071834703017e993e989291df22bbd018a6fa35cfdd906aebcbda6e49754eb5c72523e5189bc7db243ec15167aa9c49cf0a8754c2a3f6bc4a4571a85eaadb87441b7a80cd6011fa4089326d67a3cf2133319449d805f9884208ea6a400c45608584847273b6292039a516e75607a79076977324f04db9729826343c7cb94461f9964433a795852e80cfd582d27b7be2d711902410ca2251769b297120b4fefe797e2db2a77d4ba5e5b821ba7ad365802017ccd0a081c039436f0e095cd553e31212684f00e6c22388e81588e155fd5dc12f61b396a502d7ee4a7c3894d904700aa97867f73819ccc63f0387cf8cc643bb4b07620ab70808d65d6aa42589549a4a1df2214431246e4900aff659ffc5b9364e6b35100bb34a009abcbb2504a6093c6bab34c5476971bdb8974f5c57110e474759401e5fa5da13306ba583bb07003add28c04bc704f0c89e94902fea55dadaca9c26203f919426dd27269144d3be7925a55ac6618bcf879a176f8284d9cc16a174b28e671890b9f26e63c8fb818c6582a34f79d03f858c90a684de09c79a28ab757679042814959961ea8617cca45fdf491c98050c0931b1f7b41e4650a859c8706022a669ac1dd6c5a40a73852959006979d6df40a5aaa24f48150e3f9a1c3eb0b85b4898bab82a43eec75cd797ca022ad460f2f9cd3076efafa13068ef9",
+    "nonce": "0x546e696a49bd3a2652fe8142",
+    "noteCapsule": "0xaad09b37c5e3b386ddc1216aa7bf1db27b3dd8bf09e878f17a49b2435fd28d69b6462afeec1277372be57d8c04d580afe3999a697c687e702f31525c8f48a84bbe2002f92a61d37e4fa84561f349119a8eceafd40b91c33211efaeafd09f023d4b6221e72df59b21085f57416789627cdf52ab0a568fcecf7ac02ae81dd9abe8d32b0a5a0d5883095dbbcd0e32054392c0a5bb9a27d13abdb6b7707b87d0880703b54e9f1a006a4553246625b31103c5a8987f4aa728a7419e63673808fafadf8004f093b8960a1b20e56ca8cc832b9447a4a33cea124e866cf261c54b807baacd6c0ca3369a7305534271763484980268f27eea338f09b972a7b23999ca7fbd1d88f79891f980f8454fbaf15baf802b7a9674d24bc818ad3f3d18d854884d9755bfe883c11f31f350cae4b30439e15253152621be7dfe846fd145a4810dc893b0b3cb734e2fcfde77f2977310412c99c0d1251342460cfc2bdf03535233a3eba4abd6db92e51117d91d31086b26f411d4153b9c122da11a9cfc2c7aa4d275315f733db5c8d82ddc81a1f647af0465f0ac095793f80af31b70f162a9b0f9aef8622dc600d026beb905a5c48e19d0510d07fc70168793d70877927cab87e316ff452ad9c28399fc9dffee9c44bb3a379d08529c6ff96476b1bb9bfc74802c8b4b3980b66c2ceb8b40dfac2987d94a59e4752e557db8d818214f64b2f6e7dba00014e17dbe2f542706561703110e56560033d8ff882d652ae161568f6312515779bd86337cdbc2ad5be4f728cff60123b465d1b401013394a3e7f460ee1d141ecce7cfa1f3109d73211ab05d8cefd863e8d2c5d5a4c35ccf1eab2f3378e98860376b03513c7672a144572d8e3dcd569a17959948ac9d097dc00d58d7fca47da3dd93d813a1ab3de993ed6c23d8b2f5fccd10a5bc712903cab8a3ce3c8b0ce24b760b71577165dc110a1dc2afcc723051f7d0e80ef642b8da9cc1882d0961772db7f8aad903413cc4f69cdfd2e52ce132621a0d60b489c66a34f52d908035ab61632bb7ecac0e91442813a836373195eedf3d2532031f1b6c16db135e6171a00d2b0c9cc687deca351d1f247be0e530cd285bdca9837f7476840bde0c4dab571890626254b152702357f5d57211a62e51ae3ed04f0bd7dfc4e51e05dd2fae796a9bacc544ebe9cb628efbb0183cd0b73f69cf792b325331a0b7bee62cc72fac16624e7caa9e1640376b0fbb428a67604027fb94455dce4e3f71bc23129a566ff5c1908cdfde3301a29470ae5bee24715da28304ceab1d8e29ca4a93a59a8404b170bc2dc2660a903e207f1eb2582b9bce94bdc60b89f0c0fd16ace4e3025a6f15ad785b6b95c867e3b4b545c62852f94f20a88e67add3430d419cdae415342037d784a581fb6820d17dc03c0a610abf9e523e4af1a0251e96532237949a3fff51807cac716db8c1445cc3b8fdccbbbf1d250a3113b968c5c8eb75273f67d9d5e1d0a4fcc8c07f87a76c55f87b99b810539c0bcbee6e01baff506461a9287f743129",
+    "noteEncTxData": "0xf34c73924b68660c1556b3d9d17ca41a81b003ac8b900c6bb96993ce660ffd9d80e077fd51b9a4c4668fc5d224a1850e89ac4a1bbbbae6ea9df6610d07a7ca934d47018d49a5b21cf211a6765da9f1d95c8fa6351221284506cc5107",
+    "noteSs": "0x66434dc74a211ec6d501cbac9b737244e9dce02032758b907b7281cd7b99bd0c",
+    "otherAuditor": "refused",
+    "pkSpend": "8156372617690083877751686899634039184797231608225012565204862268616559160379",
+    "salt": "14316051194269074075213199485196736845588861818633014912936574092132814347134",
+    "scanned": "8",
+    "sealed": "0x41079bc655b6044d06873ba093a996467c9ed1f11525c5a9b1f5b92ec9999d24c5252daea1a2b90883f11c0ca9acf41f5e68d54f9d8ef1a6c7a84c9fd962ef5de8032590646e25bd247842db8b2f416c",
+    "seed": "0x2ea234dac6507b85c504fa50e22cfe9a887d0217688a70fc751859ad611afa2a1fbedb6750042d03228722a15187d80aa6db1bab444c3a2a0d7b5e7bcf45e84a",
+    "senderOpened": "0",
+    "ss": "0x3170b92b0ef282206c9a165aa6045d59eaef98f88062a0ed217870c9920e28c4",
+    "token": "0",
+    "withdrawn": "25"
+   },
+   "ledger": []
+  },
   "auditor": {
    "values": {
-    "auditor.ek": "0xf727b446f90b3ee38a06f383a1b8a5cafa3fd642b89b40ac8a8a15afbb9e8151136a28baceb2bfeafc38107c5361f174137244cc504a7d96659231259ef0a5fb368d494aca03fb4745546c0a5782ca520038e883e2970d01167ebee6ab21a5376257c141ac978b7cbaaac55942509e252bab62195f6bd7749a8c2dfeac48e1755f6b2013b3b21fd8e1c60d3182102a679a3b55900a6613d0852ccab8f1da6be714accaa44dcc827aef241cf4176701e99de4608278c622e2053e8b754a4a87c61f8c07eaf6b0ca55cca66a43bdf86251e61da8a9608bc22ca157a6c4515435447881113bcd8387cff1bdfb1995e19788e9a10f1e5447b6b5708cb869bbac3a7bac47e940acaa06cfea3aac85ab7ec8c407a6d92ddd1944bf2031cdc46e2fe6a7a89693bd017883dbb583198feb641ab775c3a8da6c0ca73eb951831d872b17254636706f5814ae3ee86d39095833b0378c628e2c2779e0a904229b490e046a21a04e0ce092951c50cbda2e7b1a8f703530cf9240ab88218fb9205b732538333133f729d0007ea178bfa3497394e53e0c10146cd7acb98741cfb696b2d52567f4523965b151b5babca74d774549154084400b223f8aaac8921fda7bc8d99c529e92555bf132e7b415707566f5537969a1a795230e1c3c697f005495cb6ae8c23cb144849cd77a07786c758a3017b7c82a9b5d09f9300f2a0773b34128f25714639188044c59903dae05629a6a78befa9bc6d9ba6a717602211c6eac2622755f274ba5cee908e184390000924f273ca1f8792947c3dc3c63262492c1c54fcfd16a31a077fcb0761f251b981121912b19e6073aafb006956bc62dc1272a6bad3729b8aef80864e8683aa82a33da32a8b912f0010c4b181761dc24289487716363db24bdbac346ab109cca6b40c4895651e523e178ccd01a1250980e25006bef2c756ca97c04f2b54cf956fc4829f2ccafd2f22630a2b608b45dba6a04d73ac932418f1e87b4dd72b65fe1522c2849b4c85c959c09088858b2143d64346a7464916f146cc318455cf608654a78addb59a6f2728163aea6f8b698c9b5e027c9a909ba1cd81b56a8bea2ca9229835b38957e16c65acb9c28960016f27b279d670f3167a8df5279a2d3804184c37d27aaa7460d2a899b2f64698382b6cb41585423c8c7e188ab117d61b20a586041ef8473af624dfb068cdf76a3bcb129d83ba059d9656283780c226ea9b6c6b000bed3b9131dc9c56e912d26ac524fdc3a0701ac5e1999c7fa5120cac7b626746c7b5523234a8c256813fa2e4bccc624841b8c624cab13812804936d5543a45b2613508bcbb039fca704ea67ba550100c48acc721625203b1c888223f0b719f882ca97b9c8aa354457ab6d1e656116064a0ec7b4c430a61f976c655611c258073e195b3247a3137abf4b49bb9ff43df2d826722aa13f303301f9ba640a865005b9e25036800099b47742e0b7475c8acdd87000a87674c63c0b0ad01993b79345723541ea9b496214d723b4ecf3b79b4c6957c100a0805ff9a3ab43f36b64d434ace00d3ca1be76032719bcc839c00a49353bf40b64d4808ae918aa0714970349767ee86802309c5f511df190b27a04a092db00be5ab312c336fe38201a8ebb457169a9631acdcae2911fb46215f471b333b6646310ec",
-    "auditor.seed": "0x0c7dc5da39e16ee99c20d2c32349585843100c80486532f1e93298867ff9b3c47c7c8ec749620b7619fa8372a27f18260a49678f0c3733f535b87adeed01a01d"
+    "auditor.ek": "0xbeac3fb9746dc72420a1b7b6ed5b8417053114cc7c7468b039178e8110261b9bbc4ecba457684b30cbb1c9588587c5aadf093fad421b49a987b897277188356f128fe5f4af4af01fb09b990753b1270517ad0bbc6b8c22aaaa6682f7045ac46c31c56c9b7329680769159ab2fdb0aed4189af4186ea46b9a0a55c8e0ec40ef851cb1906c3e119e97654eea9bb478036195087b541442fc3013dc0acfefccc7fb7b5efd139a8903b009d446efa6cee301c01a86cab43799648146ef779a03794422282187d326625362f921af3b846c1f2c65cfa4b7483580b6e04275642a0f4abb4e8a484d3938cbb17a8c18257a721c1bbc9f08595acb4919596b03fd11a346f7997d3152b1918efa4cb520db4c81410a0fe17ab8a10a01a6b7ed1bb99aa8bf87f5b85f319e5b16274deb6c7e0ac141b9ae0080169dc75204a42142ac95d8c5938299cc358582e35a8d1e5a08bca6cbc3e7b25c01b8f6484f885b51a6a66b48a01d4fc83cc4b416d2133faa6b210f3ccd94f4089dd57f9fe4a298222e9dc632b8cba836817fa70055eb244dbcdc64161a78163bb97f1c046331433837bba179800f828a959bbaca989f85326fff2b1f5c7694bc1364613c8b20e400d2f1685f940e096807074b29eab418309488c02295039320f719c217932ad2d8a6c458c9a278a094b4b79417086e372762f1511f728d0df30857989ab14c6b86840c921a45a3ab74e2c9529ac5b8df052f024791a1458c7cb4ab3e605b70c4a7df0427cfc00b615835919069c301b7135944e4f7a70d01a93615290197928b06a926e160972495f0a1734912bbd4b400cf7088f32756cbb79943e84b7dc73dda2a762f84428828b879ec03b9639f863850ddf613adb0226bcc7c24f9b09c0797ff5c6415e2cf532b0fde588de6618f818428645913b31b8ed4a48aac02cccdec5ec9b10e9e7c2a5302a9393258d7fa962465b9df571faef0015ac38a1e9c9655640d2d83b81a17bd635028efe914243a930bdc1294e68ed0394d38b62ea585c8ad4c8465ca70fef69dc2b110e0411afe14bc283470f075700cb146c93ccf3cd8ace80378d8230634a45987898561ac5a2743706cd7c1c8e950024057b45c39c345ac8589cdffd1a2fc76739891c72eb79399834032c23127966c75b868c1ccc1b1d219d0b88612e879ad046daa8aa99269bc87d646d3dbb395064129d2cdeb253a822907eddb0dbf97a973706c09391434ab37b9b1bd255c6acae600a670121387581bb947680580a37c7f22bb1d3aa97f817c50ba5479e67b79db990ed25068ef696eaff12e15a24618847551dc529fb840f5d2baf2490fafe9a9049c575340bdbff595f03499b73bb0d18678e0421c4045308efc55f9b13ba310416c4cab2de9cee960350e7885083b69293923b817402ef26fa3924a51fa8d1704417450c641136019211ae0856ba3b091849341a25a1bee69657ed14b1b46a6ab30a82663c6b4393b64e70bd1f2bbd89a5e31401457dc7098383da4144b126a0bac973121d7b711359ee55a3e5decb55c2b823f5413e3f20f51358b4bfc63ecb02d7a741e94ebb865c72a9f6044db678d7653513a52c6a8f00c6a84bdf9dc13e65c3c9fc5b62f2b02788437ffcbfbf9b4926f433ea63e77dfd7af782326896bbe14723f39a681a9e5",
+    "auditor.seed": "0xcb9ffd86eaa41b92db53bf5c323b0c811a90c2166ee733a26977f7225ab7dafd1c8e5baef0ad3a3813d866e61cbff9496efa2e3dbc0e83d365ad47f6fe8f63bf"
    },
    "ledger": []
   },
   "discovery": {
    "values": {
     "amount": "60",
-    "anaEk": "0xdb07b9527405e3dacb8546c542d8c64fc25ed3022c038375f21075d0a194587b3213944a90595a9f71c89d2b70c1620e0aa6b61ec30bdd9cc5f2b113ab94c933930b1a7bc31a800da4d370b74a0e379a963659439746c1e69ba52df6206c457fbc2421861c9442bcce1e486b144c2a7d63205b760aa997c77fc24de61b35f1219328c22d3d54937fd457b11c108d84bf14f4709797694d4cb5c3137f0b6a051e41c716db9041803e87e15ed6b95471e38491b30769f624c91b54b466beaf2b82a1799832b24d53808700b488a7a8418bf555e57b0a593c768df065a2d70bb589b31795812ed4606959745348805bf9c0415383355b221f68c2d6d79dfc87adb3bc0ca66aa7ae326861f03843665f85aa4d41033160f735db4607609c25c372a306a357a2a506589b8ebb3792ff441246966532c81b5c2b547386ce58634691d103860c706e3aa8d76142e1cb5b7b0c8621396ed7d8c0ed7644a2c043332a450459b72d89672cf609c1a9863505471cbcc5799037ee6a8fa9babf1c77a000a452d696762a8482ed9c13e4c9437b383f4087c1b38a26ef5a1510fb1d118c7304eb0ad72647cc02c5783b044a7baf9cba16fbc2a96a441b21559298f79086b340ae1cb12077764fd74307d72c73da49e1b90e1891adea7a1a42f3b4e1b558404c1428d4cbbf5c056a81c13bf4b81ed6587e256ad83c50e1f15b3d3174f66c69c1787b9fba87796390a272acc1762f512b4b4010b4fa554428223a015aa2965286c8cb24aa36c33a6179443a78af7c30120638ed88613de52707e640b173c71e12af05f401ce96105c2a3b69f554b6d834ab54875610807e1b5bf0485ab9aa704e156a0d0583c18147bc081d583790cfd518994479502750dda5bbbb5952d5a6a787051c84d70dce8b9a68e638436b2c28b4494da28c6dda77cf702342e1b64992cee5d18b357b14c91231b974aaae91332740272c11412f48c13615123cd0c3d216b06099779cb639a0982f592c230ba5786ce63885e260c1b08153380a9300a2eb1052f7d68af5644013842029773177db7665d915c23a5e6d9088ccd50b754615950086dae18b75f44cfb90365dda8f0c521ef004115d4b9855c4abb882733a7a454cf7376891a6018c901bf8c3117c2fed0700187bc412860bac210be5770e3969bd6d10c18d548e4d7b297f1181c74a5e94c01ab1aa720af3ca271b164953190cd26551c73c39a9148ebb8ef991bc0f44be1df1592d88839715aba0364782927411791f66511be485a1793c45275c82152140358408b0ccccf67b3f4d12a69428b332b689b7e850991ab7a8f88eea2ab7507808fc1bc7e07cb8e2fb271885b96ed15718b439bab40a6024b0a2cb4ec743614fe4bd8e975e37f81077310c213aaa435c0c1254aa9c709191ac8635a09a450cb4e15b711ef52d2d56704de4a5f2550cf93039732076a789ce45b7915dbc16c325b8771002844b5a39c52320b4c47c93a07d6a1696e3500e845f8e83bdffc692eac32f9714b37fd77efc00161207012c1b5b6187b71f046a8ff55b44dc0cc4704d67733114487704b45bc273411a270f45367ad609a415e032b2a43565b9613136c400f4748643a7fc0618291140bedfe456549e71a1a823f76a7abbc6737f2ca3f74ca4ae748a6f376efe7f9f6f",
-    "capsule": "0x51b7a38b5781b64da25ba9f9b2849f4b702a4c5392382f515274ce70ae4ad2faa459fce870ce3d0d822103274bd0ba6d26008a51cb4365f445f0addbe271de070cb23c40e067632af0f2e2280ec27ef9a8a1b21d5e138090295738a7624e3988b14e61214da5d6d3ddddd4475e2fc1244c1823022205ff260fe054c23cee6d813832b54dc2734b9eb25d86be28feab0b471670f7a679f1c156c69331cb74b1c6c24e1549127b1fad7969eeefaf13a9bc9fcc14346cc1871c828130a9e104cdcd1b0c920989d81c29198e1f1ee703731d779a7f0cf707ff59ac2f0dd9c485a43c935818f1e2335226756d848a3aea3624869320133e0ba50053e82ce7a8ac381c1fed266920f51e420b295031bb0e3cce0b1d51a14ffef2d111dbf52de3650875b0fd4bbf12d953ce4cd3e0af33b36d8b943851fc21037ed2b07ffda645bd526fe3208975054f4ae51bcdff816ef9bc8da7814a17ce63e5f4b9870bd500848731526374e7a111fa8660bfc23f09f1187a0dc250630680eafbeef5226425d1ac47e7d3cf33db14e51d6edd9a7ba3cec5c0731fa005cb78648fe9422581e6a1da4eb009f0ac3630eff066cf7123c0533a10a71e253a5cd8a5eee7b6ac43e3406556c0aa3e0f2fe6a062103169d525d6c6fe1ab3acd8bc0d1ccd9984248c3e68c0dea4ea6b0399bf4cdb7d225160b7cfeb39b4e6fd979375ad1e84bf934213d06b19cd92dde78008673d6d72cf8e97725d495187ddd0e4c5eb6c5208e47fb1a362e25a623befd069be025930141975e5587d23b27d8462bac7831972232750ca75828c3b5a8bb4124eb2c86e6ccb6606ba3946bcf39be3ce47b3a35f1904871914b24b45b5d52a0ab484e473aed7b570b5a3193eb53628057cd7616ae2ef6d959c65adf536c7f530621f4b73b36a6101ca650b40818376ebdf1480d3c918aa92e4a0bef02bb15380a4e47cdc83e5d719c597553f1ba2e7d9d091ce32b74e133f2d38723615591b2ba563dbe40f4551168d169f19fdc77abb3a28af046f1791969e98291c486c37e6176638aff7472acc0b13b225fafefb6050ccee919d22797599a1bd04d7fd27f7cbee88038476a387c4faa41cf05e9cc92f75747e2b556ca8d84732e8c1b0cd6147db64d6b411250798a7aa965c43b3f7825e6e2c56a4d50108512afc871f75fe14d9cf7ca9b80a406eacc6bf0ae07348bc84818d4aa63d583f3df0034afc3016e3bff3b2bcb81cc89bcbc92b860bf6ae27e13ec59f5b98c8d305ac142d794a1450d40926da1a805945fd1637e52bd1eebe2a3d687fe6aecb6488854b9b4389d8f51077062009ede4ea8aa79fb905261fa603a83ce74080a371b3a822c1f76bd009766e6fba26fb821838b28bd23f963408bd55dc37ff37fb3cf59527267fce961e7f69be193422b019b6ac17528a4446e80014c989bf47d437570b1f16edcace518745ddf0163e697224964a35684ad3aa54fbd1adb600457c0cf93cc3158bad2ec785c0ca08823e3b4674e12b890df4d6ee5aa4236c1cc0b285",
-    "commitment": "20072588028813941854778852144519848294886431193935427604333466561216270678258",
-    "encTxData": "0x82690cbfe550c82b6f06310b8b95e1c12f1b9569606d6ab77926cb4d39e3222b502b1766efc724489e6bd805a2ee671fb5e0f7de00b15eac1cb99ce39af63868a92218e627f42ad7dc080e674d63a9cdf1b339b2a5a95808a76a8cb4",
+    "anaEk": "0x449848bc13a64d1821bec794debc7006f3b5c2247f32e27b14120ac603a9c0911e1ac6320fd9a66d19759be925d5e21363440b0942830c234f2853b62032037593449e002b2d36b89b23af9b064192e6236548776d378d7b78c43c42307d381ebb0828ac69acb95192c5d87e3ea14885f96617c55ed3e6a308679a41625411e799c2a679d13870dfb545a66583ce6927312cae7a2737da160915c79596d48d209815dcea0a04f62876f7c2ab40cac5d32d69446d486621ec7399ebf2843af303653369efc4927deb49dae8c5daa85cbd541d05e427b7918b01e86d7f9b7f060a47b8dc1fd6e0a0a01bc00110b12ec8adf12453e53685dac6c4d50a61e86951144258d4f888a38a0c2d12390d95c16fac87bd443802e6851ef40be927c1dd29603ef285429835fed99933658cd24aa874f1ae790ba4e96cbe4ac3a1862576fb0a231f201fdb8b1534568c5e9aa1347c92127ba7169528f4205026c63db9f31a62abcae9591958900f01e09c7221b37f552c82630cdfe6a82fd68dfddb84da37b50fc24bb6ea240e343c181349d243062942bdc47bafb7e460adc13303a7475476345d8786ac8772f2b86366447b01a98657e54c05e594393599da8738e4024b85b8420129245e57a796e24c90b7963d6b1363f6b162f59410019b1541c75443a9af65002545044fbb1235f19f6ab1bbb0c67383c36d624b38287662dc312569c051718b90cda328d55c8882a782002c8b5f199c7ed31f17c405aab3c333d80fdd204bf3956df04132e17ab40d7b375a1b7f85ab56f87c911b8665d1f86ce7796490b67612a5b55325520145758dc002d1a0544ee07f3cbc0a07c6c0cab2011a16738a41cb75940c5228ce9b888f4c920fe9963b0be07ed136cd0c4b1bc26c745dc951d8452edcf9146bd22a5e0c6353931c333572c04784b56c156cd7a722625676bb8f36797aee9bcaaf4088207799c0071834703017e993e989291df22bbd018a6fa35cfdd906aebcbda6e49754eb5c72523e5189bc7db243ec15167aa9c49cf0a8754c2a3f6bc4a4571a85eaadb87441b7a80cd6011fa4089326d67a3cf2133319449d805f9884208ea6a400c45608584847273b6292039a516e75607a79076977324f04db9729826343c7cb94461f9964433a795852e80cfd582d27b7be2d711902410ca2251769b297120b4fefe797e2db2a77d4ba5e5b821ba7ad365802017ccd0a081c039436f0e095cd553e31212684f00e6c22388e81588e155fd5dc12f61b396a502d7ee4a7c3894d904700aa97867f73819ccc63f0387cf8cc643bb4b07620ab70808d65d6aa42589549a4a1df2214431246e4900aff659ffc5b9364e6b35100bb34a009abcbb2504a6093c6bab34c5476971bdb8974f5c57110e474759401e5fa5da13306ba583bb07003add28c04bc704f0c89e94902fea55dadaca9c26203f919426dd27269144d3be7925a55ac6618bcf879a176f8284d9cc16a174b28e671890b9f26e63c8fb818c6582a34f79d03f858c90a684de09c79a28ab757679042814959961ea8617cca45fdf491c98050c0931b1f7b41e4650a859c8706022a669ac1dd6c5a40a73852959006979d6df40a5aaa24f48150e3f9a1c3eb0b85b4898bab82a43eec75cd797ca022ad460f2f9cd3076efafa13068ef9",
+    "capsule": "0xaad09b37c5e3b386ddc1216aa7bf1db27b3dd8bf09e878f17a49b2435fd28d69b6462afeec1277372be57d8c04d580afe3999a697c687e702f31525c8f48a84bbe2002f92a61d37e4fa84561f349119a8eceafd40b91c33211efaeafd09f023d4b6221e72df59b21085f57416789627cdf52ab0a568fcecf7ac02ae81dd9abe8d32b0a5a0d5883095dbbcd0e32054392c0a5bb9a27d13abdb6b7707b87d0880703b54e9f1a006a4553246625b31103c5a8987f4aa728a7419e63673808fafadf8004f093b8960a1b20e56ca8cc832b9447a4a33cea124e866cf261c54b807baacd6c0ca3369a7305534271763484980268f27eea338f09b972a7b23999ca7fbd1d88f79891f980f8454fbaf15baf802b7a9674d24bc818ad3f3d18d854884d9755bfe883c11f31f350cae4b30439e15253152621be7dfe846fd145a4810dc893b0b3cb734e2fcfde77f2977310412c99c0d1251342460cfc2bdf03535233a3eba4abd6db92e51117d91d31086b26f411d4153b9c122da11a9cfc2c7aa4d275315f733db5c8d82ddc81a1f647af0465f0ac095793f80af31b70f162a9b0f9aef8622dc600d026beb905a5c48e19d0510d07fc70168793d70877927cab87e316ff452ad9c28399fc9dffee9c44bb3a379d08529c6ff96476b1bb9bfc74802c8b4b3980b66c2ceb8b40dfac2987d94a59e4752e557db8d818214f64b2f6e7dba00014e17dbe2f542706561703110e56560033d8ff882d652ae161568f6312515779bd86337cdbc2ad5be4f728cff60123b465d1b401013394a3e7f460ee1d141ecce7cfa1f3109d73211ab05d8cefd863e8d2c5d5a4c35ccf1eab2f3378e98860376b03513c7672a144572d8e3dcd569a17959948ac9d097dc00d58d7fca47da3dd93d813a1ab3de993ed6c23d8b2f5fccd10a5bc712903cab8a3ce3c8b0ce24b760b71577165dc110a1dc2afcc723051f7d0e80ef642b8da9cc1882d0961772db7f8aad903413cc4f69cdfd2e52ce132621a0d60b489c66a34f52d908035ab61632bb7ecac0e91442813a836373195eedf3d2532031f1b6c16db135e6171a00d2b0c9cc687deca351d1f247be0e530cd285bdca9837f7476840bde0c4dab571890626254b152702357f5d57211a62e51ae3ed04f0bd7dfc4e51e05dd2fae796a9bacc544ebe9cb628efbb0183cd0b73f69cf792b325331a0b7bee62cc72fac16624e7caa9e1640376b0fbb428a67604027fb94455dce4e3f71bc23129a566ff5c1908cdfde3301a29470ae5bee24715da28304ceab1d8e29ca4a93a59a8404b170bc2dc2660a903e207f1eb2582b9bce94bdc60b89f0c0fd16ace4e3025a6f15ad785b6b95c867e3b4b545c62852f94f20a88e67add3430d419cdae415342037d784a581fb6820d17dc03c0a610abf9e523e4af1a0251e96532237949a3fff51807cac716db8c1445cc3b8fdccbbbf1d250a3113b968c5c8eb75273f67d9d5e1d0a4fcc8c07f87a76c55f87b99b810539c0bcbee6e01baff506461a9287f743129",
+    "commitment": "3247351366383618404575860298711471673532902777225617713059856448401393332415",
+    "encTxData": "0xf34c73924b68660c1556b3d9d17ca41a81b003ac8b900c6bb96993ce660ffd9d80e077fd51b9a4c4668fc5d224a1850e89ac4a1bbbbae6ea9df6610d07a7ca934d47018d49a5b21cf211a6765da9f1d95c8fa6351221284506cc5107",
     "forged": "61",
-    "key": "0x30eeeeb5d088b30e2aef1a521f7c6ea16106025a0aed742cdb93477289452948",
-    "nonce": "0x82690cbfe550c82b6f06310b",
+    "key": "0xcff8784e56aaae579e10d895044015d2e9c6335b41218d3122dc36742163b3b2",
+    "nonce": "0xf34c73924b68660c1556b3d9",
     "opened": "1",
-    "pkSpend": "7043873878631457259366491044075408335673533132595060497267625614044314406762",
+    "pkSpend": "8156372617690083877751686899634039184797231608225012565204862268616559160379",
     "plaintext": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003c",
-    "salt": "9750577146619970318538653298032567894268941497703618162425691571955997644691",
-    "saltBytes": "0xa6bb8ce7e39199c640fe94fd527ab384eaff6b2fdd919e80db63156b3e209796",
-    "scanned": "20",
-    "sealed": "0x8b95e1c12f1b9569606d6ab77926cb4d39e3222b502b1766efc724489e6bd805a2ee671fb5e0f7de00b15eac1cb99ce39af63868a92218e627f42ad7dc080e674d63a9cdf1b339b2a5a95808a76a8cb4",
-    "ss": "0x236979db861eac429f5d14f9218fbba45ad87d8c20c61e7a9777b4fbf3b9531f",
+    "salt": "14316051194269074075213199485196736845588861818633014912936574092132814347134",
+    "saltBytes": "0xe137d2d6f3b90dcf6c21d033d4ddedbd12db6b01f14889ce0e410dd0a25edb82",
+    "scanned": "8",
+    "sealed": "0xd17ca41a81b003ac8b900c6bb96993ce660ffd9d80e077fd51b9a4c4668fc5d224a1850e89ac4a1bbbbae6ea9df6610d07a7ca934d47018d49a5b21cf211a6765da9f1d95c8fa6351221284506cc5107",
+    "ss": "0x66434dc74a211ec6d501cbac9b737244e9dce02032758b907b7281cd7b99bd0c",
     "token": "0"
    },
    "ledger": []
   },
   "keys": {
    "values": {
-    "ana.pkSpend": "7043873878631457259366491044075408335673533132595060497267625614044314406762",
-    "ana.skSpend": "1731811223813115138863647779414126930871581227094481957449051704748768093297",
-    "ana.viewEk": "0xdb07b9527405e3dacb8546c542d8c64fc25ed3022c038375f21075d0a194587b3213944a90595a9f71c89d2b70c1620e0aa6b61ec30bdd9cc5f2b113ab94c933930b1a7bc31a800da4d370b74a0e379a963659439746c1e69ba52df6206c457fbc2421861c9442bcce1e486b144c2a7d63205b760aa997c77fc24de61b35f1219328c22d3d54937fd457b11c108d84bf14f4709797694d4cb5c3137f0b6a051e41c716db9041803e87e15ed6b95471e38491b30769f624c91b54b466beaf2b82a1799832b24d53808700b488a7a8418bf555e57b0a593c768df065a2d70bb589b31795812ed4606959745348805bf9c0415383355b221f68c2d6d79dfc87adb3bc0ca66aa7ae326861f03843665f85aa4d41033160f735db4607609c25c372a306a357a2a506589b8ebb3792ff441246966532c81b5c2b547386ce58634691d103860c706e3aa8d76142e1cb5b7b0c8621396ed7d8c0ed7644a2c043332a450459b72d89672cf609c1a9863505471cbcc5799037ee6a8fa9babf1c77a000a452d696762a8482ed9c13e4c9437b383f4087c1b38a26ef5a1510fb1d118c7304eb0ad72647cc02c5783b044a7baf9cba16fbc2a96a441b21559298f79086b340ae1cb12077764fd74307d72c73da49e1b90e1891adea7a1a42f3b4e1b558404c1428d4cbbf5c056a81c13bf4b81ed6587e256ad83c50e1f15b3d3174f66c69c1787b9fba87796390a272acc1762f512b4b4010b4fa554428223a015aa2965286c8cb24aa36c33a6179443a78af7c30120638ed88613de52707e640b173c71e12af05f401ce96105c2a3b69f554b6d834ab54875610807e1b5bf0485ab9aa704e156a0d0583c18147bc081d583790cfd518994479502750dda5bbbb5952d5a6a787051c84d70dce8b9a68e638436b2c28b4494da28c6dda77cf702342e1b64992cee5d18b357b14c91231b974aaae91332740272c11412f48c13615123cd0c3d216b06099779cb639a0982f592c230ba5786ce63885e260c1b08153380a9300a2eb1052f7d68af5644013842029773177db7665d915c23a5e6d9088ccd50b754615950086dae18b75f44cfb90365dda8f0c521ef004115d4b9855c4abb882733a7a454cf7376891a6018c901bf8c3117c2fed0700187bc412860bac210be5770e3969bd6d10c18d548e4d7b297f1181c74a5e94c01ab1aa720af3ca271b164953190cd26551c73c39a9148ebb8ef991bc0f44be1df1592d88839715aba0364782927411791f66511be485a1793c45275c82152140358408b0ccccf67b3f4d12a69428b332b689b7e850991ab7a8f88eea2ab7507808fc1bc7e07cb8e2fb271885b96ed15718b439bab40a6024b0a2cb4ec743614fe4bd8e975e37f81077310c213aaa435c0c1254aa9c709191ac8635a09a450cb4e15b711ef52d2d56704de4a5f2550cf93039732076a789ce45b7915dbc16c325b8771002844b5a39c52320b4c47c93a07d6a1696e3500e845f8e83bdffc692eac32f9714b37fd77efc00161207012c1b5b6187b71f046a8ff55b44dc0cc4704d67733114487704b45bc273411a270f45367ad609a415e032b2a43565b9613136c400f4748643a7fc0618291140bedfe456549e71a1a823f76a7abbc6737f2ca3f74ca4ae748a6f376efe7f9f6f",
-    "ana.viewSeed": "0x1b144c4a641270096ab13ab4473665102bbe4c67dbf00eb0d8abbe8afbfee33c53c5c948d3c13e232e44ee42f18ef71a08fc51e324422095dfa935b3d26f4dfd",
+    "ana.pkSpend": "8156372617690083877751686899634039184797231608225012565204862268616559160379",
+    "ana.skSpend": "10897036864852605569814376664423211114812587488132531693011497716665223366304",
+    "ana.viewEk": "0x449848bc13a64d1821bec794debc7006f3b5c2247f32e27b14120ac603a9c0911e1ac6320fd9a66d19759be925d5e21363440b0942830c234f2853b62032037593449e002b2d36b89b23af9b064192e6236548776d378d7b78c43c42307d381ebb0828ac69acb95192c5d87e3ea14885f96617c55ed3e6a308679a41625411e799c2a679d13870dfb545a66583ce6927312cae7a2737da160915c79596d48d209815dcea0a04f62876f7c2ab40cac5d32d69446d486621ec7399ebf2843af303653369efc4927deb49dae8c5daa85cbd541d05e427b7918b01e86d7f9b7f060a47b8dc1fd6e0a0a01bc00110b12ec8adf12453e53685dac6c4d50a61e86951144258d4f888a38a0c2d12390d95c16fac87bd443802e6851ef40be927c1dd29603ef285429835fed99933658cd24aa874f1ae790ba4e96cbe4ac3a1862576fb0a231f201fdb8b1534568c5e9aa1347c92127ba7169528f4205026c63db9f31a62abcae9591958900f01e09c7221b37f552c82630cdfe6a82fd68dfddb84da37b50fc24bb6ea240e343c181349d243062942bdc47bafb7e460adc13303a7475476345d8786ac8772f2b86366447b01a98657e54c05e594393599da8738e4024b85b8420129245e57a796e24c90b7963d6b1363f6b162f59410019b1541c75443a9af65002545044fbb1235f19f6ab1bbb0c67383c36d624b38287662dc312569c051718b90cda328d55c8882a782002c8b5f199c7ed31f17c405aab3c333d80fdd204bf3956df04132e17ab40d7b375a1b7f85ab56f87c911b8665d1f86ce7796490b67612a5b55325520145758dc002d1a0544ee07f3cbc0a07c6c0cab2011a16738a41cb75940c5228ce9b888f4c920fe9963b0be07ed136cd0c4b1bc26c745dc951d8452edcf9146bd22a5e0c6353931c333572c04784b56c156cd7a722625676bb8f36797aee9bcaaf4088207799c0071834703017e993e989291df22bbd018a6fa35cfdd906aebcbda6e49754eb5c72523e5189bc7db243ec15167aa9c49cf0a8754c2a3f6bc4a4571a85eaadb87441b7a80cd6011fa4089326d67a3cf2133319449d805f9884208ea6a400c45608584847273b6292039a516e75607a79076977324f04db9729826343c7cb94461f9964433a795852e80cfd582d27b7be2d711902410ca2251769b297120b4fefe797e2db2a77d4ba5e5b821ba7ad365802017ccd0a081c039436f0e095cd553e31212684f00e6c22388e81588e155fd5dc12f61b396a502d7ee4a7c3894d904700aa97867f73819ccc63f0387cf8cc643bb4b07620ab70808d65d6aa42589549a4a1df2214431246e4900aff659ffc5b9364e6b35100bb34a009abcbb2504a6093c6bab34c5476971bdb8974f5c57110e474759401e5fa5da13306ba583bb07003add28c04bc704f0c89e94902fea55dadaca9c26203f919426dd27269144d3be7925a55ac6618bcf879a176f8284d9cc16a174b28e671890b9f26e63c8fb818c6582a34f79d03f858c90a684de09c79a28ab757679042814959961ea8617cca45fdf491c98050c0931b1f7b41e4650a859c8706022a669ac1dd6c5a40a73852959006979d6df40a5aaa24f48150e3f9a1c3eb0b85b4898bab82a43eec75cd797ca022ad460f2f9cd3076efafa13068ef9",
+    "ana.viewSeed": "0x2ea234dac6507b85c504fa50e22cfe9a887d0217688a70fc751859ad611afa2a1fbedb6750042d03228722a15187d80aa6db1bab444c3a2a0d7b5e7bcf45e84a",
     "p": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
-    "sender.pkSpend": "13836040177063715977640769883463276747293928359336404988999366857548893910214",
-    "sender.skSpend": "9185102241164513335431409119664936162066193330793529346166233397347022845582",
-    "sender.viewEk": "0x46562f2b7a843ff6677fb95589b98166eb72fb66bbd880010078c23e976d86083984624a46ebb966f5b93e0b8439870006d6181b3269151631705748a0010c5ee560042a50b5f54efc27b7df63c9dd18bd488170a659c87a352773773482dca588135153d01313bb4b7ccc2e0abba92668691b256906644f9c9192ec5764a030372f3b6457274202f1378d634486731b7cf4a2007115da08392fb306685aabd50002c1a72ec1e6c4eb3340203aaad53aa1eb90a5f028037aa3012544ba825c3a275a1abb891f18f30146d810a48cbc67909b2a7222499851ac80a78e92b7f6978f2dd812082269c9baae8e96c9c3d566130a8f004945e96797d02629e8ac00adc176676489facace67d48ea6dc4a23162879f01351409e35d4b18d974051771339dc25afb61e74a71f9388a48aa01706a693b598967466260d1773a972beaefb2ae2542e8f03a810399cb4e83ba5cb42b97912593a43f565a78779983b80a1d1bc079475cc76f82c26957edc94bb6a81254fec57487792a311b4ceb11301d9b7badb0743d2a69c4420b868c91143565c87cd24eac7fb355f3a7a2a7b88c4927cc1104993a08570a768582c258b814519e79b23b526a58f4665d5c0873d243220d16d30db6efe1cb8ee71637e821a3674af5cc6c62e05bb13802b2db301a497133c780b668583199998376c53a5ea828d1a1e6421b2b669a5be592cc8a179b051834bd01a49a4a98b7b044ad5cff3c8b43739bdf9b92605c1a403239a7412694fec902626b7a91a4a2954c2415399a0d3cf8df633d1678995cc941790c66e992abaa64b92f5aade1475e8ca7d97e07551925ab1bc9341d66391b921301b142b147534e2b87ee306083aa378201ae4727823a4b8cf7bb6d1186b5c1bba6ef044de5772d8844c3f0b7ff1992fa5e548e6ea4524844af92c0601a58be945ba6fe3830d0abdb0b9630feb0c7f481d8e076c799bb90f639cbcd39b7198b615e71ec92b1945963a0b55c173bca89158ae145bb58f83a9be7b5c5acb31e0325052c516f9c8370ee4afb3470df0cbbda5413a2276c18c37c323ba949c393d1761c1e521707f4c4c06e9347c0cb25ffa2ddb308a92e4201b3157b5b99f1e387495097854dcb7fff47e98c2caefa39ecf2c787db07a65488e610b49ee573826285ad6d232a0a2575e1ba2c2273cb34c885a8b10c10c06283a0bba909151da9561a9100515993642a78fb42a511c5843b110b6b29905479ac5f41096995278d2aa02045ff7477064ac2418c449b8e7c76fba90e4d49212861999092d6490563a359954d81e1a943082e7bbb5000309c48df9a10d6af49e551aa71c07ccbef786bcb120f883ce6c8363a34142b23c3855f8c3f36b8d392bc283194ec79600545c073af36967cc1c66ba28e368c7cb6ab206682a5b85132d2b6c2b0cc5f2101570849e51db36c040a45b22bfed19ab83c0a2249bb279cb4354c5bc14239fb4a418603734f7a56eafab75b2dbc0446765e2b6586d047ac84a711127356b26bf0df3706c4474da7625a70512d1739e7bb49361530671ac65fc171bda180d0c7530044b4199738aad203f28f998cc83393e8718ef142456cac15b8c6ba7f8436de80627d7c8d67b20817067272bdeb07f791012af8c97b2ec56ee06a88b58f53f5576a3e8f327a765",
-    "sender.viewSeed": "0x44a2eb1b7aa9e76ef6c27999b766e960598bb3e5f90b2f4dbe4ee868ab7fe63fc98dd3e314d6200683445d154f8ae017ea97d866de38c38b846ad35729b56179"
+    "sender.pkSpend": "9084175403911520028722701820462555227909539898664467748671360897296522871172",
+    "sender.skSpend": "10703999321988218384757753720204245632079346041948321248644627976753444286637",
+    "sender.viewEk": "0x871048d730cd54401d5411ab16dc6b7711c0d5fbc6d303aca87303faa65f30b12c5a4a7ac396c51b66cb466745b22a0ff91c1112f49bad1c4d446192e5acb3b07457ccc6368830441e3901b1e4bfb02a56bb177730413ffd1999a9a9879e6526c994313bba8d50aa4f379662de14b7d8396bc0ac57535c814e7b917972b37e1a36d88748f67a63eab9a803aa4d7db052bd90236bb82a0e62ced0c644f4675e4efa0a4d2cb585da447e99ac2447894310094a275dfe928f92b28defaa87b64053daf4b4519764ff1a308ce2600d4b5049c1ba5e714b47b2c41772a68f694fcc44a6ae4a510c279d638a78f9e4bf7fcc7e698a75ba023b2394945b86bbe987660a78239d856cb1970193413790810105b1932fd38300517929709e04b7c5af047a9418c2703190021c431b77314a384fa470ad4ab057d1d1af8934a557e554dec838097ba20272c9d8338d617059497549878bacf6a0990db4cfbf1040175701e9c42fce8725daf0cdc7c2ad0d03943bc148d52664a9dac92346c5cf472e113a475c619b6b17057f3884bc087620d354b12b359a4a4606767f60ea3943eca067160b9de7010563ca69721a1ab992fdd117e59725df87aabf5cc5b777ca04b8b7539089eedacaeec9a951606c1f73baff6507dd54c66f6a2ea6f61e81ecad460b9236e0562693bab2530528ac1f0bb5a311a6379541517b1c9ac0304ad1aa8c07c2a8df6b3ac2fb1143d3358bb474ee0c8262f6b7b47109dfe15ee0ec1f085917714374d572321392be4a51af98c095d2224eed8701be57144118b17e08cf3c3548d8f59e547c5621fb5d721cc15669a26bc00fed5a4884d980d353bef50052874180247681624c1b77c7cc85e584f5333eae82cd4355908e5ca771b68fc69809ff4132a9506550f1a9974b6b778ba6608398b18b76ec731a9ef311b076696f653dc3a387c836825aca41d2006cae98210c8acb23230041986e58357bf74135f4d4961b9abf55ca73e262a5f4b57a699b04cc6c8ee46945898c131f18a432b677eae81f4126a59832829227cd350233848607a9d8b78c4c962984041a198afdb64e51d139257087fa27ab3bf0bccb8c96b7551ebcb50e1fb106df609dc95313e85288ce0a642a5b36b4b70d42576879e401e4a33c4c196c2137cd3428bb45c7332a9b840ff51034a12a49778fd459a9e65180b663c5d82249c23c76de49ae5e91008db175c0e2b404ab21a31cbe0033bec5030cd998045c6311c9f93b7fcc428270c2b501aa5dfb50606bbddcc95ebe39c9b1a9c563521c864226d797b1a030a2b62b8824eb752ee2608c7756d4942c3f0877da6642c825a1b2466e36584c2865c0d1b70b5b10a337e5782da270029b1d586bbc5444b05de2b909857860c8a207b0b7a30b1f4658aa9e20cb2f19a6af3863a84846d3988fe3947ac444b03de48e688427dc91a6ea3c1c869000fcb2908aec06f26300b572a1ab3abbf5a8afab6cc59e9ccd4bebc954358088c133bc5abf7698a076e4c86ea099ea9b5db6d81ac6557703339760730e58036907f967976536d7c7c5a5116b0ccabc5db0625d1804a1e5624c4604a2e8b537611217c75998a404a9348e4b79593ebb6423e222b753b4b0806fe422e40beb85c199c815da17d882e8ff9de532f4a182057e2b586f7d4a",
+    "sender.viewSeed": "0x6f7262377cef3ac849fa11eebfd589f00f64fc5f4f3a4d078664d5200cc8275aacc88378e5a457cea278630e1914a712545dfdc9a04fa57ce970cc653eb5ecb5"
    },
    "ledger": []
   },
   "payment": {
    "values": {
-    "anaPk": "7043873878631457259366491044075408335673533132595060497267625614044314406762",
-    "block": "110",
-    "commitmentIn": "5758221054770044157301182026028739054621464201251656353388517277792634062098",
-    "commitmentOut0": "20072588028813941854778852144519848294886431193935427604333466561216270678258",
-    "commitmentOut1": "16564180470095359238864843842889194389137332357218656369912106554640996929545",
+    "anaPk": "8156372617690083877751686899634039184797231608225012565204862268616559160379",
+    "block": "189",
+    "commitmentIn": "7297486730543740246123001088683060194278277596819266986878221620383619976870",
+    "commitmentOut0": "3247351366383618404575860298711471673532902777225617713059856448401393332415",
+    "commitmentOut1": "6812738066330512985721466654797241051370696849064816376212693709667821166575",
     "contractAddress": "932239071683227935029502081705487684401212248220",
     "dvp": "0x6b01819C927b66eB1ED17a276fC60359B502d3De",
     "enable": "1",
-    "globalIndex": "29",
-    "leafIndex": "29",
-    "leafOut0": "tree 0 · leaf #30",
-    "leafOut1": "tree 0 · leaf #31",
+    "globalIndex": "59",
+    "leafIndex": "59",
+    "leafOut0": "tree 0 · leaf #60",
+    "leafOut1": "tree 0 · leaf #61",
     "message": "0",
-    "msgSender": "0x084daD774102Ed2f437b4F06055f683644393536",
-    "nullifier": "6664908510648210216335313309374213552942795708759472958741512894246482733334",
+    "msgSender": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
+    "nullifier": "7208329225738307036620796597427457213227123135657966337647704065148768079978",
     "path0.bit": "1",
-    "path0.node": "913481234718477327334968582925068184274388334423056795184553464995512292476",
-    "path0.sibling": "20172738257466275507636727830379102265502414879182016197974541863253924889896",
-    "path1.bit": "0",
-    "path1.node": "1822438893434461107891668922251730623654969880818001156755079841829847070051",
-    "path1.sibling": "18548196279604799461048000334259916142758522801444715662239164855577399482970",
-    "path2.bit": "1",
-    "path2.node": "2593644058546670771869299625636565620015071026977960034653994431449316540724",
-    "path2.sibling": "20537632709722865158370825657870351647863101295335024197599283293298617099165",
+    "path0.node": "15401636002436970706741351152938846243865198071515882950700948520706357897626",
+    "path0.sibling": "18348109795885975445514369295879813353036938099393237807352682054589054805152",
+    "path1.bit": "1",
+    "path1.node": "14732795365862748406195395529243984984132346835326824979059593852549244397422",
+    "path1.sibling": "2527768834344796619069093235389093711820201369358161527369917662341587718033",
+    "path2.bit": "0",
+    "path2.node": "9411316730045225275755893919681364367890610501346587504900175496081202981209",
+    "path2.sibling": "6394967702556731931349597360857231577818344086247308420600702098348151392332",
     "path3.bit": "1",
-    "path3.node": "11036432632854047083430951544285711348963150143410707207813037887099541820265",
-    "path3.sibling": "8100171988430558133204245973335679682081137042120888595668800736825926601343",
+    "path3.node": "5556449046887406485891307971153256788611120328967704796026595842622113108712",
+    "path3.sibling": "20843609531007886649269512711160135569723303774467840153926421674794959234242",
     "path4.bit": "1",
-    "path4.node": "636839700513673841347581503073476639833748545948129291700033903428305042034",
-    "path4.sibling": "5187514373325490536457738443724076824252418394246882239702085080913430797157",
-    "path5.bit": "0",
-    "path5.node": "11592064299465174858599987650273105230012085813306668457461679394015977746365",
-    "path5.sibling": "7763070937946622828545897559398364952701415676360141127081877575944863661924",
+    "path4.node": "18568864184271216049992863652124359185304511654129557313413456320009756739958",
+    "path4.sibling": "7860843340180015939772673651261280689585376878597261252600216270105070214880",
+    "path5.bit": "1",
+    "path5.node": "16945781763654570664681291151397122548878414165195461882518546331977503029810",
+    "path5.sibling": "14290190609687384909855250610022284472652577382742325477760311199060660336599",
     "path6.bit": "0",
-    "path6.node": "11436182630954647678652247770116632802257612889274011640819639387680040173081",
+    "path6.node": "404674261395351770721514626112961378200197386285457658437975974582442588992",
     "path6.sibling": "4336110172767843874572170947831826800762554433417721132971126558487413457970",
     "path7.bit": "0",
-    "path7.node": "11012242564251145328893068904913744546732881978239560903562114057727063279449",
+    "path7.node": "18897827550650437328315489462838126812804138288032286074832573510430835729114",
     "path7.sibling": "17793516955206672117877101086466671169038346493482525475927531680188516206475",
-    "pkSpend": "13836040177063715977640769883463276747293928359336404988999366857548893910214",
+    "pkSpend": "9084175403911520028722701820462555227909539898664467748671360897296522871172",
     "range": "1000000000000000000000000000000000000",
-    "root": "11012242564251145328893068904913744546732881978239560903562114057727063279449",
-    "saltIn": "12507245492257313140007359567259368482756480757997153430253547688133030748396",
-    "saltOut0": "9750577146619970318538653298032567894268941497703618162425691571955997644691",
-    "saltOut1": "996232779957341028935271617780326887464851189795488164502655547153379675900",
-    "skSpend": "9185102241164513335431409119664936162066193330793529346166233397347022845582",
+    "root": "18897827550650437328315489462838126812804138288032286074832573510430835729114",
+    "saltIn": "18486071838680645546622098928206364634047379364250235419764063816766054928503",
+    "saltOut0": "14316051194269074075213199485196736845588861818633014912936574092132814347134",
+    "saltOut1": "15847038353824693123546216443903559225649115305279505827062285425309980636320",
+    "skSpend": "10703999321988218384757753720204245632079346041948321248644627976753444286637",
     "token": "0",
     "tree": "0",
-    "tx": "0x84520f632dd840deacab1034d5c8276968df673337c203db33ad0abff0647125",
+    "tx": "0x6acea428c22769bd9d50f161e8f39a3bd2a449ea4e8384c664b2cc890cf7f3a9",
     "valueIn": "100",
     "valueOut0": "60",
     "valueOut1": "40",
@@ -965,7 +1090,7 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "payment · Sender",
      "field": "msg.sender",
-     "value": "0x084daD774102Ed2f437b4F06055f683644393536",
+     "value": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
      "msgSender": true
     },
     {
@@ -986,22 +1111,22 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "payment · public inputs",
      "field": "MerkleRoot",
-     "value": "11012242564251145328893068904913744546732881978239560903562114057727063279449"
+     "value": "18897827550650437328315489462838126812804138288032286074832573510430835729114"
     },
     {
      "tx": "payment · public inputs",
      "field": "Nullifier",
-     "value": "6664908510648210216335313309374213552942795708759472958741512894246482733334"
+     "value": "7208329225738307036620796597427457213227123135657966337647704065148768079978"
     },
     {
      "tx": "payment · public inputs",
      "field": "CommitmentOut[0]",
-     "value": "20072588028813941854778852144519848294886431193935427604333466561216270678258"
+     "value": "3247351366383618404575860298711471673532902777225617713059856448401393332415"
     },
     {
      "tx": "payment · public inputs",
      "field": "CommitmentOut[1]",
-     "value": "16564180470095359238864843842889194389137332357218656369912106554640996929545"
+     "value": "6812738066330512985721466654797241051370696849064816376212693709667821166575"
     },
     {
      "tx": "payment · public inputs",
@@ -1011,66 +1136,66 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "payment · Sender",
      "field": "proof",
-     "value": "20659448250104119236069653087399168350183933855369783984296097346247168738192 9735218935146329793291336567961677183842863055634379979570874637814239949744 9517244282523739935745869469278920056248214968211685761658819061561244972091 19119163870701310953703241125255297398134625047636268186809377069842458631236 19098778237232863712653297646215365901797745885663375939026310693109757816653 13438513454675011068777489682756204774633509742532852773742405669470639594518 2817465410887397913303029923000805443414884520499209616467241437789331508136 4143203445293224649649404680969612469652601236581376151754946674905193678138"
+     "value": "1629743963984087887336480653321416945094252585407282672001452674404238143646 10102225187042972742744086033039187818827710359432481881836558591852243519376 16309835629534846184866907368001565090802547553970029589619738439659645958178 21025676019611586847312494097055760366438965854772482402041653494841192847986 18777061603735708836937588934795339958368290322102161250533752167344436026343 18671170009221884539147355722096633260527431543599579391962932992126866753594 6761789713648179226558166357375247121462048075294227611172256234488224216082 10716526539585469402871584462633908015081990724742796256337262398059574933668"
     },
     {
      "tx": "payment · Sender",
      "field": "ctxt",
-     "value": "0x51b7a38b5781b64da25ba9f9b2849f4b702a4c5392382f515274ce70ae4ad2faa459fce870ce3d0d822103274bd0ba6d26008a51cb4365f445f0addbe271de070cb23c40e067632af0f2e2280ec27ef9a8a1b21d5e138090295738a7624e3988b14e61214da5d6d3ddddd4475e2fc1244c1823022205ff260fe054c23cee6d813832b54dc2734b9eb25d86be28feab0b471670f7a679f1c156c69331cb74b1c6c24e1549127b1fad7969eeefaf13a9bc9fcc14346cc1871c828130a9e104cdcd1b0c920989d81c29198e1f1ee703731d779a7f0cf707ff59ac2f0dd9c485a43c935818f1e2335226756d848a3aea3624869320133e0ba50053e82ce7a8ac381c1fed266920f51e420b295031bb0e3cce0b1d51a14ffef2d111dbf52de3650875b0fd4bbf12d953ce4cd3e0af33b36d8b943851fc21037ed2b07ffda645bd526fe3208975054f4ae51bcdff816ef9bc8da7814a17ce63e5f4b9870bd500848731526374e7a111fa8660bfc23f09f1187a0dc250630680eafbeef5226425d1ac47e7d3cf33db14e51d6edd9a7ba3cec5c0731fa005cb78648fe9422581e6a1da4eb009f0ac3630eff066cf7123c0533a10a71e253a5cd8a5eee7b6ac43e3406556c0aa3e0f2fe6a062103169d525d6c6fe1ab3acd8bc0d1ccd9984248c3e68c0dea4ea6b0399bf4cdb7d225160b7cfeb39b4e6fd979375ad1e84bf934213d06b19cd92dde78008673d6d72cf8e97725d495187ddd0e4c5eb6c5208e47fb1a362e25a623befd069be025930141975e5587d23b27d8462bac7831972232750ca75828c3b5a8bb4124eb2c86e6ccb6606ba3946bcf39be3ce47b3a35f1904871914b24b45b5d52a0ab484e473aed7b570b5a3193eb53628057cd7616ae2ef6d959c65adf536c7f530621f4b73b36a6101ca650b40818376ebdf1480d3c918aa92e4a0bef02bb15380a4e47cdc83e5d719c597553f1ba2e7d9d091ce32b74e133f2d38723615591b2ba563dbe40f4551168d169f19fdc77abb3a28af046f1791969e98291c486c37e6176638aff7472acc0b13b225fafefb6050ccee919d22797599a1bd04d7fd27f7cbee88038476a387c4faa41cf05e9cc92f75747e2b556ca8d84732e8c1b0cd6147db64d6b411250798a7aa965c43b3f7825e6e2c56a4d50108512afc871f75fe14d9cf7ca9b80a406eacc6bf0ae07348bc84818d4aa63d583f3df0034afc3016e3bff3b2bcb81cc89bcbc92b860bf6ae27e13ec59f5b98c8d305ac142d794a1450d40926da1a805945fd1637e52bd1eebe2a3d687fe6aecb6488854b9b4389d8f51077062009ede4ea8aa79fb905261fa603a83ce74080a371b3a822c1f76bd009766e6fba26fb821838b28bd23f963408bd55dc37ff37fb3cf59527267fce961e7f69be193422b019b6ac17528a4446e80014c989bf47d437570b1f16edcace518745ddf0163e697224964a35684ad3aa54fbd1adb600457c0cf93cc3158bad2ec785c0ca08823e3b4674e12b890df4d6ee5aa4236c1cc0b285"
+     "value": "0xaad09b37c5e3b386ddc1216aa7bf1db27b3dd8bf09e878f17a49b2435fd28d69b6462afeec1277372be57d8c04d580afe3999a697c687e702f31525c8f48a84bbe2002f92a61d37e4fa84561f349119a8eceafd40b91c33211efaeafd09f023d4b6221e72df59b21085f57416789627cdf52ab0a568fcecf7ac02ae81dd9abe8d32b0a5a0d5883095dbbcd0e32054392c0a5bb9a27d13abdb6b7707b87d0880703b54e9f1a006a4553246625b31103c5a8987f4aa728a7419e63673808fafadf8004f093b8960a1b20e56ca8cc832b9447a4a33cea124e866cf261c54b807baacd6c0ca3369a7305534271763484980268f27eea338f09b972a7b23999ca7fbd1d88f79891f980f8454fbaf15baf802b7a9674d24bc818ad3f3d18d854884d9755bfe883c11f31f350cae4b30439e15253152621be7dfe846fd145a4810dc893b0b3cb734e2fcfde77f2977310412c99c0d1251342460cfc2bdf03535233a3eba4abd6db92e51117d91d31086b26f411d4153b9c122da11a9cfc2c7aa4d275315f733db5c8d82ddc81a1f647af0465f0ac095793f80af31b70f162a9b0f9aef8622dc600d026beb905a5c48e19d0510d07fc70168793d70877927cab87e316ff452ad9c28399fc9dffee9c44bb3a379d08529c6ff96476b1bb9bfc74802c8b4b3980b66c2ceb8b40dfac2987d94a59e4752e557db8d818214f64b2f6e7dba00014e17dbe2f542706561703110e56560033d8ff882d652ae161568f6312515779bd86337cdbc2ad5be4f728cff60123b465d1b401013394a3e7f460ee1d141ecce7cfa1f3109d73211ab05d8cefd863e8d2c5d5a4c35ccf1eab2f3378e98860376b03513c7672a144572d8e3dcd569a17959948ac9d097dc00d58d7fca47da3dd93d813a1ab3de993ed6c23d8b2f5fccd10a5bc712903cab8a3ce3c8b0ce24b760b71577165dc110a1dc2afcc723051f7d0e80ef642b8da9cc1882d0961772db7f8aad903413cc4f69cdfd2e52ce132621a0d60b489c66a34f52d908035ab61632bb7ecac0e91442813a836373195eedf3d2532031f1b6c16db135e6171a00d2b0c9cc687deca351d1f247be0e530cd285bdca9837f7476840bde0c4dab571890626254b152702357f5d57211a62e51ae3ed04f0bd7dfc4e51e05dd2fae796a9bacc544ebe9cb628efbb0183cd0b73f69cf792b325331a0b7bee62cc72fac16624e7caa9e1640376b0fbb428a67604027fb94455dce4e3f71bc23129a566ff5c1908cdfde3301a29470ae5bee24715da28304ceab1d8e29ca4a93a59a8404b170bc2dc2660a903e207f1eb2582b9bce94bdc60b89f0c0fd16ace4e3025a6f15ad785b6b95c867e3b4b545c62852f94f20a88e67add3430d419cdae415342037d784a581fb6820d17dc03c0a610abf9e523e4af1a0251e96532237949a3fff51807cac716db8c1445cc3b8fdccbbbf1d250a3113b968c5c8eb75273f67d9d5e1d0a4fcc8c07f87a76c55f87b99b810539c0bcbee6e01baff506461a9287f743129"
     },
     {
      "tx": "payment · Sender",
      "field": "encTxData",
-     "value": "0x82690cbfe550c82b6f06310b8b95e1c12f1b9569606d6ab77926cb4d39e3222b502b1766efc724489e6bd805a2ee671fb5e0f7de00b15eac1cb99ce39af63868a92218e627f42ad7dc080e674d63a9cdf1b339b2a5a95808a76a8cb4"
+     "value": "0xf34c73924b68660c1556b3d9d17ca41a81b003ac8b900c6bb96993ce660ffd9d80e077fd51b9a4c4668fc5d224a1850e89ac4a1bbbbae6ea9df6610d07a7ca934d47018d49a5b21cf211a6765da9f1d95c8fa6351221284506cc5107"
     },
     {
      "tx": "Nullifier event",
      "field": "nullifier",
-     "value": "6664908510648210216335313309374213552942795708759472958741512894246482733334"
+     "value": "7208329225738307036620796597427457213227123135657966337647704065148768079978"
     },
     {
      "tx": "Commitment event",
      "field": "commitment",
-     "value": "20072588028813941854778852144519848294886431193935427604333466561216270678258"
+     "value": "3247351366383618404575860298711471673532902777225617713059856448401393332415"
     },
     {
      "tx": "Commitment event",
      "field": "leaf",
-     "value": "tree 0 · leaf #30"
+     "value": "tree 0 · leaf #60"
     },
     {
      "tx": "Commitment event",
      "field": "commitment",
-     "value": "16564180470095359238864843842889194389137332357218656369912106554640996929545"
+     "value": "6812738066330512985721466654797241051370696849064816376212693709667821166575"
     },
     {
      "tx": "Commitment event",
      "field": "leaf",
-     "value": "tree 0 · leaf #31"
+     "value": "tree 0 · leaf #61"
     },
     {
      "tx": "Payment event",
      "field": "commitmentOut",
-     "value": "20072588028813941854778852144519848294886431193935427604333466561216270678258"
+     "value": "3247351366383618404575860298711471673532902777225617713059856448401393332415"
     },
     {
      "tx": "Payment event",
      "field": "ctxt",
-     "value": "0x51b7a38b5781b64da25ba9f9b2849f4b702a4c5392382f515274ce70ae4ad2faa459fce870ce3d0d822103274bd0ba6d26008a51cb4365f445f0addbe271de070cb23c40e067632af0f2e2280ec27ef9a8a1b21d5e138090295738a7624e3988b14e61214da5d6d3ddddd4475e2fc1244c1823022205ff260fe054c23cee6d813832b54dc2734b9eb25d86be28feab0b471670f7a679f1c156c69331cb74b1c6c24e1549127b1fad7969eeefaf13a9bc9fcc14346cc1871c828130a9e104cdcd1b0c920989d81c29198e1f1ee703731d779a7f0cf707ff59ac2f0dd9c485a43c935818f1e2335226756d848a3aea3624869320133e0ba50053e82ce7a8ac381c1fed266920f51e420b295031bb0e3cce0b1d51a14ffef2d111dbf52de3650875b0fd4bbf12d953ce4cd3e0af33b36d8b943851fc21037ed2b07ffda645bd526fe3208975054f4ae51bcdff816ef9bc8da7814a17ce63e5f4b9870bd500848731526374e7a111fa8660bfc23f09f1187a0dc250630680eafbeef5226425d1ac47e7d3cf33db14e51d6edd9a7ba3cec5c0731fa005cb78648fe9422581e6a1da4eb009f0ac3630eff066cf7123c0533a10a71e253a5cd8a5eee7b6ac43e3406556c0aa3e0f2fe6a062103169d525d6c6fe1ab3acd8bc0d1ccd9984248c3e68c0dea4ea6b0399bf4cdb7d225160b7cfeb39b4e6fd979375ad1e84bf934213d06b19cd92dde78008673d6d72cf8e97725d495187ddd0e4c5eb6c5208e47fb1a362e25a623befd069be025930141975e5587d23b27d8462bac7831972232750ca75828c3b5a8bb4124eb2c86e6ccb6606ba3946bcf39be3ce47b3a35f1904871914b24b45b5d52a0ab484e473aed7b570b5a3193eb53628057cd7616ae2ef6d959c65adf536c7f530621f4b73b36a6101ca650b40818376ebdf1480d3c918aa92e4a0bef02bb15380a4e47cdc83e5d719c597553f1ba2e7d9d091ce32b74e133f2d38723615591b2ba563dbe40f4551168d169f19fdc77abb3a28af046f1791969e98291c486c37e6176638aff7472acc0b13b225fafefb6050ccee919d22797599a1bd04d7fd27f7cbee88038476a387c4faa41cf05e9cc92f75747e2b556ca8d84732e8c1b0cd6147db64d6b411250798a7aa965c43b3f7825e6e2c56a4d50108512afc871f75fe14d9cf7ca9b80a406eacc6bf0ae07348bc84818d4aa63d583f3df0034afc3016e3bff3b2bcb81cc89bcbc92b860bf6ae27e13ec59f5b98c8d305ac142d794a1450d40926da1a805945fd1637e52bd1eebe2a3d687fe6aecb6488854b9b4389d8f51077062009ede4ea8aa79fb905261fa603a83ce74080a371b3a822c1f76bd009766e6fba26fb821838b28bd23f963408bd55dc37ff37fb3cf59527267fce961e7f69be193422b019b6ac17528a4446e80014c989bf47d437570b1f16edcace518745ddf0163e697224964a35684ad3aa54fbd1adb600457c0cf93cc3158bad2ec785c0ca08823e3b4674e12b890df4d6ee5aa4236c1cc0b285"
+     "value": "0xaad09b37c5e3b386ddc1216aa7bf1db27b3dd8bf09e878f17a49b2435fd28d69b6462afeec1277372be57d8c04d580afe3999a697c687e702f31525c8f48a84bbe2002f92a61d37e4fa84561f349119a8eceafd40b91c33211efaeafd09f023d4b6221e72df59b21085f57416789627cdf52ab0a568fcecf7ac02ae81dd9abe8d32b0a5a0d5883095dbbcd0e32054392c0a5bb9a27d13abdb6b7707b87d0880703b54e9f1a006a4553246625b31103c5a8987f4aa728a7419e63673808fafadf8004f093b8960a1b20e56ca8cc832b9447a4a33cea124e866cf261c54b807baacd6c0ca3369a7305534271763484980268f27eea338f09b972a7b23999ca7fbd1d88f79891f980f8454fbaf15baf802b7a9674d24bc818ad3f3d18d854884d9755bfe883c11f31f350cae4b30439e15253152621be7dfe846fd145a4810dc893b0b3cb734e2fcfde77f2977310412c99c0d1251342460cfc2bdf03535233a3eba4abd6db92e51117d91d31086b26f411d4153b9c122da11a9cfc2c7aa4d275315f733db5c8d82ddc81a1f647af0465f0ac095793f80af31b70f162a9b0f9aef8622dc600d026beb905a5c48e19d0510d07fc70168793d70877927cab87e316ff452ad9c28399fc9dffee9c44bb3a379d08529c6ff96476b1bb9bfc74802c8b4b3980b66c2ceb8b40dfac2987d94a59e4752e557db8d818214f64b2f6e7dba00014e17dbe2f542706561703110e56560033d8ff882d652ae161568f6312515779bd86337cdbc2ad5be4f728cff60123b465d1b401013394a3e7f460ee1d141ecce7cfa1f3109d73211ab05d8cefd863e8d2c5d5a4c35ccf1eab2f3378e98860376b03513c7672a144572d8e3dcd569a17959948ac9d097dc00d58d7fca47da3dd93d813a1ab3de993ed6c23d8b2f5fccd10a5bc712903cab8a3ce3c8b0ce24b760b71577165dc110a1dc2afcc723051f7d0e80ef642b8da9cc1882d0961772db7f8aad903413cc4f69cdfd2e52ce132621a0d60b489c66a34f52d908035ab61632bb7ecac0e91442813a836373195eedf3d2532031f1b6c16db135e6171a00d2b0c9cc687deca351d1f247be0e530cd285bdca9837f7476840bde0c4dab571890626254b152702357f5d57211a62e51ae3ed04f0bd7dfc4e51e05dd2fae796a9bacc544ebe9cb628efbb0183cd0b73f69cf792b325331a0b7bee62cc72fac16624e7caa9e1640376b0fbb428a67604027fb94455dce4e3f71bc23129a566ff5c1908cdfde3301a29470ae5bee24715da28304ceab1d8e29ca4a93a59a8404b170bc2dc2660a903e207f1eb2582b9bce94bdc60b89f0c0fd16ace4e3025a6f15ad785b6b95c867e3b4b545c62852f94f20a88e67add3430d419cdae415342037d784a581fb6820d17dc03c0a610abf9e523e4af1a0251e96532237949a3fff51807cac716db8c1445cc3b8fdccbbbf1d250a3113b968c5c8eb75273f67d9d5e1d0a4fcc8c07f87a76c55f87b99b810539c0bcbee6e01baff506461a9287f743129"
     },
     {
      "tx": "Payment event",
      "field": "encTxData",
-     "value": "0x82690cbfe550c82b6f06310b8b95e1c12f1b9569606d6ab77926cb4d39e3222b502b1766efc724489e6bd805a2ee671fb5e0f7de00b15eac1cb99ce39af63868a92218e627f42ad7dc080e674d63a9cdf1b339b2a5a95808a76a8cb4"
+     "value": "0xf34c73924b68660c1556b3d9d17ca41a81b003ac8b900c6bb96993ce660ffd9d80e077fd51b9a4c4668fc5d224a1850e89ac4a1bbbbae6ea9df6610d07a7ca934d47018d49a5b21cf211a6765da9f1d95c8fa6351221284506cc5107"
     }
    ]
   },
   "proof": {
    "values": {
-    "A": "(20659448250104119236069653087399168350183933855369783984296097346247168738192, 9735218935146329793291336567961677183842863055634379979570874637814239949744)",
-    "B": "(19119163870701310953703241125255297398134625047636268186809377069842458631236 + 9517244282523739935745869469278920056248214968211685761658819061561244972091·u, 13438513454675011068777489682756204774633509742532852773742405669470639594518 + 19098778237232863712653297646215365901797745885663375939026310693109757816653·u)",
-    "C": "(2817465410887397913303029923000805443414884520499209616467241437789331508136, 4143203445293224649649404680969612469652601236581376151754946674905193678138)",
-    "L": "(6379886192227455886422492875529557306248709367685655572387068877860320907476, 1775028317703401061303829050434215650234926819118198707074556576380955250340)",
+    "A": "(1629743963984087887336480653321416945094252585407282672001452674404238143646, 10102225187042972742744086033039187818827710359432481881836558591852243519376)",
+    "B": "(21025676019611586847312494097055760366438965854772482402041653494841192847986 + 16309835629534846184866907368001565090802547553970029589619738439659645958178·u, 18671170009221884539147355722096633260527431543599579391962932992126866753594 + 18777061603735708836937588934795339958368290322102161250533752167344436026343·u)",
+    "C": "(6761789713648179226558166357375247121462048075294227611172256234488224216082, 10716526539585469402871584462633908015081990724742796256337262398059574933668)",
+    "L": "(4904503493175218035121959112736811950720046165532504253139398062620114413425, 15254438049039800136448266501190698464963869481488117105150960263202311518451)",
     "alpha": "(765462912738004479221577589320033722499888906698781089121482525052452911565, 2260826112563596002743628723823195749936720564966532953343059647161254640781)",
     "beta": "(16061311367017520097179497636002899930159971093538266472126270100272700988594 + 19219909221303619200617125629867824277435339207302084961302406754313771627057·u, 4394149797766704278984341224080873161517277850618460923517521932168224141071 + 15587658225871261254719641457642385273633671921900931139462324992940410930632·u)",
     "delta": "(19409927545917337230617829159982927243485017489088864896110768661050364432870 + 9365406384222228609872422051383672502581610374030028838290367835897042821217·u, 21437868405320059019228235689115164125074815349846975306407136036031697693082 + 12397785959561999519111425123571463972242517787134739366499056656490880125690·u)",
@@ -1098,13 +1223,13 @@ aside.warn { border-left-color:var(--warn); }
     "x1.name": "Message",
     "x2": "0",
     "x2.name": "TreeNumber",
-    "x3": "11012242564251145328893068904913744546732881978239560903562114057727063279449",
+    "x3": "18897827550650437328315489462838126812804138288032286074832573510430835729114",
     "x3.name": "MerkleRoot",
-    "x4": "6664908510648210216335313309374213552942795708759472958741512894246482733334",
+    "x4": "7208329225738307036620796597427457213227123135657966337647704065148768079978",
     "x4.name": "Nullifier",
-    "x5": "20072588028813941854778852144519848294886431193935427604333466561216270678258",
+    "x5": "3247351366383618404575860298711471673532902777225617713059856448401393332415",
     "x5.name": "CommitmentOut[0]",
-    "x6": "16564180470095359238864843842889194389137332357218656369912106554640996929545",
+    "x6": "6812738066330512985721466654797241051370696849064816376212693709667821166575",
     "x6.name": "CommitmentOut[1]",
     "x7": "932239071683227935029502081705487684401212248220",
     "x7.name": "ContractAddress"
@@ -1113,104 +1238,104 @@ aside.warn { border-left-color:var(--warn); }
   },
   "registration": {
    "values": {
-    "ana.address": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6",
-    "ana.aesCt": "0x9ed4aadc8516d43e7ce58d8a7f21e1bbd48338b2992dc3172177186448ed3093de2710d94f55c2a927beeed60f921fdcb99804972471646af9341139432e2a040e7475f2a8649e76831626066bb1c66a79b2ad9d3868d9e833c8ee73",
-    "ana.auditKey": "0x94c166721aae9e5a15684e9cebb595644c1d061cf069eec3d440ef35cf0280d2",
-    "ana.block": "106",
-    "ana.capsule": "0x4d51e9a103cc71884092155677f4816ad0605272eb827d2fc2f287d0e6c53b43b8ae205d7e86930c24a9b87f0a4c9328608b982b7038c3f7649bf3cae5f65f4c211b06caa59f8cd1da380906fe4011089a00a4f8f030c086cfddfeeabba46d83b3eb9287e5513a2939bad17efe4ce44a64437c60a01a0e01dd2619c92f84f3dda999ce0f5f742bf1d4c3ef5b89cd73476dc8264727563f8c12c414b841fc9062d66eb70d9b99588d236196d85f763b0d076af97d309650a52ca28b774de0cb01c3e5b81e2a766b2204a57a41ca46a1986f7ba2cf3cf9cebba53caf951e723f3af22e1a9433740c329092f0207116cb4aa8cad6d18af091d9b6192b57b9c5581e5c0ac1fea28ae4f295ea9b797f52d8eaf14334234509db9e6ef799793f4f2dfeaeff943c1fd8cdbb73922759710776788b5874a286f853a742f06aadecc56122685fc872863faf0b7f736fadd90f5feb4b2245491e2881987e96de617169d80178ce0aece44a0e3adc3c0fa28ebad52438a5556a986a0381921d605a5e6216cb2981298aece80d58304a98501bf8fdf7601bb822f61a68c0f6734f06e4c6a864510a35fbf10c92bb946368222d2559c0ba30922455bb1a64ac01e842163b09d37269ecf5de6ae2346e8d2791a481192d8ad876a4d1209bfc6337a6f94a0e3f2caf0e43e01f84be93a07b0cda15a2be4707e9641df3f9e6f8705197e8d6debd10ac61f0db36b25454c8d59d1b5d52fcbac30baa0bf57115bb4e37b801a006fd8d255957a9bae59a575fe78f58c5cdd89c05789f13ffb9a920f08658627086451f87d6e2c68976f7552af995cd1f903917021b4a4ea0e6232acfe1901e2c49cd514551844c6975124c63c3737d0b1e54ff4e55b45ae006cb5d7d3eb4054553815b8d46a4ee53bf228d03eda451c68be1e433b68718c35072d69ae9039729a88ed696aa6fbd60a81b4eefc991fcfeaf9fc8416de39eead8627aeec4b551fe13082f4ded84b324e0de542fbe5835ad05fc1e7459e83bda5d49d802edaa0728bd802a11434a425e2e9f4c6afdc5490e3bfe961940743a18ad5bb339d5c5ee212a4e4d59d4182b30951931342178bfa6ee69d651b59c8a541d666437cf38f47a9470a12c00fc9fa2618f4b9e7085ace0c08683bb3a795e70ba807d90d556b79c1f77381f9458f78004a6bfaac72e0a64d8a902688115b0727774fc34719ea618f3375e202c7d2ec3f04b715855cde7da5afc753f4de0b25373d7d4a2657bfa5043dd8a78c05f11ecb622e24dfaa3685b57c3a55f40f16996dd50e56bf863ed450c21c7fa2dcdf4ddc7ee12867fc60e2df0d8c9b7f1dab31e61bb92dc44a246c426ba102a8efe32a54867a072ae1d6ab0d4e4a5ac28d8646f9fc95af30407c16bdbc50ac3e362828abff370b8ca5367a1102f88166d43183562894526a3eebc7ff6c14860af2ad2b874d1b0c598bc1089b50e985f284d55e664731b06346790031b5be1345ea72889f12c4251adf5fa24a3e8ca2f6cc38eb1f3836a342ca10c5fd5dd6a",
-    "ana.nonce": "0x9ed4aadc8516d43e7ce58d8a",
-    "ana.opened": "0x1b144c4a641270096ab13ab4473665102bbe4c67dbf00eb0d8abbe8afbfee33c53c5c948d3c13e232e44ee42f18ef71a08fc51e324422095dfa935b3d26f4dfd",
-    "ana.sealed": "0x7f21e1bbd48338b2992dc3172177186448ed3093de2710d94f55c2a927beeed60f921fdcb99804972471646af9341139432e2a040e7475f2a8649e76831626066bb1c66a79b2ad9d3868d9e833c8ee73",
-    "ana.ss": "0xcad58bacda898f5ae12741fddbc1852009592e19cc6966360f29186094d0d469",
-    "ana.tx": "0x0f6eee82a903196ab00d6744e32d03985201f79025b8e352f1fc47962388e517",
+    "ana.address": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
+    "ana.aesCt": "0x546e696a49bd3a2652fe814241079bc655b6044d06873ba093a996467c9ed1f11525c5a9b1f5b92ec9999d24c5252daea1a2b90883f11c0ca9acf41f5e68d54f9d8ef1a6c7a84c9fd962ef5de8032590646e25bd247842db8b2f416c",
+    "ana.auditKey": "0x4bbc68f72d1443821aee7cf9043c270c3608b1b24abc4d2d04b74e9cc578de47",
+    "ana.block": "185",
+    "ana.capsule": "0x5195f285a7852bf943d8abb0461962b25fc374173b8a54cb919a3e4278d1f5d49b515e50e38b799479ec061afe795cbcc58cf6243b8067c2a64999ea6b016bd7f81907f3941935846c5828f0df5da9c8eb3cf3cf84dc9d9d884e9120cb4b5aa64ef92a7d595ec83503d707712480c94f9b96aac15a93010a3c6c942535a998af8e5a5e8917531a49c139998dc34d9ea17402a12787578196f4376966d4504ae6e86178d82ddbdf039466e5bdbdd9ba6fe4f22241ec528ee6ed8d8c46c706b08f7cfde9cff81f66745ec03850ac5e98a036c8a839e0d21b69adc6c2a7e558a0fdd737e62bde8fe9a5f43319d7e5e76f29dfc0668bb8bb0f07b1796f7591727e413765c2a2e488558615fbb87774c524c4f4379f5c2a60f325240c263b5af2eae9fb103905838a9464ac5946b8338cf71f61305043dd44a824f3029021a346f8bf288f8f951c2d07a3c4cd5043004185ccef0134caeb5bfb0c679f371306f76e9e7f240fbd962080943361c2fcec6d626ce7df94c9a89379972657b3fed9fe5ad2fe54bbb6dc1795c5a4a38055dc4e5b9009b50708b8a8cd44f51ae1ec6a28f6cdc2a791d129f5eb1c5f33f65dd11df3c15ca21e0756e3ca31d1d1fad9a06f535dfaf5c7f199b3478926362b30805bc522011d8b5593f2305f7d336d17bb95fdc5b9584e5c531a5ca731e248316af629f7decd978fefd6e6128f6376e5e42fe10efe435f135cfb1767b1de7ee1d493d301d98b128eacf07867f21eca7060567fdb66d72f26ff3ba9124cd78f684f2b068f12ad43f20dbdde46f19fb0390ff9a09995c4f89ff3f27420f108b88da6569fd48dd959df5ed264e7aecb7f37b1bde013efa3b0d233bd1cd7b60891bf2d8bb786ee806b483b7cc78ca94f482205138771d3012d5cc8a28eff56dce1adea52ce7d2a5386162222f19215aef37c726e1add1df6bcc1b90b5f82d79333ed42ca66cfeedd8bca0a10f90efd09764218c438a09cb40423f60dc9f837368ef4e3991e04561230e955d75360208f56da322d5597846e8f9d28832d3dab216a84d98adef8b17a6a1318a4f6ced9a550f2fda4747794ebf6b49403f6c322cbffa76ba5a34b99f876ad6aad5e81889c5ac660a748e9ba1130c7ebcdd4035fa7378e6646fb0f88fcb73b1dbeb260a9076b38d5a85c328a937baf3e62065dabbe04a6e8332fda9d104080e32059f195b42f6e78d9c87d9b3d453ac9caec4505b8976d4c28ca39b45c4084b885feb7eb05cdc0a43e83a9dc1721c43cfe94c803b96c2b1a5a4e219d47730e3eba6f5aad456bd39bc53a5f2235ebe6761688540eee98fe2c7ae9fa5f95d41cdd3c7b7375dda6a630b373a75a22e62095ec07ba8a2037a4c23af995bb8090c8a66b864cf5f5901bc29f828eeb5785b45567ca4c12ecb902c6169623e1863391c36df848e4ebf9481608216e23f92a04bebed7b9903822399dc6e7100c77ee99470378f2a897a3c842f3df44b62843981750ae515db8954034050baa0cad42347788df1a47bff86735200d64",
+    "ana.nonce": "0x546e696a49bd3a2652fe8142",
+    "ana.opened": "0x2ea234dac6507b85c504fa50e22cfe9a887d0217688a70fc751859ad611afa2a1fbedb6750042d03228722a15187d80aa6db1bab444c3a2a0d7b5e7bcf45e84a",
+    "ana.sealed": "0x41079bc655b6044d06873ba093a996467c9ed1f11525c5a9b1f5b92ec9999d24c5252daea1a2b90883f11c0ca9acf41f5e68d54f9d8ef1a6c7a84c9fd962ef5de8032590646e25bd247842db8b2f416c",
+    "ana.ss": "0x3170b92b0ef282206c9a165aa6045d59eaef98f88062a0ed217870c9920e28c4",
+    "ana.tx": "0xbe6a4ea547e7369cc3852abedde41b1f51c576b45350246502e180d6f9354832",
     "hkdfInfo": "enygma-audit-view-key-v1",
-    "sender.address": "0x084daD774102Ed2f437b4F06055f683644393536",
-    "sender.aesCt": "0x84ac2d45d7d67876c61b7b1e6093fee972b60e40595fb698203d4bacfb34a25c53f37f7aabb23dd3b9b0b15b316ddbcfa4b80776b1db348e0ec7e901f411ed1a570b704768c74aa0799d7ded0c843bcde49f0c795ab506037b61178a",
-    "sender.auditKey": "0x909e1fffe79c96daafb58787ab384c9a4878a476d81632768026ef85a5bfecc1",
-    "sender.block": "105",
-    "sender.capsule": "0x6891760b624ddabd345d554a8c0ffb83c3147b5b7b5a66fcc753338b537790ae44e3cd392fd4fada0af2d9b7899b8b04cc3a47b3ea93068a2591d6873e5ccfbf5767f500d3783ce25e584edd68478da9ca3119d35671ca1c5953839d5cc383cee1fb881b6cb4618365788ff81ad78dad729aee51d363eed6bf572750256703946d366e74c1e1df096f3fee0af4f32ae299a9f0330b5757ecd3a495f00a7c86d48c4186fbd88ef174d94a4b92144b8e0761baf88a769c2e6167b2c0b71595e00e40d6b77ae6013b291828cd1bbfa39f46101760ae8d89bcf831381d7c1404bd795b3f529c26a4b452a142369817d29b416ac97187aae10cbb3dc08b9c29534265d8f1ac9363e830d5302eeb99840e07a27c81fa618a0dd58f79a9947aa8ff931985f51d49e70f680c9d71e2ae773eacade2e417a44d6c7f2bc404b06fa50d068fd3eb15b2c32e284ab357da88977971a6a8e6d0c2149470af76d90099fa194fe35cf92d568c2120c82371333b76b90ebc55a3644f990e7319700ef7f3e77ad59ff068e877b1a1c5eb3e048ea036a291bdae37e812f4ea1d815d775e7245a60bbfe6337afc0c165fc9ee8d62bfc1007fe84e6a032b9729a6326dad6c12362a1f2b82fad34f018845806ae268be26b0b44442a636921691967dcca85b592ca6164253848dd5ce464899dcfff200a9d824918cff2a57fd339753f91db62448cb53de6d453b419bbfe4fbf77f5d51b9db568575faea6c0b3eef9882ffbf51e2e2eb133d23867d5d5e7c66386e7574827e9d72e5565448d9ecc91cf47aef10ddbc34dc18fe8a6462891c167e854b6a6bcefe3650c734d5731f0ba37a73e025a59fd82816ff7e264d6591242a93a07b05fd450ba26d25e0777bdabff052dd75f0142ecac304e3d7b9723ab13d88a31da65671a649534a413c3284443eaa8297d5a61275955521378b02a6abd70ea2e48c5e7069e79004b2d1382f6da40b82b625c493d143bb446466df909532428e9b5a6ee675629210cfbd74c06b84eccfbad5e5dd1d88942cdc5f1d39b7ed3183ef720574f23335c137961e43b01ed5635ae9e48f1c8508444f3ffcdbe7d221489db37af6559f07faa9c3d27fbf3a39915a84eea3fa3e1028c6c031b403291e17379f187958d30a4c847d1f67933f89ba4a8f1be99f662118be416880fc0ff2aac0570649f81c8b4423ee0a5bafa20f23b08b1a90f4e7d2b2018f599300993db951c5318086e082a1f8e0dbd14850d64c449567f1c8c0371c79d7802cd1394b9788693df813e2dcd6d1dd3cf07c5903d110e8e50d2eafd36a2b7d777f4cc7bd63a015682c5a882960373719499473eea3a1da6dac6d973507bb15d86b052ae7f7ecef70f04d32c41fc2906ad2568dc2de4e2f0bab494082d52994cfd25875872326c04aa4ec4642dc7cfb0b489f423b01b5d2e165caa575e0ba7795f3a9f005fe6f09fc1c134d2cf1421fdbeafcdabaa4b72cc1d2f4fa1fb052a30ea06cca2a41af59b2ea39e0f59323d552bbefac746301c1e233ca",
-    "sender.nonce": "0x84ac2d45d7d67876c61b7b1e",
-    "sender.opened": "0x44a2eb1b7aa9e76ef6c27999b766e960598bb3e5f90b2f4dbe4ee868ab7fe63fc98dd3e314d6200683445d154f8ae017ea97d866de38c38b846ad35729b56179",
-    "sender.sealed": "0x6093fee972b60e40595fb698203d4bacfb34a25c53f37f7aabb23dd3b9b0b15b316ddbcfa4b80776b1db348e0ec7e901f411ed1a570b704768c74aa0799d7ded0c843bcde49f0c795ab506037b61178a",
-    "sender.ss": "0x6978e24ed91ebe7fb9875feb7309f417d6d69895f6bff95079c5952690627942",
-    "sender.tx": "0x8adfbf2b206dcae87d9cd48c62e470b1b672c1c3f4c61964fa9e63a8822a6577"
+    "sender.address": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
+    "sender.aesCt": "0xe1883192419a91a75222170eed4ab9f539b159026c5ec7b5ab37adb7bfe8b928f31cfe9d56d2a73d9a265b6271ad88a73ec12250ad2cb791f4c3f6170253c60b16eeda7f10e705686fac7d740b78aaf6984d13d493b205070e0f6494",
+    "sender.auditKey": "0x0bba7cca315e2d69dd0f479d8f9f377c4323adbb966d5194a06c1e0cc658374e",
+    "sender.block": "184",
+    "sender.capsule": "0xc4ddbd01a74747549ff86dbb83a345d2e784863c9a75140e9e74693ed7d3e83917db67c61bea338c354919704f7f2b4e202558b183fb78325777fa4497528adea6a9cc9f281953da5cfc0055a5ff346b7208cf44ff279b1b204c2920bff4b256c7fc9d5a769c5b9230c8a9fc3c0a88a536afc134cee088ec10b89ec943e4963997b8b149b1fb1d0e33d352ebf4eaca9d6d03830572197801fc317d2dec273fb6d0f3298f489cf5801b69d0573dba9dec32174f49a98d3ae80d0ca6520a6d3df686c1956558b46bff6058ffd3dbd11c3abcde2d867edb6e23c078eac35deeae08843acb73b1795aaa49c2732549009baaf1bc8ac3e4c561e68b39b5e951819e18e31d8d0942a13aeaa53ae6c148f119bbbc7fe05673e4a1e6d0f9a00430c544fa7bc5c2567ccb37cfb24db4462c9ee3c7a38d251210e2c6bf0ae9ad34d6eac362b2a2192375bd649f24750af5681ab3c4317662a5599173831997f9c7f147fd1d85673effa7165ed97e30a7d31368337b2c2a26b19396adf767e0fd1611ff586b3079c049f337841d0f0614d111a2e7daea2b071b46f26cd0bee39ec395504e44e2d6d577ecd744eb34f4c434d56121010a53a30db53109de1ee4d4ed66a5618927e012ea2f39e0696d5d4503f138c3f300f1227ceebffceef4a9c905fc22af0cef4130f1ee45da94c0ff65fef81d2654452d623d072590309ef9ea04e7a44f8d1e19fcc5f2e0184fe2197feeb3c4fff7133347bc7ad33c05572389805d048707a4f6acb79105fcb34a7d4f580808d8ebf868266ff95ca310455781d9ebf494dfdbe23e96bcf929811fc6b7ab10705a84fabb3a3c3aca5ea57589104fca734a5f4f3809dffa24ec37c6c5c68fef350f2faea20b94ba83b88df0067f308117f4a29490ad2dddcfd12fd56e9c411277533b6b41b1c841639be389b346837da4cd4dedb8cb548fc4a2f430d8ee0605d0d16f5fd1f719bf6cba82c819dca5da5a7c9673addf3ea45be87104fcc784ad1e53c73d21e7aeb23710a1f2ef3af04ca71862c6710e65bbd426a708750b8ba276ddf3a7f4b18b9d642a0b5dcf23f5aa36bd482083f49594e6897172a128d48a22a2913372070a518dbf9d9e8e37de13e187b7e6d1271ef344614e4e0a51949b4da209d5cf192541e5290fb900162a7d1fcb3647e48c56002faa6fc88590cfce153b99facfffb8d04132c109dd2e4f6c36a096a75f06b5e9bf8ae4c563a9ec6788721bd0b799953ad891e11827aba65a63fdc51dd4cc196af4e76fe937b0d1e9dd964940628a894ea8bf060c11f2d1b749412bd0e18f31e4ff3a7c1f04f932acbafab49bdbae3ba0d8d86796a491dc8ae5d8cff43c83654f41071cc683a56856917cd966518750c1d0eef7bbc5d05a7ee6fa14c3d085617f63203adb66a1726e9e0c202cab76a15cd1022af77a16f7a962ed969e6f02e0b4cd009593cd499d2c0e1107a9f2d425bd792e2b70efaf6c851098ad792ed2a0fa31298e31ce127400fd4739b4bcb3116832f9e86b3ea6ef3264366c",
+    "sender.nonce": "0xe1883192419a91a75222170e",
+    "sender.opened": "0x6f7262377cef3ac849fa11eebfd589f00f64fc5f4f3a4d078664d5200cc8275aacc88378e5a457cea278630e1914a712545dfdc9a04fa57ce970cc653eb5ecb5",
+    "sender.sealed": "0xed4ab9f539b159026c5ec7b5ab37adb7bfe8b928f31cfe9d56d2a73d9a265b6271ad88a73ec12250ad2cb791f4c3f6170253c60b16eeda7f10e705686fac7d740b78aaf6984d13d493b205070e0f6494",
+    "sender.ss": "0xef8970f00391134fa9fbaf0c4d836e5b494702affecd6af09fd2e54f83b2b80d",
+    "sender.tx": "0x46646fd5308041863837eeadb2c13b1307d10c2fabd65d254926a16a47601a7f"
    },
    "ledger": [
     {
      "tx": "register · Sender",
      "field": "msg.sender",
-     "value": "0x084daD774102Ed2f437b4F06055f683644393536",
+     "value": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
      "msgSender": true
     },
     {
      "tx": "register · Sender",
      "field": "pkSpend",
-     "value": "13836040177063715977640769883463276747293928359336404988999366857548893910214"
+     "value": "9084175403911520028722701820462555227909539898664467748671360897296522871172"
     },
     {
      "tx": "register · Sender",
      "field": "pkView",
-     "value": "0x46562f2b7a843ff6677fb95589b98166eb72fb66bbd880010078c23e976d86083984624a46ebb966f5b93e0b8439870006d6181b3269151631705748a0010c5ee560042a50b5f54efc27b7df63c9dd18bd488170a659c87a352773773482dca588135153d01313bb4b7ccc2e0abba92668691b256906644f9c9192ec5764a030372f3b6457274202f1378d634486731b7cf4a2007115da08392fb306685aabd50002c1a72ec1e6c4eb3340203aaad53aa1eb90a5f028037aa3012544ba825c3a275a1abb891f18f30146d810a48cbc67909b2a7222499851ac80a78e92b7f6978f2dd812082269c9baae8e96c9c3d566130a8f004945e96797d02629e8ac00adc176676489facace67d48ea6dc4a23162879f01351409e35d4b18d974051771339dc25afb61e74a71f9388a48aa01706a693b598967466260d1773a972beaefb2ae2542e8f03a810399cb4e83ba5cb42b97912593a43f565a78779983b80a1d1bc079475cc76f82c26957edc94bb6a81254fec57487792a311b4ceb11301d9b7badb0743d2a69c4420b868c91143565c87cd24eac7fb355f3a7a2a7b88c4927cc1104993a08570a768582c258b814519e79b23b526a58f4665d5c0873d243220d16d30db6efe1cb8ee71637e821a3674af5cc6c62e05bb13802b2db301a497133c780b668583199998376c53a5ea828d1a1e6421b2b669a5be592cc8a179b051834bd01a49a4a98b7b044ad5cff3c8b43739bdf9b92605c1a403239a7412694fec902626b7a91a4a2954c2415399a0d3cf8df633d1678995cc941790c66e992abaa64b92f5aade1475e8ca7d97e07551925ab1bc9341d66391b921301b142b147534e2b87ee306083aa378201ae4727823a4b8cf7bb6d1186b5c1bba6ef044de5772d8844c3f0b7ff1992fa5e548e6ea4524844af92c0601a58be945ba6fe3830d0abdb0b9630feb0c7f481d8e076c799bb90f639cbcd39b7198b615e71ec92b1945963a0b55c173bca89158ae145bb58f83a9be7b5c5acb31e0325052c516f9c8370ee4afb3470df0cbbda5413a2276c18c37c323ba949c393d1761c1e521707f4c4c06e9347c0cb25ffa2ddb308a92e4201b3157b5b99f1e387495097854dcb7fff47e98c2caefa39ecf2c787db07a65488e610b49ee573826285ad6d232a0a2575e1ba2c2273cb34c885a8b10c10c06283a0bba909151da9561a9100515993642a78fb42a511c5843b110b6b29905479ac5f41096995278d2aa02045ff7477064ac2418c449b8e7c76fba90e4d49212861999092d6490563a359954d81e1a943082e7bbb5000309c48df9a10d6af49e551aa71c07ccbef786bcb120f883ce6c8363a34142b23c3855f8c3f36b8d392bc283194ec79600545c073af36967cc1c66ba28e368c7cb6ab206682a5b85132d2b6c2b0cc5f2101570849e51db36c040a45b22bfed19ab83c0a2249bb279cb4354c5bc14239fb4a418603734f7a56eafab75b2dbc0446765e2b6586d047ac84a711127356b26bf0df3706c4474da7625a70512d1739e7bb49361530671ac65fc171bda180d0c7530044b4199738aad203f28f998cc83393e8718ef142456cac15b8c6ba7f8436de80627d7c8d67b20817067272bdeb07f791012af8c97b2ec56ee06a88b58f53f5576a3e8f327a765"
+     "value": "0x871048d730cd54401d5411ab16dc6b7711c0d5fbc6d303aca87303faa65f30b12c5a4a7ac396c51b66cb466745b22a0ff91c1112f49bad1c4d446192e5acb3b07457ccc6368830441e3901b1e4bfb02a56bb177730413ffd1999a9a9879e6526c994313bba8d50aa4f379662de14b7d8396bc0ac57535c814e7b917972b37e1a36d88748f67a63eab9a803aa4d7db052bd90236bb82a0e62ced0c644f4675e4efa0a4d2cb585da447e99ac2447894310094a275dfe928f92b28defaa87b64053daf4b4519764ff1a308ce2600d4b5049c1ba5e714b47b2c41772a68f694fcc44a6ae4a510c279d638a78f9e4bf7fcc7e698a75ba023b2394945b86bbe987660a78239d856cb1970193413790810105b1932fd38300517929709e04b7c5af047a9418c2703190021c431b77314a384fa470ad4ab057d1d1af8934a557e554dec838097ba20272c9d8338d617059497549878bacf6a0990db4cfbf1040175701e9c42fce8725daf0cdc7c2ad0d03943bc148d52664a9dac92346c5cf472e113a475c619b6b17057f3884bc087620d354b12b359a4a4606767f60ea3943eca067160b9de7010563ca69721a1ab992fdd117e59725df87aabf5cc5b777ca04b8b7539089eedacaeec9a951606c1f73baff6507dd54c66f6a2ea6f61e81ecad460b9236e0562693bab2530528ac1f0bb5a311a6379541517b1c9ac0304ad1aa8c07c2a8df6b3ac2fb1143d3358bb474ee0c8262f6b7b47109dfe15ee0ec1f085917714374d572321392be4a51af98c095d2224eed8701be57144118b17e08cf3c3548d8f59e547c5621fb5d721cc15669a26bc00fed5a4884d980d353bef50052874180247681624c1b77c7cc85e584f5333eae82cd4355908e5ca771b68fc69809ff4132a9506550f1a9974b6b778ba6608398b18b76ec731a9ef311b076696f653dc3a387c836825aca41d2006cae98210c8acb23230041986e58357bf74135f4d4961b9abf55ca73e262a5f4b57a699b04cc6c8ee46945898c131f18a432b677eae81f4126a59832829227cd350233848607a9d8b78c4c962984041a198afdb64e51d139257087fa27ab3bf0bccb8c96b7551ebcb50e1fb106df609dc95313e85288ce0a642a5b36b4b70d42576879e401e4a33c4c196c2137cd3428bb45c7332a9b840ff51034a12a49778fd459a9e65180b663c5d82249c23c76de49ae5e91008db175c0e2b404ab21a31cbe0033bec5030cd998045c6311c9f93b7fcc428270c2b501aa5dfb50606bbddcc95ebe39c9b1a9c563521c864226d797b1a030a2b62b8824eb752ee2608c7756d4942c3f0877da6642c825a1b2466e36584c2865c0d1b70b5b10a337e5782da270029b1d586bbc5444b05de2b909857860c8a207b0b7a30b1f4658aa9e20cb2f19a6af3863a84846d3988fe3947ac444b03de48e688427dc91a6ea3c1c869000fcb2908aec06f26300b572a1ab3abbf5a8afab6cc59e9ccd4bebc954358088c133bc5abf7698a076e4c86ea099ea9b5db6d81ac6557703339760730e58036907f967976536d7c7c5a5116b0ccabc5db0625d1804a1e5624c4604a2e8b537611217c75998a404a9348e4b79593ebb6423e222b753b4b0806fe422e40beb85c199c815da17d882e8ff9de532f4a182057e2b586f7d4a"
     },
     {
      "tx": "register · Sender",
      "field": "mlKemAuditCt",
-     "value": "0x6891760b624ddabd345d554a8c0ffb83c3147b5b7b5a66fcc753338b537790ae44e3cd392fd4fada0af2d9b7899b8b04cc3a47b3ea93068a2591d6873e5ccfbf5767f500d3783ce25e584edd68478da9ca3119d35671ca1c5953839d5cc383cee1fb881b6cb4618365788ff81ad78dad729aee51d363eed6bf572750256703946d366e74c1e1df096f3fee0af4f32ae299a9f0330b5757ecd3a495f00a7c86d48c4186fbd88ef174d94a4b92144b8e0761baf88a769c2e6167b2c0b71595e00e40d6b77ae6013b291828cd1bbfa39f46101760ae8d89bcf831381d7c1404bd795b3f529c26a4b452a142369817d29b416ac97187aae10cbb3dc08b9c29534265d8f1ac9363e830d5302eeb99840e07a27c81fa618a0dd58f79a9947aa8ff931985f51d49e70f680c9d71e2ae773eacade2e417a44d6c7f2bc404b06fa50d068fd3eb15b2c32e284ab357da88977971a6a8e6d0c2149470af76d90099fa194fe35cf92d568c2120c82371333b76b90ebc55a3644f990e7319700ef7f3e77ad59ff068e877b1a1c5eb3e048ea036a291bdae37e812f4ea1d815d775e7245a60bbfe6337afc0c165fc9ee8d62bfc1007fe84e6a032b9729a6326dad6c12362a1f2b82fad34f018845806ae268be26b0b44442a636921691967dcca85b592ca6164253848dd5ce464899dcfff200a9d824918cff2a57fd339753f91db62448cb53de6d453b419bbfe4fbf77f5d51b9db568575faea6c0b3eef9882ffbf51e2e2eb133d23867d5d5e7c66386e7574827e9d72e5565448d9ecc91cf47aef10ddbc34dc18fe8a6462891c167e854b6a6bcefe3650c734d5731f0ba37a73e025a59fd82816ff7e264d6591242a93a07b05fd450ba26d25e0777bdabff052dd75f0142ecac304e3d7b9723ab13d88a31da65671a649534a413c3284443eaa8297d5a61275955521378b02a6abd70ea2e48c5e7069e79004b2d1382f6da40b82b625c493d143bb446466df909532428e9b5a6ee675629210cfbd74c06b84eccfbad5e5dd1d88942cdc5f1d39b7ed3183ef720574f23335c137961e43b01ed5635ae9e48f1c8508444f3ffcdbe7d221489db37af6559f07faa9c3d27fbf3a39915a84eea3fa3e1028c6c031b403291e17379f187958d30a4c847d1f67933f89ba4a8f1be99f662118be416880fc0ff2aac0570649f81c8b4423ee0a5bafa20f23b08b1a90f4e7d2b2018f599300993db951c5318086e082a1f8e0dbd14850d64c449567f1c8c0371c79d7802cd1394b9788693df813e2dcd6d1dd3cf07c5903d110e8e50d2eafd36a2b7d777f4cc7bd63a015682c5a882960373719499473eea3a1da6dac6d973507bb15d86b052ae7f7ecef70f04d32c41fc2906ad2568dc2de4e2f0bab494082d52994cfd25875872326c04aa4ec4642dc7cfb0b489f423b01b5d2e165caa575e0ba7795f3a9f005fe6f09fc1c134d2cf1421fdbeafcdabaa4b72cc1d2f4fa1fb052a30ea06cca2a41af59b2ea39e0f59323d552bbefac746301c1e233ca"
+     "value": "0xc4ddbd01a74747549ff86dbb83a345d2e784863c9a75140e9e74693ed7d3e83917db67c61bea338c354919704f7f2b4e202558b183fb78325777fa4497528adea6a9cc9f281953da5cfc0055a5ff346b7208cf44ff279b1b204c2920bff4b256c7fc9d5a769c5b9230c8a9fc3c0a88a536afc134cee088ec10b89ec943e4963997b8b149b1fb1d0e33d352ebf4eaca9d6d03830572197801fc317d2dec273fb6d0f3298f489cf5801b69d0573dba9dec32174f49a98d3ae80d0ca6520a6d3df686c1956558b46bff6058ffd3dbd11c3abcde2d867edb6e23c078eac35deeae08843acb73b1795aaa49c2732549009baaf1bc8ac3e4c561e68b39b5e951819e18e31d8d0942a13aeaa53ae6c148f119bbbc7fe05673e4a1e6d0f9a00430c544fa7bc5c2567ccb37cfb24db4462c9ee3c7a38d251210e2c6bf0ae9ad34d6eac362b2a2192375bd649f24750af5681ab3c4317662a5599173831997f9c7f147fd1d85673effa7165ed97e30a7d31368337b2c2a26b19396adf767e0fd1611ff586b3079c049f337841d0f0614d111a2e7daea2b071b46f26cd0bee39ec395504e44e2d6d577ecd744eb34f4c434d56121010a53a30db53109de1ee4d4ed66a5618927e012ea2f39e0696d5d4503f138c3f300f1227ceebffceef4a9c905fc22af0cef4130f1ee45da94c0ff65fef81d2654452d623d072590309ef9ea04e7a44f8d1e19fcc5f2e0184fe2197feeb3c4fff7133347bc7ad33c05572389805d048707a4f6acb79105fcb34a7d4f580808d8ebf868266ff95ca310455781d9ebf494dfdbe23e96bcf929811fc6b7ab10705a84fabb3a3c3aca5ea57589104fca734a5f4f3809dffa24ec37c6c5c68fef350f2faea20b94ba83b88df0067f308117f4a29490ad2dddcfd12fd56e9c411277533b6b41b1c841639be389b346837da4cd4dedb8cb548fc4a2f430d8ee0605d0d16f5fd1f719bf6cba82c819dca5da5a7c9673addf3ea45be87104fcc784ad1e53c73d21e7aeb23710a1f2ef3af04ca71862c6710e65bbd426a708750b8ba276ddf3a7f4b18b9d642a0b5dcf23f5aa36bd482083f49594e6897172a128d48a22a2913372070a518dbf9d9e8e37de13e187b7e6d1271ef344614e4e0a51949b4da209d5cf192541e5290fb900162a7d1fcb3647e48c56002faa6fc88590cfce153b99facfffb8d04132c109dd2e4f6c36a096a75f06b5e9bf8ae4c563a9ec6788721bd0b799953ad891e11827aba65a63fdc51dd4cc196af4e76fe937b0d1e9dd964940628a894ea8bf060c11f2d1b749412bd0e18f31e4ff3a7c1f04f932acbafab49bdbae3ba0d8d86796a491dc8ae5d8cff43c83654f41071cc683a56856917cd966518750c1d0eef7bbc5d05a7ee6fa14c3d085617f63203adb66a1726e9e0c202cab76a15cd1022af77a16f7a962ed969e6f02e0b4cd009593cd499d2c0e1107a9f2d425bd792e2b70efaf6c851098ad792ed2a0fa31298e31ce127400fd4739b4bcb3116832f9e86b3ea6ef3264366c"
     },
     {
      "tx": "register · Sender",
      "field": "aesAuditCt",
-     "value": "0x84ac2d45d7d67876c61b7b1e6093fee972b60e40595fb698203d4bacfb34a25c53f37f7aabb23dd3b9b0b15b316ddbcfa4b80776b1db348e0ec7e901f411ed1a570b704768c74aa0799d7ded0c843bcde49f0c795ab506037b61178a"
+     "value": "0xe1883192419a91a75222170eed4ab9f539b159026c5ec7b5ab37adb7bfe8b928f31cfe9d56d2a73d9a265b6271ad88a73ec12250ad2cb791f4c3f6170253c60b16eeda7f10e705686fac7d740b78aaf6984d13d493b205070e0f6494"
     },
     {
      "tx": "register · Ana",
      "field": "msg.sender",
-     "value": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6",
+     "value": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
      "msgSender": true
     },
     {
      "tx": "register · Ana",
      "field": "pkSpend",
-     "value": "7043873878631457259366491044075408335673533132595060497267625614044314406762"
+     "value": "8156372617690083877751686899634039184797231608225012565204862268616559160379"
     },
     {
      "tx": "register · Ana",
      "field": "pkView",
-     "value": "0xdb07b9527405e3dacb8546c542d8c64fc25ed3022c038375f21075d0a194587b3213944a90595a9f71c89d2b70c1620e0aa6b61ec30bdd9cc5f2b113ab94c933930b1a7bc31a800da4d370b74a0e379a963659439746c1e69ba52df6206c457fbc2421861c9442bcce1e486b144c2a7d63205b760aa997c77fc24de61b35f1219328c22d3d54937fd457b11c108d84bf14f4709797694d4cb5c3137f0b6a051e41c716db9041803e87e15ed6b95471e38491b30769f624c91b54b466beaf2b82a1799832b24d53808700b488a7a8418bf555e57b0a593c768df065a2d70bb589b31795812ed4606959745348805bf9c0415383355b221f68c2d6d79dfc87adb3bc0ca66aa7ae326861f03843665f85aa4d41033160f735db4607609c25c372a306a357a2a506589b8ebb3792ff441246966532c81b5c2b547386ce58634691d103860c706e3aa8d76142e1cb5b7b0c8621396ed7d8c0ed7644a2c043332a450459b72d89672cf609c1a9863505471cbcc5799037ee6a8fa9babf1c77a000a452d696762a8482ed9c13e4c9437b383f4087c1b38a26ef5a1510fb1d118c7304eb0ad72647cc02c5783b044a7baf9cba16fbc2a96a441b21559298f79086b340ae1cb12077764fd74307d72c73da49e1b90e1891adea7a1a42f3b4e1b558404c1428d4cbbf5c056a81c13bf4b81ed6587e256ad83c50e1f15b3d3174f66c69c1787b9fba87796390a272acc1762f512b4b4010b4fa554428223a015aa2965286c8cb24aa36c33a6179443a78af7c30120638ed88613de52707e640b173c71e12af05f401ce96105c2a3b69f554b6d834ab54875610807e1b5bf0485ab9aa704e156a0d0583c18147bc081d583790cfd518994479502750dda5bbbb5952d5a6a787051c84d70dce8b9a68e638436b2c28b4494da28c6dda77cf702342e1b64992cee5d18b357b14c91231b974aaae91332740272c11412f48c13615123cd0c3d216b06099779cb639a0982f592c230ba5786ce63885e260c1b08153380a9300a2eb1052f7d68af5644013842029773177db7665d915c23a5e6d9088ccd50b754615950086dae18b75f44cfb90365dda8f0c521ef004115d4b9855c4abb882733a7a454cf7376891a6018c901bf8c3117c2fed0700187bc412860bac210be5770e3969bd6d10c18d548e4d7b297f1181c74a5e94c01ab1aa720af3ca271b164953190cd26551c73c39a9148ebb8ef991bc0f44be1df1592d88839715aba0364782927411791f66511be485a1793c45275c82152140358408b0ccccf67b3f4d12a69428b332b689b7e850991ab7a8f88eea2ab7507808fc1bc7e07cb8e2fb271885b96ed15718b439bab40a6024b0a2cb4ec743614fe4bd8e975e37f81077310c213aaa435c0c1254aa9c709191ac8635a09a450cb4e15b711ef52d2d56704de4a5f2550cf93039732076a789ce45b7915dbc16c325b8771002844b5a39c52320b4c47c93a07d6a1696e3500e845f8e83bdffc692eac32f9714b37fd77efc00161207012c1b5b6187b71f046a8ff55b44dc0cc4704d67733114487704b45bc273411a270f45367ad609a415e032b2a43565b9613136c400f4748643a7fc0618291140bedfe456549e71a1a823f76a7abbc6737f2ca3f74ca4ae748a6f376efe7f9f6f"
+     "value": "0x449848bc13a64d1821bec794debc7006f3b5c2247f32e27b14120ac603a9c0911e1ac6320fd9a66d19759be925d5e21363440b0942830c234f2853b62032037593449e002b2d36b89b23af9b064192e6236548776d378d7b78c43c42307d381ebb0828ac69acb95192c5d87e3ea14885f96617c55ed3e6a308679a41625411e799c2a679d13870dfb545a66583ce6927312cae7a2737da160915c79596d48d209815dcea0a04f62876f7c2ab40cac5d32d69446d486621ec7399ebf2843af303653369efc4927deb49dae8c5daa85cbd541d05e427b7918b01e86d7f9b7f060a47b8dc1fd6e0a0a01bc00110b12ec8adf12453e53685dac6c4d50a61e86951144258d4f888a38a0c2d12390d95c16fac87bd443802e6851ef40be927c1dd29603ef285429835fed99933658cd24aa874f1ae790ba4e96cbe4ac3a1862576fb0a231f201fdb8b1534568c5e9aa1347c92127ba7169528f4205026c63db9f31a62abcae9591958900f01e09c7221b37f552c82630cdfe6a82fd68dfddb84da37b50fc24bb6ea240e343c181349d243062942bdc47bafb7e460adc13303a7475476345d8786ac8772f2b86366447b01a98657e54c05e594393599da8738e4024b85b8420129245e57a796e24c90b7963d6b1363f6b162f59410019b1541c75443a9af65002545044fbb1235f19f6ab1bbb0c67383c36d624b38287662dc312569c051718b90cda328d55c8882a782002c8b5f199c7ed31f17c405aab3c333d80fdd204bf3956df04132e17ab40d7b375a1b7f85ab56f87c911b8665d1f86ce7796490b67612a5b55325520145758dc002d1a0544ee07f3cbc0a07c6c0cab2011a16738a41cb75940c5228ce9b888f4c920fe9963b0be07ed136cd0c4b1bc26c745dc951d8452edcf9146bd22a5e0c6353931c333572c04784b56c156cd7a722625676bb8f36797aee9bcaaf4088207799c0071834703017e993e989291df22bbd018a6fa35cfdd906aebcbda6e49754eb5c72523e5189bc7db243ec15167aa9c49cf0a8754c2a3f6bc4a4571a85eaadb87441b7a80cd6011fa4089326d67a3cf2133319449d805f9884208ea6a400c45608584847273b6292039a516e75607a79076977324f04db9729826343c7cb94461f9964433a795852e80cfd582d27b7be2d711902410ca2251769b297120b4fefe797e2db2a77d4ba5e5b821ba7ad365802017ccd0a081c039436f0e095cd553e31212684f00e6c22388e81588e155fd5dc12f61b396a502d7ee4a7c3894d904700aa97867f73819ccc63f0387cf8cc643bb4b07620ab70808d65d6aa42589549a4a1df2214431246e4900aff659ffc5b9364e6b35100bb34a009abcbb2504a6093c6bab34c5476971bdb8974f5c57110e474759401e5fa5da13306ba583bb07003add28c04bc704f0c89e94902fea55dadaca9c26203f919426dd27269144d3be7925a55ac6618bcf879a176f8284d9cc16a174b28e671890b9f26e63c8fb818c6582a34f79d03f858c90a684de09c79a28ab757679042814959961ea8617cca45fdf491c98050c0931b1f7b41e4650a859c8706022a669ac1dd6c5a40a73852959006979d6df40a5aaa24f48150e3f9a1c3eb0b85b4898bab82a43eec75cd797ca022ad460f2f9cd3076efafa13068ef9"
     },
     {
      "tx": "register · Ana",
      "field": "mlKemAuditCt",
-     "value": "0x4d51e9a103cc71884092155677f4816ad0605272eb827d2fc2f287d0e6c53b43b8ae205d7e86930c24a9b87f0a4c9328608b982b7038c3f7649bf3cae5f65f4c211b06caa59f8cd1da380906fe4011089a00a4f8f030c086cfddfeeabba46d83b3eb9287e5513a2939bad17efe4ce44a64437c60a01a0e01dd2619c92f84f3dda999ce0f5f742bf1d4c3ef5b89cd73476dc8264727563f8c12c414b841fc9062d66eb70d9b99588d236196d85f763b0d076af97d309650a52ca28b774de0cb01c3e5b81e2a766b2204a57a41ca46a1986f7ba2cf3cf9cebba53caf951e723f3af22e1a9433740c329092f0207116cb4aa8cad6d18af091d9b6192b57b9c5581e5c0ac1fea28ae4f295ea9b797f52d8eaf14334234509db9e6ef799793f4f2dfeaeff943c1fd8cdbb73922759710776788b5874a286f853a742f06aadecc56122685fc872863faf0b7f736fadd90f5feb4b2245491e2881987e96de617169d80178ce0aece44a0e3adc3c0fa28ebad52438a5556a986a0381921d605a5e6216cb2981298aece80d58304a98501bf8fdf7601bb822f61a68c0f6734f06e4c6a864510a35fbf10c92bb946368222d2559c0ba30922455bb1a64ac01e842163b09d37269ecf5de6ae2346e8d2791a481192d8ad876a4d1209bfc6337a6f94a0e3f2caf0e43e01f84be93a07b0cda15a2be4707e9641df3f9e6f8705197e8d6debd10ac61f0db36b25454c8d59d1b5d52fcbac30baa0bf57115bb4e37b801a006fd8d255957a9bae59a575fe78f58c5cdd89c05789f13ffb9a920f08658627086451f87d6e2c68976f7552af995cd1f903917021b4a4ea0e6232acfe1901e2c49cd514551844c6975124c63c3737d0b1e54ff4e55b45ae006cb5d7d3eb4054553815b8d46a4ee53bf228d03eda451c68be1e433b68718c35072d69ae9039729a88ed696aa6fbd60a81b4eefc991fcfeaf9fc8416de39eead8627aeec4b551fe13082f4ded84b324e0de542fbe5835ad05fc1e7459e83bda5d49d802edaa0728bd802a11434a425e2e9f4c6afdc5490e3bfe961940743a18ad5bb339d5c5ee212a4e4d59d4182b30951931342178bfa6ee69d651b59c8a541d666437cf38f47a9470a12c00fc9fa2618f4b9e7085ace0c08683bb3a795e70ba807d90d556b79c1f77381f9458f78004a6bfaac72e0a64d8a902688115b0727774fc34719ea618f3375e202c7d2ec3f04b715855cde7da5afc753f4de0b25373d7d4a2657bfa5043dd8a78c05f11ecb622e24dfaa3685b57c3a55f40f16996dd50e56bf863ed450c21c7fa2dcdf4ddc7ee12867fc60e2df0d8c9b7f1dab31e61bb92dc44a246c426ba102a8efe32a54867a072ae1d6ab0d4e4a5ac28d8646f9fc95af30407c16bdbc50ac3e362828abff370b8ca5367a1102f88166d43183562894526a3eebc7ff6c14860af2ad2b874d1b0c598bc1089b50e985f284d55e664731b06346790031b5be1345ea72889f12c4251adf5fa24a3e8ca2f6cc38eb1f3836a342ca10c5fd5dd6a"
+     "value": "0x5195f285a7852bf943d8abb0461962b25fc374173b8a54cb919a3e4278d1f5d49b515e50e38b799479ec061afe795cbcc58cf6243b8067c2a64999ea6b016bd7f81907f3941935846c5828f0df5da9c8eb3cf3cf84dc9d9d884e9120cb4b5aa64ef92a7d595ec83503d707712480c94f9b96aac15a93010a3c6c942535a998af8e5a5e8917531a49c139998dc34d9ea17402a12787578196f4376966d4504ae6e86178d82ddbdf039466e5bdbdd9ba6fe4f22241ec528ee6ed8d8c46c706b08f7cfde9cff81f66745ec03850ac5e98a036c8a839e0d21b69adc6c2a7e558a0fdd737e62bde8fe9a5f43319d7e5e76f29dfc0668bb8bb0f07b1796f7591727e413765c2a2e488558615fbb87774c524c4f4379f5c2a60f325240c263b5af2eae9fb103905838a9464ac5946b8338cf71f61305043dd44a824f3029021a346f8bf288f8f951c2d07a3c4cd5043004185ccef0134caeb5bfb0c679f371306f76e9e7f240fbd962080943361c2fcec6d626ce7df94c9a89379972657b3fed9fe5ad2fe54bbb6dc1795c5a4a38055dc4e5b9009b50708b8a8cd44f51ae1ec6a28f6cdc2a791d129f5eb1c5f33f65dd11df3c15ca21e0756e3ca31d1d1fad9a06f535dfaf5c7f199b3478926362b30805bc522011d8b5593f2305f7d336d17bb95fdc5b9584e5c531a5ca731e248316af629f7decd978fefd6e6128f6376e5e42fe10efe435f135cfb1767b1de7ee1d493d301d98b128eacf07867f21eca7060567fdb66d72f26ff3ba9124cd78f684f2b068f12ad43f20dbdde46f19fb0390ff9a09995c4f89ff3f27420f108b88da6569fd48dd959df5ed264e7aecb7f37b1bde013efa3b0d233bd1cd7b60891bf2d8bb786ee806b483b7cc78ca94f482205138771d3012d5cc8a28eff56dce1adea52ce7d2a5386162222f19215aef37c726e1add1df6bcc1b90b5f82d79333ed42ca66cfeedd8bca0a10f90efd09764218c438a09cb40423f60dc9f837368ef4e3991e04561230e955d75360208f56da322d5597846e8f9d28832d3dab216a84d98adef8b17a6a1318a4f6ced9a550f2fda4747794ebf6b49403f6c322cbffa76ba5a34b99f876ad6aad5e81889c5ac660a748e9ba1130c7ebcdd4035fa7378e6646fb0f88fcb73b1dbeb260a9076b38d5a85c328a937baf3e62065dabbe04a6e8332fda9d104080e32059f195b42f6e78d9c87d9b3d453ac9caec4505b8976d4c28ca39b45c4084b885feb7eb05cdc0a43e83a9dc1721c43cfe94c803b96c2b1a5a4e219d47730e3eba6f5aad456bd39bc53a5f2235ebe6761688540eee98fe2c7ae9fa5f95d41cdd3c7b7375dda6a630b373a75a22e62095ec07ba8a2037a4c23af995bb8090c8a66b864cf5f5901bc29f828eeb5785b45567ca4c12ecb902c6169623e1863391c36df848e4ebf9481608216e23f92a04bebed7b9903822399dc6e7100c77ee99470378f2a897a3c842f3df44b62843981750ae515db8954034050baa0cad42347788df1a47bff86735200d64"
     },
     {
      "tx": "register · Ana",
      "field": "aesAuditCt",
-     "value": "0x9ed4aadc8516d43e7ce58d8a7f21e1bbd48338b2992dc3172177186448ed3093de2710d94f55c2a927beeed60f921fdcb99804972471646af9341139432e2a040e7475f2a8649e76831626066bb1c66a79b2ad9d3868d9e833c8ee73"
+     "value": "0x546e696a49bd3a2652fe814241079bc655b6044d06873ba093a996467c9ed1f11525c5a9b1f5b92ec9999d24c5252daea1a2b90883f11c0ca9acf41f5e68d54f9d8ef1a6c7a84c9fd962ef5de8032590646e25bd247842db8b2f416c"
     }
    ]
   },
   "shield": {
    "values": {
     "amount": "100",
-    "block": "109",
-    "commitment": "5758221054770044157301182026028739054621464201251656353388517277792634062098",
+    "block": "188",
+    "commitment": "7297486730543740246123001088683060194278277596819266986878221620383619976870",
     "depth": "8",
-    "leafIndex": "29",
-    "leaves": "30",
-    "msgSender": "0x084daD774102Ed2f437b4F06055f683644393536",
+    "leafIndex": "59",
+    "leaves": "60",
+    "msgSender": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
     "p": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
     "pBits": "254",
-    "pkSpend": "13836040177063715977640769883463276747293928359336404988999366857548893910214",
+    "pkSpend": "9084175403911520028722701820462555227909539898664467748671360897296522871172",
     "rf": "8",
-    "root": "11012242564251145328893068904913744546732881978239560903562114057727063279449",
+    "root": "18897827550650437328315489462838126812804138288032286074832573510430835729114",
     "rp2": "56",
     "rp3": "57",
     "rp5": "60",
-    "salt": "12507245492257313140007359567259368482756480757997153430253547688133030748396",
+    "salt": "18486071838680645546622098928206364634047379364250235419764063816766054928503",
     "token": "0",
     "tree": "0",
-    "tx": "0x34d47af07bdeccf6301e5875c89cd222b44d903cf9561b3b05e7a8a27588b5ee",
+    "tx": "0x4a4e519d255d2a560d16923db98eba8ed4ec20dd11feb07e1802a71dd3811a29",
     "vault": "0xa34b0bB5F2d8C1674eB7cF53e06B813A31C5509C",
     "zero": "21786163348386038604960770631540184405176086071424084281943739401806009032442"
    },
@@ -1218,7 +1343,7 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "depositV2 · Sender",
      "field": "msg.sender",
-     "value": "0x084daD774102Ed2f437b4F06055f683644393536",
+     "value": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
      "msgSender": true
     },
     {
@@ -1229,12 +1354,12 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "depositV2 · Sender",
      "field": "pkSpend",
-     "value": "13836040177063715977640769883463276747293928359336404988999366857548893910214"
+     "value": "9084175403911520028722701820462555227909539898664467748671360897296522871172"
     },
     {
      "tx": "depositV2 · Sender",
      "field": "salt",
-     "value": "12507245492257313140007359567259368482756480757997153430253547688133030748396"
+     "value": "18486071838680645546622098928206364634047379364250235419764063816766054928503"
     },
     {
      "tx": "depositV2 · Sender",
@@ -1244,52 +1369,67 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "depositV2 · Sender",
      "field": "ciphertextI",
-     "value": "0xb291fdb39d0ee6469589ecd4849630cbbc3a434ef43294be90e8e1980786876c91151a43867ef21385d41a7583ad3f20f837626fabd9353be241f3b50c774d6712f9b38ae718591f4a53d6441f0b819b315ee898157c9969d8da95be8c0e074cb6a6cedfdc8148a18635c6c7368a1d3eacac7e41394e03a6e2e776adee00fdb3e5a3c9c3319bf43e347aad2f4314fd29babb6cfb5b86d12647fd5baeba471dc7b638d1aeb20a01861ae2c4cdca7a35577595d1b3c2de45be938f110086edc08ffd559b0bc64f9189876a20ae178495dadb3af5dc3bcbc60b5ea512bc4f8255aaa1960b590d24a621128bc9b315045ef07413e391a2dd1102aeb8c2db0ddb36b61e883e9521bbb4552727119732eb6524e24c953284ae9cf843dc5f3269ff86de52acdc1b1e5389b9f6cad0c87ef455c3cb3dcb4ab2627975e00ebeb7e5ff9a33a6d1153708897ff6016df191f6f103be15d877b913fa6b8cf7cc05ede72113f337c99ab4ba981fade9d0a101854cbe6d339312e4b308a5e209333fe0b267ecde2e66982e146d9ac7bbb74b93e60264fd0ddbdabee9a73a4d18ae9279ae61bbdd4c9327d67e9d5ea679c65f3731b826affe7d5d735c8138a9654baa820ddec8af4d8ec694547000d5b6039158a21338393857e8cfbd9cc9ae0d63918ca9d80b719cbce02d868dbc5d5741edb5bdf7ddd7307c7a7041e259e2f7854edf138b7610e0deb0a37e2ab9834bcfc8c11a7d7d4a07eb0ecc00277c480a12c331553619dbf9264f338bd3307027817f0431d614be5294481841687ff6b1c4c5dd4a014679363481ce9017146057686cc5f01752703ee4019c9905947c67da94348b8a5f3330cfca03e2ca72c3ac2de2a554e209482929a882199a036950654fcbba1efc8dfac10d36efec95e117a60391e9a36983683336b4fe5f6d80af99294998f04ac223995cd764ab1b8eaf570a05b7a53ffb7624a76618d684622fc2ddd7f2990a1594108a67c749fe9407804cbe676327f66181a004806e7728aeed6fcecb81601ad87e71533093b9683d405a68b307b3a8b5a5b87dfd5effc5910bb99a0629a770cb2ff4b84edbed76352e1e3f694a064dc7982901972a8d2dcf98084ddd5211c64359a760f0bd4612c46566cac3a15419058102496ddcfda2a1e8000532c22b1cf13129cc3687ff8d4a378302e8eaf78df87b0114023b051faeff12fad633c42a032213ee6e27ececa22e50f556cfaecb1014446d003f6a841e1c4006ca8ef0d407a1bd63ef7ed530d21248bd38eb0f374b2a74283ee9fcc6c85e35c2c99eabfb4c3bf5ec6b377166269d3dbcfc82e85010861f3875a45ff8eae9e6cbf87f44ec068d54f6a3a7ba565ec9607a7db1dc532567b4ab4eb76800456d1e14aa90f35feff93c9841b88ba3c05c14cf1e2835627edb37479c748634ce3122a53b5ce29be4d2d846327a0ce05efff527a4038f146d89824a874ba704c9b263defd4fac2b400b21b703bc9bd797ae79bcbd27ccd135c32603b914bcac48101488b03b0f5b"
+     "value": "0x53e0229d3217c044a4b0bfb7a9617312ea0c501a1fa112c14d0570b10560295cfa5c3884a553f58e53582328962f8de0ce546969559353e4f2aaeaac16f56b50dea9a82e79cdccda50c714c3c1a042c67026189688f0c2b73db7af3667851f1fa02af83f18149ab39e96a1e1737b3e36a84abdcdebe0161e2145da9bf70a3837dfce48f501b0f2004d3a2a4497bfa8282419e0b763bb07befd978e93cb9d9fce4379a2ad73d389ef3006548dcc3dde8345c72f26c427692319c9658ddfb10784dbe509d18eb34cc56528a74c60d87998fd6f4c02fad9b8cdcc5bef93651e5695d048ca0fa7fa19a9ca04956dc042fc4b36b4d71c362f8b4d9b94c8f4363f43b820fbdcc66165cad5ff45689f17cca317bde6d8786eca8dc424bc294b18cbbbcb9600d1e505257305e8407fa8097013cfbee13036e9160125885d391d29618015be0812446c2e3632d1abf9aafd633b5f5bd854c18970826037644196c7a5c950fb3b440898d72170e5e5707ca61bd17d6988fe38db1a6f76859dadb4c9e3b7b3bdbd861828ea644804a59efab7f9b68521db8a1ee585b36173c5900297e410e6e23519ad1a509b049701830c6bfc616db05c27a6a57bc0ce3274da56b6ce0f4f40bae0cefc540e01004f0b786a774754e3dd961ee8a45905725d2968b65fcf8c232b8787ca4ad876ac69ae74dd9024f0de534284c633e9aafcba283d32f8be1eaedb5bd055451e4a0fe5cbfdc0f70637615893de9c111cbee58ff0943a8e63619f089c6a9aabdda77199f228d0f1ef4f0f1902a6858068f61b1ebb8081124d62d3a2bc0f9b37a701e19736bc7330367788b7c180e7c7fe8cb4bc2ff47e02c0f7dcb7f08cf61f4856a7fa74eced42cd1edf1e15d2a963e524168b0635b5d4c9fa9d61a8b7b43a4608e50eda2903adf3c08ec782f277da2206dbc4ba1b9f516edcdd7284cde503d9da518a001e5a48bab4d0d60e3446cbf4d341ec3085f68bbf3907494e778e808f5d6dc0c3dc65199319db56a25c08b2601575173a421c5d922fbbfb4f94bb28dec19eec1aa4c08fad799692bf424429baca574d9e14ea1ed6d24a16d547ee0a5e1533ff9e7f6640a55d7704d0481f95f05c148e2c5016783fd4837b137ead4c09fecfb2c7cbbfacd20b9e4e62d900b339d53e88da49a1d1e8c7e45613f50f35863e3ec0cfdd336ef6a99f04de0e1d93c81449cfea4cfb82c1d73c0932366b4e0c9d5a6d2f9600da0fad0112ea7348b56854a036c3ddfb2a693f473f7e7bb2f714e2a04d2aa8c760d1c14cdf6d95ee8ad53c5549597ecd5308a2123e6fc36bf5fe84ea1f19e8d1cc726830f54735f17a2e18a5016d118dac51c92a56caad160be55f97ff8b6b5a656ae03875e01b91a7ac03e996fd6905e0f128a88d3964eb7fd71d49e69528e3fe2594b852a8e06aadc8a7ba5818828ea8fe325e8c4cf6844bc9ceab53fceae8497f916c6c4381cd16f8685df7e111d910bb99a2eb2a998b3ed00050e3c75c2c3441d074453737a2e66691ae7397c49221d565"
     },
     {
      "tx": "depositV2 · Sender",
      "field": "ciphertextII",
-     "value": "0x6495c2278e892462638062be3023adb8f5e20b84f3f26685b2a429ddf254b0510feee5fbce22efdb05f24fe021178489e30af726517242e9c9e89859c59ba99924236d00e12707d7b6b501fd40a3fa4e8988a081fd1c9b00c4fd71c6"
+     "value": "0xe3e4b5bc779ab365c1b64f1fe8a6fd9edb586ebc5d3187a388457c4f78376a3054fbe9d8552844296ed3c60d54f3abfdbe9c83c840d9e716103220b47f81f2e2160fd333c9d341f209b432cfa1060459d7c6397810cfde28aa47afef"
     },
     {
      "tx": "Commitment event",
      "field": "commitment",
-     "value": "5758221054770044157301182026028739054621464201251656353388517277792634062098"
+     "value": "7297486730543740246123001088683060194278277596819266986878221620383619976870"
     },
     {
      "tx": "Commitment event",
      "field": "leaf",
-     "value": "tree 0 · leaf #29"
+     "value": "tree 0 · leaf #59"
     }
    ]
+  },
+  "verdict": {
+   "values": {
+    "commitmentOut0": "3247351366383618404575860298711471673532902777225617713059856448401393332415",
+    "commitmentOut1": "6812738066330512985721466654797241051370696849064816376212693709667821166575",
+    "payNullifier": "7208329225738307036620796597427457213227123135657966337647704065148768079978",
+    "payer": "0xBeaa78580333C2E435dAAE13c83D3c44a9Bdf0dC",
+    "poolLeft": "75",
+    "recipient": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
+    "shieldAmount": "100",
+    "withdrawAmount": "25",
+    "withdrawNullifier": "17192389363419613062916608554783421995480295763211629507632194673535308428954",
+    "withdrawer": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54"
+   },
+   "ledger": []
   },
   "withdrawal": {
    "values": {
     "amount": "25",
     "balanceAfter": "25",
     "balanceBefore": "0",
-    "block": "113",
+    "block": "192",
     "change": "35",
-    "commitment0": "12867182232003430911084579753995026068574094189186457192234064508286996497470",
-    "commitmentChange": "14059155904502971510005874201402416923695389785020660317588786704358642139215",
-    "commitmentIn": "20072588028813941854778852144519848294886431193935427604333466561216270678258",
+    "commitment0": "16587584923801706017836693986077679781761422864941286109872196745820809268421",
+    "commitmentChange": "4596628566597296411180347407490646693732867340261511550235382738607081429724",
+    "commitmentIn": "3247351366383618404575860298711471673532902777225617713059856448401393332415",
     "contractAddress": "932239071683227935029502081705487684401212248220",
-    "globalIndex": "30",
-    "leafChange": "tree 0 · leaf #32",
-    "leafIndex": "30",
+    "globalIndex": "60",
+    "leafChange": "tree 0 · leaf #62",
+    "leafIndex": "60",
     "message": "1",
-    "msgSender": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6",
-    "nullifier": "20508227089243370770899951192463122834157478375717510659557842642080698863181",
-    "pkSpend": "7043873878631457259366491044075408335673533132595060497267625614044314406762",
-    "recipient": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6",
-    "recipientField": "316422720040338080689189055676374101180953821126",
-    "root": "20948861447107495289869302521473514679929635055338146579024844690664889037776",
-    "saltChange": "20743240105662844128388038588575618972014955019378469825815045082901212955919",
-    "saltIn": "9750577146619970318538653298032567894268941497703618162425691571955997644691",
-    "skSpend": "1731811223813115138863647779414126930871581227094481957449051704748768093297",
+    "msgSender": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
+    "nullifier": "17192389363419613062916608554783421995480295763211629507632194673535308428954",
+    "pkSpend": "8156372617690083877751686899634039184797231608225012565204862268616559160379",
+    "recipient": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
+    "recipientField": "1191426660481931706612222696466615130561700158804",
+    "root": "16663206008457418807798522071871410581678827795255930276650511622718206731845",
+    "saltChange": "1075689902915956056535820287054863282701096386393843568929028758745691859675",
+    "saltIn": "14316051194269074075213199485196736845588861818633014912936574092132814347134",
+    "skSpend": "10897036864852605569814376664423211114812587488132531693011497716665223366304",
     "token": "0",
     "tree": "0",
-    "tx": "0x4639278a2f13d3ae08cb6c4b52efc979f6c2de12e9135290b31b7e140e113f37",
+    "tx": "0xb3ec850d41c459dfc01f820a9b61091b856e42e1d43c8ca9794f2b186f9b2595",
     "valueIn": "60",
     "verifyProof": "true",
     "vkSlot": "0"
@@ -1298,7 +1438,7 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "partialWithdraw · Ana",
      "field": "msg.sender",
-     "value": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6",
+     "value": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54",
      "msgSender": true
     },
     {
@@ -1309,7 +1449,7 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "partialWithdraw · Ana",
      "field": "recipient",
-     "value": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6"
+     "value": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54"
     },
     {
      "tx": "partialWithdraw · Ana",
@@ -1329,22 +1469,22 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "partialWithdraw · public inputs",
      "field": "MerkleRoot",
-     "value": "20948861447107495289869302521473514679929635055338146579024844690664889037776"
+     "value": "16663206008457418807798522071871410581678827795255930276650511622718206731845"
     },
     {
      "tx": "partialWithdraw · public inputs",
      "field": "Nullifier",
-     "value": "20508227089243370770899951192463122834157478375717510659557842642080698863181"
+     "value": "17192389363419613062916608554783421995480295763211629507632194673535308428954"
     },
     {
      "tx": "partialWithdraw · public inputs",
      "field": "CommitmentOut[0]",
-     "value": "12867182232003430911084579753995026068574094189186457192234064508286996497470"
+     "value": "16587584923801706017836693986077679781761422864941286109872196745820809268421"
     },
     {
      "tx": "partialWithdraw · public inputs",
      "field": "CommitmentOut[1]",
-     "value": "14059155904502971510005874201402416923695389785020660317588786704358642139215"
+     "value": "4596628566597296411180347407490646693732867340261511550235382738607081429724"
     },
     {
      "tx": "partialWithdraw · public inputs",
@@ -1354,52 +1494,52 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "partialWithdraw · Ana",
      "field": "proof",
-     "value": "21344852419159701140593239034896105680636313293669860051858395747295768567284 10174704939962009398010544452495983839507815560120078558374928526376342516116 11735334884172929355714341663656070723013781372801683327395296291847375742170 20773415604081891390681072939275410245187573282176920350263044533129491032224 17212814639445868410206694061208854412389498742044377996126978386317967817320 1471971342565303300783909730763869428989754007434875955856683134151085253038 7655140670187721631576528789819621708687981245702723658556369617511698011335 8140217415054045177311965845774036988198070791940916811554532519698369409233"
+     "value": "1364953905216013840618222377357127722995722764993989065974319664777683814119 20076788838420315881961065355765668968372084073853990548620382800693873970510 11331319716684556945242458926128562300922052244844253765192447102540797613757 7866748005162168776781778983008754271772980446657855374651941357607802084602 21648733905617096121018043363161093910729900462386476407043600291607840364567 18780175837018891453036182724526321850058201243398188589221147761904174906398 4632711569607913604251452914742673925098436517768657818950692688912155901522 19914263381603015959154662524323688069926779327229702135752560225557132169517"
     },
     {
      "tx": "partialWithdraw · Ana",
      "field": "ciphertextI",
-     "value": "0x755d26da79aee0686110440b235628b920f4a84e7628408fc7f8fc70ae53f6a543418d112422b271856039b08ae4c068262bdaad810dde63a8151cfbfc2b1c572cca0bb07d52e116bc214d9a990ee1d2ad196de435f90c808f16a8b77965eaf912039093a6ff0d3ba5f32fbbfea66fe3b5f4164a914afc2017106d5bb4b5590e1813bb16a3525d2d677b753a600a7668eccae34a4b0b6de670bff4aff52f158b375bb392fcb39a042d50603d73969f81bffca5b259d0ef1c33bee4c9438abd120051ead753418de104e7d8bd7e1ba71a5bfb96e6b7c5cc74bc7b490b6689910241ec21f2d235cb030c6f3db199e269a45636b4b5ed53eb3fca272258f39c0581fea3339e16da920e76b402074b5d8e0de8cb26ea8b71e3ddf783c9d7c53228c66912a410dd97a948eaf8c9598e0dd67e05c9c78c2293f0dea83a842ad43971f76e40b60c067221897ee30e6fee96807e92fe5118e51865d71e1ec3ef77e835bab337ac0fc9bc31d0b7fe8f26048b60b07ac39b15cfdc60edc2106b401ba5be6f55f9f6d01e54356893905c63f047da2581bf59c698f2fd8471a15512f73863e9f10755e979f451e49d699097aeab41c3979ba652ac407eb99af9944c8e30c81addd9a0414fda3535001e74c22f13e2e76a2acfa2104b61a8b7dedc4f4c780259611625e2d6b2d3792620b978295be4c805808d2c09740ea7c7c0710d723a788eca03a688d6a172fef36398fc5245188e6c37f8a9ee656958e0b376129de207f1a459a89e922d8c9a79337e31b1e7f02ee35f09e95951fdb5421956230c06b97bf8731c674a0cd3a008f160c515775899f9c2f4a0e1b6cb7f3ad5673fc003dd12efbe3870b9e2a10a55f0aa5d2492cdb61e33e37b957aafc2247a0daf8279188c4ea841e1a420a2b9e2ca5cbf7c575cbeafb9e8e19ad7d7e3dd97cded7846d8e00de87f501f19f8b69f917d8096688deab84a398ac92df49894ff0118aaa6c7399c07338a6e4854f6283f99e2244d9a58103d1dd0ebbd82549057415763858124084d7593268873d05c11d42dd6d2bc760d21bf6aeec52c3dd804c758a5f7a5f97652c538d8ff3b4cf93e10926fb0e27cad96b9ca542e6a3c7d8da2b58ceb153ff8d21eec9d5064e8db77b01514e6b8722f8f8474b8d94b2c8e2ea3d42eba236991564ca93cbe54e59fc95f7af4e54114504ff77a74e692e2f3c523b0315bcf4d2d3162620c089cb1a5252b88adbb82ded21e0adc9c6210332caf136ed73d7481f8b55b330146a8c1dac756054028894ebbbaecce9d9bd7fcf31917958170cbd52b2ce2a6e361b001ad0829998080f5797e1d779b727b2b346e4d82ca2cfa878231aca20466f39c14164dc17e1a1efa62e037efb7b13fe6e8dafdf210e740303670571eec3fa3b940f45d44477e1ae1fcf360d104e425e5ad01c8c6f518c1cb3de4d2181432446cce52bcbd58ef6bc5f0b1b0848e4a3a042779452ab17952972eb46ca2ba3ae6253c638508ce913111f7ef6a31f57dbf8aba3eb4bc9f0157d431"
+     "value": "0x0bb8cae0cf988c8a947719eaf25f27e804caade6e6e8cb9273ce76f07b56903cd01442b099d232c9f9e580b97bf6bcebaf38ef83acd3e02bb74f24cc863a6c17f213982ba82de0554f8f22b17704e362c6750617690f7beebadeb20249675b54f8c183effedd7de81a0c3e41c65ced38c30581890c261a8c67deac0327e3ef32f86c2365214e2d8dabbc1426d4dd0b2d66383a69a9fcb520ba6898bfe6094a33ecebde6eb187af23454f687c5b9e0de0f7c91716a60a7e6348c53cba5ad00605aa7d280887dc3e0d399c5d3e1a44ef69c618e3f5777eeda87674346c1c1aae2fc81b4479422cc28cd95145e52b2ebb643649ab38d91d980e5ab08525ff46f3f8ef93db72e06247bbbac2fab18be6b9d7201eac441e98ee3c8ea4b56a2f15ea2073f78b6a7d38e0c350536f3c7bc9d099be697ec498829c37628651b2ea5b4908e6abc0ed946f1ffbfead1381b0abe306160491a6b3b2d7a30fae481af8133e1705a073d30f81f1c597e1f5df7aef04ab46ed67bac9040565e2ed809c6c7cc59f1a7d1194a0f3d635342e96504c1bc17664d07eb694aa2108ec54cdd3445cf88024e64319dc37ff599e3cda2d8204ac7db034860f965c705de0cb32d0ae5c2ed46896aab8042b7ae03ea83d1c27fe5d5a7978e5e5d257b68a2fb81e2d764b541631f731b0fe66c28f5969a3c26795fba63c8df80c8351937ae5ecc4f291ab1ec82bb2faa5feb3345e62a1e40a2d59d9d1e148eb46d35405f8afbd29c8bba51383cfe46aad8ebe523433db5630f807ac35c87e7f4bcd29f96f5e8f4588cb74a8c56cd7c1850a60f6023458328efd6a7c476484ecd2ab1b06b6d5bcdca18e04457251d55ee63fdf52d0c4c910142e6312dface5cf538955c56c7023f8892ef8fe0aa019534e353122d7320f5bd494e8ffd6a09b112110f53e237a2260181561b55037dbb558f211f54a77f15b01992a079dae26b0aaaeecba9307f608a2cc4c703622538763bb21a1ab6984ca15ec2caa0ca69d5c7404a2edcc1647b269268dfe1ba8561d6b5d5a49636bb04f623d531324d35939bdb0d533a4f7a386c14f307a8913eee4387a277daf12b8a06347c68d1ad7767365128bbc2fc98fccfe94cd916da900aa4bcd289d7bf68b334a5c6f274936d98e1a70e5a03b3a4de1c1b092371f35ea180f3fb335805ddd5772e32ad267cae6d7890ef29605175427d1ae66efa5ff86adbb7c930d529cfd46dd628b4fd7bab2de59d92fc70b5c1352e94462f8a704b4b410499fcf5e17fc5cc3d4f4a3055fc4cbb769615478cc7272289b769d48dbcce0a5bddbd43729a2094094c3c5229903ab78d3308922576048ff20fb68ab4d2c6dcc4eb413075f476d6d13c3fba2675dda27918f684769a3223cd0929bb8ae3625cb5b44af952d02e665a0973057cb50444708794022908116a3980ae7b288787bd9f0ab9fcb1227abca27456cd274047a5a72ba44320dfa5ac89e642b93db4ebcda7cbe263a7d6438f1de334cac587b401f8540807757d7e7d9d2ba9d30"
     },
     {
      "tx": "partialWithdraw · Ana",
      "field": "ciphertextII",
-     "value": "0xe55762100b8d8827b4ac3fa40394d70323c6fa44d264534adfa11c42197871a801ddeae5c0d8833982a506599494b24da04a83c11dff8cd64d4200862e651cb6ed6cf3515d383658b2f5af0e3becd3e562a7ed02f231027356e7475d"
+     "value": "0xa3ba8b93c798fe58d3fd54a58581cf67bc08317cae6d924c2a9d0f761c43d0601ab4a2175c7fb58cb8c738a424ff3c45c7f22d94b0ffb447ac2fda8729b42301eca0d45f585d8acaed6f7df652612c2c39907363f2bf6258ffe5f6e4"
     },
     {
      "tx": "Nullifier event",
      "field": "nullifier",
-     "value": "20508227089243370770899951192463122834157478375717510659557842642080698863181"
+     "value": "17192389363419613062916608554783421995480295763211629507632194673535308428954"
     },
     {
      "tx": "Commitment event",
      "field": "commitment",
-     "value": "14059155904502971510005874201402416923695389785020660317588786704358642139215"
+     "value": "4596628566597296411180347407490646693732867340261511550235382738607081429724"
     },
     {
      "tx": "Commitment event",
      "field": "leaf",
-     "value": "tree 0 · leaf #32"
+     "value": "tree 0 · leaf #62"
     },
     {
      "tx": "EncryptedNote event",
      "field": "commitment",
-     "value": "14059155904502971510005874201402416923695389785020660317588786704358642139215"
+     "value": "4596628566597296411180347407490646693732867340261511550235382738607081429724"
     },
     {
      "tx": "EncryptedNote event",
      "field": "ciphertextI",
-     "value": "0x755d26da79aee0686110440b235628b920f4a84e7628408fc7f8fc70ae53f6a543418d112422b271856039b08ae4c068262bdaad810dde63a8151cfbfc2b1c572cca0bb07d52e116bc214d9a990ee1d2ad196de435f90c808f16a8b77965eaf912039093a6ff0d3ba5f32fbbfea66fe3b5f4164a914afc2017106d5bb4b5590e1813bb16a3525d2d677b753a600a7668eccae34a4b0b6de670bff4aff52f158b375bb392fcb39a042d50603d73969f81bffca5b259d0ef1c33bee4c9438abd120051ead753418de104e7d8bd7e1ba71a5bfb96e6b7c5cc74bc7b490b6689910241ec21f2d235cb030c6f3db199e269a45636b4b5ed53eb3fca272258f39c0581fea3339e16da920e76b402074b5d8e0de8cb26ea8b71e3ddf783c9d7c53228c66912a410dd97a948eaf8c9598e0dd67e05c9c78c2293f0dea83a842ad43971f76e40b60c067221897ee30e6fee96807e92fe5118e51865d71e1ec3ef77e835bab337ac0fc9bc31d0b7fe8f26048b60b07ac39b15cfdc60edc2106b401ba5be6f55f9f6d01e54356893905c63f047da2581bf59c698f2fd8471a15512f73863e9f10755e979f451e49d699097aeab41c3979ba652ac407eb99af9944c8e30c81addd9a0414fda3535001e74c22f13e2e76a2acfa2104b61a8b7dedc4f4c780259611625e2d6b2d3792620b978295be4c805808d2c09740ea7c7c0710d723a788eca03a688d6a172fef36398fc5245188e6c37f8a9ee656958e0b376129de207f1a459a89e922d8c9a79337e31b1e7f02ee35f09e95951fdb5421956230c06b97bf8731c674a0cd3a008f160c515775899f9c2f4a0e1b6cb7f3ad5673fc003dd12efbe3870b9e2a10a55f0aa5d2492cdb61e33e37b957aafc2247a0daf8279188c4ea841e1a420a2b9e2ca5cbf7c575cbeafb9e8e19ad7d7e3dd97cded7846d8e00de87f501f19f8b69f917d8096688deab84a398ac92df49894ff0118aaa6c7399c07338a6e4854f6283f99e2244d9a58103d1dd0ebbd82549057415763858124084d7593268873d05c11d42dd6d2bc760d21bf6aeec52c3dd804c758a5f7a5f97652c538d8ff3b4cf93e10926fb0e27cad96b9ca542e6a3c7d8da2b58ceb153ff8d21eec9d5064e8db77b01514e6b8722f8f8474b8d94b2c8e2ea3d42eba236991564ca93cbe54e59fc95f7af4e54114504ff77a74e692e2f3c523b0315bcf4d2d3162620c089cb1a5252b88adbb82ded21e0adc9c6210332caf136ed73d7481f8b55b330146a8c1dac756054028894ebbbaecce9d9bd7fcf31917958170cbd52b2ce2a6e361b001ad0829998080f5797e1d779b727b2b346e4d82ca2cfa878231aca20466f39c14164dc17e1a1efa62e037efb7b13fe6e8dafdf210e740303670571eec3fa3b940f45d44477e1ae1fcf360d104e425e5ad01c8c6f518c1cb3de4d2181432446cce52bcbd58ef6bc5f0b1b0848e4a3a042779452ab17952972eb46ca2ba3ae6253c638508ce913111f7ef6a31f57dbf8aba3eb4bc9f0157d431"
+     "value": "0x0bb8cae0cf988c8a947719eaf25f27e804caade6e6e8cb9273ce76f07b56903cd01442b099d232c9f9e580b97bf6bcebaf38ef83acd3e02bb74f24cc863a6c17f213982ba82de0554f8f22b17704e362c6750617690f7beebadeb20249675b54f8c183effedd7de81a0c3e41c65ced38c30581890c261a8c67deac0327e3ef32f86c2365214e2d8dabbc1426d4dd0b2d66383a69a9fcb520ba6898bfe6094a33ecebde6eb187af23454f687c5b9e0de0f7c91716a60a7e6348c53cba5ad00605aa7d280887dc3e0d399c5d3e1a44ef69c618e3f5777eeda87674346c1c1aae2fc81b4479422cc28cd95145e52b2ebb643649ab38d91d980e5ab08525ff46f3f8ef93db72e06247bbbac2fab18be6b9d7201eac441e98ee3c8ea4b56a2f15ea2073f78b6a7d38e0c350536f3c7bc9d099be697ec498829c37628651b2ea5b4908e6abc0ed946f1ffbfead1381b0abe306160491a6b3b2d7a30fae481af8133e1705a073d30f81f1c597e1f5df7aef04ab46ed67bac9040565e2ed809c6c7cc59f1a7d1194a0f3d635342e96504c1bc17664d07eb694aa2108ec54cdd3445cf88024e64319dc37ff599e3cda2d8204ac7db034860f965c705de0cb32d0ae5c2ed46896aab8042b7ae03ea83d1c27fe5d5a7978e5e5d257b68a2fb81e2d764b541631f731b0fe66c28f5969a3c26795fba63c8df80c8351937ae5ecc4f291ab1ec82bb2faa5feb3345e62a1e40a2d59d9d1e148eb46d35405f8afbd29c8bba51383cfe46aad8ebe523433db5630f807ac35c87e7f4bcd29f96f5e8f4588cb74a8c56cd7c1850a60f6023458328efd6a7c476484ecd2ab1b06b6d5bcdca18e04457251d55ee63fdf52d0c4c910142e6312dface5cf538955c56c7023f8892ef8fe0aa019534e353122d7320f5bd494e8ffd6a09b112110f53e237a2260181561b55037dbb558f211f54a77f15b01992a079dae26b0aaaeecba9307f608a2cc4c703622538763bb21a1ab6984ca15ec2caa0ca69d5c7404a2edcc1647b269268dfe1ba8561d6b5d5a49636bb04f623d531324d35939bdb0d533a4f7a386c14f307a8913eee4387a277daf12b8a06347c68d1ad7767365128bbc2fc98fccfe94cd916da900aa4bcd289d7bf68b334a5c6f274936d98e1a70e5a03b3a4de1c1b092371f35ea180f3fb335805ddd5772e32ad267cae6d7890ef29605175427d1ae66efa5ff86adbb7c930d529cfd46dd628b4fd7bab2de59d92fc70b5c1352e94462f8a704b4b410499fcf5e17fc5cc3d4f4a3055fc4cbb769615478cc7272289b769d48dbcce0a5bddbd43729a2094094c3c5229903ab78d3308922576048ff20fb68ab4d2c6dcc4eb413075f476d6d13c3fba2675dda27918f684769a3223cd0929bb8ae3625cb5b44af952d02e665a0973057cb50444708794022908116a3980ae7b288787bd9f0ab9fcb1227abca27456cd274047a5a72ba44320dfa5ac89e642b93db4ebcda7cbe263a7d6438f1de334cac587b401f8540807757d7e7d9d2ba9d30"
     },
     {
      "tx": "EncryptedNote event",
      "field": "ciphertextII",
-     "value": "0xe55762100b8d8827b4ac3fa40394d70323c6fa44d264534adfa11c42197871a801ddeae5c0d8833982a506599494b24da04a83c11dff8cd64d4200862e651cb6ed6cf3515d383658b2f5af0e3becd3e562a7ed02f231027356e7475d"
+     "value": "0xa3ba8b93c798fe58d3fd54a58581cf67bc08317cae6d924c2a9d0f761c43d0601ab4a2175c7fb58cb8c738a424ff3c45c7f22d94b0ffb447ac2fda8729b42301eca0d45f585d8acaed6f7df652612c2c39907363f2bf6258ffe5f6e4"
     },
     {
      "tx": "PartialWithdrawal event",
      "field": "recipient",
-     "value": "0x376cE2afB2b69F377c47a5fdFd525137dE3e7fc6"
+     "value": "0xD0B16b5009f7AfB799F8c67Fb2598B1751a7dd54"
     },
     {
      "tx": "PartialWithdrawal event",
@@ -1409,7 +1549,7 @@ aside.warn { border-left-color:var(--warn); }
     {
      "tx": "PartialWithdrawal event",
      "field": "changeCommitment",
-     "value": "14059155904502971510005874201402416923695389785020660317588786704358642139215"
+     "value": "4596628566597296411180347407490646693732867340261511550235382738607081429724"
     }
    ]
   }
@@ -1548,9 +1688,22 @@ const CHIPS = [
   { step: 'withdrawal', cls: 'pub', label: 'recipient', at: [615, 440], from: [297, WALLET_TOP.ana + 8] },
   { step: 'withdrawal', cls: 'pub', label: 'C₁ → leaf', at: [602, 376], from: [206, WALLET_TOP.ana + 8] },
   { step: 'withdrawal', cls: 'pub', label: 'ERC20', at: [381, WALLET_TOP.ana + 8], from: [552, 440] },
+  // The audit: Ana's audit ciphertexts cross from the UserRegistry to the
+  // auditor's wallet, which opens them to her seed; the Payment event's
+  // ciphertexts follow, and open to her note. Nothing crosses back.
+  { step: 'audit', cls: 'pub', label: 'c', at: [136, WALLET_TOP.auditor + 8], from: [496, 206] },
+  { step: 'audit', cls: 'pub', label: 'nonce‖ct', at: [163, WALLET_TOP.auditor + 8], from: [560, 206] },
+  { step: 'audit', cls: 'priv', label: 'seed_view', at: [245, WALLET_TOP.auditor + 8], from: [163, WALLET_TOP.auditor + 8] },
+  { step: 'audit', cls: 'priv', label: 'ek_view ✓', at: [330, WALLET_TOP.auditor + 8], from: [245, WALLET_TOP.auditor + 8] },
+  { step: 'audit', cls: 'pub', label: 'c', at: [28, WALLET_TOP.auditor + 70], from: [492, 532] },
+  { step: 'audit', cls: 'pub', label: 'nonce‖ct', at: [55, WALLET_TOP.auditor + 70], from: [492, 532] },
+  { step: 'audit', cls: 'priv', label: 'amount', at: [137, WALLET_TOP.auditor + 70], from: [55, WALLET_TOP.auditor + 70] },
+  { step: 'audit', cls: 'priv', label: 'salt', at: [199, WALLET_TOP.auditor + 70], from: [28, WALLET_TOP.auditor + 70] },
+  { step: 'audit', cls: 'priv', label: 'C₀ ✓', at: [247, WALLET_TOP.auditor + 70], from: [496, 408] },
+  { step: 'audit', cls: 'priv', label: 'change', at: [301, WALLET_TOP.auditor + 70], from: [55, WALLET_TOP.auditor + 70] },
 ];
 // LIT names the diagram nodes each step lights up.
-const LIT = { keys: ['sender', 'ana'], auditor: ['auditor'], registration: ['sender', 'ana', 'registry'], shield: ['sender', 'vault'], payment: ['sender', 'vault'], proof: ['vault', 'verifier'], discovery: ['ana', 'dvp'], withdrawal: ['ana', 'vault'] };
+const LIT = { keys: ['sender', 'ana'], auditor: ['auditor'], registration: ['sender', 'ana', 'registry'], shield: ['sender', 'vault'], payment: ['sender', 'vault'], proof: ['vault', 'verifier'], discovery: ['ana', 'dvp'], withdrawal: ['ana', 'vault'], audit: ['auditor', 'registry', 'dvp'], verdict: ['sender', 'ana', 'vault'] };
 
 const SVG = 'http://www.w3.org/2000/svg';
 // svgEl makes an SVG element with attrs.
