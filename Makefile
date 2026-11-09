@@ -68,7 +68,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
 	enygma_retail_payments/src enygma_retail_payments/test
 
-.PHONY: help modules hooks fmt fmt-check page-check build vet errcheck check test-unit hardhat-check ci \
+.PHONY: help modules hooks fmt fmt-check page-check primer-from-disk build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-gnark-restart \
 	auctions-gnark auctions-keygen
@@ -81,7 +81,7 @@ modules: ## List the Go modules the targets below operate on
 
 # ── Quality gates ─────────────────────────────────────────────────────────────
 
-hooks: ## Install the pre-commit hooks (gofmt, page scripts, gitleaks) and the primer's git diff driver in this clone; needs pre-commit
+hooks: ## Install the git hooks (gofmt, page scripts, gitleaks; on push, refuse a branch whose PR merged) and the primer's git diff driver in this clone; needs pre-commit
 	@# git diff shows the primer's data block as its step and value names (.gitattributes).
 	@git config diff.primer.textconv 'node "$$(git rev-parse --show-toplevel)/scripts/primer_page.js" --textconv'
 	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
@@ -113,6 +113,9 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/protocol_primer_replay.test.js >/dev/null || node --test scripts/protocol_primer_replay.test.js
 	@# primer_page.js, the primer's reader, still finds and summarises the data block.
 	@node --test scripts/primer_page.test.js >/dev/null || node --test scripts/primer_page.test.js
+
+primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
+	@node scripts/primer_from_disk.js $(OUT)
 
 build: ## go build ./... in every module
 	$(call each_module,go build ./...)
