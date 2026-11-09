@@ -1041,16 +1041,29 @@ func TestProtocolPrimer(t *testing.T) {
 		if h, _ := poseidon.Hash([]*big.Int{ana.spend.PublicKey, salt, claimed, token}); h.Cmp(mine.Commitment) == 0 {
 			t.Error("a payload claiming another amount hashes to the published commitment")
 		}
-		if owned, err := dvpcore.ScanForErc20Notes(ana.view.DecapsKey, ana.spend.PublicKey,
-			[]dvpcore.OnChainErc20Event{{Commitment: mine.Commitment, CipherText: capsule, EncTxData: forged}}); err == nil || len(owned) != 0 {
-			t.Errorf("ScanForErc20Notes accepted the mismatched ciphertext: %v", owned)
+		owned, rejected, err := dvpcore.ScanForErc20NotesWithRejected(ana.view.DecapsKey, ana.spend.PublicKey,
+			[]dvpcore.OnChainErc20Event{{Commitment: mine.Commitment, CipherText: capsule, EncTxData: forged}, *mine})
+		if err != nil || len(owned) != 1 || owned[0].Amount.Cmp(amount) != 0 {
+			t.Errorf("the mismatched ciphertext cost Ana her note: owned %v, err %v", owned, err)
 		}
-		// A capsule of the wrong length stops the library's scan too, for any
-		// wallet: Decaps rejects it, and the scan returns the error instead
-		// of skipping the event. The page names this stall.
+		if !slices.Equal(rejected, []dvpcore.RejectedEvent{{Index: 0, Reason: dvpcore.RejectCommitmentMismatch}}) {
+			t.Errorf("rejected = %v, want the mismatched ciphertext", rejected)
+		}
+		// A capsule of the wrong length costs any wallet only that event:
+		// Decaps rejects it, and the scan skips it and goes on.
 		short := dvpcore.OnChainErc20Event{Commitment: big.NewInt(1), CipherText: capsule[:len(capsule)-1], EncTxData: payload}
-		if _, err := dvpcore.ScanForErc20Notes(sender.view.DecapsKey, sender.spend.PublicKey, []dvpcore.OnChainErc20Event{*mine, short}); err == nil {
-			t.Error("ScanForErc20Notes skipped a capsule of the wrong length; the page says it stops the scan")
+		for name, w := range map[string]struct {
+			view  *mlkem.DecapsulationKey768
+			spend *big.Int
+			notes int
+		}{"Ana": {ana.view.DecapsKey, ana.spend.PublicKey, 1}, "the Sender": {sender.view.DecapsKey, sender.spend.PublicKey, 0}} {
+			owned, rejected, err := dvpcore.ScanForErc20NotesWithRejected(w.view, w.spend, []dvpcore.OnChainErc20Event{short, *mine})
+			if err != nil || len(owned) != w.notes {
+				t.Errorf("%s's scan with a short capsule: owned %v, err %v, want %d notes", name, owned, err, w.notes)
+			}
+			if !slices.Equal(rejected, []dvpcore.RejectedEvent{{Index: 0, Reason: dvpcore.RejectBadCapsule}}) {
+				t.Errorf("%s's scan: rejected = %v, want the short capsule", name, rejected)
+			}
 		}
 
 		data.Steps["discovery"] = primerEntry{Values: map[string]string{
@@ -1617,7 +1630,7 @@ func trialOpen(t *testing.T, dk *mlkem.DecapsulationKey768, capsule, payload []b
 	t.Helper()
 	var got noteOpening
 	if len(capsule) != mlkem.CiphertextSize768 || len(payload) < 12 {
-		return got // not an ML-KEM-768 capsule and a sealed payload: not anyone's note (the library's scan stops here instead; the discovery check shows it)
+		return got // not an ML-KEM-768 capsule and a sealed payload: not anyone's note (the library's scan skips it too; the discovery check shows it)
 	}
 	ss, err := dk.Decapsulate(capsule)
 	if err != nil {

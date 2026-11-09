@@ -2,9 +2,116 @@ package core
 
 import (
 	"crypto/mlkem"
+	"errors"
 	"fmt"
 	"math/big"
 )
+
+// RejectReason says why a scan refused an event. It is an error so the
+// per-event step can report it to scanEvents.
+type RejectReason string
+
+const (
+	// RejectBadCapsule: the capsule is not a valid ML-KEM-768 ciphertext.
+	RejectBadCapsule RejectReason = "bad capsule"
+	// RejectCommitmentMismatch: the payload opened under this wallet's key,
+	// but its values don't hash to the published commitment.
+	RejectCommitmentMismatch RejectReason = "commitment mismatch"
+	// RejectCommitmentNotComputable: the payload opened under this wallet's
+	// key, but a decrypted value can't be hashed (it is outside the field).
+	RejectCommitmentNotComputable RejectReason = "commitment not computable"
+)
+
+func (r RejectReason) Error() string { return string(r) }
+
+// RejectedEvent is an event a scan refused: Index is its position in the
+// scanned events. A wrong-length capsule is reported by every wallet's scan.
+// The other reasons are reported only by the wallet the payload was sealed
+// to, and mean someone sent it a note that doesn't open.
+type RejectedEvent struct {
+	Index  int
+	Reason RejectReason
+}
+
+// errNotAddressed is the per-event step's report that the payload does not
+// open under this wallet's key: someone else's note, not a bad event.
+var errNotAddressed = errors.New("not addressed to this key")
+
+// scanEvents is the per-event path every scanner shares. It decapsulates each
+// event's capsule and hands the shared secret to open. An event that open
+// reports as errNotAddressed or a RejectReason is skipped; any other error
+// isn't the event's fault, and fails the scan.
+func scanEvents[E, N any](
+	dk *mlkem.DecapsulationKey768,
+	events []E,
+	capsule func(E) []byte,
+	open func(ev E, ss []byte) (N, error),
+) ([]N, []RejectedEvent, error) {
+	var found []N
+	var rejected []RejectedEvent
+	for i, ev := range events {
+		ss, err := Decapsulate(dk, capsule(ev))
+		if err != nil {
+			rejected = append(rejected, RejectedEvent{Index: i, Reason: RejectBadCapsule})
+			continue
+		}
+		note, err := open(ev, ss)
+		var reason RejectReason
+		switch {
+		case err == nil:
+			found = append(found, note)
+		case errors.Is(err, errNotAddressed):
+		case errors.As(err, &reason):
+			rejected = append(rejected, RejectedEvent{Index: i, Reason: reason})
+		default:
+			return nil, nil, fmt.Errorf("event %d: %w", i, err)
+		}
+	}
+	return found, rejected, nil
+}
+
+// checkWalletValues fails a scan on a value the wallet itself supplied that
+// can't be hashed. Checking these before the events means a commitment that
+// can't be computed during the scan is always the event's fault.
+func checkWalletValues(values ...*big.Int) error {
+	for _, v := range values {
+		if v == nil || v.Sign() < 0 || v.Cmp(SNARK_SCALAR_FIELD) >= 0 {
+			return errors.New("scan input is not a field element")
+		}
+	}
+	return nil
+}
+
+// openNote derives a note's salt and key from the shared secret and decrypts
+// its payload, returning the payload's two values and the salt as a field
+// element.
+func openNote(ss, encTxData []byte) (first, second, saltBField *big.Int, err error) {
+	saltB, err := DerivePaymentSalt(ss)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("DerivePaymentSalt failed: %w", err)
+	}
+	encKey, err := DerivePaymentKey(ss)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("DerivePaymentKey failed: %w", err)
+	}
+	first, second, err = DecryptPayload(encKey, encTxData)
+	if err != nil {
+		return nil, nil, nil, errNotAddressed
+	}
+	return first, second, SaltBToField(saltB), nil
+}
+
+// checkCommitment reports the rejection, if any, for a commitment recomputed
+// from an event's decrypted values. computeErr is the recomputation's error.
+func checkCommitment(expected *big.Int, computeErr error, onChain *big.Int) error {
+	if computeErr != nil {
+		return RejectCommitmentNotComputable
+	}
+	if expected.Cmp(onChain) != 0 {
+		return RejectCommitmentMismatch
+	}
+	return nil
+}
 
 // OnChainErc20Event represents a single on-chain note-creation event published
 // by the ERC20 vault after a successful JoinSplit proof.
@@ -54,7 +161,11 @@ type OwnedErc20Note struct {
 //  2. Derives salt_B = HKDF(ss, "Bob salt") and encKey = HKDF(ss, "encryption key").
 //  3. Attempts to decrypt encTxData with encKey (AES-GCM); failure = not for us.
 //  4. Recomputes Poseidon(pk_spend, SaltBToField(salt_B), amount, tokenId) and
-//     checks it matches the on-chain commitment. A mismatch is an error (tampered).
+//     checks it matches the on-chain commitment.
+//
+// Events are untrusted: one that fails any of these steps is skipped, and the
+// scan continues. An error means the scan itself failed, for example because
+// pkSpend is not a field element.
 //
 // dk is the recipient's ML-KEM decapsulation key (sk_view).
 // pkSpend is the recipient's spend public key (pk_spend = Poseidon(sk_spend)).
@@ -63,53 +174,39 @@ func ScanForErc20Notes(
 	pkSpend *big.Int,
 	events []OnChainErc20Event,
 ) ([]OwnedErc20Note, error) {
-	var owned []OwnedErc20Note
+	owned, _, err := ScanForErc20NotesWithRejected(dk, pkSpend, events)
+	return owned, err
+}
 
-	for i, ev := range events {
-		// Step 1: recover raw shared secret from the ML-KEM capsule.
-		ss, err := Decapsulate(dk, ev.CipherText)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: decapsulation failed: %w", i, err)
-		}
-
-		// Step 2: HKDF-derive salt and encryption key.
-		saltB, err := DerivePaymentSalt(ss)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: DerivePaymentSalt failed: %w", i, err)
-		}
-		encKey, err := DerivePaymentKey(ss)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: DerivePaymentKey failed: %w", i, err)
-		}
-
-		// Step 3: try to decrypt the payload. AES-GCM auth failure = not for us.
-		tokenId, amount, err := DecryptPayload(encKey, ev.EncTxData)
-		if err != nil {
-			continue
-		}
-
-		// Step 4: recompute commitment and verify it matches the chain.
-		saltBField := SaltBToField(saltB)
-		expected, err := Erc20CommitmentV2(pkSpend, saltBField, amount, tokenId)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: failed to compute commitment: %w", i, err)
-		}
-		if expected.Cmp(ev.Commitment) != 0 {
-			return nil, fmt.Errorf(
-				"event %d: commitment mismatch — decrypted payload does not match on-chain commitment"+
-					" (got %s, want %s)", i, expected.String(), ev.Commitment.String(),
-			)
-		}
-
-		owned = append(owned, OwnedErc20Note{
-			Commitment: new(big.Int).Set(ev.Commitment),
-			TokenId:    tokenId,
-			Amount:     amount,
-			SaltBField: saltBField,
-		})
+// ScanForErc20NotesWithRejected is ScanForErc20Notes, also returning the events
+// it refused and why.
+func ScanForErc20NotesWithRejected(
+	dk *mlkem.DecapsulationKey768,
+	pkSpend *big.Int,
+	events []OnChainErc20Event,
+) ([]OwnedErc20Note, []RejectedEvent, error) {
+	if err := checkWalletValues(pkSpend); err != nil {
+		return nil, nil, err
 	}
-
-	return owned, nil
+	return scanEvents(dk, events,
+		func(ev OnChainErc20Event) []byte { return ev.CipherText },
+		func(ev OnChainErc20Event, ss []byte) (OwnedErc20Note, error) {
+			tokenId, amount, saltBField, err := openNote(ss, ev.EncTxData)
+			if err != nil {
+				return OwnedErc20Note{}, err
+			}
+			expected, err := Erc20CommitmentV2(pkSpend, saltBField, amount, tokenId)
+			if err := checkCommitment(expected, err, ev.Commitment); err != nil {
+				return OwnedErc20Note{}, err
+			}
+			return OwnedErc20Note{
+				Commitment: new(big.Int).Set(ev.Commitment),
+				TokenId:    tokenId,
+				Amount:     amount,
+				SaltBField: saltBField,
+			}, nil
+		},
+	)
 }
 
 // OnChainErc721Event represents a single on-chain note-creation event published
@@ -128,7 +225,8 @@ type OwnedErc721Note struct {
 	SaltBField      *big.Int
 }
 
-// ScanForErc721Notes scans on-chain ERC721 events for notes owned by the given key pair.
+// ScanForErc721Notes scans on-chain ERC721 events for notes owned by the given key
+// pair, skipping bad events as ScanForErc20Notes does.
 //
 // EncTxData was created with EncryptPayload(encKey, contractAddress, tokenId)
 // so DecryptPayload returns (contractAddress, tokenId).
@@ -137,50 +235,39 @@ func ScanForErc721Notes(
 	pkSpend *big.Int,
 	events []OnChainErc721Event,
 ) ([]OwnedErc721Note, error) {
-	var owned []OwnedErc721Note
+	owned, _, err := ScanForErc721NotesWithRejected(dk, pkSpend, events)
+	return owned, err
+}
 
-	for i, ev := range events {
-		ss, err := Decapsulate(dk, ev.CipherText)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: decapsulation failed: %w", i, err)
-		}
-
-		saltB, err := DerivePaymentSalt(ss)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: DerivePaymentSalt failed: %w", i, err)
-		}
-		encKey, err := DerivePaymentKey(ss)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: DerivePaymentKey failed: %w", i, err)
-		}
-
-		// DecryptPayload returns (contractAddress, tokenId) for ERC721
-		contractAddress, tokenId, err := DecryptPayload(encKey, ev.EncTxData)
-		if err != nil {
-			continue // not addressed to this key
-		}
-
-		saltBField := SaltBToField(saltB)
-		expected, err := Erc721Commitment(tokenId, pkSpend, saltBField)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: failed to compute commitment: %w", i, err)
-		}
-		if expected.Cmp(ev.Commitment) != 0 {
-			return nil, fmt.Errorf(
-				"event %d: commitment mismatch — decrypted payload does not match on-chain commitment"+
-					" (got %s, want %s)", i, expected.String(), ev.Commitment.String(),
-			)
-		}
-
-		owned = append(owned, OwnedErc721Note{
-			Commitment:      new(big.Int).Set(ev.Commitment),
-			ContractAddress: contractAddress,
-			TokenId:         tokenId,
-			SaltBField:      saltBField,
-		})
+// ScanForErc721NotesWithRejected is ScanForErc721Notes, also returning the
+// events it refused and why.
+func ScanForErc721NotesWithRejected(
+	dk *mlkem.DecapsulationKey768,
+	pkSpend *big.Int,
+	events []OnChainErc721Event,
+) ([]OwnedErc721Note, []RejectedEvent, error) {
+	if err := checkWalletValues(pkSpend); err != nil {
+		return nil, nil, err
 	}
-
-	return owned, nil
+	return scanEvents(dk, events,
+		func(ev OnChainErc721Event) []byte { return ev.CipherText },
+		func(ev OnChainErc721Event, ss []byte) (OwnedErc721Note, error) {
+			contractAddress, tokenId, saltBField, err := openNote(ss, ev.EncTxData)
+			if err != nil {
+				return OwnedErc721Note{}, err
+			}
+			expected, err := Erc721Commitment(tokenId, pkSpend, saltBField)
+			if err := checkCommitment(expected, err, ev.Commitment); err != nil {
+				return OwnedErc721Note{}, err
+			}
+			return OwnedErc721Note{
+				Commitment:      new(big.Int).Set(ev.Commitment),
+				ContractAddress: contractAddress,
+				TokenId:         tokenId,
+				SaltBField:      saltBField,
+			}, nil
+		},
+	)
 }
 
 // OnChainZkDvpEvent represents a pending-swap event emitted by the EnygmaDvp contract
@@ -234,7 +321,8 @@ type ZkDvpSwapInfo struct {
 	SaltBField *big.Int
 }
 
-// ScanForZkDvpSwap scans on-chain ZkDvp pending events for swaps addressed to Bob.
+// ScanForZkDvpSwap scans on-chain ZkDvp pending events for swaps addressed to Bob,
+// skipping bad events as ScanForErc20Notes does.
 //
 // For each event it:
 //  1. Decapsulates CipherText with dk (Bob's view decapsulation key) to recover saltB.
@@ -257,59 +345,52 @@ func ScanForZkDvpSwap(
 	amountIn, tokenIdIn *big.Int,
 	events []OnChainZkDvpEvent,
 ) ([]ZkDvpSwapInfo, error) {
-	var swaps []ZkDvpSwapInfo
+	swaps, _, err := ScanForZkDvpSwapWithRejected(dk, aliceSpendPk, bobSpendPk, amountIn, tokenIdIn, events)
+	return swaps, err
+}
 
-	for i, ev := range events {
-		// Step 1: recover raw shared secret from the ML-KEM capsule.
-		// ZkDvP uses ss directly (not HKDF-derived) for commitment and encryption.
-		ss, err := Decapsulate(dk, ev.CipherText)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: decapsulation failed: %w", i, err)
-		}
-
-		// Step 2: decrypt payload; failure = not addressed to Bob.
-		tokenIdOut, amountOut, saltStar, err := DecryptSwapPayload(ss, ev.EncTxData)
-		if err != nil {
-			continue // not for Bob
-		}
-
-		// Step 3: verify CommitmentA is well-formed.
-		saltStarField := SaltBToField(saltStar)
-		expectedCommA, err := Erc20CommitmentV2(aliceSpendPk, saltStarField, amountOut, tokenIdOut)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: failed to compute CommitmentA: %w", i, err)
-		}
-		if expectedCommA.Cmp(ev.CommitmentA) != 0 {
-			return nil, fmt.Errorf(
-				"event %d: CommitmentA mismatch (computed %s, on-chain %s)",
-				i, expectedCommA, ev.CommitmentA,
-			)
-		}
-
-		// Step 4: verify CommitmentB is well-formed using agreed swap terms.
-		saltBField := SaltBToField(ss)
-		expectedCommB, err := Erc20CommitmentV2(bobSpendPk, saltBField, amountIn, tokenIdIn)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: failed to compute CommitmentB: %w", i, err)
-		}
-		if expectedCommB.Cmp(ev.CommitmentB) != 0 {
-			return nil, fmt.Errorf(
-				"event %d: CommitmentB mismatch (computed %s, on-chain %s)",
-				i, expectedCommB, ev.CommitmentB,
-			)
-		}
-
-		swaps = append(swaps, ZkDvpSwapInfo{
-			CommitmentA: new(big.Int).Set(ev.CommitmentA),
-			CommitmentB: new(big.Int).Set(ev.CommitmentB),
-			TokenIdOut:  tokenIdOut,
-			AmountOut:   amountOut,
-			SaltStar:    saltStar,
-			SaltBField:  saltBField,
-		})
+// ScanForZkDvpSwapWithRejected is ScanForZkDvpSwap, also returning the events
+// it refused and why.
+func ScanForZkDvpSwapWithRejected(
+	dk *mlkem.DecapsulationKey768,
+	aliceSpendPk *big.Int,
+	bobSpendPk *big.Int,
+	amountIn, tokenIdIn *big.Int,
+	events []OnChainZkDvpEvent,
+) ([]ZkDvpSwapInfo, []RejectedEvent, error) {
+	if err := checkWalletValues(aliceSpendPk, bobSpendPk, amountIn, tokenIdIn); err != nil {
+		return nil, nil, err
 	}
+	return scanEvents(dk, events,
+		func(ev OnChainZkDvpEvent) []byte { return ev.CipherText },
+		func(ev OnChainZkDvpEvent, ss []byte) (ZkDvpSwapInfo, error) {
+			// ZkDvP uses ss directly (not HKDF-derived) for commitment and encryption.
+			tokenIdOut, amountOut, saltStar, err := DecryptSwapPayload(ss, ev.EncTxData)
+			if err != nil {
+				return ZkDvpSwapInfo{}, errNotAddressed
+			}
 
-	return swaps, nil
+			expectedCommA, err := Erc20CommitmentV2(aliceSpendPk, SaltBToField(saltStar), amountOut, tokenIdOut)
+			if err := checkCommitment(expectedCommA, err, ev.CommitmentA); err != nil {
+				return ZkDvpSwapInfo{}, err
+			}
+
+			saltBField := SaltBToField(ss)
+			expectedCommB, err := Erc20CommitmentV2(bobSpendPk, saltBField, amountIn, tokenIdIn)
+			if err := checkCommitment(expectedCommB, err, ev.CommitmentB); err != nil {
+				return ZkDvpSwapInfo{}, err
+			}
+
+			return ZkDvpSwapInfo{
+				CommitmentA: new(big.Int).Set(ev.CommitmentA),
+				CommitmentB: new(big.Int).Set(ev.CommitmentB),
+				TokenIdOut:  tokenIdOut,
+				AmountOut:   amountOut,
+				SaltStar:    saltStar,
+				SaltBField:  saltBField,
+			}, nil
+		},
+	)
 }
 
 // OnChainErc1155Event represents a single on-chain note-creation event published
@@ -330,7 +411,8 @@ type OwnedErc1155Note struct {
 	SaltBField      *big.Int
 }
 
-// ScanForErc1155Notes scans on-chain ERC1155 events for notes owned by the given key pair.
+// ScanForErc1155Notes scans on-chain ERC1155 events for notes owned by the given
+// key pair, skipping bad events as ScanForErc20Notes does.
 //
 // EncTxData was created with EncryptPayload(encKey, tokenId, amount).
 // contractAddress comes from the on-chain event (it is public).
@@ -339,48 +421,38 @@ func ScanForErc1155Notes(
 	pkSpend *big.Int,
 	events []OnChainErc1155Event,
 ) ([]OwnedErc1155Note, error) {
-	var owned []OwnedErc1155Note
+	owned, _, err := ScanForErc1155NotesWithRejected(dk, pkSpend, events)
+	return owned, err
+}
 
-	for i, ev := range events {
-		ss, err := Decapsulate(dk, ev.CipherText)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: decapsulation failed: %w", i, err)
-		}
-
-		saltB, err := DerivePaymentSalt(ss)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: DerivePaymentSalt failed: %w", i, err)
-		}
-		encKey, err := DerivePaymentKey(ss)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: DerivePaymentKey failed: %w", i, err)
-		}
-
-		tokenId, amount, err := DecryptPayload(encKey, ev.EncTxData)
-		if err != nil {
-			continue // not addressed to this key
-		}
-
-		saltBField := SaltBToField(saltB)
-		expected, err := Erc1155Commitment(tokenId, amount, pkSpend, saltBField)
-		if err != nil {
-			return nil, fmt.Errorf("event %d: failed to compute commitment: %w", i, err)
-		}
-		if expected.Cmp(ev.Commitment) != 0 {
-			return nil, fmt.Errorf(
-				"event %d: commitment mismatch — decrypted payload does not match on-chain commitment"+
-					" (got %s, want %s)", i, expected.String(), ev.Commitment.String(),
-			)
-		}
-
-		owned = append(owned, OwnedErc1155Note{
-			Commitment:      new(big.Int).Set(ev.Commitment),
-			ContractAddress: new(big.Int).Set(ev.ContractAddress),
-			TokenId:         tokenId,
-			Amount:          amount,
-			SaltBField:      saltBField,
-		})
+// ScanForErc1155NotesWithRejected is ScanForErc1155Notes, also returning the
+// events it refused and why.
+func ScanForErc1155NotesWithRejected(
+	dk *mlkem.DecapsulationKey768,
+	pkSpend *big.Int,
+	events []OnChainErc1155Event,
+) ([]OwnedErc1155Note, []RejectedEvent, error) {
+	if err := checkWalletValues(pkSpend); err != nil {
+		return nil, nil, err
 	}
-
-	return owned, nil
+	return scanEvents(dk, events,
+		func(ev OnChainErc1155Event) []byte { return ev.CipherText },
+		func(ev OnChainErc1155Event, ss []byte) (OwnedErc1155Note, error) {
+			tokenId, amount, saltBField, err := openNote(ss, ev.EncTxData)
+			if err != nil {
+				return OwnedErc1155Note{}, err
+			}
+			expected, err := Erc1155Commitment(tokenId, amount, pkSpend, saltBField)
+			if err := checkCommitment(expected, err, ev.Commitment); err != nil {
+				return OwnedErc1155Note{}, err
+			}
+			return OwnedErc1155Note{
+				Commitment:      new(big.Int).Set(ev.Commitment),
+				ContractAddress: new(big.Int).Set(ev.ContractAddress),
+				TokenId:         tokenId,
+				Amount:          amount,
+				SaltBField:      saltBField,
+			}, nil
+		},
+	)
 }
