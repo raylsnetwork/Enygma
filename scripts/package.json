@@ -3,6 +3,6 @@
   "private": true,
   "description": "make page-check's dependencies: jsdom, for the shield demo replay test.",
   "devDependencies": {
-    "jsdom": "26.1.0"
+    "jsdom": "31.0.0"
   }
 }
