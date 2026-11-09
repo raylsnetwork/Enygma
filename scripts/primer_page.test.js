@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const { summarise, stepData, sectionLines, scriptLines, PRIMER } = require('./primer_page');
+const { summarise, stepData, sectionLines, scriptLines, textconv, PRIMER, OPEN } = require('./primer_page');
 
 const PAGE = fs.readFileSync(PRIMER, 'utf8');
 const LINES = PAGE.split('\n');
@@ -35,6 +35,25 @@ test('the summary names each step, each value with its length, and each ledger f
     for (const i of e.ledger) assert.ok(summary.includes(`${i.tx}: ${i.field}`), `${step}: ledger ${i.field}`);
   }
   assert.ok(summary.length < PAGE.match(BLOCK)[1].length / 4, `the summary (${summary.length} chars) is a fraction of the block it replaces`);
+});
+
+test('for git diff, a new run\'s values show as nothing, and a new step or value shows', () => {
+  const withBlock = data => PAGE.replace(BLOCK, m => m.replace(PAGE.match(BLOCK)[1], () => JSON.stringify(data, null, 1)));
+  const out = textconv(PAGE);
+  assert.ok(out.length < PAGE.length - PAGE.match(BLOCK)[1].length / 2, 'the block is reduced');
+  for (const l of LINES.slice(0, LINES.indexOf(OPEN))) assert.ok(out.includes(l), 'the page around it is whole');
+  const rerun = structuredClone(DATA);
+  for (const e of Object.values(rerun.steps)) for (const k of Object.keys(e.values)) e.values[k] = '1' + e.values[k];
+  assert.strictEqual(textconv(withBlock(rerun)), out, 'other values diff to nothing');
+  const added = structuredClone(DATA);
+  added.steps.keys.values.brandNew = '1';
+  assert.notStrictEqual(textconv(withBlock(added)), out, 'a new value shows');
+  const stepAdded = structuredClone(DATA);
+  stepAdded.steps.brandNew = { values: {}, ledger: [] };
+  assert.notStrictEqual(textconv(withBlock(stepAdded)), out, 'a new step shows');
+  for (const page of ['<html>no block</html>', `${OPEN}\n{}\n</script>`, `${OPEN}\nnot json\n</script>`]) {
+    assert.strictEqual(textconv(page), page, 'a page without a readable block is unchanged');
+  }
 });
 
 test('one step prints in full', () => {

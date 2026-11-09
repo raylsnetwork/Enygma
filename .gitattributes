@@ -7,3 +7,7 @@
 # changes, and so `git diff` tooling that reads .gitattributes picks it up.
 enygma_payments/go_client/contracts/enygma.go linguist-generated=true
 enygma_payments/relayer/contracts/enygma.go linguist-generated=true
+
+# git diff shows the Protocol primer's data block (rewritten by every run) as
+# its step and value names; make hooks sets the driver, --no-textconv shows it all.
+enygma_retail_payments/shield_demo/protocol.html diff=primer
