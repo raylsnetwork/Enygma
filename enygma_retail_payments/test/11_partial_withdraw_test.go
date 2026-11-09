@@ -256,7 +256,7 @@ func (e *pwEnv) proveWithdrawMsg(t *testing.T, circuit pwCircuit, message string
 func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message string, ins []pwNote, amount, changeValue, fee, relayerPk, changeSaltOverride *big.Int, recipient common.Address) (*pwSpend, error) {
 	t.Helper()
 	nIn := len(ins)
-	mt := loadVaultMerkleTree(t, e.client, e.vaultAddr, partialWithdrawDepth)
+	mt := rebuildVaultTree(t, e.client, e.vaultAddr, nil)
 
 	trees := make([]string, nIn)
 	roots := make([]string, nIn)
@@ -598,7 +598,7 @@ func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 			t.Errorf("input %d's nullifier is not marked spent", i)
 		}
 	}
-	mt := loadVaultMerkleTree(t, e.client, e.vaultAddr, partialWithdrawDepth)
+	mt := rebuildVaultTree(t, e.client, e.vaultAddr, nil)
 	if _, err := mt.GenerateProof(s.change.commit); err != nil {
 		t.Errorf("the change note is not in the vault's Merkle tree: %v", err)
 	}
@@ -965,7 +965,7 @@ func TestRetailErc20_PartialWithdraw_NoCrossSettlement(t *testing.T) {
 	if m, err := bind.WaitMined(e.ctx, e.client, tx); err != nil || m.Status != types.ReceiptStatusSuccessful {
 		t.Fatalf("withdrawV2 reverted (receipt=%v err=%v)", m, err)
 	}
-	mt := loadVaultMerkleTree(t, e.client, e.vaultAddr, partialWithdrawDepth)
+	mt := rebuildVaultTree(t, e.client, e.vaultAddr, nil)
 	if _, err := mt.GenerateProof(s.change.commit); err != nil {
 		t.Fatalf("withdrawV2 dropped the change note: %v", err)
 	}
@@ -1131,7 +1131,7 @@ func (r *relayerEnv) checkRelayedSettled(t *testing.T, mined *types.Receipt, s *
 		filtered.Logs = append(filtered.Logs, lg)
 	}
 	r.checkSettled(t, &filtered, s)
-	mt := loadVaultMerkleTree(t, r.client, r.vaultAddr, partialWithdrawDepth)
+	mt := rebuildVaultTree(t, r.client, r.vaultAddr, nil)
 	if _, err := mt.GenerateProof(s.feeCommit); err != nil {
 		t.Errorf("the relayer's fee note is not in the vault's Merkle tree: %v", err)
 	}

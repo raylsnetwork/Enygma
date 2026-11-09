@@ -121,6 +121,9 @@ function checkStep(doc, i) {
   if (step === 'discovery') {
     for (const k of ['pkSpend', 'salt', 'saltBytes', 'amount', 'token', 'commitment', 'scanned', 'opened']) assert.ok(inMath.has(k), `discovery shows ${k} inside a formula`);
   }
+  if (step === 'withdrawal') {
+    for (const k of ['message', 'recipientField', 'amount', 'token', 'commitment0', 'pkSpend', 'saltChange', 'change', 'commitmentChange', 'skSpend', 'nullifier', 'globalIndex', 'valueIn']) assert.ok(inMath.has(k), `withdrawal shows ${k} inside a formula`);
+  }
   if (step === 'shield') {
     for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment']) assert.ok(inMath.has(k), `shield shows ${k} inside the commitment's formula`);
   }
@@ -166,7 +169,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'proof', 'discovery']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'proof', 'discovery', 'withdrawal']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -314,6 +317,50 @@ test('Ana\'s discovery opens the Payment event addressed to her, its opening has
   const { doc } = open();
   const body = text(section(doc, 'discovery'));
   for (const s of ['module-LWE', 'quantum', 'AES-256-GCM', 'HKDF-SHA256']) assert.ok(body.includes(s), `discovery names ${s}`);
+});
+
+test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount and recipient public, her change a private note, her msg.sender amber', () => {
+  const v = DATA.steps.withdrawal.values, ledger = DATA.steps.withdrawal.ledger, found = DATA.steps.discovery.values;
+  const field = (tx, f) => ledger.filter(i => i.tx === tx && i.field === f).map(i => i.value);
+  const call = 'partialWithdraw · Ana';
+  // The note she spends is the one she discovered.
+  assert.strictEqual(v.commitmentIn, found.commitment);
+  assert.strictEqual(v.valueIn, found.amount);
+  assert.strictEqual(v.saltIn, found.salt);
+  assert.strictEqual(v.pkSpend, found.pkSpend);
+  // The same statement as the payment's, with Message = 1.
+  assert.strictEqual(v.message, '1');
+  const pubs = ledger.filter(i => i.tx === 'partialWithdraw · public inputs');
+  assert.deepStrictEqual(pubs.map(i => i.field), PUBLIC, 'the same seven public inputs, in order');
+  assert.deepStrictEqual(pubs.map(i => i.value), [v.message, v.tree, v.root, v.nullifier, v.commitment0, v.commitmentChange, v.contractAddress]);
+  assert.strictEqual(v.vkSlot, DATA.steps.proof.values.vkSlot, 'the same verifying key as the payment\'s');
+  assert.strictEqual(v.verifyProof, 'true');
+  // The exit is public, as the shield's amount was.
+  assert.deepStrictEqual(field(call, 'amount'), [v.amount], 'the amount is calldata');
+  assert.deepStrictEqual(field(call, 'recipient'), [v.recipient], 'the recipient is calldata');
+  assert.deepStrictEqual(field('PartialWithdrawal event', 'amount'), [v.amount]);
+  assert.deepStrictEqual(field('PartialWithdrawal event', 'recipient'), [v.recipient]);
+  assert.strictEqual(BigInt(v.recipientField), BigInt(v.recipient), 'output 0\'s owner is the recipient\'s address as a number');
+  // Ana's change stays private: its commitment is public, its value and salt are not.
+  assert.strictEqual(BigInt(v.valueIn), BigInt(v.amount) + BigInt(v.change), 'Σin = amount + change');
+  assert.ok(BigInt(v.change) > 0n, 'a partial withdrawal leaves change');
+  assert.deepStrictEqual(field('Commitment event', 'commitment'), [v.commitmentChange], 'only the change is inserted, never output 0');
+  assert.deepStrictEqual(field('PartialWithdrawal event', 'changeCommitment'), [v.commitmentChange]);
+  assert.deepStrictEqual(field('Nullifier event', 'nullifier'), [v.nullifier]);
+  for (const k of ['skSpend', 'saltIn', 'saltChange']) assert.ok(!ledger.some(i => i.value === v[k]), `${k} is not public`);
+  for (const k of ['valueIn', 'change']) assert.ok(!ledger.some(i => i.value === v[k]), `${k} is not public`);
+  assert.strictEqual(BigInt(v.globalIndex), BigInt(v.tree) * 256n + BigInt(v.leafIndex), 'tree·2^8 + leaf index');
+  // The recipient's public balance grew by the amount.
+  assert.strictEqual(BigInt(v.balanceAfter) - BigInt(v.balanceBefore), BigInt(v.amount));
+  // Ana's msg.sender, and only it, is amber.
+  assert.deepStrictEqual(ledger.filter(i => i.msgSender).map(i => [i.tx, i.value]), [[call, v.msgSender]]);
+  assert.strictEqual(v.msgSender, DATA.steps.registration.values['ana.address'], 'Ana sent it from her registered account');
+  const { doc } = open();
+  for (let i = 0; i < 7; i++) doc.getElementById('next').click();
+  const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
+  assert.ok(amber.some(t => t.includes(call) && t.includes(v.msgSender)), 'her msg.sender shows amber in the ledger');
+  const body = text(section(doc, 'withdrawal'));
+  for (const s of ['Message = 1', 'mirror', 'G11', 'partialWithdrawWithRelayerFee']) assert.ok(body.includes(s), `the withdrawal names ${s}`);
 });
 
 test('served by the demo, the primer steps through its run and links back to the demo', () => {
