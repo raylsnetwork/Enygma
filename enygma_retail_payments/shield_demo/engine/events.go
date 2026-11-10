@@ -132,8 +132,9 @@ const (
 	// participant's scan; with tags, a participant opens their note with
 	// the tag channel's key, so the audit's); with tags, the tag channel
 	// setup on the open channel hop of the Sender's tag channel to payment
-	// 1's payee, and the tag channel detection on that payee's scan
-	// channels hop that finds it. A walkthrough's carries the
+	// 1's payee, the tag channel detection on that payee's scan channels
+	// hop that finds it, the tag on payment 1's tag hop, and the tag payload
+	// on that payee's tag-based open note. A walkthrough's carries the
 	// run's real values too, checked against what the chain holds: the
 	// spend key on the Sender's registration (its sk_spend is a throwaway
 	// demo key); the commitment on the shield (its values are the shield's
@@ -151,7 +152,10 @@ const (
 	// checked against the record TagChannelRegistry holds and the
 	// UserRegistry's user count) and its detection (the payee's Decaps and
 	// AEAD opening of that record, another participant's AEAD failing on
-	// it, and the scan's counts).
+	// it, and the scan's counts), the tag (checked against the one
+	// TagRegistry published for the block it landed in, beside the reverse
+	// direction's) and its payload (the block key opening it, checked
+	// against the payee's commitment in the vault).
 	DetailFormula HopDetailKind = "formula"
 	// DetailProver is what the gnark server did for one proof request, on
 	// every proof hop: the circuit it ran and the stats it measured itself
@@ -226,6 +230,14 @@ const (
 	// secret, and only under the payee's does c₂ open; an AEAD failure
 	// means "not mine".
 	FormulaTagChannelDetection FormulaName = "tagChannelDetection"
+	// FormulaTag is a payment's tag, t_b = Poseidon(b, payee pk_spend,
+	// ss mod p) for the block b it landed in, as TagRegistry publishes it:
+	// the payee's spend key makes the two directions of a tag channel differ.
+	FormulaTag FormulaName = "tag"
+	// FormulaTagPayload is a tag's payload: k_b = HKDF-SHA256(ss,
+	// "enygma-block-key-v1" ‖ b ‖ payee pk_spend) seals amount ‖ token ‖
+	// salt, which the payee opens and hashes to the commitment in the vault.
+	FormulaTagPayload FormulaName = "tagPayload"
 )
 
 // Formula is one equation with its real inputs, in the order the equation

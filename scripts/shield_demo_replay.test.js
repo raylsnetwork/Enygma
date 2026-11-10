@@ -230,6 +230,22 @@ const ARGUMENT = {
     // A walkthrough's ✓ is the scan's real counts.
     check: /: \d+ records? checked, 1 opened: .*'s scan of the records TagChannelRegistry published since their last one/,
   },
+  tag: {
+    property: 'Unlinkable, one per block and direction', eq: 't_b = Poseidon(b, pk_spend^payee, ss mod p)',
+    sees: /^chain sees\s*the tag t_b in TagRegistry, the block it landed in, sent by the relayer$/, private: /^stays private\s*the shared secret ss, who the payee is, and who paid$/,
+    why: /Poseidon is one-way and only the payer and the payee hold ss.*b changes it every block.*The payee’s spend key is in it so the two directions differ: without it, a payment each way over one tag channel in the same block would get the same tag, collide in TagRegistry, and match the payer’s own scan\.$/,
+    note: /^The payer sends the relayer a tag for each block of a short window.*the relayer publishes the one for the block its transaction lands in\.$/,
+    // A walkthrough's ✓ names the block and payment 1's tag transaction.
+    check: /: equals the tag TagRegistry.s TagPublished event logged for block \d+ \(tx 0x[0-9a-f]{64}\)/,
+  },
+  tagPayload: {
+    property: 'Only the payee (and the auditor) can read it',
+    eq: 'k_b = HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee); ct = AES-256-GCM_k_b(amount ‖ token ‖ salt); the payee opens ct, and Poseidon(pk_spend, salt, amount, token) = commitment',
+    sees: /^chain sees\s*ct beside the tag in TagRegistry, and the note’s commitment in the vault$/, private: /^stays private\s*the block key k_b, the amount, the token, the salt$/,
+    why: /k_b derives from ss.*AES-GCM fails under any other key.*the key changes with the block and the direction.*the payee hashes the opening with their pk_spend and finds that commitment in the vault before keeping the note\.$/,
+    // A walkthrough's ✓ names the vault's Commitment event and payment 1's transaction.
+    check: /: equals the vault.s Commitment event for Ana.s note \(tx 0x[0-9a-f]{64}\)$/,
+  },
   groth16: {
     property: 'Zero-knowledge and soundness', eq: 'on BN254: e(A, B) = e(α, β) · e(L, γ) · e(C, δ), with L = IC₀ + Σ xᵢ · ICᵢ',
     sees: /^chain sees\s*the proof \(A, B, C\) and the public inputs$/, private: /the whole witness/,
@@ -454,8 +470,8 @@ test('the default run fixture is a real default run, with the cases the replay i
   // payment 1's payee, in the channels step.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['register', 'actor1 → UserRegistry', 'spendKey'], ['channels', 'actor1 → relayer', 'tagChannelSetup'], ['channels', 'TagChannelRegistry → actor2', 'tagChannelDetection'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'actor1 → gnark', 'feeConservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
-    'formula details: the spend key on the Sender’s registration, the tag channel setup and detection on the Sender’s tag channel to payment 1’s payee, the commitment on the shield, the Merkle path, value conservation, the fee’s value conservation, the nullifier and the Groth16 check on payment 1, note encryption on the audit');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['channels', 'actor1 → relayer', 'tagChannelSetup'], ['channels', 'TagChannelRegistry → actor2', 'tagChannelDetection'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'actor1 → gnark', 'feeConservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['fanout_1', 'actor1 → relayer', 'tag'], ['discover', 'Erc20CoinVault → actor2', 'tagPayload'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
+    'formula details: the spend key on the Sender’s registration, the tag channel setup and detection on the Sender’s tag channel to payment 1’s payee, the commitment on the shield, the Merkle path, value conservation, the fee’s value conservation, the nullifier, the Groth16 check and the tag on payment 1, the tag payload on its payee’s open note, note encryption on the audit');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
   // Every proof hop carries a prover card's stats, and no witness.
   proverDetails(DEFAULT_RUN, false);
@@ -523,6 +539,11 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
     'no tag channel setup formula, with its values, on payment 1’s open channel');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'scan channels' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tagChannelDetection' && d.formula.chain)),
     'no tag channel detection formula, with its values, on payment 1’s payee’s scan channels');
+  // Payment 1's tag carries the tag card; its payee's tag-based open note, the tag payload card.
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'tag' && e.from === 'actor1' && e.to === 'relayer' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tag' && d.formula.chain)),
+    'no tag formula, with its values, on payment 1’s tag');
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'discover' && e.label === 'open note' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tagPayload' && d.formula.chain)),
+    'no tag payload formula, with its values, on payment 1’s payee’s open note');
   for (const name of ['merklePath', 'nullifier'])
     assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === name)), `no ${name} formula on payment 1`);
   // The Merkle path card names its crowd: at least the leaves up to the spent one.

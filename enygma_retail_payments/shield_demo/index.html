@@ -1809,6 +1809,23 @@ const FORMULA = {
     // A walkthrough's ✓ is the scan's real counts, and the tag channel it opened.
     check: d => !hasValues(d.formula) ? '' : `${d.formula.chain.value}: ${d.formula.chain.name}`,
   },
+  tag: {
+    title: 'The tag', property: 'Unlinkable, one per block and direction',
+    eq: 't_b = Poseidon(b, pk_spend^payee, ss mod p)',
+    result: 't_b',
+    sees: 'the tag t_b in TagRegistry, the block it landed in, sent by the relayer',
+    hidden: 'the shared secret ss, who the payee is, and who paid',
+    why: 'Poseidon is one-way and only the payer and the payee hold ss (and the auditor, through the view keys it recovers), so no one else can compute t_b or tell which tag channel it rides on. b changes it every block, so two tags on one tag channel look unrelated. The payee’s spend key is in it so the two directions differ: without it, a payment each way over one tag channel in the same block would get the same tag, collide in TagRegistry, and match the payer’s own scan.',
+    note: 'The payer sends the relayer a tag for each block of a short window, each with its payload; the relayer publishes the one for the block its transaction lands in.',
+  },
+  tagPayload: {
+    title: 'The tag’s payload', property: 'Only the payee (and the auditor) can read it',
+    eq: 'k_b = HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee); ct = AES-256-GCM_k_b(amount ‖ token ‖ salt); the payee opens ct, and Poseidon(pk_spend, salt, amount, token) = commitment',
+    result: 'commitment',
+    sees: 'ct beside the tag in TagRegistry, and the note’s commitment in the vault',
+    hidden: 'the block key k_b, the amount, the token, the salt',
+    why: 'k_b derives from ss, which only the payer and the payee hold (and the auditor, through the view keys it recovers), so only they can open ct: AES-GCM fails under any other key. Like the tag, the key changes with the block and the direction, so every payload has a key of its own. A tag alone proves nothing was paid: the payee hashes the opening with their pk_spend and finds that commitment in the vault before keeping the note.',
+  },
   groth16: {
     title: 'The Groth16 check', property: 'Zero-knowledge and soundness', eq: 'on BN254: e(A, B) = e(α, β) · e(L, γ) · e(C, δ), with L = IC₀ + Σ xᵢ · ICᵢ', result: 'verifyProof',
     sees: 'the proof (A, B, C) and the public inputs',
