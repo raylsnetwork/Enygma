@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -103,7 +104,7 @@ func (e *Engine) openChannels(ctx context.Context, s *step) error {
 		}
 	}
 	for _, a := range e.registrable() {
-		if _, err := e.scanChannels(s, a); err != nil {
+		if _, err := e.scanChannels(ctx, s, a); err != nil {
 			return err
 		}
 	}
@@ -124,8 +125,8 @@ func (e *Engine) openChannel(ctx context.Context, s *step, from, to *Actor) erro
 	if err != nil {
 		return err
 	}
-	ss, c1, c2, bitmap, err := tags.PrepareChannelSetup(to.View.EncapsKey,
-		[]byte("Payment channel ready"), []byte(from.Address.Hex()), tags.PrivacyFull, users, idx, nil)
+	msg, senderId := []byte("Payment channel ready"), []byte(from.Address.Hex())
+	ss, c1, c2, bitmap, err := tags.PrepareChannelSetup(to.View.EncapsKey, msg, senderId, tags.PrivacyFull, users, idx, nil)
 	if err != nil {
 		return fmt.Errorf("channel %s → %s: %w", from.Name, to.Name, err)
 	}
@@ -139,11 +140,31 @@ func (e *Engine) openChannel(ctx context.Context, s *step, from, to *Actor) erro
 	if err != nil {
 		return fmt.Errorf("channel %s → %s: %w", from.Name, to.Name, err)
 	}
-	s.hop(ActorNode(from.ID), NodeRelayer, "open channel", fmt.Sprintf("a shared secret encapsulated to %s's view key", to.Name), ex)
+	details := []HopDetail{ex}
+	// The Sender's tag channel to payment 1's payee carries the tag channel
+	// setup card: a walkthrough's with its values, checked against the
+	// record, a full run's by name only.
+	if e.carriesTagChannelCards(from, to) {
+		d := formulaNamed(FormulaTagChannelSetup, NodeTagChannelRegistry, 0)
+		if e.opts.Walkthrough {
+			if d, err = c.tagChannelSetupFormula(ctx, from, to, resp.ChannelIdx, ss, c1, c2, bitmap, msg, senderId); err != nil {
+				return err
+			}
+		}
+		details = append(details, d)
+	}
+	s.hop(ActorNode(from.ID), NodeRelayer, "open channel", fmt.Sprintf("a shared secret encapsulated to %s's view key", to.Name), details...)
 	s.hop(NodeRelayer, NodeTagChannelRegistry, "openChannel", fmt.Sprintf("channel #%d, block %d, gas %s; the relayer is its on-chain sender", resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed)), receipt)
 	s.log("tag", "TagChannelRegistry.openChannel(%s → %s) via relayer → channel #%d  block %d  gas %s",
 		from.Name, to.Name, resp.ChannelIdx, resp.BlockNumber, formatNum(resp.GasUsed))
 	return nil
+}
+
+// carriesTagChannelCards says whether the tag channel from from to to is the
+// Sender's to payment 1's payee, the first participant: the one whose
+// setup and detection carry the tag channel cards.
+func (e *Engine) carriesTagChannelCards(from, to *Actor) bool {
+	return from == e.sender() && to == e.participants()[0]
 }
 
 // maxChannelScan bounds one channel scan; a run opens a few dozen channels.
@@ -151,7 +172,7 @@ const maxChannelScan = 1 << 20
 
 // scanChannels has a check every channel record published since their last
 // scan, keeping the ones their view key opens, and returns how many it found.
-func (e *Engine) scanChannels(s *step, a *Actor) (int, error) {
+func (e *Engine) scanChannels(ctx context.Context, s *step, a *Actor) (int, error) {
 	c := e.chain
 	cursor := &tags.ScanCursor{LastChannelIdx: a.tags.nextChannel}
 	found, next, err := tags.ScanChannelsFromCursor(c.client, c.channelRegistryAddr, a.View.DecapsKey, cursor, maxChannelScan)
@@ -164,7 +185,25 @@ func (e *Engine) scanChannels(s *step, a *Actor) (int, error) {
 	checked := next.LastChannelIdx - a.tags.nextChannel
 	a.tags.nextChannel = next.LastChannelIdx
 	if len(found) > 0 {
-		s.hop(NodeTagChannelRegistry, ActorNode(a.ID), "scan channels", fmt.Sprintf("%d records checked, %d opened with %s's view key", checked, len(found), a.Name))
+		var details []HopDetail
+		// The scan that finds the Sender's tag channel to payment 1's payee
+		// carries the tag channel detection card: a walkthrough's with its
+		// values, a full run's by name only.
+		if sender := e.sender(); e.carriesTagChannelCards(sender, a) {
+			for _, f := range found {
+				if !bytes.Equal(f.SharedSecret, sender.tags.out[a]) {
+					continue
+				}
+				d := formulaNamed(FormulaTagChannelDetection, NodeTagChannelRegistry, 0)
+				if e.opts.Walkthrough {
+					if d, err = c.tagChannelDetectionFormula(ctx, sender, a, e.participants()[1], f, checked, len(found)); err != nil {
+						return 0, err
+					}
+				}
+				details = append(details, d)
+			}
+		}
+		s.hop(NodeTagChannelRegistry, ActorNode(a.ID), "scan channels", fmt.Sprintf("%d records checked, %d opened with %s's view key", checked, len(found), a.Name), details...)
 		s.log("tag", "%s checked %d channel records, opened %d with their ML-KEM view key", a.Name, checked, len(found))
 		s.actor(a, "channels", fmt.Sprintf("%d incoming", len(a.tags.in)))
 	}
@@ -190,7 +229,7 @@ func (e *Engine) ensureChannel(ctx context.Context, s *step, from, to *Actor) er
 	if err := e.openChannel(ctx, s, from, to); err != nil {
 		return err
 	}
-	if found, err := e.scanChannels(s, to); err != nil {
+	if found, err := e.scanChannels(ctx, s, to); err != nil {
 		return err
 	} else if found != 1 {
 		return fmt.Errorf("%s found %d new channels by scanning, want the one %s opened", to.Name, found, from.Name)

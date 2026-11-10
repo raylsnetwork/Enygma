@@ -130,7 +130,10 @@ const (
 	// the Groth16 check on payment 1's settlement, and note encryption on
 	// the first hop a view key opens a note's ciphertext by (the first
 	// participant's scan; with tags, a participant opens their note with
-	// the tag channel's key, so the audit's). A walkthrough's carries the
+	// the tag channel's key, so the audit's); with tags, the tag channel
+	// setup on the open channel hop of the Sender's tag channel to payment
+	// 1's payee, and the tag channel detection on that payee's scan
+	// channels hop that finds it. A walkthrough's carries the
 	// run's real values too, checked against what the chain holds: the
 	// spend key on the Sender's registration (its sk_spend is a throwaway
 	// demo key); the commitment on the shield (its values are the shield's
@@ -143,7 +146,12 @@ const (
 	// by verifyProof) on the settlement, values the page shows there anyway
 	// in payment 1's witness and on-chain check; and note encryption on the
 	// first participant's scan (the ciphertext the scan's decryption detail
-	// shows, and its opening).
+	// shows, and its opening); and, with tags, on payment 1's hops, the tag
+	// channel setup (its shared secret, capsule, key, payload and bitmap,
+	// checked against the record TagChannelRegistry holds and the
+	// UserRegistry's user count) and its detection (the payee's Decaps and
+	// AEAD opening of that record, another participant's AEAD failing on
+	// it, and the scan's counts).
 	DetailFormula HopDetailKind = "formula"
 	// DetailProver is what the gnark server did for one proof request, on
 	// every proof hop: the circuit it ran and the stats it measured itself
@@ -206,6 +214,18 @@ const (
 	// e(α,β)·e(L,γ)·e(C,δ) with L = IC₀ + Σ xᵢ·ICᵢ, as the Verifier's
 	// verifyProof makes it.
 	FormulaGroth16 FormulaName = "groth16"
+	// FormulaTagChannelSetup is a tag channel's setup by its payer:
+	// ML-KEM-768 encapsulation to the payee's view key gives the shared
+	// secret ss and the capsule c₁, k_ch = HKDF-SHA256(ss,
+	// "enygma-channel-key-v1"), c₂ = AES-256-GCM of msg ‖ senderId under
+	// k_ch with c₁ as associated data, and a bitmap of every registered
+	// user, as TagChannelRegistry holds the record.
+	FormulaTagChannelSetup FormulaName = "tagChannelSetup"
+	// FormulaTagChannelDetection is a payee finding a tag channel by scanning
+	// TagChannelRegistry: Decaps of each record's c₁ always returns a
+	// secret, and only under the payee's does c₂ open; an AEAD failure
+	// means "not mine".
+	FormulaTagChannelDetection FormulaName = "tagChannelDetection"
 )
 
 // Formula is one equation with its real inputs, in the order the equation
