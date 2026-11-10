@@ -1790,6 +1790,25 @@ const FORMULA = {
     hidden: 'the shared secret ss, the salt, the amount, the token',
     why: 'Only the view key’s holder can decapsulate the capsule to the shared secret, and ML-KEM-768 is post-quantum: even a quantum computer can’t recover it from the capsule. AES-GCM fails to open under any other key, so every other wallet’s trial decryption just fails. The auditor reads the note too: it recovers every user’s view key from the audit ciphertexts they registered.',
   },
+  tagChannelSetup: {
+    title: 'Opening the tag channel', property: 'Only the payee (and the auditor) can open it',
+    eq: '(ss, c₁) = ML-KEM-768.Encaps(pk_view); k_ch = HKDF-SHA256(ss, "enygma-channel-key-v1"); c₂ = AES-256-GCM_k_ch(msg ‖ senderId; AAD = c₁); bitmap = every registered user',
+    result: 'c₂',
+    sees: 'the record in TagChannelRegistry: c₁, c₂ and the bitmap, sent by the relayer',
+    hidden: 'the shared secret ss, who the payee is, and the payer’s senderId inside c₂',
+    why: 'ML-KEM-768 seals ss to the payee’s view key: only its holder can decapsulate c₁ to ss, and the auditor, which recovers every user’s view key. c₂ is sealed under a key derived from ss, with c₁ bound in as associated data, so it can’t be paired with another capsule. The bitmap sets every registered user’s bit, so it names nobody, and the relayer sends the record, so msg.sender is the relayer’s, not the payer’s.',
+    note: 'Every later tag between the two, in this direction, derives from ss. The payee, and the auditor through the view keys it recovers, read the payer’s senderId in c₂. The payment’s note encryption is separate: a fresh capsule per payment.',
+  },
+  tagChannelDetection: {
+    title: 'Finding the tag channel', property: 'Only the payee (and the auditor) recognises it',
+    eq: 'for each record: ss′ = ML-KEM-768.Decaps(sk_view, c₁); k′ = HKDF-SHA256(ss′, "enygma-channel-key-v1"); AES-256-GCM.Open_k′(c₂; AAD = c₁) opens: mine, fails: not mine',
+    result: 'msg ‖ senderId',
+    sees: 'nothing new: the scan only reads the records',
+    hidden: 'which record the payee opened, and that they opened one at all',
+    why: 'Decaps never fails: ML-KEM’s implicit rejection returns a secret for any capsule, so every scanner gets some ss′ from every record. Only the payee’s is the payer’s ss, so only under the payee’s k′ does c₂ open; under any other key the AEAD’s authentication fails, and that failure means “not mine”. The scan only reads, and a read leaves nothing on chain.',
+    // A walkthrough's ✓ is the scan's real counts, and the tag channel it opened.
+    check: d => !hasValues(d.formula) ? '' : `${d.formula.chain.value}: ${d.formula.chain.name}`,
+  },
   groth16: {
     title: 'The Groth16 check', property: 'Zero-knowledge and soundness', eq: 'on BN254: e(A, B) = e(α, β) · e(L, γ) · e(C, δ), with L = IC₀ + Σ xᵢ · ICᵢ', result: 'verifyProof',
     sees: 'the proof (A, B, C) and the public inputs',
@@ -2304,7 +2323,8 @@ const hopPanel = (() => {
       const sameTx = tx && latest?.details.some(d => d.tx === tx) ? latest.details.filter(d => LANDS.has(d.kind) && d.vault !== h.hopDetail[0].vault) : [];
       const details = [...h.hopDetail, ...sameTx];
       const focus = focusOf(details);
-      const front = h.hopDetail[0]?.vault || latest?.front || VAULT_IDS[0];
+      // Only a vault has a tree to show: a tag channel card's value is in TagChannelRegistry.
+      const front = VAULT_IDS.includes(h.hopDetail[0]?.vault) ? h.hopDetail[0].vault : latest?.front || VAULT_IDS[0];
       // The run's first fee-paying relay carries the tie line.
       const tie = tiesFee(h, h.hopDetail) && !history.some(en => en.tie);
       latest = { hop: h, details, focus, front, tie, trees: structuredClone(trees) };

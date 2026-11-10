@@ -1,15 +1,22 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/binary"
 	"fmt"
 	"math/big"
+	"math/bits"
 
 	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -352,6 +359,177 @@ func (c *chain) noteEncryptionFormula(ctx context.Context, owner *Actor, cm *big
 		Result: result,
 		Chain:  &FormulaValue{Name: fmt.Sprintf("the commitment the vault's %s event published with this ciphertext, tx %s", event, l.TxHash.Hex()), Value: chain},
 		OK:     result == chain,
+	}}, nil
+}
+
+// channelRecord is a tag channel's record as TagChannelRegistry holds it.
+type channelRecord struct {
+	sender         common.Address
+	c1, c2, bitmap []byte
+}
+
+// channelRecordArgs are getChannel's outputs: sender, c1, c2, bitmap.
+func channelRecordArgs() abi.Arguments {
+	addressT, _ := abi.NewType("address", "", nil)
+	bytesT, _ := abi.NewType("bytes", "", nil)
+	return abi.Arguments{{Type: addressT}, {Type: bytesT}, {Type: bytesT}, {Type: bytesT}}
+}
+
+// channelRecord reads tag channel #idx from TagChannelRegistry's getChannel
+// (an eth_call).
+func (c *chain) channelRecord(ctx context.Context, idx uint64) (channelRecord, error) {
+	uint256T, _ := abi.NewType("uint256", "", nil)
+	arg, err := abi.Arguments{{Type: uint256T}}.Pack(new(big.Int).SetUint64(idx))
+	if err != nil {
+		return channelRecord{}, err
+	}
+	data := append(crypto.Keccak256([]byte("getChannel(uint256)"))[:4], arg...)
+	out, err := c.client.CallContract(ctx, ethereum.CallMsg{To: &c.channelRegistryAddr, Data: data}, nil)
+	if err != nil {
+		return channelRecord{}, fmt.Errorf("TagChannelRegistry.getChannel(%d): %w", idx, err)
+	}
+	vals, err := channelRecordArgs().Unpack(out)
+	if err != nil || len(vals) != 4 {
+		return channelRecord{}, fmt.Errorf("TagChannelRegistry.getChannel(%d) answered %x: %v", idx, out, err)
+	}
+	return channelRecord{sender: vals[0].(common.Address), c1: vals[1].([]byte), c2: vals[2].([]byte), bitmap: vals[3].([]byte)}, nil
+}
+
+// openChannelPayload is c₂ of a tag channel record opened under k with c₁
+// as associated data, as the private tags library seals it (AES-256-GCM,
+// nonce ‖ ciphertext), and decoded to its msg and senderId (each a 4-byte
+// big-endian length, then its bytes). An error is the AEAD failing: the
+// record is not for whoever derived k.
+func openChannelPayload(k [32]byte, c1, c2 []byte) (msg, senderId []byte, err error) {
+	block, err := aes.NewCipher(k[:])
+	if err != nil {
+		return nil, nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(c2) < gcm.NonceSize() {
+		return nil, nil, fmt.Errorf("c₂ is %d bytes, shorter than its nonce", len(c2))
+	}
+	plain, err := gcm.Open(nil, c2[:gcm.NonceSize()], c2[gcm.NonceSize():], c1)
+	if err != nil {
+		return nil, nil, err
+	}
+	field := func() ([]byte, error) {
+		if len(plain) < 4 || uint64(len(plain)-4) < uint64(binary.BigEndian.Uint32(plain)) {
+			return nil, fmt.Errorf("c₂ opens to a truncated payload")
+		}
+		n := binary.BigEndian.Uint32(plain)
+		v := plain[4 : 4+n]
+		plain = plain[4+n:]
+		return v, nil
+	}
+	if msg, err = field(); err != nil {
+		return nil, nil, err
+	}
+	if senderId, err = field(); err != nil {
+		return nil, nil, err
+	}
+	return msg, senderId, nil
+}
+
+// popcount is how many bits of b are set: the users a tag channel's bitmap
+// covers.
+func popcount(b []byte) int {
+	n := 0
+	for _, x := range b {
+		n += bits.OnesCount8(x)
+	}
+	return n
+}
+
+// channelPayloadText is a tag channel's msg ‖ senderId as the cards show it.
+func channelPayloadText(msg, senderId []byte) string {
+	return string(msg) + " ‖ " + string(senderId)
+}
+
+// tagChannelSetupFormula is the setup formula of tag channel #idx, which from
+// opened to to's view key with shared secret ss, capsule c1, sealed payload
+// c2 of msg ‖ senderId and bitmap: k_ch derived from ss, checked against
+// the record TagChannelRegistry holds (the same c₁, c₂ and bitmap) and the
+// bitmap against the users the UserRegistry holds (every one of them).
+func (c *chain) tagChannelSetupFormula(ctx context.Context, from, to *Actor, idx uint64, ss, c1, c2, bitmap, msg, senderId []byte) (HopDetail, error) {
+	rec, err := c.channelRecord(ctx, idx)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag channel setup card: %w", err)
+	}
+	users, err := tags.GetUserCount(c.client, c.registryAddr)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag channel setup card: %w", err)
+	}
+	k := tags.DeriveChannelKey(ss)
+	covered := popcount(bitmap)
+	return HopDetail{Kind: DetailFormula, Vault: NodeTagChannelRegistry, Formula: &Formula{
+		Name: FormulaTagChannelSetup,
+		Inputs: []FormulaValue{
+			{Name: fmt.Sprintf("pk_view · %s's view key", to.Name), Value: bytesHex(to.View.EncapsKey)},
+			{Name: "ss · ML-KEM-768 shared secret", Value: bytesHex(ss)},
+			{Name: "c₁ · ML-KEM-768 capsule", Value: bytesHex(c1)},
+			{Name: "k_ch · HKDF-SHA256(ss, \"enygma-channel-key-v1\")", Value: bytesHex(k[:])},
+			{Name: "msg", Value: string(msg)},
+			{Name: fmt.Sprintf("senderId · the %s's address", from.Name), Value: string(senderId)},
+			{Name: fmt.Sprintf("bitmap · PrivacyFull, %d of %d registered users", covered, users), Value: bytesHex(bitmap)},
+		},
+		Result: bytesHex(c2),
+		Chain: &FormulaValue{Name: fmt.Sprintf("c₂ of tag channel #%d as TagChannelRegistry holds it (getChannel), beside the same c₁ and a bitmap of all %d users the UserRegistry holds", idx, users),
+			Value: bytesHex(rec.c2)},
+		OK: bytes.Equal(rec.c1, c1) && bytes.Equal(rec.c2, c2) && bytes.Equal(rec.bitmap, bitmap) && covered == users,
+	}}, nil
+}
+
+// tagChannelDetectionFormula is the detection formula of tag channel f, which
+// payee's scan of checked records found among opened: the record as
+// TagChannelRegistry holds it, decapsulated with payee's view key to the
+// payer's shared secret and its c₂ opened under the key derived from it, to
+// the payer's senderId; and decapsulated with other's view key to some
+// other secret, under whose key c₂ fails to open.
+func (c *chain) tagChannelDetectionFormula(ctx context.Context, payer, payee, other *Actor, f tags.FoundChannel, checked uint64, opened int) (HopDetail, error) {
+	rec, err := c.channelRecord(ctx, f.ChannelIdx)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag channel detection card: %w", err)
+	}
+	ss, err := payee.View.DecapsKey.Decapsulate(rec.c1)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag channel detection card: %s's Decaps: %w", payee.Name, err)
+	}
+	k := tags.DeriveChannelKey(ss)
+	msg, senderId, err := openChannelPayload(k, rec.c1, rec.c2)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag channel detection card: %s's key does not open tag channel #%d: %w", payee.Name, f.ChannelIdx, err)
+	}
+	otherSS, err := other.View.DecapsKey.Decapsulate(rec.c1)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag channel detection card: %s's Decaps: %w", other.Name, err)
+	}
+	_, _, otherErr := openChannelPayload(tags.DeriveChannelKey(otherSS), rec.c1, rec.c2)
+	otherOpen := fmt.Sprintf("fails: not %s's", other.Name)
+	if otherErr == nil {
+		otherOpen = "opens"
+	}
+	records := "records"
+	if checked == 1 {
+		records = "record"
+	}
+	return HopDetail{Kind: DetailFormula, Vault: NodeTagChannelRegistry, Formula: &Formula{
+		Name: FormulaTagChannelDetection,
+		Inputs: []FormulaValue{
+			{Name: fmt.Sprintf("c₁ · tag channel #%d", f.ChannelIdx), Value: bytesHex(rec.c1)},
+			{Name: fmt.Sprintf("c₂ · tag channel #%d", f.ChannelIdx), Value: bytesHex(rec.c2)},
+			{Name: fmt.Sprintf("ss′ = Decaps(sk_view, c₁) · %s", payee.Name), Value: bytesHex(ss)},
+			{Name: "k′ = HKDF-SHA256(ss′, \"enygma-channel-key-v1\")", Value: bytesHex(k[:])},
+			{Name: fmt.Sprintf("ss″ = Decaps with %s's view key · a secret too", other.Name), Value: bytesHex(otherSS)},
+			{Name: fmt.Sprintf("AES-256-GCM.Open of c₂ under %s's key", other.Name), Value: otherOpen},
+		},
+		Result: channelPayloadText(msg, senderId),
+		Chain: &FormulaValue{Name: fmt.Sprintf("%s's scan of the records TagChannelRegistry published since their last one (getChannelCount); the one their view key opens is tag channel #%d, the %s's", payee.Name, f.ChannelIdx, payer.Name),
+			Value: fmt.Sprintf("%d %s checked, %d opened", checked, records, opened)},
+		OK: bytes.Equal(ss, f.SharedSecret) && bytes.Equal(ss, payer.tags.out[payee]) && string(senderId) == payer.Address.Hex() && otherErr != nil && opened == 1,
 	}}, nil
 }
 

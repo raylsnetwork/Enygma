@@ -19,11 +19,13 @@ import (
 	"crypto/cipher"
 	"crypto/hkdf"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -34,8 +36,11 @@ import (
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/iden3/go-iden3-crypto/constants"
 	"github.com/iden3/go-iden3-crypto/poseidon"
@@ -1222,6 +1227,200 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
+	// channelCard is the formula named name on payment 1's what hop, from →
+	// to, its one formula detail, with its inputs by name, in order; it
+	// fails unless it carries values and is in TagChannelRegistry.
+	channelCard := func(t *testing.T, name engine.FormulaName, what, from, to string) (*engine.Formula, []string, map[string]string) {
+		t.Helper()
+		var cards []engine.HopDetail
+		for _, h := range sink.hops() {
+			if h.Step == "fanout_1" && h.Label == what && h.From == from && h.To == to && !h.Failed {
+				cards = append(cards, detailsOf(h, engine.DetailFormula)...)
+			}
+		}
+		if len(cards) != 1 || cards[0].Formula == nil || cards[0].Formula.Name != name {
+			t.Fatalf("payment 1's %s hop (%s → %s) carries %d formula details, want one %s formula", what, from, to, len(cards), name)
+		}
+		f := cards[0].Formula
+		if f.Chain == nil {
+			t.Fatalf("the %s formula carries no chain value: a full run's, by name only", name)
+		}
+		if cards[0].Vault != engine.NodeTagChannelRegistry {
+			t.Errorf("the %s formula is in the %s, want the %s", name, cards[0].Vault, engine.NodeTagChannelRegistry)
+		}
+		var names []string
+		in := map[string]string{}
+		for _, x := range f.Inputs {
+			names = append(names, x.Name)
+			in[x.Name] = x.Value
+		}
+		return f, names, in
+	}
+	// payment1Channel is the tag channel payment 1's setup opened, read
+	// back from the registry: its index, its record, and the registry's
+	// address, from the receipt of the relayer's openChannel in payment 1.
+	payment1Channel := func(t *testing.T) (uint64, channelRecord, common.Address) {
+		t.Helper()
+		for _, h := range sink.hops() {
+			if h.Step != "fanout_1" || h.Label != "openChannel" || h.To != engine.NodeTagChannelRegistry {
+				continue
+			}
+			rs := detailsOf(h, engine.DetailReceipt)
+			if len(rs) != 1 {
+				t.Fatalf("payment 1's openChannel carries %d receipts, want 1", len(rs))
+			}
+			for _, l := range txLogs(t, client, common.HexToHash(rs[0].TxHash)) {
+				if len(l.Topics) == 3 && l.Topics[0] == channelOpenedSig {
+					idx := l.Topics[1].Big().Uint64()
+					return idx, readChannel(t, client, l.Address, idx), l.Address
+				}
+			}
+			t.Fatal("payment 1's openChannel logged no ChannelOpened event")
+		}
+		t.Fatal("no openChannel hop in payment 1")
+		return 0, channelRecord{}, common.Address{}
+	}
+
+	t.Run("payment 1's open channel hop carries the tag channel setup formula: the payee's Decaps of the record TagChannelRegistry holds gives its ss, HKDF its k_ch, under which c₂ opens to msg ‖ the Sender's address, and the bitmap covers every registered user", func(t *testing.T) {
+		sender, payee := e.Sender(), e.Participants()[0]
+		f, names, in := channelCard(t, engine.FormulaTagChannelSetup, "open channel", engine.ActorNode(sender.ID), engine.NodeRelayer)
+		users, err := rpcore.GetUserCount(client, common.HexToAddress(receipts["UserRegistry"].ContractAddress))
+		if err != nil {
+			t.Fatalf("GetUserCount: %v", err)
+		}
+		bitmapName := fmt.Sprintf("bitmap · PrivacyFull, %d of %d registered users", users, users)
+		if want := []string{fmt.Sprintf("pk_view · %s's view key", payee.Name), "ss · ML-KEM-768 shared secret", "c₁ · ML-KEM-768 capsule",
+			`k_ch · HKDF-SHA256(ss, "enygma-channel-key-v1")`, "msg", fmt.Sprintf("senderId · the %s's address", sender.Name), bitmapName}; !slices.Equal(names, want) {
+			t.Fatalf("inputs %v, want %v", names, want)
+		}
+		idx, rec, _ := payment1Channel(t)
+		if got := hexBytes(t, in[names[0]]); !slices.Equal(got, payee.View.EncapsKey) {
+			t.Errorf("pk_view is not %s's view key", payee.Name)
+		}
+		if !slices.Equal(hexBytes(t, in["c₁ · ML-KEM-768 capsule"]), rec.c1) || !slices.Equal(hexBytes(t, f.Result), rec.c2) || !slices.Equal(hexBytes(t, f.Chain.Value), rec.c2) {
+			t.Errorf("the card's c₁, c₂ (result) and chain value are not tag channel #%d's c₁ and c₂ as TagChannelRegistry holds them", idx)
+		}
+		if !slices.Equal(hexBytes(t, in[bitmapName]), rec.bitmap) {
+			t.Errorf("the card's bitmap %s, tag channel #%d holds 0x%x", in[bitmapName], idx, rec.bitmap)
+		}
+		// The bitmap covers every user the UserRegistry holds, and no more.
+		set := 0
+		for i := range len(rec.bitmap) * 8 {
+			if rec.bitmap[i/8]&(1<<(i%8)) != 0 {
+				if i >= users {
+					t.Errorf("the bitmap sets bit %d, past the registry's %d users", i, users)
+				}
+				set++
+			}
+		}
+		if set != users {
+			t.Errorf("the bitmap sets %d bits, the UserRegistry holds %d users", set, users)
+		}
+
+		// Recompute it independently, with the standard library: the
+		// payee's ML-KEM-768 Decaps of the record's c₁, HKDF-SHA256 to k_ch,
+		// AES-256-GCM (nonce || ciphertext, c₁ as associated data) to
+		// msg ‖ senderId, each a 4-byte big-endian length then its bytes.
+		ss, err := payee.View.DecapsKey.Decapsulate(rec.c1)
+		if err != nil {
+			t.Fatalf("decapsulate: %v", err)
+		}
+		if !slices.Equal(ss, hexBytes(t, in["ss · ML-KEM-768 shared secret"])) {
+			t.Errorf("the card's ss %s, %s's Decaps of c₁ gives 0x%x", in["ss · ML-KEM-768 shared secret"], payee.Name, ss)
+		}
+		k, err := hkdf.Key(sha256.New, ss, nil, "enygma-channel-key-v1", 32)
+		if err != nil {
+			t.Fatalf("HKDF: %v", err)
+		}
+		if !slices.Equal(k, hexBytes(t, in[names[3]])) {
+			t.Errorf("the card's k_ch %s, HKDF-SHA256(ss) is 0x%x", in[names[3]], k)
+		}
+		msg, senderId, err := openChannelSealed(t, k, rec.c1, rec.c2)
+		if err != nil {
+			t.Fatalf("c₂ does not open under k_ch with c₁ as associated data: %v", err)
+		}
+		if msg != in["msg"] || senderId != in[names[5]] || senderId != sender.Address.Hex() {
+			t.Errorf("c₂ opens to %q ‖ %q; the card says %q ‖ %q, the %s's address is %s", msg, senderId, in["msg"], in[names[5]], sender.Name, sender.Address.Hex())
+		}
+		if !f.OK {
+			t.Error("the tag channel setup formula is not ok")
+		}
+		if !strings.Contains(f.Chain.Name, fmt.Sprintf("#%d", idx)) {
+			t.Errorf("the chain's value is %q, want it to name tag channel #%d", f.Chain.Name, idx)
+		}
+	})
+
+	t.Run("the payee's scan channels hop carries the tag channel detection formula: their Decaps and AEAD open the record, another participant's Decaps gives a secret under which the AEAD fails, and the scan's counts match the registry", func(t *testing.T) {
+		sender, payee, other := e.Sender(), e.Participants()[0], e.Participants()[1]
+		f, names, in := channelCard(t, engine.FormulaTagChannelDetection, "scan channels", engine.NodeTagChannelRegistry, engine.ActorNode(payee.ID))
+		idx, rec, registry := payment1Channel(t)
+		if want := []string{fmt.Sprintf("c₁ · tag channel #%d", idx), fmt.Sprintf("c₂ · tag channel #%d", idx), fmt.Sprintf("ss′ = Decaps(sk_view, c₁) · %s", payee.Name),
+			`k′ = HKDF-SHA256(ss′, "enygma-channel-key-v1")`, fmt.Sprintf("ss″ = Decaps with %s's view key · a secret too", other.Name),
+			fmt.Sprintf("AES-256-GCM.Open of c₂ under %s's key", other.Name)}; !slices.Equal(names, want) {
+			t.Fatalf("inputs %v, want %v", names, want)
+		}
+		if !slices.Equal(hexBytes(t, in[names[0]]), rec.c1) || !slices.Equal(hexBytes(t, in[names[1]]), rec.c2) {
+			t.Errorf("the card's c₁ and c₂ are not tag channel #%d's as TagChannelRegistry holds them", idx)
+		}
+		ss, err := payee.View.DecapsKey.Decapsulate(rec.c1)
+		if err != nil {
+			t.Fatalf("decapsulate: %v", err)
+		}
+		k, err := hkdf.Key(sha256.New, ss, nil, "enygma-channel-key-v1", 32)
+		if err != nil {
+			t.Fatalf("HKDF: %v", err)
+		}
+		if !slices.Equal(ss, hexBytes(t, in[names[2]])) || !slices.Equal(k, hexBytes(t, in[names[3]])) {
+			t.Errorf("the card's ss′ %s and k′ %s, %s's Decaps and HKDF give 0x%x and 0x%x", in[names[2]], in[names[3]], payee.Name, ss, k)
+		}
+		msg, senderId, err := openChannelSealed(t, k, rec.c1, rec.c2)
+		if err != nil {
+			t.Fatalf("c₂ does not open under %s's k′: %v", payee.Name, err)
+		}
+		if want := msg + " ‖ " + senderId; f.Result != want || senderId != sender.Address.Hex() {
+			t.Errorf("result %q, c₂ opens to %q, want the %s's address %s as its senderId", f.Result, want, sender.Name, sender.Address.Hex())
+		}
+		// Another view key decapsulates the same c₁ to some other secret:
+		// Decaps never fails, the AEAD does.
+		oss, err := other.View.DecapsKey.Decapsulate(rec.c1)
+		if err != nil {
+			t.Fatalf("decapsulate with %s's view key: %v", other.Name, err)
+		}
+		if slices.Equal(oss, ss) || !slices.Equal(oss, hexBytes(t, in[names[4]])) {
+			t.Errorf("the card's ss″ %s, %s's Decaps gives 0x%x (the payee's is 0x%x)", in[names[4]], other.Name, oss, ss)
+		}
+		otherK, err := hkdf.Key(sha256.New, oss, nil, "enygma-channel-key-v1", 32)
+		if err != nil {
+			t.Fatalf("HKDF: %v", err)
+		}
+		if _, _, err := openChannelSealed(t, otherK, rec.c1, rec.c2); err == nil {
+			t.Errorf("c₂ opens under %s's key too", other.Name)
+		}
+		if want := fmt.Sprintf("fails: not %s's", other.Name); in[names[5]] != want {
+			t.Errorf("the card says %q of %s's AEAD, want %q", in[names[5]], other.Name, want)
+		}
+		// The counts: the payee registered in this run, so their scan's
+		// cursor starts at the first tag channel of the run, payment 1's:
+		// every tag channel record after it is one of the run's own, one
+		// per payment, so the scan checked one record and opened it.
+		count := channelCount(t, client, registry)
+		published := 0
+		for _, h := range sink.hops() {
+			if h.Label == "openChannel" && h.To == engine.NodeTagChannelRegistry && !h.Failed {
+				published++
+			}
+		}
+		if count != idx+uint64(published) {
+			t.Fatalf("TagChannelRegistry holds %d records, want tag channel #%d and the run's %d from it on: payment 1's the run's first", count, idx, published)
+		}
+		if f.Chain.Value != "1 record checked, 1 opened" || !f.OK {
+			t.Errorf("the chain's value %q (ok %v), want \"1 record checked, 1 opened\", ok", f.Chain.Value, f.OK)
+		}
+		if !strings.Contains(f.Chain.Name, fmt.Sprintf("#%d", idx)) {
+			t.Errorf("the chain's value is %q, want it to name tag channel #%d", f.Chain.Name, idx)
+		}
+	})
+
 	t.Run("payment 1's settlement carries its Groth16 formula: the proof and public inputs the vault verified, verifyProof true, and false once tampered", func(t *testing.T) {
 		f := payment1Formula(t, engine.FormulaGroth16, "settle", engine.NodeRelayer, engine.NodeDvp)
 		if f.Chain == nil {
@@ -1647,4 +1846,92 @@ func openSealed(t *testing.T, ss, sealed []byte) ([]byte, error) {
 		t.Fatalf("sealed payload of %d bytes, shorter than its nonce", len(sealed))
 	}
 	return gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], nil)
+}
+
+// channelOpenedSig is TagChannelRegistry's ChannelOpened event.
+var channelOpenedSig = crypto.Keccak256Hash([]byte("ChannelOpened(uint256,address)"))
+
+// tagChannelRegistry is TagChannelRegistry at addr, bound with the private
+// tags library's artifact.
+func tagChannelRegistry(t *testing.T, client *ethclient.Client, addr common.Address) *bind.BoundContract {
+	t.Helper()
+	data, err := os.ReadFile("../private_tags/contracts/TagChannelRegistry.json")
+	if err != nil {
+		t.Fatalf("read the TagChannelRegistry artifact: %v", err)
+	}
+	var artifact struct {
+		ABI json.RawMessage `json:"abi"`
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatalf("parse the TagChannelRegistry artifact: %v", err)
+	}
+	a, err := abi.JSON(strings.NewReader(string(artifact.ABI)))
+	if err != nil {
+		t.Fatalf("TagChannelRegistry ABI: %v", err)
+	}
+	return bindContract(t, client, addr, a)
+}
+
+// channelRecord is a tag channel's record as TagChannelRegistry holds it.
+type channelRecord struct{ c1, c2, bitmap []byte }
+
+// readChannel is tag channel #idx of the TagChannelRegistry at addr, by its
+// getChannel.
+func readChannel(t *testing.T, client *ethclient.Client, addr common.Address, idx uint64) channelRecord {
+	t.Helper()
+	var out []any
+	if err := tagChannelRegistry(t, client, addr).Call(&bind.CallOpts{}, &out, "getChannel", new(big.Int).SetUint64(idx)); err != nil {
+		t.Fatalf("getChannel(%d): %v", idx, err)
+	}
+	if len(out) != 4 {
+		t.Fatalf("getChannel(%d) returned %d values, want sender, c1, c2, bitmap", idx, len(out))
+	}
+	return channelRecord{c1: out[1].([]byte), c2: out[2].([]byte), bitmap: out[3].([]byte)}
+}
+
+// channelCount is how many records the TagChannelRegistry at addr holds.
+func channelCount(t *testing.T, client *ethclient.Client, addr common.Address) uint64 {
+	t.Helper()
+	var out []any
+	if err := tagChannelRegistry(t, client, addr).Call(&bind.CallOpts{}, &out, "getChannelCount"); err != nil {
+		t.Fatalf("getChannelCount: %v", err)
+	}
+	return out[0].(*big.Int).Uint64()
+}
+
+// openChannelSealed opens a tag channel's c₂ (AES-256-GCM, nonce ||
+// ciphertext) under k with c₁ as associated data, with the standard library
+// alone, and decodes msg ‖ senderId (each a 4-byte big-endian length, then
+// its bytes). It returns AES-GCM's error when k is not the key c₂ was
+// sealed under.
+func openChannelSealed(t *testing.T, k, c1, c2 []byte) (msg, senderId string, err error) {
+	t.Helper()
+	block, err := aes.NewCipher(k)
+	if err != nil {
+		t.Fatalf("AES: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("GCM: %v", err)
+	}
+	if len(c2) < gcm.NonceSize() {
+		t.Fatalf("c₂ of %d bytes, shorter than its nonce", len(c2))
+	}
+	plain, err := gcm.Open(nil, c2[:gcm.NonceSize()], c2[gcm.NonceSize():], c1)
+	if err != nil {
+		return "", "", err
+	}
+	var parts []string
+	for range 2 {
+		if len(plain) < 4 || len(plain)-4 < int(binary.BigEndian.Uint32(plain)) {
+			t.Fatalf("c₂ opens to a truncated payload")
+		}
+		n := binary.BigEndian.Uint32(plain)
+		parts = append(parts, string(plain[4:4+n]))
+		plain = plain[4+n:]
+	}
+	if len(plain) != 0 {
+		t.Fatalf("c₂ opens to %d bytes past msg ‖ senderId", len(plain))
+	}
+	return parts[0], parts[1], nil
 }

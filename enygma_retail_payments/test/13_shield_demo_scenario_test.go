@@ -345,7 +345,10 @@ func TestShieldDemoScenario(t *testing.T) {
 		// settlement, and its Groth16 check there too; note encryption,
 		// tags on, on the audit: each participant opens their note with a
 		// tag channel's key, so the audit is the first hop a view key opens
-		// a note's ciphertext by.
+		// a note's ciphertext by; and, tags on, the tag channel setup on
+		// the open channel hop of the Sender's tag channel to payment 1's
+		// payee, and its detection on that payee's scan channels hop.
+		payee := e.Participants()[0]
 		first := map[engine.FormulaName]func(engine.Event) bool{
 			engine.FormulaSpendKey: func(h engine.Event) bool {
 				return h.Step == "register" && h.Label == "register" && h.From == sender && h.To == engine.NodeUserRegistry
@@ -371,6 +374,13 @@ func TestShieldDemoScenario(t *testing.T) {
 			engine.FormulaNoteEncryption: func(h engine.Event) bool {
 				return h.Step == "audit" && h.Label == "audit" && h.From == engine.NodeVault && h.To == engine.NodeAuditor
 			},
+			engine.FormulaTagChannelSetup: func(h engine.Event) bool {
+				return h.Step == "channels" && h.Label == "open channel" && h.From == sender && h.To == engine.NodeRelayer &&
+					strings.HasSuffix(h.Detail, fmt.Sprintf(" to %s's view key", payee.Name))
+			},
+			engine.FormulaTagChannelDetection: func(h engine.Event) bool {
+				return h.Step == "channels" && h.Label == "scan channels" && h.From == engine.NodeTagChannelRegistry && h.To == engine.ActorNode(payee.ID)
+			},
 		}
 		seen := map[engine.FormulaName]int{}
 		for _, h := range sink.hops() {
@@ -389,13 +399,15 @@ func TestShieldDemoScenario(t *testing.T) {
 				}
 				// Where the chain holds the value a walkthrough's is checked
 				// against: the spend key's in the UserRegistry, the fee's
-				// in the USDr vault.
+				// in the USDr vault, the tag channel's in TagChannelRegistry.
 				holder := engine.NodeVault
 				switch name {
 				case engine.FormulaSpendKey:
 					holder = engine.NodeUserRegistry
 				case engine.FormulaFeeConservation:
 					holder = engine.NodeUsdrVault
+				case engine.FormulaTagChannelSetup, engine.FormulaTagChannelDetection:
+					holder = engine.NodeTagChannelRegistry
 				}
 				if d.Vault != holder {
 					t.Errorf("step %s: the %s formula is in the %s, want the %s", h.Step, name, d.Vault, holder)
@@ -878,6 +890,9 @@ func TestShieldDemoScenario(t *testing.T) {
 		cards := 0
 		for _, h := range usink.hops() {
 			for _, d := range detailsOf(h, engine.DetailFormula) {
+				if d.Formula != nil && (d.Formula.Name == engine.FormulaTagChannelSetup || d.Formula.Name == engine.FormulaTagChannelDetection) {
+					t.Errorf("step %s: hop %q carries the %s formula with tags off", h.Step, h.Label, d.Formula.Name)
+				}
 				if d.Formula == nil || d.Formula.Name != engine.FormulaNoteEncryption {
 					continue
 				}
