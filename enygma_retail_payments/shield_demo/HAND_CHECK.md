@@ -1,6 +1,6 @@
 # Hand-checking a shield demo page change
 
-A page ticket's acceptance is checked by hand in Chrome against the `run.sh` stack. A scenario run takes 3–5 minutes, so each wasted run is expensive.
+A page ticket's acceptance is checked by hand in Chrome against the `run.sh` stack, following the Steps below. A `?fast` default run plays out in about a minute and a half, and a walkthrough takes a NEXT per gate, so each wasted run still costs a few calls.
 
 ## What the replay test covers
 
@@ -408,6 +408,23 @@ Run 2026-11-04 in Chrome at 1280×707, all seven passed after one fix: the decry
 7. **Both themes at 1280×828.** The cards wrap inside the panel, the long values scroll inside their boxes and never widen the panel, and the warn (private) and accent (public) tags read in both themes.
 
 ## Formula cards
+
+Read a finished step's formula cards by replaying it: the hop panel's text is mostly hex, which the browser extension may withhold, so read the cards' structure. The replay bar is redrawn on every ‹ or ›, so look its buttons up again each time; a step still running has no replay.
+```js
+const bar = () => [...document.querySelectorAll('#hopPanel *')].find(e => e.querySelector?.('button') && /^Replaying step \d+/.test(e.textContent.trim()) && e.children.length < 8);
+const btn = t => [...bar().querySelectorAll('button')].find(b => b.textContent.trim() === t);
+const p = document.getElementById('hopPanel'), out = [];
+document.getElementById('step-fanout_1').click(); await new Promise(r => setTimeout(r, 600)); // the step to read
+while (!btn('‹').disabled) { btn('‹').click(); await new Promise(r => setTimeout(r, 40)); }
+for (;;) {
+  const at = bar().textContent.match(/hop detail (\d+) of (\d+)/)?.[1];
+  const hop = [...p.querySelectorAll('*')].find(e => !e.children.length && /→/.test(e.textContent) && e.textContent.length < 50)?.parentElement.textContent.trim();
+  for (const c of p.querySelectorAll('.formula')) out.push(`${at} ${hop}: ${c.querySelector('.fprop').textContent} ✓line=${!!c.querySelector('.fchk')} fold=${!!c.querySelector('.fvals')}`);
+  if (btn('›').disabled) break; btn('›').click(); await new Promise(r => setTimeout(r, 60));
+}
+out
+```
+A card's values: open its fold (`c.querySelector('.fvals').open = true`) and map each `.fin` row's `.k` to its `.fv`.
 
 Since #198, a formula card is laid out as a privacy argument (#191): the property the formula gives as its title, the equation in symbols, a "chain sees" line with the public tag, a "stays private" line with the private tag, and "why it holds" in plain words. A walkthrough's adds one line, "✓ checked against the chain with this run’s values" (✗ when not equal), naming the chain's value, and a closed "this run's values" fold with every input, the result and the chain's value in full. A full run's card has the argument only: the engine sends its formula detail by name, with no values, once per run on the formula's first hop. In a walkthrough, the "Proof and Merkle tree details" fold opens by itself when a hop with a formula card plays; a full run never opens it. `TestShieldDemoScenario` checks a full run carries each formula's value-less detail once, on its first hop; `TestShieldDemoWalkthrough` recomputes the commitment with the client library's Poseidon and compares it with the card and the logged leaf; the replay test checks each card's argument, that the values fold is walkthrough-only and closed with every value digit for digit, and the fold opening by itself, live and on replay. The commitment was the first card laid out this way (#198); the Merkle path and nullifier cards followed in #192, the spend key card in #193, the value conservation card in #194, the note encryption card in #195, the Groth16 card in #196, the fee conservation card and the relay hop's tie line in #197; the tag channel setup and detection cards in #236 (see Tag channel formula cards).
 
