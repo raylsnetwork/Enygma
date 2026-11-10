@@ -70,7 +70,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks fmt fmt-check page-check primer-from-disk build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-gnark-restart \
+	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-demo-stale shield-gnark-restart \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -85,6 +85,8 @@ hooks: ## Install the git hooks (gofmt, page scripts, gitleaks; on push, refuse 
 	@# git diff shows the primer's data block as its step and value names (.gitattributes).
 	@git config diff.primer.textconv 'node "$$(git rev-parse --show-toplevel)/scripts/primer_page.js" --textconv'
 	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
+	@# .pre-commit-config.yaml's stage names (pre-commit, pre-push) need pre-commit 3.2+.
+	@v=$$(pre-commit --version | cut -d' ' -f2); [ "$$(printf '%s\n' 3.2.0 "$$v" | sort -V | head -1)" = 3.2.0 ] || { echo "pre-commit $$v is too old for .pre-commit-config.yaml: pip install -U pre-commit (3.2+)"; exit 1; }
 	pre-commit install
 
 fmt: ## Format all tracked Go files with gofmt
@@ -104,6 +106,7 @@ $(PAGE_DEPS): scripts/package-lock.json
 
 page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> selector or MathML Chrome draws wrong in a tracked HTML page, or on the shield demo page failing to play a real run, or on the Protocol primer failing to step through its run; needs node
 	@command -v node >/dev/null || { echo "node not found (the demo pages' scripts need it to check)"; exit 1; }
+	@[ "$$(node -p 'process.versions.node.split(".")[0]')" -ge 18 ] || { echo "node $$(node -v) is too old: page-check needs node 18+ (nvm use, from .nvmrc)"; exit 1; }
 	@# The checks' own tests, quiet unless they fail (then rerun to show why).
 	@node --test scripts/check_page_scripts.test.js >/dev/null || node --test scripts/check_page_scripts.test.js
 	@node scripts/check_page_scripts.js $$(git ls-files '*.html')
@@ -227,12 +230,19 @@ primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewri
 	if [ $$status = 0 ]; then go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
 	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; exit $$status
 
+shield-demo-stale: ## Fail if the demo on :9092 was built from Go sources other than the working tree's (then make shield-demo-restart)
+	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
+	logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); \
+	built=$$(cat "$$logs/bin/shield_demo.src" 2>/dev/null) || { echo "the demo on :9092 has no record of its sources (built before shield-demo-stale): run make shield-demo-restart"; exit 1; }; \
+	[ "$$built" = "$$(scripts/shield_demo_src.sh)" ] || { echo "the demo on :9092 was built from other Go sources than the working tree's: run make shield-demo-restart"; exit 1; }; \
+	echo "the demo on :9092 is current: built from the working tree's Go sources"
+
 shield-demo-restart: ## Rebuild the shield demo and restart it on the running run.sh stack (after an engine change)
 	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
 	logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); \
 	[ -d "$$logs" ] || { echo "the demo on :9092 (pid $$pid) has no -logs dir: restart the stack with run.sh"; exit 1; }; \
 	root=$(CURDIR)/enygma_retail_payments; \
-	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && kill $$pid && \
+	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && scripts/shield_demo_src.sh >$$logs/bin/shield_demo.src && kill $$pid && \
 	while lsof -tiTCP:9092 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
 	(cd $$root/shield_demo && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
 	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo restarted on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
