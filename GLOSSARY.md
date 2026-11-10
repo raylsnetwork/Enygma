@@ -40,6 +40,10 @@
 
 **View key**: a user's ML-KEM-768 key pair for finding notes; senders encrypt each note's opening to its public half (`pkView`), and the user decrypts with the private half. _Avoid_: viewing key, scan key.
 
+**Tag channel**: the private link a payer opens once to a payee, from which every later tag between them derives. The payer encapsulates a fresh shared secret `ss` to the payee's view key and publishes, in `TagChannelRegistry`, the capsule `c₁`, the payload `c₂` (AES-256-GCM of a message and the payer's declared `senderId` under `k_ch = HKDF(ss, "enygma-channel-key-v1")`, with `c₁` as associated data) and a bitmap of every registered user, which names nobody. The payee finds it by scanning: Decaps always returns a secret, and `c₂` failing to open means the record is not theirs. The auditor, holding every view key, opens every tag channel and reads its `senderId`. A payer has one tag channel per payee, distinct from the per-payment capsule of note encryption. _Avoid_: channel alone, link, connection, pairing.
+
+**Tag**: what a payment publishes in `TagRegistry` so its payee finds it at once: `t = Poseidon(block number, the payee's pkSpend, ss mod p)` over the tag channel's shared secret, with the note's opening sealed under `k_b = HKDF(ss, "enygma-block-key-v1" ‖ block number ‖ pkSpend)`. Only the tag channel's two ends (its payer, who made it, and its payee) and the auditor, through the tag channel, can recognise it, and it differs from block to block and between the two directions of a pair. Not the transfer circuit's `MessageTags`. _Avoid_: note tag, marker, label.
+
 **Audit ciphertexts**: the pair a user publishes at registration so the auditor can recover their view key: an ML-KEM-768 capsule to the auditor's public key (`mlKemAuditCt`) and the AES-256-GCM encryption of the view key's seed under the key derived from it (`aesAuditCt`).
 
 **Registration**: a user's one-time publication of their spend key, view key and audit ciphertexts in the `UserRegistry`, from their own address; it cannot be repeated for that address. _Avoid_: sign-up, onboarding.

@@ -90,6 +90,7 @@ async function open(f, { walk = false } = {}) {
   vc.on('jsdomError', err => errors.push(err));
   vc.on('error', (...a) => errors.push(new Error('console.error: ' + a.join(' '))));
   let source = null, timers = null;
+  const resized = [];
   const requests = { run: [], release: 0, ethCall: [] };
   const dom = new JSDOM(PAGE, {
     url: 'http://localhost:9092/?fast',
@@ -100,7 +101,8 @@ async function open(f, { walk = false } = {}) {
       timers = clock(win, errors);
       win.localStorage.setItem('enygmaRetailShieldPause', 'off');
       // What a browser has and jsdom lacks; layout is all zeros here.
-      win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+      // Each ResizeObserver's callback is kept in resized, for a test to call as a resize would.
+      win.ResizeObserver = class { constructor(cb) { resized.push(cb); } observe() {} unobserve() {} disconnect() {} };
       win.SVGElement.prototype.getBBox = () => ({ x: 0, y: 0, width: 0, height: 0 });
       win.SVGElement.prototype.beginElement = () => {};
       win.structuredClone ||= v => win.JSON.parse(win.JSON.stringify(v));
@@ -128,7 +130,7 @@ async function open(f, { walk = false } = {}) {
   await tick();
   assert.ok(source, 'the page opened no EventSource');
   source.onopen?.();
-  return { win: dom.window, doc: dom.window.document, source, timers, errors, requests };
+  return { win: dom.window, doc: dom.window.document, source, timers, errors, requests, resized };
 }
 
 // feed sends events to the page as /events delivers them, each a few
@@ -514,6 +516,7 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
 test('the page plays a walkthrough it started, Next pressed at every gate, and replays every step’s hop details without an exception', async () => {
   const page = await open(WALKTHROUGH, { walk: true });
   const { doc, errors, requests } = page;
+  const tagChannelsSeen = inUse(page);
   const $ = id => doc.getElementById(id);
 
   // The Walkthrough button sends the fixture's run options, as the form holds /defaults.
@@ -535,6 +538,7 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
     at = end;
     await playOut(page);
     failOn(errors, `playing up to gate ${nexts + 1}`);
+    checkArcs(doc, WALKTHROUGH, at, `gate ${nexts + 1}`);
     for (const id of Object.keys(cards)) if (!$(id).hidden && $(id).innerHTML) cards[id] = true;
     // A formula card shows in the hop detail panel as its hop plays.
     const latest = evs.slice(0, at).findLast(e => e.kind === 'hop' && e.hopDetail);
@@ -561,6 +565,9 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
   assert.strictEqual(nexts, GATES, 'Next pressed once per gate');
   assert.ok($('nextBtn').disabled, 'Next still on after the last gate');
   for (const [id, seen] of Object.entries(cards)) assert.ok(seen, `the ${id} card never showed`);
+  // The Sender's six tag channels, each audited at the end, each lit at its opening and its tag.
+  assert.deepStrictEqual(Object.values(expectedArcs(WALKTHROUGH).state), Array(6).fill('audited'), 'the walkthrough’s tag channels at the end');
+  checkInUse(tagChannelsSeen, WALKTHROUGH, 'the walkthrough');
   assert.ok(formulaLive, 'no formula card showed while its hop played');
   assert.strictEqual(tieLive, 1, 'relays of a fee-paying payment that showed the fee’s tie line as they played');
   const all = finished(page);
@@ -595,4 +602,211 @@ test('the page plays a walkthrough it started, Next pressed at every gate, and r
   const { formulaValues } = await replayAll(page, WALKTHROUGH, all);
   assert.ok(formulaValues > 0, 'no formula card value checked');
   failOn(errors, 'at the end');
+});
+
+// ---- tag channel arcs ------------------------------------------------------
+
+// actorIds maps each user's name to their diagram node, from run f's actor events.
+const actorIds = f => Object.fromEntries(f.events.filter(e => e.kind === 'actor' && e.field === 'name').map(e => [e.value, 'actor' + e.actor]));
+
+// participantsOf is run f's participants' nodes, in the order the fan-out pays them.
+const participantsOf = f => f.events.filter(e => e.kind === 'actor' && e.field === 'name' && !['Issuer', 'Sender'].includes(e.value)).map(e => 'actor' + e.actor);
+
+// expectedChannels is run f's tag channels as its run options imply them,
+// each "payer>payee", in the order the run opens them: the Sender's to every
+// participant, then, in a full run, the payer's to the payee of each
+// scripted transfer.
+function expectedChannels(f) {
+  const run = f.run || f.defaults, id = actorIds(f);
+  if (!run.tags) return [];
+  const out = participantsOf(f).map(p => `${id.Sender}>${p}`);
+  if (!run.walkthrough) for (const t of run.script) out.push(`${id[t.from]}>${id[t.to]}`);
+  return out;
+}
+
+// expectedArcs is each tag channel arc's state once run f's first n events
+// have played, as the hops imply it: the k-th "open channel" hop opens the
+// k-th expected tag channel, sealed; a "scan channels" hop to its payee after it
+// finds it; the audit's hop to the auditor after it audits it. It also gives
+// the in-use chips those hops light, in order: one per opening, and one per
+// tag, fanout_k's on the Sender's to participant k, transfer_k's on scripted
+// transfer k's.
+function expectedArcs(f, n = f.events.length) {
+  const want = expectedChannels(f), run = f.run || f.defaults, id = actorIds(f), parts = participantsOf(f);
+  const state = {}, chips = [];
+  let opened = 0;
+  for (const h of f.events.slice(0, n)) {
+    if (h.kind !== 'hop' || h.failed) continue;
+    if (h.label === 'open channel') {
+      const key = want[opened++];
+      assert.ok(key?.startsWith(h.from + '>'), `open channel hop ${opened} is from ${h.from}, want the payer of ${key}`);
+      state[key] = 'sealed';
+      chips.push(`${key} 🔒 ss → ${Object.keys(id).find(n => id[n] === key.split('>')[1])}`);
+    } else if (h.label === 'scan channels') {
+      for (const k in state) if (k.endsWith('>' + h.to) && state[k] === 'sealed') state[k] = 'found';
+    } else if (h.label === 'audit' && h.to === 'auditor') {
+      // Every tag channel is found before it is audited: sealed, then found, then audited.
+      for (const k in state) assert.strictEqual(state[k], 'found', `${k} is ${state[k]} when the audit plays, want found`);
+      for (const k in state) state[k] = 'audited';
+    } else if (h.label === 'tag') {
+      const [, kind, k] = h.step.match(/^(fanout|transfer)_(\d+)$/);
+      const t = run.script[k - 1], key = kind === 'fanout' ? `${id.Sender}>${parts[k - 1]}` : `${id[t.from]}>${id[t.to]}`;
+      chips.push(`${key} tag on 🔒 ss`);
+    }
+  }
+  return { state, chips };
+}
+
+// checkArcs fails unless the arcs drawn are those run f's first n events
+// imply, each in its state, joining its rows.
+function checkArcs(doc, f, n, where) {
+  const got = Object.fromEntries(arcs(doc).map(a => [a.key, a.state.join(' ')]));
+  assert.deepStrictEqual(got, expectedArcs(f, n).state, `${where}: the tag channel arcs and their states`);
+  checkArcsJoin(doc, where);
+}
+
+// inUse records each tag channel chip the diagram shows, "payer>payee text",
+// with when it showed and went (virtual ms), and every dot and lit arc
+// drawn with one. It times them as the DOM adds and removes them, not as a
+// MutationObserver later reports them: feed moves the clock between events.
+function inUse({ doc, win }) {
+  const seen = { chips: [], dots: 0, hot: 0, left: () => doc.querySelectorAll('#chips .ch-chip, #chips .ch-dot, #chips .ch-hot').length };
+  const of = new Map(), { appendChild } = win.Node.prototype, { remove } = win.Element.prototype;
+  win.Node.prototype.appendChild = function (n) {
+    const cls = n.classList;
+    if (cls?.contains('ch-chip')) { const c = { el: n, at: win.performance.now() }; of.set(n, c); seen.chips.push(c); }
+    if (cls?.contains('ch-dot')) seen.dots++;
+    if (cls?.contains('ch-hot')) seen.hot++;
+    return appendChild.call(this, n);
+  };
+  win.Element.prototype.remove = function () {
+    if (of.has(this)) of.get(this).gone = win.performance.now();
+    return remove.call(this);
+  };
+  return seen;
+}
+
+// checkInUse fails unless the diagram lit run f's tag channels as its hops
+// imply, each with a dot and a lit arc, each for at least the hop's hold
+// (MIN_HOLD in /?fast) and gone within two.
+function checkInUse(seen, f, where) {
+  const want = expectedArcs(f).chips;
+  for (const c of seen.chips) c.key = `${c.el.dataset.from}>${c.el.dataset.to} ${c.el.textContent}`;
+  assert.deepStrictEqual(seen.chips.map(c => c.key), want, `${where}: the tag channel chips shown, in order`);
+  assert.strictEqual(seen.dots, want.length, `${where}: a dot along the arc with each chip`);
+  assert.strictEqual(seen.hot, want.length, `${where}: a lit arc with each chip`);
+  for (const c of seen.chips) {
+    assert.ok(c.gone != null, `${where}: ${c.key} never went`);
+    assert.ok(c.gone - c.at >= 120 && c.gone - c.at <= 240, `${where}: ${c.key} showed for ${c.gone - c.at} ms, want the hop's hold (120 ms) to twice it`);
+  }
+  assert.strictEqual(seen.left(), 0, `${where}: a tag channel chip, dot or lit arc left behind`);
+}
+
+// arcs reads the tag channel arcs the diagram draws: each one's payer and
+// payee, state, tint, its path's two ends and its payee end mark's centre.
+function arcs(doc) {
+  return [...doc.querySelectorAll('#diagram .chan .ch-arc')].map(p => {
+    const n = (p.getAttribute('d').match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    const end = doc.querySelector(`#diagram .chan .ch-end[data-from="${p.dataset.from}"][data-to="${p.dataset.to}"]`);
+    return {
+      key: `${p.dataset.from}>${p.dataset.to}`, from: p.dataset.from, to: p.dataset.to,
+      state: ['sealed', 'found', 'audited'].filter(s => p.classList.contains(s)),
+      tint: (p.getAttribute('style') || '').match(/--h:\s*var\((--own\d+)\)/)?.[1],
+      start: n.slice(0, 2), finish: n.slice(-2),
+      mark: end && [+end.getAttribute('cx'), +end.getAttribute('cy')],
+    };
+  });
+}
+
+// rowY is the y of node id's row on the diagram, from its transform.
+const rowY = (doc, id) => +doc.querySelector(`#diagram .node[data-node="${id}"]`).getAttribute('transform').match(/translate\([^,]+,([^)]+)\)/)[1];
+
+// checkArcsJoin fails unless every arc starts on its payer's row and ends,
+// at its payee end mark, on its payee's row, coloured by its payer.
+function checkArcsJoin(doc, where) {
+  for (const a of arcs(doc)) {
+    const at = `${where}, tag channel ${a.key}`;
+    assert.ok(Math.abs(a.start[1] - rowY(doc, a.from)) <= 13, `${at}: starts at y ${a.start[1]}, not on the payer's row (${rowY(doc, a.from)})`);
+    assert.ok(Math.abs(a.finish[1] - rowY(doc, a.to)) <= 13, `${at}: ends at y ${a.finish[1]}, not on the payee's row (${rowY(doc, a.to)})`);
+    assert.deepStrictEqual(a.mark, a.finish, `${at}: the payee end mark is not at the arc's payee end`);
+    assert.strictEqual(a.tint, '--own' + a.from.slice('actor'.length), `${at}: not coloured by its payer`);
+  }
+}
+
+test('a default run draws one arc per tag channel, each from its payer’s row to its payee’s, coloured by the payer; they follow a resize, and a new run clears them', async () => {
+  const page = await open(DEFAULT_RUN);
+  const { doc } = page;
+  feed(page, DEFAULT_RUN.events);
+  await playOut(page);
+  failOn(page.errors, 'while playing the run');
+  const want = expectedChannels(DEFAULT_RUN);
+  assert.strictEqual(want.length, 12, 'the default run’s options imply 12 tag channels');
+  assert.deepStrictEqual(arcs(doc).map(a => a.key).sort(), [...want].sort(), 'the arcs drawn: one per tag channel');
+  checkArcsJoin(doc, 'at the end');
+
+  // A taller window: the diagram refits, its rows spread, and the arcs follow them.
+  const canvas = doc.getElementById('diagram').parentElement, before = rowY(doc, 'actor7');
+  Object.defineProperty(canvas, 'clientWidth', { configurable: true, value: 1200 });
+  Object.defineProperty(canvas, 'clientHeight', { configurable: true, value: 840 });
+  page.resized.forEach(cb => cb([]));
+  failOn(page.errors, 'refitting the diagram');
+  assert.ok(rowY(doc, 'actor7') > before + 100, `the rows did not spread on a resize: Felipe's at ${rowY(doc, 'actor7')}, was ${before}`);
+  checkArcsJoin(doc, 'after a resize');
+
+  // A new run clears the arcs; its first opening draws only its own.
+  page.source.onmessage({ data: JSON.stringify({ kind: 'reset' }) });
+  await tick();
+  assert.deepStrictEqual(arcs(doc), [], 'arcs left from the last run after a new run’s reset');
+  const first = DEFAULT_RUN.events.findIndex(e => e.kind === 'hop' && e.label === 'open channel');
+  feed(page, DEFAULT_RUN.events.slice(1, first + 1), 1);
+  await playOut(page);
+  failOn(page.errors, 'starting a new run');
+  checkArcs(doc, DEFAULT_RUN, first + 1, 'a new run’s first opening');
+});
+
+test('a default run’s tag channel arcs turn sealed, found and audited at their hops, and light with a dot and a chip on each opening and tag', async () => {
+  const page = await open(DEFAULT_RUN);
+  const seen = inUse(page);
+  const marks = new Set(['open channel', 'scan channels', 'tag', 'audit']);
+  let fed = 0;
+  for (const [at, e] of DEFAULT_RUN.events.entries()) {
+    if (e.kind !== 'hop' || !marks.has(e.label)) continue;
+    feed(page, DEFAULT_RUN.events.slice(fed, at + 1), fed);
+    fed = at + 1;
+    await playOut(page);
+    checkArcs(page.doc, DEFAULT_RUN, fed, `after event ${at} (${e.step} ${e.label} → ${e.to})`);
+  }
+  feed(page, DEFAULT_RUN.events.slice(fed), fed);
+  await playOut(page);
+  failOn(page.errors, 'while playing the run');
+  const end = expectedArcs(DEFAULT_RUN);
+  assert.ok(Object.values(end.state).length === 12 && Object.values(end.state).every(s => s === 'audited'), 'every tag channel audited at the end');
+  assert.strictEqual(end.chips.length, 24, 'the default run lights 12 openings and 12 tags');
+  checkInUse(seen, DEFAULT_RUN, 'the default run');
+});
+
+// tagsOff is run f as a tags-off run would send it: no Tag channels step
+// (in the steps announced, nor its events), no tag hops and no tag channel
+// fields, with tags off in its options. No tags-off run is recorded; the
+// default run, cut, keeps every other hop that could draw an arc (the audit).
+function tagsOff(f) {
+  const cut = e => e.step === 'channels' || (e.kind === 'hop' && ['tag', 'publishTag', 'scan tags'].includes(e.label)) || (e.kind === 'actor' && e.field === 'channels');
+  const events = f.events.filter(e => !cut(e)).map(e => {
+    if (e.kind !== 'proto' || e.field !== 'steps') return e;
+    return { ...e, value: JSON.stringify(JSON.parse(e.value).filter(s => s.id !== 'channels')) };
+  });
+  return { ...f, defaults: { ...f.defaults, tags: false }, events };
+}
+
+test('a tags-off run draws no tag channel arcs', async () => {
+  const off = tagsOff(DEFAULT_RUN);
+  assert.ok(off.events.some(e => e.kind === 'hop' && e.label === 'audit' && e.to === 'auditor'), 'the cut run lost its audit hop');
+  const page = await open(off);
+  const seen = inUse(page);
+  feed(page, off.events);
+  await playOut(page);
+  failOn(page.errors, 'while playing a tags-off run');
+  finished(page);
+  assert.deepStrictEqual(arcs(page.doc), [], 'tag channel arcs on a tags-off run');
+  assert.strictEqual(seen.chips.length, 0, 'tag channel chips on a tags-off run');
 });
