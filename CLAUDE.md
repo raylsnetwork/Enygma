@@ -10,7 +10,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Shield demo page changes
 
-Done when their section of `enygma_retail_payments/shield_demo/HAND_CHECK.md` passes in Chrome, after review and before the commit.
+Done when their section of `enygma_retail_payments/shield_demo/HAND_CHECK.md` passes in Chrome, following that file's Steps, after review and before the commit.
 
 ### Domain docs
 
