@@ -30,6 +30,12 @@ for n in ${parent:+"$parent"} ${blockers[@]+"${blockers[@]}"}; do
   [[ "$n" =~ ^[0-9]+$ ]] || { echo "gh_ticket: issue number $n is not a number" >&2; exit 2; }
 done
 
+# A ticket may cite GLOSSARY.md or an ADR, and whoever picks it up works
+# from the remote: publish once both are committed and pushed.
+root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+local=$(git -C "$root" status --porcelain -- GLOSSARY.md docs/adr; git -C "$root" log --oneline HEAD --not --remotes -- GLOSSARY.md docs/adr)
+[ -z "$local" ] || { printf 'gh_ticket: commit and push GLOSSARY.md and docs/adr first; only this clone has:\n%s\n' "$local" >&2; exit 2; }
+
 # run runs its arguments, or prints them with --dry-run.
 run() { if [ -n "$dry" ]; then printf '%q ' "$@" >&2; echo >&2; else "$@"; fi; }
 

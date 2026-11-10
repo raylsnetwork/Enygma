@@ -186,6 +186,8 @@ fi
 
 echo "[run.sh] [7/7] building and starting the demo…"
 go build -C "$DEMO_DIR" -o "$BIN_DIR/shield_demo" .
+# What it was built from, for make shield-demo-stale.
+"$DEMO_DIR/../../scripts/shield_demo_src.sh" >"$BIN_DIR/shield_demo.src"
 start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR" -dev
 wait_port demo 9092
 echo "[run.sh] demo: http://localhost:9092  (Ctrl-C to stop everything)"

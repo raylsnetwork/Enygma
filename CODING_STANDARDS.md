@@ -18,4 +18,4 @@ The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html
 
 ## Tests and checks
 
-- **A new check is shown red.** A change that adds a test or check names the mutation of the code under test that makes it fail (in the commit message or PR), and says it was run. The mutated code still compiles: the check fails when it runs, not the build. A commit or PR with a check that has no stated red is a finding. In review of an uncommitted diff, list each new check and the mutation its commit must name, rather than reporting the message missing.
+- **A new check is shown red.** A change that adds a test or check names the mutation of the code under test that makes it fail (in the commit message or PR), and says it was run. The mutated code still compiles: the check fails when it runs, not the build. `scripts/mutant.sh` applies one mutation, runs the test command and restores the file. A commit or PR with a check that has no stated red is a finding. In review of an uncommitted diff, list each new check and the mutation its commit must name, rather than reporting the message missing.

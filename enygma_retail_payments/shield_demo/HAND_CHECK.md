@@ -22,7 +22,7 @@ jsdom does no layout, timing or theming, and the fixtures are a default run and 
    ```sh
    for p in 8545 8082 8090 9092; do lsof -iTCP:$p -sTCP:LISTEN -nP >/dev/null && echo "$p up" || echo "$p DOWN"; done
    ```
-   Any port down: stop the leftover demo (`pkill -f 'shield_demo -root'`) and start the whole stack afresh with `bash run.sh` (in the background; it prints `demo is up on :9092` when ready). `run.sh` starts the demo with `-dev`, so the page is read from disk on every request. A stack started before `-dev` existed (check `ps ax | grep '[s]hield_demo -root'` for the flag) needs the demo rebuilt once and relaunched detached with the same `-root`/`-logs` args plus `-dev`; the chain, gnark server and relayer keep running. `-dev` covers page edits only: after an engine (Go) change, `make shield-demo-restart` rebuilds the demo and relaunches it on the running stack. Done when all four ports are up and `curl -s localhost:9092/` shows your edit.
+   Any port down: stop the leftover demo (`pkill -f 'shield_demo -root'`) and start the whole stack afresh with `bash run.sh` (in the background; it prints `demo is up on :9092` when ready). `run.sh` starts the demo with `-dev`, so the page is read from disk on every request. A stack started before `-dev` existed (check `ps ax | grep '[s]hield_demo -root'` for the flag) needs the demo rebuilt once and relaunched detached with the same `-root`/`-logs` args plus `-dev`; the chain, gnark server and relayer keep running. `-dev` covers page edits only: the engine is the binary's. `make shield-demo-stale` says whether the demo was built from the working tree's Go sources (yours, and any merged since the stack started); when it fails, `make shield-demo-restart` rebuilds the demo and relaunches it on the running stack. Done when all four ports are up, `make shield-demo-stale` passes and `curl -s localhost:9092/` shows your edit.
 3. **Open the page with the `navigate` tool**, as `http://localhost:9092/?fast` when the check needs the end of a run. Reloading from inside `javascript_tool` (`location.reload()`) kills the evaluation mid-call.
 4. **Install the probe, then start the run** (below). It records what the check needs without depending on the page's timers.
 5. **Wait in the background** (`sleep` with `run_in_background`), then read `window.__chk` in one short `javascript_tool` call. `javascript_tool` times out at 45 s; never wait inside it.
@@ -68,6 +68,8 @@ new EventSource('/events').onmessage = m => {
 c.collapsed = () => [...document.querySelectorAll('#hopPanel *, .card *')]
   .filter(el => el.checkVisibility() && el.innerText?.trim() && el.getBoundingClientRect().height === 0 && el.parentElement.getBoundingClientRect().height > 0)
   .map(el => `${el.tagName.toLowerCase()}.${el.className}: ${el.innerText.trim().slice(0, 40)}`);
+// Pausing is kept in localStorage across sessions: set it as the check needs (off here; a check that needs it on sets it on).
+if ($('optPause').checked) { $('optPause').checked = false; $('optPause').dispatchEvent(new Event('change', { bubbles: true })); }
 $('runBtn').click(); 'started'
 ```
 

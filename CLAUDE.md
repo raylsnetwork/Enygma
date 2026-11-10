@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues on `raylsnetwork/Enygma` (always pass `-R raylsnetwork/Enygma`). See `docs/agents/issue-tracker.md`.
+Issues are tracked in GitHub Issues on `raylsnetwork/Enygma` (always pass `-R raylsnetwork/Enygma`). See `docs/agents/issue-tracker.md`. Ticket work starts on a new branch from a freshly fetched `origin/main`.
 
 ### Triage labels
 
