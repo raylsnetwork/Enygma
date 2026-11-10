@@ -88,14 +88,19 @@ func TestEveryStepKindHasANarration(t *testing.T) {
 	}
 }
 
-// Every concept moment plays before a step that a run announces, for each
-// USDr fee × tags combination: a renamed step can't silently drop one.
+// Every concept moment plays before a step that a tags-on run announces, for
+// either USDr fee: a renamed step can't silently drop one. A tags-off run
+// announces fewer steps, so plays fewer moments: TestARunPlaysItsConceptMoments
+// checks each of its moments' step ids.
 func TestEveryConceptMomentPlaysBeforeAnAnnouncedStep(t *testing.T) {
 	moments := servedNarration(t).Moments
 	if len(moments) == 0 {
 		t.Fatal("the narration block has no concept moments")
 	}
 	for _, tc := range combos {
+		if !tc.tags {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			announced := map[string]bool{}
 			for _, id := range engine.StepIDs(comboOptions(tc.usdrFee, tc.tags)) {
@@ -133,12 +138,16 @@ type momentKicker struct {
 	Kicker string `json:"kicker"`
 }
 
-// A run plays the five concept moments, in the spec's order, for each USDr
-// fee × tags combination.
-func TestARunPlaysTheFiveConceptMoments(t *testing.T) {
+// A tags-on run plays six concept moments, "Tag channel" first, before its
+// Tag channels step; a tags-off run plays the other five, in the same
+// order, for either USDr fee. Each is "step id: kicker".
+func TestARunPlaysItsConceptMoments(t *testing.T) {
 	moments := servedNarration(t).Moments
-	want := []string{"Hidden on chain", "Proof", "Relayer", "Finding your notes", "Auditor"}
 	for _, tc := range combos {
+		want := []string{"shield: Hidden on chain", "fanout_1: Proof", "fanout_1: Relayer", "discover: Finding your notes", "audit: Auditor"}
+		if tc.tags {
+			want = append([]string{"channels: Tag channel"}, want...)
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
 			for _, id := range engine.StepIDs(comboOptions(tc.usdrFee, tc.tags)) {
@@ -147,7 +156,7 @@ func TestARunPlaysTheFiveConceptMoments(t *testing.T) {
 					if err := json.Unmarshal(raw, &m); err != nil {
 						t.Fatalf("moment before %s: %v", id, err)
 					}
-					got = append(got, m.Kicker)
+					got = append(got, id+": "+m.Kicker)
 				}
 			}
 			if !slices.Equal(got, want) {

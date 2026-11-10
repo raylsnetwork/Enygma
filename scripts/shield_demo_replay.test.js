@@ -26,8 +26,10 @@
 // prover card must name its circuit and constraint count, and show its
 // witness, proof and signals digit for digit only in the walkthrough. The cards show only
 // as their hops play; replaying a step shows the same hop details (the
-// witness, the refusal) in the hop detail panel. Two first tests check the
-// fixtures still hold the cases this is there for.
+// witness, the refusal) in the hop detail panel. With tags on, the Tag
+// channel concept moment must hold before its step's hops, its four beats
+// lighting in turn, and a run play six moments; with tags off, five. Two
+// first tests check the fixtures still hold the cases this is there for.
 //
 //   node --test scripts/shield_demo_replay.test.js   (make page-check)
 
@@ -852,4 +854,70 @@ test('a tags-off run draws no tag channel arcs', async () => {
   finished(page);
   assert.deepStrictEqual(arcs(page.doc), [], 'tag channel arcs on a tags-off run');
   assert.strictEqual(seen.chips.length, 0, 'tag channel chips on a tags-off run');
+});
+
+// FIVE_MOMENTS are the kickers of the concept moments every run plays, in
+// order; a tags-on run plays the Tag channel moment before them.
+const FIVE_MOMENTS = ['Hidden on chain', 'Proof', 'Relayer', 'Finding your notes', 'Auditor'];
+// ideas are kickers as the card heads them: "Idea i of n · kicker".
+const ideas = kickers => kickers.map((k, i) => `Idea ${i + 1} of ${kickers.length} · ${k}`);
+
+// shownMoments records the kicker of each concept moment the page shows, in
+// order, from the nodes the DOM added: a MutationObserver reports them late,
+// but keeps each one it added.
+function shownMoments({ doc, win }) {
+  const shown = [];
+  new win.MutationObserver(rs => {
+    for (const r of rs) for (const n of r.addedNodes) if (n.classList?.contains('kicker')) shown.push(n.textContent);
+  }).observe(doc.getElementById('moment'), { childList: true, subtree: true });
+  return shown;
+}
+
+// TAG_CHANNEL_BEATS are the Tag channel moment's four beats: where each is,
+// its zone, and what it must say.
+const TAG_CHANNEL_BEATS = [
+  { where: 'In the Sender’s wallet · private', zone: 'wallet', says: /ss, sealed to Ana’s view key in c₁.*keeps ss.*every later tag to Ana/ },
+  { where: 'In TagChannelRegistry · public', zone: 'chain', says: /c₁, a sealed c₂, a bitmap of every user.*relayer under its own name.*names no one/ },
+  { where: 'In Ana’s wallet · private', zone: 'wallet', says: /c₁ with her view key → ss.*c₂ opens under ss: the channel is hers.*Any other key.*different secret.*c₂ fails/ },
+  { where: 'With each payment · public', zone: 'chain', says: /t = Poseidon\(block, Ana’s pk_spend, ss\).*New every block: only Ana, the Sender and the auditor recognise it/ },
+];
+
+test('a default run holds the Tag channel concept moment before its Tag channels step, its four beats lighting in turn, and plays six moments', async () => {
+  const page = await open(DEFAULT_RUN);
+  const { doc, timers } = page;
+  const shown = shownMoments(page);
+  const at = DEFAULT_RUN.events.findIndex(e => e.kind === 'step_started' && e.step === 'channels');
+  assert.ok(at > 0, 'the default run has no Tag channels step');
+  feed(page, DEFAULT_RUN.events.slice(0, at + 1));
+  const card = doc.getElementById('moment');
+  for (let i = 0; i < 2000 && card.hidden; i++) { timers.run(100); await tick(); }
+  failOn(page.errors, 'up to the Tag channels step');
+  assert.ok(!card.hidden, 'no concept moment showed at the Tag channels step');
+  assert.strictEqual(card.querySelector('.kicker').textContent, 'Idea 1 of 6 · Tag channel');
+  assert.deepStrictEqual(arcs(doc), [], 'a tag channel opened while its concept moment held');
+  const beats = [...card.querySelectorAll('.beat')];
+  assert.deepStrictEqual(beats.map(b => [b.querySelector('.where').textContent, [...b.classList].filter(c => c !== 'beat' && c !== 'on')]),
+    TAG_CHANNEL_BEATS.map(b => [b.where, [b.zone]]), 'the four beats: where each is and its zone');
+  TAG_CHANNEL_BEATS.forEach((b, j) => assert.match(beats[j].textContent, b.says, `beat ${j + 1}`));
+  const lit = () => card.querySelectorAll('.beat.on').length;
+  for (let n = 1; n <= TAG_CHANNEL_BEATS.length; n++) {
+    assert.strictEqual(lit(), n, `beats lit, ${(n - 1) * 1.8} s in`);
+    timers.run(1800); await tick();
+  }
+  feed(page, DEFAULT_RUN.events.slice(at + 1), at + 1);
+  await playOut(page);
+  failOn(page.errors, 'while playing the run');
+  finished(page);
+  assert.deepStrictEqual(shown, ideas(['Tag channel', ...FIVE_MOMENTS]), 'the concept moments a tags-on run plays');
+});
+
+test('a tags-off run plays five concept moments, without the Tag channel one', async () => {
+  const off = tagsOff(DEFAULT_RUN);
+  const page = await open(off);
+  const shown = shownMoments(page);
+  feed(page, off.events);
+  await playOut(page);
+  failOn(page.errors, 'while playing a tags-off run');
+  finished(page);
+  assert.deepStrictEqual(shown, ideas(FIVE_MOMENTS), 'the concept moments a tags-off run plays');
 });
