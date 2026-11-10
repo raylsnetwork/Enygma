@@ -30,6 +30,8 @@ try { if (localStorage.getItem(THEME_KEY) === 'dark') document.documentElement.d
   /* The "show owners" tints, one per note owner: Issuer, Sender, the six participants, the relayer. */
   --own0:#64748b; --own1:#be123c; --own2:#2563eb; --own3:#9333ea; --own4:#db2777;
   --own5:#ca8a04; --own6:#0891b2; --own7:#65a30d; --own8:#c2410c; --own9:#7c2d12;
+  /* The auditor's tint: a tag channel arc takes it once the audit opens it. */
+  --auditor:var(--warn);
 }
 :root[data-theme="dark"] {
   --bg:#06101c; --s1:#09172a; --s2:#0d1f37; --bd:#152e4d; --bd2:#1b3d66;
@@ -115,6 +117,20 @@ details.opts > div { position:absolute; right:0; top:38px; z-index:60; backgroun
 #chips .chip.pub rect { fill:color-mix(in srgb, var(--contract) 16%, var(--s1)); stroke:var(--contract); }
 #chips .chip.pub text { fill:var(--contract); }
 #chips .chip.failed rect { stroke:var(--bad); stroke-width:2; }
+/* The tag channel arcs, in the diagram's drawing under the open wallet, each
+   in its payer's tint (--h): dashed while sealed, solid once found, in the
+   auditor's tint once audited; a tag channel in use lights, over the open
+   wallet in the chips' drawing, with a dot and a chip. */
+.chan .ch-arc { fill:none; stroke:var(--h); stroke-width:2.2; stroke-dasharray:6 5; opacity:.6; transition:stroke .4s, opacity .4s; }
+.chan .ch-arc.found { stroke-dasharray:none; opacity:.85; }
+.chan .ch-end { fill:var(--s1); stroke:var(--h); stroke-width:2; }
+.chan .ch-end.found { fill:var(--h); }
+.chan .ch-arc.audited { stroke:var(--auditor); stroke-dasharray:none; opacity:.85; }
+.chan .ch-end.audited { fill:var(--auditor); stroke:var(--auditor); }
+.chan .ch-hot { fill:none; stroke:var(--h); stroke-width:6; opacity:.9; stroke-linecap:round; }
+.chan .ch-dot { fill:var(--h); stroke:var(--s1); stroke-width:2; }
+.chan .ch-chip rect { fill:color-mix(in srgb, var(--h) 16%, var(--s1)); stroke:var(--h); stroke-width:1.4; }
+.chan .ch-chip text { font:600 19px var(--mono); fill:var(--h); }
 #diagram .node.bad rect { stroke:var(--bad); stroke-width:2.5; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--bad) 40%, transparent)); }
 #diagram .node[data-tip] { cursor:help; }
 /* The acting user's open wallet: a card in the wallet zone, beside their row. */
@@ -1209,6 +1225,104 @@ function svg(tag, attrs, parent) {
   return el;
 }
 
+// ---- tag channels: one arc per tag channel, payer's row to payee's ---------
+
+// The diagram draws each tag channel a run opens as an arc on the wallet
+// column's right edge, from its payer's row to its payee's, bulging with the
+// distance between them, in the payer's owner tint, its payee end marked.
+// It reads them from the hops the engine already sends, as each plays: an
+// "open channel" hop (payer → relayer, "… to Ana's view key") opens one,
+// sealed; the payee's "scan channels" finds every tag channel to them so
+// far; the audit's hop to the auditor audits every tag channel so far.
+// Opening a tag channel and each "tag" on it ("… only Ana can recognise …")
+// light its arc, with a dot travelling along it and a chip, for the hop's hold.
+// The arcs lie in the diagram's drawing, under the open wallet, which they
+// would otherwise cross; what lights them rides in the chips' drawing, over it.
+const tagChannels = (() => {
+  let pos = null, arcs = null, live = null, edge = 0, chips = null, list = [];
+  // idOf is the diagram node of the user named name, or null; nameOf the name of user node id.
+  const idOf = name => { const i = ACTORS.findIndex(([n]) => n === name); return i < 0 ? null : 'actor' + i; };
+  const nameOf = id => ACTORS[+id.slice(5)]?.[0] || id;
+  // find is the tag channel from user from to user to, if one is drawn.
+  const find = (from, to) => list.find(c => c.from === from && c.to === to);
+  // tint is tag channel c's colour, its payer's owner tint, as the style its parts draw in.
+  const tint = c => `--h:var(--own${c.from.slice(5)})`;
+  // state is tag channel c's state: audited, found or sealed.
+  const state = c => c.audited ? 'audited' : c.found ? 'found' : 'sealed';
+  // lit is the group in the chips' drawing, under the moving chips, that a tag channel in use lights in, made again after a reset.
+  function lit() {
+    if (!live?.isConnected) { live = document.createElementNS(SVGNS, 'g'); live.setAttribute('class', 'chan'); chips.prepend(live); }
+    return live;
+  }
+  // shape is tag channel c's arc as rows now sit: its path, its payee end and its apex.
+  // An arc up the column bulges a little further, so a pair's two tag channels, one each way, stay apart.
+  function shape(c) {
+    const a = pos[c.from], b = pos[c.to], x = a.x + a.w / 2 + 2, bend = 16 + Math.abs(b.y - a.y) * 0.42 + (b.y < a.y ? 12 : 0);
+    const y1 = a.y - 4, y2 = b.y + 4;
+    return { d: `M${x},${y1} C${x + bend},${y1} ${x + bend},${y2} ${x},${y2}`, end: [x, y2], apex: [x + bend * 0.75, (y1 + y2) / 2] };
+  }
+  // place lays tag channel c's arc and payee end mark on the rows as they sit now.
+  function place(c) {
+    const { d, end } = shape(c);
+    c.arc.setAttribute('d', d);
+    c.end.setAttribute('cx', end[0]); c.end.setAttribute('cy', end[1]);
+  }
+  // mark shows tag channel c's state on its arc and payee end mark.
+  function mark(c) {
+    for (const el of [c.arc, c.end]) el.setAttribute('class', el.dataset.part + ' ' + state(c));
+  }
+  // open draws a new tag channel from user from to user to, sealed.
+  function open(from, to) {
+    const c = { from, to, found: false, audited: false }, L = arcs, ids = { 'data-from': from, 'data-to': to, style: tint(c) };
+    c.arc = svg('path', { ...ids, 'data-part': 'ch-arc' }, L);
+    c.end = svg('circle', { ...ids, 'data-part': 'ch-end', r: 4 }, L);
+    list.push(c);
+    place(c); mark(c);
+    return c;
+  }
+  // use lights tag channel c for hold ms with a dot along its arc and a chip saying text.
+  function use(c, hold, text) {
+    const L = lit(), { d, apex } = shape(c), ids = { 'data-from': c.from, 'data-to': c.to, style: tint(c) };
+    const hot = svg('path', { ...ids, d, class: 'ch-hot' }, L);
+    const dot = svg('circle', { ...ids, r: 6, class: 'ch-dot' }, L);
+    svg('animateMotion', { dur: Math.max(hold * 0.9, 120) + 'ms', path: d, fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
+    // The chip sits right of the arc's apex, kept left of the privacy line; its 🔒 is wider than a letter, as on a private data chip.
+    const w = [...text].length * 11.5 + 34, x = Math.min(apex[0] + 8, edge - 6 - w);
+    const chip = svg('g', { ...ids, class: 'ch-chip' }, L);
+    svg('rect', { x, y: apex[1] - 16, width: w, height: 32, rx: 16 }, chip);
+    svg('text', { x: x + w / 2, y: apex[1] + 7, 'text-anchor': 'middle' }, chip).textContent = text;
+    setTimeout(() => [hot, dot, chip].forEach(el => el.remove()), hold * 1.3);
+  }
+  return {
+    // attach sets where the arcs go: the diagram's group g for the arcs, the chips' drawing svgEl for what lights
+    // them, the diagram's node positions p (kept live as it refits), and the privacy line's x.
+    attach(g, svgEl, p, x) { arcs = g; chips = svgEl; pos = p; edge = x; },
+    // hop updates the tag channels for hop h as it plays, for hold ms.
+    hop(h, hold) {
+      if (h.failed) return;
+      const opened = h.label === 'open channel' && /to (.+?)['’]s view key/.exec(h.detail || '');
+      const tagged = h.label === 'tag' && /only (.+?) can recognise/.exec(h.detail || '');
+      if (opened) {
+        const to = idOf(opened[1]);
+        if (!to || !pos[h.from] || !pos[to]) return;
+        const c = find(h.from, to) || open(h.from, to);
+        use(c, hold, `🔒 ss → ${nameOf(to)}`);
+      } else if (tagged) {
+        const c = find(h.from, idOf(tagged[1]));
+        if (c) use(c, hold, 'tag on 🔒 ss');
+      } else if (h.label === 'scan channels') {
+        for (const c of list) if (c.to === h.to) { c.found = true; mark(c); }
+      } else if (h.label === 'audit' && h.to === 'auditor') {
+        for (const c of list) { c.audited = true; mark(c); }
+      }
+    },
+    // layout lays every arc on the rows again, once the diagram has refit.
+    layout() { list.forEach(place); },
+    // reset forgets every tag channel and removes the arcs.
+    reset() { list = []; arcs.replaceChildren(); live?.remove(); live = null; },
+  };
+})();
+
 const diagram = (() => {
   const s = $('diagram');
   // Three zones split at ZONE_CUTS: the wallets (the users and the auditor in
@@ -1222,13 +1336,15 @@ const diagram = (() => {
   pos.funder = { x: 595, y: 80, w: 160, h: 30 };
   pos.relayer = { x: 595, y: 230, w: 200, h: 64 };
   NODES.filter(n => n.group === 'contract').forEach((n, i) => pos[n.id] = { x: 1065, y: 60 + i * 62, w: 210, h: 38 });
-  const gZ = svg('g', {}, s), gL = svg('g', {}, s), gN = svg('g', {}, s), gP = svg('g', {}, s);
+  // The tag channel arcs (gC) lie over the links and under the nodes.
+  const gZ = svg('g', {}, s), gL = svg('g', {}, s), gC = svg('g', { class: 'chan' }, s), gN = svg('g', {}, s), gP = svg('g', {}, s);
   // The chips ride in their own drawing, over the open wallet, in the same viewBox.
   const chips = $('chips');
+  tagChannels.attach(gC, chips, pos, ZONE_CUTS[0]);
   const nodeEl = {};
   for (const n of NODES) {
     const p = pos[n.id], actor = n.group === 'actor';
-    const g = svg('g', { class: 'node ' + n.group, transform: `translate(${p.x},${p.y})` }, gN);
+    const g = svg('g', { class: 'node ' + n.group, 'data-node': n.id, transform: `translate(${p.x},${p.y})` }, gN);
     svg('rect', { x: -p.w / 2, y: -p.h / 2, width: p.w, height: p.h, rx: n.group === 'service' ? 32 : 6 }, g);
     const sub = n.sub || [], top = 5 - sub.length * 9;
     svg('text', { x: actor ? -p.w / 2 + 12 : 0, y: n.group === 'service' ? top : 4, class: 'nl', 'text-anchor': actor ? 'start' : 'middle' }, g).textContent = n.label;
@@ -1303,6 +1419,7 @@ const diagram = (() => {
     }
     for (const k in links) links[k].setAttribute('d', path(...k.split('>')));
     zones(h);
+    tagChannels.layout();
     wallet.place();
   }
   // box is node id's box in the canvas's pixels, with k the pixels per viewBox unit.
@@ -1363,6 +1480,7 @@ const diagram = (() => {
     refusal.shown(h);
     if (!h.repeat) narration.hop(h, rep);
     wallet.follow(h);
+    tagChannels.hop(h, hold);
   }
 
   // Pacing is in the page only: the engine runs at full speed and each hop
@@ -1503,7 +1621,7 @@ const diagram = (() => {
     reset() {
       queue.length = 0; clearTimeout(timer); timer = null;
       pacing.showHeld(false);
-      gL.innerHTML = ''; gP.innerHTML = ''; chips.replaceChildren();
+      gL.innerHTML = ''; gP.innerHTML = ''; chips.replaceChildren(); tagChannels.reset();
       for (const k in links) delete links[k];
       for (const g of Object.values(nodeEl)) { Object.values(g._t || {}).forEach(clearTimeout); g.classList.remove('lit', 'bad'); }
       $('queued').textContent = '';
