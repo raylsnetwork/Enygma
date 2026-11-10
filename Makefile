@@ -179,8 +179,15 @@ retail-keygen: ## Generate retail proving/verifying keys
 retail-gnark: ## Start the retail gnark proof server (keep running)
 	cd enygma_retail_payments/gnark_circuits && go run ./cmd/server
 
-retail-test: ## Retail integration tests (needs chain, setup and gnark server)
-	cd enygma_retail_payments/test && go test ./... -v -timeout 600s
+# The retail suite takes 8–12 min on the shield_demo/run.sh stack; the bench and
+# load tests are left out (run them by name). Tests that rebuild the vault's
+# tree 0 fail fast once the chain is past one tree: restart it fresh.
+RETAIL_BENCH_SKIP := TestRetailThroughput|TestRetailLoad|TestRetailScanRate|TestRetailChainTPS
+retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts
+	@log=$$(mktemp -t retail_test); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
+	go test -count=1 -v ./... -timeout 1800s -skip '$(RETAIL_BENCH_SKIP)' >$$log 2>&1 || status=1; \
+	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
+	grep -E '^--- (FAIL|SKIP)' $$log; echo "log: $$log"; exit $$status
 
 # The full shield demo scenario test plays three runs (about 1–2 min since #190's
 # fast proofs); this plays the default-mode run (about 30 s) and the subtests matching
@@ -221,14 +228,14 @@ shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 3
 # with that demo's -logs dir, detached as run.sh starts it.
 # The suite runs first so the primer's scans cover other payments: a fresh
 # chain holds only the story's own, and the replay check refuses that block.
-PRIMER_REFRESH_SKIP := TestRetailThroughput|TestRetailLoad|TestRetailScanRate|TestRetailChainTPS|TestShieldDemoScenario|TestShieldDemoWalkthrough|TestProtocolPrimer$$
+PRIMER_REFRESH_SKIP := $(RETAIL_BENCH_SKIP)|TestShieldDemoScenario|TestShieldDemoWalkthrough|TestProtocolPrimer$$
 primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewrites the primer's data block); prints pass/fail/skip counts, stops the stack
 	@$(MAKE) --no-print-directory shield-stack
 	@log=$$(mktemp -t primer_refresh); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
 	go test -count=1 -v . -timeout 900s -skip '$(PRIMER_REFRESH_SKIP)' >$$log 2>&1 || status=1; \
 	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
 	grep -E '^--- (FAIL|SKIP)' $$log; \
-	if [ $$status = 0 ]; then go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
+	if [ $$status = 0 ]; then PRIMER_WRITE=1 go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
 	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; exit $$status
 
 shield-demo-stale: ## Fail if the demo on :9092 was built from Go sources other than the working tree's (then make shield-demo-restart)
