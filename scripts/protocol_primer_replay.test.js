@@ -2,8 +2,8 @@
 // stepped through in jsdom on the run its data block holds.
 //
 // The data block is a JSON <script> inside the page, which a passing
-// TestProtocolPrimer (enygma_retail_payments/test/15_…) rewrites from one
-// live run. Each test opens the page, as the demo server serves it and as a
+// TestProtocolPrimer (enygma_retail_payments/test/15_…) run with
+// PRIMER_WRITE=1 (make primer-refresh) rewrites from one live run. Each test opens the page, as the demo server serves it and as a
 // file opened from disk, with every request the page could make failing the
 // test: it makes none. It steps through the page with Next to the last step
 // and back to the first with Back, and on every step checks that:

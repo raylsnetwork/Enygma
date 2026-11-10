@@ -3,10 +3,11 @@ package tests
 // TestProtocolPrimer runs the Protocol primer's story against the live
 // stack with fresh users (the Sender and Ana) and a fresh auditor, using the
 // client library, and recomputes every equation the primer shows from the
-// run's values and the chain. Only when every check has run and held does it
-// rewrite the JSON data block inside the primer page
-// (shield_demo/protocol.html), which is those values' only copy; a filtered
-// or failed run writes nothing.
+// run's values and the chain. Only with PRIMER_WRITE=1 (make primer-refresh
+// sets it), and when every check has run and held, does it rewrite the JSON
+// data block inside the primer page (shield_demo/protocol.html), which is
+// those values' only copy; any other run, the retail suite's included,
+// writes nothing.
 //
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
 // auditor's keys, the registration of both users, the Sender's shield, and
@@ -24,6 +25,9 @@ package tests
 // Run:
 //
 //	cd test && CC=/usr/bin/clang go test -run 'TestProtocolPrimer$' -v
+//
+// (with PRIMER_WRITE=1 to rewrite the data block; make primer-refresh is the
+// way to make it)
 
 import (
 	"bytes"
@@ -2022,8 +2026,8 @@ func newGCM(t *testing.T, key []byte) cipher.AEAD {
 var primerBlock = regexp.MustCompile(`(?s)(<script type="application/json" id="primer-data">\n)(.*?)(\n</script>)`)
 
 // writePrimerDataIfPassed rewrites the primer page's data block with data,
-// once t has passed and every one of primerChecks has run and passed; a
-// filtered or failed run leaves the page as it was.
+// with PRIMER_WRITE=1, once t has passed and every one of primerChecks has
+// run and passed; any other run leaves the page as it was.
 func writePrimerDataIfPassed(t *testing.T, data primerData, passed map[string]bool) {
 	t.Helper()
 	if t.Failed() {
@@ -2034,6 +2038,10 @@ func writePrimerDataIfPassed(t *testing.T, data primerData, passed map[string]bo
 			t.Logf("primer data not written: the %q check did not run (a filtered run); refresh it with an unfiltered run", c)
 			return
 		}
+	}
+	if os.Getenv("PRIMER_WRITE") != "1" {
+		t.Log("primer data not written: set PRIMER_WRITE=1 to rewrite it (make primer-refresh does)")
+		return
 	}
 	page, err := os.ReadFile(primerPage)
 	if err != nil {
