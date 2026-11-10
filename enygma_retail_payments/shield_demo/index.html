@@ -856,6 +856,38 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "open note": { "text": "ciphertext → note", "kinds": ["ciphertext", "note"] }
   },
   "moments": {
+    "channels": [
+      {
+        "kicker": "Tag channel",
+        "h": "A private link only the payee can open",
+        "beats": [
+          {
+            "where": "In the Sender’s wallet · private",
+            "zone": "wallet",
+            "what": [["makes", "ss, sealed to Ana’s view key in c₁"]],
+            "cap": "It keeps ss, to make every later tag to Ana."
+          },
+          {
+            "where": "In TagChannelRegistry · public",
+            "zone": "chain",
+            "what": [["holds", "c₁, a sealed c₂, a bitmap of every user"]],
+            "cap": "Sent by the relayer under its own name, it names no one."
+          },
+          {
+            "where": "In Ana’s wallet · private",
+            "zone": "wallet",
+            "what": [["opens", "c₁ with her view key → ss"], ["checks", "c₂ opens under ss: the channel is hers"]],
+            "cap": "Any other key gets a different secret, and c₂ fails."
+          },
+          {
+            "where": "With each payment · public",
+            "zone": "chain",
+            "what": "t = Poseidon(block, Ana’s pk_spend, ss)",
+            "cap": "New every block: only Ana, the Sender and the auditor recognise it."
+          }
+        ]
+      }
+    ],
     "shield": [
       {
         "kicker": "Hidden on chain",

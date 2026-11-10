@@ -60,7 +60,7 @@
 
 **Data chip**: the label a hop carries on the retail shield demo's diagram, naming what it moves (a key, gas, a proof, a commitment, a ciphertext, a nullifier, a private note); a chip that stays inside a wallet is marked private. _Avoid_: badge, tag (a tag is a protocol object).
 
-**Concept moment**: a short illustration of one privacy idea (hidden on chain, proof, relayer, finding your notes, auditor) that the retail shield demo plays once, before the step where the idea first happens, and holds until the presenter moves on. _Avoid_: explainer, intro, tutorial.
+**Concept moment**: a short illustration of one privacy idea (tag channel, with tags on; hidden on chain, proof, relayer, finding your notes, auditor) that the retail shield demo plays once, before the step where the idea first happens, and holds until the presenter moves on. _Avoid_: explainer, intro, tutorial.
 
 **Prover card**: what the gnark server does on a proof hop of the retail shield demo: the circuit, its constraint count, the witness it receives, the proof and public signals it returns, how long compiling, proving and verifying took, and that whoever proves sees the whole witness. _Avoid_: gnark card, proof panel.
 
