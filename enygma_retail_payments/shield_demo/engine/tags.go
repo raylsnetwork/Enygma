@@ -162,7 +162,8 @@ func (e *Engine) openChannel(ctx context.Context, s *step, from, to *Actor) erro
 
 // carriesTagChannelCards says whether the tag channel from from to to is the
 // Sender's to payment 1's payee, the first participant: the one whose
-// setup and detection carry the tag channel cards.
+// setup, detection, first tag (payment 1's) and that tag's payload carry
+// the tag channel's four formula cards.
 func (e *Engine) carriesTagChannelCards(from, to *Actor) bool {
 	return from == e.sender() && to == e.participants()[0]
 }
@@ -266,17 +267,41 @@ func (e *Engine) publishTag(ctx context.Context, s *step, from, to *Actor, t *se
 	if err != nil {
 		return err
 	}
-	s.hop(ActorNode(from.ID), NodeRelayer, "tag", fmt.Sprintf("a tag only %s can recognise, carrying the note's opening", to.Name), ex)
+	details := []HopDetail{ex}
+	// Payment 1's tag, the first on the Sender's tag channel to its payee,
+	// carries the tag card: a walkthrough's with its values, checked
+	// against the tag TagRegistry published, a full run's by name only.
+	if e.carriesTagChannelCards(from, to) && len(e.fanOut) == 0 {
+		d := formulaNamed(FormulaTag, NodeTagRegistry, 0)
+		if e.opts.Walkthrough {
+			if d, err = e.chain.tagFormula(ctx, from, to, ss, t.tagBlock, t.TagTxHash); err != nil {
+				return err
+			}
+		}
+		details = append(details, d)
+	}
+	s.hop(ActorNode(from.ID), NodeRelayer, "tag", fmt.Sprintf("a tag only %s can recognise, carrying the note's opening", to.Name), details...)
 	s.hop(NodeRelayer, NodeTagRegistry, "publishTag", fmt.Sprintf("block %d, gas %s", resp.BlockNumber, formatNum(resp.GasUsed)), receipt)
 	s.log("tag", "TagRegistry.publishTag() via relayer → %s's tag in block %d  gas %s", to.Name, resp.BlockNumber, formatNum(resp.GasUsed))
 	return nil
+}
+
+// taggedNote is a note a scan found by its tag: the note as decrypted, the
+// tag channel whose tag matched, the block the tag was published in, the
+// payload it carried, and what that opened to.
+type taggedNote struct {
+	DecryptedNote
+	ch      tags.Channel
+	block   uint64
+	payload []byte
+	opened  *tags.PaymentNote
 }
 
 // scanTags has a check every tag published since their last scan against
 // their channels, decrypt only the notes whose tags match, and keep each
 // that opens to a commitment in the vault. It returns the new notes, as
 // decrypted from their tags, and how many tags it checked.
-func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []DecryptedNote, checked int, err error) {
+func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, checked int, err error) {
 	c := e.chain
 	tip, err := c.client.BlockNumber(ctx)
 	if err != nil {
@@ -313,9 +338,10 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []DecryptedNote,
 			}
 			if !a.notes.has(n.commitment) {
 				a.notes = append(a.notes, n)
-				found = append(found, DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: l.TxHash.Hex(),
+				found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: l.TxHash.Hex(),
 					Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(payload),
-					Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(pn.TokenId)})
+					Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(pn.TokenId)},
+					ch: ch, block: l.BlockNumber, payload: payload, opened: pn})
 			}
 		}
 	}
@@ -378,8 +404,28 @@ func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int)
 		return "", fmt.Errorf("%s found %d new notes by their tags, want %d", a.Name, len(found), want)
 	}
 	scan := fmt.Sprintf("%d tags checked → %d decrypted", checked, len(found))
+	notes := make([]DecryptedNote, len(found))
+	for i, f := range found {
+		notes[i] = f.DecryptedNote
+	}
+	details := []HopDetail{decryption(notes)}
+	for _, f := range found {
+		// The note payment 1's tag carried, opened by its payee, carries the
+		// tag payload card: a walkthrough's with its values, checked
+		// against the commitment in the vault, a full run's by name only.
+		if len(e.fanOut) == 0 || !e.carriesTagChannelCards(e.sender(), a) || common.HexToHash(f.Tx) != e.fanOut[0].TagTxHash {
+			continue
+		}
+		d := formulaNamed(FormulaTagPayload, NodeVault, 0)
+		if e.opts.Walkthrough {
+			if d, err = e.chain.tagPayloadFormula(ctx, a, f); err != nil {
+				return "", err
+			}
+		}
+		details = append(details, d)
+	}
 	s.hop(NodeTagRegistry, ActorNode(a.ID), "scan tags", scan)
-	s.hop(NodeVault, ActorNode(a.ID), "open note", fmt.Sprintf("the tagged note's commitment confirmed in the vault; %s decrypts only it", a.Name), decryption(found))
+	s.hop(NodeVault, ActorNode(a.ID), "open note", fmt.Sprintf("the tagged note's commitment confirmed in the vault; %s decrypts only it", a.Name), details...)
 	s.log("tag", "%s checked %d tags, matched %d and decrypted only those notes", a.Name, checked, len(found))
 	s.actor(a, "scan", scan)
 	return scan, nil

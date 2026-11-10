@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/iden3/go-iden3-crypto/constants"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 )
 
@@ -530,6 +531,92 @@ func (c *chain) tagChannelDetectionFormula(ctx context.Context, payer, payee, ot
 		Chain: &FormulaValue{Name: fmt.Sprintf("%s's scan of the records TagChannelRegistry published since their last one (getChannelCount); the one their view key opens is tag channel #%d, the %s's", payee.Name, f.ChannelIdx, payer.Name),
 			Value: fmt.Sprintf("%d %s checked, %d opened", checked, records, opened)},
 		OK: bytes.Equal(ss, f.SharedSecret) && bytes.Equal(ss, payer.tags.out[payee]) && string(senderId) == payer.Address.Hex() && otherErr != nil && opened == 1,
+	}}, nil
+}
+
+// tagFormula is the tag formula of the tag from published to to's spend key
+// on the tag channel with shared secret ss, landed in block b by tx:
+// t_b = Poseidon(b, pk_spend, ss mod p), and the reverse direction's, with
+// from's spend key, which differs; checked against the tag TagRegistry's
+// TagPublished event logged in tx.
+func (c *chain) tagFormula(ctx context.Context, from, to *Actor, ss []byte, b uint64, tx common.Hash) (HopDetail, error) {
+	receipt, err := c.client.TransactionReceipt(ctx, tx)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag card: receipt for %s: %w", tx.Hex(), err)
+	}
+	t, err := tags.DeriveTag(b, to.Spend.PublicKey, ss)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag card: %w", err)
+	}
+	reverse, err := tags.DeriveTag(b, from.Spend.PublicKey, ss)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag card: %w", err)
+	}
+	var published []*ethtypes.Log
+	for _, l := range receipt.Logs {
+		if l.Address == c.tagRegistryAddr && len(l.Topics) >= 3 && l.Topics[0] == tagPublishedTopic {
+			published = append(published, l)
+		}
+	}
+	if len(published) != 1 {
+		return HopDetail{}, fmt.Errorf("tag card: tx %s logged %d TagPublished events, want one", receipt.TxHash.Hex(), len(published))
+	}
+	logged := published[0]
+	result := bytesHex(t[:])
+	return HopDetail{Kind: DetailFormula, Vault: NodeTagRegistry, Formula: &Formula{
+		Name: FormulaTag,
+		Inputs: []FormulaValue{
+			{Name: "b · the block the tag landed in", Value: fmt.Sprint(b)},
+			{Name: fmt.Sprintf("pk_spend^payee · %s's spend key", to.Name), Value: fieldHex(to.Spend.PublicKey)},
+			{Name: "ss · the tag channel's shared secret", Value: bytesHex(ss)},
+			{Name: "ss mod p · in BN254's scalar field", Value: fieldHex(new(big.Int).Mod(new(big.Int).SetBytes(ss), constants.Q))},
+			{Name: fmt.Sprintf("t_b′ = Poseidon(b, pk_spend^%s, ss mod p) · the reverse direction, %s → %s", from.Name, to.Name, from.Name), Value: bytesHex(reverse[:])},
+		},
+		Result: result,
+		Chain: &FormulaValue{Name: fmt.Sprintf("the tag TagRegistry's TagPublished event logged for block %d (tx %s), the one of the payer's %d-block window the relayer published", logged.Topics[1].Big(), receipt.TxHash.Hex(), tagWindow),
+			Value: logged.Topics[2].Hex()},
+		OK: logged.Topics[2].Hex() == result && logged.Topics[1].Big().Uint64() == b && reverse != t,
+	}}, nil
+}
+
+// tagPayloadFormula is the tag payload formula of f, a note payee found by
+// its tag: the block key k_b of f's tag channel for f's block and payee's
+// spend key, which opens the payload to amount ‖ token ‖ salt, and the
+// commitment those hash to with payee's pk_spend, checked against the
+// vault's Commitment event for it.
+func (c *chain) tagPayloadFormula(ctx context.Context, payee *Actor, f taggedNote) (HopDetail, error) {
+	k := tags.DeriveBlockKey(f.ch.SharedSecret, f.block, payee.Spend.PublicKey)
+	cm, err := rpcore.Erc20CommitmentV2(payee.Spend.PublicKey, f.opened.Salt, f.opened.Amount, f.opened.TokenId)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag payload card: %w", err)
+	}
+	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+		Addresses: []common.Address{c.vaultAddr},
+		Topics:    [][]common.Hash{{commitmentTopic}, nil, {common.BigToHash(cm)}},
+	})
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag payload card: vault Commitment events: %w", err)
+	}
+	if len(logs) != 1 {
+		return HopDetail{}, fmt.Errorf("tag payload card: the vault logged %d Commitment events for 0x%x, want one", len(logs), cm)
+	}
+	result := fieldHex(cm)
+	return HopDetail{Kind: DetailFormula, Vault: NodeVault, Formula: &Formula{
+		Name: FormulaTagPayload,
+		Inputs: []FormulaValue{
+			{Name: "ss · the tag channel's shared secret", Value: bytesHex(f.ch.SharedSecret)},
+			{Name: "b · the block the tag landed in", Value: fmt.Sprint(f.block)},
+			{Name: fmt.Sprintf("pk_spend^payee · %s's spend key", payee.Name), Value: fieldHex(payee.Spend.PublicKey)},
+			{Name: `k_b · HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee)`, Value: bytesHex(k[:])},
+			{Name: "ct · the tag's payload in TagRegistry", Value: bytesHex(f.payload)},
+			{Name: "amount · opened", Value: f.opened.Amount.String()},
+			{Name: "token · opened", Value: fieldHex(f.opened.TokenId)},
+			{Name: "salt · opened", Value: fieldHex(f.opened.Salt)},
+		},
+		Result: result,
+		Chain: &FormulaValue{Name: fmt.Sprintf("the vault's Commitment event for %s's note (tx %s)", payee.Name, logs[0].TxHash.Hex()),
+			Value: fieldHex(logs[0].Topics[2].Big())},
+		OK: logs[0].Topics[2].Big().Cmp(cm) == 0,
 	}}, nil
 }
 
