@@ -152,6 +152,10 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("/run", s.handleRun)
 	mux.HandleFunc("/transfer", s.handleTransfer)
 	mux.HandleFunc("/release", s.handleRelease)
+	// PROTOTYPE (tag channel): the recorded default run that /?replay plays, from disk (-dev only).
+	mux.HandleFunc("/prototype/run.json", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(filepath.Dir(s.pageFile), "testdata", "default_run.events.json"))
+	})
 	return mux
 }
 

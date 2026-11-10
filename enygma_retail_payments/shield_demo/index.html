@@ -451,6 +451,40 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
 #termBody .c-key { color:var(--t-key); } #termBody .c-chain { color:var(--t-chain); } #termBody .c-zk { color:var(--t-zk); } #termBody .c-tag { color:var(--t-tag); }
 #termBody .c-step { color:var(--t-step); } #termBody .c-ok { color:var(--t-ok); } #termBody .c-bad { color:var(--t-bad); }
 #termBody .empty { color:var(--t-dim); }
+
+/* PROTOTYPE (tag channel): the channel layer, three variants, and the variant bar. */
+.chan .ch-arc { fill:none; stroke:var(--h); stroke-width:2.2; stroke-dasharray:6 5; opacity:.55; }
+.chan .ch-arc.found { stroke-dasharray:none; opacity:.8; }
+.chan .ch-arc.audited, .chan .ch-end.audited { stroke:var(--warn); }
+.chan .ch-end { fill:var(--s1); stroke:var(--h); stroke-width:2; }
+.chan .ch-end.found { fill:var(--h); }
+.chan .ch-hot { fill:none; stroke:var(--h); stroke-width:6; opacity:.9; stroke-linecap:round; }
+.chan .ch-dot { fill:var(--h); stroke:var(--s1); stroke-width:2; }
+.chan .ch-chip rect { fill:color-mix(in srgb, var(--h) 16%, var(--s1)); stroke:var(--h); stroke-width:1.5; }
+.chan .ch-chip text { font:600 18px var(--mono); fill:var(--h); }
+.chan .ch-key { fill:var(--s1); stroke:var(--h); stroke-width:1.6; }
+.chan .ch-key.found { fill:var(--h); }
+.chan .ch-key.audited { fill:var(--h); stroke:var(--warn); stroke-width:2.4; }
+.chan .ch-band { fill:none; stroke:var(--h); stroke-width:14; opacity:.28; stroke-linecap:round; }
+.chan .ch-mt { font:700 11px var(--mono); letter-spacing:.08em; fill:var(--text2); }
+.chan .ch-ml { font:600 11px var(--mono); fill:var(--text2); }
+.chan .ch-cell { stroke-width:1.3; }
+.chan .ch-cell.none { fill:none; stroke:var(--bd); }
+.chan .ch-cell.self { fill:var(--s2); stroke:none; }
+.chan .ch-cell.sealed { fill:var(--s1); stroke:var(--h); stroke-dasharray:3 2; }
+.chan .ch-cell.found { fill:var(--h); stroke:var(--h); }
+.chan .ch-cell.audited { fill:var(--h); stroke:var(--warn); stroke-width:2.4; }
+.chan .ch-cellhot { fill:none; stroke:var(--h); stroke-width:3; }
+.wchan { display:flex; flex-direction:column; gap:2px; margin-top:6px; font-size:12px; }
+.wchan > span { font:700 10px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--text2); }
+.wch { display:flex; align-items:center; gap:6px; }
+.wch i { width:8px; height:9px; border-radius:2px; border:1.5px solid var(--h); }
+.wch.found i, .wch.audited i { background:var(--h); }
+.wch.audited i { outline:2px solid var(--warn); }
+.wch code { font:11px var(--mono); color:var(--actor); }
+.wch small { color:var(--muted); margin-left:auto; }
+.proto-bar { position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:99; display:flex; gap:10px; align-items:center; padding:6px 10px; border-radius:999px; background:#111; color:#fff; font:600 12px var(--mono); box-shadow:0 6px 20px rgba(0,0,0,.35); }
+.proto-bar button { border:none; background:#333; color:#fff; border-radius:999px; width:28px; height:24px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -840,6 +874,38 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "open note": { "text": "ciphertext → note", "kinds": ["ciphertext", "note"] }
   },
   "moments": {
+    "channels": [
+      {
+        "kicker": "Tag channel",
+        "h": "A private link that only the payee can open",
+        "beats": [
+          {
+            "where": "In the Sender’s wallet · private",
+            "zone": "wallet",
+            "what": [["makes", "a fresh secret ss, sealed to Ana’s view key"], ["keeps", "ss, to make every later tag to Ana"]],
+            "cap": "ML-KEM gives the Sender ss and a capsule c₁ that only Ana’s view key opens."
+          },
+          {
+            "where": "In TagChannelRegistry · public",
+            "zone": "chain",
+            "what": [["holds", "c₁, a sealed note c₂, a bitmap of every user"], ["never says", "whom it is for"]],
+            "cap": "The relayer publishes it under its own name, and the bitmap points at everyone."
+          },
+          {
+            "where": "In Ana’s wallet · private",
+            "zone": "wallet",
+            "what": [["opens", "c₁ with her view key → ss"], ["checks", "c₂ opens under ss: this channel is hers"]],
+            "cap": "Anyone else’s view key turns c₁ into a different secret, and c₂ fails to open."
+          },
+          {
+            "where": "With each payment · public",
+            "zone": "chain",
+            "what": "t = Poseidon(block, Ana’s pk_spend, ss)",
+            "cap": "A tag only Ana recognises, new every block: she finds her payment by it at once."
+          }
+        ]
+      }
+    ],
     "shield": [
       {
         "kicker": "Hidden on chain",
@@ -1209,6 +1275,162 @@ function svg(tag, attrs, parent) {
   return el;
 }
 
+// ---- PROTOTYPE: the tag channel, three ways --------------------------------
+// PROTOTYPE, throwaway, never for main. Question: how should the demo draw a
+// tag channel between a payer's and a payee's wallets? ?variant=A (Arcs), B
+// (Keyring) or C (Matrix + sealed route), flipped with the bottom bar or ← →.
+// ?replay plays the recorded default run (testdata/default_run.events.json),
+// so no chain is needed. Every variant shows the same states: opened (sealed,
+// the payee hasn't found it), found (the payee's scan opened it), in use (a
+// tag travels on it) and audited (the auditor's view keys open it).
+const PROTO_VARIANTS = [['A', 'Arcs'], ['B', 'Keyring'], ['C', 'Matrix + sealed route']];
+const PROTO_Q = new URLSearchParams(location.search);
+const VARIANT = PROTO_VARIANTS.some(([k]) => k === PROTO_Q.get('variant')) ? PROTO_Q.get('variant') : 'A';
+
+const channels = (() => {
+  let list = [], audited = false, g = null;
+  const lastTo = {};
+  const idOf = name => { const i = ACTORS.findIndex(([n]) => n === name); return i < 0 ? null : 'actor' + i; };
+  const nameOf = id => ACTORS[+id.slice(5)]?.[0] || id;
+  const find = (a, b) => list.find(c => c.from === a && c.to === b);
+  const hue = c => `var(--own${c.from.slice(5)})`;
+  const P = () => diagram.pos;
+  // layer is the channel drawing: in the chips' svg, over the open wallet, under the moving chips.
+  function layer() {
+    if (!g || !g.isConnected) { g = document.createElementNS(SVGNS, 'g'); g.setAttribute('class', 'chan'); $('chips').prepend(g); }
+    return g;
+  }
+  const state = c => audited ? 'audited' : c.found ? 'found' : 'sealed';
+
+  // A: an arc on the wallet column's right edge, bulging with the rows' distance.
+  const X0 = 140;
+  function arc(c) {
+    const a = P()[c.from], b = P()[c.to], bend = 16 + Math.abs(b.y - a.y) * 0.42;
+    return { d: `M${X0},${a.y - 4} C${X0 + bend},${a.y - 4} ${X0 + bend},${b.y + 4} ${X0},${b.y + 4}`, apex: [X0 + bend * 0.75, (a.y + b.y) / 2] };
+  }
+  // C: the matrix of payer rows × payee columns, below the users, left of the prover.
+  const PAYERS = ACTORS.map((_, i) => 'actor' + i).filter(id => ACTORS[+id.slice(5)][1] !== 'issuer');
+  const PAYEES = PAYERS.filter(id => ACTORS[+id.slice(5)][1] === 'participant');
+  function cell(from, to) {
+    const top = P().auditor.y + 34, cs = 15;
+    return { x: 44 + PAYEES.indexOf(to) * cs, y: top + PAYERS.indexOf(from) * cs, cs };
+  }
+
+  function draw() {
+    const L = layer();
+    L.replaceChildren();
+    if (VARIANT === 'A') {
+      for (const c of list) {
+        const { d } = arc(c), cls = state(c);
+        svg('path', { d, class: 'ch-arc ' + cls, style: `--h:${hue(c)}` }, L);
+        const b = P()[c.to];
+        svg('circle', { cx: X0, cy: b.y + 4, r: 3.5, class: 'ch-end ' + cls, style: `--h:${hue(c)}` }, L);
+      }
+    } else if (VARIANT === 'B') {
+      // A key ring at each row's right end: one key per channel the user holds.
+      for (const id of Object.keys(P()).filter(id => /^actor\d+$/.test(id))) {
+        const mine = list.filter(c => c.from === id || c.to === id);
+        if (!mine.length) continue;
+        const p = P()[id];
+        mine.forEach((c, k) => svg('rect', { x: p.x + p.w / 2 - 10 - k * 9, y: p.y - 4, width: 7, height: 8, rx: 2, class: 'ch-key ' + state(c), style: `--h:${hue(c)}` }, L));
+      }
+    } else {
+      if (!list.length) return;
+      const o = cell(PAYERS[0], PAYEES[0]);
+      svg('text', { x: 18, y: o.y - 22, class: 'ch-mt' }, L).textContent = 'TAG CHANNELS · payer ↓ payee →';
+      PAYEES.forEach((id, j) => svg('text', { x: o.x + j * o.cs + o.cs / 2, y: o.y - 5, class: 'ch-ml', 'text-anchor': 'middle' }, L).textContent = nameOf(id)[0]);
+      PAYERS.forEach((id, i) => {
+        svg('text', { x: o.x - 6, y: o.y + i * o.cs + 11, class: 'ch-ml', 'text-anchor': 'end' }, L).textContent = nameOf(id).slice(0, 3);
+        PAYEES.forEach(to => {
+          const c = find(id, to), q = cell(id, to);
+          svg('rect', { x: q.x + 1, y: q.y + 1, width: q.cs - 2, height: q.cs - 2, rx: 3, class: 'ch-cell ' + (id === to ? 'self' : c ? state(c) : 'none'), style: c ? `--h:${hue(c)}` : '' }, L);
+        });
+      });
+    }
+    wallet.refresh();
+  }
+
+  // flash shows channel c in use for hold ms: kind 'open' (its setup) or 'tag'.
+  function flash(c, hold, kind) {
+    const L = layer(), out = [];
+    const label = kind === 'open' ? `🔒 ss → ${nameOf(c.to)}` : `tag on 🔒 ss`;
+    if (VARIANT === 'A') {
+      const { d, apex } = arc(c);
+      out.push(svg('path', { d, class: 'ch-hot', style: `--h:${hue(c)}` }, L));
+      const dot = svg('circle', { r: 6, class: 'ch-dot', style: `--h:${hue(c)}` }, L);
+      svg('animateMotion', { dur: hold * 0.9 + 'ms', path: d, fill: 'freeze', begin: 'indefinite' }, dot).beginElement();
+      out.push(dot, tagChip(L, apex[0] + 8, apex[1], label, c, 'start'));
+    } else if (VARIANT === 'B') {
+      const a = P()[c.from], b = P()[c.to], x = a.x + a.w / 2 + 6;
+      out.push(svg('path', { d: `M${x},${a.y} L${x + 10},${a.y} L${x + 10},${b.y} L${x},${b.y}`, class: 'ch-hot', style: `--h:${hue(c)}` }, L));
+      out.push(tagChip(L, x + 16, (a.y + b.y) / 2, label, c, 'start'));
+    } else {
+      const reg = kind === 'open' ? 'TagChannelRegistry' : 'TagRegistry';
+      for (const [u, v] of [[c.from, 'relayer'], ['relayer', reg], [reg, c.to]])
+        out.push(svg('path', { d: diagram.path(u, v), class: 'ch-band', style: `--h:${hue(c)}` }, L));
+      const r = P().relayer;
+      out.push(tagChip(L, r.x, r.y - r.h / 2 - 22, `sealed: only ${nameOf(c.to)} opens it`, c, 'middle'));
+      const q = cell(c.from, c.to);
+      out.push(svg('rect', { x: q.x - 1, y: q.y - 1, width: q.cs + 2, height: q.cs + 2, rx: 4, class: 'ch-cellhot', style: `--h:${hue(c)}` }, L));
+    }
+    setTimeout(() => out.forEach(el => el.remove()), hold * 1.3);
+  }
+  function tagChip(L, x, y, text, c, anchor) {
+    const w = [...text].length * 11 + 22, gg = svg('g', { class: 'ch-chip', style: `--h:${hue(c)}` }, L);
+    const x0 = anchor === 'middle' ? x - w / 2 : x;
+    svg('rect', { x: x0, y: y - 16, width: w, height: 30, rx: 15 }, gg);
+    svg('text', { x: x0 + w / 2, y: y + 5, 'text-anchor': 'middle' }, gg).textContent = text;
+    return gg;
+  }
+
+  return {
+    // hop takes each hop as it plays.
+    hop(h, hold) {
+      const open = h.label === 'open channel' && /to (\w+)'s view key/.exec(h.detail || '');
+      if (open) {
+        const to = idOf(open[1]);
+        if (to && !find(h.from, to)) list.push({ from: h.from, to, found: false, tags: 0 });
+        draw(); flash(find(h.from, to), hold, 'open'); return;
+      }
+      if (h.label === 'scan channels') { for (const c of list) if (c.to === h.to) c.found = true; draw(); return; }
+      const tag = h.label === 'tag' && /only (\w+) can/.exec(h.detail || '');
+      if (tag) {
+        const c = find(h.from, idOf(tag[1]));
+        if (c) { c.tags++; lastTo[c.to] = c; draw(); flash(c, hold, 'tag'); }
+        return;
+      }
+      if (h.label === 'audit' && h.to === 'auditor') { audited = true; draw(); }
+    },
+    layout() { if (list.length) draw(); },
+    reset() { list = []; audited = false; g?.remove(); g = null; },
+    // walletHtml is B's tag-channel list in user i's open wallet.
+    walletHtml(i) {
+      if (VARIANT !== 'B') return '';
+      const id = 'actor' + i, mine = list.filter(c => c.from === id || c.to === id);
+      if (!mine.length) return '';
+      return `<div class="wchan"><span>tag channels · ${mine.length}</span>` + mine.map(c => {
+        const out = c.from === id, peer = nameOf(out ? c.to : c.from);
+        return `<div class="wch ${state(c)}" style="--h:${hue(c)}"><i></i>${out ? '→' : '←'} ${esc(peer)}<code>🔒 ss</code><small>${c.tags} tag${c.tags === 1 ? '' : 's'}${audited ? ' · auditor opens' : c.found ? '' : ' · not found yet'}</small></div>`;
+      }).join('') + '</div>';
+    },
+  };
+})();
+
+// The prototype's variant bar, bottom centre: ◀ variant ▶, and ← → (not in a field).
+(() => {
+  const bar = document.createElement('div');
+  bar.className = 'proto-bar';
+  const go = d => { const i = PROTO_VARIANTS.findIndex(([k]) => k === VARIANT); PROTO_Q.set('variant', PROTO_VARIANTS[(i + d + PROTO_VARIANTS.length) % PROTO_VARIANTS.length][0]); location.search = PROTO_Q.toString().replace('replay=', 'replay'); };
+  bar.innerHTML = `<button aria-label="previous variant">◀</button><span>PROTOTYPE · ${VARIANT} (${PROTO_VARIANTS.find(([k]) => k === VARIANT)[1]})</span><button aria-label="next variant">▶</button>`;
+  const [prev, next] = bar.querySelectorAll('button');
+  prev.onclick = () => go(-1); next.onclick = () => go(1);
+  addEventListener('keydown', e => {
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    if (e.key === 'ArrowLeft') go(-1); else if (e.key === 'ArrowRight') go(1);
+  });
+  document.body.append(bar);
+})();
+
 const diagram = (() => {
   const s = $('diagram');
   // Three zones split at ZONE_CUTS: the wallets (the users and the auditor in
@@ -1304,6 +1526,7 @@ const diagram = (() => {
     for (const k in links) links[k].setAttribute('d', path(...k.split('>')));
     zones(h);
     wallet.place();
+    channels.layout(); // PROTOTYPE
   }
   // box is node id's box in the canvas's pixels, with k the pixels per viewBox unit.
   function box(id) {
@@ -1363,6 +1586,7 @@ const diagram = (() => {
     refusal.shown(h);
     if (!h.repeat) narration.hop(h, rep);
     wallet.follow(h);
+    channels.hop(h, hold); // PROTOTYPE
   }
 
   // Pacing is in the page only: the engine runs at full speed and each hop
@@ -1495,6 +1719,7 @@ const diagram = (() => {
     },
     refreshTip,
     box,
+    pos, path, // PROTOTYPE: the channel layer draws from them
     // walletZone is the wallet zone's box in the canvas's pixels, below its label.
     walletZone() {
       const k = s.parentElement.clientWidth / W;
@@ -1503,7 +1728,7 @@ const diagram = (() => {
     reset() {
       queue.length = 0; clearTimeout(timer); timer = null;
       pacing.showHeld(false);
-      gL.innerHTML = ''; gP.innerHTML = ''; chips.replaceChildren();
+      gL.innerHTML = ''; gP.innerHTML = ''; chips.replaceChildren(); channels.reset(); // PROTOTYPE
       for (const k in links) delete links[k];
       for (const g of Object.values(nodeEl)) { Object.values(g._t || {}).forEach(clearTimeout); g.classList.remove('lit', 'bad'); }
       $('queued').textContent = '';
@@ -1530,7 +1755,7 @@ const wallet = (() => {
     card.innerHTML = `<div class="wh"><b>${esc(w.name || ACTORS[current][0])}’s wallet</b><span>PRIVATE</span></div>` +
       `<div class="wkey"><span>spend key</span><code>${esc(shortKey(w.pkSpend))}</code></div>` +
       `<div class="wkey"><span>view key</span><code>${esc(shortKey(w.pkView))}</code></div>` +
-      (notes || '<div class="wnone">no private notes yet</div>') +
+      (notes || '<div class="wnone">no private notes yet</div>') + channels.walletHtml(current) + // PROTOTYPE
       `<div class="wpub"><span>public · visible</span><b>${esc(w.public?.replace(' RaylsERC20', '') || '—')}</b></div>`;
     card.hidden = false;
     place();
@@ -1559,6 +1784,7 @@ const wallet = (() => {
       if (a && +a.slice(5) !== current) { current = +a.slice(5); render(); }
     },
     place,
+    refresh: () => render(), // PROTOTYPE
     // reset empties every wallet and closes the card.
     reset() { wallets = {}; current = null; render(); },
   };
@@ -2884,9 +3110,16 @@ termReset();
 showTab('engine');
 layoutDrawer();
 loadDefaults();
+// PROTOTYPE: ?replay plays the recorded default run instead of a live engine.
+if (PROTO_Q.has('replay')) (async () => {
+  const run = await (await fetch('/prototype/run.json')).json();
+  runOpts = { ...run.defaults }; startingRun = true;
+  for (const e of run.events) onEvent(e);
+})(); else {
 const events = new EventSource('/events');
 events.onopen = clearServices;
 events.onmessage = m => onEvent(JSON.parse(m.data));
+}
 </script>
 </body>
 </html>
