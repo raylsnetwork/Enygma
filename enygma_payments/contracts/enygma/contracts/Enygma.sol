@@ -1251,7 +1251,7 @@ contract Enygma is IEnygma {
 
         // DEPOSIT_LEN signals shared with deposit's layout, then the DvP deposit
         // commitments (StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_OFFSET).
-        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[62])", proof));
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[92])", proof));
         if (depositParams.length > StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_SIZE) revert TooManyDeposits();
 
         // The checks shared with deposit() read the first DEPOSIT_LEN signals.
@@ -1259,6 +1259,13 @@ contract Enygma is IEnygma {
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
         _verifyPublicInputsDeposit(sharedSignals, participantIds, commitmentDeltas);
+
+        // Every participant's commitment shifts by a blinding factor derived
+        // from the sender's shared secret with it, exactly as in transfer(),
+        // so the same check applies: each pairwise fingerprint must be one
+        // both parties confirmed on chain. Without it a zero-value withdraw
+        // with made-up secrets froze the other participants' balances.
+        _verifyFingerprintsDeposit(sharedSignals, participantIds);
 
         // Verify proof was generated against the current block
         _verifyBlockNumberDeposit(sharedSignals);
@@ -1410,6 +1417,16 @@ contract Enygma is IEnygma {
         WithdrawParams calldata withdrawParam,
         uint256[] calldata participantIds
     ) external onlyRegistered whenInitialized whenNotPaused nonReentrant returns (bool) {
+        // Same shape checks as withdraw(): _verifyFingerprintsDeposit reads
+        // the k×k matrix at k = DEFAULT_SIZE, and the public-input checks
+        // loop over participantIds, so both arrays must have that length.
+        if (participantIds.length != commitmentDeltas.length) {
+            revert ParticipantIdsLengthMismatch();
+        }
+        if (commitmentDeltas.length != DEFAULT_SIZE) {
+            revert InvalidParticipantCount();
+        }
+
         // Verify deposit proof
         address verifier = _depositVerifiers[commitmentDeltas.length];
         if (verifier == address(0)) revert VerifierNotFound();
@@ -1420,10 +1437,14 @@ contract Enygma is IEnygma {
         // commitment), which made every deposit() call revert InvalidProof
         // unconditionally, regardless of proof validity. The selector's
         // arity is pinned to DEPOSIT_LEN by gnark-server's genlayout tests.
-        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[52])", proof));
+        _verifyViaStaticcall(verifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[82])", proof));
 
         // Verify public inputs are bound to current on-chain state and deltas match proof
         _verifyPublicInputsDeposit(proof.public_signal, participantIds, commitmentDeltas);
+
+        // See withdraw(): the shared-secret fingerprints must be the ones
+        // confirmed on chain.
+        _verifyFingerprintsDeposit(proof.public_signal, participantIds);
 
         // Verify proof was generated against the current block
         _verifyBlockNumberDeposit(proof.public_signal);
@@ -2025,17 +2046,11 @@ contract Enygma is IEnygma {
             uint256 idI = participantIds[i];
             for (uint256 j; j < len; ) {
                 if (i != j) {
-                    uint256 idJ = participantIds[j];
-                    if (!fingerprintConfirmed[idI][idJ]) {
-                        revert FingerprintNotConfirmed();
-                    }
-                    uint256 offset = StatementLayout.TRANSFER_FINGERPRINT_OFFSET + i * len + j;
-                    if (
-                        uint256(public_signal[offset]) !=
-                        confirmedFingerprint[idI][idJ]
-                    ) {
-                        revert InvalidPublicInputs();
-                    }
+                    _requireConfirmedFingerprint(
+                        idI,
+                        participantIds[j],
+                        public_signal[StatementLayout.TRANSFER_FINGERPRINT_OFFSET + i * len + j]
+                    );
                 }
                 unchecked {
                     ++j;
@@ -2044,6 +2059,52 @@ contract Enygma is IEnygma {
             unchecked {
                 ++i;
             }
+        }
+    }
+
+    /**
+     * @notice _verifyFingerprints for withdraw() and deposit(), whose
+     *         circuits publish the same k×k FingerPrintofSharedSecrets matrix
+     *         as transfer's, at StatementLayout.DEPOSIT_FINGERPRINT_OFFSET
+     *         (inside the prefix withdraw shares with deposit). Their
+     *         circuits used to publish only a flat HashedSharedSecrets array
+     *         that nothing here read, so any registered bank could shift
+     *         other banks' commitments by blinding factors they could not
+     *         compute, locking those balances for good.
+     */
+    function _verifyFingerprintsDeposit(
+        uint256[DEPOSIT_LEN] memory public_signal,
+        uint256[] calldata participantIds
+    ) private view {
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 idI = participantIds[i];
+            for (uint256 j; j < len; ) {
+                if (i != j) {
+                    _requireConfirmedFingerprint(
+                        idI,
+                        participantIds[j],
+                        public_signal[StatementLayout.DEPOSIT_FINGERPRINT_OFFSET + i * len + j]
+                    );
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @dev Reverts unless the pair (idI, idJ) has a mutually confirmed
+    ///      fingerprint and `published` is exactly that fingerprint.
+    function _requireConfirmedFingerprint(uint256 idI, uint256 idJ, uint256 published) private view {
+        if (!fingerprintConfirmed[idI][idJ]) {
+            revert FingerprintNotConfirmed();
+        }
+        if (published != confirmedFingerprint[idI][idJ]) {
+            revert InvalidPublicInputs();
         }
     }
 

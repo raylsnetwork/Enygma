@@ -73,6 +73,7 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 		t.Fatal("addZkDvp failed")
 	}
 
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		t.Fatalf("getBlckHash: %v", err)
@@ -91,6 +92,7 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.DepositFingerprintOffset, fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
@@ -138,6 +140,7 @@ func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
 		t.Fatal("addZkDvp failed")
 	}
 
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		t.Fatalf("getBlckHash: %v", err)
@@ -167,6 +170,7 @@ func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.DepositFingerprintOffset, fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
@@ -258,6 +262,7 @@ func TestC09_WithdrawRejectsMismatchedDepositValue(t *testing.T) {
 		t.Fatal("addZkDvp failed")
 	}
 
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		t.Fatalf("getBlckHash: %v", err)
@@ -279,6 +284,7 @@ func TestC09_WithdrawRejectsMismatchedDepositValue(t *testing.T) {
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.WithdrawFingerprintOffset, fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
@@ -344,6 +350,7 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 		t.Fatal("mintSupply failed")
 	}
 
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		t.Fatalf("getBlckHash: %v", err)
@@ -373,6 +380,7 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.WithdrawFingerprintOffset, fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {

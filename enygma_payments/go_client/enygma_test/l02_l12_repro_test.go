@@ -166,7 +166,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
+		if r := waitTx(instance.RegisterAccount(mkAuth(), freshBankAddr(i, ownerAddr), big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
@@ -194,6 +194,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 		t.Fatal("registering MaliciousZkDvp as an account failed")
 	}
 
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		t.Fatalf("getBlckHash: %v", err)
@@ -214,6 +215,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.WithdrawFingerprintOffset, fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {

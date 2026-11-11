@@ -127,80 +127,82 @@ const (
 	UsdrFeeRecipientKeySize   = 1
 )
 
-// Withdraw statement layout (62 public signals).
+// Withdraw statement layout (92 public signals).
 const (
-	WithdrawLen = 62
+	WithdrawLen = 92
 
-	WithdrawHashedSharedSecretsOffset = 0
-	WithdrawHashedSharedSecretsSize   = 6
+	// Fingerprint: [6][6], row-major: element [i][j] at WithdrawFingerprintOffset + i*6 + j.
+	WithdrawFingerprintOffset = 0
+	WithdrawFingerprintSize   = 36
 
-	WithdrawPublicKeysOffset = 6
+	WithdrawPublicKeysOffset = 36
 	WithdrawPublicKeysSize   = 6
 
 	// PreviousCommitments: [6][2], row-major: element [i][j] at WithdrawPreviousCommitmentsOffset + i*2 + j.
-	WithdrawPreviousCommitmentsOffset = 12
+	WithdrawPreviousCommitmentsOffset = 42
 	WithdrawPreviousCommitmentsSize   = 12
 
 	// TxCommitments: [6][2], row-major: element [i][j] at WithdrawTxCommitmentsOffset + i*2 + j.
-	WithdrawTxCommitmentsOffset = 24
+	WithdrawTxCommitmentsOffset = 54
 	WithdrawTxCommitmentsSize   = 12
 
-	WithdrawBlockNumberOffset = 36
+	WithdrawBlockNumberOffset = 66
 	WithdrawBlockNumberSize   = 1
 
-	WithdrawAnonymitySetOffset = 37
+	WithdrawAnonymitySetOffset = 67
 	WithdrawAnonymitySetSize   = 6
 
-	WithdrawMessageTagsOffset = 43
+	WithdrawMessageTagsOffset = 73
 	WithdrawMessageTagsSize   = 6
 
-	WithdrawNullifierOffset = 49
+	WithdrawNullifierOffset = 79
 	WithdrawNullifierSize   = 1
 
-	WithdrawTotalDepositValueOffset = 50
+	WithdrawTotalDepositValueOffset = 80
 	WithdrawTotalDepositValueSize   = 1
 
-	WithdrawDomainIdOffset = 51
+	WithdrawDomainIdOffset = 81
 	WithdrawDomainIdSize   = 1
 
-	WithdrawDepositCommitmentsOffset = 52
+	WithdrawDepositCommitmentsOffset = 82
 	WithdrawDepositCommitmentsSize   = 10
 )
 
-// Deposit statement layout (52 public signals).
+// Deposit statement layout (82 public signals).
 const (
-	DepositLen = 52
+	DepositLen = 82
 
-	DepositHashedSharedSecretsOffset = 0
-	DepositHashedSharedSecretsSize   = 6
+	// Fingerprint: [6][6], row-major: element [i][j] at DepositFingerprintOffset + i*6 + j.
+	DepositFingerprintOffset = 0
+	DepositFingerprintSize   = 36
 
-	DepositPublicKeysOffset = 6
+	DepositPublicKeysOffset = 36
 	DepositPublicKeysSize   = 6
 
 	// PreviousCommitments: [6][2], row-major: element [i][j] at DepositPreviousCommitmentsOffset + i*2 + j.
-	DepositPreviousCommitmentsOffset = 12
+	DepositPreviousCommitmentsOffset = 42
 	DepositPreviousCommitmentsSize   = 12
 
 	// TxCommitments: [6][2], row-major: element [i][j] at DepositTxCommitmentsOffset + i*2 + j.
-	DepositTxCommitmentsOffset = 24
+	DepositTxCommitmentsOffset = 54
 	DepositTxCommitmentsSize   = 12
 
-	DepositBlockNumberOffset = 36
+	DepositBlockNumberOffset = 66
 	DepositBlockNumberSize   = 1
 
-	DepositAnonymitySetOffset = 37
+	DepositAnonymitySetOffset = 67
 	DepositAnonymitySetSize   = 6
 
-	DepositMessageTagsOffset = 43
+	DepositMessageTagsOffset = 73
 	DepositMessageTagsSize   = 6
 
-	DepositNullifierOffset = 49
+	DepositNullifierOffset = 79
 	DepositNullifierSize   = 1
 
-	DepositHashOffset = 50
+	DepositHashOffset = 80
 	DepositHashSize   = 1
 
-	DepositDomainIdOffset = 51
+	DepositDomainIdOffset = 81
 	DepositDomainIdSize   = 1
 )
 

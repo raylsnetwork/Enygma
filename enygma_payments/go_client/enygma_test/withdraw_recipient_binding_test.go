@@ -65,6 +65,7 @@ func TestWithdrawRecipientBinding(t *testing.T) {
 		if r := waitTx(instance.MintSupply(mkAuth(), big.NewInt(mintAmt), big.NewInt(1), mcx, mcy)); r.Status != 1 {
 			t.Fatal("mintSupply failed")
 		}
+		fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 		blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 		if err != nil {
 			t.Fatal(err)
@@ -80,6 +81,7 @@ func TestWithdrawRecipientBinding(t *testing.T) {
 		for i := range base {
 			base[i] = big.NewInt(0)
 		}
+		putFingerprints(base[:], layout.WithdrawFingerprintOffset, fp)
 		deltas := make([]enygma.IEnygmaPoint, nBanks)
 		ids := make([]*big.Int, nBanks)
 		for i := 0; i < nBanks; i++ {

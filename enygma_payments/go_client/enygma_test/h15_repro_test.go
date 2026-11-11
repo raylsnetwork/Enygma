@@ -92,6 +92,9 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 	}
 
 	instance, enygmaAddr := freshSetup(t, client, mkAuth, waitTx) // registers accountIds 1..6
+	// Before the bystander takes over the owner's address (registerFingerprint
+	// acts for msg.sender's account).
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 
 	// Register a 7th account — beyond DEFAULT_SIZE, and so beyond any
 	// withdraw() call's fixed 6-participant set. This is the bystander.
@@ -171,6 +174,7 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.WithdrawFingerprintOffset, fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, 6)
 	participantIds := make([]*big.Int, 6)
 	for i := 0; i < 6; i++ {
