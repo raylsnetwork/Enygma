@@ -262,9 +262,9 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 
 // conserve infers the balances of a walkthrough, which has no tags to name
 // payers by: every note in it comes from one user's shield, and only that
-// user pays, so they keep what they shielded less what the others
-// received, and each other user holds what they received. It infers none
-// if more than one user shielded.
+// user pays. So they keep what they shielded less what the others received,
+// and the USDr they were granted less each relayer fee; each other user
+// holds what they received. It infers none if more than one user shielded.
 func (a *Audit) conserve() {
 	shielder := ""
 	for _, en := range a.Entries {
@@ -284,6 +284,8 @@ func (a *Audit) conserve() {
 	}
 	for _, en := range a.Entries {
 		switch {
+		case en.Kind == AuditUsdrFee: // a USDr entry too, so before the next case
+			a.UsdrBalances[shielder].Sub(a.UsdrBalances[shielder], en.Amount)
 		case en.Asset == assetUsdr:
 			if to := a.UsdrBalances[en.To]; to != nil && !en.Kind.paidPrivately() {
 				to.Add(to, en.Amount)
