@@ -204,6 +204,10 @@ interface IEnygmaDvp {
     error AuditorAlreadyRegistered(uint256, uint256);
     error AuditorNotRegistered(uint256);
 
+    // unlockReceiptNullifiers: one of the receipt's notes was not locked by
+    // lockReceiptNullifiers with this same receipt and the same relayer.
+    error NotLockedByCaller();
+
     ///////////////////////////////////////////////
     //                  Events
     //////////////////////////////////////////////
@@ -556,7 +560,10 @@ interface IEnygmaDvp {
     function usdrTokenId() external view returns (uint256);
 
     // lockReceiptNullifiers / unlockReceiptNullifiers are used by SwapRelayer
-    // to hold nullifiers while awaiting the counterparty's leg.
+    // to hold nullifiers while awaiting the counterparty's leg. A lock is
+    // taken only for a receipt that passes its vault's checks (proof, Merkle
+    // roots, unspent nullifiers), and only the relayer that took it, with the
+    // same receipt, can release it.
     function lockReceiptNullifiers(
         ProofReceipt calldata receipt,
         uint256 vaultId

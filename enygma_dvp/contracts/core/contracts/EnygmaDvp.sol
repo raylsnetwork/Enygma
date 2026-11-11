@@ -121,6 +121,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // authorized on-chain relayer contracts (set by owner)
     mapping(address => bool) public authorizedRelayers;
 
+    // Who holds each note locked through lockReceiptNullifiers, by vault, tree
+    // and nullifier: keccak256(relayer, vaultId, receipt statement). Notes
+    // locked by other paths (a pending partial settlement, an auction) have no
+    // entry, so unlockReceiptNullifiers cannot release them.
+    mapping(uint256 => mapping(uint256 => mapping(uint256 => bytes32))) private _relayerLocks;
+
     // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
     // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
     uint256 public relayerFixedFeeAmount;
@@ -611,34 +617,58 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         _;
     }
 
-    // Lock all input nullifiers in a receipt so the prover cannot double-spend
-    // while the counterparty's receipt is pending in SwapRelayer.
-    // Only callable by an authorized SwapRelayer contract.
+    // Lock the input notes of a receipt so its prover cannot spend them
+    // elsewhere while the counterparty's leg is pending in SwapRelayer.
+    // Only callable by an authorized relayer. The receipt must pass its vault's
+    // checks first (proof, Merkle roots, unspent nullifiers), so a lock only
+    // ever covers notes that a valid proof spends. Inputs with a zero Merkle
+    // root are skipped, as they are by the vault's checks, settlement
+    // (nullifyFromReceipt) and unlockFromReceipt.
     function lockReceiptNullifiers(
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
-        uint treeNumbersIndex = 1;
-        uint nullifiersIndex  = 1 + (2 * receipt.numberOfInputs);
+        IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
+        vault.checkReceiptConditions(receipt);
 
-        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-            IAbstractCoinVault(_coinVaults[vaultId]).lockCoin(
-                receipt.statement[treeNumbersIndex + i],
-                receipt.statement[nullifiersIndex + i]
-            );
+        bytes32 lockId = _relayerLockId(receipt, vaultId);
+        uint256 n = receipt.numberOfInputs;
+        for (uint256 i = 0; i < n; i++) {
+            if (receipt.statement[1 + n + i] == 0) continue;
+            uint256 treeNumber = receipt.statement[1 + i];
+            uint256 nullifier = receipt.statement[1 + 2 * n + i];
+            vault.lockCoin(treeNumber, nullifier);
+            _relayerLocks[vaultId][treeNumber][nullifier] = lockId;
         }
         return true;
     }
 
-    // Release the nullifier locks placed by lockReceiptNullifiers.
-    // Called by SwapRelayer when a swap is cancelled after expiry.
-    // Only callable by an authorized SwapRelayer contract.
+    // Release the locks placed by lockReceiptNullifiers, when a swap settles
+    // or is cancelled. Only callable by an authorized relayer, and only for
+    // notes that the same relayer locked with this same receipt.
     function unlockReceiptNullifiers(
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
+        bytes32 lockId = _relayerLockId(receipt, vaultId);
+        uint256 n = receipt.numberOfInputs;
+        for (uint256 i = 0; i < n; i++) {
+            if (receipt.statement[1 + n + i] == 0) continue;
+            uint256 treeNumber = receipt.statement[1 + i];
+            uint256 nullifier = receipt.statement[1 + 2 * n + i];
+            if (_relayerLocks[vaultId][treeNumber][nullifier] != lockId) revert NotLockedByCaller();
+            delete _relayerLocks[vaultId][treeNumber][nullifier];
+        }
         IAbstractCoinVault(_coinVaults[vaultId]).unlockFromReceipt(receipt);
         return true;
+    }
+
+    // Identifies one relayer's lock on one receipt in one vault.
+    function _relayerLockId(
+        ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) private view returns (bytes32) {
+        return keccak256(abi.encode(msg.sender, vaultId, receipt.statement));
     }
 
     function submitPartialSettlement(

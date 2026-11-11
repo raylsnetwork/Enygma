@@ -334,6 +334,23 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		}
 	})
 
+	// A payment (message 0) or withdrawal (WITHDRAW_MESSAGE, 1) receipt is
+	// not a DvP leg, so it cannot be filed under any swapId.
+	t.Run("payment and withdrawal receipts are not legs", func(t *testing.T) {
+		env := newSwapRelayerEnv(t)
+		expiry := big.NewInt(int64(env.now() + 3600))
+		for _, message := range []int64{0, 1} {
+			notLeg := leg(message, 82, 505, false)
+			id := crypto.Keccak256Hash(common.BigToHash(big.NewInt(82)).Bytes(), common.BigToHash(big.NewInt(message)).Bytes())
+			if r := env.send("mallory", "submitReceipt", id, notLeg, true, pv, expiry, ctx, ctx); r != "NotSwapLeg" {
+				t.Fatalf("receipt with message %d: got %q, want NotSwapLeg", message, r)
+			}
+			if env.locked(paymentVault, big.NewInt(505)) {
+				t.Fatalf("receipt with message %d locked its note", message)
+			}
+		}
+	})
+
 	t.Run("a leg cannot be filed under another swap's id", func(t *testing.T) {
 		env := newSwapRelayerEnv(t)
 		alice, _, _ := swapPair(51, 52, 101, 202)
