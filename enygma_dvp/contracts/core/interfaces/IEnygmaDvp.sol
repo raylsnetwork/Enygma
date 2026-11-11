@@ -188,6 +188,8 @@ interface IEnygmaDvp {
     error InvalidSalt();
     error PrivateMintVerifierNotRegistered();
     error PublicSignalMismatch();
+    // privateMint: the vault has not been flagged mintable (setVaultMintable).
+    error VaultNotMintable();
     // paymentWithRelayerFee: the proof's public StFee signal does not match
     // the contract-configured relayerFixedFeeAmount.
     error InvalidRelayerFee();
@@ -300,6 +302,9 @@ interface IEnygmaDvp {
     );
 
     event AuditorUnregistered(uint256 indexed onchainId);
+
+    // The owner flagged a vault as open (or closed) to privateMint.
+    event VaultMintableSet(uint256 indexed vaultId, bool mintable);
 
     event PrivateMint(
         uint256 indexed vaultId,

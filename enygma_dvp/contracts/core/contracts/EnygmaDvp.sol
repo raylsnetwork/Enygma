@@ -143,6 +143,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // usdrFeeVaultSet distinguishes "unset" from vault id 0.
     uint256 public usdrFeeVaultId;
     bool public usdrFeeVaultSet;
+
+    // Vaults privateMint may add notes to (setVaultMintable). A private mint
+    // creates a note that no deposit backs, so it is refused in any vault not
+    // flagged here; every vault starts unflagged.
+    mapping(uint256 => bool) public mintableVaults;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -244,6 +249,20 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         address privateMintVerifierAddress
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         _privateMintVerifierAddress = privateMintVerifierAddress;
+        return true;
+    }
+
+    // Flags a registered vault as open (or closed) to privateMint. Flag only
+    // a vault whose notes are not redeemed from other users' deposits, such
+    // as one for an asset its issuer backs itself; never a shared ERC-20
+    // vault holding deposits.
+    function setVaultMintable(
+        uint256 vaultId,
+        bool mintable
+    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        mintableVaults[vaultId] = mintable;
+        emit VaultMintableSet(vaultId, mintable);
         return true;
     }
 
@@ -1287,6 +1306,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // Validate vault exists
         if (_coinVaults[vaultId] == address(0)) {
             revert InvalidVaultId();
+        }
+        // Only into a vault the owner flagged as mintable (setVaultMintable).
+        if (!mintableVaults[vaultId]) {
+            revert VaultNotMintable();
         }
 
         // Verify the ZK proof
