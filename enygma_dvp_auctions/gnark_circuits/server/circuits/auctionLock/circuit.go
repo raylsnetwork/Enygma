@@ -15,7 +15,7 @@ type AuctionLockRequest struct {
 	StCommitLocked string `json:"stCommitLocked" binding:"required"`
 	StNftTokenId   string `json:"stNftTokenId"   binding:"required"`
 	StRevertCommit string `json:"stRevertCommit" binding:"required"`
-	StParamsHash   string `json:"stParamsHash"   binding:"required"` // keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr
+	StParamsHash   string `json:"stParamsHash"   binding:"required"` // keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice, sellerPk)) mod Fr
 
 	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber
 	WtSpendKey     string    `json:"wtSpendKey"     binding:"required"`

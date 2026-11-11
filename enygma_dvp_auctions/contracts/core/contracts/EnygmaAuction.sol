@@ -133,6 +133,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256 settlementDeadline;  // after this, anyone can call recoverAuction()
         uint256 floorPrice;          // seller's reserve price
         uint256 bidCount;            // total bids ever submitted
+        uint256 sellerPk;            // seller's payout key: every bid's commitB pays it
     }
 
     mapping(uint256 => AuctionCore)                     private _auctions;
@@ -209,20 +210,26 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [5] StNftTokenId
     //   [6] StRevertCommit = Erc721Commitment(tokenId, pk_B, saltRevert)
     //   [7] StParamsHash   = keccak256(abi.encode(auctionId, deadline,
-    //                        settlementDeadline, floorPrice)) mod Fr
+    //                        settlementDeadline, floorPrice, sellerPk)) mod Fr
     //
     // [7] binds the auction's parameters to Bob's proof. The statement is public
     // the moment initAuction() is broadcast, so without it a front-runner could
     // replay Bob's proof with parameters of its own (floor price 0, a deadline
-    // that closes at once, a settlement deadline far out) and hold his note.
-    // Replaying Bob's own parameters is harmless: they are what he chose.
+    // that closes at once, a settlement deadline far out, its own payout key)
+    // and hold his note or take his proceeds. Replaying Bob's own parameters is
+    // harmless: they are what he chose.
+    //
+    // sellerPk is the spend public key the seller is paid to. submitBid() makes
+    // every bid prove its commitB pays it (StSellerPk), and settlement pays out
+    // the winning bid's commitB, so the proceeds can only reach the seller.
 
     function initAuction(
         uint256[8] calldata proof,
         uint256[8] calldata statement,
         uint256    deadline,
         uint256    settlementDeadline,
-        uint256    floorPrice
+        uint256    floorPrice,
+        uint256    sellerPk
     ) external nonReentrant returns (bool) {
         uint256 auctionId    = statement[0];
         uint256 treeNumber   = statement[1];
@@ -236,9 +243,12 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         if (deadline <= block.timestamp)                          revert InvalidDeadline();
         if (settlementDeadline < deadline + 2 days)               revert InvalidSettlementDeadline();
         if (settlementDeadline > deadline + MAX_SETTLEMENT_WINDOW) revert InvalidSettlementDeadline();
+        // A bid's StSellerPk is a public input, so it must be a non-zero field
+        // element for any bid to verify.
+        if (sellerPk == 0 || sellerPk >= SNARK_SCALAR_FIELD)      revert InvalidSellerPk();
 
         // The parameters must be the ones Bob's proof was made for.
-        if (statement[7] != _paramsHash(auctionId, deadline, settlementDeadline, floorPrice))
+        if (statement[7] != _paramsHash(auctionId, deadline, settlementDeadline, floorPrice, sellerPk))
             revert ParamsMismatch();
 
         // Verify the AuctionLock ZK proof.
@@ -263,10 +273,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             deadline:            deadline,
             settlementDeadline:  settlementDeadline,
             floorPrice:          floorPrice,
-            bidCount:            0
+            bidCount:            0,
+            sellerPk:            sellerPk
         });
 
-        emit AuctionInitialized(auctionId, commitLocked, revertCommit, nftTokenId, deadline, settlementDeadline, floorPrice);
+        emit AuctionInitialized(auctionId, commitLocked, revertCommit, nftTokenId, deadline, settlementDeadline, floorPrice, sellerPk);
         return true;
     }
 
@@ -274,7 +285,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // Phase 0b — Alice (bidder) submits a sealed bid — only before deadline
     // -----------------------------------------------------------------------
     //
-    // AuctionBid public statement (9 elements):
+    // AuctionBid public statement (10 elements):
     //   [0] StAuctionId   — must match an open auction
     //   [1] StTreeNumber  — bidder's USDC sub-tree
     //   [2] StMerkleRoot  — current ERC-20 Merkle root
@@ -284,13 +295,14 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     //   [6] StRevertCommit — Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId)
     //   [7] StCtxtHash     — keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr
     //   [8] StFloorPrice   — the auction's floor price; the circuit proves bidAmount >= it
+    //   [9] StSellerPk     — the auction's sellerPk; the circuit builds commitB from it
     //
     // The ciphertexts are not part of the proof otherwise, so [7] is what stops a
     // front-runner from registering this bid with ciphertexts of its own.
 
     function submitBid(
         uint256[8] calldata proof,
-        uint256[9] calldata statement,
+        uint256[10] calldata statement,
         bytes      calldata ctxt1,
         bytes      calldata ctxt2
     ) external nonReentrant returns (bool) {
@@ -310,9 +322,14 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         // The proof shows the bid reaches this floor, so it must be this
         // auction's: otherwise dust bids could fill the MAX_BIDS slots.
         if (statement[8] != _auctions[auctionId].floorPrice)    revert FloorPriceMismatch();
+        // The proof shows commitB pays this key, so it must be the seller's:
+        // otherwise the winner could make commitB pay themselves, and settlement
+        // (which pays out exactly the winning commitB) would hand them the NFT
+        // and their money back.
+        if (statement[9] != _auctions[auctionId].sellerPk)      revert SellerPkMismatch();
 
         // Verify the AuctionBid ZK proof.
-        _verifyProof(VK_BID, proof, _toArr9(statement));
+        _verifyProof(VK_BID, proof, _toArr10(statement));
 
         // Ensure the Merkle root matches a root the USDC vault accepts.
         if (!ICoinVault(_erc20Vault).verifyRoot(treeNumber, merkleRoot))
@@ -791,6 +808,11 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // View helpers
     // -----------------------------------------------------------------------
 
+    /// @notice The seller payout key every bid's commitB must pay (see initAuction()).
+    function getSellerPk(uint256 auctionId) external view returns (uint256) {
+        return _auctions[auctionId].sellerPk;
+    }
+
     function getAuctionState(uint256 auctionId) external view returns (AuctionState) {
         return _auctions[auctionId].state;
     }
@@ -991,9 +1013,9 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         return uint256(keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2)))) % SNARK_SCALAR_FIELD;
     }
 
-    function _toArr9(uint256[9] calldata s) internal pure returns (uint256[] memory a) {
-        a = new uint256[](9);
-        for (uint256 i = 0; i < 9; i++) a[i] = s[i];
+    function _toArr10(uint256[10] calldata s) internal pure returns (uint256[] memory a) {
+        a = new uint256[](10);
+        for (uint256 i = 0; i < 10; i++) a[i] = s[i];
     }
 
     /// @dev The value the AuctionLock circuit binds as StParamsHash.
@@ -1001,8 +1023,9 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256 auctionId,
         uint256 deadline,
         uint256 settlementDeadline,
-        uint256 floorPrice
+        uint256 floorPrice,
+        uint256 sellerPk
     ) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice))) % SNARK_SCALAR_FIELD;
+        return uint256(keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice, sellerPk))) % SNARK_SCALAR_FIELD;
     }
 }

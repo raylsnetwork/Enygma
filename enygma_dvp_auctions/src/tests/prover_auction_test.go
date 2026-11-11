@@ -94,6 +94,7 @@ func TestAuctionLockProof_Success(t *testing.T) {
 		Deadline:           big.NewInt(1_900_000_000),
 		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
 		FloorPrice:         big.NewInt(1),
+		SellerPk:           big.NewInt(20),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -127,6 +128,7 @@ func TestAuctionLockProof_PayloadFields(t *testing.T) {
 		Deadline:           big.NewInt(1_900_000_000),
 		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
 		FloorPrice:         big.NewInt(1),
+		SellerPk:           big.NewInt(20),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -154,7 +156,7 @@ func TestAuctionLockProof_PayloadFields(t *testing.T) {
 	}
 
 	// stParamsHash binds the auction's parameters, exactly as initAuction() hashes them.
-	wantParams := core.AuctionParamsHash(wantAuctionId, big.NewInt(1_900_000_000), big.NewInt(1_900_000_000+3*86400), big.NewInt(1))
+	wantParams := core.AuctionParamsHash(wantAuctionId, big.NewInt(1_900_000_000), big.NewInt(1_900_000_000+3*86400), big.NewInt(1), big.NewInt(20))
 	if payload["stParamsHash"] != wantParams.String() || payload["wtParamsHash"] != wantParams.String() {
 		t.Errorf("params hash: st=%v wt=%v want %s", payload["stParamsHash"], payload["wtParamsHash"], wantParams)
 	}
@@ -233,6 +235,14 @@ func TestAuctionBidProof_PayloadFields(t *testing.T) {
 	// The proof is made against the auction's floor price.
 	if payload["stFloorPrice"] != "1" {
 		t.Errorf("stFloorPrice: got %v want 1", payload["stFloorPrice"])
+	}
+	// commitB pays the auction's seller key, sent as the public stSellerPk
+	// the contract checks; there is no separate, bidder-chosen payout key.
+	if payload["stSellerPk"] != bobPk.String() {
+		t.Errorf("stSellerPk: got %v want %s", payload["stSellerPk"], bobPk)
+	}
+	if _, ok := payload["wtSpendPkBob"]; ok {
+		t.Errorf("payload still carries a private payout key wtSpendPkBob")
 	}
 	// All-in bid: wtAmount must equal wtBidAmount.
 	if payload["wtAmount"] != payload["wtBidAmount"] {
@@ -488,6 +498,7 @@ func TestAuctionLockProof_ServerError(t *testing.T) {
 		Deadline:           big.NewInt(1_900_000_000),
 		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
 		FloorPrice:         big.NewInt(1),
+		SellerPk:           big.NewInt(20),
 	})
 	if err == nil {
 		t.Fatal("expected error for 500 response")

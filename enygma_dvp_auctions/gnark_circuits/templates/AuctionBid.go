@@ -21,7 +21,7 @@ type AuctionBidCircuitConfig struct {
 //     Alice's locked bid — held by the auction contract. Released back to
 //     Alice if she loses; released to Bob as payment if she wins.
 //
-//   - commitB = Erc20CommitmentV2(pk_B, saltB, bidAmount, tokenId)
+//   - commitB = Erc20CommitmentV2(sellerPk, saltB, bidAmount, tokenId)
 //     Bob's USDC destination — becomes spendable by Bob after auction
 //     settlement. saltB = HKDF(ss, "note salt") where ss is from
 //     ML-KEM.Encapsulate(pk_auction), so only the auctioneer can read the bid.
@@ -41,9 +41,16 @@ type AuctionBidCircuitConfig struct {
 // (dust) was accepted, so one party could fill an auction's MAX_BIDS slots with
 // worthless bids and lock honest bidders out.
 //
-// Public statement (9 elements):
+// StSellerPk is the seller's payout key, supplied on-chain from the auction's
+// own state (set by initAuction() and bound by the seller's AuctionLock proof
+// through StParamsHash). commitB is built from it, not from a key the bidder
+// picks: settlement pays out exactly the winning bid's commitB, so with a
+// bidder-chosen key the winner could make commitB pay themselves and take the
+// NFT for free.
 //
-//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
+// Public statement (10 elements):
+//
+//	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice, stSellerPk]
 type AuctionBidCircuit struct {
 	Config AuctionBidCircuitConfig `gnark:"-"` // compile-time shape only; never a witness
 
@@ -57,6 +64,7 @@ type AuctionBidCircuit struct {
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc20CommitmentV2(pk_A, saltRevert, amount, tokenId) — pre-committed recovery destination
 	StCtxtHash     frontend.Variable `gnark:",public"` // hash of the ciphertexts submitted with the bid (checked on-chain)
 	StFloorPrice   frontend.Variable `gnark:",public"` // the auction's floor price (checked on-chain); bidAmount >= it
+	StSellerPk     frontend.Variable `gnark:",public"` // the auction's seller payout key (checked on-chain); commitB pays it
 
 	// --- private witnesses ---
 	WtAuctionId  frontend.Variable // must equal StAuctionId; binds proof to one auction
@@ -71,7 +79,6 @@ type AuctionBidCircuit struct {
 	WtPathIndex    frontend.Variable   // leaf index in tree
 
 	// --- private witnesses: output notes + timeout recovery ---
-	WtSpendPkBob frontend.Variable // Bob's spend public key (from his registration)
 	WtSaltA      frontend.Variable // salt for commitA (fresh random)
 	WtSaltB      frontend.Variable // salt for commitB = HKDF(ss, "note salt")
 	WtBidAmount  frontend.Variable // bid amount — constrained == WtAmount (all-in)
@@ -114,7 +121,8 @@ func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(commitA, circuit.StCommitA)
 
 	// 6. commitB: Bob's USDC payout destination — saltB derived from ML-KEM ss.
-	commitB := primitives.Erc20CommitmentV2(api, circuit.WtSpendPkBob, circuit.WtSaltB, circuit.WtBidAmount, circuit.WtTokenId)
+	//    Its key is the public StSellerPk, the one the auction was opened with.
+	commitB := primitives.Erc20CommitmentV2(api, circuit.StSellerPk, circuit.WtSaltB, circuit.WtBidAmount, circuit.WtTokenId)
 	api.AssertIsEqual(commitB, circuit.StCommitB)
 
 	// 7. All-in bid: bid amount must equal Alice's full note amount (no change).

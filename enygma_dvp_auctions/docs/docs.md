@@ -54,7 +54,7 @@ Bob proves he owns an NFT note, nullifies it, and creates a fresh locked commitm
 | `StNftTokenId` | NFT token ID |
 | `StRevertCommit` | `Erc721(pk_B, saltRevert, 1, tokenId)` — `saltRevert ≠ saltLocked` enforced in-circuit |
 
-### AuctionBid (Phase 0b) — 7 public signals
+### AuctionBid (Phase 0b) — 10 public signals
 Alice proves she owns a USDC note, nullifies it (all-in), and creates `commitA` (locked bid), `commitB` (Bob's payout destination), and `revertCommit` (Alice's recovery note).
 
 | Signal | Description |
@@ -64,8 +64,11 @@ Alice proves she owns a USDC note, nullifies it (all-in), and creates `commitA` 
 | `StMerkleRoot` | Current USDC Merkle root |
 | `StNullifier` | `Poseidon(sk_A, leafIndex)` |
 | `StCommitA` | `Erc20V2(pk_A, saltA, amount, tokenId)` |
-| `StCommitB` | `Erc20V2(pk_B, saltB, amount, tokenId)` — saltB from ML-KEM |
+| `StCommitB` | `Erc20V2(sellerPk, saltB, amount, tokenId)` — saltB from ML-KEM; the key is `StSellerPk`, not one the bidder picks |
 | `StRevertCommit` | `Erc20V2(pk_A, saltRevert, amount, tokenId)` — `saltRevert ≠ saltA` |
+| `StCtxtHash` | Hash of `ctxt1`/`ctxt2`, checked by `submitBid` |
+| `StFloorPrice` | The auction's floor price, checked by `submitBid`; `amount ≥` it |
+| `StSellerPk` | The auction's seller payout key, set at `initAuction` and checked by `submitBid`: settlement pays the winning `commitB`, so it must pay the seller |
 
 ### AuctionWithdraw (Phase 0c) — 2 public signals
 Alice proves she knows the preimage of `commitA` (i.e., knows `saltA`) to authenticate a bid withdrawal before the deadline.
@@ -125,7 +128,7 @@ Bob proves he owns the locked NFT note and mints it back under a fresh salt — 
 1. Bob generates `saltLocked`, `saltRevert` (random, distinct)
 2. Computes `commitLocked`, `revertCommit`, `auctionId`, `nf_B`
 3. Calls gnark server `/proof/auctionLock` to generate `π_lock`
-4. Submits `initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice)`
+4. Submits `initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice, sellerPk)` — `sellerPk` is the key Bob is paid to (bound by the proof's `StParamsHash`)
 5. Contract verifies proof, calls `nftVault.lockCoin(nf_B)`, records `commitLocked` + `revertCommit`
 
 ### Phase 0b — Alice submits a sealed bid (`submitBid`)
@@ -134,7 +137,7 @@ Bob proves he owns the locked NFT note and mints it back under a fresh salt — 
 3. Chooses `saltRevert` (random, ≠ saltA)
 4. Encrypts bid: `ctxt2 = AES-GCM(k, pk_B || tokenId || amount, aad=ctxt1)`
 5. Calls gnark server `/proof/auctionBid` to generate `π_bid`
-6. Submits `submitBid(π_bid, statement[9], ctxt1, ctxt2)`
+6. Submits `submitBid(π_bid, statement[10], ctxt1, ctxt2)`
 7. Contract verifies proof, calls `usdcVault.lockCoin(nf_A)` (note locked, not spent), stores `BidData`
 
 ### Phase 0c — Alice withdraws a bid (`withdrawBid`)

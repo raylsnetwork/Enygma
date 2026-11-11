@@ -105,15 +105,19 @@ type AuctionLockParams struct {
 	Deadline           *big.Int
 	SettlementDeadline *big.Int
 	FloorPrice         *big.Int
+	// SellerPk is the spend public key the seller is paid to: every bid's
+	// commitB must pay it. Any key the seller holds, such as Bob.PublicKey
+	// or a fresh one.
+	SellerPk *big.Int
 }
 
 // AuctionParamsHash is the value the AuctionLock circuit binds as StParamsHash
 // and EnygmaAuction.initAuction() recomputes from its arguments:
 //
-//	keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr
-func AuctionParamsHash(auctionId, deadline, settlementDeadline, floorPrice *big.Int) *big.Int {
+//	keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice, sellerPk)) mod Fr
+func AuctionParamsHash(auctionId, deadline, settlementDeadline, floorPrice, sellerPk *big.Int) *big.Int {
 	h := sha3.NewLegacyKeccak256()
-	for _, v := range []*big.Int{auctionId, deadline, settlementDeadline, floorPrice} {
+	for _, v := range []*big.Int{auctionId, deadline, settlementDeadline, floorPrice, sellerPk} {
 		h.Write(v.FillBytes(make([]byte, 32)))
 	}
 	return new(big.Int).Mod(new(big.Int).SetBytes(h.Sum(nil)), SNARK_SCALAR_FIELD)
@@ -124,7 +128,7 @@ func AuctionParamsHash(auctionId, deadline, settlementDeadline, floorPrice *big.
 // Returns PublicSignal = [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier,
 // StCommitLocked, StNftTokenId, StRevertCommit, StParamsHash] — exactly the
 // `statement` argument initAuction() expects on-chain, with the same
-// Deadline/SettlementDeadline/FloorPrice.
+// Deadline/SettlementDeadline/FloorPrice/SellerPk.
 func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResult, error) {
 	nullifier, err := GetNullifierWithTree(p.Bob.PrivateKey, p.TreeNumber, p.MerkleProof.Indices)
 	if err != nil {
@@ -146,10 +150,10 @@ func (c *AuctionClient) AuctionLockProof(p AuctionLockParams) (*AuctionProofResu
 		return nil, fmt.Errorf("revertCommit: %w", err)
 	}
 
-	if p.Deadline == nil || p.SettlementDeadline == nil || p.FloorPrice == nil {
-		return nil, fmt.Errorf("deadline, settlement deadline and floor price are required: the proof binds them")
+	if p.Deadline == nil || p.SettlementDeadline == nil || p.FloorPrice == nil || p.SellerPk == nil {
+		return nil, fmt.Errorf("deadline, settlement deadline, floor price and seller key are required: the proof binds them")
 	}
-	paramsHash := AuctionParamsHash(auctionId, p.Deadline, p.SettlementDeadline, p.FloorPrice)
+	paramsHash := AuctionParamsHash(auctionId, p.Deadline, p.SettlementDeadline, p.FloorPrice, p.SellerPk)
 
 	payload := map[string]interface{}{
 		"stAuctionId":    auctionId.String(),
@@ -185,7 +189,7 @@ type AuctionBidParams struct {
 	SaltIn      *big.Int      // salt of the bidder's existing USDC note being spent
 	TreeNumber  *big.Int      // USDC Merkle sub-tree index
 	MerkleProof *MerkleProof  // inclusion proof for the bidder's existing USDC note
-	BobPk       *big.Int      // seller's spend public key (commitB's owner)
+	BobPk       *big.Int      // the auction's sellerPk (getSellerPk / initAuction): commitB's owner, checked on-chain
 	SaltA       *big.Int      // fresh random salt for the locked bid commitment (commitA)
 	SaltB       *big.Int      // salt for the seller's payout commitment (commitB) — HKDF(ss, "note salt")
 	SaltRevert  *big.Int      // fresh random salt for the revert commitment (≠ SaltA)
@@ -213,7 +217,7 @@ func AuctionCtxtHash(ctxt1, ctxt2 []byte) *big.Int {
 // AuctionBidProof generates a proof for the AuctionBid circuit.
 //
 // Returns PublicSignal = [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier,
-// StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice] — exactly the
+// StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice, StSellerPk] — exactly the
 // `statement` argument submitBid() expects on-chain. The Ctxt1/Ctxt2 given here must be the
 // bytes later passed to submitBid().
 func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult, error) {
@@ -253,6 +257,7 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		"stCtxtHash":     ctxtHash.String(),
 		"wtCtxtHash":     ctxtHash.String(),
 		"stFloorPrice":   p.FloorPrice.String(),
+		"stSellerPk":     p.BobPk.String(),
 		"wtAuctionId":    p.AuctionId.String(),
 		"wtTreeNumber":   p.TreeNumber.String(),
 		"wtSpendKey":     p.Bidder.PrivateKey.String(),
@@ -261,7 +266,6 @@ func (c *AuctionClient) AuctionBidProof(p AuctionBidParams) (*AuctionProofResult
 		"wtSaltIn":       p.SaltIn.String(),
 		"wtPathElements": bigIntSliceToStrings(p.MerkleProof.Elements),
 		"wtPathIndex":    p.MerkleProof.Indices.String(),
-		"wtSpendPkBob":   p.BobPk.String(),
 		"wtSaltA":        p.SaltA.String(),
 		"wtSaltB":        p.SaltB.String(),
 		"wtBidAmount":    p.BidAmount.String(),

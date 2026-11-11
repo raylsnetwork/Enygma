@@ -58,7 +58,7 @@ type AuctionFinalCircuit struct {
 	WtAuctionId      frontend.Variable   // must equal StAuctionId; binds proof to one auction
 	WtBatchActive    []frontend.Variable // boolean; length AuctionFinalBatches
 	WtWinnerBatchIdx frontend.Variable   // which batch contains the overall winner
-	WtPkBob          frontend.Variable   // NFT seller's spend key (from auctioneer's decryption)
+	WtPkBob          frontend.Variable   // the auction's sellerPk (from auctioneer's decryption); fixed by the bid's commitB
 	WtSaltB          frontend.Variable   // HKDF(ss_winner, "note salt") for Bob's USDC note
 	WtUsdcTokenId    frontend.Variable   // USDC token ID
 	WtSaltAlice      frontend.Variable   // fresh random salt for winner's NFT commitment
@@ -106,6 +106,9 @@ func (circuit *AuctionFinalCircuit) Define(api frontend.API) error {
 
 	// Verify commitB: the auctioneer proves they correctly decrypted the winning
 	// bid.  WtPkBob and WtSaltB are recovered via ML-KEM.Decapsulate(sk_auction).
+	// WtPkBob is private here, but the contract requires StWinnerCommitB to be the
+	// winning bid's own commitB, which the AuctionBid proof built from the
+	// auction's on-chain sellerPk: so this payout can only go to the seller.
 	commitB := primitives.Erc20CommitmentV2(api,
 		circuit.WtPkBob,
 		circuit.WtSaltB,

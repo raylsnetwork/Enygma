@@ -71,6 +71,7 @@ func TestAuction_Revert(t *testing.T) {
 		Deadline:           big.NewInt(1_900_000_000),
 		SettlementDeadline: big.NewInt(1_900_000_000 + 3*86400),
 		FloorPrice:         big.NewInt(10),
+		SellerPk:           bob.PublicKey,
 	})
 	if err != nil {
 		t.Fatalf("AuctionLock: %v", err)

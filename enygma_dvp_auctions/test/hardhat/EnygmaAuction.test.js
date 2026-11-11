@@ -11,16 +11,19 @@ const CANCELED = 4;
 
 const ZERO_PROOF = Array(8).fill(0);
 
-// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr
+// The seller's payout key the auctions in this file are opened with.
+const SELLER_PK = 4242;
+
+// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice, sellerPk)) mod Fr
 // — the AuctionLock proof's StParamsHash, which initAuction() checks.
-function paramsHash(auctionId, deadline, settlementDeadline, floorPrice) {
+function paramsHash(auctionId, deadline, settlementDeadline, floorPrice, sellerPk = SELLER_PK) {
   return BigInt(ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]))) % FR;
+    ["uint256", "uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice, sellerPk]))) % FR;
 }
 
 function lockStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitLocked, nftTokenId, revertCommit = 0,
-  deadline, settlementDeadline, floorPrice }) {
-  const ph = deadline === undefined ? 0n : paramsHash(auctionId, deadline, settlementDeadline, floorPrice);
+  deadline, settlementDeadline, floorPrice, sellerPk = SELLER_PK }) {
+  const ph = deadline === undefined ? 0n : paramsHash(auctionId, deadline, settlementDeadline, floorPrice, sellerPk);
   return [auctionId, treeNumber, merkleRoot, nullifier, commitLocked, nftTokenId, revertCommit, ph];
 }
 
@@ -31,8 +34,8 @@ function ctxtHash(ctxt1 = "0x", ctxt2 = "0x") {
   return BigInt(ethers.keccak256(ethers.concat([ethers.keccak256(ctxt1), ethers.keccak256(ctxt2)]))) % FR;
 }
 
-function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0, ctxt1 = "0x", ctxt2 = "0x", floorPrice = 10 }) {
-  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit, ctxtHash(ctxt1, ctxt2), floorPrice];
+function bidStatement({ auctionId, treeNumber = 0, merkleRoot = 1, nullifier, commitA, commitB, revertCommit = 0, ctxt1 = "0x", ctxt2 = "0x", floorPrice = 10, sellerPk = SELLER_PK }) {
+  return [auctionId, treeNumber, merkleRoot, nullifier, commitA, commitB, revertCommit, ctxtHash(ctxt1, ctxt2), floorPrice, sellerPk];
 }
 
 function batchStatement({ auctionId, slots, winnerCommit, winnerPk, winnerAmount }) {
@@ -110,6 +113,7 @@ describe("EnygmaAuction", function () {
       deadline,
       settlementDeadline,
       floorPrice,
+      SELLER_PK,
     );
     return deadline;
   }
@@ -137,7 +141,7 @@ describe("EnygmaAuction", function () {
       const now = await time.latest();
       const settlementDeadline = now + 7200;
       await expect(
-        auction.initAuction(ZERO_PROOF, lockStatement({ auctionId: 1, nullifier: 1, commitLocked: 200, nftTokenId: 77 }), now - 1, settlementDeadline, 10)
+        auction.initAuction(ZERO_PROOF, lockStatement({ auctionId: 1, nullifier: 1, commitLocked: 200, nftTokenId: 77 }), now - 1, settlementDeadline, 10, SELLER_PK)
       ).to.be.revertedWithCustomError(auction, "InvalidDeadline");
     });
 
@@ -145,7 +149,7 @@ describe("EnygmaAuction", function () {
       const now = await time.latest();
       const deadline = now + 3600;
       await expect(
-        auction.initAuction(ZERO_PROOF, lockStatement({ auctionId: 1, nullifier: 1, commitLocked: 200, nftTokenId: 77 }), deadline, deadline, 10)
+        auction.initAuction(ZERO_PROOF, lockStatement({ auctionId: 1, nullifier: 1, commitLocked: 200, nftTokenId: 77 }), deadline, deadline, 10, SELLER_PK)
       ).to.be.revertedWithCustomError(auction, "InvalidSettlementDeadline");
     });
   });

@@ -11,20 +11,25 @@ const SETTLED = 3;
 const ZERO_PROOF = Array(8).fill(0);
 const DAY = 24 * 3600;
 
-// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice)) mod Fr — the lock proof's StParamsHash.
-const paramsHash = (auctionId, deadline, settlementDeadline, floorPrice) =>
-  BigInt(ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice]))) % FR;
+// The seller's payout key the auctions in this file are opened with, and a
+// bidder's own key.
+const SELLER_PK = 4242;
+const BIDDER_PK = 9999;
 
-// A lock statement whose proof was made for (deadline, settlementDeadline, floorPrice).
-const lockStatement = ({ auctionId, nullifier, commitLocked, nftTokenId = 77, deadline = 0, settlementDeadline = 0, floorPrice = 0 }) =>
-  [auctionId, 0, 1, nullifier, commitLocked, nftTokenId, 0, paramsHash(auctionId, deadline, settlementDeadline, floorPrice)];
+// keccak256(abi.encode(auctionId, deadline, settlementDeadline, floorPrice, sellerPk)) mod Fr — the lock proof's StParamsHash.
+const paramsHash = (auctionId, deadline, settlementDeadline, floorPrice, sellerPk) =>
+  BigInt(ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "uint256", "uint256", "uint256", "uint256"], [auctionId, deadline, settlementDeadline, floorPrice, sellerPk]))) % FR;
+
+// A lock statement whose proof was made for (deadline, settlementDeadline, floorPrice, sellerPk).
+const lockStatement = ({ auctionId, nullifier, commitLocked, nftTokenId = 77, deadline = 0, settlementDeadline = 0, floorPrice = 0, sellerPk = SELLER_PK }) =>
+  [auctionId, 0, 1, nullifier, commitLocked, nftTokenId, 0, paramsHash(auctionId, deadline, settlementDeadline, floorPrice, sellerPk)];
 const FR = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 // keccak256(abi.encodePacked(keccak256(ctxt1), keccak256(ctxt2))) mod Fr — the bid's StCtxtHash.
 const ctxtHash = (c1 = "0x", c2 = "0x") =>
   BigInt(ethers.keccak256(ethers.concat([ethers.keccak256(c1), ethers.keccak256(c2)]))) % FR;
-const bidStatement = ({ auctionId, nullifier, commitA, commitB, ctxt1 = "0x", ctxt2 = "0x", floorPrice = 10 }) =>
-  [auctionId, 0, 1, nullifier, commitA, commitB, 0, ctxtHash(ctxt1, ctxt2), floorPrice];
+const bidStatement = ({ auctionId, nullifier, commitA, commitB, ctxt1 = "0x", ctxt2 = "0x", floorPrice = 10, sellerPk = SELLER_PK }) =>
+  [auctionId, 0, 1, nullifier, commitA, commitB, 0, ctxtHash(ctxt1, ctxt2), floorPrice, sellerPk];
 const batchStatement = ({ auctionId, commits, winnerCommit, winnerPk, winnerAmount }) => {
   const c = Array(100).fill(0);
   commits.forEach((v, i) => { c[i] = v; });
@@ -52,7 +57,7 @@ async function openAuction(auction, { auctionId = 1, deadlineDelta = 3600, floor
   const settlementDeadline = deadline + 2 * DAY + 3600;
   await auction.initAuction(ZERO_PROOF,
     lockStatement({ auctionId, nullifier: 1000 + auctionId, commitLocked: 200, deadline, settlementDeadline, floorPrice }),
-    deadline, settlementDeadline, floorPrice);
+    deadline, settlementDeadline, floorPrice, SELLER_PK);
   return deadline;
 }
 
@@ -62,7 +67,7 @@ describe("EnygmaAuction — attack scenarios", function () {
     // Bob's lock proof was made for these parameters (its StParamsHash).
     const bobParams = async () => {
       const deadline = (await time.latest()) + 3600;
-      return { deadline, settlementDeadline: deadline + 3 * DAY, floorPrice: 10 };
+      return { deadline, settlementDeadline: deadline + 3 * DAY, floorPrice: 10, sellerPk: SELLER_PK };
     };
     const bobStmt = (p) => lockStatement({ auctionId: 1, nullifier: 1001, commitLocked: 200, ...p });
 
@@ -71,14 +76,16 @@ describe("EnygmaAuction — attack scenarios", function () {
       const { auction } = await deploy();
       const p = await bobParams();
       // The attacker copies Bob's proof and statement from the mempool and
-      // submits them first with a zero floor price, or deadlines of its own.
-      for (const [deadline, settlementDeadline, floorPrice] of [
-        [p.deadline, p.settlementDeadline, 0],
-        [p.deadline - 3000, p.settlementDeadline, p.floorPrice],
-        [p.deadline, p.settlementDeadline + 20 * DAY, p.floorPrice],
+      // submits them first with a zero floor price, deadlines of its own, or
+      // its own payout key (which every bid's commitB would then pay).
+      for (const [deadline, settlementDeadline, floorPrice, sellerPk] of [
+        [p.deadline, p.settlementDeadline, 0, p.sellerPk],
+        [p.deadline - 3000, p.settlementDeadline, p.floorPrice, p.sellerPk],
+        [p.deadline, p.settlementDeadline + 20 * DAY, p.floorPrice, p.sellerPk],
+        [p.deadline, p.settlementDeadline, p.floorPrice, BIDDER_PK],
       ]) {
         await expect(
-          auction.connect(attacker).initAuction(ZERO_PROOF, bobStmt(p), deadline, settlementDeadline, floorPrice),
+          auction.connect(attacker).initAuction(ZERO_PROOF, bobStmt(p), deadline, settlementDeadline, floorPrice, sellerPk),
           "VULNERABLE: Bob's proof opened the auction with the attacker's parameters",
         ).to.be.revertedWithCustomError(auction, "ParamsMismatch");
       }
@@ -89,18 +96,19 @@ describe("EnygmaAuction — attack scenarios", function () {
       const [, , attacker] = await ethers.getSigners();
       const { auction } = await deploy();
       const p = await bobParams();
-      await auction.connect(attacker).initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice);
+      await auction.connect(attacker).initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice, p.sellerPk);
       const core = await auction.getAuctionCore(1);
       expect(core.floorPrice).to.equal(BigInt(p.floorPrice));
       expect(core.deadline).to.equal(BigInt(p.deadline));
       expect(core.settlementDeadline).to.equal(BigInt(p.settlementDeadline));
+      expect(await auction.getSellerPk(1)).to.equal(BigInt(p.sellerPk));
     });
 
     it("A3: a proof cannot open the same auction twice", async function () {
       const { auction } = await deploy();
       const p = await bobParams();
-      await auction.initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice);
-      await expect(auction.initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice))
+      await auction.initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice, p.sellerPk);
+      await expect(auction.initAuction(ZERO_PROOF, bobStmt(p), p.deadline, p.settlementDeadline, p.floorPrice, p.sellerPk))
         .to.be.revertedWithCustomError(auction, "AuctionAlreadyExists");
     });
 
@@ -108,10 +116,10 @@ describe("EnygmaAuction — attack scenarios", function () {
       const { auction } = await deploy();
       const deadline = (await time.latest()) + 3600;
       const tooFar = deadline + 30 * DAY + 1;
-      await expect(auction.initAuction(ZERO_PROOF, bobStmt({ deadline, settlementDeadline: tooFar, floorPrice: 10 }), deadline, tooFar, 10))
+      await expect(auction.initAuction(ZERO_PROOF, bobStmt({ deadline, settlementDeadline: tooFar, floorPrice: 10 }), deadline, tooFar, 10, SELLER_PK))
         .to.be.revertedWithCustomError(auction, "InvalidSettlementDeadline");
       const ok = deadline + 30 * DAY;
-      await auction.initAuction(ZERO_PROOF, bobStmt({ deadline, settlementDeadline: ok, floorPrice: 10 }), deadline, ok, 10);
+      await auction.initAuction(ZERO_PROOF, bobStmt({ deadline, settlementDeadline: ok, floorPrice: 10 }), deadline, ok, 10, SELLER_PK);
     });
   });
 
@@ -343,6 +351,39 @@ describe("EnygmaAuction — attack scenarios", function () {
       ).to.be.revertedWithCustomError(auction, "FloorPriceMismatch");
       await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700, floorPrice: 10 }), "0x", "0x");
       expect((await auction.getAuctionCore(1)).bidCount).to.equal(1n);
+    });
+  });
+
+  // ── I. Bids must pay the seller's payout key ──────────────────────────────
+  describe("I: seller payout key", function () {
+    it("I1: a bid whose commitB pays any key but the auction's sellerPk is rejected", async function () {
+      // The AuctionBid circuit builds commitB from StSellerPk, and settlement
+      // pays out exactly the winning commitB. If StSellerPk were not this
+      // auction's sellerPk, the winner could prove a commitB paying their own
+      // key and take the NFT and their money back.
+      const [, bidder] = await ethers.getSigners();
+      const { auction } = await deploy();
+      await openAuction(auction);
+      for (const sellerPk of [BIDDER_PK, 0, SELLER_PK + 1]) {
+        await expect(
+          auction.connect(bidder).submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700, sellerPk }), "0x", "0x"),
+          `VULNERABLE: a bid paying key ${sellerPk} instead of the seller's was accepted`,
+        ).to.be.revertedWithCustomError(auction, "SellerPkMismatch");
+      }
+      expect((await auction.getAuctionCore(1)).bidCount).to.equal(0n);
+      await auction.connect(bidder).submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700 }), "0x", "0x");
+      expect((await auction.getAuctionCore(1)).bidCount).to.equal(1n);
+    });
+
+    it("I2: an auction cannot open with a zero or out-of-field sellerPk", async function () {
+      const { auction } = await deploy();
+      const deadline = (await time.latest()) + 3600;
+      const settlementDeadline = deadline + 3 * DAY;
+      for (const sellerPk of [0n, FR, FR + 1n]) {
+        await expect(auction.initAuction(ZERO_PROOF,
+          lockStatement({ auctionId: 1, nullifier: 1001, commitLocked: 200, deadline, settlementDeadline, floorPrice: 10, sellerPk }),
+          deadline, settlementDeadline, 10, sellerPk)).to.be.revertedWithCustomError(auction, "InvalidSellerPk");
+      }
     });
   });
 

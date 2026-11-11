@@ -218,6 +218,7 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 		Deadline:           deadline,
 		SettlementDeadline: settlementDeadline,
 		FloorPrice:         floorPrice,
+		SellerPk:           bob.PublicKey,
 	})
 	checkErr(t, "AuctionLockProof", err)
 
@@ -225,7 +226,7 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 	t.Logf("auctionId = %s", auctionId)
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
-		toBigArr8(lockResult.Proof), toBigArr8(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice,
+		toBigArr8(lockResult.Proof), toBigArr8(lockResult.PublicSignal), deadline, settlementDeadline, floorPrice, bob.PublicKey,
 	)
 	checkErr(t, "initAuction tx", err)
 	waitTx(t, ethClient, initTx)
@@ -280,7 +281,7 @@ func TestAuction_OnChain_350Bids(t *testing.T) {
 
 		bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
 			toBigArr8(bidResult.Proof),
-			toBigArr9(bidResult.PublicSignal),
+			toBigArr10(bidResult.PublicSignal),
 			ctxt1,
 			ctxt2,
 		)
