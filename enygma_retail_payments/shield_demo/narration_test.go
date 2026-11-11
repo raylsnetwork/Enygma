@@ -167,9 +167,16 @@ func TestARunPlaysItsConceptMoments(t *testing.T) {
 }
 
 // momentTexts are the texts of raw, a narration value, that a run with the
-// given USDr fee and tags, and no walkthrough, shows: a {"when", "text"}
-// part is kept only when its options hold, as the page does.
+// given USDr fee and tags, and no walkthrough, shows.
 func momentTexts(t *testing.T, raw any, usdrFee, tags bool) []string {
+	t.Helper()
+	return narrationTexts(t, raw, usdrFee, tags, false)
+}
+
+// narrationTexts are the texts of raw, a narration value, that a run with
+// the given USDr fee, tags and walkthrough shows: a {"when", "text"} part is
+// kept only when its options hold, as the page does.
+func narrationTexts(t *testing.T, raw any, usdrFee, tags, walkthrough bool) []string {
 	t.Helper()
 	switch v := raw.(type) {
 	case string:
@@ -177,12 +184,12 @@ func momentTexts(t *testing.T, raw any, usdrFee, tags bool) []string {
 	case []any:
 		var out []string
 		for _, x := range v {
-			out = append(out, momentTexts(t, x, usdrFee, tags)...)
+			out = append(out, narrationTexts(t, x, usdrFee, tags, walkthrough)...)
 		}
 		return out
 	case map[string]any:
 		if when, ok := v["when"]; ok {
-			holds := map[string]bool{"usdrFee": usdrFee, "!usdrFee": !usdrFee, "tags": tags, "!tags": !tags, "walkthrough": false, "!walkthrough": true}
+			holds := map[string]bool{"usdrFee": usdrFee, "!usdrFee": !usdrFee, "tags": tags, "!tags": !tags, "walkthrough": walkthrough, "!walkthrough": !walkthrough}
 			var conds []any
 			if c, ok := when.(string); ok {
 				conds = []any{c}
@@ -198,15 +205,40 @@ func momentTexts(t *testing.T, raw any, usdrFee, tags bool) []string {
 					return nil
 				}
 			}
-			return momentTexts(t, v["text"], usdrFee, tags)
+			return narrationTexts(t, v["text"], usdrFee, tags, walkthrough)
 		}
 		var out []string
 		for _, x := range v {
-			out = append(out, momentTexts(t, x, usdrFee, tags)...)
+			out = append(out, narrationTexts(t, x, usdrFee, tags, walkthrough)...)
 		}
 		return out
 	}
 	return nil
+}
+
+// A tags-off walkthrough's Audit step says how the auditor infers the
+// Sender's balances by conservation: with the USDr fee, that the Sender keeps
+// their granted USDr less each relayer fee; without it, nothing about USDr.
+func TestATagsOffWalkthroughsAuditSaysHowTheSendersUsdrIsInferred(t *testing.T) {
+	var audit struct {
+		B any `json:"b"`
+	}
+	if err := json.Unmarshal(servedNarration(t).Steps["audit"], &audit); err != nil {
+		t.Fatalf("steps.audit: %v", err)
+	}
+	for _, usdrFee := range []bool{true, false} {
+		body := strings.Join(narrationTexts(t, audit.B, usdrFee, false, true), " ")
+		if !strings.Contains(body, "conservation") {
+			t.Errorf("fee %v: the Audit step does not infer balances by conservation: %q", usdrFee, body)
+		}
+		feeLine := strings.Contains(body, "USDr") && strings.Contains(body, "granted") && strings.Contains(body, "relayer fee")
+		if usdrFee && !feeLine {
+			t.Errorf("fee on: the Audit step does not say the Sender keeps their granted USDr less each relayer fee: %q", body)
+		}
+		if !usdrFee && strings.Contains(body, "USDr") {
+			t.Errorf("fee off: the Audit step mentions USDr: %q", body)
+		}
+	}
 }
 
 // On a run without the USDr fee, no concept moment mentions a fee.
