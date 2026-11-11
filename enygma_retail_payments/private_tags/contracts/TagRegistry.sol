@@ -22,11 +22,18 @@ contract TagRegistry {
     // blockNumber → list of (tag, ctxt) entries published in that block
     mapping(uint256 => TagEntry[]) private _entries;
 
-    // O(1) duplicate guard: keccak256(blockNumber, tag) → published
+    // O(1) duplicate guard, per publisher:
+    // keccak256(blockNumber, publisher, tag) → published.
+    // Keyed by publisher so one address publishing a tag never blocks
+    // another address from publishing the same tag in the same block; a
+    // block may therefore hold the same tag more than once, and scanners
+    // (private_tags/src ScanBlock) return every matching entry.
     mapping(bytes32 => bool) private _tagExists;
 
     // Per-address per-block publish count for spam prevention
-    // keccak256(blockNumber, publisher) → count
+    // keccak256(blockNumber, publisher) → count.
+    // This bounds one address only: a caller with many addresses can
+    // publish MAX_TAGS_PER_BLOCK from each.
     mapping(bytes32 => uint256) private _blockPublishCount;
 
     // Maximum tags a single address may publish per block.
@@ -47,15 +54,16 @@ contract TagRegistry {
     error CtxtTooLarge(uint256 got);
 
     // publishTag publishes a (tag, ctxt) tuple at the current block number.
-    // Reverts if the (tag, block) pair is already registered, if the caller
-    // has exceeded MAX_TAGS_PER_BLOCK in this block, or if ctxt exceeds CTXT_MAX.
+    // Reverts if the caller already published this tag in this block, if the
+    // caller has exceeded MAX_TAGS_PER_BLOCK in this block, or if ctxt
+    // exceeds CTXT_MAX.
     function publishTag(bytes32 tag, bytes calldata ctxt) external {
         uint256 bn = block.number;
 
         if (ctxt.length > CTXT_MAX) revert CtxtTooLarge(ctxt.length);
 
         // O(1) duplicate check.
-        bytes32 tagKey = keccak256(abi.encode(bn, tag));
+        bytes32 tagKey = keccak256(abi.encode(bn, msg.sender, tag));
         if (_tagExists[tagKey]) revert TagAlreadyExists(tag, bn);
 
         // Per-address per-block rate limit.

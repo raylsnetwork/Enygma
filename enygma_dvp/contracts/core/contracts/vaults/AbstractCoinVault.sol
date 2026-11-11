@@ -154,9 +154,14 @@ abstract contract AbstractCoinVault is
 
         uint256[] memory commitments = new uint256[](numberOfCommitments);
 
-        for (uint256 i = 0; i < numberOfCommitments; i++) {
-            commitments[i] = (receipt.statement[commitmentsIndex + i]);
-            emit Commitment(_vaultId, commitments[i]);
+        // Zero output slots are empty: skip them wherever they sit.
+        uint256 j = 0;
+        for (uint256 i = 0; i < outputSize; i++) {
+            uint256 commitment = receipt.statement[commitmentsIndex + i];
+            if (commitment != 0) {
+                commitments[j++] = commitment;
+                emit Commitment(_vaultId, commitment);
+            }
         }
 
         insertLeaves(commitments);
@@ -286,10 +291,12 @@ abstract contract AbstractCoinVault is
             numberOfCommitments
         );
 
-        for (uint256 i = 0; i < numberOfCommitments; i++) {
+        // Zero entries are empty: skip them wherever they sit.
+        uint256 j = 0;
+        for (uint256 i = 0; i < commitments.length; i++) {
             if (commitments[i] != 0) {
-                commitmentsToInsert[i] = (commitments[i]);
-                emit Commitment(_vaultId, commitmentsToInsert[i]);
+                commitmentsToInsert[j++] = commitments[i];
+                emit Commitment(_vaultId, commitments[i]);
             }
         }
 
