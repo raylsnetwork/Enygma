@@ -186,10 +186,10 @@ type exitedNote struct {
 }
 
 // tagChannel is the Sender's tag channel to Ana: the Sender's ss, Ana's
-// Decaps of its record, and the record's index.
+// Decaps of its record, the record's index and the block that opened it.
 type tagChannel struct {
-	ss, anaSS []byte
-	idx       uint64
+	ss, anaSS  []byte
+	idx, block uint64
 }
 
 // noteOpening is one trial decryption of a note's ciphertexts: the shared
@@ -381,6 +381,9 @@ func TestProtocolPrimer(t *testing.T) {
 	var exit *exitedNote
 	// toAnaChannel is the Sender's tag channel to Ana, which the payment's tag rides on.
 	var toAnaChannel *tagChannel
+	// tagBlock is the block the payment's tag landed in, which Ana's tag
+	// scan reaches.
+	var tagBlock uint64
 
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
@@ -795,7 +798,7 @@ func TestProtocolPrimer(t *testing.T) {
 				ledgerItem{Tx: "ChannelOpened event", Field: "sender", Value: sender.addr.Hex()})
 		}
 		data.Steps["channel"] = primerEntry{Values: v, Ledger: ledger}
-		toAnaChannel = &tagChannel{ss: ss, anaSS: anaSS, idx: idx}
+		toAnaChannel = &tagChannel{ss: ss, anaSS: anaSS, idx: idx, block: toAna.receipt.BlockNumber.Uint64()}
 	})
 
 	check("payment", "one Payment proof spends the Sender's note into Ana's and the change, and every constraint holds on the run's values and the chain", func(t *testing.T) {
@@ -1367,6 +1370,7 @@ func TestProtocolPrimer(t *testing.T) {
 			"entries":      fmt.Sprint(len(entries)),
 			"matched":      fmt.Sprint(matched),
 		}
+		tagBlock = b
 		label := "publishTag · Sender"
 		data.Steps["tag"] = primerEntry{Values: v, Ledger: []ledgerItem{
 			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
@@ -1375,7 +1379,7 @@ func TestProtocolPrimer(t *testing.T) {
 		}}
 	})
 
-	check("discovery", "Ana trial-decrypts every Payment event's ciphertext with her view key, opens exactly her note, and its opening hashes to its commitment", func(t *testing.T) {
+	check("discovery", "Ana trial-decrypts every Payment event's ciphertext with her view key, opens exactly her note, and its opening hashes to its commitment; her tag scan from the tag channel's block to the tag's matches one entry, which opens to the same note", func(t *testing.T) {
 		if paid == nil {
 			t.Fatal("no note paid to Ana: the payment check did not pass")
 		}
@@ -1499,24 +1503,97 @@ func TestProtocolPrimer(t *testing.T) {
 			}
 		}
 
+		// The way with a tag. Ana's wallet finds its tag channels once, by
+		// trying every record of TagChannelRegistry (step 5), then, for each
+		// block from the tag channel's on, computes one tag per tag channel
+		// and reads that block's entries once. One entry matches, in the
+		// tag's block, and one decryption opens it to this same note.
+		if toAnaChannel == nil || tagBlock == 0 {
+			t.Fatal("no tag channel or tag: the channel or tag check did not pass")
+		}
+		tagsAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
+		records, found := scanTagChannels(t, client, receipts, ana.view.DecapsKey, "Ana's view key", toAnaChannel.idx)
+		channels := []tags.Channel{{SharedSecret: found[0].SharedSecret, PkSpend: ana.spend.PublicKey}}
+		from, to := toAnaChannel.block, tagBlock
+		var tagsComputed, entriesRead int
+		var hits []tags.ScannedTag
+		for b := from; b <= to; b++ {
+			entries, err := tags.GetEntries(client, tagsAddr, b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entriesRead += len(entries)
+			// Recomputed with iden3's Poseidon, apart from the library's scan.
+			want := map[common.Hash]bool{}
+			for _, c := range channels {
+				want[common.BigToHash(poseidonOf(t, new(big.Int).SetUint64(b), c.PkSpend, toField(c.SharedSecret)))] = true
+				tagsComputed++
+			}
+			mine := 0
+			for _, e := range entries {
+				if want[common.Hash(e.Tag)] {
+					mine++
+				}
+			}
+			scanned, err := tags.ScanBlock(client, tagsAddr, b, channels)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(scanned) != mine {
+				t.Errorf("block %d: the library's scan matched %d entries, the recomputed tags %d", b, len(scanned), mine)
+			}
+			hits = append(hits, scanned...)
+		}
+		if len(hits) != 1 || hits[0].BlockNumber != tagBlock {
+			t.Fatalf("Ana's tag scan of blocks %d–%d matched %d entries, want 1, in block %d", from, to, len(hits), tagBlock)
+		}
+		// One decryption per matched entry, each opening to this same note.
+		decryptions := 0
+		for _, h := range hits {
+			byTag, err := tags.DecryptPaymentNote(found[0].SharedSecret, ana.spend.PublicKey, h.BlockNumber, h.Entry.Ctxt)
+			decryptions++
+			if err != nil || byTag.Amount.Cmp(amount) != 0 || byTag.TokenId.Cmp(token) != 0 || byTag.Salt.Cmp(salt) != 0 {
+				t.Errorf("the matched entry opens to %+v (err %v), want the note the trial decryption found", byTag, err)
+			}
+		}
+		// Trying every note over the same blocks: the Payment events in them.
+		window, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{dvpAddr},
+			Topics: [][]common.Hash{{paymentEventSig}}, FromBlock: new(big.Int).SetUint64(from), ToBlock: new(big.Int).SetUint64(to)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(window) < 1 || len(window) > len(events) {
+			t.Errorf("%d Payment events in blocks %d–%d, want the payment's among the %d", len(window), from, to, len(events))
+		}
+
 		data.Steps["discovery"] = primerEntry{Values: map[string]string{
-			"anaEk":      hexutil.Encode(ana.view.EncapsKey),
-			"capsule":    hexutil.Encode(capsule),
-			"ss":         hexutil.Encode(anaOpen.ss),
-			"saltBytes":  hexutil.Encode(anaOpen.saltBytes),
-			"salt":       salt.String(),
-			"key":        hexutil.Encode(anaOpen.key),
-			"nonce":      hexutil.Encode(anaOpen.nonce),
-			"sealed":     hexutil.Encode(anaOpen.sealed),
-			"encTxData":  hexutil.Encode(payload),
-			"plaintext":  hexutil.Encode(anaOpen.plain),
-			"token":      token.String(),
-			"amount":     amount.String(),
-			"pkSpend":    ana.spend.PublicKey.String(),
-			"commitment": commitment.String(),
-			"scanned":    fmt.Sprint(len(events)),
-			"opened":     fmt.Sprint(opened),
-			"forged":     claimed.String(),
+			"channelRecords": fmt.Sprint(records),
+			"tagChannels":    fmt.Sprint(len(found)),
+			"tagFrom":        fmt.Sprint(from),
+			"tagTo":          fmt.Sprint(to),
+			"tagBlocks":      fmt.Sprint(to - from + 1),
+			"tagsComputed":   fmt.Sprint(tagsComputed),
+			"tagEntries":     fmt.Sprint(entriesRead),
+			"tagMatched":     fmt.Sprint(len(hits)),
+			"tagOpened":      fmt.Sprint(decryptions),
+			"windowEvents":   fmt.Sprint(len(window)),
+			"anaEk":          hexutil.Encode(ana.view.EncapsKey),
+			"capsule":        hexutil.Encode(capsule),
+			"ss":             hexutil.Encode(anaOpen.ss),
+			"saltBytes":      hexutil.Encode(anaOpen.saltBytes),
+			"salt":           salt.String(),
+			"key":            hexutil.Encode(anaOpen.key),
+			"nonce":          hexutil.Encode(anaOpen.nonce),
+			"sealed":         hexutil.Encode(anaOpen.sealed),
+			"encTxData":      hexutil.Encode(payload),
+			"plaintext":      hexutil.Encode(anaOpen.plain),
+			"token":          token.String(),
+			"amount":         amount.String(),
+			"pkSpend":        ana.spend.PublicKey.String(),
+			"commitment":     commitment.String(),
+			"scanned":        fmt.Sprint(len(events)),
+			"opened":         fmt.Sprint(opened),
+			"forged":         claimed.String(),
 		}, Ledger: []ledgerItem{}}
 		discovered = &paidNote{commitment: commitment, salt: salt, amount: amount, token: token, block: paid.block, capsule: capsule, payload: payload}
 	})
@@ -1765,7 +1842,7 @@ func TestProtocolPrimer(t *testing.T) {
 		exit = &exitedNote{amount: amount, change: change, commitment: c1, nullifier: nf, ctI: ctI, ctII: ctII, tx: mined.TxHash, block: block}
 	})
 
-	check("audit", "the auditor recovers Ana's view key from the UserRegistry's audit ciphertexts, opens her notes with it, and finds no ciphertext for the Sender's change", func(t *testing.T) {
+	check("audit", "the auditor recovers Ana's view key from the UserRegistry's audit ciphertexts, opens her notes with it, and finds no ciphertext for the Sender's change; the key opens the Sender's tag channel, whose c₂ declares the payment's msg.sender, and whose tag for b opens to C₀; records declaring someone else or no one open as declared", func(t *testing.T) {
 		if discovered == nil || exit == nil {
 			t.Fatal("no notes to audit: the discovery or withdrawal check did not pass")
 		}
@@ -1884,31 +1961,144 @@ func TestProtocolPrimer(t *testing.T) {
 			}
 		}
 
+		// The payer, named through the tag channel. Ana's recovered view key
+		// opens the records sealed to her, as her own wallet's scan does: the
+		// Sender's tag channel alone. Its c₂ gives the senderId the Sender
+		// declared, and its ss gives the tag that announced Ana's note.
+		if toAnaChannel == nil || tagBlock == 0 {
+			t.Fatal("no tag channel or tag: the channel or tag check did not pass")
+		}
+		channelsAddr := common.HexToAddress(receipts["TagChannelRegistry"].ContractAddress)
+		tagsAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
+		records, opened := scanTagChannels(t, client, receipts, recovered, "the recovered view key", toAnaChannel.idx)
+		var record []any
+		if err := bindContract(t, client, channelsAddr, tagChannelRegistryABI(t)).Call(&bind.CallOpts{}, &record, "getChannel", new(big.Int).SetUint64(toAnaChannel.idx)); err != nil {
+			t.Fatal(err)
+		}
+		recordSender, c1, c2 := record[0].(common.Address), record[1].([]byte), record[2].([]byte)
+		// Recomputed with the standard library: Decaps, HKDF, AES-GCM open.
+		chSS, err := recovered.Decapsulate(c1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(chSS, toAnaChannel.ss) || !bytes.Equal(opened[0].SharedSecret, chSS) {
+			t.Error("the auditor's Decaps of c₁ is not the tag channel's ss")
+		}
+		chKey := channelKeyOf(t, chSS)
+		chMsg, senderID, err := openChannelSealed(t, chKey, c1, c2)
+		if err != nil {
+			t.Fatalf("c₂ does not open under the auditor's k_ch: %v", err)
+		}
+		if string(opened[0].SenderId) != senderID || opened[0].Sender != recordSender {
+			t.Errorf("the library's scan gives senderId %q from %s, the recomputation %q from %s", opened[0].SenderId, opened[0].Sender, senderID, recordSender)
+		}
+		// The declared identity is the payment's msg.sender: an honest payer.
+		payTx, _, err := client.TransactionByHash(ctx, payment.TxHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payer, err := types.Sender(types.LatestSignerForChainID(big.NewInt(hardhatChainID)), payTx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if senderID != payer.Hex() || recordSender != payer {
+			t.Errorf("c₂ declares %s and the record's sender is %s; the payment was sent by %s", senderID, recordSender, payer)
+		}
+		// The tag ties the tag channel to Ana's note: from ss and her
+		// registered pk_spend, the auditor's tag for the tag's block is an
+		// entry there, and its ct opens to the opening of C₀ it verified.
+		auditTag := common.BigToHash(poseidonOf(t, new(big.Int).SetUint64(tagBlock), keys.SpendKey, toField(chSS)))
+		entries, err := tags.GetEntries(client, tagsAddr, tagBlock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hit *tags.TagEntry
+		for i := range entries {
+			if common.Hash(entries[i].Tag) == auditTag {
+				hit = &entries[i]
+			}
+		}
+		if hit == nil {
+			t.Fatalf("the auditor's tag %s is not among block %d's %d entries", auditTag, tagBlock, len(entries))
+		}
+		tagged, err := tags.DecryptPaymentNote(chSS, keys.SpendKey, tagBlock, hit.Ctxt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if poseidonOf(t, keys.SpendKey, tagged.Salt, tagged.Amount, tagged.TokenId).Cmp(commitment) != 0 {
+			t.Error("the tagged payload does not open the commitment C₀ the auditor verified")
+		}
+		// A dishonest payer: nothing checks senderId. Records sealed off chain
+		// to Ana's view key naming someone else, and naming no one, open
+		// under the recovered key just as the honest one does.
+		someone, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		forgedID := crypto.PubkeyToAddress(someone.PublicKey).Hex()
+		nUsers, err := rpcore.GetUserCount(client, registryAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		declared := map[string]string{}
+		for _, id := range []string{forgedID, ""} {
+			_, fc1, fc2, _, err := tags.PrepareChannelSetup(ana.view.EncapsKey, []byte(chMsg), []byte(id), tags.PrivacyFull, nUsers, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fss, err := recovered.Decapsulate(fc1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, got, err := openChannelSealed(t, channelKeyOf(t, fss), fc1, fc2)
+			if err != nil || got != id {
+				t.Errorf("a record declaring %q opens to %q (err %v), want it opened as declared", id, got, err)
+			}
+			declared[id] = got
+		}
+		if declared[""] == "" {
+			declared[""] = "(none)"
+		}
+
 		data.Steps["audit"] = primerEntry{Values: map[string]string{
-			"address":       ana.addr.Hex(),
-			"capsule":       hexutil.Encode(capsule),
-			"aesCt":         hexutil.Encode(aesCt),
-			"ss":            hexutil.Encode(ss),
-			"auditKey":      hexutil.Encode(k),
-			"nonce":         hexutil.Encode(nonce),
-			"sealed":        hexutil.Encode(sealed),
-			"seed":          hexutil.Encode(seed),
-			"ek":            hexutil.Encode(ek),
-			"otherAuditor":  "refused",
-			"noteCapsule":   hexutil.Encode(discovered.capsule),
-			"noteEncTxData": hexutil.Encode(discovered.payload),
-			"noteSs":        hexutil.Encode(note.ss),
-			"pkSpend":       keys.SpendKey.String(),
-			"salt":          salt.String(),
-			"token":         token.String(),
-			"amount":        amount.String(),
-			"commitment":    commitment.String(),
-			"changeCapsule": hexutil.Encode(exit.ctI),
-			"changeSealed":  hexutil.Encode(exit.ctII),
-			"changeAmount":  changeAmount.String(),
-			"withdrawn":     exit.amount.String(),
-			"senderOpened":  fmt.Sprint(senderOpened),
-			"scanned":       fmt.Sprint(len(events)),
+			"channelRecords": fmt.Sprint(records),
+			"channelsFound":  fmt.Sprint(len(opened)),
+			"channelIdx":     fmt.Sprint(toAnaChannel.idx),
+			"channelC1":      hexutil.Encode(c1),
+			"channelC2":      hexutil.Encode(c2),
+			"channelSs":      hexutil.Encode(chSS),
+			"channelKey":     hexutil.Encode(chKey),
+			"msg":            chMsg,
+			"senderId":       senderID,
+			"recordSender":   recordSender.Hex(),
+			"tagBlock":       fmt.Sprint(tagBlock),
+			"tag":            auditTag.Hex(),
+			"forgedId":       declared[forgedID],
+			"noneId":         declared[""],
+			"address":        ana.addr.Hex(),
+			"capsule":        hexutil.Encode(capsule),
+			"aesCt":          hexutil.Encode(aesCt),
+			"ss":             hexutil.Encode(ss),
+			"auditKey":       hexutil.Encode(k),
+			"nonce":          hexutil.Encode(nonce),
+			"sealed":         hexutil.Encode(sealed),
+			"seed":           hexutil.Encode(seed),
+			"ek":             hexutil.Encode(ek),
+			"otherAuditor":   "refused",
+			"noteCapsule":    hexutil.Encode(discovered.capsule),
+			"noteEncTxData":  hexutil.Encode(discovered.payload),
+			"noteSs":         hexutil.Encode(note.ss),
+			"pkSpend":        keys.SpendKey.String(),
+			"salt":           salt.String(),
+			"token":          token.String(),
+			"amount":         amount.String(),
+			"commitment":     commitment.String(),
+			"changeCapsule":  hexutil.Encode(exit.ctI),
+			"changeSealed":   hexutil.Encode(exit.ctII),
+			"changeAmount":   changeAmount.String(),
+			"withdrawn":      exit.amount.String(),
+			"senderOpened":   fmt.Sprint(senderOpened),
+			"scanned":        fmt.Sprint(len(events)),
 		}, Ledger: []ledgerItem{}}
 	})
 
@@ -2407,6 +2597,33 @@ func calldataOf(t *testing.T, client *ethclient.Client, a abi.ABI, txHash common
 		t.Fatal(err)
 	}
 	return tx, from, args
+}
+
+// scanTagChannels has the holder of dk try every record of
+// TagChannelRegistry with the client library, failing the test unless it
+// opens tag channel #want alone. It returns the record count and what opened.
+func scanTagChannels(t *testing.T, client *ethclient.Client, receipts map[string]onchainReceiptEntry, dk *mlkem.DecapsulationKey768, who string, want uint64) (uint64, []tags.FoundChannel) {
+	t.Helper()
+	addr := common.HexToAddress(receipts["TagChannelRegistry"].ContractAddress)
+	records, err := tags.GetChannelCount(client, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := tags.ScanChannels(client, addr, dk, 0, records)
+	if err != nil || len(found) != 1 || found[0].ChannelIdx != want {
+		t.Fatalf("%s opened %v of %d records (err %v), want tag channel #%d alone", who, found, records, err, want)
+	}
+	return records, found
+}
+
+// channelKeyOf is a tag channel's k_ch, HKDF-SHA256(ss, "enygma-channel-key-v1").
+func channelKeyOf(t *testing.T, ss []byte) []byte {
+	t.Helper()
+	k, err := hkdf.Key(sha256.New, ss, nil, "enygma-channel-key-v1", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
 }
 
 // toField reduces big-endian bytes b into BN254's scalar field.
