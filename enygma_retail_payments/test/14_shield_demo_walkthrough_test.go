@@ -2020,6 +2020,13 @@ var channelOpenedSig = crypto.Keccak256Hash([]byte("ChannelOpened(uint256,addres
 // tags library's artifact.
 func tagChannelRegistry(t *testing.T, client *ethclient.Client, addr common.Address) *bind.BoundContract {
 	t.Helper()
+	return bindContract(t, client, addr, tagChannelRegistryABI(t))
+}
+
+// tagChannelRegistryABI is TagChannelRegistry's ABI, from the private tags
+// library's artifact.
+func tagChannelRegistryABI(t *testing.T) abi.ABI {
+	t.Helper()
 	data, err := os.ReadFile("../private_tags/contracts/TagChannelRegistry.json")
 	if err != nil {
 		t.Fatalf("read the TagChannelRegistry artifact: %v", err)
@@ -2034,7 +2041,7 @@ func tagChannelRegistry(t *testing.T, client *ethclient.Client, addr common.Addr
 	if err != nil {
 		t.Fatalf("TagChannelRegistry ABI: %v", err)
 	}
-	return bindContract(t, client, addr, a)
+	return a
 }
 
 // channelRecord is a tag channel's record as TagChannelRegistry holds it.

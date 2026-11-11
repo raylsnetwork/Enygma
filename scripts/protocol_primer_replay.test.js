@@ -175,7 +175,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'payment', 'proof', 'discovery', 'withdrawal', 'audit', 'verdict']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'channel', 'payment', 'proof', 'discovery', 'withdrawal', 'audit', 'verdict']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -197,6 +197,71 @@ test('the shield\'s ledger entries are the deposit\'s public calldata, its commi
   // The step names the bound the tree puts on the crowd: 2^8 leaf slots.
   assert.strictEqual(v.depth, '8');
   assert.ok(text(section(doc, 'shield')).includes('256'), 'the shield names the tree\'s 256 leaf slots');
+});
+
+// chipsOf is what the diagram shows of step's chips, once it is current:
+// each chip's label and class, in drawing order.
+const chipsOf = (doc, step) => [...doc.querySelectorAll(`#flow .chip[data-step="${step}"]`)].map(c => `${c.querySelector('text').textContent} ${c.classList.contains('priv') ? 'priv' : 'pub'}`);
+
+test('the tag channel: the Sender opens it from their own account, Ana\'s view key alone opens it, a throwaway record decapsulates for her and its AEAD fails', () => {
+  const v = DATA.steps.channel.values, ledger = DATA.steps.channel.ledger;
+  const reg = DATA.steps.registration.values, keys = DATA.steps.keys.values;
+  const bytes = h => (h.length - 2) / 2;
+  // Sealed to Ana's registered view key; the Sender keeps ss, and Ana's Decaps gives the same.
+  assert.strictEqual(v.anaEk, keys['ana.viewEk']);
+  assert.strictEqual(v.anaSs, v.ss, 'Ana\'s Decaps of c₁ is the Sender\'s ss');
+  assert.deepStrictEqual([v.ss, v.c1, v.kch, v.nonce].map(bytes), [32, 1088, 32, 12]);
+  assert.strictEqual(v.c2, v.nonce + v.sealed.slice(2), 'c₂ is nonce ‖ sealed');
+  assert.strictEqual(bytes(v.sealed), bytes(v.plaintext) + 16, 'sealed is the plaintext and a 16-byte tag');
+  // msg ‖ senderId, each a 4-byte length and its bytes; senderId is the Sender's account.
+  const field = s => { const b = Buffer.from(s); const n = Buffer.alloc(4); n.writeUInt32BE(b.length); return Buffer.concat([n, b]); };
+  assert.strictEqual(v.plaintext, '0x' + Buffer.concat([field(v.msg), field(v.senderId)]).toString('hex'));
+  assert.strictEqual(v.senderId, reg['sender.address'], 'the declared identity is the Sender\'s address');
+  // PrivacyFull: every registered user's bit, and none past them.
+  const bits = [...Buffer.from(v.bitmap.slice(2), 'hex')].flatMap(b => [...Array(8)].map((_, i) => (b >> i) & 1));
+  assert.strictEqual(bits.filter(Boolean).length, Number(v.users), 'one set bit per registered user');
+  assert.ok(bits.slice(Number(v.users)).every(b => !b), 'no bit past the users');
+  // The throwaway record: Decaps gives a secret, the AEAD ⊥; Ana's scan opened one record of all.
+  assert.strictEqual(bytes(v.otherSs), 32);
+  assert.notStrictEqual(v.otherSs, v.ss);
+  assert.strictEqual(v.otherOpen, '⊥');
+  assert.strictEqual(v.found, '1');
+  assert.ok(Number(v.scanned) >= 2, 'the scan covered the throwaway record too');
+  // The ledger: both openChannel transactions from the Sender's account, each followed by its event.
+  const tx = (label, idx, c1) => [
+    [label, 'msg.sender', reg['sender.address'], true], [label, 'c1', c1, false],
+    [label, 'c2', ledger.find(i => i.tx === label && i.field === 'c2').value, false], [label, 'bitmap', v.bitmap, false],
+    ['ChannelOpened event', 'channelIdx', idx, false], ['ChannelOpened event', 'sender', reg['sender.address'], false]];
+  assert.deepStrictEqual(ledger.map(i => [i.tx, i.field, i.value, !!i.msgSender]), [
+    ...tx('openChannel · Sender', v.channelIdx, v.c1), ...tx('openChannel · Sender, throwaway', v.otherIdx, v.otherC1)]);
+  assert.strictEqual(ledger.find(i => i.tx === 'openChannel · Sender' && i.field === 'c2').value, v.c2);
+  assert.strictEqual(v.msgSender, reg['sender.address']);
+
+  // The diagram, on step 5: the Sender's wallet, Ana's and TagChannelRegistry
+  // light; the chips play; the tag channel's ss link joins the two wallets
+  // from this step on.
+  const { doc } = open();
+  const names = steps(doc), at = names.indexOf('channel');
+  assert.strictEqual(at, 4, 'the tag channel is step 5');
+  assert.strictEqual(section(doc, 'channel').querySelector('h2').lastChild.textContent.trim(), 'The tag channel');
+  const link = doc.querySelector('#flow .link');
+  assert.ok(link && link.textContent.includes('ss') && link.textContent.includes('tag channel'), 'the diagram has the tag channel link, with ss');
+  const node = id => doc.querySelector(`#flow .node[data-node="${id}"]`);
+  for (const [id, label] of [['tagChannels', 'TagChannelRegistry'], ['tags', 'TagRegistry']]) assert.ok(node(id)?.textContent.includes(label), `the chain has ${label}`);
+  const lit = () => [...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort();
+  for (let i = 0; i < names.length; i++) {
+    if (i) doc.getElementById('next').click();
+    assert.strictEqual(link.classList.contains('later'), i < at, `step ${i + 1}: the link is ${i < at ? 'not yet drawn' : 'drawn'}`);
+    if (i === at) {
+      assert.deepStrictEqual(lit(), ['ana', 'sender', 'tagChannels']);
+      assert.deepStrictEqual(chipsOf(doc, 'channel'), ['ss priv', 'c₁ pub', 'c₂ pub', 'bitmap pub', 'c₁ pub', 'c₂ pub', 'bitmap pub', 'c₁ pub', 'c₂ pub', 'ss priv', 'mine ✓ priv']);
+      for (const c of doc.querySelectorAll('#flow .chip[data-step="channel"]')) assert.ok(c.classList.contains('now'), 'the step\'s chips play');
+      assert.strictEqual([...doc.querySelectorAll('#ledger li.new')].length, ledger.length, 'the step\'s ledger rows are new');
+    }
+    if (i > at) for (const c of doc.querySelectorAll('#flow .chip[data-step="channel"]')) assert.ok(c.classList.contains('past'), 'later, they stay, faded');
+  }
+  const body = text(section(doc, 'channel'));
+  for (const s of ['PrivacyFull', 'PrivacyNone', 'PrivacySubset', 'PrivacyRift', 'checked by no one', 'Decaps never fails', 'step 10', 'relayer', '2−128']) assert.ok(body.includes(s), `the tag channel names ${s}`);
 });
 
 // GATES are the deployed Payment circuit's constraints (gnark_circuits/
@@ -261,7 +326,7 @@ test('the payment\'s ledger entries are its public inputs, the nullifier, the tw
   assert.strictEqual(BigInt(v.globalIndex), BigInt(v.tree) * 256n + BigInt(v.leafIndex), 'tree·2^8 + leaf index');
   assert.strictEqual(v['path7.node'], v.root, 'the eighth level is the root');
   const { doc } = open();
-  for (let i = 0; i < 4; i++) doc.getElementById('next').click();
+  for (let i = 0; i < 5; i++) doc.getElementById('next').click();
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes('payment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
 });
@@ -362,7 +427,7 @@ test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount 
   assert.deepStrictEqual(ledger.filter(i => i.msgSender).map(i => [i.tx, i.value]), [[call, v.msgSender]]);
   assert.strictEqual(v.msgSender, DATA.steps.registration.values['ana.address'], 'Ana sent it from her registered account');
   const { doc } = open();
-  for (let i = 0; i < 7; i++) doc.getElementById('next').click();
+  for (let i = 0; i < 8; i++) doc.getElementById('next').click();
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes(call) && t.includes(v.msgSender)), 'her msg.sender shows amber in the ledger');
   const body = text(section(doc, 'withdrawal'));
