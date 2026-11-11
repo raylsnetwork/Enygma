@@ -56,6 +56,10 @@ function open({ page = PRIMER, url = 'http://localhost:9092/protocol' } = {}) {
 }
 
 const text = el => el.textContent.replace(/\s+/g, ' ');
+// bytes is how many bytes a 0x value holds; word is a number as a 32-byte
+// big-endian word, in hex.
+const bytes = h => (h.length - 2) / 2;
+const word = x => BigInt(x).toString(16).padStart(64, '0');
 const section = (doc, step) => doc.querySelector(`section.step[data-step="${step}"]`);
 const steps = doc => [...doc.querySelectorAll('section.step')].map(s => s.dataset.step);
 
@@ -185,7 +189,7 @@ function stepThrough({ doc, errors }) {
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
-  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'channel', 'payment', 'proof', 'discovery', 'withdrawal', 'audit', 'verdict']);
+  assert.deepStrictEqual(steps(doc), ['keys', 'auditor', 'registration', 'shield', 'channel', 'payment', 'proof', 'tag', 'discovery', 'withdrawal', 'audit', 'verdict']);
   assert.deepStrictEqual(Object.keys(DATA.steps).sort(), steps(doc).slice().sort());
   assert.ok(DATA.steps.registration.ledger.some(i => i.msgSender), 'the registrations name their msg.sender');
 });
@@ -216,7 +220,6 @@ const chipsOf = (doc, step) => [...doc.querySelectorAll(`#flow .chip[data-step="
 test('the tag channel: the Sender opens it from their own account, Ana\'s view key alone opens it, a throwaway record decapsulates for her and its AEAD fails', () => {
   const v = DATA.steps.channel.values, ledger = DATA.steps.channel.ledger;
   const reg = DATA.steps.registration.values, keys = DATA.steps.keys.values;
-  const bytes = h => (h.length - 2) / 2;
   // Sealed to Ana's registered view key; the Sender keeps ss, and Ana's Decaps gives the same.
   assert.strictEqual(v.anaEk, keys['ana.viewEk']);
   assert.strictEqual(v.anaSs, v.ss, 'Ana\'s Decaps of c₁ is the Sender\'s ss');
@@ -271,7 +274,77 @@ test('the tag channel: the Sender opens it from their own account, Ana\'s view k
     if (i > at) for (const c of doc.querySelectorAll('#flow .chip[data-step="channel"]')) assert.ok(c.classList.contains('past'), 'later, they stay, faded');
   }
   const body = text(section(doc, 'channel'));
-  for (const s of ['PrivacyFull', 'PrivacyNone', 'PrivacySubset', 'PrivacyRift', 'checked by no one', 'Decaps never fails', 'step 10', 'relayer', '2−128']) assert.ok(body.includes(s), `the tag channel names ${s}`);
+  for (const s of ['PrivacyFull', 'PrivacyNone', 'PrivacySubset', 'PrivacyRift', 'checked by no one', 'Decaps never fails', 'step 11', 'relayer', '2−128']) assert.ok(body.includes(s), `the tag channel names ${s}`);
+});
+
+test('the tag: the Sender publishes payment 1\'s tag from their own account in the block after settlement, Ana\'s tag channel finds it and opens its payload to her note, and the reverse direction\'s tag differs', () => {
+  const v = DATA.steps.tag.values, ledger = DATA.steps.tag.ledger;
+  const { channel, payment, keys, registration: reg } = DATA.steps;
+  // The block after the payment's, on the tag channel of step 5, to Ana's spend key.
+  assert.strictEqual(BigInt(v.b), BigInt(payment.values.block) + 1n, 'the tag lands in the block after settlement');
+  assert.strictEqual(v.paymentBlock, payment.values.block);
+  assert.strictEqual(v.ss, channel.values.ss, 'the tag channel\'s ss');
+  assert.strictEqual(v.channelIdx, channel.values.channelIdx);
+  assert.strictEqual(v.pkSpend, keys.values['ana.pkSpend'], 'the payee\'s spend key');
+  assert.strictEqual(v.senderPk, keys.values['sender.pkSpend'], 'the reverse direction\'s payee is the Sender');
+  assert.strictEqual(BigInt(v.ssField), BigInt(v.ss) % BigInt(keys.values.p), 'ss mod p');
+  // k_b's info: the label, b as 8 big-endian bytes, pk_spend as 32.
+  assert.strictEqual(v.info, '0x' + Buffer.from('enygma-block-key-v1').toString('hex') + BigInt(v.b).toString(16).padStart(16, '0') + word(v.pkSpend));
+  assert.deepStrictEqual([v.tag, v.reverseTag, v.kb, v.nonce].map(bytes), [32, 32, 32, 12]);
+  assert.notStrictEqual(v.reverseTag, v.tag, 'the two directions\' tags differ');
+  assert.strictEqual(v.reverseOpen, '⊥', 'the reverse direction\'s key does not open ct');
+  // ct seals Ana's note's opening: amount ‖ token ‖ salt₀, 32 bytes each.
+  assert.strictEqual(v.amount, payment.values.valueOut0);
+  assert.strictEqual(v.token, payment.values.token);
+  assert.strictEqual(v.salt, payment.values.saltOut0);
+  assert.strictEqual(v.commitment, payment.values.commitmentOut0);
+  assert.strictEqual(v.plaintext, '0x' + word(v.amount) + word(v.token) + word(v.salt));
+  assert.strictEqual(v.ct, v.nonce + v.sealed.slice(2), 'ct is nonce ‖ sealed');
+  assert.strictEqual(bytes(v.sealed), 96 + 16, 'sealed is the 96-byte opening and a 16-byte tag');
+  // Ana's side: her tag for b is the published one, the only entry of the block it matches.
+  assert.strictEqual(v.anaTag, v.tag);
+  assert.ok(Number(v.entries) >= 1);
+  assert.strictEqual(v.matched, '1');
+  // The ledger: publishTag from the Sender's account, and nothing that names Ana.
+  assert.deepStrictEqual(ledger.map(i => [i.tx, i.field, i.value, !!i.msgSender]), [
+    ['publishTag · Sender', 'msg.sender', reg.values['sender.address'], true],
+    ['publishTag · Sender', 'tag', v.tag, false],
+    ['publishTag · Sender', 'ctxt', v.ct, false]]);
+  assert.strictEqual(v.msgSender, reg.values['sender.address']);
+  for (const x of [reg.values['ana.address'], keys.values['ana.pkSpend'], word(keys.values['ana.pkSpend']), word(v.amount), word(v.salt), v.ss.slice(2)]) {
+    assert.ok(!ledger.some(i => i.value.includes(x)), `the tag's ledger rows do not show ${x.slice(0, 20)}…`);
+  }
+
+  // The diagram, on step 8: the Sender's wallet, Ana's and TagRegistry light, and the step's chips play.
+  const { doc } = open();
+  assert.strictEqual(steps(doc).indexOf('tag'), 7, 'the tag is step 8');
+  assert.strictEqual(section(doc, 'tag').querySelector('h2').lastChild.textContent.trim(), 'The tag');
+  goTo(doc, 'tag');
+  assert.deepStrictEqual([...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort(), ['ana', 'sender', 'tags']);
+  assert.deepStrictEqual(chipsOf(doc, 'tag'), ['t_b pub', 'k_b priv', 'ct pub', 't_b pub', 'ct pub', 't_b ✓ priv', 'k_b priv', 'opening ✓ priv']);
+  for (const c of doc.querySelectorAll('#flow .chip[data-step="tag"]')) assert.ok(c.classList.contains('now'), 'the step\'s chips play');
+  assert.strictEqual([...doc.querySelectorAll('#ledger li.new')].length, ledger.length, 'the step\'s ledger rows are new');
+  const body = text(section(doc, 'tag'));
+  for (const s of ['TagRegistry', 'publishTag', 'window', 'relayer', 'reverse', 'selective disclosure', 'view keys', 'step 5', 'step 6']) assert.ok(body.includes(s), `the tag names ${s}`);
+});
+
+test('no chip of the diagram overlaps another, at any step', () => {
+  // Chips stay, faded, on every later step, so the last step shows them all.
+  const { doc } = open();
+  goTo(doc, 'verdict');
+  const boxes = [...doc.querySelectorAll('#flow .chip')].map(c => {
+    const [x, y] = c.getAttribute('transform').match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+    const r = c.querySelector('rect');
+    return { name: `${c.dataset.step} ${c.querySelector('text').textContent}`, x, y, w: Number(r.getAttribute('width')), h: Number(r.getAttribute('height')) };
+  });
+  assert.ok(boxes.length > 50);
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+      assert.ok(!overlap, `${a.name} (${a.x}, ${a.y}) overlaps ${b.name} (${b.x}, ${b.y})`);
+    }
+  }
 });
 
 // GATES are the deployed Payment circuit's constraints (gnark_circuits/
@@ -386,7 +459,6 @@ test('Ana\'s discovery opens the Payment event addressed to her, its opening has
   assert.strictEqual(v.anaEk, DATA.steps.keys.values['ana.viewEk']);
   // The sizes the page names: a 1088-byte capsule, a 32-byte secret, salt and
   // key, and nonce ‖ ct ‖ tag = 12 + 64 + 16 bytes over token ‖ amount.
-  const bytes = h => (h.length - 2) / 2;
   assert.deepStrictEqual([v.capsule, v.ss, v.saltBytes, v.key, v.nonce, v.sealed, v.plaintext].map(bytes), [1088, 32, 32, 32, 12, 80, 64]);
   assert.strictEqual(v.encTxData, v.nonce + v.sealed.slice(2), 'encTxData is nonce ‖ ct ‖ tag');
   assert.strictEqual(BigInt(v.plaintext), (BigInt(v.token) << 256n) + BigInt(v.amount), 'the plaintext is token ‖ amount, 32 bytes each');
@@ -495,7 +567,6 @@ test('the last step\'s ledger shows who spent, but holds no amount besides the s
   // No private amount sits under another field's name, in decimal or as a
   // 32-byte word, and no note's opening does.
   const values = new Set(all.map(i => i.value));
-  const word = x => BigInt(x).toString(16).padStart(64, '0');
   for (const [what, x] of Object.entries({ 'Ana\'s note': pay.values.valueOut0, 'the Sender\'s change': pay.values.valueOut1, 'Ana\'s change': exit.values.change, 'the audited change': audit.values.changeAmount })) {
     assert.ok(!values.has(x), `${what} (${x}) is not on the ledger`);
     assert.ok(![...values].some(l => l.includes(word(x))), `${what} is not on the ledger as a 32-byte word`);
