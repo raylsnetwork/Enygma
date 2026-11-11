@@ -10,6 +10,8 @@
 # Exit 0 when the mutant is killed (red), 1 when it survives or goes red
 # elsewhere, 2 on bad input: a command already red without the mutant, or
 # one that did not run (exit 126 or 127, as a command passed as one word).
+# The verdict (RED:, SURVIVED: or BAD INPUT:) is always the last line, after
+# the failure lines it rests on, so `| tail` keeps it.
 #
 #   scripts/mutant.sh enygma_retail_payments/shield_demo/index.html \
 #     "hold * 1.3)" "hold * 3)" -- node --test scripts/shield_demo_replay.test.js
@@ -31,8 +33,8 @@ trap 'cp "$backup" "$file"; rm -f "$backup" "$out"' EXIT
 
 # The command as the code stands: green, or there is nothing to show red.
 if ! "$@" >"$out" 2>&1; then
-  echo "BAD INPUT: the command fails without the mutant, so a red would show nothing"
   tail -8 "$out"
+  echo "BAD INPUT: the command fails without the mutant, so a red would show nothing"
   exit 2
 fi
 
@@ -53,14 +55,14 @@ if [ $status = 0 ]; then
   exit 1
 fi
 if [ $status = 126 ] || [ $status = 127 ]; then
-  echo "BAD INPUT: the command did not run with the mutant in place (exit $status)"
   tail -4 "$out"
+  echo "BAD INPUT: the command did not run with the mutant in place (exit $status)"
   exit 2
 fi
 if [ -n "$expect" ] && ! grep -Eq -- "$expect" "$out"; then
-  echo "SURVIVED: the command went red, but not from the expected check (/$expect/)"
   grep -E '^not ok|^ *(error|Error|--- FAIL|FAIL)' "$out" | head -8 || tail -8 "$out"
+  echo "SURVIVED: the command went red, but not from the expected check (/$expect/)"
   exit 1
 fi
-echo "RED: the command failed with the mutant in place"
 grep -E '^not ok|^ *(error|Error|--- FAIL|FAIL)' "$out" | head -8 || tail -8 "$out"
+echo "RED: the command failed with the mutant in place"

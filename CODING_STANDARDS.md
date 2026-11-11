@@ -14,6 +14,7 @@ The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html
 - **A security claim states its reach.** A bound says whom it holds against (an honest sender, any payer), and a stated weakness gives its widest reach, read from the deployed code.
 - **A claim agrees with the page's other steps.** A statement about who holds or sees a value matches every other step that mentions that value. A pointer to another step ("step 9 shows …") names what that step shows as merged; a later ticket's work is not there yet.
 - **The primer's "the run checked" matches a real assertion.** Text on the Protocol primer saying the run checked or found something matches an assertion in `TestProtocolPrimer`: a sentence with no such assertion is a finding.
+- **A hand check follows the page it checks.** A page change that alters what a `HAND_CHECK.md` check describes (a narration line, a count, a label) updates that check in the same change, and a recorded run there that the change outdates says so. A check that still describes the old page is a finding.
 - **Engine and service JSON is read for its real shape.** A list field may be absent (Go's `omitempty` drops an empty list), so lists are read as `x || []`. A service body with bare big numbers (the gnark server's field elements) goes through the hop panel's `body()`, which keeps them digit for digit, never plain `JSON.parse` into numbers.
 
 ## Tests and checks
