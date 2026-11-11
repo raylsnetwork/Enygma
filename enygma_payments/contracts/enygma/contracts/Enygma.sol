@@ -1065,10 +1065,9 @@ contract Enygma is IEnygma {
      * usdrFixedFeeAmount.
      * @param participantIds Account IDs involved in transfer — shared by
      * both proofs (same k=6 anonymity set for both)
-     * @param bankTag Fix H-09: optional, unvalidated caller-supplied
-     *        attribution string (typically the relayer's per-bank
-     *        credential id) — see RelayAttribution's doc comment in
-     *        IEnygma.sol. Pass "" for no attribution.
+     * @param bankTag Optional, unvalidated, public attribution string; the
+     *        relayer passes "" so no participant identity is published —
+     *        see RelayAttribution's doc comment in IEnygma.sol.
      */
     function transfer(
         Point[] calldata commitmentDeltas,

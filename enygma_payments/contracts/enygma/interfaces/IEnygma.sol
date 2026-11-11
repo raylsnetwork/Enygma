@@ -98,19 +98,11 @@ interface IEnygma {
 
     event TransactionSuccessful(address indexed senderAddress);
 
-    // Fix H-09 (item 4 of the remediation list): the relayer is the sole
-    // possible transaction submitter (registerAccount binds every bank to
-    // the OWNER's address, not its own — see _expectedDomainId... no,
-    // see onlyRegistered), so TransactionSuccessful's senderAddress is
-    // always the relayer, never the bank that actually asked for this
-    // submission. bankTag is a caller-supplied, unvalidated string
-    // (typically the relayer's own per-bank credential identifier,
-    // Fix H-06) letting the chain's own event log carry that
-    // attribution instead of relying solely on the relayer's off-chain
-    // logs. Deliberately NOT the anonymity-set sender's real accountId —
-    // that stays hidden by design (H-01/H-02); this is "which caller of
-    // the relayer asked for this submission", an orthogonal, non-private
-    // fact the relayer already tracks off-chain per bank.
+    // Emitted by transfer() and transferWithFee() with the submitter and
+    // the caller-supplied, unvalidated bankTag. The tag is public (in the
+    // transaction's calldata and in this event), so it must not identify the
+    // participant that asked for the submission: the relayer always passes
+    // "" and keeps which bank asked for each submission in its own logs.
     event RelayAttribution(address indexed submitter, string bankTag);
 
     event BurnSuccessful(uint256 bankIndex, uint256 burnValue);
@@ -193,9 +185,8 @@ interface IEnygma {
     // (the same k=6 anonymity set). usdrProof's fee amount (public signal
     // StatementLayout.USDR_FEE_AMOUNT_OFFSET) must equal usdrFixedFeeAmount.
     //
-    // Fix H-09: bankTag is optional (pass "" for no attribution — every
-    // direct on-chain caller other than the relayer has no bank
-    // credential to report) and unvalidated; see RelayAttribution's doc.
+    // bankTag is optional and unvalidated, and public; the relayer passes
+    // "" (see RelayAttribution's doc).
     function transfer(
         Point[] memory commitments,
         Proof memory proof,
