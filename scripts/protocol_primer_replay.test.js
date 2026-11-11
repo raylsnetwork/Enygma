@@ -186,6 +186,14 @@ function stepThrough({ doc, errors }) {
   assert.deepStrictEqual(errors, []);
 }
 
+test('the data block comes from a chain no larger than the page is laid out for', () => {
+  // Every registered user is a bit of step 5's bitmap, shown in a formula
+  // line: from a long-lived chain (100+ users) that line overflows its box,
+  // which primer-from-disk reports far from the cause.
+  const users = Number(DATA.steps.channel.values.users);
+  assert.ok(users <= 40, `the data block's chain has ${users} registered users, past 40: write it on a fresh chain with make primer-refresh, not PRIMER_WRITE=1 on a long-lived stack`);
+});
+
 test('the data block holds an entry for each of the primer\'s steps, and nothing else', () => {
   assert.ok(DATA, 'the primer has a data block');
   const { doc } = open();
