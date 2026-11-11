@@ -93,6 +93,9 @@ interface IAbstractCoinVault {
     error CantSpendLockedCoin();
     error CoinAlreadyUnlocked();
     error InvalidStatmentSize();
+    // A receipt whose (numberOfInputs, numberOfOutputs, statement length) is
+    // not the exact shape of a circuit this vault accepts.
+    error ReceiptShapeMismatch();
     error ZeroWithdrawAmount();
 
     error InvalidAuditorPublicKey();

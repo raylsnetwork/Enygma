@@ -190,6 +190,12 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
         if (receipt.numberOfInputs != 2 && receipt.numberOfInputs != 10) {
             revert InvalidNumberOfInputs();
         }
+        // Both join-split circuits here have 2 outputs. numberOfOutputs is the
+        // caller's claim, and settlement inserts that many statement elements
+        // as commitments, so it must be the circuit's.
+        if (receipt.numberOfOutputs != 2) {
+            revert ReceiptShapeMismatch();
+        }
         if (receipt.numberOfInputs == 2) {
             if (!IVerifier(_verifierContractAddress).verifyProof(
                 VK_ID_ERC20_JOINSPLIT,
