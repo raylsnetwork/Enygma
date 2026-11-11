@@ -116,6 +116,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/protocol_primer_replay.test.js >/dev/null || node --test scripts/protocol_primer_replay.test.js
 	@# primer_page.js, the primer's reader, still finds and summarises the data block.
 	@node --test scripts/primer_page.test.js >/dev/null || node --test scripts/primer_page.test.js
+	@# mutant.sh, which shows a new check red, says RED only for a red it can trust.
+	@node --test scripts/mutant.test.js >/dev/null || node --test scripts/mutant.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
