@@ -711,7 +711,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
       "b": [
         {"when": "tags", "text": "With the view keys it recovered, the auditor decrypts every payment and, through the tag channels, names every payer. It rebuilds each user’s balance exactly, while the public still sees only fingerprints."},
         {"when": ["!tags", "!walkthrough"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, so it sees what each user received but can’t rebuild their balances."},
-        {"when": ["!tags", "walkthrough"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, but every note here comes from the Sender’s one shield, so it infers each balance by conservation: the Sender keeps what they shielded less what the others received. Each matches the user’s own scan."}
+        {"when": ["!tags", "walkthrough", "usdrFee"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, but every RaylsERC20 note here comes from the Sender’s one shield and only the Sender paid a relayer, so it infers each balance by conservation: the Sender keeps what they shielded less what the others received, and the USDr they were granted less each relayer fee. Each matches the user’s own scan."},
+        {"when": ["!tags", "walkthrough", "!usdrFee"], "text": "With the view keys it recovered, the auditor decrypts every payment’s amount and recipient. Without tags it can’t name the payer, but every note here comes from the Sender’s one shield, so it infers each balance by conservation: the Sender keeps what they shielded less what the others received. Each matches the user’s own scan."}
       ],
       "pub": ["Still only fingerprints, nullifiers and proofs"],
       "priv": [
