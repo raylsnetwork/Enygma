@@ -71,3 +71,17 @@ test('--expect: red from another check is not the check shown red', () => {
   assert.match(r.out, /not from the expected check/);
   assert.doesNotMatch(r.out, /^RED:/m);
 });
+
+test('every verdict is the last line, so a tail of the output keeps it', () => {
+  const cases = {
+    red: [CHECK, {}],
+    survived: ['true', {}],
+    'already red': ['echo "--- FAIL: TestCode/broken"; exit 1', {}],
+    'did not run': ['grep -q ok "$F" || no-such-command-for-mutant-test', {}],
+    'red elsewhere': [CHECK, { expect: 'TestCode/other_check' }],
+  };
+  for (const [name, [cmd, opts]] of Object.entries(cases)) {
+    const last = run(cmd, opts).out.trimEnd().split('\n').at(-1);
+    assert.match(last, /^(RED|SURVIVED|BAD INPUT):/, `${name}: last line ${JSON.stringify(last)}`);
+  }
+});

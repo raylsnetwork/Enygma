@@ -244,21 +244,30 @@ primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewri
 	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; exit $$status
 
 shield-demo-stale: ## Fail if the demo on :9092 was built from Go sources other than the working tree's (then make shield-demo-restart)
-	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
+	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: run make shield-demo-restart (on a running stack) or bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
 	logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); \
 	built=$$(cat "$$logs/bin/shield_demo.src" 2>/dev/null) || { echo "the demo on :9092 has no record of its sources (built before shield-demo-stale): run make shield-demo-restart"; exit 1; }; \
 	[ "$$built" = "$$(scripts/shield_demo_src.sh)" ] || { echo "the demo on :9092 was built from other Go sources than the working tree's: run make shield-demo-restart"; exit 1; }; \
 	echo "the demo on :9092 is current: built from the working tree's Go sources"
 
-shield-demo-restart: ## Rebuild the shield demo and restart it on the running run.sh stack (after an engine change)
-	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
-	logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); \
-	[ -d "$$logs" ] || { echo "the demo on :9092 (pid $$pid) has no -logs dir: restart the stack with run.sh"; exit 1; }; \
+# With no demo on :9092 but the stack up (the demo died, or was killed), it
+# finds the stack's logs dir from the gnark server's binary path, as
+# shield-gnark-restart does, and starts the demo there: run.sh would start a
+# fresh node over the running one.
+shield-demo-restart: ## Rebuild the shield demo and restart it on the running run.sh stack, or start it there if it is down (after an engine change)
+	@if pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN); then \
+	  logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); done_msg=restarted; \
+	  [ -d "$$logs" ] || { echo "the demo on :9092 (pid $$pid) has no -logs dir: restart the stack with run.sh"; exit 1; }; \
+	else \
+	  gpid=$$(lsof -tiTCP:8082 -sTCP:LISTEN) || { echo "no demo on :9092 and no gnark server on :8082: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
+	  logs=$$(dirname $$(dirname $$(ps -o args= -p $$gpid | awk '{print $$1}'))); done_msg=started; \
+	  [ -f "$$logs/gnark.log" ] || { echo "no demo on :9092, and the gnark server on :8082 (pid $$gpid) was not started by run.sh: restart the stack with run.sh"; exit 1; }; \
+	fi; \
 	root=$(CURDIR)/enygma_retail_payments; \
-	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && scripts/shield_demo_src.sh >$$logs/bin/shield_demo.src && kill $$pid && \
+	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && scripts/shield_demo_src.sh >$$logs/bin/shield_demo.src && { [ -z "$$pid" ] || kill $$pid; } && \
 	while lsof -tiTCP:9092 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
 	(cd $$root/shield_demo && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
-	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo restarted on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
+	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo $$done_msg on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
 	echo "the demo did not come back on :9092: see $$logs/demo.log"; exit 1
 
 # The gnark server holds no chain state, so a gnark_circuits/server change needs
