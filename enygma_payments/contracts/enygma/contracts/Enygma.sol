@@ -89,6 +89,15 @@ contract Enygma is IEnygma {
     // Total supply as Pedersen commitment point (x, y)
     uint256 public totalSupplyX;
     uint256 public totalSupplyY;
+    /// @notice Plaintext issued supply: Σ mintSupply amounts minus Σ burn
+    ///         amounts minus Σ protocol fees burned. It moves only where
+    ///         the plaintext amount is known. withdraw()/deposit() move the
+    ///         commitment point (totalSupplyX/Y) but not this value, because
+    ///         deposit() carries no plaintext amount; leaving withdraw()
+    ///         alone too keeps a withdraw/deposit round trip neutral. So
+    ///         this counts value bridged out to the DvP vault as still
+    ///         issued. Subtractions are checked: a burn larger than the
+    ///         recorded issued supply reverts instead of wrapping.
     uint256 public totalSupplyAmount;
 
     /// @notice Fix M-13: the fee `transferWithFee`'s proof must carry at
@@ -678,12 +687,16 @@ contract Enygma is IEnygma {
      *      it to their own running blinding factor). This trades the
      *      old, trivially-self-evident on-chain link between `amount` and
      *      the delta point for owner-asserted correctness — the same
-     *      trust tier mintSupply already operates at (onlyOwner) — which
-     *      is why _enforceInvariant() below now runs on every mint: if
-     *      the owner ever supplies a mintCommit that doesn't actually
-     *      open to `amount`, the mismatch surfaces immediately as a
-     *      revert here rather than as a later, harder-to-diagnose
-     *      check() failure.
+     *      trust tier mintSupply already operates at (onlyOwner).
+     *
+     *      Limitation: nothing on chain checks that mintCommit opens to
+     *      `amount`. The contract cannot open Com(amount, r_mint) without
+     *      r_mint, and publishing r_mint would undo the hiding above. The
+     *      _enforceInvariant() call below adds the same point to the
+     *      recipient's balance and to totalSupply, so it passes for any
+     *      mintCommit; it guards the ledger bookkeeping, not the
+     *      amount-commitment binding. totalSupplyAmount records the
+     *      owner-stated `amount`.
      */
     function mintSupply(
         uint256 amount,
@@ -704,9 +717,7 @@ contract Enygma is IEnygma {
             mintCommitY
         );
 
-        unchecked {
-            totalSupplyAmount += amount;
-        }
+        totalSupplyAmount += amount;
 
         // Propagate balances to current epoch start
         _propagateBalancesExcept(recipientId);
@@ -907,9 +918,7 @@ contract Enygma is IEnygma {
             negAmountX,
             negAmountY
         );
-        unchecked {
-            totalSupplyAmount -= amount;
-        }
+        totalSupplyAmount -= amount; // checked: reverts rather than wraps
 
         emit BurnSuccessful(accountId, amount);
 
@@ -1203,9 +1212,7 @@ contract Enygma is IEnygma {
             negFeeX,
             negFeeY
         );
-        unchecked {
-            totalSupplyAmount -= fee;
-        }
+        totalSupplyAmount -= fee; // checked: reverts rather than wraps
         emit FeeBurned(fee);
     }
 
