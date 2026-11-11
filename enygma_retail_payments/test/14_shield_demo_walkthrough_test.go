@@ -177,6 +177,21 @@ func checkGates(t *testing.T, opts engine.Options, acts []released) {
 	}
 }
 
+// checkAuditMatchesScans checks that the auditor's RaylsERC20 and USDr
+// balance for the Sender and each participant is what the user's own scan
+// holds.
+func checkAuditMatchesScans(t *testing.T, e *engine.Engine, a *engine.Audit) {
+	t.Helper()
+	for _, u := range append([]engine.Actor{e.Sender()}, e.Participants()...) {
+		if got, own := a.Balances[u.Name], e.Balance(u); got == nil || got.Cmp(own) != 0 {
+			t.Errorf("%s: auditor's balance %v, the user's own scan %s", u.Name, got, own)
+		}
+		if got, own := a.UsdrBalances[u.Name], e.UsdrBalance(u); got == nil || got.Cmp(own) != 0 {
+			t.Errorf("%s: auditor's USDr balance %v, the user's own scan %s", u.Name, got, own)
+		}
+	}
+}
+
 // checkNoFeeNoTags checks that a walkthrough with both toggles off sent
 // nothing to the USDr vault or the tag registries, and settled each payment
 // as one proof's, alone.
@@ -1913,17 +1928,24 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 				t.Errorf("%s of %s %s to %s (tx %s): payer %q, want the Sender", en.Kind, en.Amount, en.Asset, en.To, en.TxHash.Hex(), en.From)
 			}
 		}
-		for _, u := range append([]engine.Actor{e.Sender()}, e.Participants()...) {
-			if got, own := a.Balances[u.Name], e.Balance(u); got == nil || got.Cmp(own) != 0 {
-				t.Errorf("%s: auditor's balance %v, the user's own scan %s", u.Name, got, own)
-			}
-			if got, own := a.UsdrBalances[u.Name], e.UsdrBalance(u); got == nil || got.Cmp(own) != 0 {
-				t.Errorf("%s: auditor's USDr balance %v, the user's own scan %s", u.Name, got, own)
-			}
-		}
+		checkAuditMatchesScans(t, e, a)
 		if !slices.ContainsFunc(sink.snapshot(), func(ev engine.Event) bool { return ev.Kind == engine.RunDone }) {
 			t.Error("the walkthrough did not finish")
 		}
+	})
+
+	t.Run("with the USDr fee on and tags off, the auditor infers by conservation that the Sender paid every relayer fee", func(t *testing.T) {
+		feeOnly := walkthroughOpts()
+		feeOnly.Tags = false
+		e, _, _ := walk(t, cfg, feeOnly)
+		a, err := e.Audit(context.Background())
+		if err != nil {
+			t.Fatalf("Audit: %v", err)
+		}
+		if !a.Inferred {
+			t.Error("the audit names payers it has no tags for")
+		}
+		checkAuditMatchesScans(t, e, a)
 	})
 
 	t.Run("with the USDr fee and tags off, the walkthrough plays as before them: no credit, channel, fee or tag, the auditor inferring balances by conservation", func(t *testing.T) {
@@ -1939,11 +1961,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if !a.Inferred {
 			t.Error("the audit names payers it has no tags for")
 		}
-		for _, u := range append([]engine.Actor{e.Sender()}, e.Participants()...) {
-			if got, own := a.Balances[u.Name], e.Balance(u); got == nil || got.Cmp(own) != 0 {
-				t.Errorf("%s: auditor's balance %v, the user's own scan %s", u.Name, got, own)
-			}
-		}
+		checkAuditMatchesScans(t, e, a)
 		at := slices.IndexFunc(acts, func(a released) bool { return a.at.Action == "replay" })
 		if at < 0 || len(acts[at].hops) != 1 {
 			t.Fatal("no replay of payment 1 with one hop")
