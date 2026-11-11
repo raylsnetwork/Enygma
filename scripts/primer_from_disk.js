@@ -9,11 +9,12 @@
 // screenshot of each step in the output directory (made if missing; default:
 // the system's temporary directory). Read the screenshots against the served page.
 //
-// At 1200 × 785, with the last step scrolled into view as Next leaves it, it
-// exits 1 when the page or a diagram's panel scrolls sideways, the stage is
-// clipped or ends past the window, the ledger is left under MIN_LEDGER_PX, or a
-// formula's value runs past its grey box with no value over MAX_SCROLLING_VALUE
-// characters in its row to excuse it: a 77-digit value may scroll, an account may not.
+// At each of DESKTOP_SIZES, with the last step scrolled into view as Next
+// leaves it, it exits 1 when the page or a diagram's panel scrolls sideways,
+// the stage is clipped or ends past the window, the ledger's list shows under
+// MIN_LEDGER_LIST_PX, or a formula's line runs past its grey box with no value
+// over MAX_SCROLLING_VALUE characters in it to excuse it: a 77-digit value may
+// scroll, an account or a long formula may not.
 //
 // Then, at a 390 px phone width, it measures each diagram's smallest rendered
 // label (an SVG <text>'s font size times its <svg>'s scale) and exits 1 when
@@ -38,8 +39,13 @@ const OUT = process.argv[2] || os.tmpdir();
 fs.mkdirSync(OUT, { recursive: true });
 // MIN_LABEL_PX is the smallest label, in CSS px, a diagram may render at 390 px wide.
 const MIN_LABEL_PX = 7;
-// MIN_LEDGER_PX is the least height, at 1200 × 785, the diagram and stepper may leave the ledger.
-const MIN_LEDGER_PX = 120;
+// DESKTOP_SIZES are the windows the stage must fit: 1200 × 785, and the
+// 1159 × 688 viewport the browser gives the hand check in that window
+// (HAND_CHECK.md, "Layout checks run in a 1200×785 window").
+const DESKTOP_SIZES = [[1200, 785], [1159, 688]];
+// MIN_LEDGER_LIST_PX is the least height the diagram and stepper may leave
+// the ledger's list: about two items (60 px before #238's taller diagram).
+const MIN_LEDGER_LIST_PX = 50;
 // MAX_SCROLLING_VALUE is the longest value, in characters, that must still fit
 // its formula's box (an account is 42); a longer one excuses its row.
 const MAX_SCROLLING_VALUE = 44;
@@ -103,17 +109,24 @@ const DESKTOP = `(() => {
   if (stage.getBoundingClientRect().bottom > innerHeight) faults.push('the stage ends at ' + Math.round(stage.getBoundingClientRect().bottom) + ' px, past the window');
   if (document.documentElement.scrollWidth > innerWidth) faults.push('the page scrolls sideways');
   if (stage.scrollHeight > stage.clientHeight) faults.push('the stage is clipped: ' + stage.scrollHeight + ' px in ' + stage.clientHeight);
-  if (ledger.getBoundingClientRect().height < ${MIN_LEDGER_PX}) faults.push('the ledger is ' + Math.round(ledger.getBoundingClientRect().height) + ' px tall');
+  const list = ledger.querySelector('#ledger');
+  if (list.clientHeight < ${MIN_LEDGER_LIST_PX}) faults.push("the ledger's list shows " + list.clientHeight + ' px');
   for (const id of ['flow', 'circuit']) {
     const panel = document.getElementById(id).parentElement;
     if (panel.scrollWidth > panel.clientWidth) faults.push('the panel of #' + id + ' scrolls sideways');
   }
+  // A formula's line is each row of its table, or the whole formula when it
+  // has none; its extent is its contents', not its box's (a row is as wide as
+  // its table).
   for (const box of document.querySelectorAll('section.step .fm')) {
     const edge = box.getBoundingClientRect().right;
-    for (const value of box.querySelectorAll('[data-v]')) {
-      if (value.getBoundingClientRect().right <= edge + 1) continue;
-      const row = value.closest('mtr') || box;
-      if (![...row.querySelectorAll('[data-v]')].some(v => v.textContent.length > ${MAX_SCROLLING_VALUE})) faults.push(box.closest('section').id + ': the value ' + value.getAttribute('data-v') + ' is cut off at its box');
+    const lines = [...box.querySelectorAll('math')].flatMap(m => m.querySelector('mtr') ? [...m.querySelectorAll('mtr')] : [m]);
+    for (const line of lines) {
+      const range = document.createRange();
+      range.selectNodeContents(line.lastElementChild || line);
+      if (range.getBoundingClientRect().right <= edge + 1) continue;
+      if ([...line.querySelectorAll('[data-v]')].some(v => v.textContent.length > ${MAX_SCROLLING_VALUE})) continue;
+      faults.push(box.closest('section').id + ': the line "' + line.textContent.replace(/\s+/g, ' ').trim().slice(0, 40) + '" is cut off at its box');
     }
   }
   return faults;
@@ -161,11 +174,14 @@ withChrome(async ({ send, evaluate, events, sleep }) => {
   while (s.next) { await click('next'); s = await record('next'); }
   while (s.back) { await click('back'); s = await record('back'); }
 
-  // A desktop width, on the last step: the ledger at its longest.
-  await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 785, deviceScaleFactor: 1, mobile: false });
-  await evaluate('showStep(STEPS.length - 1, false)');
-  await sleep(800);
-  result.desktop = await evaluate(DESKTOP);
+  // Each desktop size, on the last step: the ledger at its longest.
+  result.desktop = [];
+  for (const [width, height] of DESKTOP_SIZES) {
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await evaluate('showStep(STEPS.length - 1, false)');
+    await sleep(800);
+    for (const fault of await evaluate(DESKTOP)) result.desktop.push(`at ${width} × ${height}: ${fault}`);
+  }
 
   // The phone width: the last step drawn, so every diagram has its labels.
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -188,7 +204,7 @@ withChrome(async ({ send, evaluate, events, sleep }) => {
     process.exitCode = 1;
   }
   if (result.desktop.length) {
-    console.error(`at 1200 × 785: ${result.desktop.join('; ')}`);
+    console.error(`desktop: ${result.desktop.join('; ')}`);
     process.exitCode = 1;
   }
   if (result.layout.length) {
