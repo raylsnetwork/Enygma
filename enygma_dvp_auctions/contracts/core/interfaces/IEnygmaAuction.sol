@@ -60,7 +60,8 @@ interface IEnygmaAuction {
         uint256 nftTokenId,
         uint256 deadline,
         uint256 settlementDeadline,
-        uint256 floorPrice
+        uint256 floorPrice,
+        uint256 sellerPk
     );
 
     /// @notice Emitted when a bidder submits a sealed bid.
@@ -157,9 +158,14 @@ interface IEnygmaAuction {
     error WinnerNotHighest();
     error BelowFloorPrice();
     error PayoutCommitMismatch();
-    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice) is not
-    // what the AuctionLock proof's StParamsHash was made for.
+    // initAuction: (auctionId, deadline, settlementDeadline, floorPrice, sellerPk)
+    // is not what the AuctionLock proof's StParamsHash was made for.
     error ParamsMismatch();
+    // initAuction: sellerPk is 0 or not a field element.
+    error InvalidSellerPk();
+    // submitBid: the bid's StSellerPk is not the auction's sellerPk, so its
+    // commitB would not pay the seller.
+    error SellerPkMismatch();
     // revertAuction: a batch has already been submitted.
     error BatchesAlreadySubmitted();
     error BidsStillOpen();
@@ -182,22 +188,27 @@ interface IEnygmaAuction {
     /// @param settlementDeadline  Unix timestamp after which anyone can trigger timeout recovery.
     ///                            Must be strictly greater than deadline.
     /// @param floorPrice          Seller's reserve price; enforced in-circuit by AuctionFinal.
+    /// @param sellerPk            Seller's payout spend public key: every bid's commitB must pay it
+    ///                            (checked as the AuctionBid proof's StSellerPk). Any key the
+    ///                            seller holds; a fresh one keeps the auction unlinked to their
+    ///                            usual key.
     function initAuction(
         uint256[8]  calldata proof,
         uint256[8]  calldata statement,
         uint256     deadline,
         uint256     settlementDeadline,
-        uint256     floorPrice
+        uint256     floorPrice,
+        uint256     sellerPk
     ) external returns (bool);
 
     /// @notice A bidder locks their USDC and submits a sealed bid. Only before deadline.
     /// @param proof      Groth16 proof
-    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice]
+    /// @param statement  [StAuctionId, StTreeNumber, StMerkleRoot, StNullifier, StCommitA, StCommitB, StRevertCommit, StCtxtHash, StFloorPrice, StSellerPk]
     /// @param ctxt1      ML-KEM capsule (published so the auctioneer can decrypt)
     /// @param ctxt2      AEAD ciphertext of bid details
     function submitBid(
         uint256[8]  calldata proof,
-        uint256[9]  calldata statement,
+        uint256[10] calldata statement,
         bytes       calldata ctxt1,
         bytes       calldata ctxt2
     ) external returns (bool);

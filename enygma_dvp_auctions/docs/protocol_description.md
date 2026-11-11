@@ -169,7 +169,7 @@ sequenceDiagram
     Bob->>gnark: sk_B, saltIn, saltLocked, saltRevert, Merkle path
     gnark-->>Bob: π_lock, statement[8]
 
-    Bob->>Chain: initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice)
+    Bob->>Chain: initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice, sellerPk)
     note over Chain: Verify π_lock
     Chain->>Vault: lockCoin(nf_B)
     note over Chain: state = BIDDING
@@ -285,9 +285,9 @@ sequenceDiagram
 
     note over Alice: ML-KEM.Encaps(pk_auction) → ss, ctxt1
     Alice->>gnark: sk_A, saltIn, saltA, saltB, saltRevert, Merkle path
-    gnark-->>Alice: π_bid, statement[9]
+    gnark-->>Alice: π_bid, statement[10]
 
-    Alice->>Chain: submitBid(π_bid, statement[9], ctxt1, ctxt2)
+    Alice->>Chain: submitBid(π_bid, statement[10], ctxt1, ctxt2)
     note over Chain: Verify π_bid (before deadline)
     Chain->>Vault: lockCoin(nf_A)
     note over Chain: Store BidData { commitA, commitB, revertCommit }
@@ -651,14 +651,14 @@ sequenceDiagram
 
     rect rgba(100,149,237,0.12)
         note over Bob,Chain: PHASE 0a — Bob Locks NFT
-        Bob->>Chain: initAuction(π_lock, deadline, settlementDeadline, floorPrice)
+        Bob->>Chain: initAuction(π_lock, deadline, settlementDeadline, floorPrice, sellerPk)
         note over Chain: state = BIDDING
     end
 
     rect rgba(100,200,100,0.10)
         note over Alice,Chain: PHASE 0b — Sealed Bid (before deadline)
         note over Alice: ML-KEM.Encaps(pk_auction) → ss, ctxt1
-        Alice->>Chain: submitBid(π_bid, statement[9], ctxt1, ctxt2)
+        Alice->>Chain: submitBid(π_bid, statement[10], ctxt1, ctxt2)
         note over Chain: nullify nf_A → store BidData
     end
 
@@ -769,14 +769,14 @@ If the auctioneer goes offline, Bob can call `revertAuction` at any time (while 
 - $revertCommit = \mathrm{H}(pk_B, saltRevert, 1, tokenId)$ with $saltRevert \neq saltLocked$
 - The input NFT note exists in the on-chain Merkle tree
 
-### $\pi_{bid}$ (AuctionBid — 7 public signals)
+### $\pi_{bid}$ (AuctionBid — 10 public signals)
 
 - I know the spend key for the USDC note being spent
 - The nullifier $nf_A = \mathrm{H}(sk_A, leafIndex_A)$ is well-formed
 - $commitA = \mathrm{H}(pk_A, saltA, amount, tokenId)$ is correctly formed (all-in: $bidAmount = amount_{in}$)
-- $commitB = \mathrm{H}(pk_B, saltB, amount, tokenId)$ is correctly formed with ML-KEM-derived $saltB$
+- $commitB = \mathrm{H}(sellerPk, saltB, amount, tokenId)$ is correctly formed with ML-KEM-derived $saltB$, where $sellerPk$ is the public $StSellerPk$ the contract requires to be the auction's seller payout key (set at `initAuction`); the bidder cannot choose whom $commitB$ pays
 - $revertCommit = \mathrm{H}(pk_A, saltRevert, amount, tokenId)$ with $saltRevert \neq saltA$
-- $0 < amount \leq 2^{128}$ (range check)
+- $0 < amount < 10^{36}$ (range check, at a fixed 120-bit width)
 - The input USDC note exists in the on-chain Merkle tree
 
 ### $\pi_{batch}$ (AuctionBatch — 104 public signals)

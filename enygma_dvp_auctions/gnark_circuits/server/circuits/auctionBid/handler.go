@@ -59,6 +59,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.StRevertCommit = frontend.Variable(req.StRevertCommit)
 		witness.StCtxtHash = frontend.Variable(req.StCtxtHash)
 		witness.StFloorPrice = frontend.Variable(req.StFloorPrice)
+		witness.StSellerPk = frontend.Variable(req.StSellerPk)
 
 		// populate private witnesses
 		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
@@ -68,7 +69,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.WtTokenId = frontend.Variable(req.WtTokenId)
 		witness.WtSaltIn = frontend.Variable(req.WtSaltIn)
 		witness.WtPathIndex = frontend.Variable(req.WtPathIndex)
-		witness.WtSpendPkBob = frontend.Variable(req.WtSpendPkBob)
 		witness.WtSaltA = frontend.Variable(req.WtSaltA)
 		witness.WtSaltB = frontend.Variable(req.WtSaltB)
 		witness.WtBidAmount = frontend.Variable(req.WtBidAmount)
@@ -126,7 +126,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		proofRemix := []*big.Int{ax, ay, bx1, bx0, by1, by0, cx, cy}
 
-		// public signal: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
+		// public signal: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice, stSellerPk]
 		publicSignal := []*big.Int{
 			utils.ParseBigInt(req.StAuctionId),
 			utils.ParseBigInt(req.StTreeNumber),
@@ -137,6 +137,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			utils.ParseBigInt(req.StRevertCommit),
 			utils.ParseBigInt(req.StCtxtHash),
 			utils.ParseBigInt(req.StFloorPrice),
+			utils.ParseBigInt(req.StSellerPk),
 		}
 
 		c.JSON(http.StatusOK, AuctionBidOutput{Proof: proofRemix, PublicSignal: publicSignal})

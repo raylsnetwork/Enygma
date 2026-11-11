@@ -8,7 +8,7 @@ Changes from v1:
 - **`reclaimBid()`**: now inserts `bid.revertCommit` (fresh salt, unlinkable) instead of the original `commitA`, preserving bidder privacy after cancellation.
 - **No bond mechanics**: the optimistic challenge path is deadline-gated only; no ETH bonds are required from either auctioneer or challenger.
 - **`revertAuction()` cancel**: Bob can cancel the auction while the state is BIDDING. (Later restored: only before the bidding deadline, since after it the auctioneer's submitBatch() reveals batch winners' amounts in the mempool before it is mined.) After CANCELED, all bidders reclaim their USDC via `reclaimBid()` using their pre-committed `revertCommit`.
-- `initAuction` / `submitBid` now accept `statement[7]` (was `statement[6]`); the 7th element is `revertCommit`. (Since then: `initAuction` takes `statement[8]`, adding `StParamsHash`, and `submitBid` takes `statement[9]`, adding `StCtxtHash` and `StFloorPrice`.)
+- `initAuction` / `submitBid` now accept `statement[7]` (was `statement[6]`); the 7th element is `revertCommit`. (Since then: `initAuction` takes `statement[8]`, adding `StParamsHash`, and `submitBid` takes `statement[9]`, adding `StCtxtHash` and `StFloorPrice`; then `statement[10]`, adding `StSellerPk`, the seller payout key `initAuction` now takes and binds in `StParamsHash`, so `commitB` must pay the seller.)
 - **Single settlement path**: `settle()` (immediate on-chain verification) was removed; only the optimistic path remains (`settleOptimistic` → challenge window → `finalizeSettlement` or `challengeSettlement`).
 
 ```mermaid
@@ -57,7 +57,7 @@ sequenceDiagram
 
         gnark-->>bob: { proof: π[8], publicSignal: [auctionId, treeNumber, merkleRoot,<br>                                    nullifier, commitLocked, nftTokenId,<br>                                    revertCommit] }   ← 7 signals (was 6)
 
-        bob->>chain: initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice)
+        bob->>chain: initAuction(π_lock, statement[8], deadline, settlementDeadline, floorPrice, sellerPk)
 
         chain->>verif: verifyProof(VK_LOCK, π_lock, statement[8])
         verif-->>chain: ✓ valid
@@ -87,10 +87,10 @@ sequenceDiagram
 
             gnark-->>alice: { proof: π[8], publicSignal: [auctionId, treeNumber, merkleRoot,<br>                                       nullifier, commitA, commitB,<br>                                       revertCommit] }   ← 7 signals (was 6)
 
-            alice->>chain: submitBid(π_bid, statement[9], ctxt1, ctxt2)
+            alice->>chain: submitBid(π_bid, statement[10], ctxt1, ctxt2)
             note over chain: Guards:<br>① state[auctionId] == BIDDING<br>② block.timestamp < deadline<br>③ _bids[auctionId][commitA] not already active
 
-            chain->>verif: verifyProof(VK_BID, π_bid, statement[9])
+            chain->>verif: verifyProof(VK_BID, π_bid, statement[10])
             verif-->>chain: ✓ valid
 
             chain->>usdc: verifyRoot(treeNumber, merkleRoot)

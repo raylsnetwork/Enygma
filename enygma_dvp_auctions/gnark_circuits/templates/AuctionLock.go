@@ -22,10 +22,11 @@ type AuctionLockCircuitConfig struct {
 //
 // StParamsHash binds the auction's parameters to the proof: the contract
 // requires it to equal keccak256(abi.encode(auctionId, deadline,
-// settlementDeadline, floorPrice)) mod Fr of the initAuction() arguments. They
-// are not otherwise part of the proof, so without it a front-runner who saw
-// Bob's proof in the mempool could open his auction with a floor price and
-// deadlines of its own.
+// settlementDeadline, floorPrice, sellerPk)) mod Fr of the initAuction()
+// arguments. They are not otherwise part of the proof, so without it a
+// front-runner who saw Bob's proof in the mempool could open his auction with a
+// floor price, deadlines or a payout key (sellerPk, which every bid's commitB
+// must pay) of its own.
 //
 // Public statement (8 elements):
 //
@@ -41,7 +42,7 @@ type AuctionLockCircuit struct {
 	StCommitLocked frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltLocked)
 	StNftTokenId   frontend.Variable `gnark:",public"` // public tokenId so bidders know what is up for auction
 	StRevertCommit frontend.Variable `gnark:",public"` // Erc721Commitment(tokenId, pk_B, saltRevert) — pre-committed recovery destination
-	StParamsHash   frontend.Variable `gnark:",public"` // hash of the auction's deadline, settlement deadline and floor price (checked on-chain)
+	StParamsHash   frontend.Variable `gnark:",public"` // hash of the auction's deadline, settlement deadline, floor price and seller payout key (checked on-chain)
 
 	// --- private witnesses ---
 	WtTreeNumber frontend.Variable // must equal StTreeNumber; incorporated into nullifier to prevent cross-tree replay

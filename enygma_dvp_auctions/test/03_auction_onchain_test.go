@@ -194,6 +194,7 @@ func TestAuction_OnChain(t *testing.T) {
 		Deadline:           deadline,
 		SettlementDeadline: settlementDeadline,
 		FloorPrice:         floorPrice,
+		SellerPk:           bob.PublicKey,
 	})
 	checkErr(t, "AuctionLockProof", err)
 
@@ -207,23 +208,30 @@ func TestAuction_OnChain(t *testing.T) {
 	// parameters of its own: the contract checks them against the proof's
 	// StParamsHash...
 	if _, atkErr := auctionContract.Transact(ownerAuth, "initAuction",
-		proof8Lock, signal8Lock, deadline, settlementDeadline, big.NewInt(0)); atkErr == nil {
+		proof8Lock, signal8Lock, deadline, settlementDeadline, big.NewInt(0), bob.PublicKey); atkErr == nil {
 		t.Fatal("VULNERABLE: initAuction accepted Bob's lock proof with a zero floor price")
 	} else if !strings.Contains(atkErr.Error(), "ParamsMismatch") {
 		t.Fatalf("other parameters rejected, but not with ParamsMismatch: %v", atkErr)
 	}
+	// Nor with a payout key of its own, which every bid's commitB would pay.
+	if _, atkErr := auctionContract.Transact(ownerAuth, "initAuction",
+		proof8Lock, signal8Lock, deadline, settlementDeadline, floorPrice, alice.PublicKey); atkErr == nil {
+		t.Fatal("VULNERABLE: initAuction accepted Bob's lock proof with another seller payout key")
+	} else if !strings.Contains(atkErr.Error(), "ParamsMismatch") {
+		t.Fatalf("another seller key rejected, but not with ParamsMismatch: %v", atkErr)
+	}
 	// ...and rewriting StParamsHash to match them breaks the proof.
 	forgedLock := signal8Lock
-	forgedLock[7] = core.AuctionParamsHash(auctionId, deadline, settlementDeadline, big.NewInt(0))
+	forgedLock[7] = core.AuctionParamsHash(auctionId, deadline, settlementDeadline, big.NewInt(0), bob.PublicKey)
 	if _, atkErr := auctionContract.Transact(ownerAuth, "initAuction",
-		proof8Lock, forgedLock, deadline, settlementDeadline, big.NewInt(0)); atkErr == nil {
+		proof8Lock, forgedLock, deadline, settlementDeadline, big.NewInt(0), bob.PublicKey); atkErr == nil {
 		t.Fatal("VULNERABLE: initAuction accepted a lock proof with a rewritten parameters hash")
 	} else if !strings.Contains(atkErr.Error(), "invalid proof") {
 		t.Fatalf("forged parameters hash rejected, but not as an invalid proof: %v", atkErr)
 	}
 
 	initTx, err := auctionContract.Transact(ownerAuth, "initAuction",
-		proof8Lock, signal8Lock, deadline, settlementDeadline, floorPrice,
+		proof8Lock, signal8Lock, deadline, settlementDeadline, floorPrice, bob.PublicKey,
 	)
 	checkErr(t, "initAuction tx", err)
 	waitTx(t, ethClient, initTx)
@@ -290,19 +298,19 @@ func TestAuction_OnChain(t *testing.T) {
 	t.Logf("Alice commitB = %s", aliceCommitB)
 
 	proof8Bid := toBigArr8(bidResult.Proof)
-	signal9Bid := toBigArr9(bidResult.PublicSignal)
+	signal10Bid := toBigArr10(bidResult.PublicSignal)
 
 	// A front-runner who copies the bid's proof and statement cannot swap the
 	// ciphertexts: the contract checks their hash against the statement...
 	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
-		proof8Bid, signal9Bid, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
+		proof8Bid, signal10Bid, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
 		t.Fatal("VULNERABLE: submitBid accepted the bid's proof with different ciphertexts")
 	} else if !strings.Contains(atkErr.Error(), "CiphertextMismatch") {
 		t.Fatalf("swapped ciphertexts rejected, but not with CiphertextMismatch: %v", atkErr)
 	}
 	// ...and rewriting the statement's hash to match them breaks the proof, because
 	// the circuit binds StCtxtHash.
-	forged := signal9Bid
+	forged := signal10Bid
 	forged[7] = core.AuctionCtxtHash([]byte("attacker-ctxt"), ctxt2)
 	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
 		proof8Bid, forged, []byte("attacker-ctxt"), ctxt2); atkErr == nil {
@@ -311,8 +319,45 @@ func TestAuction_OnChain(t *testing.T) {
 		t.Fatalf("forged hash rejected, but not as an invalid proof: %v", atkErr)
 	}
 
+	// The winner cannot be paid in their own place: a bid whose commitB pays
+	// the bidder's key is proven against StSellerPk = that key, which is not
+	// the auction's sellerPk...
+	selfPay, err := gnarkClient.AuctionBidProof(core.AuctionBidParams{
+		AuctionId:   auctionId,
+		Bidder:      alice,
+		BidAmount:   bidAmount,
+		TokenId:     usdcTokenId,
+		SaltIn:      aliceSaltIn,
+		TreeNumber:  big.NewInt(0),
+		MerkleProof: usdcProof,
+		BobPk:       alice.PublicKey,
+		SaltA:       saltA,
+		SaltB:       saltB,
+		SaltRevert:  saltRevertAlice,
+		Ctxt1:       ctxt1,
+		Ctxt2:       ctxt2,
+		FloorPrice:  floorPrice,
+	})
+	checkErr(t, "AuctionBidProof(self-pay)", err)
+	selfPaySig := toBigArr10(selfPay.PublicSignal)
+	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
+		toBigArr8(selfPay.Proof), selfPaySig, ctxt1, ctxt2); atkErr == nil {
+		t.Fatal("VULNERABLE: submitBid accepted a bid whose commitB pays the bidder")
+	} else if !strings.Contains(atkErr.Error(), "SellerPkMismatch") {
+		t.Fatalf("self-paying bid rejected, but not with SellerPkMismatch: %v", atkErr)
+	}
+	// ...and claiming the seller's key in its statement breaks the proof,
+	// because the circuit builds commitB from StSellerPk.
+	selfPaySig[9] = bob.PublicKey
+	if _, atkErr := auctionContract.Transact(ownerAuth, "submitBid",
+		toBigArr8(selfPay.Proof), selfPaySig, ctxt1, ctxt2); atkErr == nil {
+		t.Fatal("VULNERABLE: submitBid accepted a self-paying bid relabelled with the seller's key")
+	} else if !strings.Contains(atkErr.Error(), "invalid proof") {
+		t.Fatalf("relabelled self-paying bid rejected, but not as an invalid proof: %v", atkErr)
+	}
+
 	bidTx, err := auctionContract.Transact(ownerAuth, "submitBid",
-		proof8Bid, signal9Bid, ctxt1, ctxt2,
+		proof8Bid, signal10Bid, ctxt1, ctxt2,
 	)
 	checkErr(t, "submitBid tx", err)
 	waitTx(t, ethClient, bidTx)
@@ -644,12 +689,12 @@ func toBigArr8(slice []*big.Int) [8]*big.Int {
 	return arr
 }
 
-func toBigArr9(slice []*big.Int) [9]*big.Int {
-	var arr [9]*big.Int
-	for i := 0; i < 9 && i < len(slice); i++ {
+func toBigArr10(slice []*big.Int) [10]*big.Int {
+	var arr [10]*big.Int
+	for i := 0; i < 10 && i < len(slice); i++ {
 		arr[i] = slice[i]
 	}
-	for i := len(slice); i < 9; i++ {
+	for i := len(slice); i < 10; i++ {
 		arr[i] = big.NewInt(0)
 	}
 	return arr

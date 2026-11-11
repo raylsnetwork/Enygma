@@ -6,7 +6,7 @@ import "math/big"
 //
 // Fixed config: Merkle depth 8, all-in bid (bidAmount == note amount).
 //
-// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
+// Public statement returned: [stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice, stSellerPk]
 type AuctionBidRequest struct {
 	StAuctionId    string `json:"stAuctionId"    binding:"required"`
 	StTreeNumber   string `json:"stTreeNumber"   binding:"required"`
@@ -17,6 +17,7 @@ type AuctionBidRequest struct {
 	StRevertCommit string `json:"stRevertCommit" binding:"required"` // Alice's pre-committed recovery destination
 	StCtxtHash     string `json:"stCtxtHash"     binding:"required"` // hash of the ciphertexts submitted with the bid
 	StFloorPrice   string `json:"stFloorPrice"   binding:"required"` // the auction's floor price; the bid must reach it
+	StSellerPk     string `json:"stSellerPk"     binding:"required"` // the auction's seller payout key; commitB pays it
 
 	WtAuctionId    string    `json:"wtAuctionId"    binding:"required"` // must equal StAuctionId
 	WtTreeNumber   string    `json:"wtTreeNumber"   binding:"required"` // must equal StTreeNumber
@@ -26,7 +27,6 @@ type AuctionBidRequest struct {
 	WtSaltIn       string    `json:"wtSaltIn"       binding:"required"`
 	WtPathElements [8]string `json:"wtPathElements" binding:"required"`
 	WtPathIndex    string    `json:"wtPathIndex"    binding:"required"`
-	WtSpendPkBob   string    `json:"wtSpendPkBob"   binding:"required"`
 	WtSaltA        string    `json:"wtSaltA"        binding:"required"`
 	WtSaltB        string    `json:"wtSaltB"        binding:"required"` // HKDF(ML-KEM ss, "note salt")
 	WtBidAmount    string    `json:"wtBidAmount"    binding:"required"`
