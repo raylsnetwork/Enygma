@@ -186,9 +186,9 @@ retail-gnark: ## Start the retail gnark proof server (keep running)
 # load tests are left out (run them by name). Tests that rebuild the vault's
 # tree 0 fail fast once the chain is past one tree: restart it fresh.
 RETAIL_BENCH_SKIP := TestRetailThroughput|TestRetailLoad|TestRetailScanRate|TestRetailChainTPS
-retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts
+retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts; leaves the shield demo's replay fixtures alone
 	@log=$$(mktemp -t retail_test); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
-	go test -count=1 -v ./... -timeout 1800s -skip '$(RETAIL_BENCH_SKIP)' >$$log 2>&1 || status=1; \
+	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v ./... -timeout 1800s -skip '$(RETAIL_BENCH_SKIP)' >$$log 2>&1 || status=1; \
 	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
 	grep -E '^--- (FAIL|SKIP)' $$log; echo "log: $$log"; exit $$status
 
@@ -235,7 +235,7 @@ PRIMER_REFRESH_SKIP := $(RETAIL_BENCH_SKIP)|TestShieldDemoScenario|TestShieldDem
 primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewrites the primer's data block); prints pass/fail/skip counts, stops the stack
 	@$(MAKE) --no-print-directory shield-stack
 	@log=$$(mktemp -t primer_refresh); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
-	go test -count=1 -v . -timeout 900s -skip '$(PRIMER_REFRESH_SKIP)' >$$log 2>&1 || status=1; \
+	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v . -timeout 900s -skip '$(PRIMER_REFRESH_SKIP)' >$$log 2>&1 || status=1; \
 	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
 	grep -E '^--- (FAIL|SKIP)' $$log; \
 	if [ $$status = 0 ]; then PRIMER_WRITE=1 go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
