@@ -261,6 +261,47 @@ describe("EnygmaAuction — attack scenarios", function () {
         winner: 600, winnerPk: 900, winnerCommitB: 700, winningAmount: 50 }), batchIdsArr([1]));
     });
 
+    // A bid whose ciphertext the auctioneer cannot open could never be batched,
+    // so without excludeBid it would hold up settlement until recoverAuction.
+    it("C4: a bid the auctioneer excludes does not block settlement and is refunded", async function () {
+      const { auction, erc20Vault } = await deploy();
+      const [, outsider] = await ethers.getSigners();
+      await openAuction(auction, { deadlineDelta: 10 });
+      await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700 }), "0x", "0x");
+      await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 501, commitA: 601, commitB: 701, ctxt2: "0xdead" }),
+        "0x", "0xdead"); // does not open
+      // Only the auctioneer, and only once bidding has closed.
+      await expect(auction.excludeBid(1, 601, "0x01")).to.be.revertedWithCustomError(auction, "BidsStillOpen");
+      await time.increase(20);
+      await expect(auction.connect(outsider).excludeBid(1, 601, "0x01")).to.be.reverted;
+
+      await expect(auction.excludeBid(1, 601, "0x01")).to.emit(auction, "BidExcluded").withArgs(1, 601, "0x01");
+      await expect(auction.excludeBid(1, 601, "0x01")).to.be.revertedWithCustomError(auction, "BidIsExcluded");
+      // An excluded bid cannot be put back into a batch.
+      await expect(auction.submitBatch(2, ZERO_PROOF, batchStatement({ auctionId: 1, commits: [601], winnerCommit: 601, winnerPk: 901, winnerAmount: 90 })))
+        .to.be.revertedWithCustomError(auction, "BidIsExcluded");
+      // Its bidder gets the funds back at once.
+      await auction.reclaimBid(1, 601);
+      expect(await erc20Vault.nullified(501n)).to.equal(true);
+
+      await auction.submitBatch(1, ZERO_PROOF, batchStatement({ auctionId: 1, commits: [600], winnerCommit: 600, winnerPk: 900, winnerAmount: 50 }));
+      await auction.settleOptimistic(ZERO_PROOF, finalStatement({ auctionId: 1, batches: [{ commit: 600, pk: 900, amount: 50 }],
+        winner: 600, winnerPk: 900, winnerCommitB: 700, winningAmount: 50 }), batchIdsArr([1]));
+      expect(await auction.getAuctionState(1)).to.equal(PENDING_SETTLEMENT);
+    });
+
+    it("C5: a batched bid cannot be excluded, and a bid is not reclaimable early unless excluded", async function () {
+      const { auction } = await deploy();
+      await openAuction(auction, { deadlineDelta: 10 });
+      await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 500, commitA: 600, commitB: 700 }), "0x", "0x");
+      await auction.submitBid(ZERO_PROOF, bidStatement({ auctionId: 1, nullifier: 501, commitA: 601, commitB: 701 }), "0x", "0x");
+      await time.increase(20);
+      await auction.submitBatch(1, ZERO_PROOF, batchStatement({ auctionId: 1, commits: [600], winnerCommit: 600, winnerPk: 900, winnerAmount: 50 }));
+      await expect(auction.excludeBid(1, 600, "0x")).to.be.revertedWithCustomError(auction, "BidAlreadyBatched");
+      await expect(auction.excludeBid(1, 999, "0x")).to.be.revertedWithCustomError(auction, "UnknownBid");
+      await expect(auction.reclaimBid(1, 601)).to.be.revertedWithCustomError(auction, "AuctionStateMismatch");
+    });
+
     it("C3: bids stop at MAX_BIDS so all of them can always be batched", async function () {
       this.timeout(300000);
       const { auction } = await deploy();

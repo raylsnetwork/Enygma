@@ -118,6 +118,13 @@ interface IEnygmaAuction {
     /// @notice Emitted when a losing bidder reclaims their locked USDC.
     event BidReclaimed(uint256 indexed auctionId, uint256 indexed commitA);
 
+    /// @notice Emitted when the auctioneer leaves a bid it cannot open out of
+    ///         settlement. openingKey is the key the auctioneer derived from the
+    ///         bid's ML-KEM capsule (ctxt1), published so anyone can check
+    ///         offchain that the bid's ciphertext (ctxt2) does not open to a bid
+    ///         matching its commitA.
+    event BidExcluded(uint256 indexed auctionId, uint256 indexed commitA, bytes openingKey);
+
     /// @notice Emitted when the auction is canceled and the NFT reverted to Bob
     ///         under a fresh, unlinkable commitment.
     event AuctionReverted(uint256 indexed auctionId, uint256 revertedCommit);
@@ -176,6 +183,7 @@ interface IEnygmaAuction {
     error ChallengeWindowClosed();
     error ChallengeWindowOpen();
     error WithdrawalDeadlinePassed();
+    error BidIsExcluded(uint256 commitA);
 
     // -------------------------------------------------------------------------
     // Functions
@@ -271,8 +279,18 @@ interface IEnygmaAuction {
         uint256[2] calldata statement
     ) external returns (bool);
 
+    /// @notice Auctioneer leaves out of settlement a bid whose ciphertext it cannot
+    ///         open, so that bid cannot hold up the auction. Only after the bidding
+    ///         deadline, while the auction is in BIDDING state, for a bid not yet in a
+    ///         batch. The excluded bid can no longer be batched or win, and its bidder
+    ///         may reclaim it at once with reclaimBid().
+    /// @param openingKey The key derived from the bid's capsule, emitted in BidExcluded.
+    function excludeBid(uint256 auctionId, uint256 commitA, bytes calldata openingKey) external returns (bool);
+
     /// @notice A bidder inserts their pre-committed revert commitment into the USDC
     ///         tree to reclaim funds. Identified by commitA (stored at submitBid time).
     ///         No ZK proof required — the contract checks commitA ≠ overallWinnerCommit.
+    ///         Callable once the auction is SETTLED or CANCELED, or at any time for a
+    ///         bid the auctioneer excluded.
     function reclaimBid(uint256 auctionId, uint256 commitA) external returns (bool);
 }

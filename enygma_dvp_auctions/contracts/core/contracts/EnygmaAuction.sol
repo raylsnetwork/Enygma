@@ -44,6 +44,7 @@ interface ICoinVault {
 ///   1. Bob calls initAuction()      — locks NFT, sets deadline + settlementDeadline + floorPrice (bound by his proof), opens bidding
 ///   2. Bidders call submitBid()     — locks USDC, publishes ML-KEM capsule (only before deadline)
 ///   3. Auctioneer calls submitBatch() (one per 100-bid batch) — Phase 1 (only after deadline)
+///       └─ excludeBid()            — leaves out a bid whose ciphertext it cannot open
 ///   4. Auctioneer calls settleOptimistic() — posts Phase-2 claim; proof stored but not verified yet
 ///       └─ challengeSettlement()   — anyone forces verification during the challenge window
 ///       └─ finalizeSettlement()    — anyone finalizes an unchallenged claim after the window
@@ -51,7 +52,7 @@ interface ICoinVault {
 ///   5b. Anyone calls recoverAuction() — timeout path once settlementDeadline passes (also for a claim stuck in
 ///                                    PENDING_SETTLEMENT); uses pre-committed revertCommit
 ///   6. Bidders call reclaimBid()   — releases pre-committed revertCommit into USDC tree (losers after SETTLED,
-///                                    everyone after CANCELED)
+///                                    everyone after CANCELED, an excluded bid at any time)
 ///
 /// Security model
 /// --------------
@@ -65,7 +66,8 @@ interface ICoinVault {
 ///   already-public locked commitment, so the reverted note cannot be linked back to
 ///   this specific auction by anyone watching the chain.
 /// - reclaimBid requires no ZK proof; the contract simply checks
-///   commitA ≠ overallWinnerCommit and that the auction is SETTLED or CANCELED.
+///   commitA ≠ overallWinnerCommit and that the auction is SETTLED or CANCELED
+///   (or that the auctioneer excluded the bid).
 contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
 
     // -----------------------------------------------------------------------
@@ -115,9 +117,16 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     // auctionId → number of bids that have been placed in a submitted batch.
-    // settleOptimistic() requires this to equal the auction's live bidCount, so
-    // the auctioneer cannot leave a bid out of every batch.
+    // settleOptimistic() requires this plus the excluded bids to equal the
+    // auction's live bidCount, so the auctioneer cannot leave a bid out of
+    // every batch without excluding it publicly.
     mapping(uint256 => uint256) private _batchedBids;
+
+    // auctionId → commitA → true once the auctioneer has excluded the bid
+    // (excludeBid), and auctionId → number of such bids. Settlement requires
+    // batched + excluded bids to cover every live bid.
+    mapping(uint256 => mapping(uint256 => bool)) private _excluded;
+    mapping(uint256 => uint256) private _excludedBids;
 
     // Per-auction core state.
     struct AuctionCore {
@@ -453,6 +462,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
             BidData storage b = _bids[auctionId][commitA];
             if (!b.active)  revert UnknownBid(commitA);
             if (b.batched)  revert BidAlreadyBatched(commitA);
+            if (_excluded[auctionId][commitA]) revert BidIsExcluded(commitA);
             b.batched = true;
             batchedNow++;
         }
@@ -478,6 +488,39 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         _auctions[auctionId].batchCount++;
 
         emit BatchProcessed(auctionId, batchId, batchWinnerCommit, batchWinnerAmount);
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 1b — Auctioneer excludes a bid it cannot open — only after deadline
+    // -----------------------------------------------------------------------
+    //
+    // The bid proof binds the ciphertexts' hash, not that they decrypt to the
+    // bid's commitA, and AuctionBatch needs every batched bid's opening. A bid
+    // whose ciphertext does not open could otherwise never be batched, and
+    // settlement (which needs every live bid batched) could never happen.
+    //
+    // Excluding a bid is recorded onchain with the key the auctioneer derived
+    // from its capsule, so anyone can check offchain that it really does not
+    // open. The excluded bid cannot be batched or win; its bidder can reclaim
+    // it at once.
+
+    function excludeBid(
+        uint256 auctionId,
+        uint256 commitA,
+        bytes calldata openingKey
+    ) external nonReentrant onlyRole(AUCTIONEER_ROLE) returns (bool) {
+        if (_auctions[auctionId].state != AuctionState.BIDDING) revert AuctionStateMismatch();
+        if (block.timestamp < _auctions[auctionId].deadline)    revert BidsStillOpen();
+        BidData storage b = _bids[auctionId][commitA];
+        if (!b.active)                                           revert UnknownBid(commitA);
+        if (b.batched)                                           revert BidAlreadyBatched(commitA);
+        if (_excluded[auctionId][commitA])                       revert BidIsExcluded(commitA);
+
+        _excluded[auctionId][commitA] = true;
+        _excludedBids[auctionId]++;
+
+        emit BidExcluded(auctionId, commitA, openingKey);
         return true;
     }
 
@@ -776,7 +819,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     // -----------------------------------------------------------------------
     //
     // No ZK proof is required. The contract checks:
-    //   1. Auction is SETTLED or CANCELED.
+    //   1. Auction is SETTLED or CANCELED, or the auctioneer excluded the bid.
     //   2. commitA was registered by submitBid.
     //   3. commitA is not the overall winner's commitment (always false when CANCELED).
     //   4. commitA has not already been reclaimed.
@@ -790,7 +833,7 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
         uint256 commitA
     ) external nonReentrant returns (bool) {
         AuctionState state = _auctions[auctionId].state;
-        if (state != AuctionState.SETTLED && state != AuctionState.CANCELED)
+        if (state != AuctionState.SETTLED && state != AuctionState.CANCELED && !_excluded[auctionId][commitA])
             revert AuctionStateMismatch();
         if (!_bids[auctionId][commitA].active)                  revert BidNotFound();
         if (_bids[auctionId][commitA].claimed)                  revert BidAlreadyClaimed();
@@ -867,9 +910,10 @@ contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     function _validateClaim(uint256 auctionId, uint256[38] calldata statement) internal view {
         AuctionCore storage a = _auctions[auctionId];
 
-        // Every live bid must sit in a submitted batch: otherwise the auctioneer
-        // could leave the highest bid out.
-        if (_batchedBids[auctionId] != a.bidCount) revert BidsNotAllBatched();
+        // Every live bid must sit in a submitted batch or have been excluded,
+        // publicly, with excludeBid: otherwise the auctioneer could leave the
+        // highest bid out unseen.
+        if (_batchedBids[auctionId] + _excludedBids[auctionId] != a.bidCount) revert BidsNotAllBatched();
 
         // The overall winner must be one of the verified batch winners and must
         // carry the highest amount among them.

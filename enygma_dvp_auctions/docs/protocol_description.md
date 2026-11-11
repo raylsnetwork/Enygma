@@ -599,11 +599,15 @@ The $revertCommit$ was proven well-formed and unlinkable from $commitLocked$ at 
 
 ---
 
+## Bids the auctioneer cannot open (`excludeBid`)
+
+The bid proof binds the hash of the ciphertexts, not that they decrypt to the bid's $commitA$, while an `AuctionBatch` proof needs the opening of every bid it includes and settlement needs every live bid batched. After the bidding deadline, while the auction is BIDDING, the auctioneer can call `excludeBid(auctionId, commitA, openingKey)` for an unbatched bid it cannot open. The call emits `BidExcluded` with `openingKey`, the key derived from the bid's ML-KEM capsule, so anyone can check offchain that the ciphertext does not open. Settlement then requires batched + excluded bids to cover every live bid; an excluded bid can no longer be batched or win, and its bidder can reclaim it at once.
+
 ## Phase 4 — Losers Reclaim USDC (`reclaimBid`)
 
 After the auction is SETTLED or CANCELED, every losing bidder can reclaim their locked USDC. No ZK proof is required — the contract checks:
 
-1. Auction state is SETTLED or CANCELED
+1. Auction state is SETTLED or CANCELED, or the auctioneer excluded the bid (`excludeBid`, below)
 2. $commitA$ was registered via `submitBid`
 3. $commitA \neq overallWinnerCommit$ (the winner cannot reclaim)
 4. The bid has not already been claimed
