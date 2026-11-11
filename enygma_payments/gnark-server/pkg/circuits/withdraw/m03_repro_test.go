@@ -81,27 +81,27 @@ type m03Values struct {
 	k         int
 	senderIdx int
 
-	hashedSecrets []*big.Int
-	pks           []*big.Int
-	prevCommit    [][2]*big.Int
-	txCommit      [][2]*big.Int
-	blockNumber   *big.Int
-	anonymitySet  []*big.Int
-	messageTags   []*big.Int
-	nullifier     *big.Int
-	senderId      *big.Int
-	secrets       []*big.Int
-	sk            *big.Int
-	prevBalance   *big.Int
-	prevR         *big.Int
-	txValues      []*big.Int
-	txRandom      []*big.Int
-	withdrawAmt   *big.Int
-	depositAddr   *big.Int
-	hashes        [10]*big.Int
-	skDeposits    [10]*big.Int
-	vPerDeposit   [10]*big.Int
-	domainId      *big.Int
+	fingerprints [][]*big.Int
+	pks          []*big.Int
+	prevCommit   [][2]*big.Int
+	txCommit     [][2]*big.Int
+	blockNumber  *big.Int
+	anonymitySet []*big.Int
+	messageTags  []*big.Int
+	nullifier    *big.Int
+	senderId     *big.Int
+	secrets      []*big.Int
+	sk           *big.Int
+	prevBalance  *big.Int
+	prevR        *big.Int
+	txValues     []*big.Int
+	txRandom     []*big.Int
+	withdrawAmt  *big.Int
+	depositAddr  *big.Int
+	hashes       [10]*big.Int
+	skDeposits   [10]*big.Int
+	vPerDeposit  [10]*big.Int
+	domainId     *big.Int
 }
 
 // m03BuildValues mirrors circuit.go's Define() field-by-field for a single
@@ -144,13 +144,28 @@ func m03BuildValues(t *testing.T, sk, prevR, previousBalance, withdrawAmt, block
 		secrets[i] = big.NewInt(int64(2000 + i))
 	}
 
-	hashedSecrets := make([]*big.Int, k)
+	// The sender's column of the fingerprint matrix holds Poseidon(secret)
+	// for every other slot; every other cell is free in the circuit (the
+	// contract pins them to the on-chain registry), 0 here.
+	fingerprints := make([][]*big.Int, k)
 	for i := 0; i < k; i++ {
-		h, err := iden3poseidon.Hash([]*big.Int{secrets[i], secrets[i]})
-		if err != nil {
-			t.Fatalf("hashed secret %d: %v", i, err)
+		fingerprints[i] = make([]*big.Int, k)
+		for j := 0; j < k; j++ {
+			fingerprints[i][j] = big.NewInt(0)
 		}
-		hashedSecrets[i] = m03ReduceModP(h)
+		if i == senderIdx {
+			continue
+		}
+		h, err := iden3poseidon.Hash([]*big.Int{secrets[i]})
+		if err != nil {
+			t.Fatalf("fingerprint %d: %v", i, err)
+		}
+		fingerprints[i][senderIdx] = m03ReduceModP(h)
+	}
+	// The nullifier's preimage, Poseidon(secretRemain, secretRemain).
+	senderHashRaw, err := iden3poseidon.Hash([]*big.Int{secrets[senderIdx], secrets[senderIdx]})
+	if err != nil {
+		t.Fatalf("nullifier preimage: %v", err)
 	}
 
 	anonymitySet := make([]*big.Int, k)
@@ -216,7 +231,7 @@ func m03BuildValues(t *testing.T, sk, prevR, previousBalance, withdrawAmt, block
 		}
 	}
 
-	nullifierRaw, err := iden3poseidon.Hash([]*big.Int{hashedSecrets[senderIdx], blockNumber})
+	nullifierRaw, err := iden3poseidon.Hash([]*big.Int{m03ReduceModP(senderHashRaw), blockNumber})
 	if err != nil {
 		t.Fatalf("nullifier: %v", err)
 	}
@@ -247,7 +262,7 @@ func m03BuildValues(t *testing.T, sk, prevR, previousBalance, withdrawAmt, block
 
 	return m03Values{
 		k: k, senderIdx: senderIdx,
-		hashedSecrets: hashedSecrets, pks: pks, prevCommit: prevCommit, txCommit: txCommit,
+		fingerprints: fingerprints, pks: pks, prevCommit: prevCommit, txCommit: txCommit,
 		blockNumber: blockNumber, anonymitySet: anonymitySet, messageTags: messageTags,
 		nullifier: nullifierRaw, senderId: senderId, secrets: secrets, sk: sk,
 		prevBalance: previousBalance, prevR: prevR, txValues: txValues, txRandom: txRandom,
@@ -259,17 +274,17 @@ func m03BuildValues(t *testing.T, sk, prevR, previousBalance, withdrawAmt, block
 
 func (v m03Values) circuit() *WithdrawEnygmaCircuit {
 	w := &WithdrawEnygmaCircuit{
-		Config:              WithdrawEnygmaCircuitConfig{NCommitment: v.k},
-		HashedSharedSecrets: toVars(v.hashedSecrets),
-		PublicKey:           toVars(v.pks),
-		PreviousCommit:      toVarPairs(v.prevCommit),
-		TxCommit:            toVarPairs(v.txCommit),
-		BlockNumber:         v.blockNumber,
-		AnonymitySet:        toVars(v.anonymitySet),
-		MessageTags:         toVars(v.messageTags),
-		Nullifier:           v.nullifier,
-		TotalDepositValue:   new(big.Int).Set(v.withdrawAmt),
-		DomainId:            v.domainId,
+		Config:                     WithdrawEnygmaCircuitConfig{NCommitment: v.k},
+		FingerPrintofSharedSecrets: toVarMatrix(v.fingerprints),
+		PublicKey:                  toVars(v.pks),
+		PreviousCommit:             toVarPairs(v.prevCommit),
+		TxCommit:                   toVarPairs(v.txCommit),
+		BlockNumber:                v.blockNumber,
+		AnonymitySet:               toVars(v.anonymitySet),
+		MessageTags:                toVars(v.messageTags),
+		Nullifier:                  v.nullifier,
+		TotalDepositValue:          new(big.Int).Set(v.withdrawAmt),
+		DomainId:                   v.domainId,
 
 		SenderId:                  v.senderId,
 		SharedSecrets:             toVars(v.secrets),
@@ -308,6 +323,13 @@ func (v m03Values) requestJSON() map[string]interface{} {
 		}
 		return out
 	}
+	matrix := func(vals [][]*big.Int) [][]string {
+		out := make([][]string, len(vals))
+		for i, row := range vals {
+			out[i] = strs(row)
+		}
+		return out
+	}
 	arr10 := func(vals [10]*big.Int) [10]string {
 		var out [10]string
 		for i, x := range vals {
@@ -316,7 +338,7 @@ func (v m03Values) requestJSON() map[string]interface{} {
 		return out
 	}
 	return map[string]interface{}{
-		"hashed_shared_secrets":        strs(v.hashedSecrets),
+		"fingerprint_shared_secrets":   matrix(v.fingerprints),
 		"public_keys":                  strs(v.pks),
 		"previous_commits":             pairs(v.prevCommit),
 		"tx_commits":                   pairs(v.txCommit),
@@ -344,6 +366,14 @@ func toVars(vals []*big.Int) []frontend.Variable {
 	out := make([]frontend.Variable, len(vals))
 	for i, v := range vals {
 		out[i] = v
+	}
+	return out
+}
+
+func toVarMatrix(rows [][]*big.Int) [][]frontend.Variable {
+	out := make([][]frontend.Variable, len(rows))
+	for i, row := range rows {
+		out[i] = toVars(row)
 	}
 	return out
 }
@@ -453,9 +483,8 @@ func TestM03_HandlerProvesRealRequest(t *testing.T) {
 	if len(resp.Proof) != 8 {
 		t.Errorf("proof: got %d elements, want 8", len(resp.Proof))
 	}
-	// 52 signals up to DomainId, then the 10 DvP deposit commitments.
-	if len(resp.PublicSignal) != 62 {
-		t.Errorf("publicSignal: got %d elements, want 62", len(resp.PublicSignal))
+	if want := StatementLayout().Len; len(resp.PublicSignal) != want {
+		t.Errorf("publicSignal: got %d elements, want %d", len(resp.PublicSignal), want)
 	}
 	t.Logf("POST /proof/withdraw/6 returned a real proof (8 elements) and %d public signals — the withdraw circuit's HTTP prover route is unblocked ✓", len(resp.PublicSignal))
 }

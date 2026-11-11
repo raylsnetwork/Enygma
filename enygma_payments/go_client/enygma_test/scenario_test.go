@@ -784,7 +784,10 @@ func freshSetup(
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
+		// Each bank gets its own address so it can confirm its own
+		// shared-secret fingerprints (confirmFreshFingerprints); the last
+		// keeps the owner's, so the owner stays a registered caller.
+		if r := waitTx(instance.RegisterAccount(mkAuth(), freshBankAddr(i, ownerAddr),
 			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}

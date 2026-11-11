@@ -20,14 +20,14 @@ type WithdrawEnygmaCircuit struct {
 	Config WithdrawEnygmaCircuitConfig
 
 	// Public signals
-	HashedSharedSecrets []frontend.Variable    `gnark:",public"` // Array of hash of shared secrets (1D)
-	PublicKey           []frontend.Variable    `gnark:",public"` // Public keys from all other PLs
-	PreviousCommit      [][2]frontend.Variable `gnark:",public"` // Previous balances (Pedersen commitments)
-	TxCommit            [][2]frontend.Variable `gnark:",public"` // Commitments for this tx
-	BlockNumber         frontend.Variable      `gnark:",public"` // Block number
-	AnonymitySet        []frontend.Variable    `gnark:",public"` // K-anonymity set
-	MessageTags         []frontend.Variable    `gnark:",public"` // Tag messages
-	Nullifier           frontend.Variable      `gnark:",public"` // Nullifier
+	FingerPrintofSharedSecrets [][]frontend.Variable  `gnark:",public"` // k×k matrix: FingerPrint[i][j] = Poseidon(secret[i][j]); diagonal skipped
+	PublicKey                  []frontend.Variable    `gnark:",public"` // Public keys from all other PLs
+	PreviousCommit             [][2]frontend.Variable `gnark:",public"` // Previous balances (Pedersen commitments)
+	TxCommit                   [][2]frontend.Variable `gnark:",public"` // Commitments for this tx
+	BlockNumber                frontend.Variable      `gnark:",public"` // Block number
+	AnonymitySet               []frontend.Variable    `gnark:",public"` // K-anonymity set
+	MessageTags                []frontend.Variable    `gnark:",public"` // Tag messages
+	Nullifier                  frontend.Variable      `gnark:",public"` // Nullifier
 	// Fix C-09: Σ VPerDeposit, exposed so Enygma.sol can bind it against
 	// Σ depositParams[i].amount before forwarding to the DvP vault — see
 	// the assertion below for why this alone closes the finding for the
@@ -157,12 +157,34 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(secretRemain, selectedSecret)
 
 	///////////////////////////////////**///////////////////////////////////
-	// Check if Hash Array of Secret is well formed
+	// Check if FingerPrintofSharedSecrets is well formed for sender's column,
+	// exactly as the transfer circuit does (enygma/circuit.go):
+	// FingerPrintofSharedSecrets[i][senderCol] = Poseidon(SharedSecrets[i])
+	// for every i other than the sender. SharedSecrets[i] is what shifts
+	// participant i's blinding factor below, and Enygma.sol requires the whole
+	// matrix to equal the fingerprints both parties of each pair confirmed on
+	// chain (_verifyFingerprints). This used to publish a flat
+	// HashedSharedSecrets[i] = Poseidon(SharedSecrets[i], SharedSecrets[i])
+	// that nothing on chain read, so a sender could make up the secret for
+	// any other participant and shift that participant's commitment by a
+	// blinding factor only the sender knew, freezing the balance for good
+	// (a zero-value withdraw needs no funds). The off-diagonal cells outside the
+	// sender's column are free here, and pinned by the contract.
 	for i := 0; i < k; i++ {
-		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i], circuit.SharedSecrets[i]})
+		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i]})
 		hashMod := utils.ReduceModP(api, calculatedHash) // Fix C-01
 
-		api.AssertIsEqual(hashMod, circuit.HashedSharedSecrets[i])
+		isRowSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
+
+		for j := 0; j < k; j++ {
+			isColSender := api.IsZero(api.Sub(circuit.AnonymitySet[j], circuit.SenderId))
+			// Only 0 when both i and j are the sender's position.
+			isNotDiagonal := api.Sub(1, api.Mul(isRowSender, isColSender))
+			// If j is the sender's column and not the diagonal: FingerPrint[i][j] == hashMod.
+			shouldCheck := api.Mul(isColSender, isNotDiagonal)
+			diff := api.Sub(circuit.FingerPrintofSharedSecrets[i][j], hashMod)
+			api.AssertIsEqual(api.Mul(shouldCheck, diff), 0)
+		}
 	}
 
 	///////////////////////////////////**///////////////////////////////////
@@ -250,12 +272,12 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 
 	///////////////////////////////////**//////////////////////////////////////
 	// Knowledge of Nullifier
-	selectedPreImage := frontend.Variable(0)
-	for i := 0; i < k; i++ {
-		diff := api.Sub(circuit.SenderId, circuit.AnonymitySet[i])
-		eq := api.IsZero(diff)
-		selectedPreImage = api.Add(selectedPreImage, api.Mul(eq, circuit.HashedSharedSecrets[i]))
-	}
+	// Preimage = Poseidon(secretRemain, secretRemain) mod p, the value the
+	// sender's HashedSharedSecrets slot used to publish; computed here
+	// instead, so the nullifier is unchanged and no longer recomputable from
+	// public signals (Poseidon(HashedSharedSecrets[i], BlockNumber) ==
+	// Nullifier picked out the sender's slot).
+	selectedPreImage := utils.ReduceModP(api, pos.Poseidon(api, []frontend.Variable{selectedSecret, selectedSecret}))
 
 	computedNullifier := pos.Poseidon(api, []frontend.Variable{selectedPreImage, circuit.BlockNumber})
 	api.AssertIsEqual(computedNullifier, circuit.Nullifier)
@@ -387,26 +409,26 @@ func (circuit *WithdrawEnygmaCircuit) Define(api frontend.API) error {
 // than error, but ParseBigInt's Fix M-08 error-return (see utils.go)
 // already rejects an empty-string element before any witness is built.
 type WithdrawRequest struct {
-	HashedSharedSecrets       []string    `json:"hashed_shared_secrets" binding:"required,len=6"`
-	PublicKey                 []string    `json:"public_keys" binding:"required,len=6"`
-	PreviousCommit            [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
-	TxCommit                  [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
-	BlockNumber               string      `json:"block_number" binding:"required"`
-	AnonymitySet              []string    `json:"anonymity_set" binding:"required,len=6"`
-	MessageTags               []string    `json:"message_tags" binding:"required,len=6"`
-	Nullifier                 string      `json:"nullifier" binding:"required"`
-	SenderID                  string      `json:"sender_id" binding:"required"`
-	SharedSecrets             []string    `json:"shared_secrets" binding:"required,len=6"`
-	SecretKey                 string      `json:"secret_key" binding:"required"`
-	PreviousSenderBalance     string      `json:"previous_sender_balance" binding:"required"`
-	PreviousSenderRandomValue string      `json:"previous_sender_random_value" binding:"required"`
-	TxValues                  []string    `json:"tx_values" binding:"required,len=6"`
-	TxRandomValues            []string    `json:"tx_random_values" binding:"required,len=6"`
-	SenderTxValue             string      `json:"sender_tx_value" binding:"required"`
-	Hashes                    [10]string  `json:"hashes" binding:"required"`
-	SkDeposits                [10]string  `json:"sk_deposits" binding:"required"`
-	VPerDeposit               [10]string  `json:"v_per_deposit" binding:"required"`
-	Address                   string      `json:"address" binding:"required"`
+	FingerPrintofSharedSecrets [][]string  `json:"fingerprint_shared_secrets" binding:"required,len=6,dive,len=6"`
+	PublicKey                  []string    `json:"public_keys" binding:"required,len=6"`
+	PreviousCommit             [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
+	TxCommit                   [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
+	BlockNumber                string      `json:"block_number" binding:"required"`
+	AnonymitySet               []string    `json:"anonymity_set" binding:"required,len=6"`
+	MessageTags                []string    `json:"message_tags" binding:"required,len=6"`
+	Nullifier                  string      `json:"nullifier" binding:"required"`
+	SenderID                   string      `json:"sender_id" binding:"required"`
+	SharedSecrets              []string    `json:"shared_secrets" binding:"required,len=6"`
+	SecretKey                  string      `json:"secret_key" binding:"required"`
+	PreviousSenderBalance      string      `json:"previous_sender_balance" binding:"required"`
+	PreviousSenderRandomValue  string      `json:"previous_sender_random_value" binding:"required"`
+	TxValues                   []string    `json:"tx_values" binding:"required,len=6"`
+	TxRandomValues             []string    `json:"tx_random_values" binding:"required,len=6"`
+	SenderTxValue              string      `json:"sender_tx_value" binding:"required"`
+	Hashes                     [10]string  `json:"hashes" binding:"required"`
+	SkDeposits                 [10]string  `json:"sk_deposits" binding:"required"`
+	VPerDeposit                [10]string  `json:"v_per_deposit" binding:"required"`
+	Address                    string      `json:"address" binding:"required"`
 	// Fix L-01: caller-supplied chainId<<160|contractAddress.
 	DomainId string `json:"domain_id" binding:"required"`
 }

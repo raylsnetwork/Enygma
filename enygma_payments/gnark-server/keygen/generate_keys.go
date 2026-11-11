@@ -132,17 +132,21 @@ func generateKeysEnygmaFee() error {
 
 func generateKeysZkDvpDeposit() error {
 	config := deposit.DefaultConfig
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
 	depositCircuit := deposit.DepositEnygmaCircuit{
-		Config:              config,
-		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-		PublicKey:           make([]frontend.Variable, config.NCommitment),
-		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-		MessageTags:         make([]frontend.Variable, config.NCommitment),
-		TxValues:            make([]frontend.Variable, config.NCommitment),
-		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
 	}
 	return generateKeys(
 		&depositCircuit,
@@ -175,17 +179,21 @@ func generateKeysZkDvpDeposit() error {
 func generateKeysZkDvpWithdraw() error {
 	config := withdraw.DefaultConfig
 
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
 	withdrawCircuit := withdraw.WithdrawEnygmaCircuit{
-		Config:              config,
-		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-		PublicKey:           make([]frontend.Variable, config.NCommitment),
-		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-		MessageTags:         make([]frontend.Variable, config.NCommitment),
-		TxValues:            make([]frontend.Variable, config.NCommitment),
-		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
 	}
 
 	// splitSize (6) names the one reachable slot — matches DEFAULT_SIZE

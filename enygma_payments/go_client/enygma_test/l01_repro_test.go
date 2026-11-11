@@ -64,6 +64,7 @@ type l01Deployment struct {
 	keys6     []*big.Int
 	balances6 []enygma.IEnygmaPoint
 	blockHash *big.Int
+	fp        [nBanks][nBanks]*big.Int
 }
 
 // l01DeployAndRegister deploys a fresh Enygma + MockWithdrawVerifier and
@@ -101,11 +102,12 @@ func l01DeployAndRegister(t *testing.T, client *ethclient.Client, mkAuth func() 
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if rc := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr, big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); rc.Status != 1 {
+		if rc := waitTx(instance.RegisterAccount(mkAuth(), freshBankAddr(i, ownerAddr), big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); rc.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}
 	}
 
+	fp := confirmFreshFingerprints(t, client, mkAuth, waitTx, instance)
 	blockHash, err := instance.GetBlckHash(&bind.CallOpts{})
 	if err != nil {
 		t.Fatalf("getBlckHash: %v", err)
@@ -121,6 +123,7 @@ func l01DeployAndRegister(t *testing.T, client *ethclient.Client, mkAuth func() 
 		keys6:     pubVals.Keys[1:],
 		balances6: pubVals.Balances[1:],
 		blockHash: blockHash,
+		fp:        fp,
 	}
 }
 
@@ -136,6 +139,7 @@ func l01BuildWithdrawProof(dep l01Deployment, domainAddr common.Address, nullifi
 	for i := range pubSig {
 		pubSig[i] = big.NewInt(0)
 	}
+	putFingerprints(pubSig[:], layout.WithdrawFingerprintOffset, dep.fp)
 	commitmentDeltas := make([]enygma.IEnygmaPoint, nBanks)
 	participantIds := make([]*big.Int, nBanks)
 	for i := 0; i < nBanks; i++ {
