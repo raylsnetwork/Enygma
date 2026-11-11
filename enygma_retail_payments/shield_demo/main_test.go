@@ -327,3 +327,63 @@ func TestDefaultsWithoutADeploymentHaveNoChain(t *testing.T) {
 		t.Error("/defaults has no run options")
 	}
 }
+
+// getStatus returns /status's state, failing on anything but a 200.
+func getStatus(t *testing.T, url string) string {
+	t.Helper()
+	res, err := http.Get(url + "/status")
+	if err != nil {
+		t.Fatalf("GET /status: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /status: %s", res.Status)
+	}
+	var st struct {
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&st); err != nil {
+		t.Fatalf("GET /status: %v", err)
+	}
+	return st.State
+}
+
+// /status says, read-only, whether a run, a walkthrough or a manual transfer
+// holds the server, or idle when a page's RUN would start one. It starts
+// nothing: a POST is refused, and the state is unchanged.
+func TestStatusSaysWhatHoldsTheServerAndStartsNothing(t *testing.T) {
+	s, url := startDemo(t, "")
+	if got := getStatus(t, url); got != "idle" {
+		t.Errorf("a new server: state %q, want idle", got)
+	}
+	res, err := http.Post(url+"/status", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST /status: %s, want 405", res.Status)
+	}
+	if got := getStatus(t, url); got != "idle" {
+		t.Errorf("after a POST: state %q, want idle", got)
+	}
+
+	s.mu.Lock()
+	s.live = engine.New(s.cfg, s.broker)
+	s.mu.Unlock()
+	if got := getStatus(t, url); got != "run" {
+		t.Errorf("a run in progress: state %q, want run", got)
+	}
+	s.mu.Lock()
+	s.endWalk = func() {}
+	s.mu.Unlock()
+	if got := getStatus(t, url); got != "walkthrough" {
+		t.Errorf("a walkthrough in progress: state %q, want walkthrough", got)
+	}
+	s.mu.Lock()
+	s.live, s.endWalk, s.transferring = nil, nil, true
+	s.mu.Unlock()
+	if got := getStatus(t, url); got != "transfer" {
+		t.Errorf("a manual transfer in progress: state %q, want transfer", got)
+	}
+}

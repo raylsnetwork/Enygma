@@ -68,7 +68,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
 	enygma_retail_payments/src enygma_retail_payments/test
 
-.PHONY: help modules hooks fmt fmt-check page-check primer-from-disk build vet errcheck check test-unit hardhat-check ci \
+.PHONY: help modules hooks fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-demo-stale shield-gnark-restart \
 	auctions-gnark auctions-keygen
@@ -119,6 +119,9 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
+
+moments-fit: $(PAGE_DEPS) ## Fail when a shield demo concept moment runs past the drawer at 1200x785, in any full run or walkthrough, in headless Chrome; needs Chrome, no stack
+	@node scripts/moments_fit.js
 
 build: ## go build ./... in every module
 	$(call each_module,go build ./...)
