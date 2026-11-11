@@ -75,7 +75,6 @@ func feeFamilyConfig() templates.PaymentCircuitConfig {
 		TmNInputs:         1,
 		TmMOutputs:        2,
 		TmMerkleTreeDepth: feeFamilyTestDepth,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 }
 
@@ -205,7 +204,7 @@ func TestPaymentFeeCircuit_StFeeWraparoundMintsValue_Fails(t *testing.T) {
 func TestPaymentFeeCircuit_StFeeAtTheRangeBound_Fails(t *testing.T) {
 	assert := test.NewAssert(t)
 	wc, _ := buildValidPaymentFeeWitness(t)
-	// A fee equal to TmRange (10^36) is out of range whatever else balances.
+	// A fee equal to the value bound (10^36) is out of range whatever else balances.
 	wc.StFee = new(big.Int).Set(new(big.Int).Exp(big.NewInt(10), big.NewInt(36), nil))
 	assert.ProverFailed(emptyPaymentFeeCircuit(), wc, test.WithCurves(ecc.BN254))
 }

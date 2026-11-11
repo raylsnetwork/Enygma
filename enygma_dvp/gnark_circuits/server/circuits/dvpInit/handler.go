@@ -40,7 +40,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		cfg := templates.DvPInitiatorCircuitConfig{
 			TmMerkleTreeDepth: merkleDepth,
-			TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 		}
 
 		newCircuit := func() templates.DvPInitiatorCircuit {

@@ -2,18 +2,12 @@ package templates
 
 import (
 	pos "enygma_gnark_shared/poseidon"
+	"enygma_gnark_shared/valuebound"
 	"enygma_retail_payments/gnark_circuits/primitives"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/math/cmp"
 )
 
-type PrivateMintConfig struct {
-	TmRange frontend.Variable
-}
-
 type PrivateMintCircuit struct {
-	Config PrivateMintConfig `gnark:"-"`
-
 	// --- public inputs (statement) ---
 	Commitment      frontend.Variable `gnark:",public"` // Poseidon(pk_spend, salt, amount, tokenId) — inserted into the Merkle tree on-chain
 	ContractAddress frontend.Variable `gnark:",public"` // address of the EnygmaDvp contract — binds the proof to a specific deployment
@@ -28,8 +22,8 @@ type PrivateMintCircuit struct {
 
 func (circuit *PrivateMintCircuit) Define(api frontend.API) error {
 
-	api.AssertIsEqual(cmp.IsLess(api, circuit.Amount, circuit.Config.TmRange), 1)
-	api.AssertIsEqual(cmp.IsLessOrEqual(api, 0, circuit.Amount), 1)
+	// Amount range check: 0 ≤ Amount < 10^36, at the fixed valuebound width.
+	valuebound.Assert(api, circuit.Amount)
 
 	calculatedCommitment := primitives.Erc20CommitmentV2(api, circuit.PublicKey, circuit.Salt, circuit.Amount, circuit.TokenId)
 	api.AssertIsEqual(calculatedCommitment, circuit.Commitment)

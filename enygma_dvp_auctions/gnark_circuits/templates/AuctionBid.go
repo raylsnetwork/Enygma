@@ -2,6 +2,7 @@ package templates
 
 import (
 	"enygma_dvp_auctions/gnark_circuits/primitives"
+	"enygma_gnark_shared/valuebound"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/cmp"
 )
@@ -9,7 +10,8 @@ import (
 // AuctionBidCircuitConfig holds compile-time parameters.
 type AuctionBidCircuitConfig struct {
 	TmMerkleTreeDepth int
-	TmRange           frontend.Variable // upper bound for range checks (e.g. 2^128)
+	// No value bound here: it is the fixed valuebound constant. A
+	// frontend.Variable in this struct would compile as a prover-chosen witness.
 }
 
 // AuctionBidCircuit proves that Alice owns a USDC note, nullifies it, and
@@ -43,7 +45,7 @@ type AuctionBidCircuitConfig struct {
 //
 //	[stAuctionId, stTreeNumber, stMerkleRoot, stNullifier, stCommitA, stCommitB, stRevertCommit, stCtxtHash, stFloorPrice]
 type AuctionBidCircuit struct {
-	Config AuctionBidCircuitConfig
+	Config AuctionBidCircuitConfig `gnark:"-"` // compile-time shape only; never a witness
 
 	// --- public inputs ---
 	StAuctionId    frontend.Variable `gnark:",public"` // identifies which auction this bid targets
@@ -118,12 +120,10 @@ func (circuit *AuctionBidCircuit) Define(api frontend.API) error {
 	// 7. All-in bid: bid amount must equal Alice's full note amount (no change).
 	api.AssertIsEqual(circuit.WtBidAmount, circuit.WtAmount)
 
-	// 8. Range check: 0 < bidAmount < TmRange (prevents zero bids and overflow).
-	isPositive := cmp.IsLess(api, 0, circuit.WtBidAmount)
-	api.AssertIsEqual(isPositive, 1)
-
-	isInRange := cmp.IsLess(api, circuit.WtBidAmount, circuit.Config.TmRange)
-	api.AssertIsEqual(isInRange, 1)
+	// 8. Range check: 0 < bidAmount < 10^36 (prevents zero bids and overflow),
+	//    the upper bound at the fixed valuebound width.
+	api.AssertIsDifferent(circuit.WtBidAmount, 0)
+	valuebound.Assert(api, circuit.WtBidAmount)
 
 	// 9. Revert commitment: same owner and amount, fresh recovery salt.
 	// Pre-committed at bid time so anyone can trigger bid recovery after the

@@ -80,7 +80,6 @@ func bench(label, pkPath string, circuit, witness frontend.Circuit) {
 func main() {
 	solver.RegisterHint(primitives.ModHint)
 
-	range_ := frontend.Variable("1000000000000000000000000000000000000")
 	depth := 8
 
 	// ── PrivateMint ──────────────────────────────────────────────────────────
@@ -95,10 +94,8 @@ func main() {
 		cipherTextRaw, _ := poseidon.Hash([]*big.Int{spendPk, salt, contractAddr})
 		cipherText := cipherTextRaw.Mod(cipherTextRaw, BN254Order)
 
-		cfg := templates.PrivateMintConfig{TmRange: range_}
-		circuit := &templates.PrivateMintCircuit{Config: cfg}
+		circuit := &templates.PrivateMintCircuit{}
 		witness := &templates.PrivateMintCircuit{
-			Config:          cfg,
 			Commitment:      frontend.Variable(commitment),
 			ContractAddress: frontend.Variable(contractAddr),
 			TokenId:         frontend.Variable(tokenId),
@@ -112,7 +109,7 @@ func main() {
 
 	// ── DvPInitiator ─────────────────────────────────────────────────────────
 	{
-		cfg := templates.DvPInitiatorCircuitConfig{TmMerkleTreeDepth: depth, TmRange: range_}
+		cfg := templates.DvPInitiatorCircuitConfig{TmMerkleTreeDepth: depth}
 
 		// build a single-leaf Merkle tree so the path is trivially valid
 		spendSkA := big.NewInt(12345)
@@ -191,7 +188,7 @@ func main() {
 
 	// ── DvPDestination ───────────────────────────────────────────────────────
 	{
-		cfg := templates.DvPDestinationCircuitConfig{TmMerkleTreeDepth: depth, TmRange: range_}
+		cfg := templates.DvPDestinationCircuitConfig{TmMerkleTreeDepth: depth}
 
 		spendSkB := big.NewInt(99999)
 		spendPkB, _ := poseidon.Hash([]*big.Int{spendSkB})

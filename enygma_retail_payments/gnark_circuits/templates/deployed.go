@@ -1,7 +1,5 @@
 package templates
 
-import "github.com/consensys/gnark/frontend"
-
 // The configs the Payment-family circuits are compiled, keyed and served at.
 // Keygen, the prove handlers and the statement layouts all read these, so a
 // layout is derived at the shape the deployed verifying key was made for.
@@ -25,9 +23,6 @@ var (
 const (
 	// paymentMerkleTreeDepth is the depth of the vaults' Merkle trees.
 	paymentMerkleTreeDepth = 8
-	// paymentValueRange is the exclusive upper bound on every note value
-	// and fee (TmRange): 10^36.
-	paymentValueRange = "1000000000000000000000000000000000000"
 )
 
 func paymentConfig(nInputs, mOutputs int) PaymentCircuitConfig {
@@ -35,6 +30,5 @@ func paymentConfig(nInputs, mOutputs int) PaymentCircuitConfig {
 		TmNInputs:         nInputs,
 		TmMOutputs:        mOutputs,
 		TmMerkleTreeDepth: paymentMerkleTreeDepth,
-		TmRange:           frontend.Variable(paymentValueRange),
 	}
 }

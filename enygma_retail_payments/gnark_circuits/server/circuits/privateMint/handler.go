@@ -28,10 +28,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	pk, _ := utils.LoadProvingKey(curve, pkPath)
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
 
-	range_ := frontend.Variable("1000000000000000000000000000000000000")
-	circuitPrivateMint := templates.PrivateMintCircuit{
-		Config: templates.PrivateMintConfig{TmRange: range_},
-	}
+	circuitPrivateMint := templates.PrivateMintCircuit{}
 
 	solver.RegisterHint(primitives.ModHint)
 	solver.RegisterHint(primitives.ERC155UniqueIdNative)

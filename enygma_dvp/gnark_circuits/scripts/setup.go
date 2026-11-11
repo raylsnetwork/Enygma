@@ -11,12 +11,10 @@ import (
 	"enygma_dvp/gnark_circuits/templates"
 )
 
-func SetupPrivateMint(config templates.PrivateMintConfig, circuitName string) {
+func SetupPrivateMint(circuitName string) {
 	fmt.Print("Initializing Setup Process")
 	fmt.Print("\n")
-	circuit := templates.PrivateMintCircuit{
-		Config: config,
-	}
+	circuit := templates.PrivateMintCircuit{}
 
 	printable := fmt.Sprintf("Generating Proving Key and Veryfing key for %s", circuitName)
 	fmt.Println(printable)

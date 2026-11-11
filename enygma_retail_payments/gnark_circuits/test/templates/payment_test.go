@@ -143,7 +143,6 @@ func paymentTestConfig() templates.PaymentCircuitConfig {
 		TmNInputs:         1,
 		TmMOutputs:        2,
 		TmMerkleTreeDepth: paymentTestDepth,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 }
 

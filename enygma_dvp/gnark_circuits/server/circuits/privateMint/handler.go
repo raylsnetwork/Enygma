@@ -35,11 +35,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		}
 		// fmt.Println(request)
 
-		range_ := frontend.Variable("1000000000000000000000000000000000000")
-
-		circuitPrivateMint := templates.PrivateMintCircuit{
-			Config: templates.PrivateMintConfig{TmRange: range_},
-		}
+		circuitPrivateMint := templates.PrivateMintCircuit{}
 		witness := templates.PrivateMintCircuit{}
 
 		witness.Commitment = frontend.Variable(request.Commitment)

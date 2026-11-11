@@ -2,8 +2,8 @@ package templates
 
 import (
 	"enygma_dvp/gnark_circuits/primitives"
+	"enygma_gnark_shared/valuebound"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/math/cmp"
 )
 
 // PaymentFeeCircuit is the fee-absorbed variant of the plain 1-in/2-out payment
@@ -28,7 +28,7 @@ import (
 //	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
 //	 StCommitmentsOut[0], StCommitmentsOut[1], StContractAddress, StFee]
 type PaymentFeeCircuit struct {
-	Config PaymentCircuitConfig
+	Config PaymentCircuitConfig `gnark:"-"` // compile-time shape only; never a witness
 
 	// --- public inputs ---
 	StMessage         frontend.Variable   `gnark:",public"`
@@ -65,10 +65,8 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 
 	// --- verify input notes ---
 	for i := 0; i < circuit.Config.TmNInputs; i++ {
-		isValid0 := cmp.IsLess(api, circuit.WtValuesIn[i], circuit.Config.TmRange)
-		api.AssertIsEqual(isValid0, 1)
-		isValid1 := cmp.IsLessOrEqual(api, 0, circuit.WtValuesIn[i])
-		api.AssertIsEqual(isValid1, 1)
+		// Range check: 0 <= valueIn[i] < 10^36 (valuebound: fixed 120-bit width).
+		valuebound.Assert(api, circuit.WtValuesIn[i])
 
 		isZero := api.IsZero(circuit.WtValuesIn[i])
 		enable := api.Sub(1, isZero)
@@ -112,10 +110,8 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 
 	// --- verify output notes ---
 	for j := 0; j < circuit.Config.TmMOutputs; j++ {
-		isValid0 := cmp.IsLess(api, circuit.WtValuesOut[j], circuit.Config.TmRange)
-		api.AssertIsEqual(isValid0, 1)
-		isValid1 := cmp.IsLessOrEqual(api, 0, circuit.WtValuesOut[j])
-		api.AssertIsEqual(isValid1, 1)
+		// Range check: 0 <= valueOut[j] < 10^36 (valuebound: fixed 120-bit width).
+		valuebound.Assert(api, circuit.WtValuesOut[j])
 
 		commitment := primitives.Erc20CommitmentV2(api,
 			circuit.WtSpendPublicKeysOut[j],
@@ -139,8 +135,8 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 	// was not: a prover could pick StFee = Fr - d and satisfy
 	// sum(out) + StFee == sum(in) (mod Fr) with outputs worth d more than the
 	// inputs, creating value from nothing. Bound it like every note value: an
-	// honest fee is part of an input note's value, so it is below TmRange.
-	api.AssertIsEqual(cmp.IsLess(api, circuit.StFee, circuit.Config.TmRange), 1)
+	// honest fee is part of an input note's value, so it is below 10^36.
+	valuebound.Assert(api, circuit.StFee)
 
 	// Conservation: outputs + fee must equal inputs — fee is absorbed, not an output.
 	api.AssertIsEqual(api.Add(outputsTotal, circuit.StFee), inputsTotal)

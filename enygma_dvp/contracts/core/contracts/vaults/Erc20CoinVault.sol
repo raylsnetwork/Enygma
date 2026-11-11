@@ -63,9 +63,9 @@ contract Erc20CoinVault is AbstractCoinVault {
     uint256 public constant VK_ID_DVP_INITIATOR = 23;
 
     // Exclusive upper bound on the public StFee of a PaymentFee proof: the range
-    // bound the circuits put on every note value (TmRange, 10^36 in the gnark
-    // handlers). No honest fee reaches it, since a fee is part of an input note's
-    // value.
+    // bound the circuits put on every note value and fee (valuebound.Bound in
+    // enygma_gnark_shared, 10^36, compiled into every verifying key). No honest
+    // fee reaches it, since a fee is part of an input note's value.
     uint256 public constant MAX_FEE_AMOUNT = 10 ** 36;
 
     ///////////////////////////////////////////////
