@@ -30,6 +30,15 @@
 // channel concept moment must hold before its step's hops, its four beats
 // lighting in turn, and a run play six moments; with tags off, five. Two
 // first tests check the fixtures still hold the cases this is there for.
+// A page that joins a run partway (pausing on) is fed what /events replays of
+// the run so far, its live event, then the rest. Straight after the replay it
+// must show every step's row, those finished succeeded, the run running, and
+// no gate or moment; it must then play only the moments of steps starting
+// after it joined, numbered "Idea i of n" as a page that saw the run start
+// would. Joining a walkthrough at a gate, it must just watch: no step or
+// action gate, no /release. A page opened after a run must show it finished
+// at once, and the page that started a walkthrough must still drive it after
+// /events reconnects.
 //
 //   node --test scripts/shield_demo_replay.test.js   (make page-check)
 
@@ -81,12 +90,14 @@ function clock(win, errors) {
   };
 }
 
-// open loads the page as /?fast with pausing off, on fixture f. /defaults
-// answers with the fixture's; with walk, /run, /release and the on-chain
-// check's eth_call to the fixture's node answer as the fixture's run did,
-// each recorded in requests. Any other request is an error: a full run the
-// page did not start sends none.
-async function open(f, { walk = false } = {}) {
+// open loads the page as /?fast with pausing off (on with pausing), on
+// fixture f. /defaults answers with the fixture's, and /status with status;
+// with walk, /run, /release and the on-chain check's eth_call to the
+// fixture's node answer as the fixture's run did, each recorded in requests.
+// Any other request is an error: a full run the page did not start sends
+// none. /events opens with an empty replay, its live event sent, unless
+// joining: the test then feeds the replay and the live event itself.
+async function open(f, { walk = false, pausing = false, status = 'run', joining = false } = {}) {
   const errors = [];
   const vc = new VirtualConsole();
   vc.on('jsdomError', err => errors.push(err));
@@ -101,7 +112,7 @@ async function open(f, { walk = false } = {}) {
     virtualConsole: vc,
     beforeParse(win) {
       timers = clock(win, errors);
-      win.localStorage.setItem('enygmaRetailShieldPause', 'off');
+      win.localStorage.setItem('enygmaRetailShieldPause', pausing ? 'on' : 'off');
       // What a browser has and jsdom lacks; layout is all zeros here.
       // Each ResizeObserver's callback is kept in resized, for a test to call as a resize would.
       win.ResizeObserver = class { constructor(cb) { resized.push(cb); } observe() {} unobserve() {} disconnect() {} };
@@ -113,6 +124,7 @@ async function open(f, { walk = false } = {}) {
       const answer = v => { const body = JSON.stringify(v); return { ok: true, status: 200, json: async () => win.JSON.parse(body), text: async () => body }; };
       win.fetch = async (url, init = {}) => {
         if (url === '/defaults') return answer(f.defaults);
+        if (url === '/status') return answer({ state: status });
         if (walk && url === '/run') { requests.run.push(JSON.parse(init.body)); return answer({ status: 'started' }); }
         if (walk && url === '/release') { requests.release++; return answer({ status: 'released' }); }
         if (walk && url === f.defaults.chain?.rpcUrl) {
@@ -132,8 +144,12 @@ async function open(f, { walk = false } = {}) {
   await tick();
   assert.ok(source, 'the page opened no EventSource');
   source.onopen?.();
+  if (!joining) source.onmessage({ data: JSON.stringify(LIVE) });
   return { win: dom.window, doc: dom.window.document, source, timers, errors, requests, resized };
 }
+
+// LIVE ends /events' replay of the run so far.
+const LIVE = { kind: 'live' };
 
 // feed sends events to the page as /events delivers them, each a few
 // virtual ms after the last; an exception names its event's index in the
@@ -920,4 +936,101 @@ test('a tags-off run plays five concept moments, without the Tag channel one', a
   failOn(page.errors, 'while playing a tags-off run');
   finished(page);
   assert.deepStrictEqual(shown, ideas(FIVE_MOMENTS), 'the concept moments a tags-off run plays');
+});
+
+// KEPT are the kinds of a run's events /events replays to a page that joins
+// it partway, after the service lines: the broker's runKept and the reset.
+const KEPT = new Set(['reset', 'proto', 'step_started', 'step_succeeded', 'step_failed', 'done', 'failed']);
+// join feeds a page opened with joining what /events replays to a page that
+// joins fixture f's run at event at: the run's events before at that it
+// keeps, then the live event.
+function join(page, f, at) {
+  feed(page, [...f.events.slice(0, at).filter(e => KEPT.has(e.kind)), LIVE]);
+}
+const stepsOf = f => JSON.parse(f.events.find(e => e.kind === 'proto' && e.field === 'steps').value);
+const succeededBefore = (f, at) => f.events.slice(0, at).filter(e => e.kind === 'step_succeeded').length;
+
+// joined checks, straight after the replay, that the page shows fixture f's
+// run as it stood at event at: a row for every step, those finished before
+// at succeeded, the run running, and no gate or moment held.
+function joined({ doc }, f, at) {
+  assert.strictEqual(doc.querySelectorAll('#steps .st').length, stepsOf(f).length, 'the stepper’s rows, straight after the replay');
+  assert.strictEqual(doc.querySelectorAll('#steps .st.success').length, succeededBefore(f, at), 'the steps shown succeeded, straight after the replay');
+  assert.strictEqual(doc.getElementById('statusText').textContent, 'running', 'the status, straight after the replay');
+  assert.ok(doc.getElementById('nextBtn').disabled, 'a gate held straight after the replay');
+  assert.ok(doc.getElementById('moment').hidden, 'a concept moment showed straight after the replay');
+}
+
+test('a page that joins a default run partway shows its steps as the run has them at once, and numbers the moments it plays as a page that saw the run start', async () => {
+  const at = DEFAULT_RUN.events.findIndex(e => e.kind === 'hop' && e.step === 'fanout_1');
+  assert.ok(at > 0, 'the default run has no hop in payment 1');
+  const page = await open(DEFAULT_RUN, { pausing: true, joining: true });
+  const shown = shownMoments(page);
+  join(page, DEFAULT_RUN, at);
+  failOn(page.errors, 'on the replay');
+  joined(page, DEFAULT_RUN, at);
+  // Pausing off, the rest plays out with no Next.
+  page.doc.getElementById('optPause').click();
+  feed(page, DEFAULT_RUN.events.slice(at), at);
+  await playOut(page);
+  failOn(page.errors, 'while playing a run joined partway');
+  finished(page);
+  // Payment 1 had started: its moments are past, and those of Discover and Audit play.
+  assert.deepStrictEqual(shown, ideas(['Tag channel', ...FIVE_MOMENTS]).slice(4), 'the concept moments a page joining at payment 1 plays');
+});
+
+test('a page that opens after a run shows it finished at once, never running', async () => {
+  const page = await open(DEFAULT_RUN, { pausing: true, joining: true });
+  join(page, DEFAULT_RUN, DEFAULT_RUN.events.length);
+  failOn(page.errors, 'on the replay');
+  finished(page);
+  assert.ok(page.doc.getElementById('nextBtn').disabled, 'a gate held after a finished run’s replay');
+  assert.ok(page.doc.getElementById('moment').hidden, 'a concept moment showed after a finished run’s replay');
+});
+
+test('a page that joins a walkthrough at a gate just watches: it shows no step or action gate and sends no /release', async () => {
+  const at = WALKTHROUGH.events.findIndex(e => e.kind === 'action' && e.step === 'fanout_1') + 1;
+  assert.ok(at > 0, 'the walkthrough has no gate in payment 1');
+  const page = await open(WALKTHROUGH, { walk: true, pausing: true, status: 'walkthrough', joining: true });
+  const card = page.doc.getElementById('moment');
+  join(page, WALKTHROUGH, at);
+  await tick();
+  failOn(page.errors, 'on the replay');
+  joined(page, WALKTHROUGH, at);
+  // With pausing on, only its concept moments hold; their own NEXT releases each.
+  feed(page, WALKTHROUGH.events.slice(at), at);
+  const kickers = [];
+  for (let i = 0; i < 20; i++) {
+    await playOut(page);
+    if (card.hidden) break;
+    kickers.push(card.querySelector('.kicker').textContent);
+    card.querySelector('#momentNext').click();
+  }
+  failOn(page.errors, 'while watching the walkthrough');
+  finished(page);
+  assert.strictEqual(page.requests.release, 0, 'a joined page sent /release');
+  assert.deepStrictEqual(kickers, ideas(FIVE_MOMENTS).slice(3), 'the concept moments a page joining at payment 1’s gate plays');
+});
+
+test('a page that started a walkthrough still drives it after /events reconnects, skipping the replay of the run it shows', async () => {
+  const page = await open(WALKTHROUGH, { walk: true });
+  const $ = id => page.doc.getElementById(id);
+  await tick();
+  $('walkBtn').click();
+  await tick();
+  const at = WALKTHROUGH.events.findIndex(e => e.kind === 'action') + 1;
+  feed(page, WALKTHROUGH.events.slice(0, at));
+  await playOut(page);
+  assert.ok(!$('nextBtn').disabled, 'no gate at the walkthrough’s first action');
+  const shown = $('steps').innerHTML;
+  // A reconnect: the service lines are cleared and replayed, then the run so far.
+  page.source.onopen();
+  join(page, WALKTHROUGH, at);
+  await playOut(page);
+  failOn(page.errors, 'on the reconnect');
+  assert.strictEqual($('steps').innerHTML, shown, 'the reconnect’s replay redrew the stepper');
+  assert.ok(!$('nextBtn').disabled, 'the gate went with the reconnect');
+  $('nextBtn').click();
+  await tick();
+  assert.strictEqual(page.requests.release, 1, 'Next sent no /release after the reconnect');
 });

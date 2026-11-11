@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +188,9 @@ func TestWithoutALogDirectoryOnlyEngineEventsAreSent(t *testing.T) {
 	time.Sleep(3 * tailPoll)
 	s.broker.Emit(engine.Event{Kind: engine.Log, Msg: "engine line"})
 
+	if e := page.next(); e["kind"] != "live" {
+		t.Fatalf("got %v, want the replay's end, with no service line before it", e)
+	}
 	if e := page.next(); e["kind"] != "log" || e["msg"] != "engine line" {
 		t.Fatalf("got %v, want the engine's log line", e)
 	}
@@ -385,5 +389,77 @@ func TestStatusSaysWhatHoldsTheServerAndStartsNothing(t *testing.T) {
 	s.mu.Unlock()
 	if got := getStatus(t, url); got != "transfer" {
 		t.Errorf("a manual transfer in progress: state %q, want transfer", got)
+	}
+}
+
+// replayed is a new page's replay: each event it is sent before a live log
+// line published once it has connected, as its kind and its line, field or
+// step.
+func replayed(t *testing.T, s *server, url string) []string {
+	t.Helper()
+	page := connect(t, url)
+	// The replay is written before the stream is flushed, so the first
+	// event read means it is all on its way: the marker comes after it.
+	first := page.next()
+	s.broker.Emit(engine.Event{Kind: engine.Log, Msg: "ok"})
+	var got []string
+	for e := first; e["msg"] != "ok"; e = page.next() {
+		l := fmt.Sprint(e["kind"])
+		for _, k := range []string{"line", "field", "step"} {
+			if v, ok := e[k]; ok {
+				l += fmt.Sprint(" ", v)
+			}
+		}
+		got = append(got, l)
+	}
+	return got
+}
+
+// A page that joins a run partway is sent, after the service lines, the
+// run's start: its reset, its protocol fields (the steps among them) and its
+// steps' status events, in order, and up to its end; a new run's reset
+// drops the last run's. Its log lines, hops and manual transfers after the
+// run are not kept. The replay always ends with a live event, after which
+// events are the run's as they happen.
+func TestAPageThatJoinsARunPartwayGetsTheRunsStart(t *testing.T) {
+	s, url := startDemo(t, "")
+	s.broker.publishLine(termEvent{Kind: "term", Service: "hardhat", Line: "hardhat line"})
+	if got, want := replayed(t, s, url), []string{"term hardhat line", "live"}; !slices.Equal(got, want) {
+		t.Fatalf("before any run: replay %q, want %q", got, want)
+	}
+
+	b := s.broker
+	b.reset()
+	b.Emit(engine.Event{Kind: engine.ProtocolField, Field: "steps", Value: `[{"id":"a"},{"id":"b"}]`})
+	b.Emit(engine.Event{Kind: engine.StepStarted, Step: "a"})
+	b.Emit(engine.Event{Kind: engine.Log, Msg: "a log line"})
+	b.Emit(engine.Event{Kind: engine.Hop, Step: "a", From: "x", To: "y"})
+	b.Emit(engine.Event{Kind: engine.ActorField, Actor: 1, Field: "name"})
+	b.Emit(engine.Event{Kind: engine.ProtocolField, Field: "vault"})
+	b.Emit(engine.Event{Kind: engine.StepSucceeded, Step: "a"})
+	b.Emit(engine.Event{Kind: engine.StepStarted, Step: "b"})
+	first := []string{"term hardhat line", "reset", "proto steps", "step_started a",
+		"proto vault", "step_succeeded a", "step_started b"}
+	if got := replayed(t, s, url); !slices.Equal(got, slices.Concat(first, []string{"live"})) {
+		t.Fatalf("mid-run: replay %q,\nwant %q", got, first)
+	}
+
+	b.Emit(engine.Event{Kind: engine.StepFailed, Step: "b"})
+	b.Emit(engine.Event{Kind: engine.RunFailed, Msg: "b failed"})
+	b.Emit(engine.Event{Kind: engine.StepStarted, Step: "transfer"})
+	ended := slices.Concat(first, []string{"step_failed b", "failed", "live"})
+	if got := replayed(t, s, url); !slices.Equal(got, ended) {
+		t.Fatalf("after the run: replay %q,\nwant %q", got, ended)
+	}
+
+	b.reset()
+	b.Emit(engine.Event{Kind: engine.ProtocolField, Field: "steps", Value: `[{"id":"c"}]`})
+	b.Emit(engine.Event{Kind: engine.StepStarted, Step: "c"})
+	b.Emit(engine.Event{Kind: engine.StepSucceeded, Step: "c"})
+	b.Emit(engine.Event{Kind: engine.RunDone})
+	second := []string{"term hardhat line", "reset", "proto steps",
+		"step_started c", "step_succeeded c", "done", "live"}
+	if got := replayed(t, s, url); !slices.Equal(got, second) {
+		t.Fatalf("after a second run: replay %q,\nwant %q", got, second)
 	}
 }
