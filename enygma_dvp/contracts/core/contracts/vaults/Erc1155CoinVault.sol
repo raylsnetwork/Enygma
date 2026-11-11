@@ -378,10 +378,27 @@ contract Erc1155CoinVault is AbstractCoinVault, ERC1155Holder {
             }
         } else if (receipt.statement.length == expectedBatchSize) {
             receiptType = 2;
+            // The batch size does not depend on numberOfOutputs, so without
+            // this a batch receipt could claim any number of outputs and have
+            // that many statement elements inserted as commitments. The
+            // batch circuit moves 10 notes into 10.
+            if (receipt.numberOfInputs != 10 || receipt.numberOfOutputs != 10) {
+                revert ReceiptShapeMismatch();
+            }
         } else if (receipt.statement.length == expectedFungibleAuditorSize) {
             receiptType = 4;
+            // Other (numberOfInputs, numberOfOutputs) pairs give the same
+            // length (1 in, 5 out does) and would read the statement at the
+            // wrong offsets. JoinSplitErc1155WithAuditor is 2 in, 2 out.
+            if (receipt.numberOfInputs != 2 || receipt.numberOfOutputs != 2) {
+                revert ReceiptShapeMismatch();
+            }
         } else if (receipt.statement.length == expectedNonFungibleAuditorSize) {
             receiptType = 5;
+            // OwnershipErc1155NonFungibleWithAuditor is 1 in, 1 out.
+            if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 1) {
+                revert ReceiptShapeMismatch();
+            }
             // if(receipt.numberOfInputs != 2){
             //     revert InvalidNumberOfInputs();
             // }

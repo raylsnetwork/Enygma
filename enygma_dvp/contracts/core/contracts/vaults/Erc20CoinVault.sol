@@ -17,6 +17,7 @@ import {
     PAYMENT_RELAYER_FEE_LEN,
     USDR_FEE_LEN
 } from "../PaymentStatementLayout.sol";
+import {DVP_INITIATOR_LEN} from "../DvpStatementLayout.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
@@ -478,18 +479,29 @@ contract Erc20CoinVault is AbstractCoinVault {
         // nullifiers[numberOfInputs];
         // commitments[numberOfOutputs];
 
+        // numberOfInputs and numberOfOutputs are the caller's claim, and every
+        // offset below (and the ones nullifyFromReceipt and
+        // insertCommitmentsFromReceipt use) is computed from them, while the
+        // verifier only checks the statement's length. So the receipt must
+        // have exactly the shape of the circuit its verifying key belongs to.
+        // Before, a DvP Initiator receipt claiming 4 outputs inserted commitA
+        // and revertCommitA next to commitB, one claiming 0 outputs could
+        // never settle, and a Payment2in receipt claiming 1 output spent both
+        // inputs but inserted only output[0], destroying the change note.
+        (uint256 vkId, uint256 contractAddrIdx) = _receiptShape(receipt);
+
         uint jInputSize = receipt.numberOfInputs;
         uint jTreeNumbersIndex = 1;
         uint jRootsIndex = jTreeNumbersIndex + jInputSize;
         uint jNullifiersIndex = jRootsIndex + jInputSize;
         uint jCommitmentsIndex = jNullifiersIndex + jInputSize;
 
-        // VULN-5 fix: verify the proof is bound to THIS vault contract.
-        // statement layout: [...commitments, contractAddress] — contractAddress is last.
-        // Retail payment proofs (1-in/2-out and 1-in/3-out and 2-in/2-out) carry StContractAddress.
-        // DvP Initiator proofs (numberOfOutputs == 1) do not include it.
-        if (receipt.numberOfOutputs == 2 || receipt.numberOfOutputs == 3) {
-            uint contractAddrIdx = jCommitmentsIndex + receipt.numberOfOutputs;
+        // VULN-5 fix: verify the proof is bound to THIS vault contract. Every
+        // Payment-family shape carries StContractAddress after its outputs,
+        // and it is checked for each of them. A DvP Initiator proof carries
+        // the counterparty's vault instead (StCounterVault), which EnygmaDvp
+        // checks at settlement.
+        if (contractAddrIdx != 0) {
             require(
                 receipt.statement[contractAddrIdx] == uint256(uint160(address(this))),
                 "proof not bound to this vault"
@@ -525,71 +537,66 @@ contract Erc20CoinVault is AbstractCoinVault {
             }
         }
 
-        if (receipt.numberOfInputs != 1 && receipt.numberOfInputs != 2) {
-            revert InvalidNumberOfInputs();
-        }
-        if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2) {
-            // PaymentFee, UsdrFee and Payment share this shape; dispatch by
-            // statement length.
-            if (receipt.statement.length == PAYMENT_FEE_LEN) {
-                // PaymentFeeCircuit enforces  sum(in) == sum(out) + StFee  in the
-                // field but did not range-check StFee, so a prover could pick
-                // StFee = Fr - d and spend a note of value v into outputs worth
-                // v + d: value created from nothing, then withdrawn from other
-                // depositors' funds. payment() does not look at the fee at all and
-                // paymentWithFee() only compares it with a value the caller
-                // supplies, so the bound is enforced here, on every path that
-                // verifies a receipt of this shape.
-                if (receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] >= MAX_FEE_AMOUNT) {
-                    revert IEnygmaDvp.FeeOutOfRange();
-                }
-                if (!IVerifier(_verifierContractAddress).verifyProof(
-                    VK_ID_ERC20_JOINSPLIT_FEE,
-                    receipt.proof,
-                    receipt.statement
-                )) revert InvalidProof();
-            } else if (receipt.statement.length == USDR_FEE_LEN) {
-                if (!IVerifier(_verifierContractAddress).verifyProof(
-                    VK_ID_ERC20_USDR,
-                    receipt.proof,
-                    receipt.statement
-                )) revert InvalidProof();
-            } else {
-                // Retail Payment circuit: 1-input/2-output, VK registered at slot 0.
-                if (!IVerifier(_verifierContractAddress).verifyProof(
-                    VK_ID_ERC20_JOINSPLIT,
-                    receipt.proof,
-                    receipt.statement
-                )) revert InvalidProof();
+        if (vkId == VK_ID_ERC20_JOINSPLIT_FEE) {
+            // PaymentFeeCircuit enforces  sum(in) == sum(out) + StFee  in the
+            // field but did not range-check StFee, so a prover could pick
+            // StFee = Fr - d and spend a note of value v into outputs worth
+            // v + d: value created from nothing, then withdrawn from other
+            // depositors' funds. payment() does not look at the fee at all and
+            // paymentWithFee() only compares it with a value the caller
+            // supplies, so the bound is enforced here, on every path that
+            // verifies a receipt of this shape.
+            if (receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] >= MAX_FEE_AMOUNT) {
+                revert IEnygmaDvp.FeeOutOfRange();
             }
-        } else if (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 3) {
-            // PaymentRelayerFeePublic circuit: 1-in/3-out.
-            // output[0]=Bob, output[1]=Alice change, output[2]=relayer fee note.
-            if (!IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_JOINSPLIT_RELAYER,
-                receipt.proof,
-                receipt.statement
-            )) revert InvalidProof();
-        } else if (receipt.numberOfInputs == 1) {
-            // DvP Initiator: 1-input/3-output circuit with 8-element statement
-            // (…, revertCommitA, counterVault).
-            // numberOfOutputs is reported as 1 on-chain so only statement[4]=commitB
-            // is inserted into the vault; the full 7-element statement is used for VK verification.
-            if (!IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_DVP_INITIATOR,
-                receipt.proof,
-                receipt.statement
-            )) revert InvalidProof();
-        } else {
-            // 2-input/2-output circuit uses its own VK slot — VULN-2 fix.
-            if (!IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_JOINSPLIT_2INPUT,
-                receipt.proof,
-                receipt.statement
-            )) revert InvalidProof();
         }
+        if (!IVerifier(_verifierContractAddress).verifyProof(
+            vkId,
+            receipt.proof,
+            receipt.statement
+        )) revert InvalidProof();
 
         return true;
+    }
+
+    // The verifying key for a receipt, and where its StContractAddress sits
+    // (0 when the circuit has none), from its exact (numberOfInputs,
+    // numberOfOutputs, statement length). Any other shape reverts.
+    //   Payment                  1 in, 2 out,  7 signals, VK slot 0
+    //   Payment2in               2 in, 2 out, 10 signals, VK slot 1
+    //   PaymentFee               1 in, 2 out,  8 signals, VK slot 2
+    //   PaymentRelayerFeePublic  1 in, 3 out,  9 signals, VK slot 3
+    //   UsdrFee                  1 in, 2 out,  9 signals, VK slot 4
+    //   DvP Initiator            1 in, 1 out,  8 signals, VK slot 23
+    // The DvP Initiator circuit publishes three commitments (commitB, commitA,
+    // revertCommitA), but only commitB is this leg's output: commitA is
+    // inserted by the counterparty's leg, in the other vault, and
+    // revertCommitA only on timeout (claimSwapTimeout). So it is 1 output.
+    function _receiptShape(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) internal pure returns (uint256 vkId, uint256 contractAddrIdx) {
+        uint256 nIn = receipt.numberOfInputs;
+        uint256 nOut = receipt.numberOfOutputs;
+        uint256 len = receipt.statement.length;
+        if (nIn == 1 && nOut == 2 && len == PAYMENT_LEN) {
+            return (VK_ID_ERC20_JOINSPLIT, Psl.PAYMENT_CONTRACT_ADDRESS_OFFSET);
+        }
+        if (nIn == 2 && nOut == 2 && len == PAYMENT2IN_LEN) {
+            return (VK_ID_ERC20_JOINSPLIT_2INPUT, Psl.PAYMENT2IN_CONTRACT_ADDRESS_OFFSET);
+        }
+        if (nIn == 1 && nOut == 2 && len == PAYMENT_FEE_LEN) {
+            return (VK_ID_ERC20_JOINSPLIT_FEE, Psl.PAYMENT_FEE_CONTRACT_ADDRESS_OFFSET);
+        }
+        if (nIn == 1 && nOut == 3 && len == PAYMENT_RELAYER_FEE_LEN) {
+            return (VK_ID_ERC20_JOINSPLIT_RELAYER, Psl.PAYMENT_RELAYER_FEE_CONTRACT_ADDRESS_OFFSET);
+        }
+        if (nIn == 1 && nOut == 2 && len == USDR_FEE_LEN) {
+            return (VK_ID_ERC20_USDR, Psl.USDR_FEE_CONTRACT_ADDRESS_OFFSET);
+        }
+        if (nIn == 1 && nOut == 1 && len == DVP_INITIATOR_LEN) {
+            return (VK_ID_DVP_INITIATOR, 0);
+        }
+        revert ReceiptShapeMismatch();
     }
 
     function verifyOwnership(
