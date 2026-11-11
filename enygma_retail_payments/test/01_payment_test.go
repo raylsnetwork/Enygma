@@ -123,7 +123,16 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 		mintResult.ContractStatement(),
 	)
 
-	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain.
+	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain. privateMint only
+	// accepts a vault flagged mintable; on this local deployment the issuer is
+	// the only depositor of its own token, so the test flags vault 0 itself.
+	flagTx, err := dvp.Transact(auth, "setVaultMintable", vaultId, true)
+	if err != nil {
+		t.Fatalf("EnygmaDvp.setVaultMintable: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, client, flagTx); err != nil {
+		t.Fatalf("wait setVaultMintable: %v", err)
+	}
 	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)
