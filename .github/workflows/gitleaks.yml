@@ -12,7 +12,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # gitleaks/gitleaks-action@v2 now requires a paid GITLEAKS_LICENSE for
@@ -21,7 +21,7 @@ jobs:
       # PR, regardless of content. The underlying gitleaks CLI itself is
       # still free/open-source (MIT) and needs no license; run it directly
       # instead of through the paid Action wrapper.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "stable"
       - name: Install gitleaks
@@ -31,6 +31,7 @@ jobs:
         # github.com/gitleaks/gitleaks/v8 import path fails Go's module
         # identity check ("module declares its path as ... but was
         # required as ..."), even though that's the current repo URL.
-        run: go install github.com/zricethezav/gitleaks/v8@latest
+        # Pinned so a new release can't change what CI runs unannounced.
+        run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
       - name: Scan
         run: gitleaks detect --source . --config .gitleaks.toml --redact -v
