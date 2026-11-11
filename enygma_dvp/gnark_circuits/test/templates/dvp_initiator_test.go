@@ -132,7 +132,6 @@ func (w *dvpInitiatorTestWitness) circuit() *templates.DvPInitiatorCircuit {
 func dvpInitiatorTestConfig() templates.DvPInitiatorCircuitConfig {
 	return templates.DvPInitiatorCircuitConfig{
 		TmMerkleTreeDepth: dvpInitiatorTestDepth,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 }
 

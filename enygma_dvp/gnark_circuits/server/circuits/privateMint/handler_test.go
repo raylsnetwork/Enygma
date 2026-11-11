@@ -4,8 +4,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/consensys/gnark/frontend"
-
 	ht "enygma_dvp/gnark_circuits/server/circuits/internal/handlertest"
 	"enygma_dvp/gnark_circuits/templates"
 	"enygma_dvp/layout"
@@ -16,9 +14,7 @@ import (
 // proof's own public witness, and the proof must verify against them. A
 // request whose public values the witness does not satisfy gets an error.
 func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
-	empty := templates.PrivateMintCircuit{
-		Config: templates.PrivateMintConfig{TmRange: frontend.Variable("1000000000000000000000000000000000000")},
-	}
+	empty := templates.PrivateMintCircuit{}
 	pkPath, vkPath, vk := ht.Keys(t, &empty)
 	handler := NewHandler(pkPath, vkPath)
 

@@ -18,11 +18,7 @@ import (
 	"enygma_dvp_auctions/gnark_circuits/utils"
 )
 
-const (
-	bidMerkleDepth = 8
-	// bidRange is the upper bound for amount range checks (same as dvp convention).
-	bidRange = "1000000000000000000000000000000000000"
-)
+const bidMerkleDepth = 8
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
 // AuctionBidCircuit (Merkle depth 8, all-in bid). Keys are loaded once at startup.
@@ -41,7 +37,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		cfg := templates.AuctionBidCircuitConfig{
 			TmMerkleTreeDepth: bidMerkleDepth,
-			TmRange:           frontend.Variable(bidRange),
 		}
 
 		newCircuit := func() templates.AuctionBidCircuit {

@@ -151,7 +151,7 @@ func nullifierFormula(sk *big.Int, vaultNode string, vaultAddr common.Address, p
 	}}, nil
 }
 
-// valueRange is the bound of the circuits' range check, TmRange: every
+// valueRange is the bound of the circuits' range check (valuebound.Bound): every
 // amount a proof spends or makes is 0 ≤ v < 10³⁶.
 var valueRange = new(big.Int).Exp(big.NewInt(10), big.NewInt(36), nil)
 

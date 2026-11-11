@@ -2,8 +2,8 @@ package templates
 
 import (
 	"enygma_dvp/gnark_circuits/primitives"
+	"enygma_gnark_shared/valuebound"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/math/cmp"
 )
 
 // UsdrFeeCircuit is a second, independent relayer-fee asset: a 1-in/2-out
@@ -40,7 +40,7 @@ import (
 //	[StMessage, StTreeNumbers[0], StMerkleRoots[0], StNullifiers[0],
 //	 StCommitmentsOut[0], StCommitmentsOut[1], StContractAddress, StFee, StTokenId]
 type UsdrFeeCircuit struct {
-	Config PaymentCircuitConfig
+	Config PaymentCircuitConfig `gnark:"-"` // compile-time shape only; never a witness
 
 	// --- public inputs ---
 	StMessage         frontend.Variable   `gnark:",public"`
@@ -76,10 +76,8 @@ func (circuit *UsdrFeeCircuit) Define(api frontend.API) error {
 
 	// --- verify input notes ---
 	for i := 0; i < circuit.Config.TmNInputs; i++ {
-		isValid0 := cmp.IsLess(api, circuit.WtValuesIn[i], circuit.Config.TmRange)
-		api.AssertIsEqual(isValid0, 1)
-		isValid1 := cmp.IsLessOrEqual(api, 0, circuit.WtValuesIn[i])
-		api.AssertIsEqual(isValid1, 1)
+		// Range check: 0 <= valueIn[i] < 10^36 (valuebound: fixed 120-bit width).
+		valuebound.Assert(api, circuit.WtValuesIn[i])
 
 		isZero := api.IsZero(circuit.WtValuesIn[i])
 		enable := api.Sub(1, isZero)
@@ -123,10 +121,8 @@ func (circuit *UsdrFeeCircuit) Define(api frontend.API) error {
 
 	// --- verify output notes ---
 	for j := 0; j < circuit.Config.TmMOutputs; j++ {
-		isValid0 := cmp.IsLess(api, circuit.WtValuesOut[j], circuit.Config.TmRange)
-		api.AssertIsEqual(isValid0, 1)
-		isValid1 := cmp.IsLessOrEqual(api, 0, circuit.WtValuesOut[j])
-		api.AssertIsEqual(isValid1, 1)
+		// Range check: 0 <= valueOut[j] < 10^36 (valuebound: fixed 120-bit width).
+		valuebound.Assert(api, circuit.WtValuesOut[j])
 
 		commitment := primitives.Erc20CommitmentV2(api,
 			circuit.WtSpendPublicKeysOut[j],

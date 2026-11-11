@@ -95,7 +95,6 @@ func generateAuctionBid() {
 	const depth = 8
 	cfg := templates.AuctionBidCircuitConfig{
 		TmMerkleTreeDepth: depth,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 	circuit := templates.AuctionBidCircuit{
 		Config:         cfg,

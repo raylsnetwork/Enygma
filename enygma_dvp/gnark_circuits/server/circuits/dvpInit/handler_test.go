@@ -67,7 +67,6 @@ func newTestCircuit() *templates.DvPInitiatorCircuit {
 	return &templates.DvPInitiatorCircuit{
 		Config: templates.DvPInitiatorCircuitConfig{
 			TmMerkleTreeDepth: merkleDepth,
-			TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 		},
 		WtPathElements: make([]frontend.Variable, merkleDepth),
 	}

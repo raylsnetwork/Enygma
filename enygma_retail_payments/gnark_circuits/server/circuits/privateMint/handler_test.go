@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/frontend"
 
 	ht "enygma_retail_payments/gnark_circuits/server/circuits/internal/handlertest"
 	"enygma_retail_payments/gnark_circuits/templates"
@@ -34,9 +33,7 @@ func TestHandler_ProvesConcurrentRequests(t *testing.T) {
 
 func keys(t *testing.T) (pkPath, vkPath string, vk groth16.VerifyingKey) {
 	t.Helper()
-	empty := templates.PrivateMintCircuit{
-		Config: templates.PrivateMintConfig{TmRange: frontend.Variable("1000000000000000000000000000000000000")},
-	}
+	empty := templates.PrivateMintCircuit{}
 	return ht.Keys(t, &empty)
 }
 

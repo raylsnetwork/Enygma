@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/consensys/gnark/constraint/solver"
-	"github.com/consensys/gnark/frontend"
 
 	"enygma_dvp/gnark_circuits/primitives"
 	script "enygma_dvp/gnark_circuits/scripts"
@@ -173,27 +172,19 @@ func GenerationVkPk(only map[string]bool) {
 	// 	TmAssetGroupMerkleTree:8,
 	// }
 
-	// covered by test/01_v2_erc20_private_mint_test.go (TestV2Erc20OnChain_PrivateMint)
-	private_mint_config := templates.PrivateMintConfig{
-		TmRange: frontend.Variable("1000000000000000000000000000000000000"),
-	}
-
 	// covered by test/03_v2_dvp_test.go and test/04_v2_dvp_deadline_test.go
-	// H-2 fix: TmRange added — KEYS MUST BE REGENERATED after this change.
 	dvp_initiator_config := templates.DvPInitiatorCircuitConfig{
 		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 
 	// covered by test/03_v2_dvp_test.go and test/04_v2_dvp_deadline_test.go
-	// H-2 fix: TmRange added — KEYS MUST BE REGENERATED after this change.
 	dvp_destination_config := templates.DvPDestinationCircuitConfig{
 		TmMerkleTreeDepth: 8,
-		TmRange:           frontend.Variable("1000000000000000000000000000000000000"),
 	}
 
+	// covered by test/01_v2_erc20_private_mint_test.go (TestV2Erc20OnChain_PrivateMint)
 	if want("PrivateMint") {
-		script.SetupPrivateMint(private_mint_config, "PrivateMint")
+		script.SetupPrivateMint("PrivateMint")
 	}
 	if want("DvPInitiator") {
 		script.SetupDvPInitiator(dvp_initiator_config, "DvPInitiator")
