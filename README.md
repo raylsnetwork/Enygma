@@ -12,6 +12,9 @@ cryptography happen: real commitments, real AEAD payloads, real trial decryption
 Payments additionally lets you view the same ledger as a bank, as the chain, as the regulator and
 as the operator.
 
+> **Usage policy:** every Enygma deployment must use $RLS as its fee token, unless agreed with
+> the Rayls Foundation. See [`USAGE-POLICY.md`](./USAGE-POLICY.md).
+
 ## Repository layout
 
 Each variant is a self-contained set of Go modules plus Solidity contracts; nothing outside
