@@ -917,28 +917,28 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "fanout_1": [
       {
         "kicker": "Proof",
-        "h": "The chain checks the payment without seeing it",
+        "h": "The chain checks a payment it can’t read",
         "beats": [
           {
             "where": "In the Sender’s wallet · private",
             "zone": "wallet",
             "what": [["spends", "the {shieldTotal} RaylsERC20 note"], ["pays", "{to} {amount} RaylsERC20"], ["change", "the rest, back to the Sender"]],
-            "cap": "The payment as only the Sender’s wallet knows it."
+            "cap": "Only the Sender’s wallet knows the payment now."
           },
           {
             "where": "The wallet’s prover · private",
             "zone": "wallet",
             "what": "note + spend key → sealed proof",
             "cap": [
-              "The prover seals the note and the spend key into a zero-knowledge proof: the payment adds up, and the note is the Sender’s.",
-              {"when": "usdrFee", "text": "A second proof pays the relayer’s USDr fee the same way."}
+              "It seals both into a zero-knowledge proof: the payment adds up, and the note is the Sender’s.",
+              {"when": "usdrFee", "text": "A second proof pays the relayer’s USDr fee privately."}
             ]
           },
           {
             "where": "In EnygmaDvp · public",
             "zone": "chain",
-            "what": [["sees", [{"when": "!usdrFee", "text": "a tree root, a nullifier, two new commitments"}, {"when": "usdrFee", "text": "for each proof, a tree root, a nullifier and two new commitments"}]], ["never sees", "the note, {to}, the amount"]],
-            "cap": "EnygmaDvp checks the proof without opening it. The nullifier marks the note spent without saying which."
+            "what": [["sees", [{"when": "!usdrFee", "text": "a tree root, a nullifier, two new commitments"}, {"when": "usdrFee", "text": "per proof, a tree root, a nullifier, two new commitments"}]], ["never sees", "the note, {to}, the amount"]],
+            "cap": "It checks the proof unopened; the nullifier marks the note spent without saying which."
           }
         ]
       },
@@ -1015,13 +1015,13 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
             "where": "In the UserRegistry · public",
             "zone": "chain",
             "what": "audit ciphertexts, one set per user",
-            "cap": "When they registered, each user sealed their view key for the auditor. Anyone can see the sealed boxes; only the auditor can open them."
+            "cap": "At registration each user sealed their view key for the auditor: anyone sees the boxes, only the auditor opens them."
           },
           {
             "where": "In the Auditor’s wallet · private",
             "zone": "wallet",
             "what": "auditor’s key → {users} view keys",
-            "cap": "At Auditor keys, right after they registered, the auditor’s key opened each user’s audit ciphertexts and recovered their view key."
+            "cap": "At Auditor keys, the auditor’s key opened them and recovered each user’s view key."
           },
           {
             "where": "The auditor’s view · private",
@@ -1029,13 +1029,13 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
             "what": [
               ["amounts", "every payment’s"],
               ["recipients", "every payment’s"],
-              ["payers", [{"when": "tags", "text": "every payment’s, through the tag channels"}, {"when": "!tags", "text": "hidden, even from the auditor: this run has no tags"}]]
+              ["payers", [{"when": "tags", "text": "every payment’s, through the tag channels"}, {"when": "!tags", "text": "hidden even from the auditor, tags off"}]]
             ],
             "cap": [
               "With those view keys it opens every note, as each recipient can.",
               {"when": "tags", "text": "It rebuilds each user’s balance exactly."},
-              {"when": ["!tags", "!walkthrough"], "text": "It sees what each user received, but can’t rebuild their balances."},
-              {"when": ["!tags", "walkthrough"], "text": "Every note here comes from the Sender’s one shield, so it infers each balance by conservation."},
+              {"when": ["!tags", "!walkthrough"], "text": "It sees what each user received, not their balances."},
+              {"when": ["!tags", "walkthrough"], "text": "Every RaylsERC20 note here is from the Sender’s shield: it infers balances."},
               "None of this is public."
             ]
           }

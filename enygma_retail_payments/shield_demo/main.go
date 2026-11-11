@@ -125,9 +125,11 @@ type server struct {
 	engine  *engine.Engine
 	// live is the run in progress, whose gate /release opens, and
 	// endWalk ends it if it is a walkthrough; both are nil between runs.
-	mu      sync.Mutex
-	live    *engine.Engine
-	endWalk context.CancelFunc
+	// transferring is true while a manual transfer holds running.
+	mu           sync.Mutex
+	live         *engine.Engine
+	endWalk      context.CancelFunc
+	transferring bool
 	// pageFile and primerFile, if set, are read for the page and the
 	// primer on every request instead of the embedded copies (-dev).
 	pageFile, primerFile string
@@ -152,6 +154,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("/run", s.handleRun)
 	mux.HandleFunc("/transfer", s.handleTransfer)
 	mux.HandleFunc("/release", s.handleRelease)
+	mux.HandleFunc("/status", s.handleStatus)
 	return mux
 }
 
@@ -296,6 +299,30 @@ func (s *server) endWalkthrough() bool {
 	return true
 }
 
+// handleStatus says, read-only, what holds the server: "run", "walkthrough",
+// "transfer", or "idle" when a RUN would start. It starts nothing. A run or
+// transfer is marked just after it takes the server and cleared just before
+// it lets go, so "idle" can show a moment early.
+func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.Lock()
+	state := "idle"
+	switch {
+	case s.endWalk != nil:
+		state = "walkthrough"
+	case s.live != nil:
+		state = "run"
+	case s.transferring:
+		state = "transfer"
+	}
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"state": state})
+}
+
 // handleRelease lets a waiting walkthrough perform its next action.
 func (s *server) handleRelease(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -330,6 +357,14 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.running.Unlock()
+	s.mu.Lock()
+	s.transferring = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.transferring = false
+		s.mu.Unlock()
+	}()
 	if s.engine == nil {
 		writeError(w, http.StatusConflict, "run the scenario first")
 		return
