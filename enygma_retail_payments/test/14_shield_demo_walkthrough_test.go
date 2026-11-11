@@ -2027,19 +2027,26 @@ func tagChannelRegistry(t *testing.T, client *ethclient.Client, addr common.Addr
 // library's artifact.
 func tagChannelRegistryABI(t *testing.T) abi.ABI {
 	t.Helper()
-	data, err := os.ReadFile("../private_tags/contracts/TagChannelRegistry.json")
+	return privateTagsABI(t, "TagChannelRegistry")
+}
+
+// privateTagsABI is the ABI of the private tags library's contract name
+// (TagChannelRegistry or TagRegistry), from its artifact.
+func privateTagsABI(t *testing.T, name string) abi.ABI {
+	t.Helper()
+	data, err := os.ReadFile("../private_tags/contracts/" + name + ".json")
 	if err != nil {
-		t.Fatalf("read the TagChannelRegistry artifact: %v", err)
+		t.Fatalf("read the %s artifact: %v", name, err)
 	}
 	var artifact struct {
 		ABI json.RawMessage `json:"abi"`
 	}
 	if err := json.Unmarshal(data, &artifact); err != nil {
-		t.Fatalf("parse the TagChannelRegistry artifact: %v", err)
+		t.Fatalf("parse the %s artifact: %v", name, err)
 	}
 	a, err := abi.JSON(strings.NewReader(string(artifact.ABI)))
 	if err != nil {
-		t.Fatalf("TagChannelRegistry ABI: %v", err)
+		t.Fatalf("%s ABI: %v", name, err)
 	}
 	return a
 }
