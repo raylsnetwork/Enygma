@@ -10,17 +10,18 @@ package tests
 // writes nothing.
 //
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
-// auditor's keys, the registration of both users, the Sender's shield, and
-// the Sender's payment to Ana (one Payment proof, sent from the Sender's own
-// account), its Groth16 proof opened up (L and the pairing check, and the
+// auditor's keys, the registration of both users, the Sender's shield, the
+// Sender's tag channel to Ana (and a second to a throwaway view key, which
+// Ana's key fails to open), and the Sender's payment to Ana (one Payment
+// proof, sent from the Sender's own account), its Groth16 proof opened up (L and the pairing check, and the
 // Verifier's answer), Ana's discovery of her note (her scan of the Payment
 // events), her partial withdrawal from that note (the same Payment circuit
 // with Message = 1), the auditor's recovery of her view key and opening of
 // her notes, and the observer's verdict (what the chain's bytes name).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
-// chain and a deployment, and the gnark server on :8082 for the payment's
-// proof; this test does not call the relayer).
+// chain and a deployment, with its TagChannelRegistry, and the gnark server
+// on :8082 for the payment's proof; this test does not call the relayer).
 //
 // Run:
 //
@@ -38,6 +39,7 @@ import (
 	"crypto/hkdf"
 	"crypto/mlkem"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -67,6 +69,7 @@ import (
 	"github.com/iden3/go-iden3-crypto/constants"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 )
 
 // primerPage is the Protocol primer, whose data block this test rewrites.
@@ -117,7 +120,7 @@ type primerUser struct {
 
 // primerChecks are the checks a run must pass, every one, before it may
 // write the data block.
-var primerChecks = []string{"keys", "auditor", "registration", "shield", "payment", "proof", "discovery", "withdrawal", "audit", "verdict"}
+var primerChecks = []string{"keys", "auditor", "registration", "shield", "channel", "payment", "proof", "discovery", "withdrawal", "audit", "verdict"}
 
 // shieldAmount is what the Sender shields: public RaylsERC20 the issuer
 // mints to them, deposited whole into one note.
@@ -564,6 +567,224 @@ func TestProtocolPrimer(t *testing.T) {
 			{Tx: "Commitment event", Field: "commitment", Value: commitment.String()},
 			{Tx: "Commitment event", Field: "leaf", Value: fmt.Sprintf("tree %s · leaf #%d", tree, index)},
 		}}
+	})
+
+	check("channel", "the Sender's tag channel record opens to Ana's view key alone: her Decaps gives ss, HKDF k_ch, and c₂ opens with c₁ as AAD to msg ‖ the Sender's address; a record sealed to a throwaway view key decapsulates for her too, and its AEAD fails", func(t *testing.T) {
+		sender, ana := users[0], users[1]
+		channelsAddr := common.HexToAddress(receipts["TagChannelRegistry"].ContractAddress)
+		channelsABI := tagChannelRegistryABI(t)
+		channels := bindContract(t, client, channelsAddr, channelsABI)
+		auth, err := bind.NewKeyedTransactorWithChainID(sender.key, big.NewInt(hardhatChainID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nUsers, err := rpcore.GetUserCount(client, registryAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		anaIdx, err := tags.GetRecipientIndex(client, registryAddr, ana.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, senderID := "Payment channel ready", sender.addr.Hex()
+
+		// opened is one tag channel the Sender opened: what it built, the
+		// record's index and the openChannel transaction's receipt.
+		type opened struct {
+			ss, c1, c2, bitmap []byte
+			idx                uint64
+			receipt            *types.Receipt
+		}
+		// open has the Sender build a tag channel to ek with the client
+		// library and send openChannel from their own account (no relayer).
+		open := func(what string, ek []byte, idx int) opened {
+			t.Helper()
+			ss, c1, c2, bitmap, err := tags.PrepareChannelSetup(ek, []byte(msg), []byte(senderID), tags.PrivacyFull, nUsers, idx, nil)
+			if err != nil {
+				t.Fatalf("%s: PrepareChannelSetup: %v", what, err)
+			}
+			tx, err := channels.Transact(auth, "openChannel", c1, c2, bitmap)
+			if err != nil {
+				t.Fatalf("%s: openChannel: %v", what, err)
+			}
+			r, err := bind.WaitMined(ctx, client, tx)
+			if err != nil || r.Status != types.ReceiptStatusSuccessful {
+				t.Fatalf("%s: openChannel receipt %v, err %v", what, r, err)
+			}
+			var events []*types.Log
+			for _, l := range r.Logs {
+				if l.Address == channelsAddr && len(l.Topics) == 3 && l.Topics[0] == channelOpenedSig {
+					events = append(events, l)
+				}
+			}
+			if len(events) != 1 || common.BytesToAddress(events[0].Topics[2].Bytes()) != sender.addr {
+				t.Fatalf("%s: %d ChannelOpened events naming the Sender, want 1", what, len(events))
+			}
+			channelIdx := events[0].Topics[1].Big().Uint64()
+			// The record as TagChannelRegistry holds it is what was built,
+			// and its sender is the Sender's account.
+			var out []any
+			if err := channels.Call(&bind.CallOpts{}, &out, "getChannel", new(big.Int).SetUint64(channelIdx)); err != nil {
+				t.Fatal(err)
+			}
+			if out[0].(common.Address) != sender.addr || !bytes.Equal(out[1].([]byte), c1) || !bytes.Equal(out[2].([]byte), c2) || !bytes.Equal(out[3].([]byte), bitmap) {
+				t.Fatalf("%s: tag channel #%d is not the record built, sent by the Sender", what, channelIdx)
+			}
+			if _, from, _ := calldataOf(t, client, channelsABI, r.TxHash, "openChannel", sender.addr, channelsAddr); from != sender.addr {
+				t.Fatalf("%s: openChannel sent by %s", what, from)
+			}
+			return opened{ss, c1, c2, bitmap, channelIdx, r}
+		}
+		toAna := open("Sender → Ana", ana.view.EncapsKey, anaIdx)
+		ss, c1, c2, bitmap, idx := toAna.ss, toAna.c1, toAna.c2, toAna.bitmap, toAna.idx
+
+		// Recomputed with the standard library, as Ana's wallet does it:
+		// Decaps of c₁, HKDF-SHA256 to k_ch, AES-256-GCM open of c₂ with c₁
+		// as associated data, decoded to msg ‖ senderId.
+		if len(c1) != mlkem.CiphertextSize768 {
+			t.Errorf("c₁ is %d bytes, want %d", len(c1), mlkem.CiphertextSize768)
+		}
+		anaSS, err := ana.view.DecapsKey.Decapsulate(c1)
+		if err != nil {
+			t.Fatalf("Ana's Decaps: %v", err)
+		}
+		if !bytes.Equal(anaSS, ss) {
+			t.Fatal("Ana's Decaps of c₁ is not the Sender's ss")
+		}
+		kch, err := hkdf.Key(sha256.New, ss, nil, "enygma-channel-key-v1", 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lib := tags.DeriveChannelKey(ss); !bytes.Equal(lib[:], kch) {
+			t.Error("the library's channel key is not HKDF-SHA256(ss, \"enygma-channel-key-v1\")")
+		}
+		gotMsg, gotID, err := openChannelSealed(t, kch, c1, c2)
+		if err != nil {
+			t.Fatalf("c₂ does not open under k_ch with c₁ as AAD: %v", err)
+		}
+		if gotMsg != msg || gotID != senderID {
+			t.Errorf("c₂ opens to %q ‖ %q, want %q ‖ the Sender's address %s", gotMsg, gotID, msg, senderID)
+		}
+		// The plaintext, as the library encodes it: each part a 4-byte
+		// big-endian length, then its bytes.
+		var plain []byte
+		for _, part := range []string{msg, senderID} {
+			plain = append(binary.BigEndian.AppendUint32(plain, uint32(len(part))), part...)
+		}
+		gcm := newGCM(t, kch)
+		nonce, sealed := c2[:gcm.NonceSize()], c2[gcm.NonceSize():]
+		if got, err := gcm.Open(nil, nonce, sealed, c1); err != nil || !bytes.Equal(got, plain) {
+			t.Errorf("c₂ opens to %x (err %v), want msg ‖ senderId as %x", got, err, plain)
+		}
+		tampered := slices.Clone(c1)
+		tampered[0] ^= 1
+		if _, err := gcm.Open(nil, nonce, sealed, tampered); err == nil {
+			t.Error("c₂ opened beside a tampered c₁")
+		}
+		// The bitmap is PrivacyFull: one bit per registered user, all set.
+		set := 0
+		for i := range len(bitmap) * 8 {
+			if bitmap[i/8]&(1<<(i%8)) != 0 {
+				if i >= nUsers {
+					t.Errorf("the bitmap sets bit %d, past the registry's %d users", i, nUsers)
+				}
+				set++
+			}
+		}
+		if set != nUsers || len(bitmap) != (nUsers+7)/8 {
+			t.Errorf("the bitmap sets %d bits in %d bytes, the UserRegistry holds %d users", set, len(bitmap), nUsers)
+		}
+
+		// A second record, sealed to a throwaway view key: Ana's Decaps
+		// still returns a secret (ML-KEM rejects implicitly), and the AEAD
+		// under its key gives ⊥. The throwaway key's Decaps and AEAD open
+		// it, so it is a well-formed record that is simply not hers.
+		throwaway, err := mlkem.GenerateKey768()
+		if err != nil {
+			t.Fatal(err)
+		}
+		toOther := open("Sender → throwaway", throwaway.EncapsulationKey().Bytes(), anaIdx)
+		otherSS, otherC1, otherC2 := toOther.ss, toOther.c1, toOther.c2
+		anaOther, err := ana.view.DecapsKey.Decapsulate(otherC1)
+		if err != nil {
+			t.Fatalf("Ana's Decaps of the throwaway record: %v", err)
+		}
+		if bytes.Equal(anaOther, otherSS) || len(anaOther) != 32 {
+			t.Errorf("Ana's Decaps of the throwaway record gives %x, want a 32-byte secret other than its ss", anaOther)
+		}
+		otherK, err := hkdf.Key(sha256.New, anaOther, nil, "enygma-channel-key-v1", 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := openChannelSealed(t, otherK, otherC1, otherC2); err == nil {
+			t.Error("the throwaway record's c₂ opened under Ana's key")
+		}
+		own, err := throwaway.Decapsulate(otherC1)
+		if err != nil || !bytes.Equal(own, otherSS) {
+			t.Fatal("the throwaway key's Decaps does not give its record's ss")
+		}
+		ownK, err := hkdf.Key(sha256.New, own, nil, "enygma-channel-key-v1", 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotMsg, gotID, err := openChannelSealed(t, ownK, otherC1, otherC2); err != nil || gotMsg != msg || gotID != senderID {
+			t.Errorf("the throwaway key does not open its own record's c₂ (%q ‖ %q, err %v)", gotMsg, gotID, err)
+		}
+
+		// Ana's scan with the client library: of every record, hers alone opens.
+		count, err := tags.GetChannelCount(client, channelsAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found, err := tags.ScanChannels(client, channelsAddr, ana.view.DecapsKey, 0, count)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) != 1 || found[0].ChannelIdx != idx || !bytes.Equal(found[0].SharedSecret, ss) || string(found[0].SenderId) != senderID {
+			t.Fatalf("Ana's scan of %d records found %d channels, want tag channel #%d from the Sender alone", count, len(found), idx)
+		}
+
+		v := map[string]string{
+			"registry":   channelsAddr.Hex(),
+			"anaEk":      hexutil.Encode(ana.view.EncapsKey),
+			"ss":         hexutil.Encode(ss),
+			"c1":         hexutil.Encode(c1),
+			"kch":        hexutil.Encode(kch),
+			"msg":        msg,
+			"senderId":   senderID,
+			"plaintext":  hexutil.Encode(plain),
+			"nonce":      hexutil.Encode(nonce),
+			"sealed":     hexutil.Encode(sealed),
+			"c2":         hexutil.Encode(c2),
+			"bitmap":     hexutil.Encode(bitmap),
+			"users":      fmt.Sprint(nUsers),
+			"channelIdx": fmt.Sprint(idx),
+			"msgSender":  sender.addr.Hex(),
+			"tx":         toAna.receipt.TxHash.Hex(),
+			"block":      toAna.receipt.BlockNumber.String(),
+			"anaSs":      hexutil.Encode(anaSS),
+			"otherIdx":   fmt.Sprint(toOther.idx),
+			"otherC1":    hexutil.Encode(otherC1),
+			"otherSs":    hexutil.Encode(anaOther),
+			"otherKey":   hexutil.Encode(otherK),
+			"otherOpen":  "⊥",
+			"scanned":    fmt.Sprint(count),
+			"found":      fmt.Sprint(len(found)),
+		}
+		ledger := []ledgerItem{}
+		for _, r := range []struct {
+			label string
+			o     opened
+		}{{"openChannel · Sender", toAna}, {"openChannel · Sender, throwaway", toOther}} {
+			ledger = append(ledger,
+				ledgerItem{Tx: r.label, Field: "msg.sender", Value: sender.addr.Hex(), MsgSender: true},
+				ledgerItem{Tx: r.label, Field: "c1", Value: hexutil.Encode(r.o.c1)},
+				ledgerItem{Tx: r.label, Field: "c2", Value: hexutil.Encode(r.o.c2)},
+				ledgerItem{Tx: r.label, Field: "bitmap", Value: hexutil.Encode(r.o.bitmap)},
+				ledgerItem{Tx: "ChannelOpened event", Field: "channelIdx", Value: fmt.Sprint(r.o.idx)},
+				ledgerItem{Tx: "ChannelOpened event", Field: "sender", Value: sender.addr.Hex()})
+		}
+		data.Steps["channel"] = primerEntry{Values: v, Ledger: ledger}
 	})
 
 	check("payment", "one Payment proof spends the Sender's note into Ana's and the change, and every constraint holds on the run's values and the chain", func(t *testing.T) {
