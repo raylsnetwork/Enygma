@@ -40,12 +40,20 @@ var indexHTML string
 var protocolHTML string
 
 // broker fans engine events and service-log lines out to every connected
-// SSE client, and keeps each service's last replayLines lines for new ones.
+// SSE client. It keeps each service's last replayLines lines, and the last
+// run's start, for new ones.
 type broker struct {
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
 	// replay holds each service's latest lines, oldest first.
 	replay map[string][][]byte
+	// run is the last run's start, from its reset to its end, for a page
+	// that joins it partway to build its stepper from: the reset, the
+	// protocol fields (the steps among them) and the steps' status events.
+	// ended is set once the run is done or failed: the events that follow
+	// (a manual transfer's) are not the run's.
+	run   [][]byte
+	ended bool
 }
 
 // replayLines is how many of each service's lines a new client is sent.
@@ -55,8 +63,9 @@ func newBroker() *broker {
 	return &broker{clients: map[chan []byte]struct{}{}, replay: map[string][][]byte{}}
 }
 
-// subscribe adds a client and returns the service lines to replay to it
-// first; lines published after it come on the channel.
+// subscribe adds a client and returns what to replay to it first: the
+// service lines, then the last run's start, then a live event. Events
+// published after it come on the channel.
 func (b *broker) subscribe() (chan []byte, [][]byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -66,7 +75,7 @@ func (b *broker) subscribe() (chan []byte, [][]byte) {
 	for _, svc := range services {
 		replay = append(replay, b.replay[svc]...)
 	}
-	return ch, replay
+	return ch, append(append(replay, b.run...), replayEnd)
 }
 
 func (b *broker) unsubscribe(ch chan []byte) {
@@ -75,11 +84,37 @@ func (b *broker) unsubscribe(ch chan []byte) {
 	delete(b.clients, ch)
 }
 
-func (b *broker) publish(v any) {
+// publish publishes v, an event of kind kind, keeping it in the run's start
+// if it is a reset, which starts a new run, or one of the kinds runKept names.
+func (b *broker) publish(kind engine.EventKind, v any) {
 	data, _ := json.Marshal(v)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	switch {
+	case kind == runReset:
+		b.run, b.ended = [][]byte{data}, false
+	case b.run != nil && !b.ended && runKept[kind]:
+		b.run = append(b.run, data)
+		b.ended = kind == engine.RunDone || kind == engine.RunFailed
+	}
 	b.send(data)
+}
+
+// runReset is the event a run starts with, which empties a page.
+const runReset engine.EventKind = "reset"
+
+// replayEnd ends a new client's replay: the page applies the run events
+// before it as the run's state so far, and plays those after it.
+var replayEnd = []byte(`{"kind":"live"}`)
+
+// reset publishes a new run's reset.
+func (b *broker) reset() { b.publish(runReset, map[string]engine.EventKind{"kind": runReset}) }
+
+// runKept are the kinds of a run's events the broker keeps after its reset:
+// what a page builds its stepper and status from.
+var runKept = map[engine.EventKind]bool{
+	engine.ProtocolField: true, engine.StepStarted: true, engine.StepSucceeded: true,
+	engine.StepFailed: true, engine.RunDone: true, engine.RunFailed: true,
 }
 
 // publishLine publishes one service-log line and keeps it for replay.
@@ -107,7 +142,7 @@ func (b *broker) send(data []byte) {
 
 // Emit makes the broker the engine's Sink, stamping log lines with a time.
 func (b *broker) Emit(e engine.Event) {
-	b.publish(struct {
+	b.publish(e.Kind, struct {
 		engine.Event
 		TS string `json:"ts"`
 	}{e, stamp()})
@@ -275,7 +310,7 @@ func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
 			s.engine.Close()
 			s.engine = nil
 		}
-		s.broker.publish(map[string]string{"kind": "reset"})
+		s.broker.reset()
 		if err := e.Run(ctx, opts); err != nil {
 			log.Printf("run failed: %v", err)
 			e.Close()

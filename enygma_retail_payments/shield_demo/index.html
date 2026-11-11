@@ -2516,6 +2516,12 @@ const HOP_LINES = 4;
 let defaults = null;      // /defaults: the payouts and script a run starts from
 let runOpts = null;       // the options this page started the current run with
 let startingRun = false;  // this page asked for the run whose reset is next
+// /events replays the run so far (from its reset) to a page that connects,
+// then sends live. Until then (replaying), the page builds the run's steps
+// and status from it, with no narration, moments or step gates; its reset
+// empties the hop queue, so they show at once. A page that had a run when it
+// reconnected (rejoining) already shows it, so it skips the replay.
+let replaying = true, rejoining = false, hasRun = false;
 let sentTransfer = null;  // the manual transfer this page is sending
 
 const narration = (() => {
@@ -2805,8 +2811,10 @@ const verify = (() => {
 // waits until /release. The announcement queues behind the hops so far, then
 // a gate: once playback reaches it, the card says what Next will do, and Next
 // or Space releases the gate and the engine, whose hops then play. The step
-// gates of pausing stay off: the actions set the pace.
+// gates of pausing stay off: the actions set the pace. A page watching a
+// walkthrough another page drives shows no action or step gates.
 const walk = (() => {
+  let watched = false;
   // release has the engine perform action e. If the request doesn't reach
   // the server, the engine still waits, so its gate comes back; a refusal
   // (no walkthrough waiting) only shows.
@@ -2827,6 +2835,12 @@ const walk = (() => {
   return {
     // on says whether this page's run is a walkthrough.
     on: () => !!runOpts?.walkthrough,
+    // watched says whether this page watches a walkthrough another page drives.
+    watched: () => watched,
+    // watch asks /status whether the run another page started is a walkthrough.
+    async watch() {
+      try { watched = (await (await fetch('/status')).json()).state === 'walkthrough'; } catch (_) {}
+    },
     // action queues action event e: what it does, then its gate.
     action(e) {
       diagram.after(() => { narration.action(e); label(e); });
@@ -2835,7 +2849,7 @@ const walk = (() => {
     // done offers the full run, once the walkthrough's last hop has played.
     done() { diagram.after(() => { $('fullRunBtn').hidden = false; }); },
     // reset takes the handover away, for a new run.
-    reset() { $('fullRunBtn').hidden = true; label(null); },
+    reset() { $('fullRunBtn').hidden = true; label(null); watched = false; },
   };
 })();
 
@@ -2882,7 +2896,7 @@ const pacing = (() => {
   return {
     // stepDone queues a gate after scenario step id, unless it is the last.
     stepDone(id) {
-      if (on && !walk.on() && $('step-' + id) && id !== steps.at(-1)?.id) diagram.gate();
+      if (on && !walk.on() && !walk.watched() && $('step-' + id) && id !== steps.at(-1)?.id) diagram.gate();
     },
     // showHeld shows whether playback waits at a gate.
     showHeld(w) { if (held !== w) { held = w; show(); } },
@@ -2984,20 +2998,25 @@ const moments = (() => {
 // what is still queued), and a step outside the scenario shows at once.
 const whenHopsPlayed = (id, fn) => $('step-' + id) ? diagram.after(fn) : fn();
 
+// RUN_KINDS are the kinds of the run events /events replays.
+const RUN_KINDS = new Set(['reset', 'proto', 'step_started', 'step_succeeded', 'step_failed', 'done', 'failed']);
+
 let finished = 0;
 function onEvent(e) {
+  if (e.kind === 'live') { replaying = false; return; }
+  const past = replaying && RUN_KINDS.has(e.kind);
+  if (past && rejoining) return;
   switch (e.kind) {
-  case 'reset': if (!startingRun) runOpts = null; startingRun = false; walk.reset(); verify.reset(); columns.reset(); refusal.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
+  case 'reset': hasRun = true; if (!startingRun) runOpts = null; startingRun = false; walk.reset(); if (!runOpts) walk.watch(); verify.reset(); columns.reset(); refusal.reset(); narration.reset(); build(); termReset(); diagram.reset(); moments.reset(); wallet.reset(); hopPanel.reset(); finished = 0; $('stepMsg').textContent = ''; $('stepMsg').className = ''; setStatus('running', 'running'); $('sendBtn').disabled = true; break;
   case 'step_started':
     whenHopsPlayed(e.step, () => setStep(e.step, 'running', e.msg || e.label));
     // The narration waits for queued hops even for a manual transfer, whose
     // stepper message does not: its card would take the run's last hop lines.
-    diagram.after(() => narration.step(e.step, e.label, e.msg));
-    moments.queue(e.step);
+    if (!past) { diagram.after(() => narration.step(e.step, e.label, e.msg)); moments.queue(e.step); }
     termLine(e, 'c-step', `▶ ${e.label}  ${e.msg || ''}`); break;
   case 'step_succeeded':
     whenHopsPlayed(e.step, () => { if (setStep(e.step, 'success', e.msg)) showProgress(++finished); });
-    pacing.stepDone(e.step);
+    if (!past) pacing.stepDone(e.step);
     termLine(e, 'c-ok', `✓ ${e.label}  ${e.msg}`); break;
   case 'step_failed':
     whenHopsPlayed(e.step, () => setStep(e.step, 'error', e.label + ' failed: ' + e.msg));
@@ -3073,7 +3092,7 @@ showTab('engine');
 layoutDrawer();
 loadDefaults();
 const events = new EventSource('/events');
-events.onopen = clearServices;
+events.onopen = () => { clearServices(); replaying = true; rejoining = hasRun; };
 events.onmessage = m => onEvent(JSON.parse(m.data));
 </script>
 </body>
