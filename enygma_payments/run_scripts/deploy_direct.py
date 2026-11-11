@@ -46,6 +46,11 @@ if not IS_LOCAL_TARGET and os.environ.get("I_UNDERSTAND_THIS_TARGETS_A_REMOTE_CH
 #   60  blocks ≈ 30-60 s
 EPOCH_INTERVAL = int(os.environ.get("EPOCH_INTERVAL", "30"))
 
+# Seconds a replacement of an already-set verifier waits before
+# executeVerifierChange can apply it (Enygma.verifierChangeDelay, at most 30
+# days). 0 applies replacements at once: local development only.
+VERIFIER_CHANGE_DELAY = int(os.environ.get("VERIFIER_CHANGE_DELAY", "0"))
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONTRACTS_DIR = os.path.join(ROOT, "..", "contracts", "enygma", "artifacts", "contracts")
 
@@ -139,9 +144,12 @@ def main():
     print(f"Chain ID: {actual_chain_id}")
     print(f"Block: {w3.eth.block_number}")
 
-    print(f"\nDeploying Enygma (epochInterval={EPOCH_INTERVAL})...")
+    print(f"\nDeploying Enygma (epochInterval={EPOCH_INTERVAL}, verifierChangeDelay={VERIFIER_CHANGE_DELAY})...")
     enygma_artifact = load_artifact(ENYGMA_ARTIFACT)
-    enygma_receipt = deploy_contract(w3, account, enygma_artifact, constructor_args={"_epochInterval": EPOCH_INTERVAL})
+    enygma_receipt = deploy_contract(w3, account, enygma_artifact, constructor_args={
+        "_epochInterval": EPOCH_INTERVAL,
+        "_verifierChangeDelay": VERIFIER_CHANGE_DELAY,
+    })
 
     print("\nDeploying EnygmaVerifier...")
     verifier_artifact = load_artifact(VERIFIER_ARTIFACT)

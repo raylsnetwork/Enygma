@@ -83,6 +83,18 @@ contract Enygma is IEnygma {
     bool private _paused;
     bool private _reentrancyLock; // Fix L-12
     uint256 public immutable epochInterval;
+
+    /// @notice How long a replacement of an already-set verifier (or of the
+    ///         ZkDvp bridge) waits between being proposed and taking effect.
+    ///         Set at deploy; 0 applies replacements at once (local
+    ///         development deployments only).
+    uint256 public immutable verifierChangeDelay;
+
+    /// @notice Longest verifierChangeDelay a deployment may choose.
+    uint256 public constant MAX_VERIFIER_CHANGE_DELAY = 30 days;
+
+    /// @notice Largest usdrFixedFeeAmount setUsdrFixedFee accepts (exclusive).
+    uint256 public constant MAX_USDR_FIXED_FEE = 1 << 64;
     uint256 public lastBlockNum;
     uint256 private _totalRegisteredParties;
 
@@ -176,6 +188,20 @@ contract Enygma is IEnygma {
     /// @notice ZkDvp contract addresses
     mapping(uint256 => address) private _zkDvpContracts;
 
+    /// @notice The verifier slots an owner can set: each add*Verifier setter
+    ///         and addZkDvp. Withdraw slots are further keyed by split count.
+    enum VerifierKind { Transfer, Withdraw, Deposit, Fee, Burn, Usdr, ZkDvp }
+
+    struct PendingVerifierChange {
+        address target;
+        uint256 readyAt;
+    }
+
+    /// @notice A proposed replacement per slot [kind][splitCount] (splitCount
+    ///         is 0 for every kind but Withdraw), waiting for
+    ///         executeVerifierChange.
+    mapping(VerifierKind => mapping(uint256 => PendingVerifierChange)) public pendingVerifierChange;
+
     /// @notice Consumed nullifiers — prevents proof replay
     mapping(uint256 => bool) private _nullifiers;
     // USDr proofs record their nullifiers here, not in _nullifiers. The USDr
@@ -248,6 +274,9 @@ contract Enygma is IEnygma {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event Paused(address account);
     event Unpaused(address account);
+    event VerifierChangeProposed(VerifierKind indexed kind, uint256 splitCount, address target, uint256 readyAt);
+    event VerifierChangeCancelled(VerifierKind indexed kind, uint256 splitCount, address target);
+    event VerifierChangeExecuted(VerifierKind indexed kind, uint256 splitCount, address target);
     // ============================================
     // ERRORS
     // ============================================
@@ -299,6 +328,9 @@ contract Enygma is IEnygma {
     /// of the account that submitted this transaction (msg.sender), so the
     /// fee would not be paid to the relayer.
     error InvalidFeeRecipient();
+    error NoPendingVerifierChange();
+    error VerifierChangeNotReady();
+    error VerifierChangeDelayTooLong();
 
     // ============================================
     // MODIFIERS
@@ -353,8 +385,10 @@ contract Enygma is IEnygma {
     // CONSTRUCTOR
     // ============================================
 
-    constructor(uint256 _epochInterval) {
+    constructor(uint256 _epochInterval, uint256 _verifierChangeDelay) {
         require(_epochInterval > 0, "epochInterval must be > 0");
+        if (_verifierChangeDelay > MAX_VERIFIER_CHANGE_DELAY) revert VerifierChangeDelayTooLong();
+        verifierChangeDelay = _verifierChangeDelay;
         _owner = msg.sender;
         _status = STATUS_NOT_INITIALIZED;
         epochInterval = _epochInterval;
@@ -522,6 +556,10 @@ contract Enygma is IEnygma {
         // own /run/register-bank handler logs a repeat call as "OK —
         // idempotent", which it was not.
         if (publicKeys[accountId] != 0) revert AlreadyRegistered();
+        // One account per address: a second registration of the same address
+        // would silently repoint addressToAccountId at the new account.
+        if (addr == address(0)) revert ZeroAddress();
+        if (addressToAccountId[addr] != 0) revert AlreadyRegistered();
         if (accountId == 0) revert InvalidAccountId();
         // Account ids must be assigned 1, 2, 3, ... with no gaps. Every
         // per-account loop in this contract (check(), checkUsdr(),
@@ -934,18 +972,22 @@ contract Enygma is IEnygma {
     // ============================================
     // VERIFIER MANAGEMENT
     // ============================================
+    //
+    // Setting a slot for the first time takes effect at once. Replacing a
+    // verifier (or the ZkDvp bridge) that is already set is a two-step change:
+    // the setter records it as pending (VerifierChangeProposed), and
+    // executeVerifierChange applies it once verifierChangeDelay has passed, so
+    // participants can see a replacement coming before it takes effect. The
+    // owner can drop a pending change with cancelVerifierChange; proposing
+    // again for the same slot replaces the pending change and restarts its
+    // delay. With verifierChangeDelay == 0 replacements apply at once.
+
     /**
      * @notice Register transfer verifier contract
      * @param verifier Address of verifier contract
      */
     function addVerifier(address verifier) external onlyOwner returns (bool) {
-        if (verifier == address(0)) revert ZeroAddress();
-        if (verifier.code.length == 0) revert VerifierHasNoCode();
-
-        _transferVerifiers[DEFAULT_SIZE] = verifier;
-        _transferVerifier = verifier;
-
-        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.Transfer, 0, verifier);
         return true;
     }
     /**
@@ -961,13 +1003,7 @@ contract Enygma is IEnygma {
         address verifier,
         uint256 splitCount
     ) external onlyOwner returns (bool) {
-        if (verifier == address(0)) revert ZeroAddress();
-        if (verifier.code.length == 0) revert VerifierHasNoCode();
-
-        _withdrawVerifiers[splitCount] = verifier;
-        _withdrawVerifier = verifier;
-
-        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.Withdraw, splitCount, verifier);
         return true;
     }
     /**
@@ -977,13 +1013,7 @@ contract Enygma is IEnygma {
     function addDepositVerifier(
         address verifier
     ) external onlyOwner returns (bool) {
-        if (verifier == address(0)) revert ZeroAddress();
-        if (verifier.code.length == 0) revert VerifierHasNoCode();
-
-        _depositVerifiers[DEFAULT_SIZE] = verifier;
-        _depositVerifier = verifier;
-
-        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.Deposit, 0, verifier);
         return true;
     }
 
@@ -992,12 +1022,7 @@ contract Enygma is IEnygma {
      * @param verifier Address of fee verifier contract
      */
     function addFeeVerifier(address verifier) external onlyOwner returns (bool) {
-        if (verifier == address(0)) revert ZeroAddress();
-        if (verifier.code.length == 0) revert VerifierHasNoCode();
-
-        _feeVerifier = verifier;
-
-        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.Fee, 0, verifier);
         return true;
     }
 
@@ -1006,12 +1031,7 @@ contract Enygma is IEnygma {
      * @param verifier Address of verifier contract
      */
     function addBurnVerifier(address verifier) external onlyOwner returns (bool) {
-        if (verifier == address(0)) revert ZeroAddress();
-        if (verifier.code.length == 0) revert VerifierHasNoCode();
-
-        _burnVerifier = verifier;
-
-        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.Burn, 0, verifier);
         return true;
     }
 
@@ -1022,12 +1042,7 @@ contract Enygma is IEnygma {
      * @param verifier Address of USDr verifier contract
      */
     function addUsdrVerifier(address verifier) external onlyOwner returns (bool) {
-        if (verifier == address(0)) revert ZeroAddress();
-        if (verifier.code.length == 0) revert VerifierHasNoCode();
-
-        _usdrVerifiers[DEFAULT_SIZE] = verifier;
-
-        emit VerifierRegistered(verifier, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.Usdr, 0, verifier);
         return true;
     }
 
@@ -1036,25 +1051,92 @@ contract Enygma is IEnygma {
      * must carry exactly this amount as its public FeeAmount signal
      * (StatementLayout.USDR_FEE_AMOUNT_OFFSET) or the call reverts
      * InvalidFeeAmount().
-     * @param amount The fixed fee, in USDr's plaintext unit.
+     * @param amount The fixed fee, in USDr's plaintext unit; below
+     * MAX_USDR_FIXED_FEE (2^64), the range the circuits' amounts live in.
      */
     function setUsdrFixedFee(uint256 amount) external onlyOwner returns (bool) {
+        if (amount >= MAX_USDR_FIXED_FEE) revert InvalidFeeAmount();
         usdrFixedFeeAmount = amount;
         return true;
     }
 
     /**
      * @notice Register ZkDvp contract
-     * @param zkDvp Address of ZkDvp contract
+     * @param zkDvp Address of ZkDvp contract (must have code)
      */
     function addZkDvp(address zkDvp) external onlyOwner returns (bool) {
-        if (zkDvp == address(0)) revert ZeroAddress();
-
-        _zkDvpContracts[DEFAULT_SIZE] = zkDvp;
-        _zkDvpAddress = zkDvp;
-
-        emit VerifierRegistered(zkDvp, _totalRegisteredParties);
+        _setOrPropose(VerifierKind.ZkDvp, 0, zkDvp);
         return true;
+    }
+
+    /// @notice Apply a pending replacement once its delay has passed.
+    function executeVerifierChange(VerifierKind kind, uint256 splitCount) external onlyOwner returns (bool) {
+        PendingVerifierChange memory p = pendingVerifierChange[kind][splitCount];
+        if (p.target == address(0)) revert NoPendingVerifierChange();
+        if (block.timestamp < p.readyAt) revert VerifierChangeNotReady();
+        if (p.target.code.length == 0) revert VerifierHasNoCode();
+        delete pendingVerifierChange[kind][splitCount];
+        _applyVerifier(kind, splitCount, p.target);
+        emit VerifierChangeExecuted(kind, splitCount, p.target);
+        return true;
+    }
+
+    /// @notice Drop a pending replacement; the current verifier stays.
+    function cancelVerifierChange(VerifierKind kind, uint256 splitCount) external onlyOwner returns (bool) {
+        address target = pendingVerifierChange[kind][splitCount].target;
+        if (target == address(0)) revert NoPendingVerifierChange();
+        delete pendingVerifierChange[kind][splitCount];
+        emit VerifierChangeCancelled(kind, splitCount, target);
+        return true;
+    }
+
+    // Sets an empty slot at once; records a replacement of a set slot as
+    // pending for verifierChangeDelay (or sets it at once when that is 0).
+    function _setOrPropose(VerifierKind kind, uint256 splitCount, address target) private {
+        if (target == address(0)) revert ZeroAddress();
+        if (target.code.length == 0) revert VerifierHasNoCode();
+        if (verifierChangeDelay == 0 || _currentVerifier(kind, splitCount) == address(0)) {
+            _applyVerifier(kind, splitCount, target);
+            return;
+        }
+        uint256 readyAt = block.timestamp + verifierChangeDelay;
+        pendingVerifierChange[kind][splitCount] = PendingVerifierChange(target, readyAt);
+        emit VerifierChangeProposed(kind, splitCount, target, readyAt);
+    }
+
+    // The address currently in a slot.
+    function _currentVerifier(VerifierKind kind, uint256 splitCount) private view returns (address) {
+        if (kind == VerifierKind.Transfer) return _transferVerifiers[DEFAULT_SIZE];
+        if (kind == VerifierKind.Withdraw) return _withdrawVerifiers[splitCount];
+        if (kind == VerifierKind.Deposit) return _depositVerifiers[DEFAULT_SIZE];
+        if (kind == VerifierKind.Fee) return _feeVerifier;
+        if (kind == VerifierKind.Burn) return _burnVerifier;
+        if (kind == VerifierKind.Usdr) return _usdrVerifiers[DEFAULT_SIZE];
+        return _zkDvpContracts[DEFAULT_SIZE];
+    }
+
+    // Writes a slot (and its single-address mirror, where it has one).
+    function _applyVerifier(VerifierKind kind, uint256 splitCount, address target) private {
+        if (kind == VerifierKind.Transfer) {
+            _transferVerifiers[DEFAULT_SIZE] = target;
+            _transferVerifier = target;
+        } else if (kind == VerifierKind.Withdraw) {
+            _withdrawVerifiers[splitCount] = target;
+            _withdrawVerifier = target;
+        } else if (kind == VerifierKind.Deposit) {
+            _depositVerifiers[DEFAULT_SIZE] = target;
+            _depositVerifier = target;
+        } else if (kind == VerifierKind.Fee) {
+            _feeVerifier = target;
+        } else if (kind == VerifierKind.Burn) {
+            _burnVerifier = target;
+        } else if (kind == VerifierKind.Usdr) {
+            _usdrVerifiers[DEFAULT_SIZE] = target;
+        } else {
+            _zkDvpContracts[DEFAULT_SIZE] = target;
+            _zkDvpAddress = target;
+        }
+        emit VerifierRegistered(target, _totalRegisteredParties);
     }
 
     // ============================================
