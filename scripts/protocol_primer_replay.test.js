@@ -71,6 +71,16 @@ function shown(doc) {
   };
 }
 
+// goTo steps the page with Next until step is current, so a test reaches
+// its step by name whatever steps come before it.
+function goTo(doc, step) {
+  const next = doc.getElementById('next');
+  while (shown(doc).step !== step) {
+    assert.ok(!next.disabled, `${step} is a step of the page`);
+    next.click();
+  }
+}
+
 // OWNERS names the person a value's key prefix belongs to.
 const OWNERS = { sender: 'Sender', ana: 'Ana', auditor: 'Auditor' };
 
@@ -191,7 +201,7 @@ test('the shield\'s ledger entries are the deposit\'s public calldata, its commi
   assert.strictEqual(ledger.filter(i => i.msgSender).length, 1, 'only msg.sender is amber');
   const { doc } = open();
   const ul = doc.getElementById('ledger');
-  for (let i = 0; i < 3; i++) doc.getElementById('next').click();
+  goTo(doc, 'shield');
   const amber = [...ul.querySelectorAll('li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes('depositV2') && t.includes(v.msgSender)), 'the deposit\'s msg.sender shows amber in the ledger');
   // The step names the bound the tree puts on the crowd: 2^8 leaf slots.
@@ -326,7 +336,7 @@ test('the payment\'s ledger entries are its public inputs, the nullifier, the tw
   assert.strictEqual(BigInt(v.globalIndex), BigInt(v.tree) * 256n + BigInt(v.leafIndex), 'tree·2^8 + leaf index');
   assert.strictEqual(v['path7.node'], v.root, 'the eighth level is the root');
   const { doc } = open();
-  for (let i = 0; i < 5; i++) doc.getElementById('next').click();
+  goTo(doc, 'payment');
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes('payment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
 });
@@ -427,7 +437,7 @@ test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount 
   assert.deepStrictEqual(ledger.filter(i => i.msgSender).map(i => [i.tx, i.value]), [[call, v.msgSender]]);
   assert.strictEqual(v.msgSender, DATA.steps.registration.values['ana.address'], 'Ana sent it from her registered account');
   const { doc } = open();
-  for (let i = 0; i < 8; i++) doc.getElementById('next').click();
+  goTo(doc, 'withdrawal');
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes(call) && t.includes(v.msgSender)), 'her msg.sender shows amber in the ledger');
   const body = text(section(doc, 'withdrawal'));
@@ -511,7 +521,7 @@ test('the last step\'s ledger shows who spent, but holds no amount besides the s
   // The nullifiers and the note commitments the page points at are the ledger's.
   for (const k of ['payNullifier', 'withdrawNullifier', 'commitmentOut0', 'commitmentOut1']) assert.ok(values.has(v[k]), `${k} is on the ledger`);
   // The last step's page shows that ledger, whole.
-  for (let i = 1; i < names.length; i++) doc.getElementById('next').click();
+  goTo(doc, 'verdict');
   assert.strictEqual(doc.querySelectorAll('#ledger li').length, all.length, 'the last step lists every public item');
   assert.strictEqual([...doc.querySelectorAll('#ledger li .lf')].filter(f => f.textContent === 'amount').length, 3, 'three amount rows');
   const body = text(section(doc, 'verdict'));
@@ -542,8 +552,7 @@ test('the page shows the data block\'s values, not values of its own', () => {
   const { doc, errors } = open({ page });
   assert.ok(text(section(doc, 'keys')).includes('1234567890123456789'));
   assert.ok(!text(section(doc, 'keys')).includes(v['sender.pkSpend']));
-  doc.getElementById('next').click();
-  doc.getElementById('next').click();
+  goTo(doc, 'registration');
   assert.ok(text(doc.getElementById('ledger')).includes('0x00000000000000000000000000000000000000aa'));
   assert.deepStrictEqual(errors, []);
 });
