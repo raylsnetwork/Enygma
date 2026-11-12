@@ -85,6 +85,33 @@ test('removing a test needs no red', () => {
   assert.strictEqual(r.code, 0, r.out);
 });
 
+test('editing an existing test, even its func line, needs no red', () => {
+  const base = { 'x_test.go': 'package x\n\nfunc TestShapes(t *testing.T) {}\n' };
+  const r = commit({ 'x_test.go': 'package x\n\nfunc TestShapes(t *testing.T) {\n\tt.Log("x")\n}\n' },
+    'Log in a test\n', { base });
+  assert.strictEqual(r.code, 0, r.out);
+});
+
+test('moving an existing subtest to another file needs no red', () => {
+  const base = { 'a_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n\tt.Run("three inputs", nil)\n}\n' };
+  const r = commit({
+    'a_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n}\n',
+    'b_test.go': 'package x\n\nfunc TestB(t *testing.T) {\n\t\tt.Run("three inputs", nil)\n}\n',
+  }, 'Move a subtest\n', { base });
+  // TestB is new; the subtest is not.
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /func TestB/);
+  assert.doesNotMatch(r.out, /three inputs/);
+});
+
+test('a renamed subtest counts as a new check', () => {
+  const base = { 'x_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n\tt.Run("three inputs", nil)\n}\n' };
+  const r = commit({ 'x_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n\tt.Run("four inputs", nil)\n}\n' },
+    'Pin four inputs\n', { base });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /four inputs/);
+});
+
 test('"RED" inside a word is not a red', () => {
   const r = commit({ 'x_test.go': GO_TEST }, 'Refuse a short statement\n\nCovers the REDUCED case.\n');
   assert.strictEqual(r.code, 1, r.out);

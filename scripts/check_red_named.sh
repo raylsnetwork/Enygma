@@ -20,10 +20,23 @@ msg=$(grep -v '^#' "$msg_file")
 case "$msg" in fixup!* | squash!* | amend!*) exit 0 ;; esac
 [ -n "$(printf '%s' "$msg" | tr -d '[:space:]')" ] || exit 0
 
-added=$(git diff --cached -U0 --no-color --diff-filter=AM -- '*.go' '*.js' '*.ts' |
-  grep -E '^\+[^+]' |
-  grep -E '^\+(func Test[A-Za-z0-9_]*\(|[[:space:]]*t\.Run\(|[[:space:]]*(test|it)\([[:space:]]*['"'"'"`])' |
-  sed -E 's/^\+[[:space:]]*//; s/[[:space:]]*\{?[[:space:]]*$//')
+diff=$(git diff --cached -U0 --no-color --diff-filter=AM -- '*.go' '*.js' '*.ts')
+
+# checks <sign> — "<name>	<line>" for each check declared on the diff's
+# <sign> (+ or -) lines; the name is the Go test's, or the subtest's or JS
+# test's quoted title.
+checks() {
+  printf '%s\n' "$diff" | grep -E "^[$1][^$1]" | sed -nE \
+    -e 's/^.(func (Test[A-Za-z0-9_]*)\(.*)$/go:\2	\1/p' \
+    -e 's/^.[[:space:]]*(t\.Run\([[:space:]]*"([^"]*)".*)$/run:\2	\1/p' \
+    -e "s/^.[[:space:]]*((test|it)\\([[:space:]]*['\"\`]([^'\"\`]*).*)\$/js:\\3	\\1/p"
+}
+
+# A check whose name is also on a removed line was edited or moved, not added.
+removed=$(checks - | cut -f1)
+added=$(checks + | while IFS=$'\t' read -r name line; do
+  printf '%s\n' "$removed" | grep -qxF -- "$name" || printf '%s\n' "$line"
+done | sed -E 's/[[:space:]]*\{?[[:space:]]*$//')
 [ -n "$added" ] || exit 0
 
 if printf '%s\n' "$msg" | grep -qE '(^|[^A-Za-z])RED([^A-Za-z]|$)|^No red:'; then
