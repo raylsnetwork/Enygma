@@ -661,7 +661,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         }
 
         // checking the receipt, vaultId and groupId validity
-        IAbstractCoinVault(_coinVaults[vaultId]).checkReceiptConditions(
+        IAbstractCoinVault(_coinVaults[vaultId]).checkDvpReceiptConditions(
             receipt
         );
 
@@ -999,7 +999,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             revert GroupMembershipMismatch();
         }
 
-        paymentCoinVault.checkReceiptConditions(receipt1);
+        paymentCoinVault.checkDvpReceiptConditions(receipt1);
 
         // asserting item proof shows that item belongs to group2
         if (
@@ -1012,7 +1012,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         }
 
         // checking other conditions of the
-        deliveryCoinVault.checkReceiptConditions(receipt2);
+        deliveryCoinVault.checkDvpReceiptConditions(receipt2);
 
         //-----------------------
         // [[SETTLEMENT]]
@@ -1129,7 +1129,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
-        // Verify ZK proof with fee VK (dispatched in checkReceiptConditions by statement.length).
+        // Verify ZK proof with fee VK (checkReceiptConditions picks it by shape and statement length).
         vault.checkReceiptConditions(receipt);
 
         vault.nullifyFromReceipt(receipt);

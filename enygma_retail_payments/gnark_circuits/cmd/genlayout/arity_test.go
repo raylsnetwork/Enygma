@@ -16,16 +16,21 @@ var (
 	solLen         = regexp.MustCompile(`uint256 constant (\w+_LEN) = (\d+);`)
 	solLengthCheck = regexp.MustCompile(`statement\.length\s*[!=]=\s*(\w+)`)
 	solLengthLen   = regexp.MustCompile(`\?\s*(\w+_LEN)\s*:\s*(\w+_LEN)`)
-	// One _receiptShape clause: the exact receipt shape that selects a key.
-	solShape = regexp.MustCompile(`nIn\s*==\s*(\d+)\s*&&\s*nOut\s*==\s*(\d+)\s*&&\s*len\s*==\s*(\w+)\s*\)\s*\{\s*return\s*\(\s*(VK_ID_\w+)`)
+	solTableRow    = regexp.MustCompile(`PaymentCircuit\(\{([^}]*)\}\)`)
+	solRowVk       = regexp.MustCompile(`vkId:\s*(VK_ID_\w+)`)
+	solPslName     = regexp.MustCompile(`Psl\.([A-Z][A-Z0-9_]*)_(?:OFFSET|SIZE)\b`)
+	solIndexRead   = regexp.MustCompile(`statement\[([^\]]*)\]`)
+	solTableIndex  = regexp.MustCompile(`^\s*((Psl|Dsl)\.[A-Z][A-Z0-9_]*_OFFSET|circuit\.\w+(\s*\+\s*(1|i))*)\s*$`)
+	// A _paymentCircuit guard on the receipt's claimed input or output count.
+	solCountGuard = regexp.MustCompile(`receipt\.numberOf(Inputs|Outputs)\s*[!=]=\s*(\d+)`)
 )
 
-// Erc20CoinVault picks a Payment-family verifying key from a receipt's exact
-// (numberOfInputs, numberOfOutputs, statement length), and checks a receipt's
-// statement length before settling it, but nothing ties a verifying key id or
-// a function to the shape of the circuit whose key it is. This pins each such
-// check to its circuit's shape, whether the length is written as a generated
-// *_LEN constant or as a literal.
+// Erc20CoinVault picks a Payment-family circuit from a table by shape and
+// statement length, and checks a receipt's statement length before settling
+// it, but nothing ties a table row or a function to the length of the
+// circuit it reads. This pins each such check to its circuit's statement
+// length, whether it is written as a generated *_LEN constant or as a
+// literal, and each row's offsets to its own circuit.
 func TestVaultLengthChecksMatchStatementLengths(t *testing.T) {
 	src := readFile(t, erc20CoinVaultSol)
 	lens := generatedLens(t)
@@ -40,42 +45,95 @@ func TestVaultLengthChecksMatchStatementLengths(t *testing.T) {
 		return n
 	}
 
-	// The shape each Payment-family key is selected by in _receiptShape, which
-	// checkReceiptConditions verifies every receipt with: the deployed config's
-	// input and output counts and the layout's statement length.
-	type receiptShape struct{ in, out, len int }
-	circuitShape := func(c templates.PaymentCircuitConfig, l int) receiptShape {
-		return receiptShape{c.TmNInputs, c.TmMOutputs, l}
+	// _paymentCircuit is the Payment-family table: each row names a
+	// verifying key and the offsets the vault reads, and is returned after a
+	// statement length check. Pin each row to one circuit: the length
+	// compared last before it must be that circuit's, and every layout
+	// constant in it must be that circuit's own.
+	// Its (inputs, outputs) guards must be the circuit's deployed config's
+	// counts, which every vault offset is computed for.
+	circuits := map[string]struct {
+		prefix  string
+		len     int
+		in, out int
+	}{
+		"VK_ID_ERC20_JOINSPLIT":         {"PAYMENT", templates.PaymentStatementLayout().Len, templates.PaymentConfig.TmNInputs, templates.PaymentConfig.TmMOutputs},
+		"VK_ID_ERC20_JOINSPLIT_2INPUT":  {"PAYMENT2IN", templates.Payment2inStatementLayout().Len, templates.Payment2inConfig.TmNInputs, templates.Payment2inConfig.TmMOutputs},
+		"VK_ID_ERC20_JOINSPLIT_FEE":     {"PAYMENT_FEE", templates.PaymentFeeStatementLayout().Len, templates.PaymentFeeConfig.TmNInputs, templates.PaymentFeeConfig.TmMOutputs},
+		"VK_ID_ERC20_JOINSPLIT_RELAYER": {"PAYMENT_RELAYER_FEE", templates.PaymentRelayerFeeStatementLayout().Len, templates.PaymentRelayerFeePublicConfig.TmNInputs, templates.PaymentRelayerFeePublicConfig.TmMOutputs},
+		"VK_ID_ERC20_USDR":              {"USDR_FEE", templates.UsdrFeeStatementLayout().Len, templates.UsdrFeeConfig.TmNInputs, templates.UsdrFeeConfig.TmMOutputs},
 	}
-	dispatch := map[string]receiptShape{
-		"VK_ID_ERC20_JOINSPLIT":         circuitShape(templates.PaymentConfig, templates.PaymentStatementLayout().Len),
-		"VK_ID_ERC20_JOINSPLIT_2INPUT":  circuitShape(templates.Payment2inConfig, templates.Payment2inStatementLayout().Len),
-		"VK_ID_ERC20_JOINSPLIT_FEE":     circuitShape(templates.PaymentFeeConfig, templates.PaymentFeeStatementLayout().Len),
-		"VK_ID_ERC20_JOINSPLIT_RELAYER": circuitShape(templates.PaymentRelayerFeePublicConfig, templates.PaymentRelayerFeeStatementLayout().Len),
-		"VK_ID_ERC20_USDR":              circuitShape(templates.UsdrFeeConfig, templates.UsdrFeeStatementLayout().Len),
+	prefixes := []string{}
+	for _, c := range circuits {
+		prefixes = append(prefixes, c.prefix)
 	}
-	seen := map[string]int{}
-	for _, m := range solShape.FindAllStringSubmatch(functionBody(t, src, "_receiptShape"), -1) {
-		vk := m[4]
-		want, ok := dispatch[vk]
-		if !ok {
+	// circuitOf returns the circuit a layout constant name belongs to, by
+	// its longest matching circuit prefix.
+	circuitOf := func(constant string) string {
+		best := ""
+		for _, p := range prefixes {
+			if strings.HasPrefix(constant, p+"_") && len(p) > len(best) {
+				best = p
+			}
+		}
+		return best
+	}
+	table := functionBody(t, src, "_paymentCircuit")
+	seen := map[string]bool{}
+	for _, m := range solTableRow.FindAllStringSubmatchIndex(table, -1) {
+		row := table[m[2]:m[3]]
+		vk := solRowVk.FindStringSubmatch(row)
+		if vk == nil {
+			t.Errorf("_paymentCircuit row has no vkId: %s", row)
 			continue
 		}
-		in, _ := strconv.Atoi(m[1])
-		out, _ := strconv.Atoi(m[2])
-		if got := (receiptShape{in, out, resolve(m[3])}); got != want {
-			t.Errorf("_receiptShape selects %s for %d in, %d out, %d signals; its circuit is %d in, %d out, %d signals",
-				vk, got.in, got.out, got.len, want.in, want.out, want.len)
+		c, ok := circuits[vk[1]]
+		if !ok {
+			t.Errorf("_paymentCircuit row names %s, not a Payment-family verifying key", vk[1])
+			continue
 		}
-		seen[vk]++
-	}
-	for vk := range dispatch {
-		if seen[vk] != 1 {
-			t.Errorf("_receiptShape selects %s in %d clauses, want exactly 1", vk, seen[vk])
+		if seen[vk[1]] {
+			t.Errorf("_paymentCircuit has two rows for %s", vk[1])
+		}
+		seen[vk[1]] = true
+		checks := solLengthCheck.FindAllStringSubmatch(table[:m[0]], -1)
+		if len(checks) == 0 {
+			t.Errorf("_paymentCircuit row %s: no statement length check guards it", vk[1])
+		} else if got := resolve(checks[len(checks)-1][1]); got != c.len {
+			t.Errorf("_paymentCircuit row %s is guarded by statement length %d, its circuit's is %d", vk[1], got, c.len)
+		}
+		// The last guard on each count before the row is the count it is
+		// returned for: "== n" leads into it, "!= n" reverts every other.
+		count := map[string]int{"Inputs": -1, "Outputs": -1}
+		for _, g := range solCountGuard.FindAllStringSubmatch(table[:m[0]], -1) {
+			count[g[1]], _ = strconv.Atoi(g[2])
+		}
+		if count["Inputs"] != c.in || count["Outputs"] != c.out {
+			t.Errorf("_paymentCircuit returns row %s for %d in, %d out; its circuit is %d in, %d out",
+				vk[1], count["Inputs"], count["Outputs"], c.in, c.out)
+		}
+		for _, k := range solPslName.FindAllStringSubmatch(row, -1) {
+			if got := circuitOf(k[1]); got != c.prefix {
+				t.Errorf("_paymentCircuit row %s reads Psl.%s, a %s constant, not %s's", vk[1], k[1], got, c.prefix)
+			}
 		}
 	}
-	if !strings.Contains(functionBody(t, src, "checkReceiptConditions"), "_receiptShape(receipt)") {
-		t.Error("checkReceiptConditions does not choose its verifying key with _receiptShape")
+	for vk := range circuits {
+		if !seen[vk] {
+			t.Errorf("_paymentCircuit has no row for %s", vk)
+		}
+	}
+
+	// Every read of a receipt's statement in the vault is at a named layout
+	// offset or at a table row's offset: none is counted from the
+	// caller-supplied numberOfInputs/numberOfOutputs.
+	for _, m := range solIndexRead.FindAllStringSubmatch(src, -1) {
+		if !solTableIndex.MatchString(m[1]) {
+			t.Errorf("Erc20CoinVault reads statement[%s], not a named layout offset or a table row's", m[1])
+		}
+	}
+	if !strings.Contains(functionBody(t, src, "checkReceiptConditions"), "_paymentCircuit(receipt)") {
+		t.Error("checkReceiptConditions does not choose its verifying key with _paymentCircuit")
 	}
 
 	// partialWithdrawWithRelayerFee settles only PaymentRelayerFee receipts.

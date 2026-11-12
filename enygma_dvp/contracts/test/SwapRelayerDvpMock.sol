@@ -8,7 +8,7 @@ import {DvpReceipt} from "../core/contracts/DvpReceipt.sol";
 ///         and for the vault it checks legs against (vaultById returns this
 ///         contract). Nullifier locks follow Merkle.lock/unlock (no double lock,
 ///         no unlock of an unlocked nullifier); swap() only counts settlements;
-///         checkReceiptConditions rejects a receipt whose proof.a.x is BAD_PROOF.
+///         checkDvpReceiptConditions rejects a receipt whose proof.a.x is BAD_PROOF.
 contract SwapRelayerDvpMock {
     uint256 public constant BAD_PROOF = 0xbad;
 
@@ -41,7 +41,7 @@ contract SwapRelayerDvpMock {
         return address(this);
     }
 
-    function checkReceiptConditions(
+    function checkDvpReceiptConditions(
         IEnygmaDvp.ProofReceipt calldata receipt
     ) external pure returns (bool) {
         if (receipt.proof.a.x == BAD_PROOF) revert InvalidProof();

@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {IEnygmaDvp, WITHDRAW_MESSAGE, paymentCommitmentsOutOffset} from "../../interfaces/IEnygmaDvp.sol";
+import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../../interfaces/IEnygmaDvp.sol";
 import {
     PaymentStatementLayout as Psl,
     PAYMENT_LEN,
@@ -17,7 +17,8 @@ import {
     PAYMENT_RELAYER_FEE_LEN,
     USDR_FEE_LEN
 } from "../PaymentStatementLayout.sol";
-import {DVP_INITIATOR_LEN} from "../DvpStatementLayout.sol";
+import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "../DvpStatementLayout.sol";
+import {DvpReceipt} from "../DvpReceipt.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
@@ -68,6 +69,21 @@ contract Erc20CoinVault is AbstractCoinVault {
     // enygma_gnark_shared, 10^36, compiled into every verifying key). No honest
     // fee reaches it, since a fee is part of an input note's value.
     uint256 public constant MAX_FEE_AMOUNT = 10 ** 36;
+
+    // One row of the Payment-family table (see _paymentCircuit): a circuit's
+    // verifying key, its numbers of inputs and outputs, and the offset of each
+    // field in its statement layout.
+    struct PaymentCircuit {
+        uint256 vkId;
+        uint256 inputs;
+        uint256 outputs;
+        uint256 messageOffset;
+        uint256 treeNumbersOffset;
+        uint256 merkleRootsOffset;
+        uint256 nullifiersOffset;
+        uint256 commitmentsOutOffset;
+        uint256 contractAddressOffset;
+    }
 
     ///////////////////////////////////////////////
     //              Constructor
@@ -157,15 +173,15 @@ contract Erc20CoinVault is AbstractCoinVault {
     }
 
     // transfer()/transferV2() are open to any caller, so they must only settle
-    // receipts that are complete on their own. A DvP Initiator receipt (one
-    // input, numberOfOutputs == 1, non-zero StMessage) is one half of a swap:
-    // it must only settle through EnygmaDvp.submitPartialSettlement, together
-    // with the counterparty's leg. checkReceiptConditions dispatches such a
-    // receipt to the initiator verification key and accepts it, so without this
-    // guard anyone holding the receipt (the counterparty, or a mempool observer)
-    // could spend the initiator's input note and insert commitB with nothing
-    // delivered in return. Retail transfer proofs carry StMessage == 0 and at
-    // least two outputs.
+    // receipts that are complete on their own. A DvP Initiator receipt
+    // (non-zero StMessage) is one half of a swap: it must only settle through
+    // EnygmaDvp.submitPartialSettlement, together with the counterparty's leg,
+    // or anyone holding it (the counterparty, or a mempool observer) could
+    // spend the initiator's input note and insert commitB with nothing
+    // delivered in return. checkReceiptConditions already refuses every DvP
+    // leg (only checkDvpReceiptConditions takes one); this guard is extra
+    // protection. Retail transfer proofs carry StMessage == 0 and at least two
+    // outputs.
     function _requireStandaloneTransfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) internal pure {
@@ -216,9 +232,9 @@ contract Erc20CoinVault is AbstractCoinVault {
         _insertCommitmentsFromReceipt(receipt);
 
         // Emit EncryptedNote for each output so recipients can scan
-        uint256 commitmentsOffset = paymentCommitmentsOutOffset(receipt.numberOfInputs);
-        for (uint256 i = 0; i < receipt.numberOfOutputs; i++) {
-            uint256 commitment = receipt.statement[commitmentsOffset + i];
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
+        for (uint256 i = 0; i < circuit.outputs; i++) {
+            uint256 commitment = receipt.statement[circuit.commitmentsOutOffset + i];
             emit EncryptedNote(_vaultId, commitment, ciphertextI[i], ciphertextII[i]);
         }
 
@@ -365,17 +381,16 @@ contract Erc20CoinVault is AbstractCoinVault {
         if (amount == 0) {
             revert ZeroWithdrawAmount();
         }
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
         // A withdrawal proof, not a payment one (see WITHDRAW_MESSAGE).
-        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != WITHDRAW_MESSAGE) {
+        if (receipt.statement[circuit.messageOffset] != WITHDRAW_MESSAGE) {
             revert IEnygmaDvp.InvalidPaymentMessage();
         }
-
-        uint256 commitmentsOffset = paymentCommitmentsOutOffset(receipt.numberOfInputs);
 
         uint256 withdrawCommitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
             [uint256(uint160(recipient)), 0, amount, tokenId]
         );
-        if (receipt.statement[commitmentsOffset] != withdrawCommitment) {
+        if (receipt.statement[circuit.commitmentsOutOffset] != withdrawCommitment) {
             revert InvalidOpening();
         }
 
@@ -387,16 +402,16 @@ contract Erc20CoinVault is AbstractCoinVault {
         // every output but the withdrawal.
         _nullifyFromReceipt(receipt);
 
-        uint256[] memory commitments = new uint256[](receipt.numberOfOutputs - 1);
+        uint256[] memory commitments = new uint256[](circuit.outputs - 1);
         for (uint256 i = 0; i < commitments.length; i++) {
-            commitments[i] = receipt.statement[commitmentsOffset + 1 + i];
+            commitments[i] = receipt.statement[circuit.commitmentsOutOffset + 1 + i];
             emit Commitment(_vaultId, commitments[i]);
         }
         insertLeaves(commitments);
 
         // Read from the statement, not commitments[0]: insertLeaves uses its
         // argument as scratch space for the tree's inner hashes.
-        uint256 changeCommitment = receipt.statement[commitmentsOffset + 1];
+        uint256 changeCommitment = receipt.statement[circuit.commitmentsOutOffset + 1];
         if (ciphertextI.length != 0) {
             emit EncryptedNote(_vaultId, changeCommitment, ciphertextI, ciphertextII);
         }
@@ -411,19 +426,11 @@ contract Erc20CoinVault is AbstractCoinVault {
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
-        //     receipt.statement;
-        //     message;
-        //     treeNumbers[numberOfInputs];
-        //     merkleRoots[numberOfInputs];
-        //     nullifiers[numberOfInputs];
-        //     commitments[numberOfOutputs];
-
+        // Legacy uid-commitment withdrawal: output[0] must be
+        // Poseidon(uid, recipient). The receipt is Payment-family, read
+        // through its circuit's layout.
         uint256 amount = withdrawParams[0];
-
-        uint256 treeNumbersIndex = 1;
-        uint256 merkleRootsIndex = 1 + receipt.numberOfInputs;
-        uint256 nullifiersIndex = merkleRootsIndex + receipt.numberOfInputs;
-        uint256 commitmentsIndex = nullifiersIndex + receipt.numberOfInputs;
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
 
         uint256[] memory assetParams = new uint256[](2);
         assetParams[0] = amount;
@@ -434,18 +441,18 @@ contract Erc20CoinVault is AbstractCoinVault {
             [uid, uint256(uint160(recipient))]
         );
 
-        if (receipt.statement[commitmentsIndex] != commitment) {
+        if (receipt.statement[circuit.commitmentsOutOffset] != commitment) {
             revert InvalidOpening();
         }
 
         checkReceiptConditions(receipt);
 
         // Effects: nullify input coins before external transfer (checks-effects-interactions)
-        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-            if (receipt.statement[nullifiersIndex + i] != 0) {
+        for (uint256 i = 0; i < circuit.inputs; i++) {
+            if (receipt.statement[circuit.nullifiersOffset + i] != 0) {
                 _spendNullifier(
-                    receipt.statement[treeNumbersIndex + i],
-                    receipt.statement[nullifiersIndex + i]
+                    receipt.statement[circuit.treeNumbersOffset + i],
+                    receipt.statement[circuit.nullifiersOffset + i]
                 );
             }
         }
@@ -469,58 +476,130 @@ contract Erc20CoinVault is AbstractCoinVault {
             );
     }
 
+    // The Payment-family table: the receipt's (inputs, outputs) shape picks
+    // a row, and its statement must be that row's circuit's length, before
+    // anything is read from it.
+    //
+    //   (inputs, outputs)  length                   circuit
+    //   (1, 2)             PAYMENT_LEN              Payment
+    //   (1, 2)             PAYMENT_FEE_LEN          PaymentFee
+    //   (1, 2)             USDR_FEE_LEN             UsdrFee
+    //   (1, 3)             PAYMENT_RELAYER_FEE_LEN  PaymentRelayerFee
+    //   (2, 2)             PAYMENT2IN_LEN           Payment2in
+    //
+    // Length alone cannot pick the row (PaymentRelayerFee and UsdrFee are
+    // both 9 signals), nor tell a payment from a DvP leg (DvpInitiator is as
+    // long as PaymentFee), so no DvP leg is in the table: those go to
+    // checkDvpReceiptConditions.
+    //
+    // numberOfInputs and numberOfOutputs are the caller's claim, while the
+    // verifier only checks the statement's length, so a receipt must have
+    // exactly one row's shape: any other (inputs, outputs, length) reverts
+    // ReceiptShapeMismatch. Before, a Payment2in receipt claiming 1 output
+    // spent both inputs but inserted only output[0], destroying the change
+    // note, and skipped the vault-address check.
+    function _paymentCircuit(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) internal pure returns (PaymentCircuit memory) {
+        if (receipt.numberOfInputs == 2) {
+            if (receipt.numberOfOutputs != 2) revert ReceiptShapeMismatch();
+            if (receipt.statement.length != PAYMENT2IN_LEN) revert ReceiptShapeMismatch();
+            return PaymentCircuit({
+                vkId: VK_ID_ERC20_JOINSPLIT_2INPUT,
+                inputs: Psl.PAYMENT2IN_NULLIFIERS_SIZE,
+                outputs: Psl.PAYMENT2IN_COMMITMENTS_OUT_SIZE,
+                messageOffset: Psl.PAYMENT2IN_MESSAGE_OFFSET,
+                treeNumbersOffset: Psl.PAYMENT2IN_TREE_NUMBERS_OFFSET,
+                merkleRootsOffset: Psl.PAYMENT2IN_MERKLE_ROOTS_OFFSET,
+                nullifiersOffset: Psl.PAYMENT2IN_NULLIFIERS_OFFSET,
+                commitmentsOutOffset: Psl.PAYMENT2IN_COMMITMENTS_OUT_OFFSET,
+                contractAddressOffset: Psl.PAYMENT2IN_CONTRACT_ADDRESS_OFFSET
+            });
+        }
+        if (receipt.numberOfInputs != 1) revert ReceiptShapeMismatch();
+        if (receipt.numberOfOutputs == 3) {
+            if (receipt.statement.length != PAYMENT_RELAYER_FEE_LEN) revert ReceiptShapeMismatch();
+            return PaymentCircuit({
+                vkId: VK_ID_ERC20_JOINSPLIT_RELAYER,
+                inputs: Psl.PAYMENT_RELAYER_FEE_NULLIFIERS_SIZE,
+                outputs: Psl.PAYMENT_RELAYER_FEE_COMMITMENTS_OUT_SIZE,
+                messageOffset: Psl.PAYMENT_RELAYER_FEE_MESSAGE_OFFSET,
+                treeNumbersOffset: Psl.PAYMENT_RELAYER_FEE_TREE_NUMBERS_OFFSET,
+                merkleRootsOffset: Psl.PAYMENT_RELAYER_FEE_MERKLE_ROOTS_OFFSET,
+                nullifiersOffset: Psl.PAYMENT_RELAYER_FEE_NULLIFIERS_OFFSET,
+                commitmentsOutOffset: Psl.PAYMENT_RELAYER_FEE_COMMITMENTS_OUT_OFFSET,
+                contractAddressOffset: Psl.PAYMENT_RELAYER_FEE_CONTRACT_ADDRESS_OFFSET
+            });
+        }
+        if (receipt.numberOfOutputs != 2) revert ReceiptShapeMismatch();
+        if (receipt.statement.length == PAYMENT_LEN) {
+            return PaymentCircuit({
+                vkId: VK_ID_ERC20_JOINSPLIT,
+                inputs: Psl.PAYMENT_NULLIFIERS_SIZE,
+                outputs: Psl.PAYMENT_COMMITMENTS_OUT_SIZE,
+                messageOffset: Psl.PAYMENT_MESSAGE_OFFSET,
+                treeNumbersOffset: Psl.PAYMENT_TREE_NUMBERS_OFFSET,
+                merkleRootsOffset: Psl.PAYMENT_MERKLE_ROOTS_OFFSET,
+                nullifiersOffset: Psl.PAYMENT_NULLIFIERS_OFFSET,
+                commitmentsOutOffset: Psl.PAYMENT_COMMITMENTS_OUT_OFFSET,
+                contractAddressOffset: Psl.PAYMENT_CONTRACT_ADDRESS_OFFSET
+            });
+        }
+        if (receipt.statement.length == PAYMENT_FEE_LEN) {
+            return PaymentCircuit({
+                vkId: VK_ID_ERC20_JOINSPLIT_FEE,
+                inputs: Psl.PAYMENT_FEE_NULLIFIERS_SIZE,
+                outputs: Psl.PAYMENT_FEE_COMMITMENTS_OUT_SIZE,
+                messageOffset: Psl.PAYMENT_FEE_MESSAGE_OFFSET,
+                treeNumbersOffset: Psl.PAYMENT_FEE_TREE_NUMBERS_OFFSET,
+                merkleRootsOffset: Psl.PAYMENT_FEE_MERKLE_ROOTS_OFFSET,
+                nullifiersOffset: Psl.PAYMENT_FEE_NULLIFIERS_OFFSET,
+                commitmentsOutOffset: Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET,
+                contractAddressOffset: Psl.PAYMENT_FEE_CONTRACT_ADDRESS_OFFSET
+            });
+        }
+        if (receipt.statement.length == USDR_FEE_LEN) {
+            return PaymentCircuit({
+                vkId: VK_ID_ERC20_USDR,
+                inputs: Psl.USDR_FEE_NULLIFIERS_SIZE,
+                outputs: Psl.USDR_FEE_COMMITMENTS_OUT_SIZE,
+                messageOffset: Psl.USDR_FEE_MESSAGE_OFFSET,
+                treeNumbersOffset: Psl.USDR_FEE_TREE_NUMBERS_OFFSET,
+                merkleRootsOffset: Psl.USDR_FEE_MERKLE_ROOTS_OFFSET,
+                nullifiersOffset: Psl.USDR_FEE_NULLIFIERS_OFFSET,
+                commitmentsOutOffset: Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET,
+                contractAddressOffset: Psl.USDR_FEE_CONTRACT_ADDRESS_OFFSET
+            });
+        }
+        revert ReceiptShapeMismatch();
+    }
+
+    // Checks a Payment-family receipt; a DvP leg is refused (it is not in the
+    // table) and goes to checkDvpReceiptConditions.
     function checkReceiptConditions(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public view override returns (bool) {
-        // jsReceipt.inputs;
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
 
-        // numberOfInputs and numberOfOutputs are the caller's claim, and every
-        // offset below (and the ones nullifyFromReceipt and
-        // insertCommitmentsFromReceipt use) is computed from them, while the
-        // verifier only checks the statement's length. So the receipt must
-        // have exactly the shape of the circuit its verifying key belongs to.
-        // Before, a DvP Initiator receipt claiming 4 outputs inserted commitA
-        // and revertCommitA next to commitB, one claiming 0 outputs could
-        // never settle, and a Payment2in receipt claiming 1 output spent both
-        // inputs but inserted only output[0], destroying the change note.
-        (uint256 vkId, uint256 contractAddrIdx) = _receiptShape(receipt);
-
-        uint jInputSize = receipt.numberOfInputs;
-        uint jTreeNumbersIndex = 1;
-        uint jRootsIndex = jTreeNumbersIndex + jInputSize;
-        uint jNullifiersIndex = jRootsIndex + jInputSize;
-        uint jCommitmentsIndex = jNullifiersIndex + jInputSize;
-
-        // VULN-5 fix: verify the proof is bound to THIS vault contract. Every
-        // Payment-family shape carries StContractAddress after its outputs,
-        // and it is checked for each of them. A DvP Initiator proof carries
-        // the counterparty's vault instead (StCounterVault), which EnygmaDvp
-        // checks at settlement.
-        if (contractAddrIdx != 0) {
-            require(
-                receipt.statement[contractAddrIdx] == uint256(uint160(address(this))),
-                "proof not bound to this vault"
-            );
-        }
+        // VULN-5 fix: verify the proof is bound to THIS vault contract.
+        require(
+            receipt.statement[circuit.contractAddressOffset] == uint256(uint160(address(this))),
+            "proof not bound to this vault"
+        );
 
         if (
-            receipt.statement[jCommitmentsIndex] ==
-            receipt.statement[jCommitmentsIndex + 1]
+            receipt.statement[circuit.commitmentsOutOffset] ==
+            receipt.statement[circuit.commitmentsOutOffset + 1]
         ) {
             revert JoinSplitWithSameCommitments();
         }
 
-        for (uint i = 0; i < jInputSize; i++) {
-            if (receipt.statement[jRootsIndex + i] != 0) {
+        for (uint256 i = 0; i < circuit.inputs; i++) {
+            if (receipt.statement[circuit.merkleRootsOffset + i] != 0) {
                 if (
                     !isValidRoot(
-                        receipt.statement[jTreeNumbersIndex + i],
-                        receipt.statement[jRootsIndex + i]
+                        receipt.statement[circuit.treeNumbersOffset + i],
+                        receipt.statement[circuit.merkleRootsOffset + i]
                     )
                 ) {
                     revert InvalidMerkleRoot();
@@ -528,8 +607,8 @@ contract Erc20CoinVault is AbstractCoinVault {
 
                 if (
                     isValidNullifier(
-                        receipt.statement[jTreeNumbersIndex + i],
-                        receipt.statement[jNullifiersIndex + i]
+                        receipt.statement[circuit.treeNumbersOffset + i],
+                        receipt.statement[circuit.nullifiersOffset + i]
                     )
                 ) {
                     revert InvalidNullifier();
@@ -537,21 +616,23 @@ contract Erc20CoinVault is AbstractCoinVault {
             }
         }
 
-        if (vkId == VK_ID_ERC20_JOINSPLIT_FEE) {
-            // PaymentFeeCircuit enforces  sum(in) == sum(out) + StFee  in the
-            // field but did not range-check StFee, so a prover could pick
-            // StFee = Fr - d and spend a note of value v into outputs worth
-            // v + d: value created from nothing, then withdrawn from other
-            // depositors' funds. payment() does not look at the fee at all and
-            // paymentWithFee() only compares it with a value the caller
-            // supplies, so the bound is enforced here, on every path that
-            // verifies a receipt of this shape.
-            if (receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] >= MAX_FEE_AMOUNT) {
-                revert IEnygmaDvp.FeeOutOfRange();
-            }
+        // PaymentFeeCircuit enforces  sum(in) == sum(out) + StFee  in the
+        // field but did not range-check StFee, so a prover could pick
+        // StFee = Fr - d and spend a note of value v into outputs worth
+        // v + d: value created from nothing, then withdrawn from other
+        // depositors' funds. payment() does not look at the fee at all and
+        // paymentWithFee() only compares it with a value the caller
+        // supplies, so the bound is enforced here, on every path that
+        // verifies a receipt of this shape.
+        if (
+            circuit.vkId == VK_ID_ERC20_JOINSPLIT_FEE &&
+            receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] >= MAX_FEE_AMOUNT
+        ) {
+            revert IEnygmaDvp.FeeOutOfRange();
         }
+
         if (!IVerifier(_verifierContractAddress).verifyProof(
-            vkId,
+            circuit.vkId,
             receipt.proof,
             receipt.statement
         )) revert InvalidProof();
@@ -559,44 +640,75 @@ contract Erc20CoinVault is AbstractCoinVault {
         return true;
     }
 
-    // The verifying key for a receipt, and where its StContractAddress sits
-    // (0 when the circuit has none), from its exact (numberOfInputs,
-    // numberOfOutputs, statement length). Any other shape reverts.
-    //   Payment                  1 in, 2 out,  7 signals, VK slot 0
-    //   Payment2in               2 in, 2 out, 10 signals, VK slot 1
-    //   PaymentFee               1 in, 2 out,  8 signals, VK slot 2
-    //   PaymentRelayerFeePublic  1 in, 3 out,  9 signals, VK slot 3
-    //   UsdrFee                  1 in, 2 out,  9 signals, VK slot 4
-    //   DvP Initiator            1 in, 1 out,  8 signals, VK slot 23
-    // The DvP Initiator circuit publishes three commitments (commitB, commitA,
-    // revertCommitA), but only commitB is this leg's output: commitA is
-    // inserted by the counterparty's leg, in the other vault, and
-    // revertCommitA only on timeout (claimSwapTimeout). So it is 1 output.
-    function _receiptShape(
+    // Checks a DvpInitiator leg: the fungible side of a swap. It is read only
+    // through DvpReceipt and the DvP layout, never by numberOfInputs or
+    // numberOfOutputs, and any other receipt is refused before a field is
+    // read.
+    function checkDvpReceiptConditions(
         IEnygmaDvp.ProofReceipt memory receipt
-    ) internal pure returns (uint256 vkId, uint256 contractAddrIdx) {
-        uint256 nIn = receipt.numberOfInputs;
-        uint256 nOut = receipt.numberOfOutputs;
-        uint256 len = receipt.statement.length;
-        if (nIn == 1 && nOut == 2 && len == PAYMENT_LEN) {
-            return (VK_ID_ERC20_JOINSPLIT, Psl.PAYMENT_CONTRACT_ADDRESS_OFFSET);
+    ) public view override returns (bool) {
+        if (receipt.statement.length != DVP_INITIATOR_LEN) revert InvalidStatmentSize();
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+
+        if (leg.commitment == receipt.statement[Dsl.DVP_INITIATOR_COMMIT_A_OFFSET]) {
+            revert JoinSplitWithSameCommitments();
         }
-        if (nIn == 2 && nOut == 2 && len == PAYMENT2IN_LEN) {
-            return (VK_ID_ERC20_JOINSPLIT_2INPUT, Psl.PAYMENT2IN_CONTRACT_ADDRESS_OFFSET);
+        if (!isValidRoot(leg.treeNumber, leg.merkleRoot)) {
+            revert InvalidMerkleRoot();
         }
-        if (nIn == 1 && nOut == 2 && len == PAYMENT_FEE_LEN) {
-            return (VK_ID_ERC20_JOINSPLIT_FEE, Psl.PAYMENT_FEE_CONTRACT_ADDRESS_OFFSET);
+        if (isValidNullifier(leg.treeNumber, leg.nullifier)) {
+            revert InvalidNullifier();
         }
-        if (nIn == 1 && nOut == 3 && len == PAYMENT_RELAYER_FEE_LEN) {
-            return (VK_ID_ERC20_JOINSPLIT_RELAYER, Psl.PAYMENT_RELAYER_FEE_CONTRACT_ADDRESS_OFFSET);
+        if (!IVerifier(_verifierContractAddress).verifyProof(
+            VK_ID_DVP_INITIATOR,
+            receipt.proof,
+            receipt.statement
+        )) revert InvalidProof();
+
+        return true;
+    }
+
+    // Spends and inserts a Payment-family receipt's notes, read through its
+    // circuit's layout (see _paymentCircuit), not by the legacy walker.
+    function _nullifyFromReceipt(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) internal override returns (bool) {
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
+        for (uint256 i = 0; i < circuit.inputs; i++) {
+            if (receipt.statement[circuit.merkleRootsOffset + i] != 0) {
+                _spendNullifier(
+                    receipt.statement[circuit.treeNumbersOffset + i],
+                    receipt.statement[circuit.nullifiersOffset + i]
+                );
+            }
         }
-        if (nIn == 1 && nOut == 2 && len == USDR_FEE_LEN) {
-            return (VK_ID_ERC20_USDR, Psl.USDR_FEE_CONTRACT_ADDRESS_OFFSET);
+        return true;
+    }
+
+    function _insertCommitmentsFromReceipt(
+        IEnygmaDvp.ProofReceipt memory receipt
+    ) internal override returns (bool) {
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
+        uint256 numberOfCommitments = 0;
+        for (uint256 i = 0; i < circuit.outputs; i++) {
+            if (receipt.statement[circuit.commitmentsOutOffset + i] != 0) {
+                numberOfCommitments++;
+            }
         }
-        if (nIn == 1 && nOut == 1 && len == DVP_INITIATOR_LEN) {
-            return (VK_ID_DVP_INITIATOR, 0);
+
+        uint256[] memory commitments = new uint256[](numberOfCommitments);
+        uint256 n = 0;
+        for (uint256 i = 0; i < circuit.outputs; i++) {
+            uint256 commitment = receipt.statement[circuit.commitmentsOutOffset + i];
+            if (commitment != 0) {
+                commitments[n++] = commitment;
+                emit Commitment(_vaultId, commitment);
+            }
         }
-        revert ReceiptShapeMismatch();
+
+        insertLeaves(commitments);
+
+        return true;
     }
 
     function verifyOwnership(
@@ -607,13 +719,10 @@ contract Erc20CoinVault is AbstractCoinVault {
         // 0: amount
         uint256 amount = params_[0];
 
-        // receipt.statement:
-        // 0 challenge;
-        // 1 treeNumber;
-        // 2 merkleRoot;
-        // 3 nullifier;
-        // 4 commitment;
-        uint256 challenge = receipt_.statement[0];
+        // A Payment-family receipt whose message is the challenge and whose
+        // output[0] is the opened commitment.
+        PaymentCircuit memory circuit = _paymentCircuit(receipt_);
+        uint256 challenge = receipt_.statement[circuit.messageOffset];
 
         IEnygmaDvp(_zkDvpContractAddress).checkAndRegisterChallenge(challenge);
 
@@ -626,7 +735,7 @@ contract Erc20CoinVault is AbstractCoinVault {
             [uid, uint256(uint160(0))]
         );
 
-        if (receipt_.statement[4] != commitment) {
+        if (receipt_.statement[circuit.commitmentsOutOffset] != commitment) {
             revert InvalidOpening();
         }
 
