@@ -174,8 +174,11 @@ If the auctioneer hasn't settled by `settlementDeadline`:
 1. Anyone calls `recoverAuction(auctionId)` — no ZK proof needed
 2. Contract unlocks + nullifies NFT note, inserts stored `revertCommit` (proven well-formed at init time), state → CANCELED
 
+### Bids the auctioneer cannot open (`excludeBid`)
+After the bidding deadline the auctioneer can exclude an unbatched bid whose ciphertext it cannot open, publishing the key derived from the bid's capsule (`BidExcluded`) so anyone can check it. Settlement needs batched + excluded bids to cover every live bid; an excluded bid cannot be batched or win, and can be reclaimed at once.
+
 ### Phase 4 — Losers reclaim USDC (`reclaimBid`)
-After SETTLED or CANCELED:
+After SETTLED or CANCELED (or at once, for an excluded bid):
 1. Any loser (or anyone on their behalf) calls `reclaimBid(auctionId, commitA)` — no ZK proof
 2. Contract checks `commitA ≠ overallWinnerCommit`, unlocks + nullifies the locked USDC note, inserts `bid.revertCommit`
 
