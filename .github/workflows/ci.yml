@@ -25,12 +25,21 @@ jobs:
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
+      # Module paths become matrix values, so only plain relative paths
+      # (letters, digits, _ . / -, no "..") are accepted.
       - id: list
         run: |
-          echo "matrix=$(git ls-files '*go.mod' | xargs -n1 dirname | sort | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          dirs=$(git ls-files '*go.mod' | xargs -n1 dirname | sort)
+          bad=$(printf '%s\n' "$dirs" | grep -Ev '^[A-Za-z0-9_][A-Za-z0-9_./-]*$' || true)
+          bad="$bad$(printf '%s\n' "$dirs" | grep -E '(^|/)\.\.(/|$)' || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::unexpected Go module path(s): $bad"
+            exit 1
+          fi
+          echo "matrix=$(printf '%s\n' "$dirs" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
       # Fail loudly when a new module is added but Dependabot does not cover it.
       - name: Every Go module is listed in dependabot.yml
         run: |
@@ -47,10 +56,10 @@ jobs:
     name: gofmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "stable"
       - run: make fmt-check
@@ -59,8 +68,8 @@ jobs:
     name: page scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
           cache: npm
@@ -72,8 +81,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -93,12 +102,16 @@ jobs:
       matrix:
         module: ${{ fromJSON(needs.modules.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: build, vet, errcheck, test
-        run: make build vet errcheck test-unit MODULE=${{ matrix.module }}
+        env:
+          MODULE: ${{ matrix.module }}
+        run: |
+          [[ "$MODULE" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*$ && "$MODULE" != *..* ]] || { echo "::error::bad module path"; exit 1; }
+          make build vet errcheck test-unit MODULE="$MODULE"
