@@ -693,13 +693,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             receipt
         );
 
-        // asserting item proof shows that item belongs to group1
-        if (
-            !IAssetGroup(_assetGroups[groupId]).isMemberFromProofReceipt(
-                vaultId,
-                receipt
-            )
-        ) {
+        // The leg's vault must belong to the group. A DvP leg carries no
+        // asset-group root (its last signal is CounterVault), so membership
+        // is the vault's, not read from the receipt.
+        if (!IAssetGroup(_assetGroups[groupId]).isVaultMember(vaultId)) {
             revert GroupMembershipMismatch();
         }
 
@@ -1017,25 +1014,16 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             revert CounterVaultMismatch();
         }
 
-        // asserting item proof shows that item belongs to group1
-        if (
-            !IAssetGroup(_assetGroups[groupId1]).isMemberFromProofReceipt(
-                vaultId1,
-                receipt1
-            )
-        ) {
+        // Each leg's vault must belong to its group. A DvP leg carries no
+        // asset-group root (its last signal is CounterVault), so membership
+        // is the vault's, not read from the receipt.
+        if (!IAssetGroup(_assetGroups[groupId1]).isVaultMember(vaultId1)) {
             revert GroupMembershipMismatch();
         }
 
         paymentCoinVault.checkDvpReceiptConditions(receipt1);
 
-        // asserting item proof shows that item belongs to group2
-        if (
-            !IAssetGroup(_assetGroups[groupId2]).isMemberFromProofReceipt(
-                vaultId2,
-                receipt2
-            )
-        ) {
+        if (!IAssetGroup(_assetGroups[groupId2]).isVaultMember(vaultId2)) {
             revert GroupMembershipMismatch();
         }
 
