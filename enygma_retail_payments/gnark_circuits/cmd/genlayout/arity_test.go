@@ -16,14 +16,16 @@ var (
 	solLen         = regexp.MustCompile(`uint256 constant (\w+_LEN) = (\d+);`)
 	solLengthCheck = regexp.MustCompile(`statement\.length\s*[!=]=\s*(\w+)`)
 	solLengthLen   = regexp.MustCompile(`\?\s*(\w+_LEN)\s*:\s*(\w+_LEN)`)
-	solVerifyProof = regexp.MustCompile(`verifyProof\(\s*(VK_ID_\w+)`)
+	// One _receiptShape clause: the exact receipt shape that selects a key.
+	solShape = regexp.MustCompile(`nIn\s*==\s*(\d+)\s*&&\s*nOut\s*==\s*(\d+)\s*&&\s*len\s*==\s*(\w+)\s*\)\s*\{\s*return\s*\(\s*(VK_ID_\w+)`)
 )
 
-// Erc20CoinVault picks a Payment-family verifying key by statement length,
-// and checks a receipt's statement length before settling it, but nothing
-// ties a verifying key id or a function to the length of the circuit whose
-// key it is. This pins each such check to its circuit's statement length,
-// whether it is written as a generated *_LEN constant or as a literal.
+// Erc20CoinVault picks a Payment-family verifying key from a receipt's exact
+// (numberOfInputs, numberOfOutputs, statement length), and checks a receipt's
+// statement length before settling it, but nothing ties a verifying key id or
+// a function to the shape of the circuit whose key it is. This pins each such
+// check to its circuit's shape, whether the length is written as a generated
+// *_LEN constant or as a literal.
 func TestVaultLengthChecksMatchStatementLengths(t *testing.T) {
 	src := readFile(t, erc20CoinVaultSol)
 	lens := generatedLens(t)
@@ -38,34 +40,42 @@ func TestVaultLengthChecksMatchStatementLengths(t *testing.T) {
 		return n
 	}
 
-	// The verifier each length dispatches to in checkReceiptConditions: the
-	// length compared last before a verifyProof call is the one guarding it.
-	dispatch := map[string]int{
-		"VK_ID_ERC20_JOINSPLIT_FEE": templates.PaymentFeeStatementLayout().Len,
-		"VK_ID_ERC20_USDR":          templates.UsdrFeeStatementLayout().Len,
+	// The shape each Payment-family key is selected by in _receiptShape, which
+	// checkReceiptConditions verifies every receipt with: the deployed config's
+	// input and output counts and the layout's statement length.
+	type receiptShape struct{ in, out, len int }
+	circuitShape := func(c templates.PaymentCircuitConfig, l int) receiptShape {
+		return receiptShape{c.TmNInputs, c.TmMOutputs, l}
 	}
-	body := functionBody(t, src, "checkReceiptConditions")
-	seen := map[string]bool{}
-	for _, m := range solVerifyProof.FindAllStringSubmatchIndex(body, -1) {
-		vk := body[m[2]:m[3]]
+	dispatch := map[string]receiptShape{
+		"VK_ID_ERC20_JOINSPLIT":         circuitShape(templates.PaymentConfig, templates.PaymentStatementLayout().Len),
+		"VK_ID_ERC20_JOINSPLIT_2INPUT":  circuitShape(templates.Payment2inConfig, templates.Payment2inStatementLayout().Len),
+		"VK_ID_ERC20_JOINSPLIT_FEE":     circuitShape(templates.PaymentFeeConfig, templates.PaymentFeeStatementLayout().Len),
+		"VK_ID_ERC20_JOINSPLIT_RELAYER": circuitShape(templates.PaymentRelayerFeePublicConfig, templates.PaymentRelayerFeeStatementLayout().Len),
+		"VK_ID_ERC20_USDR":              circuitShape(templates.UsdrFeeConfig, templates.UsdrFeeStatementLayout().Len),
+	}
+	seen := map[string]int{}
+	for _, m := range solShape.FindAllStringSubmatch(functionBody(t, src, "_receiptShape"), -1) {
+		vk := m[4]
 		want, ok := dispatch[vk]
 		if !ok {
 			continue
 		}
-		checks := solLengthCheck.FindAllStringSubmatch(body[:m[0]], -1)
-		if len(checks) == 0 {
-			t.Errorf("verifyProof(%s): no statement length check guards it", vk)
-			continue
+		in, _ := strconv.Atoi(m[1])
+		out, _ := strconv.Atoi(m[2])
+		if got := (receiptShape{in, out, resolve(m[3])}); got != want {
+			t.Errorf("_receiptShape selects %s for %d in, %d out, %d signals; its circuit is %d in, %d out, %d signals",
+				vk, got.in, got.out, got.len, want.in, want.out, want.len)
 		}
-		if got := resolve(checks[len(checks)-1][1]); got != want {
-			t.Errorf("verifyProof(%s) is guarded by statement length %d, its circuit's is %d", vk, got, want)
-		}
-		seen[vk] = true
+		seen[vk]++
 	}
 	for vk := range dispatch {
-		if !seen[vk] {
-			t.Errorf("checkReceiptConditions has no verifyProof(%s)", vk)
+		if seen[vk] != 1 {
+			t.Errorf("_receiptShape selects %s in %d clauses, want exactly 1", vk, seen[vk])
 		}
+	}
+	if !strings.Contains(functionBody(t, src, "checkReceiptConditions"), "_receiptShape(receipt)") {
+		t.Error("checkReceiptConditions does not choose its verifying key with _receiptShape")
 	}
 
 	// partialWithdrawWithRelayerFee settles only PaymentRelayerFee receipts.
