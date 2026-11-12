@@ -11,7 +11,8 @@
 //
 // init registers one VK per circuit in enygmadvp.config.json, in order, so
 // every one needs a JSON. A circuit whose key file is missing (or that has no
-// key file, see circuitMapping) is an error naming it, unless -placeholder is
+// key file, see circuitMapping) keeps the JSON already in <build_dir>, if
+// there is one. Otherwise it is an error naming it, unless -placeholder is
 // given: then it gets an unprovable placeholder VK (see placeholderVK), which
 // keeps the slot numbering and verifies no proof. make dvp-stack passes it for
 // a local chain; slots 1-22 are never exercised by the integration tests.
@@ -245,11 +246,20 @@ func configCircuits(configPath string) ([]string, error) {
 	return names, nil
 }
 
+// exported is what exportAll did with each circuit.
+type exported struct {
+	Exported  []string // written from its key file
+	Kept      []string // no key file: the JSON already in the build dir is kept
+	Placeheld []string // no key file or JSON: an unprovable placeholder VK
+}
+
 // exportAll writes <buildDir>/<name>.json for each circuit, from its key file
-// in mapping. A circuit with no key file is a placeholder (placeholderVK)
-// when placeholder is set, and missing otherwise; missing circuits get no
-// file and make exportAll return an error naming them.
-func exportAll(circuits []string, mapping map[string]string, buildDir string, placeholder bool) (exported, placeheld []string, err error) {
+// in mapping. A circuit with no key file keeps the JSON already in buildDir
+// if there is one (an earlier setup's); without one it is a placeholder
+// (placeholderVK) when placeholder is set, and missing otherwise. Missing
+// circuits get no file and make exportAll return an error naming them.
+func exportAll(circuits []string, mapping map[string]string, buildDir string, placeholder bool) (exported, error) {
+	var out exported
 	var missing []string
 	var stand *groth16bn254.VerifyingKey
 	for _, name := range circuits {
@@ -262,33 +272,38 @@ func exportAll(circuits []string, mapping map[string]string, buildDir string, pl
 		}
 		if mapped && readErr == nil {
 			if err := writeVK(vk, outPath); err != nil {
-				return nil, nil, err
+				return out, err
 			}
-			exported = append(exported, name)
+			out.Exported = append(out.Exported, name)
 			continue
 		}
 		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-			return nil, nil, readErr
+			return out, readErr
+		}
+		if _, err := os.Stat(outPath); err == nil {
+			out.Kept = append(out.Kept, name)
+			continue
 		}
 		if !placeholder {
 			missing = append(missing, name)
 			continue
 		}
 		if stand == nil {
+			var err error
 			if stand, err = placeholderVK(); err != nil {
-				return nil, nil, err
+				return out, err
 			}
 		}
 		if err := writeVK(stand, outPath); err != nil {
-			return nil, nil, err
+			return out, err
 		}
-		placeheld = append(placeheld, name)
+		out.Placeheld = append(out.Placeheld, name)
 	}
 	if len(missing) > 0 {
-		return exported, placeheld, fmt.Errorf("no key file for %s; run keygen, or pass -placeholder for a local chain (an unprovable VK in each such slot)",
-			strings.Join(missing, ", "))
+		return out, fmt.Errorf("no key file and no %s/<name>.json for %s; run keygen, or pass -placeholder for a local chain (an unprovable VK in each such slot)",
+			buildDir, strings.Join(missing, ", "))
 	}
-	return exported, placeheld, nil
+	return out, nil
 }
 
 func main() {
@@ -308,16 +323,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("read config: %v", err)
 	}
-	exported, placeheld, err := exportAll(circuits, circuitMapping, buildDir, *placeholder)
-	for _, name := range exported {
+	out, err := exportAll(circuits, circuitMapping, buildDir, *placeholder)
+	for _, name := range out.Exported {
 		fmt.Printf("  exported %s\n", name)
 	}
-	for _, name := range placeheld {
+	for _, name := range out.Kept {
+		fmt.Printf("  kept %s (no key file; %s.json already in the build dir)\n", name, name)
+	}
+	for _, name := range out.Placeheld {
 		fmt.Printf("  placeholder %s (unprovable VK)\n", name)
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Done: %d exported, %d placeholders, of the config's %d circuits, to %s\n",
-		len(exported), len(placeheld), len(circuits), buildDir)
+	fmt.Printf("Done: %d exported, %d kept, %d placeholders, of the config's %d circuits, to %s\n",
+		len(out.Exported), len(out.Kept), len(out.Placeheld), len(circuits), buildDir)
 }
