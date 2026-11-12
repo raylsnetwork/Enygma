@@ -55,7 +55,7 @@ func exists(t *testing.T, path string) bool {
 
 func TestExportAll_NamesEveryCircuitWithNoKeyFile(t *testing.T) {
 	circuits, mapping, build := scenario(t)
-	exported, _, err := exportAll(circuits, mapping, build, false)
+	out, err := exportAll(circuits, mapping, build, false)
 	if err == nil {
 		t.Fatal("exportAll succeeded with two circuits missing their key file")
 	}
@@ -67,19 +67,19 @@ func TestExportAll_NamesEveryCircuitWithNoKeyFile(t *testing.T) {
 			t.Errorf("%s.json written with no key file and no -placeholder", name)
 		}
 	}
-	if !slices.Equal(exported, []string{"A"}) || !exists(t, filepath.Join(build, "A.json")) {
-		t.Errorf("exported %v, want A written", exported)
+	if !slices.Equal(out.Exported, []string{"A"}) || !exists(t, filepath.Join(build, "A.json")) {
+		t.Errorf("exported %v, want A written", out.Exported)
 	}
 }
 
 func TestExportAll_PlaceholderGivesEveryConfigCircuitAVK(t *testing.T) {
 	circuits, mapping, build := scenario(t)
-	exported, placeheld, err := exportAll(circuits, mapping, build, true)
+	out, err := exportAll(circuits, mapping, build, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(exported, []string{"A"}) || !slices.Equal(placeheld, []string{"B", "C"}) {
-		t.Fatalf("exported %v, placeholders %v; want [A], [B C]", exported, placeheld)
+	if !slices.Equal(out.Exported, []string{"A"}) || !slices.Equal(out.Placeheld, []string{"B", "C"}) {
+		t.Fatalf("exported %v, placeholders %v; want [A], [B C]", out.Exported, out.Placeheld)
 	}
 	a, _ := os.ReadFile(filepath.Join(build, "A.json"))
 	for _, name := range circuits {
@@ -91,6 +91,33 @@ func TestExportAll_PlaceholderGivesEveryConfigCircuitAVK(t *testing.T) {
 		// for that circuit would then verify in the placeholder's slot.
 		if name != "A" && bytes.Equal(data, a) {
 			t.Errorf("%s.json is a copy of A's real VK", name)
+		}
+	}
+}
+
+// A build dir from an earlier setup already holds the JSONs of circuits
+// with no key file here (scripts/init.sh runs the export without
+// -placeholder): they are kept as they are, and the export succeeds.
+func TestExportAll_KeepsAnEarlierSetupsJSONForACircuitWithNoKeyFile(t *testing.T) {
+	circuits, mapping, build := scenario(t)
+	earlier := map[string][]byte{"B": []byte(`{"protocol":"groth16","from":"B"}`), "C": []byte(`{"protocol":"groth16","from":"C"}`)}
+	for name, data := range earlier {
+		if err := os.WriteFile(filepath.Join(build, name+".json"), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, placeholder := range []bool{false, true} {
+		out, err := exportAll(circuits, mapping, build, placeholder)
+		if err != nil {
+			t.Fatalf("placeholder=%v: %v", placeholder, err)
+		}
+		if !slices.Equal(out.Kept, []string{"B", "C"}) || len(out.Placeheld) != 0 {
+			t.Errorf("placeholder=%v: kept %v, placeholders %v; want [B C], none", placeholder, out.Kept, out.Placeheld)
+		}
+		for name, data := range earlier {
+			if got, _ := os.ReadFile(filepath.Join(build, name+".json")); !bytes.Equal(got, data) {
+				t.Errorf("placeholder=%v: %s.json was overwritten", placeholder, name)
+			}
 		}
 	}
 }
