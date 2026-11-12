@@ -163,6 +163,16 @@ The server loads proving/verifying keys from `./scripts/keys/` at startup. Pre-g
 keys are committed to the repo, so no key-generation step is needed for a standard run.
 See [Regenerating Keys](#regenerating-provingverifying-keys) only if you change circuit parameters.
 
+It listens on `127.0.0.1:8082`. Environment variables:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GNARK_BIND_HOST` | `127.0.0.1` | Interface to listen on. Proof requests carry witness data in cleartext, so put TLS and access control in front of any other interface. |
+| `GNARK_AUTH_TOKEN` | unset | When set, every request needs `Authorization: Bearer <token>`. |
+| `GNARK_MAX_CONCURRENT_PROOFS` | `GOMAXPROCS` | Proofs running at once; others wait up to 30 s, then get 503. |
+
+Request bodies over 512 KiB are rejected.
+
 ### 4. Run integration tests
 
 ```bash

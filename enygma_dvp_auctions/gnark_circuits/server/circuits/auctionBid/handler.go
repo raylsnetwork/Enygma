@@ -33,7 +33,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		fmt.Println(req)
 
 		cfg := templates.AuctionBidCircuitConfig{
 			TmMerkleTreeDepth: bidMerkleDepth,

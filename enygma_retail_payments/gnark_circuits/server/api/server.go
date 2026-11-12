@@ -12,8 +12,13 @@ import (
 	"enygma_retail_payments/gnark_circuits/server/config"
 )
 
+// NewServer wires the proof routes behind the body-size, bearer-token and
+// concurrency checks.
 func NewServer(cfg *config.Config) *gin.Engine {
 	r := gin.Default()
+	r.Use(maxBodySize(maxRequestBodyBytes))
+	r.Use(bearerToken(cfg.AuthToken))
+	r.Use(concurrencyLimit(cfg.MaxConcurrentProofs, proofSlotWait))
 
 	r.POST("/proof/payment", payment.NewHandler(cfg.PaymentPk, cfg.PaymentVk))
 	r.POST("/proof/payment2in", payment2in.NewHandler(cfg.Payment2inPk, cfg.Payment2inVk))
