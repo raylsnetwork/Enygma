@@ -300,9 +300,9 @@ type Server struct {
 // X-Demo-Admin-Key header — closes both the network-exposure and CSRF halves
 // of H-05: binding to loopback alone stops other hosts, but a malicious page
 // the operator's own browser visits can still POST to localhost, and simple
-// (non-fetch, e.g. <form>) CSRF can't set custom headers or know this value,
-// which is generated per run and only ever handed to the page this same
-// server rendered.
+// (non-fetch, e.g. <form>) CSRF can't set custom headers or know this value.
+// The key is printed to the operator's terminal at startup and typed into the
+// page once per tab; no route serves it.
 func (s *Server) requireAdminKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Demo-Admin-Key")), []byte(s.adminKey)) != 1 {
@@ -315,12 +315,12 @@ func (s *Server) requireAdminKey(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, strings.Replace(indexHTML, "%%DEMO_ADMIN_KEY%%", s.adminKey, 1))
+	fmt.Fprint(w, indexHTML)
 }
 
 func (s *Server) handleBank(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, strings.Replace(bankHTML, "%%DEMO_ADMIN_KEY%%", s.adminKey, 1))
+	fmt.Fprint(w, bankHTML)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -1889,9 +1889,7 @@ func tcpAvailable(addr string) bool {
 // newAdminKey returns DEMO_ADMIN_KEY if set, otherwise a fresh random token.
 // Fix H-05: every /run/* route requires this value in an X-Demo-Admin-Key
 // header. Generating one automatically means the demo still runs with zero
-// setup for a legitimate local operator — handleIndex/handleBank hand it to
-// the page this same server renders — while a network-adjacent attacker or
-// a CSRF page from anywhere else has no way to learn it.
+// setup: main() prints it, and the page asks the operator for it once per tab.
 func newAdminKey() string {
 	if v := os.Getenv("DEMO_ADMIN_KEY"); v != "" {
 		return v
@@ -1901,6 +1899,41 @@ func newAdminKey() string {
 		log.Fatalf("generate admin key: %v", err)
 	}
 	return hex.EncodeToString(buf)
+}
+
+// allowedHosts returns the Host header names the dashboard answers to: the
+// loopback names, the host part of listen (unless it is a wildcard), and the
+// comma-separated names in extra (DEMO_ALLOWED_HOSTS).
+func allowedHosts(listen, extra string) map[string]bool {
+	hosts := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
+	if h, _, err := net.SplitHostPort(listen); err == nil && h != "" {
+		if ip := net.ParseIP(h); ip == nil || !ip.IsUnspecified() {
+			hosts[strings.ToLower(h)] = true
+		}
+	}
+	for _, h := range strings.Split(extra, ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			hosts[h] = true
+		}
+	}
+	return hosts
+}
+
+// requireAllowedHost rejects any request whose Host header names a host
+// outside allowed, so the dashboard only answers to the names it is served on.
+func requireAllowedHost(allowed map[string]bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+		if !allowed[host] {
+			http.Error(w, "unexpected Host header", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
@@ -1927,13 +1960,16 @@ func main() {
 	log.Printf("  Gnark    : %s", gnarkURL)
 	log.Printf("  Relayer  : %s", relayerURL)
 	if os.Getenv("DEMO_ADMIN_KEY") == "" {
-		log.Printf("  Admin key: %s  (generated — set DEMO_ADMIN_KEY to pin it across restarts; only needed for direct API calls, the web UI already has it)", srv.adminKey)
+		log.Printf("  Admin key: %s  (generated — set DEMO_ADMIN_KEY to pin it across restarts; the page asks for it once per tab)", srv.adminKey)
+	} else {
+		log.Printf("  Admin key: from DEMO_ADMIN_KEY (the page asks for it once per tab)")
 	}
 	if !strings.HasPrefix(listenAddr, "127.0.0.1:") && !strings.HasPrefix(listenAddr, "localhost:") {
-		log.Printf("  WARNING: DEMO_LISTEN_ADDR=%s is not loopback-only — the admin key is the only thing standing between this and C-06/H-05's owner-privileged routes. Make sure that's deliberate.", listenAddr)
+		log.Printf("  WARNING: DEMO_LISTEN_ADDR=%s is not loopback-only — the admin key is the only thing standing between this and C-06/H-05's owner-privileged routes. Make sure that's deliberate, and list the names it is reached by in DEMO_ALLOWED_HOSTS.", listenAddr)
 	}
 
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	hosts := allowedHosts(listenAddr, os.Getenv("DEMO_ALLOWED_HOSTS"))
+	if err := http.ListenAndServe(listenAddr, requireAllowedHost(hosts, mux)); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }

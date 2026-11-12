@@ -1,7 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script>window.__DEMO_ADMIN_KEY__ = "%%DEMO_ADMIN_KEY%%";</script>
+<script>
+// Returns the admin key for /run/* calls: asked once per tab (the demo server prints it at startup), then kept in sessionStorage.
+function demoAdminKey() {
+  let k = '';
+  try { k = sessionStorage.getItem('demoAdminKey') || ''; } catch (e) {}
+  if (!k) {
+    k = (prompt('Admin key (printed by the demo server at startup):') || '').trim();
+    try { if (k) sessionStorage.setItem('demoAdminKey', k); } catch (e) {}
+  }
+  return k;
+}
+// Forgets the stored admin key after a 401, so the next run asks again.
+function forgetRejectedAdminKey(r) {
+  if (r.status === 401) { try { sessionStorage.removeItem('demoAdminKey'); } catch (e) {} }
+  return r;
+}
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Enygma Payments · Operator Console</title>
@@ -1375,7 +1391,8 @@ function enableBtns() {
 }
 function postRun(url, body) {
   setGlobal('running', 'Running…'); disableBtns();
-  fetch(url, { method:'POST', headers:{'Content-Type':'application/json', 'X-Demo-Admin-Key': window.__DEMO_ADMIN_KEY__}, body: body ? JSON.stringify(body) : undefined })
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json', 'X-Demo-Admin-Key': demoAdminKey()}, body: body ? JSON.stringify(body) : undefined })
+    .then(forgetRejectedAdminKey)
     .then(r => { if (!r.ok) r.text().then(t => { setGlobal('error','Error'); appendLog({msg:'Server: '+t}); enableBtns(); }); })
     .catch(err => { setGlobal('error','Error'); appendLog({msg:'Cannot reach server: '+err}); enableBtns(); });
 }
