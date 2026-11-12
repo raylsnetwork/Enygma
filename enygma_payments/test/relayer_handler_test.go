@@ -132,23 +132,32 @@ func TestRelayHandler_Transfer_Success(t *testing.T) {
 	}
 }
 
-// TestRelayHandler_Transfer_AttributesCallingBank reproduces the H-09
-// (item 4) fix directly: the relayer must pass the authenticated caller's
-// bank identity (Fix H-06's bankID, resolved from the bearer token) as
-// Transfer()'s bankTag argument, not an empty string — this is what lets
-// the chain's own RelayAttribution event carry per-bank attribution
-// instead of relying solely on the relayer's off-chain logs.
-func TestRelayHandler_Transfer_AttributesCallingBank(t *testing.T) {
-	tx := dummyTx()
-	mc := &mockContract{tx: tx}
-	r := server.NewWithHandler(testAPIKeys, newTestHandler(mc, &mockMiner{receipt: successReceipt(tx)}))
-	w := serveHTTPPost(r, "/relay/transfer", testAPIKey, validTransferBody())
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-	const wantBankTag = "bank-test" // testAPIKeys[testAPIKey], see relayer_mocks_test.go
-	if mc.gotBankTag != wantBankTag {
-		t.Errorf("FAIL (H-09 regressed): Transfer() was called with bankTag %q, want %q", mc.gotBankTag, wantBankTag)
+// TestRelayHandler_KeepsCallingBankOffchain: the relayer submits every
+// transaction itself, and the bankTag it passes is public (calldata and the
+// RelayAttribution event), so it passes an empty tag on both routes rather
+// than the authenticated caller's bank identity ("bank-test" here). Which
+// bank asked for a submission stays in the relayer's own logs.
+func TestRelayHandler_KeepsCallingBankOffchain(t *testing.T) {
+	for _, tc := range []struct {
+		route string
+		body  interface{}
+	}{
+		{"/relay/transfer", validTransferBody()},
+		{"/relay/transfer_fee", validTransferFeeBody()},
+	} {
+		tx := dummyTx()
+		mc := &mockContract{tx: tx}
+		r := server.NewWithHandler(testAPIKeys, newTestHandler(mc, &mockMiner{receipt: successReceipt(tx)}))
+		w := serveHTTPPost(r, tc.route, testAPIKey, tc.body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: got %d: %s", tc.route, w.Code, w.Body.String())
+		}
+		if mc.calls != 1 {
+			t.Fatalf("%s: %d submissions, want 1", tc.route, mc.calls)
+		}
+		if mc.gotBankTag != "" {
+			t.Errorf("%s: submitted with bankTag %q, want an empty tag", tc.route, mc.gotBankTag)
+		}
 	}
 }
 

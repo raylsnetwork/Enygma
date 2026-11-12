@@ -104,7 +104,7 @@ func TestRelayHandler_FeeSlot_UnpaidRelayerGets402AndNothingIsSubmitted(t *testi
 	if w.Code != http.StatusPaymentRequired {
 		t.Fatalf("an unpaid relayer got %d, want 402: %s", w.Code, w.Body.String())
 	}
-	if mc.gotBankTag != "" {
+	if mc.calls != 0 {
 		t.Fatal("the relayer submitted a transaction for a transfer that did not pay it")
 	}
 }

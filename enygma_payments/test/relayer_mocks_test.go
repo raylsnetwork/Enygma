@@ -30,12 +30,13 @@ const hardhatKey0 = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f
 // ── Mock Ethereum contract ────────────────────────────────────────────────────
 
 // mockContract implements server.EnygmaContract.
-// Transfer returns the configured tx/err pair. gotBankTag captures
-// whatever bankTag the handler actually passed through (Fix H-09), so a
-// test can assert on it directly rather than only on the HTTP outcome.
+// Transfer and TransferWithFee return the configured tx/err pair. calls
+// counts submissions and gotBankTag captures the bankTag the handler passed,
+// so a test can assert on them directly rather than only on the HTTP outcome.
 type mockContract struct {
 	tx         *types.Transaction
 	err        error
+	calls      int
 	gotBankTag string
 
 	// Read-only state answered to the relayer's fee-slot check. Only used by
@@ -59,11 +60,13 @@ func (m *mockContract) AddressToAccountId(_ *bind.CallOpts, _ common.Address) (*
 }
 
 func (m *mockContract) Transfer(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaProof, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaUsdrProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
+	m.calls++
 	m.gotBankTag = bankTag
 	return m.tx, m.err
 }
 
 func (m *mockContract) TransferWithFee(_ *bind.TransactOpts, _ []contracts.IEnygmaPoint, _ contracts.IEnygmaFeeProof, _ []*big.Int, bankTag string) (*types.Transaction, error) {
+	m.calls++
 	m.gotBankTag = bankTag
 	return m.tx, m.err
 }
@@ -127,6 +130,23 @@ func newTestHandlerWithBackend(c *mockContract, m bind.DeployBackend) *server.Ha
 }
 
 // ── Valid request body ────────────────────────────────────────────────────────
+
+func validTransferFeeBody() server.RelayTransferFeeRequest {
+	var proof [8]string
+	for i := range proof {
+		proof[i] = big.NewInt(int64(i + 1)).String()
+	}
+	pubSig := make([]string, layout.TransferFeeLen)
+	for i := range pubSig {
+		pubSig[i] = big.NewInt(int64(i + 500)).String()
+	}
+	return server.RelayTransferFeeRequest{
+		Proof:        proof,
+		PublicSignal: pubSig,
+		Commitments:  [][]string{{"1", "2"}, {"3", "4"}, {"5", "6"}, {"7", "8"}, {"9", "10"}, {"11", "12"}},
+		KIndex:       []int64{1, 2, 3, 4, 5, 6},
+	}
+}
 
 func validTransferBody() server.RelayTransferRequest {
 	var proof, usdrProof [8]string

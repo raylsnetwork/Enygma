@@ -30,11 +30,11 @@ import (
 // Exported so external test packages can inject a mock without importing the handler internals.
 // The concrete *enygma.Enygma satisfies this interface.
 type EnygmaContract interface {
-	// bankTag (Fix H-09): the caller's per-bank credential identifier
-	// (Fix H-06's bankID), passed through so the chain's own
-	// RelayAttribution event can attribute this specific transaction —
-	// previously only the relayer's own logs knew which bank asked for
-	// a given submission.
+	// bankTag is the contract's optional attribution string. The relayer
+	// always passes relayBankTag (empty): the tag would be public in the
+	// transaction's calldata and in RelayAttribution, naming the participant
+	// that asked for each submission. Which bank asked stays in the
+	// relayer's own logs.
 	Transfer(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaProof, usdrCommitmentDeltas []enygma.IEnygmaPoint, usdrProof enygma.IEnygmaUsdrProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 	TransferWithFee(opts *bind.TransactOpts, commitmentDeltas []enygma.IEnygmaPoint, proof enygma.IEnygmaFeeProof, participantIds []*big.Int, bankTag string) (*types.Transaction, error)
 
@@ -279,7 +279,7 @@ func (h *Handler) Info(c *gin.Context) {
 // RelayTransfer handles POST /relay/transfer.
 //
 // Calls Enygma.transfer(commitmentDeltas, proof, usdrCommitmentDeltas,
-// usdrProof, participantIds, bankTag). Used for confidential
+// usdrProof, participantIds, relayBankTag). Used for confidential
 // Enygma-to-Enygma balance updates (the enygma circuit), plus a second,
 // independent USDr proof paying the relayer a fee, settled atomically in
 // the same call. PublicSignal must have exactly layout.TransferLen elements
@@ -415,7 +415,7 @@ func (h *Handler) RelayTransfer(c *gin.Context) {
 	// WaitMined, so one slow-to-mine transaction can no longer hold every
 	// other bank's request queued behind it for up to txTimeout.
 	h.txMu.Lock()
-	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, usdrCommitments, usdrTransferProof, kIndex, bankID) // Fix H-09
+	tx, err := h.instance.Transfer(h.auth, commitments, transferProof, usdrCommitments, usdrTransferProof, kIndex, relayBankTag)
 	h.txMu.Unlock()
 	if err != nil {
 		h.release(claimKeys)
@@ -517,7 +517,7 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 	log.Printf("[relay] bank=%s transfer_fee: submitting", bankID)
 
 	h.txMu.Lock()
-	tx, err := h.instance.TransferWithFee(h.auth, commitments, feeProof, kIndex, bankID) // Fix H-09
+	tx, err := h.instance.TransferWithFee(h.auth, commitments, feeProof, kIndex, relayBankTag)
 	h.txMu.Unlock()
 	if err != nil {
 		h.release(claimKeys)
@@ -550,6 +550,10 @@ func (h *Handler) RelayTransferFee(c *gin.Context) {
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
+
+// relayBankTag is the bankTag the relayer passes to Transfer and
+// TransferWithFee: empty, so no participant identity is published onchain.
+const relayBankTag = ""
 
 // bankIDFromContext reads the bank identifier bearerAuth attached to the
 // request. Falls back to "unknown" (never expected on an authenticated
