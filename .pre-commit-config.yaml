@@ -1,4 +1,4 @@
-default_install_hook_types: [pre-commit, pre-push]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit]
 repos:
   - repo: https://github.com/gitleaks/gitleaks
@@ -19,6 +19,13 @@ repos:
         entry: node scripts/check_page_scripts.js
         language: system
         files: '\.html$'
+      - id: red-named
+        name: a commit adding a check names its red
+        # A staged Go/JS test or subtest needs a RED line (its mutation) or "No red: <why>" in the message.
+        entry: scripts/check_red_named.sh
+        language: system
+        stages: [commit-msg]
+        always_run: true
       - id: merged-branch
         name: branch's PR not already merged
         entry: scripts/refuse_merged_branch.sh

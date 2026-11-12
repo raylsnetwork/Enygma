@@ -81,7 +81,7 @@ modules: ## List the Go modules the targets below operate on
 
 # ── Quality gates ─────────────────────────────────────────────────────────────
 
-hooks: ## Install the git hooks (gofmt, page scripts, gitleaks; on push, refuse a branch whose PR merged) and the primer's git diff driver in this clone; needs pre-commit
+hooks: ## Install the git hooks (gofmt, page scripts, gitleaks; on commit, a commit adding a check names its red; on push, refuse a branch whose PR merged) and the primer's git diff driver in this clone; needs pre-commit
 	@# git diff shows the primer's data block as its step and value names (.gitattributes).
 	@git config diff.primer.textconv 'node "$$(git rev-parse --show-toplevel)/scripts/primer_page.js" --textconv'
 	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
@@ -118,6 +118,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/primer_page.test.js >/dev/null || node --test scripts/primer_page.test.js
 	@# mutant.sh, which shows a new check red, says RED only for a red it can trust.
 	@node --test scripts/mutant.test.js >/dev/null || node --test scripts/mutant.test.js
+	@# check_red_named.sh, the commit-msg hook, asks for a red only when a commit adds a check.
+	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
