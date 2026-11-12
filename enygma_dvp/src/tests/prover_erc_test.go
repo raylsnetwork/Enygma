@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"enygma_dvp/layout"
+
 	"github.com/raylsnetwork/enygma_dvp/src/core"
 )
 
@@ -85,7 +87,7 @@ func TestErc20JoinSplitProof_Success(t *testing.T) {
 		t.Error("expected WtSpendPublicKeysOut in payload")
 	}
 
-	// Statement order: [message, tree[0], root[0], null[0], tree[1], root[1], null[1], commit[0], commit[1]]
+	// Statement order: [message, tree[0], tree[1], root[0], root[1], null[0], null[1], commit[0], commit[1]]
 	// = 1 + 3*2 + 2 = 9
 	if len(result.Statement) != 9 {
 		t.Errorf("expected 9 statement elements, got %d", len(result.Statement))
@@ -96,10 +98,17 @@ func TestErc20JoinSplitProof_Success(t *testing.T) {
 		t.Errorf("expected statement[0]=message=1, got %s", result.Statement[0])
 	}
 
-	// Elements 1,2,3 are tree[0], root[0], null[0]
-	// Element 1 should be tree number 0
+	// Elements 1,2 are tree[0], tree[1]
 	if result.Statement[1].Cmp(big.NewInt(0)) != 0 {
 		t.Errorf("expected statement[1]=tree[0]=0, got %s", result.Statement[1])
+	}
+	if result.Statement[2].Cmp(big.NewInt(1)) != 0 {
+		t.Errorf("expected statement[2]=tree[1]=1, got %s", result.Statement[2])
+	}
+
+	// ContractStatement submits the statement as held
+	if got := result.ContractStatement(); len(got) != len(result.Statement) {
+		t.Errorf("ContractStatement has %d elements, want %d", len(got), len(result.Statement))
 	}
 
 	if result.NumberOfInputs != 2 || result.NumberOfOutputs != 2 {
@@ -148,10 +157,10 @@ func TestErc20JoinSplitProof_ZeroValueInput(t *testing.T) {
 	}
 
 	// Zero-value input should have zero merkle root in statement
-	// Statement: [message, tree[0], root[0], null[0], tree[1], root[1], null[1], commit[0]]
-	// root[0] at index 2 should be 0
-	if result.Statement[2].Sign() != 0 {
-		t.Errorf("expected zero merkle root for zero-value input, got %s", result.Statement[2])
+	// Statement: [message, tree[0], tree[1], root[0], root[1], null[0], null[1], commit[0]]
+	// root[0] at index 3 should be 0
+	if result.Statement[3].Sign() != 0 {
+		t.Errorf("expected zero merkle root for zero-value input, got %s", result.Statement[3])
 	}
 }
 
@@ -432,8 +441,8 @@ func TestErc1155FungibleJoinSplitProof_Success(t *testing.T) {
 		t.Error("expected WtErc1155TokenId in payload")
 	}
 
-	// Statement (interleaved, no asset group):
-	// [message, tree[0], root[0], null[0], tree[1], root[1], null[1], commit[0], commit[1]]
+	// Statement (no asset group):
+	// [message, tree[0], tree[1], root[0], root[1], null[0], null[1], commit[0], commit[1]]
 	// = 1 + 3*2 + 2 = 9
 	if len(result.Statement) != 9 {
 		t.Errorf("expected 9 statement elements, got %d", len(result.Statement))
@@ -677,17 +686,33 @@ func TestGnarkProverDispatcher_AuctionBid(t *testing.T) {
 	}
 }
 
+// privateMintEchoServer is a /proof/privateMint stub that, like the real
+// server, answers with the request's public values in the PrivateMint
+// statement layout's order. If received is non-nil it gets the request body.
+func privateMintEchoServer(t *testing.T, received *map[string]interface{}) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]interface{}
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+		if received != nil {
+			*received = req
+		}
+		signals := make([]json.RawMessage, layout.PrivateMintLen)
+		signals[layout.PrivateMintCommitmentOffset] = json.RawMessage(req["commitment"].(string))
+		signals[layout.PrivateMintContractAddressOffset] = json.RawMessage(req["contractAddress"].(string))
+		signals[layout.PrivateMintTokenIdOffset] = json.RawMessage(req["tokenId"].(string))
+		signals[layout.PrivateMintCipherTextOffset] = json.RawMessage(req["cipherText"].(string))
+		json.NewEncoder(w).Encode(map[string]any{"proof": []int{1}, "publicSignal": signals})
+	}))
+}
+
 // TestErc20PrivateMintProof_CommitmentFormat verifies that Erc20PrivateMintProof
 // sends the correct V2 commitment and cipherText to the server, and that the
 // commitment matches what the JoinSplit circuit expects on the input side.
 func TestErc20PrivateMintProof_CommitmentFormat(t *testing.T) {
 	var receivedBody map[string]interface{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
-		w.WriteHeader(200)
-		w.Write([]byte(`{"proof":["0x1"],"publicSignal":["0xa"]}`))
-	}))
+	server := privateMintEchoServer(t, &receivedBody)
 	defer server.Close()
 
 	client := core.NewGnarkClient(server.URL)
@@ -708,8 +733,8 @@ func TestErc20PrivateMintProof_CommitmentFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2: %v", err)
 	}
-	if result.Commitment.Cmp(expected) != 0 {
-		t.Errorf("commitment mismatch: got %s, want %s", result.Commitment, expected)
+	if result.Commitment().Cmp(expected) != 0 {
+		t.Errorf("commitment mismatch: got %s, want %s", result.Commitment(), expected)
 	}
 
 	// Salt is preserved for later spending
@@ -739,10 +764,7 @@ func TestErc20PrivateMintProof_CommitmentFormat(t *testing.T) {
 // commitment produced by PrivateMint is accepted by the JoinSplit proof path —
 // i.e. the same (pkSpend, salt, amount, tokenId) tuple satisfies Erc20CommitmentV2.
 func TestErc20PrivateMintProof_CommitmentUsableAsJoinSplitInput(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte(`{"proof":["0x1"],"publicSignal":["0xa"]}`))
-	}))
+	server := privateMintEchoServer(t, nil)
 	defer server.Close()
 
 	client := core.NewGnarkClient(server.URL)
@@ -771,7 +793,7 @@ func TestErc20PrivateMintProof_CommitmentUsableAsJoinSplitInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 recompute: %v", err)
 	}
-	if recomputed.Cmp(result.Commitment) != 0 {
-		t.Errorf("recomputed commitment mismatch: got %s, want %s", recomputed, result.Commitment)
+	if recomputed.Cmp(result.Commitment()) != 0 {
+		t.Errorf("recomputed commitment mismatch: got %s, want %s", recomputed, result.Commitment())
 	}
 }

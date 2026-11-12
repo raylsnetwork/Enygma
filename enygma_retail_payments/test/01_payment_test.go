@@ -42,13 +42,13 @@ type onchainPrivateMintProof struct {
 	PublicSignal [4]*big.Int `abi:"public_signal"`
 }
 
-func proofStringsToPrivateMint(t *testing.T, proofStrs []string, sigStrs []string) onchainPrivateMintProof {
+func proofStringsToPrivateMint(t *testing.T, proofStrs []string, statement []*big.Int) onchainPrivateMintProof {
 	t.Helper()
 	if len(proofStrs) != 8 {
 		t.Fatalf("expected 8 proof elements, got %d", len(proofStrs))
 	}
-	if len(sigStrs) != 4 {
-		t.Fatalf("expected 4 public signal elements, got %d", len(sigStrs))
+	if len(statement) != 4 {
+		t.Fatalf("expected 4 public signal elements, got %d", len(statement))
 	}
 	var p onchainPrivateMintProof
 	for i, s := range proofStrs {
@@ -58,13 +58,7 @@ func proofStringsToPrivateMint(t *testing.T, proofStrs []string, sigStrs []strin
 		}
 		p.Proof[i] = n
 	}
-	for i, s := range sigStrs {
-		n, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			t.Fatalf("invalid public_signal element %d: %q", i, s)
-		}
-		p.PublicSignal[i] = n
-	}
+	copy(p.PublicSignal[:], statement)
 	return p
 }
 
@@ -122,15 +116,15 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20PrivateMintProof: %v", err)
 	}
-	t.Logf("Step 2 — commitment: %s", mintResult.Commitment)
+	t.Logf("Step 2 — commitment: %s", mintResult.Commitment())
 
 	proof := proofStringsToPrivateMint(t,
-		mintResult.ProofResponse.Proof,
-		mintResult.ProofResponse.PublicSignal,
+		mintResult.Proof,
+		mintResult.ContractStatement(),
 	)
 
 	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain.
-	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment, proof)
+	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)
 	}
@@ -152,8 +146,8 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	if eventCommitment == nil {
 		t.Fatalf("PrivateMint event not found in transaction receipt")
 	}
-	if eventCommitment.Cmp(mintResult.Commitment) != 0 {
-		t.Errorf("event commitment: got %s, want %s", eventCommitment, mintResult.Commitment)
+	if eventCommitment.Cmp(mintResult.Commitment()) != 0 {
+		t.Errorf("event commitment: got %s, want %s", eventCommitment, mintResult.Commitment())
 	}
 
 	// Step 4 — Alice confirms the note is hers.

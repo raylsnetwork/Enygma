@@ -843,11 +843,11 @@ func stepDvpInitiator(fs *FlowState) {
 	fs.initiatorResult = initiatorResult
 	fs.proofGenMs = time.Since(proofStart).Milliseconds()
 	logMsg(b, "zk", fmt.Sprintf("DvP Initiator proof generated in %d ms", fs.proofGenMs))
-	logMsg(b, "zk", fmt.Sprintf("commitB (Bob receives %d USDT):  0x%s…", erc20Amount, initiatorResult.CommitB.Text(16)[:16]))
-	logMsg(b, "zk", fmt.Sprintf("commitA (Alice receives ticket): 0x%s…", initiatorResult.CommitA.Text(16)[:16]))
+	logMsg(b, "zk", fmt.Sprintf("commitB (Bob receives %d USDT):  0x%s…", erc20Amount, initiatorResult.CommitB().Text(16)[:16]))
+	logMsg(b, "zk", fmt.Sprintf("commitA (Alice receives ticket): 0x%s…", initiatorResult.CommitA().Text(16)[:16]))
 	protoSet(b, "proofTimeMs", fmt.Sprintf("%d", fs.proofGenMs))
-	panelSet(b, 0, "commitB", "0x"+initiatorResult.CommitB.Text(16))
-	panelSet(b, 0, "commitA", "0x"+initiatorResult.CommitA.Text(16))
+	panelSet(b, 0, "commitB", "0x"+initiatorResult.CommitB().Text(16))
+	panelSet(b, 0, "commitA", "0x"+initiatorResult.CommitA().Text(16))
 	emitStep(b, "dvp_initiator", "success", "DvP Initiator Proof", fmt.Sprintf("Groth16 proof generated in %d ms — swap terms locked, note encrypted for Bob", fs.proofGenMs))
 	fs.done["dvp_initiator"] = true
 }
@@ -895,7 +895,7 @@ func stepBobScan(fs *FlowState) {
 		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
-	if expectedCommitB.Cmp(fs.initiatorResult.CommitB) != 0 {
+	if expectedCommitB.Cmp(fs.initiatorResult.CommitB()) != 0 {
 		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", "commitB mismatch")
 		return
 	}
@@ -904,7 +904,7 @@ func stepBobScan(fs *FlowState) {
 		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", err.Error())
 		return
 	}
-	if expectedCommitA.Cmp(fs.initiatorResult.CommitA) != 0 {
+	if expectedCommitA.Cmp(fs.initiatorResult.CommitA()) != 0 {
 		emitStep(b, "bob_scan", "error", "Bob Scans & Verifies", "commitA mismatch")
 		return
 	}
@@ -925,7 +925,7 @@ func stepDvpDestination(fs *FlowState) {
 		fs.bobNftSalt, fs.nftAmountBig, fs.nftTokenIdBig,
 		fs.aliceSpend.PublicKey, fs.saltAField, fs.saltBField,
 		fs.decAmount, fs.decTokenId,
-		fs.initiatorResult.CommitA,
+		fs.initiatorResult.CommitA(),
 		big.NewInt(0),
 		fs.bobMerkleProof, merkleDepth,
 		new(big.Int).SetBytes(fs.erc20VaultAddr.Bytes()),
@@ -1050,9 +1050,9 @@ func stepVerify(fs *FlowState) {
 				continue
 			}
 			cmt := l.Topics[2].Big()
-			if cmt.Cmp(fs.initiatorResult.CommitB) == 0 {
+			if cmt.Cmp(fs.initiatorResult.CommitB()) == 0 {
 				foundCommitB = true
-			} else if cmt.Cmp(fs.initiatorResult.CommitA) == 0 {
+			} else if cmt.Cmp(fs.initiatorResult.CommitA()) == 0 {
 				foundCommitA = true
 			}
 		case nullifierSig:

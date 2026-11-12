@@ -310,7 +310,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		bobNftSalt, one, nftTokenId,
 		aliceSpend.PublicKey, core.SaltBToField(saltA),
 		core.SaltBToField(saltB), decAmount, decTokenId,
-		initiator.CommitA,
+		initiator.CommitA(),
 		big.NewInt(0), bobProof, depth,
 		vaultInt(erc20VaultAddr), // Bob is paid from the ERC-20 vault
 	)
@@ -330,7 +330,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		NumberOfInputs:  big.NewInt(int64(destination.NumberOfInputs)),
 		NumberOfOutputs: big.NewInt(int64(destination.NumberOfOutputs)),
 	}
-	return pay, del, initiator.CommitA, initiator.CommitB
+	return pay, del, initiator.CommitA(), initiator.CommitB()
 }
 
 func TestV2SwapRelayer_OnChain(t *testing.T) {
