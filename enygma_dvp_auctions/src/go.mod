@@ -4,6 +4,8 @@ go 1.26.8
 
 require github.com/raylsnetwork/enygma_dvp/src v0.0.0
 
+require enygma_dvp/layout v0.0.0 // indirect
+
 require (
 	github.com/dchest/blake512 v1.0.0 // indirect
 	github.com/iden3/go-iden3-crypto v0.0.17 // indirect
@@ -15,3 +17,5 @@ require (
 // Both repos must be cloned side-by-side: enygma_dvp/ and enygma_dvp_auctions/
 // in the same parent directory.
 replace github.com/raylsnetwork/enygma_dvp/src => ../../enygma_dvp/src
+
+replace enygma_dvp/layout => ../../enygma_dvp/layout

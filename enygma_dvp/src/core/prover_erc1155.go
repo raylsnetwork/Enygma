@@ -78,14 +78,7 @@ func (c *GnarkClient) Erc1155FungibleJoinSplitProof(
 		proofStrsFung[i] = n.String()
 	}
 
-	// Statement (interleaved per input, then commitments — no asset group in public signal):
-	// [message, tree[0], root[0], null[0], tree[1], root[1], null[1], commit[0], commit[1]]
-	statement := make([]*big.Int, 0, 1+3*len(wtValuesIn)+len(keysOut))
-	statement = append(statement, stMessage)
-	for i := 0; i < len(wtValuesIn); i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
+	statement := joinSplitStatement(stMessage, stTreeNumbers, stMerkleRoots, stNullifiers, stCommitmentsOut)
 
 	return &ProofResult{
 		Proof:           proofStrsFung,
@@ -392,12 +385,7 @@ func (c *GnarkClient) Erc1155FungibleAuditorProof(
 		proofStrs[i] = n.String()
 	}
 
-	statement := make([]*big.Int, 0, 1+3*len(wtValuesIn)+len(keysOut))
-	statement = append(statement, stMessage)
-	for i := 0; i < len(wtValuesIn); i++ {
-		statement = append(statement, stTreeNumbers[i], stMerkleRoots[i], stNullifiers[i])
-	}
-	statement = append(statement, stCommitmentsOut...)
+	statement := joinSplitStatement(stMessage, stTreeNumbers, stMerkleRoots, stNullifiers, stCommitmentsOut)
 
 	return &ProofResult{
 		Proof:           proofStrs,
