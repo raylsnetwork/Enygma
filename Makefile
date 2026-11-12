@@ -69,7 +69,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/src enygma_retail_payments/test
 
 .PHONY: help modules hooks fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
-	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-test \
+	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-demo-stale shield-gnark-restart \
 	auctions-gnark auctions-keygen
 
@@ -153,9 +153,12 @@ hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat proj
 ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
 # ── Local development shortcuts (thin wrappers over the existing scripts) ─────
-# Full local flow for DvP:  dvp-chain (own terminal) -> dvp-keygen (once) ->
-# dvp-deploy -> dvp-init -> dvp-gnark (own terminal) -> dvp-test.
-# Run dvp-test once per fresh chain: ERC721 state accumulates across runs.
+# Full local flow for DvP: dvp-keygen (once) -> dvp-stack -> dvp-test -> dvp-stack-stop.
+# dvp-stack brings up everything the suite uses (both deployments, gnark, both
+# relayers), so no test skips for a missing service. Run dvp-test once per
+# fresh stack: ERC721 state accumulates across runs. The dvp-chain/deploy/init/
+# gnark targets are the stack's pieces, for running one by hand.
+DVP_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_dvp_stack.pid
 
 dvp-chain: ## Start a local Hardhat node (keep running)
 	cd enygma_dvp && npx hardhat node
@@ -166,14 +169,41 @@ dvp-deploy: ## Regenerate Poseidon artifacts, build and run the DvP deploy
 dvp-init: ## Export VKs and register them on-chain
 	cd enygma_dvp && bash scripts/init.sh
 
-dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes)
-	cd enygma_dvp/gnark_circuits && go run ./cmd/keygen
+dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes), with retail's PrivateMint keys
+	cd enygma_dvp/gnark_circuits && mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen
+	@# keygen draws fresh PrivateMint keys; the committed PrivateMintVerifier.sol is for retail's (same R1CS).
+	cp enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintPK.key enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintVK.key enygma_dvp/gnark_circuits/scripts/keys/
 
 dvp-gnark: ## Start the DvP gnark proof server on :8081 (keep running)
 	cd enygma_dvp/gnark_circuits && go run ./cmd/server
 
-dvp-test: ## DvP integration tests (needs chain, deploy/init and gnark server)
-	cd enygma_dvp/test && go test ./... -v -timeout 600s
+dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :8081, relayers :8091/:8092), detached; returns when it is up
+	@logs=$$(mktemp -d -t dvp_stack); \
+	(cd enygma_dvp && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash scripts/stack.sh >$$logs/stack.log 2>&1) & \
+	pid=$$!; \
+	while kill -0 $$pid 2>/dev/null; do \
+		grep -q 'stack is up' $$logs/stack.log && { echo $$pid >$(DVP_STACK_PID); echo $$logs >$(DVP_STACK_PID).logs; echo "stack is up (logs $$logs); run make dvp-test, then make dvp-stack-stop"; exit 0; }; \
+		sleep 1; \
+	done; \
+	cat $$logs/stack.log; exit 1
+
+dvp-stack-stop: ## Stop the stack make dvp-stack started, and wait for its ports to free
+	@pid=$$(cat $(DVP_STACK_PID) 2>/dev/null); \
+	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'scripts/stack.sh' || { echo "no stack started by make dvp-stack"; exit 1; }; \
+	kill -TERM $$pid; \
+	for _ in $$(seq 1 150); do \
+		lsof -tiTCP:8545,8081,8091,8092 -sTCP:LISTEN >/dev/null || { echo "stack stopped"; exit 0; }; \
+		sleep 0.2; \
+	done; \
+	echo "still listening after about 30 s:"; lsof -iTCP:8545,8081,8091,8092 -sTCP:LISTEN; exit 1
+
+dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail/skip counts
+	@log=$$(mktemp -t dvp_test); status=0; export CC=$${CC:-/usr/bin/clang}; \
+	env=$$(cat $(DVP_STACK_PID).logs 2>/dev/null)/test.env; \
+	if [ -f "$$env" ]; then set -a; . "$$env"; set +a; else echo "no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers"; fi; \
+	cd enygma_dvp/test; go test -count=1 -v ./... -timeout 1800s >$$log 2>&1 || status=1; \
+	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
+	grep -E '^--- (FAIL|SKIP)' $$log; echo "log: $$log"; exit $$status
 
 retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script header)
 	cd enygma_retail_payments && bash setup.sh
