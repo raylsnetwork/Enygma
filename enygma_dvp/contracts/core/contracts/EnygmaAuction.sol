@@ -18,6 +18,13 @@ import {IAssetGroup} from "../interfaces/vaults/IAssetGroup.sol";
 import {IPoseidonWrapper} from "../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../interfaces/IVerifier.sol";
 
+/// @custom:deprecated Legacy copy. The maintained auction contract is
+/// enygma_dvp_auctions/contracts/core/contracts/EnygmaAuction.sol. This
+/// project's deploy and init scripts never deploy this copy; it is kept only
+/// because EnygmaDvp.registerEnygmaAuction and
+/// test/11_v2_auction_declarewinner_test.go still reference it. Do not deploy
+/// it or register it with EnygmaDvp; it will be removed together with those
+/// references.
 contract EnygmaAuction is IEnygmaAuction, AccessControl, ReentrancyGuard {
     ///////////////////////////////////////////////
     //              Constants
