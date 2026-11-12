@@ -35,6 +35,7 @@ var (
 	solArity       = regexp.MustCompile(`\bnumberOf(Inputs|Outputs)\b`)
 	solPaymentCall = regexp.MustCompile(`\.(nullifyFromReceipt|insertCommitmentsFromReceipt|checkReceiptConditions)\(`)
 	solDvpCheck    = regexp.MustCompile(`\.checkDvpReceiptConditions\(`)
+	solGroupByTail = regexp.MustCompile(`\.isMemberFromProofReceipt\(`)
 )
 
 // A DvP receipt's statement is a dynamic array, so the compiler cannot tie a
@@ -127,6 +128,11 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 			if dvpPaths[name] {
 				if m := solPaymentCall.FindStringSubmatch(body); m != nil {
 					t.Errorf("%s settles a DvP leg with the Payment-family %s", name, m[1])
+				}
+				// isMemberFromProofReceipt reads the statement's last signal
+				// as an asset-group root; a leg's last signal is CounterVault.
+				if solGroupByTail.MatchString(body) {
+					t.Errorf("%s decides a DvP leg's group membership with isMemberFromProofReceipt, which reads its CounterVault as a group root", name)
 				}
 			}
 			if _, ok := dvpChecks[name]; ok && solDvpCheck.MatchString(body) {
