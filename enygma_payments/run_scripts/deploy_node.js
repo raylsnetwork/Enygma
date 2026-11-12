@@ -16,6 +16,10 @@ const OWNER_KEY      = process.env.OWNER_KEY || "34d091c661db4c814d65c8ae9277b70
 const CHAIN_ID       = parseInt(process.env.CHAIN_ID || "1337");
 const RPC_URL        = process.env.RPC_URL    || "http://127.0.0.1:8545";
 const EPOCH_INTERVAL = parseInt(process.env.EPOCH_INTERVAL || "1");
+// Seconds a replacement of an already-set verifier waits before
+// executeVerifierChange can apply it (Enygma.verifierChangeDelay, at most 30
+// days). 0 applies replacements at once: local development only.
+const VERIFIER_CHANGE_DELAY = parseInt(process.env.VERIFIER_CHANGE_DELAY || "0");
 
 const ROOT          = path.join(__dirname, "..");
 const CONTRACTS_DIR = path.join(ROOT, "contracts", "enygma", "artifacts", "contracts");
@@ -36,9 +40,9 @@ async function main() {
   console.log("Deployer:", wallet.address);
   console.log("Block:", await provider.getBlockNumber());
 
-  console.log(`\nDeploying Enygma (epochInterval=${EPOCH_INTERVAL})...`);
+  console.log(`\nDeploying Enygma (epochInterval=${EPOCH_INTERVAL}, verifierChangeDelay=${VERIFIER_CHANGE_DELAY})...`);
   const enygmaArtifact = JSON.parse(fs.readFileSync(path.join(CONTRACTS_DIR, "Enygma.sol", "Enygma.json")));
-  const tokenAddr = await deploy(wallet, enygmaArtifact, [EPOCH_INTERVAL]);
+  const tokenAddr = await deploy(wallet, enygmaArtifact, [EPOCH_INTERVAL, VERIFIER_CHANGE_DELAY]);
 
   console.log("\nDeploying EnygmaVerifier...");
   const verifierArtifact = JSON.parse(fs.readFileSync(path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json")));
