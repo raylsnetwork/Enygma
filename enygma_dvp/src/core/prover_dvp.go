@@ -234,8 +234,8 @@ type DvPInitiatorResult struct {
 	// Statement is the public signals exactly as the gnark server returned
 	// them, in the DvpInitiator statement layout's order.
 	Statement       []*big.Int
-	NumberOfInputs  int      // always 1
-	NumberOfOutputs int      // reported as 1 on-chain (only commitB inserted; commitA goes to ERC721 vault via Bob's proof)
+	NumberOfInputs  int      // always 1; the contracts never read a leg's counts (GLOSSARY: DvP leg)
+	NumberOfOutputs int      // always 1; settlement inserts the leg's one commitment, CommitB
 	CipherText      []byte   // ML-KEM capsule for Bob (1088 bytes)
 	EncTxData       []byte   // AES-256-GCM ciphertext of (tokenIdIn || valueIn)
 	RevertSalt      *big.Int // opens RevertCommitA() after claimSwapTimeout; SwapRevertSalt(sk, nf_A)
@@ -293,8 +293,8 @@ func (r *DvPInitiatorResult) CounterVault() *big.Int {
 //
 //	_pendingTransactions[commitB].targetReceiptId = commitA = Message
 //
-// On-chain receipt should use NumberOfOutputs=1 so only CommitB
-// is inserted into the ERC20 vault. commitA goes into the ERC721 vault via
+// Settlement inserts only CommitB into the ERC20 vault, whatever counts the
+// receipt carries (a leg is read by name). commitA goes into the ERC721 vault via
 // Bob's DvPDestinationProof; revertCommitA is only inserted on swap timeout.
 //
 // counterVault is the address (as an integer) of the vault Alice expects to be
@@ -407,13 +407,11 @@ func (c *GnarkClient) DvPInitiatorProof(
 		return nil, fmt.Errorf("failed to parse dvpInitiator proof response: %w", err)
 	}
 
-	// On-chain NumberOfOutputs is reported as 1 so only CommitB is inserted
-	// into the ERC20 vault during settlement.
 	return &DvPInitiatorResult{
 		Proof:           proofStrs,
 		Statement:       statement,
 		NumberOfInputs:  1,
-		NumberOfOutputs: 1, // only commitB counts as payment output; commitA goes to ERC721 via Bob's proof
+		NumberOfOutputs: 1,
 		CipherText:      cipherText,
 		EncTxData:       encTxData,
 		RevertSalt:      revertSalt,
