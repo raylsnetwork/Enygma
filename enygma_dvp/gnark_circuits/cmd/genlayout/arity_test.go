@@ -19,6 +19,8 @@ const (
 	privateMintVerifierSol  = "../../../contracts/core/contracts/PrivateMintVerifier.sol"
 	swapRelayerSol          = "../../../contracts/core/contracts/SwapRelayer.sol"
 	abstractCoinVaultSol    = "../../../contracts/core/contracts/vaults/AbstractCoinVault.sol"
+	erc20CoinVaultSol       = "../../../contracts/core/contracts/vaults/Erc20CoinVault.sol"
+	erc721CoinVaultSol      = "../../../contracts/core/contracts/vaults/Erc721CoinVault.sol"
 )
 
 var (
@@ -31,14 +33,16 @@ var (
 	solIndexRead   = regexp.MustCompile(`statement\[([^\]]*)\]`)
 	solNamedIndex  = regexp.MustCompile(`^\s*(Dsl|Psl)\.[A-Z][A-Z0-9_]*_OFFSET\s*$`)
 	solArity       = regexp.MustCompile(`\bnumberOf(Inputs|Outputs)\b`)
-	solPaymentCall = regexp.MustCompile(`\.(nullifyFromReceipt|insertCommitmentsFromReceipt)\(`)
+	solPaymentCall = regexp.MustCompile(`\.(nullifyFromReceipt|insertCommitmentsFromReceipt|checkReceiptConditions)\(`)
+	solDvpCheck    = regexp.MustCompile(`\.checkDvpReceiptConditions\(`)
 )
 
 // A DvP receipt's statement is a dynamic array, so the compiler cannot tie a
 // read at a DvpStatementLayout offset to the circuit that offset belongs to:
 // a DvpInitiator offset read from a DvpDestination statement compiles and
 // reads the wrong field, or past its end. This pins every such read in
-// EnygmaDvp, DvpReceipt, SwapRelayer and the coin vaults to a statement
+// EnygmaDvp, DvpReceipt, SwapRelayer and the coin vaults (including each
+// vault's checkDvpReceiptConditions) to a statement
 // length check for its own circuit: the length compared last before the
 // read, in the same function, must be that circuit's statement length.
 func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
@@ -62,6 +66,8 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 		"AbstractCoinVault.nullifyFromDvpReceipt":          false,
 		"AbstractCoinVault.insertCommitmentFromDvpReceipt": false,
 		"AbstractCoinVault.unlockFromDvpReceipt":           false,
+		"Erc20CoinVault.checkDvpReceiptConditions":         false,
+		"Erc721CoinVault.checkDvpReceiptConditions":        false,
 	}
 	// Each takes a lock on a leg's note, and must have refused a receipt of
 	// any other length (DvpReceipt.read) before it does.
@@ -71,19 +77,27 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 		"AbstractCoinVault.addPendingProofReceipt": "lockCoin(",
 	}
 	// The DvP settlement paths hand legs to the vaults' DvP-receipt
-	// functions: the Payment-family ones walk the statement by the
-	// caller-supplied numberOfInputs/numberOfOutputs.
+	// functions, never the payment-receipt ones (ADR 0001).
 	dvpPaths := map[string]bool{
 		"EnygmaDvp.submitPartialSettlement": true,
 		"EnygmaDvp.claimSwapTimeout":        true,
 		"EnygmaDvp._settleOnGroupPair":      true,
 		"EnygmaDvp.unlockReceiptNullifiers": true,
+		"SwapRelayer.submitReceipt":         true,
+	}
+	// Each checks the legs it holds with checkDvpReceiptConditions.
+	dvpChecks := map[string]bool{
+		"EnygmaDvp.submitPartialSettlement": false,
+		"EnygmaDvp._settleOnGroupPair":      false,
+		"SwapRelayer.submitReceipt":         false,
 	}
 	for contract, path := range map[string]string{
 		"EnygmaDvp":         enygmaDvpSol,
 		"DvpReceipt":        dvpReceiptSol,
 		"SwapRelayer":       swapRelayerSol,
 		"AbstractCoinVault": abstractCoinVaultSol,
+		"Erc20CoinVault":    erc20CoinVaultSol,
+		"Erc721CoinVault":   erc721CoinVaultSol,
 	} {
 		src := readFile(t, path)
 		for _, fn := range solFunction.FindAllStringSubmatch(src, -1) {
@@ -115,6 +129,9 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 					t.Errorf("%s settles a DvP leg with the Payment-family %s", name, m[1])
 				}
 			}
+			if _, ok := dvpChecks[name]; ok && solDvpCheck.MatchString(body) {
+				dvpChecks[name] = true
+			}
 			for _, m := range solOffsetRead.FindAllStringSubmatchIndex(body, -1) {
 				circuit, ok := circuitOf(body[m[2]:m[3]], circuits)
 				if !ok {
@@ -137,6 +154,11 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 	for name, read := range mustRead {
 		if !read {
 			t.Errorf("%s reads no DvP statement field by name", name)
+		}
+	}
+	for name, checked := range dvpChecks {
+		if !checked {
+			t.Errorf("%s does not check its legs with checkDvpReceiptConditions", name)
 		}
 	}
 

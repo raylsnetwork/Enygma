@@ -15,9 +15,13 @@ package tests
 //	    submitPartialSettlement but never settle (insertLeaves([]) reverts),
 //	    locking the note until the timeout.
 //
-// Every path that nullifies or inserts from a receipt (transfer, payment,
-// withdraw, partial withdraw, DvP settlement, SwapRelayer) first calls the
-// vault's checkReceiptConditions, so this checks that gate directly, against
+// Every path that nullifies or inserts from a Payment-family receipt
+// (transfer, payment, withdraw, partial withdraw) first calls the vault's
+// checkReceiptConditions, and every DvP leg (DvP settlement, SwapRelayer)
+// goes through checkDvpReceiptConditions instead, which reads the leg by
+// name and never by its claimed counts (ADR 0001). So a DvP Initiator receipt
+// must be refused by the payment gate whatever counts it claims (a, c), and
+// taken by the leg gate. This checks both gates directly, against
 // AcceptAllVerifier so only the vault's own checks apply. Runs on
 // go-ethereum's simulated backend; needs `npx hardhat compile` and the
 // circomlibjs Poseidon artifacts (node scripts/regen_poseidon.js). Uses the
@@ -52,6 +56,13 @@ func (s *shapeVault) check(statement []*big.Int, nIn, nOut int64) string {
 	return s.e.send(s.abi, s.addr, "checkReceiptConditions", legacyReceipt(statement, nIn, nOut))
 }
 
+// checkDvp returns the custom error checkDvpReceiptConditions reverts with,
+// or "".
+func (s *shapeVault) checkDvp(statement []*big.Int, nIn, nOut int64) string {
+	s.e.t.Helper()
+	return s.e.send(s.abi, s.addr, "checkDvpReceiptConditions", legacyReceipt(statement, nIn, nOut))
+}
+
 func n(v int64) *big.Int { return big.NewInt(v) }
 
 func TestV2ReceiptShape_Erc20(t *testing.T) {
@@ -79,7 +90,6 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		{"PaymentFee", paymentFee, 1, 2},
 		{"PaymentRelayerFeePublic", relayerFee, 1, 3},
 		{"UsdrFee", usdrFee, 1, 2},
-		{"DvP Initiator", initiator, 1, 1},
 	}
 	for _, c := range honest {
 		if r := s.check(c.statement, c.nIn, c.nOut); r != "" {
@@ -92,6 +102,7 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		statement []*big.Int
 		nIn, nOut int64
 	}{
+		{"DvP Initiator claiming its 1 output", initiator, 1, 1},
 		{"(a) DvP Initiator claiming 4 outputs", initiator, 1, 4},
 		{"(a) DvP Initiator claiming 3 outputs", initiator, 1, 3},
 		{"(b) Payment2in claiming 1 output", payment2in, 2, 1},
@@ -112,8 +123,16 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		}
 	}
 
+	// The leg gate takes the initiator, whatever counts it claims: it
+	// nullifies and inserts exactly its one nullifier and CommitB.
+	for _, nOut := range []int64{1, 0, 3, 4} {
+		if r := s.checkDvp(initiator, 1, nOut); r != "" {
+			t.Errorf("checkDvpReceiptConditions on a DvP Initiator claiming %d outputs: %s", nOut, r)
+		}
+	}
+
 	// The vault-address binding runs for every Payment-family shape.
-	for _, c := range honest[:5] {
+	for _, c := range honest {
 		other := append([]*big.Int(nil), c.statement...)
 		for i, v := range other {
 			if v == vault {
