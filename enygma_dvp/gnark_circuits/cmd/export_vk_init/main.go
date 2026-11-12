@@ -3,11 +3,18 @@
 //
 // Usage (run from gnark_circuits/ directory):
 //
-//	go run ./cmd/export_vk_init/ <build_dir>
+//	go run ./cmd/export_vk_init/ [-placeholder] [-config ../enygmadvp.config.json] <build_dir>
 //
 // Example:
 //
 //	go run ./cmd/export_vk_init/ ../build
+//
+// init registers one VK per circuit in enygmadvp.config.json, in order, so
+// every one needs a JSON. A circuit whose key file is missing (or that has no
+// key file, see circuitMapping) is an error naming it, unless -placeholder is
+// given: then it gets an unprovable placeholder VK (see placeholderVK), which
+// keeps the slot numbering and verifies no proof. make dvp-stack passes it for
+// a local chain; slots 1-22 are never exercised by the integration tests.
 //
 // Output: one <CircuitName>.json per circuit in <build_dir>, matching the
 // VerificationKeyJSON struct used by scripts/cmd/init/main.go:
@@ -29,15 +36,20 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16bn254 "github.com/consensys/gnark/backend/groth16/bn254"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 )
 
 // circomVK mirrors the VerificationKeyJSON struct in scripts/cmd/init/main.go.
@@ -55,10 +67,14 @@ type circomVK struct {
 // circuitMapping maps circuit names (used in enygmadvp.config.json) to VK key files
 // (relative to the gnark_circuits/ directory).
 //
-// All 21 entries must be present because the vault contracts use hardcoded VK
-// indices: VK_ID_ERC20_JOINSPLIT=0, VK_ID_DVP_INITIATOR=23, VK_ID_DVP_DESTINATION=24.
-// Entries at unused positions (1–22) use pre-existing keys so the index numbering
-// is maintained; those VKs are never exercised by integration tests (test/01–04).
+// The vault contracts use hardcoded VK indices (VK_ID_ERC20_JOINSPLIT=0,
+// VK_ID_DVP_INITIATOR=23, VK_ID_DVP_DESTINATION=24), and init registers a VK
+// for every circuit in enygmadvp.config.json, in order. Positions 1-22 use
+// pre-existing keys only to keep that numbering; no integration test
+// exercises them, and keygen does not make them. BrokerRegistration,
+// LegitBroker, JoinSplitErc20WithBrokerV1 and JoinSplitErc1155WithBrokerV1
+// are in the config but have no key file here at all: -placeholder covers
+// them and any missing key.
 var circuitMapping = map[string]string{
 	// index 0 — covered by test/02 (Payment uses VK_ID_ERC20_JOINSPLIT=0)
 	"Payment": "scripts/keys/PaymentVK.key",
@@ -103,23 +119,51 @@ func g2Fields(xA0, xA1, yA0, yA1 *big.Int) [][]string {
 	}
 }
 
-func exportVK(keyPath, outPath string) error {
+// readVK reads a gnark BN254 Groth16 verifying key file.
+func readVK(keyPath string) (*groth16bn254.VerifyingKey, error) {
 	f, err := os.Open(keyPath)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", keyPath, err)
+		return nil, fmt.Errorf("open %s: %w", keyPath, err)
 	}
 	defer f.Close()
 
 	vkIface := groth16.NewVerifyingKey(ecc.BN254)
 	if _, err := vkIface.ReadFrom(f); err != nil {
-		return fmt.Errorf("read vk from %s: %w", keyPath, err)
+		return nil, fmt.Errorf("read vk from %s: %w", keyPath, err)
 	}
-
 	vk, ok := vkIface.(*groth16bn254.VerifyingKey)
 	if !ok {
-		return fmt.Errorf("unexpected VK type %T", vkIface)
+		return nil, fmt.Errorf("unexpected VK type %T", vkIface)
 	}
+	return vk, nil
+}
 
+// placeholderCircuit has one public input and one constraint.
+type placeholderCircuit struct {
+	X frontend.Variable `gnark:",public"`
+}
+
+func (c *placeholderCircuit) Define(api frontend.API) error {
+	api.AssertIsEqual(c.X, c.X)
+	return nil
+}
+
+// placeholderVK returns the VK of a fresh trusted setup of placeholderCircuit
+// whose proving key is discarded: it is a well-formed key the verifier
+// contract accepts, and no proof verifies against it.
+func placeholderVK() (*groth16bn254.VerifyingKey, error) {
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &placeholderCircuit{})
+	if err != nil {
+		return nil, fmt.Errorf("compile placeholder circuit: %w", err)
+	}
+	_, vk, err := groth16.Setup(ccs)
+	if err != nil {
+		return nil, fmt.Errorf("set up placeholder circuit: %w", err)
+	}
+	return vk.(*groth16bn254.VerifyingKey), nil
+}
+
+func writeVK(vk *groth16bn254.VerifyingKey, outPath string) error {
 	// alpha1
 	var ax, ay big.Int
 	vk.G1.Alpha.X.BigInt(&ax)
@@ -177,26 +221,103 @@ func exportVK(keyPath, outPath string) error {
 	return nil
 }
 
+// configCircuits returns the circuit names enygmadvp.config.json registers,
+// in order.
+func configCircuits(configPath string) ([]string, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	var cfg struct {
+		Circom struct {
+			Circuits []struct {
+				Filename string `json:"filename"`
+			} `json:"circuits"`
+		} `json:"circom"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	names := make([]string, len(cfg.Circom.Circuits))
+	for i, c := range cfg.Circom.Circuits {
+		names[i] = c.Filename
+	}
+	return names, nil
+}
+
+// exportAll writes <buildDir>/<name>.json for each circuit, from its key file
+// in mapping. A circuit with no key file is a placeholder (placeholderVK)
+// when placeholder is set, and missing otherwise; missing circuits get no
+// file and make exportAll return an error naming them.
+func exportAll(circuits []string, mapping map[string]string, buildDir string, placeholder bool) (exported, placeheld []string, err error) {
+	var missing []string
+	var stand *groth16bn254.VerifyingKey
+	for _, name := range circuits {
+		outPath := filepath.Join(buildDir, name+".json")
+		keyPath, mapped := mapping[name]
+		var vk *groth16bn254.VerifyingKey
+		var readErr error
+		if mapped {
+			vk, readErr = readVK(keyPath)
+		}
+		if mapped && readErr == nil {
+			if err := writeVK(vk, outPath); err != nil {
+				return nil, nil, err
+			}
+			exported = append(exported, name)
+			continue
+		}
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return nil, nil, readErr
+		}
+		if !placeholder {
+			missing = append(missing, name)
+			continue
+		}
+		if stand == nil {
+			if stand, err = placeholderVK(); err != nil {
+				return nil, nil, err
+			}
+		}
+		if err := writeVK(stand, outPath); err != nil {
+			return nil, nil, err
+		}
+		placeheld = append(placeheld, name)
+	}
+	if len(missing) > 0 {
+		return exported, placeheld, fmt.Errorf("no key file for %s; run keygen, or pass -placeholder for a local chain (an unprovable VK in each such slot)",
+			strings.Join(missing, ", "))
+	}
+	return exported, placeheld, nil
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: export_vk_init <build_dir>")
+	placeholder := flag.Bool("placeholder", false, "give a circuit with no key file an unprovable placeholder VK")
+	configPath := flag.String("config", "../enygmadvp.config.json", "enygmadvp.config.json, whose circuits init registers")
+	flag.Parse()
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: export_vk_init [-placeholder] [-config <path>] <build_dir>")
 		os.Exit(1)
 	}
-	buildDir := os.Args[1]
+	buildDir := flag.Arg(0)
 
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		log.Fatalf("create build dir: %v", err)
 	}
-
-	ok := 0
-	for name, vkRelPath := range circuitMapping {
-		outPath := filepath.Join(buildDir, name+".json")
-		if err := exportVK(vkRelPath, outPath); err != nil {
-			log.Printf("WARN: skipping %s: %v", name, err)
-			continue
-		}
-		fmt.Printf("  exported %s → %s\n", name, outPath)
-		ok++
+	circuits, err := configCircuits(*configPath)
+	if err != nil {
+		log.Fatalf("read config: %v", err)
 	}
-	fmt.Printf("Done: %d/%d VKs exported to %s\n", ok, len(circuitMapping), buildDir)
+	exported, placeheld, err := exportAll(circuits, circuitMapping, buildDir, *placeholder)
+	for _, name := range exported {
+		fmt.Printf("  exported %s\n", name)
+	}
+	for _, name := range placeheld {
+		fmt.Printf("  placeholder %s (unprovable VK)\n", name)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Done: %d exported, %d placeholders, of the config's %d circuits, to %s\n",
+		len(exported), len(placeheld), len(circuits), buildDir)
 }
