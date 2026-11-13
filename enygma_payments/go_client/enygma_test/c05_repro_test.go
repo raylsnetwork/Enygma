@@ -100,7 +100,7 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 	// MockTransferVerifier, since this test needs an actual circuit-
 	// generated attack proof, not just contract-side logic in isolation.
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
+	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
 	verifierAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/EnygmaVerifier.sol/Verifier.json")
 
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
