@@ -147,10 +147,20 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain
 	//   The contract checks:
 	//     1. onlyRole(DEFAULT_OWNER_ROLE) — the Hardhat deployer account holds this role
-	//     2. IPrivateMintVerifier.verifyProof(proof, publicSignal)
-	//     3. IAbstractCoinVault.registerCoins([commitment]) — inserts the Merkle leaf
+	//     2. the vault is flagged mintable (setVaultMintable). On this local
+	//        deployment the issuer is the only depositor of its own token, so
+	//        the test flags the ERC-20 vault itself.
+	//     3. IPrivateMintVerifier.verifyProof(proof, publicSignal)
+	//     4. IAbstractCoinVault.registerCoins([commitment]) — inserts the Merkle leaf
 	//   Emits: PrivateMint(vaultId, commitment, cipherText)
 	// ─────────────────────────────────────────────────────────────────────────
+	flagTx, err := dvp.Transact(auth, "setVaultMintable", vaultId, true)
+	if err != nil {
+		t.Fatalf("EnygmaDvp.setVaultMintable: %v", err)
+	}
+	if _, err := bind.WaitMined(ctx, ethClient, flagTx); err != nil {
+		t.Fatalf("wait setVaultMintable: %v", err)
+	}
 	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)

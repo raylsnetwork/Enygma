@@ -30,7 +30,9 @@ sequenceDiagram
     GnarkServer-->>Issuer: {proof[8], publicSignal[4]}<br/>publicSignal = [commitment, contractAddr, 0, cipherText]
 
     Note over Issuer,Vault: Step 3 — On-chain mint
+    Issuer->>DVP: setVaultMintable(vaultId=0, true) (owner, once)
     Issuer->>DVP: privateMint(vaultId=0, commitment, proof)
+    DVP->>DVP: require mintableVaults[0]
     DVP->>Verifier: verifyProof(proof, publicSignal)
     Verifier-->>DVP: ok (pairing check passes)
     DVP->>Vault: registerCoins([commitment])
@@ -59,6 +61,7 @@ sequenceDiagram
 
 | Contract | Function | Purpose |
 |----------|----------|---------|
-| `EnygmaDvp` | `privateMint(vaultId, commitment, proof)` | Entry point; role-gated to DEFAULT_OWNER_ROLE |
+| `EnygmaDvp` | `privateMint(vaultId, commitment, proof)` | Entry point; role-gated to DEFAULT_OWNER_ROLE; only into a vault flagged mintable |
+| `EnygmaDvp` | `setVaultMintable(vaultId, mintable)` | Owner flags a vault open (or closed) to private mints; every vault starts closed. A minted note has no deposit behind it, so flag only a vault whose notes are not redeemed from other users' deposits (the test deployment's issuer is the only depositor of its own token) |
 | `PrivateMintVerifier` | `verifyProof(proof, publicSignal)` | Groth16 verifier with hardcoded VK |
 | `Erc20CoinVault` | `registerCoins([commitment])` | Inserts Merkle leaf |
