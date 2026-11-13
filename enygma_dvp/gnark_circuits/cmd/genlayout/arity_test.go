@@ -87,10 +87,12 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 		"SwapRelayer.submitReceipt":         true,
 	}
 	// Each checks the legs it holds with checkDvpReceiptConditions.
+	// SwapRelayer.submitReceipt's legs are checked by the lock it takes
+	// (EnygmaDvp.lockReceiptNullifiers, which lockAfterRead pins it to).
 	dvpChecks := map[string]bool{
 		"EnygmaDvp.submitPartialSettlement": false,
 		"EnygmaDvp._settleOnGroupPair":      false,
-		"SwapRelayer.submitReceipt":         false,
+		"EnygmaDvp.lockReceiptNullifiers":   false,
 	}
 	for contract, path := range map[string]string{
 		"EnygmaDvp":         enygmaDvpSol,

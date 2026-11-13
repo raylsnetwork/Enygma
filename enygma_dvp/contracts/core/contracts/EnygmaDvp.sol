@@ -130,6 +130,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // authorized on-chain relayer contracts (set by owner)
     mapping(address => bool) public authorizedRelayers;
 
+    // Who holds each note locked through lockReceiptNullifiers, by vault, tree
+    // and nullifier: _relayerLockId(relayer, vaultId, receipt statement).
+    // Notes locked by other paths (a pending partial settlement, an auction)
+    // have no entry, so unlockReceiptNullifiers cannot release them.
+    mapping(uint256 => mapping(uint256 => mapping(uint256 => bytes32))) private _relayerLocks;
+
     // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
     // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
     uint256 public relayerFixedFeeAmount;
@@ -644,28 +650,53 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         _;
     }
 
-    // Lock all input nullifiers in a receipt so the prover cannot double-spend
-    // while the counterparty's receipt is pending in SwapRelayer.
-    // Only callable by an authorized SwapRelayer contract.
+    // Lock the note a DvP leg spends, so its prover cannot spend it elsewhere
+    // while the counterparty's leg is pending in SwapRelayer. Only callable by
+    // an authorized relayer. The leg must pass its vault's DvP checks first
+    // (proof, Merkle root, unspent nullifier), so a lock only ever covers a
+    // note that a valid proof spends, whoever the relayer is.
     function lockReceiptNullifiers(
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
         // Reverts with InvalidStatementSize unless the receipt is a DvP leg.
         DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
-        IAbstractCoinVault(_coinVaults[vaultId]).lockCoin(leg.treeNumber, leg.nullifier);
+        IAbstractCoinVault vault = _relayerLockVault(vaultId);
+        vault.checkDvpReceiptConditions(receipt);
+        vault.lockCoin(leg.treeNumber, leg.nullifier);
+        _relayerLocks[vaultId][leg.treeNumber][leg.nullifier] = _relayerLockId(receipt, vaultId);
         return true;
     }
 
-    // Release the nullifier locks placed by lockReceiptNullifiers.
-    // Called by SwapRelayer when a swap is cancelled after expiry.
-    // Only callable by an authorized SwapRelayer contract.
+    // Release a lock placed by lockReceiptNullifiers, when a swap settles or
+    // is cancelled. Only callable by an authorized relayer, and only for a note
+    // that the same relayer locked with this same receipt.
     function unlockReceiptNullifiers(
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
-        IAbstractCoinVault(_coinVaults[vaultId]).unlockFromDvpReceipt(receipt);
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        if (_relayerLocks[vaultId][leg.treeNumber][leg.nullifier] != _relayerLockId(receipt, vaultId)) {
+            revert NotLockedByCaller();
+        }
+        delete _relayerLocks[vaultId][leg.treeNumber][leg.nullifier];
+        _relayerLockVault(vaultId).unlockFromDvpReceipt(receipt);
         return true;
+    }
+
+    // The registered vault a relayer lock is taken in.
+    function _relayerLockVault(uint256 vaultId) private view returns (IAbstractCoinVault) {
+        address vault = _coinVaults[vaultId];
+        if (vault == address(0)) revert InvalidVaultId();
+        return IAbstractCoinVault(vault);
+    }
+
+    // Identifies one relayer's lock on one receipt in one vault.
+    function _relayerLockId(
+        ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) private view returns (bytes32) {
+        return keccak256(abi.encode(msg.sender, vaultId, receipt.statement));
     }
 
     function submitPartialSettlement(

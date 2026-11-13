@@ -16,6 +16,7 @@ package tests
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -42,14 +43,19 @@ type lockEnv struct {
 	verifier common.Address
 }
 
-func newLockEnv(t *testing.T) *lockEnv {
+// newLockEnv funds a fresh deployer account, plus any extra accounts given.
+func newLockEnv(t *testing.T, extra ...*ecdsa.PrivateKey) *lockEnv {
 	t.Helper()
 	key, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 	from := crypto.PubkeyToAddress(key.PublicKey)
-	backend := simulated.NewBackend(types.GenesisAlloc{from: {Balance: new(big.Int).Lsh(big.NewInt(1), 100)}})
+	alloc := types.GenesisAlloc{from: {Balance: new(big.Int).Lsh(big.NewInt(1), 100)}}
+	for _, k := range extra {
+		alloc[crypto.PubkeyToAddress(k.PublicKey)] = types.Account{Balance: new(big.Int).Lsh(big.NewInt(1), 100)}
+	}
+	backend := simulated.NewBackend(alloc)
 	t.Cleanup(func() { backend.Close() })
 	auth, err := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 	if err != nil {
@@ -130,11 +136,17 @@ func (e *lockEnv) deploy(a abi.ABI, bin []byte, args ...interface{}) common.Addr
 // returns the custom error name, or "" on success.
 func (e *lockEnv) send(a abi.ABI, to common.Address, method string, args ...interface{}) string {
 	e.t.Helper()
+	return e.sendFrom(e.auth, a, to, method, args...)
+}
+
+// sendFrom is send from another account.
+func (e *lockEnv) sendFrom(auth *bind.TransactOpts, a abi.ABI, to common.Address, method string, args ...interface{}) string {
+	e.t.Helper()
 	data, err := a.Pack(method, args...)
 	if err != nil {
 		e.t.Fatalf("pack %s: %v", method, err)
 	}
-	msg := ethereum.CallMsg{From: e.auth.From, To: &to, Gas: e.auth.GasLimit, Data: data}
+	msg := ethereum.CallMsg{From: auth.From, To: &to, Gas: auth.GasLimit, Data: data}
 	if _, err := e.backend.Client().CallContract(context.Background(), msg, nil); err != nil {
 		var de rpc.DataError
 		if errors.As(err, &de) {
@@ -149,7 +161,7 @@ func (e *lockEnv) send(a abi.ABI, to common.Address, method string, args ...inte
 		}
 		return err.Error()
 	}
-	tx, err := bind.NewBoundContract(to, a, nil, e.backend.Client(), nil).RawTransact(e.auth, data)
+	tx, err := bind.NewBoundContract(to, a, nil, e.backend.Client(), nil).RawTransact(auth, data)
 	if err != nil {
 		e.t.Fatalf("send %s: %v", method, err)
 	}

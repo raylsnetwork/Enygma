@@ -462,21 +462,42 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		}
 	})
 
-	// A withdrawal is Payment-shaped, so no DvP leg's length: it must still be
-	// refused as a withdrawal, as before the length check.
-	t.Run("a withdrawal receipt is refused as a withdrawal", func(t *testing.T) {
+	// A payment (message 0) or withdrawal (WITHDRAW_MESSAGE, 1) receipt is
+	// not a DvP leg, so it cannot be filed under any swapId, whatever its
+	// shape: Payment's (no DvP leg's length), PaymentFee's (as long as
+	// DvpInitiator's) or a DvP leg's own.
+	t.Run("payment and withdrawal receipts are not legs", func(t *testing.T) {
 		env := newSwapRelayerEnv(t)
 		alice, _, id := swapPair(95, 96, 101, 202)
 		expiry := big.NewInt(int64(env.now() + 3600))
 
-		withdrawal := alice
-		withdrawal.Statement = make([]*big.Int, layout.PaymentLen)
-		for i := range withdrawal.Statement {
-			withdrawal.Statement[i] = big.NewInt(0)
-		}
-		withdrawal.Statement[layout.PaymentMessageOffset] = big.NewInt(1) // WITHDRAW_MESSAGE
-		if r := env.send("mallory", "submitReceipt", id, withdrawal, true, pv, expiry, ctx, ctx); r != "WithdrawalReceipt" {
-			t.Fatalf("withdrawal receipt: got %q, want WithdrawalReceipt", r)
+		for _, message := range []int64{0, 1} {
+			for _, shape := range []struct {
+				name          string
+				length, msgAt int
+			}{
+				{"Payment", layout.PaymentLen, layout.PaymentMessageOffset},
+				{"PaymentFee", layout.PaymentFeeLen, layout.PaymentFeeMessageOffset},
+			} {
+				notLeg := alice
+				notLeg.Statement = make([]*big.Int, shape.length)
+				for i := range notLeg.Statement {
+					notLeg.Statement[i] = big.NewInt(0)
+				}
+				notLeg.Statement[shape.msgAt] = big.NewInt(message)
+				if r := env.send("mallory", "submitReceipt", id, notLeg, true, pv, expiry, ctx, ctx); r != "NotSwapLeg" {
+					t.Fatalf("%s-shaped receipt with message %d: got %q, want NotSwapLeg", shape.name, message, r)
+				}
+			}
+
+			dvpShaped := leg(message, 82, 505, false)
+			dvpID := crypto.Keccak256Hash(common.BigToHash(big.NewInt(82)).Bytes(), common.BigToHash(big.NewInt(message)).Bytes())
+			if r := env.send("mallory", "submitReceipt", dvpID, dvpShaped, true, pv, expiry, ctx, ctx); r != "NotSwapLeg" {
+				t.Fatalf("DvP-shaped receipt with message %d: got %q, want NotSwapLeg", message, r)
+			}
+			if env.locked(paymentVault, big.NewInt(505)) {
+				t.Fatalf("DvP-shaped receipt with message %d locked its note", message)
+			}
 		}
 	})
 }
