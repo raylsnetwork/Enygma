@@ -71,6 +71,7 @@ ERRCHECK_SKIP_MODULES ?= \
 .PHONY: help modules hooks fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-demo-stale shield-gnark-restart \
+	payments-stack payments-stack-stop payments-test \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -120,6 +121,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/mutant.test.js >/dev/null || node --test scripts/mutant.test.js
 	@# check_red_named.sh, the commit-msg hook, asks for a red only when a commit adds a check.
 	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
+	@# suite_result.sh, the on-chain suites' verdict, fails a failed test or an unlisted skip.
+	@node --test scripts/suite_result.test.js >/dev/null || node --test scripts/suite_result.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
@@ -206,6 +209,46 @@ dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail
 	cd enygma_dvp/test; go test -count=1 -v ./... -timeout 1800s >$$log 2>&1 || status=1; \
 	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
 	grep -E '^--- (FAIL|SKIP)' $$log; echo "log: $$log"; exit $$status
+
+# Full local flow for enygma_payments' end-to-end suite (go_client/enygma_test):
+# payments-stack -> payments-test -> payments-stack-stop. payments-stack compiles
+# the contracts and builds relayer_bin first (both gitignored), then starts a
+# fresh node and the gnark server; the suite deploys its own contracts and
+# spawns relayer_bin. Logs go to PAYMENTS_LOG_DIR (default: a fresh temp dir),
+# the suite's to suite.log there. The Burn keys are gitignored: see
+# run_scripts/stack.sh's header.
+PAYMENTS_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_payments_stack.pid
+PAYMENTS_LOG_DIR ?=
+# Tests allowed to skip in payments-test (full names, space-separated). Any
+# other skip fails the suite: a missing service must not pass for green.
+PAYMENTS_KNOWN_SKIPS :=
+
+payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
+	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p $$logs; \
+	(LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash enygma_payments/run_scripts/stack.sh >$$logs/stack.log 2>&1) & \
+	pid=$$!; \
+	while kill -0 $$pid 2>/dev/null; do \
+		grep -q 'stack is up' $$logs/stack.log && { echo $$pid >$(PAYMENTS_STACK_PID); echo $$logs >$(PAYMENTS_STACK_PID).logs; echo "stack is up (logs $$logs); run make payments-test, then make payments-stack-stop"; exit 0; }; \
+		sleep 1; \
+	done; \
+	cat $$logs/stack.log; exit 1
+
+payments-stack-stop: ## Stop the stack make payments-stack started, and wait for its ports to free
+	@pid=$$(cat $(PAYMENTS_STACK_PID) 2>/dev/null); \
+	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'run_scripts/stack.sh' || { echo "no stack started by make payments-stack"; exit 1; }; \
+	kill -TERM $$pid; \
+	for _ in $$(seq 1 150); do \
+		(exec 3<>/dev/tcp/127.0.0.1/8545) 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null || { rm -f $(PAYMENTS_STACK_PID) $(PAYMENTS_STACK_PID).logs; echo "stack stopped"; exit 0; }; \
+		sleep 0.2; \
+	done; \
+	echo "still listening on :8545 or :8080 after about 30 s"; exit 1
+
+payments-test: ## Payments end-to-end suite (on make payments-stack); prints pass/fail/skip counts, fails on a skip not in PAYMENTS_KNOWN_SKIPS
+	@logs=$$(cat $(PAYMENTS_STACK_PID).logs 2>/dev/null); \
+	if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/payments_test.XXXXXX"); fi; \
+	status=0; cd enygma_payments/go_client/enygma_test; \
+	go test -count=1 -v ./... -timeout 900s >$$log 2>&1 || status=$$?; \
+	cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(PAYMENTS_KNOWN_SKIPS)'; result=$$?; echo "log: $$log"; exit $$result
 
 retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script header)
 	cd enygma_retail_payments && bash setup.sh
