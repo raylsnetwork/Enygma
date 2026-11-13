@@ -927,7 +927,7 @@ func TestRetailErc20_PartialWithdraw_NoCrossSettlement(t *testing.T) {
 	t.Run("dvp_paths_refuse_a_withdrawal", func(t *testing.T) {
 		expectCallRevert(t, e, dvp, "InvalidPartialProofReceipt", "submitPartialSettlement", s.receipt, big.NewInt(0), big.NewInt(0), big.NewInt(0))
 		sr := deploySwapRelayer(t, e, dvpAddr)
-		expectCallRevert(t, e, sr, "WithdrawalReceipt", "submitReceipt", [32]byte{1}, s.receipt, true, big.NewInt(0), big.NewInt(0), []byte{}, []byte{})
+		expectCallRevert(t, e, sr, "NotSwapLeg", "submitReceipt", [32]byte{1}, s.receipt, true, big.NewInt(0), big.NewInt(0), []byte{}, []byte{})
 	})
 	t.Run("withdrawal_paths_refuse_a_payment", func(t *testing.T) {
 		pay, err := e.proveWithdrawMsg(t, pwPayment, pwPaymentMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, recipient)

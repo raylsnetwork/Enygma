@@ -4,7 +4,6 @@
 pragma solidity ^0.8.0;
 
 import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
-import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {DvpReceipt} from "./DvpReceipt.sol";
 import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -37,8 +36,12 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 ///   where commitmentB and C' are the pre-computed cross-commitments from Step 3
 ///   (the delivery leg's and the payment leg's statement messages). Each leg
 ///   carries both, so submitReceipt checks that the swapId matches the leg and
-///   that the leg's proof verifies before locking anything: a leg can only
-///   occupy the slot of its own swap.
+///   EnygmaDvp.lockReceiptNullifiers checks the leg (proof, Merkle root,
+///   unspent nullifier) before locking anything: a leg can only occupy the
+///   slot of its own swap.
+///
+/// Only DvP legs are accepted: a leg's statement message is a commitment,
+/// never 0 (a payment) or WITHDRAW_MESSAGE (a withdrawal).
 contract SwapRelayer is ReentrancyGuard {
 
     struct PendingSwap {
@@ -94,7 +97,7 @@ contract SwapRelayer is ReentrancyGuard {
     error ExpiryTooSoon();
     error SwapIdMismatch();
     error LegTypeMismatch();
-    error WithdrawalReceipt();
+    error NotSwapLeg();
 
     constructor(address dvpAddress) {
         dvp = IEnygmaDvp(dvpAddress);
@@ -118,14 +121,16 @@ contract SwapRelayer is ReentrancyGuard {
         bytes   calldata                 ctII
     ) external nonReentrant {
         if (closed[swapId]) revert SwapClosed();
-        // A withdrawal receipt is not a leg: filing one would lock its note
-        // until expiry (see WITHDRAW_MESSAGE). A withdrawal is Payment-shaped,
-        // so this reads its message by the Payment layout, before the DvP
-        // length check below would refuse it as InvalidStatementSize.
-        if (
-            receipt.statement.length > Psl.PAYMENT_MESSAGE_OFFSET &&
-            receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] == WITHDRAW_MESSAGE
-        ) revert WithdrawalReceipt();
+        // Only a DvP leg can be filed. A payment (message 0) or withdrawal
+        // (WITHDRAW_MESSAGE) receipt is not a leg of any swap: filing one would
+        // only hold its note until expiry. Both are Payment-shaped, so this
+        // reads the message by the Payment layout, before the DvP length check
+        // below would refuse most of them as InvalidStatementSize (PaymentFee's
+        // statement is as long as DvpInitiator's, so not all).
+        if (receipt.statement.length > Psl.PAYMENT_MESSAGE_OFFSET) {
+            uint256 message = receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET];
+            if (message == 0 || message == WITHDRAW_MESSAGE) revert NotSwapLeg();
+        }
         // Any other receipt that is not DvP-shaped is refused
         // (InvalidStatementSize) before anything is locked.
         DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
@@ -138,11 +143,6 @@ contract SwapRelayer is ReentrancyGuard {
         if (!dvp.isVaultMemberOf(vaultId, isPayment ? GROUP_ID_FUNGIBLES : GROUP_ID_NON_FUNGIBLES)) {
             revert LegTypeMismatch();
         }
-        // Verify the leg (proof, Merkle root, unspent nullifiers) before it can
-        // lock anything. Without this a junk receipt could occupy a swap's slot
-        // and lock arbitrary nullifiers until its expiry.
-        IAbstractCoinVault(dvp.vaultById(vaultId)).checkDvpReceiptConditions(receipt);
-
         PendingSwap storage s = swaps[swapId];
 
         if (s.expiry != 0 && block.timestamp >= s.expiry) revert SwapExpired();
@@ -172,7 +172,10 @@ contract SwapRelayer is ReentrancyGuard {
             s.expiry = expiry;
         }
 
-        // lock nullifiers immediately — prevents double-spend during the gap
+        // Lock the leg's note so it cannot be spent while the swap is pending.
+        // EnygmaDvp verifies the leg (proof, Merkle root, unspent nullifier)
+        // first and reverts the whole submission if it fails, so a junk
+        // receipt can neither occupy the swap's slot nor lock anything.
         dvp.lockReceiptNullifiers(receipt, vaultId);
 
         // emit ctI/ctII so the counterparty can discover the swap by scanning
