@@ -120,7 +120,7 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 	}
 
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, ownerAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	enygmaAddr := deployFromArtifact(t, client, ownerAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	verifierAddr := deployFromArtifact(t, client, ownerAuth(), artifactBase+"/EnygmaVerifier.sol/Verifier.json")
 
 	instance, err := enygma.NewEnygma(enygmaAddr, client)

@@ -47,7 +47,7 @@ func guardSetup(t *testing.T) guardEnv {
 	}
 	client, mk, wait := scenarioClient(t)
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	addr := deployFromArtifact(t, client, mk(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	addr := deployFromArtifact(t, client, mk(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	inst, err := enygma.NewEnygma(addr, client)
 	if err != nil {
 		t.Fatalf("bind: %v", err)

@@ -180,7 +180,7 @@ func TestCostReport(t *testing.T) {
 	enygmaAuth := mkAuth()
 	enygmaABIStr, enygmaBytecode := artifactJSON(t, artifactBase+"/Enygma.sol/Enygma.json")
 	parsedEnygmaABI, _ := abi.JSON(strings.NewReader(enygmaABIStr))
-	enygmaAddr, enygmaTx, _, err := bind.DeployContract(enygmaAuth, parsedEnygmaABI, enygmaBytecode, client, big.NewInt(30))
+	enygmaAddr, enygmaTx, _, err := bind.DeployContract(enygmaAuth, parsedEnygmaABI, enygmaBytecode, client, big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	if err != nil {
 		t.Fatalf("deploy Enygma: %v", err)
 	}

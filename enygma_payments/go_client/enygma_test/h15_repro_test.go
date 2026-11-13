@@ -48,6 +48,7 @@ import (
 	"enygma_payments/layout"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -111,7 +112,11 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 	// senderPrevR/senderMintR are reused here purely as convenient nonzero
 	// constants, same as everywhere in this suite that isn't senderIdx.
 	bcx, bcy := regCommit(big.NewInt(senderPrevR))
-	if r := waitTx(instance.RegisterAccount(mkAuth(), ownerAddr,
+	// One account per address (#260), and freshSetup gave the owner's to its
+	// last bank, so the bystander gets an address of its own. It never sends
+	// anything, so no key is needed behind it.
+	bystanderAddr := common.BigToAddress(big.NewInt(0xb7574d))
+	if r := waitTx(instance.RegisterAccount(mkAuth(), bystanderAddr,
 		big.NewInt(bystanderId), bystanderPk, bcx, bcy, []byte{})); r.Status != 1 {
 		t.Fatal("registering bystander account failed")
 	}

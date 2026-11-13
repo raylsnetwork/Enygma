@@ -130,7 +130,7 @@ func TestFeeTransferFlow(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	t.Log("deploying Enygma contract…")
 	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
-		artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+		artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	t.Log("deploying standard verifier…")
 	verifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/EnygmaVerifier.sol/Verifier.json")
@@ -183,7 +183,9 @@ func TestFeeTransferFlow(t *testing.T) {
 			r = big.NewInt(senderRegR)
 		}
 		cx, cy := regCommit(r)
-		if r := waitTx(enygmaInstance.RegisterAccount(mkAuth(), ownerAddr,
+		// One account per address (#260): each bank gets its own, and the
+		// last keeps the owner's, as in freshSetup.
+		if r := waitTx(enygmaInstance.RegisterAccount(mkAuth(), freshBankAddr(i, ownerAddr),
 			big.NewInt(int64(i+1)), pks[i], cx, cy, []byte{})); r.Status != 1 {
 			t.Fatalf("registerAccount bank %d failed", i)
 		}

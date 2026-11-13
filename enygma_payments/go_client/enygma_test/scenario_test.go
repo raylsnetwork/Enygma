@@ -120,6 +120,12 @@ func deployFromArtifact(
 // with (deploy_direct.py's default).
 const testEpochInterval = 30
 
+// testVerifierChangeDelay is Enygma's second constructor argument (#260): how
+// long a replacement of an already-set verifier waits before
+// executeVerifierChange can apply it. 0 is allowed and keeps the tests' setup
+// immediate; a first-time verifier set is never delayed.
+const testVerifierChangeDelay = 0
+
 // deployEnygma deploys a fresh Enygma (epochInterval testEpochInterval) and
 // Verifier pair, initializes Enygma and registers the verifier on it, and
 // returns the bound instance plus its address. Every test that registers
@@ -136,6 +142,7 @@ func deployEnygma(
 	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/Enygma.sol/Enygma.json",
 		big.NewInt(testEpochInterval),
+		big.NewInt(testVerifierChangeDelay),
 	)
 	verifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/EnygmaVerifier.sol/Verifier.json",
@@ -266,6 +273,7 @@ func TestNullifierReuseProtection(t *testing.T) {
 	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/Enygma.sol/Enygma.json",
 		big.NewInt(30), // epochInterval
+		big.NewInt(testVerifierChangeDelay),
 	)
 	verifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/EnygmaVerifier.sol/Verifier.json",
@@ -1021,6 +1029,7 @@ func TestDoubleInitializeReverts(t *testing.T) {
 	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/Enygma.sol/Enygma.json",
 		big.NewInt(30),
+		big.NewInt(testVerifierChangeDelay),
 	)
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
 	if err != nil {
