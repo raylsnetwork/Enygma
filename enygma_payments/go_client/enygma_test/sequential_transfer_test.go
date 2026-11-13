@@ -109,7 +109,7 @@ func TestSequentialTransfers(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	t.Log("deploying Enygma.sol…")
 	enygmaAddr := deployFromArtifact(t, client, mkAuth(),
-		artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+		artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	t.Log("deploying EnygmaVerifier.sol…")
 	verifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/EnygmaVerifier.sol/Verifier.json")

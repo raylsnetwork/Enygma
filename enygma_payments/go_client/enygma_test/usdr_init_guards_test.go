@@ -56,7 +56,7 @@ func TestInitializeUsdrBalanceGuards(t *testing.T) {
 		return a
 	}
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, auth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	enygmaAddr := deployFromArtifact(t, client, auth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
 	if err != nil {
 		t.Fatalf("bind: %v", err)

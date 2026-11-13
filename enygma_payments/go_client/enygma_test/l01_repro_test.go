@@ -76,7 +76,7 @@ func l01DeployAndRegister(t *testing.T, client *ethclient.Client, mkAuth func() 
 	t.Helper()
 
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
 	if err != nil {
 		t.Fatalf("bind contract: %v", err)

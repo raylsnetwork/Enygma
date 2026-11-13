@@ -83,7 +83,7 @@ func c04Setup(t *testing.T, client *ethclient.Client) (*enygma.Enygma, []c04Bank
 
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	enygmaAddr := deployFromArtifact(t, client, ownerAuth(),
-		artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+		artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	mockVerifierAddr := deployFromArtifact(t, client, ownerAuth(),
 		artifactBase+"/mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
 

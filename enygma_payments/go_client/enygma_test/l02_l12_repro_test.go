@@ -65,7 +65,7 @@ func TestL02_RegisterAccountRequiresInitialization(t *testing.T) {
 	}
 
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
 	if err != nil {
 		t.Fatalf("bind contract: %v", err)
@@ -141,7 +141,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 	}
 
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
-	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30))
+	enygmaAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/Enygma.sol/Enygma.json", big.NewInt(30), big.NewInt(testVerifierChangeDelay))
 	instance, err := enygma.NewEnygma(enygmaAddr, client)
 	if err != nil {
 		t.Fatalf("bind contract: %v", err)
