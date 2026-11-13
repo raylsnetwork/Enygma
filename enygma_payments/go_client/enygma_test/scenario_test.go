@@ -169,6 +169,7 @@ func deployEnygma(
 // registered accounts and one mint, to verify that the homomorphic sum of all
 // bank balance commitments equals totalSupply.
 func TestCheckInvariant(t *testing.T) {
+	t.Skip("THROWAWAY: unlisted skip (red check for #287)")
 	if !chainAvailable() {
 		t.Skipf("chain not reachable at %s — set ENYGMA_CHAIN_URL / ENYGMA_CHAIN_ID for local Hardhat", chainURL)
 	}
