@@ -1,0 +1,86 @@
+name: onchain
+
+# The on-chain end-to-end suites, each on a fresh stack on its own runner,
+# through the same make targets a developer runs locally:
+#   make payments-stack && make payments-test; make payments-stack-stop
+# A suite fails on any failed test and on any skip not on its known-skip
+# list (PAYMENTS_KNOWN_SKIPS in the root Makefile). On failure the stack's
+# and the suite's logs are uploaded as an artifact. Separate from `ci` so
+# these longer jobs do not hold up the fast checks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "enygma_payments/**"
+      - "enygma_gnark_shared/**"
+      - "Makefile"
+      - "scripts/suite_result.sh"
+      - ".github/workflows/onchain.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onchain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  payments:
+    name: payments e2e
+    runs-on: ubuntu-latest
+    # The suite runs in under a minute and the stack starts in about one; a
+    # Burn key generation on a cache miss adds a few more. payments-test's
+    # go test times out at 15 min, so a hung suite fails with its logs first.
+    timeout-minutes: 30
+    steps:
+      # make payments-stack logs here; uploaded when the job fails.
+      - run: echo "PAYMENTS_LOG_DIR=$RUNNER_TEMP/payments-logs" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: enygma_payments/go_client/enygma_test/go.mod
+          cache-dependency-path: |
+            enygma_payments/go_client/enygma_test/go.sum
+            enygma_payments/gnark-server/go.sum
+            enygma_payments/relayer/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: enygma_payments/contracts/enygma/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: enygma_payments/contracts/enygma
+
+      # The Burn keys are gitignored (the other payments keys are committed
+      # through LFS). A change to the burn circuit, what it imports, or the
+      # key generator misses the cache and regenerates them. BurnVerifier.sol,
+      # which keygen also writes, is not cached: the suite deploys
+      # MockBurnVerifier.
+      - id: burn-keys
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            enygma_payments/gnark-server/keys/BurnPk.key
+            enygma_payments/gnark-server/keys/BurnVk.key
+          key: payments-burn-keys-${{ hashFiles('enygma_payments/gnark-server/pkg/circuits/burn/**', 'enygma_payments/gnark-server/poseidon/**', 'enygma_payments/gnark-server/utils/**', 'enygma_payments/gnark-server/keygen/**', 'enygma_payments/gnark-server/go.sum', 'enygma_gnark_shared/**') }}
+      - name: generate Burn keys
+        if: steps.burn-keys.outputs.cache-hit != 'true'
+        working-directory: enygma_payments/gnark-server
+        run: go run ./keygen/generate_keys.go -circuit burn
+
+      - run: make payments-stack
+      - run: make payments-test
+      - if: always()
+        run: make payments-stack-stop || true
+      - if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: payments-logs
+          path: |
+            ${{ env.PAYMENTS_LOG_DIR }}
+            !${{ env.PAYMENTS_LOG_DIR }}/bin
+          if-no-files-found: warn
