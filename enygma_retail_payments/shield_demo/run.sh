@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Enygma Retail Shield Demo — one-command launcher.
 #
-# Starts a fresh Hardhat node, runs the retail setup (compile, Poseidon
-# regen, deploy, init, USDr fixed fee = 1), starts the gnark server and the
-# relayer, then builds and serves the demo on http://localhost:9092.
+# Compiles the contracts (and regenerates Poseidon), starts a fresh Hardhat
+# node, runs the retail setup (deploy, init, USDr fixed fee = 1), starts the
+# gnark server and the relayer, then builds and serves the demo on
+# http://localhost:9092.
 # Ctrl-C (or any failure) stops everything this script started.
 #
 # Usage:
@@ -30,7 +31,7 @@ set -euo pipefail
 DEMO_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DEMO_DIR/.." && pwd)"
 DVP_ROOT="$(cd "$ROOT/../enygma_dvp" && pwd)"
-LOG_DIR="${LOG_DIR:-$(mktemp -d -t shield_demo)}"
+LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/shield_demo.XXXXXX")}"
 BIN_DIR="$LOG_DIR/bin"
 mkdir -p "$BIN_DIR"
 
@@ -73,14 +74,15 @@ preflight() {
 }
 preflight
 
-# go-ethereum needs CGo; Homebrew clang points at a missing macOS SDK.
-export CC=/usr/bin/clang
+# go-ethereum needs CGo; Homebrew clang on macOS points at a missing SDK.
+if [ "$(uname -s)" = Darwin ]; then export CC="${CC:-/usr/bin/clang}"; fi
+listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 # Hardhat account[2] — the relayer's signing key (demo only).
 RELAYER_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda
 RELAYER_API_KEY=test-api-key-dev-only
 
-PIDS=()
+PIDS=() NAMES=()
 cleanup() {
     trap - EXIT INT TERM
     echo ""
@@ -103,16 +105,28 @@ start() {
     # perl's setsid: stock macOS has no setsid(1).
     (cd "$dir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@" >"$LOG_DIR/$name.log" 2>&1) &
     PIDS+=($!)
+    NAMES+=("$name")
 }
 
-# wait_port NAME PORT — waits until PORT accepts connections, or fails with NAME's log.
+# died NAME — NAME's service exited: shows its log's tail and fails.
+died() {
+    echo "[run.sh] $1 exited — last log lines:" >&2
+    tail -20 "$LOG_DIR/$1.log" >&2
+    exit 1
+}
+
+# wait_port NAME PORT — waits until PORT accepts connections, or fails with
+# NAME's log, at once if NAME exits.
 wait_port() {
-    local name=$1 port=$2
+    local name=$1 port=$2 i pid=
+    for i in "${!NAMES[@]}"; do [ "${NAMES[$i]}" != "$name" ] || pid=${PIDS[$i]}; done
+    [ -n "$pid" ] || { echo "[run.sh] wait_port: no service named $name was started" >&2; exit 1; }
     for _ in $(seq 1 600); do
-        if nc -z localhost "$port" 2>/dev/null; then
+        if listening "$port"; then
             echo "[run.sh] $name is up on :$port"
             return 0
         fi
+        kill -0 "$pid" 2>/dev/null || died "$name"
         sleep 0.5
     done
     echo "[run.sh] $name did not come up on :$port — last log lines:" >&2
@@ -121,7 +135,7 @@ wait_port() {
 }
 
 for port in 8545 8082 8090 9092; do
-    if nc -z localhost "$port" 2>/dev/null; then
+    if listening "$port"; then
         echo "[run.sh] port $port is already in use — stop whatever is running there first (every run needs a fresh chain)." >&2
         exit 1
     fi
@@ -132,16 +146,20 @@ FEE_NOTES="$ROOT/build/relayer_fee_notes.jsonl"
 mkdir -p "$ROOT/build"
 rm -f "$FEE_NOTES"
 
-echo "[run.sh] [1/7] starting a fresh Hardhat node…"
-start hardhat "$DVP_ROOT" npx hardhat node
-wait_port hardhat 8545
-
-echo "[run.sh] [2/7] compiling contracts and regenerating Poseidon…"
+# Compile before the node starts: the node reads the artifacts once, at
+# start, to name the contracts' custom errors in reverts. Started on a checkout
+# with no artifacts (CI's), it reports each one as "unrecognized custom
+# error", and every test that matches an error name fails.
+echo "[run.sh] [1/7] compiling contracts and regenerating Poseidon…"
 (cd "$DVP_ROOT" && npx hardhat compile >"$LOG_DIR/compile.log" 2>&1)
 # Poseidon.sol is a placeholder: compile overwrites the real artifacts.
 (cd "$DVP_ROOT" && node regen_poseidon.mjs >>"$LOG_DIR/compile.log" 2>&1)
 cp "$DVP_ROOT/artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json" "$ROOT/contracts/abis/Erc20CoinVault.json"
 cp "$DVP_ROOT/artifacts/contracts/core/contracts/EnygmaDvp.sol/EnygmaDvp.json" "$ROOT/contracts/abis/EnygmaDvp.json"
+
+echo "[run.sh] [2/7] starting a fresh Hardhat node…"
+start hardhat "$DVP_ROOT" npx hardhat node
+wait_port hardhat 8545
 
 echo "[run.sh] [3/7] deploying and initialising the retail contracts…"
 (cd "$ROOT/gnark_circuits" && go run ./cmd/export_vk/ ../build >"$LOG_DIR/setup.log" 2>&1)
@@ -178,6 +196,9 @@ start relayer "$ROOT/relayer" env \
     "$BIN_DIR/relayer"
 wait_port relayer 8090
 
+# Once up, wait (not a watch that stops the stack when a service exits):
+# make shield-demo-restart and shield-gnark-restart replace a service
+# under a running stack.
 if [ "$START_DEMO" = 0 ]; then
     echo "[run.sh] stack is up (no demo). Ctrl-C to stop."
     wait
@@ -191,5 +212,6 @@ go build -C "$DEMO_DIR" -o "$BIN_DIR/shield_demo" .
 start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR" -dev
 wait_port demo 9092
 echo "[run.sh] demo: http://localhost:9092  (Ctrl-C to stop everything)"
-command -v open >/dev/null && open http://localhost:9092 || true
+# macOS's open only: on Debian/Ubuntu, open is openvt.
+[ "$(uname -s)" != Darwin ] || open http://localhost:9092 || true
 wait
