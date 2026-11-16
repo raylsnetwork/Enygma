@@ -254,9 +254,9 @@ func TestV2VaultLegacyWithdraw_RefusesLockedNote_Erc20(t *testing.T) {
 
 	nf := big.NewInt(777)
 	root := e.call(vABI, vault, "getRoot").(*big.Int)
-	// [message, tree, root, nullifier, output0, output1, vault]
+	// [message, tree, root, nullifier, output0, output1, vault, ciphertextHash]
 	rcpt := legacyReceipt([]*big.Int{big.NewInt(0), big.NewInt(0), root, nf, opening, big.NewInt(999),
-		new(big.Int).SetBytes(vault.Bytes())}, 1, 2)
+		new(big.Int).SetBytes(vault.Bytes()), big.NewInt(0xC1F7)}, 1, 2)
 
 	e.checkLockedThenUnlocked(vABI, vault, nf, func() string {
 		return e.send(vABI, vault, "withdraw", []*big.Int{amount}, recipient, rcpt)
