@@ -10,20 +10,25 @@ name: onchain
 # Makefile). On failure the stack's and the suite's logs are uploaded as an
 # artifact.
 # Separate from `ci` so these longer jobs do not hold up the fast checks.
-# A pull request runs a suite only when it changes a path that suite's job
-# lists in `changes`; a push to main runs every suite.
+# A pull request runs a suite only when it changes a path that suite's
+# filter in scripts/suite_changes.sh names (a change to this workflow, the
+# root Makefile, a stack script or the suites' scripts runs all three; docs
+# and demo pages run none); a push to main runs every suite.
 
 on:
   push:
     branches: [main]
   pull_request:
-    # Every path some suite's filter in `changes` names.
+    # Every path some suite's filter in scripts/suite_changes.sh names (the
+    # stack scripts are under the module dirs). Docs and demo pages under
+    # them still start the workflow, but `changes` runs no suite for them.
     paths:
       - "enygma_payments/**"
       - "enygma_dvp/**"
       - "enygma_gnark_shared/**"
       - "enygma_retail_payments/**"
       - "Makefile"
+      - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"
       - ".github/workflows/onchain.yml"
 
@@ -52,33 +57,16 @@ jobs:
       - id: filter
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+        # The paths each suite runs on are in scripts/suite_changes.sh (and
+        # its tests in suite_changes.test.js, under make page-check).
+        # shell: bash adds pipefail, so a failing filter fails the job.
+        shell: bash
         run: |
-          # Each suite's paths (globs; * also matches /): what its stack
-          # builds, deploys or copies in, plus the suites' shared wiring.
-          common="Makefile scripts/suite_result.sh .github/workflows/onchain.yml"
-          paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
-          # make dvp-keygen copies retail's PrivateMint keys.
-          paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*"
-          # The retail stack runs enygma_dvp's Hardhat node and deploys its
-          # contracts; the retail test module imports enygma_dvp's src and
-          # layout.
-          dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"
-          paths_retail="$common enygma_retail_payments/* enygma_gnark_shared/* $dvp_for_retail"
-          set -f # the globs are patterns for [[ ]], not for the working dir
-          # A push (to main) runs every suite: nothing to diff.
-          changed=
-          [ "$GITHUB_EVENT_NAME" != pull_request ] || changed=$(git diff --name-only "$BASE...HEAD")
-          for suite in payments dvp retail; do
-            var=paths_$suite
-            run=false
-            [ "$GITHUB_EVENT_NAME" = pull_request ] || run=true
-            while IFS= read -r f; do
-              for p in ${!var}; do
-                if [[ -n $f && $f == $p ]]; then run=true; fi
-              done
-            done <<<"$changed"
-            echo "$suite=$run" | tee -a "$GITHUB_OUTPUT"
-          done
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only "$BASE...HEAD" | bash scripts/suite_changes.sh
+          else
+            bash scripts/suite_changes.sh --all
+          fi | tee -a "$GITHUB_OUTPUT"
 
   payments:
     name: payments e2e

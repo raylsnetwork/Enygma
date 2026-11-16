@@ -123,6 +123,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
 	@# suite_result.sh, the on-chain suites' verdict, fails a failed test or an unlisted skip.
 	@node --test scripts/suite_result.test.js >/dev/null || node --test scripts/suite_result.test.js
+	@# suite_changes.sh, the on-chain workflow's filter, runs the suites a change touches.
+	@node --test scripts/suite_changes.test.js >/dev/null || node --test scripts/suite_changes.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
