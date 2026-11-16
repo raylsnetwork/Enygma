@@ -22,9 +22,11 @@ on:
 permissions:
   contents: read
 
+# A new push cancels a PR's older run; on main every commit's run finishes,
+# so each merged commit is verified.
 concurrency:
   group: onchain-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   payments:
