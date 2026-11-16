@@ -25,14 +25,15 @@ var (
 
 // fakeNode answers the two RPCs scanTags makes: eth_blockNumber with tip,
 // and eth_getLogs with the TagRegistry's logs or the vault's Commitment
-// event for each commitment in vault. vaultDown fails the vault's, all but
-// the first vaultUpFor of them.
+// events for the queried commitments in vault. vaultDown fails the vault's,
+// all but the first vaultUpFor of them; vaultQueries counts them.
 type fakeNode struct {
-	tip        uint64
-	tagLogs    []ethtypes.Log
-	vault      map[common.Hash]bool
-	vaultDown  bool
-	vaultUpFor int
+	tip          uint64
+	tagLogs      []ethtypes.Log
+	vault        map[common.Hash]bool
+	vaultDown    bool
+	vaultUpFor   int
+	vaultQueries int
 }
 
 func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +64,7 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case testTagRegistry:
 			logs = f.tagLogs
 		case testVault:
+			f.vaultQueries++
 			if f.vaultDown && f.vaultUpFor == 0 {
 				resp["error"] = map[string]any{"code": -32000, "message": "node unavailable"}
 				break
@@ -70,8 +72,10 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if f.vaultUpFor > 0 {
 				f.vaultUpFor--
 			}
-			if cm := q.Topics[2][0]; f.vault[cm] {
-				logs = append(logs, ethtypes.Log{Address: testVault, Topics: []common.Hash{commitmentTopic, {}, cm}})
+			for _, cm := range q.Topics[2] {
+				if f.vault[cm] {
+					logs = append(logs, ethtypes.Log{Address: testVault, Topics: []common.Hash{commitmentTopic, {}, cm}})
+				}
 			}
 		}
 		if resp["error"] == nil {
@@ -204,9 +208,12 @@ func TestScanTagsKeepsCursorOnRPCError(t *testing.T) {
 }
 
 // Alice pays Bob twice, and the vault's events become unreadable after the
-// scan has confirmed her first payment: the failed scan keeps neither note,
-// so the retry finds both rather than only the one it had not yet reached.
+// scan has confirmed her first payment, one commitment per vault query: the
+// failed scan keeps neither note, so the retry finds both rather than only
+// the one it had not yet reached.
 func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
+	defer func(n int) { vaultQueryChunk = n }(vaultQueryChunk)
+	vaultQueryChunk = 1
 	node := &fakeNode{tip: 6, vaultDown: true, vaultUpFor: 2}
 	e, bob, _ := scanSetup(t, node)
 	alice := bob.tags.in[1]
@@ -229,5 +236,38 @@ func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
 	found, _, _, err := e.scanTags(context.Background(), bob)
 	if err != nil || len(found) != 2 || len(bob.notes) != 2 || bob.tags.lastBlock != 6 {
 		t.Fatalf("retry found %d notes, kept %d, cursor %d, err %v; want both of Alice's and block 6", len(found), len(bob.notes), bob.tags.lastBlock, err)
+	}
+}
+
+// An attacker fills a channel to Bob with well-formed notes that are not in
+// the vault: the scan confirms all its candidates in one vault query, not
+// one per tag, and still skips every junk note and finds Alice's payment.
+func TestScanTagsConfirmsInOneVaultQuery(t *testing.T) {
+	node := &fakeNode{tip: 200}
+	e, bob, _ := scanSetup(t, node)
+	attacker := bob.tags.in[0]
+	const junk = 150
+	for i := range junk {
+		b := uint64(10 + i)
+		node.tagLogs = append(node.tagLogs, tagLog(t, b, attacker, sealedNote(t, b, attacker, big.NewInt(7), big.NewInt(int64(1000+i)))))
+	}
+
+	found, _, skipped, err := e.scanTags(context.Background(), bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].block != 4 || skipped != junk+2 {
+		t.Fatalf("found %d notes and skipped %d tags, want Alice's note and %d", len(found), skipped, junk+2)
+	}
+	if node.vaultQueries != 1 {
+		t.Errorf("confirmed %d candidates in %d vault queries, want 1", junk+2, node.vaultQueries)
+	}
+
+	// Rescanning the same blocks with 100 commitments a query takes two.
+	defer func(n int) { vaultQueryChunk = n }(vaultQueryChunk)
+	vaultQueryChunk = 100
+	bob.tags.lastBlock, bob.notes, node.vaultQueries = 1, nil, 0
+	if found, _, _, err := e.scanTags(context.Background(), bob); err != nil || len(found) != 1 || node.vaultQueries != 2 {
+		t.Errorf("chunks of 100: found %d notes in %d vault queries, err %v; want Alice's in 2", len(found), node.vaultQueries, err)
 	}
 }
