@@ -39,6 +39,13 @@ test('a passing suite prints its top-level counts and passes', () => {
   assert.match(r.out, /^suite SKIP: 0$/m);
 });
 
+test('a suite that ran no tests fails, though go test exited 0', () => {
+  // A build tag, a renamed file or a TestMain that exits early: go test is happy.
+  const r = run('testing: warning: no tests to run\nPASS\nok  \tenygma_test\t0.01s [no tests to run]\n');
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /^no test passed: the suite ran no tests$/m);
+});
+
 test('a failed test fails the suite, and is listed', () => {
   // go test's status is 0 here, so the FAIL line alone must fail the suite.
   const r = run('--- PASS: TestA (0s)\n--- FAIL: TestB (0s)\nFAIL\n');

@@ -2,8 +2,9 @@
 # The verdict on an on-chain suite's `go test -v` log, for the suites' make
 # targets (make payments-test; built for dvp-test and retail-test too):
 # prints `suite PASS/FAIL/SKIP` counts (top-level tests), lists the failed and
-# skipped tests, and exits non-zero when go test did, when any test failed, or
-# when a test (or subtest) skipped that is not on the suite's known-skip list.
+# skipped tests, and exits non-zero when go test did, when no test passed (a
+# suite that ran nothing), when any test failed, or when a test (or subtest)
+# skipped that is not on the suite's known-skip list.
 #
 # Usage: suite_result.sh <log> <go test exit status> "<known skip> ..."
 #   Known skips are full test names (TestA, or TestA/sub for a subtest),
@@ -18,6 +19,7 @@ grep -E '^ *--- (FAIL|SKIP)' "$log"
 
 ok=1
 [ "$status" = 0 ] || { echo "go test exited $status"; ok=0; }
+[ "$(grep -c '^--- PASS' "$log")" -gt 0 ] || { echo "no test passed: the suite ran no tests"; ok=0; }
 grep -qE '^ *--- FAIL' "$log" && ok=0
 for name in $(sed -nE 's/^ *--- SKIP: ([^ ]+) .*/\1/p' "$log"); do
     case " $known " in
