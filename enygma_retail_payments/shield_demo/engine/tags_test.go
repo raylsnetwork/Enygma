@@ -52,7 +52,10 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Address []common.Address `json:"address"`
 			Topics  [][]common.Hash  `json:"topics"`
 		}
-		json.Unmarshal(req.Params[0], &q) //nolint:errcheck
+		if err := json.Unmarshal(req.Params[0], &q); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		logs := []ethtypes.Log{}
 		switch q.Address[0] {
 		case testTagRegistry:
