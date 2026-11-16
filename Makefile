@@ -191,7 +191,7 @@ dvp-gnark: ## Start the DvP gnark proof server on :8081 (keep running)
 	cd enygma_dvp/gnark_circuits && go run ./cmd/server
 
 dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :8081, relayers :8091/:8092), detached; returns when it is up
-	@logs=$${DVP_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}; mkdir -p $$logs; : >$$logs/stack.log; \
+	@logs=$${DVP_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/stack.log; \
 	(cd enygma_dvp && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash scripts/stack.sh >$$logs/stack.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
@@ -233,7 +233,7 @@ PAYMENTS_LOG_DIR ?=
 PAYMENTS_KNOWN_SKIPS :=
 
 payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
-	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p $$logs; : >$$logs/stack.log; \
+	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/stack.log; \
 	(LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash enygma_payments/run_scripts/stack.sh >$$logs/stack.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
@@ -302,7 +302,7 @@ shield-test: ## Shield demo scenario, default run only, subtests matching T= (ne
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
 
 shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relayer :8090), detached; returns when it is up
-	@logs=$${RETAIL_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/shield_demo.XXXXXX")}; mkdir -p $$logs; : >$$logs/run.log; \
+	@logs=$${RETAIL_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/shield_demo.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/run.log; \
 	(cd enygma_retail_payments/shield_demo && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash run.sh --no-demo >$$logs/run.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
