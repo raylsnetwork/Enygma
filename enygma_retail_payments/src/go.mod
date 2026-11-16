@@ -5,7 +5,7 @@ go 1.26.8
 require (
 	github.com/ethereum/go-ethereum v1.17.10
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 )
 
 require (
@@ -39,8 +39,8 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 )
 
 // Local replace — remove once enygma_dvp is published as a standalone Go module.
