@@ -162,8 +162,14 @@ ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 # dvp-stack brings up everything the suite uses (both deployments, gnark, both
 # relayers), so no test skips for a missing service. Run dvp-test once per
 # fresh stack: ERC721 state accumulates across runs. The dvp-chain/deploy/init/
-# gnark targets are the stack's pieces, for running one by hand.
+# gnark targets are the stack's pieces, for running one by hand. Logs go to
+# DVP_LOG_DIR (default: a fresh temp dir), the suite's to suite.log there.
 DVP_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_dvp_stack.pid
+DVP_LOG_DIR ?=
+# Tests allowed to skip in dvp-test (full names, space-separated): the
+# NewKeyPair field-range flakes. Any other skip fails the suite, so a relayer
+# or deployment missing for tests 10/12/15/26/27 cannot pass for green.
+DVP_KNOWN_SKIPS := TestNewKeyPair TestNewKeyPairDeterministicPublicKey
 
 dvp-chain: ## Start a local Hardhat node (keep running)
 	cd enygma_dvp && npx hardhat node
@@ -183,7 +189,7 @@ dvp-gnark: ## Start the DvP gnark proof server on :8081 (keep running)
 	cd enygma_dvp/gnark_circuits && go run ./cmd/server
 
 dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :8081, relayers :8091/:8092), detached; returns when it is up
-	@logs=$$(mktemp -d -t dvp_stack); \
+	@logs=$${DVP_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}; mkdir -p $$logs; : >$$logs/stack.log; \
 	(cd enygma_dvp && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash scripts/stack.sh >$$logs/stack.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
@@ -197,18 +203,19 @@ dvp-stack-stop: ## Stop the stack make dvp-stack started, and wait for its ports
 	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'scripts/stack.sh' || { echo "no stack started by make dvp-stack"; exit 1; }; \
 	kill -TERM $$pid; \
 	for _ in $$(seq 1 150); do \
-		lsof -tiTCP:8545,8081,8091,8092 -sTCP:LISTEN >/dev/null || { echo "stack stopped"; exit 0; }; \
+		busy=; for p in 8545 8081 8091 8092; do (exec 3<>/dev/tcp/127.0.0.1/$$p) 2>/dev/null && busy="$$busy :$$p"; done; \
+		[ -n "$$busy" ] || { rm -f $(DVP_STACK_PID) $(DVP_STACK_PID).logs; echo "stack stopped"; exit 0; }; \
 		sleep 0.2; \
 	done; \
-	echo "still listening after about 30 s:"; lsof -iTCP:8545,8081,8091,8092 -sTCP:LISTEN; exit 1
+	echo "still listening on$$busy after about 30 s"; exit 1
 
-dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail/skip counts
-	@log=$$(mktemp -t dvp_test); status=0; export CC=$${CC:-/usr/bin/clang}; \
-	env=$$(cat $(DVP_STACK_PID).logs 2>/dev/null)/test.env; \
-	if [ -f "$$env" ]; then set -a; . "$$env"; set +a; else echo "no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers"; fi; \
-	cd enygma_dvp/test; go test -count=1 -v ./... -timeout 1800s >$$log 2>&1 || status=1; \
-	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
-	grep -E '^--- (FAIL|SKIP)' $$log; echo "log: $$log"; exit $$status
+dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail/skip counts, fails on a skip not in DVP_KNOWN_SKIPS
+	@logs=$$(cat $(DVP_STACK_PID).logs 2>/dev/null); \
+	if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/dvp_test.XXXXXX"); fi; \
+	if [ -f "$$logs/test.env" ]; then set -a; . "$$logs/test.env"; set +a; else echo "no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers"; fi; \
+	[ "$$(uname -s)" != Darwin ] || export CC=$${CC:-/usr/bin/clang}; \
+	status=0; cd enygma_dvp/test; go test -count=1 -v ./... -timeout 1800s >$$log 2>&1 || status=$$?; \
+	cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(DVP_KNOWN_SKIPS)'; result=$$?; echo "log: $$log"; exit $$result
 
 # Full local flow for enygma_payments' end-to-end suite (go_client/enygma_test):
 # payments-stack -> payments-test -> payments-stack-stop. payments-stack compiles

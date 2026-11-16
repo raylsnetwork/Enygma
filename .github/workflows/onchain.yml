@@ -3,18 +3,24 @@ name: onchain
 # The on-chain end-to-end suites, each on a fresh stack on its own runner,
 # through the same make targets a developer runs locally:
 #   make payments-stack && make payments-test; make payments-stack-stop
+#   make dvp-stack && make dvp-test; make dvp-stack-stop
 # A suite fails on any failed test and on any skip not on its known-skip
-# list (PAYMENTS_KNOWN_SKIPS in the root Makefile). On failure the stack's
-# and the suite's logs are uploaded as an artifact. Separate from `ci` so
-# these longer jobs do not hold up the fast checks.
+# list (PAYMENTS_KNOWN_SKIPS, DVP_KNOWN_SKIPS in the root Makefile). On
+# failure the stack's and the suite's logs are uploaded as an artifact.
+# Separate from `ci` so these longer jobs do not hold up the fast checks.
+# A pull request runs a suite only when it changes a path that suite's job
+# lists in `changes`; a push to main runs every suite.
 
 on:
   push:
     branches: [main]
   pull_request:
+    # Every path some suite's filter in `changes` names.
     paths:
       - "enygma_payments/**"
+      - "enygma_dvp/**"
       - "enygma_gnark_shared/**"
+      - "enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*"
       - "Makefile"
       - "scripts/suite_result.sh"
       - ".github/workflows/onchain.yml"
@@ -29,8 +35,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Which suites this event runs: on a pull request, those whose paths it
+  # changes; on a push to main, all of them.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      payments: ${{ steps.filter.outputs.payments }}
+      dvp: ${{ steps.filter.outputs.dvp }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Each suite's paths (globs; * also matches /): what its stack
+          # builds, deploys or copies in, plus the suites' shared wiring.
+          common="Makefile scripts/suite_result.sh .github/workflows/onchain.yml"
+          paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
+          # make dvp-keygen copies retail's PrivateMint keys.
+          paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*"
+          set -f # the globs are patterns for [[ ]], not for the working dir
+          # A push (to main) runs every suite: nothing to diff.
+          changed=
+          [ "$GITHUB_EVENT_NAME" != pull_request ] || changed=$(git diff --name-only "$BASE...HEAD")
+          for suite in payments dvp; do
+            var=paths_$suite
+            run=false
+            [ "$GITHUB_EVENT_NAME" = pull_request ] || run=true
+            while IFS= read -r f; do
+              for p in ${!var}; do
+                if [[ -n $f && $f == $p ]]; then run=true; fi
+              done
+            done <<<"$changed"
+            echo "$suite=$run" | tee -a "$GITHUB_OUTPUT"
+          done
+
   payments:
     name: payments e2e
+    needs: changes
+    if: needs.changes.outputs.payments == 'true'
     runs-on: ubuntu-latest
     # The suite runs in under a minute and the stack starts in about one; a
     # Burn key generation on a cache miss adds a few more. payments-test's
@@ -85,4 +130,64 @@ jobs:
           path: |
             ${{ env.PAYMENTS_LOG_DIR }}
             !${{ env.PAYMENTS_LOG_DIR }}/bin
+          if-no-files-found: warn
+
+  dvp:
+    name: dvp e2e
+    needs: changes
+    if: needs.changes.outputs.dvp == 'true'
+    runs-on: ubuntu-latest
+    # The suite and the stack's start each take about 2.5 min here, and a
+    # key generation on a cache miss about 30 s. dvp-test's go test times
+    # out at 30 min, which this job's timeout cuts short: the logs are still
+    # uploaded on cancel.
+    timeout-minutes: 30
+    steps:
+      # make dvp-stack logs here; uploaded when the job fails.
+      - run: echo "DVP_LOG_DIR=$RUNNER_TEMP/dvp-logs" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: enygma_dvp/test/go.mod
+          cache-dependency-path: |
+            enygma_dvp/test/go.sum
+            enygma_dvp/src/go.sum
+            enygma_dvp/scripts/go.sum
+            enygma_dvp/gnark_circuits/go.sum
+            enygma_dvp/relayer/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: enygma_dvp/.nvmrc
+          cache: npm
+          cache-dependency-path: enygma_dvp/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: enygma_dvp
+
+      # The DvP keys are gitignored. make dvp-keygen generates them and copies
+      # in retail's PrivateMint keys (committed through LFS). A change to the
+      # DvP circuits, what they import (go list -deps ./cmd/keygen), the key
+      # generator, or retail's PrivateMint keys misses the cache and
+      # regenerates them.
+      - id: dvp-keys
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: enygma_dvp/gnark_circuits/scripts/keys
+          key: dvp-keys-${{ hashFiles('enygma_dvp/gnark_circuits/templates/**', 'enygma_dvp/gnark_circuits/primitives/**', 'enygma_dvp/gnark_circuits/scripts/*.go', 'enygma_dvp/gnark_circuits/cmd/keygen/**', 'enygma_dvp/gnark_circuits/go.mod', 'enygma_dvp/gnark_circuits/go.sum', 'enygma_gnark_shared/**', 'enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*') }}
+      - name: generate DvP keys
+        if: steps.dvp-keys.outputs.cache-hit != 'true'
+        run: make dvp-keygen
+
+      - run: make dvp-stack
+      - run: make dvp-test
+      - if: always()
+        run: make dvp-stack-stop || true
+      - if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dvp-logs
+          path: |
+            ${{ env.DVP_LOG_DIR }}
+            !${{ env.DVP_LOG_DIR }}/bin
           if-no-files-found: warn
