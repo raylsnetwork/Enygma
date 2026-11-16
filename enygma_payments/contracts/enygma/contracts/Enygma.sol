@@ -2735,3 +2735,5 @@ contract Enygma is IEnygma {
         return CurveBabyJubJub.pointAdd(gX, gY, hX, hY);
     }
 }
+
+// path-filter probe (#286): enygma_payments contract, do not merge
