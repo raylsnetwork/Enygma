@@ -15,11 +15,11 @@ const SCRIPT = path.join(__dirname, 'suite_result.sh');
 
 // run writes log to a scratch file and runs the checker on it with go test's
 // exit status and the known skips; it returns the exit code and output.
-function run(log, { status = 0, known = '' } = {}) {
+function run(log, { status = 0, known = '', cwd } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suite-result-test-'));
   const file = path.join(dir, 'suite.log');
   fs.writeFileSync(file, log);
-  const r = spawnSync('bash', [SCRIPT, file, String(status), known], { encoding: 'utf8' });
+  const r = spawnSync('bash', [SCRIPT, file, String(status), known], { encoding: 'utf8', cwd });
   fs.rmSync(dir, { recursive: true });
   return { code: r.status, out: r.stdout + r.stderr };
 }
@@ -83,4 +83,17 @@ test('a skipped subtest counts against the list by its full name', () => {
   const log = '--- PASS: TestA (0s)\n    --- SKIP: TestA/flake (0s)\n';
   assert.strictEqual(run(log).code, 1);
   assert.strictEqual(run(log, { known: 'TestA/flake' }).code, 0);
+});
+
+test('a skipped subtest name with glob characters is matched as written', () => {
+  // Go keeps * and [ ] in subtest names; run where they match a file.
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'suite-result-glob-'));
+  fs.mkdirSync(path.join(cwd, 'TestF'));
+  fs.writeFileSync(path.join(cwd, 'TestF', 'amount_1'), '');
+  const log = '--- PASS: TestF (0s)\n    --- SKIP: TestF/amount_* (0s)\n';
+  const known = run(log, { known: 'TestF/amount_*', cwd });
+  const unknown = run(log, { cwd });
+  fs.rmSync(cwd, { recursive: true });
+  assert.strictEqual(known.code, 0, known.out);
+  assert.match(unknown.out, /^unexpected skip: TestF\/amount_\*$/m);
 });

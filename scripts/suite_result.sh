@@ -21,10 +21,12 @@ ok=1
 [ "$status" = 0 ] || { echo "go test exited $status"; ok=0; }
 [ "$(grep -c '^--- PASS' "$log")" -gt 0 ] || { echo "no test passed: the suite ran no tests"; ok=0; }
 grep -qE '^ *--- FAIL' "$log" && ok=0
-for name in $(sed -nE 's/^ *--- SKIP: ([^ ]+) .*/\1/p' "$log"); do
+# read, not for over $(sed …): a subtest name may hold * or [ ], which an
+# unquoted substitution would expand against the files in the working dir.
+while IFS= read -r name; do
     case " $known " in
     *" $name "*) ;;
     *) echo "unexpected skip: $name"; ok=0 ;;
     esac
-done
+done < <(sed -nE 's/^ *--- SKIP: ([^ ]+) .*/\1/p' "$log")
 [ "$ok" = 1 ]
