@@ -71,7 +71,7 @@ func assertStatement(t *testing.T, r *PaymentResult, want []int64) {
 // The statement a Payment proof is submitted with is the one the server
 // proved, as it returned it, not one rebuilt from the request.
 func TestBoundPaymentProof_StatementIsTheServersPublicSignals(t *testing.T) {
-	signals := []int64{100, 101, 102, 103, 104, 105, 106}
+	signals := []int64{100, 101, 102, 103, 104, 105, 106, 107}
 	c := proveServer(t, "/proof/payment", signals)
 	a := newPaymentArgs(t)
 	r, err := c.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
@@ -85,7 +85,7 @@ func TestBoundPaymentProof_StatementIsTheServersPublicSignals(t *testing.T) {
 }
 
 func TestBoundPaymentFeeProof_StatementIsTheServersPublicSignals(t *testing.T) {
-	signals := []int64{100, 101, 102, 103, 104, 105, 106, 107}
+	signals := []int64{100, 101, 102, 103, 104, 105, 106, 107, 108}
 	c := proveServer(t, "/proof/paymentFee", signals)
 	a := newPaymentArgs(t)
 	r, err := c.BoundPaymentFeeProof(big.NewInt(0xABCD), big.NewInt(10), big.NewInt(0),
@@ -101,7 +101,7 @@ func TestBoundPaymentFeeProof_StatementIsTheServersPublicSignals(t *testing.T) {
 // Two input notes (60 + 50 merged into 70 paid and 40 back) are proved by the
 // Payment2in circuit, so the request goes to its own route.
 func TestBoundPaymentProof_TwoInputsUsePayment2in(t *testing.T) {
-	signals := []int64{100, 101, 102, 103, 104, 105, 106, 107, 108, 109}
+	signals := []int64{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110}
 	c := proveServer(t, "/proof/payment2in", signals)
 	a := newPaymentArgs(t)
 	r, err := c.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
@@ -134,8 +134,8 @@ func assertInts(t *testing.T, name string, got []*big.Int, want ...int64) {
 
 // A PaymentFee result names each field of the statement the server returned.
 func TestBoundPaymentFeeProof_AccessorsNameTheStatementsFields(t *testing.T) {
-	// message, tree, root, nullifier, commitments out ×2, contract address, fee
-	c := proveServer(t, "/proof/paymentFee", []int64{0, 3, 900, 901, 902, 903, 0xABCD, 10})
+	// message, tree, root, nullifier, commitments out ×2, contract address, ciphertext hash, fee
+	c := proveServer(t, "/proof/paymentFee", []int64{0, 3, 900, 901, 902, 903, 0xABCD, 10, 0xC1F7})
 	a := newPaymentArgs(t)
 	r, err := c.BoundPaymentFeeProof(big.NewInt(0xABCD), big.NewInt(10), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
@@ -155,7 +155,7 @@ func TestBoundPaymentFeeProof_AccessorsNameTheStatementsFields(t *testing.T) {
 
 // A Payment result has no fee.
 func TestBoundPaymentProof_HasNoFee(t *testing.T) {
-	c := proveServer(t, "/proof/payment", []int64{0, 3, 900, 901, 902, 903, 0xABCD})
+	c := proveServer(t, "/proof/payment", []int64{0, 3, 900, 901, 902, 903, 0xABCD, 0xC1F7})
 	a := newPaymentArgs(t)
 	r, err := c.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
@@ -174,14 +174,64 @@ func TestBoundPaymentProof_HasNoFee(t *testing.T) {
 // A response whose statement is not the circuit's statement length is an
 // error, not a result whose accessors read the wrong signals.
 func TestBoundPaymentProof_RejectsAStatementOfTheWrongLength(t *testing.T) {
-	c := proveServer(t, "/proof/payment", []int64{0, 3, 900, 901, 902, 903})
+	c := proveServer(t, "/proof/payment", []int64{0, 3, 900, 901, 902, 903, 0xABCD})
 	a := newPaymentArgs(t)
 	_, err := c.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
 		[]*big.Int{big.NewInt(60), big.NewInt(40)}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
 		8, a.proofs, []*big.Int{big.NewInt(3)}, big.NewInt(7))
 	if err == nil {
-		t.Fatal("a 6-signal Payment statement was accepted")
+		t.Fatal("a 7-signal Payment statement was accepted")
+	}
+}
+
+// PaymentCiphertextHash must equal CiphertextHash.sol's value, which the
+// contracts compare with the proof's StCiphertextHash. The vectors are
+// keccak256(abi.encode(bytes[], bytes[])) mod the scalar field, computed
+// with ethers' ABI coder: no ciphertexts (Erc20CoinVault.transfer), one
+// note (EnygmaDvp.payment*) and two (transferV2).
+func TestPaymentCiphertextHash_MatchesTheContractsEncoding(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ctI, ctII [][]byte
+		want      string
+	}{
+		{"none", nil, nil, "2399156551665389805367252676811131530831779407996746425235550023578295295939"},
+		{"one note", [][]byte{{1, 2}}, [][]byte{{3}}, "21386765348705937713341287917350094816637447784635915768830309461782184974402"},
+		{"two notes", [][]byte{{1}, {2}}, [][]byte{{3}, {4}}, "13835726498560739053917206011880702979312706352419410452261044024720295753759"},
+	} {
+		if got := PaymentCiphertextHash(tc.ctI, tc.ctII); got.String() != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The proof request binds the hash of exactly the ciphertexts the result
+// hands back for EnygmaDvp.payment*.
+func TestBoundPaymentProof_BindsItsCiphertexts(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+		}
+		got, _ = req["stCiphertextHash"].(string)
+		json.NewEncoder(w).Encode(map[string]any{
+			"proof":        []int64{1, 2, 3, 4, 5, 6, 7, 8},
+			"publicSignal": []int64{0, 3, 900, 901, 902, 903, 0xABCD, 0xC1F7},
+		})
+	}))
+	defer srv.Close()
+	a := newPaymentArgs(t)
+	r, err := NewGnarkClient(srv.URL).BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
+		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
+		[]*big.Int{big.NewInt(60), big.NewInt(40)}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+		8, a.proofs, []*big.Int{big.NewInt(3)}, big.NewInt(7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := PaymentCiphertextHash([][]byte{r.CipherText}, [][]byte{r.EncTxData}).String(); got != want {
+		t.Errorf("stCiphertextHash %q, want %s", got, want)
 	}
 }
 
@@ -225,7 +275,7 @@ func TestBoundPaymentProofs_ChangeNoteIsRebuiltFromKeyAndNullifier(t *testing.T)
 		t.Fatal(err)
 	}
 
-	pay, payReqs := recordingProveServer(t, "/proof/payment", 7)
+	pay, payReqs := recordingProveServer(t, "/proof/payment", paymentStatement.length)
 	payRes, err := pay.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
 		[]*big.Int{big.NewInt(60), change}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
@@ -233,7 +283,7 @@ func TestBoundPaymentProofs_ChangeNoteIsRebuiltFromKeyAndNullifier(t *testing.T)
 	if err != nil {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
-	fee, feeReqs := recordingProveServer(t, "/proof/paymentFee", 8)
+	fee, feeReqs := recordingProveServer(t, "/proof/paymentFee", paymentFeeStatement.length)
 	feeRes, err := fee.BoundPaymentFeeProof(big.NewInt(0xABCD), big.NewInt(10), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
 		[]*big.Int{big.NewInt(50), change}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,

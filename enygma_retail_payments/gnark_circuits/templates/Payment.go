@@ -27,6 +27,7 @@ type PaymentCircuit struct {
 	StNullifiers      []frontend.Variable `gnark:",public"` // TmNInputs — nf[i] = Poseidon(sk[i], leafIndex[i])
 	StCommitmentsOut  []frontend.Variable `gnark:",public"` // TmMOutputs — output commitment per output
 	StContractAddress frontend.Variable   `gnark:",public"` // vault contract address (uint160)
+	StCiphertextHash  frontend.Variable   `gnark:",public"` // the payment's note ciphertexts (see bindCiphertextHash)
 
 	// --- private witnesses: inputs ---
 	WtPrivateKeysIn []frontend.Variable   // TmNInputs — sk_spend per input
@@ -73,6 +74,23 @@ func assertPaymentMessage(api frontend.API, message frontend.Variable) {
 func assertChangeSalt(api frontend.API, sk, nullifier0, changeSalt frontend.Variable) {
 	api.AssertIsDifferent(nullifier0, 0)
 	api.AssertIsEqual(changeSalt, pos.Poseidon(api, []frontend.Variable{sk, nullifier0}))
+}
+
+// bindCiphertextHash binds StCiphertextHash, the hash of the note ciphertexts
+// a payment publishes (EnygmaDvp.payment's ctxt/encTxData, a vault
+// transferV2's per-output ciphertexts), into the proof. The circuit cannot
+// check the hash itself: the contract recomputes it from the ciphertexts it
+// is given and compares it with this signal (CiphertextHash.sol). Before,
+// the ciphertexts were plain call arguments, so whoever settled a receipt
+// first, through any entry point, could publish other ciphertexts or none,
+// and the recipient's scan never found the note.
+//
+// A public input that appears in no constraint is not bound by a Groth16
+// proof (its verifying-key term is zero), so the signal is squared: a
+// constraint that holds for every value, the hash of no ciphertexts and a
+// withdrawal's unchecked value included.
+func bindCiphertextHash(api frontend.API, h frontend.Variable) {
+	api.AssertIsEqual(api.Mul(h, h), api.Mul(h, h))
 }
 
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
@@ -168,6 +186,8 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 	// verifying vault): a public input that appears in no constraint is not
 	// bound by the proof, so it would be free to rewrite.
 	api.AssertIsDifferent(circuit.StContractAddress, 0)
+
+	bindCiphertextHash(api, circuit.StCiphertextHash)
 
 	return nil
 }

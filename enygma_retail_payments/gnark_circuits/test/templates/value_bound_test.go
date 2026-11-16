@@ -64,6 +64,7 @@ func spendOneNote(t *testing.T, message int, sk, valueIn, pkOut0, out0, salt0, o
 	a.StCommitmentsOut[0] = boundHash(t, pkOut0, salt0, out0, token)
 	a.StCommitmentsOut[1] = boundHash(t, pkS, salt1, out1, token)
 	a.StContractAddress = big.NewInt(0xABCD)
+	a.StCiphertextHash = big.NewInt(0xC1F7)
 	a.WtPrivateKeysIn[0] = sk
 	a.WtValuesIn[0] = valueIn
 	a.WtSaltsIn[0] = saltIn

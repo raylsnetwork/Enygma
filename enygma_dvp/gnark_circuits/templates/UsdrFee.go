@@ -51,6 +51,7 @@ type UsdrFeeCircuit struct {
 	StContractAddress frontend.Variable   `gnark:",public"`
 	StFee             frontend.Variable   `gnark:",public"` // relayer fee amount, publicly verifiable
 	StTokenId         frontend.Variable   `gnark:",public"` // USDr's fixed token id — public, unlike WtTokenId elsewhere
+	StCiphertextHash  frontend.Variable   `gnark:",public"` // the payment's note ciphertexts (see bindCiphertextHash)
 
 	// --- private witnesses: inputs ---
 	WtPrivateKeysIn []frontend.Variable
@@ -152,6 +153,8 @@ func (circuit *UsdrFeeCircuit) Define(api frontend.API) error {
 	// verifying vault): a public input that appears in no constraint is not
 	// bound by the proof, so it would be free to rewrite.
 	api.AssertIsDifferent(circuit.StContractAddress, 0)
+
+	bindCiphertextHash(api, circuit.StCiphertextHash)
 
 	return nil
 }

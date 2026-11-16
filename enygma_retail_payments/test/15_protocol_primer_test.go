@@ -155,6 +155,7 @@ var paymentPublic = []struct {
 	{"CommitmentOut[0]", layout.PaymentCommitmentsOutOffset},
 	{"CommitmentOut[1]", layout.PaymentCommitmentsOutOffset + 1},
 	{"ContractAddress", layout.PaymentContractAddressOffset},
+	{"CiphertextHash", layout.PaymentCiphertextHashOffset},
 }
 
 // shieldedNote is the opening of the Sender's shielded note.

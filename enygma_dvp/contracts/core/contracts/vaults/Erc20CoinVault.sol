@@ -19,6 +19,7 @@ import {
 } from "../PaymentStatementLayout.sol";
 import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "../DvpStatementLayout.sol";
 import {DvpReceipt} from "../DvpReceipt.sol";
+import {CiphertextHash} from "../CiphertextHash.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
 import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
@@ -83,6 +84,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 nullifiersOffset;
         uint256 commitmentsOutOffset;
         uint256 contractAddressOffset;
+        uint256 ciphertextHashOffset;
     }
 
     ///////////////////////////////////////////////
@@ -193,11 +195,29 @@ contract Erc20CoinVault is AbstractCoinVault {
         }
     }
 
+    // A receipt settles only with the note ciphertexts its proof binds as
+    // StCiphertextHash (see CiphertextHash.sol for the encoding).
+    function _requireCiphertextHash(
+        IEnygmaDvp.ProofReceipt memory receipt,
+        bytes[] memory ciphertextI,
+        bytes[] memory ciphertextII
+    ) internal pure {
+        PaymentCircuit memory circuit = _paymentCircuit(receipt);
+        if (receipt.statement[circuit.ciphertextHashOffset] != CiphertextHash.ofNotes(ciphertextI, ciphertextII)) {
+            revert IEnygmaDvp.CiphertextHashMismatch();
+        }
+    }
+
+    // The receipt's proof must bind the hash of no ciphertexts: transfer
+    // publishes none, so it settles only a payment proved for none. A payment
+    // proved for its recipient's ciphertexts settles only where they are
+    // published (EnygmaDvp.payment*, transferV2), whoever submits it.
     function transfer(
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
         _requireStandaloneTransfer(receipt);
         checkReceiptConditions(receipt);
+        _requireCiphertextHash(receipt, new bytes[](0), new bytes[](0));
         // NEW-1 fix: nullify inputs before inserting outputs (CEI).
         // Reversed order opened a reentrancy window via the Poseidon precompile
         // call inside insertLeaves() — a re-entrant transfer() would find the
@@ -227,6 +247,8 @@ contract Erc20CoinVault is AbstractCoinVault {
         _requireStandaloneTransfer(receipt);
 
         checkReceiptConditions(receipt);
+        // The ciphertexts emitted below must be the ones the proof binds.
+        _requireCiphertextHash(receipt, ciphertextI, ciphertextII);
         // NEW-1 fix: nullify inputs before inserting outputs (CEI — matches transfer()).
         _nullifyFromReceipt(receipt);
         _insertCommitmentsFromReceipt(receipt);
@@ -513,7 +535,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 merkleRootsOffset: Psl.PAYMENT2IN_MERKLE_ROOTS_OFFSET,
                 nullifiersOffset: Psl.PAYMENT2IN_NULLIFIERS_OFFSET,
                 commitmentsOutOffset: Psl.PAYMENT2IN_COMMITMENTS_OUT_OFFSET,
-                contractAddressOffset: Psl.PAYMENT2IN_CONTRACT_ADDRESS_OFFSET
+                contractAddressOffset: Psl.PAYMENT2IN_CONTRACT_ADDRESS_OFFSET,
+                ciphertextHashOffset: Psl.PAYMENT2IN_CIPHERTEXT_HASH_OFFSET
             });
         }
         if (receipt.numberOfInputs != 1) revert ReceiptShapeMismatch();
@@ -528,7 +551,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 merkleRootsOffset: Psl.PAYMENT_RELAYER_FEE_MERKLE_ROOTS_OFFSET,
                 nullifiersOffset: Psl.PAYMENT_RELAYER_FEE_NULLIFIERS_OFFSET,
                 commitmentsOutOffset: Psl.PAYMENT_RELAYER_FEE_COMMITMENTS_OUT_OFFSET,
-                contractAddressOffset: Psl.PAYMENT_RELAYER_FEE_CONTRACT_ADDRESS_OFFSET
+                contractAddressOffset: Psl.PAYMENT_RELAYER_FEE_CONTRACT_ADDRESS_OFFSET,
+                ciphertextHashOffset: Psl.PAYMENT_RELAYER_FEE_CIPHERTEXT_HASH_OFFSET
             });
         }
         if (receipt.numberOfOutputs != 2) revert ReceiptShapeMismatch();
@@ -542,7 +566,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 merkleRootsOffset: Psl.PAYMENT_MERKLE_ROOTS_OFFSET,
                 nullifiersOffset: Psl.PAYMENT_NULLIFIERS_OFFSET,
                 commitmentsOutOffset: Psl.PAYMENT_COMMITMENTS_OUT_OFFSET,
-                contractAddressOffset: Psl.PAYMENT_CONTRACT_ADDRESS_OFFSET
+                contractAddressOffset: Psl.PAYMENT_CONTRACT_ADDRESS_OFFSET,
+                ciphertextHashOffset: Psl.PAYMENT_CIPHERTEXT_HASH_OFFSET
             });
         }
         if (receipt.statement.length == PAYMENT_FEE_LEN) {
@@ -555,7 +580,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 merkleRootsOffset: Psl.PAYMENT_FEE_MERKLE_ROOTS_OFFSET,
                 nullifiersOffset: Psl.PAYMENT_FEE_NULLIFIERS_OFFSET,
                 commitmentsOutOffset: Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET,
-                contractAddressOffset: Psl.PAYMENT_FEE_CONTRACT_ADDRESS_OFFSET
+                contractAddressOffset: Psl.PAYMENT_FEE_CONTRACT_ADDRESS_OFFSET,
+                ciphertextHashOffset: Psl.PAYMENT_FEE_CIPHERTEXT_HASH_OFFSET
             });
         }
         if (receipt.statement.length == USDR_FEE_LEN) {
@@ -568,7 +594,8 @@ contract Erc20CoinVault is AbstractCoinVault {
                 merkleRootsOffset: Psl.USDR_FEE_MERKLE_ROOTS_OFFSET,
                 nullifiersOffset: Psl.USDR_FEE_NULLIFIERS_OFFSET,
                 commitmentsOutOffset: Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET,
-                contractAddressOffset: Psl.USDR_FEE_CONTRACT_ADDRESS_OFFSET
+                contractAddressOffset: Psl.USDR_FEE_CONTRACT_ADDRESS_OFFSET,
+                ciphertextHashOffset: Psl.USDR_FEE_CIPHERTEXT_HASH_OFFSET
             });
         }
         revert ReceiptShapeMismatch();

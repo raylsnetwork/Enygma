@@ -860,6 +860,7 @@ func withdrawRevertNote(t *testing.T, tc *dvpTestContext, d *dvpDeposits, p *dvp
 		"stNullifiers":         [1]string{nf.String()},
 		"stCommitmentsOut":     [2]string{wdCmt.String(), change.String()},
 		"stContractAddress":    new(big.Int).SetBytes(tc.erc20VaultAddr.Bytes()).String(),
+		"stCiphertextHash":     core.PaymentCiphertextHash(nil, nil).String(), // withdrawV2 publishes none
 		"wtPrivateKeysIn":      [1]string{sk.String()},
 		"wtValuesIn":           [1]string{d.erc20Amount.String()},
 		"wtSaltsIn":            [1]string{salt.String()},

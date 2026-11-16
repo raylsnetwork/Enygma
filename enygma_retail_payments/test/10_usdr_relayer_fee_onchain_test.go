@@ -212,6 +212,8 @@ func depositAndBuildUsdrFeeWitness(
 		pathElements[j] = elem.String()
 	}
 
+	// The USDr leg is relayed with empty fee-note ciphertexts ("0x"), and
+	// the proof binds their hash.
 	reqBody := map[string]interface{}{
 		"stMessage":            "0",
 		"stTreeNumbers":        [1]string{"0"},
@@ -219,6 +221,7 @@ func depositAndBuildUsdrFeeWitness(
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtFee.String(), cmtChange.String()},
 		"stContractAddress":    vaultAddrBig.String(),
+		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
 		"stFee":                relayerFeeAmt.String(),
 		"stTokenId":            tokenId.String(),
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},

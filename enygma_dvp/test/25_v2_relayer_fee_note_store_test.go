@@ -86,6 +86,8 @@ func spendFeeNoteFromRelayerStore(
 	client *ethclient.Client,
 	owner *bind.TransactOpts,
 	gnarkClient *core.GnarkClient,
+	dvp *bind.BoundContract,
+	vaultId int64,
 	vault *bind.BoundContract,
 	vaultAddr common.Address,
 	merkleDepth int,
@@ -155,11 +157,13 @@ func spendFeeNoteFromRelayerStore(
 	if err != nil {
 		t.Fatalf("FEE STRANDED: cannot prove a spend of the fee note from the stored opening: %v", err)
 	}
+	// Settled through EnygmaDvp.payment with the note ciphertexts the proof
+	// binds; the vault's bare transfer only takes a proof bound to none.
 	stmt := pay.ContractStatement()
-	tx, err := vault.Transact(owner, "transfer", onchainProofReceipt{
+	tx, err := dvp.Transact(owner, "payment", onchainProofReceipt{
 		Proof: proofStringsToOnchain(t, pay.Proof), Statement: stmt,
 		NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(2),
-	})
+	}, big.NewInt(vaultId), pay.CipherText, pay.EncTxData)
 	if err != nil {
 		t.Fatalf("FEE STRANDED: spending the fee note with the stored opening was refused: %v", err)
 	}

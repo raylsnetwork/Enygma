@@ -91,6 +91,7 @@ func TestPaymentCircuit_PaddingFirstInput_Fails(t *testing.T) {
 	a.StCommitmentsOut[0] = boundHash(t, pk, big.NewInt(444), zero, token)
 	a.StCommitmentsOut[1] = boundHash(t, pk, salt1, zero, token)
 	a.StContractAddress = big.NewInt(0xABCD)
+	a.StCiphertextHash = big.NewInt(0xC1F7)
 	a.WtPrivateKeysIn[0], a.WtValuesIn[0], a.WtSaltsIn[0] = sk, zero, zero
 	sibs := make([]frontend.Variable, cfg.TmMerkleTreeDepth)
 	for i := range sibs {

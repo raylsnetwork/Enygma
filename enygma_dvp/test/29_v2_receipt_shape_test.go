@@ -70,12 +70,14 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		common.HexToAddress("0x00000000000000000000000000000000000000a0"))
 	root, vault := s.root, s.vault
 
-	// Statements as each circuit publishes them, bound to this vault.
-	payment := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault}
-	payment2in := []*big.Int{n(0), n(0), n(0), root, root, n(11), n(12), n(21), n(22), vault}
-	paymentFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault, n(5)}
-	relayerFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), n(23), vault, n(5)}
-	usdrFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault, n(5), n(1)}
+	// Statements as each circuit publishes them, bound to this vault, each
+	// ending in its StCiphertextHash (ch).
+	ch := n(0xC1F7)
+	payment := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault, ch}
+	payment2in := []*big.Int{n(0), n(0), n(0), root, root, n(11), n(12), n(21), n(22), vault, ch}
+	paymentFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault, n(5), ch}
+	relayerFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), n(23), vault, n(5), ch}
+	usdrFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault, n(5), n(1), ch}
 	counterVault := n(0xc0)
 	// [message = commitA, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault]
 	initiator := []*big.Int{n(31), n(0), root, n(11), n(32), n(31), n(33), counterVault}
@@ -113,7 +115,7 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		{"Payment2in claiming 1 input", payment2in, 1, 2},
 		{"PaymentFee claiming 3 outputs", paymentFee, 1, 3},
 	}
-	// (UsdrFee and PaymentRelayerFeePublic both have 9 signals, so a receipt
+	// (UsdrFee and PaymentRelayerFeePublic both have 10 signals, so a receipt
 	// of one claiming the other's output count is the other's exact shape:
 	// it goes to the other circuit's verifying key, which its proof does not
 	// satisfy.)

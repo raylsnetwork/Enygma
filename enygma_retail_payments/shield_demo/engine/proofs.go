@@ -34,6 +34,7 @@ var statements = map[string]statement{
 		{"Nullifiers", layout.PaymentNullifiersOffset, layout.PaymentNullifiersSize},
 		{"CommitmentsOut", layout.PaymentCommitmentsOutOffset, layout.PaymentCommitmentsOutSize},
 		{"ContractAddress", layout.PaymentContractAddressOffset, layout.PaymentContractAddressSize},
+		{"CiphertextHash", layout.PaymentCiphertextHashOffset, layout.PaymentCiphertextHashSize},
 	}, paymentPrivate},
 	"Payment2in": {layout.Payment2inLen, []statementField{
 		{"Message", layout.Payment2inMessageOffset, layout.Payment2inMessageSize},
@@ -42,6 +43,7 @@ var statements = map[string]statement{
 		{"Nullifiers", layout.Payment2inNullifiersOffset, layout.Payment2inNullifiersSize},
 		{"CommitmentsOut", layout.Payment2inCommitmentsOutOffset, layout.Payment2inCommitmentsOutSize},
 		{"ContractAddress", layout.Payment2inContractAddressOffset, layout.Payment2inContractAddressSize},
+		{"CiphertextHash", layout.Payment2inCiphertextHashOffset, layout.Payment2inCiphertextHashSize},
 	}, paymentPrivate},
 	"UsdrFee": {layout.UsdrFeeLen, []statementField{
 		{"Message", layout.UsdrFeeMessageOffset, layout.UsdrFeeMessageSize},
@@ -52,6 +54,7 @@ var statements = map[string]statement{
 		{"ContractAddress", layout.UsdrFeeContractAddressOffset, layout.UsdrFeeContractAddressSize},
 		{"Fee", layout.UsdrFeeFeeOffset, layout.UsdrFeeFeeSize},
 		{"TokenId", layout.UsdrFeeTokenIdOffset, layout.UsdrFeeTokenIdSize},
+		{"CiphertextHash", layout.UsdrFeeCiphertextHashOffset, layout.UsdrFeeCiphertextHashSize},
 	}, []string{"PrivateKeysIn", "ValuesIn", "SaltsIn", "PathElements", "PathIndices", "SpendPublicKeysOut", "ValuesOut", "SaltsOut"}},
 }
 

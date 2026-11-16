@@ -5,6 +5,9 @@ import (
 	"math/big"
 
 	"enygma_dvp/layout"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // PaymentResult holds the output of the Payment-family proof functions —
@@ -17,7 +20,9 @@ type PaymentResult struct {
 	Statement       []*big.Int
 	NumberOfInputs  int
 	NumberOfOutputs int
-	// Bob's note discovery data (output 0 only — published on-chain).
+	// Bob's note discovery data (output 0 only — published on-chain). The
+	// proof binds their hash (PaymentCiphertextHash), so the receipt settles
+	// only through EnygmaDvp.payment* with exactly these two.
 	CipherText []byte // ML-KEM capsule for Bob (1088 bytes)
 	EncTxData  []byte // AES-256-GCM ciphertext of (tokenId || amount) for Bob
 	// Bob's salt — needed by the tag-based notification path (private tag layer).
@@ -68,6 +73,45 @@ var (
 		fee:             field{layout.PaymentFeeFeeOffset, layout.PaymentFeeFeeSize},
 	}
 )
+
+// snarkScalarField is the BN254 scalar field order, the modulus every public
+// signal is reduced by.
+var snarkScalarField, _ = new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+
+var bytesArrays = func() abi.Arguments {
+	t, err := abi.NewType("bytes[]", "", nil)
+	if err != nil {
+		panic(err)
+	}
+	return abi.Arguments{{Type: t}, {Type: t}}
+}()
+
+// PaymentCiphertextHash is the StCiphertextHash a Payment-family proof binds:
+// keccak256(abi.encode(ciphertextI, ciphertextII)) mod the scalar field, the
+// value CiphertextHash.sol recomputes from the ciphertexts a settlement
+// publishes. ciphertextI[i]/ciphertextII[i] are one note's ML-KEM capsule and
+// AEAD ciphertext: one note (output 0's) for EnygmaDvp.payment*, one per
+// output for Erc20CoinVault.transferV2, none for transfer.
+func PaymentCiphertextHash(ciphertextI, ciphertextII [][]byte) *big.Int {
+	if ciphertextI == nil {
+		ciphertextI = [][]byte{}
+	}
+	if ciphertextII == nil {
+		ciphertextII = [][]byte{}
+	}
+	enc, err := bytesArrays.Pack(ciphertextI, ciphertextII)
+	if err != nil {
+		panic(fmt.Sprintf("abi-encode ciphertexts: %v", err)) // only on a type mismatch, which [][]byte cannot have
+	}
+	h := new(big.Int).SetBytes(crypto.Keccak256(enc))
+	return h.Mod(h, snarkScalarField)
+}
+
+// paymentNoteCiphertextHash is PaymentCiphertextHash for the one note
+// EnygmaDvp.payment* publishes.
+func paymentNoteCiphertextHash(ctxt, encTxData []byte) *big.Int {
+	return PaymentCiphertextHash([][]byte{ctxt}, [][]byte{encTxData})
+}
 
 // ContractStatement returns the statement for on-chain submission: Statement,
 // as the server returned it.
@@ -224,6 +268,7 @@ func (c *GnarkClient) BoundPaymentProof(
 		"stNullifiers":         bigIntSliceToStrings(stNullifiers),
 		"stCommitmentsOut":     bigIntSliceToStrings(stCommitmentsOut),
 		"stContractAddress":    contractAddress.String(),
+		"stCiphertextHash":     paymentNoteCiphertextHash(cipherText, encTxData).String(),
 		"wtPrivateKeysIn":      bigIntSliceToStrings(extractPrivateKeys(keysIn)),
 		"wtValuesIn":           bigIntSliceToStrings(wtValuesIn),
 		"wtSaltsIn":            bigIntSliceToStrings(wtSaltsIn),
@@ -390,6 +435,7 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 		"stNullifiers":         bigIntSliceToStrings(stNullifiers),
 		"stCommitmentsOut":     bigIntSliceToStrings(stCommitmentsOut),
 		"stContractAddress":    contractAddress.String(),
+		"stCiphertextHash":     paymentNoteCiphertextHash(cipherText, encTxData).String(),
 		"stFee":                stFee.String(),
 		"wtPrivateKeysIn":      bigIntSliceToStrings(extractPrivateKeys(keysIn)),
 		"wtValuesIn":           bigIntSliceToStrings(wtValuesIn),

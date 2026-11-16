@@ -127,12 +127,15 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		path[i] = mp.Elements[i].String()
 	}
 	req := map[string]any{
-		"stMessage":            "0",
-		"stTreeNumbers":        [1]string{treeNum.String()},
-		"stMerkleRoots":        [1]string{mp.Root.String()},
-		"stNullifiers":         [1]string{nullifier.String()},
-		"stCommitmentsOut":     [2]string{feeNote.String(), change.commitment.String()},
-		"stContractAddress":    new(big.Int).SetBytes(c.usdrVaultAddr.Bytes()).String(),
+		"stMessage":         "0",
+		"stTreeNumbers":     [1]string{treeNum.String()},
+		"stMerkleRoots":     [1]string{mp.Root.String()},
+		"stNullifiers":      [1]string{nullifier.String()},
+		"stCommitmentsOut":  [2]string{feeNote.String(), change.commitment.String()},
+		"stContractAddress": new(big.Int).SetBytes(c.usdrVaultAddr.Bytes()).String(),
+		// The USDr leg publishes empty fee-note ciphertexts (relayUsdrFee's
+		// "0x"): the relayer keeps the fee note's opening from the request.
+		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
 		"stFee":                e.usdrFixedFee.String(),
 		"stTokenId":            tokenId.String(),
 		"wtPrivateKeysIn":      [1]string{payer.Spend.PrivateKey.String()},

@@ -19,6 +19,7 @@ type PaymentRelayerFeePublicRequest struct {
 	StNullifiers      [1]string `json:"stNullifiers"      binding:"required"`
 	StCommitmentsOut  [3]string `json:"stCommitmentsOut"  binding:"required"`
 	StContractAddress string    `json:"stContractAddress" binding:"required"`
+	StCiphertextHash  string    `json:"stCiphertextHash"  binding:"required"` // hash of the ciphertexts the payment publishes (CiphertextHash.sol)
 	StFee             string    `json:"stFee"             binding:"required"`
 
 	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`

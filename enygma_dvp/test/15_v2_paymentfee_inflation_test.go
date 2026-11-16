@@ -177,6 +177,7 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtInflated.String(), cmtChange.String()},
 		"stContractAddress":    vaultAddrBig.String(),
+		"stCiphertextHash":     core.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(), // paymentWithFee(..., "", "")
 		"stFee":                stFee.String(),
 		"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{deposit.String()},
@@ -255,6 +256,7 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		"stNullifiers":         [1]string{nf2.String()},
 		"stCommitmentsOut":     [2]string{wdCmt.String(), change2.String()},
 		"stContractAddress":    vaultAddrBig.String(),
+		"stCiphertextHash":     core.PaymentCiphertextHash(nil, nil).String(), // withdrawV2 publishes none
 		"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{inflated.String()},
 		"wtSaltsIn":            [1]string{inflSalt.String()},
@@ -351,6 +353,7 @@ func TestV2PaymentFee_HonestFeeStillWorks(t *testing.T) {
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtBob.String(), cmtChange.String()},
 		"stContractAddress":    vaultAddrBig.String(),
+		"stCiphertextHash":     core.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(), // paymentWithFee(..., "", "")
 		"stFee":                fee.String(),
 		"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{deposit.String()},

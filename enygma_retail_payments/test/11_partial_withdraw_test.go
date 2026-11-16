@@ -340,12 +340,15 @@ func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message strin
 		"stMerkleRoots":     roots,
 		"stNullifiers":      nullifierStrs,
 		"stContractAddress": vaultInt(e.vaultAddr).String(),
-		"wtPrivateKeysIn":   keys,
-		"wtValuesIn":        values,
-		"wtSaltsIn":         salts,
-		"wtPathElements":    paths,
-		"wtPathIndices":     indices,
-		"wtTokenId":         e.tokenId.String(),
+		// A withdrawal's ciphertexts are the change note's; the vault does
+		// not check them (the change salt is recoverable instead).
+		"stCiphertextHash": core.PaymentCiphertextHash([][]byte{ctI}, [][]byte{ctII}).String(),
+		"wtPrivateKeysIn":  keys,
+		"wtValuesIn":       values,
+		"wtSaltsIn":        salts,
+		"wtPathElements":   paths,
+		"wtPathIndices":    indices,
+		"wtTokenId":        e.tokenId.String(),
 	}
 	switch circuit {
 	case pwPaymentFee:
@@ -759,8 +762,8 @@ func TestRetailErc20_PartialWithdraw_TwoInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gnark /proof/payment2in: %v", err)
 	}
-	if n := len(s.receipt.Statement); n != 10 {
-		t.Fatalf("2-input statement has %d elements, want 10", n)
+	if n := len(s.receipt.Statement); n != layout.Payment2inLen {
+		t.Fatalf("2-input statement has %d elements, want %d", n, layout.Payment2inLen)
 	}
 	if !e.verifiesAt(t, 1, s.receipt) {
 		t.Fatalf("the 2-input proof does not verify against VK slot 1 (Payment2in)")
@@ -802,8 +805,8 @@ func TestRetailErc20_PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gnark /proof/paymentFee: %v", err)
 		}
-		if n := len(s.receipt.Statement); n != 8 {
-			t.Fatalf("PaymentFee statement has %d elements, want 8", n)
+		if n := len(s.receipt.Statement); n != layout.PaymentFeeLen {
+			t.Fatalf("PaymentFee statement has %d elements, want %d", n, layout.PaymentFeeLen)
 		}
 		if !e.verifiesAt(t, 2, s.receipt) {
 			t.Fatalf("the PaymentFee proof does not verify against VK slot 2 — the test would prove nothing")
@@ -817,8 +820,8 @@ func TestRetailErc20_PartialWithdraw_RejectsFeeCircuits(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gnark /proof/paymentRelayerFeePublic: %v", err)
 		}
-		if n := len(s.receipt.Statement); n != 9 {
-			t.Fatalf("PaymentRelayerFeePublic statement has %d elements, want 9", n)
+		if n := len(s.receipt.Statement); n != layout.PaymentRelayerFeeLen {
+			t.Fatalf("PaymentRelayerFeePublic statement has %d elements, want %d", n, layout.PaymentRelayerFeeLen)
 		}
 		if !e.verifiesAt(t, 3, s.receipt) {
 			t.Fatalf("the PaymentRelayerFeePublic proof does not verify against VK slot 3 — the test would prove nothing")

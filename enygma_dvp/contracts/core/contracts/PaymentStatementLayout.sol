@@ -8,7 +8,7 @@ pragma solidity ^0.8.24;
 ///         rejects a library-qualified constant as an array length, and
 ///         the lengths size calldata public-signal arrays.
 library PaymentStatementLayout {
-    // Payment statement layout (PAYMENT_LEN = 7 public signals).
+    // Payment statement layout (PAYMENT_LEN = 8 public signals).
     uint256 internal constant PAYMENT_MESSAGE_OFFSET = 0;
     uint256 internal constant PAYMENT_MESSAGE_SIZE = 1;
     uint256 internal constant PAYMENT_TREE_NUMBERS_OFFSET = 1;
@@ -21,8 +21,10 @@ library PaymentStatementLayout {
     uint256 internal constant PAYMENT_COMMITMENTS_OUT_SIZE = 2;
     uint256 internal constant PAYMENT_CONTRACT_ADDRESS_OFFSET = 6;
     uint256 internal constant PAYMENT_CONTRACT_ADDRESS_SIZE = 1;
+    uint256 internal constant PAYMENT_CIPHERTEXT_HASH_OFFSET = 7;
+    uint256 internal constant PAYMENT_CIPHERTEXT_HASH_SIZE = 1;
 
-    // Payment2in statement layout (PAYMENT2IN_LEN = 10 public signals).
+    // Payment2in statement layout (PAYMENT2IN_LEN = 11 public signals).
     uint256 internal constant PAYMENT2IN_MESSAGE_OFFSET = 0;
     uint256 internal constant PAYMENT2IN_MESSAGE_SIZE = 1;
     uint256 internal constant PAYMENT2IN_TREE_NUMBERS_OFFSET = 1;
@@ -35,8 +37,10 @@ library PaymentStatementLayout {
     uint256 internal constant PAYMENT2IN_COMMITMENTS_OUT_SIZE = 2;
     uint256 internal constant PAYMENT2IN_CONTRACT_ADDRESS_OFFSET = 9;
     uint256 internal constant PAYMENT2IN_CONTRACT_ADDRESS_SIZE = 1;
+    uint256 internal constant PAYMENT2IN_CIPHERTEXT_HASH_OFFSET = 10;
+    uint256 internal constant PAYMENT2IN_CIPHERTEXT_HASH_SIZE = 1;
 
-    // PaymentFee statement layout (PAYMENT_FEE_LEN = 8 public signals).
+    // PaymentFee statement layout (PAYMENT_FEE_LEN = 9 public signals).
     uint256 internal constant PAYMENT_FEE_MESSAGE_OFFSET = 0;
     uint256 internal constant PAYMENT_FEE_MESSAGE_SIZE = 1;
     uint256 internal constant PAYMENT_FEE_TREE_NUMBERS_OFFSET = 1;
@@ -51,8 +55,10 @@ library PaymentStatementLayout {
     uint256 internal constant PAYMENT_FEE_CONTRACT_ADDRESS_SIZE = 1;
     uint256 internal constant PAYMENT_FEE_FEE_OFFSET = 7;
     uint256 internal constant PAYMENT_FEE_FEE_SIZE = 1;
+    uint256 internal constant PAYMENT_FEE_CIPHERTEXT_HASH_OFFSET = 8;
+    uint256 internal constant PAYMENT_FEE_CIPHERTEXT_HASH_SIZE = 1;
 
-    // PaymentRelayerFee statement layout (PAYMENT_RELAYER_FEE_LEN = 9 public signals).
+    // PaymentRelayerFee statement layout (PAYMENT_RELAYER_FEE_LEN = 10 public signals).
     uint256 internal constant PAYMENT_RELAYER_FEE_MESSAGE_OFFSET = 0;
     uint256 internal constant PAYMENT_RELAYER_FEE_MESSAGE_SIZE = 1;
     uint256 internal constant PAYMENT_RELAYER_FEE_TREE_NUMBERS_OFFSET = 1;
@@ -67,8 +73,10 @@ library PaymentStatementLayout {
     uint256 internal constant PAYMENT_RELAYER_FEE_CONTRACT_ADDRESS_SIZE = 1;
     uint256 internal constant PAYMENT_RELAYER_FEE_FEE_OFFSET = 8;
     uint256 internal constant PAYMENT_RELAYER_FEE_FEE_SIZE = 1;
+    uint256 internal constant PAYMENT_RELAYER_FEE_CIPHERTEXT_HASH_OFFSET = 9;
+    uint256 internal constant PAYMENT_RELAYER_FEE_CIPHERTEXT_HASH_SIZE = 1;
 
-    // UsdrFee statement layout (USDR_FEE_LEN = 9 public signals).
+    // UsdrFee statement layout (USDR_FEE_LEN = 10 public signals).
     uint256 internal constant USDR_FEE_MESSAGE_OFFSET = 0;
     uint256 internal constant USDR_FEE_MESSAGE_SIZE = 1;
     uint256 internal constant USDR_FEE_TREE_NUMBERS_OFFSET = 1;
@@ -85,10 +93,12 @@ library PaymentStatementLayout {
     uint256 internal constant USDR_FEE_FEE_SIZE = 1;
     uint256 internal constant USDR_FEE_TOKEN_ID_OFFSET = 8;
     uint256 internal constant USDR_FEE_TOKEN_ID_SIZE = 1;
+    uint256 internal constant USDR_FEE_CIPHERTEXT_HASH_OFFSET = 9;
+    uint256 internal constant USDR_FEE_CIPHERTEXT_HASH_SIZE = 1;
 }
 
-uint256 constant PAYMENT_LEN = 7;
-uint256 constant PAYMENT2IN_LEN = 10;
-uint256 constant PAYMENT_FEE_LEN = 8;
-uint256 constant PAYMENT_RELAYER_FEE_LEN = 9;
-uint256 constant USDR_FEE_LEN = 9;
+uint256 constant PAYMENT_LEN = 8;
+uint256 constant PAYMENT2IN_LEN = 11;
+uint256 constant PAYMENT_FEE_LEN = 9;
+uint256 constant PAYMENT_RELAYER_FEE_LEN = 10;
+uint256 constant USDR_FEE_LEN = 10;

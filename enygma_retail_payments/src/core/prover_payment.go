@@ -42,6 +42,9 @@ var (
 	ChangeNote         = pay.ChangeNote
 	WithdrawChangeSalt = pay.WithdrawChangeSalt
 	WithdrawChangeNote = pay.WithdrawChangeNote
+	// PaymentCiphertextHash is the StCiphertextHash a Payment-family proof
+	// binds: the hash of the note ciphertexts its settlement publishes.
+	PaymentCiphertextHash = pay.PaymentCiphertextHash
 	// DeriveBlockKey derives the per-block AES key used by the private-tag system.
 	DeriveBlockKey     = pay.DeriveBlockKey
 	ChannelEncryptNote = pay.ChannelEncryptNote

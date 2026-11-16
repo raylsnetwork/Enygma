@@ -296,12 +296,15 @@ func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message strin
 		"stMerkleRoots":     roots,
 		"stNullifiers":      nullifierStrs,
 		"stContractAddress": vaultInt(e.vaultAddr).String(),
-		"wtPrivateKeysIn":   keys,
-		"wtValuesIn":        values,
-		"wtSaltsIn":         salts,
-		"wtPathElements":    paths,
-		"wtPathIndices":     indices,
-		"wtTokenId":         e.tokenId.String(),
+		// A withdrawal's ciphertexts are the change note's; the vault does
+		// not check them (the change salt is recoverable instead).
+		"stCiphertextHash": core.PaymentCiphertextHash([][]byte{ctI}, [][]byte{ctII}).String(),
+		"wtPrivateKeysIn":  keys,
+		"wtValuesIn":       values,
+		"wtSaltsIn":        salts,
+		"wtPathElements":   paths,
+		"wtPathIndices":    indices,
+		"wtTokenId":        e.tokenId.String(),
 	}
 	switch circuit {
 	case pwPaymentFee:
@@ -640,6 +643,7 @@ func TestV2Erc20PartialWithdraw_Rejections(t *testing.T) {
 		bad.Statement = make([]*big.Int, layout.PaymentFeeLen)
 		copy(bad.Statement, s.receipt.Statement)
 		bad.Statement[layout.PaymentFeeFeeOffset] = big.NewInt(1)
+		bad.Statement[layout.PaymentFeeCiphertextHashOffset] = big.NewInt(0)
 		e.expectRevert(t, "InvalidStatmentSize", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
 	t.Run("payment_message", func(t *testing.T) {

@@ -36,6 +36,7 @@ const (
 	sContractAddress
 	sFee
 	sTokenId
+	sCiphertextHash
 )
 
 func fill(vs []frontend.Variable, field int) {
@@ -46,13 +47,14 @@ func fill(vs []frontend.Variable, field int) {
 
 // fillPayment assigns sentinels to the public fields every Payment-family
 // circuit has.
-func fillPayment(message *frontend.Variable, trees, roots, nullifiers, commitments []frontend.Variable, contractAddress *frontend.Variable) {
+func fillPayment(message *frontend.Variable, trees, roots, nullifiers, commitments []frontend.Variable, contractAddress, ciphertextHash *frontend.Variable) {
 	*message = sentinel(sMessage, 0)
 	fill(trees, sTreeNumbers)
 	fill(roots, sMerkleRoots)
 	fill(nullifiers, sNullifiers)
 	fill(commitments, sCommitmentsOut)
 	*contractAddress = sentinel(sContractAddress, 0)
+	*ciphertextHash = sentinel(sCiphertextHash, 0)
 }
 
 var paymentFields = []sentinelField{
@@ -62,6 +64,7 @@ var paymentFields = []sentinelField{
 	{"Nullifiers", sNullifiers},
 	{"CommitmentsOut", sCommitmentsOut},
 	{"ContractAddress", sContractAddress},
+	{"CiphertextHash", sCiphertextHash},
 }
 
 var feeFields = append(append([]sentinelField{}, paymentFields...), sentinelField{"Fee", sFee})
@@ -82,17 +85,17 @@ type sentinelCase struct {
 func sentinelCases() []sentinelCase {
 	payment := func(cfg PaymentCircuitConfig) *PaymentCircuit {
 		c := NewPaymentCircuit(cfg)
-		fillPayment(&c.StMessage, c.StTreeNumbers, c.StMerkleRoots, c.StNullifiers, c.StCommitmentsOut, &c.StContractAddress)
+		fillPayment(&c.StMessage, c.StTreeNumbers, c.StMerkleRoots, c.StNullifiers, c.StCommitmentsOut, &c.StContractAddress, &c.StCiphertextHash)
 		return &c
 	}
 	fee := NewPaymentFeeCircuit(PaymentFeeConfig)
-	fillPayment(&fee.StMessage, fee.StTreeNumbers, fee.StMerkleRoots, fee.StNullifiers, fee.StCommitmentsOut, &fee.StContractAddress)
+	fillPayment(&fee.StMessage, fee.StTreeNumbers, fee.StMerkleRoots, fee.StNullifiers, fee.StCommitmentsOut, &fee.StContractAddress, &fee.StCiphertextHash)
 	fee.StFee = sentinel(sFee, 0)
 	relayer := NewPaymentRelayerFeePublicCircuit(PaymentRelayerFeePublicConfig)
-	fillPayment(&relayer.StMessage, relayer.StTreeNumbers, relayer.StMerkleRoots, relayer.StNullifiers, relayer.StCommitmentsOut, &relayer.StContractAddress)
+	fillPayment(&relayer.StMessage, relayer.StTreeNumbers, relayer.StMerkleRoots, relayer.StNullifiers, relayer.StCommitmentsOut, &relayer.StContractAddress, &relayer.StCiphertextHash)
 	relayer.StFee = sentinel(sFee, 0)
 	usdr := NewUsdrFeeCircuit(UsdrFeeConfig)
-	fillPayment(&usdr.StMessage, usdr.StTreeNumbers, usdr.StMerkleRoots, usdr.StNullifiers, usdr.StCommitmentsOut, &usdr.StContractAddress)
+	fillPayment(&usdr.StMessage, usdr.StTreeNumbers, usdr.StMerkleRoots, usdr.StNullifiers, usdr.StCommitmentsOut, &usdr.StContractAddress, &usdr.StCiphertextHash)
 	usdr.StFee = sentinel(sFee, 0)
 	usdr.StTokenId = sentinel(sTokenId, 0)
 

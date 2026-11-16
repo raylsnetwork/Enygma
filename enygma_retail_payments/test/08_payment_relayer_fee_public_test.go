@@ -303,6 +303,7 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [3]string{cmtBob.String(), cmtChange.String(), cmtRelayer.String()},
 		"stContractAddress":    vaultAddrBig.String(),
+		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{ctxtBob}, [][]byte{ctxtIIBob}).String(),
 		"stFee":                relayerAmt.String(),
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{depositAmt.String()},
