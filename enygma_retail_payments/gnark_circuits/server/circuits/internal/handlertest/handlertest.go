@@ -272,6 +272,9 @@ type Note struct {
 	Sk, Pk, Salt, Value, TokenId *big.Int
 	Siblings                     []*big.Int
 	Root, Nullifier              *big.Int
+	// ChangeSalt is the salt the Payment-family circuits require of the
+	// change note of a proof spending this note first: Poseidon(sk, nullifier).
+	ChangeSalt *big.Int
 }
 
 // NewNote builds the note sk owns holding value of tokenId at depth.
@@ -292,6 +295,7 @@ func NewNote(t *testing.T, sk, value, tokenId int64, depth int) Note {
 	}
 	// Poseidon(sk, treeNumber*2^depth + pathIndex) with tree 0, index 0.
 	n.Nullifier = Hash(t, n.Sk, big.NewInt(0))
+	n.ChangeSalt = Hash(t, n.Sk, n.Nullifier)
 	return n
 }
 

@@ -262,9 +262,10 @@ func depositAndBuildRelayerFeeWitness(
 		t.Fatalf("Erc20CommitmentV2 (Bob): %v", err)
 	}
 
-	saltA, err := dvpcore.RandomInField()
+	// The circuit requires the change salt Poseidon(sk, nullifier).
+	saltA, err := rpcore.ChangeSalt(aliceSpend.PrivateKey, nullifier)
 	if err != nil {
-		t.Fatalf("RandomInField (change): %v", err)
+		t.Fatalf("ChangeSalt: %v", err)
 	}
 	cmtChange, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, saltA, changeAmt, tokenId)
 	if err != nil {

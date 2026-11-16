@@ -149,10 +149,10 @@ $$
 
 #### Deriving a change salt
 
-This case is slightly different. Alice needs to generate a salt for the change commitment such that only Alice knows this value. Therefore, Alice simply generates a random value of size $$len_{salt}$$.
+This case is slightly different. Alice needs a salt for the change commitment that only Alice knows, and that she can rebuild without stored state: the ciphertexts that go with a payment are not bound by the proof, so if someone else settles her receipt first with replaced ciphertexts, her own transaction reverts although her input note is spent. Alice therefore derives the change salt from her spend key and the nullifier of the transaction's first input note, which is published on chain, and the circuit requires exactly this salt for the change output of every payment and withdrawal.
 
 $$
-\mathrm{salt_{A}} \longleftarrow \\{ 0,1\\}^{len_{salt}}
+\mathrm{salt_{A}} = \mathrm{Poseidon}(sk_{A}^{\text{spend}}, nf_{0})
 $$
 
 ---

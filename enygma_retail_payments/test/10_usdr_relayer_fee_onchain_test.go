@@ -194,9 +194,10 @@ func depositAndBuildUsdrFeeWitness(
 	}
 
 	// Output 1: Alice's change.
-	changeSalt, err := dvpcore.RandomInField()
+	// The circuit requires the change salt Poseidon(sk, nullifier).
+	changeSalt, err := rpcore.ChangeSalt(aliceSpend.PrivateKey, nullifier)
 	if err != nil {
-		t.Fatalf("RandomInField (change): %v", err)
+		t.Fatalf("ChangeSalt: %v", err)
 	}
 	cmtChange, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, changeSalt, changeAmt, tokenId)
 	if err != nil {

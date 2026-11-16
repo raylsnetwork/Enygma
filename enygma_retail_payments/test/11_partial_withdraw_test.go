@@ -251,8 +251,8 @@ func (e *pwEnv) proveWithdrawMsg(t *testing.T, circuit pwCircuit, message string
 }
 
 // proveWithdrawFull is proveWithdrawMsg with the change note's salt chosen by
-// the caller (nil: the salt a wallet uses — WithdrawChangeSalt for a
-// withdrawal, the KEM-derived one for a payment).
+// the caller (nil: the salt a wallet uses, WithdrawChangeSalt, which the circuits
+// require of a payment's change as well as a withdrawal's).
 func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message string, ins []pwNote, amount, changeValue, fee, relayerPk, changeSaltOverride *big.Int, recipient common.Address) (*pwSpend, error) {
 	t.Helper()
 	nIn := len(ins)
@@ -301,23 +301,16 @@ func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message strin
 	if err != nil {
 		t.Fatalf("Encapsulate: %v", err)
 	}
-	saltB, err := core.DerivePaymentSalt(ss)
-	if err != nil {
-		t.Fatalf("DerivePaymentSalt: %v", err)
-	}
 	encKey, err := core.DerivePaymentKey(ss)
 	if err != nil {
 		t.Fatalf("DerivePaymentKey: %v", err)
 	}
-	changeSalt := core.SaltBToField(saltB)
-	if message == pwWithdrawMessage {
-		// The circuit requires a withdrawal's change salt to be recoverable
-		// from the owner's key: Poseidon(sk, nullifier of input 0). The
-		// EncryptedNote below is then only a convenience.
-		changeSalt, err = core.WithdrawChangeSalt(owner.spend.PrivateKey, nullifiers[0])
-		if err != nil {
-			t.Fatalf("WithdrawChangeSalt: %v", err)
-		}
+	// The circuit requires the change salt to be recoverable from the
+	// owner's key: Poseidon(sk, nullifier of input 0). The EncryptedNote below
+	// is then only a convenience.
+	changeSalt, err := core.WithdrawChangeSalt(owner.spend.PrivateKey, nullifiers[0])
+	if err != nil {
+		t.Fatalf("WithdrawChangeSalt: %v", err)
 	}
 	if changeSaltOverride != nil {
 		changeSalt = changeSaltOverride
@@ -1285,9 +1278,13 @@ func TestRetailErc20_PartialWithdraw_RecoverChangeWithoutCiphertext(t *testing.T
 		} else {
 			t.Logf("PaymentRelayerFeePublic prover refused a random change salt: %.100s", err)
 		}
-		// A payment's change salt stays free (the KEM-derived one is used).
+		// A payment's change salt is held to the same rule: a random one is
+		// refused, the recoverable one proves.
+		if _, err := e.proveWithdrawFull(t, pwPayment, pwPaymentMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, random, recipient); err == nil {
+			t.Fatalf("the Payment circuit proved a payment whose change salt is not Poseidon(sk, nullifier0)")
+		}
 		if _, err := e.proveWithdrawMsg(t, pwPayment, pwPaymentMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, recipient); err != nil {
-			t.Fatalf("a payment proof with a KEM-derived change salt was refused: %v", err)
+			t.Fatalf("a payment proof with the recoverable change salt was refused: %v", err)
 		}
 	})
 

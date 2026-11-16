@@ -266,10 +266,11 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (Bob): %v", err)
 	}
 
-	// Output 1: Alice's change — random salt (SaltA)
-	saltA, err := dvpcore.RandomInField()
+	// Output 1: Alice's change (SaltA).
+	// The circuit requires the change salt Poseidon(sk, nullifier).
+	saltA, err := rpcore.ChangeSalt(aliceSpend.PrivateKey, nullifier)
 	if err != nil {
-		t.Fatalf("RandomInField (change): %v", err)
+		t.Fatalf("ChangeSalt: %v", err)
 	}
 	cmtChange, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, saltA, changeAmt, tokenId)
 	if err != nil {

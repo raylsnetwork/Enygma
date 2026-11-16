@@ -34,8 +34,12 @@ var (
 	EncryptPayload    = pay.EncryptPayload
 	DecryptPayload    = pay.DecryptPayload
 	RandomInField     = pay.RandomInField
-	// WithdrawChangeSalt/WithdrawChangeNote rebuild a withdrawal's change note
-	// from the owner's spend key (the salt the Payment circuits enforce).
+	// ChangeSalt/ChangeNote rebuild the change note of a payment or a
+	// withdrawal from the owner's spend key and the first spent nullifier
+	// (the salt the Payment circuits enforce); WithdrawChangeSalt and
+	// WithdrawChangeNote are their earlier names.
+	ChangeSalt         = pay.ChangeSalt
+	ChangeNote         = pay.ChangeNote
 	WithdrawChangeSalt = pay.WithdrawChangeSalt
 	WithdrawChangeNote = pay.WithdrawChangeNote
 	// DeriveBlockKey derives the per-block AES key used by the private-tag system.
