@@ -308,8 +308,9 @@ var errBadTag = errors.New("bad tag")
 // their channels, decrypt only the notes whose tags match, and keep each
 // that opens to a commitment in the vault. It returns the new notes, as
 // decrypted from their tags, how many tags it checked, and how many matching
-// tags it skipped as bad. Only an RPC error stops the scan, and then the
-// cursor stays put so the next scan reads the same blocks again.
+// tags it skipped as bad. Only an RPC error stops the scan, and then it
+// keeps no notes and the cursor stays put, so the next scan reads the same
+// blocks again and finds the same notes.
 func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, checked, skipped int, err error) {
 	c := e.chain
 	tip, err := c.client.BlockNumber(ctx)
@@ -328,6 +329,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("TagPublished events: %w", err)
 	}
+	var fresh purse
 	for _, l := range logs {
 		if len(l.Topics) < 4 {
 			continue
@@ -348,10 +350,10 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 				continue
 			}
 			if err != nil {
-				return found, checked, skipped, err
+				return nil, checked, skipped, err
 			}
-			if !a.notes.has(n.commitment) {
-				a.notes = append(a.notes, n)
+			if !a.notes.has(n.commitment) && !fresh.has(n.commitment) {
+				fresh = append(fresh, n)
 				found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: l.TxHash.Hex(),
 					Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(payload),
 					Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(pn.TokenId)},
@@ -359,6 +361,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 			}
 		}
 	}
+	a.notes = append(a.notes, fresh...)
 	a.tags.lastBlock = tip
 	return found, checked, skipped, nil
 }

@@ -25,12 +25,14 @@ var (
 
 // fakeNode answers the two RPCs scanTags makes: eth_blockNumber with tip,
 // and eth_getLogs with the TagRegistry's logs or the vault's Commitment
-// event for each commitment in vault. vaultDown fails the vault's.
+// event for each commitment in vault. vaultDown fails the vault's, all but
+// the first vaultUpFor of them.
 type fakeNode struct {
-	tip       uint64
-	tagLogs   []ethtypes.Log
-	vault     map[common.Hash]bool
-	vaultDown bool
+	tip        uint64
+	tagLogs    []ethtypes.Log
+	vault      map[common.Hash]bool
+	vaultDown  bool
+	vaultUpFor int
 }
 
 func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -61,9 +63,12 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case testTagRegistry:
 			logs = f.tagLogs
 		case testVault:
-			if f.vaultDown {
+			if f.vaultDown && f.vaultUpFor == 0 {
 				resp["error"] = map[string]any{"code": -32000, "message": "node unavailable"}
 				break
+			}
+			if f.vaultUpFor > 0 {
+				f.vaultUpFor--
 			}
 			if cm := q.Topics[2][0]; f.vault[cm] {
 				logs = append(logs, ethtypes.Log{Address: testVault, Topics: []common.Hash{commitmentTopic, {}, cm}})
@@ -195,5 +200,34 @@ func TestScanTagsKeepsCursorOnRPCError(t *testing.T) {
 	found, _, _, err := e.scanTags(context.Background(), bob)
 	if err != nil || len(found) != 1 || bob.tags.lastBlock != 5 {
 		t.Fatalf("retry found %d notes, cursor %d, err %v; want Alice's note and block 5", len(found), bob.tags.lastBlock, err)
+	}
+}
+
+// Alice pays Bob twice, and the vault's events become unreadable after the
+// scan has confirmed her first payment: the failed scan keeps neither note,
+// so the retry finds both rather than only the one it had not yet reached.
+func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
+	node := &fakeNode{tip: 6, vaultDown: true, vaultUpFor: 2}
+	e, bob, _ := scanSetup(t, node)
+	alice := bob.tags.in[1]
+	amount, salt := big.NewInt(30), big.NewInt(515151)
+	paid, err := rpcore.Erc20CommitmentV2(bob.Spend.PublicKey, salt, amount, tokenId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.tagLogs = append(node.tagLogs, tagLog(t, 5, alice, sealedNote(t, 5, alice, amount, salt)))
+	node.vault[common.BigToHash(paid)] = true
+
+	if _, _, _, err := e.scanTags(context.Background(), bob); err == nil {
+		t.Fatal("scan succeeded with the vault's events unreadable")
+	}
+	if len(bob.notes) != 0 || bob.tags.lastBlock != 1 {
+		t.Fatalf("failed scan kept %d notes and moved the cursor to %d, want 0 and 1", len(bob.notes), bob.tags.lastBlock)
+	}
+
+	node.vaultDown = false
+	found, _, _, err := e.scanTags(context.Background(), bob)
+	if err != nil || len(found) != 2 || len(bob.notes) != 2 || bob.tags.lastBlock != 6 {
+		t.Fatalf("retry found %d notes, kept %d, cursor %d, err %v; want both of Alice's and block 6", len(found), len(bob.notes), bob.tags.lastBlock, err)
 	}
 }
