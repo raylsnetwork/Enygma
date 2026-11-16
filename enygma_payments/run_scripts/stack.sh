@@ -19,6 +19,8 @@ set -euo pipefail
 PAY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONTRACTS="$PAY_ROOT/contracts/enygma"
 LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/payments_stack.XXXXXX")}"
+mkdir -p "$LOG_DIR"
+LOG_DIR="$(cd "$LOG_DIR" && pwd)" # absolute: services start in their own dirs
 BIN_DIR="$LOG_DIR/bin"
 mkdir -p "$BIN_DIR"
 # go-ethereum needs CGo; Homebrew clang on macOS points at a missing SDK.
@@ -71,7 +73,12 @@ cleanup() {
     wait 2>/dev/null || true
     say "stopped. Logs: $LOG_DIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# A signal exits, which runs cleanup through the EXIT trap: a trap that only
+# returned would put the script back in its wait loop, to find the services
+# it just stopped gone and report them dead.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # start NAME DIR CMD... — runs CMD in DIR in its own process group, logging to $LOG_DIR/NAME.log.
 start() {
