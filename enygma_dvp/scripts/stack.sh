@@ -19,12 +19,14 @@
 set -euo pipefail
 DVP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$DVP_ROOT/.." && pwd)"
-LOG_DIR="${LOG_DIR:-$(mktemp -d -t dvp_stack)}"
+LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}"
 BIN_DIR="$LOG_DIR/bin"
 KEYS="$DVP_ROOT/gnark_circuits/scripts/keys"
 mkdir -p "$BIN_DIR"
-export CC=/usr/bin/clang # go-ethereum needs CGo; Homebrew clang points at a missing SDK
+# go-ethereum needs CGo; Homebrew clang on macOS points at a missing SDK.
+[ "$(uname -s)" = Darwin ] && export CC="${CC:-/usr/bin/clang}"
 say() { echo "[stack.sh] $*"; }
+listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
 NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
@@ -64,13 +66,13 @@ preflight() {
     # Keys older than the last circuit change are stale: proofs from them fail
     # on-chain verification. A warning, since a rebase also moves the time.
     newest=$(git -C "$REPO_ROOT" log -1 --format=%ct -- enygma_dvp/gnark_circuits/templates enygma_gnark_shared 2>/dev/null || echo 0)
-    if [ "$(stat -f %m "$KEYS/PaymentVK.key" 2>/dev/null || stat -c %Y "$KEYS/PaymentVK.key")" -lt "$newest" ]; then
+    if [ "$(stat -c %Y "$KEYS/PaymentVK.key" 2>/dev/null || stat -f %m "$KEYS/PaymentVK.key")" -lt "$newest" ]; then
         say "WARNING: the keys predate the last circuit change ($(git -C "$REPO_ROOT" log -1 --format='%h %s' -- enygma_dvp/gnark_circuits/templates enygma_gnark_shared)); if proofs fail on-chain: make dvp-keygen" >&2
     fi
 }
 preflight
 
-PIDS=()
+PIDS=() NAMES=()
 cleanup() {
     trap - EXIT INT TERM
     say "stopping services…"
@@ -88,11 +90,23 @@ start() {
     shift 2
     (cd "$dir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@" >"$LOG_DIR/$name.log" 2>&1) &
     PIDS+=($!)
+    NAMES+=("$name")
 }
+# died NAME — NAME's service exited: shows its log's tail and fails.
+died() {
+    say "$1 exited — last log lines:" >&2
+    tail -20 "$LOG_DIR/$1.log" >&2
+    exit 1
+}
+# wait_port NAME PORT — waits for service NAME to listen on PORT, failing at
+# once if it exits.
 wait_port() {
-    local name=$1 port=$2
+    local name=$1 port=$2 i pid=
+    for i in "${!NAMES[@]}"; do [ "${NAMES[$i]}" != "$name" ] || pid=${PIDS[$i]}; done
+    [ -n "$pid" ] || { say "wait_port: no service named $name was started" >&2; exit 1; }
     for _ in $(seq 1 600); do
-        nc -z localhost "$port" 2>/dev/null && { say "$name is up on :$port"; return 0; }
+        listening "$port" && { say "$name is up on :$port"; return 0; }
+        kill -0 "$pid" 2>/dev/null || died "$name"
         sleep 0.5
     done
     say "$name did not come up on :$port — last log lines:" >&2
@@ -112,7 +126,7 @@ step() {
 }
 
 for port in 8545 8081 8091 8092; do
-    if nc -z localhost "$port" 2>/dev/null; then
+    if listening "$port"; then
         say "port $port is already in use — stop whatever is running there first (every run needs a fresh chain)." >&2
         exit 1
     fi
@@ -161,4 +175,11 @@ RELAYER_FEE_SPEND_PRIVATE_KEY=$FEE_SPEND_KEY
 RELAYER_FEE_NOTES_PATH=$FEE_NOTES_8092
 EOF
 say "stack is up (logs $LOG_DIR)"
-wait
+# Up while every service runs; when one exits, the trap stops the rest, so the
+# stack never looks up with a service gone. (Polled: macOS's bash 3.2 has no wait -n.)
+while :; do
+    for i in "${!PIDS[@]}"; do
+        kill -0 "${PIDS[$i]}" 2>/dev/null || died "${NAMES[$i]}"
+    done
+    sleep 1
+done
