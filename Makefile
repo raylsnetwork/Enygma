@@ -269,12 +269,21 @@ retail-gnark: ## Start the retail gnark proof server (keep running)
 # The retail suite takes 8–12 min on the shield_demo/run.sh stack; the bench and
 # load tests are left out (run them by name). Tests that rebuild the vault's
 # tree 0 fail fast once the chain is past one tree: restart it fresh.
+# Full flow: shield-stack -> retail-test -> shield-stack-stop. Logs go to
+# RETAIL_LOG_DIR (default: a fresh temp dir), the suite's to suite.log there
+# when the stack is shield-stack's.
 RETAIL_BENCH_SKIP := TestRetailThroughput|TestRetailLoad|TestRetailScanRate|TestRetailChainTPS
-retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts; leaves the shield demo's replay fixtures alone
-	@log=$$(mktemp -t retail_test); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
-	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v ./... -timeout 1800s -skip '$(RETAIL_BENCH_SKIP)' >$$log 2>&1 || status=1; \
-	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
-	grep -E '^--- (FAIL|SKIP)' $$log; echo "log: $$log"; exit $$status
+RETAIL_LOG_DIR ?=
+# Tests allowed to skip in retail-test (full names, space-separated): both skip
+# once Alice is registered, which the suite's earlier tests do. Any other skip
+# fails the suite: a missing service must not pass for green.
+RETAIL_KNOWN_SKIPS := TestUserRegistration TestAuditorViewKeyRecovery
+retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts, fails on a skip not in RETAIL_KNOWN_SKIPS; leaves the shield demo's replay fixtures alone
+	@logs=$$(cat $(SHIELD_STACK_PID).logs 2>/dev/null); \
+	if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/retail_test.XXXXXX"); fi; \
+	status=0; cd enygma_retail_payments/test; \
+	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v ./... -timeout 1800s -skip '$(RETAIL_BENCH_SKIP)' >$$log 2>&1 || status=$$?; \
+	cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(RETAIL_KNOWN_SKIPS)'; result=$$?; echo "log: $$log"; exit $$result
 
 # The full shield demo scenario test plays three runs (about 1–2 min since #190's
 # fast proofs); this plays the default-mode run (about 30 s) and the subtests matching
@@ -291,24 +300,25 @@ shield-test: ## Shield demo scenario, default run only, subtests matching T= (ne
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
 
 shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relayer :8090), detached; returns when it is up
-	@logs=$$(mktemp -d -t shield_demo); \
+	@logs=$${RETAIL_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/shield_demo.XXXXXX")}; mkdir -p $$logs; : >$$logs/run.log; \
 	(cd enygma_retail_payments/shield_demo && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash run.sh --no-demo >$$logs/run.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
-		grep -q 'stack is up' $$logs/run.log && { echo $$pid >$(SHIELD_STACK_PID); echo "stack is up (logs $$logs); stop it with make shield-stack-stop"; exit 0; }; \
+		grep -q 'stack is up' $$logs/run.log && { echo $$pid >$(SHIELD_STACK_PID); echo $$logs >$(SHIELD_STACK_PID).logs; echo "stack is up (logs $$logs); run make retail-test, then make shield-stack-stop"; exit 0; }; \
 		sleep 1; \
 	done; \
-	echo "run.sh exited before the stack came up:"; tail -5 $$logs/run.log; exit 1
+	echo "run.sh exited before the stack came up:"; cat $$logs/run.log; exit 1
 
 shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 30 s for its ports to free
 	@pid=$$(cat $(SHIELD_STACK_PID) 2>/dev/null); \
 	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'run.sh --no-demo' || { echo "no stack started by make shield-stack"; exit 1; }; \
 	kill -TERM $$pid; \
-	for _ in $$(seq 1 110); do \
-		lsof -tiTCP:8545,8082,8090 -sTCP:LISTEN >/dev/null || { echo "stack stopped"; exit 0; }; \
+	for _ in $$(seq 1 150); do \
+		busy=; for p in 8545 8082 8090; do (exec 3<>/dev/tcp/127.0.0.1/$$p) 2>/dev/null && busy="$$busy :$$p"; done; \
+		[ -n "$$busy" ] || { rm -f $(SHIELD_STACK_PID) $(SHIELD_STACK_PID).logs; echo "stack stopped"; exit 0; }; \
 		sleep 0.2; \
 	done; \
-	echo "still listening after about 30 s:"; lsof -iTCP:8545,8082,8090 -sTCP:LISTEN; exit 1
+	echo "still listening on$$busy after about 30 s"; exit 1
 
 # run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
 # demo binary rebuilt: this rebuilds it and relaunches it on the running stack,

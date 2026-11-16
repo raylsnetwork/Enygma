@@ -4,9 +4,11 @@ name: onchain
 # through the same make targets a developer runs locally:
 #   make payments-stack && make payments-test; make payments-stack-stop
 #   make dvp-stack && make dvp-test; make dvp-stack-stop
+#   make shield-stack && make retail-test; make shield-stack-stop
 # A suite fails on any failed test and on any skip not on its known-skip
-# list (PAYMENTS_KNOWN_SKIPS, DVP_KNOWN_SKIPS in the root Makefile). On
-# failure the stack's and the suite's logs are uploaded as an artifact.
+# list (PAYMENTS_KNOWN_SKIPS, DVP_KNOWN_SKIPS, RETAIL_KNOWN_SKIPS in the root
+# Makefile). On failure the stack's and the suite's logs are uploaded as an
+# artifact.
 # Separate from `ci` so these longer jobs do not hold up the fast checks.
 # A pull request runs a suite only when it changes a path that suite's job
 # lists in `changes`; a push to main runs every suite.
@@ -20,7 +22,7 @@ on:
       - "enygma_payments/**"
       - "enygma_dvp/**"
       - "enygma_gnark_shared/**"
-      - "enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*"
+      - "enygma_retail_payments/**"
       - "Makefile"
       - "scripts/suite_result.sh"
       - ".github/workflows/onchain.yml"
@@ -42,6 +44,7 @@ jobs:
     outputs:
       payments: ${{ steps.filter.outputs.payments }}
       dvp: ${{ steps.filter.outputs.dvp }}
+      retail: ${{ steps.filter.outputs.retail }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,11 +59,16 @@ jobs:
           paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
           # make dvp-keygen copies retail's PrivateMint keys.
           paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*"
+          # The retail stack runs enygma_dvp's Hardhat node and deploys its
+          # contracts; the retail test module imports enygma_dvp's src and
+          # layout.
+          dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"
+          paths_retail="$common enygma_retail_payments/* enygma_gnark_shared/* $dvp_for_retail"
           set -f # the globs are patterns for [[ ]], not for the working dir
           # A push (to main) runs every suite: nothing to diff.
           changed=
           [ "$GITHUB_EVENT_NAME" != pull_request ] || changed=$(git diff --name-only "$BASE...HEAD")
-          for suite in payments dvp; do
+          for suite in payments dvp retail; do
             var=paths_$suite
             run=false
             [ "$GITHUB_EVENT_NAME" = pull_request ] || run=true
@@ -190,4 +198,54 @@ jobs:
           path: |
             ${{ env.DVP_LOG_DIR }}
             !${{ env.DVP_LOG_DIR }}/bin
+          if-no-files-found: warn
+
+  retail:
+    name: retail e2e
+    needs: changes
+    if: needs.changes.outputs.retail == 'true'
+    runs-on: ubuntu-latest
+    # The suite takes 8–12 min on a laptop and the stack about 1 min to
+    # start. retail-test's go test times out at 30 min, which this job's
+    # timeout cuts short: the logs are still uploaded on cancel.
+    timeout-minutes: 40
+    steps:
+      # make shield-stack logs here; uploaded when the job fails.
+      - run: echo "RETAIL_LOG_DIR=$RUNNER_TEMP/retail-logs" >> "$GITHUB_ENV"
+      # Retail's keys are committed through LFS and used as committed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: enygma_retail_payments/test/go.mod
+          cache-dependency-path: |
+            enygma_retail_payments/**/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: enygma_dvp/.nvmrc
+          cache: npm
+          cache-dependency-path: enygma_dvp/package-lock.json
+      # run.sh runs enygma_dvp's Hardhat node and compiles its contracts.
+      - run: npm ci --no-audit --no-fund
+        working-directory: enygma_dvp
+
+      - run: make shield-stack
+      - run: make retail-test
+      - if: always()
+        run: make shield-stack-stop || true
+      # retail-test sets REPLAY_FIXTURE_WRITE=0 and leaves PRIMER_WRITE unset.
+      # Also after a failed suite, and counting new untracked files.
+      - name: replay fixtures and primer data block unchanged
+        if: success() || failure()
+        run: |
+          changed=$(git status --porcelain -- enygma_retail_payments/shield_demo/testdata enygma_retail_payments/shield_demo/protocol.html)
+          [ -z "$changed" ] || { echo "the job rewrote:"; echo "$changed"; exit 1; }
+      - if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: retail-logs
+          path: |
+            ${{ env.RETAIL_LOG_DIR }}
+            !${{ env.RETAIL_LOG_DIR }}/bin
           if-no-files-found: warn
