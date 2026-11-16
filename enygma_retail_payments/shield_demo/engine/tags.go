@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -297,18 +298,26 @@ type taggedNote struct {
 	opened  *tags.PaymentNote
 }
 
+// errBadTag marks a tag that matches one of an actor's channels but opens to
+// no payment: a payload that does not decode or decrypt, or a note for
+// another token or not in the vault. Anyone can open a channel to a user and
+// publish tags on it, so a scan skips such a tag rather than stopping at it.
+var errBadTag = errors.New("bad tag")
+
 // scanTags has a check every tag published since their last scan against
 // their channels, decrypt only the notes whose tags match, and keep each
 // that opens to a commitment in the vault. It returns the new notes, as
-// decrypted from their tags, and how many tags it checked.
-func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, checked int, err error) {
+// decrypted from their tags, how many tags it checked, and how many matching
+// tags it skipped as bad. Only an RPC error stops the scan, and then the
+// cursor stays put so the next scan reads the same blocks again.
+func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, checked, skipped int, err error) {
 	c := e.chain
 	tip, err := c.client.BlockNumber(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if tip <= a.tags.lastBlock {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(a.tags.lastBlock + 1),
@@ -317,7 +326,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 		Topics:    [][]common.Hash{{tagPublishedTopic}},
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("TagPublished events: %w", err)
+		return nil, 0, 0, fmt.Errorf("TagPublished events: %w", err)
 	}
 	for _, l := range logs {
 		if len(l.Topics) < 4 {
@@ -327,14 +336,19 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 		for _, ch := range a.tags.in {
 			pn, payload, err := openTag(l, ch)
 			if err != nil {
-				return found, checked, fmt.Errorf("%s: %w", a.Name, err)
+				skipped++
+				continue
 			}
 			if pn == nil {
 				continue
 			}
 			n, err := e.tagNote(ctx, a, pn)
+			if errors.Is(err, errBadTag) {
+				skipped++
+				continue
+			}
 			if err != nil {
-				return found, checked, err
+				return found, checked, skipped, err
 			}
 			if !a.notes.has(n.commitment) {
 				a.notes = append(a.notes, n)
@@ -346,7 +360,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 		}
 	}
 	a.tags.lastBlock = tip
-	return found, checked, nil
+	return found, checked, skipped, nil
 }
 
 // openTag decrypts the payment note a TagPublished log carries if it is
@@ -363,22 +377,26 @@ func openTag(l ethtypes.Log, ch tags.Channel) (*tags.PaymentNote, []byte, error)
 	}
 	vals, err := abiBytes().Unpack(l.Data)
 	if err != nil || len(vals) != 1 {
-		return nil, nil, fmt.Errorf("decode the tag in block %d: %v", l.BlockNumber, err)
+		return nil, nil, fmt.Errorf("%w: decode the tag in block %d: %v", errBadTag, l.BlockNumber, err)
 	}
 	payload := vals[0].([]byte)
 	pn, err := tags.DecryptPaymentNote(ch.SharedSecret, ch.PkSpend, l.BlockNumber, payload)
-	return pn, payload, err
+	if err != nil {
+		return nil, payload, fmt.Errorf("%w: %v", errBadTag, err)
+	}
+	return pn, payload, nil
 }
 
 // tagNote is the note a tag's payload opens for a, once its commitment is
-// confirmed in the vault: a tag alone proves nothing was paid.
+// confirmed in the vault: a tag alone proves nothing was paid. Its errors
+// wrap errBadTag unless the vault's events could not be read.
 func (e *Engine) tagNote(ctx context.Context, a *Actor, pn *tags.PaymentNote) (*note, error) {
 	if pn.TokenId.Cmp(tokenId) != 0 {
-		return nil, fmt.Errorf("%s: tagged note is for token %s, want %s", a.Name, pn.TokenId, tokenId)
+		return nil, fmt.Errorf("%w: %s: tagged note is for token %s, want %s", errBadTag, a.Name, pn.TokenId, tokenId)
 	}
 	cm, err := rpcore.Erc20CommitmentV2(a.Spend.PublicKey, pn.Salt, pn.Amount, tokenId)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errBadTag, err)
 	}
 	logs, err := e.chain.client.FilterLogs(ctx, ethereum.FilterQuery{
 		Addresses: []common.Address{e.chain.vaultAddr},
@@ -388,7 +406,7 @@ func (e *Engine) tagNote(ctx context.Context, a *Actor, pn *tags.PaymentNote) (*
 		return nil, fmt.Errorf("vault Commitment events: %w", err)
 	}
 	if len(logs) == 0 {
-		return nil, fmt.Errorf("%s: tagged note 0x%s… is not in the vault", a.Name, cm.Text(16)[:12])
+		return nil, fmt.Errorf("%w: %s: tagged note 0x%s… is not in the vault", errBadTag, a.Name, cm.Text(16)[:12])
 	}
 	return &note{commitment: cm, salt: pn.Salt, amount: pn.Amount}, nil
 }
@@ -396,9 +414,12 @@ func (e *Engine) tagNote(ctx context.Context, a *Actor, pn *tags.PaymentNote) (*
 // discoverByTag has a scan for tags and describes what the scan checked;
 // want is how many new notes the scan must find.
 func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int) (string, error) {
-	found, checked, err := e.scanTags(ctx, a)
+	found, checked, skipped, err := e.scanTags(ctx, a)
 	if err != nil {
 		return "", err
+	}
+	if skipped > 0 {
+		s.log("tag", "%s skipped %d matching tags that opened to no payment in the vault", a.Name, skipped)
 	}
 	if len(found) != want {
 		return "", fmt.Errorf("%s found %d new notes by their tags, want %d", a.Name, len(found), want)

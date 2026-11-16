@@ -178,10 +178,13 @@ func ScanChannels(
 
 	var found []FoundChannel
 	for idx := fromIdx; idx < end; idx++ {
+		// idx is below the count, so getChannel cannot revert: an error is
+		// the RPC's, and skipping the record would lose a channel for good
+		// once a cursor moves past it.
 		var recOut []interface{}
 		if err := c.Call(&bind.CallOpts{}, &recOut, "getChannel",
 			new(big.Int).SetUint64(idx)); err != nil {
-			continue
+			return nil, fmt.Errorf("TagChannelRegistry.getChannel(%d): %w", idx, err)
 		}
 
 		sender, _ := recOut[0].(common.Address)

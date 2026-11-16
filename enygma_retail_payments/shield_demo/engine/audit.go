@@ -392,18 +392,17 @@ func (e *Engine) auditPayers(ctx context.Context) (map[string]string, error) {
 	}
 	for _, l := range logs {
 		for _, ch := range channels {
+			// A bad tag (anyone can open a channel to a user and publish
+			// junk on it) names no one, like an unpaid one below.
 			pn, _, err := openTag(l, ch.Channel)
-			if err != nil {
-				return nil, fmt.Errorf("auditor: %w", err)
-			}
-			if pn == nil {
+			if err != nil || pn == nil {
 				continue
 			}
 			// A tag only names the payer of a note the auditor also decrypts
 			// from a Payment event, so an unpaid tag names no one.
 			cm, err := rpcore.Erc20CommitmentV2(ch.PkSpend, pn.Salt, pn.Amount, pn.TokenId)
 			if err != nil {
-				return nil, err
+				continue
 			}
 			payers[cm.String()] = ch.payer
 		}
