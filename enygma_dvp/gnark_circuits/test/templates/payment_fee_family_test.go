@@ -114,6 +114,7 @@ func buildValidPaymentFeeWitness(t *testing.T) (*templates.PaymentFeeCircuit, *f
 		StNullifiers:         []frontend.Variable{f.nullifier},
 		StCommitmentsOut:     []frontend.Variable{cmt0, cmt1},
 		StContractAddress:    f.contractAddress,
+		StCiphertextHash:     big.NewInt(0xC1F7),
 		StFee:                fee,
 		WtPrivateKeysIn:      []frontend.Variable{f.sk},
 		WtValuesIn:           []frontend.Variable{f.valueIn},
@@ -161,6 +162,13 @@ func TestPaymentFeeCircuit_TamperedContractAddress_Fails(t *testing.T) {
 	wc, _ := buildValidPaymentFeeWitness(t)
 	tampered := *wc
 	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentFeeCircuit(), wc, &tampered)
+}
+
+func TestPaymentFeeCircuit_TamperedCiphertextHash_Fails(t *testing.T) {
+	wc, _ := buildValidPaymentFeeWitness(t)
+	tampered := *wc
+	tampered.StCiphertextHash = big.NewInt(0xBAD)
 	assertPublicInputBound(t, emptyPaymentFeeCircuit(), wc, &tampered)
 }
 
@@ -260,6 +268,7 @@ func buildValidPaymentRelayerFeePublicWitness(t *testing.T) *templates.PaymentRe
 		StNullifiers:         []frontend.Variable{f.nullifier},
 		StCommitmentsOut:     []frontend.Variable{cmt0, cmt1, cmt2},
 		StContractAddress:    f.contractAddress,
+		StCiphertextHash:     big.NewInt(0xC1F7),
 		StFee:                fee,
 		WtPrivateKeysIn:      []frontend.Variable{f.sk},
 		WtValuesIn:           []frontend.Variable{f.valueIn},
@@ -310,6 +319,13 @@ func TestPaymentRelayerFeePublicCircuit_TamperedContractAddress_Fails(t *testing
 	assertPublicInputBound(t, emptyPaymentRelayerFeePublicCircuit(), wc, &tampered)
 }
 
+func TestPaymentRelayerFeePublicCircuit_TamperedCiphertextHash_Fails(t *testing.T) {
+	wc := buildValidPaymentRelayerFeePublicWitness(t)
+	tampered := *wc
+	tampered.StCiphertextHash = big.NewInt(0xBAD)
+	assertPublicInputBound(t, emptyPaymentRelayerFeePublicCircuit(), wc, &tampered)
+}
+
 func TestPaymentRelayerFeePublicCircuit_TamperedTreeNumber_Fails(t *testing.T) {
 	assert := test.NewAssert(t)
 	wc := buildValidPaymentRelayerFeePublicWitness(t)
@@ -356,6 +372,7 @@ func buildValidUsdrFeeWitness(t *testing.T) *templates.UsdrFeeCircuit {
 		StNullifiers:         []frontend.Variable{f.nullifier},
 		StCommitmentsOut:     []frontend.Variable{cmt0, cmt1},
 		StContractAddress:    f.contractAddress,
+		StCiphertextHash:     big.NewInt(0xC1F7),
 		StFee:                fee,
 		StTokenId:            f.tokenId,
 		WtPrivateKeysIn:      []frontend.Variable{f.sk},
@@ -402,6 +419,13 @@ func TestUsdrFeeCircuit_TamperedContractAddress_Fails(t *testing.T) {
 	wc := buildValidUsdrFeeWitness(t)
 	tampered := *wc
 	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyUsdrFeeCircuit(), wc, &tampered)
+}
+
+func TestUsdrFeeCircuit_TamperedCiphertextHash_Fails(t *testing.T) {
+	wc := buildValidUsdrFeeWitness(t)
+	tampered := *wc
+	tampered.StCiphertextHash = big.NewInt(0xBAD)
 	assertPublicInputBound(t, emptyUsdrFeeCircuit(), wc, &tampered)
 }
 

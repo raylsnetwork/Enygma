@@ -6,9 +6,9 @@
 // without gnark.
 package layout
 
-// Payment statement layout (7 public signals).
+// Payment statement layout (8 public signals).
 const (
-	PaymentLen = 7
+	PaymentLen = 8
 
 	PaymentMessageOffset = 0
 	PaymentMessageSize   = 1
@@ -27,11 +27,14 @@ const (
 
 	PaymentContractAddressOffset = 6
 	PaymentContractAddressSize   = 1
+
+	PaymentCiphertextHashOffset = 7
+	PaymentCiphertextHashSize   = 1
 )
 
-// Payment2in statement layout (10 public signals).
+// Payment2in statement layout (11 public signals).
 const (
-	Payment2inLen = 10
+	Payment2inLen = 11
 
 	Payment2inMessageOffset = 0
 	Payment2inMessageSize   = 1
@@ -50,11 +53,14 @@ const (
 
 	Payment2inContractAddressOffset = 9
 	Payment2inContractAddressSize   = 1
+
+	Payment2inCiphertextHashOffset = 10
+	Payment2inCiphertextHashSize   = 1
 )
 
-// PaymentFee statement layout (8 public signals).
+// PaymentFee statement layout (9 public signals).
 const (
-	PaymentFeeLen = 8
+	PaymentFeeLen = 9
 
 	PaymentFeeMessageOffset = 0
 	PaymentFeeMessageSize   = 1
@@ -76,11 +82,14 @@ const (
 
 	PaymentFeeFeeOffset = 7
 	PaymentFeeFeeSize   = 1
+
+	PaymentFeeCiphertextHashOffset = 8
+	PaymentFeeCiphertextHashSize   = 1
 )
 
-// PaymentRelayerFee statement layout (9 public signals).
+// PaymentRelayerFee statement layout (10 public signals).
 const (
-	PaymentRelayerFeeLen = 9
+	PaymentRelayerFeeLen = 10
 
 	PaymentRelayerFeeMessageOffset = 0
 	PaymentRelayerFeeMessageSize   = 1
@@ -102,11 +111,14 @@ const (
 
 	PaymentRelayerFeeFeeOffset = 8
 	PaymentRelayerFeeFeeSize   = 1
+
+	PaymentRelayerFeeCiphertextHashOffset = 9
+	PaymentRelayerFeeCiphertextHashSize   = 1
 )
 
-// UsdrFee statement layout (9 public signals).
+// UsdrFee statement layout (10 public signals).
 const (
-	UsdrFeeLen = 9
+	UsdrFeeLen = 10
 
 	UsdrFeeMessageOffset = 0
 	UsdrFeeMessageSize   = 1
@@ -131,4 +143,7 @@ const (
 
 	UsdrFeeTokenIdOffset = 8
 	UsdrFeeTokenIdSize   = 1
+
+	UsdrFeeCiphertextHashOffset = 9
+	UsdrFeeCiphertextHashSize   = 1
 )

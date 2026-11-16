@@ -39,6 +39,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		StNullifiers:         [1]string{in.Nullifier.String()},
 		StCommitmentsOut:     [2]string(ht.Strings(cmts...)),
 		StContractAddress:    ht.VaultHex,
+		StCiphertextHash:     ht.CiphertextHashHex,
 		StFee:                fee.String(),
 		StTokenId:            in.TokenId.String(),
 		WtPrivateKeysIn:      [1]string{in.Sk.String()},
@@ -59,6 +60,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		w.StCommitmentsOut[i] = cmts[i]
 	}
 	w.StContractAddress = ht.Vault
+	w.StCiphertextHash = ht.CiphertextHash
 	w.StFee = fee
 	w.StTokenId = in.TokenId
 	ht.AssertStatementLen(t, signals, layout.UsdrFeeLen)

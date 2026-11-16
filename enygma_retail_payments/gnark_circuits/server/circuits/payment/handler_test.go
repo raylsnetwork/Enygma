@@ -72,6 +72,7 @@ func paymentCase(t *testing.T, salt0 int64) ht.Case {
 		StNullifiers:         [1]string{in.Nullifier.String()},
 		StCommitmentsOut:     [2]string(ht.Strings(cmts...)),
 		StContractAddress:    ht.VaultHex,
+		StCiphertextHash:     ht.CiphertextHashHex,
 		WtPrivateKeysIn:      [1]string{in.Sk.String()},
 		WtValuesIn:           [1]string{in.Value.String()},
 		WtSaltsIn:            [1]string{in.Salt.String()},
@@ -90,5 +91,6 @@ func paymentCase(t *testing.T, salt0 int64) ht.Case {
 		w.StCommitmentsOut[i] = cmts[i]
 	}
 	w.StContractAddress = ht.Vault
+	w.StCiphertextHash = ht.CiphertextHash
 	return ht.Case{Request: request, Assignment: &w}
 }

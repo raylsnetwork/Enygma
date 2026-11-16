@@ -144,7 +144,7 @@ func TestV2Erc20Vault_PaymentReceiptShapes(t *testing.T) {
 		{"1 input, 1 output (a DvpInitiator leg)", 1, 1, layout.DvpInitiatorLen, selReceiptShapeMismatch},
 		{"1 input, 4 outputs", 1, 4, layout.PaymentRelayerFeeLen, selReceiptShapeMismatch},
 		{"(1,2) at length 6", 1, 2, 6, selReceiptShapeMismatch},
-		{"(1,2) at length 10", 1, 2, 10, selReceiptShapeMismatch},
+		{"(1,2) at length 11", 1, 2, 11, selReceiptShapeMismatch},
 		{"(1,3) at length 8", 1, 3, 8, selReceiptShapeMismatch},
 		{"(2,2) at length 7", 2, 2, 7, selReceiptShapeMismatch},
 		{"empty statement", 1, 2, 0, selReceiptShapeMismatch},
@@ -207,7 +207,11 @@ func TestV2Vaults_DvpLegChecks(t *testing.T) {
 	}{
 		{"Erc20 takes an initiator leg", erc20, initiator, selInvalidMerkleRoot},
 		{"Erc20 refuses a destination leg", erc20, destination, selInvalidStatmentSize},
-		{"Erc20 refuses a Payment receipt", erc20, fakeReceipt(layout.PaymentLen, 1, 2), selInvalidStatmentSize},
+		// Payment's statement is as long as DvpInitiator's since it gained
+		// StCiphertextHash (as PaymentFee's was before), so a Payment receipt
+		// passes the length check and fails later: a real one at the DvP
+		// verifying key. Payment2in's length is not a leg's.
+		{"Erc20 refuses a Payment2in receipt", erc20, fakeReceipt(layout.Payment2inLen, 2, 2), selInvalidStatmentSize},
 		{"Erc721 takes a destination leg", erc721, destination, selInvalidMerkleRoot},
 		{"Erc721 refuses an initiator leg", erc721, initiator, selInvalidStatmentSize},
 		{"Erc1155 refuses an initiator leg", erc1155, initiator, selDvpLegNotSupported},

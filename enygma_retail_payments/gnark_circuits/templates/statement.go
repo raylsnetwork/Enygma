@@ -12,6 +12,7 @@ var paymentStatementNames = map[string]string{
 	"StNullifiers":      "Nullifiers",
 	"StCommitmentsOut":  "CommitmentsOut",
 	"StContractAddress": "ContractAddress",
+	"StCiphertextHash":  "CiphertextHash",
 }
 
 // feeStatementNames adds the public fee of PaymentFee, PaymentRelayerFeePublic

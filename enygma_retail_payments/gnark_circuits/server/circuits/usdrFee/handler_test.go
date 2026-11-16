@@ -72,6 +72,7 @@ func usdrFeeCase(t *testing.T, salt0 int64) ht.Case {
 		StNullifiers:         [1]string{in.Nullifier.String()},
 		StCommitmentsOut:     [2]string(ht.Strings(cmts...)),
 		StContractAddress:    ht.VaultHex,
+		StCiphertextHash:     ht.CiphertextHashHex,
 		StFee:                fee.String(),
 		StTokenId:            in.TokenId.String(),
 		WtPrivateKeysIn:      [1]string{in.Sk.String()},
@@ -91,6 +92,7 @@ func usdrFeeCase(t *testing.T, salt0 int64) ht.Case {
 		w.StCommitmentsOut[i] = cmts[i]
 	}
 	w.StContractAddress = ht.Vault
+	w.StCiphertextHash = ht.CiphertextHash
 	w.StFee = fee
 	w.StTokenId = in.TokenId
 	return ht.Case{Request: request, Assignment: &w}

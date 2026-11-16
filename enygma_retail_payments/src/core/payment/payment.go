@@ -49,6 +49,8 @@ var (
 	// that salt of every change note, a payment's as well as a withdrawal's.
 	ChangeSalt = dvpcore.WithdrawChangeSalt
 	ChangeNote = dvpcore.WithdrawChangeNote
+	// PaymentCiphertextHash is the StCiphertextHash a Payment-family proof binds.
+	PaymentCiphertextHash = dvpcore.PaymentCiphertextHash
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.

@@ -16,6 +16,7 @@ type PaymentRequest struct {
 	StCommitmentsOut [2]string `json:"stCommitmentsOut" binding:"required"`
 	// VULN-5: vault contract address bound into the proof to prevent cross-deployment replay.
 	StContractAddress string `json:"stContractAddress" binding:"required"`
+	StCiphertextHash  string `json:"stCiphertextHash"  binding:"required"` // hash of the ciphertexts the payment publishes (CiphertextHash.sol)
 
 	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`
 	WtValuesIn           [1]string    `json:"wtValuesIn"           binding:"required"`

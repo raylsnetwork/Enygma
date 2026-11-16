@@ -131,6 +131,9 @@ interface IEnygmaDvp {
     error InvalidOpening();
     error InvalidChallenge();
     error InvalidPaymentMessage();
+    // A Payment-family receipt settled with other note ciphertexts than the
+    // ones its proof's StCiphertextHash binds (see CiphertextHash.sol).
+    error CiphertextHashMismatch();
     error InvalidDeliveryMessage();
     error JoinSplitWithSameCommitments();
     error InvalidMerkleRoot();

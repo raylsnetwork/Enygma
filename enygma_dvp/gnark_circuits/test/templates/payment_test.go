@@ -126,6 +126,7 @@ func (w *paymentTestWitness) circuit() *templates.PaymentCircuit {
 		StNullifiers:         []frontend.Variable{w.nullifier},
 		StCommitmentsOut:     []frontend.Variable{w.cmt0, w.cmt1},
 		StContractAddress:    w.contractAddress,
+		StCiphertextHash:     big.NewInt(0xC1F7),
 		WtPrivateKeysIn:      []frontend.Variable{w.sk},
 		WtValuesIn:           []frontend.Variable{w.valueIn},
 		WtSaltsIn:            []frontend.Variable{w.saltIn},
@@ -189,6 +190,20 @@ func TestPaymentCircuit_TamperedContractAddress_Fails(t *testing.T) {
 	wc.Config = paymentTestConfig()
 	tampered := *wc
 	tampered.StContractAddress = big.NewInt(0xDEAD)
+	assertPublicInputBound(t, emptyPaymentCircuit(), wc, &tampered)
+}
+
+// TestPaymentCircuit_TamperedCiphertextHash_Fails locks in the
+// StCiphertextHash binding: a proof made for one set of note ciphertexts must
+// not verify with the hash of another. The contracts compare the signal with
+// the hash of the ciphertexts they publish, so this is what stops a receipt
+// being settled with other ciphertexts than its prover's.
+func TestPaymentCircuit_TamperedCiphertextHash_Fails(t *testing.T) {
+	w := buildValidPaymentWitness(t)
+	wc := w.circuit()
+	wc.Config = paymentTestConfig()
+	tampered := *wc
+	tampered.StCiphertextHash = big.NewInt(0xBAD)
 	assertPublicInputBound(t, emptyPaymentCircuit(), wc, &tampered)
 }
 

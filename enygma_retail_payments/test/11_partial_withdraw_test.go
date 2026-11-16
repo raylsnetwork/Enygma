@@ -340,12 +340,15 @@ func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message strin
 		"stMerkleRoots":     roots,
 		"stNullifiers":      nullifierStrs,
 		"stContractAddress": vaultInt(e.vaultAddr).String(),
-		"wtPrivateKeysIn":   keys,
-		"wtValuesIn":        values,
-		"wtSaltsIn":         salts,
-		"wtPathElements":    paths,
-		"wtPathIndices":     indices,
-		"wtTokenId":         e.tokenId.String(),
+		// A withdrawal's ciphertexts are the change note's; the vault does
+		// not check them (the change salt is recoverable instead).
+		"stCiphertextHash": core.PaymentCiphertextHash([][]byte{ctI}, [][]byte{ctII}).String(),
+		"wtPrivateKeysIn":  keys,
+		"wtValuesIn":       values,
+		"wtSaltsIn":        salts,
+		"wtPathElements":   paths,
+		"wtPathIndices":    indices,
+		"wtTokenId":        e.tokenId.String(),
 	}
 	switch circuit {
 	case pwPaymentFee:

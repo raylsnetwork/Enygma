@@ -280,6 +280,7 @@ func paymentSignal(vault common.Address) []string {
 	s[layout.PaymentCommitmentsOutOffset] = "6"
 	s[layout.PaymentCommitmentsOutOffset+1] = "7"
 	s[layout.PaymentContractAddressOffset] = new(big.Int).SetBytes(vault.Bytes()).String()
+	s[layout.PaymentCiphertextHashOffset] = "0"
 	return s
 }
 
@@ -296,6 +297,7 @@ func (f *feeFixture) relayerFeeRequest(t *testing.T, msg string, out0, salt *big
 	signal[layout.PaymentRelayerFeeCommitmentsOutOffset+1] = "7"
 	signal[layout.PaymentRelayerFeeCommitmentsOutOffset+2] = f.feeCmt(t, salt, fee, tokenId).String()
 	signal[layout.PaymentRelayerFeeContractAddressOffset] = new(big.Int).SetBytes(f.vaultAddr.Bytes()).String()
+	signal[layout.PaymentRelayerFeeCiphertextHashOffset] = "0"
 	signal[layout.PaymentRelayerFeeFeeOffset] = fee.String()
 	return RelayPaymentRelayerFeeRequest{
 		VaultId: "0", Proof: proof8, PublicSignal: signal,
@@ -364,6 +366,7 @@ func (f *feeFixture) usdrFeeRequest(t *testing.T, salt *big.Int) RelayPaymentUsd
 	usdr[layout.UsdrFeeCommitmentsOutOffset] = cmtFee.String()
 	usdr[layout.UsdrFeeCommitmentsOutOffset+1] = "8"
 	usdr[layout.UsdrFeeContractAddressOffset] = new(big.Int).SetBytes(f.h.usdrVaultAddr.Bytes()).String()
+	usdr[layout.UsdrFeeCiphertextHashOffset] = "0"
 	usdr[layout.UsdrFeeFeeOffset] = fee.String()
 	usdr[layout.UsdrFeeTokenIdOffset] = tokenId.String()
 	return RelayPaymentUsdrFeeRequest{
@@ -516,6 +519,7 @@ func payment2inSignal(vault common.Address) []string {
 	s[layout.Payment2inCommitmentsOutOffset] = "6"
 	s[layout.Payment2inCommitmentsOutOffset+1] = "7"
 	s[layout.Payment2inContractAddressOffset] = new(big.Int).SetBytes(vault.Bytes()).String()
+	s[layout.Payment2inCiphertextHashOffset] = "0"
 	return s
 }
 
@@ -546,8 +550,8 @@ func TestRelayPaymentUsdrFee_AcceptsAPaymentOrPayment2inMainLeg(t *testing.T) {
 		lastNullifier           int
 		wantSignals, wantInputs int
 	}{
-		"Payment":    {paymentSignal, layout.PaymentNullifiersOffset, 7, 1},
-		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 10, 2},
+		"Payment":    {paymentSignal, layout.PaymentNullifiersOffset, 8, 1},
+		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 11, 2},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -597,9 +601,9 @@ func TestRelayPaymentUsdrFee_ChecksBothInputsOfAPayment2inMainLeg(t *testing.T) 
 func TestRelayPaymentUsdrFee_RefusesAnotherMainLegLength(t *testing.T) {
 	f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
 	req := f.usdrFeeRequest(t, big.NewInt(42))
-	req.PublicSignal = append(payment2inSignal(f.vaultAddr), "0") // 11 signals
+	req.PublicSignal = append(payment2inSignal(f.vaultAddr), "0") // 12 signals
 	w := postJSON(f.r, "/relay/payment_usdr_fee", req)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "publicSignal has 11 signals") {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "publicSignal has 12 signals") {
 		t.Fatalf("got %d, want 400 naming the statement length: %s", w.Code, w.Body.String())
 	}
 	f.checkNothingDone(t)
@@ -635,8 +639,8 @@ func TestRelayPayment_AcceptsAPaymentOrPayment2in(t *testing.T) {
 		lastNullifier           int
 		wantSignals, wantInputs int
 	}{
-		"Payment":    {paymentSignal, layout.PaymentNullifiersOffset, 7, 1},
-		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 10, 2},
+		"Payment":    {paymentSignal, layout.PaymentNullifiersOffset, 8, 1},
+		"Payment2in": {payment2inSignal, layout.Payment2inNullifiersOffset + 1, 11, 2},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -681,8 +685,8 @@ func TestRelayPayment_ChecksBothInputsOfAPayment2in(t *testing.T) {
 // with a 400, before anything is claimed or sent.
 func TestRelayPayment_RefusesAnotherStatementLength(t *testing.T) {
 	f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
-	w := postJSON(f.r, "/relay/payment", paymentRequest(append(payment2inSignal(f.vaultAddr), "0"))) // 11 signals
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "publicSignal has 11 signals") {
+	w := postJSON(f.r, "/relay/payment", paymentRequest(append(payment2inSignal(f.vaultAddr), "0"))) // 12 signals
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "publicSignal has 12 signals") {
 		t.Fatalf("got %d, want 400 naming the statement length: %s", w.Code, w.Body.String())
 	}
 	f.checkNothingDone(t)

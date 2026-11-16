@@ -117,8 +117,8 @@ func newFeeRelayFixture(t *testing.T, notesPath string) *feeRelayFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// [msg, treeNum0, root0, nf0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee]
-	signal := []string{"0", "0", "1", "5", "6", "7", feeCmt.String(), new(big.Int).SetBytes(vaultAddr.Bytes()).String(), fee.String()}
+	// [msg, treeNum0, root0, nf0, cmtBob, cmtChange, cmtRelayer, contractAddr, fee, ciphertextHash]
+	signal := []string{"0", "0", "1", "5", "6", "7", feeCmt.String(), new(big.Int).SetBytes(vaultAddr.Bytes()).String(), fee.String(), "0"}
 	body, _ := json.Marshal(RelayPaymentRelayerFeeRequest{
 		VaultId: "0",
 		Receipt: ReceiptPayload{

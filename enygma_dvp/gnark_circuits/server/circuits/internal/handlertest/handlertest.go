@@ -257,3 +257,10 @@ var Vault = big.NewInt(0xABCD)
 
 // VaultHex is Vault as a request carries it.
 const VaultHex = "0xabcd"
+
+// CiphertextHash is the StCiphertextHash the tests prove for, in hex in
+// requests for the same reason as Vault.
+var CiphertextHash = big.NewInt(0xC1F7)
+
+// CiphertextHashHex is CiphertextHash as a request carries it.
+const CiphertextHashHex = "0xc1f7"

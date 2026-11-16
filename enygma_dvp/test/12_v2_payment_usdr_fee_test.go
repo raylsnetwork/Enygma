@@ -443,6 +443,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"stNullifiers":         [1]string{nullifier.String()},
 			"stCommitmentsOut":     [3]string{cmtBob.String(), cmtChange.String(), cmtRelayer.String()},
 			"stContractAddress":    vaultAddrBig.String(),
+			"stCiphertextHash":     core.PaymentCiphertextHash([][]byte{ctxtBob}, [][]byte{ctxtIIBob}).String(),
 			"stFee":                relayerFixedFee.String(),
 			"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 			"wtValuesIn":           [1]string{d.depositAmt.String()},
@@ -501,7 +502,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 		// The relayer must be able to spend it: it learned the salt only from
 		// this request, so it has to have kept it.
-		spendFeeNoteFromRelayerStore(t, ctx, client, owner, gnarkClient, vault, vaultAddr, merkleDepth, cmtRelayer, resp.TxHash)
+		spendFeeNoteFromRelayerStore(t, ctx, client, owner, gnarkClient, dvp, 0, vault, vaultAddr, merkleDepth, cmtRelayer, resp.TxHash)
 	})
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -547,6 +548,8 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		}
 		usdrVaultAddrBig := new(big.Int).SetBytes(usdrVaultAddr.Bytes())
 
+		// The USDr leg is relayed with empty fee-note ciphertexts ("0x"), and
+		// the proof binds their hash.
 		reqBody := map[string]interface{}{
 			"stMessage":            "0",
 			"stTreeNumbers":        [1]string{"0"},
@@ -554,6 +557,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"stNullifiers":         [1]string{nullifier.String()},
 			"stCommitmentsOut":     [2]string{fCmt.String(), cmtChange.String()},
 			"stContractAddress":    usdrVaultAddrBig.String(),
+			"stCiphertextHash":     core.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
 			"stFee":                feeAmt.String(),
 			"stTokenId":            usdrTokenId.String(),
 			"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
@@ -680,7 +684,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		}
 		t.Logf("  USDr fee note (amount=%s, separate token) matches the fee the client paid ✓ — atomic with the main payment", usdrFixedFee)
 
-		spendFeeNoteFromRelayerStore(t, ctx, client, owner, gnarkClient, usdrVault, usdrVaultAddr, merkleDepth, cmtFee, resp.TxHash)
+		spendFeeNoteFromRelayerStore(t, ctx, client, owner, gnarkClient, dvp, 1, usdrVault, usdrVaultAddr, merkleDepth, cmtFee, resp.TxHash)
 	})
 
 	t.Run("negative: usdrFee mismatches usdrFixedFeeAmount", func(t *testing.T) {

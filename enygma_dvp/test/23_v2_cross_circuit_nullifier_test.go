@@ -68,7 +68,7 @@ func TestV2CrossCircuit_NoteSpentByPaymentCannotOpenASwap(t *testing.T) {
 		NumberOfInputs:  big.NewInt(1),
 		NumberOfOutputs: big.NewInt(2),
 	}
-	tx, err := tc.erc20Vault.Transact(tc.auth, "transfer", payReceipt)
+	tx, err := tc.dvp.Transact(tc.auth, "payment", payReceipt, big.NewInt(0), pay.CipherText, pay.EncTxData)
 	if err != nil {
 		t.Fatalf("payment transfer: %v", err)
 	}

@@ -59,6 +59,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness.StMessage = frontend.Variable(request.StMessage)
 		witness.StContractAddress = frontend.Variable(request.StContractAddress)
+		witness.StCiphertextHash = frontend.Variable(request.StCiphertextHash)
 		witness.WtTokenId = frontend.Variable(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {

@@ -21,6 +21,7 @@ import {
 } from "./PaymentStatementLayout.sol";
 import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "./DvpStatementLayout.sol";
 import {DvpReceipt} from "./DvpReceipt.sol";
+import {CiphertextHash} from "./CiphertextHash.sol";
 import {IEnygmaAuction} from "../interfaces/IEnygmaAuction.sol";
 import {IAbstractCoinVault} from "../interfaces/vaults/IAbstractCoinVault.sol";
 import {IMerkle} from "../interfaces/vaults/IMerkle.sol";
@@ -664,6 +665,43 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return _joinsplitCommitmentsOutOffset(numberOfInputs) + numberOfOutputs + 1;
     }
 
+    // Offset of a Payment-family receipt's StCiphertextHash, by the same
+    // shape and length dispatch as _commitmentsOutOffset. The legacy joinsplit
+    // circuits have no such signal, so their receipts cannot settle through
+    // payment*, which publish ciphertexts the proof must bind.
+    function _ciphertextHashOffset(ProofReceipt memory receipt) internal pure returns (uint256) {
+        uint256 numberOfInputs = receipt.numberOfInputs;
+        uint256 numberOfOutputs = receipt.numberOfOutputs;
+        uint256 length = receipt.statement.length;
+        if (numberOfInputs == 2 && numberOfOutputs == 2 && length == PAYMENT2IN_LEN) {
+            return Psl.PAYMENT2IN_CIPHERTEXT_HASH_OFFSET;
+        }
+        if (numberOfInputs == 1 && numberOfOutputs == 3 && length == PAYMENT_RELAYER_FEE_LEN) {
+            return Psl.PAYMENT_RELAYER_FEE_CIPHERTEXT_HASH_OFFSET;
+        }
+        if (numberOfInputs == 1 && numberOfOutputs == 2) {
+            if (length == PAYMENT_LEN) return Psl.PAYMENT_CIPHERTEXT_HASH_OFFSET;
+            if (length == PAYMENT_FEE_LEN) return Psl.PAYMENT_FEE_CIPHERTEXT_HASH_OFFSET;
+            if (length == USDR_FEE_LEN) return Psl.USDR_FEE_CIPHERTEXT_HASH_OFFSET;
+        }
+        revert InvalidStatementSize();
+    }
+
+    // The ciphertexts a payment* call publishes in its Payment event must be
+    // the ones the proof binds (CiphertextHash.sol). Without this check the
+    // relayer, or anyone who saw the receipt before it was mined, could
+    // settle it first with other ciphertexts: the sender's notes spent, the
+    // recipient's note inserted, but never found by the recipient's scan.
+    function _requireCiphertextHash(
+        ProofReceipt memory receipt,
+        bytes calldata ctxt,
+        bytes calldata encTxData
+    ) internal pure {
+        if (receipt.statement[_ciphertextHashOffset(receipt)] != CiphertextHash.ofNote(ctxt, encTxData)) {
+            revert CiphertextHashMismatch();
+        }
+    }
+
     modifier onlyRelayer() {
         require(authorizedRelayers[msg.sender], "EnygmaDvp: caller is not an authorized relayer");
         _;
@@ -1154,6 +1192,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         // Verify ZK proof and check nullifier/root validity.
         vault.checkReceiptConditions(receipt);
+        _requireCiphertextHash(receipt, ctxt, encTxData);
 
         // MEDIUM-5 fix: nullify inputs BEFORE inserting outputs — same order as
         // _settleOnGroupPair. Inputs are permanently spent before outputs are
@@ -1197,6 +1236,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         // Verify ZK proof with fee VK (checkReceiptConditions picks it by shape and statement length).
         vault.checkReceiptConditions(receipt);
+        _requireCiphertextHash(receipt, ctxt, encTxData);
 
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
@@ -1236,6 +1276,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
         vault.checkReceiptConditions(receipt);
+        _requireCiphertextHash(receipt, ctxt, encTxData);
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
@@ -1293,6 +1334,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
         vault.checkReceiptConditions(receipt);
+        _requireCiphertextHash(receipt, ctxt, encTxData);
         vault.nullifyFromReceipt(receipt);
         vault.insertCommitmentsFromReceipt(receipt);
 
@@ -1308,6 +1350,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         IAbstractCoinVault usdrVault = IAbstractCoinVault(_coinVaults[usdrVaultId]);
         usdrVault.checkReceiptConditions(usdrReceipt);
+        _requireCiphertextHash(usdrReceipt, usdrCtxt, usdrEncTxData);
         usdrVault.nullifyFromReceipt(usdrReceipt);
         usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
 
