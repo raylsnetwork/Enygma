@@ -68,7 +68,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
 	enygma_retail_payments/src enygma_retail_payments/test
 
-.PHONY: help modules hooks fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
+.PHONY: help modules hooks hooks-check fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-stack payments-stack-stop payments-test \
@@ -121,6 +121,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/mutant.test.js >/dev/null || node --test scripts/mutant.test.js
 	@# check_red_named.sh, the commit-msg hook, asks for a red only when a commit adds a check.
 	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
+	@# check_hooks_installed.sh, make check's hooks-check, finds a hook type this clone lacks.
+	@node --test scripts/check_hooks_installed.test.js >/dev/null || node --test scripts/check_hooks_installed.test.js
 	@# suite_result.sh, the on-chain suites' verdict, fails a failed test or an unlisted skip.
 	@node --test scripts/suite_result.test.js >/dev/null || node --test scripts/suite_result.test.js
 	@# suite_changes.sh, the on-chain workflow's filter, runs the suites a change touches.
@@ -141,7 +143,10 @@ vet: ## go vet ./... in every module
 errcheck: ## Fail on a dropped error (idioms in .errcheck-exclude allowed) in every module not known-red
 	$(call each_in,$(filter-out $(ERRCHECK_SKIP_MODULES),$(MODULES)),$(ERRCHECK) ./...)
 
-check: fmt-check page-check build vet errcheck ## Static checks only (no tests)
+check: hooks-check fmt-check page-check build vet errcheck ## Static checks only (no tests)
+
+hooks-check: ## Fail when a git hook type .pre-commit-config.yaml installs is missing from this clone (skipped in CI)
+	@scripts/check_hooks_installed.sh
 
 test-unit: ## go test ./... in every module (chain-dependent tests skip themselves)
 	@echo "Not run (known red, see TEST_SKIP_* above): modules [$(TEST_SKIP_MODULES)], packages [$(TEST_SKIP_PACKAGES)]"
