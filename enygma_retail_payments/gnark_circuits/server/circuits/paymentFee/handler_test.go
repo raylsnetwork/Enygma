@@ -21,7 +21,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	fee := big.NewInt(10)
 	values := []*big.Int{big.NewInt(50), big.NewInt(40)} // + fee == 100
 	pks := []*big.Int{ht.Hash(t, big.NewInt(999)), in.Pk}
-	salts := []*big.Int{big.NewInt(444), big.NewInt(555)}
+	salts := []*big.Int{big.NewInt(444), in.ChangeSalt}
 	cmts := []*big.Int{
 		ht.Commitment(t, pks[0], salts[0], values[0], in.TokenId),
 		ht.Commitment(t, pks[1], salts[1], values[1], in.TokenId),

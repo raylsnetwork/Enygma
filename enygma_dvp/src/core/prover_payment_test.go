@@ -184,3 +184,80 @@ func TestBoundPaymentProof_RejectsAStatementOfTheWrongLength(t *testing.T) {
 		t.Fatal("a 6-signal Payment statement was accepted")
 	}
 }
+
+// recordingProveServer is proveServer that also records each request body.
+func recordingProveServer(t *testing.T, path string, nSignals int) (*GnarkClient, *[]map[string]any) {
+	t.Helper()
+	var reqs []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			t.Errorf("request to %s, want %s", r.URL.Path, path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		reqs = append(reqs, body)
+		json.NewEncoder(w).Encode(map[string]any{
+			"proof":        []int64{1, 2, 3, 4, 5, 6, 7, 8},
+			"publicSignal": make([]int64, nSignals),
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return NewGnarkClient(srv.URL), &reqs
+}
+
+// A payment's change note must be recoverable without local state: if the
+// receipt is settled first with replaced ciphertexts, the sender's own
+// transaction reverts although the input is spent. Every payment prover
+// salts the change with WithdrawChangeSalt(sk, nullifier0), so the wallet
+// rebuilds the note from its spend key and the spent nullifier
+// (WithdrawChangeNote), and the request proves exactly that note.
+func TestBoundPaymentProofs_ChangeNoteIsRebuiltFromKeyAndNullifier(t *testing.T) {
+	a := newPaymentArgs(t)
+	sk, tree, token, change := a.keys[0].PrivateKey, big.NewInt(3), big.NewInt(7), big.NewInt(40)
+	nf, err := GetNullifierWithTree(sk, tree, a.proofs[0].Indices, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSalt, wantCommit, err := WithdrawChangeNote(sk, nf, change, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pay, payReqs := recordingProveServer(t, "/proof/payment", 7)
+	payRes, err := pay.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
+		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
+		[]*big.Int{big.NewInt(60), change}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+		8, a.proofs, []*big.Int{tree}, token)
+	if err != nil {
+		t.Fatalf("BoundPaymentProof: %v", err)
+	}
+	fee, feeReqs := recordingProveServer(t, "/proof/paymentFee", 8)
+	feeRes, err := fee.BoundPaymentFeeProof(big.NewInt(0xABCD), big.NewInt(10), big.NewInt(0),
+		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
+		[]*big.Int{big.NewInt(50), change}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+		8, a.proofs, []*big.Int{tree}, token)
+	if err != nil {
+		t.Fatalf("BoundPaymentFeeProof: %v", err)
+	}
+
+	for _, r := range []struct {
+		name string
+		res  *PaymentResult
+		req  map[string]any
+	}{
+		{"BoundPaymentProof", payRes, (*payReqs)[0]},
+		{"BoundPaymentFeeProof", feeRes, (*feeReqs)[0]},
+	} {
+		if r.res.SaltA == nil || r.res.SaltA.Cmp(wantSalt) != 0 {
+			t.Errorf("%s: SaltA %v, want WithdrawChangeSalt(sk, nf) %s", r.name, r.res.SaltA, wantSalt)
+		}
+		if got := r.req["wtSaltsOut"].([]any)[1]; got != wantSalt.String() {
+			t.Errorf("%s: proved with change salt %v, want %s", r.name, got, wantSalt)
+		}
+		if got := r.req["stCommitmentsOut"].([]any)[1]; got != wantCommit.String() {
+			t.Errorf("%s: proved change commitment %v, want WithdrawChangeNote's %s", r.name, got, wantCommit)
+		}
+	}
+}

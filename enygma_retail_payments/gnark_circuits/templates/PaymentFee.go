@@ -138,6 +138,9 @@ func (circuit *PaymentFeeCircuit) Define(api frontend.API) error {
 
 	api.AssertIsEqual(api.Add(outputsTotal, circuit.StFee), inputsTotal)
 
+	// The change note (output[1]) uses the recoverable salt.
+	assertChangeSalt(api, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
+
 	// Bind StContractAddress (the vault address, checked on-chain against the
 	// verifying vault): a public input that appears in no constraint is not
 	// bound by the proof, so it would be free to rewrite.

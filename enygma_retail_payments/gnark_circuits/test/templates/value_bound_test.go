@@ -36,7 +36,8 @@ func boundHash(t *testing.T, xs ...*big.Int) *big.Int {
 
 // spendOneNote returns a PaymentConfig witness spending a valueIn note of
 // key sk into out0 for pkOut0 (salt salt0) and out1 back to sk's key (salt
-// salt1), with message as StMessage.
+// salt1, or nil for the salt the circuit requires, Poseidon(sk, nullifier)),
+// with message as StMessage.
 func spendOneNote(t *testing.T, message int, sk, valueIn, pkOut0, out0, salt0, out1, salt1 *big.Int) *templates.PaymentCircuit {
 	t.Helper()
 	cfg := templates.PaymentConfig
@@ -51,7 +52,7 @@ func spendOneNote(t *testing.T, message int, sk, valueIn, pkOut0, out0, salt0, o
 		root = boundHash(t, root, s)
 	}
 	nf := boundHash(t, sk, big.NewInt(0))
-	if message == templates.MessageWithdraw {
+	if salt1 == nil {
 		salt1 = boundHash(t, sk, nf)
 	}
 
@@ -89,7 +90,7 @@ func TestValueBound_InflationDoesNotProve(t *testing.T) {
 	sk := big.NewInt(12345)
 	valueIn := big.NewInt(100)
 	big30 := new(big.Int).Exp(big.NewInt(10), big.NewInt(30), nil)
-	a := spendOneNote(t, 0, sk, valueIn, boundHash(t, sk), big30, big.NewInt(444), wrapped(valueIn, big30), big.NewInt(555))
+	a := spendOneNote(t, 0, sk, valueIn, boundHash(t, sk), big30, big.NewInt(444), wrapped(valueIn, big30), nil)
 
 	empty := templates.NewPaymentCircuit(templates.PaymentConfig)
 	if err := test.IsSolved(&empty, a, ecc.BN254.ScalarField()); err == nil {
@@ -136,13 +137,13 @@ func TestValueBound_TopValueSolves(t *testing.T) {
 	top := new(big.Int).Sub(valuebound.Bound(), big.NewInt(1))
 	empty := templates.NewPaymentCircuit(templates.PaymentConfig)
 
-	a := spendOneNote(t, 0, sk, top, big.NewInt(99), top, big.NewInt(1), big.NewInt(0), big.NewInt(2))
+	a := spendOneNote(t, 0, sk, top, big.NewInt(99), top, big.NewInt(1), big.NewInt(0), nil)
 	if err := test.IsSolved(&empty, a, ecc.BN254.ScalarField()); err != nil {
 		t.Fatalf("a 10^36 - 1 note did not spend: %v", err)
 	}
 
 	over := valuebound.Bound()
-	a = spendOneNote(t, 0, sk, over, big.NewInt(99), over, big.NewInt(1), big.NewInt(0), big.NewInt(2))
+	a = spendOneNote(t, 0, sk, over, big.NewInt(99), over, big.NewInt(1), big.NewInt(0), nil)
 	if err := test.IsSolved(&empty, a, ecc.BN254.ScalarField()); err == nil {
 		t.Fatal("a 10^36 note spent")
 	}

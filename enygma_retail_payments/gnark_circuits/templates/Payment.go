@@ -41,7 +41,7 @@ type PaymentCircuit struct {
 	// --- private witnesses: outputs ---
 	WtSpendPublicKeysOut []frontend.Variable // TmMOutputs — pk_spend of each recipient
 	WtValuesOut          []frontend.Variable // TmMOutputs — amount per output
-	WtSaltsOut           []frontend.Variable // TmMOutputs — salt per output (HKDF-derived for output 0; random for change outputs)
+	WtSaltsOut           []frontend.Variable // TmMOutputs — salt per output (HKDF-derived for output 0; Poseidon(sk, nullifier0) for the change, see assertChangeSalt)
 }
 
 // MessageWithdraw is the StMessage of a withdrawal proof. The Payment-family
@@ -59,19 +59,20 @@ func assertPaymentMessage(api frontend.API, message frontend.Variable) {
 	api.AssertIsEqual(api.Mul(message, api.Sub(message, MessageWithdraw)), 0)
 }
 
-// assertWithdrawChangeSalt makes a withdrawal's change note (output[1])
-// recoverable from the owner's key alone: when message is MessageWithdraw
-// (after assertPaymentMessage it is 0 or 1, so it serves as the selector), the
-// change salt must be Poseidon(sk, nullifier0), and input 0 must be a real
-// note, so that nullifier0 is unique and on chain. The vault publishes the
-// change note's EncryptedNote, but those ciphertexts are not bound by the
-// proof: whoever settles the receipt first can drop or replace them. With
-// this rule the owner rebuilds the note from public data instead (the spent
-// nullifier, and the withdrawn amount and fee); see core.WithdrawChangeSalt.
-func assertWithdrawChangeSalt(api frontend.API, message, sk, nullifier0, changeSalt frontend.Variable) {
-	api.AssertIsEqual(api.Mul(message, api.IsZero(nullifier0)), 0)
-	expected := pos.Poseidon(api, []frontend.Variable{sk, nullifier0})
-	api.AssertIsEqual(api.Mul(message, api.Sub(changeSalt, expected)), 0)
+// assertChangeSalt makes the change note (output[1]) of every Payment-family
+// proof, a payment or a withdrawal, recoverable from the owner's key alone:
+// the change salt must be Poseidon(sk, nullifier0), and input 0 must be a real
+// note, so that nullifier0 is unique and on chain. The ciphertexts that go
+// with a receipt are not bound by the proof: whoever settles the receipt first
+// can drop or replace them, and the sender's own transaction then reverts
+// although the input note is spent. With this rule the owner rebuilds the
+// change note from public data instead (the spent nullifier, and the change
+// value the owner chose); see core.ChangeSalt and core.ChangeNote. It applied
+// to withdrawals only at first; a payment's change salt was random, so a
+// wallet that lost it lost the change note.
+func assertChangeSalt(api frontend.API, sk, nullifier0, changeSalt frontend.Variable) {
+	api.AssertIsDifferent(nullifier0, 0)
+	api.AssertIsEqual(changeSalt, pos.Poseidon(api, []frontend.Variable{sk, nullifier0}))
 }
 
 func (circuit *PaymentCircuit) Define(api frontend.API) error {
@@ -161,7 +162,7 @@ func (circuit *PaymentCircuit) Define(api frontend.API) error {
 	// Conservation: total inputs must equal total outputs
 	api.AssertIsEqual(outputsTotal, inputsTotal)
 
-	assertWithdrawChangeSalt(api, circuit.StMessage, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
+	assertChangeSalt(api, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
 
 	// Bind StContractAddress (the vault address, checked on-chain against the
 	// verifying vault): a public input that appears in no constraint is not

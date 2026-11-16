@@ -23,7 +23,10 @@ type PaymentResult struct {
 	// Bob's salt — needed by the tag-based notification path (private tag layer).
 	SaltB *big.Int // saltB field element used in Bob's output commitment
 	// Alice's change note data (private — not published on-chain).
-	SaltA *big.Int // random change salt; Alice must store this locally to open Commitment_A
+	// SaltA is the change salt, WithdrawChangeSalt(sk, nullifier0): Alice can
+	// rebuild it, and so Commitment_A, from her spend key and the payment's
+	// first nullifier (WithdrawChangeNote), without storing it.
+	SaltA *big.Int
 
 	circuit paymentLayout // the statement layout of the circuit that proved Statement
 }
@@ -107,8 +110,10 @@ func (r *PaymentResult) Fee() *big.Int { return r.circuit.fee.one(r.Statement) }
 // Salt derivation follows the protocol:
 //   - Output 0 (destination): salt derived via HKDF from the ML-KEM shared secret
 //     so Bob can recover it by decapsulating the ML-KEM ciphertext.
-//   - Output 1+ (change): salt is random (protocol §"Deriving a change salt");
-//     the caller must store PaymentResult.SaltA locally to later open the commitment.
+//   - Output 1 (change): salt is WithdrawChangeSalt(sk, nullifier0), so Alice
+//     can rebuild her change note from her key and the spent nullifier, even
+//     if the payment's ciphertexts are replaced and her own transaction
+//     reverts (see paymentChangeSalt).
 //
 // The caller submits the resulting ctxts/encTxDatas alongside the proof on-chain.
 func (c *GnarkClient) BoundPaymentProof(
@@ -186,15 +191,15 @@ func (c *GnarkClient) BoundPaymentProof(
 	stCommitmentsOut[0] = cmt0
 
 	for i := 1; i < nOut; i++ {
-		randSalt, err := RandomInField()
+		salt, err := paymentChangeSalt(i, keysIn[0].PrivateKey, stNullifiers[0])
 		if err != nil {
-			return nil, fmt.Errorf("RandomInField change output %d: %w", i, err)
+			return nil, fmt.Errorf("change output %d salt: %w", i, err)
 		}
 		if i == 1 {
-			saltA = randSalt
+			saltA = salt
 		}
-		wtSaltsOut[i] = randSalt
-		cmt, err := Erc20CommitmentV2(recipientSpendPks[i], randSalt, wtValuesOut[i], wtTokenId)
+		wtSaltsOut[i] = salt
+		cmt, err := Erc20CommitmentV2(recipientSpendPks[i], salt, wtValuesOut[i], wtTokenId)
 		if err != nil {
 			return nil, fmt.Errorf("Erc20CommitmentV2 change output %d: %w", i, err)
 		}
@@ -255,6 +260,20 @@ func (c *GnarkClient) BoundPaymentProof(
 		SaltA:           saltA,
 		circuit:         circuit,
 	}, nil
+}
+
+// paymentChangeSalt is the salt of change output i of a payment whose first
+// input is spent by sk with nullifier0. Output 1 gets WithdrawChangeSalt(sk,
+// nullifier0), the salt enygma_retail_payments' Payment-family circuits
+// require of every proof (payments as well as withdrawals), so the change
+// note never depends on locally stored data. Any further output, and a proof
+// whose first input is zero padding (nullifier0 = 0, which those circuits
+// reject), gets a random salt as before: no circuit constrains it.
+func paymentChangeSalt(i int, sk, nullifier0 *big.Int) (*big.Int, error) {
+	if i == 1 && nullifier0.Sign() != 0 {
+		return WithdrawChangeSalt(sk, nullifier0)
+	}
+	return RandomInField()
 }
 
 // BoundPaymentFeeProof generates a PaymentFee proof where the sender's note absorbs
@@ -338,15 +357,15 @@ func (c *GnarkClient) BoundPaymentFeeProof(
 	stCommitmentsOut[0] = cmt0
 
 	for i := 1; i < nOut; i++ {
-		randSalt, err := RandomInField()
+		salt, err := paymentChangeSalt(i, keysIn[0].PrivateKey, stNullifiers[0])
 		if err != nil {
-			return nil, fmt.Errorf("RandomInField change output %d: %w", i, err)
+			return nil, fmt.Errorf("change output %d salt: %w", i, err)
 		}
 		if i == 1 {
-			saltA = randSalt
+			saltA = salt
 		}
-		wtSaltsOut[i] = randSalt
-		cmt, err := Erc20CommitmentV2(recipientSpendPks[i], randSalt, wtValuesOut[i], wtTokenId)
+		wtSaltsOut[i] = salt
+		cmt, err := Erc20CommitmentV2(recipientSpendPks[i], salt, wtValuesOut[i], wtTokenId)
 		if err != nil {
 			return nil, fmt.Errorf("Erc20CommitmentV2 change output %d: %w", i, err)
 		}

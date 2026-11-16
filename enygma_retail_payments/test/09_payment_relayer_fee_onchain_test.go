@@ -255,9 +255,10 @@ func runRelayerFeeFlow(
 	}
 
 	// Output 1: Alice's change.
-	saltA, err = dvpcore.RandomInField()
+	// The circuit requires the change salt Poseidon(sk, nullifier).
+	saltA, err = rpcore.ChangeSalt(aliceSpend.PrivateKey, nullifier)
 	if err != nil {
-		t.Fatalf("[%s] RandomInField (change): %v", p.label, err)
+		t.Fatalf("[%s] ChangeSalt: %v", p.label, err)
 	}
 	cmtChange, err := rpcore.Erc20CommitmentV2(aliceSpend.PublicKey, saltA, changeAmt, tokenId)
 	if err != nil {

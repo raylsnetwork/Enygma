@@ -134,8 +134,9 @@ func (circuit *PaymentRelayerFeePublicCircuit) Define(api frontend.API) error {
 	// Conservation: all 3 outputs sum to all inputs — nothing burned.
 	api.AssertIsEqual(outputsTotal, inputsTotal)
 
-	// A relayed withdrawal's change note (output[1]) uses the recoverable salt.
-	assertWithdrawChangeSalt(api, circuit.StMessage, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
+	// The change note (output[1]), of a payment or a relayed withdrawal, uses
+	// the recoverable salt.
+	assertChangeSalt(api, circuit.WtPrivateKeysIn[0], circuit.StNullifiers[0], circuit.WtSaltsOut[1])
 
 	// Fee binding: relayer's note amount must equal the public StFee signal.
 	// This prevents Alice from under-paying the relayer while claiming a higher fee on-chain.

@@ -107,7 +107,9 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 	if err != nil {
 		return nil, err
 	}
-	changeSalt, err := dvpcore.RandomInField()
+	// The UsdrFee circuit requires the change salt Poseidon(sk, nullifier),
+	// so payer can rebuild the change note from the key and the nullifier.
+	changeSalt, err := rpcore.ChangeSalt(payer.Spend.PrivateKey, nullifier)
 	if err != nil {
 		return nil, err
 	}

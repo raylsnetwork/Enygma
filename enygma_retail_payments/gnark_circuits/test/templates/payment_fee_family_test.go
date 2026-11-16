@@ -29,6 +29,9 @@ type feeFamilyInputFixture struct {
 	siblings                 []*big.Int
 	root, contractAddress    *big.Int
 	nullifier                *big.Int
+	// changeSalt is the salt the circuits require of the change note:
+	// Poseidon(sk, nullifier).
+	changeSalt *big.Int
 }
 
 func buildFeeFamilyInputFixture(t *testing.T, tokenId int64) *feeFamilyInputFixture {
@@ -66,6 +69,10 @@ func buildFeeFamilyInputFixture(t *testing.T, tokenId int64) *feeFamilyInputFixt
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.changeSalt, err = poseidon.Hash([]*big.Int{f.sk, f.nullifier})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	return f
 }
@@ -99,7 +106,7 @@ func buildValidPaymentFeeWitness(t *testing.T) (*templates.PaymentFeeCircuit, *f
 	}
 
 	pkOut1 := f.pk // Alice's change, must be sender-owned
-	saltOut1 := big.NewInt(555)
+	saltOut1 := f.changeSalt
 	valueOut1 := big.NewInt(40) // 50 + 40 + 10(fee) == 100
 	cmt1, err := poseidon.Hash([]*big.Int{pkOut1, saltOut1, valueOut1, f.tokenId})
 	if err != nil {
@@ -230,7 +237,7 @@ func buildValidPaymentRelayerFeePublicWitness(t *testing.T) *templates.PaymentRe
 	}
 
 	pkOut1 := f.pk // Alice's change
-	saltOut1 := big.NewInt(555)
+	saltOut1 := f.changeSalt
 	valueOut1 := big.NewInt(30)
 	cmt1, err := poseidon.Hash([]*big.Int{pkOut1, saltOut1, valueOut1, f.tokenId})
 	if err != nil {
@@ -339,7 +346,7 @@ func buildValidUsdrFeeWitness(t *testing.T) *templates.UsdrFeeCircuit {
 	}
 
 	pkOut1 := f.pk // sender's change
-	saltOut1 := big.NewInt(555)
+	saltOut1 := f.changeSalt
 	valueOut1 := big.NewInt(80) // 20 + 80 == 100
 	cmt1, err := poseidon.Hash([]*big.Int{pkOut1, saltOut1, valueOut1, f.tokenId})
 	if err != nil {

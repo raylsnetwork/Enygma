@@ -108,7 +108,11 @@ func buildValidPaymentWitness(t *testing.T) *paymentTestWitness {
 
 	// Output 1 (change) — MUST be owned by the sender (WtPrivateKeysIn[0]'s pk).
 	w.pkOut1 = w.pk
-	w.saltOut1 = big.NewInt(555)
+	// The change salt the circuit requires: Poseidon(sk, nullifier0).
+	w.saltOut1, err = poseidon.Hash([]*big.Int{w.sk, w.nullifier})
+	if err != nil {
+		t.Fatal(err)
+	}
 	w.valueOut1 = big.NewInt(40) // 60 + 40 == 100 == valueIn (conservation)
 	w.cmt1, err = poseidon.Hash([]*big.Int{w.pkOut1, w.saltOut1, w.valueOut1, w.tokenId})
 	if err != nil {

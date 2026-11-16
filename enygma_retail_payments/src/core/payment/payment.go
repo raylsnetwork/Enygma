@@ -44,6 +44,11 @@ var (
 	RandomInField        = dvpcore.RandomInField
 	WithdrawChangeSalt   = dvpcore.WithdrawChangeSalt
 	WithdrawChangeNote   = dvpcore.WithdrawChangeNote
+	// ChangeSalt/ChangeNote are WithdrawChangeSalt/WithdrawChangeNote under
+	// the name that fits their use here: the Payment-family circuits require
+	// that salt of every change note, a payment's as well as a withdrawal's.
+	ChangeSalt = dvpcore.WithdrawChangeSalt
+	ChangeNote = dvpcore.WithdrawChangeNote
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.

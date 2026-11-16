@@ -47,16 +47,17 @@ func keys(t *testing.T) (pkPath, vkPath string, vk groth16.VerifyingKey) {
 	return ht.Keys(t, &empty)
 }
 
-// paymentCase pays 60 of a 100 note to Bob and 40 back as change, the change
-// note salted with changeSalt.
-func paymentCase(t *testing.T, changeSalt int64) ht.Case {
+// paymentCase pays 60 of a 100 note to Bob and 40 back as change,
+// Bob's note salted with salt0. The change note has the salt the circuit
+// requires, so salt0 is what tells cases apart.
+func paymentCase(t *testing.T, salt0 int64) ht.Case {
 	t.Helper()
 	cfg := templates.PaymentConfig
 	in := ht.NewNote(t, 12345, 100, 7, cfg.TmMerkleTreeDepth)
 	bobPk := ht.Hash(t, big.NewInt(999))
 	values := []*big.Int{big.NewInt(60), big.NewInt(40)}
 	pks := []*big.Int{bobPk, in.Pk}
-	salts := []*big.Int{big.NewInt(444), big.NewInt(changeSalt)}
+	salts := []*big.Int{big.NewInt(salt0), in.ChangeSalt}
 	cmts := []*big.Int{
 		ht.Commitment(t, pks[0], salts[0], values[0], in.TokenId),
 		ht.Commitment(t, pks[1], salts[1], values[1], in.TokenId),
