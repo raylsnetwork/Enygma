@@ -466,8 +466,8 @@ func TestEpochIntervalFlow(t *testing.T) {
 
 	// ── Phases 7-8: ZK transfer + stale proof rejection ───────────────────────
 	if !tcpAvailable("127.0.0.1:8080") {
-		t.Log("=== Phases 7-8: SKIPPED — gnark server not available at 127.0.0.1:8080 ===")
-		return
+		// t.Skip, not a logged return: make payments-test fails on a skip it does not expect.
+		t.Skip("gnark server not reachable at 127.0.0.1:8080 — phases 7-8 (ZK transfer, stale proof) need it")
 	}
 	relayURL := startTestRelayer(t, contractAddr, banks)
 	apiKey := relayerKey
