@@ -224,7 +224,7 @@ PAYMENTS_LOG_DIR ?=
 PAYMENTS_KNOWN_SKIPS :=
 
 payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
-	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p $$logs; \
+	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p $$logs; : >$$logs/stack.log; \
 	(LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash enygma_payments/run_scripts/stack.sh >$$logs/stack.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \

@@ -3,7 +3,8 @@
 # contracts and builds relayer/relayer_bin (both gitignored, so a stale copy
 # would otherwise be tested), then starts a fresh Hardhat node on :8545 and
 # the gnark server on :8080. The suite deploys its own contracts and spawns
-# relayer_bin itself. Ctrl-C (or any failure) stops what it started.
+# relayer_bin itself. Ctrl-C, any failure, or either service exiting stops
+# what it started.
 #
 # Usage:
 #   bash enygma_payments/run_scripts/stack.sh
@@ -60,7 +61,7 @@ for port in 8545 8080; do
 done
 say "logs: $LOG_DIR"
 
-PIDS=()
+PIDS=() NAMES=()
 cleanup() {
     trap - EXIT INT TERM
     say "stopping services…"
@@ -78,11 +79,20 @@ start() {
     shift 2
     (cd "$dir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@" >"$LOG_DIR/$name.log" 2>&1) &
     PIDS+=($!)
+    NAMES+=("$name")
 }
+# died NAME — NAME's service exited: shows its log's tail and fails.
+died() {
+    say "$1 exited — last log lines:" >&2
+    tail -20 "$LOG_DIR/$1.log" >&2
+    exit 1
+}
+# wait_port NAME PORT PID — waits for NAME to listen on PORT, failing at once if PID exits.
 wait_port() {
-    local name=$1 port=$2
+    local name=$1 port=$2 pid=$3
     for _ in $(seq 1 600); do
         listening "$port" && { say "$name is up on :$port"; return 0; }
+        kill -0 "$pid" 2>/dev/null || died "$name"
         sleep 0.5
     done
     say "$name did not come up on :$port — last log lines:" >&2
@@ -107,8 +117,15 @@ step build-gnark "$PAY_ROOT/gnark-server" go build -o "$BIN_DIR/gnark_server" ./
 
 start hardhat "$CONTRACTS" npx hardhat node
 start gnark "$PAY_ROOT/gnark-server" "$BIN_DIR/gnark_server"
-wait_port hardhat 8545
-wait_port gnark 8080
+wait_port hardhat 8545 "${PIDS[0]}"
+wait_port gnark 8080 "${PIDS[1]}"
 
 say "stack is up (logs $LOG_DIR)"
-wait
+# Up while both run; when one exits, the trap stops the other, so the stack
+# never looks up with a service gone. (Polled: macOS's bash 3.2 has no wait -n.)
+while :; do
+    for i in "${!PIDS[@]}"; do
+        kill -0 "${PIDS[$i]}" 2>/dev/null || died "${NAMES[$i]}"
+    done
+    sleep 1
+done
