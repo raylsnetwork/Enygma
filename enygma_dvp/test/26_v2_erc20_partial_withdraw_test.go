@@ -643,6 +643,7 @@ func TestV2Erc20PartialWithdraw_Rejections(t *testing.T) {
 		bad.Statement = make([]*big.Int, layout.PaymentFeeLen)
 		copy(bad.Statement, s.receipt.Statement)
 		bad.Statement[layout.PaymentFeeFeeOffset] = big.NewInt(1)
+		bad.Statement[layout.PaymentFeeCiphertextHashOffset] = big.NewInt(0)
 		e.expectRevert(t, "InvalidStatmentSize", big.NewInt(10), recipient, bad, s.ctI, s.ctII)
 	})
 	t.Run("payment_message", func(t *testing.T) {
