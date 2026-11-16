@@ -300,17 +300,19 @@ type taggedNote struct {
 
 // errBadTag marks a tag that matches one of an actor's channels but opens to
 // no payment: a payload that does not decode or decrypt, or a note for
-// another token or not in the vault. Anyone can open a channel to a user and
+// another token. A note not in the vault is skipped the same way. Anyone can open a channel to a user and
 // publish tags on it, so a scan skips such a tag rather than stopping at it.
 var errBadTag = errors.New("bad tag")
 
 // scanTags has a check every tag published since their last scan against
 // their channels, decrypt only the notes whose tags match, and keep each
-// that opens to a commitment in the vault. It returns the new notes, as
-// decrypted from their tags, how many tags it checked, and how many matching
-// tags it skipped as bad. Only an RPC error stops the scan, and then it
-// keeps no notes and the cursor stays put, so the next scan reads the same
-// blocks again and finds the same notes.
+// that opens to a commitment in the vault. It confirms all the candidates
+// together, in one vault query per vaultQueryChunk of them rather than one
+// per matching tag, so a channel full of junk notes can't slow it down. It
+// returns the new notes, as decrypted from their tags, how many tags it
+// checked, and how many matching tags it skipped as bad. Only an RPC error
+// stops the scan, and then it keeps no notes and the cursor stays put, so
+// the next scan reads the same blocks again and finds the same notes.
 func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, checked, skipped int, err error) {
 	c := e.chain
 	tip, err := c.client.BlockNumber(ctx)
@@ -329,7 +331,15 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("TagPublished events: %w", err)
 	}
-	var fresh purse
+	type candidate struct {
+		l       ethtypes.Log
+		ch      tags.Channel
+		payload []byte
+		pn      *tags.PaymentNote
+		cm      *big.Int
+	}
+	var cands []candidate
+	var cms []*big.Int
 	for _, l := range logs {
 		if len(l.Topics) < 4 {
 			continue
@@ -344,7 +354,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 			if pn == nil {
 				continue
 			}
-			n, err := e.tagNote(ctx, a, pn)
+			cm, err := tagCommitment(a, pn)
 			if errors.Is(err, errBadTag) {
 				skipped++
 				continue
@@ -352,14 +362,30 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 			if err != nil {
 				return nil, checked, skipped, err
 			}
-			if !a.notes.has(n.commitment) && !fresh.has(n.commitment) {
-				fresh = append(fresh, n)
-				found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: l.TxHash.Hex(),
-					Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(payload),
-					Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(pn.TokenId)},
-					ch: ch, block: l.BlockNumber, payload: payload, opened: pn})
-			}
+			cands = append(cands, candidate{l, ch, payload, pn, cm})
+			cms = append(cms, cm)
 		}
+	}
+	inVault, err := e.vaultHas(ctx, cms)
+	if err != nil {
+		return nil, checked, skipped, err
+	}
+	var fresh purse
+	for _, k := range cands {
+		// A tag alone proves nothing was paid.
+		if !inVault[common.BigToHash(k.cm)] {
+			skipped++
+			continue
+		}
+		if a.notes.has(k.cm) || fresh.has(k.cm) {
+			continue
+		}
+		n := &note{commitment: k.cm, salt: k.pn.Salt, amount: k.pn.Amount}
+		fresh = append(fresh, n)
+		found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: k.l.TxHash.Hex(),
+			Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(k.payload),
+			Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(k.pn.TokenId)},
+			ch: k.ch, block: k.l.BlockNumber, payload: k.payload, opened: k.pn})
 	}
 	a.notes = append(a.notes, fresh...)
 	a.tags.lastBlock = tip
@@ -390,10 +416,10 @@ func openTag(l ethtypes.Log, ch tags.Channel) (*tags.PaymentNote, []byte, error)
 	return pn, payload, nil
 }
 
-// tagNote is the note a tag's payload opens for a, once its commitment is
-// confirmed in the vault: a tag alone proves nothing was paid. Its errors
-// wrap errBadTag unless the vault's events could not be read.
-func (e *Engine) tagNote(ctx context.Context, a *Actor, pn *tags.PaymentNote) (*note, error) {
+// tagCommitment is the commitment of the note a tag's payload opens for a.
+// Its errors all wrap errBadTag: a note for another token, or one whose
+// commitment can't be computed.
+func tagCommitment(a *Actor, pn *tags.PaymentNote) (*big.Int, error) {
 	if pn.TokenId.Cmp(tokenId) != 0 {
 		return nil, fmt.Errorf("%w: %s: tagged note is for token %s, want %s", errBadTag, a.Name, pn.TokenId, tokenId)
 	}
@@ -401,17 +427,44 @@ func (e *Engine) tagNote(ctx context.Context, a *Actor, pn *tags.PaymentNote) (*
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errBadTag, err)
 	}
-	logs, err := e.chain.client.FilterLogs(ctx, ethereum.FilterQuery{
-		Addresses: []common.Address{e.chain.vaultAddr},
-		Topics:    [][]common.Hash{{commitmentTopic}, nil, {common.BigToHash(cm)}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("vault Commitment events: %w", err)
+	return cm, nil
+}
+
+// vaultQueryChunk is how many commitments one vault query ORs together,
+// well under the topic limits nodes put on eth_getLogs.
+var vaultQueryChunk = 256
+
+// vaultHas says which of cms the vault has a Commitment event for, asking
+// for vaultQueryChunk of them per query.
+func (e *Engine) vaultHas(ctx context.Context, cms []*big.Int) (map[common.Hash]bool, error) {
+	var want []common.Hash
+	has := map[common.Hash]bool{}
+	for _, cm := range cms {
+		h := common.BigToHash(cm)
+		if _, dup := has[h]; !dup {
+			has[h] = false
+			want = append(want, h)
+		}
 	}
-	if len(logs) == 0 {
-		return nil, fmt.Errorf("%w: %s: tagged note 0x%s… is not in the vault", errBadTag, a.Name, cm.Text(16)[:12])
+	for len(want) > 0 {
+		chunk := want[:min(len(want), vaultQueryChunk)]
+		want = want[len(chunk):]
+		logs, err := e.chain.client.FilterLogs(ctx, ethereum.FilterQuery{
+			Addresses: []common.Address{e.chain.vaultAddr},
+			Topics:    [][]common.Hash{{commitmentTopic}, nil, chunk},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("vault Commitment events: %w", err)
+		}
+		for _, l := range logs {
+			if len(l.Topics) >= 3 {
+				if _, asked := has[l.Topics[2]]; asked {
+					has[l.Topics[2]] = true
+				}
+			}
+		}
 	}
-	return &note{commitment: cm, salt: pn.Salt, amount: pn.Amount}, nil
+	return has, nil
 }
 
 // discoverByTag has a scan for tags and describes what the scan checked;
