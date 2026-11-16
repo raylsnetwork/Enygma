@@ -275,7 +275,7 @@ func TestBoundPaymentProofs_ChangeNoteIsRebuiltFromKeyAndNullifier(t *testing.T)
 		t.Fatal(err)
 	}
 
-	pay, payReqs := recordingProveServer(t, "/proof/payment", 7)
+	pay, payReqs := recordingProveServer(t, "/proof/payment", paymentStatement.length)
 	payRes, err := pay.BoundPaymentProof(big.NewInt(0xABCD), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
 		[]*big.Int{big.NewInt(60), change}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
@@ -283,7 +283,7 @@ func TestBoundPaymentProofs_ChangeNoteIsRebuiltFromKeyAndNullifier(t *testing.T)
 	if err != nil {
 		t.Fatalf("BoundPaymentProof: %v", err)
 	}
-	fee, feeReqs := recordingProveServer(t, "/proof/paymentFee", 8)
+	fee, feeReqs := recordingProveServer(t, "/proof/paymentFee", paymentFeeStatement.length)
 	feeRes, err := fee.BoundPaymentFeeProof(big.NewInt(0xABCD), big.NewInt(10), big.NewInt(0),
 		[]*big.Int{big.NewInt(100)}, a.keys, []*big.Int{big.NewInt(1)},
 		[]*big.Int{big.NewInt(50), change}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
