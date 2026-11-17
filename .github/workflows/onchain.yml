@@ -20,9 +20,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    # Every path some suite's filter in scripts/suite_changes.sh names (the
-    # stack scripts are under the module dirs). Docs and demo pages under
-    # them still start the workflow, but `changes` runs no suite for them.
+    # Every path some suite's filter in scripts/suite_changes.sh names.
+    # Docs and demo pages under the module dirs still start the workflow,
+    # but `changes` runs no suite for them. scripts/suite_changes.test.js
+    # checks these cover the files suite_changes.sh --wiring prints.
     paths:
       - "enygma_payments/**"
       - "enygma_dvp/**"
