@@ -16,7 +16,8 @@ set -euo pipefail
 # deploys or copies in, plus the suites' shared wiring: the workflow, the
 # root Makefile's stack and suite targets, this script, the suites' verdict
 # and every stack script with the helpers they share, so a change to how CI
-# runs one suite is tested on all three.
+# runs one suite is tested on all three. suite_changes.test.js checks that
+# stacks holds every stack script and that onchain.yml's paths cover common.
 stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh scripts/stack_start.sh scripts/stack_stop.sh"
 common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/suite_result.sh $stacks"
 paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
