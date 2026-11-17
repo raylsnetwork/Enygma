@@ -300,9 +300,6 @@ shield-test: ## Shield demo scenario, default run only, subtests matching T= (ne
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
 	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
 
-# run.sh stays in the foreground for the stack's whole life, so anything waiting
-# on it (a pipe, the next command) waits forever: this detaches it and returns
-# once the stack is up, or with run.sh's error.
 # Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
 # What shield-stack runs, in shield_demo: shield-stack-stop signals only this command line.

@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues on `raylsnetwork/Enygma` (always pass `-R raylsnetwork/Enygma`). See `docs/agents/issue-tracker.md`. Ticket work starts on a new branch from a freshly fetched `origin/main`.
+Issues are tracked in GitHub Issues on `raylsnetwork/Enygma` (always pass `-R raylsnetwork/Enygma`). See `docs/agents/issue-tracker.md`. Ticket work starts on a new branch from a freshly fetched `origin/main`. A `ready-for-agent` ticket has no human to confirm with: what a skill asks the user to agree first (`/tdd`'s seams), pick, state in the session and proceed.
 
 ### Triage labels
 
