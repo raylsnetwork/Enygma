@@ -32,6 +32,7 @@ on:
       - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"
       - "scripts/stack_lib.sh"
+      - "scripts/stack_start.sh"
       - "scripts/stack_stop.sh"
       - ".github/workflows/onchain.yml"
 

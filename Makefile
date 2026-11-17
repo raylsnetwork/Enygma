@@ -129,6 +129,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/suite_changes.test.js >/dev/null || node --test scripts/suite_changes.test.js
 	@# stack_lib.sh, the stack scripts' helpers, stops a stack cleanly on a signal, a dead service or a failed step.
 	@node --test scripts/stack_lib.test.js >/dev/null || node --test scripts/stack_lib.test.js
+	@# stack_start.sh, make's *-stack, records the stack's pid from the start, and drops it when the stack fails to come up.
+	@node --test scripts/stack_start.test.js >/dev/null || node --test scripts/stack_start.test.js
 	@# stack_stop.sh, make's *-stack-stop, signals only the recorded stack and fails on a service it reports dead.
 	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
 
@@ -169,6 +171,16 @@ hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat proj
 ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
 # ── Local development shortcuts (thin wrappers over the existing scripts) ─────
+# $(call stack_start,<pid file>,<log dir>,<log prefix>,<stack log>,<run dir>,<command line>,<start target>,<test target>):
+# a *-stack recipe, starting <command line> in <run dir> detached, with its
+# output in <stack log> in <log dir> (else a fresh temp dir <log prefix>.*), and
+# returning once it is up, or with its log when it exits first. It records the
+# stack's pid in <pid file> from the start, so a stack still starting can be
+# stopped, and refuses a second start while one runs (scripts/stack_start.sh).
+define stack_start
+@bash scripts/stack_start.sh $(1) '$(2)' $(3) $(4) $(5) '$(6)' $(7) $(8)
+endef
+
 # $(call stack_stop,<pid file>,<command line>,<stack log>,<start target>,<ports>):
 # a *-stack-stop recipe, signalling only the stack <start target> recorded in
 # <pid file>, whose command line is all of <command line>, and failing when it
@@ -224,14 +236,7 @@ dvp-gnark: ## Start the DvP gnark proof server on :8081 (keep running)
 	cd enygma_dvp/gnark_circuits && go run ./cmd/server
 
 dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :8081, relayers :8091/:8092), detached; returns when it is up
-	@logs=$${DVP_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/stack.log; \
-	(cd enygma_dvp && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $(DVP_STACK_CMD) >$$logs/stack.log 2>&1) & \
-	pid=$$!; \
-	while kill -0 $$pid 2>/dev/null; do \
-		grep -q 'stack is up' $$logs/stack.log && { echo $$pid >$(DVP_STACK_PID); echo $$logs >$(DVP_STACK_PID).logs; echo "stack is up (logs $$logs); run make dvp-test, then make dvp-stack-stop"; exit 0; }; \
-		sleep 1; \
-	done; \
-	cat $$logs/stack.log; exit 1
+	$(call stack_start,$(DVP_STACK_PID),$(DVP_LOG_DIR),dvp_stack,stack.log,enygma_dvp,$(DVP_STACK_CMD),dvp-stack,dvp-test)
 
 dvp-stack-stop: ## Stop the stack make dvp-stack started, and wait for its ports to free
 	$(call stack_stop,$(DVP_STACK_PID),$(DVP_STACK_CMD),stack.log,dvp-stack,8545 8081 8091 8092)
@@ -255,14 +260,7 @@ PAYMENTS_LOG_DIR ?=
 PAYMENTS_KNOWN_SKIPS :=
 
 payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
-	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/stack.log; \
-	(LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $(PAYMENTS_STACK_CMD) >$$logs/stack.log 2>&1) & \
-	pid=$$!; \
-	while kill -0 $$pid 2>/dev/null; do \
-		grep -q 'stack is up' $$logs/stack.log && { echo $$pid >$(PAYMENTS_STACK_PID); echo $$logs >$(PAYMENTS_STACK_PID).logs; echo "stack is up (logs $$logs); run make payments-test, then make payments-stack-stop"; exit 0; }; \
-		sleep 1; \
-	done; \
-	cat $$logs/stack.log; exit 1
+	$(call stack_start,$(PAYMENTS_STACK_PID),$(PAYMENTS_LOG_DIR),payments_stack,stack.log,.,$(PAYMENTS_STACK_CMD),payments-stack,payments-test)
 
 payments-stack-stop: ## Stop the stack make payments-stack started, and wait for its ports to free
 	$(call stack_stop,$(PAYMENTS_STACK_PID),$(PAYMENTS_STACK_CMD),stack.log,payments-stack,8545 8080)
@@ -311,14 +309,7 @@ SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
 SHIELD_STACK_CMD := bash run.sh --no-demo
 
 shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relayer :8090), detached; returns when it is up
-	@logs=$${RETAIL_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/shield_demo.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/run.log; \
-	(cd enygma_retail_payments/shield_demo && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $(SHIELD_STACK_CMD) >$$logs/run.log 2>&1) & \
-	pid=$$!; \
-	while kill -0 $$pid 2>/dev/null; do \
-		grep -q 'stack is up' $$logs/run.log && { echo $$pid >$(SHIELD_STACK_PID); echo $$logs >$(SHIELD_STACK_PID).logs; echo "stack is up (logs $$logs); run make retail-test, then make shield-stack-stop"; exit 0; }; \
-		sleep 1; \
-	done; \
-	echo "run.sh exited before the stack came up:"; cat $$logs/run.log; exit 1
+	$(call stack_start,$(SHIELD_STACK_PID),$(RETAIL_LOG_DIR),shield_demo,run.log,enygma_retail_payments/shield_demo,$(SHIELD_STACK_CMD),shield-stack,retail-test)
 
 shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 30 s for its ports to free
 	$(call stack_stop,$(SHIELD_STACK_PID),$(SHIELD_STACK_CMD),run.log,shield-stack,8545 8082 8090)
