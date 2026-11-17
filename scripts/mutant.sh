@@ -10,10 +10,10 @@
 # test prints a test's name and its assertion on separate lines, so name
 # one or the other.
 # It refuses a file the stacks are wired from (suite_changes.sh --wiring)
-# while a stack make started is up: a stack reads its scripts and helpers
-# as it starts and runs (bash reads a script as it goes), so a mutant
-# applied then could run inside the live stack and pass or fail it for the
-# wrong reason.
+# while a stack make started runs, up or still starting: a stack reads its
+# scripts and helpers as it starts and runs (bash reads a script as it goes),
+# so a mutant applied then could run inside the live stack and pass or fail
+# it for the wrong reason.
 # Exit 0 when the mutant is killed (red), 1 when it survives or goes red
 # elsewhere, 2 on bad input: a wiring file of a live stack, a command
 # already red without the mutant, or one that did not run (exit 126 or 127,
@@ -38,10 +38,10 @@ fi
 file=$1 old=$2 new=$3
 shift 4
 
-# A wiring file while a stack make started is up: its pid file (make's
-# *-stack target writes enygma_<x>_stack.pid) names a live process. A stale
-# pid file, whose process is gone, blocks nothing, nor does no pid file (the
-# glob then stays literal and cat fails).
+# A wiring file while a stack make started runs: its pid file (make's
+# *-stack target writes enygma_<x>_stack.pid as it starts the stack) names
+# a live process. A stale pid file, whose process is gone, blocks nothing,
+# nor does no pid file (the glob then stays literal and cat fails).
 root=$(cd "$(dirname "$0")/.." && pwd -P)
 abs=$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")
 # The list goes in a variable first: grep -q on the pipe could exit before
@@ -53,7 +53,7 @@ if grep -qxF -- "${abs#"$root"/}" <<<"$wiring"; then
     pid=$(cat "$pid_file" 2>/dev/null) || continue
     if kill -0 "$pid" 2>/dev/null; then
       stack=${pid_file##*/enygma_}
-      echo "BAD INPUT: $file wires the stacks, and the stack in $pid_file (pid $pid) is up, so the mutant would run inside it: stop it first (make ${stack%_stack.pid}-stack-stop)"
+      echo "BAD INPUT: $file wires the stacks, and the stack in $pid_file (pid $pid) is running, so the mutant would run inside it: stop it first (make ${stack%_stack.pid}-stack-stop)"
       exit 2
     fi
   done
