@@ -331,7 +331,7 @@ func hadRoot(ctx context.Context, vault *bind.BoundContract, vaultName string, t
 // EnygmaDvp's Payment events and the vault's EncryptedNote (deposit) events.
 func (c *chain) noteEvents(ctx context.Context, vaultAddr common.Address, vaultId *big.Int) ([]dvpcore.OnChainErc20Event, error) {
 	vaultIdTopic := common.BigToHash(vaultId)
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+	logs, err := c.logsSince(ctx, c.deployBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.dvpAddr, vaultAddr},
 		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic}, {vaultIdTopic}},
 	})

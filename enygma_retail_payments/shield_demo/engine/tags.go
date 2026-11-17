@@ -308,11 +308,11 @@ var errBadTag = errors.New("bad tag")
 
 // scanTags has a check every tag published since their last scan against
 // their channels, decrypt only the notes whose tags match, and keep each
-// that opens to a commitment in the vault. It confirms all the candidates
-// together, in one vault query per vaultQueryChunk of them and
-// logQueryBlocks of the run's blocks rather than one per matching tag, so a
-// channel full of junk notes can't slow it down, and no query spans more
-// blocks than a hosted RPC provider allows. It
+// that opens to a commitment in the vault. It confirms the candidates
+// against the vault's Commitment events, which the engine reads once per
+// block, not once per scan or per matching tag, so a channel full of junk
+// notes can't slow it down, and no query spans more blocks than a hosted
+// RPC provider allows. It
 // returns the new notes, as decrypted from their tags, how many tags it
 // checked, and how many matching tags it skipped as bad. Only an RPC error
 // stops the scan, and then it keeps no notes and the cursor stays put, so
@@ -368,9 +368,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 			cms = append(cms, cm)
 		}
 	}
-	// The vault logs a note's commitment after the run made its payee's
-	// spend key, so after the run's start.
-	inVault, err := e.vaultHas(ctx, cms, e.startBlock, tip)
+	inVault, err := c.vaultHas(ctx, cms)
 	if err != nil {
 		return nil, checked, skipped, err
 	}
@@ -435,10 +433,6 @@ func tagCommitment(a *Actor, pn *tags.PaymentNote) (*big.Int, error) {
 	return cm, nil
 }
 
-// vaultQueryChunk is how many commitments one vault query ORs together,
-// well under the topic limits nodes put on eth_getLogs.
-var vaultQueryChunk = 256
-
 // logQueryBlocks is the most blocks one eth_getLogs query spans: hosted RPC
 // providers reject wider ranges, some at 10,000 blocks, some lower.
 const logQueryBlocks uint64 = 2000
@@ -459,39 +453,73 @@ func (c *chain) logsBetween(ctx context.Context, from, to uint64, q ethereum.Fil
 	return logs, nil
 }
 
-// vaultHas maps each of cms the vault logged a Commitment event for,
-// between blocks from and to, to the block it logged it in, asking for
-// vaultQueryChunk of them per query.
-func (e *Engine) vaultHas(ctx context.Context, cms []*big.Int, from, to uint64) (map[common.Hash]uint64, error) {
-	var want []common.Hash
+// logsSince is the logs q matches from block from to the chain's tip.
+func (c *chain) logsSince(ctx context.Context, from uint64, q ethereum.FilterQuery) ([]ethtypes.Log, error) {
+	tip, err := c.client.BlockNumber(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.logsBetween(ctx, from, tip, q)
+}
+
+// vaultHas maps each of cms the vault logged a Commitment event for to
+// the block it logged it in.
+func (c *chain) vaultHas(ctx context.Context, cms []*big.Int) (map[common.Hash]uint64, error) {
+	logs, err := c.vaultCommitments(ctx, c.vaultAddr)
+	if err != nil {
+		return nil, err
+	}
 	asked := map[common.Hash]bool{}
 	for _, cm := range cms {
-		h := common.BigToHash(cm)
-		if !asked[h] {
-			asked[h] = true
-			want = append(want, h)
-		}
+		asked[common.BigToHash(cm)] = true
 	}
 	loggedIn := map[common.Hash]uint64{}
-	for len(want) > 0 {
-		chunk := want[:min(len(want), vaultQueryChunk)]
-		want = want[len(chunk):]
-		logs, err := e.chain.logsBetween(ctx, from, to, ethereum.FilterQuery{
-			Addresses: []common.Address{e.chain.vaultAddr},
-			Topics:    [][]common.Hash{{commitmentTopic}, nil, chunk},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("vault Commitment events: %w", err)
-		}
-		for _, l := range logs {
-			if len(l.Topics) >= 3 && asked[l.Topics[2]] {
-				if _, seen := loggedIn[l.Topics[2]]; !seen {
-					loggedIn[l.Topics[2]] = l.BlockNumber
-				}
+	for _, l := range logs {
+		if len(l.Topics) >= 3 && asked[l.Topics[2]] {
+			if _, seen := loggedIn[l.Topics[2]]; !seen {
+				loggedIn[l.Topics[2]] = l.BlockNumber
 			}
 		}
 	}
 	return loggedIn, nil
+}
+
+// vaultLog is the Commitment events a vault logged before block next,
+// oldest first.
+type vaultLog struct {
+	next uint64
+	logs []ethtypes.Log
+}
+
+// vaultCommitments is every Commitment event the vault at vaultAddr has
+// logged since the deployment, oldest first. It reads each block once:
+// a later call asks only for the blocks mined since. On an RPC error it
+// keeps none of the new blocks' events, so the next call asks for them
+// again.
+func (c *chain) vaultCommitments(ctx context.Context, vaultAddr common.Address) ([]ethtypes.Log, error) {
+	v, ok := c.commitments[vaultAddr]
+	if !ok {
+		v = &vaultLog{next: c.deployBlock}
+	}
+	tip, err := c.client.BlockNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vault Commitment events: %w", err)
+	}
+	if tip >= v.next {
+		logs, err := c.logsBetween(ctx, v.next, tip, ethereum.FilterQuery{
+			Addresses: []common.Address{vaultAddr},
+			Topics:    [][]common.Hash{{commitmentTopic}},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("vault Commitment events: %w", err)
+		}
+		v.logs, v.next = append(v.logs, logs...), tip+1
+	}
+	if c.commitments == nil {
+		c.commitments = map[common.Address]*vaultLog{}
+	}
+	c.commitments[vaultAddr] = v
+	return v.logs, nil
 }
 
 // discoverByTag has a scan for tags and describes what the scan checked;

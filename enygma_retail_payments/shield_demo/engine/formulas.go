@@ -303,7 +303,7 @@ func (c *chain) groth16Formula(ctx context.Context, cfg Config, tree int, res *r
 // opening hashed with owner's pk_spend, checked against the commitment the
 // event published with the ciphertext.
 func (c *chain) noteEncryptionFormula(ctx context.Context, owner *Actor, cm *big.Int) (HopDetail, error) {
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+	logs, err := c.logsSince(ctx, c.deployBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.dvpAddr, c.vaultAddr},
 		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic}, {common.BigToHash(erc20VaultId)}, {common.BigToHash(cm)}},
 	})
@@ -590,9 +590,7 @@ func (c *chain) tagPayloadFormula(ctx context.Context, payee *Actor, f taggedNot
 	if err != nil {
 		return HopDetail{}, fmt.Errorf("tag payload card: %w", err)
 	}
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(f.cmBlock),
-		ToBlock:   new(big.Int).SetUint64(f.cmBlock),
+	logs, err := c.logsBetween(ctx, f.cmBlock, f.cmBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.vaultAddr},
 		Topics:    [][]common.Hash{{commitmentTopic}, nil, {common.BigToHash(cm)}},
 	})

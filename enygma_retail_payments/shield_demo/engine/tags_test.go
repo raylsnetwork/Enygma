@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
@@ -24,13 +26,15 @@ var (
 	testVault       = common.HexToAddress("0x7a0")
 )
 
-// fakeNode answers the two RPCs scanTags makes: eth_blockNumber with tip,
-// and eth_getLogs with the TagRegistry's logs or the vault's Commitment
-// events for the queried commitments in vault, each logged in its block,
-// within the queried range. vaultDown fails the vault's, all but the first
+// fakeNode answers the two RPCs the engine's log queries make:
+// eth_blockNumber with tip, and eth_getLogs with the TagRegistry's logs or
+// the vault's Commitment events in vault (those of the queried commitments,
+// if the query names any), each logged in its block, within the queried
+// range. vaultDown fails the vault's, all but the first
 // vaultUpFor of them; vaultQueries counts them. With maxSpan set it rejects
 // any eth_getLogs spanning more than maxSpan blocks, as hosted RPC
-// providers do.
+// providers do. queries records every eth_getLogs it was asked, rejected
+// or not; any other contract's logs it answers with none.
 type fakeNode struct {
 	tip          uint64
 	tagLogs      []ethtypes.Log
@@ -39,6 +43,15 @@ type fakeNode struct {
 	vaultUpFor   int
 	vaultQueries int
 	maxSpan      uint64
+	queries      []logQuery
+}
+
+// logQuery is one eth_getLogs a fakeNode was asked: its first address, its
+// block range, and whether the node rejected the range.
+type logQuery struct {
+	addr     common.Address
+	from, to uint64
+	rejected bool
 }
 
 // block is a query's fromBlock or toBlock: a number, or latest for the tip.
@@ -83,7 +96,9 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("block range %q to %q", q.FromBlock, q.ToBlock), http.StatusBadRequest)
 			return
 		}
-		if f.maxSpan > 0 && to-from+1 > f.maxSpan {
+		rejected := f.maxSpan > 0 && to-from+1 > f.maxSpan
+		f.queries = append(f.queries, logQuery{addr: q.Address[0], from: from, to: to, rejected: rejected})
+		if rejected {
 			resp["error"] = map[string]any{"code": -32005, "message": fmt.Sprintf("query spans blocks %d to %d, over the %d-block limit", from, to, f.maxSpan)}
 			break
 		}
@@ -104,11 +119,19 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if f.vaultUpFor > 0 {
 				f.vaultUpFor--
 			}
-			for _, cm := range q.Topics[2] {
-				if b, ok := f.vault[cm]; ok && b >= from && b <= to {
+			// A query naming commitments gets only theirs.
+			named := map[common.Hash]bool{}
+			if len(q.Topics) >= 3 {
+				for _, cm := range q.Topics[2] {
+					named[cm] = true
+				}
+			}
+			for cm, b := range f.vault {
+				if (len(named) == 0 || named[cm]) && b >= from && b <= to {
 					logs = append(logs, ethtypes.Log{Address: testVault, BlockNumber: b, Topics: []common.Hash{commitmentTopic, {}, cm}})
 				}
 			}
+			slices.SortFunc(logs, func(a, b ethtypes.Log) int { return cmp.Compare(a.BlockNumber, b.BlockNumber) })
 		}
 		if resp["error"] == nil {
 			resp["result"] = logs
@@ -239,14 +262,12 @@ func TestScanTagsKeepsCursorOnRPCError(t *testing.T) {
 	}
 }
 
-// Alice pays Bob twice, and the vault's events become unreadable after the
-// scan has confirmed her first payment, one commitment per vault query: the
+// Alice pays Bob twice, 2,500 blocks apart, and the vault's events become
+// unreadable after the scan has read the first 2,000 blocks of them: the
 // failed scan keeps neither note, so the retry finds both rather than only
-// the one it had not yet reached.
+// the one in the blocks it had read.
 func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
-	defer func(n int) { vaultQueryChunk = n }(vaultQueryChunk)
-	vaultQueryChunk = 1
-	node := &fakeNode{tip: 6, vaultDown: true, vaultUpFor: 2}
+	node := &fakeNode{tip: 4100, vaultDown: true, vaultUpFor: 1}
 	e, bob, _ := scanSetup(t, node)
 	alice := bob.tags.in[1]
 	amount, salt := big.NewInt(30), big.NewInt(515151)
@@ -254,8 +275,8 @@ func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node.tagLogs = append(node.tagLogs, tagLog(t, 5, alice, sealedNote(t, 5, alice, amount, salt)))
-	node.vault[common.BigToHash(paid)] = 5
+	node.tagLogs = append(node.tagLogs, tagLog(t, 2501, alice, sealedNote(t, 2501, alice, amount, salt)))
+	node.vault[common.BigToHash(paid)] = 2500
 
 	if _, _, _, err := e.scanTags(context.Background(), bob); err == nil {
 		t.Fatal("scan succeeded with the vault's events unreadable")
@@ -266,8 +287,8 @@ func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
 
 	node.vaultDown = false
 	found, _, _, err := e.scanTags(context.Background(), bob)
-	if err != nil || len(found) != 2 || len(bob.notes) != 2 || bob.tags.lastBlock != 6 {
-		t.Fatalf("retry found %d notes, kept %d, cursor %d, err %v; want both of Alice's and block 6", len(found), len(bob.notes), bob.tags.lastBlock, err)
+	if err != nil || len(found) != 2 || len(bob.notes) != 2 || bob.tags.lastBlock != 4100 {
+		t.Fatalf("retry found %d notes, kept %d, cursor %d, err %v; want both of Alice's and block 4100", len(found), len(bob.notes), bob.tags.lastBlock, err)
 	}
 }
 
@@ -294,26 +315,18 @@ func TestScanTagsConfirmsInOneVaultQuery(t *testing.T) {
 	if node.vaultQueries != 1 {
 		t.Errorf("confirmed %d candidates in %d vault queries, want 1", junk+2, node.vaultQueries)
 	}
-
-	// Rescanning the same blocks with 100 commitments a query takes two.
-	defer func(n int) { vaultQueryChunk = n }(vaultQueryChunk)
-	vaultQueryChunk = 100
-	bob.tags.lastBlock, bob.notes, node.vaultQueries = 1, nil, 0
-	if found, _, _, err := e.scanTags(context.Background(), bob); err != nil || len(found) != 1 || node.vaultQueries != 2 {
-		t.Errorf("chunks of 100: found %d notes in %d vault queries, err %v; want Alice's in 2", len(found), node.vaultQueries, err)
-	}
 }
 
 // Bob's node caps eth_getLogs at 10,000 blocks, as hosted RPC providers do,
 // and the run is 25,000 blocks long when he scans: Alice paid him at its
 // start and again near its tip. The scan finds both notes, never asking
 // for more blocks in one query than the node allows, and still skips the
-// bad tags. Its one chunk of candidates takes one vault query per 2000
-// blocks of blocks 2 to 25000: 13.
+// bad tags. Its candidates take one vault query per 2000 blocks of the
+// deployment's blocks 2 to 25000: 13.
 func TestScanTagsBoundsEachQuerysBlockRange(t *testing.T) {
 	node := &fakeNode{tip: 25_000, maxSpan: 10_000}
 	e, bob, _ := scanSetup(t, node)
-	e.startBlock = 2
+	e.chain.deployBlock = 2
 	alice := bob.tags.in[1]
 	amount, salt := big.NewInt(30), big.NewInt(515151)
 	late, err := rpcore.Erc20CommitmentV2(bob.Spend.PublicKey, salt, amount, tokenId)
@@ -335,5 +348,37 @@ func TestScanTagsBoundsEachQuerysBlockRange(t *testing.T) {
 	}
 	if node.vaultQueries != 13 {
 		t.Errorf("confirmed the candidates in %d vault queries, want 13", node.vaultQueries)
+	}
+}
+
+// Bob scans once 25,000 blocks into the run and again a block later, when
+// Alice has paid him: the second scan reads the vault's new block, not
+// the 25,000 the first one read, and finds her note.
+func TestScanTagsReadsEachVaultBlockOnce(t *testing.T) {
+	node := &fakeNode{tip: 25_000}
+	e, bob, _ := scanSetup(t, node)
+	e.chain.deployBlock = 2
+	if _, _, _, err := e.scanTags(context.Background(), bob); err != nil {
+		t.Fatal(err)
+	}
+	alice := bob.tags.in[1]
+	amount, salt := big.NewInt(30), big.NewInt(515151)
+	paid, err := rpcore.Erc20CommitmentV2(bob.Spend.PublicKey, salt, amount, tokenId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.tip = 25_001
+	node.tagLogs = append(node.tagLogs, tagLog(t, 25_001, alice, sealedNote(t, 25_001, alice, amount, salt)))
+	node.vault[common.BigToHash(paid)] = 25_001
+	node.queries = nil
+
+	found, _, _, err := e.scanTags(context.Background(), bob)
+	if err != nil || len(found) != 1 || found[0].cmBlock != 25_001 {
+		t.Fatalf("second scan found %d notes, err %v; want Alice's, in block 25001", len(found), err)
+	}
+	for _, q := range node.queries {
+		if q.addr == testVault && q.from != 25_001 {
+			t.Errorf("second scan read the vault's blocks %d to %d, want only block 25001", q.from, q.to)
+		}
 	}
 }
