@@ -3,10 +3,13 @@
 # job: prints payments=, dvp= and retail=, each true or false. Reads the
 # changed files, one per line, on stdin, and runs a suite when one of them
 # matches that suite's paths. With --all (a push to main) it runs every
-# suite and reads nothing.
+# suite and reads nothing. With --wiring it prints the suites' shared wiring
+# files (common below), one per line: mutant.sh refuses to mutate one while a
+# stack is up.
 #
 #   git diff --name-only "$BASE...HEAD" | bash scripts/suite_changes.sh
 #   bash scripts/suite_changes.sh --all
+#   bash scripts/suite_changes.sh --wiring
 set -euo pipefail
 
 # Each suite's paths (globs; * also matches /): what its stack builds,
@@ -23,6 +26,11 @@ paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gna
 # the retail test module imports enygma_dvp's src and layout.
 dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"
 paths_retail="$common enygma_retail_payments/* enygma_gnark_shared/* $dvp_for_retail"
+
+if [ "${1:-}" = --wiring ]; then
+  printf '%s\n' $common
+  exit 0
+fi
 
 all=false
 [ "${1:-}" != --all ] || all=true

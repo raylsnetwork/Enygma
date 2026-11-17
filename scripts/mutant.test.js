@@ -93,3 +93,56 @@ test('every verdict is the last line, so a tail of the output keeps it', () => {
     assert.match(last, /^(RED|SURVIVED|BAD INPUT):/, `${name}: last line ${JSON.stringify(last)}`);
   }
 });
+
+// inRepo runs mutant.sh from a scratch repo: a copy of mutant.sh and
+// suite_changes.sh (whose stacks and common lists name the wiring files)
+// under scripts/, a wiring file (Makefile) and another file, each holding
+// "ok", and pid files named in pids ({ shield: pid }) in its own TMPDIR. It
+// applies "ok" → "bad" to rel with cmd as the test command and returns
+// mutant.sh's exit code, its output and the file afterwards.
+function inRepo(rel, cmd, pids = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-repo-'));
+  const tmp = path.join(root, 'tmp');
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.mkdirSync(tmp);
+  for (const s of ['mutant.sh', 'suite_changes.sh']) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
+  for (const f of ['Makefile', 'other.txt']) fs.writeFileSync(path.join(root, f), 'ok\n');
+  for (const [stack, pid] of Object.entries(pids)) fs.writeFileSync(path.join(tmp, `enygma_${stack}_stack.pid`), `${pid}\n`);
+  const file = path.join(root, rel);
+  const r = spawnSync('bash', [path.join(root, 'scripts', 'mutant.sh'), file, 'ok', 'bad', '--', 'bash', '-c', cmd],
+    { encoding: 'utf8', env: { ...process.env, F: file, TMPDIR: tmp } });
+  const after = fs.readFileSync(file, 'utf8');
+  fs.rmSync(root, { recursive: true });
+  return { code: r.status, out: r.stdout + r.stderr, after, tmp };
+}
+
+test('a wiring file of a live stack is bad input: the mutant would run inside the stack', () => {
+  // This test's own pid is live.
+  const r = inRepo('Makefile', CHECK, { shield: process.pid });
+  assert.strictEqual(r.code, 2, r.out);
+  const last = r.out.trimEnd().split('\n').at(-1);
+  assert.match(last, /^BAD INPUT:/, r.out);
+  assert.ok(last.includes(path.join(r.tmp, 'enygma_shield_stack.pid')), `names the pid file: ${last}`);
+  assert.match(last, /make shield-stack-stop/);
+  assert.strictEqual(r.after, 'ok\n', 'the file is untouched');
+});
+
+test("a stale pid file, whose process is gone, doesn't block a wiring file's mutant", () => {
+  const gone = spawnSync('true').pid;
+  const r = inRepo('Makefile', CHECK, { shield: gone });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out, /^RED/m);
+  assert.strictEqual(r.after, 'ok\n', 'the file is restored');
+});
+
+test('a file outside the wiring mutates as before with a stack up', () => {
+  const r = inRepo('other.txt', CHECK, { dvp: process.pid });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out, /^RED/m);
+});
+
+test('a wiring file mutates as before with no stack up', () => {
+  const r = inRepo('Makefile', CHECK);
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out, /^RED/m);
+});
