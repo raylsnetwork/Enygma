@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -25,15 +26,30 @@ var (
 
 // fakeNode answers the two RPCs scanTags makes: eth_blockNumber with tip,
 // and eth_getLogs with the TagRegistry's logs or the vault's Commitment
-// events for the queried commitments in vault. vaultDown fails the vault's,
-// all but the first vaultUpFor of them; vaultQueries counts them.
+// events for the queried commitments in vault, each logged in its block,
+// within the queried range. vaultDown fails the vault's, all but the first
+// vaultUpFor of them; vaultQueries counts them. With maxSpan set it rejects
+// any eth_getLogs spanning more than maxSpan blocks, as hosted RPC
+// providers do.
 type fakeNode struct {
 	tip          uint64
 	tagLogs      []ethtypes.Log
-	vault        map[common.Hash]bool
+	vault        map[common.Hash]uint64
 	vaultDown    bool
 	vaultUpFor   int
 	vaultQueries int
+	maxSpan      uint64
+}
+
+// block is a query's fromBlock or toBlock: a number, or latest for the tip.
+func (f *fakeNode) block(arg string) (uint64, error) {
+	if arg == "" || arg == "latest" {
+		return f.tip, nil
+	}
+	if arg == "earliest" {
+		return 0, nil
+	}
+	return hexutil.DecodeUint64(arg)
 }
 
 func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,17 +68,33 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		resp["result"] = hexutil.Uint64(f.tip)
 	case "eth_getLogs":
 		var q struct {
-			Address []common.Address `json:"address"`
-			Topics  [][]common.Hash  `json:"topics"`
+			Address   []common.Address `json:"address"`
+			Topics    [][]common.Hash  `json:"topics"`
+			FromBlock string           `json:"fromBlock"`
+			ToBlock   string           `json:"toBlock"`
 		}
 		if err := json.Unmarshal(req.Params[0], &q); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		from, err1 := f.block(q.FromBlock)
+		to, err2 := f.block(q.ToBlock)
+		if err1 != nil || err2 != nil {
+			http.Error(w, fmt.Sprintf("block range %q to %q", q.FromBlock, q.ToBlock), http.StatusBadRequest)
+			return
+		}
+		if f.maxSpan > 0 && to-from+1 > f.maxSpan {
+			resp["error"] = map[string]any{"code": -32005, "message": fmt.Sprintf("query spans blocks %d to %d, over the %d-block limit", from, to, f.maxSpan)}
+			break
+		}
 		logs := []ethtypes.Log{}
 		switch q.Address[0] {
 		case testTagRegistry:
-			logs = f.tagLogs
+			for _, l := range f.tagLogs {
+				if l.BlockNumber >= from && l.BlockNumber <= to {
+					logs = append(logs, l)
+				}
+			}
 		case testVault:
 			f.vaultQueries++
 			if f.vaultDown && f.vaultUpFor == 0 {
@@ -73,8 +105,8 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				f.vaultUpFor--
 			}
 			for _, cm := range q.Topics[2] {
-				if f.vault[cm] {
-					logs = append(logs, ethtypes.Log{Address: testVault, Topics: []common.Hash{commitmentTopic, {}, cm}})
+				if b, ok := f.vault[cm]; ok && b >= from && b <= to {
+					logs = append(logs, ethtypes.Log{Address: testVault, BlockNumber: b, Topics: []common.Hash{commitmentTopic, {}, cm}})
 				}
 			}
 		}
@@ -146,7 +178,7 @@ func scanSetup(t *testing.T, node *fakeNode) (*Engine, *Actor, *big.Int) {
 		tagLog(t, 3, attacker, sealedNote(t, 3, attacker, big.NewInt(999999), big.NewInt(1))),
 		tagLog(t, 4, alice, sealedNote(t, 4, alice, amount, salt)),
 	}
-	node.vault = map[common.Hash]bool{common.BigToHash(paid): true}
+	node.vault = map[common.Hash]uint64{common.BigToHash(paid): 4}
 	srv := httptest.NewServer(node)
 	t.Cleanup(srv.Close)
 	client, err := ethclient.Dial(srv.URL)
@@ -223,7 +255,7 @@ func TestScanTagsKeepsNoNotesOnRPCError(t *testing.T) {
 		t.Fatal(err)
 	}
 	node.tagLogs = append(node.tagLogs, tagLog(t, 5, alice, sealedNote(t, 5, alice, amount, salt)))
-	node.vault[common.BigToHash(paid)] = true
+	node.vault[common.BigToHash(paid)] = 5
 
 	if _, _, _, err := e.scanTags(context.Background(), bob); err == nil {
 		t.Fatal("scan succeeded with the vault's events unreadable")
@@ -269,5 +301,39 @@ func TestScanTagsConfirmsInOneVaultQuery(t *testing.T) {
 	bob.tags.lastBlock, bob.notes, node.vaultQueries = 1, nil, 0
 	if found, _, _, err := e.scanTags(context.Background(), bob); err != nil || len(found) != 1 || node.vaultQueries != 2 {
 		t.Errorf("chunks of 100: found %d notes in %d vault queries, err %v; want Alice's in 2", len(found), node.vaultQueries, err)
+	}
+}
+
+// Bob's node caps eth_getLogs at 10,000 blocks, as hosted RPC providers do,
+// and the run is 25,000 blocks long when he scans: Alice paid him at its
+// start and again near its tip. The scan finds both notes, never asking
+// for more blocks in one query than the node allows, and still skips the
+// bad tags. Its one chunk of candidates takes one vault query per 2000
+// blocks of blocks 2 to 25000: 13.
+func TestScanTagsBoundsEachQuerysBlockRange(t *testing.T) {
+	node := &fakeNode{tip: 25_000, maxSpan: 10_000}
+	e, bob, _ := scanSetup(t, node)
+	e.startBlock = 2
+	alice := bob.tags.in[1]
+	amount, salt := big.NewInt(30), big.NewInt(515151)
+	late, err := rpcore.Erc20CommitmentV2(bob.Spend.PublicKey, salt, amount, tokenId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.tagLogs = append(node.tagLogs, tagLog(t, 24_001, alice, sealedNote(t, 24_001, alice, amount, salt)))
+	node.vault[common.BigToHash(late)] = 24_000
+
+	found, _, skipped, err := e.scanTags(context.Background(), bob)
+	if err != nil {
+		t.Fatalf("scan against a node capping eth_getLogs at %d blocks: %v", node.maxSpan, err)
+	}
+	if len(found) != 2 || found[0].cmBlock != 4 || found[1].cmBlock != 24_000 || skipped != 2 {
+		t.Fatalf("found %d notes and skipped %d tags, want both of Alice's, confirmed in blocks 4 and 24000, and 2", len(found), skipped)
+	}
+	if bob.tags.lastBlock != 25_000 {
+		t.Errorf("cursor at block %d, want 25000", bob.tags.lastBlock)
+	}
+	if node.vaultQueries != 13 {
+		t.Errorf("confirmed the candidates in %d vault queries, want 13", node.vaultQueries)
 	}
 }

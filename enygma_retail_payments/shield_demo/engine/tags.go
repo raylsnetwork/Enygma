@@ -289,13 +289,15 @@ func (e *Engine) publishTag(ctx context.Context, s *step, from, to *Actor, t *se
 
 // taggedNote is a note a scan found by its tag: the note as decrypted, the
 // tag channel whose tag matched, the block the tag was published in, the
-// payload it carried, and what that opened to.
+// payload it carried, what that opened to, and the block the vault logged
+// the note's commitment in.
 type taggedNote struct {
 	DecryptedNote
 	ch      tags.Channel
 	block   uint64
 	payload []byte
 	opened  *tags.PaymentNote
+	cmBlock uint64
 }
 
 // errBadTag marks a tag that matches one of an actor's channels but opens to
@@ -307,8 +309,10 @@ var errBadTag = errors.New("bad tag")
 // scanTags has a check every tag published since their last scan against
 // their channels, decrypt only the notes whose tags match, and keep each
 // that opens to a commitment in the vault. It confirms all the candidates
-// together, in one vault query per vaultQueryChunk of them rather than one
-// per matching tag, so a channel full of junk notes can't slow it down. It
+// together, in one vault query per vaultQueryChunk of them and
+// logQueryBlocks of the run's blocks rather than one per matching tag, so a
+// channel full of junk notes can't slow it down, and no query spans more
+// blocks than a hosted RPC provider allows. It
 // returns the new notes, as decrypted from their tags, how many tags it
 // checked, and how many matching tags it skipped as bad. Only an RPC error
 // stops the scan, and then it keeps no notes and the cursor stays put, so
@@ -322,9 +326,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 	if tip <= a.tags.lastBlock {
 		return nil, 0, 0, nil
 	}
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(a.tags.lastBlock + 1),
-		ToBlock:   new(big.Int).SetUint64(tip),
+	logs, err := c.logsBetween(ctx, a.tags.lastBlock+1, tip, ethereum.FilterQuery{
 		Addresses: []common.Address{c.tagRegistryAddr},
 		Topics:    [][]common.Hash{{tagPublishedTopic}},
 	})
@@ -366,14 +368,17 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 			cms = append(cms, cm)
 		}
 	}
-	inVault, err := e.vaultHas(ctx, cms)
+	// The vault logs a note's commitment after the run made its payee's
+	// spend key, so after the run's start.
+	inVault, err := e.vaultHas(ctx, cms, e.startBlock, tip)
 	if err != nil {
 		return nil, checked, skipped, err
 	}
 	var fresh purse
 	for _, k := range cands {
 		// A tag alone proves nothing was paid.
-		if !inVault[common.BigToHash(k.cm)] {
+		cmBlock, ok := inVault[common.BigToHash(k.cm)]
+		if !ok {
 			skipped++
 			continue
 		}
@@ -385,7 +390,7 @@ func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, ch
 		found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: k.l.TxHash.Hex(),
 			Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(k.payload),
 			Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(k.pn.TokenId)},
-			ch: k.ch, block: k.l.BlockNumber, payload: k.payload, opened: k.pn})
+			ch: k.ch, block: k.l.BlockNumber, payload: k.payload, opened: k.pn, cmBlock: cmBlock})
 	}
 	a.notes = append(a.notes, fresh...)
 	a.tags.lastBlock = tip
@@ -434,22 +439,44 @@ func tagCommitment(a *Actor, pn *tags.PaymentNote) (*big.Int, error) {
 // well under the topic limits nodes put on eth_getLogs.
 var vaultQueryChunk = 256
 
-// vaultHas says which of cms the vault has a Commitment event for, asking
-// for vaultQueryChunk of them per query.
-func (e *Engine) vaultHas(ctx context.Context, cms []*big.Int) (map[common.Hash]bool, error) {
+// logQueryBlocks is the most blocks one eth_getLogs query spans: hosted RPC
+// providers reject wider ranges, some at 10,000 blocks, some lower.
+const logQueryBlocks uint64 = 2000
+
+// logsBetween is the logs q matches from block from to block to, asking for
+// logQueryBlocks blocks of them per query.
+func (c *chain) logsBetween(ctx context.Context, from, to uint64, q ethereum.FilterQuery) ([]ethtypes.Log, error) {
+	var logs []ethtypes.Log
+	for lo := from; lo <= to; lo += logQueryBlocks {
+		q.FromBlock = new(big.Int).SetUint64(lo)
+		q.ToBlock = new(big.Int).SetUint64(min(to, lo+logQueryBlocks-1))
+		got, err := c.client.FilterLogs(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		logs = append(logs, got...)
+	}
+	return logs, nil
+}
+
+// vaultHas maps each of cms the vault logged a Commitment event for,
+// between blocks from and to, to the block it logged it in, asking for
+// vaultQueryChunk of them per query.
+func (e *Engine) vaultHas(ctx context.Context, cms []*big.Int, from, to uint64) (map[common.Hash]uint64, error) {
 	var want []common.Hash
-	has := map[common.Hash]bool{}
+	asked := map[common.Hash]bool{}
 	for _, cm := range cms {
 		h := common.BigToHash(cm)
-		if _, dup := has[h]; !dup {
-			has[h] = false
+		if !asked[h] {
+			asked[h] = true
 			want = append(want, h)
 		}
 	}
+	loggedIn := map[common.Hash]uint64{}
 	for len(want) > 0 {
 		chunk := want[:min(len(want), vaultQueryChunk)]
 		want = want[len(chunk):]
-		logs, err := e.chain.client.FilterLogs(ctx, ethereum.FilterQuery{
+		logs, err := e.chain.logsBetween(ctx, from, to, ethereum.FilterQuery{
 			Addresses: []common.Address{e.chain.vaultAddr},
 			Topics:    [][]common.Hash{{commitmentTopic}, nil, chunk},
 		})
@@ -457,14 +484,14 @@ func (e *Engine) vaultHas(ctx context.Context, cms []*big.Int) (map[common.Hash]
 			return nil, fmt.Errorf("vault Commitment events: %w", err)
 		}
 		for _, l := range logs {
-			if len(l.Topics) >= 3 {
-				if _, asked := has[l.Topics[2]]; asked {
-					has[l.Topics[2]] = true
+			if len(l.Topics) >= 3 && asked[l.Topics[2]] {
+				if _, seen := loggedIn[l.Topics[2]]; !seen {
+					loggedIn[l.Topics[2]] = l.BlockNumber
 				}
 			}
 		}
 	}
-	return has, nil
+	return loggedIn, nil
 }
 
 // discoverByTag has a scan for tags and describes what the scan checked;
