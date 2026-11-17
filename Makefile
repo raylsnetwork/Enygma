@@ -129,6 +129,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/suite_changes.test.js >/dev/null || node --test scripts/suite_changes.test.js
 	@# stack_lib.sh, the stack scripts' helpers, stops a stack cleanly on a signal, a dead service or a failed step.
 	@node --test scripts/stack_lib.test.js >/dev/null || node --test scripts/stack_lib.test.js
+	@# stack_stop.sh, make's *-stack-stop, signals only the recorded stack and fails on a service it reports dead.
+	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
@@ -167,6 +169,27 @@ hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat proj
 ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
 # ── Local development shortcuts (thin wrappers over the existing scripts) ─────
+# $(call stack_stop,<pid file>,<process match>,<stack log>,<start target>,<ports>):
+# a *-stack-stop recipe, signalling only the stack <start target> recorded in
+# <pid file>, and failing when it doesn't stop cleanly (scripts/stack_stop.sh).
+define stack_stop
+@bash scripts/stack_stop.sh $(1) '$(2)' $(3) $(4) $(5)
+endef
+
+# $(call suite_test,<pid file>,<suite dir>,<name>,<timeout>,<env>,<go test flags>,<known skips>,<no stack env note>):
+# an on-chain suite's recipe. It runs go test in <suite dir> with <env>, plus the
+# stack's test.env when it wrote one (else prints the note, if any), logging to
+# suite.log in the stack's log dir (else a temp file named <name>.*). It prints
+# the verdict from scripts/suite_result.sh.
+define suite_test
+@logs=$$(cat $(1).logs 2>/dev/null); \
+if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/$(3).XXXXXX"); fi; \
+if [ -f "$$logs/test.env" ]; then set -a; . "$$logs/test.env"; set +a; $(if $(8),else echo '$(8)'; )fi; \
+[ "$$(uname -s)" != Darwin ] || export CC=$${CC:-/usr/bin/clang}; \
+status=0; cd $(2); $(5) go test -count=1 -v ./... -timeout $(4) $(6) >$$log 2>&1 || status=$$?; \
+cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(7)'; result=$$?; echo "log: $$log"; exit $$result
+endef
+
 # Full local flow for DvP: dvp-keygen (once) -> dvp-stack -> dvp-test -> dvp-stack-stop.
 # dvp-stack brings up everything the suite uses (both deployments, gnark, both
 # relayers), so no test skips for a missing service. Run dvp-test once per
@@ -208,23 +231,10 @@ dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :80
 	cat $$logs/stack.log; exit 1
 
 dvp-stack-stop: ## Stop the stack make dvp-stack started, and wait for its ports to free
-	@pid=$$(cat $(DVP_STACK_PID) 2>/dev/null); \
-	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'scripts/stack.sh' || { echo "no stack started by make dvp-stack"; exit 1; }; \
-	kill -TERM $$pid; \
-	for _ in $$(seq 1 150); do \
-		busy=; for p in 8545 8081 8091 8092; do (exec 3<>/dev/tcp/127.0.0.1/$$p) 2>/dev/null && busy="$$busy :$$p"; done; \
-		[ -n "$$busy" ] || { rm -f $(DVP_STACK_PID) $(DVP_STACK_PID).logs; echo "stack stopped"; exit 0; }; \
-		sleep 0.2; \
-	done; \
-	echo "still listening on$$busy after about 30 s"; exit 1
+	$(call stack_stop,$(DVP_STACK_PID),scripts/stack.sh,stack.log,dvp-stack,8545 8081 8091 8092)
 
 dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail/skip counts, fails on a skip not in DVP_KNOWN_SKIPS
-	@logs=$$(cat $(DVP_STACK_PID).logs 2>/dev/null); \
-	if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/dvp_test.XXXXXX"); fi; \
-	if [ -f "$$logs/test.env" ]; then set -a; . "$$logs/test.env"; set +a; else echo "no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers"; fi; \
-	[ "$$(uname -s)" != Darwin ] || export CC=$${CC:-/usr/bin/clang}; \
-	status=0; cd enygma_dvp/test; go test -count=1 -v ./... -timeout 1800s >$$log 2>&1 || status=$$?; \
-	cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(DVP_KNOWN_SKIPS)'; result=$$?; echo "log: $$log"; exit $$result
+	$(call suite_test,$(DVP_STACK_PID),enygma_dvp/test,dvp_test,1800s,,,$(DVP_KNOWN_SKIPS),no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers)
 
 # Full local flow for enygma_payments' end-to-end suite (go_client/enygma_test):
 # payments-stack -> payments-test -> payments-stack-stop. payments-stack compiles
@@ -250,21 +260,10 @@ payments-stack: ## Start the payments e2e stack (compile contracts, build relaye
 	cat $$logs/stack.log; exit 1
 
 payments-stack-stop: ## Stop the stack make payments-stack started, and wait for its ports to free
-	@pid=$$(cat $(PAYMENTS_STACK_PID) 2>/dev/null); \
-	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'run_scripts/stack.sh' || { echo "no stack started by make payments-stack"; exit 1; }; \
-	kill -TERM $$pid; \
-	for _ in $$(seq 1 150); do \
-		(exec 3<>/dev/tcp/127.0.0.1/8545) 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null || { rm -f $(PAYMENTS_STACK_PID) $(PAYMENTS_STACK_PID).logs; echo "stack stopped"; exit 0; }; \
-		sleep 0.2; \
-	done; \
-	echo "still listening on :8545 or :8080 after about 30 s"; exit 1
+	$(call stack_stop,$(PAYMENTS_STACK_PID),run_scripts/stack.sh,stack.log,payments-stack,8545 8080)
 
 payments-test: ## Payments end-to-end suite (on make payments-stack); prints pass/fail/skip counts, fails on a skip not in PAYMENTS_KNOWN_SKIPS
-	@logs=$$(cat $(PAYMENTS_STACK_PID).logs 2>/dev/null); \
-	if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/payments_test.XXXXXX"); fi; \
-	status=0; cd enygma_payments/go_client/enygma_test; \
-	go test -count=1 -v ./... -timeout 900s >$$log 2>&1 || status=$$?; \
-	cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(PAYMENTS_KNOWN_SKIPS)'; result=$$?; echo "log: $$log"; exit $$result
+	$(call suite_test,$(PAYMENTS_STACK_PID),enygma_payments/go_client/enygma_test,payments_test,900s,,,$(PAYMENTS_KNOWN_SKIPS))
 
 retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script header)
 	cd enygma_retail_payments && bash setup.sh
@@ -288,11 +287,7 @@ RETAIL_LOG_DIR ?=
 # fails the suite: a missing service must not pass for green.
 RETAIL_KNOWN_SKIPS := TestUserRegistration TestAuditorViewKeyRecovery
 retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts, fails on a skip not in RETAIL_KNOWN_SKIPS; leaves the shield demo's replay fixtures alone
-	@logs=$$(cat $(SHIELD_STACK_PID).logs 2>/dev/null); \
-	if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/retail_test.XXXXXX"); fi; \
-	status=0; cd enygma_retail_payments/test; \
-	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v ./... -timeout 1800s -skip '$(RETAIL_BENCH_SKIP)' >$$log 2>&1 || status=$$?; \
-	cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(RETAIL_KNOWN_SKIPS)'; result=$$?; echo "log: $$log"; exit $$result
+	$(call suite_test,$(SHIELD_STACK_PID),enygma_retail_payments/test,retail_test,1800s,REPLAY_FIXTURE_WRITE=0,-skip '$(RETAIL_BENCH_SKIP)',$(RETAIL_KNOWN_SKIPS))
 
 # The full shield demo scenario test plays three runs (about 1–2 min since #190's
 # fast proofs); this plays the default-mode run (about 30 s) and the subtests matching
@@ -319,15 +314,7 @@ shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relaye
 	echo "run.sh exited before the stack came up:"; cat $$logs/run.log; exit 1
 
 shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 30 s for its ports to free
-	@pid=$$(cat $(SHIELD_STACK_PID) 2>/dev/null); \
-	ps -o command= -p "$$pid" 2>/dev/null | grep -q 'run.sh --no-demo' || { echo "no stack started by make shield-stack"; exit 1; }; \
-	kill -TERM $$pid; \
-	for _ in $$(seq 1 150); do \
-		busy=; for p in 8545 8082 8090; do (exec 3<>/dev/tcp/127.0.0.1/$$p) 2>/dev/null && busy="$$busy :$$p"; done; \
-		[ -n "$$busy" ] || { rm -f $(SHIELD_STACK_PID) $(SHIELD_STACK_PID).logs; echo "stack stopped"; exit 0; }; \
-		sleep 0.2; \
-	done; \
-	echo "still listening on$$busy after about 30 s"; exit 1
+	$(call stack_stop,$(SHIELD_STACK_PID),run.sh --no-demo,run.log,shield-stack,8545 8082 8090)
 
 # run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
 # demo binary rebuilt: this rebuilds it and relaunches it on the running stack,

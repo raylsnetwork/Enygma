@@ -14,7 +14,7 @@ set -euo pipefail
 # root Makefile's stack and suite targets, this script, the suites' verdict
 # and every stack script with the helpers they share, so a change to how CI
 # runs one suite is tested on all three.
-stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh"
+stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh scripts/stack_stop.sh"
 common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/suite_result.sh $stacks"
 paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
 # make dvp-keygen copies retail's PrivateMint keys.

@@ -94,6 +94,7 @@ start() {
 }
 
 # died NAME — NAME's service exited: shows its log's tail and fails.
+# scripts/stack_stop.sh fails a stop whose log holds this line: keep them in step.
 died() {
     say "$1 exited — last log lines:" >&2
     tail -20 "$LOG_DIR/$1.log" >&2

@@ -32,6 +32,7 @@ on:
       - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"
       - "scripts/stack_lib.sh"
+      - "scripts/stack_stop.sh"
       - ".github/workflows/onchain.yml"
 
 permissions:
@@ -120,7 +121,7 @@ jobs:
       - run: make payments-stack
       - run: make payments-test
       - if: always()
-        run: make payments-stack-stop || true
+        run: make payments-stack-stop
       - if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -180,7 +181,7 @@ jobs:
       - run: make dvp-stack
       - run: make dvp-test
       - if: always()
-        run: make dvp-stack-stop || true
+        run: make dvp-stack-stop
       - if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -223,7 +224,7 @@ jobs:
       - run: make shield-stack
       - run: make retail-test
       - if: always()
-        run: make shield-stack-stop || true
+        run: make shield-stack-stop
       # retail-test sets REPLAY_FIXTURE_WRITE=0 and leaves PRIMER_WRITE unset.
       # Also after a failed suite, and counting new untracked files.
       - name: replay fixtures and primer data block unchanged
