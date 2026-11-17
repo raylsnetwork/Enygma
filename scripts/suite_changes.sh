@@ -12,9 +12,9 @@ set -euo pipefail
 # Each suite's paths (globs; * also matches /): what its stack builds,
 # deploys or copies in, plus the suites' shared wiring: the workflow, the
 # root Makefile's stack and suite targets, this script, the suites' verdict
-# and every stack script, so a change to how CI runs one suite is tested
-# on all three.
-stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh"
+# and every stack script with the helpers they share, so a change to how CI
+# runs one suite is tested on all three.
+stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh"
 common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/suite_result.sh $stacks"
 paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
 # make dvp-keygen copies retail's PrivateMint keys.
