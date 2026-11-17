@@ -169,9 +169,10 @@ hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat proj
 ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
 # ── Local development shortcuts (thin wrappers over the existing scripts) ─────
-# $(call stack_stop,<pid file>,<process match>,<stack log>,<start target>,<ports>):
+# $(call stack_stop,<pid file>,<command line>,<stack log>,<start target>,<ports>):
 # a *-stack-stop recipe, signalling only the stack <start target> recorded in
-# <pid file>, and failing when it doesn't stop cleanly (scripts/stack_stop.sh).
+# <pid file>, whose command line is all of <command line>, and failing when it
+# doesn't stop cleanly (scripts/stack_stop.sh).
 define stack_stop
 @bash scripts/stack_stop.sh $(1) '$(2)' $(3) $(4) $(5)
 endef
@@ -197,6 +198,8 @@ endef
 # gnark targets are the stack's pieces, for running one by hand. Logs go to
 # DVP_LOG_DIR (default: a fresh temp dir), the suite's to suite.log there.
 DVP_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_dvp_stack.pid
+# What dvp-stack runs, in enygma_dvp: dvp-stack-stop signals only this command line.
+DVP_STACK_CMD := bash scripts/stack.sh
 DVP_LOG_DIR ?=
 # Tests allowed to skip in dvp-test (full names, space-separated): the
 # NewKeyPair field-range flakes. Any other skip fails the suite, so a relayer
@@ -222,7 +225,7 @@ dvp-gnark: ## Start the DvP gnark proof server on :8081 (keep running)
 
 dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :8081, relayers :8091/:8092), detached; returns when it is up
 	@logs=$${DVP_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/stack.log; \
-	(cd enygma_dvp && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash scripts/stack.sh >$$logs/stack.log 2>&1) & \
+	(cd enygma_dvp && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $(DVP_STACK_CMD) >$$logs/stack.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
 		grep -q 'stack is up' $$logs/stack.log && { echo $$pid >$(DVP_STACK_PID); echo $$logs >$(DVP_STACK_PID).logs; echo "stack is up (logs $$logs); run make dvp-test, then make dvp-stack-stop"; exit 0; }; \
@@ -231,7 +234,7 @@ dvp-stack: ## Start the DvP test stack (fresh chain, both deployments, gnark :80
 	cat $$logs/stack.log; exit 1
 
 dvp-stack-stop: ## Stop the stack make dvp-stack started, and wait for its ports to free
-	$(call stack_stop,$(DVP_STACK_PID),scripts/stack.sh,stack.log,dvp-stack,8545 8081 8091 8092)
+	$(call stack_stop,$(DVP_STACK_PID),$(DVP_STACK_CMD),stack.log,dvp-stack,8545 8081 8091 8092)
 
 dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail/skip counts, fails on a skip not in DVP_KNOWN_SKIPS
 	$(call suite_test,$(DVP_STACK_PID),enygma_dvp/test,dvp_test,1800s,,,$(DVP_KNOWN_SKIPS),no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers)
@@ -244,6 +247,8 @@ dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail
 # the suite's to suite.log there. The Burn keys are gitignored: see
 # run_scripts/stack.sh's header.
 PAYMENTS_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_payments_stack.pid
+# What payments-stack runs, from the repo root: payments-stack-stop signals only this command line.
+PAYMENTS_STACK_CMD := bash enygma_payments/run_scripts/stack.sh
 PAYMENTS_LOG_DIR ?=
 # Tests allowed to skip in payments-test (full names, space-separated). Any
 # other skip fails the suite: a missing service must not pass for green.
@@ -251,7 +256,7 @@ PAYMENTS_KNOWN_SKIPS :=
 
 payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
 	@logs=$${PAYMENTS_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/payments_stack.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/stack.log; \
-	(LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash enygma_payments/run_scripts/stack.sh >$$logs/stack.log 2>&1) & \
+	(LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $(PAYMENTS_STACK_CMD) >$$logs/stack.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
 		grep -q 'stack is up' $$logs/stack.log && { echo $$pid >$(PAYMENTS_STACK_PID); echo $$logs >$(PAYMENTS_STACK_PID).logs; echo "stack is up (logs $$logs); run make payments-test, then make payments-stack-stop"; exit 0; }; \
@@ -260,7 +265,7 @@ payments-stack: ## Start the payments e2e stack (compile contracts, build relaye
 	cat $$logs/stack.log; exit 1
 
 payments-stack-stop: ## Stop the stack make payments-stack started, and wait for its ports to free
-	$(call stack_stop,$(PAYMENTS_STACK_PID),run_scripts/stack.sh,stack.log,payments-stack,8545 8080)
+	$(call stack_stop,$(PAYMENTS_STACK_PID),$(PAYMENTS_STACK_CMD),stack.log,payments-stack,8545 8080)
 
 payments-test: ## Payments end-to-end suite (on make payments-stack); prints pass/fail/skip counts, fails on a skip not in PAYMENTS_KNOWN_SKIPS
 	$(call suite_test,$(PAYMENTS_STACK_PID),enygma_payments/go_client/enygma_test,payments_test,900s,,,$(PAYMENTS_KNOWN_SKIPS))
@@ -302,10 +307,12 @@ shield-test: ## Shield demo scenario, default run only, subtests matching T= (ne
 # once the stack is up, or with run.sh's error.
 # Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
+# What shield-stack runs, in shield_demo: shield-stack-stop signals only this command line.
+SHIELD_STACK_CMD := bash run.sh --no-demo
 
 shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relayer :8090), detached; returns when it is up
 	@logs=$${RETAIL_LOG_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/shield_demo.XXXXXX")}; mkdir -p "$$logs"; logs=$$(cd "$$logs" && pwd); : >$$logs/run.log; \
-	(cd enygma_retail_payments/shield_demo && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- bash run.sh --no-demo >$$logs/run.log 2>&1) & \
+	(cd enygma_retail_payments/shield_demo && LOG_DIR=$$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $(SHIELD_STACK_CMD) >$$logs/run.log 2>&1) & \
 	pid=$$!; \
 	while kill -0 $$pid 2>/dev/null; do \
 		grep -q 'stack is up' $$logs/run.log && { echo $$pid >$(SHIELD_STACK_PID); echo $$logs >$(SHIELD_STACK_PID).logs; echo "stack is up (logs $$logs); run make retail-test, then make shield-stack-stop"; exit 0; }; \
@@ -314,7 +321,7 @@ shield-stack: ## Start the retail stack (fresh chain, setup, gnark :8082, relaye
 	echo "run.sh exited before the stack came up:"; cat $$logs/run.log; exit 1
 
 shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 30 s for its ports to free
-	$(call stack_stop,$(SHIELD_STACK_PID),run.sh --no-demo,run.log,shield-stack,8545 8082 8090)
+	$(call stack_stop,$(SHIELD_STACK_PID),$(SHIELD_STACK_CMD),run.log,shield-stack,8545 8082 8090)
 
 # run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
 # demo binary rebuilt: this rebuilds it and relaunches it on the running stack,
