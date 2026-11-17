@@ -6,7 +6,9 @@
 # so a renamed test can't drop out of the run unnoticed. With --expect, the
 # red counts only if the output matches regex, naming the check under test
 # (a subtest's name, say), so a red from an earlier check failing first
-# doesn't pass for the new check's.
+# doesn't pass for the new check's. regex matches one line of output: go
+# test prints a test's name and its assertion on separate lines, so name
+# one or the other.
 # Exit 0 when the mutant is killed (red), 1 when it survives or goes red
 # elsewhere, 2 on bad input: a command already red without the mutant, or
 # one that did not run (exit 126 or 127, as a command passed as one word).
@@ -16,6 +18,9 @@
 #   scripts/mutant.sh enygma_retail_payments/shield_demo/index.html \
 #     "hold * 1.3)" "hold * 3)" -- node --test scripts/shield_demo_replay.test.js
 #   scripts/mutant.sh --expect 'TestProtocolPrimer/audit' <file> <old> <new> -- go test …
+#   scripts/mutant.sh <file> <old> <new> -- go -C enygma_retail_payments/shield_demo test ./engine/
+# Go runs inside its module (go -C <module dir>): from the repo root it
+# finds no go.mod.
 set -euo pipefail
 expect=
 if [ "${1:-}" = --expect ]; then
@@ -26,6 +31,9 @@ fi
 [ $# -ge 5 ] && [ "$4" = -- ] || { echo "usage: mutant.sh [--expect <regex>] <file> <old> <new> -- <test command…>" >&2; exit 2; }
 file=$1 old=$2 new=$3
 shift 4
+# failures picks the lines a red rests on: node's, go test's (its FAIL
+# lines and its indented file_test.go:N: assertions) and errors.
+failures='^not ok|^ *(error|Error|--- FAIL|FAIL)|^ +[^ ]+_test\.go:[0-9]+:'
 out=$(mktemp)
 backup=$(mktemp)
 cp "$file" "$backup"
@@ -60,9 +68,9 @@ if [ $status = 126 ] || [ $status = 127 ]; then
   exit 2
 fi
 if [ -n "$expect" ] && ! grep -Eq -- "$expect" "$out"; then
-  grep -E '^not ok|^ *(error|Error|--- FAIL|FAIL)' "$out" | head -8 || tail -8 "$out"
+  grep -E "$failures" "$out" | head -8 || tail -8 "$out"
   echo "SURVIVED: the command went red, but not from the expected check (/$expect/)"
   exit 1
 fi
-grep -E '^not ok|^ *(error|Error|--- FAIL|FAIL)' "$out" | head -8 || tail -8 "$out"
+grep -E "$failures" "$out" | head -8 || tail -8 "$out"
 echo "RED: the command failed with the mutant in place"

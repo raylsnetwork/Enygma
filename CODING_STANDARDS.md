@@ -2,6 +2,10 @@
 
 Rules for review that no check enforces. What `make check` and the pre-commit hooks already catch is not repeated here.
 
+## All code
+
+- **Comments state what the code does now**, and change with it: a comment that describes an earlier version of its code is a finding.
+
 ## Demo pages
 
 The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html`) carry their whole UI as inline CSS and script.
@@ -9,7 +13,6 @@ The demo pages (`*.html`, such as `enygma_retail_payments/shield_demo/index.html
 - **Colours are tokens.** Every colour is a custom property on `:root`, redefined for the dark theme; rules use `var(--…)`, never a literal colour.
 - **Engine and service text is escaped.** Any text that comes from the engine or a service reaches the page through `esc()`, or as `textContent`, never interpolated raw into HTML.
 - **Every function and event handler has a one-line comment** above it saying what it does, in the page's plain-English style; one comment may cover a run of related one-line definitions.
-- **Comments state what the code does now**, and change with it: a comment that describes an earlier version of its code is a finding.
 - **A security claim matches the deployed code.** Any text saying what a constraint or contract check stops names the mechanism by which the deployed circuit or contract stops it; a claim the code doesn't bear out, or a reason the code doesn't use, is a finding.
 - **A security claim states its reach.** A bound says whom it holds against (an honest sender, any payer), and a stated weakness gives its widest reach, read from the deployed code.
 - **A claim agrees with the page's other steps.** A statement about who holds or sees a value matches every other step that mentions that value. A pointer to another step ("step 9 shows …") names what that step shows as merged; a later ticket's work is not there yet.
