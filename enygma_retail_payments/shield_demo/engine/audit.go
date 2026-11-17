@@ -174,8 +174,7 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 	if err != nil {
 		return nil, err
 	}
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(e.startBlock),
+	logs, err := c.logsSince(ctx, e.startBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.dvpAddr, c.vaultAddr, c.usdrVaultAddr},
 		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic}},
 	})
@@ -354,15 +353,10 @@ func (e *Engine) txSender(ctx context.Context, hash common.Hash) (string, error)
 // then matches the run's tags to those channels and opens each tagged note.
 func (e *Engine) auditPayers(ctx context.Context) (map[string]string, error) {
 	c := e.chain
-	payers := map[string]string{}
 	if c.channelRegistryAddr == (common.Address{}) || c.tagRegistryAddr == (common.Address{}) {
-		return payers, nil
+		return map[string]string{}, nil
 	}
-	type channel struct {
-		tags.Channel
-		payer string
-	}
-	var channels []channel
+	var channels []auditChannel
 	for _, u := range e.auditUsers {
 		found, _, err := tags.ScanChannelsFromCursor(c.client, c.channelRegistryAddr, u.view,
 			&tags.ScanCursor{LastChannelIdx: e.startChannel}, maxChannelScan)
@@ -375,15 +369,27 @@ func (e *Engine) auditPayers(ctx context.Context) (map[string]string, error) {
 			if common.IsHexAddress(string(f.SenderId)) {
 				payer = e.nameOf(common.HexToAddress(string(f.SenderId)))
 			}
-			channels = append(channels, channel{Channel: tags.Channel{SharedSecret: f.SharedSecret, PkSpend: u.spendPk}, payer: payer})
+			channels = append(channels, auditChannel{Channel: tags.Channel{SharedSecret: f.SharedSecret, PkSpend: u.spendPk}, payer: payer})
 		}
 	}
+	return e.tagPayers(ctx, channels)
+}
+
+// auditChannel is a tag channel the auditor opened, and the payer it names.
+type auditChannel struct {
+	tags.Channel
+	payer string
+}
+
+// tagPayers matches the run's tags to channels and names each tagged
+// note's payer, by its commitment.
+func (e *Engine) tagPayers(ctx context.Context, channels []auditChannel) (map[string]string, error) {
+	c := e.chain
+	payers := map[string]string{}
 	if len(channels) == 0 {
 		return payers, nil
 	}
-
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(e.startBlock),
+	logs, err := c.logsSince(ctx, e.startBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.tagRegistryAddr},
 		Topics:    [][]common.Hash{{tagPublishedTopic}},
 	})

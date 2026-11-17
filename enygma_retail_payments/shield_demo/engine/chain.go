@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -30,6 +31,9 @@ type chain struct {
 	usdrVaultAddr common.Address
 	usdrErc20Addr common.Address
 	registryAddr  common.Address
+	// deployBlock is the first block of the deployment receipts.json
+	// describes: no event of the demo's contracts comes before it.
+	deployBlock uint64
 
 	dvp       *bind.BoundContract
 	vault     *bind.BoundContract
@@ -42,6 +46,9 @@ type chain struct {
 	// the relayer publishes to, from its info route.
 	tagRegistryAddr     common.Address
 	channelRegistryAddr common.Address
+
+	// commitments is each vault's Commitment events read so far.
+	commitments map[common.Address]*vaultLog
 
 	// events is every event the demo's contracts declare, by topic, to
 	// decode receipts' logs.
@@ -60,7 +67,7 @@ func dialChain(cfg Config) (*chain, error) {
 		}
 		return common.HexToAddress(r.ContractAddress), nil
 	}
-	c := &chain{chainID: big.NewInt(cfg.ChainID)}
+	c := &chain{chainID: big.NewInt(cfg.ChainID), deployBlock: math.MaxUint64}
 	for name, dst := range map[string]*common.Address{
 		"EnygmaDvp":      &c.dvpAddr,
 		"Erc20CoinVault": &c.vaultAddr,
@@ -72,6 +79,7 @@ func dialChain(cfg Config) (*chain, error) {
 		if *dst, err = addr(name); err != nil {
 			return nil, err
 		}
+		c.deployBlock = min(c.deployBlock, receipts[name].BlockNumber)
 	}
 
 	dvpABI, err := loadABI(cfg.RetailRoot, "EnygmaDvp")
@@ -117,6 +125,7 @@ func (c *chain) close() {
 
 type receiptEntry struct {
 	ContractAddress string `json:"contractAddress"`
+	BlockNumber     uint64 `json:"blockNumber"`
 }
 
 func loadReceipts(root string) (map[string]receiptEntry, error) {
@@ -225,7 +234,7 @@ var userRegisteredTopic = crypto.Keccak256Hash([]byte("UserRegistered(address,ui
 // finds the transaction by its UserRegistered event, as rpcore.Register
 // returns no receipt.
 func (c *chain) registration(ctx context.Context, user common.Address) (*ethtypes.Receipt, error) {
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+	logs, err := c.logsSince(ctx, c.deployBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.registryAddr},
 		Topics:    [][]common.Hash{{userRegisteredTopic}, {common.BytesToHash(user.Bytes())}},
 	})

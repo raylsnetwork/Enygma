@@ -8,7 +8,6 @@ import (
 
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -22,12 +21,9 @@ type batch struct {
 // transactions inserted, oldest first. (The event names the vault, not the
 // tree.) No path the demo uses inserts into one vault twice in a transaction.
 func (c *chain) commitmentBatches(ctx context.Context, vaultAddr common.Address) ([]batch, error) {
-	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
-		Addresses: []common.Address{vaultAddr},
-		Topics:    [][]common.Hash{{commitmentTopic}},
-	})
+	logs, err := c.vaultCommitments(ctx, vaultAddr)
 	if err != nil {
-		return nil, fmt.Errorf("vault Commitment events: %w", err)
+		return nil, err
 	}
 	var out []batch
 	for _, l := range logs {
