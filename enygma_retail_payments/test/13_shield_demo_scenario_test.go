@@ -125,7 +125,7 @@ func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, path string, fi
 	s.mu.Unlock()
 	t.Cleanup(func() {
 		if os.Getenv("REPLAY_FIXTURE_WRITE") == "0" {
-			t.Logf("replay fixture %s not written: REPLAY_FIXTURE_WRITE=0 (make retail-test, make primer-refresh); refresh it with make shield-test or a direct run", path)
+			t.Logf("replay fixture %s not written: REPLAY_FIXTURE_WRITE=0 (make retail-test, make primer-refresh); refresh it with make shield-fixtures", path)
 			return
 		}
 		if t.Failed() {

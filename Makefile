@@ -70,7 +70,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks hooks-check fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-demo-restart shield-demo-stale shield-gnark-restart \
+	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-stack payments-stack-stop payments-test \
 	auctions-gnark auctions-keygen
 
@@ -341,6 +341,17 @@ primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewri
 	grep -E '^--- (FAIL|SKIP)' $$log; \
 	if [ $$status = 0 ]; then PRIMER_WRITE=1 go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
 	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; exit $$status
+
+# The two live runs whose events the shield demo's replay test plays: each
+# rewrites its fixture in shield_demo/testdata only when it passes. A skip
+# fails the target too, as a skipped run writes nothing.
+shield-fixtures: ## Fresh stack, then TestShieldDemoScenario and TestShieldDemoWalkthrough (rewrite the replay fixtures); prints their verdicts, stops the stack
+	@$(MAKE) --no-print-directory shield-stack
+	@log=$$(mktemp -t shield_fixtures); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
+	go test -count=1 -v -run 'TestShieldDemoScenario$$|TestShieldDemoWalkthrough$$' . -timeout 900s >$$log 2>&1 || status=1; \
+	grep -E '^--- (PASS|FAIL|SKIP)' $$log; grep -q '^--- SKIP' $$log && status=1; \
+	[ $$status = 0 ] || echo "a run failed or skipped (log: $$log): its fixture is left as it was"; \
+	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; git status --short enygma_retail_payments/shield_demo/testdata; exit $$status
 
 shield-demo-stale: ## Fail if the demo on :9092 was built from Go sources other than the working tree's (then make shield-demo-restart)
 	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: run make shield-demo-restart (on a running stack) or bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
