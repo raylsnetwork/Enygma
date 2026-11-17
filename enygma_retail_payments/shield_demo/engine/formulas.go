@@ -583,7 +583,7 @@ func (c *chain) tagFormula(ctx context.Context, from, to *Actor, ss []byte, b ui
 // its tag: the block key k_b of f's tag channel for f's block and payee's
 // spend key, which opens the payload to amount ‖ token ‖ salt, and the
 // commitment those hash to with payee's pk_spend, checked against the
-// vault's Commitment event for it.
+// vault's Commitment event for it, in the block the scan confirmed it in.
 func (c *chain) tagPayloadFormula(ctx context.Context, payee *Actor, f taggedNote) (HopDetail, error) {
 	k := tags.DeriveBlockKey(f.ch.SharedSecret, f.block, payee.Spend.PublicKey)
 	cm, err := rpcore.Erc20CommitmentV2(payee.Spend.PublicKey, f.opened.Salt, f.opened.Amount, f.opened.TokenId)
@@ -591,6 +591,8 @@ func (c *chain) tagPayloadFormula(ctx context.Context, payee *Actor, f taggedNot
 		return HopDetail{}, fmt.Errorf("tag payload card: %w", err)
 	}
 	logs, err := c.client.FilterLogs(ctx, ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(f.cmBlock),
+		ToBlock:   new(big.Int).SetUint64(f.cmBlock),
 		Addresses: []common.Address{c.vaultAddr},
 		Topics:    [][]common.Hash{{commitmentTopic}, nil, {common.BigToHash(cm)}},
 	})
