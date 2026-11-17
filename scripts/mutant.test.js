@@ -72,6 +72,14 @@ test('--expect: red from another check is not the check shown red', () => {
   assert.doesNotMatch(r.out, /^RED:/m);
 });
 
+test("a miss of --expect prints go test's assertion lines, so the red shows what failed", () => {
+  // go test prints the test's name and its assertion on separate lines.
+  const goFail = 'grep -q ok "$F" || { echo "--- FAIL: TestScan (0.00s)"; echo "    tags_test.go:328: vault query spans 25000 blocks"; echo FAIL; exit 1; }';
+  const r = run(goFail, { expect: 'TestScan.*vault query' });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /^ +tags_test\.go:328: vault query spans 25000 blocks$/m);
+});
+
 test('every verdict is the last line, so a tail of the output keeps it', () => {
   const cases = {
     red: [CHECK, {}],
