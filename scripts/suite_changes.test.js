@@ -80,7 +80,7 @@ for (const script of [
   });
 }
 
-for (const script of ['scripts/suite_result.sh', 'scripts/suite_changes.sh']) {
+for (const script of ['scripts/suite_result.sh', 'scripts/suite_changes.sh', 'scripts/stack_lib.sh']) {
   test(`a change to the suites' wiring ${script} runs every suite`, () => {
     assert.deepStrictEqual(suites([script]), ALL);
   });

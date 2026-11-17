@@ -19,25 +19,10 @@
 set -euo pipefail
 DVP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$DVP_ROOT/.." && pwd)"
-LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/dvp_stack.XXXXXX")}"
-mkdir -p "$LOG_DIR"
-LOG_DIR="$(cd "$LOG_DIR" && pwd)" # absolute: services start in their own dirs
-BIN_DIR="$LOG_DIR/bin"
+. "$REPO_ROOT/scripts/stack_lib.sh"
+use_log_dir dvp_stack
 KEYS="$DVP_ROOT/gnark_circuits/scripts/keys"
-mkdir -p "$BIN_DIR"
-# go-ethereum needs CGo; Homebrew clang on macOS points at a missing SDK.
-[ "$(uname -s)" = Darwin ] && export CC="${CC:-/usr/bin/clang}"
-say() { echo "[stack.sh] $*"; }
-listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-
-node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
-NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
-if [ "$(node_major)" -lt 20 ] && [ -s "$NVM_SH" ]; then
-    set +u
-    . "$NVM_SH"
-    nvm use --silent "$(cat "$DVP_ROOT/.nvmrc")" >/dev/null 2>&1 || true
-    set -u
-fi
+use_node "$(cat "$DVP_ROOT/.nvmrc")"
 
 # preflight — fails in a second, with the fix, on what otherwise fails
 # minutes in.
@@ -74,85 +59,22 @@ preflight() {
 }
 preflight
 
-PIDS=() NAMES=()
-cleanup() {
-    trap - EXIT INT TERM
-    say "stopping services…"
-    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    done
-    wait 2>/dev/null || true
-    say "stopped. Logs: $LOG_DIR"
-}
-trap cleanup EXIT
-# A signal exits, which runs cleanup through the EXIT trap: a trap that only
-# returned would put the script back in its wait loop, to find the services
-# it just stopped gone and report them dead.
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-# start NAME DIR CMD... — runs CMD in DIR in its own process group, logging to $LOG_DIR/NAME.log.
-start() {
-    local name=$1 dir=$2
-    shift 2
-    (cd "$dir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@" >"$LOG_DIR/$name.log" 2>&1) &
-    PIDS+=($!)
-    NAMES+=("$name")
-}
-# died NAME — NAME's service exited: shows its log's tail and fails.
-died() {
-    say "$1 exited — last log lines:" >&2
-    tail -20 "$LOG_DIR/$1.log" >&2
-    exit 1
-}
-# wait_port NAME PORT — waits for service NAME to listen on PORT, failing at
-# once if it exits.
-wait_port() {
-    local name=$1 port=$2 i pid=
-    for i in "${!NAMES[@]}"; do [ "${NAMES[$i]}" != "$name" ] || pid=${PIDS[$i]}; done
-    [ -n "$pid" ] || { say "wait_port: no service named $name was started" >&2; exit 1; }
-    for _ in $(seq 1 600); do
-        listening "$port" && { say "$name is up on :$port"; return 0; }
-        kill -0 "$pid" 2>/dev/null || died "$name"
-        sleep 0.5
-    done
-    say "$name did not come up on :$port — last log lines:" >&2
-    tail -20 "$LOG_DIR/$name.log" >&2
-    exit 1
-}
-# step NAME CMD... — runs CMD from DVP_ROOT, logging to $LOG_DIR/NAME.log; on failure shows the log's tail.
-step() {
-    local name=$1
-    shift
-    say "${name}…"
-    (cd "$DVP_ROOT" && "$@") >"$LOG_DIR/$name.log" 2>&1 || {
-        say "$name failed — last log lines:" >&2
-        tail -20 "$LOG_DIR/$name.log" >&2
-        exit 1
-    }
-}
-
-for port in 8545 8081 8091 8092; do
-    if listening "$port"; then
-        say "port $port is already in use — stop whatever is running there first (every run needs a fresh chain)." >&2
-        exit 1
-    fi
-done
+require_free_ports 8545 8081 8091 8092
 say "logs: $LOG_DIR"
 
-step compile bash -c 'npx hardhat compile && node scripts/regen_poseidon.js'
-step build bash -c "cd scripts && for c in deploy init deploy_payment init_payment; do go build -o '$BIN_DIR'/\$c ./cmd/\$c || exit 1; done &&
+step compile "$DVP_ROOT" bash -c 'npx hardhat compile && node scripts/regen_poseidon.js'
+step build "$DVP_ROOT" bash -c "cd scripts && for c in deploy init deploy_payment init_payment; do go build -o '$BIN_DIR'/\$c ./cmd/\$c || exit 1; done &&
     cd ../gnark_circuits && go build -o '$BIN_DIR'/gnark_server ./cmd/server && cd ../relayer && go build -o '$BIN_DIR'/relayer ."
 
 start hardhat "$DVP_ROOT" npx hardhat node
 wait_port hardhat 8545
 
-step deploy "$BIN_DIR/deploy"
-step export-vk bash -c 'cd gnark_circuits && go run ./cmd/export_vk_init -placeholder ../build'
-step init "$BIN_DIR/init"
-step deploy-payment "$BIN_DIR/deploy_payment"
-step export-vk-payment bash -c 'cd gnark_circuits && go run ./cmd/export_vk_payment ../build'
-step init-payment "$BIN_DIR/init_payment"
+step deploy "$DVP_ROOT" "$BIN_DIR/deploy"
+step export-vk "$DVP_ROOT" bash -c 'cd gnark_circuits && go run ./cmd/export_vk_init -placeholder ../build'
+step init "$DVP_ROOT" "$BIN_DIR/init"
+step deploy-payment "$DVP_ROOT" "$BIN_DIR/deploy_payment"
+step export-vk-payment "$DVP_ROOT" bash -c 'cd gnark_circuits && go run ./cmd/export_vk_payment ../build'
+step init-payment "$DVP_ROOT" "$BIN_DIR/init_payment"
 
 start gnark "$DVP_ROOT/gnark_circuits" "$BIN_DIR/gnark_server"
 wait_port gnark 8081
@@ -182,11 +104,4 @@ RELAYER_FEE_SPEND_PRIVATE_KEY=$FEE_SPEND_KEY
 RELAYER_FEE_NOTES_PATH=$FEE_NOTES_8092
 EOF
 say "stack is up (logs $LOG_DIR)"
-# Up while every service runs; when one exits, the trap stops the rest, so the
-# stack never looks up with a service gone. (Polled: macOS's bash 3.2 has no wait -n.)
-while :; do
-    for i in "${!PIDS[@]}"; do
-        kill -0 "${PIDS[$i]}" 2>/dev/null || died "${NAMES[$i]}"
-    done
-    sleep 1
-done
+watch_services

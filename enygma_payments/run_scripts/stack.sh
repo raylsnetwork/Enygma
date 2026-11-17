@@ -18,24 +18,9 @@
 set -euo pipefail
 PAY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONTRACTS="$PAY_ROOT/contracts/enygma"
-LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/payments_stack.XXXXXX")}"
-mkdir -p "$LOG_DIR"
-LOG_DIR="$(cd "$LOG_DIR" && pwd)" # absolute: services start in their own dirs
-BIN_DIR="$LOG_DIR/bin"
-mkdir -p "$BIN_DIR"
-# go-ethereum needs CGo; Homebrew clang on macOS points at a missing SDK.
-[ "$(uname -s)" = Darwin ] && export CC="${CC:-/usr/bin/clang}"
-say() { echo "[stack.sh] $*"; }
-listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-
-node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
-NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
-if [ "$(node_major)" -lt 20 ] && [ -s "$NVM_SH" ]; then
-    set +u
-    . "$NVM_SH"
-    nvm use --silent 22 >/dev/null 2>&1 || true
-    set -u
-fi
+. "$PAY_ROOT/../scripts/stack_lib.sh"
+use_log_dir payments_stack
+use_node 22
 
 # preflight — fails in a second, with the fix, on what otherwise fails later.
 ok=1
@@ -55,68 +40,8 @@ for k in BurnPk BurnVk; do
 done
 [ "$ok" = 1 ] || exit 1
 
-for port in 8545 8080; do
-    if listening "$port"; then
-        say "port $port is already in use — stop whatever is running there first (every run needs a fresh chain)." >&2
-        exit 1
-    fi
-done
+require_free_ports 8545 8080
 say "logs: $LOG_DIR"
-
-PIDS=() NAMES=()
-cleanup() {
-    trap - EXIT INT TERM
-    say "stopping services…"
-    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    done
-    wait 2>/dev/null || true
-    say "stopped. Logs: $LOG_DIR"
-}
-trap cleanup EXIT
-# A signal exits, which runs cleanup through the EXIT trap: a trap that only
-# returned would put the script back in its wait loop, to find the services
-# it just stopped gone and report them dead.
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-# start NAME DIR CMD... — runs CMD in DIR in its own process group, logging to $LOG_DIR/NAME.log.
-start() {
-    local name=$1 dir=$2
-    shift 2
-    (cd "$dir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@" >"$LOG_DIR/$name.log" 2>&1) &
-    PIDS+=($!)
-    NAMES+=("$name")
-}
-# died NAME — NAME's service exited: shows its log's tail and fails.
-died() {
-    say "$1 exited — last log lines:" >&2
-    tail -20 "$LOG_DIR/$1.log" >&2
-    exit 1
-}
-# wait_port NAME PORT PID — waits for NAME to listen on PORT, failing at once if PID exits.
-wait_port() {
-    local name=$1 port=$2 pid=$3
-    for _ in $(seq 1 600); do
-        listening "$port" && { say "$name is up on :$port"; return 0; }
-        kill -0 "$pid" 2>/dev/null || died "$name"
-        sleep 0.5
-    done
-    say "$name did not come up on :$port — last log lines:" >&2
-    tail -20 "$LOG_DIR/$name.log" >&2
-    exit 1
-}
-# step NAME DIR CMD... — runs CMD in DIR, logging to $LOG_DIR/NAME.log; on failure shows the log's tail.
-step() {
-    local name=$1 dir=$2
-    shift 2
-    say "${name}…"
-    (cd "$dir" && "$@") >"$LOG_DIR/$name.log" 2>&1 || {
-        say "$name failed — last log lines:" >&2
-        tail -20 "$LOG_DIR/$name.log" >&2
-        exit 1
-    }
-}
 
 step compile "$CONTRACTS" npx hardhat compile
 step build-relayer "$PAY_ROOT/relayer" env CGO_ENABLED=0 go build -o relayer_bin .
@@ -124,15 +49,8 @@ step build-gnark "$PAY_ROOT/gnark-server" go build -o "$BIN_DIR/gnark_server" ./
 
 start hardhat "$CONTRACTS" npx hardhat node
 start gnark "$PAY_ROOT/gnark-server" "$BIN_DIR/gnark_server"
-wait_port hardhat 8545 "${PIDS[0]}"
-wait_port gnark 8080 "${PIDS[1]}"
+wait_port hardhat 8545
+wait_port gnark 8080
 
 say "stack is up (logs $LOG_DIR)"
-# Up while both run; when one exits, the trap stops the other, so the stack
-# never looks up with a service gone. (Polled: macOS's bash 3.2 has no wait -n.)
-while :; do
-    for i in "${!PIDS[@]}"; do
-        kill -0 "${PIDS[$i]}" 2>/dev/null || died "${NAMES[$i]}"
-    done
-    sleep 1
-done
+watch_services

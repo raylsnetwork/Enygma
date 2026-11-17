@@ -12,8 +12,9 @@ name: onchain
 # Separate from `ci` so these longer jobs do not hold up the fast checks.
 # A pull request runs a suite only when it changes a path that suite's
 # filter in scripts/suite_changes.sh names (a change to this workflow, the
-# root Makefile, a stack script or the suites' scripts runs all three; docs
-# and demo pages run none); a push to main runs every suite.
+# root Makefile, a stack script, their shared helpers or the suites'
+# scripts runs all three; docs and demo pages run none); a push to main runs
+# every suite.
 
 on:
   push:
@@ -30,6 +31,7 @@ on:
       - "Makefile"
       - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"
+      - "scripts/stack_lib.sh"
       - ".github/workflows/onchain.yml"
 
 permissions:
