@@ -97,3 +97,48 @@ test('a skipped subtest name with glob characters is matched as written', () => 
   assert.strictEqual(known.code, 0, known.out);
   assert.match(unknown.out, /^unexpected skip: TestF\/amount_\*$/m);
 });
+
+// A test whose own output ends without a newline (fmt.Print("progress…"))
+// gets go test's verdict line glued onto it.
+test('a skip glued onto a test\'s unterminated output is counted and fails the suite', () => {
+  const r = run('=== RUN   TestA\n--- PASS: TestA (0s)\n=== RUN   TestX\nprogress…--- SKIP: TestX (0.00s)\nPASS\n');
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /^suite SKIP: 1$/m);
+  assert.match(r.out, /^unexpected skip: TestX$/m);
+});
+
+test('a glued skip on the known-skip list passes', () => {
+  const r = run('--- PASS: TestA (0s)\nprogress…--- SKIP: TestX (0.00s)\n', { known: 'TestX' });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out, /^suite SKIP: 1$/m);
+});
+
+test('a glued skipped subtest counts against the list by its full name, not as a top-level skip', () => {
+  const log = '--- PASS: TestA (0s)\nprogress…    --- SKIP: TestA/flake (0.00s)\n';
+  const r = run(log);
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /^suite SKIP: 0$/m);
+  assert.match(r.out, /^unexpected skip: TestA\/flake$/m);
+  assert.strictEqual(run(log, { known: 'TestA/flake' }).code, 0);
+});
+
+test('a failure glued onto a test\'s unterminated output fails the suite, and is listed', () => {
+  // go test's status is 0 here, so the glued FAIL alone must fail the suite.
+  const r = run('--- PASS: TestA (0s)\nprogress…--- FAIL: TestB (0.00s)\n');
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /^suite FAIL: 1$/m);
+  assert.match(r.out, /^--- FAIL: TestB \(0\.00s\)$/m);
+});
+
+test('verdict text a test logs (t.Log quoting go test output) is not a verdict', () => {
+  // t.Log ends its line, so go test never glues a verdict onto one.
+  const r = run('--- PASS: TestA (0s)\n    a_test.go:9: saw "--- FAIL: TestOld (1.00s)" and "--- SKIP: TestGone (0.00s)"\n');
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out, /^suite FAIL: 0$/m);
+  assert.match(r.out, /^suite SKIP: 0$/m);
+});
+
+test('a line-start FAIL in a shape the verdict parse does not read still fails the suite', () => {
+  const r = run('--- PASS: TestA (0s)\n--- FAIL: TestB\n');
+  assert.strictEqual(r.code, 1, r.out);
+});
