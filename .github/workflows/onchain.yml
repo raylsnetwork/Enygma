@@ -24,6 +24,10 @@ on:
     # Docs and demo pages under the module dirs still start the workflow,
     # but `changes` runs no suite for them. scripts/suite_changes.test.js
     # checks these cover the files suite_changes.sh --wiring prints.
+    # A rename's old path alone starts the workflow: a PR that only moves a
+    # file out of enygma_dvp/ to a dir no entry here matches starts it, and
+    # `changes` prints dvp=true (#357, settled by throwaway PR #361, run
+    # https://github.com/raylsnetwork/Enygma/actions/runs/44400430484).
     paths:
       - "enygma_payments/**"
       - "enygma_dvp/**"
