@@ -17,9 +17,10 @@ function git(dir, ...args) {
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
 }
 
-// commit stages files (path → content) on top of base in a scratch repo and
-// runs the hook on message; it returns the hook's exit code and output.
-function commit(files, message, { base = {} } = {}) {
+// commit stages files (path → content), and the removal of each path in
+// remove, on top of base in a scratch repo and runs the hook on message; it
+// returns the hook's exit code and output.
+function commit(files, message, { base = {}, remove = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'red-named-test-'));
   git(dir, 'init', '-q');
   git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'root');
@@ -32,6 +33,7 @@ function commit(files, message, { base = {} } = {}) {
     git(dir, 'add', '-A');
     git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base');
   }
+  remove.forEach((p) => fs.rmSync(path.join(dir, p)));
   write(files);
   git(dir, 'add', '-A');
   const msgFile = path.join(dir, '.git', 'COMMIT_EDITMSG');
@@ -110,6 +112,25 @@ test('a renamed subtest counts as a new check', () => {
     'Pin four inputs\n', { base });
   assert.strictEqual(r.code, 1, r.out);
   assert.match(r.out, /four inputs/);
+});
+
+// git diff --cached detects a rename when the new file is mostly the old
+// one (R), and records a delete and an add when it is mostly new (D, A).
+const JS_TESTS = "test('one', () => {});\ntest('two', () => {});\ntest('three', () => {});\n";
+
+test('a new test in a renamed file (a small edit: git records a rename) needs a red', () => {
+  const r = commit({ 'b.test.js': JS_TESTS + "test('brand new', () => {});\n" }, 'Rename and add\n',
+    { base: { 'a.test.js': JS_TESTS }, remove: ['a.test.js'] });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /test\('brand new'/);
+  assert.doesNotMatch(r.out, /test\('one'/);
+});
+
+test('tests moved by a rename with a big edit (git records a delete and an add) need no red', () => {
+  const rewrite = Array.from({ length: 30 }, (_, i) => `// rewritten line ${i}\n`).join('');
+  const r = commit({ 'b.test.js': rewrite + JS_TESTS }, 'Rename and rewrite\n',
+    { base: { 'a.test.js': JS_TESTS + '// old\n'.repeat(30) }, remove: ['a.test.js'] });
+  assert.strictEqual(r.code, 0, r.out);
 });
 
 test('"RED" inside a word is not a red', () => {

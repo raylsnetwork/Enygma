@@ -20,7 +20,10 @@ msg=$(grep -v '^#' "$msg_file")
 case "$msg" in fixup!* | squash!* | amend!*) exit 0 ;; esac
 [ -n "$(printf '%s' "$msg" | tr -d '[:space:]')" ] || exit 0
 
-diff=$(git diff --cached -U0 --no-color --diff-filter=AM -- '*.go' '*.js' '*.ts')
+# --no-renames, with deletions: a renamed file is its old path's removed lines
+# and its new path's added lines, so a test that only moved is on both (and
+# needs no red) and a test new to the renamed file is on the added side only.
+diff=$(git diff --cached -U0 --no-color --no-renames --diff-filter=AMD -- '*.go' '*.js' '*.ts')
 
 # checks <sign> — "<name>	<line>" for each check declared on the diff's
 # <sign> (+ or -) lines; the name is the Go test's, or the subtest's or JS
