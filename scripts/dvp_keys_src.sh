@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Print a fingerprint of the circuit sources the DvP keys are built from:
+# the content of every non-test .go file in the packages cmd/keygen builds
+# (go list -deps, so a new import counts at once) that live in this repo,
+# gnark_circuits' own or a local module it replaces (enygma_gnark_shared),
+# and the go.mod and go.sum of each of those modules; committed or not.
+# Paths are repo-relative, so the fingerprint is the same in any clone;
+# file times play no part, so a rebase or a fresh checkout leaves it.
+# It fails, rather than fingerprint nothing, on a package with no source
+# it can find in the repo (a local replace outside it, or files git
+# ignores).
+# make dvp-keygen writes it beside the keys (scripts/keys/keys.src);
+# enygma_dvp/scripts/stack.sh's preflight compares it with the working
+# tree's, so keys built from other circuit sources fail before anything
+# builds. CI's on-chain workflow keys its cache of the DvP keys on it.
+#
+#   scripts/dvp_keys_src.sh
+set -euo pipefail
+root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+cd "$root/enygma_dvp/gnark_circuits"
+# One line per package: its dir, then its module's go.mod; only packages of
+# the main module or of a module replaced by a local path.
+pkgs=$(go list -deps -f '{{with .Module}}{{if or .Main (and .Replace (not .Replace.Version))}}{{$.Dir}}	{{.GoMod}}{{end}}{{end}}' ./cmd/keygen)
+cd "$root"
+# sources prints the repo-relative path of every file the fingerprint covers.
+sources() {
+    local dir gomod rel files mod
+    while IFS=$'\t' read -r dir gomod; do
+        case "$dir" in
+            "$root"/*) ;;
+            *) echo "dvp_keys_src.sh: package $dir is outside the repo ($root)" >&2; exit 1 ;;
+        esac
+        rel=${dir#"$root"/}
+        files=$(git ls-files -co --exclude-standard -- "$rel" | grep -E "^$rel/[^/]+\.go$" | grep -v '_test\.go$') ||
+            { echo "dvp_keys_src.sh: no non-test .go files found for package $rel" >&2; exit 1; }
+        echo "$files"
+        mod=$(dirname "${gomod#"$root"/}")
+        echo "$mod/go.mod"
+        echo "$mod/go.sum"
+    done <<<"$pkgs"
+}
+list=$(sources)
+LC_ALL=C sort -u <<<"$list" |
+    while IFS= read -r f; do if [ -f "$f" ]; then shasum -a 256 "$f"; fi; done |
+    shasum -a 256 | cut -d' ' -f1

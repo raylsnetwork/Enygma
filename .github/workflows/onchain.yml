@@ -32,6 +32,7 @@ on:
       - "Makefile"
       - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"
+      - "scripts/dvp_keys_src.sh"
       - "scripts/stack_lib.sh"
       - "scripts/stack_start.sh"
       - "scripts/stack_stop.sh"
@@ -166,16 +167,21 @@ jobs:
       - run: npm ci --no-audit --no-fund
         working-directory: enygma_dvp
 
-      # The DvP keys are gitignored. make dvp-keygen generates them and copies
-      # in retail's PrivateMint keys (committed through LFS). A change to the
-      # DvP circuits, what they import (go list -deps ./cmd/keygen), the key
-      # generator, or retail's PrivateMint keys misses the cache and
-      # regenerates them.
+      # The DvP keys are gitignored. make dvp-keygen generates them, stamps
+      # them with the fingerprint of the circuit sources it compiled
+      # (scripts/dvp_keys_src.sh: keys.src, which dvp-stack's preflight
+      # checks) and copies in retail's PrivateMint keys (committed through
+      # LFS). The cache is keyed on that fingerprint and those keys, so a
+      # change to either misses it and regenerates them.
+      - id: dvp-keys-src
+        run: |
+          src=$(scripts/dvp_keys_src.sh)
+          echo "src=$src" >> "$GITHUB_OUTPUT"
       - id: dvp-keys
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: enygma_dvp/gnark_circuits/scripts/keys
-          key: dvp-keys-${{ hashFiles('enygma_dvp/gnark_circuits/templates/**', 'enygma_dvp/gnark_circuits/primitives/**', 'enygma_dvp/gnark_circuits/scripts/*.go', 'enygma_dvp/gnark_circuits/cmd/keygen/**', 'enygma_dvp/gnark_circuits/go.mod', 'enygma_dvp/gnark_circuits/go.sum', 'enygma_gnark_shared/**', 'enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*') }}
+          key: dvp-keys-${{ steps.dvp-keys-src.outputs.src }}-${{ hashFiles('enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*') }}
       - name: generate DvP keys
         if: steps.dvp-keys.outputs.cache-hit != 'true'
         run: make dvp-keygen
