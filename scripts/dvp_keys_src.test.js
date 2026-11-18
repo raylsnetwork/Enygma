@@ -158,3 +158,17 @@ for (const f of ['templates/circuit_test.go', 'cmd/server/main.go', 'relayer/rel
     assert.ok(!changed((d) => fs.appendFileSync(at(d, `enygma_dvp/gnark_circuits/${f}`), '// x\n')));
   });
 }
+
+// onchain.yml's dvp job caches the DvP keys. Keyed on anything but this
+// fingerprint, the cache can restore keys whose keys.src the stack's
+// preflight rejects (or keys from other sources under a stale key).
+test("CI's DvP keys cache is keyed on this fingerprint", () => {
+  const yml = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/onchain.yml'), 'utf8');
+  const step = /- id: dvp-keys-src\n((?: {8}.*\n)+)/.exec(yml);
+  assert.ok(step, 'onchain.yml has no dvp-keys-src step');
+  assert.match(step[1], /src=\$\(scripts\/dvp_keys_src\.sh\)/, 'the dvp-keys-src step does not run scripts/dvp_keys_src.sh');
+  const cache = /- id: dvp-keys\n((?: {8}.*\n)+)/.exec(yml);
+  assert.ok(cache, 'onchain.yml has no dvp-keys cache step');
+  assert.match(cache[1], /^ +key: dvp-keys-\$\{\{ steps\.dvp-keys-src\.outputs\.src \}\}/m,
+    "the dvp-keys cache key does not start with the dvp-keys-src step's fingerprint");
+});
