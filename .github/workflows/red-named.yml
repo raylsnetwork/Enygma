@@ -1,0 +1,44 @@
+name: red-named
+
+# A pull request that adds a check names its red (CODING_STANDARDS.md
+# § Tests and checks): when its diff adds a Go test or subtest or a JS test,
+# its body or one of its commit messages carries a RED line or a
+# "No red: <why>" line. The same rule and detection as the red-named
+# commit-msg hook (scripts/check_red_named.sh --pr), which a clone without
+# the hook and a squash merge's message never pass through. Editing the PR
+# body runs it again, so fixing the body clears a red job (a re-run of the
+# old run replays the old body: edit the body instead).
+# scripts/check_red_named.test.js reads this file.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+# A new push or edit cancels the PR's older run.
+concurrency:
+  group: red-named-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  red-named:
+    name: a PR adding a check names its red
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # The body goes through env, never into the script's text: it is the
+      # PR author's input. The range starts at the base branch as fetched
+      # now, not the event's base.sha, which goes stale once main moves: a
+      # branch that merged a newer main would otherwise count main's commits
+      # (and their reds) as its own.
+      - env:
+          BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s\n' "$BODY" > "$RUNNER_TEMP/pr_body"
+          bash scripts/check_red_named.sh --pr "origin/$BASE_REF" "$HEAD" "$RUNNER_TEMP/pr_body"
