@@ -134,7 +134,7 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/suite_result.test.js >/dev/null || node --test scripts/suite_result.test.js
 	@# suite_changes.sh, the on-chain workflow's filter, runs the suites a change touches.
 	@node --test scripts/suite_changes.test.js >/dev/null || node --test scripts/suite_changes.test.js
-	@# stack_lib.sh, the stack scripts' helpers, stops a stack cleanly on a signal, a dead service or a failed step.
+	@# stack_lib.sh, the stack scripts' helpers, stops a stack cleanly on a signal, a dead service or a failed step, and fails preflight on keys stamped with other circuit sources.
 	@node --test scripts/stack_lib.test.js >/dev/null || node --test scripts/stack_lib.test.js
 	@# stack_start.sh, make's *-stack, records the stack's pid from the start, and drops it when the stack fails to come up.
 	@node --test scripts/stack_start.test.js >/dev/null || node --test scripts/stack_start.test.js

@@ -41,21 +41,9 @@ for k in BurnPk BurnVk; do
         ok=0
     fi
 done
-# Burn keys built from other circuit sources than the working tree's give
-# proofs that fail, minutes in. make payments-burn-keygen stamps them with
-# the sources' content (scripts/keys_src.sh), so a rebase, which moves file
-# times only, passes.
-if ! src=$("$PAY_ROOT/../scripts/keys_src.sh" enygma_payments/gnark-server ./keygen); then
-    say "scripts/keys_src.sh could not fingerprint the circuit sources (above), so the Burn keys cannot be checked" >&2
-    ok=0
-elif [ "$(cat "$KEYS/burn.src" 2>/dev/null)" != "$src" ]; then
-    if [ -s "$KEYS/burn.src" ]; then
-        say "the Burn keys in gnark-server/keys were built from other circuit sources than the working tree's: make payments-burn-keygen" >&2
-    else
-        say "the Burn keys in gnark-server/keys have no record of the circuit sources they were built from (burn.src): make payments-burn-keygen" >&2
-    fi
-    ok=0
-fi
+# make payments-burn-keygen stamps the Burn keys with their circuit sources.
+check_keys_stamp 'Burn keys' enygma_payments/gnark-server ./keygen \
+    enygma_payments/gnark-server/keys/burn.src payments-burn-keygen || ok=0
 [ "$ok" = 1 ] || exit 1
 
 require_free_ports 8545 8080

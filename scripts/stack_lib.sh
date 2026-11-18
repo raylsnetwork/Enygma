@@ -6,6 +6,8 @@
 #   . "$REPO_ROOT/scripts/stack_lib.sh"
 #   use_log_dir dvp_stack      # LOG_DIR (default: a fresh temp dir) and BIN_DIR
 #   use_node "$(cat .nvmrc)"   # Node 20+ through nvm when the shell's is older
+#   check_keys_stamp keys enygma_dvp/gnark_circuits ./cmd/keygen \
+#     enygma_dvp/gnark_circuits/scripts/keys/keys.src dvp-keygen || ok=0
 #   require_free_ports 8545 8081
 #   step compile "$DIR" npx hardhat compile
 #   start hardhat "$DIR" npx hardhat node
@@ -45,6 +47,35 @@ use_node() {
         . "$nvm_sh"
         nvm use --silent "$1" >/dev/null 2>&1 || true
         set -u
+    fi
+}
+
+# check_keys_stamp KEYS MODULE KEYGEN STAMP TARGET — fails (returns 1) on
+# keys built from other circuit sources than the working tree's: they give
+# proofs that fail on-chain, or a gnark panic in Prove, minutes in. make
+# TARGET stamps the keys in STAMP's dir with scripts/keys_src.sh MODULE
+# KEYGEN (the sources' content), so a rebase, which moves file times only,
+# passes. MODULE and STAMP are repo-relative; the message names the keys as
+# "the KEYS in" STAMP's dir within its project (enygma_dvp, enygma_payments).
+# It fails, naming TARGET, on a missing (or empty) stamp and on another one,
+# told apart; and on sources keys_src.sh cannot fingerprint, naming no
+# target, since TARGET's stamp would fail the same way.
+check_keys_stamp() {
+    [ $# -eq 5 ] || { echo "usage: check_keys_stamp <keys> <module dir> <keygen package> <stamp file> <make target>" >&2; exit 2; }
+    local keys=$1 module=$2 keygen=$3 stamp=$4 target=$5 lib_dir src at
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    at=$(dirname "${stamp#*/}")
+    stamp="$lib_dir/../$stamp"
+    if ! src=$("$lib_dir/keys_src.sh" "$module" "$keygen"); then
+        say "scripts/keys_src.sh could not fingerprint the circuit sources (above), so the $keys cannot be checked" >&2
+        return 1
+    elif [ "$(cat "$stamp" 2>/dev/null)" != "$src" ]; then
+        if [ -s "$stamp" ]; then
+            say "the $keys in $at were built from other circuit sources than the working tree's: make $target" >&2
+        else
+            say "the $keys in $at have no record of the circuit sources they were built from ($(basename "$stamp")): make $target" >&2
+        fi
+        return 1
     fi
 }
 
