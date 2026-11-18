@@ -140,6 +140,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/stack_start.test.js >/dev/null || node --test scripts/stack_start.test.js
 	@# stack_stop.sh, make's *-stack-stop, signals only the recorded stack and fails on a service it reports dead.
 	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
+	@# dvp_keys_src.sh, the DvP keys' stamp, moves with a circuit source and not with a file time.
+	@node --test scripts/dvp_keys_src.test.js >/dev/null || node --test scripts/dvp_keys_src.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
@@ -242,8 +244,12 @@ dvp-deploy: ## Regenerate Poseidon artifacts, build and run the DvP deploy
 dvp-init: ## Export VKs and register them on-chain
 	cd enygma_dvp && bash scripts/init.sh
 
-dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes), with retail's PrivateMint keys
-	cd enygma_dvp/gnark_circuits && mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen
+dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes), with retail's PrivateMint keys, stamped with their circuit sources
+	@# keys.src, the fingerprint of the sources keygen compiles (scripts/dvp_keys_src.sh), is taken
+	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
+	@# when keygen succeeds; dvp-stack's preflight fails on keys whose stamp is missing or another's.
+	rm -f enygma_dvp/gnark_circuits/scripts/keys/keys.src
+	src=$$(scripts/dvp_keys_src.sh) && cd enygma_dvp/gnark_circuits && mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen && echo "$$src" >scripts/keys/keys.src
 	@# keygen draws fresh PrivateMint keys; the committed PrivateMintVerifier.sol is for retail's (same R1CS).
 	cp enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintPK.key enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintVK.key enygma_dvp/gnark_circuits/scripts/keys/
 

@@ -12,10 +12,12 @@
 #   make dvp-test        # then the suite, once per fresh stack
 #   make dvp-stack-stop
 #
-# Keys: make dvp-keygen once, and after a circuit change. VK slots whose
-# legacy key file is missing get unprovable placeholders (export_vk_init
-# -placeholder); no integration test uses them. Logs, built binaries and
-# $LOG_DIR/test.env (what the suite needs from the relayers) go to $LOG_DIR.
+# Keys: make dvp-keygen once, and after a circuit change: preflight fails on
+# keys whose keys.src stamp is missing or names other circuit sources. VK
+# slots whose legacy key file is missing get unprovable placeholders
+# (export_vk_init -placeholder); no integration test uses them. Logs, built
+# binaries and $LOG_DIR/test.env (what the suite needs from the relayers) go
+# to $LOG_DIR.
 set -euo pipefail
 DVP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$DVP_ROOT/.." && pwd)"
@@ -27,7 +29,7 @@ use_node "$(cat "$DVP_ROOT/.nvmrc")"
 # preflight — fails in a second, with the fix, on what otherwise fails
 # minutes in.
 preflight() {
-    local ok=1 k newest
+    local ok=1 k src
     if [ "$(node_major)" -lt 20 ]; then
         say "Node $(node -v 2>/dev/null || echo missing) is too old for Hardhat; use 20 or later: cd $DVP_ROOT && nvm use" >&2
         ok=0
@@ -49,13 +51,23 @@ preflight() {
         say "PrivateMintVK.key is not retail's, so it does not match PrivateMintVerifier.sol: make dvp-keygen copies it" >&2
         ok=0
     fi
-    [ "$ok" = 1 ] || exit 1
-    # Keys older than the last circuit change are stale: proofs from them fail
-    # on-chain verification. A warning, since a rebase also moves the time.
-    newest=$(git -C "$REPO_ROOT" log -1 --format=%ct -- enygma_dvp/gnark_circuits/templates enygma_gnark_shared 2>/dev/null || echo 0)
-    if [ "$(stat -c %Y "$KEYS/PaymentVK.key" 2>/dev/null || stat -f %m "$KEYS/PaymentVK.key")" -lt "$newest" ]; then
-        say "WARNING: the keys predate the last circuit change ($(git -C "$REPO_ROOT" log -1 --format='%h %s' -- enygma_dvp/gnark_circuits/templates enygma_gnark_shared)); if proofs fail on-chain: make dvp-keygen" >&2
+    # Keys built from other circuit sources than the working tree's give
+    # proofs that fail on-chain, or a gnark panic in Prove, minutes in.
+    # make dvp-keygen stamps the keys with the sources' content
+    # (scripts/dvp_keys_src.sh), so a rebase, which moves file times only,
+    # passes.
+    if ! src=$("$REPO_ROOT/scripts/dvp_keys_src.sh"); then
+        say "scripts/dvp_keys_src.sh could not fingerprint the circuit sources (above), so the keys cannot be checked" >&2
+        ok=0
+    elif [ "$(cat "$KEYS/keys.src" 2>/dev/null)" != "$src" ]; then
+        if [ -s "$KEYS/keys.src" ]; then
+            say "the keys in gnark_circuits/scripts/keys were built from other circuit sources than the working tree's: make dvp-keygen" >&2
+        else
+            say "the keys in gnark_circuits/scripts/keys have no record of the circuit sources they were built from (keys.src): make dvp-keygen" >&2
+        fi
+        ok=0
     fi
+    [ "$ok" = 1 ] || exit 1
 }
 preflight
 
