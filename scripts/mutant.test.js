@@ -207,9 +207,11 @@ test('every verdict is the last line, so a tail of the output keeps it', () => {
 // suite_changes.sh (whose stacks and common lists name the wiring files)
 // under scripts/, a wiring file (Makefile) and another file, each holding
 // "ok", and pid files named in pids ({ shield: pid }) in its own TMPDIR. It
-// applies "ok" → "bad" to rel with cmd as the test command and returns
-// mutant.sh's exit code, its output and the file afterwards.
-function inRepo(rel, cmd, pids = {}) {
+// applies old → repl (default "ok" → "bad") to rel with cmd as the test
+// command (the file's path is $F in it, and $P a file it may write to) and
+// returns mutant.sh's exit code, its output, the file afterwards and what
+// cmd wrote to $P. inspect(root, wrote) runs before the repo is removed.
+function inRepo(rel, cmd, { pids = {}, old = 'ok', repl = 'bad', inspect } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-repo-'));
   const tmp = path.join(root, 'tmp');
   fs.mkdirSync(path.join(root, 'scripts'));
@@ -218,16 +220,19 @@ function inRepo(rel, cmd, pids = {}) {
   for (const f of ['Makefile', 'other.txt']) fs.writeFileSync(path.join(root, f), 'ok\n');
   for (const [stack, pid] of Object.entries(pids)) fs.writeFileSync(path.join(tmp, `enygma_${stack}_stack.pid`), `${pid}\n`);
   const file = path.join(root, rel);
-  const r = spawnSync('bash', [path.join(root, 'scripts', 'mutant.sh'), file, 'ok', 'bad', '--', 'bash', '-c', cmd],
-    { encoding: 'utf8', env: { ...process.env, F: file, TMPDIR: tmp } });
+  const note = path.join(root, 'note');
+  const r = spawnSync('bash', [path.join(root, 'scripts', 'mutant.sh'), file, old, repl, '--', 'bash', '-c', cmd],
+    { encoding: 'utf8', env: { ...process.env, F: file, P: note, TMPDIR: tmp }, timeout: 15000 });
   const after = fs.readFileSync(file, 'utf8');
+  const wrote = fs.existsSync(note) ? fs.readFileSync(note, 'utf8') : undefined;
+  if (inspect) inspect(root, wrote);
   fs.rmSync(root, { recursive: true });
-  return { code: r.status, out: r.stdout + r.stderr, after, tmp };
+  return { code: r.status, out: r.stdout + r.stderr, after, tmp, wrote };
 }
 
 test('a wiring file of a live stack is bad input: the mutant would run inside the stack', () => {
   // This test's own pid is live.
-  const r = inRepo('Makefile', CHECK, { shield: process.pid });
+  const r = inRepo('Makefile', CHECK, { pids: { shield: process.pid } });
   assert.strictEqual(r.code, 2, r.out);
   const last = r.out.trimEnd().split('\n').at(-1);
   assert.match(last, /^BAD INPUT:/, r.out);
@@ -238,14 +243,14 @@ test('a wiring file of a live stack is bad input: the mutant would run inside th
 
 test("a stale pid file, whose process is gone, doesn't block a wiring file's mutant", () => {
   const gone = spawnSync('true').pid;
-  const r = inRepo('Makefile', CHECK, { shield: gone });
+  const r = inRepo('Makefile', CHECK, { pids: { shield: gone } });
   assert.strictEqual(r.code, 0, r.out);
   assert.match(r.out, /^RED/m);
   assert.strictEqual(r.after, 'ok\n', 'the file is restored');
 });
 
 test('a file outside the wiring mutates as before with a stack up', () => {
-  const r = inRepo('other.txt', CHECK, { dvp: process.pid });
+  const r = inRepo('other.txt', CHECK, { pids: { dvp: process.pid } });
   assert.strictEqual(r.code, 0, r.out);
   assert.match(r.out, /^RED/m);
 });
@@ -254,4 +259,42 @@ test('a wiring file mutates as before with no stack up', () => {
   const r = inRepo('Makefile', CHECK);
   assert.strictEqual(r.code, 0, r.out);
   assert.match(r.out, /^RED/m);
+});
+
+test('a mutant of mutant.sh itself runs from a copy, not the script bash is running', () => {
+  // The mutant changes the RED verdict's text. bash reads a script as it
+  // goes, so a mutant.sh running the mutated file would print the mutated
+  // verdict. The test command writes to $P the script its parent, the
+  // running mutant.sh, was started on, then what it sees of the env vars
+  // that tell the copy where the real repo is.
+  const verdict = 'echo "RED: the command failed';
+  const cmd = `{ ps -o args= -p $PPID | awk '{ print $2 }'; echo "\${MUTANT_SH_ROOT-unset} \${MUTANT_SH_COPY_DIR-unset}"; } >"$P"; `
+    + `grep -qF '${verdict}' "$F" || exit 1`;
+  let real, copyLeft;
+  const r = inRepo('scripts/mutant.sh', cmd, {
+    old: verdict,
+    repl: 'echo "MUTATED: the command failed',
+    inspect: (root, wrote) => {
+      real = path.join(root, 'scripts', 'mutant.sh');
+      copyLeft = fs.existsSync(wrote.split('\n')[0]);
+    },
+  });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^RED:/, r.out);
+  assert.strictEqual(r.after, fs.readFileSync(MUTANT, 'utf8'), 'the file is restored');
+  const [running, env] = r.wrote.trimEnd().split('\n');
+  assert.ok(running.endsWith('/mutant.sh'), `the test command named the running script: ${running}`);
+  assert.notStrictEqual(running, real, 'the running script is not the mutated file');
+  assert.ok(!copyLeft, `the copy ${running} is removed on exit`);
+  assert.strictEqual(env, 'unset unset', 'the test command does not inherit where the copy came from');
+});
+
+test('a file that is not there is left not there', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-test-'));
+  const file = path.join(dir, 'missing.txt');
+  const r = spawnSync('bash', [MUTANT, file, 'ok', 'bad', '--', 'true'], { encoding: 'utf8', timeout: 15000 });
+  const left = fs.existsSync(file);
+  fs.rmSync(dir, { recursive: true });
+  assert.notStrictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.ok(!left, 'no file is restored from a backup never made');
 });
