@@ -102,12 +102,13 @@ fmt-check: ## Fail if any tracked Go file is not gofmt-clean
 # installed again only when the lockfile changes.
 PAGE_DEPS := scripts/node_modules/.package-lock.json
 $(PAGE_DEPS): scripts/package-lock.json
-	@command -v node >/dev/null && command -v npm >/dev/null || { echo "node or npm not found (page-check needs node 18+ and npm)"; exit 1; }
+	@command -v node >/dev/null && command -v npm >/dev/null || { echo "node or npm not found (page-check needs node 22.22+ and npm)"; exit 1; }
 	cd scripts && npm ci --no-audit --no-fund
 
 page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> selector or MathML Chrome draws wrong in a tracked HTML page, or on the shield demo page failing to play a real run, or on the Protocol primer failing to step through its run; needs node
 	@command -v node >/dev/null || { echo "node not found (the demo pages' scripts need it to check)"; exit 1; }
-	@[ "$$(node -p 'process.versions.node.split(".")[0]')" -ge 18 ] || { echo "node $$(node -v) is too old: page-check needs node 18+ (nvm use, from .nvmrc)"; exit 1; }
+	@# The node versions jsdom supports (its package.json engines): on another, jsdom fails as it loads.
+	@node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit((a === 22 && b >= 22) || (a === 24 && b >= 15) || a >= 26 ? 0 : 1)' || { echo "node $$(node -v) is not one jsdom runs on: page-check needs node 22.22+, 24.15+ or 26+ (nvm use, from .nvmrc)"; exit 1; }
 	@# The checks' own tests, quiet unless they fail (then rerun to show why).
 	@node --test scripts/check_page_scripts.test.js >/dev/null || node --test scripts/check_page_scripts.test.js
 	@node scripts/check_page_scripts.js $$(git ls-files '*.html')
