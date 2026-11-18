@@ -32,26 +32,147 @@
 # The verdict (RED:, SURVIVED:, HUNG: or BAD INPUT:) is always the last
 # line, after the failure lines it rests on, so `| tail` keeps it; a red
 # elsewhere names the first failure on that line too.
+# With --batch <list.json> it runs a list of mutants, for a change with
+# several checks: a JSON list of entries, each
+#   {"expect": <regex>, "file": <path>, "old": <text>, "new": <text>,
+#    "cmd": [<test command's words>…]}
+# (old and new may span lines, as "\n" in JSON). A list it cannot read, or
+# an entry of another shape or naming no file, is bad input naming the
+# entry, and nothing runs. Each entry runs as mutant.sh --expect <regex> runs it, with the
+# batch's --timeout, and its file is restored after. Then it prints each
+# RED as the line a commit names it with,
+#   - `<old>` → `<new>`: RED: "<regex>"
+# (each text on one line, cut past 60 characters), and names each mutant
+# that was not red, with the last line of its run (its verdict). The last line is RED: when every
+# mutant was red (exit 0); else SURVIVED: (exit 1), or BAD INPUT: (exit 2)
+# when a run was on bad input.
 #
 #   scripts/mutant.sh enygma_retail_payments/shield_demo/index.html \
 #     "hold * 1.3)" "hold * 3)" -- node --test scripts/shield_demo_replay.test.js
 #   scripts/mutant.sh --expect 'TestProtocolPrimer/audit' <file> <old> <new> -- go test …
 #   scripts/mutant.sh <file> <old> <new> -- go -C enygma_retail_payments/shield_demo test ./engine/
+#   scripts/mutant.sh --batch mutants.json
 # Go runs inside its module (go -C <module dir>): from the repo root it
 # finds no go.mod.
 set -euo pipefail
-usage() { echo "usage: mutant.sh [--expect <regex>] [--timeout <seconds>] <file> <old> <new> -- <test command…>" >&2; exit 2; }
+usage() {
+  echo "usage: mutant.sh [--expect <regex>] [--timeout <seconds>] <file> <old> <new> -- <test command…>" >&2
+  echo "       mutant.sh [--timeout <seconds>] --batch <list.json>" >&2
+  exit 2
+}
 args=("$@")
-expect= timeout=600
+expect= timeout=600 batch=
 while :; do
   case ${1:-} in
     --expect) [ $# -ge 2 ] || usage; expect=$2; shift 2 ;;
+    --batch) [ $# -ge 2 ] || usage; batch=$2; shift 2 ;;
     --timeout)
       [ $# -ge 2 ] && [[ $2 =~ ^[1-9][0-9]*$ ]] || usage
       timeout=$2; shift 2 ;;
     *) break ;;
   esac
 done
+
+# --batch: each entry of the list runs as its own mutant.sh --expect, one
+# after another, and the commit's RED lines follow. An entry may mutate
+# mutant.sh itself: its run goes from a copy, as a single mutant's does,
+# and restores the file before this run reads on.
+if [ -n "$batch" ]; then
+  [ $# -eq 0 ] && [ -z "$expect" ] || usage
+  fields=$(mktemp) log=$(mktemp)
+  trap 'rm -f "$fields" "$log"' EXIT
+  # The list is read whole before any entry runs: a shape this cannot read
+  # is bad input, naming the entry, never an entry skipped. Each entry comes
+  # out as NUL-ended fields: its label (old → new, shortened, as its lines
+  # quote it), expect, file, old, new, the
+  # command's word count and its words.
+  python3 - "$batch" >"$fields" <<'PY' || exit 2
+import json, os, re, sys
+path = sys.argv[1]
+def bad(msg):
+    sys.exit(f"BAD INPUT: {path}: {msg}")
+try:
+    with open(path, encoding="utf-8") as f:
+        entries = json.load(f)
+except (OSError, ValueError) as e:
+    bad(f"not a JSON list of mutants: {e}")
+if not isinstance(entries, list) or not entries:
+    bad("want a non-empty JSON list of mutants, each {expect, file, old, new, cmd}")
+keys = ["expect", "file", "old", "new", "cmd"]
+# short is old or new as a commit line quotes it: on one line, cut past 60
+# characters, in a code span that its own backticks can't end.
+def short(s):
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) > 60:
+        s = s[:59].rstrip() + "…"
+    return f"`` {s} ``" if "`" in s else f"`{s}`"
+out = []
+for i, e in enumerate(entries, 1):
+    name = f"entry {i}"
+    if isinstance(e, dict) and isinstance(e.get("file"), str):
+        name += f" ({e['file']})"
+    if not isinstance(e, dict):
+        bad(f"{name} is not an object {{expect, file, old, new, cmd}}")
+    if set(e) != set(keys):
+        missing = [k for k in keys if k not in e]
+        extra = sorted(k for k in e if k not in keys)
+        bad(f"{name}: " + "; ".join(
+            ([f"no {', '.join(missing)}"] if missing else []) + ([f"unknown {', '.join(extra)}"] if extra else [])))
+    for k in ["expect", "file", "old", "new"]:
+        if not isinstance(e[k], str):
+            bad(f"{name}: {k} is not a string")
+    for k in ["expect", "file", "old"]:
+        if not e[k]:
+            bad(f"{name}: {k} is empty")
+    if not os.path.isfile(e["file"]):
+        bad(f"{name}: no such file")
+    cmd = e["cmd"]
+    if not isinstance(cmd, list) or not cmd or not all(isinstance(w, str) and w for w in cmd):
+        bad(f"{name}: cmd is not a non-empty list of words")
+    fields = [f"{short(e['old'])} → {short(e['new'])}",
+              e["expect"], e["file"], e["old"], e["new"], str(len(cmd)), *cmd]
+    if any("\0" in f for f in fields):
+        bad(f"{name}: holds a NUL character")
+    out.extend(fields)
+sys.stdout.write("".join(f + "\0" for f in out))
+PY
+  field=()
+  while IFS= read -r -d '' x; do field+=("$x"); done <"$fields"
+  i=0 n=0 nred=0 bad= reds=() misses=()
+  while [ $i -lt ${#field[@]} ]; do
+    n=$((n + 1)) label=${field[i]} expect=${field[i + 1]} file=${field[i + 2]}
+    old=${field[i + 3]} new=${field[i + 4]} words=${field[i + 5]}
+    echo "== mutant $n: $file"
+    rc=0
+    bash "$0" --expect "$expect" --timeout "$timeout" "$file" "$old" "$new" \
+      -- "${field[@]:i + 6:words}" 2>&1 | tee "$log" || rc=$?
+    if [ $rc = 0 ]; then
+      nred=$((nred + 1))
+      reds+=("- $label: RED: \"$expect\"")
+    else
+      [ $rc != 2 ] || bad=1
+      misses+=("mutant $n, $label (/$expect/): $(tail -1 "$log")")
+    fi
+    i=$((i + 6 + words))
+  done
+  echo
+  if [ $nred -gt 0 ]; then
+    echo "The commit's RED lines:"
+    printf '%s\n' "${reds[@]}"
+  fi
+  if [ $nred = $n ]; then
+    echo "RED: all $n mutants"
+    exit 0
+  fi
+  echo "Not red, so no RED line:"
+  printf '  %s\n' "${misses[@]}"
+  if [ -n "$bad" ]; then
+    echo "BAD INPUT: $((n - nred)) of $n mutants not red, one or more on bad input"
+    exit 2
+  fi
+  echo "SURVIVED: $((n - nred)) of $n mutants not red"
+  exit 1
+fi
 [ $# -ge 5 ] && [ "$4" = -- ] || usage
 file=$1 old=$2 new=$3
 shift 4

@@ -304,3 +304,159 @@ test('a file that is not there is left not there', () => {
   assert.notStrictEqual(r.status, 0, r.stdout + r.stderr);
   assert.ok(!left, 'no file is restored from a backup never made');
 });
+
+// batch runs mutant.sh --batch on entries (a list of { expect, old, new,
+// cmd }, or raw JSON text), each applied to its own scratch file holding
+// text (default "ok\n"; the entry's file is that path unless it names one)
+// with the shell command cmd as its test command (the file's path is $F in
+// it). It runs in that scratch dir, which also holds a.txt and b.txt for
+// raw JSON to name. It returns mutant.sh's exit code, its output, its RED
+// lines (the lines from "- `" on) and each file afterwards.
+function batch(entries, { text = 'ok\n' } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-batch-'));
+  const files = [];
+  let json = entries;
+  if (typeof entries !== 'string') {
+    json = JSON.stringify(entries.map((e, i) => {
+      const file = path.join(dir, `code${i}.txt`);
+      fs.writeFileSync(file, text);
+      files.push(file);
+      const { cmd, ...rest } = e;
+      return { file, ...rest, cmd: ['bash', '-c', `F=${file}; ${cmd}`] };
+    }), null, 2);
+  }
+  for (const f of ['a.txt', 'b.txt']) fs.writeFileSync(path.join(dir, f), text);
+  const list = path.join(dir, 'mutants.json');
+  fs.writeFileSync(list, json);
+  const r = spawnSync('bash', [MUTANT, '--batch', list], { cwd: dir, encoding: 'utf8', timeout: 30000 });
+  const after = files.map((f) => fs.readFileSync(f, 'utf8'));
+  fs.rmSync(dir, { recursive: true });
+  const out = r.stdout + r.stderr;
+  return { code: r.status, out, reds: out.split('\n').filter((l) => l.startsWith('- `')), after };
+}
+
+// CHECK2 is a second check, on the line "two".
+const CHECK2 = 'grep -q two "$F" || { echo "--- FAIL: TestCode/two_check"; exit 1; }';
+
+test('--batch: two reds print both commit lines and exit 0', () => {
+  const r = batch([
+    { expect: 'TestCode/ok_check', old: 'ok', new: 'bad', cmd: CHECK },
+    { expect: 'TestCode/two_check', old: 'two', new: 'six', cmd: CHECK2 },
+  ], { text: 'ok\ntwo\n' });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.deepStrictEqual(r.reds, [
+    '- `ok` → `bad`: RED: "TestCode/ok_check"',
+    '- `two` → `six`: RED: "TestCode/two_check"',
+  ], r.out);
+  assert.deepStrictEqual(r.after, ['ok\ntwo\n', 'ok\ntwo\n'], 'each file is restored');
+});
+
+test('--batch: a survivor among reds exits 1, is named, and gets no RED line', () => {
+  const r = batch([
+    { expect: 'TestCode/ok_check', old: 'ok', new: 'bad', cmd: CHECK },
+    { expect: 'TestCode/two_check', old: 'two', new: 'six', cmd: 'true' },
+    { expect: 'TestCode/two_check', old: 'two', new: 'ten', cmd: CHECK2 },
+  ], { text: 'ok\ntwo\n' });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.deepStrictEqual(r.reds, [
+    '- `ok` → `bad`: RED: "TestCode/ok_check"',
+    '- `two` → `ten`: RED: "TestCode/two_check"',
+  ], r.out);
+  assert.match(r.out, /^  mutant 2, `two` → `six` \(\/TestCode\/two_check\/\): SURVIVED:/m, 'the survivor is named');
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^SURVIVED: 1 of 3/, r.out);
+  assert.deepStrictEqual(r.after, ['ok\ntwo\n', 'ok\ntwo\n', 'ok\ntwo\n'], 'each file is restored');
+});
+
+test('--batch: a multi-line old text is applied whole, and quoted on one line', () => {
+  const r = batch([
+    { expect: 'TestCode/ok_check', old: 'ok\ntwo\n', new: 'two\n', cmd: CHECK },
+  ], { text: 'ok\ntwo\n' });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.deepStrictEqual(r.reds, ['- `ok two` → `two`: RED: "TestCode/ok_check"'], r.out);
+  assert.deepStrictEqual(r.after, ['ok\ntwo\n'], 'the file is restored');
+});
+
+test('--batch: a long old or new text is cut in its RED line', () => {
+  const long = 'x'.repeat(80);
+  const r = batch([{ expect: 'TestCode/ok_check', old: 'ok', new: long, cmd: CHECK }]);
+  assert.strictEqual(r.code, 0, r.out);
+  assert.deepStrictEqual(r.reds, [`- \`ok\` → \`${'x'.repeat(59)}…\`: RED: "TestCode/ok_check"`], r.out);
+});
+
+test('--batch: an entry it cannot read is bad input, named, and nothing runs', () => {
+  const ok = { expect: 'TestCode/ok_check', file: 'a.txt', old: 'ok', new: 'bad', cmd: ['true'] };
+  const cases = {
+    'no cmd': [[ok, { expect: 'x', file: 'b.txt', old: 'ok', new: 'bad' }], /entry 2 \(b\.txt\): no cmd/],
+    'unknown key': [[{ ...ok, exepct: 'x' }], /entry 1 \(a\.txt\): unknown exepct/],
+    'cmd as one string': [[{ ...ok, cmd: 'node --test x.js' }], /entry 1 \(a\.txt\): cmd is not a non-empty list/],
+    'empty old': [[{ ...ok, old: '' }], /entry 1 \(a\.txt\): old is empty/],
+    'not an object': [[ok, 'ok'], /entry 2 is not an object/],
+    'not a list': [ok, /want a non-empty JSON list/],
+    'an empty list': [[], /want a non-empty JSON list/],
+    'expect not a string': [[{ ...ok, expect: 1 }], /entry 1 \(a\.txt\): expect is not a string/],
+    'a NUL in old': [[{ ...ok, old: 'o\u0000k' }], /entry 1 \(a\.txt\): holds a NUL/],
+    'no such file': [[{ ...ok, file: 'no-such.txt' }], /entry 1 \(no-such\.txt\): no such file/],
+  };
+  for (const [name, [entries, want]] of Object.entries(cases)) {
+    const r = batch(JSON.stringify(entries));
+    assert.strictEqual(r.code, 2, `${name}: ${r.out}`);
+    assert.match(r.out, want, name);
+    assert.doesNotMatch(r.out, /== mutant/, `${name}: nothing runs`);
+  }
+  const r = batch('[{"expect": "x",');
+  assert.strictEqual(r.code, 2, r.out);
+  assert.match(r.out, /BAD INPUT: .*not a JSON list of mutants/);
+});
+
+test('--batch takes no mutant of its own and no --expect', () => {
+  for (const args of [['--batch', 'l.json', '$D/code.txt', 'ok', 'bad', '--', 'true'], ['--expect', 'x', '--batch', 'l.json'], ['--batch']]) {
+    const r = raw(args);
+    assert.strictEqual(r.code, 2, `${args.join(' ')}: ${r.out}`);
+    assert.match(r.out, /^usage:/m, args.join(' '));
+  }
+});
+
+test('--batch: an entry may mutate mutant.sh itself, and the batch reads on unharmed', () => {
+  // A scratch repo's mutant.sh runs the batch; the entry mutates that same
+  // file's single-mutant RED verdict, which the test command checks for.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-repo-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const s of ['mutant.sh', 'suite_changes.sh']) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
+  const self = path.join(root, 'scripts', 'mutant.sh');
+  const verdict = 'echo "RED: the command failed';
+  const list = path.join(root, 'mutants.json');
+  fs.writeFileSync(list, JSON.stringify([{
+    expect: 'verdict_check', file: self, old: verdict, new: 'echo "MUTATED: the command failed',
+    cmd: ['bash', '-c', `grep -qF '${verdict}' '${self}' || { echo "--- FAIL: verdict_check"; exit 1; }`],
+  }]));
+  const r = spawnSync('bash', [self, '--batch', list], { encoding: 'utf8', timeout: 30000 });
+  const after = fs.readFileSync(self, 'utf8');
+  fs.rmSync(root, { recursive: true });
+  const out = r.stdout + r.stderr;
+  assert.strictEqual(r.status, 0, out);
+  assert.match(out, /^RED: the command failed with the mutant in place$/m, 'the entry ran from a copy, not the mutated file');
+  assert.match(out, /^- `echo "RED: the command failed` → `echo "MUTATED: the command failed`: RED: "verdict_check"$/m, out);
+  assert.match(out.trimEnd().split('\n').at(-1), /^RED: all 1 mutants$/, out);
+  assert.strictEqual(after, fs.readFileSync(MUTANT, 'utf8'), 'the file is restored');
+});
+
+test('--batch: an entry run on bad input makes the batch bad input, exit 2', () => {
+  const r = batch([
+    { expect: 'TestCode/ok_check', old: 'ok', new: 'bad', cmd: CHECK },
+    { expect: 'TestCode/broken', old: 'ok', new: 'bad', cmd: 'echo "--- FAIL: TestCode/broken"; exit 1' },
+  ]);
+  assert.strictEqual(r.code, 2, r.out);
+  assert.match(r.out, /^  mutant 2, .*: BAD INPUT:/m, 'the entry is named');
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^BAD INPUT: 1 of 2/, r.out);
+});
+
+test('--batch: a batch with no red prints no RED line and exits 1', () => {
+  const r = batch([
+    { expect: 'TestCode/ok_check', old: 'ok', new: 'bad', cmd: 'true' },
+    { expect: 'TestCode/ok_check', old: 'ok', new: 'odd', cmd: 'true' },
+  ]);
+  assert.strictEqual(r.code, 1, r.out);
+  assert.deepStrictEqual(r.reds, [], r.out);
+  assert.doesNotMatch(r.out, /RED lines/);
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^SURVIVED: 2 of 2/, r.out);
+});
