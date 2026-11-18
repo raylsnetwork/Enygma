@@ -136,7 +136,7 @@ retail's too).
 
 Prerequisites
 
-- Go 1.22+ (gnark_circuits/) and Go 1.24+ (src/, scripts/, test/)
+- Go 1.26+ (every module; `make go-min-check` names the floor)
 - Node.js + npm (for Hardhat)
 
 1. Start the gnark proof server
