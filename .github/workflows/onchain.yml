@@ -32,7 +32,7 @@ on:
       - "Makefile"
       - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"
-      - "scripts/dvp_keys_src.sh"
+      - "scripts/keys_src.sh"
       - "scripts/stack_lib.sh"
       - "scripts/stack_start.sh"
       - "scripts/stack_stop.sh"
@@ -105,21 +105,28 @@ jobs:
         working-directory: enygma_payments/contracts/enygma
 
       # The Burn keys are gitignored (the other payments keys are committed
-      # through LFS). A change to the burn circuit, what it imports, or the
-      # key generator misses the cache and regenerates them. BurnVerifier.sol,
-      # which keygen also writes, is not cached: the suite deploys
-      # MockBurnVerifier.
+      # through LFS). make payments-burn-keygen generates them and stamps
+      # them with the fingerprint of the circuit sources it compiled
+      # (scripts/keys_src.sh: burn.src, which payments-stack's preflight
+      # checks). The cache is keyed on that fingerprint, so a change to any
+      # payments circuit, what it imports, or the key generator misses it and
+      # regenerates them. BurnVerifier.sol, which keygen also writes, is not
+      # cached: the suite deploys MockBurnVerifier.
+      - id: burn-keys-src
+        run: |
+          src=$(scripts/keys_src.sh enygma_payments/gnark-server ./keygen)
+          echo "src=$src" >> "$GITHUB_OUTPUT"
       - id: burn-keys
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             enygma_payments/gnark-server/keys/BurnPk.key
             enygma_payments/gnark-server/keys/BurnVk.key
-          key: payments-burn-keys-${{ hashFiles('enygma_payments/gnark-server/pkg/circuits/burn/**', 'enygma_payments/gnark-server/poseidon/**', 'enygma_payments/gnark-server/utils/**', 'enygma_payments/gnark-server/keygen/**', 'enygma_payments/gnark-server/go.sum', 'enygma_gnark_shared/**') }}
+            enygma_payments/gnark-server/keys/burn.src
+          key: payments-burn-keys-${{ steps.burn-keys-src.outputs.src }}
       - name: generate Burn keys
         if: steps.burn-keys.outputs.cache-hit != 'true'
-        working-directory: enygma_payments/gnark-server
-        run: go run ./keygen/generate_keys.go -circuit burn
+        run: make payments-burn-keygen
 
       - run: make payments-stack
       - run: make payments-test
@@ -169,13 +176,13 @@ jobs:
 
       # The DvP keys are gitignored. make dvp-keygen generates them, stamps
       # them with the fingerprint of the circuit sources it compiled
-      # (scripts/dvp_keys_src.sh: keys.src, which dvp-stack's preflight
+      # (scripts/keys_src.sh: keys.src, which dvp-stack's preflight
       # checks) and copies in retail's PrivateMint keys (committed through
       # LFS). The cache is keyed on that fingerprint and those keys, so a
       # change to either misses it and regenerates them.
       - id: dvp-keys-src
         run: |
-          src=$(scripts/dvp_keys_src.sh)
+          src=$(scripts/keys_src.sh enygma_dvp/gnark_circuits ./cmd/keygen)
           echo "src=$src" >> "$GITHUB_OUTPUT"
       - id: dvp-keys
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

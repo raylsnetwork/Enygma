@@ -12,8 +12,10 @@
 #   make payments-test        # then the suite
 #   make payments-stack-stop
 #
-# Keys: the Burn keys are gitignored; generate them once, and after a burn
-# circuit change: cd gnark-server && go run ./keygen/generate_keys.go -circuit burn
+# Keys: the Burn keys are gitignored; generate them once, and after a
+# payments circuit change: make payments-burn-keygen (from the repo root). It
+# stamps them with their circuit sources (keys/burn.src), and the preflight
+# fails on keys built from other sources than the working tree's.
 # Logs and the built gnark server go to $LOG_DIR.
 set -euo pipefail
 PAY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,12 +34,28 @@ if [ ! -x "$CONTRACTS/node_modules/.bin/hardhat" ]; then
     say "the contracts' npm packages are not installed: cd $CONTRACTS && npm ci" >&2
     ok=0
 fi
+KEYS="$PAY_ROOT/gnark-server/keys"
 for k in BurnPk BurnVk; do
-    if [ ! -s "$PAY_ROOT/gnark-server/keys/$k.key" ]; then
-        say "no gnark-server/keys/$k.key (gitignored): cd $PAY_ROOT/gnark-server && go run ./keygen/generate_keys.go -circuit burn" >&2
+    if [ ! -s "$KEYS/$k.key" ]; then
+        say "no gnark-server/keys/$k.key (gitignored): make payments-burn-keygen" >&2
         ok=0
     fi
 done
+# Burn keys built from other circuit sources than the working tree's give
+# proofs that fail, minutes in. make payments-burn-keygen stamps them with
+# the sources' content (scripts/keys_src.sh), so a rebase, which moves file
+# times only, passes.
+if ! src=$("$PAY_ROOT/../scripts/keys_src.sh" enygma_payments/gnark-server ./keygen); then
+    say "scripts/keys_src.sh could not fingerprint the circuit sources (above), so the Burn keys cannot be checked" >&2
+    ok=0
+elif [ "$(cat "$KEYS/burn.src" 2>/dev/null)" != "$src" ]; then
+    if [ -s "$KEYS/burn.src" ]; then
+        say "the Burn keys in gnark-server/keys were built from other circuit sources than the working tree's: make payments-burn-keygen" >&2
+    else
+        say "the Burn keys in gnark-server/keys have no record of the circuit sources they were built from (burn.src): make payments-burn-keygen" >&2
+    fi
+    ok=0
+fi
 [ "$ok" = 1 ] || exit 1
 
 require_free_ports 8545 8080

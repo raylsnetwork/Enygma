@@ -171,9 +171,9 @@ test("a change to any of the suites' wiring starts the onchain workflow", () => 
   }
 });
 
-test("a change to scripts/dvp_keys_src.sh, the DvP keys' stamp, runs the DvP suite only and starts the workflow", () => {
-  const f = 'scripts/dvp_keys_src.sh';
-  assert.deepStrictEqual(suites([f]), ['dvp']);
+test("a change to scripts/keys_src.sh, the DvP and Burn keys' stamp, runs the payments and DvP suites and starts the workflow", () => {
+  const f = 'scripts/keys_src.sh';
+  assert.deepStrictEqual(suites([f]), ['payments', 'dvp']);
   const globs = workflowPaths('pull_request');
   assert.ok(globs.some((g) => globMatches(g, f)), `on.pull_request.paths in onchain.yml does not match ${f}`);
 });

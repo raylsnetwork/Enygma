@@ -20,10 +20,11 @@ set -euo pipefail
 # stacks holds every stack script and that onchain.yml's paths cover common.
 stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh scripts/stack_start.sh scripts/stack_stop.sh"
 common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/suite_result.sh $stacks"
-paths_payments="$common enygma_payments/* enygma_gnark_shared/*"
-# make dvp-keygen copies retail's PrivateMint keys, and stamps the keys
-# (and CI keys their cache) with dvp_keys_src.sh's fingerprint.
-paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint* scripts/dvp_keys_src.sh"
+# make payments-burn-keygen and make dvp-keygen stamp their keys (and CI
+# keys their caches) with keys_src.sh's fingerprint.
+paths_payments="$common enygma_payments/* enygma_gnark_shared/* scripts/keys_src.sh"
+# make dvp-keygen also copies retail's PrivateMint keys.
+paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint* scripts/keys_src.sh"
 # The retail stack runs enygma_dvp's Hardhat node and deploys its contracts;
 # the retail test module imports enygma_dvp's src and layout.
 dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"
