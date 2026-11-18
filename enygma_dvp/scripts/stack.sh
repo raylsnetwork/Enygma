@@ -54,10 +54,10 @@ preflight() {
     # Keys built from other circuit sources than the working tree's give
     # proofs that fail on-chain, or a gnark panic in Prove, minutes in.
     # make dvp-keygen stamps the keys with the sources' content
-    # (scripts/dvp_keys_src.sh), so a rebase, which moves file times only,
+    # (scripts/keys_src.sh), so a rebase, which moves file times only,
     # passes.
-    if ! src=$("$REPO_ROOT/scripts/dvp_keys_src.sh"); then
-        say "scripts/dvp_keys_src.sh could not fingerprint the circuit sources (above), so the keys cannot be checked" >&2
+    if ! src=$("$REPO_ROOT/scripts/keys_src.sh" enygma_dvp/gnark_circuits ./cmd/keygen); then
+        say "scripts/keys_src.sh could not fingerprint the circuit sources (above), so the keys cannot be checked" >&2
         ok=0
     elif [ "$(cat "$KEYS/keys.src" 2>/dev/null)" != "$src" ]; then
         if [ -s "$KEYS/keys.src" ]; then

@@ -75,7 +75,7 @@ ERRCHECK_SKIP_MODULES ?= \
 .PHONY: help modules hooks hooks-check fmt fmt-check go-min-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
-	payments-stack payments-stack-stop payments-test \
+	payments-burn-keygen payments-stack payments-stack-stop payments-test \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -140,8 +140,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/stack_start.test.js >/dev/null || node --test scripts/stack_start.test.js
 	@# stack_stop.sh, make's *-stack-stop, signals only the recorded stack and fails on a service it reports dead.
 	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
-	@# dvp_keys_src.sh, the DvP keys' stamp, moves with a circuit source and not with a file time.
-	@node --test scripts/dvp_keys_src.test.js >/dev/null || node --test scripts/dvp_keys_src.test.js
+	@# keys_src.sh, the DvP and Burn keys' stamp, moves with a circuit source and not with a file time.
+	@node --test scripts/keys_src.test.js >/dev/null || node --test scripts/keys_src.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
@@ -245,11 +245,11 @@ dvp-init: ## Export VKs and register them on-chain
 	cd enygma_dvp && bash scripts/init.sh
 
 dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes), with retail's PrivateMint keys, stamped with their circuit sources
-	@# keys.src, the fingerprint of the sources keygen compiles (scripts/dvp_keys_src.sh), is taken
+	@# keys.src, the fingerprint of the sources keygen compiles (scripts/keys_src.sh), is taken
 	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
 	@# when keygen succeeds; dvp-stack's preflight fails on keys whose stamp is missing or another's.
 	rm -f enygma_dvp/gnark_circuits/scripts/keys/keys.src
-	src=$$(scripts/dvp_keys_src.sh) && cd enygma_dvp/gnark_circuits && mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen && echo "$$src" >scripts/keys/keys.src
+	src=$$(scripts/keys_src.sh enygma_dvp/gnark_circuits ./cmd/keygen) && cd enygma_dvp/gnark_circuits && mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen && echo "$$src" >scripts/keys/keys.src
 	@# keygen draws fresh PrivateMint keys; the committed PrivateMintVerifier.sol is for retail's (same R1CS).
 	cp enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintPK.key enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintVK.key enygma_dvp/gnark_circuits/scripts/keys/
 
@@ -270,8 +270,8 @@ dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail
 # the contracts and builds relayer_bin first (both gitignored), then starts a
 # fresh node and the gnark server; the suite deploys its own contracts and
 # spawns relayer_bin. Logs go to PAYMENTS_LOG_DIR (default: a fresh temp dir),
-# the suite's to suite.log there. The Burn keys are gitignored: see
-# run_scripts/stack.sh's header.
+# the suite's to suite.log there. The Burn keys are gitignored: make
+# payments-burn-keygen makes them (see run_scripts/stack.sh's header).
 PAYMENTS_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_payments_stack.pid
 # What payments-stack runs, from the repo root: payments-stack-stop signals only this command line.
 PAYMENTS_STACK_CMD := bash enygma_payments/run_scripts/stack.sh
@@ -279,6 +279,13 @@ PAYMENTS_LOG_DIR ?=
 # Tests allowed to skip in payments-test (full names, space-separated). Any
 # other skip fails the suite: a missing service must not pass for green.
 PAYMENTS_KNOWN_SKIPS :=
+
+payments-burn-keygen: ## Generate the payments Burn proving/verifying keys (gitignored; about a minute; rerun after a payments circuit change), stamped with their circuit sources
+	@# burn.src, the fingerprint of the sources keygen compiles (scripts/keys_src.sh), is taken
+	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
+	@# when keygen succeeds; payments-stack's preflight fails on keys whose stamp is missing or another's.
+	rm -f enygma_payments/gnark-server/keys/burn.src
+	src=$$(scripts/keys_src.sh enygma_payments/gnark-server ./keygen) && cd enygma_payments/gnark-server && go run ./keygen/generate_keys.go -circuit burn && echo "$$src" >keys/burn.src
 
 payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
 	$(call stack_start,$(PAYMENTS_STACK_PID),$(PAYMENTS_LOG_DIR),payments_stack,stack.log,.,$(PAYMENTS_STACK_CMD),payments-stack,payments-test)

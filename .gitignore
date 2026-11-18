@@ -11,6 +11,8 @@ enygma_retail_payments/relayer/relayer_state.db
 
 # Generated gnark Burn/Relayer keys and verifier (regenerate locally)
 enygma_payments/gnark-server/keys/Burn*
+# make payments-burn-keygen's stamp of the Burn keys' circuit sources.
+enygma_payments/gnark-server/keys/burn.src
 enygma_payments/gnark-server/keys/Relayer*
 
 # OS / editor junk
