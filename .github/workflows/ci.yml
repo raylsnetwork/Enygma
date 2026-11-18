@@ -1,7 +1,8 @@
 name: ci
 
 # Build, vet and unit-test every Go module, enforce gofmt, compile the HTML
-# pages' inline scripts, and install, compile and test the Hardhat projects.
+# pages' inline scripts, install, compile and test the Hardhat projects, and
+# check the committed retail keys' circuit-sources stamp.
 # Run the same checks locally with `make ci` (see the root Makefile).
 # Integration tests that need a chain or gnark server skip themselves here;
 # the on-chain suites run them on a live stack in the `onchain` workflow
@@ -64,6 +65,18 @@ jobs:
         with:
           go-version: "stable"
       - run: make fmt-check go-min-check
+
+  # No lfs: the check reads keys.src and the circuit sources, never a .key.
+  retail-keys:
+    name: retail keys stamp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: enygma_retail_payments/gnark_circuits/go.mod
+          cache-dependency-path: enygma_retail_payments/gnark_circuits/go.sum
+      - run: make retail-keys-check
 
   pages:
     name: page scripts

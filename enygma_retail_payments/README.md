@@ -84,10 +84,10 @@ enygma_retail_payments/
 └── build/              # Deployment receipts + exported VK JSONs (gitignored)
 ```
 
-> **Note on `PrivateMintPK.key` / `PrivateMintVK.key`:** These keys are copied from
-> `enygma_dvp` and must not be regenerated. The `PrivateMintVerifier` contract bytecode
-> has the dvp VK baked in at compile time — regenerating the keys here would cause
-> proof verification to revert on-chain.
+> **Note on `PrivateMintPK.key` / `PrivateMintVK.key`:** `make dvp-keygen` copies these
+> keys into `enygma_dvp`. The `PrivateMintVerifier` contract bytecode has their VK baked
+> in at compile time, so regenerating them means re-exporting the verifier (`setup.sh`
+> step 4/5) and rerunning `make dvp-keygen`; otherwise proof verification reverts on-chain.
 
 ## Prerequisites
 
@@ -185,16 +185,22 @@ gnark server (step 3).
 
 ## Regenerating Proving/Verifying Keys
 
-> Only regenerate `PaymentPK.key` / `PaymentVK.key`. Do **not** regenerate the
-> `PrivateMint` keys — see the note in the Repository Layout section above.
+From the repo root:
 
 ```bash
-cd gnark_circuits
-go run ./cmd/keygen
+make retail-keygen
 ```
 
+It regenerates every circuit's keys and writes `scripts/keys/keys.src`, the fingerprint
+of the circuit sources they were built from (`scripts/keys_src.sh`). Keys and stamp are
+committed together: `make retail-keys-check` (part of `make check`, and run in CI) fails
+when a circuit source or `enygma_gnark_shared` no longer matches the stamp. (`go run
+./cmd/keygen -only Payment,PaymentFee` regenerates just those circuits, but writes no
+stamp.)
+
 After regenerating, re-run `setup.sh` (or the manual steps 2c–2e above) to export the
-new VK and re-initialize the contracts.
+new VK, the `PrivateMintVerifier` and its ABI, and re-initialize the contracts; then
+`make dvp-keygen`, which copies the new PrivateMint keys (see the note above).
 
 ## Statement Layouts
 

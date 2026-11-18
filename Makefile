@@ -74,7 +74,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks hooks-check fmt fmt-check go-min-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
-	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
+	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-burn-keygen payments-stack payments-stack-stop payments-test \
 	auctions-gnark auctions-keygen
 
@@ -142,6 +142,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
 	@# keys_src.sh, the DvP and Burn keys' stamp, moves with a circuit source and not with a file time.
 	@node --test scripts/keys_src.test.js >/dev/null || node --test scripts/keys_src.test.js
+	@# retail_keys_check.sh, make check's retail-keys-check, fails on committed retail keys stamped with other circuit sources, and make retail-keygen stamps them right.
+	@node --test scripts/retail_keys_check.test.js >/dev/null || node --test scripts/retail_keys_check.test.js
 	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 
@@ -168,7 +170,7 @@ go-min-check: ## Fail when a tracked go.mod declares a go below GO_MIN (or none)
 	if [ -n "$$bad" ]; then echo "go below GO_MIN $(GO_MIN), which the pinned errcheck needs, in:$$bad"; exit 1; fi; \
 	echo "go.mod go lines: all >= $(GO_MIN)"
 
-check: hooks-check fmt-check go-min-check page-check build vet errcheck ## Static checks only (no tests)
+check: hooks-check fmt-check go-min-check retail-keys-check page-check build vet errcheck ## Static checks only (no tests)
 
 hooks-check: ## Fail when a git hook type .pre-commit-config.yaml installs is missing from this clone (skipped in CI)
 	@scripts/check_hooks_installed.sh
@@ -301,8 +303,16 @@ payments-test: ## Payments end-to-end suite (on make payments-stack); prints pas
 retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script header)
 	cd enygma_retail_payments && bash setup.sh
 
-retail-keygen: ## Generate retail proving/verifying keys
-	cd enygma_retail_payments/gnark_circuits && go run ./cmd/keygen
+retail-keygen: ## Generate retail proving/verifying keys (slow; rerun after a retail circuit change, then setup.sh step 4/5 and make dvp-keygen), stamped with their circuit sources
+	@# keys.src, the fingerprint of the sources keygen compiles (scripts/keys_src.sh), is taken
+	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
+	@# when keygen succeeds. Keys and stamp are committed; make retail-keys-check fails on keys
+	@# whose stamp is missing or another's.
+	rm -f enygma_retail_payments/gnark_circuits/scripts/keys/keys.src
+	src=$$(scripts/keys_src.sh enygma_retail_payments/gnark_circuits ./cmd/keygen) && cd enygma_retail_payments/gnark_circuits && go run ./cmd/keygen && echo "$$src" >scripts/keys/keys.src
+
+retail-keys-check: ## Fail when the committed retail keys' stamp (keys.src) is missing or names other circuit sources than the working tree's; no chain, no LFS
+	@scripts/retail_keys_check.sh
 
 retail-gnark: ## Start the retail gnark proof server (keep running)
 	cd enygma_retail_payments/gnark_circuits && go run ./cmd/server

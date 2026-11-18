@@ -17,6 +17,9 @@
 #                              -> enygma_dvp/gnark_circuits/scripts/keys/keys.src (enygma_dvp/scripts/stack.sh)
 #   make payments-burn-keygen  scripts/keys_src.sh enygma_payments/gnark-server ./keygen
 #                              -> enygma_payments/gnark-server/keys/burn.src (enygma_payments/run_scripts/stack.sh)
+#   make retail-keygen         scripts/keys_src.sh enygma_retail_payments/gnark_circuits ./cmd/keygen
+#                              -> enygma_retail_payments/gnark_circuits/scripts/keys/keys.src, committed with
+#                                 the keys (make retail-keys-check, scripts/retail_keys_check.sh, in make check)
 #
 #   scripts/keys_src.sh <module dir> <keygen package>
 set -euo pipefail
