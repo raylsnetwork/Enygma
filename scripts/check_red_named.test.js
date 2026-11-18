@@ -258,7 +258,7 @@ test('--pr without a base, a head and a body file fails, naming its usage', () =
 
 // .github/workflows/red-named.yml runs --pr on each pull request. Read as
 // text: a shape this cannot find fails the test, rather than pass for absent.
-test("CI's red-named job runs --pr on the PR's range and body, and re-runs on a body edit", () => {
+test("CI's red-named job runs the base branch's --pr on the PR's range and body, and re-runs on a body edit", () => {
   const yml = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/red-named.yml'), 'utf8');
   const types = /^ {2}pull_request:\n {4}types: \[([^\]]*)\]$/m.exec(yml);
   assert.ok(types, 'red-named.yml has no on.pull_request.types list');
@@ -272,8 +272,14 @@ test("CI's red-named job runs --pr on the PR's range and body, and re-runs on a 
   assert.match(yml, /^ {10}BASE_REF: \$\{\{ github\.event\.pull_request\.base\.ref \}\}$/m);
   assert.match(yml, /^ {10}HEAD: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/m);
   assert.match(yml, /printf '%s\\n' "\$BODY" > "\$RUNNER_TEMP\/pr_body"/, 'the step does not write BODY to the body file');
-  assert.match(yml, /bash scripts\/check_red_named\.sh --pr "origin\/\$BASE_REF" "\$HEAD" "\$RUNNER_TEMP\/pr_body"/,
-    'the step does not run check_red_named.sh --pr on the range and body file');
+  // The base branch's copy of the script, not the checkout's: a PR that
+  // loosens check_red_named.sh is still checked by the rules it would change.
+  assert.match(yml, /^ {10}git show "origin\/\$BASE_REF:scripts\/check_red_named\.sh" > "\$RUNNER_TEMP\/check_red_named\.sh"$/m,
+    "the step does not take check_red_named.sh from the base branch");
+  assert.match(yml, /^ {10}bash "\$RUNNER_TEMP\/check_red_named\.sh" --pr "origin\/\$BASE_REF" "\$HEAD" "\$RUNNER_TEMP\/pr_body"$/m,
+    "the step does not run the base branch's check_red_named.sh --pr on the range and body file");
+  // Any other step line naming the checkout's script runs it, however spelt.
+  assert.doesNotMatch(yml, /^ {10}(?!git show )[^#\n]*scripts\/check_red_named\.sh/m, "the step runs the checkout's check_red_named.sh");
   // Every expression sits on an env line or the concurrency group, so none
   // is pasted into a script.
   const inlined = yml.split('\n').filter((l) => l.includes('${{') && !/^ {10}(BODY|BASE_REF|HEAD): /.test(l) && !/^ {2}group: /.test(l));

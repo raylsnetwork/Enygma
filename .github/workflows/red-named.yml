@@ -5,8 +5,12 @@ name: red-named
 # its body or one of its commit messages carries a RED line or a
 # "No red: <why>" line. The same rule and detection as the red-named
 # commit-msg hook (scripts/check_red_named.sh --pr), which a clone without
-# the hook and a squash merge's message never pass through. Editing the PR
-# body runs it again, so fixing the body clears a red job (a re-run of the
+# the hook and a squash merge's message never pass through. It runs the base
+# branch's copy of the script, not the PR's: a PR that changes
+# check_red_named.sh is checked by the old rules, and the new ones apply from
+# the PR after it. This workflow file is still the PR's own (pull_request runs
+# the merge ref's), so review is what stops a PR rewriting this step. Editing
+# the PR body runs it again, so fixing the body clears a red job (a re-run of the
 # old run replays the old body: edit the body instead).
 # scripts/check_red_named.test.js reads this file.
 
@@ -41,4 +45,5 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           printf '%s\n' "$BODY" > "$RUNNER_TEMP/pr_body"
-          bash scripts/check_red_named.sh --pr "origin/$BASE_REF" "$HEAD" "$RUNNER_TEMP/pr_body"
+          git show "origin/$BASE_REF:scripts/check_red_named.sh" > "$RUNNER_TEMP/check_red_named.sh"
+          bash "$RUNNER_TEMP/check_red_named.sh" --pr "origin/$BASE_REF" "$HEAD" "$RUNNER_TEMP/pr_body"
