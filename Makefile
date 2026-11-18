@@ -130,6 +130,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
 	@# check_hooks_installed.sh, make check's hooks-check, finds a hook type this clone lacks.
 	@node --test scripts/check_hooks_installed.test.js >/dev/null || node --test scripts/check_hooks_installed.test.js
+	@# check_in_ci.test.js: every target make check runs, some ci.yml job runs too (CI never runs make check whole).
+	@node --test scripts/check_in_ci.test.js >/dev/null || node --test scripts/check_in_ci.test.js
 	@# suite_result.sh, the on-chain suites' verdict, fails a failed test or an unlisted skip.
 	@node --test scripts/suite_result.test.js >/dev/null || node --test scripts/suite_result.test.js
 	@# suite_changes.sh, the on-chain workflow's filter, runs the suites a change touches.
