@@ -24,6 +24,11 @@
 # elsewhere or hangs, 2 on bad input: a wiring file of a live stack, a
 # command already red without the mutant or hung without it, or one that
 # did not run (exit 126 or 127, as a command passed as one word).
+# A mutant of mutant.sh itself (the same file, symlinks resolved) runs
+# from a temporary copy of mutant.sh and suite_changes.sh, with the same
+# arguments: bash reads a script as it goes, so the run would otherwise pick
+# up the mutated text partway through. The copy mutates and restores the
+# real file as usual and is removed on exit.
 # The verdict (RED:, SURVIVED:, HUNG: or BAD INPUT:) is always the last
 # line, after the failure lines it rests on, so `| tail` keeps it.
 #
@@ -35,6 +40,7 @@
 # finds no go.mod.
 set -euo pipefail
 usage() { echo "usage: mutant.sh [--expect <regex>] [--timeout <seconds>] <file> <old> <new> -- <test command…>" >&2; exit 2; }
+args=("$@")
 expect= timeout=600
 while :; do
   case ${1:-} in
@@ -49,16 +55,39 @@ done
 file=$1 old=$2 new=$3
 shift 4
 
+# cleanup runs on exit (not across the exec below): it kills the run in
+# progress, if any (pgid, its process group), so no test runs on against
+# the restored file; restores the file once it is backed up; and removes
+# the copy mutant.sh runs from, if it runs from one.
+pgid= backup= out=
+cleanup() {
+  [ -z "$pgid" ] || kill -KILL -- "-$pgid" 2>/dev/null
+  [ -z "$backup" ] || cp "$backup" "$file"
+  rm -f "$backup" "$out"
+  [ -z "$copy_dir" ] || rm -rf -- "$copy_dir"
+}
+# The copy is told the real repo root and its own dir to remove, and
+# unsets both, so no mutant.sh the test command runs inherits them.
+root=${MUTANT_SH_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}
+copy_dir=${MUTANT_SH_COPY_DIR:-}
+unset MUTANT_SH_ROOT MUTANT_SH_COPY_DIR
+trap cleanup EXIT
+if [ "$file" -ef "$0" ]; then
+  copy_dir=$(mktemp -d)
+  mkdir "$copy_dir/scripts"
+  cp "$0" "$(dirname "$0")/suite_changes.sh" "$copy_dir/scripts/"
+  MUTANT_SH_ROOT=$root MUTANT_SH_COPY_DIR=$copy_dir exec bash "$copy_dir/scripts/mutant.sh" "${args[@]}"
+fi
+
 # A wiring file while a stack make started runs: its pid file (make's
 # *-stack target writes enygma_<x>_stack.pid as it starts the stack) names
 # a live process. A stale pid file, whose process is gone, blocks nothing,
 # nor does no pid file (the glob then stays literal and cat fails).
-root=$(cd "$(dirname "$0")/.." && pwd -P)
 abs=$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")
 # The list goes in a variable first: grep -q on the pipe could exit before
 # suite_changes.sh had written it all, and pipefail would read that SIGPIPE
 # as no match.
-wiring=$(bash "$root/scripts/suite_changes.sh" --wiring)
+wiring=$(bash "$(dirname "$0")/suite_changes.sh" --wiring)
 if grep -qxF -- "${abs#"$root"/}" <<<"$wiring"; then
   for pid_file in "${TMPDIR:-/tmp}"/enygma_*_stack.pid; do
     pid=$(cat "$pid_file" 2>/dev/null) || continue
@@ -73,12 +102,11 @@ fi
 # lines and its indented file_test.go:N: assertions) and errors.
 failures='^not ok|^ *(error|Error|--- FAIL|FAIL)|^ +[^ ]+_test\.go:[0-9]+:'
 out=$(mktemp)
-backup=$(mktemp)
-cp "$file" "$backup"
-# pgid is the process group of the run in progress, killed too if
-# mutant.sh itself is stopped, so no test runs on against the restored file.
-pgid=
-trap '[ -z "$pgid" ] || kill -KILL -- "-$pgid" 2>/dev/null; cp "$backup" "$file"; rm -f "$backup" "$out"' EXIT
+# backup is set only once the copy is whole, so cleanup never restores a
+# partial one.
+copy=$(mktemp)
+cp "$file" "$copy" || { rm -f "$copy"; exit 1; }
+backup=$copy
 
 # run <name> <command…> runs the test command, output to $out, in its own
 # process group (perl's setsid: stock macOS has no setsid(1)), and sets
