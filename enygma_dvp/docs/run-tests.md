@@ -9,7 +9,7 @@ You will need **3 terminals** open at the project root (`enygma_dvp/`).
 
 ## Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - Node.js + npm (`npx hardhat` available)
 - `solc` installed and on PATH (for `cmd/patch_verifier`)
 - gnark circuit keys already generated in `gnark_circuits/scripts/keys/`

@@ -91,7 +91,7 @@ enygma_retail_payments/
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.26+
 - Node.js + npm (for Hardhat)
 - A running instance of **[enygma_dvp](../enygma_dvp)** providing the Hardhat node on port 8545
 
