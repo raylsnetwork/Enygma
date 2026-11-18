@@ -8,22 +8,34 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const MUTANT = path.join(__dirname, 'mutant.sh');
 
 // run applies the mutant "ok" → "bad" to a scratch file holding "ok", with
-// the shell command cmd as the test command (the file's path is $F in it),
-// and returns mutant.sh's exit code, its output and the file afterwards.
-function run(cmd, { expect } = {}) {
+// the shell command cmd as the test command (the file's path is $F in it,
+// and $P a file it may write a pid to), and returns mutant.sh's exit code,
+// its output, the file afterwards and the pid written to $P, if any.
+function run(cmd, { expect, timeout } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-test-'));
   const file = path.join(dir, 'code.txt');
+  const pidFile = path.join(dir, 'pid');
   fs.writeFileSync(file, 'ok\n');
-  const args = [...(expect ? ['--expect', expect] : []), file, 'ok', 'bad', '--', 'bash', '-c', cmd];
-  const r = spawnSync('bash', [MUTANT, ...args], { encoding: 'utf8', env: { ...process.env, F: file } });
+  const args = [...(expect ? ['--expect', expect] : []), ...(timeout ? ['--timeout', String(timeout)] : []),
+    file, 'ok', 'bad', '--', 'bash', '-c', cmd];
+  // A mutant.sh that misses its own deadline is ended here (SIGTERM, which
+  // its trap passes on to the run's group), and so fails the test.
+  const r = spawnSync('bash', [MUTANT, ...args],
+    { encoding: 'utf8', env: { ...process.env, F: file, P: pidFile }, timeout: 15000 });
   const after = fs.readFileSync(file, 'utf8');
+  const pid = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : undefined;
   fs.rmSync(dir, { recursive: true });
-  return { code: r.status, out: r.stdout + r.stderr, after };
+  return { code: r.status, out: r.stdout + r.stderr, after, pid };
+}
+
+// alive says whether process pid still runs.
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 // A check that fails on the mutant: grep finds "ok" in the file.
@@ -59,6 +71,101 @@ test('a command that does not run is bad input, not red', () => {
   assert.doesNotMatch(r.out, /^RED/m);
 });
 
+// raw runs mutant.sh with args as they are, in a scratch dir (its path is
+// $D in the env), and returns its exit code and output.
+function raw(args) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-test-'));
+  fs.writeFileSync(path.join(dir, 'code.txt'), 'ok\n');
+  const r = spawnSync('bash', [MUTANT, ...args.map((a) => a.replaceAll('$D', dir))], { encoding: 'utf8', timeout: 15000 });
+  fs.rmSync(dir, { recursive: true });
+  return { code: r.status, out: r.stdout + r.stderr };
+}
+
+test('a command passed as one word does not run: bad input, not split by a shell', () => {
+  // As the shell would, mutant.sh execs "echo ok" as one program's name.
+  const r = raw(['$D/code.txt', 'ok', 'bad', '--', 'echo ok']);
+  assert.strictEqual(r.code, 2, r.out);
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^BAD INPUT:/);
+});
+
+test('a mutant that leaves the command unable to start is bad input: did not run', () => {
+  // The mutated file is the command: a mutant of its #! line can't exec.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-test-'));
+  const script = path.join(dir, 'check.sh');
+  fs.writeFileSync(script, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const r = spawnSync('bash', [MUTANT, script, '#!/bin/sh', '#!/no/such/shell', '--', script], { encoding: 'utf8', timeout: 15000 });
+  fs.rmSync(dir, { recursive: true });
+  assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stdout, /did not run with the mutant in place \(exit 12[67]\)/);
+});
+
+test('--timeout takes a whole number of seconds, above 0', () => {
+  for (const t of [['--timeout', '0'], ['--timeout', 'abc'], ['--timeout', '1.5']]) {
+    const r = raw([...t, '$D/code.txt', 'ok', 'bad', '--', 'true']);
+    assert.strictEqual(r.code, 2, `${t.join(' ')}: ${r.out}`);
+    assert.match(r.out, /^usage:/m, t.join(' '));
+  }
+  const bare = raw(['--timeout']);
+  assert.strictEqual(bare.code, 2, bare.out);
+  assert.match(bare.out, /^usage:/m);
+});
+
+// HANG starts a child that would outlive the command, writes its pid to $P
+// and sleeps past the deadline. The child's output goes elsewhere, so a
+// mutant.sh that leaves it running still returns (its pipes close).
+const HANG = '{ sleep 30 >/dev/null 2>&1 & echo $! >"$P"; sleep 30; }';
+// MUTANT_HANG passes as the code stands and hangs with the mutant.
+const MUTANT_HANG = `grep -q ok "$F" || ${HANG}`;
+
+test('a command that ends on time is killed with all it left running', () => {
+  const r = run(`sleep 30 >/dev/null 2>&1 & echo $! >"$P"; ${CHECK}`);
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out, /^RED/m);
+  assert.ok(r.pid, 'the command wrote its child pid');
+  assert.ok(!alive(r.pid), `the child ${r.pid} the mutant run left is killed`);
+});
+
+test('a green run past --timeout is killed with all it started: HUNG, bad input', () => {
+  const r = run(HANG, { timeout: 1 });
+  assert.strictEqual(r.code, 2, r.out);
+  assert.strictEqual(r.out.trimEnd().split('\n').at(-1), 'HUNG: the green run passed 1 s');
+  assert.strictEqual(r.after, 'ok\n', 'the file is restored');
+  assert.ok(r.pid, 'the command wrote its child pid');
+  assert.ok(!alive(r.pid), `the child ${r.pid} the command started is killed`);
+});
+
+test('a mutant run past --timeout is killed with all it started: HUNG, not red', () => {
+  const r = run(MUTANT_HANG, { timeout: 1 });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.strictEqual(r.out.trimEnd().split('\n').at(-1), 'HUNG: the mutant run passed 1 s');
+  assert.strictEqual(r.after, 'ok\n', 'the file is restored');
+  assert.ok(r.pid, 'the command wrote its child pid');
+  assert.ok(!alive(r.pid), `the child ${r.pid} the command started is killed`);
+});
+
+test('mutant.sh stopped by Ctrl-C kills the run in progress and restores the file', async () => {
+  // The command runs in its own process group, out of reach of the
+  // terminal's Ctrl-C, so mutant.sh must kill it itself.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-test-'));
+  const file = path.join(dir, 'code.txt');
+  const pidFile = path.join(dir, 'pid');
+  fs.writeFileSync(file, 'ok\n');
+  // detached: mutant.sh leads its own group, as a terminal's foreground job.
+  const p = spawn('bash', [MUTANT, file, 'ok', 'bad', '--', 'bash', '-c', MUTANT_HANG],
+    { env: { ...process.env, F: file, P: pidFile }, detached: true, stdio: 'ignore' });
+  const exited = new Promise((resolve) => p.on('exit', resolve));
+  for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fs.existsSync(pidFile), 'the mutant run started its child');
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'bad\n', 'the mutant is in place');
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  process.kill(-p.pid, 'SIGINT');
+  await exited;
+  const after = fs.readFileSync(file, 'utf8');
+  fs.rmSync(dir, { recursive: true });
+  assert.strictEqual(after, 'ok\n', 'the file is restored');
+  assert.ok(!alive(pid), `the child ${pid} the command started is killed`);
+});
+
 test('--expect: red from the named check is shown red', () => {
   const r = run(CHECK, { expect: 'TestCode/ok_check' });
   assert.strictEqual(r.code, 0, r.out);
@@ -87,10 +194,12 @@ test('every verdict is the last line, so a tail of the output keeps it', () => {
     'already red': ['echo "--- FAIL: TestCode/broken"; exit 1', {}],
     'did not run': ['grep -q ok "$F" || no-such-command-for-mutant-test', {}],
     'red elsewhere': [CHECK, { expect: 'TestCode/other_check' }],
+    'green hung': [HANG, { timeout: 1 }],
+    'mutant hung': [MUTANT_HANG, { timeout: 1 }],
   };
   for (const [name, [cmd, opts]] of Object.entries(cases)) {
     const last = run(cmd, opts).out.trimEnd().split('\n').at(-1);
-    assert.match(last, /^(RED|SURVIVED|BAD INPUT):/, `${name}: last line ${JSON.stringify(last)}`);
+    assert.match(last, /^(RED|SURVIVED|BAD INPUT|HUNG):/, `${name}: last line ${JSON.stringify(last)}`);
   }
 });
 
