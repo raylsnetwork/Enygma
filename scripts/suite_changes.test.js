@@ -9,9 +9,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { GIT_ENV, git, scratchRepo } = require('./test_git');
 
 const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(__dirname, 'suite_changes.sh');
@@ -64,30 +64,23 @@ test('a change to enygma_payments runs the payments suite only', () => {
   assert.deepStrictEqual(suites(['enygma_payments/contracts/enygma/contracts/Enygma.sol']), ['payments']);
 });
 
-// prSuites makes a git repo in a temp dir holding from, commits, moves it
-// to to (git mv) and commits again, then runs the script with --base the
-// first commit, as the workflow runs it on a PR, and returns the suites it
-// runs. Git reads no global or system config, so a diff.renames=false there
+// prSuites makes a scratch repo holding from, commits, moves it to to (git
+// mv) and commits again, then runs the script with --base the first commit,
+// as the workflow runs it on a PR, and returns the suites it runs. Git
+// reads no machine config (test_git.js), so a diff.renames=false there
 // can't hide the renames under test.
 function prSuites(from, to) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suite-changes-'));
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const dir = scratchRepo('suite-changes');
   try {
-    const git = (...a) => {
-      const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, env, encoding: 'utf8' });
-      assert.strictEqual(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
-      return r.stdout.trim();
-    };
-    git('init', '-q');
     fs.mkdirSync(path.join(dir, path.dirname(from)), { recursive: true });
     fs.writeFileSync(path.join(dir, from), 'package main\n');
-    git('add', '.');
-    git('commit', '-qm', 'base');
-    const base = git('rev-parse', 'HEAD');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'base');
+    const base = git(dir, 'rev-parse', 'HEAD');
     fs.mkdirSync(path.join(dir, path.dirname(to)), { recursive: true });
-    git('mv', from, to);
-    git('commit', '-qm', 'move');
-    return suites([], { args: ['--base', base], cwd: dir, env });
+    git(dir, 'mv', from, to);
+    git(dir, 'commit', '-qm', 'move');
+    return suites([], { args: ['--base', base], cwd: dir, env: GIT_ENV });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

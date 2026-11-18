@@ -11,6 +11,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { GIT_ENV, git, scratchRepo } = require('./test_git');
 
 const LIB = path.join(__dirname, 'stack_lib.sh');
 
@@ -129,23 +130,21 @@ const DVP = { keys: 'keys', module: 'enygma_dvp/gnark_circuits', keygen: './cmd/
   stamp: 'enygma_dvp/gnark_circuits/scripts/keys/keys.src', target: 'dvp-keygen', cwd: 'enygma_dvp' };
 const PAYMENTS = { keys: 'Burn keys', module: 'enygma_payments/gnark-server', keygen: './keygen',
   stamp: 'enygma_payments/gnark-server/keys/burn.src', target: 'payments-burn-keygen', cwd: '.' };
-const goEnv = { ...process.env, GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' };
+const goEnv = { ...GIT_ENV, GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' };
 
 // stampRepo writes STAMP_FILES, the lib and keys_src.sh to a scratch git
 // repo with one commit, and stamps both modules' keys as their keygen
 // targets do; it returns the repo's root.
 function stampRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-lib-stamp-test-'));
+  const dir = scratchRepo('stack-lib-stamp-test');
   Object.entries(STAMP_FILES).forEach(([f, c]) => {
     fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), c);
   });
   // Copied, not rewritten: the lib runs keys_src.sh, so it keeps its mode.
   for (const f of ['stack_lib.sh', 'keys_src.sh']) fs.cpSync(path.join(__dirname, f), path.join(dir, 'scripts', f));
-  const git = (...a) => spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
-  git('init', '-q');
-  git('add', '-A');
-  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'init');
   for (const { module, keygen, stamp } of [DVP, PAYMENTS]) {
     const src = spawnSync('bash', [path.join(dir, 'scripts/keys_src.sh'), module, keygen], { encoding: 'utf8', env: goEnv });
     assert.strictEqual(src.status, 0, src.stderr);

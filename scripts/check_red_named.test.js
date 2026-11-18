@@ -11,19 +11,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { GIT_ENV, git, scratchRepo } = require('./test_git');
 
 const HOOK = path.join(__dirname, 'check_red_named.sh');
-
-function git(dir, ...args) {
-  const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
-  return r.stdout.trim();
-}
 
 // commitAll commits everything in dir as a throwaway author.
 function commitAll(dir, msg) {
   git(dir, 'add', '-A');
-  git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', msg);
+  git(dir, 'commit', '-q', '--allow-empty', '-m', msg);
 }
 const revParse = (dir, ref) => git(dir, 'rev-parse', ref);
 
@@ -31,8 +26,7 @@ const revParse = (dir, ref) => git(dir, 'rev-parse', ref);
 // remove, on top of base in a scratch repo and runs the hook on message; it
 // returns the hook's exit code and output.
 function commit(files, message, { base = {}, remove = [] } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'red-named-test-'));
-  git(dir, 'init', '-q');
+  const dir = scratchRepo('red-named-test');
   commitAll(dir, 'root');
   const write = (fs_) => Object.entries(fs_).forEach(([p, c]) => {
     fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
@@ -47,7 +41,7 @@ function commit(files, message, { base = {}, remove = [] } = {}) {
   git(dir, 'add', '-A');
   const msgFile = path.join(dir, '.git', 'COMMIT_EDITMSG');
   fs.writeFileSync(msgFile, message);
-  const r = spawnSync('bash', [HOOK, msgFile], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync('bash', [HOOK, msgFile], { cwd: dir, env: GIT_ENV, encoding: 'utf8' });
   fs.rmSync(dir, { recursive: true });
   return { code: r.status, out: r.stdout + r.stderr };
 }
@@ -173,7 +167,7 @@ function pr(commits, body, { base = { 'README.md': 'x\n' } } = {}) {
     }
     const bodyFile = path.join(dir, '.git', 'PR_BODY');
     fs.writeFileSync(bodyFile, body);
-    const r = spawnSync('bash', [HOOK, '--pr', baseSha, 'HEAD', bodyFile], { cwd: dir, encoding: 'utf8' });
+    const r = spawnSync('bash', [HOOK, '--pr', baseSha, 'HEAD', bodyFile], { cwd: dir, env: GIT_ENV, encoding: 'utf8' });
     return { code: r.status, out: r.stdout + r.stderr };
   } finally {
     fs.rmSync(dir, { recursive: true });
@@ -220,7 +214,7 @@ function scratch(fn) {
     fs.writeFileSync(path.join(dir, 'x_test.go'), GO_TEST);
     commitAll(dir, 'add a test');
     fs.writeFileSync(path.join(dir, 'body'), 'Refuses it.\n');
-    return fn(dir, (...a) => spawnSync('bash', [HOOK, '--pr', ...a, path.join(dir, 'body')], { cwd: dir, encoding: 'utf8' }));
+    return fn(dir, (...a) => spawnSync('bash', [HOOK, '--pr', ...a, path.join(dir, 'body')], { cwd: dir, env: GIT_ENV, encoding: 'utf8' }));
   } finally {
     fs.rmSync(dir, { recursive: true });
   }

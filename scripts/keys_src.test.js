@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { GIT_ENV, git, scratchRepo } = require('./test_git');
 
 const SCRIPT = path.join(__dirname, 'keys_src.sh');
 
@@ -47,23 +48,21 @@ const FILES = {
 // repo writes FILES (plus the script) to a scratch git repo with one commit;
 // it returns the repo's root.
 function repo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'keys-src-test-'));
+  const dir = scratchRepo('keys-src-test');
   const files = { ...FILES, 'scripts/keys_src.sh': fs.readFileSync(SCRIPT, 'utf8') };
   Object.entries(files).forEach(([f, c]) => {
     fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
     fs.writeFileSync(path.join(dir, f), c);
   });
-  const git = (...a) => spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
-  git('init', '-q');
-  git('add', '-A');
-  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'init');
   return dir;
 }
 
 // run runs the scratch repo's copy of the script with args (DvP's unless given).
 function run(dir, args = DVP) {
   return spawnSync('bash', [path.join(dir, 'scripts/keys_src.sh'), ...args], {
-    encoding: 'utf8', env: { ...process.env, GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' } });
+    encoding: 'utf8', env: { ...GIT_ENV, GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' } });
 }
 
 // fingerprint runs the script; it fails the test on a non-zero exit or
@@ -156,7 +155,7 @@ test("fails on a package none of whose sources git sees (all gitignored)", () =>
   const dir = repo();
   try {
     fs.writeFileSync(at(dir, '.gitignore'), 'enygma_gnark_shared/poseidon/poseidon.go\n');
-    spawnSync('git', ['-C', dir, 'rm', '-q', '--cached', 'enygma_gnark_shared/poseidon/poseidon.go']);
+    git(dir, 'rm', '-q', '--cached', 'enygma_gnark_shared/poseidon/poseidon.go');
     const r = run(dir);
     assert.notStrictEqual(r.status, 0, r.stdout);
     assert.match(r.stderr, /no non-test \.go files found for package enygma_gnark_shared\/poseidon/);

@@ -142,6 +142,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
 	@# keys_src.sh, the DvP and Burn keys' stamp, moves with a circuit source and not with a file time.
 	@node --test scripts/keys_src.test.js >/dev/null || node --test scripts/keys_src.test.js
+	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
+	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
