@@ -14,12 +14,18 @@
 # scripts and helpers as it starts and runs (bash reads a script as it goes),
 # so a mutant applied then could run inside the live stack and pass or fail
 # it for the wrong reason.
-# Exit 0 when the mutant is killed (red), 1 when it survives or goes red
-# elsewhere, 2 on bad input: a wiring file of a live stack, a command
-# already red without the mutant, or one that did not run (exit 126 or 127,
-# as a command passed as one word).
-# The verdict (RED:, SURVIVED: or BAD INPUT:) is always the last line, after
-# the failure lines it rests on, so `| tail` keeps it.
+# Each run of the command has a deadline, --timeout seconds (default 600):
+# it runs in its own process group, as make's *-stack targets run a stack,
+# and a run past the deadline is killed with everything it started, the
+# file is restored and the verdict is HUNG. A node test awaiting a child
+# that never exits fails on its own timeout, but node lives on with the
+# child. A hang is never RED: a hung test is a test bug.
+# Exit 0 when the mutant is killed (red), 1 when it survives, goes red
+# elsewhere or hangs, 2 on bad input: a wiring file of a live stack, a
+# command already red without the mutant or hung without it, or one that
+# did not run (exit 126 or 127, as a command passed as one word).
+# The verdict (RED:, SURVIVED:, HUNG: or BAD INPUT:) is always the last
+# line, after the failure lines it rests on, so `| tail` keeps it.
 #
 #   scripts/mutant.sh enygma_retail_payments/shield_demo/index.html \
 #     "hold * 1.3)" "hold * 3)" -- node --test scripts/shield_demo_replay.test.js
@@ -28,13 +34,18 @@
 # Go runs inside its module (go -C <module dir>): from the repo root it
 # finds no go.mod.
 set -euo pipefail
-expect=
-if [ "${1:-}" = --expect ]; then
-  [ $# -ge 2 ] || { echo "usage: mutant.sh [--expect <regex>] <file> <old> <new> -- <test command…>" >&2; exit 2; }
-  expect=$2
-  shift 2
-fi
-[ $# -ge 5 ] && [ "$4" = -- ] || { echo "usage: mutant.sh [--expect <regex>] <file> <old> <new> -- <test command…>" >&2; exit 2; }
+usage() { echo "usage: mutant.sh [--expect <regex>] [--timeout <seconds>] <file> <old> <new> -- <test command…>" >&2; exit 2; }
+expect= timeout=600
+while :; do
+  case ${1:-} in
+    --expect) [ $# -ge 2 ] || usage; expect=$2; shift 2 ;;
+    --timeout)
+      [ $# -ge 2 ] && [[ $2 =~ ^[1-9][0-9]*$ ]] || usage
+      timeout=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
+[ $# -ge 5 ] && [ "$4" = -- ] || usage
 file=$1 old=$2 new=$3
 shift 4
 
@@ -64,10 +75,51 @@ failures='^not ok|^ *(error|Error|--- FAIL|FAIL)|^ +[^ ]+_test\.go:[0-9]+:'
 out=$(mktemp)
 backup=$(mktemp)
 cp "$file" "$backup"
-trap 'cp "$backup" "$file"; rm -f "$backup" "$out"' EXIT
+# pgid is the process group of the run in progress, killed too if
+# mutant.sh itself is stopped, so no test runs on against the restored file.
+pgid=
+trap '[ -z "$pgid" ] || kill -KILL -- "-$pgid" 2>/dev/null; cp "$backup" "$file"; rm -f "$backup" "$out"' EXIT
+
+# run <name> <command…> runs the test command, output to $out, in its own
+# process group (perl's setsid: stock macOS has no setsid(1)), and sets
+# status to its exit code. Then it kills the group, so nothing the command
+# left behind runs on. Past the deadline it ends mutant.sh: HUNG, exit 1
+# for the mutant run, 2 for the green run.
+# perl execs the command as the shell would, never through one (exec
+# { $ARGV[0] }: a command passed as one word is not split by /bin/sh), and
+# exits 127 when it is not found, 126 when it can't run.
+run() {
+  local name=$1
+  shift
+  perl -e 'use POSIX qw(setsid); setsid(); exec { $ARGV[0] } @ARGV; print STDERR "mutant.sh: $ARGV[0]: $!\n"; exit($!{ENOENT} ? 127 : 126)' -- "$@" >"$out" 2>&1 </dev/null &
+  pgid=$!
+  # SECONDS counts whole seconds, so the + 1 keeps a run from being cut
+  # before timeout seconds have passed.
+  local deadline=$((SECONDS + timeout + 1))
+  # bash reaps the background child as it exits, so kill -0 then fails.
+  while kill -0 "$pgid" 2>/dev/null && [ $SECONDS -lt $deadline ]; do sleep 0.1; done
+  local hung=
+  if kill -0 "$pgid" 2>/dev/null; then
+    hung=1
+    # Disowned, bash reports no "Killed" for it; its status goes unused.
+    disown "$pgid"
+  fi
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+  if [ -n "$hung" ]; then
+    pgid=
+    tail -8 "$out"
+    echo "HUNG: the $name run passed $timeout s"
+    [ "$name" = mutant ] && exit 1
+    exit 2
+  fi
+  status=0
+  wait "$pgid" || status=$?
+  pgid=
+}
 
 # The command as the code stands: green, or there is nothing to show red.
-if ! "$@" >"$out" 2>&1; then
+run green "$@"
+if [ $status != 0 ]; then
   tail -8 "$out"
   echo "BAD INPUT: the command fails without the mutant, so a red would show nothing"
   exit 2
@@ -83,8 +135,7 @@ if n != 1:
 open(path, "w", encoding="utf-8").write(text.replace(old, new))
 PY
 
-status=0
-"$@" >"$out" 2>&1 || status=$?
+run mutant "$@"
 if [ $status = 0 ]; then
   echo "SURVIVED: the command passed with the mutant in place"
   exit 1
