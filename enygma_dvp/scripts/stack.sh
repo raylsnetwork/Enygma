@@ -29,7 +29,7 @@ use_node "$(cat "$DVP_ROOT/.nvmrc")"
 # preflight — fails in a second, with the fix, on what otherwise fails
 # minutes in.
 preflight() {
-    local ok=1 k src
+    local ok=1 k
     if [ "$(node_major)" -lt 20 ]; then
         say "Node $(node -v 2>/dev/null || echo missing) is too old for Hardhat; use 20 or later: cd $DVP_ROOT && nvm use" >&2
         ok=0
@@ -51,22 +51,9 @@ preflight() {
         say "PrivateMintVK.key is not retail's, so it does not match PrivateMintVerifier.sol: make dvp-keygen copies it" >&2
         ok=0
     fi
-    # Keys built from other circuit sources than the working tree's give
-    # proofs that fail on-chain, or a gnark panic in Prove, minutes in.
-    # make dvp-keygen stamps the keys with the sources' content
-    # (scripts/keys_src.sh), so a rebase, which moves file times only,
-    # passes.
-    if ! src=$("$REPO_ROOT/scripts/keys_src.sh" enygma_dvp/gnark_circuits ./cmd/keygen); then
-        say "scripts/keys_src.sh could not fingerprint the circuit sources (above), so the keys cannot be checked" >&2
-        ok=0
-    elif [ "$(cat "$KEYS/keys.src" 2>/dev/null)" != "$src" ]; then
-        if [ -s "$KEYS/keys.src" ]; then
-            say "the keys in gnark_circuits/scripts/keys were built from other circuit sources than the working tree's: make dvp-keygen" >&2
-        else
-            say "the keys in gnark_circuits/scripts/keys have no record of the circuit sources they were built from (keys.src): make dvp-keygen" >&2
-        fi
-        ok=0
-    fi
+    # make dvp-keygen stamps the keys with their circuit sources.
+    check_keys_stamp keys enygma_dvp/gnark_circuits ./cmd/keygen \
+        enygma_dvp/gnark_circuits/scripts/keys/keys.src dvp-keygen || ok=0
     [ "$ok" = 1 ] || exit 1
 }
 preflight

@@ -10,8 +10,8 @@
 # it can find in the repo (a local replace outside it, or files git
 # ignores).
 # Each keygen target writes it beside the keys, and its stack's preflight
-# compares it with the working tree's, so keys built from other circuit
-# sources fail before anything builds. CI's on-chain workflow keys its
+# compares it with the working tree's (check_keys_stamp, scripts/stack_lib.sh),
+# so keys built from other circuit sources fail before anything builds. CI's on-chain workflow keys its
 # cache of those keys on it.
 #   make dvp-keygen            scripts/keys_src.sh enygma_dvp/gnark_circuits ./cmd/keygen
 #                              -> enygma_dvp/gnark_circuits/scripts/keys/keys.src (enygma_dvp/scripts/stack.sh)
