@@ -61,6 +61,10 @@ TEST_PKGS = pkgs=$$(go list ./... | grep -v -x $(foreach p,$(TEST_SKIP_PACKAGES)
 # CI starts green and catches new ones. Fix a module's, then delete its entry;
 # see them with:  make errcheck ERRCHECK_SKIP_MODULES= MODULE=<dir>
 ERRCHECK := go run github.com/kisielk/errcheck@v1.30.0 -exclude $(CURDIR)/.errcheck-exclude
+# The lowest go line a module's go.mod may declare: what that errcheck needs.
+# CI's setup-go installs the version a go.mod declares, with GOTOOLCHAIN=local,
+# so a module below it can't run errcheck in CI (#304). Raise it with ERRCHECK.
+GO_MIN := 1.26.0
 ERRCHECK_SKIP_MODULES ?= \
 	enygma_dvp/gnark_circuits enygma_dvp/relayer enygma_dvp/src enygma_dvp/test \
 	enygma_payments/demo enygma_payments/gnark-server enygma_payments/go_client/enygma_test \
@@ -68,7 +72,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
 	enygma_retail_payments/src enygma_retail_payments/test
 
-.PHONY: help modules hooks hooks-check fmt fmt-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
+.PHONY: help modules hooks hooks-check fmt fmt-check go-min-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-stack payments-stack-stop payments-test \
@@ -152,7 +156,15 @@ vet: ## go vet ./... in every module
 errcheck: ## Fail on a dropped error (idioms in .errcheck-exclude allowed) in every module not known-red
 	$(call each_in,$(filter-out $(ERRCHECK_SKIP_MODULES),$(MODULES)),$(ERRCHECK) ./...)
 
-check: hooks-check fmt-check page-check build vet errcheck ## Static checks only (no tests)
+go-min-check: ## Fail when a tracked go.mod declares a go below GO_MIN (or none), which the pinned errcheck needs
+	@bad=; for m in $$(git ls-files '*go.mod'); do \
+	  v=$$(awk '$$1 == "go" { print $$2; exit }' "$$m"); \
+	  [ -n "$$v" ] && [ "$$(printf '%s\n%s\n' $(GO_MIN) "$$v" | sort -V | head -1)" = $(GO_MIN) ] || bad="$$bad $$m (go $${v:-none})"; \
+	done; \
+	if [ -n "$$bad" ]; then echo "go below GO_MIN $(GO_MIN), which the pinned errcheck needs, in:$$bad"; exit 1; fi; \
+	echo "go.mod go lines: all >= $(GO_MIN)"
+
+check: hooks-check fmt-check go-min-check page-check build vet errcheck ## Static checks only (no tests)
 
 hooks-check: ## Fail when a git hook type .pre-commit-config.yaml installs is missing from this clone (skipped in CI)
 	@scripts/check_hooks_installed.sh
