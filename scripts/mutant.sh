@@ -30,7 +30,8 @@
 # up the mutated text partway through. The copy mutates and restores the
 # real file as usual and is removed on exit.
 # The verdict (RED:, SURVIVED:, HUNG: or BAD INPUT:) is always the last
-# line, after the failure lines it rests on, so `| tail` keeps it.
+# line, after the failure lines it rests on, so `| tail` keeps it; a red
+# elsewhere names the first failure on that line too.
 #
 #   scripts/mutant.sh enygma_retail_payments/shield_demo/index.html \
 #     "hold * 1.3)" "hold * 3)" -- node --test scripts/shield_demo_replay.test.js
@@ -175,7 +176,10 @@ if [ $status = 126 ] || [ $status = 127 ]; then
 fi
 if [ -n "$expect" ] && ! grep -Eq -- "$expect" "$out"; then
   grep -E "$failures" "$out" | head -8 || tail -8 "$out"
-  echo "SURVIVED: the command went red, but not from the expected check (/$expect/)"
+  # The first failure goes on the verdict line too, so a regex that just
+  # misses the check's name (a path before it, say) shows in a tail.
+  first=$(grep -E -m1 "$failures" "$out" | sed 's/^ *//') || first=$(grep -m1 . "$out") || first="(no output)"
+  echo "SURVIVED: the command went red, but not from the expected check (/$expect/); first failure: $first"
   exit 1
 fi
 grep -E "$failures" "$out" | head -8 || tail -8 "$out"

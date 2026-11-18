@@ -179,6 +179,12 @@ test('--expect: red from another check is not the check shown red', () => {
   assert.doesNotMatch(r.out, /^RED:/m);
 });
 
+test('--expect: a red elsewhere names the first failure in the verdict, so a near-miss regex shows in a tail', () => {
+  const r = run(CHECK, { expect: 'TestCode/other_check' });
+  const last = r.out.trimEnd().split('\n').at(-1);
+  assert.match(last, /^SURVIVED: .*\(\/TestCode\/other_check\/\); first failure: --- FAIL: TestCode\/ok_check$/);
+});
+
 test("a miss of --expect prints go test's assertion lines, so the red shows what failed", () => {
   // go test prints the test's name and its assertion on separate lines.
   const goFail = 'grep -q ok "$F" || { echo "--- FAIL: TestScan (0.00s)"; echo "    tags_test.go:328: vault query spans 25000 blocks"; echo FAIL; exit 1; }';
