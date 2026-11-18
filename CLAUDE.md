@@ -14,7 +14,7 @@ A page change is done when its section of `enygma_retail_payments/shield_demo/HA
 
 ### New checks
 
-**Show each new check red** with `scripts/mutant.sh` (CODING_STANDARDS.md § Tests and checks), and name the mutation in the commit.
+**Show each new check red** with `scripts/mutant.sh` (CODING_STANDARDS.md § Tests and checks): the commit names each mutation on a `RED` line, or says `No red: <why>`.
 
 ### Domain docs
 
