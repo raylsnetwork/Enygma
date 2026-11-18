@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            git diff --name-only "$BASE...HEAD" | bash scripts/suite_changes.sh
+            bash scripts/suite_changes.sh --base "$BASE"
           else
             bash scripts/suite_changes.sh --all
           fi | tee -a "$GITHUB_OUTPUT"

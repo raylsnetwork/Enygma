@@ -2,12 +2,16 @@
 # Which on-chain suites an event runs, for the onchain workflow's `changes`
 # job: prints payments=, dvp= and retail=, each true or false. Reads the
 # changed files, one per line, on stdin, and runs a suite when one of them
-# matches that suite's paths. With --all (a push to main) it runs every
+# matches that suite's paths. With --base <commit> (a pull request) it reads
+# them from git instead: every file HEAD changes since its merge base with
+# commit, a rename as both its old and its new path, so a file moved out of
+# a suite's paths runs that suite. With --all (a push to main) it runs every
 # suite and reads nothing. With --wiring it prints the suites' shared wiring
 # files (common below), one per line: mutant.sh refuses to mutate one while a
 # stack is up.
 #
-#   git diff --name-only "$BASE...HEAD" | bash scripts/suite_changes.sh
+#   bash scripts/suite_changes.sh --base "$BASE"
+#   git diff --name-only --no-renames "$BASE...HEAD" | bash scripts/suite_changes.sh
 #   bash scripts/suite_changes.sh --all
 #   bash scripts/suite_changes.sh --wiring
 set -euo pipefail
@@ -35,10 +39,12 @@ if [ "${1:-}" = --wiring ]; then
   exit 0
 fi
 
-all=false
-[ "${1:-}" != --all ] || all=true
-changed=
-[ "$all" = true ] || changed=$(cat)
+all=false changed=
+case ${1:-} in
+  --all) all=true ;;
+  --base) changed=$(git diff --name-only --no-renames "$2...HEAD") ;;
+  *) changed=$(cat) ;;
+esac
 
 set -f # the globs are patterns for [[ ]], not for the working dir
 for suite in payments dvp retail; do
