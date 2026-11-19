@@ -1,8 +1,9 @@
 // make test-name-skip-check (scripts/test_name_skip_check.sh), on a scratch
 // repo with the repo's Makefile: each entry of a suite's test-name list
-// (PRIMER_REFRESH_SKIP, a go test -skip regex, and the *_KNOWN_SKIPS
-// allowed skips) must name a func TestX( in a tracked _test.go of the
-// list's module (the *_SUITE dir beside it), outside a module nested in it.
+// (PRIMER_REFRESH_SKIP and the *_RUN lists, go test -skip and -run regexes,
+// and the *_KNOWN_SKIPS allowed skips) must name a func TestX( in a tracked
+// _test.go of the list's module (the *_SUITE dir beside it), outside a
+// module nested in it.
 // The lists and dirs are set on make's command line.
 //
 //   node --test scripts/test_name_skip_check.test.js   (make page-check)
@@ -39,6 +40,7 @@ const LISTS = {
   DVP_SUITE: 'suite', DVP_KNOWN_SKIPS: '',
   PAYMENTS_SUITE: 'suite', PAYMENTS_KNOWN_SKIPS: '',
   RETAIL_SUITE: 'suite', RETAIL_KNOWN_SKIPS: '', PRIMER_REFRESH_SKIP: '',
+  PRIMER_REFRESH_RUN: '', SHIELD_FIXTURES_RUN: '', SHIELD_TEST_RUN: '',
 };
 
 // check runs make test-name-skip-check in a fresh scratch repo holding
@@ -103,13 +105,23 @@ test('fails on a -skip alternative that names no test (a renamed test)', () => {
   assert.doesNotMatch(r.out, /entry Test(Real|Other) names no test/);
 });
 
+for (const list of ['PRIMER_REFRESH_RUN', 'SHIELD_FIXTURES_RUN', 'SHIELD_TEST_RUN']) {
+  test(`fails on a ${list} -run alternative that names no test (a renamed test runs nothing)`, () => {
+    passes(check({ [list]: 'TestReal$$|TestOther$$' }));
+    const r = check({ [list]: 'TestReal$$|TestGone$$' });
+    fails(r, new RegExp(`${list} entry TestGone names no test in suite`));
+    assert.doesNotMatch(r.out, /entry TestReal names no test/);
+  });
+}
+
 test('fails on a -skip alternative that is a pattern, not a test name', () => {
   fails(check({ PRIMER_REFRESH_SKIP: 'TestRe.*' }), /PRIMER_REFRESH_SKIP entry TestRe\.\* names no test/);
 });
 
-test('fails on an empty -skip alternative, which skips every test', () => {
+test('fails on an empty alternative, which matches every test', () => {
   for (const re of ['|TestReal', 'TestReal|', 'TestReal||TestOther']) {
-    fails(check({ PRIMER_REFRESH_SKIP: re }), /PRIMER_REFRESH_SKIP has an empty -skip alternative/);
+    fails(check({ PRIMER_REFRESH_SKIP: re }), /PRIMER_REFRESH_SKIP has an empty alternative, which matches every test/);
+    fails(check({ SHIELD_FIXTURES_RUN: re }), /SHIELD_FIXTURES_RUN has an empty alternative, which matches every test/);
   }
 });
 
@@ -140,7 +152,62 @@ test('the script fails printing its usage on arguments not in fours, or an unkno
   }
 });
 
-// The repo's own lists: every *_KNOWN_SKIPS and every -skip '$(VAR)' a
+// goTestFilters returns each go test -skip or -run (or -test.skip,
+// -test.run) a recipe of mk passes, as { target, flag, list, dir }: list is
+// the LIST of its '$(LIST)' value (a -run may add subtests after a /), dir
+// the last cd $(DIR) before it in the same recipe, or undefined. A recipe is
+// the tab lines after a non-tab line, and the lines a \ continues. Comments
+// are skipped. It throws on a literal value, and on a flag it cannot place
+// in a recipe (in a define body, a variable, or a $(call ...)'s argument),
+// so a filter in a shape it does not read fails rather than goes unchecked.
+function goTestFilters(mk) {
+  const out = [];
+  let target, dir, continued = false;
+  for (const raw of mk.split('\n')) {
+    const recipe = raw.startsWith('\t') || continued;
+    continued = recipe && raw.endsWith('\\');
+    if (!recipe) {
+      target = /^([\w.-]+):/.exec(raw)?.[1];
+      dir = undefined;
+    }
+    const line = recipe ? (/^\s*@?#/.test(raw) ? '' : raw) : raw.replace(/#.*/, '');
+    for (const m of line.matchAll(/cd \$\((\w+)\)|(?<=^|[\s,;'"(])(-(?:test\.)?(?:run|skip))\b(.*)/g)) {
+      if (m[1]) { dir = m[1]; continue; }
+      const [, , flag, rest] = m;
+      if (!recipe || /,$/.test(line.slice(0, m.index))) {
+        throw new Error(`cannot place ${flag} in a recipe: ${raw.trim()}`);
+      }
+      const v = /^[ =]'\$\((\w+)\)(?:'|\/)/.exec(rest);
+      if (!v) {
+        throw new Error(`${target} passes ${flag}${rest.split(/\s/, 2).join(' ')}, a literal regex: set it in a list beside its suite, check it in test-name-skip-check, pass ${flag} '$(LIST)'`);
+      }
+      out.push({ target, flag, list: v[1], dir });
+    }
+  }
+  return out;
+}
+
+test('goTestFilters reads each filter\'s list and its own recipe\'s cd, through a continued line', () => {
+  const mk = "a: ## the -run regex\n\t@# go test -run 'TestX'\n\tcd $(D1); \\\n  go test -run '$(R1)/($(T))' .\nb:\n\tgo test -count=1 -skip '$(S1)' .\n";
+  assert.deepStrictEqual(goTestFilters(mk), [
+    { target: 'a', flag: '-run', list: 'R1', dir: 'D1' },
+    { target: 'b', flag: '-skip', list: 'S1', dir: undefined },
+  ]);
+});
+
+test('goTestFilters throws on a literal -run or -skip value', () => {
+  for (const v of ["-run 'TestA$$'", '-run=TestA', '-skip "$(S)"', "-run '$(R)TestExtra'", "-test.run '^TestA$$'"]) {
+    assert.throws(() => goTestFilters(`a:\n\tgo test ${v} .\n`), /a literal regex/, v);
+  }
+});
+
+test('goTestFilters throws on a filter outside a recipe it can read', () => {
+  for (const mk of ["define d\nx; go test -skip '$(S)' .\nendef\n", 'GOFLAGS := -run TestA\n', "a:\n\t$(call suite_test,p,d,n,1s,,-skip '$(S)',)\n"]) {
+    assert.throws(() => goTestFilters(mk), /cannot place -(run|skip) in a recipe/, mk);
+  }
+});
+
+// The repo's own lists: every *_KNOWN_SKIPS and every -skip or -run regex a
 // recipe passes is checked, each against the dir its suite runs in.
 test("checks every list of test names the Makefile has, with its suite's dir", () => {
   const recipe = /^test-name-skip-check:[^\n]*\n((?:\t[^\n]*\n)+)/m.exec(MK);
@@ -148,8 +215,17 @@ test("checks every list of test names the Makefile has, with its suite's dir", (
   const checked = new Map([...recipe[1].matchAll(/\b(names|regex) (\w+) '\$\((\w+)\)' '\$\((\w+)\)'/g)]
     .map(([, kind, list, dir, val]) => (assert.strictEqual(val, list), [list, { kind, dir }])));
   const lists = new Set([...MK.matchAll(/^(\w+_KNOWN_SKIPS) *:?=/gm)].map((m) => m[1]));
-  for (const [, v] of MK.matchAll(/-skip '\$\((\w+)\)'/g)) lists.add(v);
-  assert.ok(lists.size >= 4, `lists: ${[...lists]}`);
+  // A recipe's -skip or -run is a checked list, '$(LIST)' (a -run may add
+  // subtests after a /), run in the dir the list is checked against.
+  const filters = goTestFilters(MK);
+  assert.ok(filters.length >= 4, `go test filters: ${JSON.stringify(filters)}`);
+  for (const f of filters) {
+    lists.add(f.list);
+    // Before the dir read below, which needs the entry.
+    assert.ok(checked.has(f.list), `test-name-skip-check does not check ${f.list}, which ${f.target} passes ${f.flag}`);
+    assert.strictEqual(checked.get(f.list).dir, f.dir, `${f.list} is checked against $(${checked.get(f.list).dir}), ${f.target} runs it in $(${f.dir})`);
+  }
+  assert.ok(lists.size >= 7, `lists: ${[...lists]}`);
   for (const l of lists) {
     assert.ok(checked.has(l), `test-name-skip-check does not check ${l}`);
     assert.strictEqual(checked.get(l).kind, /_KNOWN_SKIPS$/.test(l) ? 'names' : 'regex', l);
@@ -160,9 +236,6 @@ test("checks every list of test names the Makefile has, with its suite's dir", (
   for (const [, dir, skips] of suites) {
     assert.strictEqual(checked.get(skips).dir, dir, `${skips} is checked against $(${checked.get(skips).dir}), its suite runs in $(${dir})`);
   }
-  assert.match(MK, /^primer-refresh:[^\n]*\n(?:\t[^\n]*\n)*?\t[^\n]*cd \$\((\w+)\);[^\n]*\n\t[^\n]*-skip '\$\(PRIMER_REFRESH_SKIP\)'/m);
-  const primerDir = /cd \$\((\w+)\);[^\n]*\n\t[^\n]*-skip '\$\(PRIMER_REFRESH_SKIP\)'/.exec(MK)[1];
-  assert.strictEqual(checked.get('PRIMER_REFRESH_SKIP').dir, primerDir);
 });
 
 test("passes on the repo's own lists", () => {
