@@ -399,10 +399,11 @@ retail-test: ## Retail integration suite (needs the shield_demo/run.sh stack on 
 # The full shield demo scenario test plays three runs (about 1–2 min since #190's
 # fast proofs); this plays the default-mode run (about 30 s) and the subtests matching
 # T, e.g. T=leavesIn. A mode's own run is a subtest too, so T=with_the_tag_toggle_off
-# adds the tags-off run.
-shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
+# adds the tags-off run. A check, not a refresh: it leaves the replay fixtures
+# alone, which make shield-fixtures rewrites on a fresh stack.
+shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack); leaves the shield demo's replay fixtures alone
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
-	cd $(RETAIL_SUITE) && go test -run '$(SHIELD_TEST_RUN)/($(T))' -v -timeout 1800s
+	cd $(RETAIL_SUITE) && REPLAY_FIXTURE_WRITE=0 go test -run '$(SHIELD_TEST_RUN)/($(T))' -v -timeout 1800s
 
 # Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
