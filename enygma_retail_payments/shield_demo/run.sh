@@ -120,7 +120,8 @@ wait_port relayer 8090
 
 # Once up, wait (not watch_services, which stops the stack when a service
 # exits): make shield-demo-restart and shield-gnark-restart replace a service
-# under a running stack.
+# under a running stack, and list the new one in $LOG_DIR/services.pids, so
+# the stop stops it too.
 if [ "$START_DEMO" = 0 ]; then
     say "stack is up (no demo). Ctrl-C to stop."
     wait

@@ -148,7 +148,7 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/suite_result.test.js >/dev/null || node --test scripts/suite_result.test.js
 	@# suite_changes.sh, the on-chain workflow's filter, runs the suites a change touches.
 	@node --test scripts/suite_changes.test.js >/dev/null || node --test scripts/suite_changes.test.js
-	@# stack_lib.sh, the stack scripts' helpers, stops a stack cleanly on a signal, a dead service or a failed step, and fails preflight on keys stamped with other circuit sources.
+	@# stack_lib.sh, the stack scripts' helpers, stops a stack cleanly on a signal, a dead service or a failed step, stops a service a restart target relaunched (scripts/stack_service.sh), and fails preflight on keys stamped with other circuit sources.
 	@node --test scripts/stack_lib.test.js >/dev/null || node --test scripts/stack_lib.test.js
 	@# stack_start.sh, make's *-stack, records the stack's pid from the start, and drops it when the stack fails to come up.
 	@node --test scripts/stack_start.test.js >/dev/null || node --test scripts/stack_start.test.js
@@ -418,7 +418,9 @@ shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 3
 
 # run.sh's -dev serves index.html from disk, but an engine (Go) change needs the
 # demo binary rebuilt: this rebuilds it and relaunches it on the running stack,
-# with that demo's -logs dir, detached as run.sh starts it.
+# with that demo's -logs dir, detached as run.sh starts it, and lists it in
+# that dir's services.pids (scripts/stack_service.sh), so the stack's stop
+# stops it.
 # The suite runs first so the primer's scans cover other payments: a fresh
 # chain holds only the story's own, and the replay check refuses that block.
 # PRIMER_REFRESH_SKIP is a go test -skip regex over RETAIL_SUITE's tests.
@@ -467,12 +469,13 @@ shield-demo-restart: ## Rebuild the shield demo and restart it on the running ru
 	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && scripts/shield_demo_src.sh >$$logs/bin/shield_demo.src && { [ -z "$$pid" ] || kill $$pid; } && \
 	while lsof -tiTCP:9092 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
 	(cd $$root/shield_demo && exec $(CURDIR)/scripts/own_group.sh $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
+	$(CURDIR)/scripts/stack_service.sh $$logs demo $$! || { kill -- -$$!; exit 1; }; \
 	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo $$done_msg on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
 	echo "the demo did not come back on :9092: see $$logs/demo.log"; exit 1
 
 # The gnark server holds no chain state, so a gnark_circuits/server change needs
 # only that server rebuilt: this relaunches it on the running stack, logging to
-# the same gnark.log the demo tails.
+# the same gnark.log the demo tails, and lists it as shield-demo-restart does.
 shield-gnark-restart: ## Rebuild the retail gnark server and restart it on the running run.sh stack (after a gnark_circuits change)
 	@pid=$$(lsof -tiTCP:8082 -sTCP:LISTEN) || { echo "no gnark server on :8082: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
 	bin=$$(ps -o args= -p $$pid | awk '{print $$1}'); logs=$$(dirname $$(dirname $$bin)); \
@@ -481,6 +484,7 @@ shield-gnark-restart: ## Rebuild the retail gnark server and restart it on the r
 	go build -C $$root/gnark_circuits -o $$bin ./cmd/server && kill $$pid && \
 	while lsof -tiTCP:8082 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
 	(cd $$root/gnark_circuits && exec $(CURDIR)/scripts/own_group.sh $$bin >>$$logs/gnark.log 2>&1) & \
+	$(CURDIR)/scripts/stack_service.sh $$logs gnark $$! || { kill -- -$$!; exit 1; }; \
 	for _ in $$(seq 1 300); do nc -z localhost 8082 2>/dev/null && { echo "gnark server restarted on :8082 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
 	echo "the gnark server did not come back on :8082: see $$logs/gnark.log"; exit 1
 
