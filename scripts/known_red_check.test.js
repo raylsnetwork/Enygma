@@ -1,7 +1,8 @@
 // make known-red-check (scripts/known_red_check.sh), on a scratch repo with
 // the repo's Makefile and two Go modules: a TEST_SKIP_PACKAGES entry must
-// still fail its tests and name a package some tracked module builds. And
-// make test-unit, with no entries, still runs every package.
+// still fail its tests and name a package some tracked module builds, and a
+// TEST_SKIP_MODULES entry must be a tracked module. And make test-unit, with
+// no entries, still runs every package.
 //
 //   node --test scripts/known_red_check.test.js   (make page-check)
 
@@ -56,7 +57,7 @@ function make(...args) {
   }
 }
 
-const check = (pkgs, ...args) => make('known-red-check', `TEST_SKIP_PACKAGES=${pkgs}`, ...args);
+const check = (pkgs, ...args) => make('known-red-check', `TEST_SKIP_PACKAGES=${pkgs}`, 'TEST_SKIP_MODULES=', ...args);
 
 const passes = (r) => assert.strictEqual(r.code, 0, r.out);
 const fails = (r, re) => {
@@ -119,6 +120,30 @@ test('passes, saying so, with no entries', () => {
   const r = check('');
   passes(r);
   assert.match(r.out, /known red: no TEST_SKIP_PACKAGES entries to check/);
+});
+
+test('passes on a TEST_SKIP_MODULES entry that is a tracked module', () => {
+  passes(check('', 'TEST_SKIP_MODULES=other m/nested'));
+});
+
+test('fails on a TEST_SKIP_MODULES entry that is not a tracked module, naming it', () => {
+  const r = check('', 'TEST_SKIP_MODULES=other enygma_payments/go_client/gone');
+  fails(r, /TEST_SKIP_MODULES entry enygma_payments\/go_client\/gone is not a tracked Go module/);
+  assert.doesNotMatch(r.out, /entry other is not/);
+});
+
+test('with MODULE, still fails on a TEST_SKIP_MODULES entry that is not a tracked module', () => {
+  fails(check('example/m/red', 'TEST_SKIP_MODULES=gone', 'MODULE=other'), /TEST_SKIP_MODULES entry gone is not a tracked Go module/);
+});
+
+test("fails on a TEST_SKIP_MODULES entry that is a tracked module's dir only as a prefix", () => {
+  fails(check('', 'TEST_SKIP_MODULES=m/nest'), /TEST_SKIP_MODULES entry m\/nest is not a tracked Go module/);
+});
+
+test('the script, given no skipped-module list, fails printing its usage', () => {
+  const r = spawnSync('bash', [at(__dirname, 'known_red_check.sh'), 'm'], { encoding: 'utf8', env: goEnv });
+  assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /usage: scripts\/known_red_check\.sh/);
 });
 
 test('the script, given no module list, fails printing its usage', () => {
