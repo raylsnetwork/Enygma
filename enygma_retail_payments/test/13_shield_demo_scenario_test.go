@@ -115,9 +115,9 @@ type fixtureField struct {
 // passing live run refreshes the fixture, so a change to what the engine
 // sends shows up as a diff of it; a failing run leaves it as it was, and so
 // does one that leaves a field's filledBy subtest unrun. So does a run with
-// REPLAY_FIXTURE_WRITE=0, which make retail-test and make primer-refresh set:
-// a full suite run on a reused chain checks a change, it doesn't refresh the
-// page's fixtures.
+// REPLAY_FIXTURE_WRITE=0, which make retail-test, make primer-refresh and
+// make shield-test set: a run on a reused chain checks a change, it doesn't
+// refresh the page's fixtures.
 func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, path string, fields ...fixtureField) {
 	t.Helper()
 	s.mu.Lock()
@@ -125,7 +125,7 @@ func (s *capturingSink) writeReplayFixtureIfPassed(t *testing.T, path string, fi
 	s.mu.Unlock()
 	t.Cleanup(func() {
 		if os.Getenv("REPLAY_FIXTURE_WRITE") == "0" {
-			t.Logf("replay fixture %s not written: REPLAY_FIXTURE_WRITE=0 (make retail-test, make primer-refresh); refresh it with make shield-fixtures", path)
+			t.Logf("replay fixture %s not written: REPLAY_FIXTURE_WRITE=0 (make retail-test, make primer-refresh, make shield-test); refresh it with make shield-fixtures", path)
 			return
 		}
 		if t.Failed() {
