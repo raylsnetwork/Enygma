@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # make test-name-skip-check: fail when an entry of a Makefile list of test
-# names (a suite's allowed skips, or a -skip regex) names no test in that
-# list's module. A -skip alternative naming no test skips nothing, so a
-# renamed test starts running in the suite; an allowed-skip name naming no
-# test lets the list drift from the tests. An entry must be the name of a
+# names (a suite's allowed skips, or a -skip or -run regex) names no test in
+# that list's module. A -skip alternative naming no test skips nothing, so a
+# renamed test starts running in the suite; a -run alternative naming no test
+# runs nothing, and go test passes; an allowed-skip name naming no test lets
+# the list drift from the tests. An entry must be the name of a
 # func TestX( in a tracked _test.go of the module, outside any module
 # nested in it (go test ./... does not run those). The suites need a stack,
 # so only the names are checked, not that the tests skip or pass.
@@ -11,8 +12,9 @@
 # Each list comes as four arguments: its kind, its name (for the message),
 # its module's dir and its entries as one word.
 #   names  entries split on spaces (DVP_KNOWN_SKIPS).
-#   regex  a go test -skip regex: split on |, a trailing $ anchor dropped. An empty alternative fails: it matches every
-#          test, so the suite skips them all.
+#   regex  a go test -skip or -run regex: split on |, a trailing $ anchor
+#          dropped. An empty alternative fails: it matches every test, so
+#          a -skip skips them all and a -run runs them all.
 #
 #   scripts/test_name_skip_check.sh {names|regex} <list> <module dir> <entries> ...
 #
@@ -36,7 +38,7 @@ fail=0
 # check_entry fails on entry $1 of the current list when no test has its name.
 check_entry() {
     if [ -z "$1" ]; then
-        echo "$list has an empty -skip alternative, which matches every test, so the suite skips them all: delete the extra |" >&2
+        echo "$list has an empty alternative, which matches every test (a -skip skips them all, a -run runs them all): delete the extra |" >&2
         fail=1
     elif ! printf '%s\n' "$names" | grep -qxF -- "$1"; then
         echo "$list entry $1 names no test in $dir (no func $1( in its tracked _test.go files): fix it to the test's full name, or delete it" >&2

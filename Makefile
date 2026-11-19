@@ -202,10 +202,14 @@ errcheck-skip-check: ## Fail when an ERRCHECK_SKIP_MODULES entry is errcheck-cle
 	@scripts/errcheck_skip_check.sh '$(ERRCHECK)' "$(MODULES)" $(ERRCHECK_SKIP_MODULES)
 
 # Each suite's list of test names, with the module its tests are in (the
-# dir set beside the list): a -skip regex (regex) or allowed skips (names).
-test-name-skip-check: ## Fail when an entry of a suite's test-name list (PRIMER_REFRESH_SKIP, *_KNOWN_SKIPS) names no test in that suite's module; names only, no stack
+# dir set beside the list): a -skip or -run regex (regex) or allowed skips
+# (names). A recipe's -skip and -run take only these lists, as '$(LIST)'.
+test-name-skip-check: ## Fail when an entry of a suite's test-name list (a -skip or -run regex, *_KNOWN_SKIPS) names no test in that suite's module; names only, no stack
 	@scripts/test_name_skip_check.sh \
 	  regex PRIMER_REFRESH_SKIP '$(RETAIL_SUITE)' '$(PRIMER_REFRESH_SKIP)' \
+	  regex PRIMER_REFRESH_RUN '$(RETAIL_SUITE)' '$(PRIMER_REFRESH_RUN)' \
+	  regex SHIELD_FIXTURES_RUN '$(RETAIL_SUITE)' '$(SHIELD_FIXTURES_RUN)' \
+	  regex SHIELD_TEST_RUN '$(RETAIL_SUITE)' '$(SHIELD_TEST_RUN)' \
 	  names DVP_KNOWN_SKIPS '$(DVP_SUITE)' '$(DVP_KNOWN_SKIPS)' \
 	  names PAYMENTS_KNOWN_SKIPS '$(PAYMENTS_SUITE)' '$(PAYMENTS_KNOWN_SKIPS)' \
 	  names RETAIL_KNOWN_SKIPS '$(RETAIL_SUITE)' '$(RETAIL_KNOWN_SKIPS)'
@@ -375,10 +379,18 @@ RETAIL_LOG_DIR ?=
 # Tests allowed to skip in retail-test (full names, space-separated): both skip
 # once Alice is registered, which the suite's earlier tests do. Any other skip
 # fails the suite: a missing service must not pass for green. make
-# test-name-skip-check fails on a name here, or in PRIMER_REFRESH_SKIP, that is
-# no test in RETAIL_SUITE.
+# test-name-skip-check fails on a name here, or in a -skip or -run regex
+# below (PRIMER_REFRESH_SKIP and the *_RUN lists), that is no test in
+# RETAIL_SUITE: a -run alternative naming no test runs nothing, and go test
+# passes.
 RETAIL_SUITE := enygma_retail_payments/test
 RETAIL_KNOWN_SKIPS := TestUserRegistration TestAuditorViewKeyRecovery
+# go test -run regexes over RETAIL_SUITE's tests: shield-test's top-level
+# test (one name: its subtests follow a /), primer-refresh's second run, and
+# shield-fixtures' two live runs.
+SHIELD_TEST_RUN := TestShieldDemoScenario$$
+PRIMER_REFRESH_RUN := TestProtocolPrimer$$
+SHIELD_FIXTURES_RUN := TestShieldDemoScenario$$|TestShieldDemoWalkthrough$$
 retail-test: ## Retail integration suite (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts, fails on a skip not in RETAIL_KNOWN_SKIPS; leaves the shield demo's replay fixtures alone
 	$(call suite_test,$(SHIELD_STACK_PID),$(RETAIL_SUITE),retail_test,1800s,REPLAY_FIXTURE_WRITE=0,,$(RETAIL_KNOWN_SKIPS))
 
@@ -388,7 +400,7 @@ retail-test: ## Retail integration suite (needs the shield_demo/run.sh stack on 
 # adds the tags-off run.
 shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
-	cd $(RETAIL_SUITE) && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
+	cd $(RETAIL_SUITE) && go test -run '$(SHIELD_TEST_RUN)/($(T))' -v -timeout 1800s
 
 # Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
@@ -414,7 +426,7 @@ primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewri
 	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v . -timeout 900s -skip '$(PRIMER_REFRESH_SKIP)' >$$log 2>&1 || status=1; \
 	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
 	grep -E '^--- (FAIL|SKIP)' $$log; \
-	if [ $$status = 0 ]; then PRIMER_WRITE=1 go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
+	if [ $$status = 0 ]; then PRIMER_WRITE=1 go test -count=1 -run '$(PRIMER_REFRESH_RUN)' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
 	cd $(CURDIR); $(MAKE) --no-print-directory shield-stack-stop; exit $$status
 
 # The two live runs whose events the shield demo's replay test plays: each
@@ -423,7 +435,7 @@ primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewri
 shield-fixtures: ## Fresh stack, then TestShieldDemoScenario and TestShieldDemoWalkthrough (rewrite the replay fixtures); prints their verdicts, stops the stack
 	@$(MAKE) --no-print-directory shield-stack
 	@log=$$(mktemp -t shield_fixtures); status=0; export CC=$${CC:-/usr/bin/clang}; cd $(RETAIL_SUITE); \
-	go test -count=1 -v -run 'TestShieldDemoScenario$$|TestShieldDemoWalkthrough$$' . -timeout 900s >$$log 2>&1 || status=1; \
+	go test -count=1 -v -run '$(SHIELD_FIXTURES_RUN)' . -timeout 900s >$$log 2>&1 || status=1; \
 	grep -E '^--- (PASS|FAIL|SKIP)' $$log; grep -q '^--- SKIP' $$log && status=1; \
 	[ $$status = 0 ] || echo "a run failed or skipped (log: $$log): its fixture is left as it was"; \
 	cd $(CURDIR); $(MAKE) --no-print-directory shield-stack-stop; git status --short enygma_retail_payments/shield_demo/testdata; exit $$status
