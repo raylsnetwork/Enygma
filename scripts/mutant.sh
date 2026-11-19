@@ -42,7 +42,9 @@
 # batch's --timeout, and its file is restored after. Then it prints each
 # RED as the line a commit names it with,
 #   - `<old>` → `<new>`: RED: "<regex>"
-# (each text on one line, cut past 60 characters), and names each mutant
+# (each text on one line, cut past 60 characters; when the cut leaves the
+# two the same, each is a window from 20 characters before their first
+# difference, with … on each cut side), and names each mutant
 # that was not red, with the last line of its run (its verdict). The last line is RED: when every
 # mutant was red (exit 0); else SURVIVED: (exit 1), or BAD INPUT: (exit 2)
 # when a run was on bad input.
@@ -99,13 +101,32 @@ except (OSError, ValueError) as e:
 if not isinstance(entries, list) or not entries:
     bad("want a non-empty JSON list of mutants, each {expect, file, old, new, cmd}")
 keys = ["expect", "file", "old", "new", "cmd"]
-# short is old or new as a commit line quotes it: on one line, cut past 60
-# characters, in a code span that its own backticks can't end.
-def short(s):
-    s = re.sub(r"\s+", " ", s).strip()
-    if len(s) > 60:
-        s = s[:59].rstrip() + "…"
+# A commit line quotes old and new on one line, cut past WIDTH characters,
+# each in a code span that its own backticks can't end.
+WIDTH, LEAD = 60, 20
+def span(s):
     return f"`` {s} ``" if "`" in s else f"`{s}`"
+def one_line(s):
+    return re.sub(r"\s+", " ", s).strip()
+def cut(s):
+    return s[:WIDTH - 1].rstrip() + "…" if len(s) > WIDTH else s
+# window is s from LEAD characters before diff_at, cut past WIDTH with … on
+# each cut side.
+def window(s, diff_at):
+    start = max(0, diff_at - LEAD)
+    text = s[start:start + WIDTH - 2]
+    head = "…" + text.lstrip() if start > 0 else text
+    return head.rstrip() + "…" if start + WIDTH - 2 < len(s) else head
+# label is the RED line's old → new. When the cut leaves the two the same
+# (the change lies past it), each shows a window around their first
+# differing character instead, so the line still says what was mutated.
+def label(old, new):
+    old, new = one_line(old), one_line(new)
+    if cut(old) != cut(new):
+        return f"{span(cut(old))} → {span(cut(new))}"
+    # One a prefix of the other: they differ where the shorter ends.
+    diff_at = next((i for i, (a, b) in enumerate(zip(old, new)) if a != b), min(len(old), len(new)))
+    return f"{span(window(old, diff_at))} → {span(window(new, diff_at))}"
 out = []
 for i, e in enumerate(entries, 1):
     name = f"entry {i}"
@@ -129,7 +150,7 @@ for i, e in enumerate(entries, 1):
     cmd = e["cmd"]
     if not isinstance(cmd, list) or not cmd or not all(isinstance(w, str) and w for w in cmd):
         bad(f"{name}: cmd is not a non-empty list of words")
-    fields = [f"{short(e['old'])} → {short(e['new'])}",
+    fields = [label(e["old"], e["new"]),
               e["expect"], e["file"], e["old"], e["new"], str(len(cmd)), *cmd]
     if any("\0" in f for f in fields):
         bad(f"{name}: holds a NUL character")
