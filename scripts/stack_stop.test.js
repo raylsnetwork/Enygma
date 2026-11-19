@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { makeEnv } = require('./test_git');
+const { killGroup, killServices, testNoLeftovers } = require('./test_stack');
 
 const STOP = path.join(__dirname, 'stack_stop.sh');
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -89,9 +90,13 @@ async function waitGone(pid) {
   for (let i = 0; i < 100 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
 }
 
-// done kills what a test left running and removes its dir.
+// done kills what a test left running (the stack script, and its services,
+// each in its own group) and removes its dir. Each test's finally reaches
+// it: what they await ends by itself (stack_stop.sh in about 30 s, the
+// fake stack's start in 30), inside the 60 s timeout.
 function done(s) {
-  try { process.kill(-s.pid, 'SIGKILL'); } catch { /* already gone */ }
+  killServices(s.dir);
+  killGroup(s.pid);
   fs.rmSync(s.dir, { recursive: true, force: true });
 }
 
@@ -215,3 +220,5 @@ for (const [target, pidVar, script, args] of [
     } finally { done(s); }
   });
 }
+
+testNoLeftovers(test);
