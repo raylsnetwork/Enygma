@@ -13,6 +13,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { makeEnv } = require('./test_git');
+const { killGroup, killServices, testNoLeftovers } = require('./test_stack');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -80,19 +81,31 @@ function run(child) {
   return new Promise((resolve) => child.on('close', (status) => resolve({ status, out })));
 }
 
-// makeStart runs make's <target> on the fake stack s, with env added.
-function makeStart([target, cmdVar, pidVar, logVar], s, env = {}) {
+// makeStart runs make's <target> on the fake stack s, with env added, for
+// test context ctx. stack_start.sh waits as long as the stack script runs,
+// so when ctx times out (its signal aborts) it kills the stack script and
+// its services (abortStack): make then returns, and done runs.
+function makeStart(ctx, [target, cmdVar, pidVar, logVar], s, env = {}) {
+  ctx.signal.addEventListener('abort', () => abortStack(s), { once: true });
   return run(spawn('make', ['--no-print-directory', '-C', ROOT, target,
     `${cmdVar}=${s.cmd}`, `${pidVar}=${s.pidFile}`, `${logVar}=${s.logs}`], { env: { ...makeEnv, ...env } }));
 }
 
+// abortStack kills fake stack s's services and its stack script, as its pid
+// file names it.
+function abortStack(s) {
+  killServices(s.logs);
+  const pid = fs.existsSync(s.pidFile) && Number(fs.readFileSync(s.pidFile, 'utf8'));
+  for (const p of [pid, s.pid]) if (p) killGroup(p);
+}
+
 // done lets the fake stack past its wait, so make returns, then kills what
-// a test left running and removes its dir.
+// a test left running (the stack script, and its services, each in its own
+// group) and removes its dir.
 async function done(s, started) {
   s.go();
   await started;
-  const pid = fs.existsSync(s.pidFile) && Number(fs.readFileSync(s.pidFile, 'utf8'));
-  for (const p of [pid, s.pid]) { try { if (p) process.kill(-p, 'SIGKILL'); } catch { /* already gone */ } }
+  abortStack(s);
   fs.rmSync(s.dir, { recursive: true, force: true });
 }
 
@@ -109,9 +122,9 @@ for (const t of TARGETS) {
 
   // #312's mutant of a wiring file ran while a stack was sourcing
   // stack_lib.sh, before it was up: the pid file must exist then.
-  test(`make ${target} writes its pid files while the stack is starting`, { timeout: 60000 }, async () => {
+  test(`make ${target} writes its pid files while the stack is starting`, { timeout: 60000 }, async (ctx) => {
     const s = fakeStack(await freePort());
-    const started = makeStart(t, s);
+    const started = makeStart(ctx, t, s);
     try {
       const pid = await readPid(s);
       assert.ok(pid, 'no pid file while the stack starts');
@@ -130,9 +143,9 @@ for (const t of TARGETS) {
 // A stack that fails to start (a busy port, a failed build step) must not
 // leave a pid file behind: it would be stale, and block mutant.sh until a
 // stop removed it.
-test('a stack script that exits before it is up leaves no pid files', { timeout: 60000 }, async () => {
+test('a stack script that exits before it is up leaves no pid files', { timeout: 60000 }, async (ctx) => {
   const s = fakeStack(await freePort(), 'echo cannot-start; exit 3');
-  const started = makeStart(TARGETS[2], s);
+  const started = makeStart(ctx, TARGETS[2], s);
   try {
     const pid = await readPid(s);
     assert.ok(pid, 'no pid file while the stack starts');
@@ -149,10 +162,10 @@ test('a stack script that exits before it is up leaves no pid files', { timeout:
 // stack_stop.sh matches the stack script's command line, which is already
 // the stack's while it starts. make *-stack then reports the exit, without
 // a pid file to leave behind.
-test('stack_stop.sh stops a stack that is still starting', { timeout: 60000 }, async () => {
+test('stack_stop.sh stops a stack that is still starting', { timeout: 60000 }, async (ctx) => {
   const port = await freePort();
   const s = fakeStack(port);
-  const started = makeStart(TARGETS[2], s);
+  const started = makeStart(ctx, TARGETS[2], s);
   try {
     const pid = await readPid(s);
     const r = await run(spawn('bash', [STOP, s.pidFile, s.cmd, 'run.log', 'shield-stack', String(port)]));
@@ -169,14 +182,14 @@ test('stack_stop.sh stops a stack that is still starting', { timeout: 60000 }, a
 // A second start on a running stack would overwrite its pid file, fail on
 // the busy ports, and remove the file: the running stack would be left with
 // none, unguarded and unstoppable by make.
-test('a start while the stack runs is refused, and leaves its pid files alone', { timeout: 60000 }, async () => {
+test('a start while the stack runs is refused, and leaves its pid files alone', { timeout: 60000 }, async (ctx) => {
   const s = fakeStack(await freePort());
-  const started = makeStart(TARGETS[2], s);
+  const started = makeStart(ctx, TARGETS[2], s);
   let second;
   try {
     const pid = await readPid(s);
     // Unrefused, the second start would wait on the fake stack's `go` too.
-    second = makeStart(TARGETS[2], s);
+    second = makeStart(ctx, TARGETS[2], s);
     const r = await Promise.race([second, sleep(5000).then(() => ({ status: 0, out: 'the second start was not refused' }))]);
     assert.notStrictEqual(r.status, 0, r.out);
     assert.match(r.out, new RegExp(`the stack make shield-stack started \\(pid ${pid}\\) still runs: stop it first \\(make shield-stack-stop\\)`));
@@ -189,16 +202,18 @@ test('a start while the stack runs is refused, and leaves its pid files alone', 
 // Between the fork and perl's exec of the stack script, ps shows another
 // command line, and stack_stop.sh takes the pid file for stale. A perl that
 // takes a second to exec holds that window open.
-test('the pid file names the stack script from the start, never the process before its exec', { timeout: 60000 }, async () => {
+test('the pid file names the stack script from the start, never the process before its exec', { timeout: 60000 }, async (ctx) => {
   const s = fakeStack(await freePort());
   const bin = path.join(s.dir, 'bin');
   fs.mkdirSync(bin);
   const perl = execFileSync('sh', ['-c', 'command -v perl'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(path.join(bin, 'perl'), `#!/bin/sh\nsleep 1\nexec ${perl} "$@"\n`, { mode: 0o755 });
-  const started = makeStart(TARGETS[2], s, { PATH: `${bin}:${process.env.PATH}` });
+  const started = makeStart(ctx, TARGETS[2], s, { PATH: `${bin}:${process.env.PATH}` });
   try {
     const pid = await readPid(s);
     const cmd = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).trim();
     assert.strictEqual(cmd, s.cmd, 'the pid file names a process not yet the stack script');
   } finally { await done(s, started); }
 });
+
+testNoLeftovers(test);

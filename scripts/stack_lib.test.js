@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { GIT_ENV, git, scratchRepo } = require('./test_git');
+const { killServices } = require('./test_stack');
 
 const LIB = path.join(__dirname, 'stack_lib.sh');
 
@@ -40,12 +41,15 @@ function listening(port) {
 const server = (port) => `python3 -m http.server ${port} --bind 127.0.0.1`;
 
 // stack runs body as a stack script that sources the lib, in a scratch dir
-// that is also its LOG_DIR. onUp, if given, runs once the script prints
-// "stack is up", with the child and that dir; when it throws (or rejects),
-// the stack is killed and the promise rejects with that error. It resolves
-// with the exit code, the signal and the output, once the scratch dir is
-// removed.
-function stack(body, onUp) {
+// that is also its LOG_DIR, for test context t. onUp, if given, runs once
+// the script prints "stack is up", with the child and that dir; when it
+// throws (or rejects), the stack is killed and the promise rejects with
+// that error. When t times out (t.signal aborts), it kills the stack script
+// and the service groups its lists name (killServices): a stop that never
+// ends then fails the test at its timeout. Left alive, the stack would keep
+// node running, which mutant.sh reports as HUNG, never RED. It resolves with the exit code, the signal and the
+// output, once the scratch dir is removed.
+function stack(t, body, onUp) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-lib-test-'));
   const script = path.join(dir, 'stack.sh');
   fs.writeFileSync(script, `set -euo pipefail\n. ${JSON.stringify(LIB)}\nuse_log_dir stack_lib_test\n${body}\n`);
@@ -62,8 +66,11 @@ function stack(body, onUp) {
   };
   child.stdout.on('data', collect);
   child.stderr.on('data', collect);
+  const abort = () => { killServices(dir); child.kill('SIGKILL'); };
+  t.signal.addEventListener('abort', abort, { once: true });
   return new Promise((resolve, reject) => {
     child.on('close', (code, signal) => {
+      t.signal.removeEventListener('abort', abort);
       fs.rmSync(dir, { recursive: true, force: true });
       if (upErr) reject(upErr); else resolve({ code, signal, out });
     });
@@ -71,9 +78,9 @@ function stack(body, onUp) {
 }
 
 for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130]]) {
-  test(`${sig} stops the services and exits ${code}, reporting none of them dead`, { timeout: 30000 }, async () => {
+  test(`${sig} stops the services and exits ${code}, reporting none of them dead`, { timeout: 30000 }, async (t) => {
     const port = await freePort();
-    const r = await stack(`start web . ${server(port)}\nwait_port web ${port}\nsay "stack is up"\nwatch_services`,
+    const r = await stack(t, `start web . ${server(port)}\nwait_port web ${port}\nsay "stack is up"\nwatch_services`,
       (child) => child.kill(sig));
     assert.strictEqual(r.code, code, r.out);
     assert.doesNotMatch(r.out, /exited/);
@@ -112,9 +119,9 @@ async function untilListening(port, want) {
   while ((await listening(port)) !== want) await new Promise((r) => setTimeout(r, 100));
 }
 
-// servicePid reads NAME's pid from the stack's service list (or list, in logDir).
-function servicePid(logDir, name, list = 'services.pids') {
-  const line = fs.readFileSync(path.join(logDir, list), 'utf8').split('\n').find((l) => l.startsWith(`${name} `));
+// servicePid reads NAME's pid from the stack's service list.
+function servicePid(logDir, name) {
+  const line = fs.readFileSync(path.join(logDir, 'services.pids'), 'utf8').split('\n').find((l) => l.startsWith(`${name} `));
   return line && Number(line.split(' ')[1]);
 }
 
@@ -127,10 +134,10 @@ function goneElseKill(pid) {
 }
 
 // As run.sh waits once up: a restart target replaces a service under it.
-test('a service relaunched under a running stack stops with it', { timeout: 30000 }, async () => {
+test('a service relaunched under a running stack stops with it', { timeout: 30000 }, async (t) => {
   const [port, other] = [await freePort(), await freePort()];
   let replaced = 0;
-  const r = await stack(`start web . ${server(port)}\nwait_port web ${port}\nstart other . ${server(other)}\n` +
+  const r = await stack(t, `start web . ${server(port)}\nwait_port web ${port}\nstart other . ${server(other)}\n` +
     `wait_port other ${other}\nsay "stack is up"\nwait`, async (child, dir) => {
     try {
       replaced = await relaunch(dir, 'web', port, servicePid(dir, 'web'));
@@ -148,10 +155,10 @@ test('a service relaunched under a running stack stops with it', { timeout: 3000
 });
 
 // As make shield-demo-restart starts the demo on a run.sh --no-demo stack.
-test('a service started under a running stack that had none stops with it', { timeout: 30000 }, async () => {
+test('a service started under a running stack that had none stops with it', { timeout: 30000 }, async (t) => {
   const [port, other] = [await freePort(), await freePort()];
   let added = 0;
-  const r = await stack(`start other . ${server(other)}\nwait_port other ${other}\nsay "stack is up"\nwait`,
+  const r = await stack(t, `start other . ${server(other)}\nwait_port other ${other}\nsay "stack is up"\nwait`,
     async (child, dir) => {
       try {
         added = await relaunch(dir, 'demo', port);
@@ -168,11 +175,11 @@ test('a service started under a running stack that had none stops with it', { ti
 
 // A stack reusing a LOG_DIR (RETAIL_LOG_DIR=…) must not take a past
 // stack's list for its own: its pids may be anyone's by now.
-test("a stop leaves alone what a past stack's service list in its LOG_DIR names", { timeout: 30000 }, async () => {
+test("a stop leaves alone what a past stack's service list in its LOG_DIR names", { timeout: 30000 }, async (t) => {
   const port = await freePort();
   const bystander = spawn(OWN_GROUP, ['sleep', '60'], { stdio: 'ignore' });
   try {
-    const r = await stack(`echo "web ${bystander.pid}" >"$LOG_DIR/services.pids"\n` +
+    const r = await stack(t, `echo "web ${bystander.pid}" >"$LOG_DIR/services.pids"\n` +
       `start web . ${server(port)}\nwait_port web ${port}\nsay "stack is up"\nwait`, (child) => child.kill('SIGTERM'));
     assert.strictEqual(r.code, 143, r.out);
     assert.strictEqual(await listening(port), false, 'the service still listens');
@@ -183,22 +190,12 @@ test("a stop leaves alone what a past stack's service list in its LOG_DIR names"
 });
 
 // With its LOG_DIR removed under it, a stack still stops what it started.
-// A stop that kills nothing waits on its service forever: after 10 s the
-// test kills the service (its pid kept aside) and fails.
-test('a stop whose service list is gone stops the services start started', { timeout: 30000 }, async () => {
+// The list is kept aside as kept.pids, so a stop that kills nothing (and so
+// waits on its service forever) is still cleaned up at the test's timeout.
+test('a stop whose service list is gone stops the services start started', { timeout: 30000 }, async (t) => {
   const port = await freePort();
-  let forced = false;
-  let timer;
-  const r = await stack(`start web . ${server(port)}\nwait_port web ${port}\n` +
-    `mv "$LOG_DIR/services.pids" "$LOG_DIR/kept.pids"\nsay "stack is up"\nwait`, (child, dir) => {
-    child.kill('SIGTERM');
-    timer = setTimeout(() => {
-      forced = true;
-      process.kill(-servicePid(dir, 'web', 'kept.pids'), 'SIGKILL');
-    }, 10000);
-  });
-  clearTimeout(timer);
-  assert.strictEqual(forced, false, 'the stop did not stop the service with its list gone');
+  const r = await stack(t, `start web . ${server(port)}\nwait_port web ${port}\n` +
+    `mv "$LOG_DIR/services.pids" "$LOG_DIR/kept.pids"\nsay "stack is up"\nwait`, (child) => child.kill('SIGTERM'));
   assert.strictEqual(r.code, 143, r.out);
   assert.strictEqual(await listening(port), false, 'the service still listens with its list gone');
 });
@@ -229,37 +226,37 @@ test('stack_service.sh fails, naming its usage, on the wrong number of arguments
   assert.match(r.stderr, /usage: stack_service\.sh <log dir> <name> <pid>/);
 });
 
-test('a service exiting stops the stack with its log tail, and stops the others', { timeout: 30000 }, async () => {
+test('a service exiting stops the stack with its log tail, and stops the others', { timeout: 30000 }, async (t) => {
   const port = await freePort();
-  const r = await stack(`start web . ${server(port)}\nwait_port web ${port}\n` +
+  const r = await stack(t, `start web . ${server(port)}\nwait_port web ${port}\n` +
     `start brief . sh -c 'echo its-last-words; sleep 1'\nsay "stack is up"\nwatch_services`);
   assert.strictEqual(r.code, 1, r.out);
   assert.match(r.out, /brief exited — last log lines:\nits-last-words\n/);
   assert.strictEqual(await listening(port), false, 'the other service still listens');
 });
 
-test('wait_port fails at once with the log tail when its service exits before listening', { timeout: 30000 }, async () => {
+test('wait_port fails at once with the log tail when its service exits before listening', { timeout: 30000 }, async (t) => {
   const port = await freePort();
   const t0 = Date.now();
-  const r = await stack(`start web . sh -c 'echo cannot-bind; exit 1'\nwait_port web ${port}\nsay "stack is up"`);
+  const r = await stack(t, `start web . sh -c 'echo cannot-bind; exit 1'\nwait_port web ${port}\nsay "stack is up"`);
   assert.strictEqual(r.code, 1, r.out);
   assert.match(r.out, /web exited — last log lines:\ncannot-bind\n/);
   assert.ok(Date.now() - t0 < 10000, 'wait_port waited on a dead service');
   assert.doesNotMatch(r.out, /stack is up/);
 });
 
-test('a failed step stops the stack with its log tail', { timeout: 30000 }, async () => {
-  const r = await stack(`step build . sh -c 'echo compile-error; exit 2'\nsay "stack is up"`);
+test('a failed step stops the stack with its log tail', { timeout: 30000 }, async (t) => {
+  const r = await stack(t, `step build . sh -c 'echo compile-error; exit 2'\nsay "stack is up"`);
   assert.strictEqual(r.code, 1, r.out);
   assert.match(r.out, /build failed — last log lines:\ncompile-error\n/);
   assert.doesNotMatch(r.out, /stack is up/);
 });
 
-test('a busy port fails with its own message, not a stop of services never started', { timeout: 30000 }, async () => {
+test('a busy port fails with its own message, not a stop of services never started', { timeout: 30000 }, async (t) => {
   const busy = net.createServer();
   await new Promise((resolve) => busy.listen(0, '127.0.0.1', resolve));
   const { port } = busy.address();
-  const r = await stack(`require_free_ports ${port}\nsay "stack is up"`);
+  const r = await stack(t, `require_free_ports ${port}\nsay "stack is up"`);
   busy.close();
   assert.strictEqual(r.code, 1, r.out);
   assert.match(r.out, new RegExp(`port ${port} is already in use`));
