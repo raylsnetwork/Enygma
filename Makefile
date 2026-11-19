@@ -110,6 +110,9 @@ fmt-check: ## Fail if any tracked Go file is not gofmt-clean
 PAGE_DEPS := scripts/node_modules/.installed-with-node-$(shell node -v 2>/dev/null)
 $(PAGE_DEPS): scripts/package-lock.json
 	@command -v node >/dev/null && command -v npm >/dev/null || { echo "node or npm not found (page-check needs both; nvm use, from .nvmrc)"; exit 1; }
+	@# A node older than .nvmrc's major fails here, naming the fix, not in npm ci's EBADENGINE.
+	@want=$$(cat .nvmrc); [ "$$want" -eq "$$want" ] 2>/dev/null || { echo ".nvmrc holds no node major ($$want)"; exit 1; }; \
+	[ "$$(node -p 'process.versions.node.split(".")[0]')" -ge "$$want" ] || { echo "node $$(node -v) is older than .nvmrc's $$want, which page-check's dependencies need: nvm use, or put $$HOME/.nvm/versions/node/v$$want.*/bin first on PATH"; exit 1; }
 	cd scripts && npm ci --no-audit --no-fund
 	@touch $@
 
@@ -146,6 +149,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/keys_src.test.js >/dev/null || node --test scripts/keys_src.test.js
 	@# keys_check.sh, make check's retail-keys-check and payments-keys-check, fails on committed keys stamped with other circuit sources, and make retail-keygen and payments-keygen stamp them right.
 	@node --test scripts/keys_check.test.js >/dev/null || node --test scripts/keys_check.test.js
+	@# PAGE_DEPS, page-check's npm dependencies, stop on a node older than .nvmrc's, naming the fix.
+	@node --test scripts/page_deps.test.js >/dev/null || node --test scripts/page_deps.test.js
 	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 
