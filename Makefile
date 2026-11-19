@@ -79,7 +79,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
 	enygma_retail_payments/src
 
-.PHONY: help modules hooks hooks-check fmt fmt-check go-min-check known-red-check errcheck-skip-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
+.PHONY: help modules hooks hooks-check fmt fmt-check go-min-check known-red-check errcheck-skip-check test-name-skip-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-burn-keygen payments-keygen payments-keys-check payments-stack payments-stack-stop payments-test \
@@ -162,6 +162,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/known_red_check.test.js >/dev/null || node --test scripts/known_red_check.test.js
 	@# errcheck_skip_check.sh, make check's errcheck-skip-check, fails on an ERRCHECK_SKIP_MODULES entry that is errcheck-clean or names no module.
 	@node --test scripts/errcheck_skip_check.test.js >/dev/null || node --test scripts/errcheck_skip_check.test.js
+	@# test_name_skip_check.sh, make check's test-name-skip-check, fails on a suite's skip-list entry that names no test.
+	@node --test scripts/test_name_skip_check.test.js >/dev/null || node --test scripts/test_name_skip_check.test.js
 	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 
@@ -188,7 +190,7 @@ go-min-check: ## Fail when a tracked go.mod declares a go below GO_MIN (or none)
 	if [ -n "$$bad" ]; then echo "go below GO_MIN $(GO_MIN), which the pinned errcheck needs, in:$$bad"; exit 1; fi; \
 	echo "go.mod go lines: all >= $(GO_MIN)"
 
-check: hooks-check fmt-check go-min-check retail-keys-check payments-keys-check page-check build vet errcheck known-red-check errcheck-skip-check ## Static checks, and that each known-red package still fails its tests and each errcheck-skipped module still has findings; and that each skip entry names a module
+check: hooks-check fmt-check go-min-check retail-keys-check payments-keys-check page-check build vet errcheck known-red-check errcheck-skip-check test-name-skip-check ## Static checks, and that each known-red package still fails its tests and each errcheck-skipped module still has findings; and that each skip entry names a module, or a test
 
 hooks-check: ## Fail when a git hook type .pre-commit-config.yaml installs is missing from this clone (skipped in CI)
 	@scripts/check_hooks_installed.sh
@@ -198,6 +200,15 @@ known-red-check: ## Fail when a TEST_SKIP_PACKAGES entry passes its tests (delet
 
 errcheck-skip-check: ## Fail when an ERRCHECK_SKIP_MODULES entry is errcheck-clean (delete it), errcheck cannot check it, or it is not a tracked module; runs only MODULE's entry (CI: one leg each)
 	@scripts/errcheck_skip_check.sh '$(ERRCHECK)' "$(MODULES)" $(ERRCHECK_SKIP_MODULES)
+
+# Each suite's list of test names, with the module its tests are in (the
+# dir set beside the list): a -skip regex (regex) or allowed skips (names).
+test-name-skip-check: ## Fail when an entry of a suite's test-name list (PRIMER_REFRESH_SKIP, *_KNOWN_SKIPS) names no test in that suite's module; names only, no stack
+	@scripts/test_name_skip_check.sh \
+	  regex PRIMER_REFRESH_SKIP '$(RETAIL_SUITE)' '$(PRIMER_REFRESH_SKIP)' \
+	  names DVP_KNOWN_SKIPS '$(DVP_SUITE)' '$(DVP_KNOWN_SKIPS)' \
+	  names PAYMENTS_KNOWN_SKIPS '$(PAYMENTS_SUITE)' '$(PAYMENTS_KNOWN_SKIPS)' \
+	  names RETAIL_KNOWN_SKIPS '$(RETAIL_SUITE)' '$(RETAIL_KNOWN_SKIPS)'
 
 test-unit: ## go test ./... in every module (chain-dependent tests skip themselves)
 	@echo "Not run (known red, see TEST_SKIP_* above): modules [$(TEST_SKIP_MODULES)], packages [$(TEST_SKIP_PACKAGES)]"
@@ -272,6 +283,8 @@ DVP_LOG_DIR ?=
 # Tests allowed to skip in dvp-test (full names, space-separated): the
 # NewKeyPair field-range flakes. Any other skip fails the suite, so a relayer
 # or deployment missing for tests 10/12/15/26/27 cannot pass for green.
+# make test-name-skip-check fails on a name that is no test in DVP_SUITE.
+DVP_SUITE := enygma_dvp/test
 DVP_KNOWN_SKIPS := TestNewKeyPair TestNewKeyPairDeterministicPublicKey
 
 dvp-chain: ## Start a local Hardhat node (keep running)
@@ -299,7 +312,7 @@ dvp-stack-stop: ## Stop the stack make dvp-stack started, and wait for its ports
 	$(call stack_stop,$(DVP_STACK_PID),$(DVP_STACK_CMD),stack.log,dvp-stack,8545 8081 8091 8092)
 
 dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail/skip counts, fails on a skip not in DVP_KNOWN_SKIPS
-	$(call suite_test,$(DVP_STACK_PID),enygma_dvp/test,dvp_test,1800s,,,$(DVP_KNOWN_SKIPS),no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers)
+	$(call suite_test,$(DVP_STACK_PID),$(DVP_SUITE),dvp_test,1800s,,,$(DVP_KNOWN_SKIPS),no make dvp-stack env: tests 10/12/15/26/27 skip without its relayers)
 
 # Full local flow for enygma_payments' end-to-end suite (go_client/enygma_test):
 # payments-stack -> payments-test -> payments-stack-stop. payments-stack compiles
@@ -314,6 +327,8 @@ PAYMENTS_STACK_CMD := bash enygma_payments/run_scripts/stack.sh
 PAYMENTS_LOG_DIR ?=
 # Tests allowed to skip in payments-test (full names, space-separated). Any
 # other skip fails the suite: a missing service must not pass for green.
+# make test-name-skip-check fails on a name that is no test in PAYMENTS_SUITE.
+PAYMENTS_SUITE := enygma_payments/go_client/enygma_test
 PAYMENTS_KNOWN_SKIPS :=
 
 payments-burn-keygen: ## Generate the payments Burn proving/verifying keys (gitignored; about a minute; rerun after a payments circuit change), stamped with their circuit sources
@@ -336,7 +351,7 @@ payments-stack-stop: ## Stop the stack make payments-stack started, and wait for
 	$(call stack_stop,$(PAYMENTS_STACK_PID),$(PAYMENTS_STACK_CMD),stack.log,payments-stack,8545 8080)
 
 payments-test: ## Payments end-to-end suite (on make payments-stack); prints pass/fail/skip counts, fails on a skip not in PAYMENTS_KNOWN_SKIPS
-	$(call suite_test,$(PAYMENTS_STACK_PID),enygma_payments/go_client/enygma_test,payments_test,900s,,,$(PAYMENTS_KNOWN_SKIPS))
+	$(call suite_test,$(PAYMENTS_STACK_PID),$(PAYMENTS_SUITE),payments_test,900s,,,$(PAYMENTS_KNOWN_SKIPS))
 
 retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script header)
 	cd enygma_retail_payments && bash setup.sh
@@ -351,20 +366,21 @@ retail-keys-check: ## Fail when the committed retail keys' stamp (keys.src) is m
 retail-gnark: ## Start the retail gnark proof server (keep running)
 	cd enygma_retail_payments/gnark_circuits && go run ./cmd/server
 
-# The retail suite takes 8–12 min on the shield_demo/run.sh stack; the bench and
-# load tests are left out (run them by name). Tests that rebuild the vault's
-# tree 0 fail fast once the chain is past one tree: restart it fresh.
-# Full flow: shield-stack -> retail-test -> shield-stack-stop. Logs go to
-# RETAIL_LOG_DIR (default: a fresh temp dir), the suite's to suite.log there
+# The retail suite takes 8–12 min on the shield_demo/run.sh stack. Tests that
+# rebuild the vault's tree 0 fail fast once the chain is past one tree: restart
+# it fresh. Full flow: shield-stack -> retail-test -> shield-stack-stop. Logs go
+# to RETAIL_LOG_DIR (default: a fresh temp dir), the suite's to suite.log there
 # when the stack is shield-stack's.
-RETAIL_BENCH_SKIP := TestRetailThroughput|TestRetailLoad|TestRetailScanRate|TestRetailChainTPS
 RETAIL_LOG_DIR ?=
 # Tests allowed to skip in retail-test (full names, space-separated): both skip
 # once Alice is registered, which the suite's earlier tests do. Any other skip
-# fails the suite: a missing service must not pass for green.
+# fails the suite: a missing service must not pass for green. make
+# test-name-skip-check fails on a name here, or in PRIMER_REFRESH_SKIP, that is
+# no test in RETAIL_SUITE.
+RETAIL_SUITE := enygma_retail_payments/test
 RETAIL_KNOWN_SKIPS := TestUserRegistration TestAuditorViewKeyRecovery
-retail-test: ## Retail integration suite, bench and load tests skipped (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts, fails on a skip not in RETAIL_KNOWN_SKIPS; leaves the shield demo's replay fixtures alone
-	$(call suite_test,$(SHIELD_STACK_PID),enygma_retail_payments/test,retail_test,1800s,REPLAY_FIXTURE_WRITE=0,-skip '$(RETAIL_BENCH_SKIP)',$(RETAIL_KNOWN_SKIPS))
+retail-test: ## Retail integration suite (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts, fails on a skip not in RETAIL_KNOWN_SKIPS; leaves the shield demo's replay fixtures alone
+	$(call suite_test,$(SHIELD_STACK_PID),$(RETAIL_SUITE),retail_test,1800s,REPLAY_FIXTURE_WRITE=0,,$(RETAIL_KNOWN_SKIPS))
 
 # The full shield demo scenario test plays three runs (about 1–2 min since #190's
 # fast proofs); this plays the default-mode run (about 30 s) and the subtests matching
@@ -372,7 +388,7 @@ retail-test: ## Retail integration suite, bench and load tests skipped (needs th
 # adds the tags-off run.
 shield-test: ## Shield demo scenario, default run only, subtests matching T= (needs the shield_demo/run.sh stack)
 	@# T is grouped: go test splits a top-level | before /, so T=a|b would run only TestShieldDemoScenario/a.
-	cd enygma_retail_payments/test && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
+	cd $(RETAIL_SUITE) && go test -run 'TestShieldDemoScenario$$/($(T))' -v -timeout 1800s
 
 # Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
 SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
@@ -390,26 +406,27 @@ shield-stack-stop: ## Stop the stack make shield-stack started, and wait about 3
 # with that demo's -logs dir, detached as run.sh starts it.
 # The suite runs first so the primer's scans cover other payments: a fresh
 # chain holds only the story's own, and the replay check refuses that block.
-PRIMER_REFRESH_SKIP := $(RETAIL_BENCH_SKIP)|TestShieldDemoScenario|TestShieldDemoWalkthrough|TestProtocolPrimer$$
+# PRIMER_REFRESH_SKIP is a go test -skip regex over RETAIL_SUITE's tests.
+PRIMER_REFRESH_SKIP := TestShieldDemoScenario|TestShieldDemoWalkthrough|TestProtocolPrimer$$
 primer-refresh: ## Fresh stack, the retail suite, then TestProtocolPrimer (rewrites the primer's data block); prints pass/fail/skip counts, stops the stack
 	@$(MAKE) --no-print-directory shield-stack
-	@log=$$(mktemp -t primer_refresh); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
+	@log=$$(mktemp -t primer_refresh); status=0; export CC=$${CC:-/usr/bin/clang}; cd $(RETAIL_SUITE); \
 	REPLAY_FIXTURE_WRITE=0 go test -count=1 -v . -timeout 900s -skip '$(PRIMER_REFRESH_SKIP)' >$$log 2>&1 || status=1; \
 	for k in PASS FAIL SKIP; do echo "suite $$k: $$(grep -c "^--- $$k" $$log)"; done; \
 	grep -E '^--- (FAIL|SKIP)' $$log; \
 	if [ $$status = 0 ]; then PRIMER_WRITE=1 go test -count=1 -run 'TestProtocolPrimer$$$$' . || status=1; else echo "suite failed (log: $$log), data block left alone"; fi; \
-	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; exit $$status
+	cd $(CURDIR); $(MAKE) --no-print-directory shield-stack-stop; exit $$status
 
 # The two live runs whose events the shield demo's replay test plays: each
 # rewrites its fixture in shield_demo/testdata only when it passes. A skip
 # fails the target too, as a skipped run writes nothing.
 shield-fixtures: ## Fresh stack, then TestShieldDemoScenario and TestShieldDemoWalkthrough (rewrite the replay fixtures); prints their verdicts, stops the stack
 	@$(MAKE) --no-print-directory shield-stack
-	@log=$$(mktemp -t shield_fixtures); status=0; export CC=$${CC:-/usr/bin/clang}; cd enygma_retail_payments/test; \
+	@log=$$(mktemp -t shield_fixtures); status=0; export CC=$${CC:-/usr/bin/clang}; cd $(RETAIL_SUITE); \
 	go test -count=1 -v -run 'TestShieldDemoScenario$$|TestShieldDemoWalkthrough$$' . -timeout 900s >$$log 2>&1 || status=1; \
 	grep -E '^--- (PASS|FAIL|SKIP)' $$log; grep -q '^--- SKIP' $$log && status=1; \
 	[ $$status = 0 ] || echo "a run failed or skipped (log: $$log): its fixture is left as it was"; \
-	cd ../..; $(MAKE) --no-print-directory shield-stack-stop; git status --short enygma_retail_payments/shield_demo/testdata; exit $$status
+	cd $(CURDIR); $(MAKE) --no-print-directory shield-stack-stop; git status --short enygma_retail_payments/shield_demo/testdata; exit $$status
 
 shield-demo-stale: ## Fail if the demo on :9092 was built from Go sources other than the working tree's (then make shield-demo-restart)
 	@pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN) || { echo "no demo on :9092: run make shield-demo-restart (on a running stack) or bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \

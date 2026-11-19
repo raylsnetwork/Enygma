@@ -64,7 +64,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "stable"
-      - run: make fmt-check go-min-check
+      # test-name-skip-check reads only tracked files: no stack, no go.
+      - run: make fmt-check go-min-check test-name-skip-check
 
   # No lfs: each check reads keys.src and the circuit sources, never a .key.
   # Each step's setup-go reads its module's go.mod.
@@ -94,6 +95,17 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: scripts/package-lock.json
+      # The scripts' tests run go: errcheck_skip_check.test.js runs the
+      # pinned errcheck, which needs the Makefile's GO_MIN.
+      - id: go-min
+        run: |
+          v=$(sed -n 's/^GO_MIN := \([0-9.]*\)$/\1/p' Makefile)
+          [ -n "$v" ] || { echo "::error::no GO_MIN := <version> line in the Makefile"; exit 1; }
+          echo "go=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.go-min.outputs.go }}
+          cache: false
       - run: make page-check
 
   hardhat:
