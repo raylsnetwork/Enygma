@@ -75,7 +75,7 @@ ERRCHECK_SKIP_MODULES ?= \
 .PHONY: help modules hooks hooks-check fmt fmt-check go-min-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
-	payments-burn-keygen payments-stack payments-stack-stop payments-test \
+	payments-burn-keygen payments-keygen payments-keys-check payments-stack payments-stack-stop payments-test \
 	auctions-gnark auctions-keygen
 
 help: ## Show this help
@@ -144,8 +144,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/stack_stop.test.js >/dev/null || node --test scripts/stack_stop.test.js
 	@# keys_src.sh, the DvP and Burn keys' stamp, moves with a circuit source and not with a file time.
 	@node --test scripts/keys_src.test.js >/dev/null || node --test scripts/keys_src.test.js
-	@# retail_keys_check.sh, make check's retail-keys-check, fails on committed retail keys stamped with other circuit sources, and make retail-keygen stamps them right.
-	@node --test scripts/retail_keys_check.test.js >/dev/null || node --test scripts/retail_keys_check.test.js
+	@# keys_check.sh, make check's retail-keys-check and payments-keys-check, fails on committed keys stamped with other circuit sources, and make retail-keygen and payments-keygen stamp them right.
+	@node --test scripts/keys_check.test.js >/dev/null || node --test scripts/keys_check.test.js
 	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 
@@ -172,7 +172,7 @@ go-min-check: ## Fail when a tracked go.mod declares a go below GO_MIN (or none)
 	if [ -n "$$bad" ]; then echo "go below GO_MIN $(GO_MIN), which the pinned errcheck needs, in:$$bad"; exit 1; fi; \
 	echo "go.mod go lines: all >= $(GO_MIN)"
 
-check: hooks-check fmt-check go-min-check retail-keys-check page-check build vet errcheck ## Static checks only (no tests)
+check: hooks-check fmt-check go-min-check retail-keys-check payments-keys-check page-check build vet errcheck ## Static checks only (no tests)
 
 hooks-check: ## Fail when a git hook type .pre-commit-config.yaml installs is missing from this clone (skipped in CI)
 	@scripts/check_hooks_installed.sh
@@ -226,6 +226,17 @@ status=0; cd $(2); $(5) go test -count=1 -v ./... -timeout $(4) $(6) >$$log 2>&1
 cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(7)'; result=$$?; echo "log: $$log"; exit $$result
 endef
 
+# $(call keygen_stamped,<module dir>,<keygen package>,<keygen command>,<stamps>):
+# a keygen recipe stamping the keys it makes with their circuit sources. The
+# fingerprint (scripts/keys_src.sh <module dir> <keygen package>) is taken
+# before <keygen command> runs in <module dir>, so a source edited meanwhile
+# does not pass for built; the old <stamps> (module-relative) are removed
+# first, and the fingerprint written to each only when keygen succeeds.
+define keygen_stamped
+rm -f $(addprefix $(1)/,$(4))
+src=$$(scripts/keys_src.sh $(1) $(2)) && cd $(1) && $(3) $(foreach f,$(4),&& echo "$$src" >$(f))
+endef
+
 # Full local flow for DvP: dvp-keygen (once) -> dvp-stack -> dvp-test -> dvp-stack-stop.
 # dvp-stack brings up everything the suite uses (both deployments, gnark, both
 # relayers), so no test skips for a missing service. Run dvp-test once per
@@ -251,11 +262,8 @@ dvp-init: ## Export VKs and register them on-chain
 	cd enygma_dvp && bash scripts/init.sh
 
 dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes), with retail's PrivateMint keys, stamped with their circuit sources
-	@# keys.src, the fingerprint of the sources keygen compiles (scripts/keys_src.sh), is taken
-	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
-	@# when keygen succeeds; dvp-stack's preflight fails on keys whose stamp is missing or another's.
-	rm -f enygma_dvp/gnark_circuits/scripts/keys/keys.src
-	src=$$(scripts/keys_src.sh enygma_dvp/gnark_circuits ./cmd/keygen) && cd enygma_dvp/gnark_circuits && mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen && echo "$$src" >scripts/keys/keys.src
+	@# dvp-stack's preflight fails on keys whose stamp is missing or another's.
+	$(call keygen_stamped,enygma_dvp/gnark_circuits,./cmd/keygen,mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen,scripts/keys/keys.src)
 	@# keygen draws fresh PrivateMint keys; the committed PrivateMintVerifier.sol is for retail's (same R1CS).
 	cp enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintPK.key enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintVK.key enygma_dvp/gnark_circuits/scripts/keys/
 
@@ -287,11 +295,17 @@ PAYMENTS_LOG_DIR ?=
 PAYMENTS_KNOWN_SKIPS :=
 
 payments-burn-keygen: ## Generate the payments Burn proving/verifying keys (gitignored; about a minute; rerun after a payments circuit change), stamped with their circuit sources
-	@# burn.src, the fingerprint of the sources keygen compiles (scripts/keys_src.sh), is taken
-	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
-	@# when keygen succeeds; payments-stack's preflight fails on keys whose stamp is missing or another's.
-	rm -f enygma_payments/gnark-server/keys/burn.src
-	src=$$(scripts/keys_src.sh enygma_payments/gnark-server ./keygen) && cd enygma_payments/gnark-server && go run ./keygen/generate_keys.go -circuit burn && echo "$$src" >keys/burn.src
+	@# payments-stack's preflight fails on keys whose stamp is missing or another's.
+	$(call keygen_stamped,enygma_payments/gnark-server,./keygen,go run ./keygen/generate_keys.go -circuit burn,keys/burn.src)
+
+payments-keygen: ## Generate every payments proving/verifying key (slow; rerun after a payments circuit change, then copy the verifiers into the contracts), the Burn keys too, stamped with their circuit sources
+	@# The committed keys' stamp, keys.src, and the Burn keys' burn.src, both one fingerprint:
+	@# make payments-keys-check fails on committed keys whose stamp is missing or another's,
+	@# payments-stack's preflight on such Burn keys.
+	$(call keygen_stamped,enygma_payments/gnark-server,./keygen,go run ./keygen/generate_keys.go -circuit all,keys/keys.src keys/burn.src)
+
+payments-keys-check: ## Fail when the committed payments keys' stamp (keys.src) is missing or names other circuit sources than the working tree's; no chain, no LFS
+	@scripts/keys_check.sh payments
 
 payments-stack: ## Start the payments e2e stack (compile contracts, build relayer_bin, fresh chain :8545, gnark :8080), detached; returns when it is up
 	$(call stack_start,$(PAYMENTS_STACK_PID),$(PAYMENTS_LOG_DIR),payments_stack,stack.log,.,$(PAYMENTS_STACK_CMD),payments-stack,payments-test)
@@ -306,15 +320,11 @@ retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script head
 	cd enygma_retail_payments && bash setup.sh
 
 retail-keygen: ## Generate retail proving/verifying keys (slow; rerun after a retail circuit change, then setup.sh step 4/5 and make dvp-keygen), stamped with their circuit sources
-	@# keys.src, the fingerprint of the sources keygen compiles (scripts/keys_src.sh), is taken
-	@# before keygen runs, so a source edited meanwhile does not pass for built, and written only
-	@# when keygen succeeds. Keys and stamp are committed; make retail-keys-check fails on keys
-	@# whose stamp is missing or another's.
-	rm -f enygma_retail_payments/gnark_circuits/scripts/keys/keys.src
-	src=$$(scripts/keys_src.sh enygma_retail_payments/gnark_circuits ./cmd/keygen) && cd enygma_retail_payments/gnark_circuits && go run ./cmd/keygen && echo "$$src" >scripts/keys/keys.src
+	@# Keys and stamp are committed; make retail-keys-check fails on keys whose stamp is missing or another's.
+	$(call keygen_stamped,enygma_retail_payments/gnark_circuits,./cmd/keygen,go run ./cmd/keygen,scripts/keys/keys.src)
 
 retail-keys-check: ## Fail when the committed retail keys' stamp (keys.src) is missing or names other circuit sources than the working tree's; no chain, no LFS
-	@scripts/retail_keys_check.sh
+	@scripts/keys_check.sh retail
 
 retail-gnark: ## Start the retail gnark proof server (keep running)
 	cd enygma_retail_payments/gnark_circuits && go run ./cmd/server

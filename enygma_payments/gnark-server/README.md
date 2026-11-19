@@ -87,11 +87,16 @@ keys/
 
 Generating Keys
 
-If Keys are not present, you can generate them in
+The keys (except the gitignored Burn keys) are committed. After a circuit
+change, regenerate them all from the repo root, which also stamps them with
+their circuit sources (`keys/keys.src`, committed, and `keys/burn.src`):
 
 ```bash
-go run ./keygen/generate_keys.go
+make payments-keygen
 ```
+
+`make payments-keys-check` (part of `make check`) fails until then, and names
+the verifiers to copy into `../contracts/enygma/contracts/` afterwards.
 
 ---
 
