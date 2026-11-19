@@ -136,6 +136,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/primer_page.test.js >/dev/null || node --test scripts/primer_page.test.js
 	@# mutant.sh, which shows a new check red, says RED only for a red it can trust.
 	@node --test scripts/mutant.test.js >/dev/null || node --test scripts/mutant.test.js
+	@# own_group.sh, which starts the stacks' services and mutant.sh's test runs, gives the command its own process group and runs it without a shell.
+	@node --test scripts/own_group.test.js >/dev/null || node --test scripts/own_group.test.js
 	@# check_red_named.sh, the commit-msg hook, asks for a red only when a commit adds a check.
 	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
 	@# check_hooks_installed.sh, make check's hooks-check, finds a hook type this clone lacks.
@@ -463,7 +465,7 @@ shield-demo-restart: ## Rebuild the shield demo and restart it on the running ru
 	root=$(CURDIR)/enygma_retail_payments; \
 	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && scripts/shield_demo_src.sh >$$logs/bin/shield_demo.src && { [ -z "$$pid" ] || kill $$pid; } && \
 	while lsof -tiTCP:9092 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
-	(cd $$root/shield_demo && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
+	(cd $$root/shield_demo && exec $(CURDIR)/scripts/own_group.sh $$logs/bin/shield_demo -root $$root -logs $$logs -dev >>$$logs/demo.log 2>&1) & \
 	for _ in $$(seq 1 100); do nc -z localhost 9092 2>/dev/null && { echo "demo $$done_msg on :9092 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
 	echo "the demo did not come back on :9092: see $$logs/demo.log"; exit 1
 
@@ -477,7 +479,7 @@ shield-gnark-restart: ## Rebuild the retail gnark server and restart it on the r
 	root=$(CURDIR)/enygma_retail_payments; \
 	go build -C $$root/gnark_circuits -o $$bin ./cmd/server && kill $$pid && \
 	while lsof -tiTCP:8082 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; \
-	(cd $$root/gnark_circuits && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $$!"' -- $$bin >>$$logs/gnark.log 2>&1) & \
+	(cd $$root/gnark_circuits && exec $(CURDIR)/scripts/own_group.sh $$bin >>$$logs/gnark.log 2>&1) & \
 	for _ in $$(seq 1 300); do nc -z localhost 8082 2>/dev/null && { echo "gnark server restarted on :8082 (logs $$logs)"; exit 0; }; sleep 0.2; done; \
 	echo "the gnark server did not come back on :8082: see $$logs/gnark.log"; exit 1
 

@@ -11,6 +11,8 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const MUTANT = path.join(__dirname, 'mutant.sh');
+// The scripts mutant.sh runs, which a scratch repo copies in beside it.
+const SCRIPTS = ['mutant.sh', 'suite_changes.sh', 'own_group.sh'];
 
 // run applies the mutant "ok" → "bad" to a scratch file holding "ok", with
 // the shell command cmd as the test command (the file's path is $F in it,
@@ -209,9 +211,9 @@ test('every verdict is the last line, so a tail of the output keeps it', () => {
   }
 });
 
-// inRepo runs mutant.sh from a scratch repo: a copy of mutant.sh and
-// suite_changes.sh (whose stacks and common lists name the wiring files)
-// under scripts/, a wiring file (Makefile) and another file, each holding
+// inRepo runs mutant.sh from a scratch repo: a copy of SCRIPTS
+// (suite_changes.sh's stacks and common lists name the wiring files) under
+// scripts/, a wiring file (Makefile) and another file, each holding
 // "ok", and pid files named in pids ({ shield: pid }) in its own TMPDIR. It
 // applies old → repl (default "ok" → "bad") to rel with cmd as the test
 // command (the file's path is $F in it, and $P a file it may write to) and
@@ -222,7 +224,7 @@ function inRepo(rel, cmd, { pids = {}, old = 'ok', repl = 'bad', inspect } = {})
   const tmp = path.join(root, 'tmp');
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.mkdirSync(tmp);
-  for (const s of ['mutant.sh', 'suite_changes.sh']) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
+  for (const s of SCRIPTS) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
   for (const f of ['Makefile', 'other.txt']) fs.writeFileSync(path.join(root, f), 'ok\n');
   for (const [stack, pid] of Object.entries(pids)) fs.writeFileSync(path.join(tmp, `enygma_${stack}_stack.pid`), `${pid}\n`);
   const file = path.join(root, rel);
@@ -293,6 +295,19 @@ test('a mutant of mutant.sh itself runs from a copy, not the script bash is runn
   assert.notStrictEqual(running, real, 'the running script is not the mutated file');
   assert.ok(!copyLeft, `the copy ${running} is removed on exit`);
   assert.strictEqual(env, 'unset unset', 'the test command does not inherit where the copy came from');
+});
+
+test('a mutant of own_group.sh, which runs the test command, runs from a copy', () => {
+  // The mutant makes own_group.sh exit 0 before it runs anything. Run
+  // through the mutated file, the test command would never run, and the
+  // mutant would survive; run through the copy's own_group.sh, it runs and
+  // finds the mutant.
+  const run = 'exec perl -e';
+  const r = inRepo('scripts/own_group.sh', `grep -qF '${run}' "$F" || { echo "--- FAIL: own_group_check"; exit 1; }`,
+    { old: run, repl: 'exit 0; perl -e' });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^RED:/, r.out);
+  assert.strictEqual(r.after, fs.readFileSync(path.join(__dirname, 'own_group.sh'), 'utf8'), 'the file is restored');
 });
 
 test('a file that is not there is left not there', () => {
@@ -438,7 +453,7 @@ test('--batch: an entry may mutate mutant.sh itself, and the batch reads on unha
   // file's single-mutant RED verdict, which the test command checks for.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-repo-'));
   fs.mkdirSync(path.join(root, 'scripts'));
-  for (const s of ['mutant.sh', 'suite_changes.sh']) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
+  for (const s of SCRIPTS) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
   const self = path.join(root, 'scripts', 'mutant.sh');
   const verdict = 'echo "RED: the command failed';
   const list = path.join(root, 'mutants.json');

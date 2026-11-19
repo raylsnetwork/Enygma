@@ -24,11 +24,13 @@
 # elsewhere or hangs, 2 on bad input: a wiring file of a live stack, a
 # command already red without the mutant or hung without it, or one that
 # did not run (exit 126 or 127, as a command passed as one word).
-# A mutant of mutant.sh itself (the same file, symlinks resolved) runs
-# from a temporary copy of mutant.sh and suite_changes.sh, with the same
-# arguments: bash reads a script as it goes, so the run would otherwise pick
-# up the mutated text partway through. The copy mutates and restores the
-# real file as usual and is removed on exit.
+# A mutant of mutant.sh itself (the same file, symlinks resolved), or of
+# own_group.sh, which runs the test command, runs from a temporary copy of
+# mutant.sh, suite_changes.sh and own_group.sh, with the same arguments: bash
+# reads a script as it goes, so the run would otherwise pick up the mutated
+# text partway through, and a mutated own_group.sh would change how the
+# test command runs, not just the code under test. The copy mutates and
+# restores the real file as usual and is removed on exit.
 # The verdict (RED:, SURVIVED:, HUNG: or BAD INPUT:) is always the last
 # line, after the failure lines it rests on, so `| tail` keeps it; a red
 # elsewhere names the first failure on that line too.
@@ -215,10 +217,10 @@ root=${MUTANT_SH_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}
 copy_dir=${MUTANT_SH_COPY_DIR:-}
 unset MUTANT_SH_ROOT MUTANT_SH_COPY_DIR
 trap cleanup EXIT
-if [ "$file" -ef "$0" ]; then
+if [ "$file" -ef "$0" ] || [ "$file" -ef "$(dirname "$0")/own_group.sh" ]; then
   copy_dir=$(mktemp -d)
   mkdir "$copy_dir/scripts"
-  cp "$0" "$(dirname "$0")/suite_changes.sh" "$copy_dir/scripts/"
+  cp "$0" "$(dirname "$0")/suite_changes.sh" "$(dirname "$0")/own_group.sh" "$copy_dir/scripts/"
   MUTANT_SH_ROOT=$root MUTANT_SH_COPY_DIR=$copy_dir exec bash "$copy_dir/scripts/mutant.sh" "${args[@]}"
 fi
 
@@ -252,17 +254,18 @@ cp "$file" "$copy" || { rm -f "$copy"; exit 1; }
 backup=$copy
 
 # run <name> <command…> runs the test command, output to $out, in its own
-# process group (perl's setsid: stock macOS has no setsid(1)), and sets
-# status to its exit code. Then it kills the group, so nothing the command
-# left behind runs on. Past the deadline it ends mutant.sh: HUNG, exit 1
-# for the mutant run, 2 for the green run.
-# perl execs the command as the shell would, never through one (exec
-# { $ARGV[0] }: a command passed as one word is not split by /bin/sh), and
-# exits 127 when it is not found, 126 when it can't run.
+# process group (own_group.sh), and sets status to its exit code. Then it
+# kills the group, so nothing the command left behind runs on. Past the
+# deadline it ends mutant.sh: HUNG, exit 1 for the mutant run, 2 for the
+# green run.
+# own_group.sh runs the command as the shell would, never through one (a
+# command passed as one word is not split by /bin/sh), and exits 127 when it
+# is not found, 126 when it can't run. It runs through bash: a copy of it
+# (the self-mutant copy, a test's scratch repo) need not keep its mode.
 run() {
   local name=$1
   shift
-  perl -e 'use POSIX qw(setsid); setsid(); exec { $ARGV[0] } @ARGV; print STDERR "mutant.sh: $ARGV[0]: $!\n"; exit($!{ENOENT} ? 127 : 126)' -- "$@" >"$out" 2>&1 </dev/null &
+  bash "$(dirname "$0")/own_group.sh" "$@" >"$out" 2>&1 </dev/null &
   pgid=$!
   # SECONDS counts whole seconds, so the + 1 keeps a run from being cut
   # before timeout seconds have passed.
