@@ -383,6 +383,23 @@ test('--batch: a long old or new text is cut in its RED line', () => {
   assert.deepStrictEqual(r.reds, [`- \`ok\` → \`${'x'.repeat(59)}…\`: RED: "TestCode/ok_check"`], r.out);
 });
 
+test('--batch: a change past the cut is shown in a window around it, so the two sides differ', () => {
+  // Cut at 60 characters, both sides would read 59 x's and "…".
+  const x = 'x'.repeat(70), y = 'y'.repeat(70);
+  const r = batch([
+    { expect: 'TestCode/ok_check', old: `${x}ok`, new: `${x}no`, cmd: CHECK },
+    { expect: 'TestCode/ok_check', old: `${x}ok${y}`, new: `${x}no${y}`, cmd: CHECK },
+    { expect: 'TestCode/ok_check', old: `${x}ok`, new: `${x}`, cmd: CHECK },
+  ], { text: `${x}ok${y}\n` });
+  assert.strictEqual(r.code, 0, r.out);
+  const x20 = 'x'.repeat(20), y36 = 'y'.repeat(36);
+  assert.deepStrictEqual(r.reds, [
+    `- \`…${x20}ok\` → \`…${x20}no\`: RED: "TestCode/ok_check"`,
+    `- \`…${x20}ok${y36}…\` → \`…${x20}no${y36}…\`: RED: "TestCode/ok_check"`,
+    `- \`…${x20}ok\` → \`…${x20}\`: RED: "TestCode/ok_check"`,
+  ], r.out);
+});
+
 test('--batch: an entry it cannot read is bad input, named, and nothing runs', () => {
   const ok = { expect: 'TestCode/ok_check', file: 'a.txt', old: 'ok', new: 'bad', cmd: ['true'] };
   const cases = {
