@@ -1,9 +1,10 @@
 // make errcheck-skip-check (scripts/errcheck_skip_check.sh), on a scratch
 // repo with the repo's Makefile and three Go modules: an
 // ERRCHECK_SKIP_MODULES entry must be a tracked module that errcheck still
-// finds dropped errors in. errcheck itself is a stand-in (ERRCHECK=) that
-// prints what errcheck v1.30.0 prints through go run: the pinned errcheck
-// needs a newer go than the page-check job has.
+// finds dropped errors in. Most tests run a stand-in errcheck (ERRCHECK=)
+// that prints what errcheck v1.30.0 prints through go run; one runs the real
+// pinned $(ERRCHECK), whose go (GO_MIN) CI's pages job sets up, to match the
+// script's reading against errcheck's real output.
 //
 //   node --test scripts/errcheck_skip_check.test.js   (make page-check)
 
@@ -16,6 +17,10 @@ const { GIT_ENV, git, makeEnv, scratchRepo } = require('./test_git');
 
 const ROOT = path.join(__dirname, '..');
 const at = (dir, f) => path.join(dir, f);
+const MK = fs.readFileSync(at(ROOT, 'Makefile'), 'utf8');
+const goMin = /^GO_MIN := ([\d.]+)$/m.exec(MK);
+assert.ok(goMin, 'the Makefile has no GO_MIN := <version> line');
+const GO_MIN = goMin[1];
 
 // The stand-in errcheck, run in a module with ./...: in a module holding
 // FINDINGS it prints a finding and exits 1; in one holding BROKEN, the
@@ -29,7 +34,8 @@ exit 0
 `;
 
 // Module dirs clean (errcheck-clean), dirty (with findings), broken (does
-// not build), and dirty/nested inside dirty, clean.
+// not build), and dirty/nested inside dirty, clean: for the stand-in. And
+// for the real errcheck, real/dirty (one dropped error) and real/broken.
 const FILES = {
   'clean/go.mod': 'module ex/clean\n\ngo 1.21\n',
   'dirty/go.mod': 'module ex/dirty\n\ngo 1.21\n',
@@ -37,6 +43,10 @@ const FILES = {
   'dirty/nested/go.mod': 'module ex/dirty/nested\n\ngo 1.21\n',
   'broken/go.mod': 'module ex/broken\n\ngo 1.21\n',
   'broken/BROKEN': '',
+  'real/dirty/go.mod': `module ex/realdirty\n\ngo ${GO_MIN}\n`,
+  'real/dirty/p.go': 'package p\n\nfunc F() error { return nil }\n\nfunc G() { F() }\n',
+  'real/broken/go.mod': `module ex/realbroken\n\ngo ${GO_MIN}\n`,
+  'real/broken/p.go': 'package p\n\nvar _ = undefined\n',
 };
 
 // make runs make with args in a fresh scratch repo holding FILES, the
@@ -50,6 +60,7 @@ function make(...args) {
       fs.writeFileSync(at(dir, f), c);
     });
     fs.cpSync(at(ROOT, 'Makefile'), at(dir, 'Makefile'));
+    fs.cpSync(at(ROOT, '.errcheck-exclude'), at(dir, '.errcheck-exclude'));
     // Copied, not rewritten, so it keeps its mode.
     fs.cpSync(at(__dirname, 'errcheck_skip_check.sh'), at(dir, 'scripts/errcheck_skip_check.sh'));
     fs.writeFileSync(at(dir, 'fake_errcheck.sh'), FAKE_ERRCHECK, { mode: 0o755 });
@@ -118,6 +129,15 @@ test('passes, saying so, with no entries', () => {
   assert.match(r.out, /errcheck skip: no ERRCHECK_SKIP_MODULES entries to check/);
 });
 
+// The real pinned errcheck, through go run: its finding lines are the ones
+// the script counts, and a build break is none of them.
+test('with the real pinned errcheck, counts a finding, and fails on a module that does not build', () => {
+  const r = make('errcheck-skip-check', 'ERRCHECK_SKIP_MODULES=real/dirty');
+  passes(r);
+  assert.match(r.out, /errcheck skip: real\/dirty still has 1 errcheck findings/);
+  fails(make('errcheck-skip-check', 'ERRCHECK_SKIP_MODULES=real/broken'), /entry real\/broken: errcheck did not check it[^]*undefined/);
+});
+
 test('runs the errcheck make errcheck runs', () => {
   const r = make('-n', 'errcheck-skip-check', 'ERRCHECK_SKIP_MODULES=dirty');
   passes(r);
@@ -145,4 +165,17 @@ test("CI's go matrix runs make errcheck-skip-check MODULE=", () => {
   const job = /^  go:\n[^]*?(?=^  \S|(?![^]))/m.exec(yml);
   assert.ok(job, 'ci.yml has no go job');
   assert.match(job[0], /make [^\n]*\berrcheck-skip-check\b[^\n]*MODULE="\$MODULE"/);
+});
+
+// The pages job runs this file's real-errcheck test: its go is GO_MIN, read
+// from the Makefile, not a copy that could drift from it.
+test("CI's pages job sets up go at the Makefile's GO_MIN", () => {
+  const yml = fs.readFileSync(at(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  const job = /^  pages:\n[^]*?(?=^  \S|(?![^]))/m.exec(yml);
+  assert.ok(job, 'ci.yml has no pages job');
+  const id = /- id: ([\w-]+)\n\s+run: \|\n\s+v=\$\(sed -n 's\/\^GO_MIN := [^\n]*' Makefile\)/.exec(job[0]);
+  assert.ok(id, 'the pages job has no step reading GO_MIN from the Makefile');
+  assert.match(job[0], /\[ -n "\$v" \] \|\| \{ echo "::error::[^"\n]*GO_MIN[^"\n]*"; exit 1; \}/, 'the GO_MIN step does not fail on a Makefile without GO_MIN');
+  assert.match(job[0], new RegExp(`uses: actions/setup-go@[^\\n]*\\n\\s+with:\\n\\s+go-version: \\$\\{\\{ steps\\.${id[1]}\\.outputs\\.go \\}\\}`));
+  assert.ok(job[0].indexOf('setup-go') < job[0].indexOf('make page-check'), 'setup-go runs after make page-check');
 });
