@@ -129,9 +129,11 @@ jobs:
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
-      - name: build, vet, errcheck, test
+      # known-red-check runs this module's TEST_SKIP_PACKAGES entries (and
+      # fails on one no module owns), with this leg's LFS objects and go.
+      - name: build, vet, errcheck, test, known-red
         env:
           MODULE: ${{ matrix.module }}
         run: |
           [[ "$MODULE" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*$ && "$MODULE" != *..* ]] || { echo "::error::bad module path"; exit 1; }
-          make build vet errcheck test-unit MODULE="$MODULE"
+          make build vet errcheck test-unit known-red-check MODULE="$MODULE"
