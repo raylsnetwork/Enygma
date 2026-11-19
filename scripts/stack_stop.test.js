@@ -11,6 +11,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { makeEnv } = require('./test_git');
 
 const STOP = path.join(__dirname, 'stack_stop.sh');
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -72,7 +73,7 @@ function stop(s, port, cmdline = 'bash fake_stack.sh') {
 // makeStop runs make's <target> on the stack whose pid file is <pid var>'s,
 // so the stop gets the Makefile's own command line.
 function makeStop(target, pidVar, s) {
-  return run(spawn('make', ['--no-print-directory', '-C', path.join(__dirname, '..'), target, `${pidVar}=${s.pidFile}`]));
+  return run(spawn('make', ['--no-print-directory', '-C', path.join(__dirname, '..'), target, `${pidVar}=${s.pidFile}`], { env: makeEnv }));
 }
 
 // run resolves with child's exit status and output.

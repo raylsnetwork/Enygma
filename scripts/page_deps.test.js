@@ -12,6 +12,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { makeEnv } = require('./test_git');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -32,7 +33,7 @@ function deps(version, nvmrc = '22\n') {
       `#!/bin/sh\ncase "$1" in -v) echo v${version} ;; -p) echo ${major} ;; *) exit 1 ;; esac\n`, { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh\nmkdir -p node_modules && touch "${path.join(dir, 'npm-ran')}"\n`, { mode: 0o755 });
     const r = spawnSync('make', ['--no-print-directory', `scripts/node_modules/.installed-with-node-v${version}`], {
-      cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      cwd: dir, encoding: 'utf8', env: { ...makeEnv, PATH: `${bin}:${process.env.PATH}` },
     });
     return { code: r.status, out: r.stdout + r.stderr, npm: fs.existsSync(path.join(dir, 'npm-ran')) };
   } finally {
