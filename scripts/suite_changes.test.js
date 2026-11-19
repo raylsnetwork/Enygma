@@ -119,8 +119,9 @@ function stackScripts() {
   return scripts;
 }
 
-// The suites' wiring besides the stack scripts.
-const WIRING = ['Makefile', '.github/workflows/onchain.yml', 'scripts/suite_changes.sh', 'scripts/suite_result.sh'];
+// The suites' wiring besides the stack scripts, with own_group.sh, the
+// helper they start services through, which stackScripts' stack_*.sh misses.
+const WIRING = ['Makefile', '.github/workflows/onchain.yml', 'scripts/suite_changes.sh', 'scripts/suite_result.sh', 'scripts/own_group.sh'];
 
 for (const file of [...WIRING, ...stackScripts()]) {
   test(`a change to the suites' wiring ${file} runs every suite`, () => {

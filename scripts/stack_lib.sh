@@ -115,12 +115,13 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# OWN_GROUP, found as this file is sourced: start runs from DIR.
+OWN_GROUP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/own_group.sh"
 # start NAME DIR CMD… — runs CMD in DIR in its own process group, logging to $LOG_DIR/NAME.log.
 start() {
     local name=$1 dir=$2
     shift 2
-    # perl's setsid: stock macOS has no setsid(1).
-    (cd "$dir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@" >"$LOG_DIR/$name.log" 2>&1) &
+    (cd "$dir" && exec "$OWN_GROUP" "$@" >"$LOG_DIR/$name.log" 2>&1) &
     PIDS+=($!)
     NAMES+=("$name")
 }

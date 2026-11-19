@@ -22,6 +22,8 @@
 #   node --test scripts/stack_start.test.js   (make page-check)
 set -uo pipefail
 pid_file=$1 logs=$2 prefix=$3 stack_log=$4 run_dir=$5 cmdline=$6 target=$7 test_target=$8
+# Absolute: the stack script starts in <run dir>.
+own_group=$(cd "$(dirname "$0")" && pwd)/own_group.sh
 
 # A second start would overwrite the running stack's pid file, then fail on
 # its busy ports and remove it, leaving that stack with none.
@@ -34,9 +36,9 @@ log=$logs/$stack_log
 : >"$log"
 # The command line is split into words, as make's *_STACK_CMD writes it.
 # shellcheck disable=SC2086
-(cd "$run_dir" && LOG_DIR=$logs exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- $cmdline >"$log" 2>&1) &
+(cd "$run_dir" && LOG_DIR=$logs exec "$own_group" $cmdline >"$log" 2>&1) &
 pid=$!
-# Until perl has exec'd the stack script, ps shows another command line,
+# Until own_group.sh has exec'd the stack script, ps shows another command line,
 # which stack_stop.sh would take for a stale pid file (about 10 s at most).
 for _ in $(seq 1 200); do
     kill -0 "$pid" 2>/dev/null && [ "$(ps -o command= -p "$pid" 2>/dev/null)" != "$cmdline" ] || break
