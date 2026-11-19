@@ -131,7 +131,7 @@ Restart the Hardhat node (step 1) before each run — this resets the chain stat
 |---|---|
 | `contracts/enygma/contracts/Enygma.sol` | Core payment contract |
 | `contracts/enygma/contracts/EnygmaVerifier.sol` | Groth16 verifier (generated from `gnark-server/keys/EnygmaVerifier.sol`) |
-| `gnark-server/keys/EnygmaVerifier.sol` | Canonical verifier source — regenerate with `gnark-server/keygen/generate_keys.go` if keys change |
+| `gnark-server/keys/EnygmaVerifier.sol` | Canonical verifier source — regenerate with `make payments-keygen` (from the repo root) after a circuit change (`make payments-keys-check` fails until then), then copy it to `contracts/enygma/contracts/` |
 | `run_scripts/deploy_direct.py` | Deploys both contracts and writes `deploy_receipts.json` |
 | `go_client/enygma_test/transaction_test.go` | End-to-end integration test |
 | `test/enygma_test.go` | Standalone unit tests (no chain or server required) |

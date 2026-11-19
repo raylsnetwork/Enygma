@@ -66,9 +66,10 @@ jobs:
           go-version: "stable"
       - run: make fmt-check go-min-check
 
-  # No lfs: the check reads keys.src and the circuit sources, never a .key.
-  retail-keys:
-    name: retail keys stamp
+  # No lfs: each check reads keys.src and the circuit sources, never a .key.
+  # Each step's setup-go reads its module's go.mod.
+  committed-keys:
+    name: committed keys stamps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,6 +78,11 @@ jobs:
           go-version-file: enygma_retail_payments/gnark_circuits/go.mod
           cache-dependency-path: enygma_retail_payments/gnark_circuits/go.sum
       - run: make retail-keys-check
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: enygma_payments/gnark-server/go.mod
+          cache-dependency-path: enygma_payments/gnark-server/go.sum
+      - run: make payments-keys-check
 
   pages:
     name: page scripts

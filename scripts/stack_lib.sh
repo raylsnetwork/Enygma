@@ -57,7 +57,7 @@ use_node() {
 # KEYGEN (the sources' content), so a rebase, which moves file times only,
 # passes. MODULE and STAMP are repo-relative; the message names the keys as
 # "the KEYS in" STAMP's dir within its project (enygma_dvp, enygma_payments,
-# enygma_retail_payments: scripts/retail_keys_check.sh, make check's, not a stack).
+# enygma_retail_payments: scripts/keys_check.sh, make check's, not a stack).
 # It fails, naming TARGET, on a missing (or empty) stamp and on another one,
 # told apart; and on sources keys_src.sh cannot fingerprint, naming no
 # target, since TARGET's stamp would fail the same way.
