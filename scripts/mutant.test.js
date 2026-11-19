@@ -482,6 +482,38 @@ test('--batch: an entry run on bad input makes the batch bad input, exit 2', () 
   assert.match(r.out.trimEnd().split('\n').at(-1), /^BAD INPUT: 1 of 2/, r.out);
 });
 
+// runsOf runs a batch of two entries, mutating a.txt and b.txt (each "ok")
+// to "bad", with one test command, check, a shell line run in the batch's
+// dir; it returns the batch's result and how many times check ran.
+function runsOf(check) {
+  const tally = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-tally-'));
+  const runs = path.join(tally, 'runs');
+  const cmd = ['bash', '-c', `echo run >>${JSON.stringify(runs)}; ${check}`];
+  const r = batch(JSON.stringify(['a.txt', 'b.txt'].map((file) =>
+    ({ expect: 'TestCode/both_check', file, old: 'ok', new: 'bad', cmd }))));
+  const n = fs.existsSync(runs) ? fs.readFileSync(runs, 'utf8').split('\n').filter(Boolean).length : 0;
+  fs.rmSync(tally, { recursive: true });
+  return { r, n };
+}
+
+test('--batch: entries with one test command share its green run', () => {
+  // The command fails, too, on a batch's note reaching it.
+  const { r, n } = runsOf('env | grep -q MUTANT_SH_GREEN && exit 3; ' +
+    'grep -q ok a.txt && grep -q ok b.txt || { echo "--- FAIL: TestCode/both_check"; exit 1; }');
+  assert.strictEqual(r.code, 0, r.out);
+  assert.strictEqual(r.reds.length, 2, r.out);
+  assert.strictEqual(n, 3, `one green run and two mutant runs, not ${n} runs`);
+  assert.match(r.out, /^\(green run: passed already, with this command\)$/m, r.out);
+});
+
+test('--batch: a failed green run is not shared: each entry with its command runs its own', () => {
+  const { r, n } = runsOf('echo "--- FAIL: TestCode/both_check"; exit 1');
+  assert.strictEqual(r.code, 2, r.out);
+  assert.match(r.out.trimEnd().split('\n').at(-1), /^BAD INPUT: 2 of 2/, r.out);
+  assert.strictEqual(n, 2, `a green run for each entry, not ${n} runs`);
+  assert.doesNotMatch(r.out, /passed already/);
+});
+
 test('--batch: a batch with no red prints no RED line and exits 1', () => {
   const r = batch([
     { expect: 'TestCode/ok_check', old: 'ok', new: 'bad', cmd: 'true' },

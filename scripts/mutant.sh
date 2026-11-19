@@ -41,7 +41,11 @@
 # (old and new may span lines, as "\n" in JSON). A list it cannot read, or
 # an entry of another shape or naming no file, is bad input naming the
 # entry, and nothing runs. Each entry runs as mutant.sh --expect <regex> runs it, with the
-# batch's --timeout, and its file is restored after. Then it prints each
+# batch's --timeout, and its file is restored after; but its green run is
+# once per test command: an entry whose command (word for word) an earlier
+# entry's green run passed skips its own, as every entry restores its file.
+# A test command that changes the tree otherwise (writes a file) is then no
+# longer caught by a later entry's green run. Then it prints each
 # RED as the line a commit names it with,
 #   - `<old>` → `<new>`: RED: "<regex>"
 # (each text on one line, cut past 60 characters; when the cut leaves the
@@ -83,8 +87,8 @@ done
 # and restores the file before this run reads on.
 if [ -n "$batch" ]; then
   [ $# -eq 0 ] && [ -z "$expect" ] || usage
-  fields=$(mktemp) log=$(mktemp)
-  trap 'rm -f "$fields" "$log"' EXIT
+  fields=$(mktemp) log=$(mktemp) greens=$(mktemp) mark=$(mktemp)
+  trap 'rm -f "$fields" "$log" "$greens" "$mark"' EXIT
   # The list is read whole before any entry runs: a shape this cannot read
   # is bad input, naming the entry, never an entry skipped. Each entry comes
   # out as NUL-ended fields: its label (old → new, shortened, as its lines
@@ -166,9 +170,19 @@ PY
     n=$((n + 1)) label=${field[i]} expect=${field[i + 1]} file=${field[i + 2]}
     old=${field[i + 3]} new=${field[i + 4]} words=${field[i + 5]}
     echo "== mutant $n: $file"
+    # The green run: skipped for a command an earlier green run passed;
+    # else the entry's mutant.sh touches mark once it passes.
+    cmdkey=$(printf '%q ' "${field[@]:i + 6:words}") green=()
+    rm -f "$mark"
+    if grep -qxF -- "$cmdkey" "$greens"; then
+      green=(MUTANT_SH_GREEN_SKIP=1)
+    else
+      green=(MUTANT_SH_GREEN_MARK="$mark")
+    fi
     rc=0
-    bash "$0" --expect "$expect" --timeout "$timeout" "$file" "$old" "$new" \
+    env "${green[@]}" bash "$0" --expect "$expect" --timeout "$timeout" "$file" "$old" "$new" \
       -- "${field[@]:i + 6:words}" 2>&1 | tee "$log" || rc=$?
+    [ ! -f "$mark" ] || printf '%s\n' "$cmdkey" >>"$greens"
     if [ $rc = 0 ]; then
       nred=$((nred + 1))
       reds+=("- $label: RED: \"$expect\"")
@@ -215,7 +229,11 @@ cleanup() {
 # unsets both, so no mutant.sh the test command runs inherits them.
 root=${MUTANT_SH_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}
 copy_dir=${MUTANT_SH_COPY_DIR:-}
-unset MUTANT_SH_ROOT MUTANT_SH_COPY_DIR
+# From --batch: skip the green run (its command passed one already), or
+# touch green_mark once it passes. Unset too, so no test command sees them;
+# a self-mutant's copy, below, gets neither and runs its own green run.
+green_skip=${MUTANT_SH_GREEN_SKIP:-} green_mark=${MUTANT_SH_GREEN_MARK:-}
+unset MUTANT_SH_ROOT MUTANT_SH_COPY_DIR MUTANT_SH_GREEN_SKIP MUTANT_SH_GREEN_MARK
 trap cleanup EXIT
 if [ "$file" -ef "$0" ] || [ "$file" -ef "$(dirname "$0")/own_group.sh" ]; then
   copy_dir=$(mktemp -d)
@@ -292,11 +310,16 @@ run() {
 }
 
 # The command as the code stands: green, or there is nothing to show red.
-run green "$@"
-if [ $status != 0 ]; then
-  tail -8 "$out"
-  echo "BAD INPUT: the command fails without the mutant, so a red would show nothing"
-  exit 2
+if [ -n "$green_skip" ]; then
+  echo "(green run: passed already, with this command)"
+else
+  run green "$@"
+  if [ $status != 0 ]; then
+    tail -8 "$out"
+    echo "BAD INPUT: the command fails without the mutant, so a red would show nothing"
+    exit 2
+  fi
+  [ -z "$green_mark" ] || : >"$green_mark"
 fi
 
 python3 - "$file" "$old" "$new" <<'PY' || exit 2
