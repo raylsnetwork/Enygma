@@ -44,7 +44,8 @@ each_module = $(call each_in,$(MODULES),$(1))
 # regressions. These fail on main too, so they are not regressions. Fix one,
 # then delete its entry: make known-red-check (in make check) fails on a
 # TEST_SKIP_PACKAGES entry whose tests pass, or that names no package (an
-# import path, as go list ./... prints it in its module).
+# import path, as go list ./... prints it in its module), and on a
+# TEST_SKIP_MODULES entry that is not a tracked module.
 #   enygma_payments/go_client/enygma_test
 #       Integration suite: needs MY_KEY, a chain, gnark-server and the
 #       relayer, and fails instead of skipping when they are absent. So
@@ -62,21 +63,23 @@ TEST_PKGS = pkgs=$$(go list ./... $(if $(strip $(TEST_SKIP_PACKAGES)),| grep -v 
 
 # errcheck fails on a dropped error, except the idioms in .errcheck-exclude.
 # Modules with unchecked errors when it was added (70 findings) are skipped so
-# CI starts green and catches new ones. Fix a module's, then delete its entry;
-# see them with:  make errcheck ERRCHECK_SKIP_MODULES= MODULE=<dir>
+# CI starts green and catches new ones. Fix a module's, then delete its entry:
+# make errcheck-skip-check (in make check) fails on an entry that is
+# errcheck-clean, or that is not a tracked module. See a module's with:
+#   make errcheck ERRCHECK_SKIP_MODULES= MODULE=<dir>
 ERRCHECK := go run github.com/kisielk/errcheck@v1.30.0 -exclude $(CURDIR)/.errcheck-exclude
 # The lowest go line a module's go.mod may declare: what that errcheck needs.
 # CI's setup-go installs the version a go.mod declares, with GOTOOLCHAIN=local,
 # so a module below it can't run errcheck in CI (#304). Raise it with ERRCHECK.
 GO_MIN := 1.26.0
 ERRCHECK_SKIP_MODULES ?= \
-	enygma_dvp/gnark_circuits enygma_dvp/relayer enygma_dvp/src enygma_dvp/test \
+	enygma_dvp/gnark_circuits enygma_dvp/src enygma_dvp/test \
 	enygma_payments/demo enygma_payments/gnark-server enygma_payments/go_client/enygma_test \
 	enygma_payments/test enygma_retail_payments/demo enygma_retail_payments/gnark_circuits \
 	enygma_retail_payments/private_tags/src enygma_retail_payments/private_tags/test \
-	enygma_retail_payments/src enygma_retail_payments/test
+	enygma_retail_payments/src
 
-.PHONY: help modules hooks hooks-check fmt fmt-check go-min-check known-red-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
+.PHONY: help modules hooks hooks-check fmt fmt-check go-min-check known-red-check errcheck-skip-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-burn-keygen payments-keygen payments-keys-check payments-stack payments-stack-stop payments-test \
@@ -155,8 +158,10 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/keys_check.test.js >/dev/null || node --test scripts/keys_check.test.js
 	@# PAGE_DEPS, page-check's npm dependencies, stop on a node older than .nvmrc's, naming the fix.
 	@node --test scripts/page_deps.test.js >/dev/null || node --test scripts/page_deps.test.js
-	@# known_red_check.sh, make check's known-red-check, fails on a TEST_SKIP_PACKAGES entry that passes or names no package.
+	@# known_red_check.sh, make check's known-red-check, fails on a TEST_SKIP_PACKAGES entry that passes or names no package, or a TEST_SKIP_MODULES entry naming no module.
 	@node --test scripts/known_red_check.test.js >/dev/null || node --test scripts/known_red_check.test.js
+	@# errcheck_skip_check.sh, make check's errcheck-skip-check, fails on an ERRCHECK_SKIP_MODULES entry that is errcheck-clean or names no module.
+	@node --test scripts/errcheck_skip_check.test.js >/dev/null || node --test scripts/errcheck_skip_check.test.js
 	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 
@@ -183,13 +188,16 @@ go-min-check: ## Fail when a tracked go.mod declares a go below GO_MIN (or none)
 	if [ -n "$$bad" ]; then echo "go below GO_MIN $(GO_MIN), which the pinned errcheck needs, in:$$bad"; exit 1; fi; \
 	echo "go.mod go lines: all >= $(GO_MIN)"
 
-check: hooks-check fmt-check go-min-check retail-keys-check payments-keys-check page-check build vet errcheck known-red-check ## Static checks, and that each known-red package still fails its tests
+check: hooks-check fmt-check go-min-check retail-keys-check payments-keys-check page-check build vet errcheck known-red-check errcheck-skip-check ## Static checks, and that each known-red package still fails its tests and each errcheck-skipped module still has findings; and that each skip entry names a module
 
 hooks-check: ## Fail when a git hook type .pre-commit-config.yaml installs is missing from this clone (skipped in CI)
 	@scripts/check_hooks_installed.sh
 
-known-red-check: ## Fail when a TEST_SKIP_PACKAGES entry passes its tests (delete it), does not build, or names no package; runs only the entries in MODULE's modules (CI: one leg each)
-	@scripts/known_red_check.sh "$(MODULES)" $(TEST_SKIP_PACKAGES)
+known-red-check: ## Fail when a TEST_SKIP_PACKAGES entry passes its tests (delete it), does not build, or names no package, or a TEST_SKIP_MODULES entry is not a tracked module; runs only the entries in MODULE's modules (CI: one leg each)
+	@scripts/known_red_check.sh "$(MODULES)" "$(TEST_SKIP_MODULES)" $(TEST_SKIP_PACKAGES)
+
+errcheck-skip-check: ## Fail when an ERRCHECK_SKIP_MODULES entry is errcheck-clean (delete it), errcheck cannot check it, or it is not a tracked module; runs only MODULE's entry (CI: one leg each)
+	@scripts/errcheck_skip_check.sh '$(ERRCHECK)' "$(MODULES)" $(ERRCHECK_SKIP_MODULES)
 
 test-unit: ## go test ./... in every module (chain-dependent tests skip themselves)
 	@echo "Not run (known red, see TEST_SKIP_* above): modules [$(TEST_SKIP_MODULES)], packages [$(TEST_SKIP_PACKAGES)]"

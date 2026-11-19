@@ -8,16 +8,33 @@
 # starts with), and only when that module is one of <modules>: CI's go
 # matrix runs each module's entries in that module's leg, with its LFS
 # objects and its go.mod's go. An entry no tracked module owns fails in
-# every leg.
+# every leg. It fails, in every leg too, on a TEST_SKIP_MODULES entry (the
+# second argument) that is not a tracked module: test-unit's $(filter-out)
+# never matches it, so it skips nothing. Those modules' tests need a stack,
+# so only the name is checked.
 #
-#   scripts/known_red_check.sh "<module dir>..." [<package>...]
+#   scripts/known_red_check.sh "<module dir>..." "<skipped module dir>..." [<package>...]
 #
 # Tested by scripts/known_red_check.test.js.
 set -euo pipefail
-[ $# -ge 1 ] || { echo 'usage: scripts/known_red_check.sh "<module dir>..." [<package>...]' >&2; exit 2; }
+[ $# -ge 2 ] || { echo 'usage: scripts/known_red_check.sh "<module dir>..." "<skipped module dir>..." [<package>...]' >&2; exit 2; }
 modules=" $1 "
-shift
-[ $# -gt 0 ] || { echo "known red: no TEST_SKIP_PACKAGES entries to check"; exit 0; }
+skipped_modules=$2
+shift 2
+
+fail=0
+tracked=" "
+for gomod in $(git ls-files '*go.mod'); do tracked="$tracked$(dirname "$gomod") "; done
+for dir in $skipped_modules; do
+    case "$tracked" in
+        *" $dir "*) ;;
+        *)
+            echo "TEST_SKIP_MODULES entry $dir is not a tracked Go module (make modules lists them): fix it to the module's dir, or delete it" >&2
+            fail=1
+            ;;
+    esac
+done
+[ $# -gt 0 ] || { echo "known red: no TEST_SKIP_PACKAGES entries to check"; exit $fail; }
 
 # owner prints the dir of the tracked module whose module path is the
 # longest prefix of import path $1, or nothing.
@@ -34,7 +51,6 @@ owner() {
     printf '%s' "$best"
 }
 
-fail=0
 for pkg in "$@"; do
     dir=$(owner "$pkg")
     if [ -z "$dir" ]; then
