@@ -12,6 +12,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
+const { makeEnv } = require('./test_git');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -79,10 +80,10 @@ function run(child) {
   return new Promise((resolve) => child.on('close', (status) => resolve({ status, out })));
 }
 
-// makeStart runs make's <target> on the fake stack s, with env.
-function makeStart([target, cmdVar, pidVar, logVar], s, env = process.env) {
+// makeStart runs make's <target> on the fake stack s, with env added.
+function makeStart([target, cmdVar, pidVar, logVar], s, env = {}) {
   return run(spawn('make', ['--no-print-directory', '-C', ROOT, target,
-    `${cmdVar}=${s.cmd}`, `${pidVar}=${s.pidFile}`, `${logVar}=${s.logs}`], { env }));
+    `${cmdVar}=${s.cmd}`, `${pidVar}=${s.pidFile}`, `${logVar}=${s.logs}`], { env: { ...makeEnv, ...env } }));
 }
 
 // done lets the fake stack past its wait, so make returns, then kills what
@@ -194,7 +195,7 @@ test('the pid file names the stack script from the start, never the process befo
   fs.mkdirSync(bin);
   const perl = execFileSync('sh', ['-c', 'command -v perl'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(path.join(bin, 'perl'), `#!/bin/sh\nsleep 1\nexec ${perl} "$@"\n`, { mode: 0o755 });
-  const started = makeStart(TARGETS[2], s, { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+  const started = makeStart(TARGETS[2], s, { PATH: `${bin}:${process.env.PATH}` });
   try {
     const pid = await readPid(s);
     const cmd = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).trim();

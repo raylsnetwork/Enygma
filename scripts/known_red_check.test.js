@@ -10,10 +10,11 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { GIT_ENV, git, scratchRepo } = require('./test_git');
+const { GIT_ENV, git, makeEnv, scratchRepo } = require('./test_git');
 
 const ROOT = path.join(__dirname, '..');
-const goEnv = { ...GIT_ENV, GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' };
+const GO_VARS = { GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' };
+const goEnv = { ...GIT_ENV, ...GO_VARS };
 
 const testFile = (pkg, body) => `package ${pkg}\n\nimport "testing"\n\nfunc TestIt(t *testing.T) { ${body} }\n`;
 
@@ -48,7 +49,7 @@ function make(...args) {
     fs.cpSync(at(__dirname, 'known_red_check.sh'), at(dir, 'scripts/known_red_check.sh'));
     git(dir, 'add', '-A');
     git(dir, 'commit', '-qm', 'init');
-    const r = spawnSync('make', ['--no-print-directory', ...args], { cwd: dir, encoding: 'utf8', env: goEnv });
+    const r = spawnSync('make', ['--no-print-directory', ...args], { cwd: dir, encoding: 'utf8', env: { ...makeEnv, ...GO_VARS } });
     return { code: r.status, out: r.stdout + r.stderr };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

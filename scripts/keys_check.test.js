@@ -11,10 +11,11 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { GIT_ENV, git, scratchRepo } = require('./test_git');
+const { GIT_ENV, git, makeEnv, scratchRepo } = require('./test_git');
 
 const ROOT = path.join(__dirname, '..');
-const goEnv = { ...GIT_ENV, GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' };
+const GO_VARS = { GOFLAGS: '', GOWORK: 'off', GOTOOLCHAIN: 'local' };
+const goEnv = { ...GIT_ENV, ...GO_VARS };
 
 // keygenSource is a scratch keygen in module mod, building circuit package
 // pkg: it writes key, or, as the scratch repo's KEYGEN_DO says, fails or
@@ -144,7 +145,7 @@ function repo(m) {
 // make runs make with args in dir, with env added; it returns the exit code
 // and the output.
 function make(dir, args, env = {}) {
-  const r = spawnSync('make', ['--no-print-directory', ...args], { cwd: dir, encoding: 'utf8', env: { ...goEnv, ...env } });
+  const r = spawnSync('make', ['--no-print-directory', ...args], { cwd: dir, encoding: 'utf8', env: { ...makeEnv, ...GO_VARS, ...env } });
   return { code: r.status, out: r.stdout + r.stderr };
 }
 
