@@ -379,25 +379,38 @@ test('a stop whose service list is gone stops the services start started', { tim
   assert.strictEqual(await listening(port), false, 'the service still listens with its list gone');
 });
 
-// make shield-demo-restart and shield-gnark-restart may run at once.
-test('stack_service.sh keeps every line when restarts record at once', { timeout: 30000 }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-service-test-'));
-  try {
-    const names = Array.from({ length: 12 }, (_, i) => `svc${i}`);
-    fs.writeFileSync(path.join(dir, 'services.pids'), names.map((n) => `${n} 1`).join('\n') + '\n');
-    const runs = names.map((n, i) => new Promise((resolve) => {
-      const c = spawn(STACK_SERVICE, [dir, n, String(1000 + i)], { stdio: ['ignore', 'ignore', 'pipe'] });
-      let err = '';
-      c.stderr.on('data', (d) => { err += d; });
-      c.on('close', (code) => resolve({ code, err }));
-    }));
-    for (const { code, err } of await Promise.all(runs)) assert.strictEqual(code, 0, err);
-    const lines = fs.readFileSync(path.join(dir, 'services.pids'), 'utf8').trim().split('\n').sort();
-    assert.deepStrictEqual(lines, names.map((n, i) => `${n} ${1000 + i}`).sort(), 'a concurrent record lost or kept a line');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+// make shield-demo-restart and shield-gnark-restart may run at once. The
+// second run puts first on PATH a mkdir that creates the dir and exits 0
+// even when it was already there, as uutils mkdir 0.10 (ubuntu-26.04's
+// /usr/bin/mkdir) does when two race (#398): a lock taken by mkdir's exit
+// status then lets every record in at once.
+for (const [nameSuffix, lyingMkdir] of [['', false], [', even with a mkdir that reports success on a dir that exists', true]]) {
+  test(`stack_service.sh keeps every line when restarts record at once${nameSuffix}`, { timeout: 30000 }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-service-test-'));
+    try {
+      const env = { ...process.env };
+      if (lyingMkdir) {
+        const real = spawnSync('sh', ['-c', 'command -v mkdir'], { encoding: 'utf8' }).stdout.trim();
+        fs.mkdirSync(path.join(dir, 'bin'));
+        fs.writeFileSync(path.join(dir, 'bin', 'mkdir'), `#!/bin/sh\n${real} "$@" 2>/dev/null\nexit 0\n`, { mode: 0o755 });
+        env.PATH = `${path.join(dir, 'bin')}:${process.env.PATH}`;
+      }
+      const names = Array.from({ length: 12 }, (_, i) => `svc${i}`);
+      fs.writeFileSync(path.join(dir, 'services.pids'), names.map((n) => `${n} 1`).join('\n') + '\n');
+      const runs = names.map((n, i) => new Promise((resolve) => {
+        const c = spawn(STACK_SERVICE, [dir, n, String(1000 + i)], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+        let err = '';
+        c.stderr.on('data', (d) => { err += d; });
+        c.on('close', (code) => resolve({ code, err }));
+      }));
+      for (const { code, err } of await Promise.all(runs)) assert.strictEqual(code, 0, err);
+      const lines = fs.readFileSync(path.join(dir, 'services.pids'), 'utf8').trim().split('\n').sort();
+      assert.deepStrictEqual(lines, names.map((n, i) => `${n} ${1000 + i}`).sort(), 'a concurrent record lost or kept a line');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('stack_service.sh fails, naming its usage, on the wrong number of arguments', () => {
   const r = spawnSync(STACK_SERVICE, [os.tmpdir(), 'demo'], { encoding: 'utf8' });
