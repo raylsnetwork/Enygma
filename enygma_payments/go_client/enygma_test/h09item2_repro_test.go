@@ -128,6 +128,7 @@ func TestH09Item2_BankSelfSubmission(t *testing.T) {
 		t.Fatalf("bind: %v", err)
 	}
 	waitTx(instance.Initialize(ownerAuth()))
+	approveTestVerifier(t, client, instance, ownerAuth(), testKindTransfer, 0, verifierAddr)
 	waitTx(instance.AddVerifier(ownerAuth(), verifierAddr))
 
 	// ── Register 6 banks under 6 DISTINCT addresses (Fix H-09 item 2) ──────

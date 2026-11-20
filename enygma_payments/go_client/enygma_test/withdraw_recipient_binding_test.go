@@ -54,6 +54,7 @@ func TestWithdrawRecipientBinding(t *testing.T) {
 		instance, enygmaAddr := freshSetup(t, client, mkAuth, waitTx)
 		const artifactBase = "../../contracts/enygma/artifacts/contracts"
 		verifier := deployFromArtifact(t, client, mkAuth(), artifactBase+"/mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
+		approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, nBanks, verifier)
 		if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), verifier, big.NewInt(nBanks))); r.Status != 1 {
 			t.Fatal("addWithdrawVerifier failed")
 		}

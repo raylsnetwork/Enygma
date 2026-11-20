@@ -108,6 +108,7 @@ func TestC05DuplicateParticipantIdRejected(t *testing.T) {
 		t.Fatalf("bind contract: %v", err)
 	}
 	waitTx(instance.Initialize(mkAuth()))
+	approveTestVerifier(t, client, instance, mkAuth(), testKindTransfer, 0, verifierAddr)
 	waitTx(instance.AddVerifier(mkAuth(), verifierAddr))
 
 	banks := make([]c04Bank, nBanks)

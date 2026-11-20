@@ -576,6 +576,63 @@ func resolveAddresses() (token, verifier string, err error) {
 	return
 }
 
+// registerTransferVerifier pins the demo's transfer verifier to its local build.
+func (fc *flowCtx) registerTransferVerifier(inst *enygma.Enygma, verifier common.Address) error {
+	_, thisFile, _, _ := runtime.Caller(0)
+	localChain := chainID == 1337 && (rpcURL == "http://127.0.0.1:8545" || rpcURL == "http://localhost:8545")
+	artifactPath := os.Getenv("REVIEWED_VERIFIER_ARTIFACT")
+	if artifactPath == "" {
+		if !localChain {
+			return fmt.Errorf("set REVIEWED_VERIFIER_ARTIFACT to the reviewed transfer verifier build")
+		}
+		artifactPath = filepath.Join(filepath.Dir(thisFile), "..", "contracts", "enygma", "artifacts", "contracts", "EnygmaVerifier.sol", "Verifier.json")
+	}
+	data, err := os.ReadFile(artifactPath)
+	if err != nil {
+		return fmt.Errorf("read reviewed transfer verifier artifact: %w", err)
+	}
+	var artifact struct {
+		DeployedBytecode string `json:"deployedBytecode"`
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		return fmt.Errorf("parse reviewed transfer verifier artifact: %w", err)
+	}
+	runtimeCode, err := hex.DecodeString(strings.TrimPrefix(artifact.DeployedBytecode, "0x"))
+	if err != nil || len(runtimeCode) == 0 {
+		return fmt.Errorf("reviewed transfer verifier artifact has invalid runtime bytecode")
+	}
+
+	const transferVerifierKind = 0
+	slot := new(big.Int)
+	runtimeHash := crypto.Keccak256Hash(runtimeCode)
+	approved, err := inst.ApprovedVerifierRuntimeHash(nil, transferVerifierKind, slot)
+	if err != nil {
+		return fmt.Errorf("read approved transfer verifier runtime: %w", err)
+	}
+	if approved != runtimeHash {
+		if !localChain {
+			return fmt.Errorf("transfer verifier runtime must be approved on chain before remote setup")
+		}
+		tx, err := inst.ApproveVerifierRuntime(fc.mkAuth(), transferVerifierKind, slot, runtimeHash)
+		if _, err := fc.waitTx("ApproveVerifierRuntime", tx, err); err != nil {
+			return fmt.Errorf("approve local transfer verifier runtime: %w", err)
+		}
+	}
+
+	tx, err := inst.AddVerifier(fc.mkAuth(), verifier)
+	if _, err := fc.waitTx("AddVerifier", tx, err); err != nil {
+		return fmt.Errorf("register transfer verifier: %w", err)
+	}
+	active, err := inst.VerifierAddress(nil)
+	if err != nil {
+		return fmt.Errorf("read active transfer verifier: %w", err)
+	}
+	if active != verifier {
+		return fmt.Errorf("transfer verifier %s is pending activation", verifier)
+	}
+	return nil
+}
+
 // ── Tab 1: Setup flow ─────────────────────────────────────────────────────────
 
 func runSetup(s *Server) {
@@ -676,13 +733,12 @@ func runSetup(s *Server) {
 		fmt.Sprintf("contract %s · epochInterval=1", trunc(tokenAddr, 14)))
 	pause(600 * time.Millisecond)
 
+	verifier := common.HexToAddress(verifierAddr)
 	fc.emit("add_verifier", "running", "Register verifier", fmt.Sprintf("addVerifier(%s)", trunc(verifierAddr, 14)))
-	if avTx, avErr := inst.AddVerifier(fc.mkAuth(), common.HexToAddress(verifierAddr)); avErr == nil {
-		if _, waitErr := fc.waitTx("AddVerifier", avTx, avErr); waitErr != nil {
-			fc.log("Verifier already registered (OK — idempotent)")
-		}
-	} else {
-		fc.log("AddVerifier skipped: " + avErr.Error())
+	if err := fc.registerTransferVerifier(inst, verifier); err != nil {
+		fc.emit("add_verifier", "error", "Register verifier", err.Error())
+		fc.done(false, err.Error())
+		return
 	}
 	fc.emit("add_verifier", "success", "Register verifier",
 		fmt.Sprintf("Groth16 verifier registered at %s", trunc(verifierAddr, 14)))

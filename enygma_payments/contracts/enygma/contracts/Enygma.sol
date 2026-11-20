@@ -195,12 +195,16 @@ contract Enygma is IEnygma {
     struct PendingVerifierChange {
         address target;
         uint256 readyAt;
+        bytes32 runtimeHash;
     }
 
     /// @notice A proposed replacement per slot [kind][splitCount] (splitCount
     ///         is 0 for every kind but Withdraw), waiting for
     ///         executeVerifierChange.
     mapping(VerifierKind => mapping(uint256 => PendingVerifierChange)) public pendingVerifierChange;
+
+    /// @notice Reviewed verifier runtime hash per verifier slot. Zero revokes the approval.
+    mapping(VerifierKind => mapping(uint256 => bytes32)) public approvedVerifierRuntimeHash;
 
     /// @notice Consumed nullifiers — prevents proof replay
     mapping(uint256 => bool) private _nullifiers;
@@ -300,6 +304,7 @@ contract Enygma is IEnygma {
     error InvalidFingerprintParty();
     error InvalidCommitmentPoint();
     error VerifierHasNoCode();
+    error VerifierRuntimeMismatch();
     error AlreadyRegistered();
     error UnregisteredParticipant();
     error InvalidAccountId();
@@ -982,6 +987,12 @@ contract Enygma is IEnygma {
     // again for the same slot replaces the pending change and restarts its
     // delay. With verifierChangeDelay == 0 replacements apply at once.
 
+    /// @notice Approve the Keccak-256 of the reviewed verifier runtime for a slot.
+    /// @dev Use splitCount zero for non-withdrawal verifiers.
+    function approveVerifierRuntime(VerifierKind kind, uint256 splitCount, bytes32 runtimeHash) external onlyOwner {
+        approvedVerifierRuntimeHash[kind][splitCount] = runtimeHash;
+    }
+
     /**
      * @notice Register transfer verifier contract
      * @param verifier Address of verifier contract
@@ -1010,9 +1021,7 @@ contract Enygma is IEnygma {
      * @notice Register deposit verifier contract
      * @param verifier Address of verifier contract
      */
-    function addDepositVerifier(
-        address verifier
-    ) external onlyOwner returns (bool) {
+    function addDepositVerifier(address verifier) external onlyOwner returns (bool) {
         _setOrPropose(VerifierKind.Deposit, 0, verifier);
         return true;
     }
@@ -1074,7 +1083,10 @@ contract Enygma is IEnygma {
         PendingVerifierChange memory p = pendingVerifierChange[kind][splitCount];
         if (p.target == address(0)) revert NoPendingVerifierChange();
         if (block.timestamp < p.readyAt) revert VerifierChangeNotReady();
-        if (p.target.code.length == 0) revert VerifierHasNoCode();
+        if (kind != VerifierKind.ZkDvp && p.runtimeHash != approvedVerifierRuntimeHash[kind][splitCount]) {
+            revert VerifierRuntimeMismatch();
+        }
+        _checkVerifierRuntime(kind, p.target, p.runtimeHash);
         delete pendingVerifierChange[kind][splitCount];
         _applyVerifier(kind, splitCount, p.target);
         emit VerifierChangeExecuted(kind, splitCount, p.target);
@@ -1094,14 +1106,21 @@ contract Enygma is IEnygma {
     // pending for verifierChangeDelay (or sets it at once when that is 0).
     function _setOrPropose(VerifierKind kind, uint256 splitCount, address target) private {
         if (target == address(0)) revert ZeroAddress();
-        if (target.code.length == 0) revert VerifierHasNoCode();
+        bytes32 runtimeHash = kind == VerifierKind.ZkDvp ? bytes32(0) : approvedVerifierRuntimeHash[kind][splitCount];
+        _checkVerifierRuntime(kind, target, runtimeHash);
         if (verifierChangeDelay == 0 || _currentVerifier(kind, splitCount) == address(0)) {
             _applyVerifier(kind, splitCount, target);
             return;
         }
         uint256 readyAt = block.timestamp + verifierChangeDelay;
-        pendingVerifierChange[kind][splitCount] = PendingVerifierChange(target, readyAt);
+        pendingVerifierChange[kind][splitCount] = PendingVerifierChange(target, readyAt, runtimeHash);
         emit VerifierChangeProposed(kind, splitCount, target, readyAt);
+    }
+
+    // Match the approved verifier runtime. The DvP bridge is checked for code only.
+    function _checkVerifierRuntime(VerifierKind kind, address target, bytes32 runtimeHash) private view {
+        if (target.code.length == 0) revert VerifierHasNoCode();
+        if (kind != VerifierKind.ZkDvp && target.codehash != runtimeHash) revert VerifierRuntimeMismatch();
     }
 
     // The address currently in a slot.

@@ -75,6 +75,7 @@ func m13Setup(t *testing.T) m13Fixture {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockFeeVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockFeeVerifier.sol/MockFeeVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindFee, 0, mockFeeVerifierAddr)
 	if r := waitTx(instance.AddFeeVerifier(mkAuth(), mockFeeVerifierAddr)); r.Status != 1 {
 		t.Fatal("addFeeVerifier failed")
 	}

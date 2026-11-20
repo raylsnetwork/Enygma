@@ -122,6 +122,7 @@ func TestSequentialTransfers(t *testing.T) {
 
 	// ── Setup ─────────────────────────────────────────────────────────────────
 	waitTxOK(instance.Initialize(mkAuth()))
+	approveTestVerifier(t, client, instance, mkAuth(), testKindTransfer, 0, verifierAddr)
 	waitTxOK(instance.AddVerifier(mkAuth(), verifierAddr))
 
 	pks := make([]*big.Int, nBanks)
@@ -231,6 +232,7 @@ func TestSequentialTransfers(t *testing.T) {
 	t.Log("deploying UsdrVerifier.sol…")
 	usdrVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/UsdrVerifier.sol/Verifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindUsdr, 0, usdrVerifierAddr)
 	waitTxOK(instance.AddUsdrVerifier(mkAuth(), usdrVerifierAddr))
 	waitTxOK(instance.SetUsdrFixedFee(mkAuth(), big.NewInt(usdrFeeAmt)))
 	usdrCx, usdrCy := regCommit(big.NewInt(usdrPrevR))

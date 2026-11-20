@@ -92,6 +92,7 @@ func c04Setup(t *testing.T, client *ethclient.Client) (*enygma.Enygma, []c04Bank
 		t.Fatalf("bind contract: %v", err)
 	}
 	waitTx(instance.Initialize(ownerAuth()))
+	approveTestVerifier(t, client, instance, ownerAuth(), testKindTransfer, 0, mockVerifierAddr)
 	waitTx(instance.AddVerifier(ownerAuth(), mockVerifierAddr))
 
 	banks := make([]c04Bank, nBanks)

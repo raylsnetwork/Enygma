@@ -116,6 +116,33 @@ func deployFromArtifact(
 	return addr
 }
 
+const (
+	testKindTransfer uint8 = iota
+	testKindWithdraw
+	testKindDeposit
+	testKindFee
+	testKindBurn
+	testKindUsdr
+)
+
+// approveTestVerifier approves the runtime of a verifier deployed by the fixture.
+func approveTestVerifier(t *testing.T, client *ethclient.Client, instance *enygma.Enygma, auth *bind.TransactOpts, kind uint8, split int, target common.Address) {
+	t.Helper()
+	ctx := context.Background()
+	code, err := client.CodeAt(ctx, target, nil)
+	if err != nil || len(code) == 0 {
+		t.Fatalf("read verifier fixture runtime at %s: code length %d, error %v", target, len(code), err)
+	}
+	tx, err := instance.ApproveVerifierRuntime(auth, kind, big.NewInt(int64(split)), crypto.Keccak256Hash(code))
+	if err != nil {
+		t.Fatalf("approve verifier fixture: %v", err)
+	}
+	receipt, err := bind.WaitMined(ctx, client, tx)
+	if err != nil || receipt.Status != ethtypes.ReceiptStatusSuccessful {
+		t.Fatalf("approve verifier fixture: receipt=%v error=%v", receipt, err)
+	}
+}
+
 // testEpochInterval is the epochInterval every deployEnygma contract is built
 // with (deploy_direct.py's default).
 const testEpochInterval = 30
@@ -156,6 +183,7 @@ func deployEnygma(
 	if r := waitTx(instance.Initialize(mkAuth())); r.Status != 1 {
 		t.Fatal("initialize failed")
 	}
+	approveTestVerifier(t, client, instance, mkAuth(), testKindTransfer, 0, verifierAddr)
 	if r := waitTx(instance.AddVerifier(mkAuth(), verifierAddr)); r.Status != 1 {
 		t.Fatal("addVerifier failed")
 	}
@@ -291,11 +319,13 @@ func TestNullifierReuseProtection(t *testing.T) {
 	waitTx(instance.Initialize(mkAuth()))
 	t.Log("initialized")
 
+	approveTestVerifier(t, client, instance, mkAuth(), testKindTransfer, 0, verifierAddr)
 	if r := waitTx(instance.AddVerifier(mkAuth(), verifierAddr)); r.Status != 1 {
 		t.Fatal("addVerifier failed")
 	}
 	t.Log("verifier registered")
 
+	approveTestVerifier(t, client, instance, mkAuth(), testKindUsdr, 0, usdrVerifierAddr)
 	if r := waitTx(instance.AddUsdrVerifier(mkAuth(), usdrVerifierAddr)); r.Status != 1 {
 		t.Fatal("addUsdrVerifier failed")
 	}
@@ -901,6 +931,7 @@ func TestBurnBalanceUpdate(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockBurnVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockBurnVerifier.sol/MockBurnVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindBurn, 0, mockBurnVerifierAddr)
 	if r := waitTx(instance.AddBurnVerifier(mkAuth(), mockBurnVerifierAddr)); r.Status != 1 {
 		t.Fatal("addBurnVerifier failed")
 	}

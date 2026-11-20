@@ -18,6 +18,7 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/ethclient/simulated"
+	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -67,7 +70,7 @@ func loadEnygmaArtifact(t *testing.T, rel string) (abi.ABI, []byte) {
 	return parsed, common.FromHex(a.Bytecode)
 }
 
-func newOwnerEnv(t *testing.T) *ownerEnv {
+func newOwnerEnv(t *testing.T, options ...func(*node.Config, *ethconfig.Config)) *ownerEnv {
 	t.Helper()
 	key, err := crypto.GenerateKey()
 	if err != nil {
@@ -75,7 +78,7 @@ func newOwnerEnv(t *testing.T) *ownerEnv {
 	}
 	backend := simulated.NewBackend(types.GenesisAlloc{
 		crypto.PubkeyToAddress(key.PublicKey): {Balance: new(big.Int).Lsh(big.NewInt(1), 100)},
-	})
+	}, options...)
 	t.Cleanup(func() { backend.Close() })
 	e := &ownerEnv{t: t, backend: backend, key: key}
 	e.abi, _ = loadEnygmaArtifact(t, "Enygma.sol/Enygma.json")
@@ -176,6 +179,15 @@ func (e *ownerEnv) addr(method string, args ...interface{}) common.Address {
 	return e.call(method, args...)[0].(common.Address)
 }
 
+func (e *ownerEnv) runtimeHash(target common.Address) common.Hash {
+	e.t.Helper()
+	code, err := e.backend.Client().CodeAt(context.Background(), target, nil)
+	if err != nil || len(code) == 0 {
+		e.t.Fatalf("read fixture runtime at %s: code length %d, error %v", target, len(code), err)
+	}
+	return crypto.Keccak256Hash(code)
+}
+
 func (e *ownerEnv) wait(d time.Duration) {
 	e.t.Helper()
 	if err := e.backend.AdjustTime(d); err != nil {
@@ -186,6 +198,99 @@ func (e *ownerEnv) wait(d time.Duration) {
 
 const hour = int64(3600)
 
+func TestEnygmaOwner_VerifierRegistrationRequiresReviewedRuntime(t *testing.T) {
+	e := newOwnerEnv(t)
+	e.enygma = e.mustDeploy("Enygma.sol/Enygma.json", big.NewInt(1), big.NewInt(hour))
+	match := e.mustDeploy("mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
+	other := e.mustDeploy("mocks/MockFalseVerifier.sol/MockFalseVerifier.json")
+	reviewedHash := e.runtimeHash(match)
+	for _, tc := range []struct {
+		method string
+		kind   uint8
+		split  int64
+	}{
+		{"addVerifier", kindTransfer, 0},
+		{"addWithdrawVerifier", kindWithdraw, 6},
+		{"addDepositVerifier", 2, 0},
+		{"addFeeVerifier", 3, 0},
+		{"addBurnVerifier", 4, 0},
+		{"addUsdrVerifier", 5, 0},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			split := big.NewInt(tc.split)
+			register := func(target common.Address) string {
+				if tc.kind == kindWithdraw {
+					return e.send(tc.method, target, split)
+				}
+				return e.send(tc.method, target)
+			}
+			if got := register(match); got != "VerifierRuntimeMismatch" {
+				t.Fatalf("registration without approval: got %q, want VerifierRuntimeMismatch", got)
+			}
+			e.mustSend("approveVerifierRuntime", tc.kind, split, reviewedHash)
+			if got := register(other); got != "VerifierRuntimeMismatch" {
+				t.Fatalf("unreviewed initial registration: got %q, want VerifierRuntimeMismatch", got)
+			}
+			if got := register(match); got != "" {
+				t.Fatalf("reviewed registration: %s", got)
+			}
+			if got := register(other); got != "VerifierRuntimeMismatch" {
+				t.Fatalf("unreviewed replacement: got %q, want VerifierRuntimeMismatch", got)
+			}
+		})
+	}
+}
+
+func TestEnygmaOwner_VerifierReplacementRechecksRuntimeAtActivation(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "enygma-verifier-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "eth.ipc")
+	e := newOwnerEnv(t, func(config *node.Config, _ *ethconfig.Config) { config.IPCPath = socket })
+	e.enygma = e.mustDeploy("Enygma.sol/Enygma.json", big.NewInt(1), big.NewInt(hour))
+	first := e.mustDeploy("mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
+	second := e.mustDeploy("mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
+	e.mustSend("approveVerifierRuntime", kindTransfer, big.NewInt(0), e.runtimeHash(first))
+	e.mustSend("addVerifier", first)
+	e.mustSend("addVerifier", second)
+	e.wait(time.Duration(hour+1) * time.Second)
+
+	ctx := context.Background()
+	client, err := rpc.DialIPC(ctx, socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	input, err := e.abi.Pack("executeVerifierChange", kindTransfer, big.NewInt(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := map[string]string{
+		"from": e.auth().From.Hex(), "to": e.enygma.Hex(), "data": "0x" + hex.EncodeToString(input),
+	}
+	// Model a runtime change after proposal, without modifying the fixture chain.
+	override := map[string]map[string]string{second.Hex(): {"code": "0x60006000fd"}}
+	var result string
+	err = client.CallContext(ctx, &result, "eth_call", call, "latest", override)
+	var revert rpc.DataError
+	mismatch := e.abi.Errors["VerifierRuntimeMismatch"]
+	if !errors.As(err, &revert) || revert.ErrorData() != "0x"+hex.EncodeToString(mismatch.ID[:4]) {
+		t.Fatalf("activate after runtime changed: got result %q, error %v, want VerifierRuntimeMismatch", result, err)
+	}
+
+	e.mustSend("approveVerifierRuntime", kindTransfer, big.NewInt(0), common.Hash{})
+	if got := e.send("executeVerifierChange", kindTransfer, big.NewInt(0)); got != "VerifierRuntimeMismatch" {
+		t.Fatalf("activate after approval revoked: got %q, want VerifierRuntimeMismatch", got)
+	}
+	e.mustSend("approveVerifierRuntime", kindTransfer, big.NewInt(0), e.runtimeHash(second))
+	e.mustSend("executeVerifierChange", kindTransfer, big.NewInt(0))
+	if got := e.addr("VerifierAddress"); got != second {
+		t.Fatalf("activate reviewed runtime: got %s, want %s", got, second)
+	}
+}
+
 func TestEnygmaOwner_VerifierReplacementWaitsForDelay(t *testing.T) {
 	e := newOwnerEnv(t)
 	e.enygma = e.mustDeploy("Enygma.sol/Enygma.json", big.NewInt(1), big.NewInt(hour))
@@ -194,6 +299,7 @@ func TestEnygmaOwner_VerifierReplacementWaitsForDelay(t *testing.T) {
 	third := e.mustDeploy("mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
 
 	// First-time setup applies at once.
+	e.mustSend("approveVerifierRuntime", kindTransfer, big.NewInt(0), e.runtimeHash(first))
 	e.mustSend("addVerifier", first)
 	if got := e.addr("VerifierAddress"); got != first {
 		t.Fatalf("first addVerifier: verifier %s, want %s", got.Hex(), first.Hex())
@@ -205,6 +311,9 @@ func TestEnygmaOwner_VerifierReplacementWaitsForDelay(t *testing.T) {
 		t.Fatalf("replacement applied at once: verifier %s, want %s until the delay passes", got.Hex(), first.Hex())
 	}
 	pending := e.call("pendingVerifierChange", kindTransfer, big.NewInt(0))
+	if pending[2].([32]byte) != e.runtimeHash(second) {
+		t.Fatal("pending change did not retain the reviewed runtime hash")
+	}
 	if pending[0].(common.Address) != second {
 		t.Fatalf("pending target %s, want %s", pending[0].(common.Address).Hex(), second.Hex())
 	}
@@ -235,6 +344,7 @@ func TestEnygmaOwner_VerifierReplacementWaitsForDelay(t *testing.T) {
 	// Withdraw slots are per split count: a new split count is first-time setup.
 	w1 := e.mustDeploy("mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
 	w2 := e.mustDeploy("mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
+	e.mustSend("approveVerifierRuntime", kindWithdraw, big.NewInt(6), e.runtimeHash(w1))
 	e.mustSend("addWithdrawVerifier", w1, big.NewInt(6))
 	e.mustSend("addWithdrawVerifier", w2, big.NewInt(6))
 	if got := e.addr("WithdrawVerifierAddress"); got != w1 {
@@ -270,6 +380,7 @@ func TestEnygmaOwner_DelayIsSetAtDeploy(t *testing.T) {
 	e.enygma = e.mustDeploy("Enygma.sol/Enygma.json", big.NewInt(1), big.NewInt(0))
 	first := e.mustDeploy("mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
 	second := e.mustDeploy("mocks/MockTransferVerifier.sol/MockTransferVerifier.json")
+	e.mustSend("approveVerifierRuntime", kindTransfer, big.NewInt(0), e.runtimeHash(first))
 	e.mustSend("addVerifier", first)
 	e.mustSend("addVerifier", second)
 	if got := e.addr("VerifierAddress"); got != second {

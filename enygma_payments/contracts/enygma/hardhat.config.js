@@ -1,19 +1,18 @@
+const compiler = {
+  version: "0.8.27",
+  settings: { optimizer: { enabled: true, runs: 1 } },
+};
+
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  // Fix H-13: adding the burn circuit's on-chain proof verification pushed
-  // Enygma.sol past the EIP-170 24576-byte deployment size limit with the
-  // optimizer off (the prior default — this project compiled unoptimized
-  // until now). Enabled specifically to bring Enygma.sol back under that
-  // limit; runs lowered from an initial 200 to 1 once the USDr fee-proof
-  // feature pushed the unoptimized size further, to 26515 bytes — a low
-  // "runs" value prioritizes bytecode size over runtime gas efficiency, per
-  // the compiler's own suggestion in the oversized-contract warning.
   solidity: {
-    version: "0.8.27",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 1,
+    compilers: [compiler],
+    // Keep the ledger below the deployment size limit without rebuilding
+    // the standalone proof verifiers with a different compiler pipeline.
+    overrides: {
+      "contracts/Enygma.sol": {
+        ...compiler,
+        settings: { ...compiler.settings, viaIR: true },
       },
     },
   },

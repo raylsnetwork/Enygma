@@ -140,6 +140,7 @@ func TestH15NonParticipantSurvivesRollover(t *testing.T) {
 		artifactBase+"/mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
 	// Fixed withdraw() (H-14) selects its verifier by commitmentDeltas.length,
 	// which must be DEFAULT_SIZE (6) — register under that key.
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, 6, mockVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockVerifierAddr, big.NewInt(6))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier failed")
 	}

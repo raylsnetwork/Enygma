@@ -7,6 +7,7 @@
  *   OWNER_KEY=34d091c661... node run_scripts/deploy_node.js
  */
 const { ethers } = require("../contracts/enygma/node_modules/ethers");
+const { execFileSync } = require("node:child_process");
 const fs   = require("fs");
 const path = require("path");
 
@@ -35,9 +36,21 @@ async function deploy(wallet, artifact, constructorArgs = []) {
 }
 
 async function main() {
+  const verifierArtifactPath = path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json");
+  const localChain = CHAIN_ID === 1337 && ["http://127.0.0.1:8545", "http://localhost:8545"].includes(RPC_URL);
+  const reviewedPath = process.env.REVIEWED_VERIFIER_ARTIFACT;
+  if (!localChain && !reviewedPath) {
+    throw new Error("set REVIEWED_VERIFIER_ARTIFACT to the reviewed transfer verifier build for remote deployment");
+  }
+  const reviewedArtifactPath = reviewedPath ? path.resolve(reviewedPath) : verifierArtifactPath;
+  const reviewedArtifact = JSON.parse(fs.readFileSync(reviewedArtifactPath));
+  const verifierArtifact = JSON.parse(fs.readFileSync(verifierArtifactPath));
+  if (reviewedArtifact.deployedBytecode !== verifierArtifact.deployedBytecode) {
+    throw new Error("local verifier build differs from the reviewed runtime");
+  }
   const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
-  const wallet   = new ethers.Wallet(OWNER_KEY, provider);
-  console.log("Deployer:", wallet.address);
+  const wallet = new ethers.NonceManager(new ethers.Wallet(OWNER_KEY, provider));
+  console.log("Deployer:", await wallet.getAddress());
   console.log("Block:", await provider.getBlockNumber());
 
   console.log(`\nDeploying Enygma (epochInterval=${EPOCH_INTERVAL}, verifierChangeDelay=${VERIFIER_CHANGE_DELAY})...`);
@@ -45,12 +58,19 @@ async function main() {
   const tokenAddr = await deploy(wallet, enygmaArtifact, [EPOCH_INTERVAL, VERIFIER_CHANGE_DELAY]);
 
   console.log("\nDeploying EnygmaVerifier...");
-  const verifierArtifact = JSON.parse(fs.readFileSync(path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json")));
   const verifierAddr = await deploy(wallet, verifierArtifact, []);
+
+  execFileSync("go", [
+    "run", "./cmd/verify_deployed_verifier",
+    "-vk", "keys/EnygmaVk.key",
+    "-artifact", reviewedArtifactPath,
+    "-rpc", RPC_URL,
+    "-address", verifierAddr,
+  ], { cwd: path.join(ROOT, "gnark-server"), stdio: "inherit" });
 
   const receipts = {
     TOKEN:    { contractAddress: tokenAddr },
-    VERIFIER: { contractAddress: verifierAddr },
+    VERIFIER: { contractAddress: verifierAddr, runtimeHash: ethers.keccak256(reviewedArtifact.deployedBytecode) },
   };
 
   fs.mkdirSync(path.dirname(RECEIPTS_PATH), { recursive: true });
