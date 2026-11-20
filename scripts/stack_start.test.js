@@ -8,12 +8,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { makeEnv } = require('./test_git');
-const { killGroup, killServices, testNoLeftovers } = require('./test_stack');
+const { freePort, alive, run, killStack, testNoLeftovers } = require('./test_stack');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -26,21 +25,6 @@ const TARGETS = [
   ['payments-stack', 'PAYMENTS_STACK_CMD', 'PAYMENTS_STACK_PID', 'PAYMENTS_LOG_DIR', 'stack.log'],
   ['shield-stack', 'SHIELD_STACK_CMD', 'SHIELD_STACK_PID', 'RETAIL_LOG_DIR', 'run.log'],
 ];
-
-// freePort asks the OS for a port nothing listens on.
-function freePort() {
-  return new Promise((resolve) => {
-    const s = net.createServer().listen(0, '127.0.0.1', () => {
-      const { port } = s.address();
-      s.close(() => resolve(port));
-    });
-  });
-}
-
-// alive says whether process pid still runs.
-function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
 
 // sleep resolves after ms.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -73,14 +57,6 @@ function fakeStack(port, then = 'say "stack is up"\nwatch_services') {
   };
 }
 
-// run resolves with child's exit status and output.
-function run(child) {
-  let out = '';
-  child.stdout.on('data', (d) => { out += d; });
-  child.stderr.on('data', (d) => { out += d; });
-  return new Promise((resolve) => child.on('close', (status) => resolve({ status, out })));
-}
-
 // makeStart runs make's <target> on the fake stack s, with env added, for
 // test context ctx. stack_start.sh waits as long as the stack script runs,
 // so when ctx times out (its signal aborts) it kills the stack script and
@@ -94,9 +70,7 @@ function makeStart(ctx, [target, cmdVar, pidVar, logVar], s, env = {}) {
 // abortStack kills fake stack s's services and its stack script, as its pid
 // file names it.
 function abortStack(s) {
-  killServices(s.logs);
-  const pid = fs.existsSync(s.pidFile) && Number(fs.readFileSync(s.pidFile, 'utf8'));
-  for (const p of [pid, s.pid]) if (p) killGroup(p);
+  killStack(s.logs, fs.existsSync(s.pidFile) && Number(fs.readFileSync(s.pidFile, 'utf8')), s.pid);
 }
 
 // done lets the fake stack past its wait, so make returns, then kills what
