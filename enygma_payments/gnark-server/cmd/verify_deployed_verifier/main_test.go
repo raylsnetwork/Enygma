@@ -1,23 +1,13 @@
 package main
 
-// TestExpectedConstants_* and TestMatching_* cover L-04 part 3's actual
-// logic. The tool was also manually exercised against this repo's real
-// data during development (not repeated here since it needs a live
-// Hardhat node / compiled artifacts on disk):
-//   - keys/EnygmaVk.key vs its own compiled EnygmaVerifier.sol artifact
-//     (both -artifact and -rpc against a freshly deployed instance): PASS
-//   - keys/EnygmaVk.key vs the unrelated EnygmaFeeVerifier.sol artifact
-//     (both modes): FAIL, all constants reported missing
-// That run is also what caught the bug TestMatching_HandlesNarrowerPushWidths
-// pins down below: a first version of the matching logic assumed every
-// constant is emitted as a full 32-byte PUSH32 immediate and reported 4
-// false-positive mismatches against this repo's own genuinely-matching
-// EnygmaVk.key/EnygmaVerifier.sol pair, because Solidity picks the
-// narrowest PUSH opcode that fits each constant's actual value.
-
 import (
+	"encoding/json"
+	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -146,4 +136,52 @@ func TestMatching_DetectsGenuineMismatch(t *testing.T) {
 		t.Fatalf("expected exactly [%s] reported missing, got %v", skipped, missing)
 	}
 	t.Logf("correctly detected the omitted constant: %v", missing)
+}
+
+func TestVerifyRuntime_RequiresExactArtifactMatch(t *testing.T) {
+	vkPath := writeToyVK(t)
+	constants, err := expectedConstants(vkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture strings.Builder
+	fixture.WriteString("0x")
+	for _, value := range constants {
+		fmt.Fprintf(&fixture, "%064x", value)
+	}
+	reviewed := fixture.String()
+	artifactPath := filepath.Join(t.TempDir(), "verifier.json")
+	artifact := fmt.Sprintf(`{"deployedBytecode":%q}`, reviewed)
+	if err := os.WriteFile(artifactPath, []byte(artifact), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, runtime, wantError string
+		status                   int
+	}{
+		{"identical runtime", reviewed, "", http.StatusOK},
+		{"changed runtime with the same constants", reviewed + "00", "runtime differs", http.StatusOK},
+		{"empty runtime", "0x", "empty runtime", http.StatusOK},
+		{"malformed runtime", "0xZZ", "decode runtime bytecode", http.StatusOK},
+		{"RPC failure with matching bytes", reviewed, "HTTP 500", http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				if err := json.NewEncoder(w).Encode(map[string]string{"result": tc.runtime}); err != nil {
+					t.Error(err)
+				}
+			}))
+			t.Cleanup(rpc.Close)
+			err := verifyRuntime(vkPath, artifactPath, rpc.URL, "0x0000000000000000000000000000000000000001")
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("verifyRuntime error = %v, want %q", err, tc.wantError)
+			}
+		})
+	}
 }

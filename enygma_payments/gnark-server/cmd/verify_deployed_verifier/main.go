@@ -1,50 +1,11 @@
-// Command verify_deployed_verifier implements L-04 part 3 (also cited
-// inside H-12 as "the control L-04 identifies as absent"): a deploy-time
-// assertion binding a deployed Solidity verifier contract to the specific
-// verifying key it should have been generated from.
-//
-// The problem it closes: nothing anywhere in this repository previously
-// checked that a registered verifier address (addVerifier,
-// addWithdrawVerifier, addBurnVerifier, ...) was actually compiled from
-// the current key in use. A verifier compiled from a stale key, from
-// someone else's key, or swapped after the fact, would be accepted
-// silently — that absence is exactly what let H-16's mismatched zkdvp
-// verifiers go undetected until manual git-history archaeology found them.
-//
-// How it works: gnark's own vk.ExportSolidity bakes the verifying key's
-// elliptic-curve constants (alpha, beta, gamma, delta, and one point per
-// public input) into the generated contract as `uint256 constant NAME =
-// <value>;` declarations. Solidity inlines `constant` values directly into
-// bytecode as literals wherever they're referenced — there is no SLOAD,
-// so the values are recoverable straight from deployed bytecode without
-// needing the contract's source or ABI. This tool regenerates the
-// *expected* constant set from a VK file and checks that every single one
-// of them appears, as its 32-byte big-endian encoding, somewhere in the
-// bytecode being checked. A verifier compiled from a different key is
-// exceedingly unlikely to share even one 254-bit curve coordinate by
-// chance, so a single missing constant is already a conclusive mismatch.
-//
-// Usage — check a compiled-but-not-yet-deployed artifact (pre-deploy CI gate):
-//
-//	go run ./cmd/verify_deployed_verifier \
-//	  -vk keys/EnygmaVk.key \
-//	  -artifact ../contracts/enygma/artifacts/contracts/EnygmaVerifier.sol/Verifier.json
-//
-// Usage — check an already-deployed contract on a live chain:
-//
-//	go run ./cmd/verify_deployed_verifier \
-//	  -vk keys/EnygmaVk.key \
-//	  -rpc http://127.0.0.1:8545 \
-//	  -address 0x1234...
-//
-// Exit code is 0 iff every constant from the VK was found in the bytecode;
-// non-zero (with a listing of what's missing) otherwise. Intended to be
-// wired into deployment/CI as a hard gate, the same way the audit's
-// remediation asks for.
+// Command verify_deployed_verifier checks a reviewed Hardhat artifact against
+// its Groth16 verifying key and optionally compares the deployed runtime
+// byte-for-byte against that artifact.
 package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -53,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	utils "enygma_payments/gnark-server/utils"
 
@@ -63,58 +25,68 @@ var constantRe = regexp.MustCompile(`(?m)^\s*uint256\s+constant\s+(\w+)\s*=\s*(\
 
 func main() {
 	vkPath := flag.String("vk", "", "path to the verifying key file to check against (required)")
-	artifactPath := flag.String("artifact", "", "path to a Hardhat artifact JSON with a deployedBytecode field")
+	artifactPath := flag.String("artifact", "", "reviewed Hardhat artifact JSON (required)")
 	rpcURL := flag.String("rpc", "", "JSON-RPC URL of a chain to fetch deployed bytecode from (use with -address)")
 	address := flag.String("address", "", "deployed verifier contract address (use with -rpc)")
 	flag.Parse()
 
-	if *vkPath == "" {
-		fmt.Fprintln(os.Stderr, "error: -vk is required")
+	if *vkPath == "" || *artifactPath == "" || (*rpcURL == "") != (*address == "") {
+		fmt.Fprintln(os.Stderr, "error: -vk and -artifact are required; pass -rpc and -address together to verify a deployment")
 		flag.Usage()
 		os.Exit(2)
 	}
-	if (*artifactPath == "") == (*rpcURL == "" || *address == "") {
-		fmt.Fprintln(os.Stderr, "error: pass exactly one of -artifact, or -rpc together with -address")
-		flag.Usage()
-		os.Exit(2)
+	if err := verifyRuntime(*vkPath, *artifactPath, *rpcURL, *address); err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
+		os.Exit(1)
 	}
+	fmt.Println("PASS: reviewed verifier artifact checked against the verifying key")
+	if *rpcURL != "" {
+		fmt.Println("PASS: deployed runtime exactly matches the reviewed artifact")
+	}
+}
 
-	expected, err := expectedConstants(*vkPath)
+func verifyRuntime(vkPath, artifactPath, rpcURL, address string) error {
+	expected, err := expectedConstants(vkPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-	fmt.Printf("loaded %s: %d embedded constants expected from vk.ExportSolidity\n", *vkPath, len(expected))
-
-	var bytecodeHex string
-	if *artifactPath != "" {
-		bytecodeHex, err = bytecodeFromArtifact(*artifactPath)
-	} else {
-		bytecodeHex, err = bytecodeFromRPC(*rpcURL, *address)
-	}
+	artifactHex, err := bytecodeFromArtifact(artifactPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-	bytecodeHex = strings.ToLower(strings.TrimPrefix(bytecodeHex, "0x"))
-	if bytecodeHex == "" {
-		fmt.Fprintln(os.Stderr, "error: bytecode is empty — no contract code at that address/artifact")
-		os.Exit(1)
+	reviewed, err := decodeRuntime(artifactHex)
+	if err != nil {
+		return fmt.Errorf("reviewed artifact: %w", err)
 	}
+	if missing := findMissing(expected, hex.EncodeToString(reviewed)); len(missing) != 0 {
+		return fmt.Errorf("reviewed artifact is missing verifying-key constants: %s", strings.Join(missing, ", "))
+	}
+	if rpcURL == "" {
+		return nil
+	}
+	actualHex, err := bytecodeFromRPC(rpcURL, address)
+	if err != nil {
+		return err
+	}
+	actual, err := decodeRuntime(actualHex)
+	if err != nil {
+		return fmt.Errorf("deployed verifier: %w", err)
+	}
+	if !bytes.Equal(reviewed, actual) {
+		return fmt.Errorf("deployed verifier runtime differs from the reviewed artifact")
+	}
+	return nil
+}
 
-	missing := findMissing(expected, bytecodeHex)
-
-	if len(missing) == 0 {
-		fmt.Printf("PASS: all %d constants from %s are present in the checked bytecode — this verifier corresponds to this key.\n", len(expected), *vkPath)
-		return
+func decodeRuntime(raw string) ([]byte, error) {
+	code, err := hex.DecodeString(strings.TrimPrefix(raw, "0x"))
+	if err != nil {
+		return nil, fmt.Errorf("decode runtime bytecode: %w", err)
 	}
-
-	fmt.Printf("FAIL: %d of %d expected constants were NOT found in the checked bytecode:\n", len(missing), len(expected))
-	for _, name := range missing {
-		fmt.Printf("  - %s\n", name)
+	if len(code) == 0 {
+		return nil, fmt.Errorf("empty runtime bytecode")
 	}
-	fmt.Println("This verifier does NOT correspond to the given verifying key — do not register it.")
-	os.Exit(1)
+	return code, nil
 }
 
 // expectedConstants loads vkPath and regenerates its Solidity export,
@@ -177,11 +149,15 @@ func bytecodeFromRPC(rpcURL, address string) (string, error) {
 		"method":  "eth_getCode",
 		"params":  []string{address, "latest"},
 	})
-	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(reqBody))
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(rpcURL, "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("eth_getCode request to %s: %w", rpcURL, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("eth_getCode returned HTTP %d", resp.StatusCode)
+	}
 
 	var rpcResp struct {
 		Result string `json:"result"`

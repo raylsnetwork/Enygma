@@ -64,6 +64,7 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockDepositVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockDepositVerifier.sol/MockDepositVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindDeposit, 0, mockDepositVerifierAddr)
 	if r := waitTx(instance.AddDepositVerifier(mkAuth(), mockDepositVerifierAddr)); r.Status != 1 {
 		t.Fatal("addDepositVerifier failed")
 	}
@@ -131,6 +132,7 @@ func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockDepositVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockDepositVerifier.sol/MockDepositVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindDeposit, 0, mockDepositVerifierAddr)
 	if r := waitTx(instance.AddDepositVerifier(mkAuth(), mockDepositVerifierAddr)); r.Status != 1 {
 		t.Fatal("addDepositVerifier failed")
 	}
@@ -253,6 +255,7 @@ func TestC09_WithdrawRejectsMismatchedDepositValue(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockWithdrawVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, nBanks, mockWithdrawVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockWithdrawVerifierAddr, big.NewInt(nBanks))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier failed")
 	}
@@ -335,6 +338,7 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockWithdrawVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, nBanks, mockWithdrawVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockWithdrawVerifierAddr, big.NewInt(nBanks))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier failed")
 	}

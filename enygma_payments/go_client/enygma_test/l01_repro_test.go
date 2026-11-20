@@ -87,6 +87,7 @@ func l01DeployAndRegister(t *testing.T, client *ethclient.Client, mkAuth func() 
 
 	mockWithdrawVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, nBanks, mockWithdrawVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockWithdrawVerifierAddr, big.NewInt(nBanks))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier failed")
 	}

@@ -149,6 +149,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 	waitTx(instance.Initialize(mkAuth()))
 
 	verifierAddr := deployFromArtifact(t, client, mkAuth(), artifactBase+"/EnygmaVerifier.sol/Verifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindTransfer, 0, verifierAddr)
 	if r := waitTx(instance.AddVerifier(mkAuth(), verifierAddr)); r.Status != 1 {
 		t.Fatal("addVerifier failed")
 	}
@@ -173,6 +174,7 @@ func TestL12_WithdrawRejectsReentrantCall(t *testing.T) {
 
 	mockWithdrawVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockWithdrawVerifier.sol/MockWithdrawVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, nBanks, mockWithdrawVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockWithdrawVerifierAddr, big.NewInt(nBanks))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier failed")
 	}

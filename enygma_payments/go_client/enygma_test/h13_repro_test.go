@@ -43,6 +43,7 @@ func TestH13BurnRejectsMismatchedPreviousCommit(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockBurnVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockBurnVerifier.sol/MockBurnVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindBurn, 0, mockBurnVerifierAddr)
 	if r := waitTx(instance.AddBurnVerifier(mkAuth(), mockBurnVerifierAddr)); r.Status != 1 {
 		t.Fatal("addBurnVerifier failed")
 	}
@@ -115,6 +116,7 @@ func TestH13BurnNullifierReuseRejected(t *testing.T) {
 	const artifactBase = "../../contracts/enygma/artifacts/contracts"
 	mockBurnVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockBurnVerifier.sol/MockBurnVerifier.json")
+	approveTestVerifier(t, client, instance, mkAuth(), testKindBurn, 0, mockBurnVerifierAddr)
 	if r := waitTx(instance.AddBurnVerifier(mkAuth(), mockBurnVerifierAddr)); r.Status != 1 {
 		t.Fatal("addBurnVerifier failed")
 	}

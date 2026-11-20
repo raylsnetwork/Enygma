@@ -146,11 +146,13 @@ func TestFeeTransferFlow(t *testing.T) {
 	waitTx(enygmaInstance.Initialize(mkAuth()))
 	t.Log("initialized")
 
+	approveTestVerifier(t, client, enygmaInstance, mkAuth(), testKindTransfer, 0, verifierAddr)
 	if r := waitTx(enygmaInstance.AddVerifier(mkAuth(), verifierAddr)); r.Status != 1 {
 		t.Fatal("addVerifier failed")
 	}
 	t.Logf("standard verifier: %s", verifierAddr.Hex())
 
+	approveTestVerifier(t, client, enygmaInstance, mkAuth(), testKindFee, 0, feeVerifierAddr)
 	if r := waitTx(enygmaInstance.AddFeeVerifier(mkAuth(), feeVerifierAddr)); r.Status != 1 {
 		t.Fatal("addFeeVerifier failed")
 	}

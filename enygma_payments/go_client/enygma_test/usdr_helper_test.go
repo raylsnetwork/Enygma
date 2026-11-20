@@ -68,6 +68,7 @@ func setupMockUsdr(
 	mockUsdrVerifierAddr := deployFromArtifact(t, client, mkAuth(),
 		artifactBase+"/mocks/MockUsdrVerifier.sol/MockUsdrVerifier.json")
 
+	approveTestVerifier(t, client, instance, mkAuth(), testKindUsdr, 0, mockUsdrVerifierAddr)
 	if r := waitTx(instance.AddUsdrVerifier(mkAuth(), mockUsdrVerifierAddr)); r.Status != 1 {
 		t.Fatal("addUsdrVerifier failed")
 	}

@@ -247,6 +247,7 @@ func TestCostReport(t *testing.T) {
 	// until this call succeeds.
 	t.Log("[B2] addVerifier()…")
 	{
+		approveTestVerifier(t, client, instance, mkAuth(), testKindTransfer, 0, verifierAddr)
 		tx, txErr := instance.AddVerifier(mkAuth(), verifierAddr)
 		addRec(record("addVerifier()", tx, txErr))
 	}

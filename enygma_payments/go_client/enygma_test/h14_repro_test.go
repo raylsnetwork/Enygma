@@ -100,9 +100,11 @@ func TestH14EmptyParticipantArraysRejected(t *testing.T) {
 	// the *unmodified* contract (verifier keyed by depositParams.length)
 	// the call would reach the same verifier — the fixed contract must
 	// reject this on the length checks, not merely on VerifierNotFound.
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, 6, mockVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockVerifierAddr, big.NewInt(6))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier(6) failed")
 	}
+	approveTestVerifier(t, client, instance, mkAuth(), testKindWithdraw, 1, mockVerifierAddr)
 	if r := waitTx(instance.AddWithdrawVerifier(mkAuth(), mockVerifierAddr, big.NewInt(1))); r.Status != 1 {
 		t.Fatal("addWithdrawVerifier(1) failed")
 	}

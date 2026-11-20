@@ -95,6 +95,7 @@ func TestVerifierReturningFalseIsRejected(t *testing.T) {
 		if err := transfer(5001); err != nil {
 			t.Fatalf("control transfer with a true-returning verifier failed: %v", err)
 		}
+		approveTestVerifier(t, client, instance, ownerAuth(), testKindTransfer, 0, falseVerifier)
 		tx, err := instance.AddVerifier(ownerAuth(), falseVerifier)
 		if err != nil {
 			t.Fatalf("addVerifier(false): %v", err)
@@ -102,6 +103,7 @@ func TestVerifierReturningFalseIsRejected(t *testing.T) {
 		bind.WaitMined(ctx, client, tx)
 		wantErr(t, "transfer with a main verifier that returns false", "InvalidProof", transfer(5002))
 		// restore for the next sub-test
+		approveTestVerifier(t, client, instance, ownerAuth(), testKindTransfer, 0, trueMainVerifier)
 		tx, err = instance.AddVerifier(ownerAuth(), trueMainVerifier)
 		if err != nil {
 			t.Fatalf("addVerifier(true): %v", err)
@@ -113,6 +115,7 @@ func TestVerifierReturningFalseIsRejected(t *testing.T) {
 		if err := transfer(5003); err != nil {
 			t.Fatalf("control transfer failed: %v", err)
 		}
+		approveTestVerifier(t, client, instance, ownerAuth(), testKindUsdr, 0, falseVerifier)
 		tx, err := instance.AddUsdrVerifier(ownerAuth(), falseVerifier)
 		if err != nil {
 			t.Fatalf("addUsdrVerifier(false): %v", err)

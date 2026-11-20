@@ -56,48 +56,31 @@ CONTRACTS_DIR = os.path.join(ROOT, "..", "contracts", "enygma", "artifacts", "co
 
 ENYGMA_ARTIFACT = os.path.join(CONTRACTS_DIR, "Enygma.sol", "Enygma.json")
 VERIFIER_ARTIFACT = os.path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json")
+reviewed_path = os.environ.get("REVIEWED_VERIFIER_ARTIFACT")
+if not IS_LOCAL_TARGET and not reviewed_path:
+    sys.exit("set REVIEWED_VERIFIER_ARTIFACT to the reviewed transfer verifier build for remote deployment")
+REVIEWED_VERIFIER_ARTIFACT = os.path.abspath(reviewed_path) if reviewed_path else VERIFIER_ARTIFACT
 
 RECEIPTS_DIR = os.path.join(ROOT, "build", "enygma", "web3")
 RECEIPTS_PATH = os.path.join(RECEIPTS_DIR, "deploy_receipts.json")
 
-# Fix H-16 (deploy-time verifier-binding item): gnark-server/cmd/verify_deployed_verifier
-# already implements "read back the deployed verifier's embedded constants and compare
-# them to the local verifying key" — the audit's own wording — but until now nothing
-# actually called it, so a verifier compiled from a stale/wrong/swapped key would still
-# deploy and register silently, the exact class of bug that let H-16's mismatched zkdvp
-# verifiers go unnoticed. Wired in here as a hard post-deploy gate, matching the doc
-# comment's own "intended to be wired into deployment/CI as a hard gate" note.
 GNARK_SERVER_DIR = os.path.join(ROOT, "..", "gnark-server")
-VERIFIER_VK = os.path.join("keys", "EnygmaVk.key")  # relative to GNARK_SERVER_DIR
+VERIFIER_VK = os.path.join("keys", "EnygmaVk.key")
 
 
 def verify_deployed_verifier(rpc_url, address):
-    """Run the H-16 deploy-time gate: fail the deploy if the just-deployed
-    EnygmaVerifier's embedded constants don't match the local EnygmaVk.key.
-    Exits the whole script (sys.exit) on any mismatch or tooling failure —
-    an unverifiable verifier is treated the same as a mismatched one."""
-    print(f"\nVerifying deployed EnygmaVerifier at {address} against {VERIFIER_VK}...")
-    result = subprocess.run(
+    """Require the deployed runtime to match the reviewed verifier artifact."""
+    subprocess.run(
         [
             "go", "run", "./cmd/verify_deployed_verifier",
             "-vk", VERIFIER_VK,
+            "-artifact", REVIEWED_VERIFIER_ARTIFACT,
             "-rpc", rpc_url,
             "-address", address,
         ],
         cwd=GNARK_SERVER_DIR,
-        capture_output=True,
-        text=True,
+        check=True,
     )
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
-    if result.returncode != 0:
-        sys.exit(
-            f"H-16 gate failed: the deployed EnygmaVerifier at {address} does not "
-            f"correspond to {VERIFIER_VK} (or the check tool could not run — see output "
-            "above). Refusing to register this verifier. Do NOT call addVerifier with "
-            "this address."
-        )
-    print("H-16 gate passed: deployed verifier matches the local verifying key.")
 
 
 def load_artifact(path):
@@ -125,6 +108,10 @@ def deploy_contract(w3, account, artifact, constructor_args=None):
 
 
 def main():
+    reviewed_artifact = load_artifact(REVIEWED_VERIFIER_ARTIFACT)
+    verifier_artifact = load_artifact(VERIFIER_ARTIFACT)
+    if reviewed_artifact["deployedBytecode"] != verifier_artifact["deployedBytecode"]:
+        sys.exit("local verifier build differs from the reviewed runtime")
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
     assert w3.is_connected(), "Cannot connect to chain at " + RPC_URL
     # Fix M-07: is_connected() succeeds against ANY reachable chain,
@@ -152,14 +139,16 @@ def main():
     })
 
     print("\nDeploying EnygmaVerifier...")
-    verifier_artifact = load_artifact(VERIFIER_ARTIFACT)
     verifier_receipt = deploy_contract(w3, account, verifier_artifact)
 
     verify_deployed_verifier(RPC_URL, verifier_receipt.contractAddress)
 
     receipts = {
         "TOKEN": {"contractAddress": enygma_receipt.contractAddress},
-        "VERIFIER": {"contractAddress": verifier_receipt.contractAddress},
+        "VERIFIER": {
+            "contractAddress": verifier_receipt.contractAddress,
+            "runtimeHash": Web3.to_hex(Web3.keccak(hexstr=reviewed_artifact["deployedBytecode"])),
+        },
     }
 
     os.makedirs(RECEIPTS_DIR, exist_ok=True)

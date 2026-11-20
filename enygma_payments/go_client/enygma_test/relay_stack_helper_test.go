@@ -153,6 +153,7 @@ func setupUsdrLedger(t *testing.T, client *ethclient.Client, instance *enygma.En
 			t.Fatalf("%s reverted", what)
 		}
 	}
+	approveTestVerifier(t, client, instance, mkAuth(), testKindUsdr, 0, usdrVerifier)
 	ok("addUsdrVerifier", waitTx(instance.AddUsdrVerifier(mkAuth(), usdrVerifier)))
 	ok("setUsdrFixedFee", waitTx(instance.SetUsdrFixedFee(mkAuth(), big.NewInt(usdrFeeAmt))))
 	cx, cy := regCommit(big.NewInt(usdrPrevR))
