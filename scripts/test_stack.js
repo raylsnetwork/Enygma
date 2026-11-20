@@ -1,14 +1,72 @@
-// Fake stacks' services for the stack scripts' tests (stack_lib, stack_stop,
-// stack_start). Each service leads its own process group (own_group.sh), so
-// a test that kills only the stack script leaves its services running for
-// good, orphaned: kill what the stack's service lists name instead. Every
-// group killed is recorded, and stack_stop's and stack_start's tests end on
+// Fake stacks for the stack scripts' tests (stack_lib, stack_stop,
+// stack_start): the helpers they share, the one reader of the pids in a
+// stack's `<name> <pid>` service lists, and the teardown that stops a fake
+// stack.
+// Each service leads its own process group (own_group.sh), so a test that
+// kills only the stack script leaves its services running for good,
+// orphaned: kill what the stack's service lists name instead. Every group
+// killed is recorded, and stack_stop's and stack_start's tests end on
 // testNoLeftovers, so a cleanup that leaks one fails.
 
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 
 const seen = new Set();
+
+// freePort asks the OS for a port nothing listens on.
+function freePort() {
+  return new Promise((resolve) => {
+    const s = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+// listening says whether something accepts connections on port.
+function listening(port) {
+  return new Promise((resolve) => {
+    const c = net.connect(port, '127.0.0.1');
+    c.on('connect', () => { c.destroy(); resolve(true); });
+    c.on('error', () => resolve(false));
+  });
+}
+
+// alive says whether process pid still runs.
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+// run resolves with child's exit status and output.
+function run(child) {
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  return new Promise((resolve) => child.on('close', (status) => resolve({ status, out })));
+}
+
+// signallable says whether pid may be signalled as a group: an integer
+// above 1. Signalling group 0 reaches the test's own group, and -1 every
+// process the user owns.
+const signallable = (pid) => Number.isInteger(pid) && pid > 1;
+
+// serviceList reads the `<name> <pid>` lines of the service list at file,
+// as [name, pid] pairs, dropping any line whose pid is not signallable.
+function serviceList(file) {
+  const entries = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const [name, pid] = line.split(' ');
+    if (/^\d+$/.test(pid || '') && signallable(Number(pid))) entries.push([name, Number(pid)]);
+  }
+  return entries;
+}
+
+// servicePid reads NAME's pid from the stack's service list in logDir.
+function servicePid(logDir, name) {
+  const entry = serviceList(path.join(logDir, 'services.pids')).find(([n]) => n === name);
+  return entry && entry[1];
+}
 
 // listed returns the pids every *.pids file in logDir names (the stack's
 // services.pids, and any copy a test kept), recording each; none when
@@ -18,22 +76,28 @@ function listed(logDir) {
   try { files = fs.readdirSync(logDir).filter((n) => n.endsWith('.pids')); } catch { return []; }
   const pids = [];
   for (const f of files) {
-    for (const line of fs.readFileSync(path.join(logDir, f), 'utf8').split('\n')) {
-      const pid = Number(line.split(' ')[1]);
-      if (pid) { pids.push(pid); seen.add(pid); }
-    }
+    for (const [, pid] of serviceList(path.join(logDir, f))) { pids.push(pid); seen.add(pid); }
   }
   return pids;
 }
 
-// killGroup SIGKILLs process group pid, if it still runs.
+// killGroup SIGKILLs process group pid, if it still runs; a pid that is
+// not signallable (a pid file read as 0 or NaN) is left alone.
 function killGroup(pid) {
+  if (!signallable(pid)) return;
   try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
 }
 
 // killServices SIGKILLs every group logDir's lists name, recording each.
 function killServices(logDir) {
   for (const pid of listed(logDir)) killGroup(pid);
+}
+
+// killStack stops a fake stack whose script leads its own group: the
+// groups logDir's lists name, then each of groupPids (its script's group).
+function killStack(logDir, ...groupPids) {
+  killServices(logDir);
+  groupPids.forEach(killGroup);
 }
 
 // groupAlive says whether any process of group pid runs.
@@ -58,4 +122,4 @@ function testNoLeftovers(test) {
   });
 }
 
-module.exports = { killGroup, killServices, testNoLeftovers };
+module.exports = { freePort, listening, alive, run, servicePid, killGroup, killServices, killStack, testNoLeftovers };

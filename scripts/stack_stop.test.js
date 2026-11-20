@@ -7,39 +7,14 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { makeEnv } = require('./test_git');
-const { killGroup, killServices, testNoLeftovers } = require('./test_stack');
+const { freePort, listening, alive, run, killStack, testNoLeftovers } = require('./test_stack');
 
 const STOP = path.join(__dirname, 'stack_stop.sh');
 const LIB = path.join(__dirname, 'stack_lib.sh');
-
-// freePort asks the OS for a port nothing listens on.
-function freePort() {
-  return new Promise((resolve) => {
-    const s = net.createServer().listen(0, '127.0.0.1', () => {
-      const { port } = s.address();
-      s.close(() => resolve(port));
-    });
-  });
-}
-
-// listening says whether something accepts connections on port.
-function listening(port) {
-  return new Promise((resolve) => {
-    const c = net.connect(port, '127.0.0.1');
-    c.on('connect', () => { c.destroy(); resolve(true); });
-    c.on('error', () => resolve(false));
-  });
-}
-
-// alive says whether process pid still runs.
-function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
 
 // fakeStack starts a stack script (at script, relative to a fresh dir it
 // runs in, sourcing the lib, extra lines first) with one web service on
@@ -77,14 +52,6 @@ function makeStop(target, pidVar, s) {
   return run(spawn('make', ['--no-print-directory', '-C', path.join(__dirname, '..'), target, `${pidVar}=${s.pidFile}`], { env: makeEnv }));
 }
 
-// run resolves with child's exit status and output.
-function run(child) {
-  let out = '';
-  child.stdout.on('data', (d) => { out += d; });
-  child.stderr.on('data', (d) => { out += d; });
-  return new Promise((resolve) => child.on('close', (status) => resolve({ status, out })));
-}
-
 // waitGone resolves once process pid has exited, or after about 10 s.
 async function waitGone(pid) {
   for (let i = 0; i < 100 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
@@ -95,8 +62,7 @@ async function waitGone(pid) {
 // it: what they await ends by itself (stack_stop.sh in about 30 s, the
 // fake stack's start in 30), inside the 60 s timeout.
 function done(s) {
-  killServices(s.dir);
-  killGroup(s.pid);
+  killStack(s.dir, s.pid);
   fs.rmSync(s.dir, { recursive: true, force: true });
 }
 

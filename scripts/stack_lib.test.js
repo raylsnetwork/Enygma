@@ -14,28 +14,9 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { GIT_ENV, git, scratchRepo } = require('./test_git');
-const { killServices } = require('./test_stack');
+const { freePort, listening, servicePid, killServices } = require('./test_stack');
 
 const LIB = path.join(__dirname, 'stack_lib.sh');
-
-// freePort asks the OS for a port nothing listens on.
-function freePort() {
-  return new Promise((resolve) => {
-    const s = net.createServer().listen(0, '127.0.0.1', () => {
-      const { port } = s.address();
-      s.close(() => resolve(port));
-    });
-  });
-}
-
-// listening says whether something accepts connections on port.
-function listening(port) {
-  return new Promise((resolve) => {
-    const c = net.connect(port, '127.0.0.1');
-    c.on('connect', () => { c.destroy(); resolve(true); });
-    c.on('error', () => resolve(false));
-  });
-}
 
 // server is a service command that listens on port.
 const server = (port) => `python3 -m http.server ${port} --bind 127.0.0.1`;
@@ -117,12 +98,6 @@ async function relaunch(logDir, name, port, pid) {
 // untilListening waits for listening(port) to be want (each test's timeout bounds it).
 async function untilListening(port, want) {
   while ((await listening(port)) !== want) await new Promise((r) => setTimeout(r, 100));
-}
-
-// servicePid reads NAME's pid from the stack's service list.
-function servicePid(logDir, name) {
-  const line = fs.readFileSync(path.join(logDir, 'services.pids'), 'utf8').split('\n').find((l) => l.startsWith(`${name} `));
-  return line && Number(line.split(' ')[1]);
 }
 
 // goneElseKill says whether no process of pid's group runs, killing what

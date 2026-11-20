@@ -168,6 +168,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/test_name_skip_check.test.js >/dev/null || node --test scripts/test_name_skip_check.test.js
 	@# test_git.js, the tests' git, reads no machine git config, and every test runs git through it.
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
+	@# test_stack.js's service-list reader yields only pids safe to signal.
+	@node --test scripts/test_stack.test.js >/dev/null || node --test scripts/test_stack.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
