@@ -7,28 +7,28 @@ package enygma_test
 //	The fee is a fixed protocol constant — on mainnet: 0.1 USDr (native token).
 //	Senders absorb the fee directly into their commitment: sender deducts
 //	(transferAmount + fee) from their Pedersen commitment. The ZK proof commits
-//	to the fee at publicSignal[50]; the relayer verifies signal[50] == PROTOCOL_FEE.
+//	to the fee at FeeAmount; transferWithFee requires it to equal protocolFee.
 //
 //	  PROTOCOL_FEE = 20  (test units; mainnet equivalent: 0.1 USDr)
 //
 //	  Bank 0 (sender)   deducts 120 (100 transfer + 20 fee) from commitment
 //	  Bank 1            credited by +60  (destination)
 //	  Bank 2            credited by +40  (change)
-//	  Protocol fee = 20 → embedded in sender TxValue AND publicSignal[50]
+//	  Protocol fee = 20 → embedded in sender TxValue AND FeeAmount, burned from totalSupply
 //
 //	TxValues = [−120 mod P, +60, +40, 0, 0, 0]
 //	Σ(TxValues) = −20 mod P           (= −fee; fee absorbed in sender's value)
-//	Σ(TxCommit) + fee·G = (0, 1)     (conservation law; signal[51,52] == (0,1))
-//	Σ(TxValues) + fee   = 0           (scalar conservation; signal[53] == 0)
+//	Σ(TxCommit) + fee·G = (0, 1)     (conservation law; SumTxCommitments == (0,1))
+//	Σ(TxValues) + fee   = 0           (scalar conservation; SumTxValuesWithFee == 0)
 //
 // Flow:
 //
-//	Sender pays PROTOCOL_FEE to Relayer (off-chain, fixed amount — no negotiation)
-//	→ Sender builds proof with txValues (Σ=0) and fee=PROTOCOL_FEE at signal[50]
-//	→ gnark server /proof/enygma_fee  →  proof[8] + publicSignal[51]
-//	→ Relayer checks signal[50] == PROTOCOL_FEE  →  accepts transaction
-//	→ Relayer POSTs /relay/transfer_fee  →  Enygma.transferWithFee() on-chain
-//	→ On-chain: commitments updated (bank 0 −100, bank 1 +60, bank 2 +40)
+//	Every pair of banks confirms the fingerprints the proof publishes (C-04)
+//	→ Sender builds proof with fee=PROTOCOL_FEE at FeeAmount
+//	→ gnark server /proof/enygma_fee  →  proof[8] + publicSignal[TransferFeeLen]
+//	→ POST /relay/transfer_fee  →  Enygma.transferWithFee() on-chain
+//	→ On-chain: commitments updated (bank 0 −120, bank 1 +60, bank 2 +40),
+//	  fee burned from totalSupply, check() holds
 //
 // Prerequisites:
 //
@@ -72,14 +72,14 @@ import (
 const (
 	gnarkFeeURL = "http://127.0.0.1:8080/proof/enygma_fee"
 
-	// PROTOCOL_FEE is the fixed relayer fee charged on every transaction.
-	// On mainnet this is 0.1 USDr (the native token). No negotiation needed —
-	// the relayer rejects any proof where signal[50] != PROTOCOL_FEE.
+	// PROTOCOL_FEE is the protocol fee every fee transfer pays, burned from
+	// totalSupply. On mainnet this is 0.1 USDr (the native token). No negotiation needed —
+	// transferWithFee rejects any proof whose FeeAmount != protocolFee.
 	PROTOCOL_FEE = 20
 
 	feeDstAmt  = 60                    // bank 1 receives (destination)
 	feeChgAmt  = 40                    // bank 2 receives (change)
-	feeSendAmt = feeDstAmt + feeChgAmt // 100: on-chain debit (fee paid separately)
+	feeSendAmt = feeDstAmt + feeChgAmt // 100 sent; the sender's commitment also pays the fee
 )
 
 func TestFeeTransferFlow(t *testing.T) {
@@ -158,14 +158,10 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 	t.Logf("fee verifier: %s", feeVerifierAddr.Hex())
 
-	// Fix M-13: transferWithFee now enforces public_signal[50] (the fee)
-	// against this contract-side value exactly — a fee proof carrying any
-	// other value reverts InvalidFee(). Pre-fix, nothing on chain read or
-	// enforced the fee at all (this test's own header comment describing
-	// relayer-side enforcement was aspirational: RELAYER_PROTOCOL_FEE below
-	// is not read by the relayer binary — grep enygma_payments/relayer for
-	// it, there is no hit. The contract is now the actual enforcement
-	// point, which is what M-13 asked for).
+	// Fix M-13: transferWithFee enforces FeeAmount (the fee) against this
+	// contract-side value exactly — a fee proof carrying any other value
+	// reverts InvalidFee(). The contract is the enforcement point:
+	// RELAYER_PROTOCOL_FEE below is not read by the relayer binary.
 	if r := waitTx(enygmaInstance.SetProtocolFee(mkAuth(), big.NewInt(PROTOCOL_FEE))); r.Status != 1 {
 		t.Fatal("setProtocolFee failed")
 	}
@@ -301,11 +297,23 @@ func TestFeeTransferFlow(t *testing.T) {
 
 	// enygma_fee still uses the pre-H-01/H-02 BlockNumber-based formula —
 	// see legacyTagMessageGen/legacyGenCommitmentAndRandom's doc comment.
-	hashArray := hashArrayGen(secrets)
 	tagMessages := legacyTagMessageGen(secrets, new(big.Int).Set(blockHash))
 	txCommit, txRandom := legacyGenCommitmentAndRandom(
 		senderIdx, big.NewInt(int64(feeTotalSend)), txValues, new(big.Int).Set(blockHash), secrets)
-	nullifier, _ := poseidon.Hash([]*big.Int{hashArray[senderIdx], blockHash})
+	// The nullifier's preimage is Poseidon(senderSecret, senderSecret),
+	// computed in-circuit rather than published.
+	preimage, _ := poseidon.Hash([]*big.Int{senderSecret, senderSecret})
+	nullifier, _ := poseidon.Hash([]*big.Int{preimage.Mod(preimage, curveP), blockHash})
+
+	// C-04: transferWithFee requires every pairwise fingerprint the proof
+	// publishes to be confirmed on chain by both banks of the pair.
+	fp := fingerPrintGen(secrets, senderIdx)
+	var fpMatrix [nBanks][nBanks]*big.Int
+	for i := range fpMatrix {
+		copy(fpMatrix[i][:], fp[i])
+	}
+	confirmFreshFingerprintMatrix(t, client, mkAuth, waitTx, enygmaInstance, fpMatrix)
+	t.Logf("all %d directed pairwise fingerprints confirmed", nBanks*(nBanks-1))
 
 	// Σ(TxValues) = -fee mod P (not 0 — fee is embedded in sender's value)
 	sumTxValues := new(big.Int)
@@ -346,7 +354,7 @@ func TestFeeTransferFlow(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"hashed_shared_secrets":        toStrs(hashArray),
+		"fingerprint_shared_secrets":   fp2Strs(fp),
 		"public_keys":                  keyStrs,
 		"previous_commits":             prevCommitSlice,
 		"tx_commits":                   txCommitSlice,
@@ -354,7 +362,7 @@ func TestFeeTransferFlow(t *testing.T) {
 		"anonymity_set":                toStrs(kIdx),
 		"message_tags":                 toStrs(tagMessages),
 		"nullifier":                    nullifier.String(),
-		"fee":                          fmt.Sprintf("%d", PROTOCOL_FEE), // constant → signal[50]
+		"fee":                          fmt.Sprintf("%d", PROTOCOL_FEE), // → FeeAmount
 		"sender_id":                    fmt.Sprintf("%d", senderIdx),
 		"shared_secrets":               toStrs(secrets),
 		"secret_key":                   sk.String(),
@@ -367,7 +375,7 @@ func TestFeeTransferFlow(t *testing.T) {
 	})
 
 	// ── Call gnark /proof/enygma_fee ──────────────────────────────────────────
-	t.Logf("requesting fee proof (PROTOCOL_FEE=%d on-chain debit=%d, may take ~30s)…",
+	t.Logf("requesting fee proof (PROTOCOL_FEE=%d, amount sent=%d, may take ~30s)…",
 		PROTOCOL_FEE, feeSendAmt)
 
 	gnarkResp, err := http.Post(gnarkFeeURL, "application/json", bytes.NewReader(reqBody))
@@ -397,19 +405,18 @@ func TestFeeTransferFlow(t *testing.T) {
 	if len(proofResp.Proof) != 8 {
 		t.Fatalf("expected 8 proof elements, got %d", len(proofResp.Proof))
 	}
-	// 51 base + 2 SumTxCommit(X,Y) + 1 SumTxValuesWithFee + 1 DomainId (Fix L-01) = 55
 	if len(proofResp.PublicSignal) != layout.TransferFeeLen {
-		t.Fatalf("expected 55 public signals, got %d", len(proofResp.PublicSignal))
+		t.Fatalf("expected %d public signals, got %d", layout.TransferFeeLen, len(proofResp.PublicSignal))
 	}
-	t.Log("proof: 8 elements, public signal: 55 elements ✓")
+	t.Logf("proof: 8 elements, public signal: %d elements ✓", layout.TransferFeeLen)
 
-	// signal[50]: PROTOCOL_FEE constant — relayer verifies this before submitting.
+	// FeeAmount: PROTOCOL_FEE, which transferWithFee requires to equal protocolFee.
 	if feeFromSignal := proofResp.PublicSignal[layout.TransferFeeFeeAmountOffset]; feeFromSignal.Cmp(big.NewInt(PROTOCOL_FEE)) != 0 {
-		t.Fatalf("signal[50] (fee) = %s, want %d", feeFromSignal, PROTOCOL_FEE)
+		t.Fatalf("FeeAmount = %s, want %d", feeFromSignal, PROTOCOL_FEE)
 	}
-	t.Logf("signal[50] = %d == PROTOCOL_FEE ✓", PROTOCOL_FEE)
+	t.Logf("FeeAmount = %d == PROTOCOL_FEE ✓", PROTOCOL_FEE)
 
-	// signal[51–52]: SumTxCommit = Σ(TxCommit) + fee·G.
+	// SumTxCommitments = Σ(TxCommit) + fee·G.
 	// Sender's TxValue = -(amount+fee) ⟹ Σ(TxCommit) = (-fee)·G.
 	// Circuit adds fee·G ⟹ SumTxCommit = (0)·G = BJJ identity = (0,1).
 	sumTxCommitX := proofResp.PublicSignal[layout.TransferFeeSumTxCommitmentsOffset]
@@ -417,20 +424,20 @@ func TestFeeTransferFlow(t *testing.T) {
 	bjjIdentityX := big.NewInt(0)
 	bjjIdentityY := big.NewInt(1)
 	if sumTxCommitX.Cmp(bjjIdentityX) != 0 || sumTxCommitY.Cmp(bjjIdentityY) != 0 {
-		t.Errorf("signal[51,52] (SumTxCommit) = (%s, %s), expected (0,1) — conservation broken",
+		t.Errorf("SumTxCommitments = (%s, %s), expected (0,1) — conservation broken",
 			sumTxCommitX, sumTxCommitY)
 	} else {
-		t.Logf("signal[51,52] SumTxCommit = Σ(TxCommit)+fee·G = (0,1) ✓")
+		t.Logf("SumTxCommitments = Σ(TxCommit)+fee·G = (0,1) ✓")
 	}
 
-	// signal[53]: SumTxValuesWithFee = (Σ(TxValues) + fee) mod P.
+	// SumTxValuesWithFee = (Σ(TxValues) + fee) mod P.
 	// Sender's TxValue absorbs fee ⟹ Σ(TxValues) = -fee ⟹ this is 0.
 	sumTxValWithFee := proofResp.PublicSignal[layout.TransferFeeSumTxValuesWithFeeOffset]
 	if sumTxValWithFee.Sign() != 0 {
-		t.Errorf("signal[53] (SumTxValuesWithFee) = %s, want 0 (fee embedded in sender TxValue)",
+		t.Errorf("SumTxValuesWithFee = %s, want 0 (fee embedded in sender TxValue)",
 			sumTxValWithFee)
 	} else {
-		t.Logf("signal[53] SumTxValuesWithFee = 0 ✓  (Σ(TxValues)+fee=0 confirmed)")
+		t.Logf("SumTxValuesWithFee = 0 ✓  (Σ(TxValues)+fee=0 confirmed)")
 	}
 
 	// ── Build relay request ───────────────────────────────────────────────────
@@ -463,8 +470,7 @@ func TestFeeTransferFlow(t *testing.T) {
 	}{proof8, pubSigStrs, commFinal, kIdx64}
 
 	// ── Submit via relayer ────────────────────────────────────────────────────
-	// Sender has already paid PROTOCOL_FEE to the relayer (fixed, no negotiation).
-	// Relayer verifies signal[50] == PROTOCOL_FEE, then calls transferWithFee().
+	// The relayer calls transferWithFee(), which requires FeeAmount == protocolFee.
 	t.Log("submitting via /relay/transfer_fee…")
 
 	relayBody, _ := json.Marshal(relayFeeReq)
@@ -507,7 +513,7 @@ func TestFeeTransferFlow(t *testing.T) {
 		idx       int
 		label     string
 	}{
-		{1, 0, "bank 0 (−100 on-chain)"},
+		{1, 0, "bank 0 (−120 on-chain)"},
 		{2, 1, "bank 1 (+60)"},
 		{3, 2, "bank 2 (+40)"},
 	} {
@@ -589,10 +595,10 @@ func TestFeeTransferFlow(t *testing.T) {
 	// ── Summary ───────────────────────────────────────────────────────────────
 	t.Log("")
 	t.Log("══ TestFeeTransferFlow PASSED ═══════════════════════════════════════════")
-	t.Logf("   PROTOCOL_FEE:          %d (mainnet: 0.1 USDr) → signal[50]", PROTOCOL_FEE)
+	t.Logf("   PROTOCOL_FEE:          %d (mainnet: 0.1 USDr) → FeeAmount", PROTOCOL_FEE)
 	t.Logf("   Bank 0 commitment debit: %d (transfer %d + fee %d)", feeTotalSend, feeSendAmt, PROTOCOL_FEE)
 	t.Log("   Bank 1:                +60")
 	t.Log("   Bank 2:                +40")
-	t.Logf("   signal[53]:            0  (Σ(TxValues)+fee=0 ✓)")
+	t.Logf("   SumTxValuesWithFee:    0  (Σ(TxValues)+fee=0 ✓)")
 	t.Log("   Privacy pool:          intact — Σ(TxCommit)+fee·G = (0,1)")
 }

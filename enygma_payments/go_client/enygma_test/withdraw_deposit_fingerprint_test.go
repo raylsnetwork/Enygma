@@ -83,6 +83,16 @@ func testFingerprints() [nBanks][nBanks]*big.Int {
 func confirmFreshFingerprints(t *testing.T, client *ethclient.Client, mkAuth func() *bind.TransactOpts,
 	waitTx func(*ethtypes.Transaction, error) *ethtypes.Receipt, instance *enygma.Enygma) [nBanks][nBanks]*big.Int {
 	t.Helper()
+	fp := testFingerprints()
+	confirmFreshFingerprintMatrix(t, client, mkAuth, waitTx, instance, fp)
+	return fp
+}
+
+// confirmFreshFingerprintMatrix is confirmFreshFingerprints for a given
+// symmetric matrix fp.
+func confirmFreshFingerprintMatrix(t *testing.T, client *ethclient.Client, mkAuth func() *bind.TransactOpts,
+	waitTx func(*ethtypes.Transaction, error) *ethtypes.Receipt, instance *enygma.Enygma, fp [nBanks][nBanks]*big.Int) {
+	t.Helper()
 	ctx := context.Background()
 	auths := make([]func() *bind.TransactOpts, nBanks)
 	for i := 0; i < nBanks; i++ {
@@ -114,7 +124,6 @@ func confirmFreshFingerprints(t *testing.T, client *ethclient.Client, mkAuth fun
 			return a
 		}
 	}
-	fp := testFingerprints()
 	for i := 0; i < nBanks; i++ {
 		for j := 0; j < nBanks; j++ {
 			if i == j {
@@ -125,7 +134,6 @@ func confirmFreshFingerprints(t *testing.T, client *ethclient.Client, mkAuth fun
 			}
 		}
 	}
-	return fp
 }
 
 // putFingerprints writes fp into a statement's row-major k×k fingerprint

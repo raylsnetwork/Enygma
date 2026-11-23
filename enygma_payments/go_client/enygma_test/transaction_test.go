@@ -110,18 +110,7 @@ func init() {
 	hashTagUsdr, _ = poseidon.Hash([]*big.Int{big.NewInt(120)})
 }
 
-// hashArrayGen computes Poseidon(s, s) mod P for each secret s.
-// Used only by the fee circuit (enygma_fee) which retains the 1-D hash layout.
-func hashArrayGen(secrets []*big.Int) []*big.Int {
-	out := make([]*big.Int, len(secrets))
-	for i, s := range secrets {
-		h, _ := poseidon.Hash([]*big.Int{s, s})
-		out[i] = h.Mod(h, curveP)
-	}
-	return out
-}
-
-// fingerPrintGen builds the k×k FingerPrint matrix for the EnygmaCircuit.
+// fingerPrintGen builds the k×k FingerPrint matrix the transfer and fee circuits publish.
 // fp[i][senderCol] = Poseidon(secrets[i]) mod P for i ≠ senderCol (sender's column).
 // Diagonal and non-sender columns are zeroed — those entries are unconstrained.
 func fingerPrintGen(secrets []*big.Int, senderCol int) [][]*big.Int {

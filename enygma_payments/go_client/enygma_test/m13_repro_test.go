@@ -1,7 +1,7 @@
 package enygma_test
 
 // TestM13_* reproduces and verifies the M-13 fix (ENYGMA_PAYMENTS_AUDIT_2026-08-22.md,
-// Medium/LATENT): transferWithFee's public_signal[50] (the fee) was never
+// Medium/LATENT): transferWithFee's FeeAmount signal (the fee) was never
 // read or accounted for anywhere on chain. The enygma_fee circuit
 // hard-asserts Σ(TxCommit) + Fee·G == identity — i.e. the participants'
 // deltas alone always sum to -Fee·G, not to the identity a fee-less
@@ -12,21 +12,18 @@ package enygma_test
 // enforced the fee's value either: a prover could set fee=0 for a free
 // transfer.
 //
-// The fix requires public_signal[50] to exactly match a new owner-set
+// The fix requires FeeAmount to exactly match a new owner-set
 // protocolFee (mandatory, not advisory) and burns it out of totalSupply —
 // homomorphically subtracting exactly what the circuit's own Pedersen
 // equation already forces the balance sum to lose, keeping check()
 // consistent instead of permanently false.
 //
-// Uses MockFeeVerifier (always "verifies") so these tests are entirely
-// about transferWithFee's own fee-accounting logic, independent of the
-// real enygma_fee circuit's soundness — whose live prover route is
-// separately broken today ("proof generation failed: len(points) !=
-// len(scalars)", confirmed via git stash to predate this fix and any
-// other change in this session) and is out of scope for M-13, which is a
-// contract-side accounting gap, not a circuit bug. TestFeeTransferFlow
-// (fee_transfer_test.go) exercises the real circuit end-to-end and will
-// cover this fix live too, once that separate prover bug is fixed.
+// Uses MockFeeVerifier (always "verifies") so these tests are about
+// transferWithFee's own fee accounting, independent of the real enygma_fee
+// circuit; the fixture confirms every pair's fingerprints so the
+// fingerprint check (covered by fee_coverage_test.go) passes.
+// TestFeeTransferFlow (fee_transfer_test.go) exercises the real circuit
+// and fee verifier end-to-end, including this fix.
 //
 // Prerequisites:
 //
@@ -48,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 // m13Fixture bundles everything TestM13_* needs to submit a
@@ -55,6 +53,7 @@ import (
 // helpers, and the on-chain keys/balances/block hash every participant
 // slot in a public_signal must match exactly.
 type m13Fixture struct {
+	client     *ethclient.Client
 	instance   *enygma.Enygma
 	enygmaAddr common.Address
 	mkAuth     func() *bind.TransactOpts
@@ -62,12 +61,26 @@ type m13Fixture struct {
 	keys6      []*big.Int
 	balances6  []enygma.IEnygmaPoint
 	blockHash  *big.Int
+	// fingerprints is what buildFeeSignal publishes: testFingerprints(),
+	// confirmed on chain by m13Setup, not by m13Deploy.
+	fingerprints [nBanks][nBanks]*big.Int
 }
 
-// m13Setup deploys a fresh Enygma + MockFeeVerifier, registers the 6
-// DEFAULT_SIZE banks (via freshSetup), mints mintAmt to bank 0, and
-// returns everything needed to build a well-formed transferWithFee call.
+// m13Setup is m13Deploy with every pair of banks' testFingerprints()
+// confirmed, so a well-formed transferWithFee call passes the fingerprint
+// check.
 func m13Setup(t *testing.T) m13Fixture {
+	t.Helper()
+	f := m13Deploy(t)
+	confirmFreshFingerprints(t, f.client, f.mkAuth, f.waitTx, f.instance)
+	return f
+}
+
+// m13Deploy deploys a fresh Enygma + MockFeeVerifier, registers the 6
+// DEFAULT_SIZE banks (via freshSetup), mints mintAmt to bank 0, and
+// returns everything needed to build a well-formed transferWithFee call,
+// with no fingerprints confirmed.
+func m13Deploy(t *testing.T) m13Fixture {
 	t.Helper()
 	client, mkAuth, waitTx := scenarioClient(t)
 	instance, enygmaAddr := freshSetup(t, client, mkAuth, waitTx) // registers accountIds 1..6, real transfer verifier wired
@@ -95,17 +108,20 @@ func m13Setup(t *testing.T) m13Fixture {
 	}
 
 	return m13Fixture{
-		instance:   instance,
-		enygmaAddr: enygmaAddr,
-		mkAuth:     mkAuth,
-		waitTx:     waitTx,
-		keys6:      pubVals.Keys[1:],
-		balances6:  pubVals.Balances[1:],
-		blockHash:  blockHash,
+		client:       client,
+		instance:     instance,
+		enygmaAddr:   enygmaAddr,
+		mkAuth:       mkAuth,
+		waitTx:       waitTx,
+		keys6:        pubVals.Keys[1:],
+		balances6:    pubVals.Balances[1:],
+		blockHash:    blockHash,
+		fingerprints: testFingerprints(),
 	}
 }
 
-// buildFeeSignal builds a 55-signal transferWithFee public_signal array:
+// buildFeeSignal builds a TransferFeeLen-signal transferWithFee
+// public_signal array publishing f.fingerprints:
 // bank 0's delta is Com(-fee, 0) (matching the circuit's own convention —
 // no on-chain arithmetic on a secret value, the point is asserted
 // verbatim); every other bank's delta is the neutral element (0,1). Σ =
@@ -135,6 +151,7 @@ func (f m13Fixture) buildFeeSignal(fee int64, nullifierSeed string) ([layout.Tra
 			commitmentDeltas[i] = enygma.IEnygmaPoint{C1: big.NewInt(0), C2: big.NewInt(1)}
 		}
 	}
+	putFingerprints(pubSig[:], layout.TransferFeeFingerprintOffset, f.fingerprints)
 	pubSig[layout.TransferFeeBlockNumberOffset] = f.blockHash
 	pubSig[layout.TransferFeeNullifierOffset] = new(big.Int).SetBytes(crypto.Keccak256([]byte("m13-" + nullifierSeed)))
 	pubSig[layout.TransferFeeFeeAmountOffset] = big.NewInt(fee)

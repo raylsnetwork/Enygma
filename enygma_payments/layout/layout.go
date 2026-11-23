@@ -43,46 +43,47 @@ const (
 	TransferDomainIdSize   = 1
 )
 
-// TransferFee statement layout (55 public signals).
+// TransferFee statement layout (85 public signals).
 const (
-	TransferFeeLen = 55
+	TransferFeeLen = 85
 
-	TransferFeeHashedSharedSecretsOffset = 0
-	TransferFeeHashedSharedSecretsSize   = 6
+	// Fingerprint: [6][6], row-major: element [i][j] at TransferFeeFingerprintOffset + i*6 + j.
+	TransferFeeFingerprintOffset = 0
+	TransferFeeFingerprintSize   = 36
 
-	TransferFeePublicKeysOffset = 6
+	TransferFeePublicKeysOffset = 36
 	TransferFeePublicKeysSize   = 6
 
 	// PreviousCommitments: [6][2], row-major: element [i][j] at TransferFeePreviousCommitmentsOffset + i*2 + j.
-	TransferFeePreviousCommitmentsOffset = 12
+	TransferFeePreviousCommitmentsOffset = 42
 	TransferFeePreviousCommitmentsSize   = 12
 
 	// TxCommitments: [6][2], row-major: element [i][j] at TransferFeeTxCommitmentsOffset + i*2 + j.
-	TransferFeeTxCommitmentsOffset = 24
+	TransferFeeTxCommitmentsOffset = 54
 	TransferFeeTxCommitmentsSize   = 12
 
-	TransferFeeBlockNumberOffset = 36
+	TransferFeeBlockNumberOffset = 66
 	TransferFeeBlockNumberSize   = 1
 
-	TransferFeeAnonymitySetOffset = 37
+	TransferFeeAnonymitySetOffset = 67
 	TransferFeeAnonymitySetSize   = 6
 
-	TransferFeeMessageTagsOffset = 43
+	TransferFeeMessageTagsOffset = 73
 	TransferFeeMessageTagsSize   = 6
 
-	TransferFeeNullifierOffset = 49
+	TransferFeeNullifierOffset = 79
 	TransferFeeNullifierSize   = 1
 
-	TransferFeeFeeAmountOffset = 50
+	TransferFeeFeeAmountOffset = 80
 	TransferFeeFeeAmountSize   = 1
 
-	TransferFeeSumTxCommitmentsOffset = 51
+	TransferFeeSumTxCommitmentsOffset = 81
 	TransferFeeSumTxCommitmentsSize   = 2
 
-	TransferFeeSumTxValuesWithFeeOffset = 53
+	TransferFeeSumTxValuesWithFeeOffset = 83
 	TransferFeeSumTxValuesWithFeeSize   = 1
 
-	TransferFeeDomainIdOffset = 54
+	TransferFeeDomainIdOffset = 84
 	TransferFeeDomainIdSize   = 1
 )
 

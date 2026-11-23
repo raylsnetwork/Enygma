@@ -1241,18 +1241,17 @@ contract Enygma is IEnygma {
      * @param proof Zero-knowledge fee proof (StatementLayout.TRANSFER_FEE_*;
      *        fee at TRANSFER_FEE_FEE_AMOUNT_OFFSET)
      * @param participantIds Account IDs involved in transfer
-     * @dev C-04 NOT fixed here. enygma_fee's circuit exposes
-     *      HashedSharedSecrets as a flat per-participant array (index i =
-     *      "the secret between slot i and the sender"), not the k×k
-     *      matrix transfer()'s circuit uses — so which entry corresponds
-     *      to which pair can't be checked without knowing which slot is
-     *      the sender, which this contract deliberately never learns.
-     *      Closing this the same way _verifyFingerprints does needs the
-     *      fee circuit's signal layout changed first (a new trusted setup
-     *      either way, batched with the other circuit-touching findings).
-     *      This function is unreachable today — _feeVerifier is unset and
-     *      addFeeVerifier has no callers — do not call addFeeVerifier
-     *      before C-04 is closed here too.
+     * @dev The enygma_fee circuit proves conservation over exactly
+     *      DEFAULT_SIZE slots, so both arrays must have that length: with
+     *      fewer, only the named slots would be checked and applied, and a
+     *      proof whose debits sit in the other slots would mint. Every
+     *      applied slot is bound to the statement by _verifyFeePublicInputs.
+     *      The proof's k×k fingerprint matrix must equal the mutually
+     *      confirmed fingerprints (_verifyFingerprintsFee, as transfer()
+     *      does), so a sender cannot shift another participant's commitment
+     *      by a blinding factor from a secret that participant never agreed.
+     *      The route is live once the owner registers a fee verifier
+     *      (addFeeVerifier); no deployment script does.
      */
     function transferWithFee(
         Point[] calldata commitmentDeltas,
@@ -1260,8 +1259,15 @@ contract Enygma is IEnygma {
         uint256[] calldata participantIds,
         string calldata bankTag
     ) external onlyRegistered whenInitialized whenNotPaused returns (bool) {
+        if (participantIds.length != commitmentDeltas.length) {
+            revert ParticipantIdsLengthMismatch();
+        }
+        if (participantIds.length != DEFAULT_SIZE) {
+            revert InvalidParticipantCount();
+        }
         _verifyFeeTransferProof(proof);
         _verifyFeePublicInputs(proof.public_signal, participantIds, commitmentDeltas);
+        _verifyFingerprintsFee(proof.public_signal, participantIds);
         _verifyFeeBlockNumber(proof.public_signal);
         _consumeFeeNullifier(proof.public_signal);
 
@@ -2204,6 +2210,36 @@ contract Enygma is IEnygma {
         }
     }
 
+    /**
+     * @notice _verifyFingerprints for transferWithFee(), whose circuit
+     *         publishes the same k×k FingerPrintofSharedSecrets matrix as
+     *         transfer's, at StatementLayout.TRANSFER_FEE_FINGERPRINT_OFFSET.
+     */
+    function _verifyFingerprintsFee(
+        uint256[TRANSFER_FEE_LEN] calldata public_signal,
+        uint256[] calldata participantIds
+    ) private view {
+        uint256 len = participantIds.length;
+        for (uint256 i; i < len; ) {
+            uint256 idI = participantIds[i];
+            for (uint256 j; j < len; ) {
+                if (i != j) {
+                    _requireConfirmedFingerprint(
+                        idI,
+                        participantIds[j],
+                        public_signal[StatementLayout.TRANSFER_FEE_FINGERPRINT_OFFSET + i * len + j]
+                    );
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @dev Reverts unless the pair (idI, idJ) has a mutually confirmed
     ///      fingerprint and `published` is exactly that fingerprint.
     function _requireConfirmedFingerprint(uint256 idI, uint256 idJ, uint256 published) private view {
@@ -2637,11 +2673,12 @@ contract Enygma is IEnygma {
         if (_feeVerifier.code.length == 0) revert VerifierHasNoCode(); // Fix M-01
 
         // staticcall, not delegatecall — see the matching comment in withdraw().
-        _verifyViaStaticcall(_feeVerifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[55])", proof));
+        _verifyViaStaticcall(_feeVerifier, abi.encodeWithSignature("verifyProof(uint256[8],uint256[85])", proof));
     }
 
     /**
-     * @notice Verify fee public inputs match contract state (same offsets as base, 55-element array)
+     * @notice Verify fee public inputs match contract state: every slot's public key,
+     *         previous commitment and commitment delta (StatementLayout.TRANSFER_FEE_*)
      */
     function _verifyFeePublicInputs(
         uint256[TRANSFER_FEE_LEN] calldata public_signal,

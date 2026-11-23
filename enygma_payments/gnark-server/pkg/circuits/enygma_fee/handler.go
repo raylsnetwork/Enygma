@@ -19,17 +19,21 @@ import (
 )
 
 func createCircuitTemplate(config EnygmaFeeCircuitConfig) EnygmaFeeCircuit {
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
 	return EnygmaFeeCircuit{
-		Config:              config,
-		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-		PublicKey:           make([]frontend.Variable, config.NCommitment),
-		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-		MessageTags:         make([]frontend.Variable, config.NCommitment),
-		TxValues:            make([]frontend.Variable, config.NCommitment),
-		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
 	}
 }
 
@@ -70,7 +74,9 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		for i := 0; i < config.NCommitment; i++ {
 			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])
-			witness.HashedSharedSecrets[i] = bp.Parse(request.HashedSharedSecrets[i])
+			for j := 0; j < config.NCommitment; j++ {
+				witness.FingerPrintofSharedSecrets[i][j] = bp.Parse(request.FingerPrintofSharedSecrets[i][j])
+			}
 			witness.PublicKey[i] = bp.Parse(request.PublicKey[i])
 
 			witness.PreviousCommit[i][0] = bp.Parse(request.PreviousCommit[i][0])

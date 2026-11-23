@@ -110,17 +110,21 @@ func generateKeysUsdr() error {
 
 func generateKeysEnygmaFee() error {
 	config := enygma_fee.DefaultConfig
+	fp := make([][]frontend.Variable, config.NCommitment)
+	for i := range fp {
+		fp[i] = make([]frontend.Variable, config.NCommitment)
+	}
 	circuit := enygma_fee.EnygmaFeeCircuit{
-		Config:              config,
-		HashedSharedSecrets: make([]frontend.Variable, config.NCommitment),
-		PublicKey:           make([]frontend.Variable, config.NCommitment),
-		PreviousCommit:      make([][2]frontend.Variable, config.NCommitment),
-		TxCommit:            make([][2]frontend.Variable, config.NCommitment),
-		AnonymitySet:        make([]frontend.Variable, config.NCommitment),
-		SharedSecrets:       make([]frontend.Variable, config.NCommitment),
-		MessageTags:         make([]frontend.Variable, config.NCommitment),
-		TxValues:            make([]frontend.Variable, config.NCommitment),
-		TxRandomValues:      make([]frontend.Variable, config.NCommitment),
+		Config:                     config,
+		FingerPrintofSharedSecrets: fp,
+		PublicKey:                  make([]frontend.Variable, config.NCommitment),
+		PreviousCommit:             make([][2]frontend.Variable, config.NCommitment),
+		TxCommit:                   make([][2]frontend.Variable, config.NCommitment),
+		AnonymitySet:               make([]frontend.Variable, config.NCommitment),
+		SharedSecrets:              make([]frontend.Variable, config.NCommitment),
+		MessageTags:                make([]frontend.Variable, config.NCommitment),
+		TxValues:                   make([]frontend.Variable, config.NCommitment),
+		TxRandomValues:             make([]frontend.Variable, config.NCommitment),
 	}
 	return generateKeys(
 		&circuit,
