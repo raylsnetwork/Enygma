@@ -134,7 +134,7 @@ function repo(m) {
   });
   fs.cpSync(at(ROOT, 'Makefile'), at(dir, 'Makefile'));
   // Copied, not rewritten, so they keep their mode.
-  for (const f of ['keys_check.sh', 'stack_lib.sh', 'keys_src.sh']) fs.cpSync(at(__dirname, f), at(dir, `scripts/${f}`));
+  for (const f of ['keys_check.sh', 'stack_lib.sh', 'stack_groups.sh', 'keys_src.sh']) fs.cpSync(at(__dirname, f), at(dir, `scripts/${f}`));
   const src = keysSrc(dir, m);
   m.stamps.forEach((f) => fs.writeFileSync(at(dir, f), src));
   git(dir, 'add', '-A');
