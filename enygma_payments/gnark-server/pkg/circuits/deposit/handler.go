@@ -74,7 +74,7 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness.SenderTxValue = bp.Parse(request.SenderTxValue)
 		witness.SecretKey = bp.Parse(request.SecretKey)
-		witness.PkDeposit = bp.Parse(request.PkDeposit)
+		witness.SkDeposit = bp.Parse(request.SkDeposit)
 
 		for i := 0; i < config.NCommitment; i++ {
 			witness.SharedSecrets[i] = bp.Parse(request.SharedSecrets[i])

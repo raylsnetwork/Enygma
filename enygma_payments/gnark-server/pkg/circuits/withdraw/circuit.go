@@ -31,9 +31,8 @@ type WithdrawEnygmaCircuit struct {
 	// Fix C-09: Σ VPerDeposit, exposed so Enygma.sol can bind it against
 	// Σ depositParams[i].amount before forwarding to the DvP vault — see
 	// the assertion below for why this alone closes the finding for the
-	// withdraw leg (deposit's symmetric gap is a separate, cross-repo
-	// binding this fix does not attempt — see Enygma.sol's withdraw()
-	// comment).
+	// withdraw leg (the deposit leg's binding is its Hash, the note the
+	// vault spends: deposit/circuit.go).
 	TotalDepositValue frontend.Variable `gnark:",public"`
 	// Fix L-01: chainId<<160 | contractAddress — see enygma/circuit.go's
 	// DomainId field doc comment for the full reasoning; identical here.

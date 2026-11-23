@@ -9,7 +9,6 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 import {IEnygmaDvp} from "../../interfaces/IEnygmaDvp.sol";
 import {IPoseidonWrapper} from "../../interfaces/IPoseidonWrapper.sol";
-import {IVerifier} from "../../interfaces/IVerifier.sol";
 import {AbstractCoinVault} from "./AbstractCoinVault.sol";
 import {
     IEnygmaErc20CoinVault
@@ -20,13 +19,14 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     //              Constants
     //////////////////////////////////////////////
 
-    uint256 public constant VK_ID_ERC20_JOINSPLIT = 0;
-    uint256 public constant VK_ID_ERC20_10INPUT = 5;
-
     bytes32 public constant DEFAULT_ENYGMA_ROLE =
         keccak256(abi.encodePacked("EnygmaRole"));
 
     address private _enygmaAddress;
+
+    // Unspent count per commitment of the notes depositThroughEnygma inserted;
+    // withdrawThroughEnygma spends from it.
+    mapping(uint256 => uint256) private _unspentEnygmaNotes;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -66,32 +66,35 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
         commitments[0] = commitment;
 
         insertLeaves(commitments);
+        _unspentEnygmaNotes[commitment] += 1;
 
         emit Commitment(_vaultId, commitment);
 
         return (true, commitment);
     }
 
+    // Spends one Enygma note: a commitment depositThroughEnygma inserted and
+    // no earlier call spent. Enygma's deposit proof shows its submitter owns
+    // the note (knows sk with publicKey = Poseidon(sk)) and credits exactly the
+    // note's amount, so the note it names is the value this call consumes.
+    // A commitment inserted n times (the same amount and key, n withdrawals)
+    // can be spent n times.
     function withdrawThroughEnygma(
-        IEnygmaDvp.ProofReceipt memory receipt
+        uint256 commitment
     ) public override onlyRole(DEFAULT_ENYGMA_ROLE) returns (bool) {
-        uint256 treeNumbersIndex = 1;
-        uint256 merkleRootsIndex = 1 + receipt.numberOfInputs;
-        uint256 nullifiersIndex = merkleRootsIndex + receipt.numberOfInputs;
-        uint256 commitmentsIndex = nullifiersIndex + receipt.numberOfInputs;
-
-        checkReceiptConditions(receipt);
-
-        for (uint256 i = 0; i < receipt.numberOfInputs; i++) {
-            if (receipt.statement[nullifiersIndex + i] != 0) {
-                _spendNullifier(
-                    receipt.statement[treeNumbersIndex + i],
-                    receipt.statement[nullifiersIndex + i]
-                );
-            }
+        if (_unspentEnygmaNotes[commitment] == 0) {
+            revert UnknownEnygmaNote();
         }
-
+        _unspentEnygmaNotes[commitment] -= 1;
+        emit EnygmaNoteSpent(_vaultId, commitment);
         return true;
+    }
+
+    // The number of unspent Enygma notes with this commitment.
+    function unspentEnygmaNotes(
+        uint256 commitment
+    ) public view returns (uint256) {
+        return _unspentEnygmaNotes[commitment];
     }
 
     // Standards that are currently supported: ERC20, ERC721, ERC1155
@@ -137,79 +140,14 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
             );
     }
 
+    // This vault settles no receipts: its notes are spent only through
+    // withdrawThroughEnygma, by the Enygma deposit that redeems them. EnygmaDvp's
+    // payment paths check a receipt here before nullifying or inserting
+    // through a vault, so refusing every receipt keeps a note from being spent
+    // there as well as redeemed in Enygma.
     function checkReceiptConditions(
-        IEnygmaDvp.ProofReceipt memory receipt
-    ) public view override returns (bool) {
-        // jsReceipt.inputs;
-        // message;
-        // treeNumbers[numberOfInputs];
-        // merkleRoots[numberOfInputs];
-        // nullifiers[numberOfInputs];
-        // commitments[numberOfOutputs];
-
-        uint jInputSize = receipt.numberOfInputs;
-        uint jTreeNumbersIndex = 1;
-        uint jRootsIndex = jTreeNumbersIndex + jInputSize;
-        uint jNullifiersIndex = jRootsIndex + jInputSize;
-        uint jCommitmentsIndex = jNullifiersIndex + jInputSize;
-
-        // TODO:: check all pairs of commitment to be different
-        // Adding this require to original ones from the Aegis repo
-        // to avoid entering the same coins' commitments in the
-        // two input slots.
-
-        if (
-            receipt.statement[jCommitmentsIndex] ==
-            receipt.statement[jCommitmentsIndex + 1]
-        ) {
-            revert JoinSplitWithSameCommitments();
-        }
-
-        for (uint i = 0; i < jInputSize; i++) {
-            if (receipt.statement[jRootsIndex + i] != 0) {
-                if (
-                    !isValidRoot(
-                        receipt.statement[jTreeNumbersIndex + i],
-                        receipt.statement[jRootsIndex + i]
-                    )
-                ) {
-                    revert InvalidMerkleRoot();
-                }
-
-                if (
-                    isValidNullifier(
-                        receipt.statement[jTreeNumbersIndex + i],
-                        receipt.statement[jNullifiersIndex + i]
-                    )
-                ) {
-                    revert InvalidNullifier();
-                }
-            }
-        }
-
-        if (receipt.numberOfInputs != 2 && receipt.numberOfInputs != 10) {
-            revert InvalidNumberOfInputs();
-        }
-        // Both join-split circuits here have 2 outputs. numberOfOutputs is the
-        // caller's claim, and settlement inserts that many statement elements
-        // as commitments, so it must be the circuit's.
-        if (receipt.numberOfOutputs != 2) {
-            revert ReceiptShapeMismatch();
-        }
-        if (receipt.numberOfInputs == 2) {
-            if (!IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_JOINSPLIT,
-                receipt.proof,
-                receipt.statement
-            )) revert InvalidProof();
-        } else {
-            if (!IVerifier(_verifierContractAddress).verifyProof(
-                VK_ID_ERC20_10INPUT,
-                receipt.proof,
-                receipt.statement
-            )) revert InvalidProof();
-        }
-
-        return true;
+        IEnygmaDvp.ProofReceipt memory
+    ) public pure override returns (bool) {
+        revert NotImplemented();
     }
 }
