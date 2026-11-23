@@ -141,26 +141,36 @@ trap 'exit 143' TERM
 
 # start NAME DIR CMD… — runs CMD in DIR in its own process group, logging to
 # $LOG_DIR/NAME.log, and lists it in $LOG_DIR/services.pids for cleanup (the
-# first start empties a list a past stack in this LOG_DIR left). Unlocked: no
-# restart target records into the list before the stack is up. The first
-# start also launches the stack's reaper (scripts/stack_reaper.sh), which
-# stops the listed services if this script dies without its cleanup: in its
-# own group, its streams detached, and no child of this script's, so a
-# stack's wait (run.sh's) never waits on it.
+# first start empties a list a past stack in this LOG_DIR left). It holds
+# the list's lock (lock_list, stack_groups.sh) from before the launch until
+# the line is written, as scripts/stack_service.sh does for its rewrite: a
+# make restart target can record into the list while the stack is still
+# starting (shield-demo-restart finds run.sh's logs from gnark, up before
+# the relayer and the demo start), and an append between its read and its
+# rewrite would be lost (#404). Without the lock in about 10 s it fails
+# before starting CMD; a stack killed while it holds it leaves the lock
+# behind, as a killed stack_service.sh does, and the next write's failure
+# says to remove it. The first start then launches the stack's reaper
+# (scripts/stack_reaper.sh), which stops the listed services if this script
+# dies without its cleanup: in its own group, its streams detached, and no
+# child of this script's, so a stack's wait (run.sh's) never waits on it.
 start() {
-    local name=$1 dir=$2
+    local name=$1 dir=$2 list="$LOG_DIR/services.pids" first=
     shift 2
+    [ -n "${PIDS[*]+x}" ] || first=1
+    lock_list "$list" || exit 1
     (cd "$dir" && exec "$OWN_GROUP" "$@" >"$LOG_DIR/$name.log" 2>&1) &
     local pid=$!
-    if [ -z "${PIDS[*]+x}" ]; then
-        : >"$LOG_DIR/services.pids"
+    [ -z "$first" ] || : >"$list"
+    echo "$name $pid" >>"$list"
+    unlock_list "$list"
+    if [ -n "$first" ]; then
         # The stack's command line read here, not by the reaper: by the time
         # a slow reaper runs, the stack may already be running another one.
         # Handed over in the environment, not argv, so a kill by the stack's
         # name (pkill -f run.sh) spares the reaper.
         REAPER_PID=$(STACK_COMMAND="$(ps -o command= -p "$$" 2>/dev/null)" "$OWN_GROUP" "$REAPER_SH" "$$" "$LOG_DIR" </dev/null >/dev/null 2>&1 & echo $!)
     fi
-    echo "$name $pid" >>"$LOG_DIR/services.pids"
     PIDS+=("$pid")
     NAMES+=("$name")
 }
