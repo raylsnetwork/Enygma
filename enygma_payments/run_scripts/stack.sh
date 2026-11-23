@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # enygma_payments' end-to-end test stack in one command: compiles the
-# contracts and builds relayer/relayer_bin (both gitignored, so a stale copy
+# contracts, compiles enygma_dvp's (with the circomlibjs Poseidon artifacts:
+# TestDepositRedeemsARealVaultNote deploys the real EnygmaErc20CoinVault from
+# them) and builds relayer/relayer_bin (all gitignored, so a stale copy
 # would otherwise be tested), then starts a fresh Hardhat node on :8545 and
 # the gnark server on :8080. The suite deploys its own contracts and spawns
 # relayer_bin itself. Ctrl-C, any failure, or either service exiting stops
@@ -20,6 +22,7 @@
 set -euo pipefail
 PAY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONTRACTS="$PAY_ROOT/contracts/enygma"
+DVP_ROOT="$PAY_ROOT/../enygma_dvp"
 . "$PAY_ROOT/../scripts/stack_lib.sh"
 use_log_dir payments_stack
 use_node 22
@@ -32,6 +35,10 @@ if [ "$(node_major)" -lt 20 ]; then
 fi
 if [ ! -x "$CONTRACTS/node_modules/.bin/hardhat" ]; then
     say "the contracts' npm packages are not installed: cd $CONTRACTS && npm ci" >&2
+    ok=0
+fi
+if [ ! -x "$DVP_ROOT/node_modules/.bin/hardhat" ]; then
+    say "enygma_dvp's npm packages are not installed: cd $DVP_ROOT && npm ci" >&2
     ok=0
 fi
 KEYS="$PAY_ROOT/gnark-server/keys"
@@ -50,6 +57,7 @@ require_free_ports 8545 8080
 say "logs: $LOG_DIR"
 
 step compile "$CONTRACTS" npx hardhat compile
+step compile-dvp "$DVP_ROOT" bash -c 'npx hardhat compile && node scripts/regen_poseidon.js'
 step build-relayer "$PAY_ROOT/relayer" env CGO_ENABLED=0 go build -o relayer_bin .
 step build-gnark "$PAY_ROOT/gnark-server" go build -o "$BIN_DIR/gnark_server" ./cmd/server
 

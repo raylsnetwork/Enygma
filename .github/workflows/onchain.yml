@@ -108,9 +108,15 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: enygma_payments/contracts/enygma/package-lock.json
+          cache-dependency-path: |
+            enygma_payments/contracts/enygma/package-lock.json
+            enygma_dvp/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: enygma_payments/contracts/enygma
+      # The suite deploys the real EnygmaErc20CoinVault from enygma_dvp's
+      # artifacts, which make payments-stack compiles.
+      - run: npm ci --no-audit --no-fund
+        working-directory: enygma_dvp
 
       # The Burn keys are gitignored (the other payments keys are committed
       # through LFS). make payments-burn-keygen generates them and stamps

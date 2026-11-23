@@ -26,7 +26,10 @@ stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_
 common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/suite_result.sh $stacks"
 # make payments-burn-keygen and make dvp-keygen stamp their keys (and CI
 # keys their caches) with keys_src.sh's fingerprint.
-paths_payments="$common enygma_payments/* enygma_gnark_shared/* scripts/keys_src.sh"
+# The payments stack compiles enygma_dvp's contracts too: the suite deploys
+# the real EnygmaErc20CoinVault and Poseidon from them.
+dvp_for_payments="enygma_dvp/contracts/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/scripts/regen_poseidon.js enygma_dvp/regen_poseidon.mjs"
+paths_payments="$common enygma_payments/* enygma_gnark_shared/* scripts/keys_src.sh $dvp_for_payments"
 # make dvp-keygen also copies retail's PrivateMint keys.
 paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint* scripts/keys_src.sh"
 # The retail stack runs enygma_dvp's Hardhat node and deploys its contracts;
