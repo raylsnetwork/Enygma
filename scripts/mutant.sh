@@ -87,8 +87,8 @@ done
 # and restores the file before this run reads on.
 if [ -n "$batch" ]; then
   [ $# -eq 0 ] && [ -z "$expect" ] || usage
-  fields=$(mktemp) log=$(mktemp) greens=$(mktemp) mark=$(mktemp)
-  trap 'rm -f "$fields" "$log" "$greens" "$mark"' EXIT
+  fields=$(mktemp) log=$(mktemp) mark=
+  trap 'rm -f "$fields" "$log" ${mark:+"$mark"}' EXIT
   # The list is read whole before any entry runs: a shape this cannot read
   # is bad input, naming the entry, never an entry skipped. Each entry comes
   # out as NUL-ended fields: its label (old → new, shortened, as its lines
@@ -165,24 +165,29 @@ sys.stdout.write("".join(f + "\0" for f in out))
 PY
   field=()
   while IFS= read -r -d '' x; do field+=("$x"); done <"$fields"
-  i=0 n=0 nred=0 bad= reds=() misses=()
+  i=0 n=0 nred=0 bad= reds=() misses=() passed=
   while [ $i -lt ${#field[@]} ]; do
     n=$((n + 1)) label=${field[i]} expect=${field[i + 1]} file=${field[i + 2]}
     old=${field[i + 3]} new=${field[i + 4]} words=${field[i + 5]}
     echo "== mutant $n: $file"
-    # The green run: skipped for a command an earlier green run passed;
-    # else the entry's mutant.sh touches mark once it passes.
-    cmdkey=$(printf '%q ' "${field[@]:i + 6:words}") green=()
-    rm -f "$mark"
-    if grep -qxF -- "$cmdkey" "$greens"; then
+    # The green run: skipped for a command an earlier green run passed (a
+    # line of passed); else the entry's mutant.sh writes to its own empty
+    # mark once it passes.
+    cmdkey=$(printf '%q ' "${field[@]:i + 6:words}")
+    if printf '%s\n' "$passed" | grep -qxF -- "$cmdkey"; then
       green=(MUTANT_SH_GREEN_SKIP=1)
     else
+      mark=$(mktemp)
       green=(MUTANT_SH_GREEN_MARK="$mark")
     fi
     rc=0
     env "${green[@]}" bash "$0" --expect "$expect" --timeout "$timeout" "$file" "$old" "$new" \
       -- "${field[@]:i + 6:words}" 2>&1 | tee "$log" || rc=$?
-    [ ! -f "$mark" ] || printf '%s\n' "$cmdkey" >>"$greens"
+    if [ -n "$mark" ]; then
+      [ ! -s "$mark" ] || passed+=$cmdkey$'\n'
+      rm -f "$mark"
+      mark=
+    fi
     if [ $rc = 0 ]; then
       nred=$((nred + 1))
       reds+=("- $label: RED: \"$expect\"")
@@ -230,7 +235,7 @@ cleanup() {
 root=${MUTANT_SH_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}
 copy_dir=${MUTANT_SH_COPY_DIR:-}
 # From --batch: skip the green run (its command passed one already), or
-# touch green_mark once it passes. Unset too, so no test command sees them;
+# write to green_mark once it passes. Unset too, so no test command sees them;
 # a self-mutant's copy, below, gets neither and runs its own green run.
 green_skip=${MUTANT_SH_GREEN_SKIP:-} green_mark=${MUTANT_SH_GREEN_MARK:-}
 unset MUTANT_SH_ROOT MUTANT_SH_COPY_DIR MUTANT_SH_GREEN_SKIP MUTANT_SH_GREEN_MARK
@@ -319,7 +324,7 @@ else
     echo "BAD INPUT: the command fails without the mutant, so a red would show nothing"
     exit 2
   fi
-  [ -z "$green_mark" ] || : >"$green_mark"
+  [ -z "$green_mark" ] || echo passed >"$green_mark"
 fi
 
 python3 - "$file" "$old" "$new" <<'PY' || exit 2
