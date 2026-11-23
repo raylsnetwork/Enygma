@@ -28,7 +28,7 @@ func sentinel(field, element int) *big.Int {
 
 // Field numbers for sentinels; independent of the layout under test.
 const (
-	sHashedSharedSecrets = iota + 1
+	sFingerprint = iota + 1
 	sPublicKeys
 	sPreviousCommitments
 	sTxCommitments
@@ -45,7 +45,9 @@ const (
 func sentinelWitness() EnygmaFeeCircuit {
 	w := createCircuitTemplate(DefaultConfig)
 	for i := 0; i < k; i++ {
-		w.HashedSharedSecrets[i] = sentinel(sHashedSharedSecrets, i)
+		for j := 0; j < k; j++ {
+			w.FingerPrintofSharedSecrets[i][j] = sentinel(sFingerprint, i*k+j) // row-major
+		}
 		w.PublicKey[i] = sentinel(sPublicKeys, i)
 		w.PreviousCommit[i] = [2]frontend.Variable{sentinel(sPreviousCommitments, 2*i), sentinel(sPreviousCommitments, 2*i+1)} // X, Y
 		w.TxCommit[i] = [2]frontend.Variable{sentinel(sTxCommitments, 2*i), sentinel(sTxCommitments, 2*i+1)}
@@ -84,7 +86,7 @@ func TestStatementLayout_FieldsSliceTheirOwnSentinels(t *testing.T) {
 		name  string
 		field int
 	}{
-		{"HashedSharedSecrets", sHashedSharedSecrets},
+		{"Fingerprint", sFingerprint},
 		{"PublicKeys", sPublicKeys},
 		{"PreviousCommitments", sPreviousCommitments},
 		{"TxCommitments", sTxCommitments},

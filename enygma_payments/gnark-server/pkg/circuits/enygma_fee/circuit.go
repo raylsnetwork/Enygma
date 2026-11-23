@@ -20,41 +20,40 @@ type EnygmaFeeCircuitConfig struct {
 // EnygmaFeeCircuit extends EnygmaCircuit with a public Fee signal and two
 // aggregate public outputs that expose the conservation sums to the verifier.
 //
-// Signal layout (54 public slots):
+// Signal layout (85 public slots; StatementLayout.TRANSFER_FEE_* is generated
+// from this struct):
 //
-//	0–5   HashedSharedSecrets (×6)
-//	6–11  PublicKey           (×6)
-//	12–23 PreviousCommit      (X,Y ×6)
-//	24–35 TxCommit            (X,Y ×6)
-//	36    BlockNumber
-//	37–42 AnonymitySet        (×6)
-//	43–48 MessageTags         (×6)
-//	49    Nullifier
-//	50    Fee                 (PROTOCOL_FEE constant)
-//	51–52 SumTxCommit         (X,Y of Σ TxCommit — neutral iff conservation holds)
-//	53    SumTxValuesWithFee  (Σ(TxValues)+fee mod P — equals fee iff Σ(TxValues)=0)
+//	0–35  FingerPrintofSharedSecrets (6×6, row-major)
+//	36–41 PublicKey           (×6)
+//	42–53 PreviousCommit      (X,Y ×6)
+//	54–65 TxCommit            (X,Y ×6)
+//	66    BlockNumber
+//	67–72 AnonymitySet        (×6)
+//	73–78 MessageTags         (×6)
+//	79    Nullifier
+//	80    Fee                 (Enygma.sol's protocolFee)
+//	81–82 SumTxCommit         (X,Y of Σ TxCommit + Fee·G, asserted (0,1))
+//	83    SumTxValuesWithFee  (Σ(TxValues)+fee mod P)
+//	84    DomainId
 //
-// Conservation is NOT hard-asserted inside the circuit. Instead these public
-// outputs let the smart contract enforce whichever rule it needs:
-//
-//	off-chain fee: SumTxCommit==(0,1) and SumTxValuesWithFee==PROTOCOL_FEE
-//	on-chain fee:  SumTxValuesWithFee==0 and SumTxCommit+fee·G==(0,1)
+// Conservation is hard-asserted below: Σ(TxCommit) + Fee·G == (0,1) over all
+// k slots, so transferWithFee applies all k slots and burns Fee from supply.
 type EnygmaFeeCircuit struct {
 	Config EnygmaFeeCircuitConfig
 
 	// Public signals
-	HashedSharedSecrets []frontend.Variable    `gnark:",public"` // hash of shared secrets per participant
-	PublicKey           []frontend.Variable    `gnark:",public"` // public keys for all participants
-	PreviousCommit      [][2]frontend.Variable `gnark:",public"` // previous Pedersen commitments
-	TxCommit            [][2]frontend.Variable `gnark:",public"` // new Pedersen commitments for this tx
-	BlockNumber         frontend.Variable      `gnark:",public"` // block number for randomness
-	AnonymitySet        []frontend.Variable    `gnark:",public"` // participant indices (k-anonymity)
-	MessageTags         []frontend.Variable    `gnark:",public"` // unique transaction tags
-	Nullifier           frontend.Variable      `gnark:",public"` // double-spend prevention
-	Fee                 frontend.Variable      `gnark:",public"` // PROTOCOL_FEE constant (slot 50)
-	SumTxCommit         [2]frontend.Variable   `gnark:",public"` // Σ(TxCommit) point X,Y (slots 51–52)
-	SumTxValuesWithFee  frontend.Variable      `gnark:",public"` // (Σ(TxValues)+fee) mod P (slot 53)
-	// Fix L-01: chainId<<160 | contractAddress (slot 54) — see
+	FingerPrintofSharedSecrets [][]frontend.Variable  `gnark:",public"` // k×k matrix: FingerPrint[i][senderCol] = Poseidon(SharedSecrets[i]); other cells free here, pinned on chain
+	PublicKey                  []frontend.Variable    `gnark:",public"` // public keys for all participants
+	PreviousCommit             [][2]frontend.Variable `gnark:",public"` // previous Pedersen commitments
+	TxCommit                   [][2]frontend.Variable `gnark:",public"` // new Pedersen commitments for this tx
+	BlockNumber                frontend.Variable      `gnark:",public"` // block number for randomness
+	AnonymitySet               []frontend.Variable    `gnark:",public"` // participant indices (k-anonymity)
+	MessageTags                []frontend.Variable    `gnark:",public"` // unique transaction tags
+	Nullifier                  frontend.Variable      `gnark:",public"` // double-spend prevention
+	Fee                        frontend.Variable      `gnark:",public"` // the protocol fee, burned on chain
+	SumTxCommit                [2]frontend.Variable   `gnark:",public"` // Σ(TxCommit) + Fee·G, X,Y
+	SumTxValuesWithFee         frontend.Variable      `gnark:",public"` // (Σ(TxValues)+fee) mod P
+	// Fix L-01: chainId<<160 | contractAddress — see
 	// enygma/circuit.go's DomainId field doc comment for the full
 	// reasoning; identical here.
 	DomainId frontend.Variable `gnark:",public"`
@@ -170,11 +169,31 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(secretRemain, selectedSecret)
 
 	///////////////////////////////////**///////////////////////////////////
-	// Check hashed shared secrets are well-formed
+	// Check FingerPrintofSharedSecrets is well formed for the sender's
+	// column, as the transfer circuit does (enygma/circuit.go):
+	// FingerPrintofSharedSecrets[i][senderCol] = Poseidon(SharedSecrets[i])
+	// for every i other than the sender. SharedSecrets[i] is what shifts
+	// participant i's blinding factor below, and transferWithFee requires the
+	// whole matrix to equal the fingerprints both parties of each pair
+	// confirmed on chain, so a sender cannot make up the secret for another
+	// participant and shift that participant's commitment by a blinding factor
+	// only the sender knows. The off-diagonal cells outside the sender's column
+	// are free here, and pinned by the contract.
 	for i := 0; i < k; i++ {
-		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i], circuit.SharedSecrets[i]})
+		calculatedHash := pos.Poseidon(api, []frontend.Variable{circuit.SharedSecrets[i]})
 		hashMod := utils.ReduceModP(api, calculatedHash) // Fix C-01
-		api.AssertIsEqual(hashMod, circuit.HashedSharedSecrets[i])
+
+		isRowSender := api.IsZero(api.Sub(circuit.AnonymitySet[i], circuit.SenderId))
+
+		for j := 0; j < k; j++ {
+			isColSender := api.IsZero(api.Sub(circuit.AnonymitySet[j], circuit.SenderId))
+			// Only 0 when both i and j are the sender's position.
+			isNotDiagonal := api.Sub(1, api.Mul(isRowSender, isColSender))
+			// If j is the sender's column and not the diagonal: FingerPrint[i][j] == hashMod.
+			shouldCheck := api.Mul(isColSender, isNotDiagonal)
+			diff := api.Sub(circuit.FingerPrintofSharedSecrets[i][j], hashMod)
+			api.AssertIsEqual(api.Mul(shouldCheck, diff), 0)
+		}
 	}
 
 	///////////////////////////////////**///////////////////////////////////
@@ -285,13 +304,11 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(api.IsZero(api.Add(vGreaterEqualZero, frontend.Variable(1))), frontend.Variable(0))
 
 	///////////////////////////////////**///////////////////////////////////
-	// Nullifier: Poseidon(hashedSharedSecret[sender], blockNumber)
-	selectedPreImage := frontend.Variable(0)
-	for i := 0; i < k; i++ {
-		diff := api.Sub(circuit.SenderId, circuit.AnonymitySet[i])
-		eq := api.IsZero(diff)
-		selectedPreImage = api.Add(selectedPreImage, api.Mul(eq, circuit.HashedSharedSecrets[i]))
-	}
+	// Nullifier: Poseidon(preimage, blockNumber), with preimage =
+	// Poseidon(secretRemain, secretRemain) mod p computed here rather than
+	// published, so no public signal recomputes the nullifier and picks out
+	// the sender's slot.
+	selectedPreImage := utils.ReduceModP(api, pos.Poseidon(api, []frontend.Variable{selectedSecret, selectedSecret}))
 	computedNullifier := pos.Poseidon(api, []frontend.Variable{selectedPreImage, circuit.BlockNumber})
 	api.AssertIsEqual(computedNullifier, circuit.Nullifier)
 
@@ -345,15 +362,15 @@ func (circuit *EnygmaFeeCircuit) Define(api frontend.API) error {
 // [0..5]. len=6 (and dive,len=2 on the [2]string pairs) matches what the
 // handler actually requires.
 type EnygmaFeeRequest struct {
-	HashedSharedSecrets []string    `json:"hashed_shared_secrets" binding:"required,len=6"`
-	PublicKey           []string    `json:"public_keys" binding:"required,len=6"`
-	PreviousCommit      [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
-	TxCommit            [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
-	BlockNumber         string      `json:"block_number" binding:"required"`
-	AnonymitySet        []string    `json:"anonymity_set" binding:"required,len=6"`
-	MessageTags         []string    `json:"message_tags" binding:"required,len=6"`
-	Nullifier           string      `json:"nullifier" binding:"required"`
-	Fee                 string      `json:"fee" binding:"required"`
+	FingerPrintofSharedSecrets [][]string  `json:"fingerprint_shared_secrets" binding:"required,len=6,dive,len=6"`
+	PublicKey                  []string    `json:"public_keys" binding:"required,len=6"`
+	PreviousCommit             [][2]string `json:"previous_commits" binding:"required,len=6,dive,len=2"`
+	TxCommit                   [][2]string `json:"tx_commits" binding:"required,len=6,dive,len=2"`
+	BlockNumber                string      `json:"block_number" binding:"required"`
+	AnonymitySet               []string    `json:"anonymity_set" binding:"required,len=6"`
+	MessageTags                []string    `json:"message_tags" binding:"required,len=6"`
+	Nullifier                  string      `json:"nullifier" binding:"required"`
+	Fee                        string      `json:"fee" binding:"required"`
 
 	SenderID                  string   `json:"sender_id" binding:"required"`
 	SharedSecrets             []string `json:"shared_secrets" binding:"required,len=6"`
