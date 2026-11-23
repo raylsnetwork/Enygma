@@ -52,8 +52,12 @@ test('a demo page change runs no suite', () => {
   ]), []);
 });
 
-test("a change to enygma_dvp's contracts runs the DvP and retail suites, not payments", () => {
-  assert.deepStrictEqual(suites(['enygma_dvp/contracts/EnygmaDvp.sol']), ['dvp', 'retail']);
+test("a change to enygma_dvp's contracts runs the DvP, retail and payments suites", () => {
+  assert.deepStrictEqual(suites(['enygma_dvp/contracts/EnygmaDvp.sol']), ['payments', 'dvp', 'retail']);
+});
+
+test("a change to enygma_dvp's Poseidon regeneration runs the payments suite", () => {
+  assert.ok(suites(['enygma_dvp/scripts/regen_poseidon.js']).includes('payments'));
 });
 
 test('a change to enygma_dvp outside what the retail stack uses runs the DvP suite only', () => {
