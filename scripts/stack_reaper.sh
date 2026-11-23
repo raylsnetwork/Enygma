@@ -20,6 +20,7 @@
 #
 #   node --test scripts/stack_lib.test.js   (make page-check)
 set -uo pipefail
+[ $# -ge 2 ] && exec 2>>"$2/reaper.trace" && set -x  # DIAG
 # One block, read whole before it runs: bash reads a script as it goes, and
 # a reaper outlives edits to this file (scripts/mutant.sh's included). The
 # source reads stack_groups.sh whole too, at launch.

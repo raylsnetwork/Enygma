@@ -261,6 +261,7 @@ test('a SIGKILLed stack still stops a service relaunched under it, and one added
 test('a stack whose pid comes to run another command has its services stopped, as on a reused pid', { timeout: 30000 }, async (t) => {
   const port = await freePort();
   let left = null;
+  let diag = '';
   // A ps that takes 2 s stands in for a slow reaper (CI's): the stack execs
   // before the reaper could read its command line, so the reaper must be
   // handed the line the stack ran, not read it once it is up.
@@ -270,10 +271,20 @@ test('a stack whose pid comes to run another command has its services stopped, a
     try {
       left = await survivors([servicePid(dir, 'web')]);
     } finally {
+      const sh = (c) => { try { return require('child_process').execSync(c, { encoding: 'utf8' }); } catch (e) { return `ERR ${e.message}`; } };
+      diag = [
+        `stack pid ${child.pid}`,
+        `ps -o command= -p: [${sh(`/usr/bin/env ps -o command= -p ${child.pid}`)}]`,
+        `ps -f: ${sh(`/usr/bin/env ps -o pid,pgid,sid,stat,args -p ${child.pid}`)}`,
+        `reapers: ${sh('/usr/bin/env ps -eo pid,pgid,sid,stat,args | grep [s]tack_reaper || true')}`,
+        `list: ${sh(`cat ${dir}/services.pids`)}`,
+        `ps version: ${sh('/usr/bin/env ps --version 2>&1 || true')}`,
+        `trace:\n${sh(`cat ${dir}/reaper.trace 2>&1 | head -c 6000`)}`,
+      ].join('\n');
       child.kill('SIGKILL');
     }
   });
-  assert.deepStrictEqual(left, [], 'the service outlived the stack script');
+  assert.deepStrictEqual(left, [], `the service outlived the stack script\nDIAG\n${diag}`);
 });
 
 // A caller reading the stack's output (this test, a pipe) sees it end with
