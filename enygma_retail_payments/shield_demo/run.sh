@@ -135,8 +135,10 @@ step build-demo "$DEMO_DIR" go build -o "$BIN_DIR/shield_demo" .
 start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR" -dev
 wait_port demo 9092
 say "demo: http://localhost:9092  (Ctrl-C to stop everything)"
-# macOS's open only: on Debian/Ubuntu, open is openvt. Only for a run in a
-# terminal: an agent's run (output to a file) is checking the stack, and a
-# tab would open in the user's browser.
-[ "$(uname -s)" != Darwin ] || [ ! -t 1 ] || open http://localhost:9092 || true
+# macOS's open only: on Debian/Ubuntu, open is openvt. Only for a person at a
+# terminal: an agent's run is checking the stack, and a tab would open in the
+# user's browser. stdin tells them apart, not stdout: a person who pipes the
+# log (bash run.sh | tee run.log) still types at a terminal, while an agent's
+# shell has no terminal on stdin, stdout or stderr.
+[ "$(uname -s)" != Darwin ] || [ ! -t 0 ] || open http://localhost:9092 || true
 wait
