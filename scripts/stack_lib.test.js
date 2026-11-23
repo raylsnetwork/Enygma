@@ -412,6 +412,43 @@ for (const [nameSuffix, lyingMkdir] of [['', false], [', even with a mkdir that 
   });
 }
 
+// make shield-demo-restart may record while run.sh is still starting its
+// services: it finds the stack's logs dir from gnark, up before the relayer
+// and the demo start (#404). Records of pid 1, which a stop skips, race the
+// stack's own starts: a start that appends between a record's read and its
+// rewrite loses its line, and the stop then misses that service. The stack
+// keeps starting until every record is done, so the two overlap, and says
+// how many it started. Its services sleep 10 s, not 60: the stop waits
+// for one whose line was lost, which it never signals.
+test("a stack's starts and stack_service.sh records at once keep every line", { timeout: 30000 }, async (t) => {
+  const n = 8;
+  let lines = [];
+  const r = await stack(t, 'start s0 . sleep 10\nrecs=()\n' +
+    `for i in $(seq 1 ${n}); do (${STACK_SERVICE} "$LOG_DIR" "r$i" 1; : >"$LOG_DIR/recorded.$i") & recs+=($!); done\n` +
+    `k=0\nwhile [ "$(ls "$LOG_DIR" | grep -c '^recorded\\.')" -lt ${n} ]; do k=$((k + 1)); start "s$k" . sleep 10; done\n` +
+    'for p in "${recs[@]}"; do wait "$p"; done\nsay "started $k"\nsay "stack is up"\nwait', (child, dir) => {
+    try {
+      lines = fs.readFileSync(path.join(dir, 'services.pids'), 'utf8').trim().split('\n').map((l) => l.split(' ')[0]).sort();
+    } finally {
+      child.kill('SIGTERM');
+    }
+  });
+  assert.strictEqual(r.code, 143, r.out);
+  const k = Number(/started (\d+)/.exec(r.out)[1]);
+  const names = Array.from({ length: k + 1 }, (_, i) => `s${i}`).concat(Array.from({ length: n }, (_, i) => `r${i + 1}`));
+  assert.deepStrictEqual(lines, names.sort(), 'a start or a record lost its line');
+});
+
+// A writer killed holding the list's lock leaves it behind: a start fails
+// on it, naming it, rather than write the list unlocked or start a service
+// it doesn't list.
+test("a start fails, naming the lock, on a list's lock that stays held", { timeout: 30000 }, async (t) => {
+  const r = await stack(t, ': >"$LOG_DIR/services.pids.lock"\nstart web . sleep 60\nsay "stack is up"');
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /services\.pids\.lock held for about 10 s/);
+  assert.doesNotMatch(r.out, /stack is up/);
+});
+
 test('stack_service.sh fails, naming its usage, on the wrong number of arguments', () => {
   const r = spawnSync(STACK_SERVICE, [os.tmpdir(), 'demo'], { encoding: 'utf8' });
   assert.strictEqual(r.status, 2, r.stdout + r.stderr);
