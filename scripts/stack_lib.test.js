@@ -417,9 +417,11 @@ for (const [nameSuffix, lyingMkdir] of [['', false], [', even with a mkdir that 
 // and the demo start (#404). Records of pid 1, which a stop skips, race the
 // stack's own starts: a start that appends between a record's read and its
 // rewrite loses its line, and the stop then misses that service. The stack
-// keeps starting until every record is done, so the two overlap, and says
-// how many it started. Its services sleep 10 s, not 60: the stop waits
-// for one whose line was lost, which it never signals.
+// keeps starting until every record is done and says how many it started,
+// which must be at least one: with none, every record finished before the
+// first start, nothing raced, and the line check alone would pass. Its
+// services sleep 10 s, not 60: the stop waits for one whose line was lost,
+// which it never signals.
 test("a stack's starts and stack_service.sh records at once keep every line", { timeout: 30000 }, async (t) => {
   const n = 8;
   let lines = [];
@@ -435,6 +437,7 @@ test("a stack's starts and stack_service.sh records at once keep every line", { 
   });
   assert.strictEqual(r.code, 143, r.out);
   const k = Number(/started (\d+)/.exec(r.out)[1]);
+  assert.ok(k > 0, `no start overlapped a record: ${r.out}`);
   const names = Array.from({ length: k + 1 }, (_, i) => `s${i}`).concat(Array.from({ length: n }, (_, i) => `r${i + 1}`));
   assert.deepStrictEqual(lines, names.sort(), 'a start or a record lost its line');
 });
