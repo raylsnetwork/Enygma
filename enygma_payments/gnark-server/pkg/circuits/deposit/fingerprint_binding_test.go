@@ -94,8 +94,8 @@ func depositWitness(t *testing.T, amount int64, secrets, fingerprints []*big.Int
 	w.PreviousSenderRandomValue = prevR
 	w.SenderTxValue = big.NewInt(amount)
 	w.Address = big.NewInt(777)
-	w.PkDeposit = big.NewInt(555)
-	w.Hash = hash(t, hash(t, big.NewInt(777), big.NewInt(amount)), big.NewInt(555))
+	w.SkDeposit = big.NewInt(555)
+	w.Hash = vaultNote(t, amount, big.NewInt(555))
 	w.DomainId = big.NewInt(1)
 	return &w
 }

@@ -1,0 +1,12 @@
+# The Enygma Payments deposit proof is the vault spend
+
+`Enygma.deposit()` credits a shielded balance with value that comes back from `EnygmaErc20CoinVault`. The vault used to settle a separate join-split receipt (`withdrawThroughEnygma(ProofReceipt)`) that nothing related to the deposit proof's note `Hash`, so the credit and the spend could refer to different notes and amounts. The deposit proof itself is now the spend. Its `Hash` is the note it redeems, `Poseidon(Poseidon(asset, amount), Poseidon(SkDeposit))`, and the circuit binds `Hash` to the credited amount and to the prover's secret key. `deposit()` passes `Hash` to `withdrawThroughEnygma(uint256 commitment)`. The vault spends one unspent note with that commitment among those `depositThroughEnygma` inserted, and reverts `UnknownEnygmaNote` if there is none.
+
+## Considered Options
+
+- **Bind the deposit to a DvP Payment-circuit receipt**, its output 0 being the deposit's note, the way `Erc20CoinVault.partialWithdraw` pays out. Rejected: Enygma notes have the legacy two-level form that withdraw's circuit creates, which no Payment-family circuit can open. Using a receipt would mean moving the withdraw circuit to `Erc20CommitmentV2` notes as well, which changes two circuits and the vault's note format, for no binding a single proof does not already give.
+- **Spend by nullifier and Merkle root.** Rejected: an Enygma note's amount and public key are already public (withdraw()'s `depositParams`), so a nullifier hides nothing. Counting unspent notes per commitment needs no Merkle proof in the circuit.
+
+## Consequences
+
+`deposit()` loses its `withdrawParam` argument, and `IZkDvp` loses the join-split structs. The deposit request's `pk_deposit` becomes `sk_deposit`: only the holder of a note's key can redeem it, and the key reaches the prover only. Two withdrawals of the same amount to the same key make the same commitment. The vault counts them, so each can be redeemed once. The deposit keys and verifier are regenerated. `EnygmaErc20CoinVault.checkReceiptConditions` refuses every receipt, so EnygmaDvp's payment paths, which check a receipt through the vault before nullifying or inserting, cannot spend an Enygma note that a deposit also redeems. Whoever made a note by withdrawing knows its `SkDeposit` too, so the withdrawer can always redeem it first, and a note is only as private to its recipient as the withdrawer keeps that key.

@@ -1518,16 +1518,15 @@ contract Enygma is IEnygma {
     }
 
     /**
-     * @notice Deposit to Enygma from ZkDvp
+     * @notice Deposit to Enygma from ZkDvp: credits the sender the amount of
+     *         a DvP note it owns, and has the vault spend that note.
      * @param commitmentDeltas Balance changes for Enygma accounts
      * @param proof Zero-knowledge proof
-     * @param withdrawParam ZkDvp withdrawal parameters
      * @param participantIds Accounts involved
      */
     function deposit(
         Point[] calldata commitmentDeltas,
         DepositProof calldata proof,
-        WithdrawParams calldata withdrawParam,
         uint256[] calldata participantIds
     ) external onlyRegistered whenInitialized whenNotPaused nonReentrant returns (bool) {
         // Same shape checks as withdraw(): _verifyFingerprintsDeposit reads
@@ -1565,28 +1564,6 @@ contract Enygma is IEnygma {
         // Record nullifier before state changes (Fix C-2)
         _consumeNullifierDeposit(proof.public_signal);
 
-        // NOT fixed here (C-09's symmetric deposit-side gap): nothing
-        // below binds
-        // proof.public_signal[StatementLayout.DEPOSIT_HASH_OFFSET] (the
-        // deposit note commitment) against withdrawParam.transaction —
-        // the audit's own remediation asks for exactly that. It is
-        // deliberately not attempted in this fix: withdrawParam.transaction
-        // is an IZkDvp.JoinSplitTransaction (proof + opaque uint256[]
-        // statement + input/output counts) whose statement layout is
-        // defined entirely by the sibling enygma_dvp project's own
-        // join-split circuit, not by anything in this repository — and
-        // that project's real vault (EnygmaErc20CoinVault.withdrawThroughEnygma)
-        // takes an IEnygmaDvp.ProofReceipt, not the JoinSplitTransaction
-        // this interface declares, a type mismatch discovered while
-        // scoping this fix that means this call cannot reach the real
-        // vault via ABI-compatible calldata at all today. Binding
-        // StatementLayout.DEPOSIT_HASH_OFFSET correctly needs that mismatch
-        // resolved and
-        // the real statement layout cross-referenced first; doing it
-        // blindly here risked a binding that looks fixed but checks the
-        // wrong thing, which is worse than the documented gap. The
-        // withdraw leg's symmetric gap (Fix C-09 above) has no such
-        // cross-repo dependency and is fully fixed.
         // Fix L-12: state now updates first; the external ZkDvp call
         // moves last — see withdraw()'s identical comment for the full
         // reasoning (checks-effects-interactions, no reentrancy guard
@@ -1600,8 +1577,13 @@ contract Enygma is IEnygma {
         // deposit. See _applySupplyDelta (shared with withdraw()).
         _applySupplyDelta(commitmentDeltas);
 
+        // The proof's Hash is the DvP note it redeems: the circuit binds it to
+        // the credit (Hash commits to SenderTxValue) and to the prover's key
+        // (its public key is Poseidon(SkDeposit)). The vault spends exactly
+        // that note, once, and reverts unless it inserted it for a withdraw()
+        // and has not spent it, so the credit is the value the vault gives up.
         IZkDvp zkDvp = IZkDvp(_zkDvpAddress);
-        if (!zkDvp.withdrawThroughEnygma(withdrawParam.transaction)) {
+        if (!zkDvp.withdrawThroughEnygma(proof.public_signal[StatementLayout.DEPOSIT_HASH_OFFSET])) {
             revert ZkDvpOperationFailed();
         }
 

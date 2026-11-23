@@ -27,7 +27,11 @@ type DepositEnygmaCircuit struct {
 	AnonymitySet               []frontend.Variable    `gnark:",public"` // K-anonymity set
 	MessageTags                []frontend.Variable    `gnark:",public"` // Tag messages
 	Nullifier                  frontend.Variable      `gnark:",public"` // Nullifier
-	Hash                       frontend.Variable      `gnark:",public"` // Deposit commitment hash
+	// The DvP note this deposit redeems, Poseidon(Poseidon(Address,
+	// SenderTxValue), Poseidon(SkDeposit)): the commitment the vault's
+	// depositThroughEnygma inserted for a withdrawal. Enygma.sol has the vault
+	// spend exactly this note, so the credit is the note's amount.
+	Hash frontend.Variable `gnark:",public"`
 	// Fix L-01: chainId<<160 | contractAddress — see enygma/circuit.go's
 	// DomainId field doc comment for the full reasoning; identical here.
 	DomainId frontend.Variable `gnark:",public"`
@@ -41,8 +45,8 @@ type DepositEnygmaCircuit struct {
 	TxValues                  []frontend.Variable // Balances debited/credited
 	TxRandomValues            []frontend.Variable // Random factors for pedersen commitments
 	SenderTxValue             frontend.Variable   // Balance to deposit
-	PkDeposit                 frontend.Variable   // Public key for deposit
-	Address                   frontend.Variable   // Deposit address
+	SkDeposit                 frontend.Variable   // Secret key of the redeemed note (its public key is Poseidon(SkDeposit))
+	Address                   frontend.Variable   // Asset address of the redeemed note (the vault's, Enygma)
 }
 
 func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
@@ -305,9 +309,13 @@ func (circuit *DepositEnygmaCircuit) Define(api frontend.API) error {
 	}
 
 	///////////////////////////////////**//////////////////////////////////////
-	// Check if Hash(commitment in Dvp - MerkleTree) is well formed
+	// Hash is the note being redeemed, owned by the prover: the note's public
+	// key is derived from SkDeposit here, the way the withdraw circuit derives
+	// it for the notes it creates, so only the holder of the note's key can
+	// redeem it, and the credit SenderTxValue is the note's amount.
 	uid := pos.Poseidon(api, []frontend.Variable{circuit.Address, circuit.SenderTxValue})
-	CalculatedHash := pos.Poseidon(api, []frontend.Variable{uid, circuit.PkDeposit})
+	pkDeposit := pos.Poseidon(api, []frontend.Variable{circuit.SkDeposit})
+	CalculatedHash := pos.Poseidon(api, []frontend.Variable{uid, pkDeposit})
 	api.AssertIsEqual(CalculatedHash, circuit.Hash)
 
 	// Fix L-01: keep DomainId a genuinely constrained wire.
@@ -339,7 +347,7 @@ type DepositRequest struct {
 	TxValues                  []string `json:"tx_values" binding:"required,len=6"`
 	TxRandomValues            []string `json:"tx_random_values" binding:"required,len=6"`
 	SenderTxValue             string   `json:"sender_tx_value" binding:"required"`
-	PkDeposit                 string   `json:"pk_deposit" binding:"required"`
+	SkDeposit                 string   `json:"sk_deposit" binding:"required"`
 	Address                   string   `json:"address" binding:"required"`
 	// Fix L-01: caller-supplied chainId<<160|contractAddress.
 	DomainId string `json:"domain_id" binding:"required"`

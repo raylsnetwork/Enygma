@@ -107,16 +107,15 @@ func TestM14_DepositWithArity51Succeeds(t *testing.T) {
 	}
 	pubSig[layout.DepositBlockNumberOffset] = blockHash
 	pubSig[layout.DepositNullifierOffset] = deterministicNullifier(t, "m14-arity")
-	pubSig[layout.DepositHashOffset] = big.NewInt(424242)               // Hash — unbound by the contract (documented C-09 deposit-side gap), any value accepted
+	pubSig[layout.DepositHashOffset] = big.NewInt(424242)               // Hash — the note the mock vault holds (addMockNote below)
 	pubSig[layout.DepositDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
+	addMockNote(t, client, mkAuth, waitTx, mockZkDvpAddr, big.NewInt(424242))
 
 	proof := enygma.IEnygmaDepositProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	withdrawParam := emptyWithdrawParams()
-
-	if r := waitTx(instance.Deposit(mkAuth(), commitmentDeltas, proof, withdrawParam, participantIds)); r.Status != 1 {
+	if r := waitTx(instance.Deposit(mkAuth(), commitmentDeltas, proof, participantIds)); r.Status != 1 {
 		t.Fatal("FAIL (M-14 regressed): deposit() with a correctly-shaped [layout.DepositLen]-signal proof reverted")
 	}
 	t.Log("deposit() with [layout.DepositLen]-arity public_signal succeeded — M-14's arity mismatch is fixed")
@@ -192,14 +191,15 @@ func TestM15_DepositCreditsSenderAndTotalSupply(t *testing.T) {
 	}
 	pubSig[layout.DepositBlockNumberOffset] = blockHash
 	pubSig[layout.DepositNullifierOffset] = deterministicNullifier(t, "m15-deposit-credit")
-	pubSig[layout.DepositHashOffset] = big.NewInt(1)                    // Hash — unbound (documented C-09 deposit-side gap)
+	pubSig[layout.DepositHashOffset] = big.NewInt(1)                    // Hash — the note the mock vault holds (addMockNote below)
 	pubSig[layout.DepositDomainIdOffset] = expectedDomainId(enygmaAddr) // Fix L-01
+	addMockNote(t, client, mkAuth, waitTx, mockZkDvpAddr, big.NewInt(1))
 
 	proof := enygma.IEnygmaDepositProof{
 		Proof:        [8]*big.Int{big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0)},
 		PublicSignal: pubSig,
 	}
-	if r := waitTx(instance.Deposit(mkAuth(), commitmentDeltas, proof, emptyWithdrawParams(), participantIds)); r.Status != 1 {
+	if r := waitTx(instance.Deposit(mkAuth(), commitmentDeltas, proof, participantIds)); r.Status != 1 {
 		t.Fatal("honest deposit reverted — setup problem, not what this test is checking")
 	}
 
@@ -446,24 +446,6 @@ func TestM15_WithdrawDebitsSenderAndTotalSupply(t *testing.T) {
 func deterministicNullifier(t *testing.T, seed string) *big.Int {
 	t.Helper()
 	return new(big.Int).SetBytes(crypto.Keccak256([]byte(seed)))
-}
-
-// emptyWithdrawParams is a zero-value IEnygmaWithdrawParams — deposit()
-// forwards it verbatim to MockZkDvp.withdrawThroughEnygma, which accepts
-// any JoinSplitTransaction shape and returns true.
-func emptyWithdrawParams() enygma.IEnygmaWithdrawParams {
-	return enygma.IEnygmaWithdrawParams{
-		Transaction: enygma.IZkDvpJoinSplitTransaction{
-			Proof: enygma.IZkDvpSnarkProof{
-				A: enygma.IZkDvpG1Point{X: big.NewInt(0), Y: big.NewInt(0)},
-				B: enygma.IZkDvpG2Point{X: [2]*big.Int{big.NewInt(0), big.NewInt(0)}, Y: [2]*big.Int{big.NewInt(0), big.NewInt(0)}},
-				C: enygma.IZkDvpG1Point{X: big.NewInt(0), Y: big.NewInt(0)},
-			},
-			Statement:       []*big.Int{},
-			NumberOfInputs:  big.NewInt(0),
-			NumberOfOutputs: big.NewInt(0),
-		},
-	}
 }
 
 // mockDvpCommitment mirrors MockZkDvp.commitmentOf: the commitment the mock

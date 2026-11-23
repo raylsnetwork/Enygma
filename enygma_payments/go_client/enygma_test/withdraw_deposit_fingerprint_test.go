@@ -196,6 +196,8 @@ func TestWithdrawDepositFingerprints(t *testing.T) {
 		if r := waitTx(instance.AddZkDvp(mkAuth(), bridge)); r.Status != 1 {
 			t.Fatal("addZkDvp failed")
 		}
+		// The note every deposit below redeems.
+		addMockNote(t, client, mkAuth, waitTx, bridge, big.NewInt(424242))
 		f := fixture{instance: instance, client: client, mkAuth: mkAuth, waitTx: waitTx}
 		f.balancesN = func() []enygma.IEnygmaPoint {
 			pv, err := instance.GetPublicValues(&bind.CallOpts{}, big.NewInt(nBanks+1))
@@ -268,7 +270,7 @@ func TestWithdrawDepositFingerprints(t *testing.T) {
 		fp := testFingerprints()
 		_, err := f.instance.Withdraw(f.mkAuth(), f.deltas, f.withdraw(fp, "fp-unconfirmed-w"), []enygma.IEnygmaDepositParams{}, f.ids)
 		wantRevert(t, err, "FingerprintNotConfirmed")
-		_, err = f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fp, "fp-unconfirmed-d"), emptyWithdrawParams(), f.ids)
+		_, err = f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fp, "fp-unconfirmed-d"), f.ids)
 		wantRevert(t, err, "FingerprintNotConfirmed")
 	})
 
@@ -280,7 +282,7 @@ func TestWithdrawDepositFingerprints(t *testing.T) {
 		fake := fabricatedColumn(t, fp)
 		_, err := f.instance.Withdraw(f.mkAuth(), f.deltas, f.withdraw(fake, "fp-fake-w"), []enygma.IEnygmaDepositParams{}, f.ids)
 		wantRevert(t, err, "InvalidPublicInputs")
-		_, err = f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fake, "fp-fake-d"), emptyWithdrawParams(), f.ids)
+		_, err = f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fake, "fp-fake-d"), f.ids)
 		wantRevert(t, err, "InvalidPublicInputs")
 		after := f.balancesN()
 		for i := range before {
@@ -293,7 +295,7 @@ func TestWithdrawDepositFingerprints(t *testing.T) {
 		if r := f.waitTx(f.instance.Withdraw(f.mkAuth(), f.deltas, f.withdraw(fp, "fp-real-w"), []enygma.IEnygmaDepositParams{}, f.ids)); r.Status != 1 {
 			t.Fatal("withdraw with the confirmed fingerprints reverted")
 		}
-		if r := f.waitTx(f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fp, "fp-real-d"), emptyWithdrawParams(), f.ids)); r.Status != 1 {
+		if r := f.waitTx(f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fp, "fp-real-d"), f.ids)); r.Status != 1 {
 			t.Fatal("deposit with the confirmed fingerprints reverted")
 		}
 		ok, err := f.instance.Check(&bind.CallOpts{})
@@ -306,7 +308,7 @@ func TestWithdrawDepositFingerprints(t *testing.T) {
 	t.Run("deposit needs exactly DEFAULT_SIZE participants", func(t *testing.T) {
 		f := setup(t)
 		fp := testFingerprints()
-		_, err := f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fp, "fp-len-d"), emptyWithdrawParams(), f.ids[:nBanks-1])
+		_, err := f.instance.Deposit(f.mkAuth(), f.deltas, f.deposit(fp, "fp-len-d"), f.ids[:nBanks-1])
 		wantRevert(t, err, "ParticipantIdsLengthMismatch")
 	})
 }

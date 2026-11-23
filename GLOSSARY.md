@@ -12,7 +12,7 @@
 
 **Statement layout field names** (withdraw circuit, prefix `Withdraw`): the transfer circuit's `Fingerprint` through `Nullifier` (the k×k shared-secret fingerprint matrix, which `withdraw()` checks against the confirmed fingerprints exactly as `transfer()` does), then `TotalDepositValue` (Σ of the DvP deposit amounts), `DomainId`, `DepositCommitments` (the DvP note commitment each of the 10 deposit slots creates, 0 if unused). Its first `DepositLen` signals share the deposit circuit's layout everywhere except the field after `Nullifier` (`TotalDepositValue` here, `Hash` in deposit).
 
-**Statement layout field names** (deposit circuit, prefix `Deposit`): `Fingerprint` through `Nullifier` as in withdraw, then `Hash` (the deposit note commitment), `DomainId`.
+**Statement layout field names** (deposit circuit, prefix `Deposit`): `Fingerprint` through `Nullifier` as in withdraw, then `Hash` (the DvP note the deposit redeems, which `deposit()` has the vault spend; the circuit binds it to the credited amount and to the prover's key), `DomainId`.
 
 **Statement layout field names** (burn circuit, prefix `Burn`): `PublicKey` (the burned account's spend public key), `PreviousCommitment` and `NewCommitment` (one (X, Y) balance commitment each, X first), `Amount`, `BlockNumber`, `Nullifier`, `DomainId`.
 

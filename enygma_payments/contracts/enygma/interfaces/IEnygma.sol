@@ -75,10 +75,6 @@ interface IEnygma {
         uint256 publicKey;
     }
 
-    struct WithdrawParams {
-        IZkDvp.JoinSplitTransaction transaction;
-    }
-
     event TokenInitialized(uint maxBankCount);
 
     // Fix M-06: used to emit the post-increment _totalRegisteredParties
