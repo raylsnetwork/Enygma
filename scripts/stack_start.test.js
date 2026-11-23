@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { makeEnv } = require('./test_git');
-const { freePort, alive, run, killStack, testNoLeftovers } = require('./test_stack');
+const { freePort, listening, alive, run, killStack, testNoLeftovers } = require('./test_stack');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -117,8 +117,9 @@ for (const t of TARGETS) {
 // A stack that fails to start (a busy port, a failed build step) must not
 // leave a pid file behind: it would be stale, and block mutant.sh until a
 // stop removed it.
-test('a stack script that exits before it is up leaves no pid files', { timeout: 60000 }, async (ctx) => {
-  const s = fakeStack(await freePort(), 'echo cannot-start; exit 3');
+test('a stack script that exits before it is up leaves no pid files, and no service running', { timeout: 60000 }, async (ctx) => {
+  const port = await freePort();
+  const s = fakeStack(port, 'echo cannot-start; exit 3');
   const started = makeStart(ctx, TARGETS[2], s);
   try {
     const pid = await readPid(s);
@@ -129,6 +130,7 @@ test('a stack script that exits before it is up leaves no pid files', { timeout:
     assert.match(r.out, /bash \S+fake_stack\.sh exited before the stack came up:\n[^]*cannot-start/);
     assert.strictEqual(fs.existsSync(s.pidFile), false, 'the pid file is left');
     assert.strictEqual(fs.existsSync(`${s.pidFile}.logs`), false, 'the logs file is left');
+    assert.strictEqual(await listening(port), false, 'the service still listens');
   } finally { await done(s, started); }
 });
 

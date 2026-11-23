@@ -1,7 +1,8 @@
 # Helpers for the local stack scripts (enygma_dvp/scripts/stack.sh,
 # enygma_payments/run_scripts/stack.sh, enygma_retail_payments/shield_demo/run.sh):
 # start services, wait for their ports, build steps, and stop everything on a
-# signal, a failure or a service exiting. Sourced, after set -euo pipefail:
+# signal, a failure or a service exiting, or, through a reaper
+# (scripts/stack_reaper.sh), on a SIGKILL. Sourced, after set -euo pipefail:
 #
 #   . "$REPO_ROOT/scripts/stack_lib.sh"
 #   use_log_dir dvp_stack      # LOG_DIR (default: a fresh temp dir) and BIN_DIR
@@ -91,44 +92,44 @@ require_free_ports() {
     done
 }
 
-PIDS=() NAMES=()
+# OWN_GROUP and REAPER_SH, the reaper's path, found as this file is sourced:
+# start runs from DIR. stack_groups.sh holds the stop cleanup shares with the
+# reaper.
+OWN_GROUP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/own_group.sh"
+REAPER_SH="$(dirname "$OWN_GROUP")/stack_reaper.sh"
+. "$(dirname "$OWN_GROUP")/stack_groups.sh"
+
+PIDS=() NAMES=() REAPER_PID=
 # service_pids — the pids cleanup stops: one per service, from
 # $LOG_DIR/services.pids, which start writes and scripts/stack_service.sh
 # updates when a make restart target relaunches a service under the running
-# stack (or starts one it had none of). PIDS, start's own, when that list is
-# gone (its LOG_DIR removed under the running stack).
+# stack (or starts one it had none of), read by listed_pids
+# (stack_groups.sh). PIDS, start's own, when that list is gone (its LOG_DIR
+# removed under the running stack).
 service_pids() {
     if [ -f "$LOG_DIR/services.pids" ]; then
-        awk '{print $2}' "$LOG_DIR/services.pids"
+        listed_pids "$LOG_DIR/services.pids"
     else
         printf '%s\n' ${PIDS[@]+"${PIDS[@]}"}
     fi
 }
-# cleanup — stops every service start started, or a restart target
-# relaunched, and waits (about 10 s at most) for them to exit. Quiet before
-# the first one, so a preflight or port-check failure ends on its own message.
+# cleanup — stops the stack's reaper and waits for it, then stops every
+# service start started, or a restart target relaunched, and waits (about
+# 10 s at most) for them to exit (stack_groups.sh's stop_groups). Quiet
+# before the first one, so a preflight or port-check failure ends on its own
+# message.
 cleanup() {
     trap - EXIT INT TERM
     [ -n "${PIDS[*]+x}" ] || return 0
+    # First, and gone before a service is signalled, so the services never
+    # have two stoppers.
+    [ -z "$REAPER_PID" ] || { signal_groups "$REAPER_PID"; await_groups "$REAPER_PID"; }
     echo "" # after a ^C, on a line of its own
     say "stopping services…"
-    local pids pid
+    local pids
     pids=$(service_pids)
-    for pid in $pids; do
-        # Each service runs in its own process group; kill the whole group so
-        # children (npx → node) go too.
-        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    done
-    wait 2>/dev/null || true
-    # A relaunched service is no child of this script's, so wait cannot reap
-    # it: poll its group, all the groups under one deadline.
-    local alive
-    for _ in $(seq 1 50); do
-        alive=
-        for pid in $pids; do kill -0 -- "-$pid" 2>/dev/null && alive=1; done
-        [ -n "$alive" ] || break
-        sleep 0.2
-    done
+    # Unquoted: one argument a pid.
+    stop_groups $pids
     say "stopped. Logs: $LOG_DIR"
 }
 trap cleanup EXIT
@@ -138,19 +139,27 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# OWN_GROUP, found as this file is sourced: start runs from DIR.
-OWN_GROUP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/own_group.sh"
 # start NAME DIR CMD… — runs CMD in DIR in its own process group, logging to
 # $LOG_DIR/NAME.log, and lists it in $LOG_DIR/services.pids for cleanup (the
 # first start empties a list a past stack in this LOG_DIR left). Unlocked: no
-# restart target records into the list before the stack is up.
+# restart target records into the list before the stack is up. The first
+# start also launches the stack's reaper (scripts/stack_reaper.sh), which
+# stops the listed services if this script dies without its cleanup: in its
+# own group, its streams detached, and no child of this script's, so a
+# stack's wait (run.sh's) never waits on it.
 start() {
     local name=$1 dir=$2
     shift 2
     (cd "$dir" && exec "$OWN_GROUP" "$@" >"$LOG_DIR/$name.log" 2>&1) &
-    [ -n "${PIDS[*]+x}" ] || : >"$LOG_DIR/services.pids"
-    echo "$name $!" >>"$LOG_DIR/services.pids"
-    PIDS+=($!)
+    local pid=$!
+    if [ -z "${PIDS[*]+x}" ]; then
+        : >"$LOG_DIR/services.pids"
+        # The stack's command line read here, not by the reaper: by the time
+        # a slow reaper runs, the stack may already be running another one.
+        REAPER_PID=$("$OWN_GROUP" "$REAPER_SH" "$$" "$LOG_DIR" "$(ps -o command= -p "$$" 2>/dev/null)" </dev/null >/dev/null 2>&1 & echo $!)
+    fi
+    echo "$name $pid" >>"$LOG_DIR/services.pids"
+    PIDS+=("$pid")
     NAMES+=("$name")
 }
 
