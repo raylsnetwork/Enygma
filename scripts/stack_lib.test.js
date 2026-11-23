@@ -14,7 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { GIT_ENV, git, scratchRepo } = require('./test_git');
-const { freePort, listening, servicePid, killServices } = require('./test_stack');
+const { freePort, listening, servicePid, groupAlive, killGroup, killServices, survivors } = require('./test_stack');
 
 const LIB = path.join(__dirname, 'stack_lib.sh');
 
@@ -153,8 +153,8 @@ async function untilListening(port, want) {
 // goneElseKill says whether no process of pid's group runs, killing what
 // does so a failed test leaks nothing.
 function goneElseKill(pid) {
-  try { process.kill(-pid, 0); } catch { return true; }
-  process.kill(-pid, 'SIGKILL');
+  if (!groupAlive(pid)) return true;
+  killGroup(pid);
   return false;
 }
 
@@ -214,18 +214,6 @@ test("a stop leaves alone what a past stack's service list in its LOG_DIR names"
   }
 });
 
-// survivors resolves with those of the groups pids that still run after
-// about 15 s (the reaper's poll and its 10 s stop), killing them so a
-// failed test leaks nothing.
-async function survivors(pids) {
-  assert.ok(pids.length && pids.every((pid) => Number.isInteger(pid) && pid > 1), `not a list of service pids: ${pids}`);
-  const running = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
-  for (let i = 0; i < 150 && pids.some(running); i++) await new Promise((r) => setTimeout(r, 100));
-  const left = pids.filter(running);
-  left.forEach((pid) => process.kill(-pid, 'SIGKILL'));
-  return left;
-}
-
 // A SIGKILL runs no trap: the stack's reaper stops what its list names.
 test('a SIGKILLed stack still stops its services', { timeout: 30000 }, async (t) => {
   const [port, other] = [await freePort(), await freePort()];
@@ -233,8 +221,7 @@ test('a SIGKILLed stack still stops its services', { timeout: 30000 }, async (t)
   const r = await stack(t, `start web . ${server(port)}\nwait_port web ${port}\nstart other . ${slowServer(other)}\n` +
     `wait_port other ${other}\nsay "stack is up"\nwatch_services`, async (child, dir) => {
     const pids = [servicePid(dir, 'web'), servicePid(dir, 'other')];
-    child.kill('SIGKILL');
-    left = await survivors(pids);
+    left = await survivors(pids, () => child.kill('SIGKILL'));
   });
   assert.strictEqual(r.signal, 'SIGKILL', r.out);
   assert.deepStrictEqual(left, [], 'these service groups outlived the SIGKILLed stack');
@@ -248,8 +235,9 @@ test('a stack SIGKILLed by its script\'s name (pkill -f) still stops its service
   let killed = null;
   const r = await stack(t, `start web . ${server(port)}\nwait_port web ${port}\nsay "stack is up"\nwatch_services`, async (child, dir) => {
     const pids = [servicePid(dir, 'web')];
-    killed = spawnSync('pkill', ['-KILL', '-f', path.join(dir, 'stack.sh')], { encoding: 'utf8' });
-    left = await survivors(pids);
+    left = await survivors(pids, () => {
+      killed = spawnSync('pkill', ['-KILL', '-f', path.join(dir, 'stack.sh')], { encoding: 'utf8' });
+    });
   });
   assert.strictEqual(killed.status, 0, `pkill matched nothing: ${killed.stderr}`);
   assert.strictEqual(r.signal, 'SIGKILL', r.out);
@@ -265,8 +253,7 @@ test('a SIGKILLed stack still stops a service relaunched under it, and one added
     const pids = [servicePid(dir, 'other')];
     pids.push(await relaunch(dir, 'web', port, servicePid(dir, 'web')));
     pids.push(await relaunch(dir, 'demo', demo));
-    child.kill('SIGKILL');
-    left = await survivors(pids);
+    left = await survivors(pids, () => child.kill('SIGKILL'));
   });
   assert.strictEqual(r.signal, 'SIGKILL', r.out);
   assert.deepStrictEqual(left, [], 'these service groups outlived the SIGKILLed stack');
@@ -329,7 +316,7 @@ test("a SIGKILLed stack's reaper exits only once the services it stopped have", 
     watched = reaping(pid);
     for (let i = 0; i < 150 && reaping(pid); i++) await new Promise((res) => setTimeout(res, 50));
     gone = !reaping(pid);
-    try { process.kill(-slow, 0); left = true; process.kill(-slow, 'SIGKILL'); } catch { /* gone */ }
+    left = !goneElseKill(slow);
   });
   assert.strictEqual(r.signal, 'SIGKILL', r.out);
   assert.ok(watched && gone, `the reaper was ${watched ? 'never gone' : 'never seen'}`);
@@ -345,10 +332,13 @@ test("a SIGKILLed stack's reaper TERMs a listed pid that leads no group", { time
     let signal = null;
     const r = await stack(t, `start web . sleep 60\necho "loner ${loner.pid}" >>"$LOG_DIR/services.pids"\n` +
       `say "stack is up"\nwatch_services`, async (child, dir) => {
+      // start returns before web's own_group.sh has made its group.
       const web = servicePid(dir, 'web');
-      child.kill('SIGKILL');
+      for (let i = 0; i < 50 && !groupAlive(web); i++) await new Promise((res) => setTimeout(res, 100));
+      const stopped = survivors([web], () => child.kill('SIGKILL'));
+      stopped.catch(() => {}); // awaited below, after the race
       signal = await Promise.race([ended, new Promise((res) => setTimeout(() => res('none in 5 s'), 5000))]);
-      await survivors([web]);
+      await stopped;
     });
     assert.strictEqual(r.signal, 'SIGKILL', r.out);
     assert.strictEqual(signal, 'SIGTERM', 'the pid that leads no group was not TERMed');
@@ -368,8 +358,7 @@ test("a SIGKILLed stack's reaper leaves alone what a past stack's service list i
       // The stack's own web: its line, not the past stack's.
       const pids = fs.readFileSync(path.join(dir, 'services.pids'), 'utf8').trim().split('\n')
         .map((l) => Number(l.split(' ')[1])).filter((pid) => pid !== bystander.pid);
-      child.kill('SIGKILL');
-      left = await survivors(pids);
+      left = await survivors(pids, () => child.kill('SIGKILL'));
     });
     assert.strictEqual(r.signal, 'SIGKILL', r.out);
     assert.deepStrictEqual(left, [], 'the service outlived the SIGKILLed stack');

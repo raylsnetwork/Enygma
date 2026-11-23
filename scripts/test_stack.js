@@ -11,6 +11,8 @@
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
+const { spawnSync } = require('child_process');
+const assert = require('node:assert');
 
 const seen = new Set();
 
@@ -33,9 +35,25 @@ function listening(port) {
   });
 }
 
-// alive says whether process pid still runs.
+// running says whether some process that ps lists matches (its row's pid
+// and pgid) and has not exited. A zombie (stat Z: exited, not yet reaped)
+// has: Linux's kill -0 still finds one, as a pid and as a group, while
+// macOS's finds it only as a pid, so kill -0 alone would count a stopped
+// service its parent never reaped as running, on CI alone. A ps that fails
+// counts as running, as kill -0 said.
+function running(matches) {
+  const r = spawnSync('ps', ['-axo', 'pid=,pgid=,stat='], { encoding: 'utf8' });
+  if (r.status !== 0) return true;
+  return r.stdout.split('\n').some((line) => {
+    const [pid, pgid, stat] = line.trim().split(/\s+/);
+    return stat && !stat.startsWith('Z') && matches(Number(pid), Number(pgid));
+  });
+}
+
+// alive says whether process pid still runs (a zombie does not).
 function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); } catch { return false; }
+  return running((p) => p === pid);
 }
 
 // run resolves with child's exit status and output.
@@ -100,9 +118,27 @@ function killStack(logDir, ...groupPids) {
   groupPids.forEach(killGroup);
 }
 
-// groupAlive says whether any process of group pid runs.
+// groupAlive says whether any process of group pid runs (a zombie does
+// not).
 function groupAlive(pid) {
-  try { process.kill(-pid, 0); return true; } catch { return false; }
+  try { process.kill(-pid, 0); } catch { return false; }
+  return running((_, pgid) => pgid === pid);
+}
+
+// survivors runs kill (the stack's death), then resolves with those of
+// the groups pids that still run after about 15 s (the reaper's poll and
+// its 10 s stop), killing them so a failed test leaks nothing. Every group
+// must run before kill: one already gone, or not yet started, would pass
+// as stopped with nothing tested.
+async function survivors(pids, kill = () => {}) {
+  assert.ok(pids.length && pids.every((pid) => Number.isInteger(pid) && pid > 1), `not a list of service pids: ${pids}`);
+  const idle = pids.filter((pid) => !groupAlive(pid));
+  assert.deepStrictEqual(idle, [], 'these service groups were not running before the stack died, so the check would test nothing');
+  kill();
+  for (let i = 0; i < 150 && pids.some(groupAlive); i++) await new Promise((r) => setTimeout(r, 100));
+  const left = pids.filter(groupAlive);
+  left.forEach(killGroup);
+  return left;
 }
 
 // leftovers resolves with the recorded groups still running after about
@@ -118,8 +154,8 @@ async function leftovers() {
 // service group its stacks listed has stopped, so no test left one running.
 function testNoLeftovers(test) {
   test('no service a stack in this file started is left running', async () => {
-    require('node:assert').deepStrictEqual(await leftovers(), [], 'these service groups outlived their tests');
+    assert.deepStrictEqual(await leftovers(), [], 'these service groups outlived their tests');
   });
 }
 
-module.exports = { freePort, listening, alive, run, servicePid, killGroup, killServices, killStack, testNoLeftovers };
+module.exports = { freePort, listening, alive, groupAlive, run, servicePid, killGroup, killServices, killStack, survivors, testNoLeftovers };
