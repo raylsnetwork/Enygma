@@ -111,9 +111,10 @@ test('a pid file whose process is not the stack is stale: removed, and nothing i
   } finally { done(s); }
 });
 
-// A stack that exits by itself (its watch_services loop ends it when a
-// service dies) leaves its pid files behind.
-test('a pid file left by a stack that exited by itself is stale, and says so', { timeout: 60000 }, async () => {
+// A SIGKILLed stack runs no cleanup, so it leaves its pid files behind:
+// the stop finds its pid gone and says so, and the stack's reaper stops its
+// service.
+test('a pid file left by a SIGKILLed stack is stale, and says so, its services stopped', { timeout: 60000 }, async () => {
   const port = await freePort();
   const s = await fakeStack(port);
   try {
@@ -123,6 +124,8 @@ test('a pid file left by a stack that exited by itself is stale, and says so', {
     assert.strictEqual(r.status, 1, r.out);
     assert.match(r.out, /stale pid file .*has exited/);
     assert.strictEqual(fs.existsSync(s.pidFile), false, 'the stale pid file is left');
+    for (let i = 0; i < 150 && await listening(port); i++) await new Promise((res) => setTimeout(res, 100));
+    assert.strictEqual(await listening(port), false, 'the SIGKILLed stack\'s service still listens');
   } finally { done(s); }
 });
 
