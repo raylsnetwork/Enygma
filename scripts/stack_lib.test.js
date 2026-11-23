@@ -267,7 +267,8 @@ test('a stack whose pid comes to run another command has its services stopped, a
   // handed the line the stack ran, not read it once it is up.
   const slowPs = `real=$(command -v ps)\nmkdir shim\nprintf '#!/bin/sh\\nsleep 2\\nexec %s "$@"\\n' "$real" >shim/ps\n` +
     `chmod +x shim/ps\nPATH=$PWD/shim:$PATH\n`;
-  await stack(t, `${slowPs}start web . ${server(port)}\nwait_port web ${port}\nsay "stack is up"\nexec sleep 60`, async (child, dir) => {
+  const reaps = `exec perl -e 'while (1) { waitpid(-1, 0) > 0 or sleep 1 }'`;
+  await stack(t, `${slowPs}start web . ${server(port)}\nwait_port web ${port}\nsay "stack is up"\n${reaps}`, async (child, dir) => {
     try {
       left = await survivors([servicePid(dir, 'web')]);
     } finally {
