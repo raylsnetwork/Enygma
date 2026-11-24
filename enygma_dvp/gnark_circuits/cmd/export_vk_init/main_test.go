@@ -55,7 +55,7 @@ func exists(t *testing.T, path string) bool {
 
 func TestExportAll_NamesEveryCircuitWithNoKeyFile(t *testing.T) {
 	circuits, mapping, build := scenario(t)
-	out, err := exportAll(circuits, mapping, build, false)
+	out, err := exportAll(circuits, mapping, nil, build, false)
 	if err == nil {
 		t.Fatal("exportAll succeeded with two circuits missing their key file")
 	}
@@ -74,7 +74,7 @@ func TestExportAll_NamesEveryCircuitWithNoKeyFile(t *testing.T) {
 
 func TestExportAll_PlaceholderGivesEveryConfigCircuitAVK(t *testing.T) {
 	circuits, mapping, build := scenario(t)
-	out, err := exportAll(circuits, mapping, build, true)
+	out, err := exportAll(circuits, mapping, nil, build, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestExportAll_KeepsAnEarlierSetupsJSONForACircuitWithNoKeyFile(t *testing.T
 		}
 	}
 	for _, placeholder := range []bool{false, true} {
-		out, err := exportAll(circuits, mapping, build, placeholder)
+		out, err := exportAll(circuits, mapping, nil, build, placeholder)
 		if err != nil {
 			t.Fatalf("placeholder=%v: %v", placeholder, err)
 		}
@@ -154,5 +154,41 @@ func TestPlaceholderVK_VerifiesNoProof(t *testing.T) {
 	}
 	if err := groth16.Verify(proof, vk, public); err == nil {
 		t.Error("a proof from another setup verifies against the placeholder VK")
+	}
+}
+
+// A retired circuit (retiredCircuits) gets the placeholder whatever is there:
+// its key file (A) or an earlier setup's JSON (B) would register a real VK
+// in a slot another vault's constants also read, and no -placeholder is
+// needed for it.
+func TestExportAll_RetiredCircuitAlwaysGetsThePlaceholder(t *testing.T) {
+	circuits, mapping, build := scenario(t)
+	earlierB := []byte(`{"protocol":"groth16","from":"B"}`)
+	if err := os.WriteFile(filepath.Join(build, "B.json"), earlierB, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(build, "C.json"), []byte(`{"from":"C"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	retired := map[string]bool{"A": true, "B": true}
+	out, err := exportAll(circuits, mapping, retired, build, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Exported) != 0 || !slices.Equal(out.Placeheld, []string{"A", "B"}) || !slices.Equal(out.Kept, []string{"C"}) {
+		t.Fatalf("exported %v, placeholders %v, kept %v; want none, [A B], [C]", out.Exported, out.Placeheld, out.Kept)
+	}
+	real, err := readVK(mapping["A"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"A", "B"} {
+		data, _ := os.ReadFile(filepath.Join(build, name+".json"))
+		if bytes.Equal(data, earlierB) {
+			t.Errorf("%s.json is the earlier setup's", name)
+		}
+		if strings.Contains(string(data), real.G1.Alpha.X.String()) {
+			t.Errorf("%s.json carries A's real VK", name)
+		}
 	}
 }

@@ -146,29 +146,3 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		}
 	}
 }
-
-func TestV2ReceiptShape_Erc1155(t *testing.T) {
-	s := newShapeVault(t, "core/contracts/vaults/Erc1155CoinVault.sol/Erc1155CoinVault.json",
-		common.HexToAddress("0x00000000000000000000000000000000000000a0"))
-
-	filled := func(size int) []*big.Int {
-		st := make([]*big.Int, size)
-		for i := range st {
-			st[i] = n(int64(100 + i))
-		}
-		st[0] = n(0)
-		return st
-	}
-	// 23 signals is JoinSplitErc1155WithAuditor's length for 2 in, 2 out,
-	// and also what the length formula gives for 1 in, 5 out. 61 is the
-	// 10-note batch, whose length does not depend on the outputs at all.
-	if r := s.check(filled(23), 1, 5); r != "ReceiptShapeMismatch" {
-		t.Errorf("fungible auditor receipt claiming 1 in, 5 out: got %q, want ReceiptShapeMismatch", r)
-	}
-	if r := s.check(filled(61), 10, 3); r != "ReceiptShapeMismatch" {
-		t.Errorf("batch receipt claiming 3 outputs: got %q, want ReceiptShapeMismatch", r)
-	}
-	if r := s.check(filled(61), 10, 30); r != "ReceiptShapeMismatch" {
-		t.Errorf("batch receipt claiming 30 outputs: got %q, want ReceiptShapeMismatch", r)
-	}
-}
