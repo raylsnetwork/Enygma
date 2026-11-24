@@ -162,10 +162,8 @@ func initializePayment() error {
 	fmt.Printf("EnygmaDvp:  %s\n", enygmaDvpAddress.Hex())
 	fmt.Printf("Verifier:   %s\n", verifierAddress.Hex())
 
-	// The deployed Verifier.json has initializeVerifier as a world-callable function
-	// that stores the G16 verifier address AND grants DEFAULT_OWNER_ROLE to msg.sender.
-	// Calling it as the deployer grants the deployer DEFAULT_OWNER_ROLE on Verifier,
-	// which lets us call addVerificationKey directly (bypassing EnygmaDvp).
+	// Verifier grants its deployer DEFAULT_OWNER_ROLE at construction, and only
+	// that role may call initializeVerifier, once, to store the G16 verifier.
 	fmt.Println("Initializing Verifier (groth16 backend)...")
 	_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "initializeVerifier", g16VerifierAddress)
 	if err != nil {
@@ -178,8 +176,8 @@ func initializePayment() error {
 		return fmt.Errorf("failed to initialize EnygmaDvp: %w", err)
 	}
 
-	// Register VKs directly on Verifier — the deployer has DEFAULT_OWNER_ROLE after
-	// calling initializeVerifier above.
+	// Register VKs directly on Verifier (bypassing EnygmaDvp): the deployer holds
+	// DEFAULT_OWNER_ROLE from Verifier's constructor.
 	for i, vkey := range vkeys {
 		fmt.Printf("Registering verification key %d...\n", i+1)
 		_, err = callContractMethod(client, auth, verifierABI, verifierAddress, "addVerificationKey", vkey)

@@ -25,6 +25,8 @@ cp "$DVP_ROOT/artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20
    "$ROOT/contracts/abis/Erc20CoinVault.json"
 cp "$DVP_ROOT/artifacts/contracts/core/contracts/EnygmaDvp.sol/EnygmaDvp.json" \
    "$ROOT/contracts/abis/EnygmaDvp.json"
+cp "$DVP_ROOT/artifacts/contracts/core/contracts/Verifier.sol/Verifier.json" \
+   "$ROOT/contracts/abis/Verifier.json"
 cd "$ROOT"
 
 echo "==> [4/5] Exporting VKs and regenerating PrivateMintVerifier..."
