@@ -46,7 +46,7 @@ describe("Retail Verifier.json", function () {
   it("is this project's build of contracts/core/contracts/Verifier.sol", async function () {
     const built = await artifacts.readArtifact("contracts/core/contracts/Verifier.sol:Verifier");
     const copy = require(RETAIL_VERIFIER);
-    const fix = "; copy enygma_dvp/artifacts/contracts/core/contracts/Verifier.sol/Verifier.json over it";
+    const fix = "; refresh it with bash enygma_retail_payments/scripts/copy_dvp_abis.sh";
     expect(copy.bytecode === built.bytecode, "the retail copy's creation bytecode differs from the build of Verifier.sol" + fix).to.equal(true);
     expect(copy.deployedBytecode === built.deployedBytecode, "the retail copy's runtime bytecode differs from the build of Verifier.sol" + fix).to.equal(true);
     expect(copy.abi).to.deep.equal(built.abi);
