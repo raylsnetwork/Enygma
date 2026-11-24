@@ -26,13 +26,6 @@ paths = [
   # not a baseline/fingerprint file — deliberately, so no copy of the
   # actual secret text ever has to be committed to allowlist it.
   #
-  # enygma_payments/contracts/test: the original C-06 leak (pre-rotation
-  # relayer key + bearer token), fixed in 65f5537 — the current tip of
-  # this file is placeholders only (see the git blame). The key itself
-  # is already rotated/dead per relayer/.env's own note; the git-history
-  # rewrite that would fully remove it from the repo was explicitly
-  # deferred, not this allowlist entry's job to fix.
-  '''^enygma_payments/contracts/test$''',
   # enygma_payments/demo_instructions.md: false positive — a deployed
   # contract address in an example log-output block, not a secret.
   '''^enygma_payments/demo_instructions\.md$''',
