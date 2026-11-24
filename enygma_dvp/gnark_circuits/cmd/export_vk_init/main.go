@@ -10,9 +10,10 @@
 //	go run ./cmd/export_vk_init/ ../build
 //
 // init registers one VK per circuit in enygmadvp.config.json, in order, so
-// every one needs a JSON. A circuit whose key file is missing (or that has no
-// key file, see circuitMapping) keeps the JSON already in <build_dir>, if
-// there is one. Otherwise it is an error naming it, unless -placeholder is
+// every one needs a JSON. A retired circuit (retiredCircuits) always gets an
+// unprovable placeholder VK. Any other circuit whose key file is missing (or
+// that has no key file, see circuitMapping) keeps the JSON already in
+// <build_dir>, if there is one. Otherwise it is an error naming it, unless -placeholder is
 // given: then it gets an unprovable placeholder VK (see placeholderVK), which
 // keeps the slot numbering and verifies no proof. make dvp-stack passes it for
 // a local chain; slots 1-22 are never exercised by the integration tests.
@@ -72,38 +73,48 @@ type circomVK struct {
 // VK_ID_DVP_INITIATOR=23, VK_ID_DVP_DESTINATION=24), and init registers a VK
 // for every circuit in enygmadvp.config.json, in order. Positions 1-22 use
 // pre-existing keys only to keep that numbering; no integration test
-// exercises them, and keygen does not make them. BrokerRegistration,
-// LegitBroker, JoinSplitErc20WithBrokerV1 and JoinSplitErc1155WithBrokerV1
-// are in the config but have no key file here at all: -placeholder covers
-// them and any missing key.
+// exercises them, and keygen does not make them. The retired legacy ERC1155
+// circuits are not here: they always get the placeholder (retiredCircuits).
+// BrokerRegistration, LegitBroker, JoinSplitErc20WithBrokerV1 and
+// JoinSplitErc1155WithBrokerV1 are in the config but have no key file here at
+// all: -placeholder covers them and any missing key.
 var circuitMapping = map[string]string{
 	// index 0 — covered by test/02 (Payment uses VK_ID_ERC20_JOINSPLIT=0)
 	"Payment": "scripts/keys/PaymentVK.key",
 
 	// indices 1–22 — NOT covered by integration tests; old keys kept for index alignment
-	"OwnershipErc721":                        "scripts/keys/OwnershipERC721VK.key",
-	"OwnershipErc1155NonFungible":            "scripts/keys/OwnershipERC1155NonFungibleVK.key",
-	"OwnershipErc1155Fungible":               "scripts/keys/OwnershipERC1155FungibleVK.key",
-	"JoinSplitErc1155":                       "scripts/keys/JoiSplitERC1155VK.key",
-	"BatchErc1155":                           "scripts/keys/ERC1155BatchVK.key",
-	"JoinSplitErc20_10_2":                    "scripts/keys/JoinErc20_10_2VK.key",
-	"AuctionInit":                            "scripts/keys/AuctionInitVK.key",
-	"AuctionBid":                             "scripts/keys/AuctionBidVK.key",
-	"AuctionNotWinningBid":                   "scripts/keys/AuctionNotWinningVK.key",
-	"AuctionPrivateOpening":                  "scripts/keys/AuctionPrivateOpeningVK.key",
-	"JoinSplitErc1155WithAuditor":            "scripts/keys/JoinSplitERC1155AuditorVK.key",
-	"OwnershipErc1155NonFungibleWithAuditor": "scripts/keys/OwnershipERC1155NonFungibleAuditorVK.key",
-	"BatchErc1155NonFungibleWithAuditor":     "scripts/keys/ERC1155BatchAuditorVK.key",
-	"OwnershipErc721WithAuditor":             "scripts/keys/OwnershipERC721AuditorVK.key",
-	"JoinSplitErc20WithAuditor":              "scripts/keys/JoinERC20AuditorVK.key",
-	"JoinSplitErc20_10_2_WithAuditor":        "scripts/keys/JoinERC20_10_2AuditorVK.key",
-	"AuctionInit_Auditor":                    "scripts/keys/AuctionInitAuditorVK.key",
-	"AuctionBid_Auditor":                     "scripts/keys/AuctionBidAuditorVK.key",
+	"OwnershipErc721":                    "scripts/keys/OwnershipERC721VK.key",
+	"JoinSplitErc20_10_2":                "scripts/keys/JoinErc20_10_2VK.key",
+	"AuctionInit":                        "scripts/keys/AuctionInitVK.key",
+	"AuctionBid":                         "scripts/keys/AuctionBidVK.key",
+	"AuctionNotWinningBid":               "scripts/keys/AuctionNotWinningVK.key",
+	"AuctionPrivateOpening":              "scripts/keys/AuctionPrivateOpeningVK.key",
+	"BatchErc1155NonFungibleWithAuditor": "scripts/keys/ERC1155BatchAuditorVK.key",
+	"OwnershipErc721WithAuditor":         "scripts/keys/OwnershipERC721AuditorVK.key",
+	"JoinSplitErc20WithAuditor":          "scripts/keys/JoinERC20AuditorVK.key",
+	"JoinSplitErc20_10_2_WithAuditor":    "scripts/keys/JoinERC20_10_2AuditorVK.key",
+	"AuctionInit_Auditor":                "scripts/keys/AuctionInitAuditorVK.key",
+	"AuctionBid_Auditor":                 "scripts/keys/AuctionBidAuditorVK.key",
 
 	// index 23 — covered by test/03 and test/04 (VK_ID_DVP_INITIATOR=23)
 	"DvPInitiator": "scripts/keys/DvPInitiatorVK.key",
 	// index 24 — covered by test/03 and test/04 (VK_ID_DVP_DESTINATION=24)
 	"DvPDestination": "scripts/keys/DvPDestinationVK.key",
+}
+
+// retiredCircuits always get the unprovable placeholder VK, with or without
+// -placeholder, whatever key file or earlier JSON there is: the legacy
+// ERC1155 circuits of VK slots 2, 3, 4, 5, 15 and 16, whose vault is retired
+// (docs/adr/0003-retire-the-legacy-erc1155-vault.md). They have no source,
+// and Erc20CoinVault's constants read slots 2-4 as its fee circuits, so a
+// real legacy VK there would verify a legacy proof as a fee payment.
+var retiredCircuits = map[string]bool{
+	"OwnershipErc1155NonFungible":            true,
+	"OwnershipErc1155Fungible":               true,
+	"JoinSplitErc1155":                       true,
+	"BatchErc1155":                           true,
+	"JoinSplitErc1155WithAuditor":            true,
+	"OwnershipErc1155NonFungibleWithAuditor": true,
 }
 
 func g1Fields(x, y *big.Int) []string {
@@ -250,20 +261,39 @@ func configCircuits(configPath string) ([]string, error) {
 type exported struct {
 	Exported  []string // written from its key file
 	Kept      []string // no key file: the JSON already in the build dir is kept
-	Placeheld []string // no key file or JSON: an unprovable placeholder VK
+	Placeheld []string // retired, or no key file or JSON: an unprovable placeholder VK
 }
 
 // exportAll writes <buildDir>/<name>.json for each circuit, from its key file
-// in mapping. A circuit with no key file keeps the JSON already in buildDir
+// in mapping. A retired circuit is always a placeholder. Any other circuit with no key file keeps the JSON already in buildDir
 // if there is one (an earlier setup's); without one it is a placeholder
 // (placeholderVK) when placeholder is set, and missing otherwise. Missing
 // circuits get no file and make exportAll return an error naming them.
-func exportAll(circuits []string, mapping map[string]string, buildDir string, placeholder bool) (exported, error) {
+func exportAll(circuits []string, mapping map[string]string, retired map[string]bool, buildDir string, placeholder bool) (exported, error) {
 	var out exported
 	var missing []string
 	var stand *groth16bn254.VerifyingKey
+	writePlaceholder := func(name, outPath string) error {
+		if stand == nil {
+			var err error
+			if stand, err = placeholderVK(); err != nil {
+				return err
+			}
+		}
+		if err := writeVK(stand, outPath); err != nil {
+			return err
+		}
+		out.Placeheld = append(out.Placeheld, name)
+		return nil
+	}
 	for _, name := range circuits {
 		outPath := filepath.Join(buildDir, name+".json")
+		if retired[name] {
+			if err := writePlaceholder(name, outPath); err != nil {
+				return out, err
+			}
+			continue
+		}
 		keyPath, mapped := mapping[name]
 		var vk *groth16bn254.VerifyingKey
 		var readErr error
@@ -288,16 +318,9 @@ func exportAll(circuits []string, mapping map[string]string, buildDir string, pl
 			missing = append(missing, name)
 			continue
 		}
-		if stand == nil {
-			var err error
-			if stand, err = placeholderVK(); err != nil {
-				return out, err
-			}
-		}
-		if err := writeVK(stand, outPath); err != nil {
+		if err := writePlaceholder(name, outPath); err != nil {
 			return out, err
 		}
-		out.Placeheld = append(out.Placeheld, name)
 	}
 	if len(missing) > 0 {
 		return out, fmt.Errorf("no key file and no %s/<name>.json for %s; run keygen, or pass -placeholder for a local chain (an unprovable VK in each such slot)",
@@ -323,7 +346,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("read config: %v", err)
 	}
-	out, err := exportAll(circuits, circuitMapping, buildDir, *placeholder)
+	out, err := exportAll(circuits, circuitMapping, retiredCircuits, buildDir, *placeholder)
 	for _, name := range out.Exported {
 		fmt.Printf("  exported %s\n", name)
 	}

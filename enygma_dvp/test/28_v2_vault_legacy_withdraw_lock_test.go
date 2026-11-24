@@ -4,13 +4,14 @@ package tests
 //
 // A note locked in a pending swap or auction (lockCoin) must not be spendable
 // until it is unlocked. transfer, withdrawV2 and partialWithdraw check the lock
-// through _nullifyFromReceipt, but the legacy withdraw functions of the ERC20,
-// ERC721 and ERC1155 vaults set their nullifiers directly and skipped it.
+// through _nullifyFromReceipt, but the legacy withdraw functions of the ERC20
+// and ERC721 vaults set their nullifiers directly and skipped it. (The ERC1155
+// vault's withdraw is retired: test 34.)
 //
 // This deploys a vault against AcceptAllVerifier, so only the vault's own
 // checks apply, deposits a note, locks its nullifier, and checks that the
 // legacy withdraw refuses it with CantSpendLockedCoin, then succeeds once the
-// note is unlocked, for each of the three vaults. Runs on go-ethereum's
+// note is unlocked, for each of the two vaults. Runs on go-ethereum's
 // simulated backend; needs `npx hardhat compile` and the circomlibjs Poseidon
 // artifacts (node scripts/regen_poseidon.js).
 
@@ -293,36 +294,5 @@ func TestV2VaultLegacyWithdraw_RefusesLockedNote_Erc721(t *testing.T) {
 	})
 	if got := e.call(tABI, token, "ownerOf", nftId).(common.Address); got != recipient {
 		t.Fatalf("NFT owner %s, want %s", got.Hex(), recipient.Hex())
-	}
-}
-
-func TestV2VaultLegacyWithdraw_RefusesLockedNote_Erc1155(t *testing.T) {
-	e := newLockEnv(t)
-	tABI, tBin := loadArtifact(t, "erc1155/contracts/RaylsERC1155.sol/RaylsERC1155.json")
-	token := e.deploy(tABI, tBin, "uri")
-	vABI, vault := e.newVault("core/contracts/vaults/Erc1155CoinVault.sol/Erc1155CoinVault.json", token)
-
-	// Minting an unregistered id registers it as a fungible token.
-	tokenId, amount := big.NewInt(7), big.NewInt(100)
-	e.mustSend(tABI, token, "mint", e.auth.From, tokenId, amount, []byte{})
-	e.mustSend(tABI, token, "setApprovalForAll", vault, true)
-	e.mustSend(vABI, vault, "deposit", []*big.Int{amount, tokenId, big.NewInt(123), big.NewInt(456)})
-
-	recipient := common.HexToAddress("0x00000000000000000000000000000000000000b0")
-	uid := e.call(vABI, vault, "generateUniqueId", []*big.Int{amount, tokenId}).(*big.Int)
-	wABI, _ := loadLinkedArtifact(t, "core/contracts/PoseidonWrapper.sol/PoseidonWrapper.json",
-		map[string]common.Address{"PoseidonT3": {}, "PoseidonT5": {}})
-	opening := e.call(wABI, e.wrapper, "poseidon", [2]*big.Int{uid, new(big.Int).SetBytes(recipient.Bytes())}).(*big.Int)
-
-	nf := big.NewInt(777)
-	root := e.call(vABI, vault, "getRoot").(*big.Int)
-	// 1-in/1-out ownership layout (3 + 3*1 + 1 = 7): [message, tree, root, nullifier, output0, ...2 more]
-	rcpt := legacyReceipt([]*big.Int{big.NewInt(0), big.NewInt(0), root, nf, opening, big.NewInt(0), big.NewInt(0)}, 1, 1)
-
-	e.checkLockedThenUnlocked(vABI, vault, nf, func() string {
-		return e.send(vABI, vault, "withdraw", []*big.Int{amount, tokenId}, recipient, rcpt)
-	})
-	if got := e.call(tABI, token, "balanceOf", recipient, tokenId).(*big.Int); got.Cmp(amount) != 0 {
-		t.Fatalf("recipient balance %s, want %s", got, amount)
 	}
 }
