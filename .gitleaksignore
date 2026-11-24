@@ -1,0 +1,9 @@
+# Findings gitleaks reports by fingerprint (commit:path:rule:line) and is told
+# to ignore. A fingerprint names one finding at one old commit, so the path
+# stays scanned everywhere else and no secret text is committed here.
+#
+# enygma_payments/contracts/test, line 9 before 65f55373: a relayer test key
+# from a manual run, retired with nothing at stake (#416). History is kept
+# as is; 65f55373 replaced it with the $MY_KEY placeholder.
+1533c073d8f702437c2c39e75418ca56c2e8e786:enygma_payments/contracts/test:generic-api-key:9
+bd4e52023a276874093a21d41510b9d1aaa54005:enygma_payments/contracts/test:generic-api-key:9
