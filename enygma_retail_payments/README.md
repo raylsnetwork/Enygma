@@ -134,9 +134,13 @@ cd ../enygma_dvp
 npx hardhat compile
 node regen_poseidon.mjs
 
-# Copy updated ABI to retail payments
+# Copy updated ABIs to retail payments
 cp artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json \
    ../enygma_retail_payments/contracts/abis/Erc20CoinVault.json
+cp artifacts/contracts/core/contracts/EnygmaDvp.sol/EnygmaDvp.json \
+   ../enygma_retail_payments/contracts/abis/EnygmaDvp.json
+cp artifacts/contracts/core/contracts/Verifier.sol/Verifier.json \
+   ../enygma_retail_payments/contracts/abis/Verifier.json
 
 # Export Payment VK to build/Payment.json
 cd ../enygma_retail_payments/gnark_circuits

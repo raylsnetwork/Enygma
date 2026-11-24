@@ -83,6 +83,7 @@ say "[1/7] compiling contracts and regenerating Poseidon…"
 step compile "$DVP_ROOT" bash -c 'npx hardhat compile && node regen_poseidon.mjs'
 cp "$DVP_ROOT/artifacts/contracts/core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json" "$ROOT/contracts/abis/Erc20CoinVault.json"
 cp "$DVP_ROOT/artifacts/contracts/core/contracts/EnygmaDvp.sol/EnygmaDvp.json" "$ROOT/contracts/abis/EnygmaDvp.json"
+cp "$DVP_ROOT/artifacts/contracts/core/contracts/Verifier.sol/Verifier.json" "$ROOT/contracts/abis/Verifier.json"
 
 say "[2/7] starting a fresh Hardhat node…"
 start hardhat "$DVP_ROOT" npx hardhat node
