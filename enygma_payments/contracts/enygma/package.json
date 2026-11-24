@@ -2,7 +2,7 @@
   "name": "hardhat-project",
   "dependencies": {
     "ethers": "6.17.0",
-    "hardhat": "^2.29.2",
+    "hardhat": "^3.22.0",
     "solc-js": "^1.0.1"
   },
   "overrides": {
