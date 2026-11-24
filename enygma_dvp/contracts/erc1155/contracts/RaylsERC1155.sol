@@ -163,7 +163,7 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         uint256[] memory subTokenValues,
         bytes memory data, // reserved
         uint256[] memory additionalAttrs // reserved for more complex type of MetaTokens
-    ) public returns (bool) {
+    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
         // Checking the length of ids and values to be the same
         if (subTokenIds.length != subTokenValues.length) {
             revert IdsValuesLengthMismatch();
@@ -196,10 +196,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         for (uint i = 0; i < subTokenIds.length; i++) {
             newMetadata.subTokenIds[i] = subTokenIds[i];
             newMetadata.subTokenValues[i] = subTokenValues[i];
-
-            // TODO:: check the metaToken type to be SUB_TOKEN
-            //        or state and type to be NOT_EXIST and NORMAL
-            _metadatas[newMetadata.subTokenIds[i]].tType = TokenType.SUB_TOKEN;
         }
 
         // storing the additional attributes
@@ -211,12 +207,21 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         // generating tokenId based on MetaToken's metadata
         uint256 newTokenId = tokenId(newMetadata);
 
-        _metadatas[newTokenId] = newMetadata;
-        // check bond state to be unregistered
+        // check the token to be unregistered, before anything is written
         if (_metadatas[newTokenId].tState != TokenState.NOT_EXIST) {
             revert TokenAlreadyRegistered();
         }
 
+        // a sub-token is a plain token (NORMAL or SUB_TOKEN), never a meta token
+        for (uint i = 0; i < subTokenIds.length; i++) {
+            TokenType subType = _metadatas[subTokenIds[i]].tType;
+            if (subType != TokenType.NORMAL && subType != TokenType.SUB_TOKEN) {
+                revert InvalidSubToken(subTokenIds[i]);
+            }
+            _metadatas[subTokenIds[i]].tType = TokenType.SUB_TOKEN;
+        }
+
+        _metadatas[newTokenId] = newMetadata;
         _metadatas[newTokenId].tState = TokenState.REGISTERED;
 
         emit NewTokenRegistered(newTokenId, offchainId, maxTotalSupply);

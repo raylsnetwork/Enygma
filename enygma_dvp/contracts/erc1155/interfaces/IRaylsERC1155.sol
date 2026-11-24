@@ -20,6 +20,7 @@ interface IRaylsERC1155 {
     error TokenAlreadyRegistered();
     error InvalidMaxSupply();
     error IdsValuesLengthMismatch();
+    error InvalidSubToken(uint256 subTokenId);
 
     /////////////////////////////////////////
     //               Enums
