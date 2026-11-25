@@ -174,6 +174,112 @@ func (c *GnarkClient) BoundPaymentProof(
 	stTreeNumbers []*big.Int,
 	wtTokenId *big.Int,
 ) (*PaymentResult, error) {
+	ss0, ctxt0, err := Encapsulate(recipientViewEncapKeys[0])
+	if err != nil {
+		return nil, fmt.Errorf("Encapsulate Bob output: %w", err)
+	}
+	saltB0, err := DerivePaymentSalt(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentSalt Bob output: %w", err)
+	}
+	encKey0, err := DerivePaymentKey(ss0)
+	if err != nil {
+		return nil, fmt.Errorf("DerivePaymentKey Bob output: %w", err)
+	}
+	ctxtII0, err := EncryptPayload(encKey0, wtTokenId, wtValuesOut[0])
+	if err != nil {
+		return nil, fmt.Errorf("EncryptPayload Bob output: %w", err)
+	}
+	res, err := c.provePayment(contractAddress, stMessage, wtValuesIn, keysIn, wtSaltsIn, wtValuesOut, recipientSpendPks,
+		SaltBToField(saltB0), paymentNoteCiphertextHash(ctxt0, ctxtII0), merkleDepth, merkleProofs, stTreeNumbers, wtTokenId)
+	if err != nil {
+		return nil, err
+	}
+	res.CipherText, res.EncTxData = ctxt0, ctxtII0
+	return res, nil
+}
+
+// ChannelPaymentNote is what a channel payment (#451) publishes for its payee
+// besides the proof, and the salt the payer chose for the payee's note: the
+// tag channel layer (private_tags' PrepareChannelPayment) makes it.
+type ChannelPaymentNote struct {
+	Salt        *big.Int // the payee's note salt, random in the field; private
+	BlockNumber uint64   // block_n, the block the tag is for
+	Tag         [32]byte // the payee's tag for block_n
+	Ctxt        []byte   // the note's opening, sealed under the channel's block key
+}
+
+// channelPaymentDomain opens the encoding ChannelPaymentCiphertextHash hashes,
+// as CiphertextHash.sol's CHANNEL_PAYMENT_DOMAIN does.
+var channelPaymentDomain = crypto.Keccak256Hash([]byte("enygma-channel-payment-v1"))
+
+var channelPaymentArgs = func() abi.Arguments {
+	b32, _ := abi.NewType("bytes32", "", nil)
+	u256, _ := abi.NewType("uint256", "", nil)
+	bs, _ := abi.NewType("bytes", "", nil)
+	return abi.Arguments{{Type: b32}, {Type: u256}, {Type: b32}, {Type: bs}}
+}()
+
+// ChannelPaymentCiphertextHash is the StCiphertextHash a channel payment's
+// proof binds, the value CiphertextHash.ofChannelPayment recomputes from what
+// EnygmaDvp.channelPayment is given:
+//
+//	keccak256(abi.encode(keccak256("enygma-channel-payment-v1"), blockNumber, tag, ctxt)) mod p
+//
+// The leading domain word keeps it apart from PaymentCiphertextHash's
+// encoding, whose first word is an array offset: a channel receipt cannot
+// settle through payment*, nor a payment's through channelPayment.
+func ChannelPaymentCiphertextHash(blockNumber uint64, tag [32]byte, ctxt []byte) *big.Int {
+	enc, err := channelPaymentArgs.Pack(channelPaymentDomain, new(big.Int).SetUint64(blockNumber), tag, ctxt)
+	if err != nil {
+		panic(fmt.Sprintf("abi-encode channel payment: %v", err)) // only on a type mismatch, which the fixed types cannot have
+	}
+	h := new(big.Int).SetBytes(crypto.Keccak256(enc))
+	return h.Mod(h, snarkScalarField)
+}
+
+// BoundChannelPaymentProof proves a channel payment (#451): a Payment, or a
+// Payment2in with two input notes, as BoundPaymentProof does, except that
+// output 0's salt is the payer's note.Salt instead of one derived from a
+// per-payment ML-KEM capsule, and the proof binds the note's block, tag and
+// ciphertext (ChannelPaymentCiphertextHash). It settles only through
+// EnygmaDvp.channelPayment with exactly those three. The result carries no
+// CipherText or EncTxData: there is no capsule.
+func (c *GnarkClient) BoundChannelPaymentProof(
+	contractAddress *big.Int,
+	wtValuesIn []*big.Int,
+	keysIn []KeyPair,
+	wtSaltsIn []*big.Int,
+	wtValuesOut []*big.Int,
+	recipientSpendPks []*big.Int,
+	note ChannelPaymentNote,
+	merkleDepth int,
+	merkleProofs []*MerkleProof,
+	stTreeNumbers []*big.Int,
+	wtTokenId *big.Int,
+) (*PaymentResult, error) {
+	return c.provePayment(contractAddress, big.NewInt(0), wtValuesIn, keysIn, wtSaltsIn, wtValuesOut, recipientSpendPks,
+		note.Salt, ChannelPaymentCiphertextHash(note.BlockNumber, note.Tag, note.Ctxt), merkleDepth, merkleProofs, stTreeNumbers, wtTokenId)
+}
+
+// provePayment proves a Payment (one input note) or Payment2in (two) whose
+// output 0, the payee's, has salt salt0 and whose proof binds ciphertextHash
+// as StCiphertextHash. Output 1, the change, gets paymentChangeSalt.
+func (c *GnarkClient) provePayment(
+	contractAddress *big.Int,
+	stMessage *big.Int,
+	wtValuesIn []*big.Int,
+	keysIn []KeyPair,
+	wtSaltsIn []*big.Int,
+	wtValuesOut []*big.Int,
+	recipientSpendPks []*big.Int,
+	salt0 *big.Int,
+	ciphertextHash *big.Int,
+	merkleDepth int,
+	merkleProofs []*MerkleProof,
+	stTreeNumbers []*big.Int,
+	wtTokenId *big.Int,
+) (*PaymentResult, error) {
 	nIn := len(wtValuesIn)
 	nOut := len(wtValuesOut)
 
@@ -206,28 +312,9 @@ func (c *GnarkClient) BoundPaymentProof(
 
 	wtSaltsOut := make([]*big.Int, nOut)
 	stCommitmentsOut := make([]*big.Int, nOut)
-	var cipherText, encTxData []byte
 	var saltA *big.Int
 
-	ss0, ctxt0, err := Encapsulate(recipientViewEncapKeys[0])
-	if err != nil {
-		return nil, fmt.Errorf("Encapsulate Bob output: %w", err)
-	}
-	saltB0, err := DerivePaymentSalt(ss0)
-	if err != nil {
-		return nil, fmt.Errorf("DerivePaymentSalt Bob output: %w", err)
-	}
-	encKey0, err := DerivePaymentKey(ss0)
-	if err != nil {
-		return nil, fmt.Errorf("DerivePaymentKey Bob output: %w", err)
-	}
-	ctxtII0, err := EncryptPayload(encKey0, wtTokenId, wtValuesOut[0])
-	if err != nil {
-		return nil, fmt.Errorf("EncryptPayload Bob output: %w", err)
-	}
-	cipherText = ctxt0
-	encTxData = ctxtII0
-	wtSaltsOut[0] = SaltBToField(saltB0)
+	wtSaltsOut[0] = salt0
 	cmt0, err := Erc20CommitmentV2(recipientSpendPks[0], wtSaltsOut[0], wtValuesOut[0], wtTokenId)
 	if err != nil {
 		return nil, fmt.Errorf("Erc20CommitmentV2 Bob output: %w", err)
@@ -268,7 +355,7 @@ func (c *GnarkClient) BoundPaymentProof(
 		"stNullifiers":         bigIntSliceToStrings(stNullifiers),
 		"stCommitmentsOut":     bigIntSliceToStrings(stCommitmentsOut),
 		"stContractAddress":    contractAddress.String(),
-		"stCiphertextHash":     paymentNoteCiphertextHash(cipherText, encTxData).String(),
+		"stCiphertextHash":     ciphertextHash.String(),
 		"wtPrivateKeysIn":      bigIntSliceToStrings(extractPrivateKeys(keysIn)),
 		"wtValuesIn":           bigIntSliceToStrings(wtValuesIn),
 		"wtSaltsIn":            bigIntSliceToStrings(wtSaltsIn),
@@ -299,8 +386,6 @@ func (c *GnarkClient) BoundPaymentProof(
 		Statement:       statement,
 		NumberOfInputs:  nIn,
 		NumberOfOutputs: nOut,
-		CipherText:      cipherText,
-		EncTxData:       encTxData,
 		SaltB:           wtSaltsOut[0],
 		SaltA:           saltA,
 		circuit:         circuit,

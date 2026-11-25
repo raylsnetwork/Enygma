@@ -134,6 +134,9 @@ interface IEnygmaDvp {
     // A Payment-family receipt settled with other note ciphertexts than the
     // ones its proof's StCiphertextHash binds (see CiphertextHash.sol).
     error CiphertextHashMismatch();
+    // A channel payment for block blockNumber, settled outside
+    // blockNumber … blockNumber + CHANNEL_PAYMENT_WINDOW.
+    error ChannelPaymentOutsideWindow(uint256 blockNumber, uint256 currentBlock);
     error InvalidDeliveryMessage();
     error JoinSplitWithSameCommitments();
     error InvalidMerkleRoot();
@@ -309,6 +312,19 @@ interface IEnygmaDvp {
         uint256 indexed commitment,
         bytes ctxt,
         bytes encTxData
+    );
+
+    // Emitted for a channel payment (channelPayment, #451). The payee finds
+    // it by its tag: for block blockNumber they compute
+    // tag = Poseidon("enygma-tag-v1", ss mod p, blockNumber, pk_spend) for
+    // every tag channel secret ss they hold. ctxt seals the note's opening
+    // (amount, tokenId, salt) under that channel's block key.
+    event ChannelPayment(
+        uint256 indexed vaultId,
+        uint256 indexed blockNumber,
+        bytes32 indexed tag,
+        uint256 commitment,
+        bytes ctxt
     );
     ///////////////////////////////////////////////
     //              Getters
@@ -486,6 +502,20 @@ interface IEnygmaDvp {
         uint256 vaultId,
         bytes calldata ctxt,
         bytes calldata encTxData
+    ) external returns (bool);
+
+    // channelPayment settles a payment over a tag channel as one authorised
+    // payload p = (t, C_dest, C_chg, ctxt, nf, π) (#451): a Payment or
+    // Payment2in receipt whose StCiphertextHash binds blockNumber, tag and
+    // ctxt (CiphertextHash.ofChannelPayment). It settles only in blocks
+    // blockNumber … blockNumber + CHANNEL_PAYMENT_WINDOW and emits
+    // ChannelPayment for the payee's output (index 0).
+    function channelPayment(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
     ) external returns (bool);
 
     // paymentWithFee is the fee-aware variant of payment().

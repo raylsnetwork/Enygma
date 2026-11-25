@@ -27,13 +27,12 @@ type RelayPaymentRequest struct {
 	// PublicSignal is the Payment or Payment2in statement (decimal strings),
 	// in the order of layout.Payment*Offset / layout.Payment2in*Offset.
 	PublicSignal []string `json:"publicSignal" binding:"required"`
-	// CipherText is hex-encoded bytes passed opaquely to EnygmaDvp.payment().
-	// ML-KEM mode:    ML-KEM-768 capsule (1088 bytes).
-	// Channel mode:   32-byte channelId identifying the shared channel.
+	// CipherText is the hex ML-KEM-768 capsule (1088 bytes) passed to
+	// EnygmaDvp.payment(), which the proof binds. A payment over a tag
+	// channel goes to POST /relay/channel_payment instead, with no capsule.
 	CipherText string `json:"cipherText" binding:"required"`
-	// EncTxData is hex-encoded bytes passed opaquely to EnygmaDvp.payment().
-	// ML-KEM mode:    AES-GCM note payload encrypted with ML-KEM-derived key.
-	// Channel mode:   AES-256-GCM note payload encrypted with channel key.
+	// EncTxData is the hex AES-GCM note payload under the capsule's key,
+	// passed to EnygmaDvp.payment().
 	EncTxData string `json:"encTxData" binding:"required"`
 }
 
@@ -42,6 +41,24 @@ type RelayPaymentResponse struct {
 	TxHash      string `json:"txHash"`
 	BlockNumber uint64 `json:"blockNumber"`
 	GasUsed     uint64 `json:"gasUsed"`
+}
+
+// RelayChannelPaymentRequest is the JSON body accepted by
+// POST /relay/channel_payment: a channel payment (#451), one payload
+// p = (t, C_dest, C_chg, ctxt, nf, π) settled by EnygmaDvp.channelPayment.
+// The proof (a Payment or Payment2in statement, by length) binds BlockNumber,
+// Tag and Ctxt; the payment settles only in blocks
+// BlockNumber … BlockNumber + EnygmaDvp.CHANNEL_PAYMENT_WINDOW.
+type RelayChannelPaymentRequest struct {
+	VaultId      string    `json:"vaultId" binding:"required"`
+	Proof        [8]string `json:"proof" binding:"required"`
+	PublicSignal []string  `json:"publicSignal" binding:"required"`
+	// BlockNumber is block_n, the block the tag is for.
+	BlockNumber uint64 `json:"blockNumber" binding:"required"`
+	// Tag is the payee's 32-byte tag for BlockNumber, hex.
+	Tag string `json:"tag" binding:"required"`
+	// Ctxt is the sealed note, hex, at most maxChannelPaymentCtxt bytes.
+	Ctxt string `json:"ctxt" binding:"required"`
 }
 
 // parsed holds the decoded form of a RelayPaymentRequest ready for validation

@@ -24,6 +24,12 @@ pragma solidity ^0.8.0;
 /// The array lengths are part of the encoding, so a receipt proved for one
 /// entry point's ciphertexts cannot be settled through another's.
 /// enygma_dvp/src/core.PaymentCiphertextHash computes the same value.
+///
+/// A channel payment (EnygmaDvp.channelPayment, #451) publishes no capsule:
+/// its proof binds the block its tag is for, the tag and the sealed note,
+/// encoded after a domain word (ofChannelPayment). The domain word is never
+/// an array offset, which ofNotes' encoding starts with, so neither kind of
+/// receipt settles as the other.
 library CiphertextHash {
     uint256 internal constant SNARK_SCALAR_FIELD =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
@@ -45,5 +51,20 @@ library CiphertextHash {
         ciphertextI[0] = ctxt;
         ciphertextII[0] = encTxData;
         return ofNotes(ciphertextI, ciphertextII);
+    }
+
+    /// keccak256("enygma-channel-payment-v1"), the first word of a channel
+    /// payment's encoding.
+    bytes32 internal constant CHANNEL_PAYMENT_DOMAIN = keccak256("enygma-channel-payment-v1");
+
+    /// The hash a channel payment's proof binds: its block_n, tag and note
+    /// ciphertext. enygma_dvp/src/core.ChannelPaymentCiphertextHash computes
+    /// the same value.
+    function ofChannelPayment(
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(CHANNEL_PAYMENT_DOMAIN, blockNumber, tag, ctxt))) % SNARK_SCALAR_FIELD;
     }
 }
