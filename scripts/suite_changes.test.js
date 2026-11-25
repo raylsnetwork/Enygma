@@ -56,8 +56,9 @@ test("a change to enygma_dvp's contracts runs the DvP, retail and payments suite
   assert.deepStrictEqual(suites(['enygma_dvp/contracts/EnygmaDvp.sol']), ['payments', 'dvp', 'retail']);
 });
 
-test("a change to enygma_dvp's Poseidon regeneration runs the payments suite", () => {
-  assert.ok(suites(['enygma_dvp/scripts/regen_poseidon.js']).includes('payments'));
+test("a change to enygma_dvp's Poseidon regeneration runs the payments and retail suites", () => {
+  // hardhat.config.js's compile task runs it, and the retail stack compiles.
+  assert.deepStrictEqual(suites(['enygma_dvp/scripts/regen_poseidon.js']), ['payments', 'dvp', 'retail']);
 });
 
 test('a change to enygma_dvp outside what the retail stack uses runs the DvP suite only', () => {

@@ -50,6 +50,17 @@ try {
   // console.log(networks);
 }
 
+// Poseidon.sol is a placeholder, and every compile (compile, test, node) writes
+// its stub bytecode over the PoseidonT3/T5 artifacts: write circomlibjs's real
+// ones back after each one.
+task("compile").setAction(async (args, hre, runSuper) => {
+  const result = await runSuper(args);
+  // Required here, not at the top: regen_poseidon.js requires circomlibjs,
+  // which only a compile needs.
+  require("./scripts/regen_poseidon.js").writePoseidonArtifacts();
+  return result;
+});
+
 task("accounts", "Prints the list of accounts", async () => {
   const accounts = await ethers.getSigners();
 

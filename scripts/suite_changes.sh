@@ -34,7 +34,7 @@ paths_payments="$common enygma_payments/* enygma_gnark_shared/* scripts/keys_src
 paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint* scripts/keys_src.sh"
 # The retail stack runs enygma_dvp's Hardhat node and deploys its contracts;
 # the retail test module imports enygma_dvp's src and layout.
-dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"
+dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/scripts/regen_poseidon.js enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"
 paths_retail="$common enygma_retail_payments/* enygma_gnark_shared/* $dvp_for_retail"
 
 if [ "${1:-}" = --wiring ]; then

@@ -1,12 +1,13 @@
 // enygma_retail_payments/contracts/abis/ holds copies of this project's
 // artifacts, and the retail deploy deploys them as they are, so each copy must
 // be this project's build of its source (#415, #421). The copies are the
-// entries of enygma_retail_payments/scripts/copy_dvp_abis.sh.
+// entries of enygma_retail_payments/scripts/copy_dvp_abis.sh. Poseidon.sol's
+// build is circomlibjs's, which hardhat.config.js writes after each compile
+// (PoseidonArtifacts.test.js checks it).
 const { expect } = require("chai");
 const { artifacts } = require("hardhat");
 const fs = require("fs");
 const path = require("path");
-const { poseidonArtifacts, POSEIDON_SOURCE } = require("../../scripts/regen_poseidon.js");
 
 const RETAIL = path.join(__dirname, "../../../enygma_retail_payments");
 const SCRIPT = path.join(RETAIL, "scripts/copy_dvp_abis.sh");
@@ -15,16 +16,6 @@ const ABIS = path.join(RETAIL, "contracts/abis");
 // The files in contracts/abis/ that retail builds from its own sources, not
 // copies of this project's build.
 const RETAIL_BUILT = ["PrivateMintVerifier.json", "UserRegistry.json"];
-
-// build returns this project's build of contract in sourceName. Poseidon.sol's
-// build is circomlibjs's, not the compiler's: hardhat test compiles the
-// placeholder over it before this spec runs.
-async function build(sourceName, contract) {
-  if (sourceName === POSEIDON_SOURCE) {
-    return poseidonArtifacts()[contract];
-  }
-  return artifacts.readArtifact(`${sourceName}:${contract}`);
-}
 
 // copiedArtifacts returns the ARTIFACTS entries of copy_dvp_abis.sh: each an
 // artifact's path under enygma_dvp/artifacts, <sourceName>/<contract>.json.
@@ -51,7 +42,7 @@ describe("Retail's copies of enygma_dvp artifacts", function () {
     const copyPath = path.join(path.relative(path.join(RETAIL, ".."), ABIS), file);
 
     it(`${copyPath} is this project's build of ${sourceName}`, async function () {
-      const built = await build(sourceName, contract);
+      const built = await artifacts.readArtifact(`${sourceName}:${contract}`);
       const copy = JSON.parse(fs.readFileSync(path.join(ABIS, file), "utf8"));
       const fix = `: copy enygma_dvp/artifacts/${entry} over ${copyPath} (bash enygma_retail_payments/scripts/copy_dvp_abis.sh)`;
       expect(copy.sourceName, `${copyPath}'s sourceName` + fix).to.equal(sourceName);
