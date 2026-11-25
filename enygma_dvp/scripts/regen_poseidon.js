@@ -1,9 +1,9 @@
-// Poseidon.sol is a placeholder: `npx hardhat compile` (and `npx hardhat
-// test`, which compiles first) writes its stub bytecode over the PoseidonT3/T5
-// artifacts. Run this (or ../regen_poseidon.mjs, which retail's setup runs and
-// which calls it) after a compile to write the real, circomlibjs-generated
-// ones back. poseidonArtifacts() is the build of Poseidon.sol that
-// test/hardhat/RetailArtifacts.test.js checks retail's copies against.
+// Poseidon.sol is a placeholder: every compile writes its stub bytecode over
+// the PoseidonT3/T5 artifacts, and hardhat.config.js's compile task calls
+// writePoseidonArtifacts() after each one to write circomlibjs's real ones
+// back. Run as a script (or as ../regen_poseidon.mjs) it does the same by hand.
+// test/hardhat/PoseidonArtifacts.test.js checks the artifacts against
+// poseidonArtifacts().
 const { poseidonContract: poseidon_gencontract } = require('circomlibjs');
 const fs = require('fs');
 const path = require('path');

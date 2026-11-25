@@ -228,9 +228,10 @@ HARDHAT_PROJECTS := enygma_dvp enygma_dvp_auctions enygma_payments/contracts/eny
 
 hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat project; needs node 22
 	@command -v node >/dev/null || { echo "node not found (nvm use 22)"; exit 1; }
-	@# Compiling overwrites the real Poseidon artifacts with the placeholder's;
-	@# regen_poseidon.js puts them back where a project has one.
-	$(call each_in,$(HARDHAT_PROJECTS),npm ci --no-audit --no-fund && npx hardhat compile && { [ ! -f scripts/regen_poseidon.js ] || node scripts/regen_poseidon.js; } && npx hardhat test)
+	@# A project with a placeholder Poseidon.sol writes the real artifacts back
+	@# from its compile task, and its PoseidonArtifacts.test.js checks that:
+	@# running regen_poseidon.js here would hide a compile that doesn't.
+	$(call each_in,$(HARDHAT_PROJECTS),npm ci --no-audit --no-fund && npx hardhat compile && npx hardhat test)
 
 ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
