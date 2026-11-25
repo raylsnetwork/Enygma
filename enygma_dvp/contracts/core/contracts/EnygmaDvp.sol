@@ -1210,7 +1210,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     }
 
     // How many blocks after its tag's block a channel payment may still land.
-    uint256 public constant CHANNEL_PAYMENT_WINDOW = 30;
+    uint256 public constant CHANNEL_PAYMENT_WINDOW = 100;
 
     // channelPayment settles a payment over a tag channel as one authorised
     // payload p = (t, C_dest, C_chg, ctxt, nf, π) (#451). There is no

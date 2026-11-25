@@ -25,7 +25,7 @@ import (
 // ChannelPaymentWindow is how many blocks after block_n a channel payment may
 // still land: EnygmaDvp.channelPayment settles it only in blocks
 // block_n … block_n + ChannelPaymentWindow (its CHANNEL_PAYMENT_WINDOW).
-const ChannelPaymentWindow = 30
+const ChannelPaymentWindow = 100
 
 // channelTagDomain is the domain constant of the channel payment tag: the
 // ASCII bytes of "enygma-tag-v1" as a big-endian field element. It keeps the
