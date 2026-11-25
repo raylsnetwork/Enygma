@@ -534,56 +534,88 @@ func (c *chain) tagChannelDetectionFormula(ctx context.Context, payer, payee, ot
 	}}, nil
 }
 
-// tagFormula is the tag formula of the tag from published to to's spend key
-// on the tag channel with shared secret ss, landed in block b by tx:
-// t_b = Poseidon(b, pk_spend, ss mod p), and the reverse direction's, with
-// from's spend key, which differs; checked against the tag TagRegistry's
-// TagPublished event logged in tx.
-func (c *chain) tagFormula(ctx context.Context, from, to *Actor, ss []byte, b uint64, tx common.Hash) (HopDetail, error) {
-	receipt, err := c.client.TransactionReceipt(ctx, tx)
-	if err != nil {
-		return HopDetail{}, fmt.Errorf("tag card: receipt for %s: %w", tx.Hex(), err)
-	}
-	t, err := tags.DeriveTag(b, to.Spend.PublicKey, ss)
-	if err != nil {
-		return HopDetail{}, fmt.Errorf("tag card: %w", err)
-	}
-	reverse, err := tags.DeriveTag(b, from.Spend.PublicKey, ss)
+// channelTagDomain is the tag's domain constant, "enygma-tag-v1" as a
+// big-endian field element (private_tags' ChannelTag).
+var channelTagDomain = new(big.Int).SetBytes([]byte("enygma-tag-v1"))
+
+// tagFormula is the tag formula of ch, the channel payment from paid to to's
+// spend key over the tag channel with shared secret ss:
+// t = Poseidon("enygma-tag-v1", ss mod p, block_n, pk_spend), and the reverse
+// direction's, with from's spend key, which differs; checked against the
+// tag (and block_n) the ChannelPayment event in receipt logged.
+func (c *chain) tagFormula(from, to *Actor, ss []byte, ch *tags.ChannelPayment, receipt *ethtypes.Receipt) (HopDetail, error) {
+	t, err := tags.ChannelTag(ss, ch.BlockNumber, to.Spend.PublicKey)
 	if err != nil {
 		return HopDetail{}, fmt.Errorf("tag card: %w", err)
 	}
-	var published []*ethtypes.Log
+	reverse, err := tags.ChannelTag(ss, ch.BlockNumber, from.Spend.PublicKey)
+	if err != nil {
+		return HopDetail{}, fmt.Errorf("tag card: %w", err)
+	}
+	var paid []*ethtypes.Log
 	for _, l := range receipt.Logs {
-		if l.Address == c.tagRegistryAddr && len(l.Topics) >= 3 && l.Topics[0] == tagPublishedTopic {
-			published = append(published, l)
+		if l.Address == c.dvpAddr && len(l.Topics) == 4 && l.Topics[0] == channelPaymentTopic {
+			paid = append(paid, l)
 		}
 	}
-	if len(published) != 1 {
-		return HopDetail{}, fmt.Errorf("tag card: tx %s logged %d TagPublished events, want one", receipt.TxHash.Hex(), len(published))
+	if len(paid) != 1 {
+		return HopDetail{}, fmt.Errorf("tag card: tx %s logged %d ChannelPayment events, want one", receipt.TxHash.Hex(), len(paid))
 	}
-	logged := published[0]
+	logged := paid[0]
 	result := bytesHex(t[:])
-	return HopDetail{Kind: DetailFormula, Vault: NodeTagRegistry, Formula: &Formula{
+	return HopDetail{Kind: DetailFormula, Vault: NodeDvp, Formula: &Formula{
 		Name: FormulaTag,
 		Inputs: []FormulaValue{
-			{Name: "b · the block the tag landed in", Value: fmt.Sprint(b)},
-			{Name: fmt.Sprintf("pk_spend^payee · %s's spend key", to.Name), Value: fieldHex(to.Spend.PublicKey)},
+			{Name: `"enygma-tag-v1" · the domain constant, as a field element`, Value: fieldHex(channelTagDomain)},
 			{Name: "ss · the tag channel's shared secret", Value: bytesHex(ss)},
 			{Name: "ss mod p · in BN254's scalar field", Value: fieldHex(new(big.Int).Mod(new(big.Int).SetBytes(ss), constants.Q))},
-			{Name: fmt.Sprintf("t_b′ = Poseidon(b, pk_spend^%s, ss mod p) · the reverse direction, %s → %s", from.Name, to.Name, from.Name), Value: bytesHex(reverse[:])},
+			{Name: "block_n · the block the payer tagged it for", Value: fmt.Sprint(ch.BlockNumber)},
+			{Name: fmt.Sprintf("pk_spend^payee · %s's spend key", to.Name), Value: fieldHex(to.Spend.PublicKey)},
+			{Name: fmt.Sprintf(`t′ = Poseidon("enygma-tag-v1", ss mod p, block_n, pk_spend^%s) · the reverse direction, %s → %s`, from.Name, to.Name, from.Name), Value: bytesHex(reverse[:])},
 		},
 		Result: result,
-		Chain: &FormulaValue{Name: fmt.Sprintf("the tag TagRegistry's TagPublished event logged for block %d (tx %s), the one of the payer's %d-block window the relayer published", logged.Topics[1].Big(), receipt.TxHash.Hex(), tagWindow),
-			Value: logged.Topics[2].Hex()},
-		OK: logged.Topics[2].Hex() == result && logged.Topics[1].Big().Uint64() == b && reverse != t,
+		Chain: &FormulaValue{Name: fmt.Sprintf("the tag EnygmaDvp's ChannelPayment event logged for block_n %d, in the payment's own transaction (tx %s, block %d)", logged.Topics[2].Big(), receipt.TxHash.Hex(), receipt.BlockNumber),
+			Value: logged.Topics[3].Hex()},
+		OK: logged.Topics[3].Hex() == result && logged.Topics[2].Big().Uint64() == ch.BlockNumber && reverse != t,
 	}}, nil
 }
 
-// tagPayloadFormula is the tag payload formula of f, a note payee found by
-// its tag: the block key k_b of f's tag channel for f's block and payee's
-// spend key, which opens the payload to amount ‖ token ‖ salt, and the
-// commitment those hash to with payee's pk_spend, checked against the
-// vault's Commitment event for it, in the block the scan confirmed it in.
+// channelPaymentDomain is the first word of the encoding a channel
+// payment's StCiphertextHash hashes (CiphertextHash.sol's
+// CHANNEL_PAYMENT_DOMAIN).
+var channelPaymentDomain = crypto.Keccak256Hash([]byte("enygma-channel-payment-v1"))
+
+// channelPaymentFormula is the bound payload formula of ch, settled by tx:
+// h = keccak256(abi.encode(keccak256("enygma-channel-payment-v1"), block_n,
+// t, ctxt)) mod p, the hash EnygmaDvp recomputes from what it was given,
+// checked against the StCiphertextHash public input of the circuit's proof
+// in stmt.
+func channelPaymentFormula(circuit string, ch *tags.ChannelPayment, stmt []*big.Int, tx common.Hash) HopDetail {
+	at := layout.PaymentCiphertextHashOffset
+	if circuit == "Payment2in" {
+		at = layout.Payment2inCiphertextHashOffset
+	}
+	h := rpcore.ChannelPaymentCiphertextHash(ch.BlockNumber, ch.Tag, ch.Ctxt)
+	return HopDetail{Kind: DetailFormula, Vault: NodeDvp, Formula: &Formula{
+		Name: FormulaChannelPayment,
+		Inputs: []FormulaValue{
+			{Name: `keccak256("enygma-channel-payment-v1") · the domain word`, Value: channelPaymentDomain.Hex()},
+			{Name: "block_n · the block the tag is for", Value: fmt.Sprint(ch.BlockNumber)},
+			{Name: "t · the tag", Value: bytesHex(ch.Tag[:])},
+			{Name: "ctxt · the sealed note", Value: bytesHex(ch.Ctxt)},
+		},
+		Result: fieldHex(h),
+		Chain: &FormulaValue{Name: fmt.Sprintf("the proof's StCiphertextHash, the %s public input EnygmaDvp compared it with before settling (tx %s)", circuit, tx.Hex()),
+			Value: fieldHex(stmt[at])},
+		OK: h.Cmp(stmt[at]) == 0,
+	}}
+}
+
+// tagPayloadFormula is the tag payload formula of f, a channel payment payee
+// found by its tag: the block key k_b of f's tag channel for its block_n and
+// payee's spend key, which opens the sealed note to amount ‖ token ‖ salt,
+// and the commitment those hash to with payee's pk_spend, checked against
+// the vault's Commitment event for it, in the block the payment settled in.
 func (c *chain) tagPayloadFormula(ctx context.Context, payee *Actor, f taggedNote) (HopDetail, error) {
 	k := tags.DeriveBlockKey(f.ch.SharedSecret, f.block, payee.Spend.PublicKey)
 	cm, err := rpcore.Erc20CommitmentV2(payee.Spend.PublicKey, f.opened.Salt, f.opened.Amount, f.opened.TokenId)
@@ -605,10 +637,10 @@ func (c *chain) tagPayloadFormula(ctx context.Context, payee *Actor, f taggedNot
 		Name: FormulaTagPayload,
 		Inputs: []FormulaValue{
 			{Name: "ss · the tag channel's shared secret", Value: bytesHex(f.ch.SharedSecret)},
-			{Name: "b · the block the tag landed in", Value: fmt.Sprint(f.block)},
+			{Name: "block_n · the block the tag is for", Value: fmt.Sprint(f.block)},
 			{Name: fmt.Sprintf("pk_spend^payee · %s's spend key", payee.Name), Value: fieldHex(payee.Spend.PublicKey)},
-			{Name: `k_b · HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee)`, Value: bytesHex(k[:])},
-			{Name: "ct · the tag's payload in TagRegistry", Value: bytesHex(f.payload)},
+			{Name: `k_b · HKDF-SHA256(ss, "enygma-block-key-v1" ‖ block_n ‖ pk_spend^payee)`, Value: bytesHex(k[:])},
+			{Name: "ctxt · the sealed note in the ChannelPayment event", Value: bytesHex(f.payload)},
 			{Name: "amount · opened", Value: f.opened.Amount.String()},
 			{Name: "token · opened", Value: fieldHex(f.opened.TokenId)},
 			{Name: "salt · opened", Value: fieldHex(f.opened.Salt)},

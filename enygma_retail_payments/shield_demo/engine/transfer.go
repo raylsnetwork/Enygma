@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"enygma_retail_payments/layout"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -147,10 +148,9 @@ type sent struct {
 	method           string
 	// merged is set when the transfer merged two notes (Payment2in).
 	merged bool
-	// payeeSalt opens the recipient's note; a private tag carries it.
-	payeeSalt *big.Int
-	// tagBlock is the block the transfer's tag was published in; 0 with tags off.
-	tagBlock uint64
+	// channel is, with tags on, the tag channel payment it settled as: the
+	// block its tag is for, the tag, the sealed note and the payee's salt.
+	channel *tags.ChannelPayment
 	// proof and stmt are the main proof as the vault checked it, and res
 	// the prover's whole result, from which its relay request is built.
 	proof []string
@@ -166,6 +166,10 @@ type sent struct {
 // single note does, their two largest notes merged with a 2-in/2-out
 // Payment2in transfer. With payUsdrFee it also pays the relayer's USDr fee
 // from from's USDr note in the same transaction, USDr change back to from.
+// With tags on it is a channel payment (#451) over from's tag channel to
+// to: tagged for the block after the head, its note sealed under that
+// block's channel key, with no capsule, and the proof binds the block, the
+// tag and the sealed note.
 // Anything it can tell will fail — over balance, no two notes that cover it,
 // no USDr for the fee — it refuses with ErrRefused before proving. It returns
 // once the transfer is mined, so from's change notes are already in the trees.
@@ -205,23 +209,24 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if err := s.await(ctx, "prove", to.Name); err != nil {
 		return nil, err
 	}
+	ch, err := e.prepareChannelPayment(ctx, from, to, amount)
+	if err != nil {
+		return nil, err
+	}
 	gnark, rec := rpcore.NewPaymentClient(e.cfg.GnarkURL), &recorder{}
 	gnark.Client = rec.client(gnark.Client.Timeout)
 	proveStart := time.Now()
-	res, err := gnark.BoundPaymentProof(
-		new(big.Int).SetBytes(c.vaultAddr.Bytes()),
-		big.NewInt(0),
-		values,
-		keys,
-		salts,
-		[]*big.Int{amount, change},
-		[]*big.Int{to.Spend.PublicKey, from.Spend.PublicKey},
-		[][]byte{to.View.EncapsKey, from.View.EncapsKey},
-		merkleDepth,
-		proofs,
-		treeNums,
-		tokenId,
-	)
+	vaultField := new(big.Int).SetBytes(c.vaultAddr.Bytes())
+	valuesOut, spendPks := []*big.Int{amount, change}, []*big.Int{to.Spend.PublicKey, from.Spend.PublicKey}
+	var res *rpcore.PaymentResult
+	if ch != nil {
+		res, err = gnark.BoundChannelPaymentProof(vaultField, values, keys, salts, valuesOut, spendPks,
+			rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
+			merkleDepth, proofs, treeNums, tokenId)
+	} else {
+		res, err = gnark.BoundPaymentProof(vaultField, big.NewInt(0), values, keys, salts, valuesOut, spendPks,
+			[][]byte{to.View.EncapsKey, from.View.EncapsKey}, merkleDepth, proofs, treeNums, tokenId)
+	}
 	proveTime := time.Since(proveStart)
 	proveMs := proveTime.Milliseconds()
 	if err != nil {
@@ -333,7 +338,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	if err := s.await(ctx, "relay", to.Name); err != nil {
 		return nil, err
 	}
-	req, err := newRelayRequest(res, fee)
+	req, err := newRelayRequest(res, ch, fee)
 	if err != nil {
 		return nil, err
 	}
@@ -376,18 +381,40 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 	out := &sent{
 		Settlement: Settlement{From: from.Name, To: to.Name, Amount: amount, TxHash: common.HexToHash(tx.TxHash)},
 		change:     change, proveMs: proveMs, relayMs: relayMs, tx: tx, method: "payment", merged: len(ins) == 2,
-		payeeSalt: res.SaltB, proof: res.Proof, stmt: stmt, res: res, relayReq: req,
+		channel: ch, proof: res.Proof, stmt: stmt, res: res, relayReq: req,
+	}
+	if ch != nil {
+		out.TagBlock = ch.BlockNumber
+		out.method = "channelPayment"
 	}
 	if fee != nil {
 		if !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.feeNote) || !hasCommitmentLog(receipt.Logs, c.usdrVaultAddr, fee.change.commitment) {
-			return nil, fmt.Errorf("paymentWithUsdrFee %s did not insert the relayer's fee note and %s's USDr change", tx.TxHash, from.Name)
+			return nil, fmt.Errorf("%sWithUsdrFee %s did not insert the relayer's fee note and %s's USDr change", out.method, tx.TxHash, from.Name)
 		}
 		fee.in.spent = true
 		from.usdr = append(from.usdr, fee.change)
 		out.UsdrFeeNote = fee.feeNote
-		out.method = "paymentWithUsdrFee"
+		out.method += "WithUsdrFee"
 	}
-	s.hop(fromNode, NodeRelayer, "relay", fmt.Sprintf("the relayer, not %s, submits the transaction", from.Name), relayed)
+	relayDetails := []HopDetail{relayed}
+	relaySays := fmt.Sprintf("the relayer, not %s, submits the transaction", from.Name)
+	if ch != nil {
+		relaySays = fmt.Sprintf("one payload: the proof, a tag only %s can recognise and the note sealed for them; the relayer, not %s, submits it", to.Name, from.Name)
+		// Payment 1's tag, the first on the Sender's tag channel to its
+		// payee, carries the tag card: a walkthrough's with its values,
+		// checked against the tag its ChannelPayment event logged, a full
+		// run's by name only.
+		if payment1 && e.carriesTagChannelCards(from, to) {
+			d := formulaNamed(FormulaTag, NodeDvp, 0)
+			if s.gated {
+				if d, err = c.tagFormula(from, to, from.tags.out[to], ch, receipt); err != nil {
+					return nil, err
+				}
+			}
+			relayDetails = append(relayDetails, d)
+		}
+	}
+	s.hop(fromNode, NodeRelayer, "relay", relaySays, relayDetails...)
 	if err := s.await(ctx, "settle", to.Name); err != nil {
 		return nil, err
 	}
@@ -421,6 +448,17 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 			if d, err = c.groth16Formula(ctx, e.cfg, proofs[0].TreeNumber, res); err != nil {
 				return nil, err
 			}
+		}
+		settleDetails = append(settleDetails, d)
+	}
+	// Payment 1's settlement over a tag channel then carries the bound
+	// payload card: a walkthrough's with the hash EnygmaDvp recomputed from
+	// the block, the tag and the sealed note, checked against the proof's
+	// StCiphertextHash, a full run's by name only.
+	if ch != nil && payment1 && e.carriesTagChannelCards(from, to) {
+		d := formulaNamed(FormulaChannelPayment, NodeDvp, 0)
+		if s.gated {
+			d = channelPaymentFormula(circuit, ch, stmt, out.TxHash)
 		}
 		settleDetails = append(settleDetails, d)
 	}
@@ -477,8 +515,8 @@ func (t *sent) row(n int, feeAmount *big.Int, scan string) string {
 	if t.UsdrFeeNote != nil {
 		fee = feeAmount.String() + " USDr"
 	}
-	if t.tagBlock != 0 {
-		tag = fmt.Sprintf("block %d", t.tagBlock)
+	if t.TagBlock != 0 {
+		tag = fmt.Sprintf("block %d", t.TagBlock)
 	}
 	row, _ := json.Marshal(map[string]any{
 		"n": n, "from": t.From, "to": t.To, "amount": t.Amount.String(), "fee": fee, "merged": t.merged, "tag": tag, "scan": scan,
@@ -503,7 +541,7 @@ func (e *Engine) payByName(ctx context.Context, s *step, t Transfer) error {
 // payTransfer is one transfer between registered actors after the fan-out:
 // send it, then let the recipient find it by scanning the chain. With tags
 // on, the payer first opens a channel to the recipient if they have none,
-// then tags the payment, and the recipient finds it by its tag.
+// pays over it, and the recipient finds the payment by its tag.
 func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amount *big.Int) error {
 	if e.opts.Tags {
 		// Refuse before opening a channel, so a refusal sends nothing.
@@ -517,11 +555,6 @@ func (e *Engine) payTransfer(ctx context.Context, s *step, from, to *Actor, amou
 	t, err := e.send(ctx, s, from, to, amount, e.opts.UsdrFee)
 	if err != nil {
 		return err
-	}
-	if e.opts.Tags {
-		if err := e.publishTag(ctx, s, from, to, t); err != nil {
-			return err
-		}
 	}
 	e.transfers = append(e.transfers, t.Settlement)
 

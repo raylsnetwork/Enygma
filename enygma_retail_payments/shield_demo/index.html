@@ -640,7 +640,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     },
     "channels": {
       "h": "Private mailboxes",
-      "b": "Before paying, each payer opens a private channel to each person they will pay. A payment then comes with a small tag on that channel, so its recipient finds the money at once instead of trying every note on the chain, and the auditor can tell who paid.",
+      "b": "Before paying, each payer opens a private channel to each person they will pay. A payment then carries a small tag for that channel, so its recipient finds the money at once instead of trying every note on the chain, and the auditor can tell who paid.",
       "pub": ["That a channel was opened, sent by the relayer"],
       "priv": ["Who opened it, and for whom"]
     },
@@ -750,13 +750,14 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
       "fee": "Now the relayer’s {fee} fee. The Sender’s wallet asks its prover for a second, separate proof: it spends the Sender’s private USDr note, pays the relayer a new note of {fee} and gives the Sender the rest back as change. It is its own request to the prover, made now, for real.",
       "relay": [
         {"when": "!usdrFee", "text": "The Sender hands the proof to the relayer, which submits it from its own account, so the Sender’s address never appears on chain."},
-        {"when": "usdrFee", "text": "The Sender hands both proofs, the payment and the fee, to the relayer in one request. The relayer checks that the fee note is addressed to it, then submits both in one transaction from its own account, so the Sender’s address never appears on chain."}
+        {"when": "usdrFee", "text": "The Sender hands both proofs, the payment and the fee, to the relayer in one request. The relayer checks that the fee note is addressed to it, then submits both in one transaction from its own account, so the Sender’s address never appears on chain."},
+        {"when": "tags", "text": "With the proof go a tag only {to} can recognise, made for this block from their channel’s secret, and the new note’s opening, sealed with the channel’s key: one payload, and the proof was made for exactly that tag and sealed note."}
       ],
       "settle": [
         {"when": "!usdrFee", "text": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had the vault check the proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies), then the vault published the nullifier and added {to}’s note and the Sender’s change."},
-        {"when": "usdrFee", "text": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had each vault check its proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies). The vault published its nullifier and added {to}’s note and the Sender’s change; the USDr vault did the same for the fee, adding the relayer’s fee note and the Sender’s USDr change. Both or neither: one transaction."}
+        {"when": "usdrFee", "text": "The relayer’s transaction is already mined. Here is what it did: EnygmaDvp had each vault check its proof (its Merkle root is one the vault has had, its nullifier is unused, the proof verifies). The vault published its nullifier and added {to}’s note and the Sender’s change; the USDr vault did the same for the fee, adding the relayer’s fee note and the Sender’s USDr change. Both or neither: one transaction."},
+        {"when": "tags", "text": "EnygmaDvp also hashed the tag, its block and the sealed note, and checked that the proof was made for that hash, so the payment settled with exactly them. It published them for {to}, who will find the payment by its tag instead of trying every note on chain."}
       ],
-      "tag": "Last, the Sender tells {to} where the money is, without telling anyone else. Through the relayer, it publishes a tag on their channel: a value only {to} can recognise for this block, carrying the new note’s opening, sealed with the channel’s key. {to} will find the payment by it instead of trying every note on chain.",
       "payment": [
         {"when": ["!tags", "!usdrFee"], "text": "Payment {n} of {k}, in one click: the Sender spends last payment’s change note, proves paying {to} {amount}, and the relayer submits it, all for real, now."},
         {"when": "tags", "text": "Payment {n} of {k}, in one click, all for real, now. The Sender opens a tag channel to {to},"},
@@ -764,7 +765,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
         {"when": "tags", "text": "then"},
         {"when": "usdrFee", "text": "spends last payment’s change note to prove paying {to} {amount}, and its USDr note to prove the relayer’s {fee} fee. The relayer submits both in one transaction."},
         {"when": ["tags", "!usdrFee"], "text": "spends last payment’s change note to prove paying {to} {amount}, and the relayer submits it."},
-        {"when": "tags", "text": "A tag then tells {to} where the money is."}
+        {"when": "tags", "text": "A tag in the same transaction tells {to} where the money is."}
       ],
       "replay": [
         "Now try to spend the same money twice. The Sender resubmits payment 1, the very request that paid {who},",
@@ -817,11 +818,11 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "replay payment 1": "{from} sends payment 1 again, exactly as before: {detail}.",
     "payment": "The relayer submits it; EnygmaDvp checks the proof and settles.",
     "paymentWithUsdrFee": "The relayer submits them; EnygmaDvp checks both proofs and settles.",
+    "channelPayment": "The relayer submits it; EnygmaDvp checks the proof, its tag and sealed note, and settles.",
+    "channelPaymentWithUsdrFee": "The relayer submits them; EnygmaDvp checks both proofs, the tag and the sealed note, and settles.",
     "notes in": "The vault adds the new notes as fingerprints: {detailHead}.",
     "fee note in": "The relayer’s fee note lands in the USDr vault.",
-    "tag": "{from} leaves a tag only the recipient can recognise.",
-    "publishTag": "The relayer posts the tag on chain.",
-    "scan tags": "{to} checks the tags: {detail}.",
+    "scan tags": "{to} computes their tags for each new block and looks them up: {detail}.",
     "open note": "{to} opens the note meant for them."
   },
   "collapse": ["audit_keys", "channels", "usdr"],
@@ -851,8 +852,6 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
     "paymentWithUsdrFee": { "text": "proofs + nullifiers", "kinds": ["proof", "nullifier"] },
     "notes in": { "text": "commitments", "kinds": ["commitment"] },
     "fee note in": { "text": "commitment", "kinds": ["commitment"] },
-    "tag": { "text": "ciphertext", "kinds": ["ciphertext"] },
-    "publishTag": { "text": "ciphertext", "kinds": ["ciphertext"] },
     "scan tags": { "text": "ciphertexts", "kinds": ["ciphertext"] },
     "open note": { "text": "ciphertext → note", "kinds": ["ciphertext", "note"] }
   },
@@ -883,8 +882,8 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
           {
             "where": "With each payment · public",
             "zone": "chain",
-            "what": "t = Poseidon(block, Ana’s pk_spend, ss)",
-            "cap": "New every block: only Ana, the Sender and the auditor recognise it."
+            "what": "t = Poseidon(“enygma-tag-v1”, ss, block, Ana’s pk_spend)",
+            "cap": "New every block, bound into the payment’s proof: only Ana, the Sender and the auditor recognise it."
           }
         ]
       }
@@ -962,7 +961,7 @@ td.ok { color:var(--ok); } td.pending { color:var(--warn); }
             ],
             "cap": [
               "The relayer can’t change the payment: the proof would no longer check.",
-              {"when": "tags", "text": "It posts {to}’s tag too."}
+              {"when": "tags", "text": "{to}’s tag goes in the same transaction."}
             ]
           },
           {
@@ -1221,7 +1220,6 @@ const NODES = [
   { id: 'UsdrCoinVault', label: 'USDr vault', group: 'contract' },
   { id: 'EnygmaDvp', label: 'EnygmaDvp', group: 'contract' },
   { id: 'TagChannelRegistry', label: 'TagChannelRegistry', group: 'contract' },
-  { id: 'TagRegistry', label: 'TagRegistry', group: 'contract' },
 ];
 const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
 
@@ -1232,7 +1230,6 @@ const NODE_FIELDS = {
   Erc20CoinVault: [['vaultAddr', 'Address'], ['erc20Addr', 'RaylsERC20 token'], ['shieldGas', 'Shield gas']],
   UsdrCoinVault: [['usdrVaultAddr', 'Address'], ['usdrFixedFee', 'Fixed fee'], ['relayerUsdrIncome', 'Relayer fee income']],
   UserRegistry: [['registryAddr', 'Address'], ['auditorPk', 'Auditor key (ML-KEM)']],
-  TagRegistry: [['tagRegistryAddr', 'Address']],
   TagChannelRegistry: [['tagChannelAddr', 'Address']],
   relayer: [['relayerAddr', 'Address'], ['relayerUsdrIncome', 'USDr fee income']],
   auditor: [['auditorPk', 'pk (ML-KEM-768)']],
@@ -1267,7 +1264,7 @@ function svg(tag, attrs, parent) {
 // "open channel" hop (payer → relayer, "… to Ana's view key") opens one,
 // sealed; the payee's "scan channels" finds every tag channel to them so
 // far; the audit's hop to the auditor audits every tag channel so far.
-// Opening a tag channel and each "tag" on it ("… only Ana can recognise …")
+// Opening a tag channel and each payment's "relay" on it ("… a tag only Ana can recognise …")
 // light its arc, with a dot travelling along it and a chip, for the hop's hold.
 // The arcs lie in the diagram's drawing, under the open wallet, which they
 // would otherwise cross; what lights them rides in the chips' drawing, over it.
@@ -1334,7 +1331,7 @@ const tagChannels = (() => {
     hop(h, hold) {
       if (h.failed) return;
       const opened = h.label === 'open channel' && /to (.+?)['’]s view key/.exec(h.detail || '');
-      const tagged = h.label === 'tag' && /only (.+?) can recognise/.exec(h.detail || '');
+      const tagged = h.label === 'relay' && /a tag only (.+?) can recognise/.exec(h.detail || '');
       if (opened) {
         const to = idOf(opened[1]);
         if (!to || !pos[h.from] || !pos[to]) return;
@@ -1753,7 +1750,7 @@ const SENTENCE = {
     ? `With the view keys it recovered, the auditor opens ${n.length} notes’ ciphertexts, as the chain holds them, to their openings: amount, salt and token. Each hashes, with its owner’s pk_spend, to the note’s commitment.`
     : !n.length ? 'No new note opened.'
     : n[0].via === 'tag'
-    ? `${n[0].owner} opens the tag’s payload with the key of the channel it came on and gets the note’s opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to a commitment in the vault.`
+    ? `${n[0].owner} opens the payment’s sealed note with the key of the channel its tag came on and gets the note’s opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to the commitment the payment settled in the vault.`
     : `${n[0].owner}’s view key opens one note’s ciphertext, as the chain holds it, to its opening, ${n[0].amount} RaylsERC20 with its salt and token; it hashes, with ${n[0].owner}’s pk_spend, to the note’s commitment. Every other note fails to open.`,
   prover: d => `The gnark server proves with the ${d.circuit} circuit: it gets the whole witness, private inputs included, and returns a proof that reveals none of it.`,
   formula: d => `${FORMULA[d.formula.name]?.title || d.formula.name}${hasValues(d.formula) ? ', computed with this run’s real values and checked against what the chain holds' : ': the equation, and why it keeps the protocol private'}.`,
@@ -1764,8 +1761,8 @@ const SENTENCE = {
 // run, like a formula card, on the first relay hop that hands the relayer
 // both proofs.
 const TIE = 'How the fee is tied to the payment: the fee proof and the payment proof share no public input, so nothing in either proof points at the other. They are tied only by settling in one transaction, both or neither. And the relayer checks off chain, from the fee note’s opening sent with the request, that the fee note is its own.';
-// tiesFee says whether hop h relays a payment with its USDr fee: its request goes to /relay/payment_usdr_fee.
-const tiesFee = (h, details) => h.label === 'relay' && details.some(d => d.kind === 'http' && /\/relay\/payment_usdr_fee$/.test(d.url));
+// tiesFee says whether hop h relays a payment with its USDr fee: its request goes to /relay/payment_usdr_fee, or over a tag channel /relay/channel_payment_usdr_fee.
+const tiesFee = (h, details) => h.label === 'relay' && details.some(d => d.kind === 'http' && /\/relay\/(channel_)?payment_usdr_fee$/.test(d.url));
 
 // hasValues says whether formula f carries a run's values (a walkthrough's):
 // a full run's carries its name only.
@@ -1830,7 +1827,7 @@ const FORMULA = {
     sees: 'the record in TagChannelRegistry: c₁, c₂ and the bitmap, sent by the relayer',
     hidden: 'the shared secret ss, who the payee is, and the payer’s senderId inside c₂',
     why: 'ML-KEM-768 seals ss to the payee’s view key: only its holder can decapsulate c₁ to ss, and the auditor, which recovers every user’s view key. c₂ is sealed under a key derived from ss, with c₁ bound in as associated data, so it can’t be paired with another capsule. The bitmap sets every registered user’s bit, so it names nobody, and the relayer sends the record, so msg.sender is the relayer’s, not the payer’s.',
-    note: 'Every later tag between the two, in this direction, derives from ss. The payee, and the auditor through the view keys it recovers, read the payer’s senderId in c₂. The payment’s note encryption is separate: a fresh capsule per payment.',
+    note: 'Every later payment between the two, in this direction, rides on ss: its tag and the key its note is sealed with derive from it, so no payment carries a capsule of its own. The payee, and the auditor through the view keys it recovers, read the payer’s senderId in c₂.',
   },
   tagChannelDetection: {
     title: 'Finding the tag channel', property: 'Only the payee (and the auditor) recognises it',
@@ -1844,20 +1841,28 @@ const FORMULA = {
   },
   tag: {
     title: 'The tag', property: 'Unlinkable, one per block and direction',
-    eq: 't_b = Poseidon(b, pk_spend^payee, ss mod p)',
-    result: 't_b',
-    sees: 'the tag t_b in TagRegistry, the block it landed in, sent by the relayer',
+    eq: 't = Poseidon("enygma-tag-v1", ss mod p, block_n, pk_spend^payee)',
+    result: 't',
+    sees: 'the tag t and block_n in the payment’s own ChannelPayment event, sent by the relayer',
     hidden: 'the shared secret ss, who the payee is, and who paid',
-    why: 'Poseidon is one-way and only the payer and the payee hold ss (and the auditor, through the view keys it recovers), so no one else can compute t_b or tell which tag channel it rides on. b changes it every block, so two tags on one tag channel look unrelated. The payee’s spend key is in it so the two directions differ: without it, a payment each way over one tag channel in the same block would get the same tag, collide in TagRegistry, and match the payer’s own scan.',
-    note: 'The payer sends the relayer a tag for each block of a short window, each with its payload; the relayer publishes the one for the block its transaction lands in.',
+    why: 'Poseidon is one-way and only the payer and the payee hold ss (and the auditor, through the view keys it recovers), so no one else can compute t or tell which tag channel it rides on. block_n changes it every block, so two payments on one tag channel in different blocks look unrelated. The payee’s spend key is in it so the two directions differ: without it, a payment each way over one tag channel for the same block would get the same tag and match the payer’s own scan. The domain constant keeps it apart from every other hash over ss.',
+    note: 'The payer tags the payment for block_n, the block it expects it to land in, before proving it; it settles in block_n or up to 100 blocks later. The payee computes, for each block, the tag of every channel they hold and looks those tags up.',
+  },
+  channelPayment: {
+    title: 'The bound payload', property: 'Settles with its tag and note, or not at all',
+    eq: 'h = keccak256(abi.encode(keccak256("enygma-channel-payment-v1"), block_n, t, ctxt)) mod p, the proof’s StCiphertextHash',
+    result: 'h',
+    sees: 'block_n, t and ctxt in the calldata and the ChannelPayment event, and h among the proof’s public inputs',
+    hidden: 'nothing more: h is a hash of what is already public',
+    why: 'The proof was made for h, so it verifies only with this block_n, t and ctxt: EnygmaDvp recomputes h from what it was given and compares. Whoever submits the payment, the relayer included, can’t drop the tag, swap the sealed note or move it to another block. The domain word keeps h apart from the hash a capsule payment binds, so neither kind of proof settles as the other.',
   },
   tagPayload: {
-    title: 'The tag’s payload', property: 'Only the payee (and the auditor) can read it',
-    eq: 'k_b = HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee); ct = AES-256-GCM_k_b(amount ‖ token ‖ salt); the payee opens ct, and Poseidon(pk_spend, salt, amount, token) = commitment',
+    title: 'The sealed note', property: 'Only the payee (and the auditor) can read it',
+    eq: 'k_b = HKDF-SHA256(ss, "enygma-block-key-v1" ‖ block_n ‖ pk_spend^payee); ctxt = AES-256-GCM_k_b(amount ‖ token ‖ salt); the payee opens ctxt, and Poseidon(pk_spend, salt, amount, token) = commitment',
     result: 'commitment',
-    sees: 'ct beside the tag in TagRegistry, and the note’s commitment in the vault',
+    sees: 'ctxt beside the tag in the ChannelPayment event, and the note’s commitment in the vault',
     hidden: 'the block key k_b, the amount, the token, the salt',
-    why: 'k_b derives from ss, which only the payer and the payee hold (and the auditor, through the view keys it recovers), so only they can open ct: AES-GCM fails under any other key. Like the tag, the key changes with the block and the direction, so every payload has a key of its own. A tag alone proves nothing was paid: the payee hashes the opening with their pk_spend and finds that commitment in the vault before keeping the note.',
+    why: 'k_b derives from ss, which only the payer and the payee hold (and the auditor, through the view keys it recovers), so only they can open ctxt: AES-GCM fails under any other key. Like the tag, the key changes with the block and the direction, so every payment’s note has a key of its own. The salt is the payer’s random choice, carried only here, and the payee hashes the opening with their pk_spend to the commitment the payment settled before keeping the note.',
   },
   groth16: {
     title: 'The Groth16 check', property: 'Zero-knowledge and soundness', eq: 'on BN254: e(A, B) = e(α, β) · e(L, γ) · e(C, δ), with L = IC₀ + Σ xᵢ · ICᵢ', result: 'verifyProof',
@@ -2129,7 +2134,7 @@ const hopPanel = (() => {
       return [
         [`${who} · commitment`, hex(n.commitment)],
         ...(n.capsule ? [[`${who} · ML-KEM capsule`, blob(n.capsule)]] : []),
-        [`${who} · ${n.via === 'tag' ? 'tag payload' : 'sealed amount'}`, blob(n.sealed)],
+        [`${who} · ${n.via === 'tag' ? 'sealed note' : 'sealed amount'}`, blob(n.sealed)],
         [`${who} · opens to`, `${esc(n.amount)} ${esc(n.asset)} · salt ${hex(n.salt)} · token ${hex(n.token)}`],
         ...(n.tx ? [[`${who} · transaction`, hex(n.tx)]] : [])];
     });
@@ -2267,8 +2272,8 @@ const hopPanel = (() => {
       <span class="arrow">= the registered pk_view <span class="ok">✓</span></span>
     </div>`;
     if (d.kind === 'decryption') return `<div class="opened">${(d.notes || []).map(n => `<div class="opening">
-      ${sideOf(true, 'On chain, in the ' + (n.via === 'tag' ? 'TagPublished event' : 'note’s Payment or EncryptedNote event'), n.capsule
-        ? [part('capsule', sizeOf(n.capsule)), part('sealed', sizeOf(n.sealed))] : [part('tag payload', sizeOf(n.sealed))])}
+      ${sideOf(true, 'On chain, in the ' + (n.via === 'tag' ? 'payment’s ChannelPayment event' : 'note’s Payment or EncryptedNote event'), n.capsule
+        ? [part('capsule', sizeOf(n.capsule)), part('sealed', sizeOf(n.sealed))] : [part('sealed note', sizeOf(n.sealed))])}
       <span class="arrow">${n.via === 'tag' ? 'channel key' : `${esc(n.owner)}’s view key`} →</span>
       ${sideOf(false, 'Only the owner (and, with the recovered view key, the auditor) can see this', [part('amount', `<b>${esc(n.amount)}</b> ${esc(n.asset)}`), part('salt', hex(n.salt)), part('token', hex(n.token))])}
       <span class="arrow">Poseidon → ${hex(n.commitment)}</span>

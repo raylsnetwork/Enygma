@@ -128,12 +128,13 @@ const (
 	// conservation on payment 1's USDr fee proof request, the nullifier and
 	// the Groth16 check on payment 1's settlement, and note encryption on
 	// the first hop a view key opens a note's ciphertext by (the first
-	// participant's scan; with tags, a participant opens their note with
-	// the tag channel's key, so the audit's); with tags, the tag channel
+	// participant's scan; with tags, every payment's note is sealed under
+	// its tag channel's key, so the audit's); with tags, the tag channel
 	// setup on the open channel hop of the Sender's tag channel to payment
 	// 1's payee, the tag channel detection on that payee's scan channels
-	// hop that finds it, the tag on payment 1's tag hop, and the tag payload
-	// on that payee's tag-based open note. A walkthrough's carries the
+	// hop that finds it, the tag on payment 1's relay hop, the bound payload
+	// on its settlement, and the sealed note on that payee's tag-based open
+	// note. A walkthrough's carries the
 	// run's real values too, checked against what the chain holds: the
 	// spend key on the Sender's registration (its sk_spend is a throwaway
 	// demo key); the commitment on the shield (its values are the shield's
@@ -145,16 +146,18 @@ const (
 	// nullifier and the Groth16 check (its proof and public inputs, checked
 	// by verifyProof) on the settlement, values the page shows there anyway
 	// in payment 1's witness and on-chain check; and note encryption on the
-	// first participant's scan (the ciphertext the scan's decryption detail
-	// shows, and its opening); and, with tags, on payment 1's hops, the tag
+	// first participant's scan, or with tags the audit's opening of the
+	// Sender's shield note (the ciphertext the decryption detail shows, and
+	// its opening); and, with tags, on payment 1's hops, the tag
 	// channel setup (its shared secret, capsule, key, payload and bitmap,
 	// checked against the record TagChannelRegistry holds and the
 	// UserRegistry's user count) and its detection (the payee's Decaps and
 	// AEAD opening of that record, another participant's AEAD failing on
-	// it, and the scan's counts), the tag (checked against the one
-	// TagRegistry published for the block it landed in, beside the reverse
-	// direction's) and its payload (the block key opening it, checked
-	// against the payee's commitment in the vault).
+	// it, and the scan's counts), the tag (checked against the one the
+	// payment's ChannelPayment event logged for its block_n, beside the
+	// reverse direction's), the bound payload (checked against the proof's
+	// StCiphertextHash) and the sealed note (the block key opening it,
+	// checked against the payee's commitment in the vault).
 	DetailFormula HopDetailKind = "formula"
 	// DetailProver is what the gnark server did for one proof request, on
 	// every proof hop: the circuit it ran and the stats it measured itself
@@ -229,13 +232,21 @@ const (
 	// secret, and only under the payee's does c₂ open; an AEAD failure
 	// means "not mine".
 	FormulaTagChannelDetection FormulaName = "tagChannelDetection"
-	// FormulaTag is a payment's tag, t_b = Poseidon(b, payee pk_spend,
-	// ss mod p) for the block b it landed in, as TagRegistry publishes it:
-	// the payee's spend key makes the two directions of a tag channel differ.
+	// FormulaTag is a channel payment's tag, t = Poseidon("enygma-tag-v1",
+	// ss mod p, block_n, payee pk_spend) for the block block_n the payer
+	// tagged it for, as its ChannelPayment event logs it: the payee's spend
+	// key makes the two directions of a tag channel differ.
 	FormulaTag FormulaName = "tag"
-	// FormulaTagPayload is a tag's payload: k_b = HKDF-SHA256(ss,
-	// "enygma-block-key-v1" ‖ b ‖ payee pk_spend) seals amount ‖ token ‖
-	// salt, which the payee opens and hashes to the commitment in the vault.
+	// FormulaChannelPayment is a channel payment's bound payload: its proof's
+	// StCiphertextHash is keccak256(abi.encode(keccak256(
+	// "enygma-channel-payment-v1"), block_n, t, ctxt)) mod p, which
+	// EnygmaDvp recomputes from what it was given, so the payment settles
+	// with that block, tag and sealed note or not at all.
+	FormulaChannelPayment FormulaName = "channelPayment"
+	// FormulaTagPayload is a channel payment's sealed note: k_b =
+	// HKDF-SHA256(ss, "enygma-block-key-v1" ‖ block_n ‖ payee pk_spend) seals
+	// amount ‖ token ‖ salt, which the payee opens and hashes to the
+	// commitment in the vault.
 	FormulaTagPayload FormulaName = "tagPayload"
 )
 
@@ -436,8 +447,8 @@ type ViewKeyRecovery struct {
 // DecryptedNote is one note a view key opened: its owner, its asset, the
 // transaction that published it and its commitment; the ciphertext opened,
 // either a Payment or EncryptedNote event's capsule and sealed amount (Via
-// "view key") or, with tags, a TagPublished event's payload, in Sealed (Via
-// "tag"); and its opening. Byte strings and field elements are 0x-hex, the
+// "view key") or, with tags, a ChannelPayment event's sealed note, in Sealed
+// (Via "tag"); and its opening. Byte strings and field elements are 0x-hex, the
 // amount decimal.
 type DecryptedNote struct {
 	Owner      string `json:"owner"`
@@ -582,7 +593,6 @@ const (
 	NodeVault              = "Erc20CoinVault"
 	NodeUsdrVault          = "UsdrCoinVault"
 	NodeTagChannelRegistry = "TagChannelRegistry"
-	NodeTagRegistry        = "TagRegistry"
 	NodeDvp                = "EnygmaDvp"
 )
 
@@ -605,7 +615,7 @@ var Nodes = func() []Node {
 	}
 	ns = append(ns, Node{NodeAuditor, "actor"}, Node{NodeFunder, "actor"},
 		Node{NodeGnark, "service"}, Node{NodeRelayer, "service"})
-	for _, id := range []string{NodeUserRegistry, NodeVault, NodeUsdrVault, NodeDvp, NodeTagChannelRegistry, NodeTagRegistry} {
+	for _, id := range []string{NodeUserRegistry, NodeVault, NodeUsdrVault, NodeDvp, NodeTagChannelRegistry} {
 		ns = append(ns, Node{id, "contract"})
 	}
 	return ns

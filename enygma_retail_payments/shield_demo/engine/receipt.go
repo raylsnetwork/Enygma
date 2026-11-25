@@ -51,8 +51,6 @@ func (c *chain) contractName(addr common.Address) string {
 		return "UsdrERC20"
 	case c.registryAddr:
 		return NodeUserRegistry
-	case c.tagRegistryAddr:
-		return NodeTagRegistry
 	case c.channelRegistryAddr:
 		return NodeTagChannelRegistry
 	}

@@ -3,13 +3,11 @@ package engine
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
-	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -17,13 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// tagWindow is how many consecutive blocks a published tag covers, so it
-// still lands under a key its recipient derives if the relayer's
-// transaction is mined a block or two later than predicted.
-const tagWindow = 3
-
-// tagPublishedTopic is TagRegistry's TagPublished event.
-var tagPublishedTopic = crypto.Keccak256Hash([]byte("TagPublished(uint256,bytes32,address,bytes)"))
+// channelPaymentTopic is EnygmaDvp's ChannelPayment event.
+var channelPaymentTopic = crypto.Keccak256Hash([]byte("ChannelPayment(uint256,uint256,bytes32,uint256,bytes)"))
 
 // tagState is an actor's private-tag state with tags on: the channels they
 // opened to recipients, the channels they found addressed to them, and how
@@ -34,7 +27,8 @@ type tagState struct {
 	// in are the channels to this actor that their channel scans found.
 	in []tags.Channel
 	// nextChannel is the first channel record not yet scanned; lastBlock
-	// the last block whose tags have been.
+	// the last block_n whose tags have been: the payee's scan computes,
+	// for each block after it, the tag of every channel they hold.
 	nextChannel uint64
 	lastBlock   uint64
 }
@@ -239,58 +233,29 @@ func (e *Engine) ensureChannel(ctx context.Context, s *step, from, to *Actor) er
 	return nil
 }
 
-// publishTag notifies t's recipient of the payment through the relayer: a
-// tag only the recipient can recognise, carrying the note's opening
-// encrypted under the channel's per-block key. It records the tag's
-// transaction on t.
-func (e *Engine) publishTag(ctx context.Context, s *step, from, to *Actor, t *sent) error {
+// prepareChannelPayment is, with tags on, the channel payment of amount
+// from from to to (tags.PrepareChannelPayment): tagged for the block after
+// the head, the one the relayer's transaction lands in on an automining
+// chain, and settled up to tags.ChannelPaymentWindow blocks later. It is
+// nil with tags off.
+func (e *Engine) prepareChannelPayment(ctx context.Context, from, to *Actor, amount *big.Int) (*tags.ChannelPayment, error) {
+	if !e.opts.Tags {
+		return nil, nil
+	}
 	ss, ok := from.tags.out[to]
 	if !ok {
-		return fmt.Errorf("%s has no tag channel to %s", from.Name, to.Name)
+		return nil, fmt.Errorf("%s has no tag channel to %s", from.Name, to.Name)
 	}
-	start, window, ctxts, err := tags.PreparePaymentTag(e.chain.client, tagWindow, to.Spend.PublicKey, ss, t.Amount, tokenId, t.payeeSalt)
+	head, err := e.chain.client.BlockNumber(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	req := relayTagRequest{StartBlock: start}
-	for i := range window {
-		req.Tags = append(req.Tags, "0x"+hex.EncodeToString(window[i][:]))
-		req.Ctxts = append(req.Ctxts, "0x"+hex.EncodeToString(ctxts[i]))
-	}
-	resp, ex, err := e.relayer.tag(ctx, req)
-	if err != nil {
-		s.hopFailed(ActorNode(from.ID), NodeRelayer, "tag", err)
-		return err
-	}
-	t.TagTxHash = common.HexToHash(resp.TxHash)
-	t.tagBlock = resp.BlockNumber
-	receipt, err := e.chain.receiptOf(ctx, t.TagTxHash)
-	if err != nil {
-		return err
-	}
-	details := []HopDetail{ex}
-	// Payment 1's tag, the first on the Sender's tag channel to its payee,
-	// carries the tag card: a walkthrough's with its values, checked
-	// against the tag TagRegistry published, a full run's by name only.
-	if e.carriesTagChannelCards(from, to) && len(e.fanOut) == 0 {
-		d := formulaNamed(FormulaTag, NodeTagRegistry, 0)
-		if e.opts.Walkthrough {
-			if d, err = e.chain.tagFormula(ctx, from, to, ss, t.tagBlock, t.TagTxHash); err != nil {
-				return err
-			}
-		}
-		details = append(details, d)
-	}
-	s.hop(ActorNode(from.ID), NodeRelayer, "tag", fmt.Sprintf("a tag only %s can recognise, carrying the note's opening", to.Name), details...)
-	s.hop(NodeRelayer, NodeTagRegistry, "publishTag", fmt.Sprintf("block %d, gas %s", resp.BlockNumber, formatNum(resp.GasUsed)), receipt)
-	s.log("tag", "TagRegistry.publishTag() via relayer → %s's tag in block %d  gas %s", to.Name, resp.BlockNumber, formatNum(resp.GasUsed))
-	return nil
+	return tags.PrepareChannelPayment(ss, head+1, to.Spend.PublicKey, amount, tokenId)
 }
 
-// taggedNote is a note a scan found by its tag: the note as decrypted, the
-// tag channel whose tag matched, the block the tag was published in, the
-// payload it carried, what that opened to, and the block the vault logged
-// the note's commitment in.
+// taggedNote is a channel payment a scan found by its tag: the note as
+// decrypted, the tag channel whose tag matched, the block_n the tag is for,
+// the sealed note, what it opened to, and the block the payment settled in.
 type taggedNote struct {
 	DecryptedNote
 	ch      tags.Channel
@@ -300,137 +265,70 @@ type taggedNote struct {
 	cmBlock uint64
 }
 
-// errBadTag marks a tag that matches one of an actor's channels but opens to
-// no payment: a payload that does not decode or decrypt, or a note for
-// another token. A note not in the vault is skipped the same way. Anyone can open a channel to a user and
-// publish tags on it, so a scan skips such a tag rather than stopping at it.
+// errBadTag marks a channel payment that matches one of an actor's channels
+// but opens to no RaylsERC20 note of theirs: a sealed note that does not
+// decrypt, or does not open to the commitment it settled, or a note for
+// another token or in another vault.
+// Anyone with a channel to a user can pay them junk, so a scan skips such a
+// payment rather than stopping at it.
 var errBadTag = errors.New("bad tag")
 
-// scanTags has a check every tag published since their last scan against
-// their channels, decrypt only the notes whose tags match, and keep each
-// that opens to a commitment in the vault. It confirms the candidates
-// against the vault's Commitment events, which the engine reads once per
-// block, not once per scan or per matching tag, so a channel full of junk
-// notes can't slow it down, and no query spans more blocks than a hosted
-// RPC provider allows. It
-// returns the new notes, as decrypted from their tags, how many tags it
-// checked, and how many matching tags it skipped as bad. Only an RPC error
-// stops the scan, and then it keeps no notes and the cursor stays put, so
-// the next scan reads the same blocks again and finds the same notes.
-func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, checked, skipped int, err error) {
+// scanTags has a compute, for each block_n since their last scan up to the
+// head, the tag of every channel they hold, and find the channel payments
+// EnygmaDvp settled with those tags (tags.ScanChannelPayments); it keeps
+// each one whose sealed note opens to its commitment. The demo's payments
+// land in their block_n, before the scan that looks for them, so no
+// payment for an already scanned block_n comes later. It returns the new
+// notes, how many tags it computed, and how many matching payments it
+// skipped as bad. Only an RPC error stops the scan, and then it keeps no
+// notes and the cursor stays put, so the next scan reads the same blocks
+// again and finds the same notes.
+func (e *Engine) scanTags(ctx context.Context, a *Actor) (found []taggedNote, computed, skipped int, err error) {
 	c := e.chain
 	tip, err := c.client.BlockNumber(ctx)
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	if tip <= a.tags.lastBlock {
+	if tip <= a.tags.lastBlock || len(a.tags.in) == 0 {
+		a.tags.lastBlock = max(a.tags.lastBlock, tip)
 		return nil, 0, 0, nil
 	}
-	logs, err := c.logsBetween(ctx, a.tags.lastBlock+1, tip, ethereum.FilterQuery{
-		Addresses: []common.Address{c.tagRegistryAddr},
-		Topics:    [][]common.Hash{{tagPublishedTopic}},
-	})
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("TagPublished events: %w", err)
-	}
-	type candidate struct {
-		l       ethtypes.Log
-		ch      tags.Channel
-		payload []byte
-		pn      *tags.PaymentNote
-		cm      *big.Int
-	}
-	var cands []candidate
-	var cms []*big.Int
-	for _, l := range logs {
-		if len(l.Topics) < 4 {
-			continue
-		}
-		checked++
-		for _, ch := range a.tags.in {
-			pn, payload, err := openTag(l, ch)
-			if err != nil {
-				skipped++
-				continue
-			}
-			if pn == nil {
-				continue
-			}
-			cm, err := tagCommitment(a, pn)
-			if errors.Is(err, errBadTag) {
-				skipped++
-				continue
-			}
-			if err != nil {
-				return nil, checked, skipped, err
-			}
-			cands = append(cands, candidate{l, ch, payload, pn, cm})
-			cms = append(cms, cm)
-		}
-	}
-	inVault, err := c.vaultHas(ctx, cms)
-	if err != nil {
-		return nil, checked, skipped, err
-	}
 	var fresh purse
-	for _, k := range cands {
-		// A tag alone proves nothing was paid.
-		cmBlock, ok := inVault[common.BigToHash(k.cm)]
-		if !ok {
-			skipped++
-			continue
+	for b := a.tags.lastBlock + 1; b <= tip; b++ {
+		paid, err := tags.ScanChannelPayments(ctx, c.client, c.dvpAddr, b, a.tags.in)
+		if err != nil {
+			return nil, 0, 0, err
 		}
-		if a.notes.has(k.cm) || fresh.has(k.cm) {
-			continue
+		computed += len(a.tags.in)
+		for _, f := range paid {
+			// A payment into another vault (the USDr vault's notes are
+			// token 0 too) is no RaylsERC20 note, whatever it opens to.
+			if f.VaultId.Cmp(erc20VaultId) != 0 {
+				skipped++
+				continue
+			}
+			pn, err := f.Open()
+			if err == nil && pn.TokenId.Cmp(tokenId) != 0 {
+				err = fmt.Errorf("%w: %s: the note is for token %s, want %s", errBadTag, a.Name, pn.TokenId, tokenId)
+			}
+			if err != nil {
+				skipped++
+				continue
+			}
+			if a.notes.has(f.Commitment) || fresh.has(f.Commitment) {
+				continue
+			}
+			n := &note{commitment: f.Commitment, salt: pn.Salt, amount: pn.Amount}
+			fresh = append(fresh, n)
+			found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: f.TxHash.Hex(),
+				Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(f.Ctxt),
+				Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(pn.TokenId)},
+				ch: tags.Channel{SharedSecret: f.SharedSecret, PkSpend: f.PkSpend}, block: f.BlockNumber, payload: f.Ctxt, opened: pn, cmBlock: f.MinedIn})
 		}
-		n := &note{commitment: k.cm, salt: k.pn.Salt, amount: k.pn.Amount}
-		fresh = append(fresh, n)
-		found = append(found, taggedNote{DecryptedNote: DecryptedNote{Owner: a.Name, Asset: assetErc20, Tx: k.l.TxHash.Hex(),
-			Commitment: fieldHex(n.commitment), Via: viaTag, Sealed: bytesHex(k.payload),
-			Amount: n.amount.String(), Salt: fieldHex(n.salt), Token: fieldHex(k.pn.TokenId)},
-			ch: k.ch, block: k.l.BlockNumber, payload: k.payload, opened: k.pn, cmBlock: cmBlock})
 	}
 	a.notes = append(a.notes, fresh...)
 	a.tags.lastBlock = tip
-	return found, checked, skipped, nil
-}
-
-// openTag decrypts the payment note a TagPublished log carries if it is
-// ch's tag for its block, and returns it with the payload it decrypted, or
-// nil if it is not.
-func openTag(l ethtypes.Log, ch tags.Channel) (*tags.PaymentNote, []byte, error) {
-	// Topics: [0] signature, [1] block number, [2] tag, [3] publisher.
-	if len(l.Topics) < 4 {
-		return nil, nil, nil
-	}
-	want, err := tags.DeriveTag(l.BlockNumber, ch.PkSpend, ch.SharedSecret)
-	if err != nil || common.Hash(want) != l.Topics[2] {
-		return nil, nil, nil
-	}
-	vals, err := abiBytes().Unpack(l.Data)
-	if err != nil || len(vals) != 1 {
-		return nil, nil, fmt.Errorf("%w: decode the tag in block %d: %v", errBadTag, l.BlockNumber, err)
-	}
-	payload := vals[0].([]byte)
-	pn, err := tags.DecryptPaymentNote(ch.SharedSecret, ch.PkSpend, l.BlockNumber, payload)
-	if err != nil {
-		return nil, payload, fmt.Errorf("%w: %v", errBadTag, err)
-	}
-	return pn, payload, nil
-}
-
-// tagCommitment is the commitment of the note a tag's payload opens for a.
-// Its errors all wrap errBadTag: a note for another token, or one whose
-// commitment can't be computed.
-func tagCommitment(a *Actor, pn *tags.PaymentNote) (*big.Int, error) {
-	if pn.TokenId.Cmp(tokenId) != 0 {
-		return nil, fmt.Errorf("%w: %s: tagged note is for token %s, want %s", errBadTag, a.Name, pn.TokenId, tokenId)
-	}
-	cm, err := rpcore.Erc20CommitmentV2(a.Spend.PublicKey, pn.Salt, pn.Amount, tokenId)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errBadTag, err)
-	}
-	return cm, nil
+	return found, computed, skipped, nil
 }
 
 // logQueryBlocks is the most blocks one eth_getLogs query spans: hosted RPC
@@ -460,28 +358,6 @@ func (c *chain) logsSince(ctx context.Context, from uint64, q ethereum.FilterQue
 		return nil, err
 	}
 	return c.logsBetween(ctx, from, tip, q)
-}
-
-// vaultHas maps each of cms the vault logged a Commitment event for to
-// the block it logged it in.
-func (c *chain) vaultHas(ctx context.Context, cms []*big.Int) (map[common.Hash]uint64, error) {
-	logs, err := c.vaultCommitments(ctx, c.vaultAddr)
-	if err != nil {
-		return nil, err
-	}
-	asked := map[common.Hash]bool{}
-	for _, cm := range cms {
-		asked[common.BigToHash(cm)] = true
-	}
-	loggedIn := map[common.Hash]uint64{}
-	for _, l := range logs {
-		if len(l.Topics) >= 3 && asked[l.Topics[2]] {
-			if _, seen := loggedIn[l.Topics[2]]; !seen {
-				loggedIn[l.Topics[2]] = l.BlockNumber
-			}
-		}
-	}
-	return loggedIn, nil
 }
 
 // vaultLog is the Commitment events a vault logged before block next,
@@ -525,17 +401,19 @@ func (c *chain) vaultCommitments(ctx context.Context, vaultAddr common.Address) 
 // discoverByTag has a scan for tags and describes what the scan checked;
 // want is how many new notes the scan must find.
 func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int) (string, error) {
-	found, checked, skipped, err := e.scanTags(ctx, a)
+	from := a.tags.lastBlock + 1
+	found, computed, skipped, err := e.scanTags(ctx, a)
 	if err != nil {
 		return "", err
 	}
 	if skipped > 0 {
-		s.log("tag", "%s skipped %d matching tags that opened to no payment in the vault", a.Name, skipped)
+		s.log("tag", "%s skipped %d payments with their tag that opened to no note of theirs", a.Name, skipped)
 	}
 	if len(found) != want {
 		return "", fmt.Errorf("%s found %d new notes by their tags, want %d", a.Name, len(found), want)
 	}
-	scan := fmt.Sprintf("%d tags checked → %d decrypted", checked, len(found))
+	blocks := a.tags.lastBlock + 1 - from
+	scan := fmt.Sprintf("%d tags computed for %d blocks → %d matched", computed, blocks, len(found))
 	notes := make([]DecryptedNote, len(found))
 	for i, f := range found {
 		notes[i] = f.DecryptedNote
@@ -545,7 +423,7 @@ func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int)
 		// The note payment 1's tag carried, opened by its payee, carries the
 		// tag payload card: a walkthrough's with its values, checked
 		// against the commitment in the vault, a full run's by name only.
-		if len(e.fanOut) == 0 || !e.carriesTagChannelCards(e.sender(), a) || common.HexToHash(f.Tx) != e.fanOut[0].TagTxHash {
+		if len(e.fanOut) == 0 || !e.carriesTagChannelCards(e.sender(), a) || common.HexToHash(f.Tx) != e.fanOut[0].TxHash {
 			continue
 		}
 		d := formulaNamed(FormulaTagPayload, NodeVault, 0)
@@ -556,9 +434,9 @@ func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int)
 		}
 		details = append(details, d)
 	}
-	s.hop(NodeTagRegistry, ActorNode(a.ID), "scan tags", scan)
-	s.hop(NodeVault, ActorNode(a.ID), "open note", fmt.Sprintf("the tagged note's commitment confirmed in the vault; %s decrypts only it", a.Name), details...)
-	s.log("tag", "%s checked %d tags, matched %d and decrypted only those notes", a.Name, checked, len(found))
+	s.hop(NodeDvp, ActorNode(a.ID), "scan tags", scan)
+	s.hop(NodeDvp, ActorNode(a.ID), "open note", fmt.Sprintf("%s opens only the matched payment's sealed note, to the commitment it settled", a.Name), details...)
+	s.log("tag", "%s computed %d tags for %d blocks, matched %d payments and decrypted only those notes", a.Name, computed, blocks, len(found))
 	s.actor(a, "scan", scan)
 	return scan, nil
 }
