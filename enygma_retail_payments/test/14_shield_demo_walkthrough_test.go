@@ -26,6 +26,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -33,6 +34,7 @@ import (
 
 	"enygma_retail_payments/layout"
 	"enygma_retail_payments/shield_demo/engine"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
@@ -64,15 +66,16 @@ type released struct {
 // actionHops are the hop labels a walkthrough's action plays with opts. A
 // person's keys fund their gas in the same click, except the issuer's, whose
 // account is the gas funder. With tags, a payment opens its channel to the
-// payee and publishes its tag; with the USDr fee, it proves the fee too and
-// settles both in one transaction.
+// payee and settles as a channel payment, its tag in the same transaction;
+// with the USDr fee, it proves the fee too and settles both in one
+// transaction.
 func actionHops(opts engine.Options, action string) []string {
-	channel, tag, fee, settle, feeIn := []string{}, []string{}, []string{}, "payment", []string{}
+	channel, fee, settle, feeIn := []string{}, []string{}, "payment", []string{}
 	if opts.Tags {
-		channel, tag = []string{"open channel", "openChannel", "scan channels"}, []string{"tag", "publishTag"}
+		channel, settle = []string{"open channel", "openChannel", "scan channels"}, "channelPayment"
 	}
 	if opts.UsdrFee {
-		fee, settle, feeIn = []string{"prove UsdrFee"}, "paymentWithUsdrFee", []string{"fee note in"}
+		fee, settle, feeIn = []string{"prove UsdrFee"}, settle+"WithUsdrFee", []string{"fee note in"}
 	}
 	scan := []string{"scan"}
 	if opts.Tags {
@@ -91,8 +94,7 @@ func actionHops(opts engine.Options, action string) []string {
 		"fee":      fee,
 		"relay":    {"relay"},
 		"settle":   slices.Concat([]string{settle, "notes in"}, feeIn),
-		"tag":      tag,
-		"payment":  slices.Concat(channel, []string{"prove Payment"}, fee, []string{"relay", settle, "notes in"}, feeIn, tag),
+		"payment":  slices.Concat(channel, []string{"prove Payment"}, fee, []string{"relay", settle, "notes in"}, feeIn),
 		"replay":   {"replay payment 1"},
 		"scan":     scan,
 		"audit":    {"audit"},
@@ -103,8 +105,7 @@ func actionHops(opts engine.Options, action string) []string {
 // step/action/subject: the keys of the auditor, the issuer, the Sender and
 // each participant, each registration, the auditor's recovery, with the
 // USDr fee the issuer's credit, the shield, payment 1 one hop per click (with
-// tags its channel first and its tag last, with the fee its fee's proof
-// before the relay), payment 2 and its replay, payments 3–6, each
+// tags its channel first, with the fee its fee's proof before the relay), payment 2 and its replay, payments 3–6, each
 // participant's scan and the audit.
 func wantGates(opts engine.Options) []string {
 	names := []string{"Issuer", "Sender", "Ana", "Bruno", "Carla", "Diego", "Elena", "Felipe"}
@@ -129,9 +130,6 @@ func wantGates(opts engine.Options) []string {
 		p1 = append(p1, "fee")
 	}
 	p1 = append(p1, "relay", "settle")
-	if opts.Tags {
-		p1 = append(p1, "tag")
-	}
 	for _, a := range p1 {
 		g = append(g, "fanout_1/"+a+"/Ana")
 	}
@@ -193,12 +191,12 @@ func checkAuditMatchesScans(t *testing.T, e *engine.Engine, a *engine.Audit) {
 }
 
 // checkNoFeeNoTags checks that a walkthrough with both toggles off sent
-// nothing to the USDr vault or the tag registries, and settled each payment
+// nothing to the USDr vault or the tag channel registry, and settled each payment
 // as one proof's, alone.
 func checkNoFeeNoTags(t *testing.T, client *ethclient.Client, usdrVaultAddr common.Address, e *engine.Engine, hops []engine.Event) {
 	t.Helper()
 	for _, h := range hops {
-		if touches(h, engine.NodeUsdrVault) || touches(h, engine.NodeTagRegistry) || touches(h, engine.NodeTagChannelRegistry) {
+		if touches(h, engine.NodeUsdrVault) || touches(h, engine.NodeTagChannelRegistry) {
 			t.Errorf("hop %q (step %s) goes %s → %s", h.Label, h.Step, h.From, h.To)
 		}
 	}
@@ -207,8 +205,8 @@ func checkNoFeeNoTags(t *testing.T, client *ethclient.Client, usdrVaultAddr comm
 		t.Fatalf("%d fan-out payments, want %d", len(fanOut), engine.K)
 	}
 	for i, s := range fanOut {
-		if s.UsdrFeeNote != nil || s.TagTxHash != (common.Hash{}) {
-			t.Errorf("payment %d to %s paid a USDr fee or published a tag", i+1, s.To)
+		if s.UsdrFeeNote != nil || s.TagBlock != 0 {
+			t.Errorf("payment %d to %s paid a USDr fee or paid over a tag channel", i+1, s.To)
 		}
 		logs := txLogs(t, client, s.TxHash)
 		if n := countTopic(logs, paymentEventSig); n != 1 {
@@ -410,20 +408,20 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 		dvpABI := loadOnchainABI(t, "EnygmaDvp")
 		for i, s := range fanOut {
-			if s.UsdrFeeNote == nil || s.TagTxHash == (common.Hash{}) {
-				t.Errorf("payment %d to %s paid no USDr fee or published no tag", i+1, s.To)
+			if s.UsdrFeeNote == nil || s.TagBlock == 0 {
+				t.Errorf("payment %d to %s paid no USDr fee or was no channel payment", i+1, s.To)
 				continue
 			}
 			tx, _, err := client.TransactionByHash(context.Background(), s.TxHash)
 			if err != nil {
 				t.Fatalf("payment %d: %v", i+1, err)
 			}
-			if m, err := dvpABI.MethodById(tx.Data()[:4]); err != nil || m.Name != "paymentWithUsdrFee" {
-				t.Errorf("payment %d settled by %v (%v), want EnygmaDvp.paymentWithUsdrFee", i+1, m, err)
+			if m, err := dvpABI.MethodById(tx.Data()[:4]); err != nil || m.Name != "channelPaymentWithUsdrFee" {
+				t.Errorf("payment %d settled by %v (%v), want EnygmaDvp.channelPaymentWithUsdrFee", i+1, m, err)
 			}
 			logs := txLogs(t, client, s.TxHash)
-			if n := countTopic(logs, paymentEventSig); n != 2 {
-				t.Errorf("payment %d: %d Payment events, want the payment's and the fee's, in one transaction", i+1, n)
+			if n, c := countTopic(logs, paymentEventSig), countTopic(logs, channelPaymentSig); n != 1 || c != 1 {
+				t.Errorf("payment %d: %d Payment and %d ChannelPayment events, want the fee's and the payment's, in one transaction", i+1, n, c)
 			}
 			if inserted := commitmentsIn(logs, vaultAddr); len(inserted) != 2 {
 				t.Errorf("payment %d: the vault inserted %d notes, want the payee's and the change", i+1, len(inserted))
@@ -431,8 +429,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 2 || !slices.ContainsFunc(inserted, func(c *big.Int) bool { return c.Cmp(s.UsdrFeeNote) == 0 }) {
 				t.Errorf("payment %d: the USDr vault inserted %v, want the relayer's fee note 0x%x and the Sender's change", i+1, inserted, s.UsdrFeeNote)
 			}
-			if n := countTopic(txLogs(t, client, s.TagTxHash), tagPublishedSig); n != 1 {
-				t.Errorf("payment %d: its tag transaction logged %d TagPublished events, want 1", i+1, n)
+			if n := countTopic(logs, tagPublishedSig); n != 0 {
+				t.Errorf("payment %d: logged %d TagPublished events, want none: the tag is in its ChannelPayment event", i+1, n)
 			}
 		}
 		// The Sender paid K fees of 1 from their grant; the participants paid none.
@@ -1139,8 +1137,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
-	t.Run("the audit carries the note encryption formula (tags on: the participants open their notes by tag): payment 1's payee's view key decapsulates the capsule on chain, HKDF and AES-GCM open the payload, and the opening hashes to the commitment payment 1 logged", func(t *testing.T) {
-		payee := e.Participants()[0]
+	t.Run("the audit carries the note encryption formula (tags on: every payment's note is sealed under its tag channel, with no capsule): the Sender's view key decapsulates their shield's capsule, HKDF and AES-GCM open the payload, and the opening hashes to the commitment the shield logged", func(t *testing.T) {
+		owner := e.Sender()
 		var scans []engine.Event
 		for _, h := range sink.hops() {
 			for _, d := range detailsOf(h, engine.DetailFormula) {
@@ -1177,21 +1175,26 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		capsule, sealed := hexBytes(t, in["capsule · ML-KEM-768"]), hexBytes(t, in["sealed · AES-GCM"])
 
-		// The ciphertext is the one payment 1's Payment event published, with
-		// the commitment payment 1 inserted for the payee.
-		pay := e.FanOut()[0]
-		logged := commitmentsIn(txLogs(t, client, pay.TxHash), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
-		if len(logged) != 2 {
-			t.Fatalf("payment 1 logged %d commitments, want 2", len(logged))
+		// The ciphertext is the one the shield's EncryptedNote event
+		// published, with the commitment the shield inserted.
+		var shieldTx common.Hash
+		for _, h := range sink.hops() {
+			if cs := detailsOf(h, engine.DetailCommitment); h.Step == "shield" && len(cs) == 1 {
+				shieldTx = common.HexToHash(cs[0].TxHash)
+			}
 		}
-		if !noteEventCarries(t, client, pay.TxHash, logged[0], capsule, sealed) {
-			t.Fatalf("the card's capsule and sealed payload are not what payment 1's Payment event published with %s's commitment 0x%x", payee.Name, logged[0])
+		logged := commitmentsIn(txLogs(t, client, shieldTx), common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress))
+		if len(logged) != 1 {
+			t.Fatalf("the shield logged %d commitments, want 1", len(logged))
+		}
+		if !noteEventCarries(t, client, shieldTx, logged[0], capsule, sealed) {
+			t.Fatalf("the card's capsule and sealed payload are not what the shield's EncryptedNote event published with the %s's commitment 0x%x", owner.Name, logged[0])
 		}
 
 		// Open it independently, with the standard library: ML-KEM-768
-		// decapsulation with the payee's view key, HKDF-SHA256 to the salt
+		// decapsulation with the owner's view key, HKDF-SHA256 to the salt
 		// and the AES key, AES-256-GCM (nonce || ciphertext) to token || amount.
-		ss, err := payee.View.DecapsKey.Decapsulate(capsule)
+		ss, err := owner.View.DecapsKey.Decapsulate(capsule)
 		if err != nil {
 			t.Fatalf("decapsulate: %v", err)
 		}
@@ -1201,35 +1204,35 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		plain, err := openSealed(t, ss, sealed)
 		if err != nil || len(plain) != 64 {
-			t.Fatalf("AES-GCM open with %s's derived key: %d bytes (%v), want token || amount", payee.Name, len(plain), err)
+			t.Fatalf("AES-GCM open with the %s's derived key: %d bytes (%v), want token || amount", owner.Name, len(plain), err)
 		}
 		token, amount := new(big.Int).SetBytes(plain[:32]), new(big.Int).SetBytes(plain[32:])
 		salt := new(big.Int).Mod(new(big.Int).SetBytes(saltB), constants.Q)
-		if decimal(t, in["amount · opened"]).Cmp(amount) != 0 || amount.Int64() != opts.Payouts[0] {
-			t.Errorf("the card's amount %s, the payload opens to %s, want %s's payout %d", in["amount · opened"], amount, payee.Name, opts.Payouts[0])
+		if decimal(t, in["amount · opened"]).Cmp(amount) != 0 || amount.Int64() != opts.ShieldTotal {
+			t.Errorf("the card's amount %s, the payload opens to %s, want the shield's %d", in["amount · opened"], amount, opts.ShieldTotal)
 		}
 		if hexField(t, in["salt · opened"]).Cmp(salt) != 0 || hexField(t, in["token · opened"]).Cmp(token) != 0 {
 			t.Errorf("the card's salt %s and token %s, the payload opens to 0x%x and 0x%x", in["salt · opened"], in["token · opened"], salt, token)
 		}
-		// Another participant's view key decapsulates to some other secret,
-		// under whose key AES-GCM fails to open the payload.
-		other := e.Participants()[1]
+		// A participant's view key decapsulates to some other secret, under
+		// whose key AES-GCM fails to open the payload.
+		other := e.Participants()[0]
 		oss, err := other.View.DecapsKey.Decapsulate(capsule)
 		if err != nil {
 			t.Fatalf("decapsulate with %s's view key: %v", other.Name, err)
 		}
 		if _, err := openSealed(t, oss, sealed); err == nil {
-			t.Errorf("%s's view key opens %s's note too", other.Name, payee.Name)
+			t.Errorf("%s's view key opens the %s's note too", other.Name, owner.Name)
 		}
 
-		// The opening hashes, with the payee's pk_spend, to the commitment
-		// payment 1 logged: the card's ✓.
-		want, err := poseidon.Hash([]*big.Int{payee.Spend.PublicKey, salt, amount, token})
+		// The opening hashes, with the owner's pk_spend, to the commitment
+		// the shield logged: the card's ✓.
+		want, err := poseidon.Hash([]*big.Int{owner.Spend.PublicKey, salt, amount, token})
 		if err != nil {
 			t.Fatalf("poseidon.Hash: %v", err)
 		}
 		if want.Cmp(logged[0]) != 0 {
-			t.Fatalf("Poseidon(pk_spend, salt, amount, token) is 0x%x, payment 1 logged 0x%x for %s", want, logged[0], payee.Name)
+			t.Fatalf("Poseidon(pk_spend, salt, amount, token) is 0x%x, the shield logged 0x%x", want, logged[0])
 		}
 		if hexField(t, f.Result).Cmp(want) != 0 {
 			t.Errorf("result %s, the opening hashes to 0x%x", f.Result, want)
@@ -1237,8 +1240,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if hexField(t, f.Chain.Value).Cmp(logged[0]) != 0 || !f.OK {
 			t.Errorf("the chain's value %s (ok %v), want the logged commitment 0x%x, ok", f.Chain.Value, f.OK, logged[0])
 		}
-		if !strings.Contains(f.Chain.Name, pay.TxHash.Hex()) {
-			t.Errorf("the chain's value is %q, want it to name payment 1's tx %s", f.Chain.Name, pay.TxHash.Hex())
+		if !strings.Contains(f.Chain.Name, shieldTx.Hex()) {
+			t.Errorf("the chain's value is %q, want it to name the shield's tx %s", f.Chain.Name, shieldTx.Hex())
 		}
 	})
 
@@ -1446,31 +1449,32 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 	})
 
-	// payment1Tag is payment 1's tag as TagRegistry's TagPublished event
-	// logged it: the block it names, the tag and the payload, and the
-	// shared secret of its tag channel, by the payee's own Decaps of the
-	// record TagChannelRegistry holds.
-	payment1Tag := func(t *testing.T) (b uint64, tag common.Hash, ct, ss []byte) {
+	// payment1Paid is payment 1 as its ChannelPayment event logged it: the
+	// block_n it names, the tag and the sealed note, and the shared secret of
+	// its tag channel, by the payee's own Decaps of the record
+	// TagChannelRegistry holds.
+	payment1Paid := func(t *testing.T) (b uint64, tag common.Hash, ct, ss []byte) {
 		t.Helper()
 		pay := e.FanOut()[0]
+		u256, _ := abi.NewType("uint256", "", nil)
 		bytesT, _ := abi.NewType("bytes", "", nil)
 		var found int
-		for _, l := range txLogs(t, client, pay.TagTxHash) {
-			if len(l.Topics) < 3 || l.Topics[0] != tagPublishedSig {
+		for _, l := range txLogs(t, client, pay.TxHash) {
+			if len(l.Topics) != 4 || l.Topics[0] != channelPaymentSig {
 				continue
 			}
-			vals, err := abi.Arguments{{Type: bytesT}}.Unpack(l.Data)
-			if err != nil || len(vals) != 1 {
-				t.Fatalf("decode payment 1's TagPublished event: %v", err)
+			vals, err := abi.Arguments{{Type: u256}, {Type: bytesT}}.Unpack(l.Data)
+			if err != nil || len(vals) != 2 {
+				t.Fatalf("decode payment 1's ChannelPayment event: %v", err)
 			}
 			found++
-			b, tag, ct = l.Topics[1].Big().Uint64(), l.Topics[2], vals[0].([]byte)
-			if b != l.BlockNumber {
-				t.Errorf("payment 1's tag names block %d, it landed in block %d", b, l.BlockNumber)
+			b, tag, ct = l.Topics[2].Big().Uint64(), l.Topics[3], vals[1].([]byte)
+			if b != pay.TagBlock || l.BlockNumber < b || l.BlockNumber > b+tags.ChannelPaymentWindow {
+				t.Errorf("payment 1's event names block_n %d (TagBlock %d), and it settled in block %d", b, pay.TagBlock, l.BlockNumber)
 			}
 		}
 		if found != 1 {
-			t.Fatalf("payment 1's tag transaction logged %d TagPublished events, want 1", found)
+			t.Fatalf("payment 1 logged %d ChannelPayment events, want 1", found)
 		}
 		_, rec, _ := payment1Channel(t)
 		ss, err := e.Participants()[0].View.DecapsKey.Decapsulate(rec.c1)
@@ -1480,69 +1484,122 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		return b, tag, ct, ss
 	}
 
-	t.Run("payment 1's tag hop carries the tag formula: Poseidon of the block it landed in, the payee's pk_spend and the tag channel's ss mod p, the tag TagRegistry published, and the reverse direction's differs", func(t *testing.T) {
+	t.Run("payment 1's relay hop carries the tag formula: Poseidon of the domain constant, the tag channel's ss mod p, block_n and the payee's pk_spend, the tag its ChannelPayment event logged, and the reverse direction's differs", func(t *testing.T) {
 		sender, payee := e.Sender(), e.Participants()[0]
-		f, names, in := formulaCard(t, engine.FormulaTag, "fanout_1", "tag", engine.ActorNode(sender.ID), engine.NodeRelayer, engine.NodeTagRegistry)
-		reverseName := fmt.Sprintf("t_b′ = Poseidon(b, pk_spend^%s, ss mod p) · the reverse direction, %s → %s", sender.Name, payee.Name, sender.Name)
-		if want := []string{"b · the block the tag landed in", fmt.Sprintf("pk_spend^payee · %s's spend key", payee.Name), "ss · the tag channel's shared secret",
-			"ss mod p · in BN254's scalar field", reverseName}; !slices.Equal(names, want) {
+		f, names, in := formulaCard(t, engine.FormulaTag, "fanout_1", "relay", engine.ActorNode(sender.ID), engine.NodeRelayer, engine.NodeDvp)
+		reverseName := fmt.Sprintf(`t′ = Poseidon("enygma-tag-v1", ss mod p, block_n, pk_spend^%s) · the reverse direction, %s → %s`, sender.Name, payee.Name, sender.Name)
+		if want := []string{`"enygma-tag-v1" · the domain constant, as a field element`, "ss · the tag channel's shared secret", "ss mod p · in BN254's scalar field",
+			"block_n · the block the payer tagged it for", fmt.Sprintf("pk_spend^payee · %s's spend key", payee.Name), reverseName}; !slices.Equal(names, want) {
 			t.Fatalf("inputs %v, want %v", names, want)
 		}
-		b, logged, _, ss := payment1Tag(t)
-		if in[names[0]] != fmt.Sprint(b) {
-			t.Errorf("the card's b %s, payment 1's tag landed in block %d", in[names[0]], b)
+		b, logged, _, ss := payment1Paid(t)
+		// Recompute it independently: the domain constant as the big-endian
+		// field element of its ASCII bytes, ss reduced into BN254's scalar
+		// field, then iden3's Poseidon over (domain, ss mod p, block_n, pk_spend).
+		domain := new(big.Int).SetBytes([]byte("enygma-tag-v1"))
+		if hexField(t, in[names[0]]).Cmp(domain) != 0 {
+			t.Errorf("the card's domain constant %s, want 0x%x", in[names[0]], domain)
 		}
-		if hexField(t, in[names[1]]).Cmp(payee.Spend.PublicKey) != 0 {
-			t.Errorf("the card's pk_spend %s is not %s's", in[names[1]], payee.Name)
+		if !slices.Equal(hexBytes(t, in[names[1]]), ss) {
+			t.Errorf("the card's ss %s, %s's Decaps of the tag channel's c₁ gives 0x%x", in[names[1]], payee.Name, ss)
 		}
-		if !slices.Equal(hexBytes(t, in[names[2]]), ss) {
-			t.Errorf("the card's ss %s, %s's Decaps of the tag channel's c₁ gives 0x%x", in[names[2]], payee.Name, ss)
-		}
-		// Recompute it independently: ss reduced into BN254's scalar field,
-		// then iden3's Poseidon over (b, pk_spend, ss mod p).
 		ssp := new(big.Int).Mod(new(big.Int).SetBytes(ss), constants.Q)
-		if hexField(t, in[names[3]]).Cmp(ssp) != 0 {
-			t.Errorf("the card's ss mod p %s, want 0x%x", in[names[3]], ssp)
+		if hexField(t, in[names[2]]).Cmp(ssp) != 0 {
+			t.Errorf("the card's ss mod p %s, want 0x%x", in[names[2]], ssp)
 		}
-		want, err := poseidon.Hash([]*big.Int{new(big.Int).SetUint64(b), payee.Spend.PublicKey, ssp})
+		if in[names[3]] != fmt.Sprint(b) {
+			t.Errorf("the card's block_n %s, payment 1's event names %d", in[names[3]], b)
+		}
+		if hexField(t, in[names[4]]).Cmp(payee.Spend.PublicKey) != 0 {
+			t.Errorf("the card's pk_spend %s is not %s's", in[names[4]], payee.Name)
+		}
+		want, err := poseidon.Hash([]*big.Int{domain, ssp, new(big.Int).SetUint64(b), payee.Spend.PublicKey})
 		if err != nil {
 			t.Fatalf("poseidon.Hash: %v", err)
 		}
 		if common.BigToHash(want) != logged {
-			t.Fatalf("Poseidon(b, pk_spend, ss mod p) is 0x%x, TagRegistry logged %s", want, logged.Hex())
+			t.Fatalf(`Poseidon("enygma-tag-v1", ss mod p, block_n, pk_spend) is 0x%x, the ChannelPayment event logged %s`, want, logged.Hex())
 		}
 		if hexField(t, f.Result).Cmp(want) != 0 || hexField(t, f.Chain.Value).Cmp(want) != 0 || !f.OK {
 			t.Errorf("result %s, chain value %s (ok %v), want the logged tag %s, ok", f.Result, f.Chain.Value, f.OK, logged.Hex())
 		}
 		// The reverse direction, with the Sender's spend key in the payee's
-		// place, gives another tag in the same block: the two directions
-		// don't collide in TagRegistry.
-		reverse, err := poseidon.Hash([]*big.Int{new(big.Int).SetUint64(b), sender.Spend.PublicKey, ssp})
+		// place, gives another tag for the same block: the two directions
+		// don't collide.
+		reverse, err := poseidon.Hash([]*big.Int{domain, ssp, new(big.Int).SetUint64(b), sender.Spend.PublicKey})
 		if err != nil {
 			t.Fatalf("poseidon.Hash: %v", err)
 		}
 		if reverse.Cmp(want) == 0 || hexField(t, in[reverseName]).Cmp(reverse) != 0 {
 			t.Errorf("the card's reverse tag %s, Poseidon with the %s's pk_spend gives 0x%x (the tag is 0x%x)", in[reverseName], sender.Name, reverse, want)
 		}
-		if !strings.Contains(f.Chain.Name, e.FanOut()[0].TagTxHash.Hex()) || !strings.Contains(f.Chain.Name, fmt.Sprintf("block %d", b)) {
-			t.Errorf("the chain's value is %q, want it to name block %d and payment 1's tag tx %s", f.Chain.Name, b, e.FanOut()[0].TagTxHash.Hex())
+		if !strings.Contains(f.Chain.Name, e.FanOut()[0].TxHash.Hex()) || !strings.Contains(f.Chain.Name, fmt.Sprintf("block_n %d", b)) {
+			t.Errorf("the chain's value is %q, want it to name block_n %d and payment 1's tx %s", f.Chain.Name, b, e.FanOut()[0].TxHash.Hex())
 		}
 	})
 
-	t.Run("the payee's tag-based open note carries the tag payload formula: the block key opens the payload TagRegistry published to amount ‖ token ‖ salt, which hash to the commitment payment 1 logged", func(t *testing.T) {
-		payee := e.Participants()[0]
-		f, names, in := formulaCard(t, engine.FormulaTagPayload, "discover", "open note", engine.NodeVault, engine.ActorNode(payee.ID), engine.NodeVault)
-		kName := `k_b · HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee)`
-		if want := []string{"ss · the tag channel's shared secret", "b · the block the tag landed in", fmt.Sprintf("pk_spend^payee · %s's spend key", payee.Name),
-			kName, "ct · the tag's payload in TagRegistry", "amount · opened", "token · opened", "salt · opened"}; !slices.Equal(names, want) {
+	t.Run("payment 1's settlement carries the bound payload formula: keccak256 of the domain word, block_n, the tag and the sealed note, mod p, is the StCiphertextHash its proof was settled with", func(t *testing.T) {
+		f, names, in := formulaCard(t, engine.FormulaChannelPayment, "fanout_1", "channelPaymentWithUsdrFee", engine.NodeRelayer, engine.NodeDvp, engine.NodeDvp)
+		if want := []string{`keccak256("enygma-channel-payment-v1") · the domain word`, "block_n · the block the tag is for", "t · the tag", "ctxt · the sealed note"}; !slices.Equal(names, want) {
 			t.Fatalf("inputs %v, want %v", names, want)
 		}
-		b, _, ct, ss := payment1Tag(t)
+		b, tag, ct, _ := payment1Paid(t)
+		domain := crypto.Keccak256Hash([]byte("enygma-channel-payment-v1"))
+		if common.HexToHash(in[names[0]]) != domain || in[names[1]] != fmt.Sprint(b) || common.HexToHash(in[names[2]]) != tag || !slices.Equal(hexBytes(t, in[names[3]]), ct) {
+			t.Errorf("the card's inputs %v, want the domain word %s and payment 1's block_n %d, tag %s and sealed note", in, domain.Hex(), b, tag.Hex())
+		}
+		// Recompute it independently: abi.encode(bytes32, uint256, bytes32,
+		// bytes), keccak256, mod p.
+		b32, _ := abi.NewType("bytes32", "", nil)
+		u256, _ := abi.NewType("uint256", "", nil)
+		bytesT, _ := abi.NewType("bytes", "", nil)
+		enc, err := abi.Arguments{{Type: b32}, {Type: u256}, {Type: b32}, {Type: bytesT}}.Pack(domain, new(big.Int).SetUint64(b), tag, ct)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := new(big.Int).Mod(new(big.Int).SetBytes(crypto.Keccak256(enc)), constants.Q)
+		// The proof payment 1 settled with binds it: its statement's
+		// StCiphertextHash, as the relayer sent it to EnygmaDvp.
+		pay := e.FanOut()[0]
+		tx, _, err := client.TransactionByHash(context.Background(), pay.TxHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dvpABI := loadOnchainABI(t, "EnygmaDvp")
+		m, err := dvpABI.MethodById(tx.Data()[:4])
+		if err != nil {
+			t.Fatal(err)
+		}
+		args, err := m.Inputs.Unpack(tx.Data()[4:])
+		if err != nil {
+			t.Fatalf("decode payment 1's calldata: %v", err)
+		}
+		stmt := reflect.ValueOf(args[0]).FieldByName("Statement").Interface().([]*big.Int)
+		if bound := stmt[layout.PaymentCiphertextHashOffset]; bound.Cmp(want) != 0 {
+			t.Fatalf("keccak256(abi.encode(domain, block_n, t, ctxt)) mod p is 0x%x, payment 1's proof binds 0x%x", want, bound)
+		}
+		if hexField(t, f.Result).Cmp(want) != 0 || hexField(t, f.Chain.Value).Cmp(want) != 0 || !f.OK {
+			t.Errorf("result %s, chain value %s (ok %v), want the bound hash 0x%x, ok", f.Result, f.Chain.Value, f.OK, want)
+		}
+		if !strings.Contains(f.Chain.Name, pay.TxHash.Hex()) {
+			t.Errorf("the chain's value is %q, want it to name payment 1's tx %s", f.Chain.Name, pay.TxHash.Hex())
+		}
+	})
+
+	t.Run("the payee's tag-based open note carries the tag payload formula: the block key opens the sealed note payment 1's ChannelPayment event published to amount ‖ token ‖ salt, which hash to the commitment payment 1 logged", func(t *testing.T) {
+		payee := e.Participants()[0]
+		f, names, in := formulaCard(t, engine.FormulaTagPayload, "discover", "open note", engine.NodeDvp, engine.ActorNode(payee.ID), engine.NodeVault)
+		kName := `k_b · HKDF-SHA256(ss, "enygma-block-key-v1" ‖ block_n ‖ pk_spend^payee)`
+		if want := []string{"ss · the tag channel's shared secret", "block_n · the block the tag is for", fmt.Sprintf("pk_spend^payee · %s's spend key", payee.Name),
+			kName, "ctxt · the sealed note in the ChannelPayment event", "amount · opened", "token · opened", "salt · opened"}; !slices.Equal(names, want) {
+			t.Fatalf("inputs %v, want %v", names, want)
+		}
+		b, _, ct, ss := payment1Paid(t)
 		if !slices.Equal(hexBytes(t, in[names[0]]), ss) || in[names[1]] != fmt.Sprint(b) || hexField(t, in[names[2]]).Cmp(payee.Spend.PublicKey) != 0 {
 			t.Errorf("the card's ss %s, b %s and pk_spend %s, want the tag channel's ss 0x%x, block %d and %s's pk_spend", in[names[0]], in[names[1]], in[names[2]], ss, b, payee.Name)
 		}
 		if !slices.Equal(hexBytes(t, in[names[4]]), ct) {
-			t.Errorf("the card's ct is not the payload payment 1's TagPublished event published")
+			t.Errorf("the card's ctxt is not the sealed note payment 1's ChannelPayment event published")
 		}
 		// Recompute it independently, with the standard library: HKDF-SHA256
 		// of ss with info "enygma-block-key-v1" ‖ uint64_be(b) ‖
@@ -1608,7 +1665,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 
 		// The proof and statement the vault verified: the settlement's
-		// calldata, EnygmaDvp.paymentWithUsdrFee(transaction, …), whose
+		// calldata, EnygmaDvp.channelPaymentWithUsdrFee(transaction, …), whose
 		// first argument is the payment's.
 		tx, _, err := client.TransactionByHash(context.Background(), e.FanOut()[0].TxHash)
 		if err != nil {
@@ -1616,8 +1673,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		dvpABI := loadOnchainABI(t, "EnygmaDvp")
 		method, err := dvpABI.MethodById(tx.Data()[:4])
-		if err != nil || method.Name != "paymentWithUsdrFee" {
-			t.Fatalf("payment 1 settled by %v (%v), want EnygmaDvp.paymentWithUsdrFee", method, err)
+		if err != nil || method.Name != "channelPaymentWithUsdrFee" {
+			t.Fatalf("payment 1 settled by %v (%v), want EnygmaDvp.channelPaymentWithUsdrFee", method, err)
 		}
 		args, err := method.Inputs.Unpack(tx.Data()[4:])
 		if err != nil {
@@ -1885,8 +1942,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 
 		// The trees and every balance are unchanged: as the engine read them,
-		// and on chain, where nothing was mined between payment 2's tag and
-		// payment 3's channel.
+		// and on chain, where nothing was mined between payment 2 and payment
+		// 3's channel.
 		if r.Before == nil || r.After == nil || len(r.Before.Trees) != 2 || len(r.Before.Balances) != 2+2+engine.K {
 			t.Fatalf("refusal's chain state %+v → %+v, want both vaults' trees and the vault's, the relayer's and every actor's balance", r.Before, r.After)
 		}
@@ -1900,10 +1957,10 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			}
 			return rc.BlockNumber.Uint64()
 		}
-		// One transaction a block: payment 2, its tag, payment 3's channel,
-		// payment 3.
-		if b2, b3 := block(e.FanOut()[1].TxHash), block(e.FanOut()[2].TxHash); b3 != b2+3 {
-			t.Errorf("payment 2 in block %d, payment 3 in %d, want 3 blocks apart (its tag, payment 3's channel): another transaction was mined between them", b2, b3)
+		// One transaction a block: payment 2, its tag in it, payment 3's
+		// channel, payment 3.
+		if b2, b3 := block(e.FanOut()[1].TxHash), block(e.FanOut()[2].TxHash); b3 != b2+2 {
+			t.Errorf("payment 2 in block %d, payment 3 in %d, want 2 blocks apart (payment 3's channel): another transaction was mined between them", b2, b3)
 		}
 	})
 

@@ -23,6 +23,9 @@ type (
 	MerkleProof   = dvpcore.MerkleProof
 	MerkleTree    = dvpcore.MerkleTree
 	PaymentResult = dvpcore.PaymentResult
+	// ChannelPaymentNote is what a channel payment (#451) publishes for its
+	// payee besides the proof, with the salt the payer chose.
+	ChannelPaymentNote = dvpcore.ChannelPaymentNote
 )
 
 // ── DVP function re-exports ────────────────────────────────────────────────────
@@ -51,6 +54,9 @@ var (
 	ChangeNote = dvpcore.WithdrawChangeNote
 	// PaymentCiphertextHash is the StCiphertextHash a Payment-family proof binds.
 	PaymentCiphertextHash = dvpcore.PaymentCiphertextHash
+	// ChannelPaymentCiphertextHash is the StCiphertextHash a channel
+	// payment's proof binds: its block, tag and sealed note.
+	ChannelPaymentCiphertextHash = dvpcore.ChannelPaymentCiphertextHash
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.

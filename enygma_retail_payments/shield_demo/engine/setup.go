@@ -50,10 +50,9 @@ func (e *Engine) connect(ctx context.Context, s *step) error {
 		return fmt.Errorf("relayer /relay/info returned no relayer address")
 	}
 	c.relayerAddr = common.HexToAddress(info.RelayerAddr)
-	c.tagRegistryAddr = common.HexToAddress(info.TagRegistryAddr)
 	c.channelRegistryAddr = common.HexToAddress(info.TagChannelRegistryAddr)
-	if e.opts.Tags && (c.tagRegistryAddr == (common.Address{}) || c.channelRegistryAddr == (common.Address{})) {
-		return fmt.Errorf("the relayer has no tag registries (set RELAYER_TAG_REGISTRY_ADDR and RELAYER_TAG_CHANNEL_REGISTRY_ADDR), needed with tags on")
+	if e.opts.Tags && c.channelRegistryAddr == (common.Address{}) {
+		return fmt.Errorf("the relayer has no tag channel registry (set RELAYER_TAG_CHANNEL_REGISTRY_ADDR), needed with tags on")
 	}
 	// The relayer takes USDr fees only if it publishes a fee spend key; the
 	// fan-out's USDr-fee route checks for it.
@@ -92,9 +91,7 @@ func (e *Engine) connect(ctx context.Context, s *step) error {
 	s.log("chain", "UsdrCoinVault:  %s  (fixed fee %s USDr)", c.usdrVaultAddr.Hex(), e.usdrFixedFee)
 	s.log("chain", "relayer:        %s", c.relayerAddr.Hex())
 	if e.opts.Tags {
-		s.proto("tagRegistryAddr", c.tagRegistryAddr.Hex())
 		s.proto("tagChannelAddr", c.channelRegistryAddr.Hex())
-		s.log("chain", "TagRegistry:    %s", c.tagRegistryAddr.Hex())
 		s.log("chain", "TagChannelReg.: %s", c.channelRegistryAddr.Hex())
 	}
 	return nil

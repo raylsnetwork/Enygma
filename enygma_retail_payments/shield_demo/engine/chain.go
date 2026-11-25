@@ -42,9 +42,8 @@ type chain struct {
 	usdrErc20 *bind.BoundContract
 
 	relayerAddr common.Address
-	// tagRegistryAddr and channelRegistryAddr are the private-tag registries
-	// the relayer publishes to, from its info route.
-	tagRegistryAddr     common.Address
+	// channelRegistryAddr is the tag channel registry the relayer publishes
+	// to, from its info route.
 	channelRegistryAddr common.Address
 
 	// commitments is each vault's Commitment events read so far.
@@ -289,12 +288,6 @@ func hasCommitmentLog(logs []*ethtypes.Log, vault common.Address, commitment *bi
 func abiBytesPair() abi.Arguments {
 	bytesT, _ := abi.NewType("bytes", "", nil)
 	return abi.Arguments{{Type: bytesT}, {Type: bytesT}}
-}
-
-// abiBytes decodes the (bytes) data of a TagPublished event.
-func abiBytes() abi.Arguments {
-	bytesT, _ := abi.NewType("bytes", "", nil)
-	return abi.Arguments{{Type: bytesT}}
 }
 
 // formatNum formats n with comma separators, e.g. 243018 → "243,018".

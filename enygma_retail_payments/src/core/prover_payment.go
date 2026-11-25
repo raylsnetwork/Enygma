@@ -15,6 +15,9 @@ type (
 	MerkleTree    = pay.MerkleTree
 	PaymentResult = pay.PaymentResult
 	ChannelNote   = pay.ChannelNote
+	// ChannelPaymentNote is a channel payment's block, tag, sealed note and
+	// payee salt, as BoundChannelPaymentProof takes them.
+	ChannelPaymentNote = pay.ChannelPaymentNote
 )
 
 // ── Function re-exports ───────────────────────────────────────────────────────
@@ -45,6 +48,9 @@ var (
 	// PaymentCiphertextHash is the StCiphertextHash a Payment-family proof
 	// binds: the hash of the note ciphertexts its settlement publishes.
 	PaymentCiphertextHash = pay.PaymentCiphertextHash
+	// ChannelPaymentCiphertextHash is the StCiphertextHash a channel
+	// payment's proof binds: its block, tag and sealed note.
+	ChannelPaymentCiphertextHash = pay.ChannelPaymentCiphertextHash
 	// DeriveBlockKey derives the per-block AES key used by the private-tag system.
 	DeriveBlockKey     = pay.DeriveBlockKey
 	ChannelEncryptNote = pay.ChannelEncryptNote

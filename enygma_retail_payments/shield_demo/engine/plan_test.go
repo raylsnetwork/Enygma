@@ -73,9 +73,9 @@ func TestAWalkthroughFollowsTheFeeAndTagsOptions(t *testing.T) {
 		usdr          bool
 		payment1      []string
 	}{
-		{"fee and tags", true, true, true, []string{"channel", "prove", "proof", "fee", "relay", "settle", "tag"}},
+		{"fee and tags", true, true, true, []string{"channel", "prove", "proof", "fee", "relay", "settle"}},
 		{"fee, no tags", true, false, true, []string{"prove", "proof", "fee", "relay", "settle"}},
-		{"tags, no fee", false, true, false, []string{"channel", "prove", "proof", "relay", "settle", "tag"}},
+		{"tags, no fee", false, true, false, []string{"channel", "prove", "proof", "relay", "settle"}},
 		{"neither", false, false, false, []string{"prove", "proof", "relay", "settle"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

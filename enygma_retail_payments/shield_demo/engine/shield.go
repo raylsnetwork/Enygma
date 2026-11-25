@@ -131,19 +131,10 @@ func (e *Engine) payFanOut(ctx context.Context, s *step, n int, p *Actor, amount
 	if err != nil {
 		return err
 	}
-	// The page checks payment 1's proof on chain once it settles, before
-	// its tag.
+	// The page checks payment 1's proof on chain once it settles.
 	if e.opts.Walkthrough && n == 1 {
 		e.payment1 = t
 		if err := e.sendVerifyCall(s, t); err != nil {
-			return err
-		}
-	}
-	if e.opts.Tags {
-		if err := s.await(ctx, "tag", p.Name); err != nil {
-			return err
-		}
-		if err := e.publishTag(ctx, s, sender, p, t); err != nil {
 			return err
 		}
 	}

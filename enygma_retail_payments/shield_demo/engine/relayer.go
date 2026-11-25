@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"enygma_retail_payments/layout"
+	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 )
 
@@ -22,24 +23,39 @@ type relayer struct {
 
 type relayInfo struct {
 	RelayerAddr            string `json:"relayerAddr"`
-	TagRegistryAddr        string `json:"tagRegistryAddr"`
 	TagChannelRegistryAddr string `json:"tagChannelRegistryAddr"`
 	FeeSpendPubKey         string `json:"feeSpendPubKey"`
 	ChainID                int64  `json:"chainId"`
 }
 
-type relayPaymentRequest struct {
+// relayProof is a main-token Payment or Payment2in proof as every payment
+// route takes it.
+type relayProof struct {
 	VaultId      string    `json:"vaultId"`
 	Proof        [8]string `json:"proof"`
 	PublicSignal []string  `json:"publicSignal"`
-	CipherText   string    `json:"cipherText"`
-	EncTxData    string    `json:"encTxData"`
 }
 
-// relayUsdrFeeRequest is POST /relay/payment_usdr_fee's body: the main
-// Payment or Payment2in leg plus the UsdrFee leg settled with it.
-type relayUsdrFeeRequest struct {
-	relayPaymentRequest
+// relayPaymentRequest is POST /relay/payment's body: the proof with its
+// payee's ML-KEM capsule and sealed note.
+type relayPaymentRequest struct {
+	relayProof
+	CipherText string `json:"cipherText"`
+	EncTxData  string `json:"encTxData"`
+}
+
+// relayChannelPaymentRequest is POST /relay/channel_payment's body: the
+// proof with the block its tag is for, the tag and the sealed note, all
+// three bound by the proof, in place of a capsule.
+type relayChannelPaymentRequest struct {
+	relayProof
+	BlockNumber uint64 `json:"blockNumber"`
+	Tag         string `json:"tag"`
+	Ctxt        string `json:"ctxt"`
+}
+
+// relayUsdrFeeLeg is the UsdrFee leg settled with a payment.
+type relayUsdrFeeLeg struct {
 	UsdrVaultId      string                    `json:"usdrVaultId"`
 	UsdrProof        [8]string                 `json:"usdrProof"`
 	UsdrPublicSignal [layout.UsdrFeeLen]string `json:"usdrPublicSignal"`
@@ -49,19 +65,25 @@ type relayUsdrFeeRequest struct {
 	UsdrFeeSalt string `json:"usdrFeeSalt"`
 }
 
+// relayUsdrFeeRequest is POST /relay/payment_usdr_fee's body: the main
+// Payment or Payment2in leg plus the UsdrFee leg settled with it.
+type relayUsdrFeeRequest struct {
+	relayPaymentRequest
+	relayUsdrFeeLeg
+}
+
+// relayChannelUsdrFeeRequest is POST /relay/channel_payment_usdr_fee's
+// body: a channel payment plus the UsdrFee leg settled with it.
+type relayChannelUsdrFeeRequest struct {
+	relayChannelPaymentRequest
+	relayUsdrFeeLeg
+}
+
 type relayTxResponse struct {
 	TxHash      string `json:"txHash"`
 	BlockNumber uint64 `json:"blockNumber"`
 	GasUsed     uint64 `json:"gasUsed"`
 	Error       string `json:"error,omitempty"`
-}
-
-// relayTagRequest is POST /relay/tag's window-mode body: Tags[i] and
-// Ctxts[i] are the tag and payload for block StartBlock+i.
-type relayTagRequest struct {
-	Tags       []string `json:"tags"`
-	StartBlock uint64   `json:"startBlock"`
-	Ctxts      []string `json:"ctxts"`
 }
 
 // relayChannelRequest is POST /relay/channel's body: the ML-KEM capsule
@@ -99,34 +121,49 @@ func (r *relayer) info(ctx context.Context) (*relayInfo, error) {
 }
 
 // relayRequest is a transfer's relay request: its path and body. A Payment
-// or Payment2in proof alone goes to POST /relay/payment; with the UsdrFee
-// proof paying for it (fee not nil), both go to POST
-// /relay/payment_usdr_fee, which settles them in one transaction. The USDr
-// leg publishes no ciphertext: its output 0 is the relayer's own note,
-// opened by the salt.
+// or Payment2in proof alone goes to POST /relay/payment, or, over a tag
+// channel (ch not nil), to POST /relay/channel_payment with its tag and
+// sealed note; with the UsdrFee proof paying for it (fee not nil), both go
+// to POST /relay/payment_usdr_fee, or /relay/channel_payment_usdr_fee,
+// which settle them in one transaction. The USDr leg publishes no
+// ciphertext: its output 0 is the relayer's own note, opened by the salt.
 type relayRequest struct {
 	path string
 	body any
 }
 
-// newRelayRequest is the relay request of the proof in res, with fee's.
-func newRelayRequest(res *rpcore.PaymentResult, fee *usdrFeeLeg) (relayRequest, error) {
-	main, err := paymentRequest(res)
+// newRelayRequest is the relay request of the proof in res, over the tag
+// channel payment ch if not nil, with fee's.
+func newRelayRequest(res *rpcore.PaymentResult, ch *tags.ChannelPayment, fee *usdrFeeLeg) (relayRequest, error) {
+	proof, err := paymentProof(res)
 	if err != nil {
 		return relayRequest{}, err
 	}
+	var leg relayUsdrFeeLeg
+	if fee != nil {
+		leg = relayUsdrFeeLeg{
+			UsdrVaultId:      usdrVaultId.String(),
+			UsdrProof:        fee.proof,
+			UsdrPublicSignal: fee.signals,
+			UsdrCipherText:   "0x",
+			UsdrEncTxData:    "0x",
+			UsdrFeeSalt:      fee.feeSalt.String(),
+		}
+	}
+	if ch != nil {
+		main := relayChannelPaymentRequest{relayProof: proof, BlockNumber: ch.BlockNumber,
+			Tag: "0x" + hex.EncodeToString(ch.Tag[:]), Ctxt: "0x" + hex.EncodeToString(ch.Ctxt)}
+		if fee == nil {
+			return relayRequest{"/relay/channel_payment", main}, nil
+		}
+		return relayRequest{"/relay/channel_payment_usdr_fee", relayChannelUsdrFeeRequest{main, leg}}, nil
+	}
+	main := relayPaymentRequest{relayProof: proof,
+		CipherText: "0x" + hex.EncodeToString(res.CipherText), EncTxData: "0x" + hex.EncodeToString(res.EncTxData)}
 	if fee == nil {
 		return relayRequest{"/relay/payment", main}, nil
 	}
-	return relayRequest{"/relay/payment_usdr_fee", relayUsdrFeeRequest{
-		relayPaymentRequest: main,
-		UsdrVaultId:         usdrVaultId.String(),
-		UsdrProof:           fee.proof,
-		UsdrPublicSignal:    fee.signals,
-		UsdrCipherText:      "0x",
-		UsdrEncTxData:       "0x",
-		UsdrFeeSalt:         fee.feeSalt.String(),
-	}}, nil
+	return relayRequest{"/relay/payment_usdr_fee", relayUsdrFeeRequest{main, leg}}, nil
 }
 
 // relay submits req and returns once the relayer reports its transaction
@@ -134,17 +171,6 @@ func newRelayRequest(res *rpcore.PaymentResult, fee *usdrFeeLeg) (relayRequest, 
 func (r *relayer) relay(ctx context.Context, req relayRequest) (*relayTxResponse, HopDetail, error) {
 	var out relayTxResponse
 	ex, err := r.post(ctx, req.path, req.body, &out)
-	if err != nil {
-		return nil, HopDetail{}, err
-	}
-	return &out, ex, nil
-}
-
-// tag publishes a private tag window to POST /relay/tag and returns once the
-// relayer reports it mined.
-func (r *relayer) tag(ctx context.Context, req relayTagRequest) (*relayTxResponse, HopDetail, error) {
-	var out relayTxResponse
-	ex, err := r.post(ctx, "/relay/tag", req, &out)
 	if err != nil {
 		return nil, HopDetail{}, err
 	}
@@ -167,19 +193,14 @@ func (r *relayer) channel(ctx context.Context, c1, c2, bitmap []byte) (*relayCha
 	return &out, ex, nil
 }
 
-// paymentRequest is the relay request body for a main-token Payment or
-// Payment2in proof.
-func paymentRequest(res *rpcore.PaymentResult) (relayPaymentRequest, error) {
+// paymentProof is the proof part of the relay request body for a
+// main-token Payment or Payment2in proof.
+func paymentProof(res *rpcore.PaymentResult) (relayProof, error) {
 	stmt := res.ContractStatement()
 	if len(stmt) != layout.PaymentLen && len(stmt) != layout.Payment2inLen {
-		return relayPaymentRequest{}, fmt.Errorf("payment statement has %d signals, want %d or %d", len(stmt), layout.PaymentLen, layout.Payment2inLen)
+		return relayProof{}, fmt.Errorf("payment statement has %d signals, want %d or %d", len(stmt), layout.PaymentLen, layout.Payment2inLen)
 	}
-	req := relayPaymentRequest{
-		VaultId:      erc20VaultId.String(),
-		PublicSignal: make([]string, len(stmt)),
-		CipherText:   "0x" + hex.EncodeToString(res.CipherText),
-		EncTxData:    "0x" + hex.EncodeToString(res.EncTxData),
-	}
+	req := relayProof{VaultId: erc20VaultId.String(), PublicSignal: make([]string, len(stmt))}
 	copy(req.Proof[:], res.Proof)
 	for i, v := range stmt {
 		req.PublicSignal[i] = v.String()
@@ -196,7 +217,7 @@ const (
 
 // post sends body to the relayer's path and returns the http hop detail of
 // the request that was answered. The relayer rate-limits each client (5
-// requests/s), and the run's channel and tag requests can come faster than
+// requests/s), and the run's channel requests can come faster than
 // that on an automining chain; a 429 is answered before the relayer does
 // anything, so post waits and sends the request again.
 func (r *relayer) post(ctx context.Context, path string, body, result any) (HopDetail, error) {

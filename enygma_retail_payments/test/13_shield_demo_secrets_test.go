@@ -39,7 +39,8 @@ func hexBytes(t *testing.T, s string) []byte {
 // commitment their payment's transaction inserted in the vault, and its
 // ciphertext is the one on chain: with the view key, a Payment event's
 // capsule and sealed amount that the participant's view key opens to the
-// same note; with tags, the payload of their payment's TagPublished event.
+// same note; with tags, the sealed note of their payment's ChannelPayment
+// event.
 func checkDiscoverDetails(t *testing.T, client *ethclient.Client, e *engine.Engine, hops []engine.Event, tagged bool) {
 	t.Helper()
 	receipts := loadOnchainReceipts(t)
@@ -90,7 +91,7 @@ func checkDiscoverDetails(t *testing.T, client *ethclient.Client, e *engine.Engi
 				t.Errorf("%s's discovered commitment %s is not one their payment %s inserted in the vault", p.Name, n.Commitment, s.TxHash.Hex())
 			}
 			if tagged {
-				checkTagPayload(t, client, p.Name, s.TagTxHash, n)
+				checkTagPayload(t, client, p.Name, s.TxHash, n)
 				continue
 			}
 			if n.Via != "view key" || n.Capsule == "" {
@@ -115,24 +116,25 @@ func checkDiscoverDetails(t *testing.T, client *ethclient.Client, e *engine.Engi
 }
 
 // checkTagPayload checks that a tag-discovered note's ciphertext is the
-// payload its payment's TagPublished event published.
-func checkTagPayload(t *testing.T, client *ethclient.Client, name string, tagTx common.Hash, n engine.DecryptedNote) {
+// sealed note its channel payment's ChannelPayment event published.
+func checkTagPayload(t *testing.T, client *ethclient.Client, name string, tx common.Hash, n engine.DecryptedNote) {
 	t.Helper()
 	if n.Via != "tag" || n.Capsule != "" {
-		t.Errorf("%s's discovered note came via %q with capsule %q, want a tag's payload alone", name, n.Via, n.Capsule)
+		t.Errorf("%s's discovered note came via %q with capsule %q, want a sealed note alone", name, n.Via, n.Capsule)
 		return
 	}
+	u256, _ := abi.NewType("uint256", "", nil)
 	bytesT, _ := abi.NewType("bytes", "", nil)
-	for _, l := range txLogs(t, client, tagTx) {
-		if len(l.Topics) == 0 || l.Topics[0] != tagPublishedSig {
+	for _, l := range txLogs(t, client, tx) {
+		if len(l.Topics) == 0 || l.Topics[0] != channelPaymentSig {
 			continue
 		}
-		vals, err := abi.Arguments{{Type: bytesT}}.Unpack(l.Data)
-		if err == nil && len(vals) == 1 && bytes.Equal(vals[0].([]byte), hexBytes(t, n.Sealed)) {
+		vals, err := abi.Arguments{{Type: u256}, {Type: bytesT}}.Unpack(l.Data)
+		if err == nil && len(vals) == 2 && bytes.Equal(vals[1].([]byte), hexBytes(t, n.Sealed)) {
 			return
 		}
 	}
-	t.Errorf("%s's discovered tag payload is not the one their payment's tag transaction %s published", name, tagTx.Hex())
+	t.Errorf("%s's discovered sealed note is not the one their channel payment %s published", name, tx.Hex())
 }
 
 // noteEventCarries reports whether tx logged a Payment or EncryptedNote
@@ -321,8 +323,14 @@ func checkAuditDetails(t *testing.T, client *ethclient.Client, e *engine.Engine,
 		if err != nil || cm.Cmp(commitment) != 0 {
 			t.Errorf("%s's audited opening of %s hashes to 0x%x, not its commitment %s", n.Owner, n.Amount, cm, n.Commitment)
 		}
+		if n.Via == "tag" {
+			// A channel payment, which the auditor opens with the key of the
+			// tag channel its recovered view key found.
+			checkTagPayload(t, client, n.Owner, common.HexToHash(n.Tx), n)
+			continue
+		}
 		if n.Via != "view key" {
-			t.Errorf("%s's audited note came via %q, want the view key", n.Owner, n.Via)
+			t.Errorf("%s's audited note came via %q, want the view key or a tag channel", n.Owner, n.Via)
 			continue
 		}
 		capsule, sealed := hexBytes(t, n.Capsule), hexBytes(t, n.Sealed)

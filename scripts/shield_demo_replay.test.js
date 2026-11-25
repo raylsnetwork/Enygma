@@ -238,7 +238,7 @@ const ARGUMENT = {
     eq: '(ss, c₁) = ML-KEM-768.Encaps(pk_view); k_ch = HKDF-SHA256(ss, "enygma-channel-key-v1"); c₂ = AES-256-GCM_k_ch(msg ‖ senderId; AAD = c₁); bitmap = every registered user',
     sees: /^chain sees\s*the record in TagChannelRegistry: c₁, c₂ and the bitmap, sent by the relayer$/, private: /^stays private\s*the shared secret ss, who the payee is, and the payer’s senderId inside c₂$/,
     why: /only its holder can decapsulate c₁ to ss, and the auditor, which recovers every user’s view key\..*c₁ bound in as associated data.*The bitmap sets every registered user’s bit, so it names nobody.*msg\.sender is the relayer’s, not the payer’s\.$/,
-    note: /^Every later tag between the two, in this direction, derives from ss\..*senderId.*The payment’s note encryption is separate: a fresh capsule per payment\.$/,
+    note: /^Every later payment between the two, in this direction, rides on ss: its tag and the key its note is sealed with derive from it, so no payment carries a capsule of its own\..*senderId in c₂\.$/,
   },
   tagChannelDetection: {
     property: 'Only the payee (and the auditor) recognises it',
@@ -249,18 +249,26 @@ const ARGUMENT = {
     check: /: \d+ records? checked, 1 opened: .*'s scan of the records TagChannelRegistry published since their last one/,
   },
   tag: {
-    property: 'Unlinkable, one per block and direction', eq: 't_b = Poseidon(b, pk_spend^payee, ss mod p)',
-    sees: /^chain sees\s*the tag t_b in TagRegistry, the block it landed in, sent by the relayer$/, private: /^stays private\s*the shared secret ss, who the payee is, and who paid$/,
-    why: /Poseidon is one-way and only the payer and the payee hold ss.*b changes it every block.*The payee’s spend key is in it so the two directions differ: without it, a payment each way over one tag channel in the same block would get the same tag, collide in TagRegistry, and match the payer’s own scan\.$/,
-    note: /^The payer sends the relayer a tag for each block of a short window.*the relayer publishes the one for the block its transaction lands in\.$/,
-    // A walkthrough's ✓ names the block and payment 1's tag transaction.
-    check: /: equals the tag TagRegistry.s TagPublished event logged for block \d+ \(tx 0x[0-9a-f]{64}\)/,
+    property: 'Unlinkable, one per block and direction', eq: 't = Poseidon("enygma-tag-v1", ss mod p, block_n, pk_spend^payee)',
+    sees: /^chain sees\s*the tag t and block_n in the payment’s own ChannelPayment event, sent by the relayer$/, private: /^stays private\s*the shared secret ss, who the payee is, and who paid$/,
+    why: /Poseidon is one-way and only the payer and the payee hold ss.*block_n changes it every block.*The payee’s spend key is in it so the two directions differ: without it, a payment each way over one tag channel for the same block would get the same tag and match the payer’s own scan\. The domain constant keeps it apart from every other hash over ss\.$/,
+    note: /^The payer tags the payment for block_n.*before proving it; it settles in block_n or up to 100 blocks later\..*computes, for each block, the tag of every channel they hold/,
+    // A walkthrough's ✓ names block_n and payment 1's transaction.
+    check: /: equals the tag EnygmaDvp.s ChannelPayment event logged for block_n \d+, in the payment.s own transaction \(tx 0x[0-9a-f]{64}, block \d+\)/,
+  },
+  channelPayment: {
+    property: 'Settles with its tag and note, or not at all',
+    eq: 'h = keccak256(abi.encode(keccak256("enygma-channel-payment-v1"), block_n, t, ctxt)) mod p, the proof’s StCiphertextHash',
+    sees: /^chain sees\s*block_n, t and ctxt in the calldata and the ChannelPayment event, and h among the proof’s public inputs$/, private: /^stays private\s*nothing more: h is a hash of what is already public$/,
+    why: /The proof was made for h, so it verifies only with this block_n, t and ctxt.*can’t drop the tag, swap the sealed note or move it to another block\..*neither kind of proof settles as the other\.$/,
+    // A walkthrough's ✓ names the proof's public input and payment 1's transaction.
+    check: /: equals the proof.s StCiphertextHash, the Payment public input EnygmaDvp compared it with before settling \(tx 0x[0-9a-f]{64}\)$/,
   },
   tagPayload: {
     property: 'Only the payee (and the auditor) can read it',
-    eq: 'k_b = HKDF-SHA256(ss, "enygma-block-key-v1" ‖ b ‖ pk_spend^payee); ct = AES-256-GCM_k_b(amount ‖ token ‖ salt); the payee opens ct, and Poseidon(pk_spend, salt, amount, token) = commitment',
-    sees: /^chain sees\s*ct beside the tag in TagRegistry, and the note’s commitment in the vault$/, private: /^stays private\s*the block key k_b, the amount, the token, the salt$/,
-    why: /k_b derives from ss.*AES-GCM fails under any other key.*the key changes with the block and the direction.*the payee hashes the opening with their pk_spend and finds that commitment in the vault before keeping the note\.$/,
+    eq: 'k_b = HKDF-SHA256(ss, "enygma-block-key-v1" ‖ block_n ‖ pk_spend^payee); ctxt = AES-256-GCM_k_b(amount ‖ token ‖ salt); the payee opens ctxt, and Poseidon(pk_spend, salt, amount, token) = commitment',
+    sees: /^chain sees\s*ctxt beside the tag in the ChannelPayment event, and the note’s commitment in the vault$/, private: /^stays private\s*the block key k_b, the amount, the token, the salt$/,
+    why: /k_b derives from ss.*AES-GCM fails under any other key.*the key changes with the block and the direction.*the payee hashes the opening with their pk_spend to the commitment the payment settled before keeping the note\.$/,
     // A walkthrough's ✓ names the vault's Commitment event and payment 1's transaction.
     check: /: equals the vault.s Commitment event for Ana.s note \(tx 0x[0-9a-f]{64}\)$/,
   },
@@ -294,8 +302,9 @@ const ARGUMENT = {
 const TIE_LINE = /^How the fee is tied to the payment: the fee proof and the payment proof share no public input, so nothing in either proof points at the other\. They are tied only by settling in one transaction, both or neither\. And the relayer checks off chain, from the fee note’s opening sent with the request, that the fee note is its own\.$/;
 
 // firstTie is run f's first hop relaying a payment with its USDr fee (its
-// request goes to /relay/payment_usdr_fee): the one hop the tie line shows on.
-const firstTie = f => f.events.find(e => e.kind === 'hop' && e.label === 'relay' && (e.hopDetail || []).some(d => d.kind === 'http' && /\/relay\/payment_usdr_fee$/.test(d.url)));
+// request goes to /relay/payment_usdr_fee, or /relay/channel_payment_usdr_fee
+// over a tag channel): the one hop the tie line shows on.
+const firstTie = f => f.events.find(e => e.kind === 'hop' && e.label === 'relay' && (e.hopDetail || []).some(d => d.kind === 'http' && /\/relay\/(channel_)?payment_usdr_fee$/.test(d.url)));
 
 // checkTie fails unless the hop detail panel shows the fee's tie line on
 // hop h exactly when h is run f's first fee-paying relay, and nowhere else.
@@ -488,8 +497,8 @@ test('the default run fixture is a real default run, with the cases the replay i
   // payment 1's payee, in the channels step.
   const formulas = DEFAULT_RUN.events.filter(e => e.kind === 'hop').flatMap(hop => (hop.hopDetail || []).filter(d => d.kind === 'formula').map(detail => ({ hop, detail })));
   assert.deepStrictEqual(formulas.map(({ hop, detail }) => [hop.step, `${hop.from} → ${hop.to}`, detail.formula.name]),
-    [['register', 'actor1 → UserRegistry', 'spendKey'], ['channels', 'actor1 → relayer', 'tagChannelSetup'], ['channels', 'TagChannelRegistry → actor2', 'tagChannelDetection'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'actor1 → gnark', 'feeConservation'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['fanout_1', 'actor1 → relayer', 'tag'], ['discover', 'Erc20CoinVault → actor2', 'tagPayload'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
-    'formula details: the spend key on the Sender’s registration, the tag channel setup and detection on the Sender’s tag channel to payment 1’s payee, the commitment on the shield, the Merkle path, value conservation, the fee’s value conservation, the nullifier, the Groth16 check and the tag on payment 1, the tag payload on its payee’s open note, note encryption on the audit');
+    [['register', 'actor1 → UserRegistry', 'spendKey'], ['channels', 'actor1 → relayer', 'tagChannelSetup'], ['channels', 'TagChannelRegistry → actor2', 'tagChannelDetection'], ['shield', 'actor1 → Erc20CoinVault', 'commitment'], ['fanout_1', 'actor1 → gnark', 'merklePath'], ['fanout_1', 'actor1 → gnark', 'conservation'], ['fanout_1', 'actor1 → gnark', 'feeConservation'], ['fanout_1', 'actor1 → relayer', 'tag'], ['fanout_1', 'relayer → EnygmaDvp', 'nullifier'], ['fanout_1', 'relayer → EnygmaDvp', 'groth16'], ['fanout_1', 'relayer → EnygmaDvp', 'channelPayment'], ['discover', 'EnygmaDvp → actor2', 'tagPayload'], ['audit', 'Erc20CoinVault → auditor', 'noteEncryption']],
+    'formula details: the spend key on the Sender’s registration, the tag channel setup and detection on the Sender’s tag channel to payment 1’s payee, the commitment on the shield, the Merkle path, value conservation, the fee’s value conservation, the tag on its relay, the nullifier, the Groth16 check and the bound payload on payment 1, the sealed note on its payee’s open note, note encryption on the audit');
   for (const { detail } of formulas) assert.deepStrictEqual(Object.keys(detail.formula), ['name'], `a full run’s ${detail.formula.name} formula detail carries values`);
   // Every proof hop carries a prover card's stats, and no witness.
   proverDetails(DEFAULT_RUN, false);
@@ -545,9 +554,9 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
     'the Groth16 card’s values: the proof and the public inputs the on-chain check sends');
   // It pays the USDr fee and tags every payment, as the Walkthrough button sends the form's defaults.
   assert.ok(WALKTHROUGH.run.usdrFee && WALKTHROUGH.run.tags, 'not a fee-paying, tagged walkthrough');
-  for (const action of ['credit', 'channel', 'fee', 'tag'])
+  for (const action of ['credit', 'channel', 'fee'])
     assert.ok(WALKTHROUGH.events.some(e => e.kind === 'action' && e.action === action), `no ${action} gate`);
-  for (const label of ['prove UsdrFee', 'paymentWithUsdrFee', 'publishTag', 'scan tags'])
+  for (const label of ['prove UsdrFee', 'channelPaymentWithUsdrFee', 'scan tags'])
     assert.ok(WALKTHROUGH.events.some(e => e.kind === 'hop' && e.label === label), `no ${label} hop`);
   // Tags on, the participants open their notes by tag, so the audit is the first hop a view key opens a note's ciphertext by.
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'audit' && e.label === 'audit' && e.from === 'Erc20CoinVault' && e.to === 'auditor' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'noteEncryption' && d.formula.chain)),
@@ -557,9 +566,11 @@ test('the walkthrough fixture is a real walkthrough, with the cards the replay i
     'no tag channel setup formula, with its values, on payment 1’s open channel');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'scan channels' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tagChannelDetection' && d.formula.chain)),
     'no tag channel detection formula, with its values, on payment 1’s payee’s scan channels');
-  // Payment 1's tag carries the tag card; its payee's tag-based open note, the tag payload card.
-  assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'tag' && e.from === 'actor1' && e.to === 'relayer' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tag' && d.formula.chain)),
-    'no tag formula, with its values, on payment 1’s tag');
+  // Payment 1's relay carries the tag card, its settlement the bound payload card; its payee's tag-based open note, the sealed note card.
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'relay' && e.from === 'actor1' && e.to === 'relayer' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tag' && d.formula.chain)),
+    'no tag formula, with its values, on payment 1’s relay');
+  assert.ok(WALKTHROUGH.events.some(e => e.step === 'fanout_1' && e.label === 'channelPaymentWithUsdrFee' && e.to === 'EnygmaDvp' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'channelPayment' && d.formula.chain)),
+    'no bound payload formula, with its values, on payment 1’s settlement');
   assert.ok(WALKTHROUGH.events.some(e => e.step === 'discover' && e.label === 'open note' && e.to === 'actor2' && (e.hopDetail || []).some(d => d.kind === 'formula' && d.formula.name === 'tagPayload' && d.formula.chain)),
     'no tag payload formula, with its values, on payment 1’s payee’s open note');
   for (const name of ['merklePath', 'nullifier'])
@@ -709,7 +720,7 @@ function expectedArcs(f, n = f.events.length) {
       // Every tag channel is found before it is audited: sealed, then found, then audited.
       for (const k in state) assert.strictEqual(state[k], 'found', `${k} is ${state[k]} when the audit plays, want found`);
       for (const k in state) state[k] = 'audited';
-    } else if (h.label === 'tag') {
+    } else if (h.label === 'relay' && /a tag only/.test(h.detail || '')) {
       const [, kind, k] = h.step.match(/^(fanout|transfer)_(\d+)$/);
       const t = run.script[k - 1], key = kind === 'fanout' ? `${id.Sender}>${parts[k - 1]}` : `${id[t.from]}>${id[t.to]}`;
       chips.push(`${key} tag on 🔒 ss`);
@@ -828,7 +839,7 @@ test('a default run draws one arc per tag channel, each from its payer’s row t
 test('a default run’s tag channel arcs turn sealed, found and audited at their hops, and light with a dot and a chip on each opening and tag', async () => {
   const page = await open(DEFAULT_RUN);
   const seen = inUse(page);
-  const marks = new Set(['open channel', 'scan channels', 'tag', 'audit']);
+  const marks = new Set(['open channel', 'scan channels', 'relay', 'audit']);
   let fed = 0;
   for (const [at, e] of DEFAULT_RUN.events.entries()) {
     if (e.kind !== 'hop' || !marks.has(e.label)) continue;
@@ -847,12 +858,14 @@ test('a default run’s tag channel arcs turn sealed, found and audited at their
 });
 
 // tagsOff is run f as a tags-off run would send it: no Tag channels step
-// (in the steps announced, nor its events), no tag hops and no tag channel
-// fields, with tags off in its options. No tags-off run is recorded; the
-// default run, cut, keeps every other hop that could draw an arc (the audit).
+// (in the steps announced, nor its events), no tag scans, relays that carry
+// no tag, and no tag channel fields, with tags off in its options. No
+// tags-off run is recorded; the default run, cut, keeps every other hop that
+// could draw an arc (the audit).
 function tagsOff(f) {
-  const cut = e => e.step === 'channels' || (e.kind === 'hop' && ['tag', 'publishTag', 'scan tags'].includes(e.label)) || (e.kind === 'actor' && e.field === 'channels');
+  const cut = e => e.step === 'channels' || (e.kind === 'hop' && e.label === 'scan tags') || (e.kind === 'actor' && e.field === 'channels');
   const events = f.events.filter(e => !cut(e)).map(e => {
+    if (e.kind === 'hop' && e.label === 'relay') return { ...e, detail: 'the relayer submits the transaction' };
     if (e.kind !== 'proto' || e.field !== 'steps') return e;
     return { ...e, value: JSON.stringify(JSON.parse(e.value).filter(s => s.id !== 'channels')) };
   });
@@ -895,7 +908,7 @@ const TAG_CHANNEL_BEATS = [
   { where: 'In the Sender’s wallet · private', zone: 'wallet', says: /ss, sealed to Ana’s view key in c₁.*keeps ss.*every later tag to Ana/ },
   { where: 'In TagChannelRegistry · public', zone: 'chain', says: /c₁, a sealed c₂, a bitmap of every user.*relayer under its own name.*names no one/ },
   { where: 'In Ana’s wallet · private', zone: 'wallet', says: /c₁ with her view key → ss.*c₂ opens under ss: the channel is hers.*Any other key.*different secret.*c₂ fails/ },
-  { where: 'With each payment · public', zone: 'chain', says: /t = Poseidon\(block, Ana’s pk_spend, ss\).*New every block: only Ana, the Sender and the auditor recognise it/ },
+  { where: 'With each payment · public', zone: 'chain', says: /t = Poseidon\(“enygma-tag-v1”, ss, block, Ana’s pk_spend\).*New every block, bound into the payment’s proof: only Ana, the Sender and the auditor recognise it/ },
 ];
 
 test('a default run holds the Tag channel concept moment before its Tag channels step, its four beats lighting in turn, and plays six moments', async () => {

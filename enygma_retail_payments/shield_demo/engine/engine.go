@@ -85,9 +85,9 @@ type Options struct {
 	// take the plain route and pay no fee.
 	UsdrFee bool `json:"usdrFee"`
 	// Tags opens a private-tag channel between each pair that transacts and
-	// publishes a tag for every fan-out transfer and transfer between
-	// participants, so each recipient finds their notes by tag instead of
-	// trying to decrypt every note on chain.
+	// pays every fan-out transfer and transfer between participants over
+	// it, as a channel payment carrying its tag, so each recipient finds
+	// their notes by tag instead of trying to decrypt every note on chain.
 	Tags bool `json:"tags"`
 	// Script is the transfers between participants played after the fan-out.
 	Script []Transfer `json:"script"`
@@ -170,9 +170,10 @@ type Settlement struct {
 	// UsdrFeeNote is the relayer's USDr fee note the transfer paid; nil on
 	// the plain route.
 	UsdrFeeNote *big.Int
-	// TagTxHash is the transaction that published the transfer's private
-	// tag; zero with tags off.
-	TagTxHash common.Hash
+	// TagBlock is block_n, the block the transfer's tag is for: with tags
+	// on it is a channel payment, settled in TxHash with its tag and sealed
+	// note. Zero with tags off.
+	TagBlock uint64
 }
 
 // Engine runs the scenario on one fresh deployment.

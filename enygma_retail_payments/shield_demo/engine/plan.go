@@ -92,7 +92,8 @@ var walkGates = map[string]gating{
 // payment1Gates are the actions of a walkthrough's first payment with opts,
 // one hop per click: with tags, the channel to its payee; the proof request,
 // the proof back; with the USDr fee, the fee's own proof request; the
-// relay, the settlement; with tags, its tag.
+// relay, the settlement. With tags the tag goes with the relay, in one
+// payload with the proof.
 func payment1Gates(opts Options) gating {
 	var as []string
 	if opts.Tags {
@@ -103,9 +104,6 @@ func payment1Gates(opts Options) gating {
 		as = append(as, "fee")
 	}
 	as = append(as, "relay", "settle")
-	if opts.Tags {
-		as = append(as, "tag")
-	}
 	return gating{actions: as}
 }
 

@@ -189,7 +189,9 @@ func checkGrantShieldScanHops(t *testing.T, e *engine.Engine, hops []engine.Even
 			grants++
 		case h.From == sender && h.To == engine.NodeVault:
 			shields++
-		case h.Step == "discover" && h.From == engine.NodeVault:
+		// Tags off, a participant scans the vault's notes; tags on, EnygmaDvp's
+		// channel payments.
+		case h.Step == "discover" && (h.From == engine.NodeVault || h.From == engine.NodeDvp):
 			scanned[h.To] = true
 		}
 	}
@@ -201,7 +203,7 @@ func checkGrantShieldScanHops(t *testing.T, e *engine.Engine, hops []engine.Even
 	}
 	for _, p := range e.Participants() {
 		if !scanned[engine.ActorNode(p.ID)] {
-			t.Errorf("%s's discovery has no hop from the RaylsERC20 vault", p.Name)
+			t.Errorf("%s's discovery has no hop from the RaylsERC20 vault or EnygmaDvp", p.Name)
 		}
 	}
 }
@@ -215,6 +217,7 @@ var (
 	commitmentEventSig = crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
 	encryptedNoteSig   = crypto.Keccak256Hash([]byte("EncryptedNote(uint256,uint256,bytes,bytes)"))
 	tagPublishedSig    = crypto.Keccak256Hash([]byte("TagPublished(uint256,bytes32,address,bytes)"))
+	channelPaymentSig  = crypto.Keccak256Hash([]byte("ChannelPayment(uint256,uint256,bytes32,uint256,bytes)"))
 )
 
 // zkLogs counts the proving log lines the engine has emitted.
@@ -257,7 +260,7 @@ func TestShieldDemoScenario(t *testing.T) {
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 	usdrVaultAddr := common.HexToAddress(receipts["UsdrCoinVault"].ContractAddress)
-	tagRegistryAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 
 	opts := engine.DefaultOptions()
 	if !opts.UsdrFee || !opts.Tags {
@@ -391,10 +394,13 @@ func TestShieldDemoScenario(t *testing.T) {
 				return h.Step == "channels" && h.Label == "scan channels" && h.From == engine.NodeTagChannelRegistry && h.To == engine.ActorNode(payee.ID)
 			},
 			engine.FormulaTag: func(h engine.Event) bool {
-				return h.Step == "fanout_1" && h.Label == "tag" && h.From == sender && h.To == engine.NodeRelayer
+				return h.Step == "fanout_1" && h.Label == "relay" && h.From == sender && h.To == engine.NodeRelayer
+			},
+			engine.FormulaChannelPayment: func(h engine.Event) bool {
+				return h.Step == "fanout_1" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp
 			},
 			engine.FormulaTagPayload: func(h engine.Event) bool {
-				return h.Step == "discover" && h.Label == "open note" && h.From == engine.NodeVault && h.To == engine.ActorNode(payee.ID)
+				return h.Step == "discover" && h.Label == "open note" && h.From == engine.NodeDvp && h.To == engine.ActorNode(payee.ID)
 			},
 		}
 		seen := map[engine.FormulaName]int{}
@@ -415,7 +421,7 @@ func TestShieldDemoScenario(t *testing.T) {
 				// Where the chain holds the value a walkthrough's is checked
 				// against: the spend key's in the UserRegistry, the fee's
 				// in the USDr vault, the tag channel's in TagChannelRegistry,
-				// the tag's in TagRegistry.
+				// the tag's and the bound payload's in EnygmaDvp.
 				holder := engine.NodeVault
 				switch name {
 				case engine.FormulaSpendKey:
@@ -424,8 +430,8 @@ func TestShieldDemoScenario(t *testing.T) {
 					holder = engine.NodeUsdrVault
 				case engine.FormulaTagChannelSetup, engine.FormulaTagChannelDetection:
 					holder = engine.NodeTagChannelRegistry
-				case engine.FormulaTag:
-					holder = engine.NodeTagRegistry
+				case engine.FormulaTag, engine.FormulaChannelPayment:
+					holder = engine.NodeDvp
 				}
 				if d.Vault != holder {
 					t.Errorf("step %s: the %s formula is in the %s, want the %s", h.Step, name, d.Vault, holder)
@@ -499,7 +505,7 @@ func TestShieldDemoScenario(t *testing.T) {
 	})
 
 	t.Run("every fan-out and scripted transfer is tagged", func(t *testing.T) {
-		checkTagged(t, client, tagRegistryAddr, append(e.FanOut(), e.Transfers()...))
+		checkChannelPaid(t, client, dvpAddr, append(e.FanOut(), e.Transfers()...))
 	})
 	t.Run("sender and participants are registered", func(t *testing.T) {
 		registered := append([]engine.Actor{e.Sender()}, e.Participants()...)
@@ -593,18 +599,23 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 	})
 
-	t.Run("tag mode opens channels and publishes each transfer's tag as hops to the tag registries", func(t *testing.T) {
-		toRegistry := map[string]int{}
+	t.Run("tag mode opens channels as hops to the TagChannelRegistry and settles each transfer as one channel payment", func(t *testing.T) {
+		channels, settles := 0, 0
 		for _, h := range sink.hops() {
-			if h.To == engine.NodeTagChannelRegistry || h.To == engine.NodeTagRegistry {
-				toRegistry[h.To]++
+			switch {
+			case h.To == engine.NodeTagChannelRegistry:
+				channels++
+			case h.Label == "channelPaymentWithUsdrFee" && h.From == engine.NodeRelayer && h.To == engine.NodeDvp:
+				settles++
+			case h.Label == "tag" || h.Label == "publishTag" || h.Label == "paymentWithUsdrFee":
+				t.Errorf("step %s: hop %q with tags on, want each payment one channel payment", h.Step, h.Label)
 			}
 		}
-		if toRegistry[engine.NodeTagChannelRegistry] == 0 {
+		if channels == 0 {
 			t.Error("no hop opens a tag channel in the TagChannelRegistry")
 		}
-		if n, want := toRegistry[engine.NodeTagRegistry], engine.K+len(opts.Script); n != want {
-			t.Errorf("%d hops publish a tag to the TagRegistry, want one per fan-out and scripted transfer (%d)", n, want)
+		if want := engine.K + len(opts.Script); settles != want {
+			t.Errorf("%d hops settle a channel payment, want one per fan-out and scripted transfer (%d)", settles, want)
 		}
 	})
 
@@ -666,8 +677,8 @@ func TestShieldDemoScenario(t *testing.T) {
 			if s.UsdrFeeNote == nil {
 				t.Errorf("transfer %d: paid no USDr fee note", i+1)
 			}
-			if n := countTopic(txLogs(t, client, s.TxHash), paymentEventSig); n != 2 {
-				t.Errorf("transfer %d: %d Payment events, want 2 (main + USDr)", i+1, n)
+			if n := paymentEvents(txLogs(t, client, s.TxHash)); n != 2 {
+				t.Errorf("transfer %d: %d Payment and ChannelPayment events, want 2 (main + USDr)", i+1, n)
 			}
 		}
 	})
@@ -755,7 +766,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		if len(manual) != 2 {
 			t.Fatalf("got %d manual transfers, want 2", len(manual))
 		}
-		checkTagged(t, client, tagRegistryAddr, manual)
+		checkChannelPaid(t, client, dvpAddr, manual)
 	})
 
 	t.Run("sender keeps the shielded total minus the payouts", func(t *testing.T) {
@@ -772,8 +783,8 @@ func TestShieldDemoScenario(t *testing.T) {
 		}
 		for i, s := range settled {
 			logs := txLogs(t, client, s.TxHash)
-			if n := countTopic(logs, paymentEventSig); n != 2 {
-				t.Errorf("step %d: %d Payment events, want 2 (main + USDr)", i+1, n)
+			if n := paymentEvents(logs); n != 2 {
+				t.Errorf("step %d: %d Payment and ChannelPayment events, want 2 (main + USDr)", i+1, n)
 			}
 			if n := countTopic(logs, nullifierEventSig); n != 2 {
 				t.Errorf("step %d: %d Nullifier events, want 2 (main + USDr)", i+1, n)
@@ -855,14 +866,14 @@ func TestShieldDemoScenario(t *testing.T) {
 				t.Errorf("step %d: paid a USDr fee note with fees off", i+1)
 			}
 			logs := txLogs(t, client, s.TxHash)
-			if n := countTopic(logs, paymentEventSig); n != 1 {
-				t.Errorf("step %d: %d Payment events, want 1", i+1, n)
+			if n := paymentEvents(logs); n != 1 {
+				t.Errorf("step %d: %d Payment and ChannelPayment events, want 1", i+1, n)
 			}
 			if inserted := commitmentsIn(logs, usdrVaultAddr); len(inserted) != 0 {
 				t.Errorf("step %d: USDr vault inserted %d notes, want none", i+1, len(inserted))
 			}
 		}
-		checkTagged(t, client, tagRegistryAddr, append(e.FanOut(), e.Transfers()...))
+		checkChannelPaid(t, client, dvpAddr, append(e.FanOut(), e.Transfers()...))
 		checkDiegoElenaMerge(t, client, e.Transfers(), vaultAddr, false)
 		for name, want := range map[string]int64{"Diego": 10, "Elena": 230} {
 			for _, p := range e.Participants() {
@@ -887,13 +898,13 @@ func TestShieldDemoScenario(t *testing.T) {
 		untagged.Tags = false
 		ue, usink := runShieldScenario(t, cfg, untagged)
 		for _, h := range usink.hops() {
-			if touches(h, engine.NodeTagChannelRegistry) || touches(h, engine.NodeTagRegistry) {
+			if touches(h, engine.NodeTagChannelRegistry) || strings.HasPrefix(h.Label, "channelPayment") {
 				t.Errorf("hop %q (step %s) goes %s → %s with tags off", h.Label, h.Step, h.From, h.To)
 			}
 		}
 		for _, s := range append(ue.FanOut(), ue.Transfers()...) {
-			if s.TagTxHash != (common.Hash{}) {
-				t.Errorf("%s→%s: published a tag with tags off", s.From, s.To)
+			if s.TagBlock != 0 {
+				t.Errorf("%s→%s: paid over a tag channel with tags off", s.From, s.To)
 			}
 			if s.UsdrFeeNote == nil {
 				t.Errorf("%s→%s: paid no USDr fee note with fees on", s.From, s.To)
@@ -942,7 +953,7 @@ func TestShieldDemoScenario(t *testing.T) {
 		var stopped atomic.Bool
 		forward := httputil.NewSingleHostReverseProxy(relayer)
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/relay/payment_usdr_fee" {
+			if strings.HasSuffix(r.URL.Path, "payment_usdr_fee") {
 				stopped.Store(true)
 			}
 			if stopped.Load() {
@@ -1715,17 +1726,34 @@ func checkAudit(t *testing.T, e *engine.Engine, tagged bool) {
 	}
 }
 
-// checkTagged checks that each transfer's tag was published to the
-// TagRegistry in its own transaction.
-func checkTagged(t *testing.T, client *ethclient.Client, tagRegistry common.Address, settled []engine.Settlement) {
+// checkChannelPaid checks that each transfer settled as one channel payment
+// (#451): its own transaction logged one ChannelPayment event at EnygmaDvp,
+// for its block_n, and no Payment event for the main vault (no capsule) nor
+// any TagPublished event (no separate tag).
+func checkChannelPaid(t *testing.T, client *ethclient.Client, dvp common.Address, settled []engine.Settlement) {
 	t.Helper()
 	for _, s := range settled {
-		if s.TagTxHash == (common.Hash{}) {
-			t.Errorf("%s→%s %s: published no tag", s.From, s.To, s.Amount)
+		if s.TagBlock == 0 {
+			t.Errorf("%s→%s %s: not a channel payment", s.From, s.To, s.Amount)
 			continue
 		}
-		if n := countTopicAt(txLogs(t, client, s.TagTxHash), tagRegistry, tagPublishedSig); n != 1 {
-			t.Errorf("%s→%s %s: tag transaction published %d tags, want 1", s.From, s.To, s.Amount, n)
+		logs := txLogs(t, client, s.TxHash)
+		var paid []*types.Log
+		for _, l := range logs {
+			if l.Address == dvp && len(l.Topics) == 4 && l.Topics[0] == channelPaymentSig {
+				paid = append(paid, l)
+			}
+		}
+		if len(paid) != 1 || paid[0].Topics[2].Big().Uint64() != s.TagBlock {
+			t.Errorf("%s→%s %s: logged %d ChannelPayment events, want one for block_n %d", s.From, s.To, s.Amount, len(paid), s.TagBlock)
+		}
+		for _, l := range logs {
+			if len(l.Topics) >= 2 && l.Topics[0] == paymentEventSig && l.Topics[1].Big().Sign() == 0 {
+				t.Errorf("%s→%s %s: published a Payment event with a capsule for the payee", s.From, s.To, s.Amount)
+			}
+		}
+		if n := countTopic(logs, tagPublishedSig); n != 0 {
+			t.Errorf("%s→%s %s: published %d tags in TagRegistry, want none", s.From, s.To, s.Amount, n)
 		}
 	}
 }
@@ -1785,6 +1813,12 @@ func txLogs(t *testing.T, client *ethclient.Client, tx common.Hash) []*types.Log
 		t.Fatalf("tx %s reverted", tx.Hex())
 	}
 	return r.Logs
+}
+
+// paymentEvents counts the payments logs settled: Payment events (a
+// capsule payment's, or a USDr fee leg's) and ChannelPayment events.
+func paymentEvents(logs []*types.Log) int {
+	return countTopic(logs, paymentEventSig) + countTopic(logs, channelPaymentSig)
 }
 
 func countTopic(logs []*types.Log, topic common.Hash) int {
@@ -1982,7 +2016,7 @@ func checkWireDetails(t *testing.T, hops []engine.Event) []string {
 
 // miningHops are the labels of the hops that mine a transaction.
 var miningHops = map[string]bool{"fund gas": true, "register": true, "shield": true, "grant USDr": true,
-	"payment": true, "paymentWithUsdrFee": true, "openChannel": true, "publishTag": true}
+	"payment": true, "paymentWithUsdrFee": true, "channelPayment": true, "channelPaymentWithUsdrFee": true, "openChannel": true}
 
 // checkReceiptDetails checks that every hop that mines a transaction carries
 // one receipt hop detail, and that each receipt detail names a transaction

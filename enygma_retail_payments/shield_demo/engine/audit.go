@@ -9,13 +9,12 @@ import (
 	"fmt"
 	"math/big"
 
-	"enygma_retail_payments/layout"
-
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
@@ -170,13 +169,13 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 		return nil, fmt.Errorf("the auditor has not recovered the users' view keys yet")
 	}
 	c := e.chain
-	payers, err := e.auditPayers(ctx)
+	channels, err := e.auditChannels()
 	if err != nil {
 		return nil, err
 	}
 	logs, err := c.logsSince(ctx, e.startBlock, ethereum.FilterQuery{
 		Addresses: []common.Address{c.dvpAddr, c.vaultAddr, c.usdrVaultAddr},
-		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic}},
+		Topics:    [][]common.Hash{{paymentTopic, encryptedNoteTopic, channelPaymentTopic}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("note events: %w", err)
@@ -195,6 +194,22 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 	args := abiBytesPair()
 	for _, l := range logs {
 		if len(l.Topics) < 3 {
+			continue
+		}
+		if l.Topics[0] == channelPaymentTopic {
+			// A transfer over a tag channel: the auditor opens it with the
+			// channel's key, and the channel names its payer.
+			ch, pn, f := auditChannelPayment(l, channels)
+			if ch == nil || pn.TokenId.Cmp(tokenId) != 0 {
+				continue // a payment to an earlier run's user, or junk
+			}
+			en := AuditEntry{Kind: AuditTransfer, Asset: assetErc20, From: ch.payer, To: ch.payee, Amount: pn.Amount, TxHash: l.TxHash, Block: l.BlockNumber}
+			a.Entries = append(a.Entries, en)
+			a.opened = append(a.opened, DecryptedNote{Owner: ch.payee, Asset: assetErc20, Kind: string(AuditTransfer), Tx: l.TxHash.Hex(),
+				Commitment: fieldHex(f.Commitment), Via: viaTag, Sealed: bytesHex(f.Ctxt),
+				Amount: pn.Amount.String(), Salt: fieldHex(pn.Salt), Token: fieldHex(pn.TokenId)})
+			payerIn[l.TxHash] = en.From
+			a.Received[en.To].Add(a.Received[en.To], en.Amount)
 			continue
 		}
 		vals, err := args.Unpack(l.Data)
@@ -224,8 +239,8 @@ func (e *Engine) Audit(ctx context.Context) (*Audit, error) {
 				return nil, err
 			}
 		case l.Topics[0] == paymentTopic && !usdr && owner != "":
+			// A transfer without a tag channel: its payer stays hidden.
 			en.Kind, en.To, en.Amount = AuditTransfer, owner, amount
-			en.From = payers[ev.Commitment.String()]
 		case l.Topics[0] == paymentTopic && usdr && owner == "":
 			// The fee leg's note is the relayer's, published with no
 			// ciphertext; its amount is the governance-set fixed fee.
@@ -347,14 +362,13 @@ func (e *Engine) txSender(ctx context.Context, hash common.Hash) (string, error)
 	return e.nameOf(from), nil
 }
 
-// auditPayers names the payer of each payment that carries a private tag,
-// by its output commitment. With each recipient's view key the auditor opens
-// the channels addressed to them, which name the payer who opened each,
-// then matches the run's tags to those channels and opens each tagged note.
-func (e *Engine) auditPayers(ctx context.Context) (map[string]string, error) {
+// auditChannels is every tag channel to a user the auditor recovered the
+// view key of, opened since the run started, each with the payer it names:
+// the payer names themselves in the channel they open.
+func (e *Engine) auditChannels() ([]auditChannel, error) {
 	c := e.chain
-	if c.channelRegistryAddr == (common.Address{}) || c.tagRegistryAddr == (common.Address{}) {
-		return map[string]string{}, nil
+	if c.channelRegistryAddr == (common.Address{}) {
+		return nil, nil
 	}
 	var channels []auditChannel
 	for _, u := range e.auditUsers {
@@ -364,56 +378,62 @@ func (e *Engine) auditPayers(ctx context.Context) (map[string]string, error) {
 			return nil, fmt.Errorf("auditor: scan %s's channels: %w", u.name, err)
 		}
 		for _, f := range found {
-			// The payer names themselves in the channel they open.
 			payer := ""
 			if common.IsHexAddress(string(f.SenderId)) {
 				payer = e.nameOf(common.HexToAddress(string(f.SenderId)))
 			}
-			channels = append(channels, auditChannel{Channel: tags.Channel{SharedSecret: f.SharedSecret, PkSpend: u.spendPk}, payer: payer})
+			channels = append(channels, auditChannel{Channel: tags.Channel{SharedSecret: f.SharedSecret, PkSpend: u.spendPk}, payee: u.name, payer: payer})
 		}
 	}
-	return e.tagPayers(ctx, channels)
+	return channels, nil
 }
 
-// auditChannel is a tag channel the auditor opened, and the payer it names.
+// auditChannel is a tag channel the auditor opened, its payee and the payer
+// it names.
 type auditChannel struct {
 	tags.Channel
-	payer string
+	payee, payer string
 }
 
-// tagPayers matches the run's tags to channels and names each tagged
-// note's payer, by its commitment.
-func (e *Engine) tagPayers(ctx context.Context, channels []auditChannel) (map[string]string, error) {
-	c := e.chain
-	payers := map[string]string{}
-	if len(channels) == 0 {
-		return payers, nil
+// auditChannelPayment opens l, a ChannelPayment event, if its tag is one of
+// channels' for its block_n: the channel it rides on, the note its sealed
+// note opens to, checked against the commitment it settled, and the payment
+// as found. A payment whose tag matches no channel, or whose note does not
+// open (anyone with a channel can pay junk on it), opens to nothing.
+func auditChannelPayment(l ethtypes.Log, channels []auditChannel) (*auditChannel, *tags.PaymentNote, tags.FoundChannelPayment) {
+	none := tags.FoundChannelPayment{}
+	// Only a RaylsERC20 vault payment is a transfer the audit counts.
+	if len(l.Topics) != 4 || l.Topics[1].Big().Cmp(erc20VaultId) != 0 {
+		return nil, nil, none
 	}
-	logs, err := c.logsSince(ctx, e.startBlock, ethereum.FilterQuery{
-		Addresses: []common.Address{c.tagRegistryAddr},
-		Topics:    [][]common.Hash{{tagPublishedTopic}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("TagPublished events: %w", err)
+	vals, err := channelPaymentData().Unpack(l.Data)
+	if err != nil || len(vals) != 2 {
+		return nil, nil, none
 	}
-	for _, l := range logs {
-		for _, ch := range channels {
-			// A bad tag (anyone can open a channel to a user and publish
-			// junk on it) names no one, like an unpaid one below.
-			pn, _, err := openTag(l, ch.Channel)
-			if err != nil || pn == nil {
-				continue
-			}
-			// A tag only names the payer of a note the auditor also decrypts
-			// from a Payment event, so an unpaid tag names no one.
-			cm, err := rpcore.Erc20CommitmentV2(ch.PkSpend, pn.Salt, pn.Amount, pn.TokenId)
-			if err != nil {
-				continue
-			}
-			payers[cm.String()] = ch.payer
+	block := l.Topics[2].Big().Uint64()
+	for i := range channels {
+		ch := &channels[i]
+		t, err := tags.ChannelTag(ch.SharedSecret, block, ch.PkSpend)
+		if err != nil || common.Hash(t) != l.Topics[3] {
+			continue
 		}
+		f := tags.FoundChannelPayment{BlockNumber: block, Commitment: vals[0].(*big.Int), Ctxt: vals[1].([]byte),
+			SharedSecret: ch.SharedSecret, PkSpend: ch.PkSpend}
+		pn, err := f.Open()
+		if err != nil {
+			return nil, nil, none
+		}
+		return ch, pn, f
 	}
-	return payers, nil
+	return nil, nil, none
+}
+
+// channelPaymentData decodes a ChannelPayment event's data: the commitment
+// and the sealed note.
+func channelPaymentData() abi.Arguments {
+	u256, _ := abi.NewType("uint256", "", nil)
+	bs, _ := abi.NewType("bytes", "", nil)
+	return abi.Arguments{{Type: u256}, {Type: bs}}
 }
 
 // publishAudit sends the auditor's current view to the UI.
@@ -450,19 +470,19 @@ func (e *Engine) reconcile(ctx context.Context, s *step) error {
 	}
 	s.log("key", "auditor decrypted %d transactions across both vaults with the recovered view keys", len(a.Entries))
 	details := []HopDetail{decryption(a.opened)}
-	// With tags, each participant opens their note with the tag channel's
-	// key, so the audit is the run's first hop a view key opens a note's
-	// ciphertext by: it carries the note encryption card, a walkthrough's
-	// opening payment 1's note with its payee's view key, which the auditor
-	// recovered, a full run's by name only.
+	// With tags, each payment's note is sealed under its tag channel's key,
+	// with no capsule, so the audit is the run's first hop a view key opens
+	// a note's ciphertext by: it carries the note encryption card, a
+	// walkthrough's opening the Sender's shielded note with the Sender's
+	// view key, which the auditor recovered, a full run's by name only.
 	if e.opts.Tags {
 		d := formulaNamed(FormulaNoteEncryption, NodeVault, 0)
 		if e.opts.Walkthrough {
-			if e.payment1 == nil {
-				return errors.New("note encryption card: payment 1 has not settled")
+			sender := e.sender()
+			if len(sender.notes) == 0 {
+				return errors.New("note encryption card: the Sender has not shielded")
 			}
-			cm := e.payment1.stmt[layout.PaymentCommitmentsOutOffset]
-			if d, err = e.chain.noteEncryptionFormula(ctx, e.participants()[0], cm); err != nil {
+			if d, err = e.chain.noteEncryptionFormula(ctx, sender, sender.notes[0].commitment); err != nil {
 				return err
 			}
 		}

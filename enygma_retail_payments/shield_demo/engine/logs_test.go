@@ -40,7 +40,7 @@ func TestEveryLogQueryStaysWithinTheNodesBlockLimit(t *testing.T) {
 	}
 	t.Cleanup(client.Close)
 	c := &chain{client: client, deployBlock: deployed, dvpAddr: testDvp, vaultAddr: testVault, usdrVaultAddr: testUsdrVault,
-		registryAddr: testRegistry, tagRegistryAddr: testTagRegistry}
+		registryAddr: testRegistry}
 	e := &Engine{chain: c, startBlock: started, auditUsers: []auditUser{}}
 	spend := testSpendKey(t)
 	owner := &Actor{Name: "Bob", Spend: spend}
@@ -53,10 +53,6 @@ func TestEveryLogQueryStaysWithinTheNodesBlockLimit(t *testing.T) {
 		run  func() error
 	}{
 		{"Audit's note events", testDvp, started, func() error { _, err := e.Audit(ctx); return err }},
-		{"the auditor's tag query", testTagRegistry, started, func() error {
-			_, err := e.tagPayers(ctx, []auditChannel{{Channel: newChannel(t, spend.PublicKey)}})
-			return err
-		}},
 		{"noteEvents", testDvp, deployed, func() error { _, err := c.noteEvents(ctx, testVault, erc20VaultId); return err }},
 		{"commitmentBatches", testVault, deployed, func() error { _, err := c.commitmentBatches(ctx, testVault); return err }},
 		{"registration", testRegistry, deployed, func() error { _, err := c.registration(ctx, common.HexToAddress("0xb0b")); return err }},
