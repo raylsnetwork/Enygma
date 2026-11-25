@@ -1224,8 +1224,8 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // blockNumber … blockNumber + CHANNEL_PAYMENT_WINDOW; the event carries
     // blockNumber, which the payee's per-block scan computes tags for.
     //
-    // Only Payment and Payment2in receipts settle here; the fee-carrying
-    // shapes have their own fee checks in payment* and no channel variant.
+    // Only Payment and Payment2in receipts settle here; each fee-carrying
+    // shape has its own channel form below, with its variant's fee checks.
     function channelPayment(
         ProofReceipt memory receipt,
         uint256 vaultId,
@@ -1233,12 +1233,71 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes32 tag,
         bytes calldata ctxt
     ) public returns (bool) {
-        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        if (!_isPaymentShape(receipt)) revert InvalidStatementSize();
+        _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
+        return true;
+    }
+
+    // channelPaymentWithFee is paymentWithFee's channel form (#452): a
+    // PaymentFee receipt whose fee must equal protocolFee, bound to
+    // blockNumber, tag and ctxt as in channelPayment. A PaymentRelayerFee
+    // receipt, which paymentWithFee also takes, settles over a channel
+    // through channelPaymentWithRelayerFee.
+    function channelPaymentWithFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 protocolFee,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) public returns (bool) {
+        if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 2 || receipt.statement.length != PAYMENT_FEE_LEN) {
+            revert InvalidStatementSize();
+        }
+        require(receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] == protocolFee, "EnygmaDvp: fee mismatch");
+        _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
+        return true;
+    }
+
+    // channelPaymentWithRelayerFee is paymentWithRelayerFee's channel form
+    // (#452): a PaymentRelayerFee receipt whose fee note (output 2) must hold
+    // relayerFixedFeeAmount, bound to blockNumber, tag and ctxt as in
+    // channelPayment.
+    function channelPaymentWithRelayerFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) public returns (bool) {
+        if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 3 || receipt.statement.length != PAYMENT_RELAYER_FEE_LEN) {
+            revert InvalidStatementSize();
+        }
+        if (receipt.statement[Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET] != relayerFixedFeeAmount) revert InvalidRelayerFee();
+        _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
+        return true;
+    }
+
+    // A Payment (1 in, 2 out) or Payment2in (2 in, 2 out) receipt.
+    function _isPaymentShape(ProofReceipt memory receipt) internal pure returns (bool) {
         uint256 length = receipt.statement.length;
-        bool isPayment = receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2 && length == PAYMENT_LEN;
-        bool isPayment2in = receipt.numberOfInputs == 2 && receipt.numberOfOutputs == 2 && length == PAYMENT2IN_LEN;
-        if (!isPayment && !isPayment2in) revert InvalidStatementSize();
+        return (receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2 && length == PAYMENT_LEN)
+            || (receipt.numberOfInputs == 2 && receipt.numberOfOutputs == 2 && length == PAYMENT2IN_LEN);
+    }
+
+    // Settles a channel payment whose shape and fee its entry point checked:
+    // the window, the proof, the binding of blockNumber, tag and ctxt, then
+    // the notes, and the ChannelPayment event for the payee's output 0.
+    function _settleChannelPayment(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) internal {
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         // As in payment(): the Payment circuits do not constrain StMessage.
+        // It is the first signal of every Payment-family statement.
         if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
         if (block.number < blockNumber || block.number - blockNumber > CHANNEL_PAYMENT_WINDOW) {
             revert ChannelPaymentOutsideWindow(blockNumber, block.number);
@@ -1256,7 +1315,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt)];
         emit ChannelPayment(vaultId, blockNumber, tag, commitmentOut, ctxt);
-        return true;
     }
 
     // paymentWithFee is the fee-aware variant of payment().
@@ -1370,12 +1428,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes calldata usdrCtxt,
         bytes calldata usdrEncTxData
     ) external returns (bool) {
-        // The USDr leg must settle in the configured USDr vault, not one the
-        // caller picks — see usdrFeeVaultId.
-        if (!usdrFeeVaultSet || usdrVaultId != usdrFeeVaultId) revert InvalidUsdrVault();
-        // The USDr leg is read as a UsdrFee statement below; any other length
-        // is another circuit's receipt, refused before anything is read.
-        if (usdrReceipt.statement.length != USDR_FEE_LEN) revert InvalidStatementSize();
+        _requireUsdrFeeLeg(usdrReceipt, usdrVaultId);
 
         // ── main leg — identical checks/settlement to payment() ──
         if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
@@ -1390,6 +1443,52 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         emit Payment(vaultId, receipt.statement[_commitmentsOutOffset(receipt)], ctxt, encTxData);
 
+        _settleUsdrFeeLeg(usdrReceipt, usdrVaultId, usdrCtxt, usdrEncTxData);
+
+        return true;
+    }
+
+    // channelPaymentWithUsdrFee is paymentWithUsdrFee's channel form (#452):
+    // the main leg, a Payment or Payment2in receipt, settles as channelPayment
+    // settles it, bound to blockNumber, tag and ctxt; the USDr fee leg is
+    // checked and settled exactly as in paymentWithUsdrFee, with its own
+    // ciphertexts. Both settle or neither does.
+    function channelPaymentWithUsdrFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt,
+        ProofReceipt memory usdrReceipt,
+        uint256 usdrVaultId,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
+    ) external returns (bool) {
+        _requireUsdrFeeLeg(usdrReceipt, usdrVaultId);
+        if (!_isPaymentShape(receipt)) revert InvalidStatementSize();
+        _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
+        _settleUsdrFeeLeg(usdrReceipt, usdrVaultId, usdrCtxt, usdrEncTxData);
+        return true;
+    }
+
+    // The USDr leg of paymentWithUsdrFee or channelPaymentWithUsdrFee, checked
+    // before its main leg settles.
+    function _requireUsdrFeeLeg(ProofReceipt memory usdrReceipt, uint256 usdrVaultId) internal view {
+        // The USDr leg must settle in the configured USDr vault, not one the
+        // caller picks — see usdrFeeVaultId.
+        if (!usdrFeeVaultSet || usdrVaultId != usdrFeeVaultId) revert InvalidUsdrVault();
+        // _settleUsdrFeeLeg reads it as a UsdrFee statement; any other length
+        // is another circuit's receipt, refused before anything is read.
+        if (usdrReceipt.statement.length != USDR_FEE_LEN) revert InvalidStatementSize();
+    }
+
+    // Settles the USDr leg _requireUsdrFeeLeg let through, after its main leg.
+    function _settleUsdrFeeLeg(
+        ProofReceipt memory usdrReceipt,
+        uint256 usdrVaultId,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
+    ) internal {
         // ── USDr leg — checked against relayerFixedFeeAmount's USDr counterpart ──
         if (usdrReceipt.numberOfOutputs != 2) revert InvalidNumberOfOutputs();
         if (_coinVaults[usdrVaultId] == address(0)) revert InvalidVaultId();
@@ -1405,8 +1504,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
 
         emit Payment(usdrVaultId, usdrReceipt.statement[Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET], usdrCtxt, usdrEncTxData);
-
-        return true;
     }
 
     ///////////////////////////////////////////////

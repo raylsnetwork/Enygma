@@ -53,12 +53,51 @@ type RelayChannelPaymentRequest struct {
 	VaultId      string    `json:"vaultId" binding:"required"`
 	Proof        [8]string `json:"proof" binding:"required"`
 	PublicSignal []string  `json:"publicSignal" binding:"required"`
+	ChannelFields
+}
+
+// ChannelFields are what every channel payment route takes in place of a
+// capsule and its note: the block the tag is for, the tag and the sealed
+// note, all three bound by the proof.
+type ChannelFields struct {
 	// BlockNumber is block_n, the block the tag is for.
 	BlockNumber uint64 `json:"blockNumber" binding:"required"`
 	// Tag is the payee's 32-byte tag for BlockNumber, hex.
 	Tag string `json:"tag" binding:"required"`
 	// Ctxt is the sealed note, hex, at most maxChannelPaymentCtxt bytes.
 	Ctxt string `json:"ctxt" binding:"required"`
+}
+
+// RelayChannelPaymentRelayerFeeRequest is the JSON body accepted by
+// POST /relay/channel_payment_relayer_fee (#452): RelayPaymentRelayerFeeRequest
+// with ChannelFields in place of CipherText and EncTxData, settled by
+// EnygmaDvp.channelPaymentWithRelayerFee.
+type RelayChannelPaymentRelayerFeeRequest struct {
+	VaultId      string                              `json:"vaultId" binding:"required"`
+	Proof        [8]string                           `json:"proof" binding:"required"`
+	PublicSignal [layout.PaymentRelayerFeeLen]string `json:"publicSignal" binding:"required"`
+	ChannelFields
+	FeeSalt string `json:"feeSalt" binding:"required"`
+	TokenId string `json:"tokenId" binding:"required"`
+}
+
+// RelayChannelPaymentUsdrFeeRequest is the JSON body accepted by
+// POST /relay/channel_payment_usdr_fee (#452): RelayPaymentUsdrFeeRequest
+// with ChannelFields in place of the main leg's CipherText and EncTxData,
+// settled by EnygmaDvp.channelPaymentWithUsdrFee. The USDr leg keeps its
+// own ciphertexts.
+type RelayChannelPaymentUsdrFeeRequest struct {
+	VaultId      string    `json:"vaultId"      binding:"required"`
+	Proof        [8]string `json:"proof"        binding:"required"`
+	PublicSignal []string  `json:"publicSignal" binding:"required"`
+	ChannelFields
+
+	UsdrVaultId      string                    `json:"usdrVaultId"      binding:"required"`
+	UsdrProof        [8]string                 `json:"usdrProof"        binding:"required"`
+	UsdrPublicSignal [layout.UsdrFeeLen]string `json:"usdrPublicSignal" binding:"required"`
+	UsdrCipherText   string                    `json:"usdrCipherText"   binding:"required"`
+	UsdrEncTxData    string                    `json:"usdrEncTxData"    binding:"required"`
+	UsdrFeeSalt      string                    `json:"usdrFeeSalt"      binding:"required"`
 }
 
 // parsed holds the decoded form of a RelayPaymentRequest ready for validation
@@ -199,13 +238,6 @@ type RelayPaymentUsdrFeeRequest struct {
 	UsdrCipherText   string                    `json:"usdrCipherText"   binding:"required"`
 	UsdrEncTxData    string                    `json:"usdrEncTxData"    binding:"required"`
 	UsdrFeeSalt      string                    `json:"usdrFeeSalt"      binding:"required"`
-}
-
-// RelayPaymentUsdrFeeResponse is returned on success.
-type RelayPaymentUsdrFeeResponse struct {
-	TxHash      string `json:"txHash"`
-	BlockNumber uint64 `json:"blockNumber"`
-	GasUsed     uint64 `json:"gasUsed"`
 }
 
 // parsedUsdrFee holds the decoded form of a RelayPaymentUsdrFeeRequest ready

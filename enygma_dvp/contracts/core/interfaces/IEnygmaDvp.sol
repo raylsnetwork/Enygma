@@ -314,7 +314,8 @@ interface IEnygmaDvp {
         bytes encTxData
     );
 
-    // Emitted for a channel payment (channelPayment, #451). The payee finds
+    // Emitted for a channel payment (channelPayment and its fee forms,
+    // channelPaymentWith*, #451/#452). The payee finds
     // it by its tag: for block blockNumber they compute
     // tag = Poseidon("enygma-tag-v1", ss mod p, blockNumber, pk_spend) for
     // every tag channel secret ss they hold. ctxt seals the note's opening
@@ -516,6 +517,43 @@ interface IEnygmaDvp {
         uint256 blockNumber,
         bytes32 tag,
         bytes calldata ctxt
+    ) external returns (bool);
+
+    // The channel forms of the fee variants below (#452): each settles one
+    // shape with that variant's fee checks, binds blockNumber, tag and ctxt
+    // as channelPayment does, and emits ChannelPayment for the payee:
+    //   - channelPaymentWithFee: a PaymentFee receipt, its StFee == protocolFee;
+    //   - channelPaymentWithRelayerFee: a PaymentRelayerFee receipt, its
+    //     StFee == relayerFixedFeeAmount;
+    //   - channelPaymentWithUsdrFee: a Payment or Payment2in receipt with a
+    //     UsdrFee leg checked as paymentWithUsdrFee checks it.
+    function channelPaymentWithFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 protocolFee,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) external returns (bool);
+
+    function channelPaymentWithRelayerFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) external returns (bool);
+
+    function channelPaymentWithUsdrFee(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt,
+        ProofReceipt memory usdrReceipt,
+        uint256 usdrVaultId,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
     ) external returns (bool);
 
     // paymentWithFee is the fee-aware variant of payment().
