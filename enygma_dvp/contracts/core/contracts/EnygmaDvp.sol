@@ -1209,6 +1209,56 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // How many blocks after its tag's block a channel payment may still land.
+    uint256 public constant CHANNEL_PAYMENT_WINDOW = 30;
+
+    // channelPayment settles a payment over a tag channel as one authorised
+    // payload p = (t, C_dest, C_chg, ctxt, nf, π) (#451). There is no
+    // per-payment ML-KEM capsule: the payer chose the payee's salt and sealed
+    // the note's opening in ctxt under the tag channel's key for blockNumber,
+    // and the proof's StCiphertextHash binds blockNumber, tag and ctxt, so the
+    // payment settles with exactly those or not at all.
+    //
+    // The proof is made before its block is known, so the payer tags it for
+    // a block blockNumber and it settles only in blocks
+    // blockNumber … blockNumber + CHANNEL_PAYMENT_WINDOW; the event carries
+    // blockNumber, which the payee's per-block scan computes tags for.
+    //
+    // Only Payment and Payment2in receipts settle here; the fee-carrying
+    // shapes have their own fee checks in payment* and no channel variant.
+    function channelPayment(
+        ProofReceipt memory receipt,
+        uint256 vaultId,
+        uint256 blockNumber,
+        bytes32 tag,
+        bytes calldata ctxt
+    ) public returns (bool) {
+        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        uint256 length = receipt.statement.length;
+        bool isPayment = receipt.numberOfInputs == 1 && receipt.numberOfOutputs == 2 && length == PAYMENT_LEN;
+        bool isPayment2in = receipt.numberOfInputs == 2 && receipt.numberOfOutputs == 2 && length == PAYMENT2IN_LEN;
+        if (!isPayment && !isPayment2in) revert InvalidStatementSize();
+        // As in payment(): the Payment circuits do not constrain StMessage.
+        if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
+        if (block.number < blockNumber || block.number - blockNumber > CHANNEL_PAYMENT_WINDOW) {
+            revert ChannelPaymentOutsideWindow(blockNumber, block.number);
+        }
+
+        IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
+        vault.checkReceiptConditions(receipt);
+        if (receipt.statement[_ciphertextHashOffset(receipt)] != CiphertextHash.ofChannelPayment(blockNumber, tag, ctxt)) {
+            revert CiphertextHashMismatch();
+        }
+
+        // Inputs are spent before outputs are inserted, as in payment().
+        vault.nullifyFromReceipt(receipt);
+        vault.insertCommitmentsFromReceipt(receipt);
+
+        uint256 commitmentOut = receipt.statement[_commitmentsOutOffset(receipt)];
+        emit ChannelPayment(vaultId, blockNumber, tag, commitmentOut, ctxt);
+        return true;
+    }
+
     // paymentWithFee is the fee-aware variant of payment().
     // The ZK circuit enforces valueIn == Σ(valuesOut) + StFee, so the fee is
     // absorbed in Alice's input commitment rather than collected as an ERC-20 transfer.

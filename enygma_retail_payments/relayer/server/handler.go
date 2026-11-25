@@ -330,46 +330,11 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
-
 	// Steps 2 and 3 — every input's Merkle root must be in the vault's
 	// rootHistory and its nullifier unspent.
-	var nfKeys []string
-	for i := 0; i < p.layout.inputs; i++ {
-		treeNum := p.publicSignal[p.layout.treeNumbersOffset+i]
-		root := p.publicSignal[p.layout.merkleRootsOffset+i]
-		nullifier := p.publicSignal[p.layout.nullifiersOffset+i]
-		prefix := ""
-		if p.layout.inputs > 1 {
-			prefix = fmt.Sprintf("input %d: ", i)
-		}
-
-		var rootResult []interface{}
-		if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%srootHistory check: %s", prefix, err)})
-			return
-		}
-		rootKnown, ok := rootResult[0].(bool)
-		if !ok || !rootKnown {
-			c.JSON(http.StatusBadRequest, gin.H{"error": prefix + "merkle root is not a known vault root"})
-			return
-		}
-
-		var nfResult []interface{}
-		if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%snullifiers check: %s", prefix, err)})
-			return
-		}
-		nfSpent, ok := nfResult[0].(bool)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": prefix + "unexpected type from nullifiers()"})
-			return
-		}
-		if nfSpent {
-			c.JSON(http.StatusBadRequest, gin.H{"error": prefix + "nullifier already spent"})
-			return
-		}
-		nfKeys = append(nfKeys, nullifierKey(h.vaultAddr, treeNum, nullifier))
+	nfKeys, ok := h.checkPaymentInputs(c, p.publicSignal, p.layout)
+	if !ok {
+		return
 	}
 
 	// Step 4 — claim the notes as in-flight to block concurrent duplicate
@@ -379,26 +344,31 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		return
 	}
 
-	// Step 5 — build ProofReceipt and simulate it: nothing is sent for a
-	// request the chain would reject.
-	receipt := buildProofReceipt(p)
-	if !h.simulate(c, nfKeys, h.dvpAddr, h.dvpABI, "payment", receipt, p.vaultId, p.cipherText, p.encTxData) {
+	// Steps 5 and 6 — simulate, then submit.
+	h.submitToDvp(c, nfKeys, false, "payment", buildProofReceipt(p), p.vaultId, p.cipherText, p.encTxData)
+}
+
+// submitToDvp simulates EnygmaDvp.method(args…) (against the pending block
+// when pending is set), so nothing is sent for a request the chain would
+// reject; then sends it, waits for it to be mined and writes the response.
+// keys are the request's claimed in-flight keys, released on failure.
+// Submission is serialized to prevent nonce races under concurrency; txMu
+// guards only the submission itself, not the wait — see txTimeout's doc
+// comment.
+func (h *Handler) submitToDvp(c *gin.Context, keys []string, pending bool, method string, args ...interface{}) {
+	if !h.simulateIn(c, pending, keys, h.dvpAddr, h.dvpABI, method, args...) {
 		return
 	}
-
-	// Step 6 — serialize submission to prevent nonce races under concurrency.
-	// txMu guards only the submission itself, not the wait below — see
-	// txTimeout's doc comment.
 	h.txMu.Lock()
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
-	tx, err := dvp.Transact(h.auth, "payment", receipt, p.vaultId, p.cipherText, p.encTxData)
+	tx, err := dvp.Transact(h.auth, method, args...)
 	h.txMu.Unlock()
 	if err != nil {
-		h.release(nfKeys)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("payment(): %s", err)})
+		h.release(keys)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%s(): %s", method, err)})
 		return
 	}
-	txReceipt, ok := h.waitMined(c, tx, nfKeys)
+	txReceipt, ok := h.waitMined(c, tx, keys)
 	if !ok {
 		return
 	}
@@ -406,12 +376,111 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
 		return
 	}
-
 	c.JSON(http.StatusOK, RelayPaymentResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
 		BlockNumber: txReceipt.BlockNumber.Uint64(),
 		GasUsed:     txReceipt.GasUsed,
 	})
+}
+
+// checkPaymentInputs checks a Payment or Payment2in statement's inputs
+// against the vault: each input's Merkle root must be in its rootHistory and
+// its nullifier unspent. It returns the inputs' in-flight keys, or writes the
+// response and returns false.
+func (h *Handler) checkPaymentInputs(c *gin.Context, sig []*big.Int, l paymentLayout) ([]string, bool) {
+	vault := bind.NewBoundContract(h.vaultAddr, h.vaultABI, h.client, h.client, h.client)
+	var nfKeys []string
+	for i := 0; i < l.inputs; i++ {
+		treeNum := sig[l.treeNumbersOffset+i]
+		root := sig[l.merkleRootsOffset+i]
+		nullifier := sig[l.nullifiersOffset+i]
+		prefix := ""
+		if l.inputs > 1 {
+			prefix = fmt.Sprintf("input %d: ", i)
+		}
+
+		var rootResult []interface{}
+		if err := vault.Call(&bind.CallOpts{}, &rootResult, "rootHistory", treeNum, root); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%srootHistory check: %s", prefix, err)})
+			return nil, false
+		}
+		rootKnown, ok := rootResult[0].(bool)
+		if !ok || !rootKnown {
+			c.JSON(http.StatusBadRequest, gin.H{"error": prefix + "merkle root is not a known vault root"})
+			return nil, false
+		}
+
+		var nfResult []interface{}
+		if err := vault.Call(&bind.CallOpts{}, &nfResult, "nullifiers", treeNum, nullifier); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%snullifiers check: %s", prefix, err)})
+			return nil, false
+		}
+		nfSpent, ok := nfResult[0].(bool)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": prefix + "unexpected type from nullifiers()"})
+			return nil, false
+		}
+		if nfSpent {
+			c.JSON(http.StatusBadRequest, gin.H{"error": prefix + "nullifier already spent"})
+			return nil, false
+		}
+		nfKeys = append(nfKeys, nullifierKey(h.vaultAddr, treeNum, nullifier))
+	}
+	return nfKeys, true
+}
+
+// maxChannelPaymentCtxt caps a channel payment's note ciphertext, as
+// TagRegistry caps a tag's payload: the relayer pays for its calldata. A
+// sealed note is 124 bytes.
+const maxChannelPaymentCtxt = 4096
+
+// RelayChannelPayment is the gin handler for POST /relay/channel_payment: a
+// channel payment (#451), settled by EnygmaDvp.channelPayment in one
+// transaction with its tag and sealed note, which its proof binds.
+//
+// It checks the inputs as RelayPayment does, then simulates against the
+// pending block, the one the transaction lands in: the payment settles only
+// in blocks blockNumber … blockNumber + CHANNEL_PAYMENT_WINDOW, so a call
+// against the latest block would judge the window one block early.
+func (h *Handler) RelayChannelPayment(c *gin.Context) {
+	var req RelayChannelPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := parseRequest(&RelayPaymentRequest{VaultId: req.VaultId, Proof: req.Proof, PublicSignal: req.PublicSignal})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	tag, err := decodeTag(req.Tag, "tag")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	ctxt, err := decodeHexField(req.Ctxt, "ctxt")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	if len(ctxt) == 0 || len(ctxt) > maxChannelPaymentCtxt {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("ctxt must be 1 to %d bytes, got %d", maxChannelPaymentCtxt, len(ctxt))})
+		return
+	}
+	if !h.requireVault(c, "vaultId", p.vaultId, h.vaultAddr) {
+		return
+	}
+
+	nfKeys, ok := h.checkPaymentInputs(c, p.publicSignal, p.layout)
+	if !ok {
+		return
+	}
+	if !h.claim(nfKeys...) {
+		c.JSON(http.StatusConflict, gin.H{"error": "nullifier already in-flight"})
+		return
+	}
+
+	h.submitToDvp(c, nfKeys, true, "channelPayment", buildProofReceipt(p), p.vaultId, new(big.Int).SetUint64(req.BlockNumber), tag, ctxt)
 }
 
 // RelayPaymentRelayerFee is the gin handler for POST /relay/payment_relayer_fee.
@@ -603,6 +672,10 @@ const simulateTimeout = 15 * time.Second
 // failure it releases keys, writes the response (422 if the call reverts, 500
 // if the node could not run it) and returns false.
 func (h *Handler) simulate(c *gin.Context, keys []string, to common.Address, contractABI abi.ABI, method string, args ...interface{}) bool {
+	return h.simulateIn(c, false, keys, to, contractABI, method, args...)
+}
+
+func (h *Handler) simulateIn(c *gin.Context, pending bool, keys []string, to common.Address, contractABI abi.ABI, method string, args ...interface{}) bool {
 	data, err := contractABI.Pack(method, args...)
 	if err != nil {
 		h.release(keys)
@@ -611,7 +684,12 @@ func (h *Handler) simulate(c *gin.Context, keys []string, to common.Address, con
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), simulateTimeout)
 	defer cancel()
-	if _, err := h.client.CallContract(ctx, ethereum.CallMsg{From: h.auth.From, To: &to, Gas: h.auth.GasLimit, Data: data}, nil); err != nil {
+	msg := ethereum.CallMsg{From: h.auth.From, To: &to, Gas: h.auth.GasLimit, Data: data}
+	call := func() error { _, err := h.client.CallContract(ctx, msg, nil); return err }
+	if pending {
+		call = func() error { _, err := h.client.PendingCallContract(ctx, msg); return err }
+	}
+	if err := call(); err != nil {
 		h.release(keys)
 		if isRevertError(err) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("%s() would revert: %s", method, err)})
