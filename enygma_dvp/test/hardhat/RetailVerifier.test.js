@@ -1,8 +1,8 @@
 // The Verifier the retail deploy ships (enygma_retail_payments/contracts/abis/
-// Verifier.json) is this project's build of Verifier.sol, so only its deployer
-// may initialize it, and only once (#415).
+// Verifier.json) is this project's build of Verifier.sol (RetailArtifacts.test.js
+// checks that), so only its deployer may initialize it, and only once (#415).
 const { expect } = require("chai");
-const { ethers, artifacts } = require("hardhat");
+const { ethers } = require("hardhat");
 const path = require("path");
 
 const RETAIL_VERIFIER = path.join(__dirname, "../../../enygma_retail_payments/contracts/abis/Verifier.json");
@@ -41,14 +41,5 @@ describe("Retail Verifier.json", function () {
     await (await verifier.initializeVerifier(BACKEND)).wait();
     const e = await expectRevert(verifier.initializeVerifier(other.address), "a second initializeVerifier");
     expect(e.message).to.include("Verifier: already initialized");
-  });
-
-  it("is this project's build of contracts/core/contracts/Verifier.sol", async function () {
-    const built = await artifacts.readArtifact("contracts/core/contracts/Verifier.sol:Verifier");
-    const copy = require(RETAIL_VERIFIER);
-    const fix = "; refresh it with bash enygma_retail_payments/scripts/copy_dvp_abis.sh";
-    expect(copy.bytecode === built.bytecode, "the retail copy's creation bytecode differs from the build of Verifier.sol" + fix).to.equal(true);
-    expect(copy.deployedBytecode === built.deployedBytecode, "the retail copy's runtime bytecode differs from the build of Verifier.sol" + fix).to.equal(true);
-    expect(copy.abi).to.deep.equal(built.abi);
   });
 });
