@@ -948,7 +948,7 @@ func TestProtocolPrimer(t *testing.T) {
 			return vaultView(t, vault, n, method, args...)
 		}
 
-		// Message: a payment, 0 (the circuit allows 0 or 1; payment() only 0).
+		// Message: a payment, 0 (the circuit allows 0 or 1; channelPayment() only 0).
 		if message.Sign() != 0 {
 			t.Errorf("Message = %s, want 0", message)
 		}
@@ -2180,6 +2180,14 @@ func (o noteOpening) tokenAmount() (token, amount *big.Int) {
 	return new(big.Int).SetBytes(o.plain[:32]), new(big.Int).SetBytes(o.plain[32:])
 }
 
+// abiUint256, abiBytes32 and abiBytes are the ABI types the ChannelPayment
+// event and the channel payment's h encode.
+var (
+	abiUint256, _ = abi.NewType("uint256", "", nil)
+	abiBytes32, _ = abi.NewType("bytes32", "", nil)
+	abiBytes, _   = abi.NewType("bytes", "", nil)
+)
+
 // channelPaymentEvent is one ChannelPayment event: its vault id, the block b
 // its tag is for, the tag, the payee's commitment and the sealed note.
 type channelPaymentEvent struct {
@@ -2209,9 +2217,7 @@ func channelPaymentsFor(t *testing.T, ctx context.Context, client *ethclient.Cli
 // channelPaymentsIn decodes logs' ChannelPayment events from dvp.
 func channelPaymentsIn(t *testing.T, logs []*types.Log, dvp common.Address) []channelPaymentEvent {
 	t.Helper()
-	u256, _ := abi.NewType("uint256", "", nil)
-	bytesT, _ := abi.NewType("bytes", "", nil)
-	args := abi.Arguments{{Type: u256}, {Type: bytesT}}
+	args := abi.Arguments{{Type: abiUint256}, {Type: abiBytes}}
 	var events []channelPaymentEvent
 	for _, l := range logs {
 		if l.Address != dvp || len(l.Topics) != 4 || l.Topics[0] != channelPaymentSig {
@@ -2232,10 +2238,7 @@ func channelPaymentsIn(t *testing.T, logs []*types.Log, dvp common.Address) []ch
 // reduced into BN254's scalar field (CiphertextHash.ofChannelPayment).
 func channelPaymentHash(t *testing.T, b uint64, tag [32]byte, ctxt []byte) *big.Int {
 	t.Helper()
-	b32, _ := abi.NewType("bytes32", "", nil)
-	u256, _ := abi.NewType("uint256", "", nil)
-	bytesT, _ := abi.NewType("bytes", "", nil)
-	enc, err := abi.Arguments{{Type: b32}, {Type: u256}, {Type: b32}, {Type: bytesT}}.Pack(
+	enc, err := abi.Arguments{{Type: abiBytes32}, {Type: abiUint256}, {Type: abiBytes32}, {Type: abiBytes}}.Pack(
 		crypto.Keccak256Hash([]byte("enygma-channel-payment-v1")), new(big.Int).SetUint64(b), tag, ctxt)
 	if err != nil {
 		t.Fatal(err)
