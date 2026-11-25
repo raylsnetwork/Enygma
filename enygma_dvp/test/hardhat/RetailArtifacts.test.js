@@ -15,7 +15,7 @@ const ABIS = path.join(RETAIL, "contracts/abis");
 
 // The files in contracts/abis/ that retail builds from its own sources, not
 // copies of this project's build.
-const RETAIL_BUILT = ["PrivateMintVerifier.json", "UserRegistry.json"];
+const RETAIL_BUILT = ["PrivateMintVerifier.json"];
 
 // copiedArtifacts returns the ARTIFACTS entries of copy_dvp_abis.sh: each an
 // artifact's path under enygma_dvp/artifacts, <sourceName>/<contract>.json.

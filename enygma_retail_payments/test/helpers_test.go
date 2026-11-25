@@ -96,12 +96,21 @@ func loadOnchainReceipts(t *testing.T) map[string]onchainReceiptEntry {
 	return r
 }
 
+// userRegistryArtifact is the UserRegistry artifact the deploy ships.
+const userRegistryArtifact = "../contracts/user_registry/UserRegistry.json"
+
 // loadOnchainABI reads from the flat contracts/abis/<name>.json layout.
 func loadOnchainABI(t *testing.T, contractName string) abi.ABI {
 	t.Helper()
-	data, err := os.ReadFile("../contracts/abis/" + contractName + ".json")
+	return loadOnchainABIFile(t, "../contracts/abis/"+contractName+".json")
+}
+
+// loadOnchainABIFile reads the ABI of the Hardhat artifact at path.
+func loadOnchainABIFile(t *testing.T, path string) abi.ABI {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read artifact %s: %v", contractName, err)
+		t.Fatalf("read artifact %s: %v", path, err)
 	}
 	var artifact struct {
 		ABI json.RawMessage `json:"abi"`

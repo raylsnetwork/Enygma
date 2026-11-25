@@ -199,20 +199,16 @@ func loadUserRegistryABI() (abi.ABI, error) {
 		return abi.ABI{}, err
 	}
 	for {
-		// Try the full artifact layout first (contracts/user_registry/UserRegistry.json)
-		for _, candidate := range []string{
-			filepath.Join(dir, "contracts", "user_registry", "UserRegistry.json"),
-			filepath.Join(dir, "contracts", "abis", "UserRegistry.json"),
-		} {
-			if data, err := os.ReadFile(candidate); err == nil {
-				var artifact struct {
-					ABI json.RawMessage `json:"abi"`
-				}
-				if err := json.Unmarshal(data, &artifact); err != nil {
-					return abi.ABI{}, fmt.Errorf("parse UserRegistry artifact: %w", err)
-				}
-				return abi.JSON(strings.NewReader(string(artifact.ABI)))
+		// The artifact the deploy ships.
+		candidate := filepath.Join(dir, "contracts", "user_registry", "UserRegistry.json")
+		if data, err := os.ReadFile(candidate); err == nil {
+			var artifact struct {
+				ABI json.RawMessage `json:"abi"`
 			}
+			if err := json.Unmarshal(data, &artifact); err != nil {
+				return abi.ABI{}, fmt.Errorf("parse UserRegistry artifact: %w", err)
+			}
+			return abi.JSON(strings.NewReader(string(artifact.ABI)))
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -220,5 +216,5 @@ func loadUserRegistryABI() (abi.ABI, error) {
 		}
 		dir = parent
 	}
-	return abi.ABI{}, fmt.Errorf("UserRegistry.json not found (searched contracts/user_registry/ and contracts/abis/ up from %s)", dir)
+	return abi.ABI{}, fmt.Errorf("UserRegistry.json not found (searched contracts/user_registry/ up from %s)", dir)
 }

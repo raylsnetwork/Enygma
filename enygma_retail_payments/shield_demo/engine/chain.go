@@ -94,7 +94,7 @@ func dialChain(cfg Config) (*chain, error) {
 	if err != nil {
 		return nil, err
 	}
-	registryABI, err := loadABI(cfg.RetailRoot, "UserRegistry")
+	registryABI, err := loadABIFile(filepath.Join(cfg.RetailRoot, "contracts", "user_registry", "UserRegistry.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -140,16 +140,22 @@ func loadReceipts(root string) (map[string]receiptEntry, error) {
 	return r, nil
 }
 
+// loadABI reads contract's ABI from contracts/abis/<contract>.json.
 func loadABI(root, contract string) (abi.ABI, error) {
-	data, err := os.ReadFile(filepath.Join(root, "contracts", "abis", contract+".json"))
+	return loadABIFile(filepath.Join(root, "contracts", "abis", contract+".json"))
+}
+
+// loadABIFile reads the ABI of the Hardhat artifact at path.
+func loadABIFile(path string) (abi.ABI, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return abi.ABI{}, fmt.Errorf("read %s ABI: %w", contract, err)
+		return abi.ABI{}, fmt.Errorf("read ABI: %w", err)
 	}
 	var artifact struct {
 		ABI json.RawMessage `json:"abi"`
 	}
 	if err := json.Unmarshal(data, &artifact); err != nil {
-		return abi.ABI{}, fmt.Errorf("parse %s artifact: %w", contract, err)
+		return abi.ABI{}, fmt.Errorf("parse artifact %s: %w", path, err)
 	}
 	return abi.JSON(strings.NewReader(string(artifact.ABI)))
 }
