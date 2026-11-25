@@ -273,7 +273,7 @@ func TestProtocolPrimer(t *testing.T) {
 	})
 
 	check("registration", "the calldata publishes pk_spend, the view key and audit ciphertexts the auditor opens to the view key's seed", func(t *testing.T) {
-		registryABI := loadOnchainABI(t, "UserRegistry")
+		registryABI := loadOnchainABIFile(t, userRegistryArtifact)
 		registered := registryABI.Events["UserRegistered"].ID
 		v := map[string]string{"hkdfInfo": auditHKDFInfo}
 		ledger := []ledgerItem{}

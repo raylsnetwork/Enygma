@@ -239,7 +239,7 @@ func TestSybilProtection(t *testing.T) {
 	carolAuthNoFeePtr := &carolAuthNoFee
 
 	// We call the contract directly to test the revert.
-	registryABI := loadOnchainABI(t, "UserRegistry")
+	registryABI := loadOnchainABIFile(t, userRegistryArtifact)
 	registry := bindContract(t, client, registryAddr, registryABI)
 	_, err = registry.Transact(carolAuthNoFeePtr, "register",
 		carolPkSpend, carolViewPair.EncapsKey, carolMlKemCt, carolAesCt)
