@@ -7,7 +7,8 @@ package tests
 // The payee's salt is random, carried only in ctxt under the tag channel's
 // block key; there is no per-payment ML-KEM capsule. The payee finds the
 // payment by computing, for block_n, the tag of every channel secret they
-// hold, and the payment lands in blocks block_n … block_n + 30.
+// hold, and the payment lands in blocks block_n … block_n + W, W being
+// CHANNEL_PAYMENT_WINDOW (100).
 //
 // Needs the retail stack (Hardhat :8545, gnark :8082), on the keys and
 // contracts of this change.
@@ -159,15 +160,17 @@ func TestRetailErc20_ChannelPayment(t *testing.T) {
 		t.Fatalf("the first payment landed in block %s, want block_n = %d", m1.BlockNumber, blockN)
 	}
 
-	// The second lands in block_n + 30, the window's last block.
-	mineBlocks(t, e, blockN+29-m1.BlockNumber.Uint64())
+	// The second lands in block_n + W, the window's last block (W is the
+	// scan's window, which window_matches_the_scan holds to the contract's).
+	const w = tags.ChannelPaymentWindow
+	mineBlocks(t, e, blockN+w-1-m1.BlockNumber.Uint64())
 	m2 := transactChannelPayment(t, e, dvp, settle(p2, blockN, p2.note.Tag, p2.note.Ctxt))
-	if got := m2.BlockNumber.Uint64(); got != blockN+30 {
-		t.Fatalf("the second payment landed in block %d, want block_n + 30 = %d", got, blockN+30)
+	if got := m2.BlockNumber.Uint64(); got != blockN+w {
+		t.Fatalf("the second payment landed in block %d, want block_n + %d = %d", got, w, blockN+w)
 	}
 
-	// The window is over: block_n + 31 refuses the third, its proof and its
-	// bound tag and ctxt intact.
+	// The window is over: block_n + W + 1 refuses the third, its proof and
+	// its bound tag and ctxt intact.
 	t.Run("window_over", func(t *testing.T) {
 		expectPendingRevert(t, e, dvp, "ChannelPaymentOutsideWindow", "channelPayment", settle(late, blockN, late.note.Tag, late.note.Ctxt)...)
 	})
