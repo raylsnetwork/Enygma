@@ -12,13 +12,15 @@ package tests
 // The steps so far: keys (the Sender's and Ana's spend and view keys), the
 // auditor's keys, the registration of both users, the Sender's shield, the
 // Sender's tag channel to Ana (and a second to a throwaway view key, which
-// Ana's key fails to open), and the Sender's payment to Ana (one Payment
-// proof, sent from the Sender's own account), its Groth16 proof opened up (L and the pairing check, and the
-// Verifier's answer), the payment's tag (published by the Sender in the block
-// after settlement, on the tag channel to Ana), Ana's discovery of her note (her scan of the Payment
+// Ana's key fails to open), the Sender's channel payment to Ana over it (one
+// Payment proof binding the block, the tag and the sealed note, sent from
+// the Sender's own account), its Groth16 proof opened up (L and the pairing
+// check, and the Verifier's answer), the payment's tag and sealed note
+// recomputed, Ana's discovery of her note (her tag scan of the ChannelPayment
 // events), her partial withdrawal from that note (the same Payment circuit
 // with Message = 1), the auditor's recovery of her view key and opening of
-// her notes, and the observer's verdict (what the chain's bytes name).
+// her notes through the tag channel, and the observer's verdict (what the
+// chain's bytes name).
 //
 // Prerequisites: the stack shield_demo/run.sh --no-demo brings up (the
 // chain and a deployment, with its TagChannelRegistry, and the gnark server
@@ -170,11 +172,14 @@ type provedPayment struct {
 }
 
 // paidNote is Ana's note as the payment made it: its commitment, the
-// Sender's view of its opening, and the block that settled it.
+// Sender's view of its opening, the block that settled it, and the block b,
+// tag and sealed note it went over the tag channel with.
 type paidNote struct {
 	commitment, salt, amount, token *big.Int
 	block                           *big.Int
-	capsule, payload                []byte // the Payment event's ciphertexts, once the note is discovered
+	b                               uint64
+	tag                             [32]byte
+	ctxt                            []byte
 }
 
 // exitedNote is Ana's withdrawal as it settled: what left the pool, her
@@ -380,11 +385,11 @@ func TestProtocolPrimer(t *testing.T) {
 	var discovered *paidNote
 	// exit is Ana's settled withdrawal, whose change note the audit opens.
 	var exit *exitedNote
-	// toAnaChannel is the Sender's tag channel to Ana, which the payment's tag rides on.
+	// toAnaChannel is the Sender's tag channel to Ana, which the payment goes over.
 	var toAnaChannel *tagChannel
-	// tagBlock is the block the payment's tag landed in, which Ana's tag
-	// scan reaches.
-	var tagBlock uint64
+	// paidBoundTo is how channelPayment refused the payment's receipt with
+	// another tag, sealed note or block, which the tag step shows.
+	var paidBoundTo map[string]string
 
 	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
 		sender := users[0]
@@ -802,9 +807,9 @@ func TestProtocolPrimer(t *testing.T) {
 		toAnaChannel = &tagChannel{ss: ss, anaSS: anaSS, idx: idx, block: toAna.receipt.BlockNumber.Uint64()}
 	})
 
-	check("payment", "one Payment proof spends the Sender's note into Ana's and the change, and every constraint holds on the run's values and the chain", func(t *testing.T) {
-		if shielded == nil {
-			t.Fatal("no shielded note to spend: the shield check did not pass")
+	check("payment", "one channel payment spends the Sender's note into Ana's and the change, on the tag channel to Ana, its proof binding the block, the tag and the sealed note; every constraint holds on the run's values and the chain", func(t *testing.T) {
+		if shielded == nil || toAnaChannel == nil {
+			t.Fatal("no shielded note to spend, or no tag channel to Ana: the shield or channel check did not pass")
 		}
 		if !serverAvailable("localhost:8082") {
 			t.Fatal("the gnark server is not running on :8082 (shield_demo/run.sh --no-demo starts it)")
@@ -844,19 +849,54 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 		tree := big.NewInt(int64(mp.TreeNumber))
 
-		// The proof, from the gnark server, bound to this vault.
-		res, err := rpcore.NewPaymentClient("").BoundPaymentProof(
-			new(big.Int).SetBytes(vaultAddr.Bytes()), big.NewInt(0),
+		// Ana's note goes over the tag channel of step 5, for block b, the
+		// one the payment lands in: with nothing sent since, the next. The
+		// client library tags it, draws salt₀ at random and seals the
+		// opening under the tag channel's key for b (step 8 recomputes both).
+		b := head + 1
+		ch, err := tags.PrepareChannelPayment(toAnaChannel.ss, b, anaKeys.SpendKey, valuesOut[0], token)
+		if err != nil {
+			t.Fatalf("PrepareChannelPayment: %v", err)
+		}
+
+		// The proof, from the gnark server, bound to this vault and to b,
+		// the tag and the sealed note.
+		res, err := rpcore.NewPaymentClient("").BoundChannelPaymentProof(
+			new(big.Int).SetBytes(vaultAddr.Bytes()),
 			[]*big.Int{valueIn}, []rpcore.KeyPair{{PrivateKey: sk, PublicKey: sender.spend.PublicKey}}, []*big.Int{shielded.salt},
-			valuesOut, []*big.Int{anaKeys.SpendKey, senderKeys.SpendKey}, [][]byte{anaKeys.ViewKey, sender.view.EncapsKey},
+			valuesOut, []*big.Int{anaKeys.SpendKey, senderKeys.SpendKey},
+			rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
 			primerDepth, []*rpcore.MerkleProof{mp}, []*big.Int{tree}, token)
 		if err != nil {
-			t.Fatalf("BoundPaymentProof: %v", err)
+			t.Fatalf("BoundChannelPaymentProof: %v", err)
 		}
 		pr := proofStringsToOnchain(t, res.Proof)
 		receipt := ProofReceipt{
 			Proof:     SnarkProof{A: G1Point{X: pr.A.X, Y: pr.A.Y}, B: G2Point{X: pr.B.X, Y: pr.B.Y}, C: G1Point{X: pr.C.X, Y: pr.C.Y}},
 			Statement: res.ContractStatement(), NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(2),
+		}
+		dvp := bindContract(t, client, dvpAddr, dvpABI)
+		bN := new(big.Int).SetUint64(b)
+
+		// The receipt settles with its own block, tag and sealed note only:
+		// in the block it is for, each other one reverts.
+		otherTag := ch.Tag
+		otherTag[31] ^= 1
+		otherCtxt := slices.Clone(ch.Ctxt)
+		otherCtxt[len(otherCtxt)-1] ^= 1
+		boundTo := map[string]string{}
+		for name, args := range map[string][]any{
+			"otherTag":   {receipt, vaultID, bN, otherTag, ch.Ctxt},
+			"otherCtxt":  {receipt, vaultID, bN, ch.Tag, otherCtxt},
+			"otherBlock": {receipt, vaultID, new(big.Int).Sub(bN, big.NewInt(1)), ch.Tag, ch.Ctxt},
+		} {
+			var out []any
+			err := dvp.Call(&bind.CallOpts{Context: ctx, Pending: true, From: sender.addr}, &out, "channelPayment", args...)
+			if err == nil || !strings.Contains(err.Error(), "CiphertextHashMismatch") {
+				t.Errorf("channelPayment with %s: %v, want CiphertextHashMismatch", name, err)
+				continue
+			}
+			boundTo[name] = "CiphertextHashMismatch"
 		}
 
 		// The Sender sends it from their own account: no relayer.
@@ -864,15 +904,22 @@ func TestProtocolPrimer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		mined, err := submitPayment(client, auth, dvpABI, dvpAddr, receipt, vaultID, res.CipherText, res.EncTxData)
+		tx, err := dvp.Transact(auth, "channelPayment", receipt, vaultID, bN, ch.Tag, ch.Ctxt)
+		if err != nil {
+			t.Fatalf("channelPayment: %v", err)
+		}
+		mined, err := bind.WaitMined(ctx, client, tx)
 		if err != nil || mined.Status != types.ReceiptStatusSuccessful {
-			t.Fatalf("payment: receipt %v, err %v", mined, err)
+			t.Fatalf("channelPayment: receipt %v, err %v", mined, err)
 		}
 		block := mined.BlockNumber
+		if block.Uint64() != b {
+			t.Fatalf("the payment landed in block %s, want b = %d, the block its tag is for", block, b)
+		}
 
 		// The payment as the chain holds it: its calldata's statement is the
 		// proof's public inputs, and nothing else of the witness.
-		_, from, args := calldataOf(t, client, dvpABI, mined.TxHash, "payment", sender.addr, dvpAddr)
+		_, from, args := calldataOf(t, client, dvpABI, mined.TxHash, "channelPayment", sender.addr, dvpAddr)
 		cd := *abi.ConvertType(args[0], new(ProofReceipt)).(*ProofReceipt)
 		st := cd.Statement
 		if len(st) != layout.PaymentLen || len(st) != len(paymentPublic) {
@@ -883,8 +930,14 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 		message, stTree, root, nf := st[layout.PaymentMessageOffset], st[layout.PaymentTreeNumbersOffset], st[layout.PaymentMerkleRootsOffset], st[layout.PaymentNullifiersOffset]
 		c0, c1, contract := st[layout.PaymentCommitmentsOutOffset], st[layout.PaymentCommitmentsOutOffset+1], st[layout.PaymentContractAddressOffset]
-		if !bytes.Equal(args[2].([]byte), res.CipherText) || !bytes.Equal(args[3].([]byte), res.EncTxData) || args[1].(*big.Int).Cmp(vaultID) != 0 {
-			t.Error("the calldata's vault id and Ana's ciphertexts are not the ones sent")
+		cdTag, cdCtxt := args[3].([32]byte), args[4].([]byte)
+		if args[1].(*big.Int).Cmp(vaultID) != 0 || args[2].(*big.Int).Cmp(bN) != 0 || cdTag != ch.Tag || !bytes.Equal(cdCtxt, ch.Ctxt) {
+			t.Error("the calldata's vault id, block, tag and sealed note are not the ones sent")
+		}
+		// CiphertextHash: the proof's eighth public input is h, the hash of
+		// b, the tag and the sealed note that channelPayment recomputes.
+		if h := channelPaymentHash(t, b, cdTag, cdCtxt); h.Cmp(st[layout.PaymentCiphertextHashOffset]) != 0 || h.Cmp(rpcore.ChannelPaymentCiphertextHash(b, cdTag, cdCtxt)) != 0 {
+			t.Errorf("h = %s, the statement's CiphertextHash %s", h, st[layout.PaymentCiphertextHashOffset])
 		}
 
 		// hash is Poseidon, failing the test on an error.
@@ -951,12 +1004,16 @@ func TestProtocolPrimer(t *testing.T) {
 			t.Error("the nullifier is not unspent before the payment and spent after it")
 		}
 		// Spend-once: the same receipt, sent again, reverts.
-		if _, err := bindContract(t, client, dvpAddr, dvpABI).Transact(&bind.TransactOpts{From: auth.From, Signer: auth.Signer, NoSend: true, Context: ctx},
-			"payment", receipt, vaultID, res.CipherText, res.EncTxData); err == nil {
+		if _, err := dvp.Transact(&bind.TransactOpts{From: auth.From, Signer: auth.Signer, NoSend: true, Context: ctx},
+			"channelPayment", receipt, vaultID, bN, ch.Tag, ch.Ctxt); err == nil {
 			t.Error("the spent receipt would settle a second time")
 		}
-		// The output commitments: Ana's (output 0) and the Sender's change
-		// (output 1), both inserted by the settlement.
+		// The output commitments: Ana's (output 0), with the salt the
+		// Sender drew and sealed, and the Sender's change (output 1), both
+		// inserted by the settlement.
+		if res.SaltB.Cmp(ch.Salt) != 0 {
+			t.Errorf("the proof's salt₀ %s is not the one sealed for Ana, %s", res.SaltB, ch.Salt)
+		}
 		if want := hash(anaKeys.SpendKey, res.SaltB, valuesOut[0], token); want.Cmp(c0) != 0 {
 			t.Errorf("Poseidon(pk_Ana, salt0, v0, token) = %s, CommitmentOut[0] %s", want, c0)
 		}
@@ -969,12 +1026,15 @@ func TestProtocolPrimer(t *testing.T) {
 		if logged := commitmentsIn(mined.Logs, vaultAddr); len(logged) != 2 || logged[0].Cmp(c0) != 0 || logged[1].Cmp(c1) != 0 {
 			t.Errorf("the settlement's Commitment events %v, want CommitmentOut[0] and [1]", logged)
 		}
-		// The Payment event for Ana: her commitment, beside the capsule and
-		// the sealed payload of the calldata.
-		events := paymentEventsIn(t, mined.Logs, dvpAddr)
-		if len(events) != 1 || events[0].Commitment.Cmp(c0) != 0 ||
-			!bytes.Equal(events[0].CipherText, res.CipherText) || !bytes.Equal(events[0].EncTxData, res.EncTxData) {
-			t.Errorf("Payment events %v, want one, for Ana's commitment with the calldata's ctxt and encTxData", events)
+		// The ChannelPayment event for Ana: b and the tag as topics, beside
+		// her commitment and the sealed note. No Payment event, so no capsule.
+		events := channelPaymentsIn(t, mined.Logs, dvpAddr)
+		if len(events) != 1 || events[0].vaultID.Cmp(vaultID) != 0 || events[0].block != b || events[0].tag != cdTag ||
+			events[0].commitment.Cmp(c0) != 0 || !bytes.Equal(events[0].ctxt, cdCtxt) {
+			t.Errorf("ChannelPayment events %+v, want one, for b, the tag, Ana's commitment and the calldata's sealed note", events)
+		}
+		if n := len(paymentEventsIn(t, mined.Logs, dvpAddr)); n != 0 {
+			t.Errorf("the channel payment emitted %d Payment events, want none", n)
 		}
 		// Conservation.
 		if sum := new(big.Int).Add(valuesOut[0], valuesOut[1]); sum.Cmp(valueIn) != 0 {
@@ -1029,30 +1089,39 @@ func TestProtocolPrimer(t *testing.T) {
 			"message":         message.String(),
 			"contractAddress": contract.String(),
 			"vault":           vaultAddr.Hex(),
+			"b":               fmt.Sprint(b),
+			"channelIdx":      fmt.Sprint(toAnaChannel.idx),
+			"tag":             hexutil.Encode(cdTag[:]),
+			"ctxt":            hexutil.Encode(cdCtxt),
+			"ciphertextHash":  st[layout.PaymentCiphertextHashOffset].String(),
+			"window":          fmt.Sprint(tags.ChannelPaymentWindow),
 		})
-		label := "payment · Sender"
+		label := "channelPayment · Sender"
 		ledger := []ledgerItem{
 			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
 			{Tx: label, Field: "vaultId", Value: vaultID.String()},
+			{Tx: label, Field: "blockNumber", Value: bN.String()},
+			{Tx: label, Field: "tag", Value: hexutil.Encode(cdTag[:])},
+			{Tx: label, Field: "ctxt", Value: hexutil.Encode(cdCtxt)},
 		}
 		for _, in := range paymentPublic {
-			ledger = append(ledger, ledgerItem{Tx: "payment · public inputs", Field: in.name, Value: st[in.offset].String()})
+			ledger = append(ledger, ledgerItem{Tx: "channelPayment · public inputs", Field: in.name, Value: st[in.offset].String()})
 		}
 		ledger = append(ledger,
 			ledgerItem{Tx: label, Field: "proof", Value: strings.Join(res.Proof, " ")},
-			ledgerItem{Tx: label, Field: "ctxt", Value: hexutil.Encode(res.CipherText)},
-			ledgerItem{Tx: label, Field: "encTxData", Value: hexutil.Encode(res.EncTxData)},
 			ledgerItem{Tx: "Nullifier event", Field: "nullifier", Value: nf.String()},
 			ledgerItem{Tx: "Commitment event", Field: "commitment", Value: c0.String()},
 			ledgerItem{Tx: "Commitment event", Field: "leaf", Value: leafOf(c0)},
 			ledgerItem{Tx: "Commitment event", Field: "commitment", Value: c1.String()},
 			ledgerItem{Tx: "Commitment event", Field: "leaf", Value: leafOf(c1)},
-			ledgerItem{Tx: "Payment event", Field: "commitmentOut", Value: c0.String()},
-			ledgerItem{Tx: "Payment event", Field: "ctxt", Value: hexutil.Encode(res.CipherText)},
-			ledgerItem{Tx: "Payment event", Field: "encTxData", Value: hexutil.Encode(res.EncTxData)},
+			ledgerItem{Tx: "ChannelPayment event", Field: "blockNumber", Value: bN.String()},
+			ledgerItem{Tx: "ChannelPayment event", Field: "tag", Value: hexutil.Encode(cdTag[:])},
+			ledgerItem{Tx: "ChannelPayment event", Field: "commitment", Value: c0.String()},
+			ledgerItem{Tx: "ChannelPayment event", Field: "ctxt", Value: hexutil.Encode(cdCtxt)},
 		)
 		data.Steps["payment"] = primerEntry{Values: v, Ledger: ledger}
-		paid = &paidNote{commitment: c0, salt: res.SaltB, amount: valuesOut[0], token: token, block: block}
+		paid = &paidNote{commitment: c0, salt: res.SaltB, amount: valuesOut[0], token: token, block: block, b: b, tag: cdTag, ctxt: cdCtxt}
+		paidBoundTo = boundTo
 		proved = &provedPayment{proof: cd.Proof, statement: st, block: block}
 	})
 
@@ -1182,91 +1251,32 @@ func TestProtocolPrimer(t *testing.T) {
 		data.Steps["proof"] = primerEntry{Values: v, Ledger: []ledgerItem{}}
 	})
 
-	check("tag", "the Sender publishes the payment's tag in the block after settlement: t_b = Poseidon(b, pk_spend^Ana, ss mod p) and ct = AES-256-GCM under k_b = HKDF(ss, \"enygma-block-key-v1\" ‖ b ‖ pk_spend^Ana) of amount ‖ token ‖ salt₀; Ana's tag for b matches it alone and ct opens to her note; the reverse direction's tag and key differ", func(t *testing.T) {
+	check("tag", "the payment's tag t = Poseidon(\"enygma-tag-v1\", ss mod p, b, pk_spend^Ana) and sealed note ctxt = AES-256-GCM under k_b = HKDF(ss, \"enygma-block-key-v1\" ‖ b ‖ pk_spend^Ana) of amount ‖ token ‖ salt₀ are what the payment carried, and h = keccak256(abi.encode(keccak256(\"enygma-channel-payment-v1\"), b, t, ctxt)) mod p is its CiphertextHash; Ana's tag for b matches it alone and ctxt opens to her note; the reverse direction's tag and key differ", func(t *testing.T) {
 		if paid == nil || toAnaChannel == nil {
 			t.Fatal("no payment or tag channel to Ana: the payment or channel check did not pass")
 		}
 		sender, ana := users[0], users[1]
-		ss := toAnaChannel.ss
-		tagsAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
-		tagsABI := privateTagsABI(t, "TagRegistry")
-		registry := bindContract(t, client, tagsAddr, tagsABI)
-
-		// The tag lands in the block after the payment's: with nothing sent
-		// since, the next transaction is mined in it.
-		head, err := client.BlockNumber(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if head != paid.block.Uint64() {
-			t.Fatalf("the chain is at block %d, past the payment's block %s: the tag can't land in the block after settlement", head, paid.block)
-		}
-		b := head + 1
-
-		// The Sender builds the tag and its payload with the client library,
-		// and sends publishTag from their own account (no relayer).
-		libTag, err := tags.DeriveTag(b, ana.spend.PublicKey, ss)
-		if err != nil {
-			t.Fatal(err)
-		}
-		plain := make([]byte, 96)
-		paid.amount.FillBytes(plain[:32])
-		paid.token.FillBytes(plain[32:64])
-		paid.salt.FillBytes(plain[64:])
-		libCt, err := tags.EncryptPayload(tags.DeriveBlockKey(ss, b, ana.spend.PublicKey), plain)
-		if err != nil {
-			t.Fatal(err)
-		}
-		auth, err := bind.NewKeyedTransactorWithChainID(sender.key, big.NewInt(hardhatChainID))
-		if err != nil {
-			t.Fatal(err)
-		}
-		tx, err := registry.Transact(auth, "publishTag", libTag, libCt)
-		if err != nil {
-			t.Fatalf("publishTag: %v", err)
-		}
-		r, err := bind.WaitMined(ctx, client, tx)
-		if err != nil || r.Status != types.ReceiptStatusSuccessful {
-			t.Fatalf("publishTag: receipt %v, err %v", r, err)
-		}
-		if r.BlockNumber.Uint64() != b {
-			t.Fatalf("publishTag landed in block %s, want %d, the block after the payment's", r.BlockNumber, b)
-		}
-
-		// The tag as the chain holds it: the calldata, and the TagPublished
-		// event naming the block, the tag and the Sender as publisher.
-		_, from, args := calldataOf(t, client, tagsABI, r.TxHash, "publishTag", sender.addr, tagsAddr)
-		cdTag, ct := args[0].([32]byte), args[1].([]byte)
-		if cdTag != libTag || !bytes.Equal(ct, libCt) {
-			t.Error("the calldata's tag and ctxt are not the ones built")
-		}
-		var published int
-		for _, l := range r.Logs {
-			if l.Address != tagsAddr || len(l.Topics) != 4 || l.Topics[0] != tagPublishedSig {
-				continue
-			}
-			published++
-			vals, err := tagsABI.Events["TagPublished"].Inputs.NonIndexed().Unpack(l.Data)
-			if err != nil || len(vals) != 1 {
-				t.Fatalf("decode TagPublished: %v", err)
-			}
-			if l.Topics[1].Big().Uint64() != b || l.Topics[2] != common.Hash(cdTag) || common.BytesToAddress(l.Topics[3].Bytes()) != sender.addr || !bytes.Equal(vals[0].([]byte), ct) {
-				t.Error("the TagPublished event is not block b's tag and ctxt, published by the Sender")
-			}
-		}
-		if published != 1 {
-			t.Fatalf("%d TagPublished events, want 1", published)
-		}
+		ss, b := toAnaChannel.ss, paid.b
+		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 
 		// Recomputed with iden3's Poseidon and the standard library: ss
-		// reduced into BN254's scalar field, the tag over (b, pk_spend^Ana,
-		// ss mod p); k_b by HKDF-SHA256 with info "enygma-block-key-v1" ‖
-		// uint64_be(b) ‖ be32(pk_spend^Ana); ct = nonce ‖ AES-256-GCM, no AAD.
+		// reduced into BN254's scalar field, the tag over the domain, ss mod p,
+		// b and pk_spend^Ana; k_b by HKDF-SHA256 with info
+		// "enygma-block-key-v1" ‖ uint64_be(b) ‖ be32(pk_spend^Ana); ctxt =
+		// nonce ‖ AES-256-GCM, no AAD.
+		domain := new(big.Int).SetBytes([]byte("enygma-tag-v1"))
 		ssField := toField(ss)
 		bInt := new(big.Int).SetUint64(b)
-		tb := poseidonOf(t, bInt, ana.spend.PublicKey, ssField)
-		if common.BigToHash(tb) != common.Hash(cdTag) {
-			t.Errorf("Poseidon(b, pk_spend^Ana, ss mod p) = %x, the published tag %x", tb, cdTag)
+		tagFor := func(pk *big.Int, ss []byte) common.Hash {
+			t.Helper()
+			return common.BigToHash(poseidonOf(t, domain, toField(ss), bInt, pk))
+		}
+		tb := tagFor(ana.spend.PublicKey, ss)
+		if tb != common.Hash(paid.tag) {
+			t.Errorf("Poseidon(domain, ss mod p, b, pk_spend^Ana) = %x, the payment's tag %x", tb, paid.tag)
+		}
+		if lib, err := tags.ChannelTag(ss, b, ana.spend.PublicKey); err != nil || common.Hash(lib) != tb {
+			t.Errorf("the library's ChannelTag is %x (err %v), the recomputed tag %x", lib, err, tb)
 		}
 		// infoFor is k_b's HKDF info for the payee whose spend key is pk.
 		infoFor := func(pk *big.Int) []byte {
@@ -1285,318 +1295,219 @@ func TestProtocolPrimer(t *testing.T) {
 		if lib := tags.DeriveBlockKey(ss, b, ana.spend.PublicKey); !bytes.Equal(lib[:], kb) {
 			t.Error("the library's block key is not HKDF-SHA256(ss, \"enygma-block-key-v1\" ‖ b ‖ pk_spend)")
 		}
+		ct := paid.ctxt
 		gcm := newGCM(t, kb)
 		nonce, sealed := ct[:gcm.NonceSize()], ct[gcm.NonceSize():]
 		opened, err := gcm.Open(nil, nonce, sealed, nil)
-		if err != nil || !bytes.Equal(opened, plain) {
-			t.Fatalf("ct opens under k_b to %x (err %v), want amount ‖ token ‖ salt₀", opened, err)
+		if err != nil || len(opened) != 96 {
+			t.Fatalf("ctxt opens under k_b to %x (err %v), want amount ‖ token ‖ salt₀", opened, err)
 		}
 		amount, token, salt := new(big.Int).SetBytes(opened[:32]), new(big.Int).SetBytes(opened[32:64]), new(big.Int).SetBytes(opened[64:])
+		if amount.Cmp(paid.amount) != 0 || token.Cmp(paid.token) != 0 || salt.Cmp(paid.salt) != 0 {
+			t.Errorf("ctxt opens to (%s, %s, salt %s), the payment's output 0 is (%s, %s, salt %s)", amount, token, salt, paid.amount, paid.token, paid.salt)
+		}
 		if c := poseidonOf(t, ana.spend.PublicKey, salt, amount, token); c.Cmp(paid.commitment) != 0 {
 			t.Errorf("the opening hashes to %s, Ana's commitment C₀ is %s", c, paid.commitment)
 		}
 
+		// h, recomputed by hand: the domain word, then b, the tag and ctxt
+		// ABI-encoded, keccak256'd and reduced mod p. It is the proof's
+		// CiphertextHash, so the proof holds for this b, tag and ctxt only.
+		channelDomain := crypto.Keccak256Hash([]byte("enygma-channel-payment-v1"))
+		h := channelPaymentHash(t, b, paid.tag, ct)
+		if h.Cmp(proved.statement[layout.PaymentCiphertextHashOffset]) != 0 {
+			t.Errorf("h = %s, the payment's CiphertextHash %s", h, proved.statement[layout.PaymentCiphertextHashOffset])
+		}
+		if len(paidBoundTo) != 3 {
+			t.Fatalf("the payment check tried %d other bindings, want 3", len(paidBoundTo))
+		}
+
 		// The reverse direction, Ana paying the Sender in the same block on the
 		// same tag channel: the Sender's spend key in Ana's place gives
-		// another tag and another key, which does not open ct.
-		reverse := poseidonOf(t, bInt, sender.spend.PublicKey, ssField)
-		if reverse.Cmp(tb) == 0 {
+		// another tag and another key, which does not open ctxt.
+		reverse := tagFor(sender.spend.PublicKey, ss)
+		if reverse == tb {
 			t.Error("the reverse direction's tag is the tag")
 		}
-		if lib, _ := tags.DeriveTag(b, sender.spend.PublicKey, ss); common.BigToHash(reverse) != common.Hash(lib) {
-			t.Error("the library's reverse tag differs from Poseidon(b, pk_spend^Sender, ss mod p)")
-		}
 		if _, err := newGCM(t, blockKey(sender.spend.PublicKey)).Open(nil, nonce, sealed, nil); err == nil {
-			t.Error("the reverse direction's block key opens ct")
+			t.Error("the reverse direction's block key opens ctxt")
 		}
 
 		// Ana's side: from her own Decaps of the tag channel's record, her
-		// tag for block b; of block b's entries in TagRegistry, it matches
-		// the Sender's alone. The library's scan agrees, and the Sender's
-		// scan for tags to them finds nothing: their own tag is not theirs.
-		anaTag := common.BigToHash(poseidonOf(t, bInt, ana.spend.PublicKey, toField(toAnaChannel.anaSS)))
-		entries, err := tags.GetEntries(client, tagsAddr, b)
-		if err != nil {
-			t.Fatal(err)
-		}
+		// tag for b; of the ChannelPayment events for b, it matches the
+		// Sender's alone. The library's scan agrees, and the Sender's scan
+		// for payments to them finds nothing: their own tag is not theirs.
+		anaTag := tagFor(ana.spend.PublicKey, toAnaChannel.anaSS)
+		events := channelPaymentsFor(t, ctx, client, dvpAddr, b)
 		matched := 0
-		for _, e := range entries {
-			if common.Hash(e.Tag) == anaTag {
+		for _, e := range events {
+			if e.tag == anaTag {
 				matched++
-				if e.Publisher != sender.addr || !bytes.Equal(e.Ctxt, ct) {
-					t.Error("Ana's matching entry is not the Sender's tag and ctxt")
+				if e.commitment.Cmp(paid.commitment) != 0 || !bytes.Equal(e.ctxt, ct) {
+					t.Error("Ana's matching event is not the payment's commitment and sealed note")
 				}
 			}
 		}
 		if matched != 1 {
-			t.Errorf("Ana's tag matches %d of block %d's %d entries, want 1", matched, b, len(entries))
+			t.Errorf("Ana's tag matches %d of block %d's %d ChannelPayment events, want 1", matched, b, len(events))
 		}
-		scanned, err := tags.ScanBlock(client, tagsAddr, b, []tags.Channel{{SharedSecret: toAnaChannel.anaSS, PkSpend: ana.spend.PublicKey}})
-		if err != nil || len(scanned) != 1 {
-			t.Fatalf("Ana's ScanBlock of block %d: %d matches (err %v), want 1", b, len(scanned), err)
+		found, err := tags.ScanChannelPayments(ctx, client, dvpAddr, b, []tags.Channel{{SharedSecret: toAnaChannel.anaSS, PkSpend: ana.spend.PublicKey}})
+		if err != nil || len(found) != 1 {
+			t.Fatalf("Ana's ScanChannelPayments for block %d: %d matches (err %v), want 1", b, len(found), err)
 		}
-		note, err := tags.DecryptPaymentNote(toAnaChannel.anaSS, ana.spend.PublicKey, scanned[0].BlockNumber, scanned[0].Entry.Ctxt)
+		note, err := found[0].Open()
 		if err != nil || note.Amount.Cmp(paid.amount) != 0 || note.TokenId.Cmp(paid.token) != 0 || note.Salt.Cmp(paid.salt) != 0 {
-			t.Errorf("DecryptPaymentNote = %+v (err %v), want Ana's note", note, err)
+			t.Errorf("Open = %+v (err %v), want Ana's note", note, err)
 		}
-		if own, err := tags.ScanBlock(client, tagsAddr, b, []tags.Channel{{SharedSecret: ss, PkSpend: sender.spend.PublicKey}}); err != nil || len(own) != 0 {
-			t.Errorf("the Sender's own scan of block %d: %d matches (err %v), want 0", b, len(own), err)
+		if own, err := tags.ScanChannelPayments(ctx, client, dvpAddr, b, []tags.Channel{{SharedSecret: ss, PkSpend: sender.spend.PublicKey}}); err != nil || len(own) != 0 {
+			t.Errorf("the Sender's own scan for block %d: %d matches (err %v), want 0", b, len(own), err)
 		}
 
-		v := map[string]string{
-			"registry":     tagsAddr.Hex(),
-			"msgSender":    from.Hex(),
-			"tx":           r.TxHash.Hex(),
-			"b":            fmt.Sprint(b),
-			"paymentBlock": paid.block.String(),
-			"channelIdx":   fmt.Sprint(toAnaChannel.idx),
-			"ss":           hexutil.Encode(ss),
-			"ssField":      ssField.String(),
-			"pkSpend":      ana.spend.PublicKey.String(),
-			"tag":          hexutil.Encode(cdTag[:]),
-			"info":         hexutil.Encode(infoFor(ana.spend.PublicKey)),
-			"kb":           hexutil.Encode(kb),
-			"plaintext":    hexutil.Encode(opened),
-			"amount":       amount.String(),
-			"token":        token.String(),
-			"salt":         salt.String(),
-			"nonce":        hexutil.Encode(nonce),
-			"sealed":       hexutil.Encode(sealed),
-			"ct":           hexutil.Encode(ct),
-			"commitment":   paid.commitment.String(),
-			"senderPk":     sender.spend.PublicKey.String(),
-			"reverseTag":   hexutil.Encode(common.BigToHash(reverse).Bytes()),
-			"reverseOpen":  "⊥",
-			"anaTag":       anaTag.Hex(),
-			"entries":      fmt.Sprint(len(entries)),
-			"matched":      fmt.Sprint(matched),
-		}
-		tagBlock = b
-		label := "publishTag · Sender"
-		data.Steps["tag"] = primerEntry{Values: v, Ledger: []ledgerItem{
-			{Tx: label, Field: "msg.sender", Value: from.Hex(), MsgSender: true},
-			{Tx: label, Field: "tag", Value: hexutil.Encode(cdTag[:])},
-			{Tx: label, Field: "ctxt", Value: hexutil.Encode(ct)},
-		}}
+		data.Steps["tag"] = primerEntry{Values: map[string]string{
+			"b":             fmt.Sprint(b),
+			"minedIn":       paid.block.String(),
+			"window":        fmt.Sprint(tags.ChannelPaymentWindow),
+			"channelIdx":    fmt.Sprint(toAnaChannel.idx),
+			"domain":        domain.String(),
+			"ss":            hexutil.Encode(ss),
+			"ssField":       ssField.String(),
+			"pkSpend":       ana.spend.PublicKey.String(),
+			"tag":           tb.Hex(),
+			"info":          hexutil.Encode(infoFor(ana.spend.PublicKey)),
+			"kb":            hexutil.Encode(kb),
+			"plaintext":     hexutil.Encode(opened),
+			"amount":        amount.String(),
+			"token":         token.String(),
+			"salt":          salt.String(),
+			"nonce":         hexutil.Encode(nonce),
+			"sealed":        hexutil.Encode(sealed),
+			"ct":            hexutil.Encode(ct),
+			"commitment":    paid.commitment.String(),
+			"channelDomain": channelDomain.Hex(),
+			"h":             h.String(),
+			"otherTag":      paidBoundTo["otherTag"],
+			"otherCtxt":     paidBoundTo["otherCtxt"],
+			"otherBlock":    paidBoundTo["otherBlock"],
+			"senderPk":      sender.spend.PublicKey.String(),
+			"reverseTag":    reverse.Hex(),
+			"reverseOpen":   "⊥",
+			"anaTag":        anaTag.Hex(),
+			"events":        fmt.Sprint(len(events)),
+			"matched":       fmt.Sprint(matched),
+		}, Ledger: []ledgerItem{}}
 	})
 
-	check("discovery", "Ana trial-decrypts every Payment event's ciphertext with her view key, opens exactly her note, and its opening hashes to its commitment; her tag scan from the tag channel's block to the tag's matches one entry, which opens to the same note", func(t *testing.T) {
-		if paid == nil {
-			t.Fatal("no note paid to Ana: the payment check did not pass")
+	check("discovery", "Ana's tag scan, from the tag channel's block to the chain's head, computes one tag per tag channel per block, matches one ChannelPayment event, and its sealed note opens to an opening that hashes to its commitment; a sealed note claiming another amount opens and is refused", func(t *testing.T) {
+		if paid == nil || toAnaChannel == nil {
+			t.Fatal("no note paid to Ana, or no tag channel: the payment or channel check did not pass")
 		}
-		sender, ana := users[0], users[1]
+		ana := users[1]
 		dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 
-		// Every Payment event EnygmaDvp has emitted, up to the payment's block:
-		// Ana's wallet cannot tell which is hers, so it reads them all.
-		events := paymentEventsUpTo(t, ctx, client, dvpAddr, paid.block)
-		var mine *dvpcore.OnChainErc20Event
-		for i := range events {
-			if events[i].Commitment.Cmp(paid.commitment) == 0 {
-				mine = &events[i]
-			}
-		}
-		if mine == nil {
-			t.Fatalf("no Payment event for Ana's commitment %s among %d", paid.commitment, len(events))
-		}
-		capsule, payload := mine.CipherText, mine.EncTxData
-
-		// The encryption, undone with Ana's view key: the capsule gives back
-		// the Sender's shared secret, whose HKDF outputs are the note's salt
-		// and the payload's key; the payload is token ‖ amount.
-		if len(capsule) != mlkem.CiphertextSize768 {
-			t.Errorf("capsule is %d bytes, want %d", len(capsule), mlkem.CiphertextSize768)
-		}
-		anaOpen := trialOpen(t, ana.view.DecapsKey, capsule, payload)
-		if !anaOpen.ok {
-			t.Fatal("Ana's view key does not open the Payment event addressed to her")
-		}
-		if len(anaOpen.ss) != mlkem.SharedKeySize || len(anaOpen.sealed) != 64+16 || len(anaOpen.plain) != 64 {
-			t.Errorf("ss %d bytes, ct‖tag %d, plaintext %d: want 32, 80 and 64", len(anaOpen.ss), len(anaOpen.sealed), len(anaOpen.plain))
-		}
-		token, amount := anaOpen.tokenAmount()
-		if token.Cmp(paid.token) != 0 || amount.Cmp(paid.amount) != 0 {
-			t.Errorf("the payload opens to token %s, amount %s; the Sender paid token %s, amount %s", token, amount, paid.token, paid.amount)
-		}
-		salt := toField(anaOpen.saltBytes)
-		if salt.Cmp(paid.salt) != 0 {
-			t.Errorf("HKDF(ss, \"note salt\") mod p = %s, the Sender's salt_0 %s", salt, paid.salt)
-		}
-		// The client library's decryption agrees.
-		if libToken, libAmount, err := rpcore.DecryptPayload(anaOpen.key, payload); err != nil || libToken.Cmp(token) != 0 || libAmount.Cmp(amount) != 0 {
-			t.Errorf("DecryptPayload = (%v, %v, %v), want (%s, %s)", libToken, libAmount, err, token, amount)
-		}
-
-		// Ana checks the opening: Poseidon(pk_spend, salt, amount, token) is
-		// the commitment the Payment event published.
-		commitment, err := poseidon.Hash([]*big.Int{ana.spend.PublicKey, salt, amount, token})
+		// Ana's wallet finds its tag channels once, by trying every record
+		// of TagChannelRegistry (step 5), then, for each block from the tag
+		// channel's on, computes one tag per tag channel and looks it up
+		// among the ChannelPayment events for that block.
+		records, channels := scanTagChannels(t, client, receipts, ana.view.DecapsKey, "Ana's view key", toAnaChannel.idx)
+		mine := []tags.Channel{{SharedSecret: channels[0].SharedSecret, PkSpend: ana.spend.PublicKey}}
+		head, err := client.BlockNumber(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if commitment.Cmp(mine.Commitment) != 0 {
-			t.Errorf("Poseidon(pk_Ana, salt, amount, token) = %s, the event's commitment %s", commitment, mine.Commitment)
-		}
-
-		// The scan: every ciphertext tried with Ana's key, only hers opens.
-		// ML-KEM's Decaps rejects implicitly (a capsule made for another key
-		// gives a pseudorandom secret, not an error), so it is AES-GCM's tag
-		// that fails.
-		opened := 0
-		for _, e := range events {
-			if trialOpen(t, ana.view.DecapsKey, e.CipherText, e.EncTxData).ok {
-				opened++
-				if e.Commitment.Cmp(paid.commitment) != 0 {
-					t.Errorf("Ana's key opened the Payment event for %s, not hers", e.Commitment)
-				}
-			}
-		}
-		if opened != 1 {
-			t.Errorf("Ana's key opened %d of %d Payment events, want exactly hers", opened, len(events))
-		}
-		// Under any other key, her ciphertext fails too: the Sender's view key
-		// decapsulates it to another secret, and the tag does not check.
-		if senderTry := trialOpen(t, sender.view.DecapsKey, capsule, payload); senderTry.ok || bytes.Equal(senderTry.ss, anaOpen.ss) {
-			t.Error("the Sender's view key opens Ana's ciphertext")
-		}
-		// The client library's scan finds the same note, once.
-		owned, err := dvpcore.ScanForErc20Notes(ana.view.DecapsKey, ana.spend.PublicKey, []dvpcore.OnChainErc20Event{*mine})
-		if err != nil || len(owned) != 1 || owned[0].Amount.Cmp(amount) != 0 || owned[0].SaltBField.Cmp(salt) != 0 {
-			t.Errorf("ScanForErc20Notes = %v (err %v), want Ana's note of %s", owned, err, amount)
-		}
-
-		// A mismatched ciphertext can't fool her: a payload sealed under her
-		// key that claims one more than the note holds opens, but its opening
-		// hashes elsewhere, and the library's scan refuses it.
-		forged, err := rpcore.EncryptPayload(anaOpen.key, token, new(big.Int).Add(amount, big.NewInt(1)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		forgedOpen := trialOpen(t, ana.view.DecapsKey, capsule, forged)
-		if !forgedOpen.ok {
-			t.Fatal("the forged payload, sealed under Ana's key, does not open")
-		}
-		claimed := new(big.Int).SetBytes(forgedOpen.plain[32:])
-		if h, _ := poseidon.Hash([]*big.Int{ana.spend.PublicKey, salt, claimed, token}); h.Cmp(mine.Commitment) == 0 {
-			t.Error("a payload claiming another amount hashes to the published commitment")
-		}
-		owned, rejected, err := dvpcore.ScanForErc20NotesWithRejected(ana.view.DecapsKey, ana.spend.PublicKey,
-			[]dvpcore.OnChainErc20Event{{Commitment: mine.Commitment, CipherText: capsule, EncTxData: forged}, *mine})
-		if err != nil || len(owned) != 1 || owned[0].Amount.Cmp(amount) != 0 {
-			t.Errorf("the mismatched ciphertext cost Ana her note: owned %v, err %v", owned, err)
-		}
-		if !slices.Equal(rejected, []dvpcore.RejectedEvent{{Index: 0, Reason: dvpcore.RejectCommitmentMismatch}}) {
-			t.Errorf("rejected = %v, want the mismatched ciphertext", rejected)
-		}
-		// A capsule of the wrong length costs any wallet only that event:
-		// Decaps rejects it, and the scan skips it and goes on.
-		short := dvpcore.OnChainErc20Event{Commitment: big.NewInt(1), CipherText: capsule[:len(capsule)-1], EncTxData: payload}
-		for name, w := range map[string]struct {
-			view  *mlkem.DecapsulationKey768
-			spend *big.Int
-			notes int
-		}{"Ana": {ana.view.DecapsKey, ana.spend.PublicKey, 1}, "the Sender": {sender.view.DecapsKey, sender.spend.PublicKey, 0}} {
-			owned, rejected, err := dvpcore.ScanForErc20NotesWithRejected(w.view, w.spend, []dvpcore.OnChainErc20Event{short, *mine})
-			if err != nil || len(owned) != w.notes {
-				t.Errorf("%s's scan with a short capsule: owned %v, err %v, want %d notes", name, owned, err, w.notes)
-			}
-			if !slices.Equal(rejected, []dvpcore.RejectedEvent{{Index: 0, Reason: dvpcore.RejectBadCapsule}}) {
-				t.Errorf("%s's scan: rejected = %v, want the short capsule", name, rejected)
-			}
-		}
-
-		// The way with a tag. Ana's wallet finds its tag channels once, by
-		// trying every record of TagChannelRegistry (step 5), then, for each
-		// block from the tag channel's on, computes one tag per tag channel
-		// and reads that block's entries once. One entry matches, in the
-		// tag's block, and one decryption opens it to this same note.
-		if toAnaChannel == nil || tagBlock == 0 {
-			t.Fatal("no tag channel or tag: the channel or tag check did not pass")
-		}
-		tagsAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
-		records, found := scanTagChannels(t, client, receipts, ana.view.DecapsKey, "Ana's view key", toAnaChannel.idx)
-		channels := []tags.Channel{{SharedSecret: found[0].SharedSecret, PkSpend: ana.spend.PublicKey}}
-		from, to := toAnaChannel.block, tagBlock
-		var tagsComputed, entriesRead int
-		var hits []tags.ScannedTag
+		from, to := toAnaChannel.block, head
+		domain := new(big.Int).SetBytes([]byte("enygma-tag-v1"))
+		var tagsComputed, eventsRead int
+		var hits []tags.FoundChannelPayment
 		for b := from; b <= to; b++ {
-			entries, err := tags.GetEntries(client, tagsAddr, b)
-			if err != nil {
-				t.Fatal(err)
-			}
-			entriesRead += len(entries)
-			// Recomputed with iden3's Poseidon, apart from the library's scan.
+			// Recomputed with iden3's Poseidon, and compared in memory with
+			// every ChannelPayment event for b, apart from the library's
+			// scan, which asks the node for its tags alone.
 			want := map[common.Hash]bool{}
-			for _, c := range channels {
-				want[common.BigToHash(poseidonOf(t, new(big.Int).SetUint64(b), c.PkSpend, toField(c.SharedSecret)))] = true
+			for _, c := range mine {
+				want[common.BigToHash(poseidonOf(t, domain, toField(c.SharedSecret), new(big.Int).SetUint64(b), c.PkSpend))] = true
 				tagsComputed++
 			}
-			mine := 0
-			for _, e := range entries {
-				if want[common.Hash(e.Tag)] {
-					mine++
+			events := channelPaymentsFor(t, ctx, client, dvpAddr, b)
+			eventsRead += len(events)
+			matched := 0
+			for _, e := range events {
+				if want[e.tag] {
+					matched++
 				}
 			}
-			scanned, err := tags.ScanBlock(client, tagsAddr, b, channels)
+			found, err := tags.ScanChannelPayments(ctx, client, dvpAddr, b, mine)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(scanned) != mine {
-				t.Errorf("block %d: the library's scan matched %d entries, the recomputed tags %d", b, len(scanned), mine)
+			if len(found) != matched {
+				t.Errorf("block %d: the library's scan matched %d payments, the recomputed tags %d", b, len(found), matched)
 			}
-			hits = append(hits, scanned...)
+			hits = append(hits, found...)
 		}
-		if len(hits) != 1 || hits[0].BlockNumber != tagBlock {
-			t.Fatalf("Ana's tag scan of blocks %d–%d matched %d entries, want 1, in block %d", from, to, len(hits), tagBlock)
+		if len(hits) != 1 || hits[0].BlockNumber != paid.b || hits[0].MinedIn != paid.block.Uint64() || hits[0].Commitment.Cmp(paid.commitment) != 0 {
+			t.Fatalf("Ana's tag scan of blocks %d–%d matched %d payments, want 1, for block %d", from, to, len(hits), paid.b)
 		}
-		// One decryption per matched entry, each opening to this same note.
-		decryptions := 0
-		for _, h := range hits {
-			byTag, err := tags.DecryptPaymentNote(found[0].SharedSecret, ana.spend.PublicKey, h.BlockNumber, h.Entry.Ctxt)
-			decryptions++
-			if err != nil || byTag.Amount.Cmp(amount) != 0 || byTag.TokenId.Cmp(token) != 0 || byTag.Salt.Cmp(salt) != 0 {
-				t.Errorf("the matched entry opens to %+v (err %v), want the note the trial decryption found", byTag, err)
-			}
+		hit := hits[0]
+		// One decryption, and the opening check: Poseidon(pk_spend, salt,
+		// amount, token) is the commitment the event published.
+		note, err := hit.Open()
+		if err != nil {
+			t.Fatalf("Ana's matched payment does not open to its commitment: %v", err)
 		}
-		// Trying every note over the same blocks: the Payment events in them.
-		window, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{dvpAddr},
-			Topics: [][]common.Hash{{paymentEventSig}}, FromBlock: new(big.Int).SetUint64(from), ToBlock: new(big.Int).SetUint64(to)})
+		commitment := poseidonOf(t, ana.spend.PublicKey, note.Salt, note.Amount, note.TokenId)
+		if commitment.Cmp(hit.Commitment) != 0 || note.Amount.Cmp(paid.amount) != 0 || note.Salt.Cmp(paid.salt) != 0 {
+			t.Errorf("Poseidon(pk_Ana, salt, amount, token) = %s, the event's commitment %s", commitment, hit.Commitment)
+		}
+
+		// A sealed note that lies can't fool her: one sealed under her k_b
+		// that claims one more than the note holds opens, but its opening
+		// hashes elsewhere, and the library refuses it.
+		forgedPlain := make([]byte, 96)
+		new(big.Int).Add(note.Amount, big.NewInt(1)).FillBytes(forgedPlain[:32])
+		note.TokenId.FillBytes(forgedPlain[32:64])
+		note.Salt.FillBytes(forgedPlain[64:])
+		forged, err := tags.EncryptPayload(tags.DeriveBlockKey(hit.SharedSecret, hit.BlockNumber, ana.spend.PublicKey), forgedPlain)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(window) < 1 || len(window) > len(events) {
-			t.Errorf("%d Payment events in blocks %d–%d, want the payment's among the %d", len(window), from, to, len(events))
+		lie := hit
+		lie.Ctxt = forged
+		claimed, err := tags.DecryptPaymentNote(hit.SharedSecret, ana.spend.PublicKey, hit.BlockNumber, forged)
+		if err != nil {
+			t.Fatalf("the forged note, sealed under Ana's k_b, does not open: %v", err)
+		}
+		if _, err := lie.Open(); err == nil {
+			t.Error("a sealed note claiming another amount opened to the published commitment")
+		}
+
+		// No capsule to try: the event holds the commitment and the sealed
+		// note, 12 + 96 + 16 bytes, and nothing made for Ana's view key.
+		if len(hit.Ctxt) != 12+96+16 {
+			t.Errorf("the sealed note is %d bytes, want 124", len(hit.Ctxt))
 		}
 
 		data.Steps["discovery"] = primerEntry{Values: map[string]string{
 			"channelRecords": fmt.Sprint(records),
-			"tagChannels":    fmt.Sprint(len(found)),
+			"tagChannels":    fmt.Sprint(len(channels)),
 			"tagFrom":        fmt.Sprint(from),
 			"tagTo":          fmt.Sprint(to),
 			"tagBlocks":      fmt.Sprint(to - from + 1),
 			"tagsComputed":   fmt.Sprint(tagsComputed),
-			"tagEntries":     fmt.Sprint(entriesRead),
-			"tagMatched":     fmt.Sprint(len(hits)),
-			"tagOpened":      fmt.Sprint(decryptions),
-			"windowEvents":   fmt.Sprint(len(window)),
-			"anaEk":          hexutil.Encode(ana.view.EncapsKey),
-			"capsule":        hexutil.Encode(capsule),
-			"ss":             hexutil.Encode(anaOpen.ss),
-			"saltBytes":      hexutil.Encode(anaOpen.saltBytes),
-			"salt":           salt.String(),
-			"key":            hexutil.Encode(anaOpen.key),
-			"nonce":          hexutil.Encode(anaOpen.nonce),
-			"sealed":         hexutil.Encode(anaOpen.sealed),
-			"encTxData":      hexutil.Encode(payload),
-			"plaintext":      hexutil.Encode(anaOpen.plain),
-			"token":          token.String(),
-			"amount":         amount.String(),
+			"events":         fmt.Sprint(eventsRead),
+			"matched":        fmt.Sprint(len(hits)),
+			"opened":         "1",
+			"b":              fmt.Sprint(hit.BlockNumber),
+			"minedIn":        fmt.Sprint(hit.MinedIn),
+			"tag":            hexutil.Encode(hit.Tag[:]),
+			"ctxt":           hexutil.Encode(hit.Ctxt),
+			"salt":           note.Salt.String(),
+			"token":          note.TokenId.String(),
+			"amount":         note.Amount.String(),
 			"pkSpend":        ana.spend.PublicKey.String(),
 			"commitment":     commitment.String(),
-			"scanned":        fmt.Sprint(len(events)),
-			"opened":         fmt.Sprint(opened),
-			"forged":         claimed.String(),
+			"forged":         claimed.Amount.String(),
 		}, Ledger: []ledgerItem{}}
-		discovered = &paidNote{commitment: commitment, salt: salt, amount: amount, token: token, block: paid.block, capsule: capsule, payload: payload}
+		discovered = &paidNote{commitment: commitment, salt: note.Salt, amount: note.Amount, token: note.TokenId, block: paid.block, b: hit.BlockNumber, tag: hit.Tag, ctxt: hit.Ctxt}
 	})
 
 	check("withdrawal", "Ana's partial withdrawal from her discovered note: the Payment circuit with Message = 1, its amount and recipient public, her change a private note, and every equation holds on the run's values and the chain", func(t *testing.T) {
@@ -1843,7 +1754,7 @@ func TestProtocolPrimer(t *testing.T) {
 		exit = &exitedNote{amount: amount, change: change, commitment: c1, nullifier: nf, ctI: ctI, ctII: ctII, tx: mined.TxHash, block: block}
 	})
 
-	check("audit", "the auditor recovers Ana's view key from the UserRegistry's audit ciphertexts, opens her notes with it, and finds no ciphertext for the Sender's change; the key opens the Sender's tag channel, whose c₂ declares the payment's msg.sender, and whose tag for b opens to C₀; records declaring someone else or no one open as declared", func(t *testing.T) {
+	check("audit", "the auditor recovers Ana's view key from the UserRegistry's audit ciphertexts; the key opens the Sender's tag channel, whose c₂ declares the payment's msg.sender and whose tag for b finds the payment, its sealed note opening to C₀; it opens her change note, and finds nothing of the Sender's change; records declaring someone else or no one open as declared", func(t *testing.T) {
 		if discovered == nil || exit == nil {
 			t.Fatal("no notes to audit: the discovery or withdrawal check did not pass")
 		}
@@ -1897,80 +1808,14 @@ func TestProtocolPrimer(t *testing.T) {
 			t.Error("another auditor's key opened Ana's audit ciphertexts")
 		}
 
-		// Her note, opened from the Payment event with the recovered key and
-		// checked against the commitment with her public, registered pk_spend.
-		note := trialOpen(t, recovered, discovered.capsule, discovered.payload)
-		if !note.ok {
-			t.Fatal("the recovered view key does not open the payment's note")
-		}
-		token, amount := note.tokenAmount()
-		salt := toField(note.saltBytes)
-		if token.Cmp(discovered.token) != 0 || amount.Cmp(discovered.amount) != 0 || salt.Cmp(discovered.salt) != 0 {
-			t.Errorf("the auditor opened (%s, %s, salt %s), Ana's note is (%s, %s, salt %s)", token, amount, salt, discovered.token, discovered.amount, discovered.salt)
-		}
-		commitment := poseidonOf(t, keys.SpendKey, salt, amount, token)
-		if commitment.Cmp(discovered.commitment) != 0 {
-			t.Errorf("Poseidon(registered pk_spend, salt, amount, token) = %s, the event's commitment %s", commitment, discovered.commitment)
-		}
-
-		// Her change, opened from the withdrawal's EncryptedNote ciphertexts.
-		// The auditor cross-checks it against the public amount; it cannot
-		// check it against C₁, whose salt needs her spend key.
-		changeOpen := trialOpen(t, recovered, exit.ctI, exit.ctII)
-		if !changeOpen.ok {
-			t.Fatal("the recovered view key does not open the change note's ciphertexts")
-		}
-		changeToken, changeAmount := changeOpen.tokenAmount()
-		if changeAmount.Cmp(exit.change) != 0 {
-			t.Errorf("the change note opens to %s, Ana kept %s", changeAmount, exit.change)
-		}
-		if got := new(big.Int).Sub(amount, exit.amount); got.Cmp(changeAmount) != 0 {
-			t.Errorf("her note less the public amount is %s, the change opened to %s", got, changeAmount)
-		}
-		if poseidonOf(t, keys.SpendKey, toField(changeOpen.saltBytes), changeAmount, changeToken).Cmp(exit.commitment) == 0 {
-			t.Error("the change commitment opens from the capsule's salt; the page says its salt needs sk_spend")
-		}
-
-		// The Sender's change is never published: the payment emits no
-		// EncryptedNote, and the Sender's own recovered key opens no Payment
-		// event, so the auditor has nothing of theirs to decrypt.
-		senderCapsule, senderAesCt, err := rpcore.LookupAuditCiphertexts(client, registryAddr, sender.addr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		senderKey, err := rpcore.AuditorDecryptViewKey(auditor.DecapsKey, senderCapsule, senderAesCt)
-		if err != nil {
-			t.Fatalf("the auditor cannot open the Sender's audit ciphertexts: %v", err)
-		}
-		events := paymentEventsUpTo(t, ctx, client, dvpAddr, discovered.block)
-		senderOpened := 0
-		for _, e := range events {
-			if trialOpen(t, senderKey, e.CipherText, e.EncTxData).ok {
-				senderOpened++
-			}
-		}
-		if senderOpened != 0 {
-			t.Errorf("the Sender's view key opened %d Payment events, want none", senderOpened)
-		}
-		payment, err := client.TransactionReceipt(ctx, common.HexToHash(data.Steps["payment"].Values["tx"]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, l := range payment.Logs {
-			if len(l.Topics) > 0 && l.Topics[0] == encryptedNoteSig {
-				t.Error("the payment emitted an EncryptedNote event; the page says the Sender's change is never published")
-			}
-		}
-
 		// The payer, named through the tag channel. Ana's recovered view key
 		// opens the records sealed to her, as her own wallet's scan does: the
 		// Sender's tag channel alone. Its c₂ gives the senderId the Sender
-		// declared, and its ss gives the tag that announced Ana's note.
-		if toAnaChannel == nil || tagBlock == 0 {
-			t.Fatal("no tag channel or tag: the channel or tag check did not pass")
+		// declared, and its ss gives the tag Ana's note went over.
+		if toAnaChannel == nil {
+			t.Fatal("no tag channel: the channel check did not pass")
 		}
 		channelsAddr := common.HexToAddress(receipts["TagChannelRegistry"].ContractAddress)
-		tagsAddr := common.HexToAddress(receipts["TagRegistry"].ContractAddress)
 		records, opened := scanTagChannels(t, client, receipts, recovered, "the recovered view key", toAnaChannel.idx)
 		var record []any
 		if err := bindContract(t, client, channelsAddr, tagChannelRegistryABI(t)).Call(&bind.CallOpts{}, &record, "getChannel", new(big.Int).SetUint64(toAnaChannel.idx)); err != nil {
@@ -1994,6 +1839,10 @@ func TestProtocolPrimer(t *testing.T) {
 			t.Errorf("the library's scan gives senderId %q from %s, the recomputation %q from %s", opened[0].SenderId, opened[0].Sender, senderID, recordSender)
 		}
 		// The declared identity is the payment's msg.sender: an honest payer.
+		payment, err := client.TransactionReceipt(ctx, common.HexToHash(data.Steps["payment"].Values["tx"]))
+		if err != nil {
+			t.Fatal(err)
+		}
 		payTx, _, err := client.TransactionByHash(ctx, payment.TxHash)
 		if err != nil {
 			t.Fatal(err)
@@ -2005,29 +1854,79 @@ func TestProtocolPrimer(t *testing.T) {
 		if senderID != payer.Hex() || recordSender != payer {
 			t.Errorf("c₂ declares %s and the record's sender is %s; the payment was sent by %s", senderID, recordSender, payer)
 		}
-		// The tag ties the tag channel to Ana's note: from ss and her
-		// registered pk_spend, the auditor's tag for the tag's block is an
-		// entry there, and its ct opens to the opening of C₀ it verified.
-		auditTag := common.BigToHash(poseidonOf(t, new(big.Int).SetUint64(tagBlock), keys.SpendKey, toField(chSS)))
-		entries, err := tags.GetEntries(client, tagsAddr, tagBlock)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var hit *tags.TagEntry
-		for i := range entries {
-			if common.Hash(entries[i].Tag) == auditTag {
-				hit = &entries[i]
+
+		// Her note, through the tag channel: from ss and her registered
+		// pk_spend, the auditor's tag for b is a ChannelPayment event's, and
+		// its sealed note opens under k_b to an opening of the event's
+		// commitment.
+		b := discovered.b
+		auditTag := common.BigToHash(poseidonOf(t, new(big.Int).SetBytes([]byte("enygma-tag-v1")), toField(chSS), new(big.Int).SetUint64(b), keys.SpendKey))
+		var hit *channelPaymentEvent
+		for _, e := range channelPaymentsFor(t, ctx, client, dvpAddr, b) {
+			if e.tag == auditTag {
+				hit = &e
 			}
 		}
 		if hit == nil {
-			t.Fatalf("the auditor's tag %s is not among block %d's %d entries", auditTag, tagBlock, len(entries))
+			t.Fatalf("the auditor's tag %s is not among block %d's ChannelPayment events", auditTag, b)
 		}
-		tagged, err := tags.DecryptPaymentNote(chSS, keys.SpendKey, tagBlock, hit.Ctxt)
+		tagged, err := tags.DecryptPaymentNote(chSS, keys.SpendKey, b, hit.ctxt)
+		if err != nil {
+			t.Fatalf("the auditor's k_b does not open the payment's sealed note: %v", err)
+		}
+		token, amount, salt := tagged.TokenId, tagged.Amount, tagged.Salt
+		if token.Cmp(discovered.token) != 0 || amount.Cmp(discovered.amount) != 0 || salt.Cmp(discovered.salt) != 0 {
+			t.Errorf("the auditor opened (%s, %s, salt %s), Ana's note is (%s, %s, salt %s)", token, amount, salt, discovered.token, discovered.amount, discovered.salt)
+		}
+		commitment := poseidonOf(t, keys.SpendKey, salt, amount, token)
+		if commitment.Cmp(discovered.commitment) != 0 || commitment.Cmp(hit.commitment) != 0 {
+			t.Errorf("Poseidon(registered pk_spend, salt, amount, token) = %s, the event's commitment %s", commitment, hit.commitment)
+		}
+		if found, err := tags.ScanChannelPayments(ctx, client, dvpAddr, b, []tags.Channel{{SharedSecret: opened[0].SharedSecret, PkSpend: keys.SpendKey}}); err != nil || len(found) != 1 || found[0].Commitment.Cmp(commitment) != 0 {
+			t.Errorf("the library's scan with the recovered tag channel: %d payments (err %v), want Ana's", len(found), err)
+		}
+
+		// Her change, opened from the withdrawal's EncryptedNote ciphertexts.
+		// The auditor cross-checks it against the public amount; it cannot
+		// check it against C₁, whose salt needs her spend key.
+		changeOpen := trialOpen(t, recovered, exit.ctI, exit.ctII)
+		if !changeOpen.ok {
+			t.Fatal("the recovered view key does not open the change note's ciphertexts")
+		}
+		changeToken, changeAmount := changeOpen.tokenAmount()
+		if changeAmount.Cmp(exit.change) != 0 {
+			t.Errorf("the change note opens to %s, Ana kept %s", changeAmount, exit.change)
+		}
+		if got := new(big.Int).Sub(amount, exit.amount); got.Cmp(changeAmount) != 0 {
+			t.Errorf("her note less the public amount is %s, the change opened to %s", got, changeAmount)
+		}
+		if poseidonOf(t, keys.SpendKey, toField(changeOpen.saltBytes), changeAmount, changeToken).Cmp(exit.commitment) == 0 {
+			t.Error("the change commitment opens from the capsule's salt; the page says its salt needs sk_spend")
+		}
+
+		// The Sender's change is never published: the payment emits no
+		// EncryptedNote, and the Sender's own recovered key opens no tag
+		// channel record, so the auditor has no tag to look for and nothing
+		// of theirs to decrypt.
+		senderCapsule, senderAesCt, err := rpcore.LookupAuditCiphertexts(client, registryAddr, sender.addr)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if poseidonOf(t, keys.SpendKey, tagged.Salt, tagged.Amount, tagged.TokenId).Cmp(commitment) != 0 {
-			t.Error("the tagged payload does not open the commitment C₀ the auditor verified")
+		senderKey, err := rpcore.AuditorDecryptViewKey(auditor.DecapsKey, senderCapsule, senderAesCt)
+		if err != nil {
+			t.Fatalf("the auditor cannot open the Sender's audit ciphertexts: %v", err)
+		}
+		senderChannels, err := tags.ScanChannels(client, channelsAddr, senderKey, 0, uint64(records))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(senderChannels) != 0 {
+			t.Errorf("the Sender's view key opened %d tag channel records, want none", len(senderChannels))
+		}
+		for _, l := range payment.Logs {
+			if len(l.Topics) > 0 && l.Topics[0] == encryptedNoteSig {
+				t.Error("the payment emitted an EncryptedNote event; the page says the Sender's change is never published")
+			}
 		}
 		// A dishonest payer: nothing checks senderId. Records sealed off chain
 		// to Ana's view key naming someone else, and naming no one, open
@@ -2072,8 +1971,9 @@ func TestProtocolPrimer(t *testing.T) {
 			"msg":            chMsg,
 			"senderId":       senderID,
 			"recordSender":   recordSender.Hex(),
-			"tagBlock":       fmt.Sprint(tagBlock),
+			"b":              fmt.Sprint(b),
 			"tag":            auditTag.Hex(),
+			"noteCtxt":       hexutil.Encode(hit.ctxt),
 			"forgedId":       declared[forgedID],
 			"noneId":         declared[""],
 			"address":        ana.addr.Hex(),
@@ -2086,9 +1986,6 @@ func TestProtocolPrimer(t *testing.T) {
 			"seed":           hexutil.Encode(seed),
 			"ek":             hexutil.Encode(ek),
 			"otherAuditor":   "refused",
-			"noteCapsule":    hexutil.Encode(discovered.capsule),
-			"noteEncTxData":  hexutil.Encode(discovered.payload),
-			"noteSs":         hexutil.Encode(note.ss),
 			"pkSpend":        keys.SpendKey.String(),
 			"salt":           salt.String(),
 			"token":          token.String(),
@@ -2098,13 +1995,12 @@ func TestProtocolPrimer(t *testing.T) {
 			"changeSealed":   hexutil.Encode(exit.ctII),
 			"changeAmount":   changeAmount.String(),
 			"withdrawn":      exit.amount.String(),
-			"senderOpened":   fmt.Sprint(senderOpened),
-			"scanned":        fmt.Sprint(len(events)),
+			"senderChannels": fmt.Sprint(len(senderChannels)),
 		}, Ledger: []ledgerItem{}}
 	})
 
 	check("verdict", "every byte the payment and the withdrawal put on chain names who spent, but not whom the Sender paid, how much, or which note was spent", func(t *testing.T) {
-		if shielded == nil || paid == nil || discovered == nil || exit == nil {
+		if shielded == nil || paid == nil || discovered == nil || exit == nil || toAnaChannel == nil {
 			t.Fatal("no story to judge: an earlier check did not pass")
 		}
 		sender, ana := users[0], users[1]
@@ -2154,6 +2050,11 @@ func TestProtocolPrimer(t *testing.T) {
 		})
 		if bytes.Contains(paidOnChain.raw, ana.view.EncapsKey) {
 			t.Error("the payment's bytes on chain hold Ana's view key")
+		}
+		// The tag is a hash under the tag channel's secret, which the
+		// payment's bytes do not hold either way.
+		if ss := toAnaChannel.ss; bytes.Contains(paidOnChain.raw, ss) || paidOnChain.words[common.BigToHash(toField(ss))] {
+			t.Error("the payment's bytes on chain hold the tag channel's ss")
 		}
 
 		// The withdrawal names Ana and its public amount, and neither the
@@ -2279,11 +2180,22 @@ func (o noteOpening) tokenAmount() (token, amount *big.Int) {
 	return new(big.Int).SetBytes(o.plain[:32]), new(big.Int).SetBytes(o.plain[32:])
 }
 
-// paymentEventsUpTo is every Payment event EnygmaDvp has emitted up to block.
-func paymentEventsUpTo(t *testing.T, ctx context.Context, client *ethclient.Client, dvp common.Address, block *big.Int) []dvpcore.OnChainErc20Event {
+// channelPaymentEvent is one ChannelPayment event: its vault id, the block b
+// its tag is for, the tag, the payee's commitment and the sealed note.
+type channelPaymentEvent struct {
+	vaultID, commitment *big.Int
+	block               uint64
+	tag                 common.Hash
+	ctxt                []byte
+}
+
+// channelPaymentsFor reads every ChannelPayment event EnygmaDvp emitted for
+// block b, in the blocks a payment for b may settle in, up to the head.
+func channelPaymentsFor(t *testing.T, ctx context.Context, client *ethclient.Client, dvp common.Address, b uint64) []channelPaymentEvent {
 	t.Helper()
 	logs, err := client.FilterLogs(ctx, ethereum.FilterQuery{Addresses: []common.Address{dvp},
-		Topics: [][]common.Hash{{paymentEventSig}}, ToBlock: block})
+		Topics:    [][]common.Hash{{channelPaymentSig}, nil, {common.BigToHash(new(big.Int).SetUint64(b))}},
+		FromBlock: new(big.Int).SetUint64(b), ToBlock: new(big.Int).SetUint64(b + tags.ChannelPaymentWindow)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2291,7 +2203,45 @@ func paymentEventsUpTo(t *testing.T, ctx context.Context, client *ethclient.Clie
 	for i := range logs {
 		logPtrs[i] = &logs[i]
 	}
-	return paymentEventsIn(t, logPtrs, dvp)
+	return channelPaymentsIn(t, logPtrs, dvp)
+}
+
+// channelPaymentsIn decodes logs' ChannelPayment events from dvp.
+func channelPaymentsIn(t *testing.T, logs []*types.Log, dvp common.Address) []channelPaymentEvent {
+	t.Helper()
+	u256, _ := abi.NewType("uint256", "", nil)
+	bytesT, _ := abi.NewType("bytes", "", nil)
+	args := abi.Arguments{{Type: u256}, {Type: bytesT}}
+	var events []channelPaymentEvent
+	for _, l := range logs {
+		if l.Address != dvp || len(l.Topics) != 4 || l.Topics[0] != channelPaymentSig {
+			continue
+		}
+		vals, err := args.Unpack(l.Data)
+		if err != nil {
+			t.Fatalf("decode ChannelPayment event: %v", err)
+		}
+		events = append(events, channelPaymentEvent{vaultID: l.Topics[1].Big(), block: l.Topics[2].Big().Uint64(), tag: l.Topics[3],
+			commitment: vals[0].(*big.Int), ctxt: vals[1].([]byte)})
+	}
+	return events
+}
+
+// channelPaymentHash is h, recomputed by hand: keccak256 of the domain word
+// keccak256("enygma-channel-payment-v1"), b, the tag and ctxt, ABI-encoded,
+// reduced into BN254's scalar field (CiphertextHash.ofChannelPayment).
+func channelPaymentHash(t *testing.T, b uint64, tag [32]byte, ctxt []byte) *big.Int {
+	t.Helper()
+	b32, _ := abi.NewType("bytes32", "", nil)
+	u256, _ := abi.NewType("uint256", "", nil)
+	bytesT, _ := abi.NewType("bytes", "", nil)
+	enc, err := abi.Arguments{{Type: b32}, {Type: u256}, {Type: b32}, {Type: bytesT}}.Pack(
+		crypto.Keccak256Hash([]byte("enygma-channel-payment-v1")), new(big.Int).SetUint64(b), tag, ctxt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := new(big.Int).SetBytes(crypto.Keccak256(enc))
+	return h.Mod(h, constants.Q)
 }
 
 // poseidonOf is Poseidon of xs, failing the test on an error.

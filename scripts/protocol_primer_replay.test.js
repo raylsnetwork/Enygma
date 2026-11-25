@@ -130,10 +130,13 @@ function checkStep(doc, i) {
     for (const k of ['commitmentIn', 'nullifier', 'globalIndex', 'commitmentOut0', 'commitmentOut1', 'valueIn', 'valueOut0', 'valueOut1', 'root']) assert.ok(inMath.has(k), `payment shows ${k} inside a formula`);
   }
   if (step === 'proof') {
-    for (const k of ['L', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'n', 'omega', 'nbWires', 'nbPublic', 'nbPrivate', 'verifyProof']) assert.ok(inMath.has(k), `proof shows ${k} inside a formula`);
+    for (const k of ['L', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'n', 'omega', 'nbWires', 'nbPublic', 'nbPrivate', 'verifyProof']) assert.ok(inMath.has(k), `proof shows ${k} inside a formula`);
   }
   if (step === 'discovery') {
-    for (const k of ['pkSpend', 'salt', 'saltBytes', 'amount', 'token', 'commitment', 'scanned', 'opened']) assert.ok(inMath.has(k), `discovery shows ${k} inside a formula`);
+    for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment', 'tagsComputed', 'matched', 'opened']) assert.ok(inMath.has(k), `discovery shows ${k} inside a formula`);
+  }
+  if (step === 'tag') {
+    for (const k of ['b', 'minedIn', 'amount', 'token', 'salt', 'h']) assert.ok(inMath.has(k), `tag shows ${k} inside a formula`);
   }
   if (step === 'withdrawal') {
     for (const k of ['message', 'recipientField', 'amount', 'token', 'commitment0', 'pkSpend', 'saltChange', 'change', 'commitmentChange', 'skSpend', 'nullifier', 'globalIndex', 'valueIn']) assert.ok(inMath.has(k), `withdrawal shows ${k} inside a formula`);
@@ -142,7 +145,7 @@ function checkStep(doc, i) {
     for (const k of ['payer', 'withdrawer', 'shieldAmount', 'withdrawAmount', 'poolLeft']) assert.ok(inMath.has(k), `verdict shows ${k} inside a formula`);
   }
   if (step === 'audit') {
-    for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment', 'changeAmount', 'withdrawn']) assert.ok(inMath.has(k), `audit shows ${k} inside a formula`);
+    for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment', 'changeAmount', 'withdrawn', 'b']) assert.ok(inMath.has(k), `audit shows ${k} inside a formula`);
   }
   if (step === 'shield') {
     for (const k of ['pkSpend', 'salt', 'amount', 'token', 'commitment']) assert.ok(inMath.has(k), `shield shows ${k} inside the commitment's formula`);
@@ -270,7 +273,8 @@ test('the tag channel: the Sender opens it from their own account, Ana\'s view k
   const link = doc.querySelector('#flow .link');
   assert.ok(link && link.textContent.includes('ss') && link.textContent.includes('tag channel'), 'the diagram has the tag channel link, with ss');
   const node = id => doc.querySelector(`#flow .node[data-node="${id}"]`);
-  for (const [id, label] of [['tagChannels', 'TagChannelRegistry'], ['tags', 'TagRegistry']]) assert.ok(node(id)?.textContent.includes(label), `the chain has ${label}`);
+  assert.ok(node('tagChannels')?.textContent.includes('TagChannelRegistry'), 'the chain has TagChannelRegistry');
+  assert.ok(!node('tags') && !doc.getElementById('flow').textContent.includes('TagRegistry'), 'the chain has no TagRegistry: a payment carries its tag');
   const lit = () => [...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort();
   for (let i = 0; i < names.length; i++) {
     if (i) doc.getElementById('next').click();
@@ -287,55 +291,66 @@ test('the tag channel: the Sender opens it from their own account, Ana\'s view k
   for (const s of ['PrivacyFull', 'PrivacyNone', 'PrivacySubset', 'PrivacyRift', 'checked by no one', 'Decaps never fails', 'step 11', 'relayer', '2−128']) assert.ok(body.includes(s), `the tag channel names ${s}`);
 });
 
-test('the tag: the Sender publishes payment 1\'s tag from their own account in the block after settlement, Ana\'s tag channel finds it and opens its payload to her note, and the reverse direction\'s tag differs', () => {
-  const v = DATA.steps.tag.values, ledger = DATA.steps.tag.ledger;
-  const { channel, payment, keys, registration: reg } = DATA.steps;
-  // The block after the payment's, on the tag channel of step 5, to Ana's spend key.
-  assert.strictEqual(BigInt(v.b), BigInt(payment.values.block) + 1n, 'the tag lands in the block after settlement');
-  assert.strictEqual(v.paymentBlock, payment.values.block);
+test('the tag: the payment carried its tag and sealed note for block b on the tag channel to Ana, its proof binds them by h, Ana\'s tag for b finds it and opens it to her note, and the reverse direction\'s tag differs', () => {
+  const v = DATA.steps.tag.values;
+  const { channel, payment, keys } = DATA.steps;
+  // The block the payment is for and settled in, on the tag channel of step 5, to Ana's spend key.
+  assert.strictEqual(v.b, payment.values.b, 'the payment\'s b');
+  assert.strictEqual(v.minedIn, payment.values.block);
+  assert.ok(BigInt(v.minedIn) >= BigInt(v.b) && BigInt(v.minedIn) <= BigInt(v.b) + BigInt(v.window), 'it settled in its window');
+  assert.strictEqual(v.window, '100');
   assert.strictEqual(v.ss, channel.values.ss, 'the tag channel\'s ss');
   assert.strictEqual(v.channelIdx, channel.values.channelIdx);
   assert.strictEqual(v.pkSpend, keys.values['ana.pkSpend'], 'the payee\'s spend key');
   assert.strictEqual(v.senderPk, keys.values['sender.pkSpend'], 'the reverse direction\'s payee is the Sender');
   assert.strictEqual(BigInt(v.ssField), BigInt(v.ss) % BigInt(keys.values.p), 'ss mod p');
+  assert.strictEqual(BigInt(v.domain), BigInt('0x' + Buffer.from('enygma-tag-v1').toString('hex')), 'the domain is the label\'s bytes as a number');
   // k_b's info: the label, b as 8 big-endian bytes, pk_spend as 32.
   assert.strictEqual(v.info, '0x' + Buffer.from('enygma-block-key-v1').toString('hex') + BigInt(v.b).toString(16).padStart(16, '0') + word(v.pkSpend));
   assert.deepStrictEqual([v.tag, v.reverseTag, v.kb, v.nonce].map(bytes), [32, 32, 32, 12]);
   assert.notStrictEqual(v.reverseTag, v.tag, 'the two directions\' tags differ');
-  assert.strictEqual(v.reverseOpen, '⊥', 'the reverse direction\'s key does not open ct');
-  // ct seals Ana's note's opening: amount ‖ token ‖ salt₀, 32 bytes each.
+  assert.strictEqual(v.reverseOpen, '⊥', 'the reverse direction\'s key does not open ctxt');
+  // ctxt seals Ana's note's opening: amount ‖ token ‖ salt₀, 32 bytes each.
   assert.strictEqual(v.amount, payment.values.valueOut0);
   assert.strictEqual(v.token, payment.values.token);
   assert.strictEqual(v.salt, payment.values.saltOut0);
   assert.strictEqual(v.commitment, payment.values.commitmentOut0);
   assert.strictEqual(v.plaintext, '0x' + word(v.amount) + word(v.token) + word(v.salt));
-  assert.strictEqual(v.ct, v.nonce + v.sealed.slice(2), 'ct is nonce ‖ sealed');
+  assert.strictEqual(v.ct, v.nonce + v.sealed.slice(2), 'ctxt is nonce ‖ sealed');
   assert.strictEqual(bytes(v.sealed), 96 + 16, 'sealed is the 96-byte opening and a 16-byte tag');
-  // Ana's side: her tag for b is the published one, the only entry of the block it matches.
+  // They are the payment's, and h, its CiphertextHash, binds them.
+  assert.strictEqual(v.tag, payment.values.tag);
+  assert.strictEqual(v.ct, payment.values.ctxt);
+  assert.strictEqual(v.h, payment.values.ciphertextHash, 'h is the payment\'s eighth public input');
+  assert.strictEqual(v.h, DATA.steps.proof.values.x8);
+  assert.strictEqual(DATA.steps.proof.values['x8.name'], 'CiphertextHash');
+  for (const k of ['otherTag', 'otherCtxt', 'otherBlock']) assert.strictEqual(v[k], 'CiphertextHashMismatch', `the receipt with ${k} reverts`);
+  // Ana's side: her tag for b is the payment's, the only one of b's payments it matches.
   assert.strictEqual(v.anaTag, v.tag);
-  assert.ok(Number(v.entries) >= 1);
+  assert.ok(Number(v.events) >= 1);
   assert.strictEqual(v.matched, '1');
-  // The ledger: publishTag from the Sender's account, and nothing that names Ana.
-  assert.deepStrictEqual(ledger.map(i => [i.tx, i.field, i.value, !!i.msgSender]), [
-    ['publishTag · Sender', 'msg.sender', reg.values['sender.address'], true],
-    ['publishTag · Sender', 'tag', v.tag, false],
-    ['publishTag · Sender', 'ctxt', v.ct, false]]);
-  assert.strictEqual(v.msgSender, reg.values['sender.address']);
-  for (const x of [reg.values['ana.address'], keys.values['ana.pkSpend'], word(keys.values['ana.pkSpend']), word(v.amount), word(v.salt), v.ss.slice(2)]) {
-    assert.ok(!ledger.some(i => i.value.includes(x)), `the tag's ledger rows do not show ${x.slice(0, 20)}…`);
+  // No transaction of its own: the tag and ctxt are the payment's ledger rows.
+  assert.deepStrictEqual(DATA.steps.tag.ledger, [], 'the tag sends nothing');
+  const rows = payment.ledger.filter(i => i.tx === 'channelPayment · Sender' || i.tx === 'ChannelPayment event');
+  assert.deepStrictEqual(rows.filter(i => i.field === 'tag').map(i => i.value), [v.tag, v.tag], 'the calldata\'s tag and the event\'s');
+  assert.deepStrictEqual(rows.filter(i => i.field === 'ctxt').map(i => i.value), [v.ct, v.ct], 'the calldata\'s ctxt and the event\'s');
+  assert.deepStrictEqual(rows.filter(i => i.field === 'blockNumber').map(i => i.value), [v.b, v.b]);
+  for (const x of [keys.values['ana.pkSpend'], word(keys.values['ana.pkSpend']), word(v.amount), word(v.salt), v.ss.slice(2), v.kb.slice(2)]) {
+    assert.ok(!payment.ledger.some(i => i.value.includes(x)), `the payment's ledger rows do not show ${x.slice(0, 20)}…`);
   }
 
-  // The diagram, on step 8: the Sender's wallet, Ana's and TagRegistry light, and the step's chips play.
+  // The diagram, on step 8: the Sender's wallet, Ana's and EnygmaDvp light, and the step's chips play.
   const { doc } = open();
   assert.strictEqual(steps(doc).indexOf('tag'), 7, 'the tag is step 8');
   assert.strictEqual(section(doc, 'tag').querySelector('h2').lastChild.textContent.trim(), 'The tag');
   goTo(doc, 'tag');
-  assert.deepStrictEqual([...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort(), ['ana', 'sender', 'tags']);
-  assert.deepStrictEqual(chipsOf(doc, 'tag'), ['t_b pub', 'k_b priv', 'ct pub', 't_b pub', 'ct pub', 't_b ✓ priv', 'k_b priv', 'opening ✓ priv']);
+  assert.deepStrictEqual([...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort(), ['ana', 'dvp', 'sender']);
+  assert.deepStrictEqual(chipsOf(doc, 'tag'), ['h pub', 't ✓ priv', 'k_b priv', 'opening ✓ priv']);
   for (const c of doc.querySelectorAll('#flow .chip[data-step="tag"]')) assert.ok(c.classList.contains('now'), 'the step\'s chips play');
-  assert.strictEqual([...doc.querySelectorAll('#ledger li.new')].length, ledger.length, 'the step\'s ledger rows are new');
+  assert.strictEqual([...doc.querySelectorAll('#ledger li.new')].length, 0, 'the step adds no ledger rows');
   const body = text(section(doc, 'tag'));
-  for (const s of ['TagRegistry', 'publishTag', 'window', 'relayer', 'reverse', 'selective disclosure', 'view keys', 'step 5', 'step 6']) assert.ok(body.includes(s), `the tag names ${s}`);
+  for (const s of ['channelPayment', 'window', 'relayer', 'reverse', 'selective disclosure', 'view keys', 'step 5', 'step 6', 'G13', 'no second transaction']) assert.ok(body.includes(s), `the tag names ${s}`);
+  assert.ok(!body.includes('publishTag') && !body.includes('TagRegistry'), 'the tag is no transaction of its own');
 });
 
 test('no chip of the diagram overlaps another, at any step', () => {
@@ -360,10 +375,10 @@ test('no chip of the diagram overlaps another, at any step', () => {
 // GATES are the deployed Payment circuit's constraints (gnark_circuits/
 // templates/Payment.go), each a gate of the payment step's circuit diagram
 // with a card naming what it stops.
-const GATES = ['message', 'range', 'ownership', 'enable', 'commitmentIn', 'merkle', 'nullifier', 'commitmentsOut', 'changeOwner', 'conservation', 'withdrawSalt', 'contractAddress'];
+const GATES = ['message', 'range', 'ownership', 'enable', 'commitmentIn', 'merkle', 'nullifier', 'commitmentsOut', 'changeOwner', 'conservation', 'withdrawSalt', 'contractAddress', 'ciphertextHash'];
 // PUBLIC are the Payment statement's public inputs, in the layout's order
-// (enygma_retail_payments/layout: PaymentLen = 7).
-const PUBLIC = ['Message', 'TreeNumber', 'MerkleRoot', 'Nullifier', 'CommitmentOut[0]', 'CommitmentOut[1]', 'ContractAddress'];
+// (enygma_retail_payments/layout: PaymentLen = 8).
+const PUBLIC = ['Message', 'TreeNumber', 'MerkleRoot', 'Nullifier', 'CommitmentOut[0]', 'CommitmentOut[1]', 'ContractAddress', 'CiphertextHash'];
 
 test('the payment\'s circuit diagram: the witness enters private, every constraint is a gate with a card, only the public inputs leave to the Verifier', () => {
   const { doc } = open();
@@ -387,26 +402,35 @@ test('the payment\'s circuit diagram: the witness enters private, every constrai
     assert.ok(['wg', 'gp', 'pv'].includes(w.dataset.kind), `a wire is witness→gate, gate→public or public→Verifier (${w.dataset.kind})`);
   }
   // Every gate is wired in: it reads the witness, fixes a public input, or
-  // both (G1 and G12 constrain public inputs alone).
+  // both (G1, G12 and G13 constrain public inputs alone).
   for (const g of GATES) assert.ok(svg.querySelector(`.wire[data-gate="${g}"]`), `${g} is wired in`);
   for (const g of ['range', 'ownership', 'commitmentIn', 'merkle', 'nullifier', 'commitmentsOut', 'changeOwner', 'conservation']) assert.ok(svg.querySelector(`.wire[data-kind="wg"][data-gate="${g}"]`), `${g} reads the witness`);
   for (const p of PUBLIC) assert.ok(svg.querySelector(`.wire[data-kind="gp"][data-to="${p}"]`), `a gate fixes ${p}`);
   assert.strictEqual(svg.querySelectorAll('.wire[data-kind="pv"]').length, PUBLIC.length, 'each public input goes to the Verifier');
   const cardText = text(sec);
-  for (const s of ['VULN-3', '10', 'another vault']) assert.ok(cardText.includes(s), `the cards name ${s}`);
+  for (const s of ['VULN-3', '10', 'another vault', 'strip']) assert.ok(cardText.includes(s), `the cards name ${s}`);
 });
 
-test('the payment\'s ledger entries are its public inputs, the nullifier, the two new commitments and the Sender\'s msg.sender', () => {
+test('the payment\'s ledger entries are its block, tag and sealed note, its public inputs, the nullifier, the two new commitments, its ChannelPayment event and the Sender\'s msg.sender', () => {
   const v = DATA.steps.payment.values, ledger = DATA.steps.payment.ledger;
   const field = f => ledger.filter(i => i.field === f).map(i => i.value);
   assert.deepStrictEqual(field('msg.sender'), [v.msgSender], 'the payment names its msg.sender');
   assert.strictEqual(ledger.filter(i => i.msgSender).length, 1, 'only msg.sender is amber');
   assert.strictEqual(v.msgSender, DATA.steps.shield.values.msgSender, 'the Sender sent it, from the account that shielded');
-  const pubs = ledger.filter(i => i.tx === 'payment · public inputs');
-  assert.deepStrictEqual(pubs.map(i => i.field), PUBLIC, 'the seven public inputs, in order');
-  assert.deepStrictEqual(pubs.map(i => i.value), [v.message, v.tree, v.root, v.nullifier, v.commitmentOut0, v.commitmentOut1, v.contractAddress]);
+  const pubs = ledger.filter(i => i.tx === 'channelPayment · public inputs');
+  assert.deepStrictEqual(pubs.map(i => i.field), PUBLIC, 'the eight public inputs, in order');
+  assert.deepStrictEqual(pubs.map(i => i.value), [v.message, v.tree, v.root, v.nullifier, v.commitmentOut0, v.commitmentOut1, v.contractAddress, v.ciphertextHash]);
   assert.deepStrictEqual(field('nullifier'), [v.nullifier], 'the Nullifier event');
-  assert.deepStrictEqual(field('commitment'), [v.commitmentOut0, v.commitmentOut1], 'the two Commitment events');
+  assert.deepStrictEqual(field('commitment'), [v.commitmentOut0, v.commitmentOut1, v.commitmentOut0], 'the two Commitment events, then Ana\'s in the ChannelPayment event');
+  // The calldata's block, tag and sealed note, and the ChannelPayment event
+  // repeating them beside Ana's commitment: no capsule, no Payment event.
+  assert.deepStrictEqual(ledger.filter(i => i.tx === 'ChannelPayment event').map(i => [i.field, i.value]),
+    [['blockNumber', v.b], ['tag', v.tag], ['commitment', v.commitmentOut0], ['ctxt', v.ctxt]]);
+  assert.deepStrictEqual(['blockNumber', 'tag', 'ctxt'].map(f => field(f)[0]), [v.b, v.tag, v.ctxt], 'the calldata\'s b, tag and ctxt');
+  assert.ok(!ledger.some(i => /Payment event|encTxData/.test(i.tx + i.field) && i.tx !== 'ChannelPayment event'), 'no Payment event, no encTxData');
+  assert.strictEqual(bytes(v.ctxt), 12 + 96 + 16, 'ctxt: nonce, the 96-byte opening, a 16-byte tag');
+  assert.strictEqual(v.channelIdx, DATA.steps.channel.values.channelIdx, 'over the tag channel of step 5');
+  assert.strictEqual(BigInt(v.block), BigInt(v.b), 'sent directly, it landed in b');
   // No private value reaches the ledger.
   const all = ledger.map(i => i.value).join(' ');
   for (const k of ['skSpend', 'saltIn', 'saltOut0', 'saltOut1', 'anaPk']) assert.ok(!all.includes(v[k]), `${k} is not public`);
@@ -421,15 +445,16 @@ test('the payment\'s ledger entries are its public inputs, the nullifier, the tw
   const { doc } = open();
   goTo(doc, 'payment');
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
-  assert.ok(amber.some(t => t.includes('payment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
+  assert.ok(amber.some(t => t.includes('channelPayment · Sender') && t.includes(v.msgSender)), 'the payment\'s msg.sender shows amber in the ledger');
+  assert.deepStrictEqual([...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort(), ['dvp', 'sender', 'vault']);
 });
 
 test('the proof step folds the payment\'s public inputs into L, and the Verifier accepted the payment\'s proof and refused it with a tampered input', () => {
   const v = DATA.steps.proof.values, pay = DATA.steps.payment;
   // Verifying is a view call: nothing new on the ledger.
   assert.deepStrictEqual(DATA.steps.proof.ledger, [], 'verifying publishes nothing');
-  // x₁…x₇ are the payment's public inputs, in the statement's order.
-  const pubs = pay.ledger.filter(i => i.tx === 'payment · public inputs');
+  // x₁…x₈ are the payment's public inputs, in the statement's order.
+  const pubs = pay.ledger.filter(i => i.tx === 'channelPayment · public inputs');
   PUBLIC.forEach((name, i) => {
     assert.strictEqual(v[`x${i + 1}.name`], name);
     assert.strictEqual(v[`x${i + 1}`], pubs[i].value, `x${i + 1} is the payment's ${name}`);
@@ -453,58 +478,39 @@ test('the proof step folds the payment\'s public inputs into L, and the Verifier
   for (const s of ['R1CS', 'QAP', 'toxic waste', 'single', 'ceremony', 'one honest participant', 'gnark server', 'generic group', 'zero-knowledge']) assert.ok(body.includes(s), `the proof step names ${s}`);
 });
 
-test('Ana\'s discovery opens the Payment event addressed to her, its opening hashes to her commitment, and her scan publishes nothing', () => {
-  const v = DATA.steps.discovery.values, pay = DATA.steps.payment.values;
+test('Ana\'s discovery finds her note by its tag from the tag channel\'s block to the head, its opening hashes to her commitment, a lying sealed note is refused, and her scan publishes nothing', () => {
+  const v = DATA.steps.discovery.values, { channel, tag, payment: pay } = DATA.steps;
   // The scan is local: it reads the chain and adds nothing to the ledger.
   assert.deepStrictEqual(DATA.steps.discovery.ledger, [], 'the scan publishes nothing');
-  // The ledger has the capsule and the sealed payload beside the commitment,
-  // in the payment's Payment event: the ciphertext Ana's key opens.
-  const event = DATA.steps.payment.ledger.filter(i => i.tx === 'Payment event');
-  assert.deepStrictEqual(event.map(i => [i.field, i.value]), [['commitmentOut', v.commitment], ['ctxt', v.capsule], ['encTxData', v.encTxData]]);
-  // What she opened is what the Sender paid her, to her keys.
-  assert.strictEqual(v.commitment, pay.commitmentOut0, 'her note is output 0');
-  assert.strictEqual(v.amount, pay.valueOut0);
-  assert.strictEqual(v.salt, pay.saltOut0, 'HKDF(ss, "note salt") mod p is the Sender\'s salt_0');
-  assert.strictEqual(v.pkSpend, DATA.steps.keys.values['ana.pkSpend']);
-  assert.strictEqual(v.anaEk, DATA.steps.keys.values['ana.viewEk']);
-  // The sizes the page names: a 1088-byte capsule, a 32-byte secret, salt and
-  // key, and nonce ‖ ct ‖ tag = 12 + 64 + 16 bytes over token ‖ amount.
-  assert.deepStrictEqual([v.capsule, v.ss, v.saltBytes, v.key, v.nonce, v.sealed, v.plaintext].map(bytes), [1088, 32, 32, 32, 12, 80, 64]);
-  assert.strictEqual(v.encTxData, v.nonce + v.sealed.slice(2), 'encTxData is nonce ‖ ct ‖ tag');
-  assert.strictEqual(BigInt(v.plaintext), (BigInt(v.token) << 256n) + BigInt(v.amount), 'the plaintext is token ‖ amount, 32 bytes each');
-  assert.strictEqual(BigInt(v.salt), BigInt(v.saltBytes) % BigInt(DATA.steps.keys.values.p), 'salt = HKDF output mod p');
-  // Exactly one of the events scanned opened; a forged amount was refused.
-  assert.strictEqual(v.opened, '1');
-  assert.ok(Number(v.scanned) >= 2, 'the scan covered another Payment event: refresh the block with make primer-refresh');
-  assert.notStrictEqual(v.forged, v.amount);
-  const { doc } = open();
-  const body = text(section(doc, 'discovery'));
-  for (const s of ['module-LWE', 'quantum', 'AES-256-GCM', 'HKDF-SHA256']) assert.ok(body.includes(s), `discovery names ${s}`);
-});
-
-test('Ana\'s discovery compares finding her note by its tag with trying every Payment event, on this run\'s counts', () => {
-  const v = DATA.steps.discovery.values, { channel, tag } = DATA.steps;
-  // By tag: from the block that opened her tag channel (step 5) to the tag's
-  // block (step 8), one tag per tag channel per block and one read of each
-  // block's entries; one entry matched, and one decryption opened it.
+  // From the block that opened her tag channel (step 5) to the head, one
+  // tag per tag channel per block; one payment matched, one decryption.
   assert.strictEqual(v.tagChannels, channel.values.found, 'her tag channels are the ones her scan of step 5 found');
   assert.strictEqual(v.channelRecords, channel.values.scanned, 'finding them tried every record once (step 5)');
   assert.strictEqual(v.tagFrom, channel.values.block, 'the tag scan starts at the tag channel\'s block');
-  assert.strictEqual(v.tagTo, tag.values.b, 'and reaches the tag\'s block');
+  assert.ok(BigInt(v.tagTo) >= BigInt(tag.values.minedIn), 'and reaches the block the payment settled in');
   assert.strictEqual(Number(v.tagBlocks), Number(v.tagTo) - Number(v.tagFrom) + 1);
   assert.strictEqual(Number(v.tagsComputed), Number(v.tagChannels) * Number(v.tagBlocks), 'one tag per tag channel per block');
-  assert.ok(Number(v.tagEntries) >= Number(tag.values.entries), 'every entry of the tag\'s block was read');
-  assert.strictEqual(v.tagMatched, '1');
-  assert.strictEqual(v.tagOpened, '1', 'one decryption, of the matched entry');
-  // Trying every note: every Payment event, and over the tag scan's blocks alone, the ones in them.
-  assert.ok(Number(v.windowEvents) >= 1 && Number(v.windowEvents) <= Number(v.scanned), 'the payment is in the tag scan\'s blocks');
-  assert.ok(Number(v.windowEvents) <= Number(v.tagsComputed), 'the page says that, over the tag scan\'s blocks, the tags save nothing by count');
+  assert.ok(Number(v.events) >= Number(tag.values.events), 'every payment for the tag\'s block was read');
+  assert.strictEqual(v.matched, '1');
+  assert.strictEqual(v.opened, '1', 'one decryption, of the matched payment');
+  // What she found is the payment of step 6, and what she opened is what the Sender paid her.
+  assert.strictEqual(v.b, tag.values.b);
+  assert.strictEqual(v.minedIn, tag.values.minedIn);
+  assert.strictEqual(v.tag, pay.values.tag);
+  assert.strictEqual(v.ctxt, pay.values.ctxt);
+  assert.strictEqual(v.commitment, pay.values.commitmentOut0, 'her note is output 0');
+  assert.strictEqual(v.amount, pay.values.valueOut0);
+  assert.strictEqual(v.salt, pay.values.saltOut0, 'the salt ctxt sealed is the Sender\'s salt_0');
+  assert.strictEqual(v.pkSpend, DATA.steps.keys.values['ana.pkSpend']);
+  // A forged amount was refused.
+  assert.strictEqual(BigInt(v.forged), BigInt(v.amount) + 1n);
   const { doc } = open();
   const sec = section(doc, 'discovery');
   const inMath = mathKeys(sec);
-  for (const k of ['tagChannels', 'tagBlocks', 'tagsComputed', 'tagMatched', 'tagOpened', 'scanned', 'opened']) assert.ok(inMath.has(k), `the comparison shows ${k} inside its table`);
+  for (const k of ['tagChannels', 'tagBlocks', 'tagsComputed', 'matched', 'events', 'opened', 'tagFrom', 'tagTo']) assert.ok(inMath.has(k), `the scan shows ${k} inside its formula`);
   const body = text(sec);
-  for (const s of ['By tag, or by trying every note', 'getEntries', 'step 5', 'step 8']) assert.ok(body.includes(s), `discovery names ${s}`);
+  for (const s of ['module-LWE', 'quantum', 'AES-256-GCM', 'HKDF-SHA256', 'no capsule', 'trying every note', 'step 5', 'step 8', 'which payments are hers']) assert.ok(body.includes(s), `discovery names ${s}`);
+  assert.ok(!body.includes('getEntries') && !body.includes('TagRegistry'), 'no tag registry to read');
 });
 
 test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount and recipient public, her change a private note, her msg.sender amber', () => {
@@ -519,8 +525,8 @@ test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount 
   // The same statement as the payment's, with Message = 1.
   assert.strictEqual(v.message, '1');
   const pubs = ledger.filter(i => i.tx === 'partialWithdraw · public inputs');
-  assert.deepStrictEqual(pubs.map(i => i.field), PUBLIC, 'the same seven public inputs, in order');
-  assert.deepStrictEqual(pubs.map(i => i.value), [v.message, v.tree, v.root, v.nullifier, v.commitment0, v.commitmentChange, v.contractAddress]);
+  assert.deepStrictEqual(pubs.map(i => i.field), PUBLIC, 'the same eight public inputs, in order');
+  assert.deepStrictEqual(pubs.slice(0, 7).map(i => i.value), [v.message, v.tree, v.root, v.nullifier, v.commitment0, v.commitmentChange, v.contractAddress]);
   assert.strictEqual(v.vkSlot, DATA.steps.proof.values.vkSlot, 'the same verifying key as the payment\'s');
   assert.strictEqual(v.verifyProof, 'true');
   // The exit is public, as the shield's amount was.
@@ -562,9 +568,10 @@ test('the audit recovers Ana\'s view key from what she registered, opens her not
   assert.strictEqual(v.seed, keys['ana.viewSeed'], 'the recovered seed is her view key\'s');
   assert.strictEqual(v.ek, keys['ana.viewEk'], 'the recovered key is the one she registered');
   assert.strictEqual(v.otherAuditor, 'refused', 'another auditor\'s key opens nothing');
-  // Her note, opened from the Payment event on the ledger.
-  assert.strictEqual(v.noteCapsule, found.capsule);
-  assert.strictEqual(v.noteEncTxData, found.encTxData);
+  // Her note, opened from the ChannelPayment event on the ledger, through the tag channel.
+  assert.strictEqual(v.noteCtxt, found.ctxt);
+  assert.strictEqual(v.tag, found.tag);
+  assert.strictEqual(v.b, found.b);
   assert.strictEqual(v.commitment, found.commitment);
   assert.strictEqual(v.amount, found.amount);
   assert.strictEqual(v.salt, found.salt);
@@ -576,9 +583,8 @@ test('the audit recovers Ana\'s view key from what she registered, opens her not
   assert.strictEqual(v.changeAmount, exit.values.change);
   assert.strictEqual(v.withdrawn, exit.values.amount);
   assert.strictEqual(BigInt(v.amount) - BigInt(v.withdrawn), BigInt(v.changeAmount), 'her note less the public amount is her change');
-  // The Sender's change has no ciphertext: their recovered key opens no Payment event.
-  assert.strictEqual(v.senderOpened, '0');
-  assert.ok(Number(v.scanned) >= 2, 'the scan covered another Payment event: refresh the block with make primer-refresh');
+  // The Sender's change has no ciphertext, and their recovered key opens no tag channel record.
+  assert.strictEqual(v.senderChannels, '0');
   const { doc } = open();
   const body = text(section(doc, 'audit'));
   for (const s of ['sk_spend', 'cannot spend', 'nullifier', 'never published']) assert.ok(body.includes(s), `the audit names ${s}`);
@@ -600,8 +606,8 @@ test('the audit names the payer through the tag channel: Ana\'s recovered view k
   assert.strictEqual(v.senderId, reg.values['sender.address']);
   assert.strictEqual(v.senderId, DATA.steps.verdict.values.payer, 'an honest payer: the declared identity is the payment\'s msg.sender');
   assert.strictEqual(v.recordSender, reg.values['sender.address'], 'the record\'s on-chain sender, which a relayer would replace');
-  // The tag ties the tag channel to Ana's note: the auditor's tag for b is the published one, and its ct opens to C₀.
-  assert.strictEqual(v.tagBlock, tag.values.b);
+  // The tag ties the tag channel to Ana's note: the auditor's tag for b is the payment's, and its ctxt opens to C₀.
+  assert.strictEqual(v.b, tag.values.b);
   assert.strictEqual(v.tag, tag.values.tag);
   assert.strictEqual(v.pkSpend, keys.values['ana.pkSpend']);
   assert.strictEqual(v.commitment, tag.values.commitment);
@@ -611,11 +617,11 @@ test('the audit names the payer through the tag channel: Ana\'s recovered view k
   assert.strictEqual(v.noneId, '(none)');
   const { doc } = open();
   goTo(doc, 'audit');
-  assert.deepStrictEqual([...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort(), ['auditor', 'dvp', 'registry', 'tagChannels', 'tags']);
-  assert.deepStrictEqual(chipsOf(doc, 'audit').slice(-5), ['c₁ pub', 'c₂ pub', 'ss priv', 'senderId priv', 't_b ✓ priv']);
+  assert.deepStrictEqual([...doc.querySelectorAll('#flow .node.lit')].map(n => n.dataset.node).sort(), ['auditor', 'dvp', 'registry', 'tagChannels']);
+  assert.deepStrictEqual(chipsOf(doc, 'audit').slice(4), ['c₁ pub', 'c₂ pub', 'ss priv', 'senderId priv', 't ✓ priv', 'ctxt pub', 'amount priv', 'salt priv', 'C₀ ✓ priv', 'change priv']);
   const sec = section(doc, 'audit');
   const inMath = mathKeys(sec);
-  for (const k of ['senderId', 'tagBlock']) assert.ok(inMath.has(k), `the audit shows ${k} inside a formula`);
+  for (const k of ['senderId', 'b']) assert.ok(inMath.has(k), `the audit shows ${k} inside a formula`);
   const body = text(sec);
   for (const s of ['Naming the payer', 'senderId', 'honest', 'dishonest', 'relayer', 'step 5', 'step 8']) assert.ok(body.includes(s), `the audit names ${s}`);
 });
@@ -642,7 +648,7 @@ test('the last step\'s ledger shows who spent, but holds no amount besides the s
     assert.ok(!values.has(x), `${what} (${x}) is not on the ledger`);
     assert.ok(![...values].some(l => l.includes(word(x))), `${what} is not on the ledger as a 32-byte word`);
   }
-  for (const x of [pay.values.saltOut0, pay.values.saltOut1, exit.values.saltIn, exit.values.saltChange, DATA.steps.discovery.values.plaintext]) {
+  for (const x of [pay.values.saltOut0, pay.values.saltOut1, exit.values.saltIn, exit.values.saltChange, DATA.steps.tag.values.plaintext, word(pay.values.saltOut0)]) {
     assert.ok(![...values].some(l => l.includes(x)), `the opening ${x.slice(0, 20)}… is not on the ledger`);
   }
   // Who spent: the payment and the withdrawal each name their msg.sender.
@@ -653,7 +659,7 @@ test('the last step\'s ledger shows who spent, but holds no amount besides the s
   assert.strictEqual(v.recipient, exit.values.recipient);
   // To whom: nothing the payment published names Ana.
   const payment = pay.ledger.map(i => i.value);
-  for (const x of [reg.values['ana.address'], keys.values['ana.pkSpend'], keys.values['ana.viewEk']]) {
+  for (const x of [reg.values['ana.address'], keys.values['ana.pkSpend'], keys.values['ana.viewEk'], DATA.steps.channel.values.ss.slice(2)]) {
     assert.ok(!payment.some(l => l.includes(x)), `the payment does not name Ana (${x.slice(0, 20)}…)`);
   }
   // The public amounts the page reads off, and the pool left between them.
