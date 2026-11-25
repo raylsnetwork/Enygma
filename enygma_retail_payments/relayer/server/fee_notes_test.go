@@ -255,7 +255,27 @@ func newFeeFixture(t *testing.T, notesPath string) *feeFixture {
 	f.r.POST("/relay/payment_relayer_fee", f.h.RelayPaymentRelayerFee)
 	f.r.POST("/relay/partial_withdraw", f.h.RelayPartialWithdraw)
 	f.r.POST("/relay/payment_usdr_fee", f.h.RelayPaymentUsdrFee)
+	f.r.POST("/relay/channel_payment_relayer_fee", f.h.RelayChannelPaymentRelayerFee)
+	f.r.POST("/relay/channel_payment_usdr_fee", f.h.RelayChannelPaymentUsdrFee)
 	return f
+}
+
+// channelFields are a channel payment's block, tag and sealed note.
+var channelFields = ChannelFields{BlockNumber: 9, Tag: "0x" + strings.Repeat("ab", 32), Ctxt: "0x0102"}
+
+// channelRelayerFeeRequest is relayerFeeRequest's channel form.
+func (f *feeFixture) channelRelayerFeeRequest(t *testing.T, salt *big.Int) RelayChannelPaymentRelayerFeeRequest {
+	r := f.relayerFeeRequest(t, "0", big.NewInt(6), salt)
+	return RelayChannelPaymentRelayerFeeRequest{VaultId: r.VaultId, Proof: r.Proof, PublicSignal: r.PublicSignal,
+		ChannelFields: channelFields, FeeSalt: r.FeeSalt, TokenId: r.TokenId}
+}
+
+// channelUsdrFeeRequest is usdrFeeRequest's channel form.
+func (f *feeFixture) channelUsdrFeeRequest(t *testing.T, salt *big.Int) RelayChannelPaymentUsdrFeeRequest {
+	r := f.usdrFeeRequest(t, salt)
+	return RelayChannelPaymentUsdrFeeRequest{VaultId: r.VaultId, Proof: r.Proof, PublicSignal: r.PublicSignal,
+		ChannelFields: channelFields, UsdrVaultId: r.UsdrVaultId, UsdrProof: r.UsdrProof, UsdrPublicSignal: r.UsdrPublicSignal,
+		UsdrCipherText: r.UsdrCipherText, UsdrEncTxData: r.UsdrEncTxData, UsdrFeeSalt: r.UsdrFeeSalt}
 }
 
 func (f *feeFixture) feeCmt(t *testing.T, salt, fee, tokenId *big.Int) *big.Int {
@@ -390,6 +410,27 @@ func TestRelayPaymentUsdrFee_KeepsTheFeeNoteOpening(t *testing.T) {
 	f.checkKept(t, "paymentWithUsdrFee", "4", cmtFee, salt)
 }
 
+// The channel forms of the two fee routes keep the fee note's opening too,
+// under their own EnygmaDvp entry point's name.
+func TestRelayChannelFeeRoutes_KeepTheFeeNoteOpening(t *testing.T) {
+	t.Run("relayer_fee", func(t *testing.T) {
+		f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+		salt := big.NewInt(31415926)
+		if w := postJSON(f.r, "/relay/channel_payment_relayer_fee", f.channelRelayerFeeRequest(t, salt)); w.Code != http.StatusOK {
+			t.Fatalf("relay: got %d: %s", w.Code, w.Body.String())
+		}
+		f.checkKept(t, "channelPaymentWithRelayerFee", "0", f.feeCmt(t, salt, big.NewInt(5), big.NewInt(0)), salt)
+	})
+	t.Run("usdr_fee", func(t *testing.T) {
+		f := newFeeFixture(t, filepath.Join(t.TempDir(), "fee_notes.jsonl"))
+		salt := big.NewInt(27182818)
+		if w := postJSON(f.r, "/relay/channel_payment_usdr_fee", f.channelUsdrFeeRequest(t, salt)); w.Code != http.StatusOK {
+			t.Fatalf("relay: got %d: %s", w.Code, w.Body.String())
+		}
+		f.checkKept(t, "channelPaymentWithUsdrFee", "4", f.feeCmt(t, salt, big.NewInt(5), big.NewInt(0)), salt)
+	})
+}
+
 // If the opening cannot be kept, the relayer must not relay: it would be paid
 // with a note it can never spend.
 func TestRelayFeeRoutes_RefuseWhenTheOpeningCannotBeKept(t *testing.T) {
@@ -432,6 +473,12 @@ func TestRelayRoutes_SendAndRecordNothingWhenTheCallWouldRevert(t *testing.T) {
 		},
 		"/relay/payment_usdr_fee": func(f *feeFixture, t *testing.T) interface{} {
 			return f.usdrFeeRequest(t, big.NewInt(42))
+		},
+		"/relay/channel_payment_relayer_fee": func(f *feeFixture, t *testing.T) interface{} {
+			return f.channelRelayerFeeRequest(t, big.NewInt(42))
+		},
+		"/relay/channel_payment_usdr_fee": func(f *feeFixture, t *testing.T) interface{} {
+			return f.channelUsdrFeeRequest(t, big.NewInt(42))
 		},
 	}
 	for route, build := range cases {

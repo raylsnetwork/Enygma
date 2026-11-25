@@ -345,19 +345,33 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	}
 
 	// Steps 5 and 6 — simulate, then submit.
-	h.submitToDvp(c, nfKeys, false, "payment", buildProofReceipt(p), p.vaultId, p.cipherText, p.encTxData)
+	h.submitToDvp(c, nfKeys, false, nil, "payment", buildProofReceipt(p), p.vaultId, p.cipherText, p.encTxData)
+}
+
+// keptFeeNote is the opening of the fee note a submission pays this relayer,
+// kept in the fee note store (feeNoteStore): its salt reaches the relayer
+// only through the request.
+type keptFeeNote struct {
+	vaultId, commitment, salt, amount, tokenId *big.Int
 }
 
 // submitToDvp simulates EnygmaDvp.method(args…) (against the pending block
 // when pending is set), so nothing is sent for a request the chain would
-// reject; then sends it, waits for it to be mined and writes the response.
-// keys are the request's claimed in-flight keys, released on failure.
-// Submission is serialized to prevent nonce races under concurrency; txMu
-// guards only the submission itself, not the wait — see txTimeout's doc
-// comment.
-func (h *Handler) submitToDvp(c *gin.Context, keys []string, pending bool, method string, args ...interface{}) {
+// reject; then keeps fee's opening, if the submission pays one, sends it,
+// waits for it to be mined and writes the response. keys are the request's
+// claimed in-flight keys, released on failure. Submission is serialized to
+// prevent nonce races under concurrency; txMu guards only the submission
+// itself, not the wait — see txTimeout's doc comment.
+func (h *Handler) submitToDvp(c *gin.Context, keys []string, pending bool, fee *keptFeeNote, method string, args ...interface{}) {
 	if !h.simulateIn(c, pending, keys, h.dvpAddr, h.dvpABI, method, args...) {
 		return
+	}
+	if fee != nil {
+		if err := h.feeNotes.recordSubmitted(method, fee.vaultId, fee.commitment, fee.salt, fee.amount, fee.tokenId); err != nil {
+			h.release(keys)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
+			return
+		}
 	}
 	h.txMu.Lock()
 	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
@@ -375,6 +389,9 @@ func (h *Handler) submitToDvp(c *gin.Context, keys []string, pending bool, metho
 	if txReceipt.Status == types.ReceiptStatusFailed {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
 		return
+	}
+	if fee != nil {
+		h.recordFeeNoteMined(method, fee.vaultId, fee.commitment, txReceipt)
 	}
 	c.JSON(http.StatusOK, RelayPaymentResponse{
 		TxHash:      txReceipt.TxHash.Hex(),
@@ -453,18 +470,9 @@ func (h *Handler) RelayChannelPayment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
 		return
 	}
-	tag, err := decodeTag(req.Tag, "tag")
+	ch, err := parseChannelFields(req.ChannelFields)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
-		return
-	}
-	ctxt, err := decodeHexField(req.Ctxt, "ctxt")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
-		return
-	}
-	if len(ctxt) == 0 || len(ctxt) > maxChannelPaymentCtxt {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("ctxt must be 1 to %d bytes, got %d", maxChannelPaymentCtxt, len(ctxt))})
 		return
 	}
 	if !h.requireVault(c, "vaultId", p.vaultId, h.vaultAddr) {
@@ -480,7 +488,37 @@ func (h *Handler) RelayChannelPayment(c *gin.Context) {
 		return
 	}
 
-	h.submitToDvp(c, nfKeys, true, "channelPayment", buildProofReceipt(p), p.vaultId, new(big.Int).SetUint64(req.BlockNumber), tag, ctxt)
+	h.submitToDvp(c, nfKeys, true, nil, "channelPayment", append([]interface{}{buildProofReceipt(p), p.vaultId}, ch.args()...)...)
+}
+
+// channel is a channel payment's ChannelFields, decoded.
+type channel struct {
+	blockNumber uint64
+	tag         [32]byte
+	ctxt        []byte
+}
+
+// args are the channel's arguments to EnygmaDvp's channel payment entry
+// points, which take them after the main leg's receipt and vault.
+func (ch channel) args() []interface{} {
+	return []interface{}{new(big.Int).SetUint64(ch.blockNumber), ch.tag, ch.ctxt}
+}
+
+// parseChannelFields decodes a channel route's tag and sealed note, refusing
+// an empty ctxt or one over maxChannelPaymentCtxt bytes.
+func parseChannelFields(f ChannelFields) (channel, error) {
+	tag, err := decodeTag(f.Tag, "tag")
+	if err != nil {
+		return channel{}, err
+	}
+	ctxt, err := decodeHexField(f.Ctxt, "ctxt")
+	if err != nil {
+		return channel{}, err
+	}
+	if len(ctxt) == 0 || len(ctxt) > maxChannelPaymentCtxt {
+		return channel{}, fmt.Errorf("ctxt must be 1 to %d bytes, got %d", maxChannelPaymentCtxt, len(ctxt))
+	}
+	return channel{blockNumber: f.BlockNumber, tag: tag, ctxt: ctxt}, nil
 }
 
 // RelayPaymentRelayerFee is the gin handler for POST /relay/payment_relayer_fee.
@@ -527,6 +565,46 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
+	h.relayRelayerFee(c, p, false, "paymentWithRelayerFee", p.cipherText, p.encTxData)
+}
+
+// RelayChannelPaymentRelayerFee is the gin handler for
+// POST /relay/channel_payment_relayer_fee: a PaymentRelayerFeePublic proof
+// settled over a tag channel (#452), by
+// EnygmaDvp.channelPaymentWithRelayerFee, with its tag and sealed note in
+// place of a capsule. It checks what RelayPaymentRelayerFee checks, and
+// simulates against the pending block as RelayChannelPayment does.
+func (h *Handler) RelayChannelPaymentRelayerFee(c *gin.Context) {
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+	var req RelayChannelPaymentRelayerFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := parseRelayerFeeRequest(&RelayPaymentRelayerFeeRequest{
+		VaultId: req.VaultId, Proof: req.Proof, PublicSignal: req.PublicSignal, FeeSalt: req.FeeSalt, TokenId: req.TokenId,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	ch, err := parseChannelFields(req.ChannelFields)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	h.relayRelayerFee(c, p, true, "channelPaymentWithRelayerFee", ch.args()...)
+}
+
+// relayRelayerFee runs RelayPaymentRelayerFee's steps 3–10 for either of its
+// routes: method is the EnygmaDvp entry point, which takes the receipt, the
+// vault and then tail (the capsule and note, or a channel's fields).
+func (h *Handler) relayRelayerFee(c *gin.Context, p *parsedRelayerFee, pending bool, method string, tail ...interface{}) {
 	// Steps 3–6.
 	if !h.checkRelayerFeeLeg(c, p) {
 		return
@@ -544,49 +622,13 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return
 	}
 
-	// Step 8 — simulate: nothing is sent, or recorded, for a request the chain
-	// would reject.
-	receipt := buildRelayerFeeProofReceipt(p)
-	if !h.simulate(c, nfKeys, h.dvpAddr, h.dvpABI, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData) {
-		return
+	// Steps 8–10 — simulate, so nothing is sent or recorded for a request
+	// the chain would reject; keep the fee note's opening; then submit.
+	fee := &keptFeeNote{
+		vaultId: p.vaultId, commitment: p.publicSignal[relayerFeeNoteOffset], salt: p.feeSalt,
+		amount: p.publicSignal[layout.PaymentRelayerFeeFeeOffset], tokenId: p.tokenId,
 	}
-
-	// Step 9 — keep the fee note's opening before sending: the salt reaches
-	// this relayer only through the request.
-	cmtRelayer, fee := p.publicSignal[relayerFeeNoteOffset], p.publicSignal[layout.PaymentRelayerFeeFeeOffset]
-	if err := h.feeNotes.recordSubmitted("paymentWithRelayerFee", p.vaultId, cmtRelayer, p.feeSalt, fee, p.tokenId); err != nil {
-		h.release(nfKeys)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
-		return
-	}
-
-	// Step 10 — serialize submission to prevent nonce races under concurrency.
-	// txMu guards only the submission itself, not the wait below — see
-	// txTimeout's doc comment.
-	h.txMu.Lock()
-	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
-	tx, err := dvp.Transact(h.auth, "paymentWithRelayerFee", receipt, p.vaultId, p.cipherText, p.encTxData)
-	h.txMu.Unlock()
-	if err != nil {
-		h.release(nfKeys)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithRelayerFee(): %s", err)})
-		return
-	}
-	txReceipt, ok := h.waitMined(c, tx, nfKeys)
-	if !ok {
-		return
-	}
-	if txReceipt.Status == types.ReceiptStatusFailed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
-		return
-	}
-	h.recordFeeNoteMined("paymentWithRelayerFee", p.vaultId, cmtRelayer, txReceipt)
-
-	c.JSON(http.StatusOK, RelayPaymentRelayerFeeResponse{
-		TxHash:      txReceipt.TxHash.Hex(),
-		BlockNumber: txReceipt.BlockNumber.Uint64(),
-		GasUsed:     txReceipt.GasUsed,
-	})
+	h.submitToDvp(c, nfKeys, pending, fee, method, append([]interface{}{buildRelayerFeeProofReceipt(p), p.vaultId}, tail...)...)
 }
 
 // checkRelayerFeeLeg runs the checks a PaymentRelayerFeePublic receipt needs
@@ -924,6 +966,55 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
+	h.relayUsdrFee(c, p, false, "paymentWithUsdrFee", p.cipherText, p.encTxData)
+}
+
+// RelayChannelPaymentUsdrFee is the gin handler for
+// POST /relay/channel_payment_usdr_fee: a payment over a tag channel with a
+// USDr fee leg (#452), settled by EnygmaDvp.channelPaymentWithUsdrFee. The
+// main leg carries its tag and sealed note in place of a capsule; the USDr
+// leg is RelayPaymentUsdrFee's. It checks what RelayPaymentUsdrFee checks,
+// and simulates against the pending block as RelayChannelPayment does.
+func (h *Handler) RelayChannelPaymentUsdrFee(c *gin.Context) {
+	if (h.usdrVaultAddr == common.Address{}) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "USDr vault not configured — set RELAYER_USDR_VAULT_ADDR",
+		})
+		return
+	}
+	if h.feeSpendPubKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "relayer fee not configured — set RELAYER_FEE_SPEND_PRIVATE_KEY",
+		})
+		return
+	}
+	var req RelayChannelPaymentUsdrFeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := parseUsdrFeeRequest(&RelayPaymentUsdrFeeRequest{
+		VaultId: req.VaultId, Proof: req.Proof, PublicSignal: req.PublicSignal,
+		UsdrVaultId: req.UsdrVaultId, UsdrProof: req.UsdrProof, UsdrPublicSignal: req.UsdrPublicSignal,
+		UsdrCipherText: req.UsdrCipherText, UsdrEncTxData: req.UsdrEncTxData, UsdrFeeSalt: req.UsdrFeeSalt,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	ch, err := parseChannelFields(req.ChannelFields)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse: %s", err)})
+		return
+	}
+	h.relayUsdrFee(c, p, true, "channelPaymentWithUsdrFee", ch.args()...)
+}
+
+// relayUsdrFee runs RelayPaymentUsdrFee's steps 3–6 for either of its
+// routes: method is the EnygmaDvp entry point, which takes the main leg's
+// receipt and vault, then mainTail (its capsule and note, or a channel's
+// fields), then the USDr leg.
+func (h *Handler) relayUsdrFee(c *gin.Context, p *parsedUsdrFee, pending bool, method string, mainTail ...interface{}) {
 	if !h.requireVault(c, "vaultId", p.vaultId, h.vaultAddr) ||
 		!h.requireVault(c, "usdrVaultId", p.usdrVaultId, h.usdrVaultAddr) {
 		return
@@ -1022,50 +1113,13 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 		return
 	}
 
-	// Simulate, then keep the USDr fee note's opening before sending: the salt
-	// reaches this relayer only through the request.
+	// Simulate, keep the USDr fee note's opening (the salt reaches this
+	// relayer only through the request), then submit both receipts atomically.
 	receipt, usdrReceipt := buildUsdrFeeProofReceipts(p)
-	if !h.simulate(c, nfKeys, h.dvpAddr, h.dvpABI, "paymentWithUsdrFee",
-		receipt, p.vaultId, p.cipherText, p.encTxData,
-		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData) {
-		return
-	}
-	if err := h.feeNotes.recordSubmitted("paymentWithUsdrFee", p.usdrVaultId, cmtFee, p.usdrFeeSalt, fee, tokenId); err != nil {
-		h.release(nfKeys)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("could not keep the fee note's opening, so it would be unspendable; not relaying: %s", err)})
-		return
-	}
-
-	// txMu guards only the submission itself, not the wait below — see
-	// txTimeout's doc comment.
-	h.txMu.Lock()
-
-	// Step 6 — submit both receipts atomically.
-	dvp := bind.NewBoundContract(h.dvpAddr, h.dvpABI, h.client, h.client, h.client)
-	tx, err := dvp.Transact(h.auth, "paymentWithUsdrFee",
-		receipt, p.vaultId, p.cipherText, p.encTxData,
-		usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData)
-	h.txMu.Unlock()
-	if err != nil {
-		h.release(nfKeys)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("paymentWithUsdrFee(): %s", err)})
-		return
-	}
-	txReceipt, ok := h.waitMined(c, tx, nfKeys)
-	if !ok {
-		return
-	}
-	if txReceipt.Status == types.ReceiptStatusFailed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain"})
-		return
-	}
-	h.recordFeeNoteMined("paymentWithUsdrFee", p.usdrVaultId, cmtFee, txReceipt)
-
-	c.JSON(http.StatusOK, RelayPaymentUsdrFeeResponse{
-		TxHash:      txReceipt.TxHash.Hex(),
-		BlockNumber: txReceipt.BlockNumber.Uint64(),
-		GasUsed:     txReceipt.GasUsed,
-	})
+	args := append([]interface{}{receipt, p.vaultId}, mainTail...)
+	args = append(args, usdrReceipt, p.usdrVaultId, p.usdrCipherText, p.usdrEncTxData)
+	kept := &keptFeeNote{vaultId: p.usdrVaultId, commitment: cmtFee, salt: p.usdrFeeSalt, amount: fee, tokenId: tokenId}
+	h.submitToDvp(c, nfKeys, pending, kept, method, args...)
 }
 
 // RelayTag is the gin handler for POST /relay/tag.
