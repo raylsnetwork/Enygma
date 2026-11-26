@@ -97,6 +97,26 @@ contract Erc20CoinVault is AbstractCoinVault {
         _name = "ZkDvp - ERC20 Coin Vault";
     }
 
+    // A deposit's note commits to the caller's amount, so the vault must
+    // receive exactly that from the transfer: a token that delivers less (a
+    // fee on transfer) would credit notes the vault cannot pay out (#432).
+    // This checks the one transfer only; a balance that shrinks later (a
+    // rebasing token) is not caught. It reverts rather than crediting what
+    // arrived, since the caller's wallet, and depositV2's note ciphertext for
+    // the recipient, hold amount: a note for another value would not match
+    // what either knows.
+    error DepositAmountMismatch(uint256 amount, uint256 received);
+
+    function _pullDeposit(uint256 amount) internal {
+        IERC20 asset = IERC20(_assetContractAddress);
+        uint256 balanceBefore = asset.balanceOf(address(this));
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = asset.balanceOf(address(this)) - balanceBefore;
+        if (received != amount) {
+            revert DepositAmountMismatch(amount, received);
+        }
+    }
+
     // C-1 fix: commitment is now computed on-chain from the caller-supplied key material
     // so the deposited amount is binding.  Previously the caller passed a pre-computed
     // commitment that could encode any amount, allowing vault drain via inflated deposits.
@@ -111,11 +131,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
-        IERC20(_assetContractAddress).safeTransferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
+        _pullDeposit(amount);
 
         // Commitment = Poseidon4(pkSpend, salt, amount, tokenId) — on-chain, binding amount.
         uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
@@ -152,11 +168,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
-        IERC20(_assetContractAddress).safeTransferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
+        _pullDeposit(amount);
 
         // C-1 fix: compute commitment on-chain to bind it to the actual transferred amount.
         uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
