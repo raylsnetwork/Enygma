@@ -21,10 +21,10 @@ sequenceDiagram
     participant NFTVault as Erc721CoinVault
     participant GnarkServer as Gnark Server :8081
 
-    Alice->>ERC20Vault: depositV2([50, commitment_A], capsule_A, encData_A)
+    Alice->>ERC20Vault: depositV2([50, pk_A, salt_A, tokenId], capsule_A, encData_A)
     ERC20Vault-->>Alice: emit Commitment(...)
 
-    Bob->>NFTVault: deposit([tokenId, commitment_B])
+    Bob->>NFTVault: deposit([tokenId, pk_B, salt_B])
     NFTVault-->>Bob: emit Commitment(...)
 
     Alice->>GnarkServer: POST /proof/dvpInitiator<br/>delivers 50 USDT, expects ticket

@@ -57,7 +57,7 @@ commitment = Poseidon4(pk_spend, saltB, amount, tokenId)
 ### Nullifier formula
 
 ```
-nullifier = Poseidon2(sk_spend, leafIndex)
+nullifier = Poseidon2(sk_spend, treeNumber * 2^depth + leafIndex)
 ```
 
 A nullifier is unique per note and per owner. Publishing it on-chain marks the note as spent

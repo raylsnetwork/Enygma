@@ -2,7 +2,7 @@
 
 ## Motivation
 
-Enygma Dvp is privacy preserving Delivery-versus-Payment (DvP) protocol built on EVM compatible blockchains. It allows two parties to atomically swap private assets, such as ERC20, ERC721 and ERC1155. Without revealing amounts, identities or assets linkage on-chain.
+Enygma Dvp is privacy preserving Delivery-versus-Payment (DvP) protocol built on EVM compatible blockchains. It allows two parties to atomically swap private assets, such as ERC20 and ERC721 (the ERC1155 vault is retired, [ADR 0003](../docs/adr/0003-retire-the-legacy-erc1155-vault.md)). Without revealing amounts, identities or assets linkage on-chain. Moving assets into or out of a vault is public, though: see [what the chain sees](./dvp_protocol.md#what-the-chain-sees-deposits-spends-and-exits).
 
 ## System Architecture
 

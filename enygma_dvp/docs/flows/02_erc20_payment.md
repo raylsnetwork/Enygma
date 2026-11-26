@@ -32,9 +32,11 @@ sequenceDiagram
     Alice->>Alice: DerivePaymentKey(ss) → encKey
     Alice->>Alice: commitment = Poseidon4(pk_A, saltBField, 40, 0)
     Alice->>Alice: encData = ChaCha20Enc(encKey, tokenId=0, amount=40)
-    Alice->>Vault: depositV2([40, commitment], capsule, encData)
+    Alice->>Vault: depositV2([40, pk_A, saltBField, 0], capsule, encData)
+    Vault->>Vault: commitment = Poseidon4(pk_A, saltBField, 40, 0)
     Vault->>Vault: insert commitment as Merkle leaf
-    Vault-->>Alice: emit Commitment(treeNum, leafIndex, commitment)
+    Vault-->>Alice: emit Commitment(vaultId, commitment)
+    Vault-->>Alice: emit EncryptedNote(vaultId, commitment, capsule, encData)
     Alice->>Alice: build Merkle proof for commitment
 
     Note over Alice,GnarkServer: Step 2 — Payment proof
@@ -44,16 +46,15 @@ sequenceDiagram
     GnarkServer->>GnarkServer: prove JoinSplit: 40 = 30 + 10
     GnarkServer->>GnarkServer: ML-KEM encrypt output 0 for Bob
     GnarkServer->>GnarkServer: ML-KEM encrypt output 1 for Alice
-    GnarkServer-->>Alice: proof[8], statement[9]<br/>cipherText[2], encTxData[2]
+    GnarkServer-->>Alice: proof[8], statement[11]<br/>cipherText[2], encTxData[2]
 
     Note over Alice,DVP: Step 2 (cont.) — On-chain submission
-    Alice->>DVP: payment(vaultId=0, receipt, cipherTexts, encTxDatas)
+    Alice->>DVP: payment(receipt, vaultId=0, cipherText[0], encTxData[0])
     DVP->>DVP: verifyProof via GenericGroth16Verifier
     DVP->>DVP: check nullifier not spent
     DVP->>DVP: emit Nullifier(treeNum, leafIdx, nullifier)
     DVP->>Vault: registerCoins([cmtBob, cmtAliceChange])
-    DVP-->>Alice: emit Payment(vaultId, leafIdx, cipherText[0], encTxData[0])  ← Bob's note
-    DVP-->>Alice: emit Payment(vaultId, leafIdx, cipherText[1], encTxData[1])  ← Alice's change
+    DVP-->>Alice: emit Payment(vaultId, cmtBob, cipherText[0], encTxData[0])  ← Bob's note only
 
     Note over Bob: Step 3 — Bob scans his 30 USDT note
     Bob->>Bob: Decapsulate(decapsKey_B, cipherText[0]) → ss_B
@@ -62,17 +63,13 @@ sequenceDiagram
     Bob->>Bob: DecryptPayload(encKey_B, encTxData[0]) → tokenId=0, amount=30
     Bob->>Bob: Poseidon4(pk_B, saltBField_B, 30, 0) == cmtBob ✓
 
-    Note over Alice: Step 4 — Alice scans her 10 USDT change note
-    Alice->>Alice: Decapsulate(decapsKey_A, cipherText[1]) → ss_A2
-    Alice->>Alice: DerivePaymentSalt(ss_A2) → saltB_change
-    Alice->>Alice: DerivePaymentKey(ss_A2) → encKey_change
-    Alice->>Alice: DecryptPayload(encKey_change, encTxData[1]) → tokenId=0, amount=10
-    Alice->>Alice: Poseidon4(pk_A, saltBField_change, 10, 0) == cmtAliceChange ✓
+    Note over Alice: Step 4 — Alice keeps her 10 USDT change note
+    Alice->>Alice: store (pk_A, saltBField_change, 10, 0) locally<br/>(cipherText[1] is not published)
 ```
 
 ---
 
-## Circuit Statement Layout (Payment2in, 10 elements)
+## Circuit Statement Layout (Payment2in, 11 elements)
 
 Grouped by field, in the order of the Payment2in statement layout
 (`layout.Payment2in*` in `enygma_dvp/layout`, `PAYMENT2IN_*` in
@@ -90,11 +87,14 @@ Grouped by field, in the order of the Payment2in statement layout
 | 7 | `CommitmentsOut[0]` | Bob's 30 USDT commitment |
 | 8 | `CommitmentsOut[1]` | Alice's 10 USDT change commitment |
 | 9 | `ContractAddress` | Vault the proof is bound to |
+| 10 | `CiphertextHash` | Hash of the note ciphertexts the payment publishes (`CiphertextHash.sol`) |
 
 ## Key Contracts
 
+The deposit's calldata holds the note's whole opening (Alice's spend public key, the salt and the amount), so it is public who owns the deposited note; see [what the chain sees](../../dvp_protocol.md#what-the-chain-sees-deposits-spends-and-exits).
+
 | Contract | Function | Purpose |
 |----------|----------|---------|
-| `Erc20CoinVault` | `depositV2(amounts, capsule, encData)` | ML-KEM deposit |
-| `EnygmaDvp` | `payment(vaultId, receipt, ciphers, encDatas)` | JoinSplit entry point |
+| `Erc20CoinVault` | `depositV2(params, ciphertextI, ciphertextII)` | Deposit with an `EncryptedNote`; `params = [amount, pkSpend, salt, tokenId]` and the vault computes the commitment |
+| `EnygmaDvp` | `payment(receipt, vaultId, ctxt, encTxData)` | JoinSplit entry point; publishes output 0's ciphertexts only |
 | `GenericGroth16Verifier` | `verifyProof(vk, proof, statement)` | On-chain proof check |

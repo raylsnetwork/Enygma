@@ -58,7 +58,7 @@ Alice initiates the swap by constructing the transaction by following these step
 5. _Commitment_ — Alice creates `COMMIT_B` (the commitment Bob will receive) and `COMMIT_A` (the commitment Alice will receive from Bob),using the derived salts and the agreed token_ids and amounts.
 6. _Payload encryption_ — Alice encrypts (`token_id`, `amount`) under a symmetric key derived from ss_B, producing ENC_TX_DATA. This allows Bob to verify the commitment without Alice revealing the plaintext publicly.
 7. _Revert commitment_ — Alice creates `REVERT_COMMIT_A`, a self-addressed commitment over the same asset she is spending. If Bob does not respond before the deadline, the chain inserts this commitment instead, returning Alice's funds.
-8. _Zero-knowledge proof_ — Alice generates the `nf_A` =`H(spend_pk_A, leafIndexA)`. She also generates a proof `π_A` attesting that she knows the spend key for the commitment she is nullifying, the nullifier is well-formed, the revert and destination commitments are consistent with the spent asset, and the commitment exists in the Merkle tree.
+8. _Zero-knowledge proof_ — Alice generates the `nf_A = H(spend_sk_A, globalIdx_A)`, where `globalIdx_A = treeNum_A·2^depth + leafIndex_A` is the note's position across the vault's sub-trees. She also generates a proof `π_A` attesting that she knows the spend key for the commitment she is nullifying, the nullifier is well-formed, the revert and destination commitments are consistent with the spent asset, and the commitment exists in the Merkle tree.
 
 ```mermaid
 
@@ -111,7 +111,7 @@ sequenceDiagram
 
         note left of Alice: Create the ZKP for the transaction
 
-        note over Alice: Create nullifier for tx: <br><br>nf_A = H(spend_sk_A, leafIndex_A)
+        note over Alice: Create nullifier for tx: <br><br>nf_A = H(spend_sk_A, globalIdx_A)
 
         note over Alice: Create zero-knowledge proof (π_A):<br><br> - "I know the spend secret key for this commit"<br><br> - "This nullifier is well-formed"<br><br>- "The revert commit has the same amount and token_id as commit I'm spending"<br><br>- "The nullifier, the (self) destination commitment (COMMIT_A), and the REVERT_COMMIT_A are all associated with the same spend pk"<br><br>-"The destination (COMMIT_B) has the same token_id_1 and amount_1 as the commit I'm spending"<br><br>-"I know a merkle path that proves that the commitment I'm spending is in the tree"
 
@@ -183,7 +183,7 @@ Bob then performs two commitment checks to verify the swap is legitimate and int
 
 If both checks pass, Bob construct his response:
 
-1. _Nullifier_ :Bob computes `nf_B = H(spend_sk_B, leafIndex_B)`, the nullifier for the commitment he is spending.
+1. _Nullifier_ :Bob computes `nf_B = H(spend_sk_B, globalIdx_B)`, the nullifier for the commitment he is spending.
 2. _Zero-knowledge proof_: Bob generates `π_B` attesting that he knows the spend secret key for his commitment, the nullifier is well-formed, the destination commitment `COMMIT_A` encodes the same `token_id` and amount as the commitment he is spending, and the commitment exists in the Merkle tree.
 
 ```mermaid
@@ -218,7 +218,7 @@ sequenceDiagram
 
     note over Bob: Check if commitments match:<br><br>C* == COMMIT_A
 
-    note over Bob: Create nullifier for tx: <br><br>nf_B = H(spend_sk_B, leafIndex_B)
+    note over Bob: Create nullifier for tx: <br><br>nf_B = H(spend_sk_B, globalIdx_B)
 
     note over Bob: Create zero-knowledge proof (π_B):<br><br> - "I know the spend sk for this commitment"<br><br> - "This nullifier is well-formed"<br><br>- "The destination commit (COMMIT_A) has the same token_id<br>and amount as the commit I'm spending"<br><br>-"I know a merkle path that proves that the commitment I'm spending is in the tree"
 
@@ -345,7 +345,7 @@ sequenceDiagram
 
         note left of Alice: Create the zero-knowledge proof
 
-        note over Alice: Create nullifier:<br><br>nf_A = H(spend_sk_A, leafIndex_A)
+        note over Alice: Create nullifier:<br><br>nf_A = H(spend_sk_A, globalIdx_A)
 
         note over Alice: Create zero-knowledge proof (π_A):<br><br>- "I know the spend secret key for the input commitment"<br><br>- "This nullifier is well-formed"<br><br>- "The revert commitment has the same amount and token_id as the input commitment being spent"<br><br>- "The nullifier, OUTPUT_COMMIT_A, and REVERT_COMMIT_A are all associated with the same spend public key"<br><br>- "OUTPUT_COMMIT_B has the same token_id_1 and amount_1 as the input commitment being spent"<br><br>- "I know a Merkle path proving that the input commitment is in the tree"
 
@@ -394,7 +394,7 @@ sequenceDiagram
     else (OBTAINED_COMMIT_B == OUTPUT_COMMIT_B) &&<br> (OBTAINED_COMMIT_A == OUTPUT_COMMIT_A)
 
 
-        note over Bob: Create nullifier:<br><br>nf_B = H(spend_sk_B, leafIndex_B)
+        note over Bob: Create nullifier:<br><br>nf_B = H(spend_sk_B, globalIdx_B)
 
         note over Bob: Create zero-knowledge proof (π_B):<br><br>- "I know the spend secret key for the input commitment"<br><br>- "This nullifier is well-formed"<br><br>- "OUTPUT_COMMIT_A has the same token_id_2 and amount_2 as Bob's input commitment"<br><br>- "I know a Merkle path proving that the input commitment is in the tree"
 
@@ -434,6 +434,14 @@ sequenceDiagram
 #### Additional Remarks
 
 Alice was able to send funds to Bob. Only Bob can spend the received commitment. The protocol does not require any interaction from Bob.
+
+## Deposit, payment and withdrawal
+
+The swap above starts from notes Alice and Bob already hold. Notes enter and leave a vault, and move between owners outside a swap, as follows. [What the chain sees](./dvp_protocol.md#what-the-chain-sees-deposits-spends-and-exits) in `dvp_protocol.md` lists what each of these publishes.
+
+- **Deposit.** The depositor calls `deposit`/`depositV2` on the vault with `[amount, spend_pk, salt, token_id]` (`Erc721CoinVault.deposit`: `[token_id, spend_pk, salt]`). The vault pulls the asset, computes `C = H(spend_pk, salt, amount, token_id)` and inserts it; `depositV2` also emits an `EncryptedNote` for the owner's wallet to scan. The opening is in the calldata, so a deposit does not hide the note's owner or amount. An issuer's [private mint](./dvp_protocol.md#private-issuance) does.
+- **Payment.** The owner proves a Payment-family statement (inputs spent by nullifier, output commitments, the vault, and the hash of the ciphertexts the payment publishes) and submits it to `EnygmaDvp.payment*` or the vault's `transfer`/`transferV2`. The commitments hide owners and amounts; the statement's tree numbers, roots, nullifiers and vault are public, as are a relayer-fee payment's fee and a channel payment's tag.
+- **Withdrawal.** The owner proves a Payment-family statement with `StMessage = WITHDRAW_MESSAGE` whose output 0 is `H(recipient, 0, amount, token_id)`, and submits it to `Erc20CoinVault.withdrawV2`, `partialWithdraw` or `partialWithdrawWithRelayerFee`. The vault spends the inputs, inserts the change note (and any relayer fee note), and transfers `amount` to `recipient` in public. The 2-input and relayer-fee forms work only on the dedicated Payment deployment, whose VK slots hold those circuits. The legacy `withdraw` is described there too. NFTs leave the vault only as a swap leg.
 
 ## Auditing
 

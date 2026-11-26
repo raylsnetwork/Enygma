@@ -34,8 +34,8 @@ and manual run steps.
 | Doc | Covers |
 |---|---|
 | [`source_of_true.md`](./source_of_true.md) | Design rationale shared across all four variants — why Poseidon, why Groth16, why BN254, and where each primitive appears in code. |
-| [`enygma_dvp/protocol_description.md`](./enygma_dvp/protocol_description.md) | DvP protocol overview (deposit/transfer/withdraw/swap flows); points to `dvp_protocol.md` for the formal definitions. |
-| [`enygma_dvp/dvp_protocol.md`](./enygma_dvp/dvp_protocol.md) | DvP's formal definitions: commitment structure, nullifiers, key generation, ZK proof statements, security goals. |
+| [`enygma_dvp/protocol_description.md`](./enygma_dvp/protocol_description.md) | DvP protocol overview: the swap flow step by step, then deposit, payment and withdrawal; points to `dvp_protocol.md` for the formal definitions. |
+| [`enygma_dvp/dvp_protocol.md`](./enygma_dvp/dvp_protocol.md) | DvP's formal definitions: commitment structure, nullifiers, key generation, ZK proof statements, what deposits, spends and exits reveal on chain, security goals. |
 | [`enygma_dvp/docs/`](./enygma_dvp/docs/) | DvP's own doc set: gnark proof API, Merkle API, per-flow walkthroughs — see its own [README](./enygma_dvp/docs/README.md). |
 | [`enygma_payments/protocol_description.md`](./enygma_payments/protocol_description.md) | Institutional (account-based) payments protocol. |
 | [`enygma_retail_payments/protocol_description.md`](./enygma_retail_payments/protocol_description.md) | Retail (UTXO-based) payments protocol. |

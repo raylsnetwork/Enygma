@@ -77,12 +77,12 @@ The owner can spend $Commitment$ by proving knowledge of $(sk^{\text{spend}}, sa
 Each commitment is associated with exactly one leaf position in a Merkle sub-tree. The nullifier is:
 
 $$
-nf = \mathrm{H}(sk^{\text{spend}},\ leafIndex)
+nf = \mathrm{H}(sk^{\text{spend}},\ globalIdx), \qquad globalIdx = treeNum \cdot 2^{d} + leafIndex
 $$
 
-where $leafIndex$ is the position of the commitment within its sub-tree.
+where $leafIndex$ is the position of the commitment within sub-tree $treeNum$ and $d$ is the tree depth (8). Every circuit that spends from a vault, the Payment family as well as the DvP circuits, uses this formula (the retired Erc721 ownership circuit aside, see below) (`NullifierTree` in `gnark_circuits/primitives/Nullifier.go`). $treeNum$ is a public input: folding it in gives the same slot in two sub-trees two different nullifiers, and the contract also uses it to route the nullifier check to the right sub-tree's map.
 
-The sub-tree index ($treeNum$) is a separate public input submitted alongside the proof. The on-chain contract uses it to route the nullifier check to the correct sub-tree map — but it is not mixed into the nullifier hash itself.
+The formula has no vault or asset domain, so one key's notes at the same $globalIdx$ in two vaults have the same nullifier (see [What the chain sees](#what-the-chain-sees-deposits-spends-and-exits)).
 
 ## Private Issuance
 
@@ -237,10 +237,10 @@ This lets Bob verify what he will receive without Alice publishing plaintext on-
 
 ### Step 5 — Nullifier
 
-Let $leafIndex_A$ be Alice's leaf position in her sub-tree.
+Let $leafIndex_A$ be Alice's leaf position in her sub-tree $treeNum_A$, and $globalIdx_A = treeNum_A \cdot 2^{d} + leafIndex_A$.
 
 $$
-nf_A = \mathrm{H}(sk_A^{\text{spend}},\ leafIndex_A)
+nf_A = \mathrm{H}(sk_A^{\text{spend}},\ globalIdx_A)
 $$
 
 ---
@@ -364,12 +364,12 @@ Bob accepts if $\hat{C}_B = C^{\text{out}}_B$ and $\hat{C}_A = C^{\text{out}}_A$
 
 ### Step 1 — Nullifier
 
-Let $$leafIndex_{B}$$ be the Merkle-tree leaf index of Bob's input commitment.
+Let $leafIndex_B$ be the leaf index of Bob's input commitment in sub-tree $treeNum_B$, and $globalIdx_B = treeNum_B \cdot 2^{d} + leafIndex_B$.
 
 Bob computes:
 
 $$
-nf_B = \mathrm{H}(sk_B^{\text{spend}},\ leafIndex_B)
+nf_B = \mathrm{H}(sk_B^{\text{spend}},\ globalIdx_B)
 $$
 
 ---
@@ -430,10 +430,57 @@ or, through the $\mathrm{SwapRelayer}$ contract, files each leg as it arrives wi
 
 The owner registers and deregisters relayers at any time ($\mathrm{registerRelayer}$ / $\mathrm{deregisterRelayer}$). A relayer cannot forge proofs, and a lock it takes expires $\mathrm{MAX\_SWAP\_DURATION}$ after it is taken: from then on anyone can release it ($\mathrm{releaseExpiredRelayerLock}$), whether or not the relayer is still registered.
 
+## What the chain sees: deposits, spends and exits
+
+A note's commitment hides its owner, amount and token id, and a spend publishes a nullifier that only the owner can link to the note. The paths that move assets into or out of a vault are public, and spending in more than one vault can link notes. This section lists what each path publishes, as the code does it today.
+
+### Deposits
+
+`Erc20CoinVault.deposit(params)` and `depositV2(params, ciphertextI, ciphertextII)` take
+
+$$
+params = [amount,\ pk^{\text{spend}},\ salt,\ token_{id}]
+$$
+
+and `Erc721CoinVault.deposit(params)` takes $[token_{id},\ pk^{\text{spend}},\ salt]$ (amount 1). The vault pulls the asset from the caller and computes the commitment itself, $C = \mathrm{H}(pk^{\text{spend}},\ salt,\ amount,\ token_{id})$, so that the deposited amount and token are bound to the note (the C-1 fix: a commitment the caller computed could encode any amount).
+
+As a result a deposit publishes the whole note opening in its calldata: the owner's spend public key, the salt, the amount and the token id, next to the depositor's address and the token transfer. The `UserRegistry` maps each registered account to its spend public key, so the deposited note's owner is public too. **Deposits do not hide the owner.** `depositV2` also emits `EncryptedNote(vaultId, C, ciphertextI, ciphertextII)` so that the owner's wallet can find the note by scanning; the ciphertext adds nothing the calldata does not already show.
+
+What stays private is the note's later life: the nullifier that spends it needs $sk^{\text{spend}}$, so the chain cannot tell when, or into what, the deposited note is spent. A [private mint](#private-issuance) creates a note without revealing its opening.
+
+### Nullifiers across vaults
+
+The nullifier $\mathrm{H}(sk^{\text{spend}},\ globalIdx)$ has no vault or asset domain. Each vault numbers its own leaves from 0, so a key that holds a note at the same $globalIdx$ in two vaults (an Erc20 vault and the USDr vault, say) publishes the same nullifier value in both when it spends them. Each vault records its own spent nullifiers, so neither note can be spent twice, but anyone who sees the same nullifier in two vaults learns that one key owned both notes.
+
+### Exits
+
+Every withdrawal publishes its recipient address and amount: they are call arguments, the vault pays the recipient with an ordinary token transfer, and they open output 0 of the proof, which the vault recomputes as $\mathrm{H}(\mathrm{uint160}(recipient),\ 0,\ amount,\ token_{id})$ (or, for the legacy `withdraw`, $\mathrm{H}(uid,\ recipient)$).
+
+| Function (`Erc20CoinVault`) | Receipt | Public | Change note |
+| --- | --- | --- | --- |
+| `withdrawV2(params, recipient, receipt)` | Payment or Payment2in, `StMessage = WITHDRAW_MESSAGE` | recipient, amount, token id; `PartialWithdrawal` event | inserted; no `EncryptedNote` |
+| `partialWithdraw(params, recipient, receipt, ciphertextI, ciphertextII)` | as `withdrawV2` | as `withdrawV2` | inserted; `EncryptedNote` with the caller's ciphertexts |
+| `partialWithdrawWithRelayerFee(...)` | PaymentRelayerFeePublic, `StMessage = WITHDRAW_MESSAGE` | as `withdrawV2`, plus the public fee | inserted, with the relayer's fee note; `EncryptedNote` with the caller's ciphertexts |
+| `withdraw(params, recipient, receipt)` (legacy) | any Payment-family receipt | recipient, amount | not inserted |
+
+The VK slots these functions use (Payment 0, Payment2in 1, PaymentRelayerFeePublic 3) are the dedicated Payment deployment's. The main deployment registers other circuits in slots 1-3, so there only the 1-input `withdrawV2`/`partialWithdraw` verifies; a Payment2in or relayer-fee receipt reverts.
+
+The change note itself stays private: its commitment hides the remainder, and the spent inputs are hidden behind their nullifiers.
+
+**The change note's ciphertexts are not bound to the proof.** The Payment-family statements have a `CiphertextHash` slot, which every payment path checks against the ciphertexts it publishes (`CiphertextHash.sol`), but `_settlePartialWithdraw` does not check it: it emits whatever `ciphertextI`/`ciphertextII` its caller passes. Anyone who sees a pending `partialWithdraw` or `partialWithdrawWithRelayerFee` can settle the same receipt first with other ciphertexts, or with none. The recipient, amount and outputs are fixed by the proof, so nothing can be redirected, but the owner's scan finds a false or missing ciphertext for the change note. The circuit fixes the change note's salt to $\mathrm{H}(sk^{\text{spend}},\ nf_0)$, so the owner can always rebuild the note from its key and the transaction's `Nullifier` and `PartialWithdrawal` events (`core.WithdrawChangeNote`), without the ciphertexts.
+
+**The legacy `withdraw` is not domain-separated from payments.** `withdrawV2` and the partial withdrawals take only receipts whose `StMessage` is `WITHDRAW_MESSAGE`, and the payment paths refuse that value, so a withdrawal receipt settles only as a withdrawal. The legacy `withdraw` does not check `StMessage`: it takes a payment receipt (`StMessage = 0`), so a pending legacy-withdraw receipt can also be settled first as a payment (by any payment path whose ciphertexts match its `CiphertextHash`), which inserts output 0 as a note no one can spend instead of paying it out. It also spends the inputs without inserting any other output, so a change note in output 1 is lost. It does refuse locked notes.
+
+### Erc721 vault: legacy paths
+
+`Erc721CoinVault.transfer`, `withdraw` and `verifyOwnership` verify against VK slot 1 (`VK_ID_ERC721_1`), which the main deployment's config assigns to `OwnershipErc721`. That circuit's template is gone and its keygen is commented out (`gnark_circuits/cmd/keygen`), so no proof for these paths can be made. (Its nullifier was the old $\mathrm{H}(sk^{\text{spend}},\ leafIndex)$, which is why `checkReceiptConditions` takes these receipts only in tree 0.) NFTs move into the vault through `deposit` and leave it only as DvP legs (`checkDvpReceiptConditions`, VK slot 24), so an NFT never leaves the shielded pool for a public address.
+
+---
+
 ## Security Goals
 
 - **Atomicity**: either both sides settle or Alice recovers her original asset
-- **Privacy**: commitments hide owners, amounts, token identifiers, and linkage
+- **Privacy**: commitments hide owners, amounts, token identifiers, and linkage; deposits, exits and spends across vaults reveal what [What the chain sees](#what-the-chain-sees-deposits-spends-and-exits) lists
 - **Fairness**: Bob cannot receive Alice's asset unless he spends his own input
 - **Replay resistance**: nullifiers prevent double-spending
 - **Timeout safety**: locked funds can be recovered after the deadline
@@ -450,7 +497,7 @@ Alice's proof must enforce:
 - $pk_A^{\text{spend}} = \mathrm{H}(sk_A^{\text{spend}})$
 - $C^{\text{in}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{in}},\ amount_1,\ token{id_1})$
 - $C^{\text{in}}_A$ is at $leafIndex_A$ in the Merkle tree with root $MerkleRoot_A$
-- $nf_A = \mathrm{H}(sk_A^{\text{spend}},\ leafIndex_A)$
+- $nf_A = \mathrm{H}(sk_A^{\text{spend}},\ globalIdx_A)$
 - $C^{\text{out}}B = \mathrm{H}(pk_B^{\text{spend}},\ salt_B^{\text{out}},\ amount_1,\ token{id_1})$
 - $C^{\text{out}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{out}},\ amount_2,\ token{id_2})$
 - $C^{\text{rev}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{rev}},\ amount_1,\ token{id_1})$
@@ -470,7 +517,7 @@ The circuit enforces:
 - $pk_A^{\text{spend}} = \mathrm{H}(sk_A^{\text{spend}})$
 - $C^{\text{in}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{in}},\ amount_1,\ token{id_1})$
 - $C^{\text{in}}_A$ is at $leafIndex_A$ in the Merkle tree with root $MerkleRoot_A$
-- $nf_A = \mathrm{H}(sk_A^{\text{spend}},\ leafIndex_A)$
+- $nf_A = \mathrm{H}(sk_A^{\text{spend}},\ globalIdx_A)$
 - $C^{\text{out}}B = \mathrm{H}(pk_B^{\text{spend}},\ salt_B^{\text{out}},\ amount_1,\ token{id_1})$
 - $C^{\text{out}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{out}},\ amount_2,\ token{id_2})$
 - $C^{\text{rev}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{rev}},\ amount_1,\ token{id_1})$
@@ -480,7 +527,7 @@ The circuit enforces:
 
 $vault_B$ is the address of the vault Alice expects to be paid from (where $C^{\text{out}}_A$ is inserted). The commitments do not name a vault, so at settlement `EnygmaDvp` checks that Bob's leg really comes from $vault_B$ (and Bob's $vault_A$ symmetrically); otherwise it reverts with `CounterVaultMismatch`. Without this, a counterparty could pay from another vault in the same asset group.
 
-Note: $treeNum_A$ is used by the contract for nullifier map routing; it is not incorporated into the nullifier computation.
+Note: $globalIdx_A = treeNum_A \cdot 2^{d} + leafIndex_A$, so the circuit constrains the public $treeNum_A$ through the nullifier; the contract also uses it to route the nullifier check.
 
 #### Bob's Proof $\pi_B$ — DvPDestination Circuit
 
@@ -491,14 +538,14 @@ The circuit enforces:
 - $pk_B^{\text{spend}} = \mathrm{H}(sk_B^{\text{spend}})$
 - $C^{\text{in}}B = \mathrm{H}(pk_B^{\text{spend}},\ salt_B^{\text{in}},\ amount_2,\ token{id_2})$
 - $C^{\text{in}}_B$ is at $leafIndex_B$ in the Merkle tree with root $MerkleRoot_B$
-- $nf_B = \mathrm{H}(sk_B^{\text{spend}},\ leafIndex_B)$
+- $nf_B = \mathrm{H}(sk_B^{\text{spend}},\ globalIdx_B)$
 - $C^{\text{out}}A = \mathrm{H}(pk_A^{\text{spend}},\ salt_A^{\text{out}},\ amount_2,\ token{id_2})$
 - $C^{\text{out}}B = \mathrm{H}(pk_B^{\text{spend}},\ salt_B^{\text{out}},\ amount_1,\ token{id_1})$
 - $\mathrm{StMessage} = C^{\text{out}}_B$
 - $0 \le amount_2,\ amount_1 < 2^{128}$
 - $vault_A \ne 0$ (the vault Bob expects to be paid from, where $C^{\text{out}}_B$ is inserted)
 
-Note: $treeNum_B$ is used by the contract for nullifier map routing; it is not incorporated into the nullifier computation.
+Note: $globalIdx_B = treeNum_B \cdot 2^{d} + leafIndex_B$, as for Alice.
 
 ---
 
