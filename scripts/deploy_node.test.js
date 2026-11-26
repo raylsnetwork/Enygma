@@ -8,16 +8,26 @@ const script = path.join(__dirname, "../enygma_payments/run_scripts/deploy_node.
 const source = fs.readFileSync(script, "utf8");
 
 // Run the CLI with in-memory artifacts and a signer that cannot send transactions.
-async function run(env = {}, rpcResult = "0x539") {
+async function run(env = {}, rpcResult = "0x539", httpStatus = 200) {
   const calls = [];
+  const targets = [];
   const keys = [];
   const errors = [];
   const deployments = [];
   let status = 0;
   const ethers = {
+    FetchRequest: class {
+      constructor(url) { this.url = url; }
+      getUrlFunc = async () => ({ statusCode: httpStatus });
+    },
     JsonRpcProvider: class {
+      constructor(connection, chainId) {
+        this.connection = connection;
+        targets.push([connection.url ?? connection, chainId]);
+      }
       async send(method, params) {
         calls.push([method, params]);
+        await this.connection.getUrlFunc?.(this.connection);
         if (rpcResult instanceof Error) throw rpcResult;
         return rpcResult;
       }
@@ -57,7 +67,7 @@ async function run(env = {}, rpcResult = "0x539") {
     process: { env, exit: (code) => { status = code; } },
     console: { log: () => {}, error: (error) => errors.push(error.message) },
   }, { filename: script });
-  return { calls, keys, errors, deployments, status };
+  return { calls, targets, keys, errors, deployments, status };
 }
 
 function assertOwnerKeyRefused(result) {
@@ -86,6 +96,7 @@ test("requires OWNER_KEY when the local RPC does not confirm chain 1337", async 
 test("deploys with the demo key when the environment is unset and local RPC confirms chain 1337", async () => {
   const result = await run();
   assert.equal(result.status, 0, result.errors.join("\n"));
+  assert.deepEqual(result.targets, [["http://127.0.0.1:8545", 1337]]);
   assert.equal(result.calls.length, 1);
   assert.equal(result.calls[0][0], "eth_chainId");
   assert.equal(result.calls[0][1].length, 0);
@@ -102,7 +113,12 @@ test("deploys with explicit OWNER_KEY on another chain", async () => {
     REVIEWED_VERIFIER_ARTIFACT: "reviewed.json",
   }, "0x1");
   assert.equal(result.status, 0, result.errors.join("\n"));
+  assert.deepEqual(result.targets, [["https://rpc.invalid", 1]]);
   assert.deepEqual(result.calls, []);
   assert.deepEqual(result.keys, [ownerKey]);
   assert.deepEqual(result.deployments, [[1, 0], []]);
+});
+
+test("refuses an HTTP redirect before deploying with the demo key", async () => {
+  assertOwnerKeyRefused(await run({}, "0x539", 307));
 });
