@@ -406,3 +406,28 @@ func TestCheckVault_RejectsOversizedTreeNumber(t *testing.T) {
 			"exactly the silent-corruption this guard exists to prevent)", status.TreeNumber)
 	}
 }
+
+func TestCheckVaultRejectsTooManyCommitmentLogs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req jsonRPCRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch req.Method {
+		case "eth_call":
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"0x0"}`)
+		case "eth_getLogs":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":[%s{}]}`, strings.Repeat("{},", 1024))
+		default:
+			http.Error(w, "unexpected RPC method", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	status := checkVault(srv.Client(), srv.URL, "Erc20CoinVault", "0x1111111111111111111111111111111111111111", 8,
+		"0xdeadbeef", "0xaaaaaaaa", "0xbbbbbbbb")
+	if status.Error != "eth_getLogs: 1025 commitment logs exceed replay limit of 1024" || status.LocalRoot != "" {
+		t.Fatalf("expected replay limit error without a local root, got error %q and root %q", status.Error, status.LocalRoot)
+	}
+}

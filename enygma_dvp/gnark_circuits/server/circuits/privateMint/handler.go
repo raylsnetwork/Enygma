@@ -18,6 +18,8 @@ import (
 
 	"enygma_dvp/gnark_circuits/primitives"
 	"enygma_dvp/gnark_circuits/templates"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
@@ -38,19 +40,25 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		circuitPrivateMint := templates.PrivateMintCircuit{}
 		witness := templates.PrivateMintCircuit{}
 
-		witness.Commitment = frontend.Variable(request.Commitment)
-		witness.ContractAddress = frontend.Variable(request.ContractAddress)
-		witness.TokenId = frontend.Variable(request.TokenId)
-		witness.Salt = frontend.Variable(request.Salt)
-		witness.Amount = frontend.Variable(request.Amount)
-		witness.PublicKey = frontend.Variable(request.PublicKey)
-		witness.CipherText = frontend.Variable(request.CipherText)
+		var numbers witnessinput.Parser
+		witness.Commitment = numbers.Parse(request.Commitment)
+		witness.ContractAddress = numbers.Parse(request.ContractAddress)
+		witness.TokenId = numbers.Parse(request.TokenId)
+		witness.Salt = numbers.Parse(request.Salt)
+		witness.Amount = numbers.Parse(request.Amount)
+		witness.PublicKey = numbers.Parse(request.PublicKey)
+		witness.CipherText = numbers.Parse(request.CipherText)
 
 		solver.RegisterHint(primitives.ModHint)
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitPrivateMint)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})
+			return
+		}
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 

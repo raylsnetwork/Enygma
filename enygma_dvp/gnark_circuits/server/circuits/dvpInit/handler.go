@@ -16,6 +16,8 @@ import (
 	"enygma_dvp/gnark_circuits/primitives"
 	"enygma_dvp/gnark_circuits/templates"
 	utils "enygma_dvp/gnark_circuits/utils"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 const merkleDepth = 8
@@ -52,30 +54,31 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// --- populate witness ---
-		witness.StMessage = frontend.Variable(req.StMessage)
-		witness.StTreeNumber = frontend.Variable(req.StTreeNumber)
-		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
-		witness.StNullifier = frontend.Variable(req.StNullifier)
-		witness.StCommitB = frontend.Variable(req.StCommitB)
-		witness.StCommitA = frontend.Variable(req.StCommitA)
-		witness.StRevertCommitA = frontend.Variable(req.StRevertCommitA)
-		witness.StCounterVault = frontend.Variable(req.StCounterVault)
+		var numbers witnessinput.Parser
+		witness.StMessage = numbers.Parse(req.StMessage)
+		witness.StTreeNumber = numbers.Parse(req.StTreeNumber)
+		witness.StMerkleRoot = numbers.Parse(req.StMerkleRoot)
+		witness.StNullifier = numbers.Parse(req.StNullifier)
+		witness.StCommitB = numbers.Parse(req.StCommitB)
+		witness.StCommitA = numbers.Parse(req.StCommitA)
+		witness.StRevertCommitA = numbers.Parse(req.StRevertCommitA)
+		witness.StCounterVault = numbers.Parse(req.StCounterVault)
 
-		witness.WtSpendKeyIn = frontend.Variable(req.WtSpendKeyIn)
-		witness.WtValueIn = frontend.Variable(req.WtValueIn)
-		witness.WtSaltIn = frontend.Variable(req.WtSaltIn)
-		witness.WtTokenIdIn = frontend.Variable(req.WtTokenIdIn)
-		witness.WtPathIndex = frontend.Variable(req.WtPathIndex)
+		witness.WtSpendKeyIn = numbers.Parse(req.WtSpendKeyIn)
+		witness.WtValueIn = numbers.Parse(req.WtValueIn)
+		witness.WtSaltIn = numbers.Parse(req.WtSaltIn)
+		witness.WtTokenIdIn = numbers.Parse(req.WtTokenIdIn)
+		witness.WtPathIndex = numbers.Parse(req.WtPathIndex)
 		for j := 0; j < merkleDepth; j++ {
-			witness.WtPathElements[j] = frontend.Variable(req.WtPathElements[j])
+			witness.WtPathElements[j] = numbers.Parse(req.WtPathElements[j])
 		}
 
-		witness.WtSpendPkBob = frontend.Variable(req.WtSpendPkBob)
-		witness.WtSaltB = frontend.Variable(req.WtSaltB)
-		witness.WtValueBob = frontend.Variable(req.WtValueBob)
-		witness.WtTokenIdBob = frontend.Variable(req.WtTokenIdBob)
-		witness.WtSaltA = frontend.Variable(req.WtSaltA)
-		witness.WtRevertSalt = frontend.Variable(req.WtRevertSalt)
+		witness.WtSpendPkBob = numbers.Parse(req.WtSpendPkBob)
+		witness.WtSaltB = numbers.Parse(req.WtSaltB)
+		witness.WtValueBob = numbers.Parse(req.WtValueBob)
+		witness.WtTokenIdBob = numbers.Parse(req.WtTokenIdBob)
+		witness.WtSaltA = numbers.Parse(req.WtSaltA)
+		witness.WtRevertSalt = numbers.Parse(req.WtRevertSalt)
 
 		// --- compile, prove, verify ---
 		solver.RegisterHint(primitives.ModHint)
@@ -83,6 +86,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})
+			return
+		}
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 

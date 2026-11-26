@@ -347,6 +347,9 @@ type logEntry struct {
 	Topics []string `json:"topics"`
 }
 
+// maxCommitmentReplayLogs bounds the local tree rebuild for each vault.
+const maxCommitmentReplayLogs = 1024
+
 // ethGetLogs fetches all logs for the given contract matching topic0.
 func ethGetLogs(client *http.Client, rpcURL, contractAddr, topic0 string) ([]logEntry, error) {
 	resp, err := doRPC(client, rpcURL, jsonRPCRequest{
@@ -983,6 +986,10 @@ func checkVault(client *http.Client, rpcURL, name, addr string, depth int,
 		return s
 	}
 	s.LeafCount = len(logs)
+	if s.LeafCount > maxCommitmentReplayLogs {
+		s.Error = fmt.Sprintf("eth_getLogs: %d commitment logs exceed replay limit of %d", s.LeafCount, maxCommitmentReplayLogs)
+		return s
+	}
 
 	// 4. Replay insertions into a local Merkle tree and compute root
 	mt := newLocalMerkleTree(depth)

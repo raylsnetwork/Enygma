@@ -111,7 +111,14 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			return
 		}
 
-		proof, err := groth16.Prove(ccs, pk, witnessFull)
+		if !utils.ProveLimiter.Acquire() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "proving server is busy, try again shortly"})
+			return
+		}
+		proof, err := func() (groth16.Proof, error) {
+			defer utils.ProveLimiter.Release()
+			return groth16.Prove(ccs, pk, witnessFull)
+		}()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("proof generation failed: %v", err)})
 			return

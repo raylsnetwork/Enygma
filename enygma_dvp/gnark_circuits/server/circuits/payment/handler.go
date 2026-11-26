@@ -16,6 +16,8 @@ import (
 	"enygma_dvp/gnark_circuits/primitives"
 	"enygma_dvp/gnark_circuits/templates"
 	utils "enygma_dvp/gnark_circuits/utils"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
@@ -62,29 +64,30 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		circuit := newCircuit()
 		witness := newCircuit()
 
-		witness.StMessage = frontend.Variable(request.StMessage)
-		witness.StContractAddress = frontend.Variable(request.StContractAddress)
-		witness.StCiphertextHash = frontend.Variable(request.StCiphertextHash)
-		witness.WtTokenId = frontend.Variable(request.WtTokenId)
+		var numbers witnessinput.Parser
+		witness.StMessage = numbers.Parse(request.StMessage)
+		witness.StContractAddress = numbers.Parse(request.StContractAddress)
+		witness.StCiphertextHash = numbers.Parse(request.StCiphertextHash)
+		witness.WtTokenId = numbers.Parse(request.WtTokenId)
 
 		for i := 0; i < cfg.TmNInputs; i++ {
-			witness.StTreeNumbers[i] = frontend.Variable(request.StTreeNumbers[i])
-			witness.StMerkleRoots[i] = frontend.Variable(request.StMerkleRoots[i])
-			witness.StNullifiers[i] = frontend.Variable(request.StNullifiers[i])
-			witness.WtPrivateKeysIn[i] = frontend.Variable(request.WtPrivateKeysIn[i])
-			witness.WtValuesIn[i] = frontend.Variable(request.WtValuesIn[i])
-			witness.WtSaltsIn[i] = frontend.Variable(request.WtSaltsIn[i])
-			witness.WtPathIndices[i] = frontend.Variable(request.WtPathIndices[i])
+			witness.StTreeNumbers[i] = numbers.Parse(request.StTreeNumbers[i])
+			witness.StMerkleRoots[i] = numbers.Parse(request.StMerkleRoots[i])
+			witness.StNullifiers[i] = numbers.Parse(request.StNullifiers[i])
+			witness.WtPrivateKeysIn[i] = numbers.Parse(request.WtPrivateKeysIn[i])
+			witness.WtValuesIn[i] = numbers.Parse(request.WtValuesIn[i])
+			witness.WtSaltsIn[i] = numbers.Parse(request.WtSaltsIn[i])
+			witness.WtPathIndices[i] = numbers.Parse(request.WtPathIndices[i])
 			for j := 0; j < cfg.TmMerkleTreeDepth; j++ {
-				witness.WtPathElements[i][j] = frontend.Variable(request.WtPathElements[i][j])
+				witness.WtPathElements[i][j] = numbers.Parse(request.WtPathElements[i][j])
 			}
 		}
 
 		for i := 0; i < cfg.TmMOutputs; i++ {
-			witness.StCommitmentsOut[i] = frontend.Variable(request.StCommitmentsOut[i])
-			witness.WtSpendPublicKeysOut[i] = frontend.Variable(request.WtSpendPublicKeysOut[i])
-			witness.WtValuesOut[i] = frontend.Variable(request.WtValuesOut[i])
-			witness.WtSaltsOut[i] = frontend.Variable(request.WtSaltsOut[i])
+			witness.StCommitmentsOut[i] = numbers.Parse(request.StCommitmentsOut[i])
+			witness.WtSpendPublicKeysOut[i] = numbers.Parse(request.WtSpendPublicKeysOut[i])
+			witness.WtValuesOut[i] = numbers.Parse(request.WtValuesOut[i])
+			witness.WtSaltsOut[i] = numbers.Parse(request.WtSaltsOut[i])
 		}
 
 		witness.Config = cfg
@@ -99,6 +102,11 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})
+			return
+		}
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
