@@ -95,6 +95,14 @@ contract Enygma is IEnygma {
 
     /// @notice Largest usdrFixedFeeAmount setUsdrFixedFee accepts (exclusive).
     uint256 public constant MAX_USDR_FIXED_FEE = 1 << 64;
+
+    /// @notice Most accounts registerAccount accepts. Every ledger write
+    ///         copies each registered account's commitments forward on both
+    ///         ledgers, about 100k gas per account on an epoch's first write.
+    ///         The costliest such write, a withdraw into ten deposits, then
+    ///         takes about 14M gas at 80 accounts and would pass the 2^24
+    ///         per-transaction gas cap (EIP-7825) from about 106.
+    uint256 public constant MAX_REGISTERED_ACCOUNTS = 80;
     uint256 public lastBlockNum;
     uint256 private _totalRegisteredParties;
 
@@ -306,6 +314,7 @@ contract Enygma is IEnygma {
     error VerifierHasNoCode();
     error VerifierRuntimeMismatch();
     error AlreadyRegistered();
+    error RegistryFull();
     error UnregisteredParticipant();
     error InvalidAccountId();
     error InvalidPublicKey();
@@ -574,6 +583,7 @@ contract Enygma is IEnygma {
         // check() (and reverting mintSupply/burn) until every skipped id is
         // registered, and its balance is never propagated across epochs.
         if (accountId != _totalRegisteredParties + 1) revert InvalidAccountId();
+        if (_totalRegisteredParties >= MAX_REGISTERED_ACCOUNTS) revert RegistryFull();
         if (publicKey == 0) revert InvalidPublicKey();
         // viewKey is legitimately empty for accounts that never
         // participate in ZK circuits (e.g. the relayer's own self-
