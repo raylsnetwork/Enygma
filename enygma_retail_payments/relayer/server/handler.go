@@ -1122,95 +1122,43 @@ func (h *Handler) relayUsdrFee(c *gin.Context, p *parsedUsdrFee, pending bool, m
 	h.submitToDvp(c, nfKeys, pending, kept, method, args...)
 }
 
-// RelayTag is the gin handler for POST /relay/tag.
-//
-// Supports two modes:
-//
-// Single-tag mode: client pre-computes tag for a predicted block.
-// Window mode: client provides tags for multiple blocks; the relayer picks
-// the correct one and retries (up to 3 times) if the tx drifts.
+// RelayTag is the gin handler for POST /relay/tag: it publishes one tag and
+// its payload, for a block the client predicted, from the relayer's account.
+// It is for messages that are not payment notes (dummy messages, §4.2): a
+// payment pays over its tag channel with /relay/channel_payment*, which
+// settles tag and note in one transaction (#452). A request with any other
+// field (tags, startBlock, ctxts) is refused.
 //
 // Validation steps:
-//  1. Decode ctxt and validate tag input (single or window).
+//  1. Decode the request strictly, then the tag and ctxt.
 //  2. Verify TagRegistry is configured (503 if not).
-//  3. Claim in-flight lock to prevent concurrent duplicate submissions.
+//  3. Claim the tag as in-flight to prevent concurrent duplicate submissions.
 //  4. Serialize with txMu to prevent nonce races.
-//  5. Submit publishTag() — in window mode, retry on block drift.
+//  5. Submit publishTag(tag, ctxt).
 func (h *Handler) RelayTag(c *gin.Context) {
 	var req RelayTagRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s (/relay/tag takes tag and ctxt only)", err)})
+		return
+	}
+
+	// Step 1 — the tag, and the payload under the key of the tag's block.
+	if req.Tag == "" || req.Ctxt == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tag and ctxt are required"})
+		return
+	}
+	ctxt, err := decodeHexField(req.Ctxt, "ctxt")
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Step 1 — validate: either single tag or window, not both.
-	windowMode := len(req.Tags) > 0
-	if !windowMode && req.Tag == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "either tag (single) or tags+startBlock (window) is required"})
+	// Decoded before claiming: the claim is keyed on the decoded bytes.
+	tag, err := decodeTag(req.Tag, "tag")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-	if windowMode && req.Tag != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "provide either tag or tags, not both"})
-		return
-	}
-	if windowMode && len(req.Tags) > 16 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "tags window too large (max 16)"})
-		return
-	}
-
-	// The payload is under a per-block key, so it travels with its tag: one
-	// ctxt in single mode, one per tag in window mode.
-	var singleCtxt []byte
-	var windowCtxts [][]byte
-	if !windowMode {
-		if req.Ctxt == "" || len(req.Ctxts) > 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "single mode takes ctxt (not ctxts)"})
-			return
-		}
-		ctxt, err := decodeHexField(req.Ctxt, "ctxt")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		singleCtxt = ctxt
-	} else {
-		if req.Ctxt != "" || len(req.Ctxts) != len(req.Tags) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
-				"window mode takes ctxts, one per tag (got %d tags, %d ctxts)", len(req.Tags), len(req.Ctxts))})
-			return
-		}
-		windowCtxts = make([][]byte, len(req.Ctxts))
-		for i, s := range req.Ctxts {
-			ctxt, err := decodeHexField(s, fmt.Sprintf("ctxts[%d]", i))
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			windowCtxts[i] = ctxt
-		}
-	}
-
-	// Decode and validate every tag up front: the claims below are keyed on
-	// the decoded bytes, so all of them must be well-formed before claiming.
-	var singleTag [32]byte
-	var windowTags [][32]byte
-	if !windowMode {
-		tag, err := decodeTag(req.Tag, "tag")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		singleTag = tag
-	} else {
-		windowTags = make([][32]byte, len(req.Tags))
-		for i, t := range req.Tags {
-			tag, err := decodeTag(t, fmt.Sprintf("tags[%d]", i))
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			windowTags[i] = tag
-		}
 	}
 
 	// Step 2 — TagRegistry must be configured.
@@ -1221,27 +1169,18 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		return
 	}
 
-	// Step 3 — claim the tag(s) as in-flight, keyed on the decoded bytes so
-	// the same tag cannot slip past in another hex spelling (0x prefix,
-	// letter case). In window mode every tag of the window is claimed, not
-	// just the first: a shifted window that still covers the tag being
-	// published collides on it.
-	var claimKeys []string
-	if windowMode {
-		for _, t := range windowTags {
-			claimKeys = append(claimKeys, tagKey(t))
-		}
-	} else {
-		claimKeys = []string{tagKey(singleTag)}
-	}
+	// Step 3 — claim the tag as in-flight, keyed on the decoded bytes so the
+	// same tag cannot slip past in another hex spelling (0x prefix, case).
+	claimKeys := []string{tagKey(tag)}
 	if !h.claim(claimKeys...) {
 		c.JSON(http.StatusConflict, gin.H{"error": "tag already in-flight"})
 		return
 	}
-	// Released when the request ends, unless an attempt is still unmined:
-	// then only once it is mined. TagRegistry only rejects a repeated tag
-	// within one block, so a retry released early and landing in another
-	// block would publish the same tag a second time at the relayer's cost.
+	// Released when the request ends, unless the transaction is still
+	// unmined: then only once it is mined. TagRegistry only rejects a
+	// repeated tag within one block, so a retry released early and landing
+	// in another block would publish the same tag a second time at the
+	// relayer's cost.
 	var pendingTx *types.Transaction
 	defer func() {
 		if pendingTx != nil {
@@ -1251,128 +1190,37 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		h.release(claimKeys)
 	}()
 
-	// Step 5 — submit. Window mode retries up to 3 times on block drift.
-	// txMu is locked/unlocked per attempt below, around the submission
-	// only — not held across WaitMined (see txTimeout's doc comment) and
-	// not held across the whole retry loop, so one slow-to-mine attempt
-	// can't block every other request while this handler retries.
+	// Steps 4–5 — txMu is held around the submission only, not across
+	// WaitMined (see txTimeout's doc comment).
 	registry := bind.NewBoundContract(h.tagRegistryAddr, h.tagRegistryABI, h.client, h.client, h.client)
-	const maxAttempts = 3
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		var tag [32]byte
-		var ctxt []byte
-
-		if windowMode {
-			// Pick the tag for the block this tx is expected to land in.
-			currentBlock, err := h.client.BlockNumber(context.Background())
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("blockNumber: %s", err)})
-				return
-			}
-			targetBlock := currentBlock + 1
-			idx := int64(targetBlock) - int64(req.StartBlock)
-			if idx < 0 || int(idx) >= len(req.Tags) {
-				c.JSON(http.StatusConflict, gin.H{
-					"error": fmt.Sprintf("window [%d, %d) does not cover expected block %d — resubmit with a new window",
-						req.StartBlock, req.StartBlock+uint64(len(req.Tags)), targetBlock),
-				})
-				return
-			}
-			tag, ctxt = windowTags[idx], windowCtxts[idx]
-		} else {
-			tag, ctxt = singleTag, singleCtxt
-		}
-
-		h.txMu.Lock()
-		tx, err := registry.Transact(h.auth, "publishTag", tag, ctxt)
-		h.txMu.Unlock()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("publishTag(): %s", err)})
-			return
-		}
-		waitCtx, cancel := context.WithTimeout(context.Background(), txTimeout)
-		txReceipt, err := bind.WaitMined(waitCtx, h.client, tx)
-		cancel()
-		if errors.Is(err, context.DeadlineExceeded) {
-			// Outcome unknown: the block-drift check below has not run, so in
-			// window mode the client must confirm from the receipt that the
-			// transaction landed in the block its tag was for.
-			pendingTx = tx
-			c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
-			return
-		}
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
-			return
-		}
-		if txReceipt.Status == types.ReceiptStatusFailed {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain (tag may already exist in this block)"})
-			return
-		}
-
-		actualBlock := txReceipt.BlockNumber.Uint64()
-
-		// In window mode, check whether the tx landed in the block we targeted.
-		// If not, retry using the correct tag for the actual block (which is in
-		// the window since we just mined it).
-		if windowMode {
-			expectedBlock := actualBlock // we'll re-query on next attempt
-			_ = expectedBlock
-			// Verify the tag we submitted was for the correct block.
-			// Re-query to check: the tag we used was for (startBlock + idx).
-			// If the tx landed in a different block, the tag is wrong — retry.
-			tagIdx := int64(actualBlock) - int64(req.StartBlock)
-			chosenIdx := int64(0) // index we submitted
-			// Re-derive the chosen index from the pre-submission query.
-			// Since we can't recover it easily, we just check if actual block is
-			// within the window and let the retry loop pick the right tag.
-			if tagIdx < 0 || int(tagIdx) >= len(req.Tags) {
-				// Landed outside the window entirely.
-				c.JSON(http.StatusConflict, gin.H{
-					"error": fmt.Sprintf("tx landed in block %d which is outside window [%d, %d) — resubmit",
-						actualBlock, req.StartBlock, req.StartBlock+uint64(len(req.Tags))),
-				})
-				return
-			}
-			_ = chosenIdx
-			// The correct tag for the actual block is tags[tagIdx].
-			// Check if we already submitted the correct tag.
-			correctTagBytes, _ := decodeHexField(req.Tags[tagIdx], "")
-			if len(correctTagBytes) == 32 && correctTagBytes[0] == tag[0] {
-				// Quick check: likely the right tag (exact check below is fine).
-			}
-			// Deep check: compare submitted tag with correct tag for actualBlock.
-			submittedCorrect := true
-			if len(correctTagBytes) == 32 {
-				for i, b := range correctTagBytes {
-					if tag[i] != b {
-						submittedCorrect = false
-						break
-					}
-				}
-			}
-			if submittedCorrect {
-				c.JSON(http.StatusOK, RelayTagResponse{
-					TxHash:      txReceipt.TxHash.Hex(),
-					BlockNumber: actualBlock,
-					GasUsed:     txReceipt.GasUsed,
-				})
-				return
-			}
-			// Wrong tag was submitted for this block — retry with the correct one.
-			continue
-		}
-
-		c.JSON(http.StatusOK, RelayTagResponse{
-			TxHash:      txReceipt.TxHash.Hex(),
-			BlockNumber: actualBlock,
-			GasUsed:     txReceipt.GasUsed,
-		})
+	h.txMu.Lock()
+	tx, err := registry.Transact(h.auth, "publishTag", tag, ctxt)
+	h.txMu.Unlock()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("publishTag(): %s", err)})
 		return
 	}
-
-	c.JSON(http.StatusConflict, gin.H{"error": "exceeded retry limit — resubmit with a new window starting from the current block"})
+	waitCtx, cancel := context.WithTimeout(context.Background(), txTimeout)
+	txReceipt, err := bind.WaitMined(waitCtx, h.client, tx)
+	cancel()
+	if errors.Is(err, context.DeadlineExceeded) {
+		pendingTx = tx
+		c.JSON(http.StatusAccepted, gin.H{"txHash": tx.Hash().Hex(), "status": "pending"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("wait mined: %s", err)})
+		return
+	}
+	if txReceipt.Status == types.ReceiptStatusFailed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction reverted on-chain (tag may already exist in this block)"})
+		return
+	}
+	c.JSON(http.StatusOK, RelayTagResponse{
+		TxHash:      txReceipt.TxHash.Hex(),
+		BlockNumber: txReceipt.BlockNumber.Uint64(),
+		GasUsed:     txReceipt.GasUsed,
+	})
 }
 
 // RelayChannel is the gin handler for POST /relay/channel.

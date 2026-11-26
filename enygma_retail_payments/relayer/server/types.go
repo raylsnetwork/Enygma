@@ -291,39 +291,19 @@ var paymentLayouts = map[int]paymentLayout{
 
 // ── Tag relay ─────────────────────────────────────────────────────────────────
 
-// RelayTagRequest is the JSON body accepted by POST /relay/tag.
-//
-// Two modes:
-//
-// Single-tag mode — caller predicts the exact block (original API):
+// RelayTagRequest is the JSON body accepted by POST /relay/tag: one tag for
+// the block the caller predicted, and its payload under that block's key.
 //
 //	{ "tag": "0x<32-byte hex>", "ctxt": "0x..." }
 //
-// Window mode — caller provides a window of pre-derived tags so the relayer
-// can pick the one matching the actual landing block, eliminating block-
-// prediction mismatch. The payload is under a per-block key, so it comes once
-// per block too: ctxts[i] is under the key of block startBlock+i:
-//
-//	{ "tags": ["0x...", "0x...", "0x..."], "startBlock": 42, "ctxts": ["0x...", "0x...", "0x..."] }
-//
-// In window mode the relayer queries the pending block, picks the appropriate
-// (tag, ctxt) pair, and retries (up to 3 times) if the tx lands in a later
-// block that is still within the window. Use tags.PrepareTagWithWindow to
-// build the request.
+// It is for messages that are not payment notes (dummy messages, §4.2): a
+// payment pays over its tag channel with /relay/channel_payment* (#452). A
+// request with any other field (tags, startBlock, ctxts) is refused.
 type RelayTagRequest struct {
-	// Single-tag mode: pre-computed tag for a specific block.
-	Tag string `json:"tag,omitempty"`
-
-	// Window mode: tags[i] is the Poseidon tag for block startBlock+i.
-	// Must be used together with StartBlock.
-	Tags       []string `json:"tags,omitempty"`
-	StartBlock uint64   `json:"startBlock,omitempty"`
-
-	// Single-tag mode: the payload, under the key of the tag's block.
-	Ctxt string `json:"ctxt,omitempty"`
-	// Window mode: ctxts[i] is the payload under the key of block
-	// startBlock+i, published with tags[i]. Same length as Tags.
-	Ctxts []string `json:"ctxts,omitempty"`
+	// Tag is the Poseidon tag for the block the client predicted.
+	Tag string `json:"tag"`
+	// Ctxt is the payload, under the key of the tag's block.
+	Ctxt string `json:"ctxt"`
 }
 
 // RelayTagResponse is returned on successful tag publication.

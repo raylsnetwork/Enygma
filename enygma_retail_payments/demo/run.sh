@@ -6,7 +6,7 @@
 #   1. Hardhat node
 #        cd ../enygma_dvp && npx hardhat node
 #
-#   2. Deploy + init contracts  (also deploys TagChannelRegistry & TagRegistry)
+#   2. Deploy + init contracts  (also deploys TagChannelRegistry)
 #        cd enygma_retail_payments && bash setup.sh
 #
 #   3. Gnark server (port 8082)
@@ -18,8 +18,7 @@
 #        RELAYER_API_KEY=test-api-key-dev-only \
 #        go run main.go
 #
-#        For "With Tag" mode, also pass tag registry addresses (printed below):
-#        RELAYER_TAG_REGISTRY_ADDR=<TagRegistry addr>
+#        For "With Tag" mode, also pass the tag channel registry (printed below):
 #        RELAYER_TAG_CHANNEL_REGISTRY_ADDR=<TagChannelRegistry addr>
 #
 # Usage:
@@ -39,18 +38,16 @@ go mod tidy
 echo "[run.sh] building demo binary…"
 go build -o /tmp/retail_payments_demo .
 
-# Print tag registry addresses from receipts.json for "With Tag" relayer setup.
+# Print the tag channel registry from receipts.json for "With Tag" relayer setup.
 RECEIPTS="$(pwd)/../build/receipts.json"
 if [ -f "$RECEIPTS" ]; then
     TAG_CH=$(python3 -c "import json,sys; d=json.load(open('$RECEIPTS')); print(d.get('TagChannelRegistry',{}).get('contractAddress','<not deployed>'))" 2>/dev/null || echo "<error>")
-    TAG_R=$(python3 -c "import json,sys; d=json.load(open('$RECEIPTS')); print(d.get('TagRegistry',{}).get('contractAddress','<not deployed>'))" 2>/dev/null || echo "<error>")
     echo ""
     echo "[run.sh] For 'With Tag' mode, start the relayer with:"
     echo "  cd ../relayer"
     echo "  RELAYER_PRIVATE_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda \\"
     echo "  RELAYER_API_KEY=test-api-key-dev-only \\"
     echo "  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=$TAG_CH \\"
-    echo "  RELAYER_TAG_REGISTRY_ADDR=$TAG_R \\"
     echo "  go run main.go"
     echo ""
 fi

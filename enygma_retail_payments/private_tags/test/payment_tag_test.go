@@ -19,17 +19,17 @@ package tags_test
 //	Phase 3 — Deposit
 //	  Alice deposits 40 ERC-20 tokens into the private vault.
 //
-//	Phase 4 — ZK Payment
-//	  Alice generates a Groth16 payment proof: 30 to Bob, 10 change to Alice.
-//	  Alice submits the proof on-chain (EnygmaDvp.payment()).
+//	Phase 4 — Channel payment (#451)
+//	  Alice tags the payment for the next block over the channel, seals Bob's
+//	  note {amount, tokenId, salt} under that block's key, and proves the
+//	  payment (30 to Bob, 10 change to Alice) bound to (block, tag, ctxt).
+//	  One transaction, EnygmaDvp.channelPayment(), settles it: no capsule, no
+//	  Payment event, no separate tag publication.
 //
-//	Phase 5 — Tag Notification
-//	  Alice encrypts Bob's note {amount, tokenId, saltB} with the channel key
-//	  and publishes a private tag on-chain (TagRegistry.publishTag).
-//
-//	Phase 6 — Bob Receives via Tag Scan
-//	  Bob scans the TagRegistry, finds his tag, decrypts the note, and
-//	  verifies the commitment matches what landed on-chain.
+//	Phase 5 — Bob Receives via Tag Scan
+//	  Bob looks his tag for the block up among the ChannelPayment events,
+//	  opens the sealed note, and verifies the commitment matches what landed
+//	  on-chain.
 //
 // Prerequisites:
 //
@@ -196,18 +196,13 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	aliceAuth := hardhatAuthFromKey(t, alicePrivKeyHex)
 	bobAuth := hardhatAuthFromKey(t, bobPrivKeyHex)
 
-	// ── Step 1: Deploy fresh TagRegistry and TagChannelRegistry ──────────────
-	t.Log("Step 1 — deploying fresh TagRegistry and TagChannelRegistry")
+	// ── Step 1: Deploy a fresh TagChannelRegistry ────────────────────────────
+	t.Log("Step 1 — deploying a fresh TagChannelRegistry")
 
-	tagRegAddr, err := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-	if err != nil {
-		t.Fatalf("DeployTagRegistry: %v", err)
-	}
 	chRegAddr, err := tags.DeployTagChannelRegistry(client, aliceAuth, "../contracts/TagChannelRegistry.json")
 	if err != nil {
 		t.Fatalf("DeployTagChannelRegistry: %v", err)
 	}
-	t.Logf("  TagRegistry:        %s", tagRegAddr.Hex())
 	t.Logf("  TagChannelRegistry: %s", chRegAddr.Hex())
 
 	// ── Step 2: Load payment contract addresses ───────────────────────────────
@@ -387,152 +382,67 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	}
 	t.Logf("  Merkle root: %s", aliceProof.Root)
 
-	// ── Step 9: Generate ZK payment proof ────────────────────────────────────
-	t.Log("Step 9 — generating ZK payment proof (30 to Bob, 10 change to Alice)")
+	// ── Step 9: Alice tags the payment and proves it bound to the tag ────────
+	t.Log("Step 9 — Alice tags the payment for the next block and proves it (30 to Bob, 10 change)")
+
+	b := nextBlock(t, client)
+	ch, err := tags.PrepareChannelPayment(channelSS, b, bobSpend.PublicKey, paymentAmt, tokenId)
+	if err != nil {
+		t.Fatalf("PrepareChannelPayment: %v", err)
+	}
+	t.Logf("  block %d  tag %x...  ctxt %d bytes", b, ch.Tag[:8], len(ch.Ctxt))
 
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
-	paymentResult, err := gnarkClient.BoundPaymentProof(
+	paymentResult, err := gnarkClient.BoundChannelPaymentProof(
 		vaultAddrBig,
-		big.NewInt(0),
 		[]*big.Int{depositAmt},
 		[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
 		[]*big.Int{aliceSaltBField},
 		[]*big.Int{paymentAmt, changeAmt},
 		[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
-		[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
+		rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
 		merkleDepth,
 		[]*rpcore.MerkleProof{aliceProof},
 		[]*big.Int{big.NewInt(0)},
 		tokenId,
 	)
 	if err != nil {
-		t.Fatalf("BoundPaymentProof: %v", err)
+		t.Fatalf("BoundChannelPaymentProof: %v", err)
 	}
-	t.Logf("  proof generated")
-	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
+	if got, want := paymentResult.Statement[layout.PaymentCiphertextHashOffset], rpcore.ChannelPaymentCiphertextHash(b, ch.Tag, ch.Ctxt); got.Cmp(want) != 0 {
+		t.Fatalf("the proof binds ciphertext hash %s, want the channel payment's %s", got, want)
+	}
+	bobCmt := paymentResult.Statement[layout.PaymentCommitmentsOutOffset]
+	t.Logf("  Bob's commitment   (output 0): %s", bobCmt)
 	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
-	t.Logf("  Bob's saltB:                   %s", paymentResult.SaltB)
 
-	// ── Step 10: Submit payment on-chain ─────────────────────────────────────
-	t.Log("Step 10 — submitting payment on-chain (EnygmaDvp.payment)")
+	// ── Step 10: Settle the channel payment on-chain ─────────────────────────
+	t.Log("Step 10 — settling the payment on-chain (EnygmaDvp.channelPayment)")
+	t.Log("          (test-only: direct — in production use /relay/channel_payment)")
 
 	receipt := buildPayProofReceipt(paymentResult)
-	payTx, err := dvp.Transact(aliceAuth, "payment",
-		receipt, big.NewInt(0), paymentResult.CipherText, paymentResult.EncTxData)
+	payTx, err := dvp.Transact(aliceAuth, "channelPayment",
+		receipt, big.NewInt(0), new(big.Int).SetUint64(b), ch.Tag, ch.Ctxt)
 	if err != nil {
-		t.Fatalf("EnygmaDvp.payment: %v", err)
+		t.Fatalf("EnygmaDvp.channelPayment: %v", err)
 	}
 	payReceipt, err := bind.WaitMined(ctx, client, payTx)
-	if err != nil {
-		t.Fatalf("wait payment: %v", err)
+	if err != nil || payReceipt.Status != 1 {
+		t.Fatalf("channelPayment did not settle (err=%v)", err)
 	}
-	t.Logf("  payment mined (block %d, gas %d)", payReceipt.BlockNumber, payReceipt.GasUsed)
+	t.Logf("  channel payment mined (block %d, gas %d)", payReceipt.BlockNumber, payReceipt.GasUsed)
+	expectOneChannelPayment(t, payReceipt, b, ch.Tag, 0)
 
-	// Verify on-chain events.
-	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
-	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
-	var payEvents, nfEvents int
-	for _, log := range payReceipt.Logs {
-		switch log.Topics[0] {
-		case paymentSig:
-			payEvents++
-			t.Logf("  Payment event: commitment=%s", log.Topics[2].Big())
-		case nullifierSig:
-			nfEvents++
-			t.Logf("  Nullifier event: nullifier=%s", log.Topics[3].Big())
-		}
-	}
-	if payEvents != 1 {
-		t.Errorf("expected 1 Payment event, got %d", payEvents)
-	}
-	if nfEvents != 1 {
-		t.Errorf("expected 1 Nullifier event, got %d", nfEvents)
-	}
+	// ── Step 11: Bob finds the payment by its tag and opens his note ─────────
+	t.Log("Step 11 — Bob scans the ChannelPayment events for his tag and opens his note")
 
-	// ── Step 11: Alice prepares tag notification for Bob ─────────────────────
-	t.Log("Step 11 — Alice prepares payment tag notification")
-	t.Log("          (test-only: direct publish — in production use /relay/tag)")
-
-	// Use window size 3: covers startBlock, startBlock+1, startBlock+2.
-	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
-		client, 3,
-		bobSpend.PublicKey,
-		channelSS,
-		paymentAmt, tokenId, paymentResult.SaltB,
-	)
-	if err != nil {
-		t.Fatalf("PreparePaymentTag: %v", err)
-	}
-	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes each", startBlock, startBlock+3, len(noteCtxts[0]))
-
-	// Publish using windowTags[0] (expected to land in startBlock).
-	tagBlock := publishTagDirect(t, client, aliceAuth, tagRegAddr, windowTags[0], noteCtxts[0])
-
-	// If the block drifted, republish with the correct tag from the window.
-	if tagBlock != startBlock {
-		offset := int(tagBlock) - int(startBlock)
-		if offset < 0 || offset >= len(windowTags) {
-			t.Fatalf("tag drifted outside window: block %d not in [%d, %d)",
-				tagBlock, startBlock, startBlock+uint64(len(windowTags)))
-		}
-		t.Logf("  block drift %d→%d — republishing with window tag[%d]", startBlock, tagBlock, offset)
-		tagBlock = publishTagDirect(t, client, aliceAuth, tagRegAddr, windowTags[offset], noteCtxts[offset])
-	}
-	t.Logf("  tag published at block %d ✓", tagBlock)
-
-	// ── Step 12: Bob scans for his tag ───────────────────────────────────────
-	t.Log("Step 12 — Bob scans TagRegistry for his payment tag")
-
-	bobChannels := []tags.Channel{{SharedSecret: bobChannelSS, PkSpend: bobSpend.PublicKey}}
-	cursor := tags.NewScanCursor()
-	matches, _, err := tags.ScanBlocksFromCursor(client, tagRegAddr, bobChannels, cursor, tagBlock)
-	if err != nil {
-		t.Fatalf("ScanBlocksFromCursor (Bob): %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
-	}
-	t.Logf("  Bob found tag at block %d ✓", matches[0].BlockNumber)
-
-	// ── Step 13: Bob decrypts the tag and verifies the payment note ───────────
-	t.Log("Step 13 — Bob decrypts tag and verifies his payment note")
-
-	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
-	if err != nil {
-		t.Fatalf("DecryptPaymentNote: %v", err)
-	}
-
-	t.Logf("  note.Amount:  %s  (want %s)", note.Amount, paymentAmt)
-	t.Logf("  note.TokenId: %s  (want %s)", note.TokenId, tokenId)
-	t.Logf("  note.Salt:    %s", note.Salt)
-
-	if note.Amount.Cmp(paymentAmt) != 0 {
-		t.Errorf("amount mismatch: got %s, want %s", note.Amount, paymentAmt)
-	}
-	if note.TokenId.Cmp(tokenId) != 0 {
-		t.Errorf("tokenId mismatch: got %s, want %s", note.TokenId, tokenId)
-	}
+	note := bobOpensChannelPayment(t, client, dvpAddr, b, bobChannelSS, bobSpend.PublicKey, paymentAmt, tokenId, bobCmt)
 	if note.Salt.Cmp(paymentResult.SaltB) != 0 {
-		t.Errorf("saltB mismatch: got %s, want %s", note.Salt, paymentResult.SaltB)
-	}
-	t.Log("  amount ✓  tokenId ✓  salt ✓")
-
-	// Bob recomputes his commitment from the decrypted note.
-	bobRecomputedCmt, err := rpcore.Erc20CommitmentV2(
-		bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-	if err != nil {
-		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
+		t.Errorf("salt mismatch: got %s, want %s", note.Salt, paymentResult.SaltB)
 	}
 
-	expectedBobCmt := paymentResult.Statement[layout.PaymentCommitmentsOutOffset] // on-chain commitment for output 0
-	if bobRecomputedCmt.Cmp(expectedBobCmt) != 0 {
-		t.Errorf("Bob's recomputed commitment mismatch:\n  got:  %s\n  want: %s",
-			bobRecomputedCmt, expectedBobCmt)
-	}
-	t.Logf("  Bob recomputed commitment: %s ✓", bobRecomputedCmt)
-
-	// ── Step 14: Alice verifies her change note ───────────────────────────────
-	t.Log("Step 14 — Alice verifies her change note")
+	// ── Step 12: Alice verifies her change note ───────────────────────────────
+	t.Log("Step 12 — Alice verifies her change note")
 
 	aliceChangeCmt, err := rpcore.Erc20CommitmentV2(
 		aliceSpend.PublicKey, paymentResult.SaltA, changeAmt, tokenId)
@@ -549,7 +459,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 	t.Log("")
 	t.Log("=== PAYMENT WITH TAG NOTIFICATION COMPLETE ===")
 	t.Logf("    Alice paid %s tokens to Bob (kept %s as change)", paymentAmt, changeAmt)
-	t.Logf("    Bob found his note via tag scan — no Payment event decryption needed")
-	t.Logf("    Bob's commitment verified: %s", bobRecomputedCmt)
+	t.Logf("    Bob found his note by its tag among the ChannelPayment events — no capsule to trial-decrypt")
+	t.Logf("    Bob's commitment verified: %s", bobCmt)
 	t.Logf("    Bob can now generate a Merkle proof and withdraw")
 }

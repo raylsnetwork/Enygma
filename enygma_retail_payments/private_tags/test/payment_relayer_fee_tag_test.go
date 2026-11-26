@@ -2,11 +2,11 @@ package tags_test
 
 // TestFullPaymentRelayerFeeWithTagsViaRelayer — combines the PaymentRelayerFeePublic
 // circuit (1-in/3-out: pay Bob, change to Alice, spendable fee note to the relayer)
-// with the private tag notification layer, all on-chain transactions routed through
-// the relayer — same sender-privacy property as TestFullPaymentWithTagsViaRelayer,
-// but exercising the newer relayer-fee mechanism (paymentWithRelayerFee() +
-// relayerFixedFeeAmount on-chain enforcement + POST /relay/payment_relayer_fee)
-// instead of plain payment().
+// with the private tag channel, all on-chain transactions routed through the
+// relayer — same sender-privacy property as TestFullPaymentWithTagsViaRelayer,
+// but exercising the relayer-fee mechanism (channelPaymentWithRelayerFee() +
+// relayerFixedFeeAmount on-chain enforcement + POST
+// /relay/channel_payment_relayer_fee) instead of plain channelPayment().
 //
 // Flow:
 //
@@ -15,13 +15,16 @@ package tags_test
 //	Phase 3 — Deposit                 Alice deposits 45 tokens (30 pay + 10 change + 5 fee).
 //	Phase 4 — ZK Proof                PaymentRelayerFeePublic: pay=30, change=10, fee=5
 //	                                   (fee note addressed to the relayer's published
-//	                                   feeSpendPubKey from GET /relay/info).
-//	Phase 5 — Relay                   POST /relay/payment_relayer_fee — msg.sender = relayer.
-//	                                   On-chain: paymentWithRelayerFee() checks the
+//	                                   feeSpendPubKey from GET /relay/info), Bob's
+//	                                   note tagged for the next block over the channel
+//	                                   and the proof bound to (block, tag, ctxt).
+//	Phase 5 — Relay                   POST /relay/channel_payment_relayer_fee —
+//	                                   msg.sender = relayer. On-chain:
+//	                                   channelPaymentWithRelayerFee() checks the
 //	                                   proof's public StFee against relayerFixedFeeAmount.
-//	Phase 6 — Tag Notification        via POST /relay/tag — msg.sender = relayer.
-//	Phase 7 — Bob Receives            scans TagRegistry, decrypts note, verifies commitment.
-//	Phase 8 — Sender Privacy          all 3 txs (channel/payment/tag) have tx.from = relayer.
+//	Phase 6 — Bob Receives            finds his tag among the ChannelPayment events,
+//	                                   opens the sealed note, verifies the commitment.
+//	Phase 7 — Sender Privacy          both txs (channel/payment) have tx.from = relayer.
 //
 // TestPaymentRelayerFeeViaRelayer_InvalidFeeRejected then verifies the fixed-fee
 // mechanism itself, independent of tags: a fee amount that doesn't match the
@@ -39,7 +42,6 @@ package tags_test
 //	              RELAYER_API_KEY=test-api-key-dev-only \
 //	              RELAYER_FEE_SPEND_PRIVATE_KEY=123456789 \
 //	              RELAYER_TAG_CHANNEL_REGISTRY_ADDR=<addr> \
-//	              RELAYER_TAG_REGISTRY_ADDR=<addr> \
 //	              go run main.go
 //
 // Run:
@@ -65,7 +67,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
@@ -112,6 +113,19 @@ func postGnarkProof(url string, body interface{}) (*rfGnarkProofResp, error) {
 
 // ── relay request/response (POST /relay/payment_relayer_fee) ──────────────────
 
+// relayChannelRelayerFeeReq is POST /relay/channel_payment_relayer_fee's body:
+// relayRelayerFeeReq with the channel fields in place of the capsule and note.
+type relayChannelRelayerFeeReq struct {
+	VaultId      string                              `json:"vaultId"`
+	Proof        [8]string                           `json:"proof"`
+	PublicSignal [layout.PaymentRelayerFeeLen]string `json:"publicSignal"`
+	BlockNumber  uint64                              `json:"blockNumber"`
+	Tag          string                              `json:"tag"`
+	Ctxt         string                              `json:"ctxt"`
+	FeeSalt      string                              `json:"feeSalt"`
+	TokenId      string                              `json:"tokenId"`
+}
+
 type relayRelayerFeeReq struct {
 	VaultId      string                              `json:"vaultId"`
 	Proof        [8]string                           `json:"proof"`
@@ -137,8 +151,9 @@ type relayRelayerFeeResp struct {
 type relayerFeeWitness struct {
 	proof        [8]string
 	publicSignal [layout.PaymentRelayerFeeLen]string
-	ctxtBob      []byte
-	ctxtIIBob    []byte
+	ctxtBob      []byte               // the capsule; nil for a channel payment
+	ctxtIIBob    []byte               // the note under the capsule's key; nil for a channel payment
+	channel      *tags.ChannelPayment // Bob's tag and sealed note; nil without a channel
 	feeSalt      *big.Int
 	saltA        *big.Int
 	saltBobField *big.Int
@@ -154,6 +169,12 @@ type relayerFeeWitness struct {
 // the actual amounts so the circuit's conservation law always holds, even when
 // a test deliberately picks a relayerFeeAmt that mismatches the contract's
 // configured relayerFixedFeeAmount.
+//
+// With a payee channel, Bob's note is a channel payment (#451): tagged for the
+// block after the deposit over the channel's secret, its random salt sealed
+// in ctxt, and the proof bound to (block, tag, ctxt) for
+// /relay/channel_payment_relayer_fee. Without one (nil), it carries a capsule
+// for /relay/payment_relayer_fee.
 func depositAndBuildRelayerFeeWitness(
 	t *testing.T,
 	ctx context.Context,
@@ -164,6 +185,7 @@ func depositAndBuildRelayerFeeWitness(
 	bobSpendPk *big.Int,
 	bobViewEncapsKey []byte,
 	relayerFeeAmt, feeRecipientPk *big.Int,
+	payee *tags.Channel,
 ) relayerFeeWitness {
 	t.Helper()
 
@@ -240,23 +262,39 @@ func depositAndBuildRelayerFeeWitness(
 		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 
-	ssBob, ctxtBob, err := rpcore.Encapsulate(bobViewEncapsKey)
-	if err != nil {
-		t.Fatalf("Encapsulate (Bob): %v", err)
+	var ctxtBob, ctxtIIBob []byte
+	var channel *tags.ChannelPayment
+	var saltBobField, ciphertextHash *big.Int
+	if payee != nil {
+		head, err := client.BlockNumber(ctx)
+		if err != nil {
+			t.Fatalf("BlockNumber: %v", err)
+		}
+		if channel, err = tags.PrepareChannelPayment(payee.SharedSecret, head+1, bobSpendPk, paymentAmt, tokenId); err != nil {
+			t.Fatalf("PrepareChannelPayment: %v", err)
+		}
+		saltBobField = channel.Salt
+		ciphertextHash = rpcore.ChannelPaymentCiphertextHash(channel.BlockNumber, channel.Tag, channel.Ctxt)
+	} else {
+		ssBob, capsule, err := rpcore.Encapsulate(bobViewEncapsKey)
+		if err != nil {
+			t.Fatalf("Encapsulate (Bob): %v", err)
+		}
+		saltBobRaw, err := rpcore.DerivePaymentSalt(ssBob)
+		if err != nil {
+			t.Fatalf("DerivePaymentSalt (Bob): %v", err)
+		}
+		encKeyBob, err := rpcore.DerivePaymentKey(ssBob)
+		if err != nil {
+			t.Fatalf("DerivePaymentKey (Bob): %v", err)
+		}
+		if ctxtIIBob, err = rpcore.EncryptPayload(encKeyBob, tokenId, paymentAmt); err != nil {
+			t.Fatalf("EncryptPayload (Bob): %v", err)
+		}
+		ctxtBob = capsule
+		saltBobField = rpcore.SaltBToField(saltBobRaw)
+		ciphertextHash = rpcore.PaymentCiphertextHash([][]byte{ctxtBob}, [][]byte{ctxtIIBob})
 	}
-	saltBobRaw, err := rpcore.DerivePaymentSalt(ssBob)
-	if err != nil {
-		t.Fatalf("DerivePaymentSalt (Bob): %v", err)
-	}
-	encKeyBob, err := rpcore.DerivePaymentKey(ssBob)
-	if err != nil {
-		t.Fatalf("DerivePaymentKey (Bob): %v", err)
-	}
-	ctxtIIBob, err := rpcore.EncryptPayload(encKeyBob, tokenId, paymentAmt)
-	if err != nil {
-		t.Fatalf("EncryptPayload (Bob): %v", err)
-	}
-	saltBobField := rpcore.SaltBToField(saltBobRaw)
 	cmtBob, err := rpcore.Erc20CommitmentV2(bobSpendPk, saltBobField, paymentAmt, tokenId)
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (Bob): %v", err)
@@ -296,7 +334,7 @@ func depositAndBuildRelayerFeeWitness(
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [3]string{cmtBob.String(), cmtChange.String(), cmtRelayer.String()},
 		"stContractAddress":    vaultAddrBig.String(),
-		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{ctxtBob}, [][]byte{ctxtIIBob}).String(),
+		"stCiphertextHash":     ciphertextHash.String(),
 		"stFee":                relayerFeeAmt.String(),
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{depositAmt.String()},
@@ -331,6 +369,7 @@ func depositAndBuildRelayerFeeWitness(
 		publicSignal: sigArr,
 		ctxtBob:      ctxtBob,
 		ctxtIIBob:    ctxtIIBob,
+		channel:      channel,
 		feeSalt:      feeSalt,
 		saltA:        saltA,
 		saltBobField: saltBobField,
@@ -366,10 +405,6 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DeployTagChannelRegistry: %v", err)
 		}
-		trAddr, err := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-		if err != nil {
-			t.Fatalf("DeployTagRegistry: %v", err)
-		}
 		t.Logf("Relayer not running. Start it with:")
 		t.Logf("")
 		t.Logf("  cd ../../relayer")
@@ -377,7 +412,6 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 		t.Logf("  RELAYER_API_KEY=test-api-key-dev-only \\")
 		t.Logf("  RELAYER_FEE_SPEND_PRIVATE_KEY=123456789 \\")
 		t.Logf("  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s \\", chAddr.Hex())
-		t.Logf("  RELAYER_TAG_REGISTRY_ADDR=%s \\", trAddr.Hex())
 		t.Logf("  go run main.go")
 		t.Skip("relayer not running on localhost:8090")
 	}
@@ -390,11 +424,9 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  feeSpendPubKey: %s", info.FeeSpendPubKey)
 
 	zeroAddr := common.Address{}.Hex()
-	if info.TagChannelRegistryAddr == zeroAddr || info.TagRegistryAddr == zeroAddr {
+	if info.TagChannelRegistryAddr == zeroAddr {
 		chAddr, _ := tags.DeployTagChannelRegistry(client, aliceAuth, "../contracts/TagChannelRegistry.json")
-		trAddr, _ := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-		t.Skipf("Restart relayer with:\n  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s\n  RELAYER_TAG_REGISTRY_ADDR=%s",
-			chAddr.Hex(), trAddr.Hex())
+		t.Skipf("Restart relayer with:\n  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s", chAddr.Hex())
 	}
 	if info.FeeSpendPubKey == "" {
 		t.Skip("relayer is not configured with RELAYER_FEE_SPEND_PRIVATE_KEY — skipping")
@@ -405,7 +437,6 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	}
 
 	channelRegistryAddr := common.HexToAddress(info.TagChannelRegistryAddr)
-	tagRegistryAddr := common.HexToAddress(info.TagRegistryAddr)
 	relayerEthAddr := common.HexToAddress(info.RelayerAddr)
 
 	receipts := loadPaymentReceipts(t)
@@ -533,124 +564,55 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 		rfTagPaymentAmt, rfTagChangeAmt, rfTagFeeAmt)
 
 	w := depositAndBuildRelayerFeeWitness(t, ctx, client, vault, erc20, vaultAddr, aliceAuth,
-		bobSpend.PublicKey, bobView.EncapsKey, fixedFee, relayerFeePubKey)
-	t.Log("  proof generated ✓")
+		bobSpend.PublicKey, bobView.EncapsKey, fixedFee, relayerFeePubKey,
+		&tags.Channel{SharedSecret: channelSS, PkSpend: bobSpend.PublicKey})
+	t.Logf("  proof generated, bound to block %d's tag %x... ✓", w.channel.BlockNumber, w.channel.Tag[:8])
 	t.Logf("  cmt_bob=%s cmt_relayer=%s StFee=%s", w.cmtBob, w.cmtRelayer, w.publicSignal[layout.PaymentRelayerFeeFeeOffset])
 
 	// ═════════════════════════════════════════════════════════════════════════
 	// PHASE 5 — Relay via /relay/payment_relayer_fee
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 5: Payment via /relay/payment_relayer_fee ──")
+	t.Log("── Phase 5: Payment via /relay/channel_payment_relayer_fee ──")
 
 	var payResp relayRelayerFeeResp
-	status = postJSON(t, "/relay/payment_relayer_fee", relayRelayerFeeReq{
+	status = postJSON(t, "/relay/channel_payment_relayer_fee", relayChannelRelayerFeeReq{
 		VaultId:      "0",
 		Proof:        w.proof,
 		PublicSignal: w.publicSignal,
-		CipherText:   toHex(w.ctxtBob),
-		EncTxData:    toHex(w.ctxtIIBob),
+		BlockNumber:  w.channel.BlockNumber,
+		Tag:          toHex(w.channel.Tag[:]),
+		Ctxt:         toHex(w.channel.Ctxt),
 		FeeSalt:      w.feeSalt.String(),
 		TokenId:      w.tokenId.String(),
 	}, &payResp)
 	if status != http.StatusOK {
-		t.Fatalf("POST /relay/payment_relayer_fee: status=%d error=%s", status, payResp.Error)
+		t.Fatalf("POST /relay/channel_payment_relayer_fee: status=%d error=%s", status, payResp.Error)
 	}
-	t.Logf("  paymentWithRelayerFee mined: block=%d gas=%d tx=%s...",
+	t.Logf("  channelPaymentWithRelayerFee mined: block=%d gas=%d tx=%s...",
 		payResp.BlockNumber, payResp.GasUsed, payResp.TxHash[:10])
 
 	paySender := txSender(t, client, payResp.TxHash)
 	t.Logf("  payment tx.from = %s", paySender.Hex())
 
-	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
-	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	txReceipt, err := client.TransactionReceipt(ctx, common.HexToHash(payResp.TxHash))
 	if err != nil {
 		t.Fatalf("TransactionReceipt: %v", err)
 	}
-	var payEvents, nfEvents int
-	for _, log := range txReceipt.Logs {
-		switch log.Topics[0] {
-		case paymentSig:
-			payEvents++
-		case nullifierSig:
-			nfEvents++
-		}
-	}
-	if payEvents != 1 {
-		t.Errorf("expected 1 Payment event, got %d", payEvents)
-	}
-	if nfEvents != 1 {
-		t.Errorf("expected 1 Nullifier event, got %d", nfEvents)
-	}
+	expectOneChannelPayment(t, txReceipt, w.channel.BlockNumber, w.channel.Tag, 0)
 
 	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 6 — Tag Notification via /relay/tag
+	// PHASE 6 — Bob Receives via Tag Scan
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 6: Tag Notification via /relay/tag (window mode) ──")
+	t.Log("── Phase 6: Bob scans the ChannelPayment events for his tag ──")
 
-	paymentAmt := big.NewInt(rfTagPaymentAmt)
 	tokenId := w.tokenId
-	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
-		client, 3, bobSpend.PublicKey, channelSS, paymentAmt, tokenId, w.saltBobField,
-	)
-	if err != nil {
-		t.Fatalf("PreparePaymentTag: %v", err)
-	}
-	hexTags := make([]string, len(windowTags))
-	for i, wt := range windowTags {
-		wt := wt
-		hexTags[i] = toHex(wt[:])
-	}
-	var tagResp relayTagResp
-	status = postJSON(t, "/relay/tag", relayTagReq{
-		Tags:       hexTags,
-		StartBlock: startBlock,
-		Ctxts:      hexAll(noteCtxts),
-	}, &tagResp)
-	if status == http.StatusServiceUnavailable {
-		t.Skipf("relayer TagRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR=<addr>")
-	}
-	if status != http.StatusOK {
-		t.Fatalf("POST /relay/tag: status=%d error=%s", status, tagResp.Error)
-	}
-	tagBlock := tagResp.BlockNumber
-	tagSender := txSender(t, client, tagResp.TxHash)
-	t.Logf("  tag tx.from = %s (block %d)", tagSender.Hex(), tagBlock)
+	bobOpensChannelPayment(t, client, dvpAddr, w.channel.BlockNumber, bobChannelSS, bobSpend.PublicKey,
+		big.NewInt(rfTagPaymentAmt), tokenId, w.cmtBob)
 
 	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 7 — Bob Receives via Tag Scan
+	// PHASE 7 — Sender Privacy + Fee Verification
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 7: Bob scans TagRegistry ──")
-
-	bobChannels := []tags.Channel{{SharedSecret: bobChannelSS, PkSpend: bobSpend.PublicKey}}
-	cursor := tags.NewScanCursor()
-	matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
-	if err != nil {
-		t.Fatalf("ScanBlocksFromCursor (Bob): %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
-	}
-	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
-	if err != nil {
-		t.Fatalf("DecryptPaymentNote: %v", err)
-	}
-	if note.Amount.Cmp(paymentAmt) != 0 {
-		t.Errorf("amount mismatch: got %s, want %s", note.Amount, paymentAmt)
-	}
-	bobRecomputedCmt, err := rpcore.Erc20CommitmentV2(bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-	if err != nil {
-		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
-	}
-	if bobRecomputedCmt.Cmp(w.cmtBob) != 0 {
-		t.Errorf("Bob's recomputed commitment mismatch: got %s, want %s", bobRecomputedCmt, w.cmtBob)
-	}
-	t.Logf("  Bob found and verified his note via tag scan ✓ (amount=%s)", note.Amount)
-
-	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 8 — Sender Privacy + Fee Verification
-	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 8: Sender Privacy + Fee Verification ──")
+	t.Log("── Phase 7: Sender Privacy + Fee Verification ──")
 
 	aliceEthAddr := common.HexToAddress(aliceAddr)
 	bobEthAddr := common.HexToAddress(bobAddr)
@@ -659,8 +621,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 		sender common.Address
 	}{
 		{"channel", chSender},
-		{"payment_relayer_fee", paySender},
-		{"tag", tagSender},
+		{"channel_payment_relayer_fee", paySender},
 	} {
 		if check.sender == aliceEthAddr || check.sender == bobEthAddr {
 			t.Errorf("%s: tx.from == Alice or Bob — sender privacy violated", check.name)
@@ -669,7 +630,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 			t.Errorf("%s: tx.from=%s is not the relayer %s", check.name, check.sender.Hex(), relayerEthAddr.Hex())
 		}
 	}
-	t.Log("  all 3 txs: tx.from = relayer ✓")
+	t.Log("  both txs: tx.from = relayer ✓")
 
 	recomputedFeeCmt, err := rpcore.Erc20CommitmentV2(relayerFeePubKey, w.feeSalt, fixedFee, tokenId)
 	if err != nil {
@@ -760,7 +721,7 @@ func TestPaymentRelayerFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 	t.Run("on-chain: fee mismatches relayerFixedFeeAmount", func(t *testing.T) {
 		mismatchedFee := new(big.Int).Add(fixedFee, big.NewInt(1))
 		w := depositAndBuildRelayerFeeWitness(t, ctx, client, vault, erc20, vaultAddr, aliceAuth,
-			bobSpend.PublicKey, bobView.EncapsKey, mismatchedFee, relayerFeePubKey)
+			bobSpend.PublicKey, bobView.EncapsKey, mismatchedFee, relayerFeePubKey, nil)
 
 		var resp relayRelayerFeeResp
 		status := postJSON(t, "/relay/payment_relayer_fee", relayRelayerFeeReq{
@@ -792,7 +753,7 @@ func TestPaymentRelayerFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 			t.Fatalf("stranger NewSpendKeyPair: %v", err)
 		}
 		w := depositAndBuildRelayerFeeWitness(t, ctx, client, vault, erc20, vaultAddr, aliceAuth,
-			bobSpend.PublicKey, bobView.EncapsKey, fixedFee, strangerSpend.PublicKey)
+			bobSpend.PublicKey, bobView.EncapsKey, fixedFee, strangerSpend.PublicKey, nil)
 
 		var resp relayRelayerFeeResp
 		status := postJSON(t, "/relay/payment_relayer_fee", relayRelayerFeeReq{

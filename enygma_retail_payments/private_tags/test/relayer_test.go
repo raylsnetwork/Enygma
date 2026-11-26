@@ -11,17 +11,16 @@ package tags_test
 //   msg.sender = relayer  (not Bob) → sender privacy §6.3 ✓
 //   Alice scans TagChannelRegistry → decapsulates → decrypts message + senderId ✓
 //
-// Phase 2 — Real Tag (paper §4.1, via POST /relay/tag)
-//   Alice derives tag: t = Poseidon3(block, bob.pkSpend, ss_field).
-//   Alice encrypts note payload with channelKey = HKDF(ss, context).
-//   Alice POSTs to relayer → relayer calls publishTag() on-chain.
-//   msg.sender = relayer (not Alice) ✓
-//   Bob scans block → finds tag → decrypts payload → IsDummyPayload = false ✓
-//
-// Phase 3 — Dummy Tag (paper §4.2, via POST /relay/tag)
-//   Alice POSTs a dummy tag to the relayer (cover traffic).
+// Phase 2 — Dummy Tag (paper §4.2, via POST /relay/tag)
+//   Alice derives the tag for the next block and seals a dummy payload under
+//   that block's key (PrepareDummyTag), and POSTs both to the relayer
+//   (cover traffic) → relayer calls publishTag() on-chain.
 //   msg.sender = relayer (not Alice) ✓
 //   Bob scans block → finds tag → decrypts → IsDummyPayload = true → discarded ✓
+//
+// A payment note does not go through /relay/tag: it pays over the tag channel
+// with /relay/channel_payment, tag and note in one transaction (#452; see
+// TestFullPaymentWithTagsViaRelayer).
 //
 // # Prerequisites
 //
@@ -93,22 +92,8 @@ type relayChannelResponse struct {
 }
 
 type relayTagReq struct {
-	// Single-tag mode
-	Tag string `json:"tag,omitempty"`
-	// Window mode
-	Tags       []string `json:"tags,omitempty"`
-	StartBlock uint64   `json:"startBlock,omitempty"`
-	Ctxt       string   `json:"ctxt,omitempty"`
-	Ctxts      []string `json:"ctxts,omitempty"`
-}
-
-// hexAll hex-encodes each byte slice.
-func hexAll(bs [][]byte) []string {
-	out := make([]string, len(bs))
-	for i, b := range bs {
-		out[i] = toHex(b)
-	}
-	return out
+	Tag  string `json:"tag"`
+	Ctxt string `json:"ctxt"`
 }
 
 type relayInfoResp struct {
@@ -349,126 +334,40 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	t.Log("  shared secrets match ✓")
 
 	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 2 — Real Tag via POST /relay/tag (window mode, gap 4)
+	// PHASE 2 — Dummy Tag via POST /relay/tag (paper §4.2)
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 2: Real Tag via /relay/tag (window mode) ──")
+	t.Log("── Phase 2: Dummy Tag via /relay/tag (cover traffic) ──")
 
-	// Payload Bob will read after finding the tag.
-	notePayload := make([]byte, 96)
-	big.NewInt(30).FillBytes(notePayload[0:32])
-	big.NewInt(0).FillBytes(notePayload[32:64])
-	big.NewInt(0xCAFE).FillBytes(notePayload[64:96])
-
-	// Gap 4: use PrepareTagWithWindow — derives tags for 3 consecutive blocks so
-	// the relayer can pick the correct one regardless of when the tx lands.
-	// The payload is encrypted once per block of the window, each under that
-	// block's key; the relayer publishes the one for the block it lands in.
-	startBlock, windowTags, realCtxts, err := tags.PrepareTagWithWindow(
-		client, 3, bobPkSpend, ssAlice, notePayload)
+	// The tag and its payload are for the block the relayer's transaction
+	// is expected to land in, the next one.
+	head, err := client.BlockNumber(bg)
 	if err != nil {
-		t.Fatalf("PrepareTagWithWindow: %v", err)
+		t.Fatalf("BlockNumber: %v", err)
 	}
-	t.Logf("  tag window: blocks [%d, %d)  ctxt=%dB each", startBlock, startBlock+3, len(realCtxts[0]))
-
-	hexWindowTags := make([]string, len(windowTags))
-	for i, wt := range windowTags {
-		wt := wt
-		hexWindowTags[i] = toHex(wt[:])
+	dummyTargetBlock := head + 1
+	dummyTag, dummyCtxt, err := tags.PrepareDummyTag(dummyTargetBlock, bobPkSpend, ssAlice)
+	if err != nil {
+		t.Fatalf("PrepareDummyTag: %v", err)
 	}
 
-	var tagResp relayTagResp
+	var dummyResp relayTagResp
 	status = postJSON(t, "/relay/tag", relayTagReq{
-		Tags:       hexWindowTags,
-		StartBlock: startBlock,
-		Ctxts:      hexAll(realCtxts),
-	}, &tagResp)
+		Tag:  toHex(dummyTag[:]),
+		Ctxt: toHex(dummyCtxt),
+	}, &dummyResp)
 
 	if status == http.StatusServiceUnavailable {
 		t.Skipf("relayer TagRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR=<addr>")
 	}
-	if status != http.StatusOK {
-		t.Fatalf("POST /relay/tag (real): status=%d error=%s", status, tagResp.Error)
-	}
-	realBlock := tagResp.BlockNumber
-	t.Logf("  real tag published: block=%d  tx=%s...  gas=%d",
-		realBlock, tagResp.TxHash[:10], tagResp.GasUsed)
-
-	// Verify relayer signed it.
-	sender = txSender(t, client, tagResp.TxHash)
-	if sender == common.HexToAddress(aliceAddr) {
-		t.Error("tx.from == Alice — relayer did not sign the tag tx")
-	} else {
-		t.Logf("  tx.from = %s (relayer, not Alice) ✓", sender.Hex())
-	}
-
-	// The tag for the actual block is always correct because we used the window.
-	tagIdx := int(realBlock - startBlock)
-	_ = windowTags[tagIdx] // correct tag was submitted by relayer
-	t.Logf("  used window tag[%d] for block %d ✓", tagIdx, realBlock)
-
-	// Bob scans the block for his tag.
-	bobChannels := []tags.Channel{{SharedSecret: ssBob, PkSpend: bobPkSpend}}
-	realMatches, err := tags.ScanBlock(client, tagRegistryAddr, realBlock, bobChannels)
-	if err != nil {
-		t.Fatalf("ScanBlock (real): %v", err)
-	}
-	if len(realMatches) != 1 {
-		t.Fatalf("Bob expected 1 real tag match, got %d", len(realMatches))
-	}
-
-	// Bob decrypts with the key of the block he found the tag in. The
-	// payload published is the window's copy for that block, so no other
-	// block's key opens it.
-	decrypted, err := realMatches[0].Decrypt()
-	if err != nil {
-		t.Fatalf("Decrypt (real, block %d): %v", realBlock, err)
-	}
-	if _, err := tags.DecryptPayload(tags.DeriveBlockKey(ssBob, realBlock+1, bobPkSpend), realMatches[0].Entry.Ctxt); err == nil {
-		t.Error("the next block's key opened this block's payload")
-	}
-	if tags.IsDummyPayload(decrypted) {
-		t.Error("real tag payload incorrectly identified as dummy")
-	}
-	amount := new(big.Int).SetBytes(decrypted[0:32])
-	tokenId := new(big.Int).SetBytes(decrypted[32:64])
-	t.Logf("  Bob decrypted: amount=%s tokenId=%s ✓", amount, tokenId)
-	if amount.Cmp(big.NewInt(30)) != 0 {
-		t.Errorf("amount: got %s want 30", amount)
-	}
-
-	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 3 — Dummy Tag via POST /relay/tag (paper §4.2)
-	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 3: Dummy Tag via /relay/tag (cover traffic) ──")
-
-	dummyStartBlock, dummyWindowTags, dummyCtxts, err := tags.PrepareTagWithWindow(
-		client, 3, bobPkSpend, ssAlice, []byte("enygma-dummy-v1"))
-	if err != nil {
-		t.Fatalf("PrepareTagWithWindow (dummy): %v", err)
-	}
-	_ = dummyStartBlock
-
-	currentBlock2, _ := client.BlockNumber(bg)
-	dummyTargetBlock := currentBlock2 + 1
-
-	hexDummyTags := make([]string, len(dummyWindowTags))
-	for i, wt := range dummyWindowTags {
-		wt := wt
-		hexDummyTags[i] = toHex(wt[:])
-	}
-	var dummyResp relayTagResp
-	status = postJSON(t, "/relay/tag", relayTagReq{
-		Tags:       hexDummyTags,
-		StartBlock: dummyStartBlock,
-		Ctxts:      hexAll(dummyCtxts),
-	}, &dummyResp)
-
 	if status != http.StatusOK {
 		t.Fatalf("POST /relay/tag (dummy): status=%d error=%s", status, dummyResp.Error)
 	}
 	dummyBlock := dummyResp.BlockNumber
 	t.Logf("  dummy tag published: block=%d  tx=%s...  gas=%d",
 		dummyBlock, dummyResp.TxHash[:10], dummyResp.GasUsed)
+	if dummyBlock != dummyTargetBlock {
+		t.Fatalf("dummy tag landed in block %d, not the predicted %d: Bob's tag for that block differs", dummyBlock, dummyTargetBlock)
+	}
 
 	// Verify relayer (not Alice) signed the dummy transaction.
 	sender = txSender(t, client, dummyResp.TxHash)
@@ -478,10 +377,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 		t.Logf("  tx.from = %s (relayer, not Alice) ✓", sender.Hex())
 	}
 
-	// Window mode: relayer always picks the correct tag for the actual block.
-	if dummyBlock != dummyTargetBlock {
-		t.Logf("  window covered block drift %d→%d ✓", dummyTargetBlock, dummyBlock)
-	}
+	bobChannels := []tags.Channel{{SharedSecret: ssBob, PkSpend: bobPkSpend}}
 
 	// Bob scans and detects the dummy.
 	dummyMatches, err := tags.ScanBlock(client, tagRegistryAddr, dummyBlock, bobChannels)
@@ -499,14 +395,16 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	if !tags.IsDummyPayload(decryptedDummy) {
 		t.Errorf("expected dummy payload, got %q", string(decryptedDummy))
 	}
+	if _, err := tags.DecryptPayload(tags.DeriveBlockKey(ssBob, dummyBlock+1, bobPkSpend), dummyMatches[0].Entry.Ctxt); err == nil {
+		t.Error("the next block's key opened this block's payload")
+	}
 	t.Log("  Bob found dummy tag → IsDummyPayload=true → discarded ✓")
 
 	// ── Final summary ─────────────────────────────────────────────────────────
 	t.Log("")
 	t.Log("=== FULL FLOW COMPLETE ===")
 	t.Logf("  Phase 1 — Channel setup:  tx.from=%s (relayer) ✓", sender.Hex())
-	t.Logf("  Phase 2 — Real tag:       amount=%s decoded by Bob ✓", amount)
-	t.Logf("  Phase 3 — Dummy tag:      detected and discarded by Bob ✓")
+	t.Logf("  Phase 2 — Dummy tag:      detected and discarded by Bob ✓")
 	t.Log("  Bob's Ethereum address never appeared as tx.from")
 	t.Log("  Alice's Ethereum address never appeared as tx.from")
 

@@ -22,22 +22,22 @@ package tags_test
 //     (Direct — Alice depositing her own tokens needs no privacy.)
 //
 //   Phase 4 — ZK Payment Proof
-//     Alice generates a Groth16 proof: pay 30 to Bob, keep 10 change.
+//     Alice tags the payment for the next block over the channel, seals Bob's
+//     note {amount, tokenId, salt} under that block's key, and proves the
+//     payment (30 to Bob, 10 change) bound to (block, tag, ctxt).
 //
-//   Phase 5 — Payment via POST /relay/payment
-//     Alice sends the unsigned proof to the relayer.
-//     Relayer validates root + nullifier, submits payment() — msg.sender = relayer.
+//   Phase 5 — Channel payment via POST /relay/channel_payment
+//     Alice sends the unsigned proof, block, tag and ctxt to the relayer.
+//     Relayer submits channelPayment() — msg.sender = relayer. One
+//     transaction carries the payment and Bob's tag: no capsule, no
+//     separate tag publication.
 //
-//   Phase 6 — Tag Notification via POST /relay/tag
-//     Alice encrypts Bob's note {amount, tokenId, saltB} with channelKey.
-//     Alice sends tag window to relayer.
-//     Relayer submits publishTag() — msg.sender = relayer, not Alice.
+//   Phase 6 — Bob Receives via Tag Scan
+//     Bob finds his tag among the ChannelPayment events, opens the sealed
+//     note, verifies the commitment.
 //
-//   Phase 7 — Bob Receives via Tag Scan
-//     Bob scans TagRegistry, finds his tag, decrypts note, verifies commitment.
-//
-//   Phase 8 — Sender Privacy Verification
-//     All three on-chain transactions (channel, payment, tag) confirm
+//   Phase 7 — Sender Privacy Verification
+//     Both on-chain transactions (channel, payment) confirm
 //     msg.sender = relayer address, never Alice or Bob.
 //
 // Prerequisites:
@@ -49,7 +49,6 @@ package tags_test
 //	              RELAYER_PRIVATE_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda \
 //	              RELAYER_API_KEY=test-api-key-dev-only \
 //	              RELAYER_TAG_CHANNEL_REGISTRY_ADDR=<addr> \
-//	              RELAYER_TAG_REGISTRY_ADDR=<addr> \
 //	              go run main.go
 //
 // Run:
@@ -69,21 +68,21 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // ── Payment relay request / response types ────────────────────────────────────
 
-// relayPaymentReq is the JSON body sent to POST /relay/payment.
-type relayPaymentReq struct {
+// relayChannelPaymentReq is the JSON body sent to POST /relay/channel_payment.
+type relayChannelPaymentReq struct {
 	VaultId      string                    `json:"vaultId"`
 	Proof        [8]string                 `json:"proof"`
 	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
-	CipherText   string                    `json:"cipherText"`
-	EncTxData    string                    `json:"encTxData"`
+	BlockNumber  uint64                    `json:"blockNumber"`
+	Tag          string                    `json:"tag"`
+	Ctxt         string                    `json:"ctxt"`
 }
 
-// relayPaymentResp is the JSON body returned by POST /relay/payment.
+// relayPaymentResp is the JSON body returned by the relayer's payment routes.
 type relayPaymentResp struct {
 	TxHash      string `json:"txHash"`
 	BlockNumber uint64 `json:"blockNumber"`
@@ -91,8 +90,9 @@ type relayPaymentResp struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// buildPayRelayRequest converts a PaymentResult into the relayer's JSON format.
-func buildPayRelayRequest(t *testing.T, result *rpcore.PaymentResult) relayPaymentReq {
+// buildChannelPayRelayRequest converts a channel payment's PaymentResult and
+// its tag and sealed note into the relayer's JSON format.
+func buildChannelPayRelayRequest(t *testing.T, result *rpcore.PaymentResult, ch *tags.ChannelPayment) relayChannelPaymentReq {
 	t.Helper()
 	if len(result.Proof) != 8 {
 		t.Fatalf("expected 8 proof elements, got %d", len(result.Proof))
@@ -109,12 +109,13 @@ func buildPayRelayRequest(t *testing.T, result *rpcore.PaymentResult) relayPayme
 		sig[i] = v.String()
 	}
 
-	return relayPaymentReq{
+	return relayChannelPaymentReq{
 		VaultId:      "0",
 		Proof:        proof,
 		PublicSignal: sig,
-		CipherText:   toHex(result.CipherText),
-		EncTxData:    toHex(result.EncTxData),
+		BlockNumber:  ch.BlockNumber,
+		Tag:          toHex(ch.Tag[:]),
+		Ctxt:         toHex(ch.Ctxt),
 	}
 }
 
@@ -141,17 +142,12 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DeployTagChannelRegistry: %v", err)
 		}
-		trAddr, err := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-		if err != nil {
-			t.Fatalf("DeployTagRegistry: %v", err)
-		}
 		t.Logf("Relayer not running. Start it with:")
 		t.Logf("")
 		t.Logf("  cd ../../relayer")
 		t.Logf("  RELAYER_PRIVATE_KEY=9883c26cc126a37158c4ffcc9d401d3ffa41187d9b1a18ce4912398d22597cda \\")
 		t.Logf("  RELAYER_API_KEY=test-api-key-dev-only \\")
 		t.Logf("  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s \\", chAddr.Hex())
-		t.Logf("  RELAYER_TAG_REGISTRY_ADDR=%s \\", trAddr.Hex())
 		t.Logf("  go run main.go")
 		t.Logf("")
 		t.Logf("Then re-run: CC=/usr/bin/clang go test -run TestFullPaymentWithTagsViaRelayer -v -timeout 300s")
@@ -166,26 +162,22 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		t.Fatalf("GET /relay/info: status=%d", status)
 	}
 	t.Logf("  relayerAddr:            %s", info.RelayerAddr)
-	t.Logf("  tagRegistryAddr:        %s", info.TagRegistryAddr)
 	t.Logf("  tagChannelRegistryAddr: %s", info.TagChannelRegistryAddr)
 
 	zeroAddr := common.Address{}.Hex()
-	if info.TagChannelRegistryAddr == zeroAddr || info.TagRegistryAddr == zeroAddr {
+	if info.TagChannelRegistryAddr == zeroAddr {
 		chAddr, _ := tags.DeployTagChannelRegistry(client, aliceAuth, "../contracts/TagChannelRegistry.json")
-		trAddr, _ := tags.DeployTagRegistry(client, aliceAuth, "../contracts/TagRegistry.json")
-		t.Skipf("Restart relayer with:\n"+
-			"  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s\n"+
-			"  RELAYER_TAG_REGISTRY_ADDR=%s", chAddr.Hex(), trAddr.Hex())
+		t.Skipf("Restart relayer with:\n  RELAYER_TAG_CHANNEL_REGISTRY_ADDR=%s", chAddr.Hex())
 	}
 
 	channelRegistryAddr := common.HexToAddress(info.TagChannelRegistryAddr)
-	tagRegistryAddr := common.HexToAddress(info.TagRegistryAddr)
 	relayerEthAddr := common.HexToAddress(info.RelayerAddr)
 
 	// ── Load payment contracts from receipts.json ─────────────────────────────
 	receipts := loadPaymentReceipts(t)
 	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
 
 	vaultABI := loadPaymentABI(t, "Erc20CoinVault")
@@ -390,42 +382,45 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	}
 	t.Logf("  Merkle root: %s", aliceProof.Root)
 
+	b := nextBlock(t, client)
+	ch, err := tags.PrepareChannelPayment(channelSS, b, bobSpend.PublicKey, paymentAmt, tokenId)
+	if err != nil {
+		t.Fatalf("PrepareChannelPayment: %v", err)
+	}
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
-	paymentResult, err := gnarkClient.BoundPaymentProof(
+	paymentResult, err := gnarkClient.BoundChannelPaymentProof(
 		vaultAddrBig,
-		big.NewInt(0),
 		[]*big.Int{depositAmt},
 		[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
 		[]*big.Int{aliceSaltBField},
 		[]*big.Int{paymentAmt, changeAmt},
 		[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
-		[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
+		rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
 		merkleDepth,
 		[]*rpcore.MerkleProof{aliceProof},
 		[]*big.Int{big.NewInt(0)},
 		tokenId,
 	)
 	if err != nil {
-		t.Fatalf("BoundPaymentProof: %v", err)
+		t.Fatalf("BoundChannelPaymentProof: %v", err)
 	}
-	t.Logf("  proof generated")
+	t.Logf("  proof generated, bound to block %d's tag %x... and its %d-byte ctxt", b, ch.Tag[:8], len(ch.Ctxt))
 	t.Logf("  Bob's commitment   (output 0): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
 	t.Logf("  Alice's change cmt (output 1): %s", paymentResult.Statement[layout.PaymentCommitmentsOutOffset+1])
-	t.Logf("  Bob's saltB:                   %s", paymentResult.SaltB)
 
 	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 5 — Payment via POST /relay/payment
-	// Alice sends unsigned proof to relayer.
-	// Relayer validates root + nullifier, submits payment() — msg.sender = relayer.
+	// PHASE 5 — Channel payment via POST /relay/channel_payment
+	// Alice sends the unsigned proof, block, tag and ctxt to the relayer.
+	// Relayer submits channelPayment() — msg.sender = relayer.
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 5: Payment via /relay/payment ──")
+	t.Log("── Phase 5: Channel payment via /relay/channel_payment ──")
 
 	var payResp relayPaymentResp
-	status = postJSON(t, "/relay/payment", buildPayRelayRequest(t, paymentResult), &payResp)
+	status = postJSON(t, "/relay/channel_payment", buildChannelPayRelayRequest(t, paymentResult, ch), &payResp)
 	if status != http.StatusOK {
-		t.Fatalf("POST /relay/payment: status=%d error=%s", status, payResp.Error)
+		t.Fatalf("POST /relay/channel_payment: status=%d error=%s", status, payResp.Error)
 	}
-	t.Logf("  payment mined: block=%d  gas=%d  tx=%s...",
+	t.Logf("  channel payment mined: block=%d  gas=%d  tx=%s...",
 		payResp.BlockNumber, payResp.GasUsed, payResp.TxHash[:10])
 
 	// Verify msg.sender = relayer (not Alice).
@@ -435,128 +430,22 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	}
 	t.Logf("  payment tx.from = %s (relayer, not Alice) ✓", paySender.Hex())
 
-	// Verify on-chain events.
-	paymentSig := crypto.Keccak256Hash([]byte("Payment(uint256,uint256,bytes,bytes)"))
-	nullifierSig := crypto.Keccak256Hash([]byte("Nullifier(uint256,uint256,uint256)"))
 	txReceipt, err := client.TransactionReceipt(ctx, common.HexToHash(payResp.TxHash))
 	if err != nil {
 		t.Fatalf("TransactionReceipt: %v", err)
 	}
-	var payEvents, nfEvents int
-	for _, log := range txReceipt.Logs {
-		switch log.Topics[0] {
-		case paymentSig:
-			payEvents++
-			t.Logf("  Payment event: commitment=%s", log.Topics[2].Big())
-		case nullifierSig:
-			nfEvents++
-			t.Logf("  Nullifier event: nullifier=%s", log.Topics[3].Big())
-		}
-	}
-	if payEvents != 1 {
-		t.Errorf("expected 1 Payment event, got %d", payEvents)
-	}
-	if nfEvents != 1 {
-		t.Errorf("expected 1 Nullifier event, got %d", nfEvents)
-	}
+	expectOneChannelPayment(t, txReceipt, b, ch.Tag, 0)
 
 	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 6 — Tag Notification via POST /relay/tag
-	// Alice sends tag window to relayer.
-	// Relayer submits publishTag() — msg.sender = relayer, not Alice.
+	// PHASE 6 — Bob Receives via Tag Scan
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 6: Tag Notification via /relay/tag (window mode) ──")
+	t.Log("── Phase 6: Bob scans the ChannelPayment events for his tag ──")
 
-	startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
-		client, 3,
-		bobSpend.PublicKey,
-		channelSS,
-		paymentAmt, tokenId, paymentResult.SaltB,
-	)
-	if err != nil {
-		t.Fatalf("PreparePaymentTag: %v", err)
-	}
-	t.Logf("  tag window: blocks [%d, %d)  ctxt=%d bytes each", startBlock, startBlock+3, len(noteCtxts[0]))
-
-	hexTags := make([]string, len(windowTags))
-	for i, wt := range windowTags {
-		wt := wt
-		hexTags[i] = toHex(wt[:])
-	}
-
-	var tagResp relayTagResp
-	status = postJSON(t, "/relay/tag", relayTagReq{
-		Tags:       hexTags,
-		StartBlock: startBlock,
-		Ctxts:      hexAll(noteCtxts),
-	}, &tagResp)
-
-	if status == http.StatusServiceUnavailable {
-		t.Skipf("relayer TagRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR=<addr>")
-	}
-	if status != http.StatusOK {
-		t.Fatalf("POST /relay/tag: status=%d error=%s", status, tagResp.Error)
-	}
-	tagBlock := tagResp.BlockNumber
-	t.Logf("  tag published: block=%d  gas=%d  tx=%s...",
-		tagBlock, tagResp.GasUsed, tagResp.TxHash[:10])
-
-	// Verify msg.sender = relayer (not Alice).
-	tagSender := txSender(t, client, tagResp.TxHash)
-	if tagSender == common.HexToAddress(aliceAddr) {
-		t.Error("tag tx.from == Alice — relayer did not sign")
-	}
-	t.Logf("  tag tx.from = %s (relayer, not Alice) ✓", tagSender.Hex())
-
-	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 7 — Bob Receives via Tag Scan
-	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 7: Bob scans TagRegistry for his payment tag ──")
-
-	bobChannels := []tags.Channel{{SharedSecret: bobChannelSS, PkSpend: bobSpend.PublicKey}}
-	cursor := tags.NewScanCursor()
-	matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
-	if err != nil {
-		t.Fatalf("ScanBlocksFromCursor (Bob): %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("Bob expected 1 matching tag, got %d", len(matches))
-	}
-	t.Logf("  Bob found tag at block %d ✓", matches[0].BlockNumber)
-
-	// Bob decrypts the tag payload to recover the note.
-	note, err := tags.DecryptPaymentNote(bobChannelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
-	if err != nil {
-		t.Fatalf("DecryptPaymentNote: %v", err)
-	}
-
-	t.Logf("  note.Amount:  %s  (want %s)", note.Amount, paymentAmt)
-	t.Logf("  note.TokenId: %s  (want %s)", note.TokenId, tokenId)
-	t.Logf("  note.Salt:    %s", note.Salt)
-
-	if note.Amount.Cmp(paymentAmt) != 0 {
-		t.Errorf("amount mismatch: got %s, want %s", note.Amount, paymentAmt)
-	}
-	if note.TokenId.Cmp(tokenId) != 0 {
-		t.Errorf("tokenId mismatch: got %s, want %s", note.TokenId, tokenId)
-	}
+	note := bobOpensChannelPayment(t, client, dvpAddr, b, bobChannelSS, bobSpend.PublicKey,
+		paymentAmt, tokenId, paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
 	if note.Salt.Cmp(paymentResult.SaltB) != 0 {
-		t.Errorf("saltB mismatch: got %s, want %s", note.Salt, paymentResult.SaltB)
+		t.Errorf("salt mismatch: got %s, want %s", note.Salt, paymentResult.SaltB)
 	}
-	t.Log("  amount ✓  tokenId ✓  salt ✓")
-
-	// Bob recomputes his commitment and verifies it matches what is on-chain.
-	bobRecomputedCmt, err := rpcore.Erc20CommitmentV2(
-		bobSpend.PublicKey, note.Salt, note.Amount, note.TokenId)
-	if err != nil {
-		t.Fatalf("Erc20CommitmentV2 (Bob verify): %v", err)
-	}
-
-	if bobRecomputedCmt.Cmp(paymentResult.Statement[layout.PaymentCommitmentsOutOffset]) != 0 {
-		t.Errorf("Bob's recomputed commitment mismatch:\n  got:  %s\n  want: %s",
-			bobRecomputedCmt, paymentResult.Statement[layout.PaymentCommitmentsOutOffset])
-	}
-	t.Logf("  Bob recomputed commitment: %s ✓", bobRecomputedCmt)
 	t.Log("  Bob can now generate a Merkle proof and withdraw")
 
 	// Alice verifies her change note.
@@ -571,10 +460,10 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  Alice change commitment: %s ✓", aliceChangeCmt)
 
 	// ═════════════════════════════════════════════════════════════════════════
-	// PHASE 8 — Sender Privacy Verification
-	// All three on-chain transactions must have msg.sender = relayer.
+	// PHASE 7 — Sender Privacy Verification
+	// Both on-chain transactions must have msg.sender = relayer.
 	// ═════════════════════════════════════════════════════════════════════════
-	t.Log("── Phase 8: Sender Privacy Verification ──")
+	t.Log("── Phase 7: Sender Privacy Verification ──")
 
 	aliceEthAddr := common.HexToAddress(aliceAddr)
 	bobEthAddr := common.HexToAddress(bobAddr)
@@ -584,8 +473,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		sender common.Address
 	}{
 		{"channel setup", chSender},
-		{"payment", paySender},
-		{"tag", tagSender},
+		{"channel payment", paySender},
 	} {
 		if check.sender == aliceEthAddr {
 			t.Errorf("%s: tx.from == Alice — sender privacy violated", check.name)
@@ -606,12 +494,11 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  Phase 2 — Channel setup:  msg.sender = relayer ✓")
 	t.Logf("  Phase 3 — Alice deposited %s tokens", depositAmt)
 	t.Logf("  Phase 4 — ZK proof generated (gnark server)")
-	t.Logf("  Phase 5 — Payment:        msg.sender = relayer ✓")
-	t.Logf("  Phase 6 — Tag:            msg.sender = relayer ✓")
-	t.Logf("  Phase 7 — Bob found note via tag scan, commitment verified")
-	t.Logf("  Phase 8 — Alice's Ethereum address never appeared as tx.from ✓")
+	t.Logf("  Phase 5 — Channel payment (tag + note in one tx): msg.sender = relayer ✓")
+	t.Logf("  Phase 6 — Bob found note by its tag, commitment verified")
+	t.Logf("  Phase 7 — Alice's Ethereum address never appeared as tx.from ✓")
 	t.Logf("            Bob's Ethereum address never appeared as tx.from ✓")
-	t.Logf("            Relayer address (%s) was msg.sender for all 3 txs", relayerEthAddr.Hex())
+	t.Logf("            Relayer address (%s) was msg.sender for both txs", relayerEthAddr.Hex())
 }
 
 // ── Privacy mode helpers ───────────────────────────────────────────────────────
