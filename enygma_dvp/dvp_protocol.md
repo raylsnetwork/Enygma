@@ -426,9 +426,21 @@ $$
 \text{Relayer} \xrightarrow{\;\pi_A,\;\pi_B,\;\text{all associated data}\;} \text{Blockchain}
 $$
 
-or, through the $\mathrm{SwapRelayer}$ contract, files each leg as it arrives with $\mathrm{SwapRelayer.submitReceipt}()$: the first leg's note is locked ($\mathrm{EnygmaDvp.lockReceiptNullifiers}()$) until the second leg settles the swap, or until the swap's expiry (at most $\mathrm{MAX\_SWAP\_DURATION}$, 30 days, after the first leg), when anyone can cancel it.
+The off-chain relayer service (`relayer/`) takes this path, through $\mathrm{swap}()$ and $\mathrm{exchange}()$, which call these two with the fungible / non-fungible (or fungible / fungible) group pair fixed.
 
 The owner registers and deregisters relayers at any time ($\mathrm{registerRelayer}$ / $\mathrm{deregisterRelayer}$). A relayer cannot forge proofs, and a lock it takes expires $\mathrm{MAX\_SWAP\_DURATION}$ after it is taken: from then on anyone can release it ($\mathrm{releaseExpiredRelayerLock}$), whether or not the relayer is still registered.
+
+### SwapRelayer is test-only
+
+The $\mathrm{SwapRelayer}$ contract files each leg as it arrives ($\mathrm{SwapRelayer.submitReceipt}()$): the first leg's note is locked ($\mathrm{EnygmaDvp.lockReceiptNullifiers}()$) until the second leg settles the swap through $\mathrm{EnygmaDvp.swap}()$, or until the swap's expiry (15 minutes to 30 days after the first leg), when anyone can cancel it ($\mathrm{SwapRelayer.cancelSwap}()$).
+
+Only the Go tests deploy it; no deploy or init script deploys it or registers it, and the relayer service does not use it. **SwapRelayer must never be registered with $\mathrm{registerRelayer}$.** Registered, it would open these gaps:
+
+- **Anyone can lock a published leg** (reconciled audit R-057). `submitReceipt` is permissionless and calls EnygmaDvp's relayer-only `lockReceiptNullifiers`, so anyone holding a published leg can lock its note until an expiry they pick, up to 30 days. That includes the counterparty's completing leg of a swap pending in EnygmaDvp.
+- **Cancelling does not end the swap** (R-058). `cancelSwap` closes the swap only in SwapRelayer's own `closed` map and releases the lock. The cancelled leg is still a valid receipt, so the counterparty can still settle it through `EnygmaDvp.submitPartialSettlement`.
+- **The expiry is not bound** (R-059). The first leg's `expiry` is a plain argument, checked only against the 15-minute and 30-day bounds; neither leg's proof binds it (the SwapRelayer form of #431).
+- **The ciphertexts are not bound** (R-060). `ctI` and `ctII`, which the counterparty scans to discover the swap, are free arguments the leg proof does not bind, so a front-runner can file the leg first with false ciphertexts.
+- **A cancel links the note's next spend** (R-061). `cancelSwap` releases the lock instead of spending the note into a fresh commitment, so the nullifier published with the cancelled leg is the one the note's next spend reveals. That links the spend to the leg and to whoever submitted it.
 
 ## What the chain sees: deposits, spends and exits
 
