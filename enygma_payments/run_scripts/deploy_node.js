@@ -13,7 +13,7 @@ const path = require("path");
 
 // Hardhat account[0] — well-known default dev key, public, never a security
 // boundary (see .gitleaks.toml, which allowlists it by exact value).
-const OWNER_KEY      = process.env.OWNER_KEY || "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154";
+const DEFAULT_OWNER_KEY = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154";
 const CHAIN_ID       = parseInt(process.env.CHAIN_ID || "1337");
 const RPC_URL        = process.env.RPC_URL    || "http://127.0.0.1:8545";
 const EPOCH_INTERVAL = parseInt(process.env.EPOCH_INTERVAL || "1");
@@ -38,6 +38,17 @@ async function deploy(wallet, artifact, constructorArgs = []) {
 async function main() {
   const verifierArtifactPath = path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json");
   const localChain = CHAIN_ID === 1337 && ["http://127.0.0.1:8545", "http://localhost:8545"].includes(RPC_URL);
+  const ownerKey = process.env.OWNER_KEY;
+  if (!ownerKey && !localChain) {
+    throw new Error("set OWNER_KEY for deployments outside local Hardhat");
+  }
+  const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
+  if (!ownerKey) {
+    const rpcChainId = await provider.send("eth_chainId", []).catch(() => null);
+    if (rpcChainId !== "0x539") {
+      throw new Error("set OWNER_KEY when the local RPC cannot confirm chain ID 1337");
+    }
+  }
   const reviewedPath = process.env.REVIEWED_VERIFIER_ARTIFACT;
   if (!localChain && !reviewedPath) {
     throw new Error("set REVIEWED_VERIFIER_ARTIFACT to the reviewed transfer verifier build for remote deployment");
@@ -48,8 +59,7 @@ async function main() {
   if (reviewedArtifact.deployedBytecode !== verifierArtifact.deployedBytecode) {
     throw new Error("local verifier build differs from the reviewed runtime");
   }
-  const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
-  const wallet = new ethers.NonceManager(new ethers.Wallet(OWNER_KEY, provider));
+  const wallet = new ethers.NonceManager(new ethers.Wallet(ownerKey || DEFAULT_OWNER_KEY, provider));
   console.log("Deployer:", await wallet.getAddress());
   console.log("Block:", await provider.getBlockNumber());
 
