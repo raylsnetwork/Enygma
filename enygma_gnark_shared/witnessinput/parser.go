@@ -4,11 +4,12 @@ package witnessinput
 import (
 	"errors"
 	"math/big"
+	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc"
 )
 
-// Parser parses decimal BN254 scalar field elements and records the first
+// Parser parses BN254 scalar field elements and records the first
 // error. Check Err before passing any result to frontend.NewWitness.
 type Parser struct {
 	err error
@@ -19,9 +20,14 @@ func (p *Parser) Parse(value string) *big.Int {
 	if p.err != nil {
 		return new(big.Int)
 	}
-	n, ok := new(big.Int).SetString(value, 10)
+	// Match payments' decimal parsing while preserving prefixed hex witnesses.
+	base := 10
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		base = 0
+	}
+	n, ok := new(big.Int).SetString(value, base)
 	if !ok || n.Sign() < 0 || n.Cmp(ecc.BN254.ScalarField()) >= 0 {
-		p.err = errors.New("invalid witness number: expected a decimal BN254 scalar field element")
+		p.err = errors.New("invalid witness number: expected a BN254 scalar field element")
 		return new(big.Int)
 	}
 	return n

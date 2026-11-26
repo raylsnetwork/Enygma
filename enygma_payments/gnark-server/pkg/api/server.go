@@ -11,6 +11,7 @@ import (
 	"enygma_payments/gnark-server/pkg/circuits/enygma_fee"
 	"enygma_payments/gnark-server/pkg/circuits/usdr"
 	"enygma_payments/gnark-server/pkg/circuits/withdraw"
+	"enygma_payments/gnark-server/utils"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,14 +24,10 @@ import (
 const maxRequestBodyBytes = 512 * 1024
 
 func NewServer(cfg *config.Config) *gin.Engine {
-	r := gin.Default()
-
-	r.Use(maxBodySize(maxRequestBodyBytes))
-	r.Use(requireJSONContentType())
+	r := newProofRouter(usdr.NewHandler(cfg.UsdrPk, cfg.UsdrVk))
 
 	r.POST("/proof/enygma", enygma.NewHandler(cfg.EnygmaPk, cfg.EnygmaVk))
 	r.POST("/proof/enygma_fee", enygma_fee.NewHandler(cfg.EnygmaFeePk, cfg.EnygmaFeeVk))
-	r.POST("/proof/usdr", usdr.NewHandler(cfg.UsdrPk, cfg.UsdrVk))
 	// Fix M-16: was six routes (/proof/withdraw/1..6) for one constraint
 	// system — see config.Config.WithdrawPk6's doc comment. Only /6 was
 	// ever reachable through Enygma.sol's withdraw() (which forces
@@ -78,4 +75,21 @@ func requireJSONContentType() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func newProofRouter(usdrHandler gin.HandlerFunc) *gin.Engine {
+	r := gin.Default()
+	r.Use(maxBodySize(maxRequestBodyBytes))
+	r.Use(requireJSONContentType())
+	r.POST("/proof/usdr", requireProveSlot, usdrHandler)
+	return r
+}
+
+func requireProveSlot(c *gin.Context) {
+	if !utils.ProveLimiter.Acquire() {
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "proving server is busy, try again shortly"})
+		return
+	}
+	defer utils.ProveLimiter.Release()
+	c.Next()
 }
