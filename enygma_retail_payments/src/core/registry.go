@@ -13,6 +13,13 @@ type UserKeys = ur.UserKeys
 // AuditorKeyPair is the auditor's ML-KEM-768 keypair.
 type AuditorKeyPair = auditor.AuditorKeyPair
 
+// AuditCheck is what the auditor finds in one registration's audit ciphertexts.
+type AuditCheck = auditor.AuditCheck
+
+// AuditedRegistration is one registration and what the auditor finds in its
+// audit ciphertexts.
+type AuditedRegistration = ur.AuditedRegistration
+
 var (
 	// User registry
 	Register               = ur.Register
@@ -24,9 +31,11 @@ var (
 	GetRegistrationFee     = ur.GetRegistrationFee
 	SetRegistrationFee     = ur.SetRegistrationFee
 	WithdrawFees           = ur.WithdrawFees
+	AuditRegistrations     = ur.AuditRegistrations
 
 	// Auditor
 	NewAuditorKeyPair        = auditor.NewAuditorKeyPair
 	EncryptViewKeyForAuditor = auditor.EncryptViewKeyForAuditor
 	AuditorDecryptViewKey    = auditor.AuditorDecryptViewKey
+	CheckAuditCiphertexts    = auditor.CheckAuditCiphertexts
 )

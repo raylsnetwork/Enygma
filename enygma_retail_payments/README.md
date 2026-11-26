@@ -11,7 +11,7 @@ An anonymous payment system that is completely quantum-private and provides audi
 
 ## System Architecture
 
-Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which effectively acts as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. **Issuer(s)** are the managers/admins of specific assets on the private network hub. Optionally, there is an **auditor** that oversees (some of) the transactions that take place in the network. A more formal protocol description is documented [here](./protocol_description.md).
+Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which effectively acts as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. **Issuer(s)** are the managers/admins of specific assets on the private network hub. Every registration also publishes the user's view key encrypted to an **auditor** (the audit ciphertexts). They are self-asserted: the contract checks only their lengths, so the auditor checks each registration's after it is made, reads the notes of every user whose audit ciphertexts open to the view key they registered, and names the users whose do not (see [Audit ciphertexts](./protocol_description.md#audit-ciphertexts)). A more formal protocol description is documented [here](./protocol_description.md).
 
 ```mermaid
 ---
