@@ -50,11 +50,13 @@ $$
 
 ## Registration
 
-Upon completion of the key generation stage, each user registers both public keys. Therefore, each user publishes:
+Upon completion of the key generation stage, each user registers both public keys, together with their view secret key encrypted to the auditor (the audit ciphertexts). Therefore, each user publishes:
 
 $$
-(id, pk_i^{\text{view}}, pk_i^{\text{spend}})
+(id, pk_i^{\text{view}}, pk_i^{\text{spend}}, ct_i^{\text{audit}})
 $$
+
+where $ct_i^{\text{audit}}$ is an ML-KEM-768 capsule to the auditor's public key and the AES-256-GCM encryption, under the key derived from its shared secret, of the seed of $sk_i^{\text{view}}$, with the capsule as associated data.
 
 The output of this stage once different users register is a public-key record layer of the following style:
 
@@ -68,6 +70,16 @@ The output of this stage once different users register is a public-key record la
 |   $Z$    | $pk_Z^{\text{view}}$ | $pk_Z^{\text{spend}}$ |
 
 </div>
+
+### Audit ciphertexts
+
+Every registration carries audit ciphertexts: the [UserRegistry](contracts/user_registry/UserRegistry.sol) rejects one without them. They are self-asserted. The contract checks only their lengths (1088 bytes for the capsule, 92 for the AES ciphertext), not that they open, nor that they open to $sk_i^{\text{view}}$ for the registered $pk_i^{\text{view}}$. A user can register well-sized junk, or another view key's ciphertexts, and the auditor then cannot read their notes.
+
+So the auditor checks each registration after it is made: [AuditRegistrations](src/core/user_registry/audit.go) opens every registration's audit ciphertexts with the auditor's secret key and reports, per user, whether they open and whether the recovered view key's encapsulation key equals the registered $pk_i^{\text{view}}$. The auditor cannot tell a user who opted out from one who encrypted to a different auditor: either way the ciphertexts do not open. Making the ciphertexts verifiable on chain (a proof or an attestation at registration) is not part of the deployed contract.
+
+### Registration fee
+
+`register` requires `msg.value >= registrationFee` and keeps all of it. The fee defaults to 0. The contract's owner (its deployer) can set it at any time with `setRegistrationFee` and withdraw everything the contract holds with `withdrawFees`.
 
 ---
 

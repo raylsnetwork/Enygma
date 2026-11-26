@@ -1,6 +1,7 @@
 package auditor
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/mlkem"
@@ -96,6 +97,32 @@ func AuditorDecryptViewKey(
 		return nil, fmt.Errorf("parse recovered decapsulation key: %w", err)
 	}
 	return userDK, nil
+}
+
+// AuditCheck is what the auditor finds in one registration's audit
+// ciphertexts. UserRegistry.register checks only their lengths, so a user can
+// register ciphertexts that do not open, or that open to a view key other
+// than the one they registered: either way the auditor cannot read their notes.
+type AuditCheck struct {
+	// ViewKey is the view key the ciphertexts open to, nil if they do not
+	// open: they are junk, or encrypted to another auditor.
+	ViewKey *mlkem.DecapsulationKey768
+	// Matches says ViewKey's encapsulation key is the registered pkView.
+	Matches bool
+}
+
+// Opens says the ciphertexts opened to a view key.
+func (c AuditCheck) Opens() bool { return c.ViewKey != nil }
+
+// CheckAuditCiphertexts opens a registration's audit ciphertexts with
+// auditorDK and checks the view key they open to against pkView, the view key
+// the user registered.
+func CheckAuditCiphertexts(auditorDK *mlkem.DecapsulationKey768, mlKemCt, aesCt, pkView []byte) AuditCheck {
+	view, err := AuditorDecryptViewKey(auditorDK, mlKemCt, aesCt)
+	if err != nil {
+		return AuditCheck{}
+	}
+	return AuditCheck{ViewKey: view, Matches: bytes.Equal(view.EncapsulationKey().Bytes(), pkView)}
 }
 
 // deriveAuditKey runs HKDF-SHA256 over the ML-KEM shared secret to produce a

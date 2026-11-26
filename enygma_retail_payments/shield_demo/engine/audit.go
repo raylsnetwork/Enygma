@@ -1,13 +1,13 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"crypto/mlkem"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
@@ -89,41 +89,56 @@ type auditUser struct {
 	audit AuditCiphertexts
 }
 
-// recoverViewKeys has the auditor open the audit ciphertexts of every user
-// in the UserRegistry, keeping the view keys encrypted to it (users of
-// earlier runs were encrypted to other auditors), and checking each against
-// the view key the user registered. It returns how many registrations were
-// encrypted to other auditors.
-func (e *Engine) recoverViewKeys() (users []auditUser, others int, err error) {
-	c := e.chain
-	count, err := rpcore.GetUserCount(c.client, c.registryAddr)
+// recoverViewKeys has the auditor check the audit ciphertexts of every
+// registration in the UserRegistry and recover the view keys they open to
+// (see sortAuditChecks).
+func (e *Engine) recoverViewKeys() ([]auditUser, unreadable, error) {
+	regs, err := rpcore.AuditRegistrations(e.chain.client, e.chain.registryAddr, e.auditor.DecapsKey)
 	if err != nil {
-		return nil, 0, err
+		return nil, unreadable{}, err
 	}
-	for i := range count {
-		addr, err := rpcore.GetUserAt(c.client, c.registryAddr, i)
-		if err != nil {
-			return nil, 0, err
+	return e.sortAuditChecks(regs)
+}
+
+// unreadable names the accounts outside the run whose notes the auditor
+// cannot read: the contract checks only the audit ciphertexts' lengths, so
+// a registration's may not open (an earlier run's user, encrypted to another
+// auditor, or a user opting out: the auditor cannot tell which), or open to
+// a view key other than the one registered.
+type unreadable struct {
+	unopened, mismatched []string
+}
+
+// sortAuditChecks keeps the view key of each registration whose audit
+// ciphertexts open to the view key it registered. A run's own user whose
+// ciphertexts do not stops the run; any other account's is named.
+func (e *Engine) sortAuditChecks(regs []rpcore.AuditedRegistration) (users []auditUser, others unreadable, err error) {
+	for _, r := range regs {
+		name, own := e.nameOf(r.User), e.registers(r.User)
+		switch {
+		case r.Opens() && r.Matches:
+			users = append(users, auditUser{name: name, spendPk: r.Keys.SpendKey, view: r.ViewKey, audit: auditCiphertexts(r.MlKemCt, r.AesCt)})
+		case own && !r.Opens():
+			return nil, unreadable{}, fmt.Errorf("%s's audit ciphertexts do not open to the auditor", name)
+		case own:
+			return nil, unreadable{}, fmt.Errorf("%s registered a view key other than the one encrypted to the auditor", name)
+		case !r.Opens():
+			others.unopened = append(others.unopened, name)
+		default:
+			others.mismatched = append(others.mismatched, name)
 		}
-		mlKemCt, aesCt, err := rpcore.LookupAuditCiphertexts(c.client, c.registryAddr, addr)
-		if err != nil {
-			return nil, 0, err
-		}
-		view, err := rpcore.AuditorDecryptViewKey(e.auditor.DecapsKey, mlKemCt, aesCt)
-		if err != nil {
-			others++
-			continue
-		}
-		keys, err := rpcore.LookupKeys(c.client, c.registryAddr, addr)
-		if err != nil {
-			return nil, 0, err
-		}
-		if !bytes.Equal(view.EncapsulationKey().Bytes(), keys.ViewKey) {
-			return nil, 0, fmt.Errorf("%s registered a view key other than the one encrypted to the auditor", e.nameOf(addr))
-		}
-		users = append(users, auditUser{name: e.nameOf(addr), spendPk: keys.SpendKey, view: view, audit: auditCiphertexts(mlKemCt, aesCt)})
 	}
 	return users, others, nil
+}
+
+// registers says addr is one of the run's users it registers.
+func (e *Engine) registers(addr common.Address) bool {
+	for _, a := range e.registrable() {
+		if a.Address == addr {
+			return true
+		}
+	}
+	return false
 }
 
 // nameOf is the run's name for an account, or its address.
@@ -153,8 +168,13 @@ func (e *Engine) auditorKeysStep(ctx context.Context, s *step) error {
 				ViewPk: bytesHex(u.view.EncapsulationKey().Bytes()), ViewKey: shortSecret(bytesHex(u.view.Bytes()))}})
 		s.log("key", "auditor opened %s's audit ciphertexts → ML-KEM view key, matches the registered one", u.name)
 	}
-	if others > 0 {
-		s.log("key", "%d earlier registrations are encrypted to other auditors", others)
+	if n := len(others.unopened); n > 0 {
+		s.log("key", "auditor cannot open the audit ciphertexts of %d other registrations (earlier runs' users, encrypted to other auditors, or users opting out of audit): %s",
+			n, strings.Join(others.unopened, ", "))
+	}
+	if n := len(others.mismatched); n > 0 {
+		s.log("key", "%d other registrations' audit ciphertexts open to a view key other than the one registered: %s",
+			n, strings.Join(others.mismatched, ", "))
 	}
 	s.done("Auditor recovered the view keys of the sender and %d participants from the UserRegistry", K)
 	return nil
