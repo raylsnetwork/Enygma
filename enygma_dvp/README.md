@@ -85,6 +85,68 @@ flowchart TD
 Note: We intend to update the ZK module to use a quantum-secure ZK scheme, which will make the entire system quantum-secure (as opposed to quantum-private). We also intend to leverage the ability of having [Single-Server Private Outsourcing of zk-SNARKs
 ](https://eprint.iacr.org/2025/2113) to allow clients to submit ZK proofs to the Private Network Hub component of the system without incurring in unnecessary hardware costs.
 
+## Deprecated: enygma_dvp's `EnygmaAuction`
+
+`enygma_dvp/contracts/core/contracts/EnygmaAuction.sol` is a legacy contract.
+The maintained auction is the contract of the same name in
+[`enygma_dvp_auctions`](../enygma_dvp_auctions): a standalone deployment with
+its own vaults, verifier and proof server. It uses neither `EnygmaDvp` nor
+`registerEnygmaAuction` and auctions only notes held in its own vaults. Use
+that module for auctions.
+
+**The owner must never pass enygma_dvp's `EnygmaAuction` to
+`EnygmaDvp.registerEnygmaAuction`.** Nothing registers it today: no deploy or
+init script calls `registerEnygmaAuction`, and this module's gnark server
+(`gnark_circuits/`, port 8081) serves none of the `/proof/auction*` routes
+that `src/core/prover_auction.go` posts to.
+
+The gaps below matter only for vaults registered after a registration.
+`registerEnygmaAuction` stores the address, and `registerVault` hands it to
+each vault it registers from then on. That vault grants it
+`DEFAULT_AUCTION_ROLE` once, at initialization, and has no role admin to
+revoke the grant. Vaults registered earlier granted the role to whatever
+address was stored then (today, `address(0)`). A later `registerEnygmaAuction`
+call with another address neither re-points nor revokes an existing grant: a
+vault registered while the legacy contract was stored lets it call
+`lockCoin`, `unlockCoin`, `nullifyCoin` and `registerCoins` for good.
+
+Once registered, the contract has these gaps:
+
+- **`newAuction` checks no Merkle root.** Unlike `submitBid`, it never calls
+  `verifyRoot` for the init proof, and locking rejects only zero, locked or
+  spent nullifiers. The item note a seller "locks" therefore need not exist in
+  the item vault.
+- **`newAuction` trusts its `uniqueIdParams`.** No proof binds them, or any of
+  its other plain arguments, to the item note. `declareWinner` later mints
+  the winner's item from the stored params. Because `newAuction` has no sender
+  check, whoever submits the init receipt first sets them: the seller, or a
+  front-runner who copies an honest seller's receipt from the mempool.
+- **`submitBid` takes `receivingPublicKey` as a plain argument.** The bid
+  proof does not commit to it, so whoever submits the bid transaction (a
+  relayer or a front-runner) chooses which key receives the item.
+- **`declareWinner` never reads `sellerFundPublicKey`.** `newAuction` stores
+  the seller's payout key, but settlement registers the output commitments of
+  the winner's own bid proof, whose keys the bidder chose. A winning bidder can
+  pay itself and take the item for nothing.
+- **`declareWinner` has no state or time check, and can leave losing bids
+  locked** (reconciled audit R-084). `_verifyNotWinningProofs` needs only
+  `numberOfOpenedBids - 1` proofs, and `_unlockLosersBids` unlocks only bids
+  with a proof.
+- **The vault calls this contract uses check nothing beyond the caller's
+  role** (R-052). `nullifyCoin`
+  sets a nullifier without the `isLocked` check that `_spendNullifier`
+  applies, and `lockCoin` and `unlockCoin` take a raw (tree, nullifier) with no
+  owner. Only this contract calls `nullifyCoin`.
+
+The contract stays in the tree because the registration hook still exists
+and `test/11_v2_auction_declarewinner_test.go` deploys its artifact (its
+NatSpec says the same). Editing `EnygmaAuction.sol` itself changes only its own
+artifact: of the two auction files, `EnygmaDvp` imports
+only the interface `IEnygmaAuction.sol`, and no vault imports either. What would change `EnygmaDvp`, the vaults and retail's deployed
+copies is an edit to `EnygmaDvp.sol`, to the interfaces it imports
+(`IEnygmaAuction.sol`, `IEnygmaDvp.sol`), to the vault sources, or to any
+other file they import.
+
 ## Repository Structure
 
 ```
