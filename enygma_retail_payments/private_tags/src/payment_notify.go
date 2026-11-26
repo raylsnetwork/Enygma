@@ -3,12 +3,10 @@ package tags
 import (
 	"fmt"
 	"math/big"
-
-	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-// PaymentNote holds the note details for an incoming payment delivered via a
-// private tag notification.
+// PaymentNote holds the note details of an incoming payment, sealed in the
+// ctxt of a channel payment (PrepareChannelPayment).
 //
 // Bob recomputes his commitment with:
 //
@@ -21,42 +19,9 @@ type PaymentNote struct {
 	Salt    *big.Int // saltB field element used in Bob's output commitment
 }
 
-// PreparePaymentTag creates a tag window and encrypted note payload ready for
-// submission to POST /relay/tag (window mode).
-//
-// This function bridges the ZK payment layer and the private tag notification
-// layer. Alice calls it after generating a ZK payment proof to notify Bob that
-// a payment has been sent to him.
-//
-// The note payload is encoded as amount(32 BE) || tokenId(32 BE) || saltB(32 BE)
-// and encrypted once per block of the window, each under that block's key
-// (DeriveBlockKey) from the pre-established channel shared secret (from Phase 2
-// channel setup — separate from the per-payment ML-KEM shared secret).
-//
-// Parameters:
-//   - channelSS: shared secret from the Phase 2 channel Alice established with Bob
-//   - saltB: the saltB field element from PaymentResult.SaltB — the salt used in
-//     Bob's output commitment, derived by Alice during ML-KEM encapsulation
-//
-// Returns (startBlock, tags, ctxts) ready for the relayer window-mode request.
-func PreparePaymentTag(
-	client *ethclient.Client,
-	windowSize int,
-	recipientPkSpend *big.Int,
-	channelSS []byte,
-	amount, tokenId, saltB *big.Int,
-) (startBlock uint64, tagWindow [][32]byte, ctxts [][]byte, err error) {
-	payload := make([]byte, 96)
-	amount.FillBytes(payload[0:32])
-	tokenId.FillBytes(payload[32:64])
-	saltB.FillBytes(payload[64:96])
-
-	return PrepareTagWithWindow(client, windowSize, recipientPkSpend, channelSS, payload)
-}
-
-// DecryptPaymentNote decrypts the ctxt PreparePaymentTag produced for
-// blockNumber, the block its tag was found in (ScannedTag.BlockNumber), to the
-// recipient whose spend key is recipientPkSpend.
+// DecryptPaymentNote decrypts a payment's sealed note (PrepareChannelPayment's
+// ctxt) for blockNumber, the block its tag is for, to the recipient whose
+// spend key is recipientPkSpend.
 // Returns the PaymentNote containing amount, tokenId, and saltB.
 //
 // Bob verifies his commitment with:

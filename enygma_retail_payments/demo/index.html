@@ -344,7 +344,7 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
       <button class="mode-btn active" id="btnPlain" onclick="setMode('plain')">Plain</button>
       <button class="mode-btn" id="btnTag" onclick="setMode('tag')">With Tag</button>
     </div>
-    <span class="mode-tip">+ ML-KEM channel &amp; TagRegistry notification</span>
+    <span class="mode-tip">+ ML-KEM tag channel &amp; channel payment</span>
   </div>
   <div class="controls">
     <button class="present-toggle" id="presentToggle" title="Scale up the whole UI for presenting on a projector or screen share">
@@ -400,7 +400,7 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
         </p>
         <div class="intro-modes">
           <div class="intro-mode-row"><span class="intro-mode-tag plain">PLAIN</span> Bob finds his note by trial-decrypting every on-chain Payment event with his view key.</div>
-          <div class="intro-mode-row"><span class="intro-mode-tag tag">WITH TAG</span> Alice also opens an ML-KEM channel and publishes an encrypted "tag" pointer, so Bob can find his note directly without scanning every event.</div>
+          <div class="intro-mode-row"><span class="intro-mode-tag tag">WITH TAG</span> Alice also opens an ML-KEM tag channel and pays over it: the one payment transaction carries Bob's tag for its block and his note sealed under that block's key, so Bob finds his note by its tag without trial-decrypting every payment.</div>
         </div>
       </div>
     </div>
@@ -490,7 +490,6 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
         <div class="proto-row"><div class="proto-key" title="On-chain directory of each party's public spend and view keys.">UserRegistry</div><div class="proto-val" id="proto-registryAddr">—</div></div>
         <div class="proto-row"><div class="proto-key" title="Submits payment transactions as msg.sender so Alice's own address never appears on-chain.">Relayer</div><div class="proto-val" id="proto-relayerAddr">—</div></div>
         <div class="proto-row tag-only-row" style="display:none"><div class="proto-key" title="Stores ML-KEM-768 ciphertexts so two parties can derive a shared secret without a direct off-chain channel.">TagChannelRegistry</div><div class="proto-val" id="proto-tagChannelAddr">—</div></div>
-        <div class="proto-row tag-only-row" style="display:none"><div class="proto-key" title="Public ledger of encrypted, HMAC-indexed payment notes — lets Bob find his payment without scanning every vault event.">TagRegistry</div><div class="proto-val" id="proto-tagRegistryAddr">—</div></div>
       </div>
     </div>
 
@@ -500,9 +499,8 @@ body.mode-plain .step-item.tag-only { opacity: 0; pointer-events: none; }
     <div class="tx-section">
       <div class="tx-title">Transaction Record</div>
       <div class="tx-cards">
-        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label">Payment (EnygmaDvp.payment)</span><span class="tx-card-status pending" id="txstatus-payment">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-payment">—</div></div></div></div>
+        <div class="tx-card"><div class="tx-card-header"><span class="tx-card-label" id="txlabel-payment">Payment (EnygmaDvp.payment)</span><span class="tx-card-status pending" id="txstatus-payment">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-payment">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-payment">—</div></div></div></div>
         <div class="tx-card tag-only-card" style="display:none"><div class="tx-card-header"><span class="tx-card-label">Channel Setup (TagChannelRegistry)</span><span class="tx-card-status pending" id="txstatus-channel">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-channel">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-channel">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-channel">—</div></div></div></div>
-        <div class="tx-card tag-only-card" style="display:none"><div class="tx-card-header"><span class="tx-card-label">Tag Publish (TagRegistry)</span><span class="tx-card-status pending" id="txstatus-tag">pending</span></div><div class="tx-meta"><div class="tx-meta-item"><div class="tx-meta-key">Tx Hash</div><div class="tx-meta-val" id="txhash-tag">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Block</div><div class="tx-meta-val" id="txblock-tag">—</div></div><div class="tx-meta-item"><div class="tx-meta-key">Gas Used</div><div class="tx-meta-val" id="txgas-tag">—</div></div></div></div>
       </div>
     </div>
 
@@ -563,7 +561,6 @@ const STEPS_TAG = [
   { id:'merkle',   label:'Merkle Proof' },
   { id:'zkproof',  label:'ZK Proof' },
   { id:'relay',    label:'Relay Payment' },
-  { id:'tag',      label:'Publish Tag', tagOnly:true },
   { id:'scan_tag', label:'Bob Scans Tag', tagOnly:true },
   { id:'verify',   label:'Verify', tagOnly:true },
 ];
@@ -730,9 +727,9 @@ const VIZ = {
   relay: () => `
     <div class="svz-actors">
       ${actor('alice','Alice','proof sender')}
-      ${arrowRight('POST /relay/payment')}
+      ${arrowRight(mode === 'tag' ? 'POST /relay/channel_payment' : 'POST /relay/payment')}
       ${actor('relay','Relayer','msg.sender')}
-      ${arrowRight('payment(π, stmt)')}
+      ${arrowRight(mode === 'tag' ? 'channelPayment(π, b, t, ctxt)' : 'payment(π, stmt)')}
       ${actor('contract','EnygmaDvp','verifies ZK')}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:8px;font-family:var(--mono);font-size:8px;text-align:center">
@@ -742,30 +739,16 @@ const VIZ = {
     </div>
     <div class="svz-relay-note">Alice's ETH address NEVER appears on the payment transaction</div>`,
 
-  tag: () => `
-    <div class="svz-actors">
-      ${actor('alice','Alice','seals note')}
-      ${arrowRight('HMAC tag + AES-GCM note')}
-      ${actor('contract','TagRegistry','public ledger')}
-      ${arrowLeft('ScanBlocksFromCursor')}
-      ${actor('bob','Bob','discovers tag')}
-    </div>
-    <div class="svz-keyrows" style="margin-top:8px">
-      <div class="svz-keyrow"><span class="svz-keyrow-algo">note plaintext</span><span class="svz-keyrow-val">{amount=30, tokenId, saltB}</span><span class="svz-keyrow-purpose">before seal</span></div>
-      <div class="svz-keyrow"><span class="svz-keyrow-algo">AES-GCM key</span><span class="svz-keyrow-val" style="color:var(--muted)">derived from shared secret</span><span class="svz-keyrow-size">32 B</span></div>
-      <div class="svz-keyrow"><span class="svz-keyrow-algo">ciphertext</span><span class="svz-keyrow-val" id="viz-tag-ct">sealing…</span><span class="svz-keyrow-purpose">on-chain</span></div>
-    </div>`,
-
   scan_tag: () => `
     <div class="svz-actors">
       ${actor('bob','Bob','scans')}
-      ${arrowRight('HMAC match')}
-      ${actor('contract','TagRegistry','')}
+      ${arrowRight('tag match')}
+      ${actor('contract','EnygmaDvp','ChannelPayment events')}
     </div>
     <div class="svz-substeps" style="margin-top:8px">
-      ${substep('st-scan',  'Scan TagRegistry blocks')}
-      ${substep('st-hmac',  'HMAC-match tags with shared secret')}
-      ${substep('st-dec',   'AES-GCM decrypt → {amount, tokenId, saltB}')}
+      ${substep('st-scan',  't = Poseidon(domain, ss, b, pk_spend) for the payment\'s block b')}
+      ${substep('st-find',  'Find t among the ChannelPayment events for b')}
+      ${substep('st-dec',   'AES-GCM open ctxt under k_b → {amount, tokenId, salt}')}
       ${substep('st-verify','Recompute Poseidon commitment → verify ✓')}
     </div>`,
 
@@ -808,9 +791,8 @@ const VIZ_DESC = {
   deposit:  'Alice deposits 40 ERC-20 tokens into the private vault. A <strong>Poseidon commitment</strong> <code>H(pk_spend, saltB, amount, tokenId)</code> is recorded on-chain instead of the plaintext values — the amount and owner remain hidden.',
   merkle:   'Alice scans all on-chain <code>Commitment</code> events, rebuilds the full <strong>Merkle tree</strong> (depth=8) locally, and generates a sibling-path inclusion proof for her deposit note. The proof shows membership without revealing which leaf.',
   zkproof:  'The <strong>gnark server</strong> generates a Groth16 proof that: (1) Alice knows a note in the Merkle tree, (2) outputs sum to the input, (3) the nullifier is correctly derived. Private inputs are never revealed — only the proof and public signals leave the prover.',
-  relay:    'Alice sends the unsigned Groth16 proof to the relayer via <code>POST /relay/payment</code>. The relayer submits <code>EnygmaDvp.payment()</code> on-chain as <code>msg.sender</code>. The on-chain verifier runs the Groth16 pairing check. Alice\'s address is never exposed.',
-  tag:      'Alice seals the payment note <code>{amount, tokenId, saltB}</code> with the ML-KEM shared secret using AES-GCM and publishes it to <strong>TagRegistry</strong>. The tag is indexed by a one-time HMAC so Bob can scan without Alice being identified.',
-  scan_tag: 'Bob scans <strong>TagRegistry</strong> using his ML-KEM shared secret, matches his tag by HMAC, decrypts the note, and recomputes the Poseidon commitment to verify it matches the on-chain output.',
+  relay:    'Alice sends the unsigned Groth16 proof to the relayer via <code>POST /relay/payment</code> (with a tag: <code>POST /relay/channel_payment</code>, with the block <code>b</code>, Bob\'s tag <code>t</code> for it and his sealed note <code>ctxt</code>, all three bound by the proof). The relayer submits <code>EnygmaDvp.payment()</code> (or <code>channelPayment()</code>) on-chain as <code>msg.sender</code>. The on-chain verifier runs the Groth16 pairing check. Alice\'s address is never exposed.',
+  scan_tag: 'Bob computes his tag for the payment\'s block from the channel\'s shared secret, finds it among <strong>EnygmaDvp</strong>\'s <code>ChannelPayment</code> events, opens the sealed note under that block\'s key, and recomputes the Poseidon commitment to verify it matches the on-chain output.',
   scan:     'Bob iterates vault Payment events and attempts <strong>ML-KEM decapsulation</strong> on each ciphertext using his view decapsulation key. When successful, he recovers <code>{amount, tokenId, saltB}</code> and verifies the Poseidon commitment.',
   verify:   'Bob recomputes <code>H(pk_spend, saltB, amount, tokenId)</code> from the decrypted note and confirms it equals the on-chain commitment from the payment transaction. Alice\'s change commitment is also verified.',
 };
@@ -825,8 +807,8 @@ function renderStepViz(stepId, status) {
   const stepNames = {
     prereqs:'Prerequisites', keygen:'Key Generation', register:'On-Chain Registration',
     channel:'ML-KEM Channel Setup', deposit:'Private Deposit', merkle:'Merkle Proof',
-    zkproof:'Groth16 ZK Proof', relay:'Relay Payment', tag:'Publish Tag',
-    scan_tag:'Bob Scans TagRegistry', scan:'Bob Scans Payment Event', verify:'Verify Commitments',
+    zkproof:'Groth16 ZK Proof', relay:'Relay Payment',
+    scan_tag:'Bob Scans Tag', scan:'Bob Scans Payment Event', verify:'Verify Commitments',
   };
 
   labelEl.textContent = stepNames[stepId] || stepId;
@@ -889,6 +871,8 @@ function setMode(m) {
   document.querySelectorAll('.tag-only-row, .tag-only-card, .tag-only-field').forEach(el => {
     el.style.display = m === 'tag' ? '' : 'none';
   });
+  document.getElementById('txlabel-payment').textContent =
+    m === 'tag' ? 'Payment + tag (EnygmaDvp.channelPayment)' : 'Payment (EnygmaDvp.payment)';
   renderSteps();
   resetUI();
 }
@@ -933,7 +917,7 @@ function setStep(id, status) {
     ['mk-scan','mk-build','mk-prove'].forEach(s => markSubstep(s,'done'));
   }
   if (id === 'scan_tag' && status === 'success') {
-    ['st-scan','st-hmac','st-dec','st-verify'].forEach(s => markSubstep(s,'done'));
+    ['st-scan','st-find','st-dec','st-verify'].forEach(s => markSubstep(s,'done'));
   }
   if (id === 'scan' && status === 'success') {
     ['sc-decap','sc-decrypt','sc-verify'].forEach(s => markSubstep(s,'done'));
@@ -1040,14 +1024,6 @@ function setProto(field, value) {
       break;
     case 'chBlock': document.getElementById('txblock-channel').textContent = value; break;
     case 'chGas':   document.getElementById('txgas-channel').textContent = commaNum(value); break;
-    case 'tagTxHash':
-      document.getElementById('txhash-tag').innerHTML = makeHexInline(value);
-      document.getElementById('txstatus-tag').textContent = 'confirmed';
-      document.getElementById('txstatus-tag').className = 'tx-card-status done';
-      txCount++;
-      break;
-    case 'tagBlock': document.getElementById('txblock-tag').textContent = value; break;
-    case 'tagGas':   document.getElementById('txgas-tag').textContent = commaNum(value); break;
     case 'proofTimeMs': {
       const ms = parseInt(value);
       setMetric('proofTime', ms + ' ms', ms, 15000, 'mb-proofTime');
@@ -1133,12 +1109,12 @@ function resetUI() {
     });
   });
 
-  ['vaultAddr','registryAddr','relayerAddr','tagChannelAddr','tagRegistryAddr'].forEach(f => {
+  ['vaultAddr','registryAddr','relayerAddr','tagChannelAddr'].forEach(f => {
     const el = document.getElementById('proto-'+f);
     if (el) el.textContent = '—';
   });
 
-  ['payment','channel','tag'].forEach(t => {
+  ['payment','channel'].forEach(t => {
     ['txhash-','txblock-','txgas-'].forEach(p => { const el = document.getElementById(p+t); if (el) el.textContent = '—'; });
     const s = document.getElementById('txstatus-'+t);
     if (s) { s.textContent = 'pending'; s.className = 'tx-card-status pending'; }

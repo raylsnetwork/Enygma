@@ -160,62 +160,6 @@ func DeriveBlockKey(sharedSecret []byte, blockNumber uint64, recipientPkSpend *b
 	return key
 }
 
-// DeriveTagWindow derives tags for a consecutive window of blocks.
-// Returns tags for blocks [startBlock, startBlock+1, ..., startBlock+windowSize-1].
-//
-// Use this when submitting through the relayer: include the full window in the
-// request so the relayer can pick the correct tag for whichever block the tx
-// actually lands in, eliminating prediction mismatch.
-func DeriveTagWindow(startBlock uint64, windowSize int, recipientPkSpend *big.Int, sharedSecret []byte) ([][32]byte, error) {
-	tags := make([][32]byte, windowSize)
-	for i := 0; i < windowSize; i++ {
-		t, err := DeriveTag(startBlock+uint64(i), recipientPkSpend, sharedSecret)
-		if err != nil {
-			return nil, fmt.Errorf("DeriveTag(block=%d): %w", startBlock+uint64(i), err)
-		}
-		tags[i] = t
-	}
-	return tags, nil
-}
-
-// PrepareTagWithWindow prepares a tag window for relayer submission, querying
-// the chain to set the correct startBlock, and encrypts payload once per block
-// of the window: ctxts[i] is under the key of block startBlock+i, the block
-// tags[i] is for. The relayer publishes the (tag, ctxt) pair for the block the
-// transaction lands in, so the payload is always under that block's key.
-//
-// windowSize controls how many consecutive blocks to cover (recommend 3–5).
-//
-//	startBlock, tags, ctxts, err := PrepareTagWithWindow(client, 3, pkSpend, ss, payload)
-//	// POST /relay/tag { "tags": hexTags, "startBlock": startBlock, "ctxts": hexCtxts }
-func PrepareTagWithWindow(
-	client *ethclient.Client,
-	windowSize int,
-	recipientPkSpend *big.Int,
-	sharedSecret []byte,
-	payload []byte,
-) (startBlock uint64, tags [][32]byte, ctxts [][]byte, err error) {
-	currentBlock, err := client.BlockNumber(context.Background())
-	if err != nil {
-		return 0, nil, nil, fmt.Errorf("BlockNumber: %w", err)
-	}
-	startBlock = currentBlock + 1 // earliest possible landing block
-
-	tags, err = DeriveTagWindow(startBlock, windowSize, recipientPkSpend, sharedSecret)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-
-	ctxts = make([][]byte, windowSize)
-	for i := range ctxts {
-		ctxts[i], err = EncryptPayload(DeriveBlockKey(sharedSecret, startBlock+uint64(i), recipientPkSpend), payload)
-		if err != nil {
-			return 0, nil, nil, fmt.Errorf("EncryptPayload(block=%d): %w", startBlock+uint64(i), err)
-		}
-	}
-	return startBlock, tags, ctxts, nil
-}
-
 // ── Payload encryption ────────────────────────────────────────────────────────
 
 // EncryptPayload encrypts a tag payload under a block key (AES-256-GCM).

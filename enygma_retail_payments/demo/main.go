@@ -5,9 +5,11 @@
 //
 // Two modes are supported:
 //
-//	plain — Alice → relayer → Bob (no private tag notification)
-//	tag   — adds ML-KEM channel setup and tag notification so Bob discovers
-//	        the payment via TagRegistry without polling the vault directly.
+//	plain — Alice → relayer → Bob (no private tag channel)
+//	tag   — adds ML-KEM channel setup and pays over that tag channel
+//	        (EnygmaDvp.channelPayment, #451): one transaction carries the
+//	        payment, Bob's tag for its block and his sealed note, so Bob finds
+//	        it by its tag without trial-decrypting every payment.
 //
 // Usage:
 //
@@ -225,7 +227,6 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 
 type relayInfoResponse struct {
 	RelayerAddr            string `json:"relayerAddr"`
-	TagRegistryAddr        string `json:"tagRegistryAddr"`
 	TagChannelRegistryAddr string `json:"tagChannelRegistryAddr"`
 	ChainID                int64  `json:"chainId"`
 }
@@ -259,18 +260,15 @@ type relayChannelResponse struct {
 	Error       string `json:"error,omitempty"`
 }
 
-type relayTagRequest struct {
-	Tags       []string `json:"tags,omitempty"`
-	StartBlock uint64   `json:"startBlock,omitempty"`
-	Ctxt       string   `json:"ctxt,omitempty"`
-	Ctxts      []string `json:"ctxts,omitempty"`
-}
-
-type relayTagResponse struct {
-	TxHash      string `json:"txHash"`
-	BlockNumber uint64 `json:"blockNumber"`
-	GasUsed     uint64 `json:"gasUsed"`
-	Error       string `json:"error,omitempty"`
+// relayChannelPaymentRequest is POST /relay/channel_payment's body: the
+// proof, and the block, tag and sealed note it binds, in place of a capsule.
+type relayChannelPaymentRequest struct {
+	VaultId      string                    `json:"vaultId"`
+	Proof        [8]string                 `json:"proof"`
+	PublicSignal [layout.PaymentLen]string `json:"publicSignal"`
+	BlockNumber  uint64                    `json:"blockNumber"`
+	Tag          string                    `json:"tag"`
+	Ctxt         string                    `json:"ctxt"`
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -362,6 +360,14 @@ func postRelayer(path string, body interface{}, result interface{}) (int, error)
 	return resp.StatusCode, nil
 }
 
+func buildRelayChannelPaymentRequest(result *dvpcore.PaymentResult, ch *tags.ChannelPayment) relayChannelPaymentRequest {
+	req := buildRelayPaymentRequest(result)
+	return relayChannelPaymentRequest{
+		VaultId: req.VaultId, Proof: req.Proof, PublicSignal: req.PublicSignal,
+		BlockNumber: ch.BlockNumber, Tag: toHex(ch.Tag[:]), Ctxt: toHex(ch.Ctxt),
+	}
+}
+
 func buildRelayPaymentRequest(result *dvpcore.PaymentResult) relayPaymentRequest {
 	var proof [8]string
 	copy(proof[:], result.Proof)
@@ -433,86 +439,35 @@ type flowIO struct {
 	fail  func(step, label string, err error)
 }
 
-// runFlowScanAndVerify is Bob's side of the demo: discover the payment
-// (via the private tag channel in with-tag mode, or by ML-KEM-decrypting
-// the on-chain note in plain mode) and verify both his and Alice's change
+// runFlowScanAndVerify is Bob's side of the demo: discover the payment (by
+// his tag for its block among the ChannelPayment events in with-tag mode, or
+// by ML-KEM-decrypting the on-chain note in plain mode) and verify both his and Alice's change
 // commitments match what the proof committed to on-chain. Returns false
 // only after io.fail has already been called with the failure reason.
-func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tagRegistryAddr common.Address, channelSS []byte, aliceSpend, bobSpend *rpcore.SpendKeyPair, bobView *rpcore.ViewKeyPair, paymentResult *rpcore.PaymentResult, stmt []*big.Int, tokenId *big.Int, totalGasUsed *uint64) bool {
-	emit, logMsg, panel, proto, fail := io.emit, io.log, io.panel, io.proto, io.fail
+func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, dvpAddr common.Address, channelSS []byte, ch *tags.ChannelPayment, aliceSpend, bobSpend *rpcore.SpendKeyPair, bobView *rpcore.ViewKeyPair, paymentResult *rpcore.PaymentResult, stmt []*big.Int, tokenId *big.Int) bool {
+	emit, logMsg, panel, fail := io.emit, io.log, io.panel, io.fail
 
-	// ── Step: Tag notification (with-tag mode) ────────────────────────────────
-	var tagBlock uint64
 	if withTag {
-		emit("tag", "running", "Publish Tag", "Alice notifies Bob via private tag (POST /relay/tag)…")
-
-		startBlock, windowTags, noteCtxts, err := tags.PreparePaymentTag(
-			client, 3,
-			bobSpend.PublicKey,
-			channelSS,
-			big.NewInt(paymentAmt), tokenId, paymentResult.SaltB,
-		)
-		if err != nil {
-			fail("tag", "Publish Tag", fmt.Errorf("PreparePaymentTag: %w", err))
-			return false
-		}
-
-		hexTags := make([]string, len(windowTags))
-		for i, wt := range windowTags {
-			wt := wt
-			hexTags[i] = toHex(wt[:])
-		}
-		// One payload per block of the window, each under that block's key.
-		hexCtxts := make([]string, len(noteCtxts))
-		for i, ct := range noteCtxts {
-			hexCtxts[i] = toHex(ct)
-		}
-
-		var tagResp relayTagResponse
-		status, err := postRelayer("/relay/tag", relayTagRequest{
-			Tags:       hexTags,
-			StartBlock: startBlock,
-			Ctxts:      hexCtxts,
-		}, &tagResp)
-		if err != nil {
-			fail("tag", "Publish Tag", err)
-			return false
-		}
-		if status != http.StatusOK {
-			fail("tag", "Publish Tag", fmt.Errorf("relayer %d: %s", status, tagResp.Error))
-			return false
-		}
-		*totalGasUsed += tagResp.GasUsed
-		tagBlock = tagResp.BlockNumber
-		proto("tagTxHash", tagResp.TxHash)
-		proto("tagBlock", fmt.Sprintf("%d", tagBlock))
-		proto("tagGas", fmt.Sprintf("%d", tagResp.GasUsed))
-		logMsg("chain", fmt.Sprintf("TagRegistry.publishTag() → block %d  gas %s  tx %s…",
-			tagBlock, formatNum(tagResp.GasUsed), shortHex(tagResp.TxHash, 18)))
-		emit("tag", "success", "Publish Tag", fmt.Sprintf("Encrypted payment note published to TagRegistry (block %d)", tagBlock))
-		pause(2000 * time.Millisecond)
-
-		// ── Step: Bob scans TagRegistry ───────────────────────────────────────
-		emit("scan_tag", "running", "Bob Scans Tag", "Bob scans TagRegistry and decrypts payment note…")
+		// ── Step: Bob finds the payment by its tag ────────────────────────────
+		emit("scan_tag", "running", "Bob Scans Tag", "Bob looks his tag up among the ChannelPayment events and opens his note…")
 
 		bobChannels := []tags.Channel{{SharedSecret: channelSS, PkSpend: bobSpend.PublicKey}}
-		cursor := tags.NewScanCursor()
-		matches, _, err := tags.ScanBlocksFromCursor(client, tagRegistryAddr, bobChannels, cursor, tagBlock)
+		found, err := tags.ScanChannelPayments(context.Background(), client, dvpAddr, ch.BlockNumber, bobChannels)
 		if err != nil {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("ScanBlocksFromCursor: %w", err))
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("ScanChannelPayments: %w", err))
 			return false
 		}
-		if len(matches) == 0 {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found 0 tags in registry"))
+		if len(found) != 1 {
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("Bob found %d channel payments for block %d, want 1", len(found), ch.BlockNumber))
 			return false
 		}
-		note, err := tags.DecryptPaymentNote(channelSS, bobSpend.PublicKey, matches[0].BlockNumber, matches[0].Entry.Ctxt)
+		note, err := found[0].Open()
 		if err != nil {
-			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("DecryptPaymentNote: %w", err))
+			fail("scan_tag", "Bob Scans Tag", fmt.Errorf("open the sealed note: %w", err))
 			return false
 		}
 
-		logMsg("tag", fmt.Sprintf("Bob found tag in TagRegistry → decrypting note"))
+		logMsg("tag", fmt.Sprintf("Bob's tag for block %d found among the ChannelPayment events (settled in %d) → opening ctxt", found[0].BlockNumber, found[0].MinedIn))
 		logMsg("tag", fmt.Sprintf("note.amount=%s  note.tokenId=%s  note.salt=0x%s…",
 			note.Amount, note.TokenId, note.Salt.Text(16)[:16]))
 
@@ -529,7 +484,7 @@ func runFlowScanAndVerify(io flowIO, withTag bool, client *ethclient.Client, tag
 		logMsg("key", fmt.Sprintf("Bob commitment: 0x%s… ✓ matches on-chain", bobCmt.Text(16)[:16]))
 		panel(1, "balance", fmt.Sprintf("%d tokens (discovered via tag)", note.Amount))
 		panel(1, "salt", "0x"+note.Salt.Text(16))
-		emit("scan_tag", "success", "Bob Scans Tag", fmt.Sprintf("Bob decrypted note from TagRegistry: %s tokens", note.Amount))
+		emit("scan_tag", "success", "Bob Scans Tag", fmt.Sprintf("Bob found his tag and opened his note: %s tokens", note.Amount))
 		pause(1600 * time.Millisecond)
 
 		// ── Step: Verify ─────────────────────────────────────────────────────
@@ -656,7 +611,7 @@ func runFlow(b *Broker, withTag bool) {
 	logMsg("", "✓ chain · gnark server · relayer are all reachable")
 
 	// Always fetch /relay/info to get relayer address (and tag addrs in with-tag mode).
-	var tagRegistryAddr, channelRegistryAddr common.Address
+	var channelRegistryAddr common.Address
 	{
 		resp, err := http.Get(relayerURL + "/relay/info")
 		if err == nil {
@@ -669,16 +624,13 @@ func runFlow(b *Broker, withTag bool) {
 			}
 			if withTag {
 				zeroAddr := common.Address{}.Hex()
-				if info.TagRegistryAddr == zeroAddr || info.TagChannelRegistryAddr == zeroAddr {
+				if info.TagChannelRegistryAddr == zeroAddr {
 					fail("prereqs", "Check prerequisites", fmt.Errorf(
-						"relayer TagRegistry/TagChannelRegistry not configured — restart with RELAYER_TAG_REGISTRY_ADDR and RELAYER_TAG_CHANNEL_REGISTRY_ADDR"))
+						"relayer TagChannelRegistry not configured — restart with RELAYER_TAG_CHANNEL_REGISTRY_ADDR"))
 					return
 				}
-				tagRegistryAddr = common.HexToAddress(info.TagRegistryAddr)
 				channelRegistryAddr = common.HexToAddress(info.TagChannelRegistryAddr)
-				proto("tagRegistryAddr", info.TagRegistryAddr)
 				proto("tagChannelAddr", info.TagChannelRegistryAddr)
-				logMsg("chain", fmt.Sprintf("TagRegistry: %s", shortHex(info.TagRegistryAddr, 18)))
 				logMsg("chain", fmt.Sprintf("TagChannelRegistry: %s", shortHex(info.TagChannelRegistryAddr, 18)))
 			}
 		} else if withTag {
@@ -699,6 +651,7 @@ func runFlow(b *Broker, withTag bool) {
 	vaultAddr := common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress)
 	erc20Addr := common.HexToAddress(receipts["ERC20"].ContractAddress)
 	registryAddr := common.HexToAddress(receipts["UserRegistry"].ContractAddress)
+	dvpAddr := common.HexToAddress(receipts["EnygmaDvp"].ContractAddress)
 	proto("vaultAddr", vaultAddr.Hex())
 	proto("registryAddr", registryAddr.Hex())
 	logMsg("chain", fmt.Sprintf("Erc20CoinVault: %s", shortHex(vaultAddr.Hex(), 18)))
@@ -985,32 +938,66 @@ func runFlow(b *Broker, withTag bool) {
 
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
 	proofGenStart := time.Now()
-	paymentResult, err := gnarkClient.BoundPaymentProof(
-		vaultAddrBig,
-		big.NewInt(0),
-		[]*big.Int{big.NewInt(depositAmt)},
-		[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
-		[]*big.Int{aliceSaltBField},
-		[]*big.Int{big.NewInt(paymentAmt), big.NewInt(changeAmt)},
-		[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
-		[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
-		merkleDepth,
-		[]*rpcore.MerkleProof{aliceProof},
-		[]*big.Int{big.NewInt(0)},
-		tokenId,
-	)
-	proofGenMs = time.Since(proofGenStart).Milliseconds()
-	if err != nil {
-		fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundPaymentProof: %w", err))
-		return
+	var paymentResult *rpcore.PaymentResult
+	var ch *tags.ChannelPayment // with-tag mode: Bob's tag and sealed note
+	if withTag {
+		// Tag the payment for the next block over the channel and seal Bob's
+		// note under that block's key; the proof binds all three.
+		head, err := client.BlockNumber(context.Background())
+		if err != nil {
+			fail("zkproof", "Generate ZK Proof", fmt.Errorf("BlockNumber: %w", err))
+			return
+		}
+		if ch, err = tags.PrepareChannelPayment(channelSS, head+1, bobSpend.PublicKey, big.NewInt(paymentAmt), tokenId); err != nil {
+			fail("zkproof", "Generate ZK Proof", fmt.Errorf("PrepareChannelPayment: %w", err))
+			return
+		}
+		logMsg("tag", fmt.Sprintf("tag for block %d: 0x%x…  sealed note: %d bytes", ch.BlockNumber, ch.Tag[:8], len(ch.Ctxt)))
+		paymentResult, err = gnarkClient.BoundChannelPaymentProof(
+			vaultAddrBig,
+			[]*big.Int{big.NewInt(depositAmt)},
+			[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
+			[]*big.Int{aliceSaltBField},
+			[]*big.Int{big.NewInt(paymentAmt), big.NewInt(changeAmt)},
+			[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
+			rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
+			merkleDepth,
+			[]*rpcore.MerkleProof{aliceProof},
+			[]*big.Int{big.NewInt(0)},
+			tokenId,
+		)
+		if err != nil {
+			fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundChannelPaymentProof: %w", err))
+			return
+		}
+	} else {
+		paymentResult, err = gnarkClient.BoundPaymentProof(
+			vaultAddrBig,
+			big.NewInt(0),
+			[]*big.Int{big.NewInt(depositAmt)},
+			[]rpcore.KeyPair{{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey}},
+			[]*big.Int{aliceSaltBField},
+			[]*big.Int{big.NewInt(paymentAmt), big.NewInt(changeAmt)},
+			[]*big.Int{bobSpend.PublicKey, aliceSpend.PublicKey},
+			[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
+			merkleDepth,
+			[]*rpcore.MerkleProof{aliceProof},
+			[]*big.Int{big.NewInt(0)},
+			tokenId,
+		)
+		if err != nil {
+			fail("zkproof", "Generate ZK Proof", fmt.Errorf("BoundPaymentProof: %w", err))
+			return
+		}
 	}
+	proofGenMs = time.Since(proofGenStart).Milliseconds()
 
 	stmt := paymentResult.ContractStatement()
 	logMsg("zk", fmt.Sprintf("proof generation: %d ms  size: 256 bytes (Groth16: 8 × 32-byte field elements)", proofGenMs))
 	logMsg("zk", fmt.Sprintf("nullifier: 0x%s…", stmt[layout.PaymentNullifiersOffset].Text(16)[:16]))
 	logMsg("zk", fmt.Sprintf("Bob commitment:   0x%s…", stmt[layout.PaymentCommitmentsOutOffset].Text(16)[:16]))
 	logMsg("zk", fmt.Sprintf("Alice change cmt: 0x%s…", stmt[layout.PaymentCommitmentsOutOffset+1].Text(16)[:16]))
-	logMsg("zk", fmt.Sprintf("Bob saltB: 0x%s…", paymentResult.SaltB.Text(16)[:16]))
+	logMsg("zk", fmt.Sprintf("Bob's note salt: 0x%s…", paymentResult.SaltB.Text(16)[:16]))
 	panel(0, "nullifier", "0x"+stmt[layout.PaymentNullifiersOffset].Text(16))
 	panel(0, "proof", "0x"+paymentResult.Proof[0])
 	panel(1, "commitment", "0x"+stmt[layout.PaymentCommitmentsOutOffset].Text(16))
@@ -1020,12 +1007,17 @@ func runFlow(b *Broker, withTag bool) {
 	pause(2000 * time.Millisecond)
 
 	// ── Step: Relay payment ───────────────────────────────────────────────────
-	emit("relay", "running", "Relay Payment", "Alice sends unsigned proof to relayer (POST /relay/payment)…")
+	route, method := "/relay/payment", "payment"
+	var relayReq interface{} = buildRelayPaymentRequest(paymentResult)
+	if withTag {
+		route, method = "/relay/channel_payment", "channelPayment"
+		relayReq = buildRelayChannelPaymentRequest(paymentResult, ch)
+	}
+	emit("relay", "running", "Relay Payment", fmt.Sprintf("Alice sends unsigned proof to relayer (POST %s)…", route))
 
-	relayReq := buildRelayPaymentRequest(paymentResult)
 	var payResp relayPaymentResponse
 	relayCallStart := time.Now()
-	status, err := postRelayer("/relay/payment", relayReq, &payResp)
+	status, err := postRelayer(route, relayReq, &payResp)
 	relayRTTms = time.Since(relayCallStart).Milliseconds()
 	if err != nil {
 		fail("relay", "Relay Payment", err)
@@ -1041,14 +1033,14 @@ func runFlow(b *Broker, withTag bool) {
 	proto("payBlock", fmt.Sprintf("%d", payResp.BlockNumber))
 	proto("payGas", fmt.Sprintf("%d", payResp.GasUsed))
 	proto("verifyTimeMs", fmt.Sprintf("%d", relayRTTms))
-	logMsg("chain", fmt.Sprintf("EnygmaDvp.payment() → block %d  gas %s  tx %s…",
-		payResp.BlockNumber, formatNum(payResp.GasUsed), shortHex(payResp.TxHash, 18)))
+	logMsg("chain", fmt.Sprintf("EnygmaDvp.%s() → block %d  gas %s  tx %s…",
+		method, payResp.BlockNumber, formatNum(payResp.GasUsed), shortHex(payResp.TxHash, 18)))
 	logMsg("zk", fmt.Sprintf("relay round-trip (submit→confirmed): %d ms  verify gas: %s", relayRTTms, formatNum(payResp.GasUsed)))
 	panel(0, "balance", fmt.Sprintf("0 tokens (note spent at block %d)", payResp.BlockNumber))
-	emit("relay", "success", "Relay Payment", fmt.Sprintf("Relayer submitted payment() on-chain (block %d, gas %s)", payResp.BlockNumber, formatNum(payResp.GasUsed)))
+	emit("relay", "success", "Relay Payment", fmt.Sprintf("Relayer submitted %s() on-chain (block %d, gas %s)", method, payResp.BlockNumber, formatNum(payResp.GasUsed)))
 	pause(2000 * time.Millisecond)
 
-	if !runFlowScanAndVerify(io, withTag, client, tagRegistryAddr, channelSS, aliceSpend, bobSpend, bobView, paymentResult, stmt, tokenId, &totalGasUsed) {
+	if !runFlowScanAndVerify(io, withTag, client, dvpAddr, channelSS, ch, aliceSpend, bobSpend, bobView, paymentResult, stmt, tokenId) {
 		return
 	}
 
