@@ -48,11 +48,38 @@ hash of the reviewed artifact's `deployedBytecode`.
 | Kind | Split count | Setter | Verifying key relative to `gnark-server` |
 | --- | --- | --- | --- |
 | 0 | 0 | `addVerifier` | `keys/EnygmaVk.key` |
-| 1 | 6 | `addWithdrawVerifier` | `keys/zkdvp/WithdrawVk6.key` |
-| 2 | 0 | `addDepositVerifier` | `keys/zkdvp/DepositVk.key` |
 | 3 | 0 | `addFeeVerifier` | `keys/EnygmaFeeVk.key` |
 | 4 | 0 | `addBurnVerifier` | `keys/BurnVk.key` |
 | 5 | 0 | `addUsdrVerifier` | `keys/UsdrVk.key` |
+
+### Do not register the withdraw and deposit verifiers
+
+Leave kinds 1 and 2 (`addWithdrawVerifier` with `keys/zkdvp/WithdrawVk6.key`,
+`addDepositVerifier` with `keys/zkdvp/DepositVk.key`) unregistered. While they
+are unset, `withdraw()` and `deposit()` cannot run. Enabling them would let a
+chain observer identify the hidden sender:
+
+- **Linkable tags and blinding factors.** Both circuits still derive message
+  tags and blinding factors from `Poseidon(Poseidon(c), SharedSecrets[i],
+  BlockNumber)`, with a fixed `c` for each. `BlockNumber` stays the same for a whole epoch, and a pair of
+  banks shares the same secret in both directions, so statements within an
+  epoch can be linked. The transfer circuit fixed this in H-01/H-02 with a
+  per-transaction nonce that depends on direction
+  (`gnark-server/pkg/circuits/enygma/circuit.go`). The withdraw and deposit
+  circuits did not get that fix.
+- **No relayer route.** The payments relayer serves only `/transfer` and
+  `/transfer_fee`, so a bank would have to submit withdraw and deposit from its
+  own registered address. That address names the bank as the sender.
+- **Unsalted bridge note.** The DvP note that `depositThroughEnygma` builds is
+  `Poseidon(Poseidon(asset, amount), publicKey)`, from the amount and key that
+  Enygma forwards from public calldata. Because it has no salt, a DvP note
+  public key that a bank reuses across withdrawals becomes a public pseudonym
+  for that bank.
+
+The integration tests register these verifiers on a throwaway chain to test the
+contract. That does not make them safe to register in a deployment. Port the
+transfer nonce into both circuits and regenerate their keys before enabling
+them. See [#435](https://github.com/raylsnetwork/Enygma/issues/435).
 
 The contract compares the approved hash on initial registration and on
 replacement proposals. Delayed execution requires both the prior approval
