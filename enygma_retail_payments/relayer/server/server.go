@@ -1,7 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"crypto/subtle"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,12 +16,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// globalLimiter caps total relay throughput across all clients (20 req/s, burst 30).
-var globalLimiter = rate.NewLimiter(rate.Limit(20), 30)
-
-// ipLimiters holds per-IP token buckets (5 req/s per IP, burst 10).
-// Note: the map grows unboundedly; in production replace with an LRU+TTL cache.
-var ipLimiters = &ipLimiterStore{m: make(map[string]*rate.Limiter)}
+// This cap leaves headroom above the largest bodies measured in the retail
+// and shield suites.
+const maxRequestBodyBytes = 256 * 1024
 
 type ipLimiterStore struct {
 	mu sync.Mutex
@@ -37,14 +38,14 @@ func (s *ipLimiterStore) get(ip string) *rate.Limiter {
 
 // rateLimitMiddleware enforces both the global and per-IP rate limits.
 // Returns HTTP 429 if either limit is exceeded.
-func rateLimitMiddleware() gin.HandlerFunc {
+func rateLimitMiddleware(globalLimiter *rate.Limiter, ipLimiters *ipLimiterStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !globalLimiter.Allow() {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "global rate limit exceeded"})
-			return
-		}
 		if !ipLimiters.get(c.ClientIP()).Allow() {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "per-IP rate limit exceeded"})
+			return
+		}
+		if !globalLimiter.Allow() {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "global rate limit exceeded"})
 			return
 		}
 		c.Next()
@@ -58,16 +59,25 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 		return nil, err
 	}
 
+	return newRouter(cfg, h)
+}
+
+func newRouter(cfg *config.Config, h *Handler) (*gin.Engine, error) {
 	r := gin.Default()
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		return nil, fmt.Errorf("invalid RELAYER_TRUSTED_PROXIES: %w", err)
+	}
+	// Preserve the relayer limits of 20 requests/s globally (burst 30)
+	// and 5 requests/s per IP (burst 10).
+	globalLimiter := rate.NewLimiter(20, 30)
+	ipLimiters := &ipLimiterStore{m: make(map[string]*rate.Limiter)}
 
 	// /health and /relay/info are public — no auth required.
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	r.GET("/health", h.health)
 	r.GET("/relay/info", h.Info)
 
 	// All /relay/* routes require a valid Bearer token and are rate-limited.
-	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rateLimitMiddleware())
+	relay := r.Group("/relay", bearerAuth(cfg.APIKey), rateLimitMiddleware(globalLimiter, ipLimiters), limitBody)
 	{
 		relay.POST("/payment", h.RelayPayment)
 		relay.POST("/channel_payment", h.RelayChannelPayment)
@@ -81,6 +91,24 @@ func New(cfg *config.Config) (*gin.Engine, error) {
 	}
 
 	return r, nil
+}
+
+// limitBody rejects oversized bodies before JSON decoding, including trailing
+// bytes that a decoder could leave unread after the first JSON value.
+func limitBody(c *gin.Context) {
+	body := http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodyBytes)
+	data, err := io.ReadAll(body)
+	if err != nil {
+		status := http.StatusBadRequest
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		c.AbortWithStatusJSON(status, gin.H{"error": http.StatusText(status)})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(data))
+	c.Next()
 }
 
 // bearerAuth returns a gin middleware that enforces Bearer token authentication.

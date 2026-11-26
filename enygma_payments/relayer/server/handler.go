@@ -215,7 +215,6 @@ func SetTxTimeout(d time.Duration) (restore func()) {
 type HealthResponse struct {
 	Status              string `json:"status"`
 	ChainReachable      bool   `json:"chainReachable"`
-	ChainError          string `json:"chainError,omitempty"`
 	LatestBlock         uint64 `json:"latestBlock,omitempty"`
 	RelayerBalanceWei   string `json:"relayerBalanceWei,omitempty"`
 	PendingTransactions int64  `json:"pendingTransactions"`
@@ -246,7 +245,6 @@ func (h *Handler) Health(c *gin.Context) {
 	block, err := h.chain.BlockNumber(ctx)
 	if err != nil {
 		resp.ChainReachable = false
-		resp.ChainError = err.Error()
 		// The process is up but cannot reach the chain — still HTTP 200
 		// (the endpoint itself works) but ChainReachable:false is the
 		// signal monitoring should actually key off, not the status code.

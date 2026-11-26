@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"unicode"
 )
 
 // Config holds all relayer configuration loaded from environment variables.
@@ -42,6 +43,8 @@ type Config struct {
 	ReceiptsPath string
 	// Port — HTTP listen port. Defaults to 8090.
 	Port string
+	// TrustedProxies lists IP addresses and CIDRs allowed to forward client IPs.
+	TrustedProxies []string
 	// RelayerFeeSpendPrivateKey — the relayer's own BabyJubJub spend private key
 	// (decimal, positive), used ONLY to verify off-chain that a relayer-fee note
 	// (PaymentRelayerFeePublic circuit) is actually addressed to this relayer
@@ -77,6 +80,10 @@ func Load() (*Config, error) {
 		Port:                   getenv("RELAYER_PORT", "8090"),
 		FeeNotesPath:           getenv("RELAYER_FEE_NOTES_PATH", "fee_notes.jsonl"),
 	}
+
+	cfg.TrustedProxies = strings.FieldsFunc(os.Getenv("RELAYER_TRUSTED_PROXIES"), func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
 
 	chainIDStr := getenv("RELAYER_CHAIN_ID", "1337")
 	chainID, ok := new(big.Int).SetString(chainIDStr, 10)

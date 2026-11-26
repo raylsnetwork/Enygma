@@ -192,7 +192,7 @@ func TestTransact_DoesNotSendACallThatWouldRevert(t *testing.T) {
 	defer srv.Close()
 	h := newTestHandler(t, srv.URL, 8_000_000)
 
-	_, err := h.transact("ping")
+	_, err := h.transact(httptest.NewRecorder(), "ping")
 	var wr *errWouldRevert
 	if !errors.As(err, &wr) {
 		t.Fatalf("expected errWouldRevert, got: %v", err)
@@ -208,7 +208,7 @@ func TestTransact_SendsAPassingCallAndSimulatesAtTheGasCap(t *testing.T) {
 	defer srv.Close()
 	h := newTestHandler(t, srv.URL, 8_000_000)
 
-	if _, err := h.transact("ping"); err != nil {
+	if _, err := h.transact(httptest.NewRecorder(), "ping"); err != nil {
 		t.Fatalf("transact: %v", err)
 	}
 	if !node.called("eth_sendRawTransaction") {
@@ -228,7 +228,7 @@ func TestTransact_RunningOutOfGasInTheSimulationIsRefused(t *testing.T) {
 	defer srv.Close()
 	h := newTestHandler(t, srv.URL, 8_000_000)
 
-	_, err := h.transact("ping")
+	_, err := h.transact(httptest.NewRecorder(), "ping")
 	var wr *errWouldRevert
 	if !errors.As(err, &wr) {
 		t.Fatalf("expected errWouldRevert, got: %v", err)
@@ -245,7 +245,7 @@ func TestTransact_NodeFailureIsNotReportedAsARevert(t *testing.T) {
 	h := newTestHandler(t, srv.URL, 8_000_000)
 	srv.Close()
 
-	_, err := h.transact("ping")
+	_, err := h.transact(httptest.NewRecorder(), "ping")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -305,7 +305,7 @@ func TestTransact_StuckTransactionTimesOutAndKeepsClaims(t *testing.T) {
 	h.txTimeout = 300 * time.Millisecond
 
 	start := time.Now()
-	_, err := h.transact("ping")
+	_, err := h.transact(httptest.NewRecorder(), "ping")
 	var pending *errTxPending
 	if !errors.As(err, &pending) {
 		t.Fatalf("expected errTxPending, got: %v", err)

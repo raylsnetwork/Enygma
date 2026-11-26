@@ -64,7 +64,7 @@ type Handler struct {
 	dvpAddr       common.Address
 	auth          *bind.TransactOpts
 	client        *ethclient.Client
-	txMu          sync.Mutex // serializes on-chain submissions — prevents nonce races
+	txMu          sync.Mutex // serializes simulation, submission and mining
 	// txTimeout bounds how long transact waits for a receipt (0 = defaultTxTimeout).
 	txTimeout time.Duration
 	inFlight  sync.Map // key: "vault:treeNum:nullifier" — prevents concurrent double-spend
@@ -142,6 +142,14 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 	}, nil
 }
 
+// health reports RPC reachability and keeps upstream diagnostics out of the response.
+func (h *Handler) health(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	_, err := h.client.BlockNumber(ctx)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "chainReachable": err == nil})
+}
+
 // Info handles GET /relay/info — public, no auth required.
 func (h *Handler) Info(c *gin.Context) {
 	feeSpendPubKey := ""
@@ -203,7 +211,7 @@ func (h *Handler) RelayPayment(c *gin.Context) {
 	}
 
 	receipt := buildProofReceipt(parsed)
-	txReceipt, err := h.transact("payment", receipt, vaultId, ctBytes, encBytes)
+	txReceipt, err := h.transact(c.Writer, "payment", receipt, vaultId, ctBytes, encBytes)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
 		relayError(c, "payment", err)
@@ -306,7 +314,7 @@ func (h *Handler) RelayPaymentRelayerFee(c *gin.Context) {
 		return h.feeNotes.recordSubmitted("paymentWithRelayerFee", vaultId, cmtRelayer, feeSalt, fee, tokenId)
 	}
 	receipt := buildProofReceipt(parsed)
-	txReceipt, err := h.transactWith(h.dvpAddr, h.dvpABI, keepFeeNote, "paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
+	txReceipt, err := h.transactWith(c.Writer, h.dvpAddr, h.dvpABI, keepFeeNote, "paymentWithRelayerFee", receipt, vaultId, ctBytes, encBytes)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
 		relayError(c, "paymentWithRelayerFee", err)
@@ -444,7 +452,7 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 		return h.feeNotes.recordSubmitted(method, vaultId, cmtRelayer, feeSalt, fee, tokenId)
 	}
 	receipt := buildProofReceipt(parsed)
-	txReceipt, err := h.transactWith(vaultAddr, h.erc20VaultABI, keepFeeNote, method,
+	txReceipt, err := h.transactWith(c.Writer, vaultAddr, h.erc20VaultABI, keepFeeNote, method,
 		[]*big.Int{amount, tokenId}, recipient, receipt, ctBytes, encBytes)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
@@ -578,7 +586,7 @@ func (h *Handler) RelayPaymentUsdrFee(c *gin.Context) {
 	}
 	receipt := buildProofReceipt(parsed)
 	usdrReceipt := buildProofReceipt(usdrParsed)
-	txReceipt, err := h.transactWith(h.dvpAddr, h.dvpABI, keepFeeNote, "paymentWithUsdrFee",
+	txReceipt, err := h.transactWith(c.Writer, h.dvpAddr, h.dvpABI, keepFeeNote, "paymentWithUsdrFee",
 		receipt, vaultId, ctBytes, encBytes,
 		usdrReceipt, usdrVaultId, usdrCtBytes, usdrEncBytes)
 	h.settleClaims(nfKeys, err)
@@ -653,7 +661,7 @@ func (h *Handler) RelaySwap(c *gin.Context) {
 
 	payReceipt := buildProofReceipt(payParsed)
 	delReceipt := buildProofReceipt(delParsed)
-	txReceipt, err := h.transact("swap", payReceipt, delReceipt, payVaultId, delVaultId)
+	txReceipt, err := h.transact(c.Writer, "swap", payReceipt, delReceipt, payVaultId, delVaultId)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
 		relayError(c, "swap", err)
@@ -723,7 +731,7 @@ func (h *Handler) RelayExchange(c *gin.Context) {
 
 	r1 := buildProofReceipt(parsed1)
 	r2 := buildProofReceipt(parsed2)
-	txReceipt, err := h.transact("exchange", r1, r2, vaultId1, vaultId2)
+	txReceipt, err := h.transact(c.Writer, "exchange", r1, r2, vaultId1, vaultId2)
 	h.settleClaims(nfKeys, err)
 	if err != nil {
 		relayError(c, "exchange", err)
@@ -1009,14 +1017,14 @@ func relayError(c *gin.Context, method string, err error) {
 // succeed. The limit stays at the cap: a transaction that succeeds only pays for
 // the gas it uses, so a high limit costs nothing extra, and one call is much
 // cheaper than eth_estimateGas's repeated executions of two Groth16 verifications.
-func (h *Handler) transact(method string, args ...interface{}) (*types.Receipt, error) {
-	return h.transactTo(h.dvpAddr, h.dvpABI, method, args...)
+func (h *Handler) transact(w http.ResponseWriter, method string, args ...interface{}) (*types.Receipt, error) {
+	return h.transactTo(w, h.dvpAddr, h.dvpABI, method, args...)
 }
 
 // transactTo is transact against any contract: the partial-withdraw route
 // calls a vault, not EnygmaDvp.
-func (h *Handler) transactTo(to common.Address, contractABI abi.ABI, method string, args ...interface{}) (*types.Receipt, error) {
-	return h.transactWith(to, contractABI, nil, method, args...)
+func (h *Handler) transactTo(w http.ResponseWriter, to common.Address, contractABI abi.ABI, method string, args ...interface{}) (*types.Receipt, error) {
+	return h.transactWith(w, to, contractABI, nil, method, args...)
 }
 
 // errFeeNoteNotKept reports that a fee note's opening could not be saved, so
@@ -1033,8 +1041,8 @@ func (e *errFeeNoteNotKept) Unwrap() error { return e.cause }
 // passed and before the transaction is sent; if it fails, nothing is sent.
 // The fee routes save the fee note's opening there, so a request whose
 // simulation reverts leaves no record of a note that will never exist.
-func (h *Handler) transactWith(to common.Address, contractABI abi.ABI, beforeSend func() error, method string, args ...interface{}) (*types.Receipt, error) {
-	h.txMu.Lock()
+func (h *Handler) transactWith(w http.ResponseWriter, to common.Address, contractABI abi.ABI, beforeSend func() error, method string, args ...interface{}) (*types.Receipt, error) {
+	h.lockSubmission(w)
 	defer h.txMu.Unlock()
 
 	data, err := contractABI.Pack(method, args...)
@@ -1068,11 +1076,7 @@ func (h *Handler) transactWith(to common.Address, contractABI abi.ABI, beforeSen
 	}
 	// Bounded wait: an unbounded one held txMu forever if the transaction got
 	// stuck (e.g. underpriced), blocking every later submission.
-	timeout := h.txTimeout
-	if timeout <= 0 {
-		timeout = defaultTxTimeout
-	}
-	waitCtx, cancelWait := context.WithTimeout(context.Background(), timeout)
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), h.miningTimeout())
 	defer cancelWait()
 	receipt, err := bind.WaitMined(waitCtx, h.client, tx)
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -1085,6 +1089,24 @@ func (h *Handler) transactWith(to common.Address, contractABI abi.ABI, beforeSen
 		return nil, fmt.Errorf("transaction reverted on-chain")
 	}
 	return receipt, nil
+}
+
+// lockSubmission keeps queue time separate from the request's write deadline.
+func (h *Handler) lockSubmission(w http.ResponseWriter) {
+	if h.txMu.TryLock() {
+		return
+	}
+	writer := http.NewResponseController(w)
+	_ = writer.SetWriteDeadline(time.Time{})
+	h.txMu.Lock()
+	_ = writer.SetWriteDeadline(time.Now().Add(relayWriteTimeout(h.miningTimeout())))
+}
+
+func (h *Handler) miningTimeout() time.Duration {
+	if h.txTimeout <= 0 {
+		return defaultTxTimeout
+	}
+	return h.txTimeout
 }
 
 // ── file helpers ──────────────────────────────────────────────────────────────
