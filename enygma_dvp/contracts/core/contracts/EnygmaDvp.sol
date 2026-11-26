@@ -131,11 +131,21 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // authorized on-chain relayer contracts (set by owner)
     mapping(address => bool) public authorizedRelayers;
 
-    // Who holds each note locked through lockReceiptNullifiers, by vault, tree
-    // and nullifier: _relayerLockId(relayer, vaultId, receipt statement).
-    // Notes locked by other paths (a pending partial settlement, an auction)
-    // have no entry, so unlockReceiptNullifiers cannot release them.
-    mapping(uint256 => mapping(uint256 => mapping(uint256 => bytes32))) private _relayerLocks;
+    // A note locked through lockReceiptNullifiers: which relayer and receipt
+    // hold it (_relayerLockId(relayer, vaultId, receipt statement)), the
+    // relayer itself, and when anyone may release it
+    // (releaseExpiredRelayerLock).
+    struct RelayerLock {
+        bytes32 id;
+        address relayer;
+        uint256 expiresAt;
+    }
+
+    // Each relayer lock, by vault, tree and nullifier. Notes locked by other
+    // paths (a pending partial settlement, an auction) have no entry, so
+    // neither unlockReceiptNullifiers nor releaseExpiredRelayerLock can
+    // release them.
+    mapping(uint256 => mapping(uint256 => mapping(uint256 => RelayerLock))) private _relayerLocks;
 
     // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
     // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
@@ -721,7 +731,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         IAbstractCoinVault vault = _relayerLockVault(vaultId);
         vault.checkDvpReceiptConditions(receipt);
         vault.lockCoin(leg.treeNumber, leg.nullifier);
-        _relayerLocks[vaultId][leg.treeNumber][leg.nullifier] = _relayerLockId(receipt, vaultId);
+        _relayerLocks[vaultId][leg.treeNumber][leg.nullifier] = RelayerLock({
+            id: _relayerLockId(msg.sender, receipt, vaultId),
+            relayer: msg.sender,
+            expiresAt: block.timestamp + MAX_SWAP_DURATION
+        });
         return true;
     }
 
@@ -733,12 +747,43 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256 vaultId
     ) public onlyRelayer returns (bool) {
         DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
-        if (_relayerLocks[vaultId][leg.treeNumber][leg.nullifier] != _relayerLockId(receipt, vaultId)) {
+        if (_relayerLocks[vaultId][leg.treeNumber][leg.nullifier].id != _relayerLockId(msg.sender, receipt, vaultId)) {
             revert NotLockedByCaller();
         }
         delete _relayerLocks[vaultId][leg.treeNumber][leg.nullifier];
         _relayerLockVault(vaultId).unlockFromDvpReceipt(receipt);
         return true;
+    }
+
+    // Release a relayer lock once it has expired. Callable by anyone, whether
+    // or not the relayer that took the lock is still authorized: the outcome
+    // is fixed (the note goes back to its owner). The receipt must be the one
+    // locked: the vault unlocks by the receipt's statement, and skips a
+    // statement with no Merkle root, which would drop the lock entry and
+    // leave the note locked.
+    function releaseExpiredRelayerLock(
+        ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) public returns (bool) {
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        RelayerLock storage held = _relayerLocks[vaultId][leg.treeNumber][leg.nullifier];
+        // A note with no lock entry has id 0, which no lock id equals.
+        if (held.id != _relayerLockId(held.relayer, receipt, vaultId)) revert NotRelayerLocked();
+        if (block.timestamp < held.expiresAt) revert RelayerLockNotExpired();
+        delete _relayerLocks[vaultId][leg.treeNumber][leg.nullifier];
+        _relayerLockVault(vaultId).unlockFromDvpReceipt(receipt);
+        return true;
+    }
+
+    // Whether relayer still holds the lock it took on receipt's note, so a
+    // caller can tell a lock already released by expiry from one to unlock.
+    function relayerLockHeld(
+        address relayer,
+        ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) public view returns (bool) {
+        DvpReceipt.Leg memory leg = DvpReceipt.read(receipt.statement);
+        return _relayerLocks[vaultId][leg.treeNumber][leg.nullifier].id == _relayerLockId(relayer, receipt, vaultId);
     }
 
     // The registered vault a relayer lock is taken in.
@@ -750,10 +795,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     // Identifies one relayer's lock on one receipt in one vault.
     function _relayerLockId(
+        address relayer,
         ProofReceipt calldata receipt,
         uint256 vaultId
-    ) private view returns (bytes32) {
-        return keccak256(abi.encode(msg.sender, vaultId, receipt.statement));
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(relayer, vaultId, receipt.statement));
     }
 
     function submitPartialSettlement(
