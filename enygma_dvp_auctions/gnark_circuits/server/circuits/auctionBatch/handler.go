@@ -16,6 +16,8 @@ import (
 	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"enygma_dvp_auctions/gnark_circuits/templates"
 	"enygma_dvp_auctions/gnark_circuits/utils"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
@@ -49,27 +51,33 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// public inputs
-		witness.StAuctionId = frontend.Variable(req.StAuctionId)
-		witness.StBatchWinnerCommit = frontend.Variable(req.StBatchWinnerCommit)
-		witness.StBatchWinnerPk = frontend.Variable(req.StBatchWinnerPk)
-		witness.StBatchWinnerAmount = frontend.Variable(req.StBatchWinnerAmount)
+		var numbers witnessinput.Parser
+		witness.StAuctionId = numbers.Parse(req.StAuctionId)
+		witness.StBatchWinnerCommit = numbers.Parse(req.StBatchWinnerCommit)
+		witness.StBatchWinnerPk = numbers.Parse(req.StBatchWinnerPk)
+		witness.StBatchWinnerAmount = numbers.Parse(req.StBatchWinnerAmount)
 		for i := 0; i < n; i++ {
-			witness.StBidCommitA[i] = frontend.Variable(req.StBidCommitA[i])
+			witness.StBidCommitA[i] = numbers.Parse(req.StBidCommitA[i])
 		}
 
 		// private witnesses
-		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
-		witness.WtWinnerIdx = frontend.Variable(req.WtWinnerIdx)
+		witness.WtAuctionId = numbers.Parse(req.WtAuctionId)
+		witness.WtWinnerIdx = numbers.Parse(req.WtWinnerIdx)
 		for i := 0; i < n; i++ {
-			witness.WtActive[i] = frontend.Variable(req.WtActive[i])
-			witness.WtPkBidder[i] = frontend.Variable(req.WtPkBidder[i])
-			witness.WtSaltA[i] = frontend.Variable(req.WtSaltA[i])
-			witness.WtAmount[i] = frontend.Variable(req.WtAmount[i])
-			witness.WtTokenId[i] = frontend.Variable(req.WtTokenId[i])
+			witness.WtActive[i] = numbers.Parse(req.WtActive[i])
+			witness.WtPkBidder[i] = numbers.Parse(req.WtPkBidder[i])
+			witness.WtSaltA[i] = numbers.Parse(req.WtSaltA[i])
+			witness.WtAmount[i] = numbers.Parse(req.WtAmount[i])
+			witness.WtTokenId[i] = numbers.Parse(req.WtTokenId[i])
 		}
 
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

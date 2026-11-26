@@ -18,6 +18,8 @@ import (
 
 	"enygma_retail_payments/gnark_circuits/primitives"
 	"enygma_retail_payments/gnark_circuits/templates"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 // NewHandler returns a gin.HandlerFunc for POST /proof/privateMint. The
@@ -53,13 +55,19 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 
 		witness := templates.PrivateMintCircuit{}
 
-		witness.Commitment = frontend.Variable(request.Commitment)
-		witness.ContractAddress = frontend.Variable(request.ContractAddress)
-		witness.TokenId = frontend.Variable(request.TokenId)
-		witness.Salt = frontend.Variable(request.Salt)
-		witness.Amount = frontend.Variable(request.Amount)
-		witness.PublicKey = frontend.Variable(request.PublicKey)
-		witness.CipherText = frontend.Variable(request.CipherText)
+		var numbers witnessinput.Parser
+		witness.Commitment = numbers.Parse(request.Commitment)
+		witness.ContractAddress = numbers.Parse(request.ContractAddress)
+		witness.TokenId = numbers.Parse(request.TokenId)
+		witness.Salt = numbers.Parse(request.Salt)
+		witness.Amount = numbers.Parse(request.Amount)
+		witness.PublicKey = numbers.Parse(request.PublicKey)
+		witness.CipherText = numbers.Parse(request.CipherText)
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		witnessFull, err := frontend.NewWitness(&witness, ecc.BN254.ScalarField())
 		if err != nil {

@@ -2,15 +2,23 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"enygma_retail_payments/gnark_circuits/server/circuits/payment"
+	"enygma_retail_payments/gnark_circuits/server/circuits/payment2in"
+	"enygma_retail_payments/gnark_circuits/server/circuits/paymentFee"
+	"enygma_retail_payments/gnark_circuits/server/circuits/paymentRelayerFeePublic"
+	"enygma_retail_payments/gnark_circuits/server/circuits/privateMint"
+	"enygma_retail_payments/gnark_circuits/server/circuits/usdrFee"
 	"enygma_retail_payments/gnark_circuits/server/config"
 )
 
@@ -125,5 +133,76 @@ func TestLoadDefaultsToLoopback(t *testing.T) {
 	}
 	if cfg.AuthToken != "" || cfg.MaxConcurrentProofs < 1 {
 		t.Errorf("AuthToken = %q, MaxConcurrentProofs = %d", cfg.AuthToken, cfg.MaxConcurrentProofs)
+	}
+}
+
+func TestProofRequiresJSONContentType(t *testing.T) {
+	r := NewServer(&config.Config{MaxConcurrentProofs: 1})
+	for _, tc := range []struct {
+		contentType string
+		want        int
+	}{
+		{"", http.StatusUnsupportedMediaType},
+		{"text/plain", http.StatusUnsupportedMediaType},
+		{"Application/JSON; charset=utf-8", http.StatusBadRequest},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/proof/privateMint", bytes.NewBufferString("{"))
+		req.Header.Set("Content-Type", tc.contentType)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != tc.want {
+			t.Errorf("Content-Type %q: got %d, want %d", tc.contentType, w.Code, tc.want)
+		}
+	}
+}
+
+func TestProofRejectsMalformedWitnessNumber(t *testing.T) {
+	r := NewServer(&config.Config{MaxConcurrentProofs: 1})
+	for _, tc := range []struct {
+		route   string
+		request any
+	}{
+		{"payment", &payment.PaymentRequest{}},
+		{"payment2in", &payment2in.PaymentRequest2in{}},
+		{"paymentFee", &paymentFee.PaymentFeeRequest{}},
+		{"paymentRelayerFeePublic", &paymentRelayerFeePublic.PaymentRelayerFeePublicRequest{}},
+		{"privateMint", &privateMint.PrivateMintRequest{}},
+		{"usdrFee", &usdrFee.UsdrFeeRequest{}},
+	} {
+		t.Run(tc.route, func(t *testing.T) {
+			value := reflect.ValueOf(tc.request).Elem()
+			fillWitnessNumbers(t, value)
+			value.Field(0).SetString("invalid")
+			body, err := json.Marshal(tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/proof/"+tc.route, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest || !bytes.Contains(w.Body.Bytes(), []byte("invalid witness number")) {
+				t.Fatalf("got %d %s, want a witness validation error (400)", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+// fillWitnessNumbers builds a binding-valid zero witness for the request's shape.
+func fillWitnessNumbers(t *testing.T, value reflect.Value) {
+	t.Helper()
+	switch value.Kind() {
+	case reflect.String:
+		value.SetString("0")
+	case reflect.Array:
+		for i := 0; i < value.Len(); i++ {
+			fillWitnessNumbers(t, value.Index(i))
+		}
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			fillWitnessNumbers(t, value.Field(i))
+		}
+	default:
+		t.Fatalf("unexpected witness request field type %s", value.Type())
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"enygma_dvp_auctions/gnark_circuits/templates"
 	"enygma_dvp_auctions/gnark_circuits/utils"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 const bidMerkleDepth = 8
@@ -49,36 +51,42 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// populate public inputs
-		witness.StAuctionId = frontend.Variable(req.StAuctionId)
-		witness.StTreeNumber = frontend.Variable(req.StTreeNumber)
-		witness.StMerkleRoot = frontend.Variable(req.StMerkleRoot)
-		witness.StNullifier = frontend.Variable(req.StNullifier)
-		witness.StCommitA = frontend.Variable(req.StCommitA)
-		witness.StCommitB = frontend.Variable(req.StCommitB)
-		witness.StRevertCommit = frontend.Variable(req.StRevertCommit)
-		witness.StCtxtHash = frontend.Variable(req.StCtxtHash)
-		witness.StFloorPrice = frontend.Variable(req.StFloorPrice)
-		witness.StSellerPk = frontend.Variable(req.StSellerPk)
+		var numbers witnessinput.Parser
+		witness.StAuctionId = numbers.Parse(req.StAuctionId)
+		witness.StTreeNumber = numbers.Parse(req.StTreeNumber)
+		witness.StMerkleRoot = numbers.Parse(req.StMerkleRoot)
+		witness.StNullifier = numbers.Parse(req.StNullifier)
+		witness.StCommitA = numbers.Parse(req.StCommitA)
+		witness.StCommitB = numbers.Parse(req.StCommitB)
+		witness.StRevertCommit = numbers.Parse(req.StRevertCommit)
+		witness.StCtxtHash = numbers.Parse(req.StCtxtHash)
+		witness.StFloorPrice = numbers.Parse(req.StFloorPrice)
+		witness.StSellerPk = numbers.Parse(req.StSellerPk)
 
 		// populate private witnesses
-		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
-		witness.WtTreeNumber = frontend.Variable(req.WtTreeNumber)
-		witness.WtSpendKey = frontend.Variable(req.WtSpendKey)
-		witness.WtAmount = frontend.Variable(req.WtAmount)
-		witness.WtTokenId = frontend.Variable(req.WtTokenId)
-		witness.WtSaltIn = frontend.Variable(req.WtSaltIn)
-		witness.WtPathIndex = frontend.Variable(req.WtPathIndex)
-		witness.WtSaltA = frontend.Variable(req.WtSaltA)
-		witness.WtSaltB = frontend.Variable(req.WtSaltB)
-		witness.WtBidAmount = frontend.Variable(req.WtBidAmount)
-		witness.WtSaltRevert = frontend.Variable(req.WtSaltRevert)
-		witness.WtCtxtHash = frontend.Variable(req.WtCtxtHash)
+		witness.WtAuctionId = numbers.Parse(req.WtAuctionId)
+		witness.WtTreeNumber = numbers.Parse(req.WtTreeNumber)
+		witness.WtSpendKey = numbers.Parse(req.WtSpendKey)
+		witness.WtAmount = numbers.Parse(req.WtAmount)
+		witness.WtTokenId = numbers.Parse(req.WtTokenId)
+		witness.WtSaltIn = numbers.Parse(req.WtSaltIn)
+		witness.WtPathIndex = numbers.Parse(req.WtPathIndex)
+		witness.WtSaltA = numbers.Parse(req.WtSaltA)
+		witness.WtSaltB = numbers.Parse(req.WtSaltB)
+		witness.WtBidAmount = numbers.Parse(req.WtBidAmount)
+		witness.WtSaltRevert = numbers.Parse(req.WtSaltRevert)
+		witness.WtCtxtHash = numbers.Parse(req.WtCtxtHash)
 		for j := 0; j < bidMerkleDepth; j++ {
-			witness.WtPathElements[j] = frontend.Variable(req.WtPathElements[j])
+			witness.WtPathElements[j] = numbers.Parse(req.WtPathElements[j])
 		}
 
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

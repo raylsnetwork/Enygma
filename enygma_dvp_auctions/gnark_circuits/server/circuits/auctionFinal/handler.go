@@ -16,6 +16,8 @@ import (
 	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"enygma_dvp_auctions/gnark_circuits/templates"
 	"enygma_dvp_auctions/gnark_circuits/utils"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
@@ -47,36 +49,42 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// public inputs — Phase-1 batch outputs
-		witness.StAuctionId = frontend.Variable(req.StAuctionId)
+		var numbers witnessinput.Parser
+		witness.StAuctionId = numbers.Parse(req.StAuctionId)
 		for i := 0; i < k; i++ {
-			witness.StBatchWinnerCommit[i] = frontend.Variable(req.StBatchWinnerCommit[i])
-			witness.StBatchWinnerPk[i] = frontend.Variable(req.StBatchWinnerPk[i])
-			witness.StBatchWinnerAmount[i] = frontend.Variable(req.StBatchWinnerAmount[i])
+			witness.StBatchWinnerCommit[i] = numbers.Parse(req.StBatchWinnerCommit[i])
+			witness.StBatchWinnerPk[i] = numbers.Parse(req.StBatchWinnerPk[i])
+			witness.StBatchWinnerAmount[i] = numbers.Parse(req.StBatchWinnerAmount[i])
 		}
 
 		// public outputs — settlement
-		witness.StOverallWinnerCommit = frontend.Variable(req.StOverallWinnerCommit)
-		witness.StWinnerPk = frontend.Variable(req.StWinnerPk)
-		witness.StWinnerCommitB = frontend.Variable(req.StWinnerCommitB)
-		witness.StWinnerNftCommit = frontend.Variable(req.StWinnerNftCommit)
-		witness.StNftTokenId = frontend.Variable(req.StNftTokenId)
-		witness.StWinningAmount = frontend.Variable(req.StWinningAmount)
-		witness.StFloorPrice = frontend.Variable(req.StFloorPrice)
+		witness.StOverallWinnerCommit = numbers.Parse(req.StOverallWinnerCommit)
+		witness.StWinnerPk = numbers.Parse(req.StWinnerPk)
+		witness.StWinnerCommitB = numbers.Parse(req.StWinnerCommitB)
+		witness.StWinnerNftCommit = numbers.Parse(req.StWinnerNftCommit)
+		witness.StNftTokenId = numbers.Parse(req.StNftTokenId)
+		witness.StWinningAmount = numbers.Parse(req.StWinningAmount)
+		witness.StFloorPrice = numbers.Parse(req.StFloorPrice)
 
 		// private witnesses
-		witness.WtAuctionId = frontend.Variable(req.WtAuctionId)
-		witness.WtWinnerBatchIdx = frontend.Variable(req.WtWinnerBatchIdx)
-		witness.WtPkBob = frontend.Variable(req.WtPkBob)
-		witness.WtSaltB = frontend.Variable(req.WtSaltB)
-		witness.WtUsdcTokenId = frontend.Variable(req.WtUsdcTokenId)
-		witness.WtSaltAlice = frontend.Variable(req.WtSaltAlice)
-		witness.WtNftTokenId = frontend.Variable(req.WtNftTokenId)
+		witness.WtAuctionId = numbers.Parse(req.WtAuctionId)
+		witness.WtWinnerBatchIdx = numbers.Parse(req.WtWinnerBatchIdx)
+		witness.WtPkBob = numbers.Parse(req.WtPkBob)
+		witness.WtSaltB = numbers.Parse(req.WtSaltB)
+		witness.WtUsdcTokenId = numbers.Parse(req.WtUsdcTokenId)
+		witness.WtSaltAlice = numbers.Parse(req.WtSaltAlice)
+		witness.WtNftTokenId = numbers.Parse(req.WtNftTokenId)
 		for i := 0; i < k; i++ {
-			witness.WtBatchActive[i] = frontend.Variable(req.WtBatchActive[i])
+			witness.WtBatchActive[i] = numbers.Parse(req.WtBatchActive[i])
 		}
 
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

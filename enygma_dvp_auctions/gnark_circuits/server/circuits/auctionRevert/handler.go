@@ -16,6 +16,8 @@ import (
 	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"enygma_dvp_auctions/gnark_circuits/templates"
 	"enygma_dvp_auctions/gnark_circuits/utils"
+
+	"enygma_gnark_shared/witnessinput"
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
@@ -40,19 +42,25 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness := newCircuit()
 
 		// public inputs
-		witness.StAuctionId = frontend.Variable(req.StAuctionId)
-		witness.StCommitLocked = frontend.Variable(req.StCommitLocked)
-		witness.StNftTokenId = frontend.Variable(req.StNftTokenId)
-		witness.StRevertedCommit = frontend.Variable(req.StRevertedCommit)
+		var numbers witnessinput.Parser
+		witness.StAuctionId = numbers.Parse(req.StAuctionId)
+		witness.StCommitLocked = numbers.Parse(req.StCommitLocked)
+		witness.StNftTokenId = numbers.Parse(req.StNftTokenId)
+		witness.StRevertedCommit = numbers.Parse(req.StRevertedCommit)
 
 		// private witnesses
-		witness.WtSpendKey = frontend.Variable(req.WtSpendKey)
-		witness.WtTokenId = frontend.Variable(req.WtTokenId)
-		witness.WtSaltLocked = frontend.Variable(req.WtSaltLocked)
-		witness.WtSaltOut = frontend.Variable(req.WtSaltOut)
+		witness.WtSpendKey = numbers.Parse(req.WtSpendKey)
+		witness.WtTokenId = numbers.Parse(req.WtTokenId)
+		witness.WtSaltLocked = numbers.Parse(req.WtSaltLocked)
+		witness.WtSaltOut = numbers.Parse(req.WtSaltOut)
 
 		solver.RegisterHint(primitives.PoseidonNative)
 		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
+
+		if err := numbers.Err(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {

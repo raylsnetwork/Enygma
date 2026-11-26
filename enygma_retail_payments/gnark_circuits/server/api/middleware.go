@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,23 @@ func concurrencyLimit(n int, wait time.Duration) gin.HandlerFunc {
 			return
 		}
 		defer func() { <-slots }()
+		c.Next()
+	}
+}
+
+// requireJSONContentType rejects proof requests without the application/json media type.
+func requireJSONContentType() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ct := c.GetHeader("Content-Type")
+		// Allow an optional charset parameter (e.g. "application/json;
+		// charset=utf-8"), matching what real JSON clients commonly send.
+		mediaType := strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
+		if !strings.EqualFold(mediaType, "application/json") {
+			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, gin.H{
+				"error": "Content-Type must be application/json",
+			})
+			return
+		}
 		c.Next()
 	}
 }

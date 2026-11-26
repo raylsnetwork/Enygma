@@ -1,10 +1,12 @@
 package config
 
+import "os"
+
 type Config struct {
 	Port string
 
 	// APIKey, if non-empty, requires every request to carry a matching
-	// X-Gnark-Key header. Set in production to prevent unauthorized use
+	// X-Gnark-Key header. Set GNARK_API_KEY in production to prevent unauthorized use
 	// of the proving keys by any process that can reach the server's loopback
 	// address.
 	APIKey string
@@ -33,7 +35,8 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port: "8081",
+		Port:   "8081",
+		APIKey: os.Getenv("GNARK_API_KEY"),
 
 		PrivateMintPk:    "./scripts/keys/PrivateMintPK.key",
 		PrivateMintVk:    "./scripts/keys/PrivateMintVK.key",
