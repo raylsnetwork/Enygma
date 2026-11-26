@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_payments/gnark-server/utils"
 	"github.com/gin-gonic/gin"
 )
 
@@ -131,5 +132,40 @@ func TestMaxBodySize_RejectsOverLimit(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("FAIL (M-08 regressed): got %d, want 400 (body too large)", w.Code)
+	}
+}
+
+func TestUSDrRouteUsesProveLimiter(t *testing.T) {
+	oldLimiter := utils.ProveLimiter
+	utils.ProveLimiter = make(chan struct{}, 1)
+	t.Cleanup(func() { utils.ProveLimiter = oldLimiter })
+
+	calls := 0
+	r := newProofRouter(func(c *gin.Context) {
+		calls++
+		if len(utils.ProveLimiter) != 1 {
+			t.Error("handler ran without holding the shared proving slot")
+		}
+		c.Status(http.StatusNoContent)
+	})
+	request := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/proof/usdr", nil)
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+	if !utils.ProveLimiter.Acquire() {
+		t.Fatal("could not reserve the only proving slot")
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, request())
+	utils.ProveLimiter.Release()
+	if w.Code != http.StatusServiceUnavailable || calls != 0 {
+		t.Fatalf("while the shared slot was occupied, got status %d and %d calls, want 503 and zero", w.Code, calls)
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, request())
+	if w.Code != http.StatusNoContent || calls != 1 || len(utils.ProveLimiter) != 0 {
+		t.Fatalf("after freeing the slot, got status %d, %d calls, and %d occupied slots, want 204, one call, and zero slots", w.Code, calls, len(utils.ProveLimiter))
 	}
 }

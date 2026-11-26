@@ -29,3 +29,27 @@ func TestParserChecksFieldRange(t *testing.T) {
 		})
 	}
 }
+
+func TestParserAcceptsDecimalAndHex(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{"123", "123"},
+		{"0xabcd", "43981"},
+		{"0Xc1f7", "49655"},
+		{"010", "10"},
+		{"09", "9"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			var parser witnessinput.Parser
+			got := parser.Parse(tc.input)
+			if err := parser.Err(); err != nil {
+				t.Fatalf("parse %q: %v", tc.input, err)
+			}
+			if got.String() != tc.want {
+				t.Fatalf("parse %q = %s, want %s", tc.input, got, tc.want)
+			}
+		})
+	}
+}
