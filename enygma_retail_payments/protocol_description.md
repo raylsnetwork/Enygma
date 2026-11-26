@@ -339,3 +339,40 @@ TBD: Do we want to enforce that the change commitment has the sender as the owne
 ### Confidential Compliance
 
 This protocol supports an additional extension: the ability to prove that each transaction falls under a specific threshold (e.g., an AML limit)
+
+## Private tags
+
+### Channel setup limits
+
+The retail [UserRegistry](contracts/user_registry/UserRegistry.sol) has no
+registration cap or removal operation. Its registration fee defaults to zero.
+The [channel setup client](private_tags/src/channel.go) allocates one bit for
+each registered user, so a registry of `N` users requires `(N + 7) / 8` bytes
+with integer division, even when few bits are set.
+
+- **Contract limit.** [TagChannelRegistry](private_tags/contracts/TagChannelRegistry.sol)
+  rejects bitmaps over `BITMAP_MAX` (16,384 bytes). The highest representable
+  user index is 131,071, counting from zero. Once the registry reaches 131,073
+  users, the standard client bitmap exceeds the cap in every privacy mode.
+- **Relayer gas limit.** The [retail relayer](relayer/server/handler.go) sends
+  `openChannel` with a fixed budget of 8,000,000 gas. A dense bitmap can
+  exceed that budget at around 79,000 registered users. This is an estimate
+  that depends on how many bits are set and how much ciphertext is stored.
+
+### Standalone tag publication
+
+The sender computes `Poseidon3(blockNumber, pk, ss)` off chain for a chosen
+block number. [TagRegistry.publishTag](private_tags/contracts/TagRegistry.sol)
+takes the tag and ciphertext and stores them under the transaction's inclusion
+block (`block.number`). If the chosen block and inclusion block differ, a
+recipient scanning the inclusion block derives a different tag and misses the
+entry.
+
+The relayer's former window mode predicted the next block, selected that
+block's tag from a client-supplied window, and allowed up to three attempts.
+It retried a mismatched tag only if the inclusion block was still inside the
+window. The current `/relay/tag` route accepts a single precomputed tag
+and ciphertext and submits them once. Tag-channel payments now use the
+[ChannelPayment flow](../enygma_dvp/contracts/core/contracts/EnygmaDvp.sol),
+which carries the chosen block number in its event and allows inclusion
+through 100 blocks after that number.
