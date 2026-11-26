@@ -8,8 +8,7 @@ Enygma Dvp is privacy preserving Delivery-versus-Payment (DvP) protocol built on
 
 Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which effectively acts as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. **Issuer(s)** are the managers/admins of specific assets on the private network hub. Optionally, there is an **auditor** that oversees (some of) the transactions that take place in the network. A more formal protocol description is documented [here](./protocol_description.md).
 
-An optional **relayer** is an authorized off-chain service that can submit both legs of a DvP swap atomically in a single transaction via
-`SwapRelayer.sol`. When a relayer is present, Alice and Bob submit their proofs to the relayer off-chain; the relayer then calls `swapOnGroupPair` or `exchangeOnGroupPair` on-chain, collapsing the two-phase flow into one atomic settlement. Without a relayer, Alice and Bob interact with the contract directly via `submitPartialSettlement`.
+An optional **relayer** is an authorized off-chain service that can submit both legs of a DvP swap atomically in a single transaction. When a relayer is present, Alice and Bob submit their proofs to the relayer off-chain; the relayer then calls `EnygmaDvp.swap` or `exchange` (or their `swapOnGroupPair` / `exchangeOnGroupPair` forms) on-chain, collapsing the two-phase flow into one atomic settlement. Without a relayer, Alice and Bob interact with the contract directly via `submitPartialSettlement`. The `SwapRelayer.sol` contract is test-only and must never be registered as a relayer ([why](./dvp_protocol.md#swaprelayer-is-test-only)).
 
 ```mermaid
 ---
@@ -156,7 +155,7 @@ enygma_dvp/
 ├── build/              Deployment receipts (receipts.json) + gnark VK exports consumed by scripts/cmd/init
 ├── src/                Go core library (provers, crypto, Merkle tree, scan helpers)
 ├── gnark_circuits/     ZK proof server — REST API wrapping gnark Groth16 circuits
-├── relayer/             Off-chain relayer service — collects proofs from both parties  and submits them to SwapRelayer.sol
+├── relayer/             Off-chain relayer service — collects proofs from both parties and submits them to EnygmaDvp
 ├── scripts/            Go deployment and initialization scripts (cmd/deploy, cmd/init)
 ├── test/               Go integration tests (requires Hardhat node + gnark server)
 ├── docs/               Flow documentation and Mermaid diagrams
