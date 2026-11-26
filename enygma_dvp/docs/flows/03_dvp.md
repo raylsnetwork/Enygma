@@ -26,7 +26,7 @@ sequenceDiagram
     Alice->>Alice: Encapsulate(encapsKey_A) → (ss_A, capsule_A)
     Alice->>Alice: saltBField_A = DerivePaymentSalt(ss_A)
     Alice->>Alice: commitment_A = Poseidon4(pk_A, saltBField_A, 30, 0)
-    Alice->>ERC20Vault: depositV2([30, commitment_A], capsule_A, encData_A)
+    Alice->>ERC20Vault: depositV2([30, pk_A, saltBField_A, 0], capsule_A, encData_A)
     ERC20Vault-->>Alice: emit Commitment(...)
 
     Note over Bob,NFTVault: Step 2 — Bob deposits ERC721 ticket (tokenId=42)
@@ -34,7 +34,7 @@ sequenceDiagram
     Bob->>Bob: NewViewKeyPair() → (decapsKey_B, encapsKey_B)
     Bob->>Bob: bobNftSalt = RandomInField()
     Bob->>Bob: commitment_B = Poseidon4(pk_B, bobNftSalt, 1, 42)
-    Bob->>NFTVault: deposit([tokenId=42, commitment_B])
+    Bob->>NFTVault: deposit([tokenId=42, pk_B, bobNftSalt])
     NFTVault-->>Bob: emit Commitment(...)
 
     Note over Alice,GnarkServer: Step 3 — Alice runs DvPInitiator proof

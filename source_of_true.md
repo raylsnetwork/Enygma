@@ -68,7 +68,7 @@ one multiplication — so a full hash costs ~250 operations. 100x cheaper.
 **Where it is used in EnygmaDvP**:
 
 - **Commitment**: `Poseidon(pk, salt, amount, tokenId)` — hides note contents on-chain
-- **Nullifier**: `Poseidon(sk, leafIndex)` — marks a note as spent without revealing it
+- **Nullifier**: `Poseidon(sk, treeNumber * 2^depth + leafIndex)` — marks a note as spent without revealing it
 - **Merkle tree**: `Poseidon(left, right)` — each tree node, used in inclusion proofs
 
 ---
