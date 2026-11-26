@@ -316,7 +316,8 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         //        implement new MetaToken's safeTransferFrom here
     }
 
-    // subtoken transfer has been deactivated
+    // moves each id as safeTransferFrom does: refuses id 0, writes no token
+    // state, and reverts NotImplemented for a DLC meta token
     function safeBatchTransferFrom(
         address from,
         address to,
