@@ -420,13 +420,15 @@ If valid:
 
 ## Relayer Path (Optional)
 
-When a relayer is registered, Alice and Bob submit their proofs off-chain to the relayer instead of directly to the blockchain. The relayer calls $\mathrm{SwapRelayer.swapOnGroupPair}()$, submitting both proofs atomically in a single transaction:
+When a relayer is registered, Alice and Bob submit their proofs off-chain to the relayer instead of directly to the blockchain. The relayer either submits both proofs atomically in one transaction, through $\mathrm{EnygmaDvp.swapOnGroupPair}()$ (or $\mathrm{exchangeOnGroupPair}()$):
 
 $$
-\text{Relayer} \xrightarrow{;\pi_A,;\pi_B,;\text{all associated data};} \text{Blockchain}
+\text{Relayer} \xrightarrow{\;\pi_A,\;\pi_B,\;\text{all associated data}\;} \text{Blockchain}
 $$
 
-This collapses the two-phase flow into one atomic settlement. The relayer is authorized at deployment time and cannot forge proofs — it acts purely as a batching transport.
+or, through the $\mathrm{SwapRelayer}$ contract, files each leg as it arrives with $\mathrm{SwapRelayer.submitReceipt}()$: the first leg's note is locked ($\mathrm{EnygmaDvp.lockReceiptNullifiers}()$) until the second leg settles the swap, or until the swap's expiry (at most $\mathrm{MAX\_SWAP\_DURATION}$, 30 days, after the first leg), when anyone can cancel it.
+
+The owner registers and deregisters relayers at any time ($\mathrm{registerRelayer}$ / $\mathrm{deregisterRelayer}$). A relayer cannot forge proofs, and a lock it takes expires $\mathrm{MAX\_SWAP\_DURATION}$ after it is taken: from then on anyone can release it ($\mathrm{releaseExpiredRelayerLock}$), whether or not the relayer is still registered.
 
 ## Security Goals
 

@@ -38,6 +38,16 @@ contract SwapRelayerDvpMock {
         return true;
     }
 
+    /// Whether the note is still locked: the mock has one relayer and no
+    /// expiry, so a lock is only ever released through unlockReceiptNullifiers.
+    function relayerLockHeld(
+        address,
+        IEnygmaDvp.ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) external view returns (bool) {
+        return locked[vaultId][_nullifier(receipt)];
+    }
+
     /// Group membership as on a real deployment: vault 0 is fungible
     /// (group 0), vault 1 non-fungible (group 1).
     function isVaultMemberOf(uint256 vaultId, uint256 groupId) external pure returns (bool) {

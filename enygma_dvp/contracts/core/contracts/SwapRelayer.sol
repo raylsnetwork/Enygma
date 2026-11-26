@@ -242,7 +242,9 @@ contract SwapRelayer is ReentrancyGuard {
     }
 
     /// @notice Cancel a pending swap after expiry, unlocking the submitted
-    ///         leg's nullifiers so its note can be used elsewhere.
+    ///         leg's nullifiers so its note can be used elsewhere (unless
+    ///         its lock already expired and was released through
+    ///         EnygmaDvp.releaseExpiredRelayerLock).
     ///         Callable by anyone: the outcome is fixed (the note goes back to
     ///         its owner). Restricting it to the submitter let whoever submitted
     ///         a leg first (e.g. by replaying a published receipt) be the only
@@ -255,14 +257,23 @@ contract SwapRelayer is ReentrancyGuard {
         if (s.paymentSubmitted && s.deliverySubmitted) revert BothSidesAlreadyIn();
 
         if (s.paymentSubmitted) {
-            dvp.unlockReceiptNullifiers(s.paymentReceipt, s.paymentVaultId);
+            _unlockIfHeld(s.paymentReceipt, s.paymentVaultId);
             _close(s.paymentReceipt);
         } else {
-            dvp.unlockReceiptNullifiers(s.deliveryReceipt, s.deliveryVaultId);
+            _unlockIfHeld(s.deliveryReceipt, s.deliveryVaultId);
             _close(s.deliveryReceipt);
         }
 
         delete swaps[swapId];
         emit SwapCancelled(swapId);
+    }
+
+    /// @dev Unlocks a pending leg's note, unless its lock already expired and
+    ///      was released through EnygmaDvp.releaseExpiredRelayerLock. The swap
+    ///      itself expires no later than the lock, so this only happens on cancel.
+    function _unlockIfHeld(IEnygmaDvp.ProofReceipt storage receipt, uint256 vaultId) private {
+        if (dvp.relayerLockHeld(address(this), receipt, vaultId)) {
+            dvp.unlockReceiptNullifiers(receipt, vaultId);
+        }
     }
 }

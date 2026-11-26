@@ -195,6 +195,14 @@ interface IEnygmaDvp {
     // lockReceiptNullifiers with this same receipt and the same relayer.
     error NotLockedByCaller();
 
+    // releaseExpiredRelayerLock: the receipt's note holds no relayer lock
+    // taken with this same receipt.
+    error NotRelayerLocked();
+
+    // releaseExpiredRelayerLock: the lock was taken less than
+    // MAX_SWAP_DURATION ago.
+    error RelayerLockNotExpired();
+
     ///////////////////////////////////////////////
     //                  Events
     //////////////////////////////////////////////
@@ -618,7 +626,7 @@ interface IEnygmaDvp {
     // to hold a leg's note while awaiting the counterparty's leg. A lock is
     // taken only for a leg that passes its vault's DvP checks (proof, Merkle
     // root, unspent nullifier), and only the relayer that took it, with the
-    // same receipt, can release it.
+    // same receipt, can release it before it expires.
     function lockReceiptNullifiers(
         ProofReceipt calldata receipt,
         uint256 vaultId
@@ -628,6 +636,20 @@ interface IEnygmaDvp {
         ProofReceipt calldata receipt,
         uint256 vaultId
     ) external returns (bool);
+
+    // A relayer lock expires MAX_SWAP_DURATION after it is taken; from then on
+    // anyone can release it, whether or not its relayer is still authorized.
+    function releaseExpiredRelayerLock(
+        ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) external returns (bool);
+
+    // Whether relayer still holds the lock it took on receipt's note.
+    function relayerLockHeld(
+        address relayer,
+        ProofReceipt calldata receipt,
+        uint256 vaultId
+    ) external view returns (bool);
 
     ///////////////////////////////////////////////
     //          Private Mint functions
