@@ -994,6 +994,15 @@ func (s *Server) transferDeriveSecrets(fc *flowCtx, senderIdx int, blockHash *bi
 	pause(600 * time.Millisecond)
 
 	// Use ML-KEM derived secrets if key agreement has been run; fall back to demo defaults.
+	//
+	// demoDefaults are DEMO-ONLY. Never use them, or any guessable value,
+	// outside a local demo. Each slot's message tag is
+	// Poseidon(HashTag, secrets[i], Poseidon(Nullifier, Poseidon(SenderId, AnonymitySet[i])))
+	// with Nullifier and AnonymitySet public, so anyone who knows a slot's
+	// secret tries the six SenderId values and learns who sent the
+	// transfer. A real deployment needs full-entropy secrets known only to
+	// the sender and that slot's owner, the relayer's slot included (see
+	// relayer/cmd/register/main.go).
 	demoDefaults := [nBanks]int64{31415, 54142, 814712, 250912012, 12312512, 12312512}
 	for i := 0; i < nBanks; i++ {
 		if i == senderIdx {

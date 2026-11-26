@@ -389,6 +389,20 @@ private key that is ever used to call `transfer()` / `transferWithFee()` /
   carry per-bank attribution as of the per-bank credentials described in
   §3/§4 below, but that attribution exists only in the relayer's own logs,
   not on-chain.)
+- **The relayer's slot needs a real pair secret.** With USDr fees the
+  relayer is a participant in every relayed transfer's anonymity set, and
+  the proof accepts any `SharedSecrets` value the sender picks for its
+  slot: nothing on-chain checks it against the relayer. That value must
+  still be full-entropy and known only to the sender and the relayer.
+  Each slot's tag is
+  `Poseidon(HashTag, SharedSecrets[i], Poseidon(Nullifier, Poseidon(SenderId, AnonymitySet[i])))`,
+  and `Nullifier` and `AnonymitySet` are public, so anyone who knows the
+  relayer slot's secret tries the six `SenderId` values, matches the
+  relayer's tag, and names the sender. A constant or guessable placeholder
+  (such as `demo/main.go`'s `demoDefaults`, which are demo-only) does this
+  for every relayed transfer. Until the relayer takes part in a real key
+  agreement, draw a fresh random secret per sender–relayer pair and share
+  it privately.
 
 **What this does not affect.** The relayer cannot steal, redirect, or
 double-spend funds — every check that matters (proof validity, nullifier
