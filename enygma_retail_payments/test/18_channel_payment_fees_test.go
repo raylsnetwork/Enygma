@@ -380,7 +380,7 @@ func TestRetailErc20_ChannelPaymentFeeVariants(t *testing.T) {
 	if _, err := rebuildVaultTree(t, f.client, f.vaultAddr, nil).GenerateProof(pRelayer.feeCm); err != nil {
 		t.Errorf("the relayer's fee note is not in the vault: %v", err)
 	}
-	if _, err := loadVaultMerkleTree(t, f.client, f.usdrVaultAddr, partialWithdrawDepth).GenerateProof(usdr.cmtFee); err != nil {
+	if _, err := rebuildVaultTree(t, f.client, f.usdrVaultAddr, nil).GenerateProof(usdr.cmtFee); err != nil {
 		t.Errorf("the relayer's USDr fee note is not in the USDr vault: %v", err)
 	}
 
@@ -568,7 +568,7 @@ func TestRetailErc20_ChannelPaymentFeeVariantsViaRelayer(t *testing.T) {
 	if _, err := rebuildVaultTree(t, f.client, f.vaultAddr, nil).GenerateProof(relayerFeeCm); err != nil {
 		t.Errorf("the relayer's fee note is not in the vault: %v", err)
 	}
-	if _, err := loadVaultMerkleTree(t, f.client, f.usdrVaultAddr, partialWithdrawDepth).GenerateProof(usdr.cmtFee); err != nil {
+	if _, err := rebuildVaultTree(t, f.client, f.usdrVaultAddr, nil).GenerateProof(usdr.cmtFee); err != nil {
 		t.Errorf("the relayer's USDr fee note is not in the USDr vault: %v", err)
 	}
 }

@@ -171,7 +171,9 @@ func depositAndBuildUsdrFeeWitness(
 		t.Fatalf("wait depositV2: %v", err)
 	}
 
-	mt := loadVaultMerkleTree(t, client, usdrVaultAddr, merkleDepth)
+	// Every tree: run after the rest of the suite, the USDr vault has moved
+	// past tree 0, and the note lands in the current one.
+	mt := rebuildVaultTree(t, client, usdrVaultAddr, nil)
 	aliceProof, err := mt.GenerateProof(aliceCommitment)
 	if err != nil {
 		t.Fatalf("GenerateProof: %v", err)
@@ -216,7 +218,7 @@ func depositAndBuildUsdrFeeWitness(
 	// the proof binds their hash.
 	reqBody := map[string]interface{}{
 		"stMessage":            "0",
-		"stTreeNumbers":        [1]string{"0"},
+		"stTreeNumbers":        [1]string{big.NewInt(int64(aliceProof.TreeNumber)).String()},
 		"stMerkleRoots":        [1]string{aliceProof.Root.String()},
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtFee.String(), cmtChange.String()},
