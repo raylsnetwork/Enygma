@@ -3,6 +3,7 @@
 // safeBatchTransferFrom writes no token state and refuses id 0 (#445).
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { expectRevert } = require("./expectRevert.js");
 
 const NORMAL = 0;
 const SUB_TOKEN = 1;
@@ -23,26 +24,6 @@ const BOND = { tType: META_TOKEN_BOND, name: "Bond", symbol: "BND", offchainId: 
 // The id registerNewToken gives the bond.
 const bondId = (token, tType = META_TOKEN_BOND) =>
   token.tokenId([tType, 0, FUNGIBLE, BOND.name, BOND.symbol, BOND.offchainId, BOND.subIds, BOND.subValues, 0, BOND.maxSupply, 0, "0x", []]);
-
-// Resolves when tx reverts with the custom error `name`, or a revert string
-// starting with `name` (OpenZeppelin's AccessControl). The error is decoded
-// from the revert data with the contract's ABI: on the first run after a
-// recompile, Hardhat reports "unrecognized custom error (return data: 0x…)".
-async function expectRevert(token, tx, name) {
-  try {
-    await (await tx).wait();
-  } catch (e) {
-    if (e.message.includes(`reverted with reason string '${name}`)) return;
-    const data = (e.message.match(/return data: (0x[0-9a-f]+)/) || e.message.match(/custom error '([A-Za-z]+)\(/) || [])[1];
-    let got = data;
-    if (data && data.startsWith("0x")) {
-      try { got = token.interface.parseError(data).name; } catch (_) { got = undefined; }
-    }
-    if (got === name) return;
-    expect.fail(`expected a revert with ${name}, got: ${e.message}`);
-  }
-  expect.fail(`expected a revert with ${name}`);
-}
 
 describe("RaylsERC1155.registerNewToken", function () {
   let token, owner, other, alice;
