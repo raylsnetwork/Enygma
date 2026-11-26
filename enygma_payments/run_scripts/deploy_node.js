@@ -14,7 +14,8 @@ const path = require("path");
 // Hardhat account[0] — well-known default dev key, public, never a security
 // boundary (see .gitleaks.toml, which allowlists it by exact value).
 const DEFAULT_OWNER_KEY = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154";
-const CHAIN_ID       = parseInt(process.env.CHAIN_ID || "1337");
+const LOCAL_CHAIN_ID = 1337;
+const CHAIN_ID       = parseInt(process.env.CHAIN_ID || String(LOCAL_CHAIN_ID));
 const RPC_URL        = process.env.RPC_URL    || "http://127.0.0.1:8545";
 const EPOCH_INTERVAL = parseInt(process.env.EPOCH_INTERVAL || "1");
 // Seconds a replacement of an already-set verifier waits before
@@ -35,18 +36,32 @@ async function deploy(wallet, artifact, constructorArgs = []) {
   return addr;
 }
 
+// Refuse redirects for every RPC request made with the demo key.
+function localRpcRequest() {
+  const request = new ethers.FetchRequest(RPC_URL);
+  const getUrl = request.getUrlFunc;
+  request.getUrlFunc = async (req, signal) => {
+    const response = await getUrl(req, signal);
+    if (response.statusCode >= 300 && response.statusCode < 400) {
+      throw new Error("set OWNER_KEY when the local RPC redirects");
+    }
+    return response;
+  };
+  return request;
+}
+
 async function main() {
   const verifierArtifactPath = path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json");
-  const localChain = CHAIN_ID === 1337 && ["http://127.0.0.1:8545", "http://localhost:8545"].includes(RPC_URL);
+  const localChain = CHAIN_ID === LOCAL_CHAIN_ID && ["http://127.0.0.1:8545", "http://localhost:8545"].includes(RPC_URL);
   const ownerKey = process.env.OWNER_KEY;
   if (!ownerKey && !localChain) {
     throw new Error("set OWNER_KEY for deployments outside local Hardhat");
   }
-  const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
+  const provider = new ethers.JsonRpcProvider(ownerKey ? RPC_URL : localRpcRequest(), CHAIN_ID);
   if (!ownerKey) {
     const rpcChainId = await provider.send("eth_chainId", []).catch(() => null);
-    if (rpcChainId !== "0x539") {
-      throw new Error("set OWNER_KEY when the local RPC cannot confirm chain ID 1337");
+    if (rpcChainId !== `0x${LOCAL_CHAIN_ID.toString(16)}`) {
+      throw new Error(`set OWNER_KEY when the local RPC cannot confirm chain ID ${LOCAL_CHAIN_ID}`);
     }
   }
   const reviewedPath = process.env.REVIEWED_VERIFIER_ARTIFACT;
