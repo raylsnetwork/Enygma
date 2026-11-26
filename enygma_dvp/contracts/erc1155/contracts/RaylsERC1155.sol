@@ -325,8 +325,11 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
         bytes memory data
     ) public override {
         for (uint256 i = 0; i < ids.length; i++) {
+            if (ids[i] == 0) {
+                revert ZeroIdNotAllowed();
+            }
+
             TokenType tokenType = _metadatas[ids[i]].tType;
-            _metadatas[ids[i]].tState = TokenState.REGISTERED;
 
             if (tokenType == TokenType.NORMAL) {
                 super.safeTransferFrom(from, to, ids[i], values[i], "");
