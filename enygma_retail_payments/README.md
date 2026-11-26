@@ -201,6 +201,13 @@ After regenerating, re-run `setup.sh` (or the manual steps 2c–2e above) to exp
 new VK, the `PrivateMintVerifier` and its ABI, and re-initialize the contracts; then
 `make dvp-keygen`, which copies the new PrivateMint keys (see the note above).
 
+`make retail-keygen` runs a single-party setup: whoever runs it holds the randomness that
+could forge proofs. Production keys come from the multi-party ceremony instead:
+`go run ./cmd/export_r1cs -out <dir>` (from `gnark_circuits/`) writes every circuit the
+server proves as `<Name>.r1cs`, with `keys.json`, the paths the server loads their keys from.
+That is the input of [`enygma_ceremony`](../enygma_ceremony), which seals the keys at those
+paths.
+
 ## Statement Layouts
 
 Each Payment-family circuit's statement layout (the order, offsets and sizes of its

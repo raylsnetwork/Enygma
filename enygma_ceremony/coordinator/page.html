@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enygma setup ceremony</title>
+<style>
+:root {
+  --bg: #f7f7f5; --fg: #18181b; --muted: #5b5b66; --faint: #8a8a96; --line: #e4e4e7; --card: #ffffff;
+  --accent: #4338ca; --accent-strong: #3730a3; --accent-fg: #ffffff; --accent-bg: #eef2ff;
+  --ok: #15803d; --ok-bg: #f0fdf4; --warn-bg: #fff7e6; --warn-fg: #7c4a03; --warn-line: #f5d9a8;
+  --err: #b91c1c; --err-bg: #fef2f2; --code-bg: #f4f4f5;
+  --shadow: 0 1px 2px rgba(24, 24, 27, 0.04), 0 4px 16px rgba(24, 24, 27, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0b0e; --fg: #f4f4f5; --muted: #a1a1aa; --faint: #71717a; --line: #27272a; --card: #141418;
+    --accent: #a5b4fc; --accent-strong: #c7d2fe; --accent-fg: #1e1b4b; --accent-bg: #1e1b4b;
+    --ok: #4ade80; --ok-bg: #052e16; --warn-bg: #2a1d05; --warn-fg: #fcd34d; --warn-line: #4a3510;
+    --err: #fca5a5; --err-bg: #3b0a0a; --code-bg: #1c1c21;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+main { max-width: 900px; margin: 0 auto; padding: 48px 20px 72px; }
+h1 { font-size: 32px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.02em; }
+h2 { font-size: 20px; margin: 44px 0 14px; letter-spacing: -0.01em; }
+h3 { margin: 0 0 6px; }
+p { margin: 8px 0; }
+a { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.lead { color: var(--muted); font-size: 17px; margin: 0 0 28px; max-width: 680px; }
+.hint { font-size: 14px; color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow); }
+[hidden] { display: none !important; }
+
+/* The two phases */
+.phases { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.phase .num { display: inline-flex; width: 28px; height: 28px; border-radius: 50%; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; background: var(--code-bg); color: var(--muted); margin-right: 10px; flex: none; }
+.phase .head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; margin-bottom: 6px; }
+.phase .name { font-weight: 650; font-size: 16px; }
+.phase p { color: var(--muted); font-size: 14.5px; margin: 0; }
+.phase .tag { margin-left: auto; font-size: 12.5px; font-weight: 600; border-radius: 999px; padding: 2px 10px;
+  border: 1px solid var(--line); color: var(--faint); }
+.phase .tag:empty { display: none; }
+.phase.now { border-color: var(--accent); }
+.phase.now .num { background: var(--accent); color: var(--accent-fg); }
+.phase.now .tag { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+.phase.past .num { background: var(--ok-bg); color: var(--ok); }
+.phase.past .tag { color: var(--ok); border-color: var(--ok); }
+.why { margin: 14px 2px 0; font-size: 14.5px; color: var(--muted); }
+
+.notice { border-radius: 12px; padding: 12px 16px; margin: 20px 0 0; background: var(--warn-bg); color: var(--warn-fg);
+  border: 1px solid var(--warn-line); }
+.notice:empty { display: none; }
+
+/* Live numbers */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
+.stat .label { color: var(--muted); font-size: 13px; }
+.stat .value { font-size: 22px; font-weight: 650; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Contribute */
+.hero { border-width: 2px; padding: 26px 28px; }
+.status-line { font-weight: 650; font-size: 17px; margin: 0 0 6px; }
+label { display: block; font-size: 14px; font-weight: 600; margin: 18px 0 6px; }
+.field-hint { display: block; font-weight: 400; color: var(--muted); font-size: 13.5px; }
+input[type=text] { font: inherit; width: 100%; max-width: 380px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+input[type=text]:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-bg); }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 18px; }
+.btn { font: inherit; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  border-radius: 10px; padding: 11px 18px; border: 2px solid var(--accent); transition: background 0.15s, color 0.15s; }
+.btn svg { width: 18px; height: 18px; flex: none; }
+.btn-primary { background: var(--accent); color: var(--accent-fg); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn-secondary { background: transparent; color: var(--accent); }
+.btn-secondary:hover:not(:disabled) { background: var(--accent-bg); }
+.btn-large { font-size: 17px; padding: 14px 26px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Steps and progress */
+.steps { list-style: none; padding: 0; margin: 0 0 8px; }
+.steps li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 7px 0; color: var(--faint); }
+.steps li::before { content: ""; width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2px solid var(--line); }
+.steps li.current { color: var(--fg); font-weight: 650; }
+.steps li.current::before { border: 5px solid var(--accent); }
+.steps li.done { color: var(--fg); }
+.steps li.done::before { border: 0; background: var(--ok) center / 12px no-repeat
+  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.2 2.2L9.5 3.8' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.stepinfo { font-size: 13px; font-weight: 650; border-radius: 999px; padding: 1px 10px;
+  color: var(--accent); background: var(--accent-bg); border: 1px solid var(--accent); }
+.stepinfo:empty { display: none; }
+.stepinfo.go { color: var(--ok); background: var(--ok-bg); border-color: var(--ok); }
+.progress-wrap { margin: 4px 0 12px 28px; }
+.progress-label { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 12px; font-size: 14px; color: var(--muted); margin-bottom: 6px; }
+.progress-label strong { color: var(--fg); font-weight: 600; }
+.progress { height: 10px; border-radius: 999px; background: var(--code-bg); border: 1px solid var(--line); overflow: hidden; }
+.progress-bar { height: 100%; width: 0%; background: var(--accent); border-radius: 999px; transition: width 0.5s linear; }
+.progress.indeterminate .progress-bar { width: 30%; transition: none; animation: slide 1.6s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(340%); } }
+.detail { margin: 6px 0 0 28px; font-size: 15px; color: var(--muted); }
+.code { font: 700 30px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.08em;
+  padding: 10px 16px; background: var(--code-bg); border-radius: 10px; display: inline-block; margin: 8px 0; color: var(--fg); }
+.keep-open { margin: 16px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--code-bg); font-size: 14.5px; }
+
+/* Done and failed */
+.success { border-color: var(--ok); }
+.success h3 { color: var(--ok); font-size: 22px; }
+.receipt-box { margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--bg); }
+.receipt-box .label { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.receipt { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.failure { border-color: var(--err); }
+.failure h3 { color: var(--err); font-size: 20px; }
+
+/* The program, and checking */
+details { margin-top: 18px; }
+summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 15px; padding: 4px 0; }
+summary:hover { color: var(--fg); }
+.systems { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 14px; }
+.systems button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); }
+.systems button[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cmd { position: relative; }
+pre { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+.cmd pre { padding-right: 84px; }
+.cmd .btn { position: absolute; top: 7px; right: 7px; padding: 4px 10px; font-size: 13px; border-width: 1px; }
+
+/* Contributors */
+.table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+th { color: var(--muted); font-weight: 600; font-size: 13px; }
+td.num { color: var(--muted); width: 1%; white-space: nowrap; }
+td.hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--muted); white-space: nowrap; }
+td.when { color: var(--muted); white-space: nowrap; }
+tr.mine td { background: var(--accent-bg); }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-left: 8px;
+  border: 1px solid var(--line); color: var(--muted); }
+.badge.github { color: var(--ok); border-color: var(--ok); }
+.badge.you { color: var(--accent); border-color: var(--accent); }
+.empty { padding: 18px 14px; color: var(--muted); }
+footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  main { padding: 32px 16px 56px; }
+  h1 { font-size: 27px; }
+  .phases { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .hero { padding: 20px; }
+  td.when, th.when { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress.indeterminate .progress-bar { animation: none; width: 100%; opacity: 0.35; }
+  .progress-bar, .btn { transition: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Enygma setup ceremony</h1>
+  <p class="lead">Enygma's privacy rests on a set of cryptographic keys. This ceremony makes them together, so that
+    no one ever holds the secret that could forge a proof. Contributing takes one click and a few minutes of
+    your computer's time.</p>
+
+  <div class="phases">
+    <div class="card phase" id="phase1">
+      <div class="head"><span class="num">1</span><span class="name">Phase 1: the shared foundation</span><span class="tag" id="phase1-tag"></span></div>
+      <p>One ceremony that every Enygma protocol builds on.</p>
+    </div>
+    <div class="card phase" id="phase2">
+      <div class="head"><span class="num">2</span><span class="name" id="phase2-name">Phase 2: keys for each protocol</span><span class="tag" id="phase2-tag"></span></div>
+      <p id="phase2-what">One ceremony per protocol, built on Phase 1.</p>
+    </div>
+  </div>
+  <p class="why">Each contribution mixes fresh randomness from a participant's computer into the keys, and that
+    randomness is then thrown away. The keys are secure as long as one participant in each phase was honest, and
+    that can be you.</p>
+
+  <div class="notice" id="notice" role="status"></div>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Contributions so far</div><div class="value" id="count">–</div></div>
+    <div class="stat"><div class="label">Waiting in line</div><div class="value" id="queue">–</div></div>
+    <div class="stat"><div class="label">Contributing now</div><div class="value" id="now">–</div></div>
+    <div class="stat"><div class="label">Average turn</div><div class="value" id="turn">–</div></div>
+  </div>
+
+  <h2>Contribute</h2>
+
+  <!-- Before starting -->
+  <div class="card hero" id="start">
+    <p class="status-line" id="open-what">Loading…</p>
+    <p id="start-how">Press the button and keep this tab open. You join the line, and when your turn comes your
+      browser does the rest.</p>
+    <div id="name-field" hidden>
+      <label for="name">Your name <span class="field-hint">Optional. Shown in the public list of contributors; leave it
+        empty to stay anonymous.</span></label>
+      <input type="text" id="name" maxlength="64" autocomplete="name" placeholder="Anonymous">
+    </div>
+    <div class="row">
+      <button class="btn btn-primary btn-large" id="go" type="button" disabled>Contribute from this browser</button>
+    </div>
+    <p class="hint" id="mobile" hidden>On a phone, keep the screen on until it is done. A laptop or desktop is easier.</p>
+  </div>
+
+  <!-- While contributing -->
+  <div class="card hero" id="running" hidden>
+    <ol class="steps" id="steps">
+      <li data-step="join">Joining the ceremony</li>
+      <li data-step="wait">Waiting for your turn <span class="stepinfo" id="queue-pos"></span></li>
+      <li data-step="download">Downloading the latest state</li>
+      <li data-step="contribute">Adding your randomness</li>
+      <li data-step="upload">Uploading your contribution</li>
+      <li data-step="check">The ceremony checks it</li>
+    </ol>
+    <div class="progress-wrap" id="progress" hidden>
+      <div class="progress-label"><strong id="progress-what"></strong><span id="progress-detail"></span></div>
+      <div class="progress" id="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="progress-what">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+    </div>
+    <div id="running-detail"></div>
+    <p class="keep-open"><strong>Keep this tab open until it says you're done.</strong> While you wait in line you can
+      use other tabs and apps. <span id="elapsed"></span></p>
+  </div>
+
+  <!-- Done -->
+  <div class="card hero success" id="done" hidden>
+    <h3>Thank you. Your contribution is in.</h3>
+    <p id="done-what"></p>
+    <div class="receipt-box">
+      <div class="label">Your receipt: the fingerprint of your contribution</div>
+      <div class="receipt" id="receipt"></div>
+    </div>
+    <div class="row">
+      <button class="btn btn-primary" type="button" id="copy-receipt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        <span>Copy receipt</span>
+      </button>
+      <button class="btn btn-secondary" type="button" id="save-receipt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        <span>Save receipt as a file</span>
+      </button>
+    </div>
+    <p class="hint">Your row is marked in the list of contributors below. Anyone can check that your receipt is in the
+      ceremony, and that every contribution builds on the one before it.</p>
+  </div>
+
+  <!-- Failed -->
+  <div class="card hero failure" id="failed" hidden>
+    <h3>That did not work.</h3>
+    <p id="failed-why"></p>
+    <div class="row"><button class="btn btn-primary" type="button" id="retry">Try again</button></div>
+  </div>
+
+  <details id="program">
+    <summary>Prefer to run a program instead of the browser?</summary>
+    <div class="card" style="margin-top: 12px">
+      <p>Pick your system, then paste the command into a terminal (PowerShell on Windows). It does exactly what the
+        button above does.</p>
+      <div id="downloads">
+        <div class="systems" id="systems" role="group" aria-label="Your system"></div>
+        <div class="cmd"><pre id="command"></pre><button class="btn btn-secondary" data-copy="command" type="button">Copy</button></div>
+        <p class="hint" id="direct"></p>
+      </div>
+      <p class="hint" id="source"></p>
+    </div>
+  </details>
+
+  <h2>Contributors</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Receipt</th><th class="when">When</th></tr></thead>
+      <tbody id="transcript"></tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>Check the ceremony yourself</summary>
+    <div class="card" style="margin-top: 12px">
+      <p>Every contribution is public. This downloads them all, checks that each one builds correctly on the one before
+        it, and finds your receipt among them. It uses the program from "Prefer to run a program".</p>
+      <div class="cmd"><pre id="verify"></pre><button class="btn btn-secondary" data-copy="verify" type="button">Copy</button></div>
+    </div>
+  </details>
+
+  <footer id="footer"></footer>
+</main>
+<script>
+"use strict";
+const origin = location.origin;
+const title = document.title;
+const protocols = {
+  enygma_payments: "Enygma Institutional Payments",
+  enygma_retail_payments: "Enygma Retail Payments",
+  enygma_dvp: "Enygma Delivery-vs-Payment",
+  enygma_dvp_auctions: "Enygma DvP Auctions",
+};
+const systems = [
+  { id: "darwin-arm64", label: "macOS (Apple silicon)", file: "ceremony-darwin-arm64" },
+  { id: "darwin-amd64", label: "macOS (Intel)", file: "ceremony-darwin-amd64" },
+  { id: "linux-amd64", label: "Linux (x86-64)", file: "ceremony-linux-amd64" },
+  { id: "linux-arm64", label: "Linux (ARM64)", file: "ceremony-linux-arm64" },
+  { id: "windows-amd64", label: "Windows (x86-64)", file: "ceremony-windows-amd64.exe" },
+  { id: "windows-arm64", label: "Windows (ARM64)", file: "ceremony-windows-arm64.exe" },
+];
+let chosen = (() => {
+  const ua = navigator.userAgent;
+  if (/Windows/.test(ua)) return "windows-amd64";
+  if (/Mac/.test(ua)) return "darwin-arm64";
+  return "linux-amd64";
+})();
+let status = null;
+let running = false;
+
+function el(id) { return document.getElementById(id); }
+function text(id, value) { el(id).textContent = value; }
+function show(id) { for (const s of ["start", "running", "done", "failed"]) el(s).hidden = s !== id; }
+function protocolName(name) { return protocols[name] || name; }
+function duration(seconds) {
+  if (!seconds) return "–";
+  if (seconds < 90) return Math.round(seconds) + " s";
+  return Math.round(seconds / 60) + " min";
+}
+function mb(bytes) { return (bytes / 1e6).toFixed(bytes < 10e6 ? 1 : 0) + " MB"; }
+function shortHash(h) { return h.length > 20 ? `${h.slice(0, 10)}…${h.slice(-8)}` : h; }
+function mine() {
+  try { return JSON.parse(localStorage.getItem("enygma-ceremony-mine") || "[]"); } catch { return []; }
+}
+function remember(hash) {
+  try { localStorage.setItem("enygma-ceremony-mine", JSON.stringify([...new Set([...mine(), hash])])); } catch {}
+}
+
+// ---- Progress ----
+
+let guess = null; // a step that reports no progress of its own: {what, from, until, start, seconds, after}
+
+function timeLeft(seconds) {
+  if (seconds < 5) return "a few seconds left";
+  if (seconds < 90) return `about ${Math.ceil(seconds / 5) * 5} s left`;
+  return `about ${Math.round(seconds / 60)} min left`;
+}
+
+// showProgress shows what is under way and how far it has got: fraction from
+// 0 to 1, or null for a step that cannot tell.
+function showProgress(what, more, fraction) {
+  const bar = el("progress-bar");
+  const fresh = el("progress").hidden || el("progress-what").textContent !== what;
+  el("progress").hidden = false;
+  text("progress-what", what);
+  text("progress-detail", more);
+  const track = el("progress-track");
+  track.classList.toggle("indeterminate", fraction === null);
+  if (fresh) bar.style.transition = "none"; // a new bar starts where it is, not sliding back from the last one
+  if (fraction === null) {
+    track.removeAttribute("aria-valuenow");
+    bar.style.width = "";
+  } else {
+    const pct = Math.round(Math.min(Math.max(fraction, 0), 1) * 1000) / 10;
+    track.setAttribute("aria-valuenow", String(Math.round(pct)));
+    bar.style.width = pct + "%";
+  }
+  if (fresh) { void bar.offsetWidth; bar.style.transition = ""; }
+}
+
+function hideProgress() {
+  guess = null;
+  el("progress").hidden = true;
+}
+
+// While a step reports nothing (randomizing; the ceremony's check), the bar
+// moves on the time it should take, and waits just short of the end.
+setInterval(() => {
+  if (!guess) return;
+  const elapsed = (Date.now() - guess.start) / 1000;
+  const share = Math.min(elapsed / guess.seconds, 0.97);
+  showProgress(guess.what, timeLeft(Math.max(guess.seconds - elapsed, 0) + guess.after),
+    guess.from + (guess.until - guess.from) * share);
+}, 500);
+
+function onProgress(e) {
+  if (e.stage === "downloading" && e.total) {
+    guess = null;
+    showProgress("Downloading the latest state", `${mb(e.done)} of ${mb(e.total)}`, e.done / e.total);
+  } else if (e.stage === "contributing" && e.part === "randomizing") {
+    const writing = e.estimate * (1 - e.until) / Math.max(e.until - e.fraction, 0.01);
+    guess = { what: "Adding your randomness", from: e.fraction, until: e.until, start: Date.now(), seconds: e.estimate, after: writing };
+  } else if (e.stage === "contributing" && e.part) {
+    guess = null;
+    showProgress("Adding your randomness", e.part === "reading" ? "checking the latest state" : "writing your contribution", e.fraction);
+  } else if (e.stage === "uploading" && e.total) {
+    if (e.done < e.total) {
+      guess = null;
+      showProgress("Uploading your contribution", `${mb(e.done)} of ${mb(e.total)}`, e.done / e.total);
+    } else if (status && status.average_check > 0) {
+      setStep("check");
+      guess = { what: "The ceremony is checking your contribution", from: 0, until: 1, start: Date.now(), seconds: status.average_check, after: 0 };
+    } else {
+      setStep("check");
+      guess = null;
+      showProgress("The ceremony is checking your contribution", "it answers as soon as it is done", null);
+    }
+  }
+}
+
+// ---- Contributing from this browser ----
+
+const stepOrder = ["join", "wait", "download", "contribute", "upload", "check"];
+const stageStep = { signin: "join", joined: "join", full: "wait", queued: "wait", turn: "download",
+  downloading: "download", contributing: "contribute", uploading: "upload" };
+let heartbeat = null, wakeLock = null, startedAt = 0, ticker = null, audio = null, step = "";
+
+function setStep(next) {
+  if (stepOrder.indexOf(next) < stepOrder.indexOf(step)) return; // steps only move forward
+  step = next;
+  const at = stepOrder.indexOf(step);
+  for (const li of el("steps").children) {
+    const i = stepOrder.indexOf(li.dataset.step);
+    li.className = i < at ? "done" : i === at ? "current" : "";
+  }
+}
+
+function detail(...nodes) { el("running-detail").replaceChildren(...nodes); }
+
+// position shows the participant's place in line, in color, on its step.
+function position(label, go = false) {
+  const pos = el("queue-pos");
+  pos.textContent = label;
+  pos.classList.toggle("go", go);
+}
+
+// chime sounds two notes, so someone who has stepped away hears their turn come.
+function chime() {
+  if (!audio) return;
+  const now = audio.currentTime;
+  [880, 1320].forEach((f, i) => {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, now + i * 0.18);
+    g.gain.exponentialRampToValueAtTime(0.2, now + i * 0.18 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.18 + 0.5);
+    o.connect(g).connect(audio.destination);
+    o.start(now + i * 0.18);
+    o.stop(now + i * 0.18 + 0.55);
+  });
+}
+
+function onEvent(e) {
+  // The program leaves out what is zero: the first bytes, the first fraction.
+  for (const k of ["done", "total", "fraction", "until", "estimate", "position", "wait"]) e[k] = e[k] || 0;
+  const uploaded = e.stage === "uploading" && e.total && e.done >= e.total;
+  if (stageStep[e.stage] && !uploaded) setStep(stageStep[e.stage]);
+  onProgress(e);
+  const p = document.createElement("p");
+  p.className = "detail";
+  switch (e.stage) {
+    case "signin": {
+      p.append("Sign in with GitHub: open ");
+      const a = document.createElement("a");
+      a.href = e.code_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = e.code_url;
+      const code = document.createElement("div");
+      code.className = "code"; code.textContent = e.code;
+      p.append(a, " and enter this code:", document.createElement("br"), code);
+      detail(p);
+      return;
+    }
+    case "joined":
+      p.textContent = e.name ? `You joined as ${e.name}.` : "You joined.";
+      break;
+    case "full":
+      position("waiting for a place");
+      p.textContent = "Others on your network are already in line. You join as soon as one of them is done.";
+      break;
+    case "queued":
+      position(e.position === 1 ? "you're next" : `#${e.position} in line`);
+      p.textContent = e.position === 1 ? "You are next." : `${e.position - 1} ${e.position === 2 ? "person" : "people"} ahead of you.`;
+      if (e.wait >= 60) p.textContent += ` About ${duration(e.wait)} to go.`;
+      p.textContent += " You will hear a chime when your turn comes.";
+      document.title = `${e.position === 1 ? "Next" : "#" + e.position} in line · ${title}`;
+      break;
+    case "turn":
+      position("your turn", true);
+      p.textContent = "Your turn has come. Keep this tab in front for the next few minutes: in the background, your computer gives it less power and it takes several times longer.";
+      document.title = `▶ Your turn: keep this tab in front · ${title}`;
+      heartbeat = heartbeat || new Worker("/web/heartbeat.js");
+      heartbeat.postMessage({ url: origin, token: e.session });
+      keepAwake();
+      chime();
+      break;
+    case "contributing":
+      if (e.part !== "randomizing") return;
+      p.textContent = "Your computer is working. Keep this tab in front.";
+      break;
+    case "uploading":
+      if (e.done !== 0) return;
+      p.textContent = "Almost there. Keep this tab open.";
+      break;
+    default:
+      return;
+  }
+  detail(p);
+}
+
+async function keepAwake() {
+  try { if ("wakeLock" in navigator && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (running && document.visibilityState === "visible") keepAwake(); });
+window.addEventListener("beforeunload", (ev) => { if (running) { ev.preventDefault(); ev.returnValue = ""; } });
+
+function finish() {
+  running = false;
+  hideProgress();
+  if (heartbeat) { heartbeat.postMessage({}); }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  clearInterval(ticker);
+}
+
+function start() {
+  running = true;
+  try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+  step = "";
+  show("running");
+  setStep("join");
+  detail();
+  hideProgress();
+  position("");
+  startedAt = Date.now();
+  ticker = setInterval(() => { text("elapsed", `Running for ${duration((Date.now() - startedAt) / 1000)}.`); }, 1000);
+  const worker = new Worker("/web/worker.js");
+  worker.onmessage = (m) => {
+    const d = m.data;
+    if (d.type === "event") { onEvent(d.event); return; }
+    finish();
+    worker.terminate();
+    if (d.type === "result") { succeeded(d.result); } else { failed(d.message); }
+  };
+  worker.onerror = (e) => { finish(); failed(e.message || "the browser stopped the contribution"); };
+  worker.postMessage({ url: origin, name: el("name").value.trim() });
+}
+
+function succeeded(r) {
+  remember(r.sha256);
+  document.title = `✓ Done · ${title}`;
+  text("done-what", r.already
+    ? `You had already contributed: you are contributor number ${r.index}.`
+    : `You are contributor number ${r.index}.`);
+  text("receipt", r.sha256);
+  el("save-receipt").onclick = () => {
+    const body = `Enygma setup ceremony receipt\n\nCeremony: ${origin}\n${status ? phaseTitle(status) : ""}\n` +
+      `Contributor: ${r.index}\nReceipt (sha256 of your contribution): ${r.sha256}\n` +
+      (r.already ? "" : `Built on: ${r.prev}\n`) +
+      `\nCheck it is in the ceremony: ceremony verify -url ${origin} -dir transcript -mine ${r.sha256}\n`;
+    const a = document.createElement("a");
+    a.href = "data:text/plain;charset=utf-8," + encodeURIComponent(body);
+    a.download = `enygma-ceremony-receipt-${r.index}.txt`;
+    a.click();
+  };
+  el("copy-receipt").onclick = (ev) => copyText(r.sha256, ev.currentTarget.querySelector("span"), "Copy receipt");
+  show("done");
+  refresh();
+}
+
+function failed(why) {
+  document.title = title;
+  const friendly = {
+    "the phase is closed": "This phase is closed: it takes no more contributions.",
+    "a name is 1 to 64": "Your name can be at most 64 characters. Shorten it, or leave it empty to stay anonymous, then try again.",
+    "a name cannot hold": "Your name holds a character that cannot be shown. Change it, or leave it empty to stay anonymous, then try again.",
+    "has not answered": "The ceremony's server cannot be reached. Check your connection, then try again.",
+    "did not reach the ceremony's server": "Your upload did not reach the ceremony's server. Check your connection, then try again.",
+  };
+  const match = Object.keys(friendly).find(k => why.includes(k));
+  text("failed-why", match ? friendly[match] : why);
+  show("failed");
+}
+
+el("go").addEventListener("click", start);
+el("retry").addEventListener("click", () => { show("start"); renderStart(); });
+
+// ---- The phase ----
+
+function phaseTitle(s) {
+  return s.phase === "phase 1" ? "Phase 1: the shared foundation" : `Phase 2: keys for ${protocolName(s.ceremony)}`;
+}
+
+function closes(s) {
+  if (!s.close_at) return "";
+  return " It closes " + new Date(s.close_at).toLocaleString(undefined,
+    { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) + ".";
+}
+
+function expected(s) {
+  if (s.average_turn > 0) return `about ${duration(s.average_turn)}`;
+  return s.phase === "phase 1" ? "about 5 min" : "a minute or two";
+}
+
+function renderStart() {
+  const s = status;
+  if (!s || running || !el("done").hidden || !el("failed").hidden) return;
+  el("name-field").hidden = s.auth !== "open";
+  let how = `Press the button and keep this tab open. You join the line, and when your turn comes your browser does the rest, in ${expected(s)}.`;
+  if (s.auth === "github") how = `Press the button and sign in with GitHub when asked. Then keep this tab open: when your turn comes your browser does the rest, in ${expected(s)}.`;
+  if (!s.browser) how = "This ceremony takes contributions from its program: open \"Prefer to run a program\" below.";
+  if (s.closed) how = "It takes no more contributions.";
+  text("start-how", how);
+  text("open-what", s.closed ? `${phaseTitle(s)} is closed.` : `${phaseTitle(s)} is open.${closes(s)}`);
+  el("go").disabled = !(s.browser && !s.closed);
+  el("mobile").hidden = !/Mobi|Android|iPhone|iPad/.test(navigator.userAgent);
+  if (!s.browser) el("program").open = true;
+}
+
+function renderPhases(s) {
+  const one = s.phase === "phase 1";
+  el("phase1").className = "card phase " + (one ? "now" : "past");
+  text("phase1-tag", one ? (s.closed ? "Closed" : "Open now") : "Complete");
+  el("phase2").className = "card phase" + (one ? "" : " now");
+  text("phase2-tag", one ? "Comes next" : (s.closed ? "Closed" : "Open now"));
+  text("phase2-name", one ? "Phase 2: keys for each protocol" : `Phase 2: keys for ${protocolName(s.ceremony)}`);
+  text("phase2-what", one ? "One ceremony per protocol, built on Phase 1."
+    : `One ceremony per protocol, built on Phase 1. This one makes the keys of ${protocolName(s.ceremony)}.`);
+}
+
+function renderStatus() {
+  const s = status;
+  renderPhases(s);
+  let notice = s.notice || "";
+  if (s.closed) notice = "This phase is closed: it takes no more contributions." + (notice ? " " + notice : "");
+  text("notice", notice);
+  text("count", s.contributions.toLocaleString());
+  text("queue", s.queue.toLocaleString());
+  text("now", s.contributing || "Nobody");
+  text("turn", duration(s.average_turn));
+  renderStart();
+  renderCommand();
+  text("source", `To build it from source instead, run this in enygma_ceremony: go run ./cmd/ceremony join -url ${origin}` +
+    (s.version ? ` (this ceremony runs commit ${s.version}).` : "."));
+  text("verify", `ceremony verify -url ${origin} -dir transcript -mine <your receipt>`);
+  text("footer", `Latest state fingerprint ${s.latest}` + (s.version ? ` · Ceremony version ${s.version}` : ""));
+}
+
+// ---- The program, for those who prefer it ----
+
+function renderCommand() {
+  const available = new Set(status.downloads || []);
+  const offered = systems.filter(s => available.has(s.file));
+  el("downloads").hidden = offered.length === 0;
+  if (offered.length === 0) return;
+  if (!offered.some(s => s.id === chosen)) chosen = offered[0].id;
+  el("systems").replaceChildren(...offered.map(s => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = s.label;
+    b.setAttribute("aria-pressed", String(s.id === chosen));
+    b.addEventListener("click", () => { chosen = s.id; renderCommand(); });
+    return b;
+  }));
+  const sys = systems.find(s => s.id === chosen);
+  const url = origin + "/download/" + sys.file;
+  text("command", sys.id.startsWith("windows")
+    ? `iwr ${url} -OutFile ceremony.exe; .\\ceremony.exe join -url ${origin}`
+    : `curl -fsSLo ceremony ${url} && chmod +x ceremony && ./ceremony join -url ${origin}`);
+  const direct = el("direct");
+  direct.replaceChildren("Or download ");
+  const a = document.createElement("a");
+  a.href = url; a.textContent = sys.file;
+  direct.append(a, " directly. ");
+  if (available.has("SHA256SUMS")) {
+    const s = document.createElement("a");
+    s.href = origin + "/download/SHA256SUMS"; s.textContent = "Checksums";
+    direct.append(s, ": the build is reproducible, so anyone building the same version gets the same files.");
+  }
+}
+
+// ---- Contributors ----
+
+function renderTranscript(t) {
+  const yours = new Set(mine());
+  if (t.contributions.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4; td.className = "empty"; td.textContent = "No contributions yet. Be the first.";
+    tr.append(td);
+    el("transcript").replaceChildren(tr);
+    return;
+  }
+  const rows = t.contributions.slice().reverse().map(e => {
+    const tr = document.createElement("tr");
+    if (yours.has(e.sha256)) tr.className = "mine";
+    const idx = document.createElement("td"); idx.className = "num"; idx.textContent = e.index;
+    const who = document.createElement("td"); who.textContent = e.participant;
+    if ((e.identity || "").startsWith("github:")) {
+      const b = document.createElement("span"); b.className = "badge github"; b.textContent = "GitHub";
+      who.append(b);
+    }
+    if (yours.has(e.sha256)) {
+      const you = document.createElement("span"); you.className = "badge you"; you.textContent = "you";
+      who.append(you);
+    }
+    const hash = document.createElement("td"); hash.className = "hash"; hash.textContent = shortHash(e.sha256); hash.title = e.sha256;
+    const at = document.createElement("td"); at.className = "when";
+    at.textContent = new Date(e.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    tr.append(idx, who, hash, at);
+    return tr;
+  });
+  el("transcript").replaceChildren(...rows);
+}
+
+async function refresh() {
+  let s, t;
+  try {
+    [s, t] = await Promise.all([
+      fetch("/v1/status").then(r => r.json()),
+      fetch("/v1/transcript").then(r => r.json()),
+    ]);
+  } catch (e) {
+    text("open-what", "The ceremony's server cannot be reached right now. Retrying…");
+    return;
+  }
+  status = s;
+  renderStatus();
+  renderTranscript(t);
+}
+
+function copyText(value, label, original) {
+  navigator.clipboard.writeText(value).then(() => {
+    label.textContent = "Copied";
+    setTimeout(() => { label.textContent = original; }, 1500);
+  });
+}
+document.addEventListener("click", ev => {
+  const button = ev.target.closest("[data-copy]");
+  if (button) copyText(el(button.dataset.copy).textContent, button, "Copy");
+});
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

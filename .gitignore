@@ -27,3 +27,19 @@ enygma_payments/relayer/register
 enygma_retail_payments/gnark_circuits/export_vk
 enygma_retail_payments/scripts/deploy
 enygma_retail_payments/scripts/init
+enygma_dvp/gnark_circuits/export_r1cs
+enygma_dvp_auctions/gnark_circuits/export_r1cs
+enygma_payments/gnark-server/export_r1cs
+enygma_retail_payments/gnark_circuits/export_r1cs
+
+# Setup ceremony (enygma_ceremony) runs, wherever they are started: a phase
+# directory's states and transcript entries (state-N, state-N.json) and the
+# uploads it is checking, a sealed SRS (`-out phase1.srs`, as its README
+# names it), export_r1cs's circuits, and -acme-domain's certificate cache,
+# which holds the TLS private key.
+state-[0-9]*
+**/incoming/upload-*
+**/incoming/entry-*
+*.srs
+*.r1cs
+acme-cache/

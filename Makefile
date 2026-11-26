@@ -83,7 +83,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-burn-keygen payments-keygen payments-keys-check payments-stack payments-stack-stop payments-test \
-	auctions-gnark auctions-keygen
+	auctions-gnark auctions-keygen ceremony-dist ceremony-fuzz
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*## "} /^[a-zA-Z0-9_-]+:.*## /{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -498,3 +498,53 @@ auctions-keygen: ## Generate auction proving/verifying keys
 
 auctions-gnark: ## Start the auctions gnark proof server (keep running)
 	cd enygma_dvp_auctions/gnark_circuits && go run ./cmd/server
+
+# ── Setup ceremony ────────────────────────────────────────────────────────────
+
+# Participants download one of these, from the coordinator's page, and run
+# it: built with CEREMONY_URL, it joins that coordinator with no command. CGO
+# off and -trimpath make each binary a function of the commit, the URL and
+# the Go toolchain go.mod pins, so anyone can rebuild it and compare it with
+# SHA256SUMS.
+CEREMONY_TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+CEREMONY_URL ?=
+
+ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_ceremony/dist, with SHA256SUMS; CEREMONY_URL=https://… makes it join that coordinator when run
+	@mkdir -p enygma_ceremony/dist
+	@for target in $(CEREMONY_TARGETS); do \
+		os=$${target%/*}; arch=$${target#*/}; ext=; [ $$os = windows ] && ext=.exe; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -C enygma_ceremony -trimpath \
+			-ldflags "-X main.defaultURL=$(CEREMONY_URL)" -o dist/ceremony-$$os-$$arch$$ext ./cmd/ceremony || exit 1; \
+	done
+	@# The browser's client: the same program for the page's Contribute button,
+	@# gzipped as the coordinator serves it (-n: no name or time, so the build
+	@# stays reproducible), with the loader of the Go that built it.
+	@GOOS=js GOARCH=wasm go build -C enygma_ceremony -trimpath -o dist/ceremony.wasm ./cmd/ceremony-web
+	@gzip -9 -n -f -k enygma_ceremony/dist/ceremony.wasm
+	@# install, not cp: the toolchain's files are read-only, and a copy of one could not be replaced next time.
+	@install -m 644 "$$(go -C enygma_ceremony env GOROOT)/lib/wasm/wasm_exec.js" enygma_ceremony/dist/wasm_exec.js
+	@cd enygma_ceremony/dist && shasum -a 256 ceremony-* ceremony.wasm wasm_exec.js | tee SHA256SUMS
+
+# What the ceremony reads from others, fuzzed: state files (an upload, or a
+# transcript a verifier fetches), transcripts, drand's beacon, names, and
+# every request to the coordinator. go test runs each target's seeds; this
+# runs a target's package's tests, then searches for FUZZTIME. An input that
+# fails one is saved under its package's testdata/fuzz, where go test then
+# runs it every time: commit it with the fix. A target no longer in its
+# package fails the run (go test -fuzz would match nothing, and pass).
+CEREMONY_FUZZ := ceremony.FuzzDecode ceremony.FuzzCheck ceremony.FuzzCheckEdits ceremony.FuzzContribute \
+	transcript.FuzzLoad transcript.FuzzFetch drand.FuzzVerify \
+	coordinator.FuzzCleanName coordinator.FuzzRequests coordinator.FuzzUpload
+FUZZTIME ?= 1m
+# How long go test spends shrinking each input it keeps (60 s by default).
+# A target taking two state files spent nearly all its time there: 62
+# inputs in 5 minutes, against 32,000 in one minute at 1 s.
+FUZZMINIMIZE ?= 1s
+
+ceremony-fuzz: ## Fuzz the ceremony's readers of untrusted input, FUZZTIME (1m) per target
+	@for t in $(CEREMONY_FUZZ); do \
+		pkg=$${t%.*}; name=$${t#*.}; \
+		echo "== $$name ($$pkg, $(FUZZTIME))"; \
+		go test -C enygma_ceremony -list "^$$name\$$" ./$$pkg/ | grep -qx "$$name" || { echo "no fuzz target $$name in $$pkg" >&2; exit 1; }; \
+		go test -C enygma_ceremony -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) -fuzzminimizetime $(FUZZMINIMIZE) ./$$pkg/ || exit 1; \
+	done

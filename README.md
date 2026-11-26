@@ -29,6 +29,10 @@ and manual run steps.
 | [`enygma_dvp_auctions`](./enygma_dvp_auctions) | UTXO-based | contracts, gnark proof server, deploy/init scripts |
 | [`enygma_demo`](./enygma_demo) | — | single-file interactive HTML demo (no build step) |
 
+[`enygma_ceremony`](./enygma_ceremony) runs the multi-party trusted setup that makes a variant's
+production Groth16 keys, in place of a keygen target's single-party setup: anyone contributes by
+downloading one program from the ceremony's page and running it.
+
 ### Relayer deployment
 
 Deploy the DvP, retail and account-based payments relayers behind TLS termination

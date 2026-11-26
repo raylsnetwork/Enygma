@@ -1,0 +1,671 @@
+// Package participant takes a participant through a coordinated phase from
+// their own machine, with nothing for them to do but start it:
+//
+//  1. it asks the coordinator how to join, and joins: registers itself, or
+//     in a GitHub phase signs in on GitHub's device flow first;
+//  2. it queues, and waits for its turn;
+//  3. on its turn it downloads the latest state, contributes the machine's
+//     randomness (ceremony.Contribute, which draws it from the operating
+//     system and keeps no copy), and uploads the result.
+//
+// It rides out what a long wait brings: a coordinator restarted (it joins
+// again), unreachable for a while (it retries), or full for its network
+// address (it waits for a place). The randomness never leaves the process;
+// what leaves is the contribution, which is public.
+package participant
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"enygma_ceremony/ceremony"
+	"enygma_ceremony/coordinator"
+)
+
+var (
+	// ErrClosed is a phase that closed before the participant's turn.
+	ErrClosed = errors.New("the phase is closed: it takes no more contributions")
+	// ErrUnauthorized is a token the coordinator does not know.
+	ErrUnauthorized = errors.New("the coordinator does not know this participant")
+	// errTurnLost is a turn that ended before the upload was in.
+	errTurnLost = errors.New("turn lost")
+)
+
+// minPoll is the least time between asks for a turn, whatever the
+// coordinator says, so a misconfigured one is not asked in a tight loop.
+const minPoll = 10 * time.Millisecond
+
+// The steps of a run (Event.Stage).
+const (
+	StageSignIn       = "signin"       // sign in with GitHub: open Event.CodeURL, enter Event.Code
+	StageJoined       = "joined"       // admitted, as Event.Name
+	StageFull         = "full"         // waiting for a place: Event.Message says why
+	StageQueued       = "queued"       // queued at Event.Position, about Event.Wait seconds from the turn
+	StageTurn         = "turn"         // the turn, on top of state Event.Index, until Event.Deadline
+	StageDownloading  = "downloading"  // downloading the latest state: Event.Done of Event.Total bytes
+	StageContributing = "contributing" // adding this machine's randomness: Event.Fraction done (see Event.Part)
+	StageUploading    = "uploading"    // uploading: Event.Done of Event.Total bytes sent; once all are, the coordinator checks them
+	StageDone         = "done"         // contribution Event.Index, sha256 Event.SHA256, is in the transcript
+)
+
+// Event is one step of a run.
+type Event struct {
+	Stage    string    `json:"stage"`
+	Name     string    `json:"name,omitzero"`
+	Message  string    `json:"message,omitzero"`
+	Position int       `json:"position,omitzero"`
+	Wait     float64   `json:"wait,omitzero"`
+	Code     string    `json:"code,omitzero"`
+	CodeURL  string    `json:"code_url,omitzero"`
+	Index    uint32    `json:"index,omitzero"`
+	Deadline time.Time `json:"deadline,omitzero"`
+	SHA256   string    `json:"sha256,omitzero"`
+	Already  bool      `json:"already,omitzero"` // StageDone: contributed before this run
+	// Done and Total are bytes: downloaded (StageDownloading), read or
+	// written (StageContributing), or sent (StageUploading).
+	Done  int64 `json:"done,omitzero"`
+	Total int64 `json:"total,omitzero"`
+	// Part is the part of the contribution under way (ceremony.PartReading,
+	// PartRandomizing or PartWriting), and Fraction how much of the whole
+	// contribution is done. While randomizing, which reports no progress of
+	// its own, the contribution should reach Until in about Estimate seconds.
+	Part     string  `json:"part,omitzero"`
+	Fraction float64 `json:"fraction,omitzero"`
+	Until    float64 `json:"until,omitzero"`
+	Estimate float64 `json:"estimate,omitzero"`
+	// Session is the token the coordinator knows this participant by
+	// (StageTurn), for a program sending heartbeats itself.
+	Session string `json:"session,omitzero"`
+}
+
+// event reports e, when someone listens.
+func (c *Client) event(e Event) {
+	if c.Events != nil {
+		c.Events(e)
+	}
+}
+
+// Client is one participant's side of a phase.
+type Client struct {
+	URL  string // the coordinator, e.g. https://ceremony.example.org
+	Name string // the name the transcript shows; anonymous when empty (a GitHub phase shows the login)
+	HTTP *http.Client
+	// Out receives progress for the participant to read.
+	Out io.Writer
+	// Patience is how long to keep retrying while the coordinator cannot
+	// be reached; 10 minutes when zero.
+	Patience time.Duration
+	// GitHub is GitHub's site, for signing in (https://github.com when empty).
+	GitHub string
+	// AskName, when set, asks the participant for Name if an open phase
+	// would otherwise show them as anonymous.
+	AskName func() string
+	// Events, when set, receives each step of the run, for a program that
+	// shows progress its own way (the browser page).
+	Events func(Event)
+	// Put, when set, uploads the contribution in place of this package's own
+	// HTTP request, reporting the bytes sent as it goes: the browser's
+	// client uploads through the browser's own upload API, which Go's
+	// requests in the browser go around, to show the upload's progress.
+	Put func(ctx context.Context, url, token string, body []byte, sent func(int64)) (status int, reply []byte, err error)
+	// Heartbeat is how often to tell the coordinator, during the turn, that
+	// this participant is still at it; 10 seconds when zero. Negative sends
+	// none, for a program that sends them itself (the browser page, whose
+	// contribution blocks the thread this client runs on).
+	Heartbeat time.Duration
+
+	cfg          coordinator.ClientConfig
+	contributeTo func(io.Reader, int64, io.Writer, func(ceremony.Progress)) (ceremony.Receipt, error) // ceremony.ContributeWithProgress unless a test slows it
+	session      string                                                                               // the token the coordinator knows this participant by
+	githubToken  string                                                                               // a GitHub phase: kept in memory, to join again after a coordinator restart
+}
+
+// Result is the participant's contribution, as the coordinator recorded it.
+type Result struct {
+	Index   uint32   // its place in the transcript
+	SHA256  [32]byte // the sha256 the participant publishes
+	Prev    [32]byte // the state it built on; zero when Already
+	Already bool     // contributed before: in an earlier run, or before a restart
+}
+
+// Run joins, waits, contributes and uploads, and returns the contribution.
+// It returns early with ErrClosed if the phase closes first.
+func (c *Client) Run(ctx context.Context) (Result, error) {
+	if c.HTTP == nil {
+		c.HTTP = http.DefaultClient
+	}
+	if c.Out == nil {
+		c.Out = io.Discard
+	}
+	if c.Patience == 0 {
+		c.Patience = 10 * time.Minute
+	}
+	if c.GitHub == "" {
+		c.GitHub = "https://github.com"
+	}
+	if err := c.checkURL(); err != nil {
+		return Result{}, err
+	}
+	if err := c.patiently(ctx, func() error { return c.call(ctx, http.MethodGet, "/v1/config", nil, &c.cfg) }); err != nil {
+		return Result{}, err
+	}
+	if c.cfg.Notice != "" {
+		fmt.Fprintf(c.Out, "Notice from the coordinator: %s\n", c.cfg.Notice)
+	}
+	if err := c.join(ctx); err != nil {
+		return Result{}, err
+	}
+	// rejoined counts the times the coordinator forgot this participant
+	// since it last queued them, so one that forgets them at once each time
+	// is given up on, rather than joined again for ever.
+	position, full, rejoined := 0, false, 0
+	rejoin := func(why string) error {
+		fmt.Fprintf(c.Out, "%s; joining again.\n", why)
+		position, rejoined = 0, rejoined+1
+		return c.join(ctx)
+	}
+	for {
+		var r coordinator.Reply
+		err := c.patiently(ctx, func() error { return c.call(ctx, http.MethodPost, "/v1/turn", nil, &r) })
+		var h *httpError
+		switch {
+		case errors.Is(err, ErrUnauthorized) && rejoined < 3:
+			// The coordinator restarted, or forgot a registration unused for long.
+			if err := rejoin("The coordinator no longer knows this session"); err != nil {
+				return Result{}, err
+			}
+			continue
+		case errors.As(err, &h) && h.code == http.StatusTooManyRequests:
+			if !full {
+				fmt.Fprintf(c.Out, "Waiting for a place in the queue: %s\n", h.msg)
+				c.event(Event{Stage: StageFull, Message: h.msg})
+				full = true
+			}
+			if err := sleep(ctx, h.retryAfter); err != nil {
+				return Result{}, err
+			}
+			continue
+		case err != nil:
+			return Result{}, err
+		}
+		full = false
+		switch r.Status {
+		case coordinator.Done:
+			h, err := parseHash(r.SHA256)
+			if err == nil {
+				c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256, Already: true})
+			}
+			return Result{Index: r.Index, SHA256: h, Already: true}, err
+		case coordinator.Closed:
+			if r.Notice != "" {
+				return Result{}, fmt.Errorf("%w (%s)", ErrClosed, r.Notice)
+			}
+			return Result{}, ErrClosed
+		case coordinator.Queued:
+			rejoined = 0
+			if r.Position != position {
+				position = r.Position
+				c.waiting(r)
+			}
+			if err := sleep(ctx, max(time.Duration(r.Poll*float64(time.Second)), minPoll)); err != nil {
+				return Result{}, err
+			}
+		case coordinator.Go:
+			res, err := c.contribute(ctx, r)
+			switch {
+			case errors.Is(err, errTurnLost):
+				fmt.Fprintln(c.Out, "Your turn ended before your contribution was in; queueing again.")
+				position = 0
+				continue
+			case errors.Is(err, ErrUnauthorized) && rejoined < 3:
+				// The coordinator restarted during the turn, forgetting the
+				// turn and the contribution under way: queue for another.
+				if err := rejoin("The coordinator restarted during your turn"); err != nil {
+					return Result{}, err
+				}
+				continue
+			case err != nil && unreachable(err):
+				// Still this participant's turn until its deadline, or the
+				// upload went in: asking again says which.
+				fmt.Fprintf(c.Out, "Lost the coordinator during your turn (%v); asking again.\n", err)
+				if err := sleep(ctx, 5*time.Second); err != nil {
+					return Result{}, err
+				}
+				continue
+			}
+			return res, err
+		default:
+			return Result{}, fmt.Errorf("the coordinator answered %q", r.Status)
+		}
+	}
+}
+
+// checkURL makes c.URL a coordinator's address: https:// when it names no
+// scheme, as a participant may type it. An address that is no web address
+// fails at once, rather than as a coordinator unreachable for c.Patience.
+func (c *Client) checkURL() error {
+	if c.URL != "" && !strings.Contains(c.URL, "://") {
+		c.URL = "https://" + c.URL
+	}
+	u, err := url.Parse(c.URL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("%q is not a coordinator's address, such as https://ceremony.example.org", c.URL)
+	}
+	return nil
+}
+
+// waiting tells the participant where they are in the queue.
+func (c *Client) waiting(r coordinator.Reply) {
+	ahead := "you are next"
+	if r.Position > 1 {
+		ahead = fmt.Sprintf("%d ahead of you", r.Position-1)
+	}
+	if r.Wait >= 60 {
+		ahead += fmt.Sprintf(", about %s", (time.Duration(r.Wait) * time.Second).Round(time.Minute))
+	}
+	fmt.Fprintf(c.Out, "Waiting for your turn: %s. Leave this running.\n", ahead)
+	c.event(Event{Stage: StageQueued, Position: r.Position, Wait: r.Wait})
+}
+
+// join gets the session token the coordinator will know this participant by.
+func (c *Client) join(ctx context.Context) error {
+	switch c.cfg.Auth {
+	case coordinator.AuthOpen:
+		if c.Name == "" && c.AskName != nil {
+			c.Name = c.AskName()
+		}
+		return c.register(ctx, coordinator.Registration{Name: c.Name})
+	case coordinator.AuthGitHub:
+		if c.githubToken == "" {
+			token, err := c.githubSignIn(ctx, c.cfg.GitHubClientID)
+			if err != nil {
+				return err
+			}
+			c.githubToken = token
+		}
+		return c.register(ctx, coordinator.Registration{GitHubToken: c.githubToken})
+	}
+	return fmt.Errorf("the coordinator admits participants by %q, which this program does not know: is it out of date?", c.cfg.Auth)
+}
+
+// register registers with the coordinator, waiting while it takes no more
+// registrations from this network address.
+func (c *Client) register(ctx context.Context, reg coordinator.Registration) error {
+	body, err := json.Marshal(reg)
+	if err != nil {
+		return err
+	}
+	for {
+		var s coordinator.Session
+		err := c.patiently(ctx, func() error {
+			return c.call(ctx, http.MethodPost, "/v1/register", bytes.NewReader(body), &s)
+		})
+		var h *httpError
+		if errors.As(err, &h) && h.code == http.StatusTooManyRequests {
+			fmt.Fprintf(c.Out, "The coordinator takes no more registrations from your network address for now (%s); waiting.\n", h.msg)
+			if err := sleep(ctx, h.retryAfter); err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("joining: %w", err)
+		}
+		c.session = s.Token
+		fmt.Fprintf(c.Out, "Joined as %s.\n", s.Participant)
+		c.event(Event{Stage: StageJoined, Name: s.Participant})
+		return nil
+	}
+}
+
+// patiently runs try until it succeeds, fails in a way trying again cannot
+// fix, or the coordinator has been unreachable for longer than c.Patience.
+func (c *Client) patiently(ctx context.Context, try func() error) error {
+	var failingSince time.Time
+	for {
+		err := try()
+		if err == nil || !unreachable(err) {
+			return err
+		}
+		if failingSince.IsZero() {
+			failingSince = time.Now()
+		}
+		if time.Since(failingSince) > c.Patience {
+			return fmt.Errorf("the coordinator has not answered for %s: %w", c.Patience, err)
+		}
+		fmt.Fprintf(c.Out, "Cannot reach the coordinator (%v); trying again.\n", err)
+		if err := sleep(ctx, 5*time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+// contribute takes a turn: downloads the state, contributes, uploads, all
+// in memory, telling the coordinator throughout that it is still at it.
+func (c *Client) contribute(ctx context.Context, turn coordinator.Reply) (Result, error) {
+	fmt.Fprintf(c.Out, "Your turn: contributing on top of state %d.\n", turn.Index)
+	c.event(Event{Stage: StageTurn, Index: turn.Index, Deadline: turn.Deadline, Session: c.session})
+	want, err := parseHash(turn.SHA256)
+	if err != nil {
+		return Result{}, err
+	}
+	defer c.keepTurn(ctx)()
+
+	fmt.Fprintln(c.Out, "Downloading the latest state.")
+	c.event(Event{Stage: StageDownloading})
+	state, err := c.download(ctx, want)
+	if err != nil {
+		return Result{}, err
+	}
+	fmt.Fprintln(c.Out, "Contributing. Your randomness comes from this machine's operating system and is gone when this exits.")
+	c.event(Event{Stage: StageContributing})
+	var next bytes.Buffer
+	contributeTo := c.contributeTo
+	if contributeTo == nil {
+		contributeTo = ceremony.ContributeWithProgress
+	}
+	receipt, err := contributeTo(bytes.NewReader(state), int64(len(state)), &next, func(p ceremony.Progress) {
+		if p.Part == ceremony.PartRandomizing {
+			fmt.Fprintf(c.Out, "Adding your randomness: about %s on this machine.\n", p.Estimate.Round(time.Second))
+		}
+		c.event(Event{
+			Stage: StageContributing, Part: p.Part, Done: p.Done, Total: p.Total,
+			Fraction: p.Fraction, Until: p.Until, Estimate: p.Estimate.Seconds(),
+		})
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	state = nil // the next state is all an upload needs
+	fmt.Fprintln(c.Out, "Uploading; the coordinator checks your contribution before answering.")
+	r, err := c.upload(ctx, next.Bytes())
+	if err != nil {
+		return Result{}, err
+	}
+	got, err := parseHash(r.SHA256)
+	if err != nil {
+		return Result{}, err
+	}
+	if got != receipt.Hash || r.Index != receipt.Index {
+		return Result{}, fmt.Errorf("the coordinator recorded contribution %d sha256 %x, but yours is %d sha256 %x",
+			r.Index, got, receipt.Index, receipt.Hash)
+	}
+	c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256})
+	return Result{Index: r.Index, SHA256: got, Prev: receipt.In}, nil
+}
+
+// keepTurn tells the coordinator every c.Heartbeat, until the returned stop
+// is called, that this participant is still taking its turn, so that a turn
+// whose holder has gone (a laptop closed) passes on long before its deadline.
+func (c *Client) keepTurn(ctx context.Context) (stop func()) {
+	every := c.Heartbeat
+	if every == 0 {
+		every = 10 * time.Second
+	}
+	if every < 0 {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				// Not /v1/turn: asking for a turn queues a participant whose
+				// turn has passed on, who would then be handed a new one
+				// while this one's contribution is still under way.
+				_ = c.call(ctx, http.MethodPost, "/v1/heartbeat", nil, nil) // a missed heartbeat is retried at the next tick
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// upload sends the contribution, reporting the bytes sent about every 1%,
+// and returns the coordinator's answer once it has checked it.
+func (c *Client) upload(ctx context.Context, data []byte) (coordinator.Reply, error) {
+	total := int64(len(data))
+	next := int64(0)
+	sent := func(n int64) {
+		if n >= next || n >= total {
+			c.event(Event{Stage: StageUploading, Done: min(n, total), Total: total})
+			next = n + max(total/100, 1)
+		}
+	}
+	sent(0)
+	target := strings.TrimSuffix(c.URL, "/") + "/v1/contribution"
+	var (
+		code       int
+		reply      []byte
+		retryAfter string
+	)
+	if c.Put != nil {
+		var err error
+		if code, reply, err = c.Put(ctx, target, c.session, data, sent); err != nil {
+			return coordinator.Reply{}, &url.Error{Op: http.MethodPut, URL: target, Err: err}
+		}
+	} else {
+		body := &uploadProgress{r: bytes.NewReader(data), sent: sent}
+		req, err := c.request(ctx, http.MethodPut, "/v1/contribution", body)
+		if err != nil {
+			return coordinator.Reply{}, err
+		}
+		req.ContentLength = total
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return coordinator.Reply{}, err
+		}
+		defer resp.Body.Close()
+		code, retryAfter = resp.StatusCode, resp.Header.Get("Retry-After")
+		if reply, err = io.ReadAll(io.LimitReader(resp.Body, 1<<16)); err != nil {
+			return coordinator.Reply{}, &url.Error{Op: http.MethodPut, URL: target, Err: err}
+		}
+	}
+	if err := replyError(code, reply, retryAfter); err != nil {
+		return coordinator.Reply{}, err
+	}
+	var r coordinator.Reply
+	return r, json.Unmarshal(reply, &r)
+}
+
+// uploadProgress counts the bytes of an upload read off it, as the HTTP
+// client sends them.
+type uploadProgress struct {
+	r    io.Reader
+	n    int64
+	sent func(int64)
+}
+
+func (u *uploadProgress) Read(b []byte) (int, error) {
+	n, err := u.r.Read(b)
+	u.n += int64(n)
+	u.sent(u.n)
+	return n, err
+}
+
+// download returns the latest state, checked to be the one the coordinator
+// announced.
+func (c *Client) download(ctx context.Context, want [32]byte) ([]byte, error) {
+	req, err := c.request(ctx, http.MethodGet, "/v1/state", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := statusError(resp); err != nil {
+		return nil, err
+	}
+	body := &downloadProgress{r: io.LimitReader(resp.Body, ceremony.MaxDownload+1), total: resp.ContentLength, event: c.event}
+	state, err := io.ReadAll(body)
+	if err != nil {
+		// A transfer cut short is the network's failure, as a failed request is.
+		return nil, &url.Error{Op: req.Method, URL: req.URL.String(), Err: err}
+	}
+	if len(state) > ceremony.MaxDownload {
+		return nil, fmt.Errorf("the coordinator sent more than %d bytes for a state", ceremony.MaxDownload)
+	}
+	if got := sha256.Sum256(state); got != want {
+		return nil, fmt.Errorf("the coordinator sent a state of sha256 %x, having announced %x", got, want)
+	}
+	return state, nil
+}
+
+// downloadProgress reports the bytes of the state downloaded so far, about
+// every 1% of total (the response's length; no report when it is unknown).
+type downloadProgress struct {
+	r           io.Reader
+	done, total int64
+	next        int64
+	event       func(Event)
+}
+
+func (d *downloadProgress) Read(b []byte) (int, error) {
+	n, err := d.r.Read(b)
+	d.done += int64(n)
+	if d.total > 0 && (d.done >= d.next || err == io.EOF) {
+		d.event(Event{Stage: StageDownloading, Done: min(d.done, d.total), Total: d.total})
+		d.next = d.done + max(d.total/100, 1)
+	}
+	return n, err
+}
+
+// call sends a request with body and decodes the JSON reply into v, unless
+// v is nil.
+func (c *Client) call(ctx context.Context, method, path string, body io.Reader, v any) error {
+	req, err := c.request(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if err := statusError(resp); err != nil {
+		return err
+	}
+	if v == nil {
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(v)
+}
+
+// request builds a request to the coordinator carrying the session token.
+func (c *Client) request(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(c.URL, "/")+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if c.session != "" {
+		req.Header.Set("Authorization", "Bearer "+c.session)
+	}
+	return req, nil
+}
+
+// httpError is an error status from the coordinator.
+type httpError struct {
+	code       int
+	msg        string
+	retryAfter time.Duration // when the coordinator says to try again: Retry-After, or 5 s
+}
+
+func (e *httpError) Error() string {
+	return fmt.Sprintf("%d %s: %s", e.code, http.StatusText(e.code), e.msg)
+}
+
+// statusError turns an error status into an error (replyError).
+func statusError(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16)) // the status alone says enough if this fails
+	return replyError(resp.StatusCode, data, resp.Header.Get("Retry-After"))
+}
+
+// replyError turns an answer of status code with body into an error:
+// errTurnLost for 409, ErrUnauthorized for 401, and an httpError with the
+// coordinator's message otherwise; nil for 200.
+func replyError(code int, data []byte, retryAfter string) error {
+	if code == http.StatusOK {
+		return nil
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(data, &body) != nil || body.Error == "" {
+		body.Error = strings.TrimSpace(string(data))
+	}
+	switch code {
+	case http.StatusConflict:
+		return fmt.Errorf("%w: %s", errTurnLost, body.Error)
+	case http.StatusUnauthorized:
+		return fmt.Errorf("%w: %s", ErrUnauthorized, body.Error)
+	}
+	e := &httpError{code: code, msg: body.Error, retryAfter: 5 * time.Second}
+	if s, err := strconv.Atoi(retryAfter); err == nil && s > 0 {
+		e.retryAfter = time.Duration(s) * time.Second
+	}
+	return e
+}
+
+// unreachable reports whether err is the coordinator unreachable, or
+// answering that it is failing: what trying again may get past.
+func unreachable(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var h *httpError
+	if errors.As(err, &h) {
+		return h.code >= 500
+	}
+	var u *url.Error
+	return errors.As(err, &u)
+}
+
+// parseHash reads a sha256 in hex.
+func parseHash(s string) ([32]byte, error) {
+	var h [32]byte
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != len(h) {
+		return h, fmt.Errorf("the coordinator sent %q for a sha256", s)
+	}
+	copy(h[:], b)
+	return h, nil
+}
+
+// sleep waits for d, or until ctx is done.
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}

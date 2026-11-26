@@ -8,6 +8,7 @@ version: 2
 updates:
   - package-ecosystem: gomod
     directories:
+      - "/enygma_ceremony"
       - "/enygma_dvp/demo"
       - "/enygma_dvp/gnark_circuits"
       - "/enygma_dvp/layout"
