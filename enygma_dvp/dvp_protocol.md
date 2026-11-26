@@ -477,6 +477,86 @@ The change note itself stays private: its commitment hides the remainder, and th
 
 ---
 
+## Setup and owner calls
+
+### Setup call order
+
+`scripts/cmd/init` makes the owner's setup calls in this order.
+`scripts/cmd/init_payment` makes the subset the Payment deployment needs
+(`initializeDvp`, its keys, then its two vaults) in the same order.
+
+1. `Verifier.initializeVerifier`, then `Verifier.grantRole` so that
+   `EnygmaDvp` may register verification keys.
+2. `EnygmaDvp.initializeDvp(verifier)`, **once**.
+3. `registerNewVerificationKey` for each key, then `registerPrivateMintVerifier`.
+4. `registerVault` for each vault, then `registerAssetGroup`, the group pairs
+   and `addVaultToGroup`.
+5. `EnygmaErc20CoinVault.addEnygma`, **once** (see below), then
+   `registerRelayer` if one is configured.
+
+Never call `registerEnygmaAuction`: the auction in this module is legacy, and
+the maintained one is [`enygma_dvp_auctions`](../enygma_dvp_auctions), which
+uses its own vaults.
+
+The order matters because a vault takes its addresses once and keeps them.
+`registerVault` passes the verifier and auction addresses `EnygmaDvp` holds at
+that moment to the vault's `initializeVault`, which runs only once.
+`registerAssetGroup` reads the verifier from `EnygmaDvp` the same way. So:
+
+- **A second `initializeDvp` does not reach registered vaults.** It changes
+  only the address `EnygmaDvp` holds. Vaults and asset groups registered
+  earlier keep verifying against the old verifier. Keys registered from then
+  on go to the new one, so those vaults never see them. Vaults registered
+  later use the new one. Nothing warns: the call emits no event and checks no
+  state. To undo a mistaken call, call `initializeDvp` again with the first
+  verifier's address.
+- **A vault trusts the auction address that was stored when it was
+  registered.** It grants that address `DEFAULT_AUCTION_ROLE` for good (today
+  `address(0)`, as nothing calls `registerEnygmaAuction`).
+
+### `addEnygma`'s powers
+
+`EnygmaErc20CoinVault.addEnygma(addr)` is owner-only, but nothing stops a
+second call. Each call:
+
+- grants `addr` the vault's `DEFAULT_ENYGMA_ROLE`. Earlier holders keep the
+  role, and no account can revoke it, because the vault has no role admin
+  (only a holder can renounce its own role).
+- rewrites the vault's asset address to `addr`. The asset address is an input
+  to the note's unique id, so notes the vault inserts after the call have
+  different unique ids from the notes inserted before it.
+
+Every holder of the role can call `depositThroughEnygma`, which inserts a
+bridge note for any amount and key without moving any tokens, and
+`withdrawThroughEnygma`, which spends one. So the role should be held only by
+the Enygma (institutional payments) contract: call `addEnygma` once per vault,
+with that contract's address, as `scripts/cmd/init` does.
+
+### Front-running that blocks a call
+
+Two public calls can be blocked by anyone who copies a pending transaction
+from the mempool. Neither loses funds; the sender retries with fresh input.
+
+- **Ownership challenges.** `Erc20CoinVault.verifyOwnership` takes
+  the proof's message as a challenge and registers it through
+  `EnygmaDvp.checkAndRegisterChallenge`, which rejects a challenge it has seen
+  before (`RottenChallenge`). The function is public, and all vaults share one
+  set of challenges. So anyone who sees a pending `verifyOwnership` can
+  register its challenge first, or submit the same receipt themselves, and the
+  owner's call reverts. To recover, the owner proves again with a new
+  challenge.
+- **Channel ids.** `ChannelRegistry.openChannel` stores the first record
+  written under a `channelId` and rejects later ones
+  (`ChannelAlreadyExists`). A copier can therefore open the sender's
+  `channelId` first with a false ciphertext, and the sender's call reverts.
+  The recipient would find the copier's address in the record's `sender`
+  field and a ciphertext whose decapsulated secret does not hash to the
+  channel id. To recover, the sender encapsulates again, which gives a new shared secret
+  and so a new channel id (`SHA256(0x01 || sharedSecret)`), and opens that
+  channel instead.
+
+---
+
 ## Security Goals
 
 - **Atomicity**: either both sides settle or Alice recovers her original asset
