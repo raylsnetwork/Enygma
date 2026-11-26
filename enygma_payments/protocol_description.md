@@ -14,7 +14,9 @@
 > event of any kind. Everything through Section 5 (**System Setup** —
 > **Key Generation** — **Key Registration** — **Key Agreement** — **Issuing
 > Tokens**) and the core of Section 6 (commitments, nullifiers, the ZK
-> proof, and on-chain verification) matches the shipped code. If your
+> proof, and on-chain verification) matches the shipped code, except that
+> every shipped mint publishes its amount (see the note in Section 5 and
+> Section 8). If your
 > institution has relied on this document to evaluate the system's privacy
 > or auditing properties, the mechanisms above are not properties you can
 > rely on today — treat them as a roadmap, not a shipped guarantee.
@@ -166,6 +168,8 @@ We run the following ML-KEM protocol adapted to use the underlying blockchain as
 * The counterparty $$i$$ watches the chain, downloads $$⟨i, j, id, ctxt_{i, j}⟩$$, runs $$\text{MLKEM.Decaps}(sk_{i}^{view}, ctxt_{i, j})$$, obtains a shared secret $$s'_{i,j}$$, and computes $$id' = Hash(s')$$. If $$id' = id$$, party $$i$$ publishes a sign-off message and is ready to receive private transactions from the sender.
 
 ## 5 - Issuing Tokens
+> **As shipped.** `mintSupply` always takes and emits a plaintext `amount`, whatever random factor the minted commitment uses, and nothing checks that the commitment opens to that amount. So a private issuance does not hide the amount from chain observers, and a transparent one does not prove it. See Section 8.
+
 There are two ways of issuing tokens. The issuer can either mint a commitment with the random factor set to zero which publicly discloses the minted amount or, alternatively, act as a participant in the network and mint a shielded balance in the form of Pedersen commitment where the random factor is derived from the shared secret between the issuer and the receiver of funds. This specific mechanism to generate the random factor ensures that the issuer can mint a specific amount and the recipient can detect the minted amount. 
 
 ```mermaid
@@ -356,9 +360,11 @@ directly to the blockchain, and nothing in the protocol as specified
 requires otherwise — a bank *could* hold its own signing key, be its own
 `msg.sender`, and submit `transfer()` itself.
 
-The shipped `enygma_payments/relayer` component does not do that. Every
-bank's `registerAccount` currently binds `addressToAccountId` to the
-*relayer's* address, not the bank's own, and the relayer holds the only
+The shipped `enygma_payments/relayer` component does not do that. Each
+bank's `registerAccount` binds `addressToAccountId` to the bank's own
+address (`go_client/cmd/register_bank`), and the relayer is registered
+as an account of its own. That bank address is what authorizes the
+bank's fingerprint confirmations (Section 8), but the relayer holds the only
 private key that is ever used to call `transfer()` / `transferWithFee()` /
 `withdraw()` / `deposit()`. Concretely, this means:
 
@@ -605,6 +611,28 @@ Besides the auditor, we highlight that any entity in the system can always monit
 * Entity can check how many mints/burns exist in the network.
 
 Additionally, depending on the choice of random factors and the issuance process, it may be possible for any entity to check the total supply of the asset at all times. 
+
+## 8 - Trust Assumptions and Known Limitations
+The deployed contract (`enygma_payments/contracts/enygma/contracts/Enygma.sol`) relies on the assumptions below, some on purpose and some by omission. Except for a leaked EOA (second item), none of them loses funds on the shipped flows, but operators and integrators must know them. The first four (subgroup points, EOA authority, liveness, `AnonymitySet`) could each be closed later by a small `Enygma.sol` change. The visible fee submitter and the public burn and withdraw amounts would need new circuits and keys, or a vault change.
+
+**What the owner and each account must do**
+
+* **Every commitment point the contract accepts must lie in the prime-order subgroup.** `_isValidCommitment` checks that a point's coordinates are in range and that it lies on BabyJubJub, but not that it lies in the prime-order subgroup. Every point it checks is submitted by the owner: `registerAccount`'s initial commitment, `initializeUsdrBalance`'s initial USDr commitment and `mintSupply`'s mint commitment. An account that computes its own registration `Com(0, r)` (as `registerAccount`'s NatSpec describes) must hand the owner a subgroup point, and the owner should check $$[l]P = O$$ before submitting any point. A point outside the subgroup is accepted, but no opening $$(v, r)$$ matches the balance it lands in, so that balance cannot be opened or spent until the owner adds the opposite small-order point (for example `mintSupply(0, id, …)` with that point). Only the owner can submit such a point, and the account whose balance it is bears the cost.
+* **An account's EOA must be protected like its spend key.** The address bound in `registerAccount` cannot be rotated or revoked, and it can be frozen only by pausing the whole contract (`pause()` also stops every value-moving call). It is the only authority over that account's side of every fingerprint confirmation (`registerFingerprint`), and a confirmed fingerprint is overwritten as soon as both sides post matching new claims. So an attacker who holds a leaked EOA and colludes with a counterparty can replace that pair's confirmed fingerprint with one for a secret the victim does not know. The counterparty can then send a transfer naming the victim with that secret in `SharedSecrets`, which shifts the victim's blinding factor by a value the victim cannot compute. The victim's whole balance becomes unopenable, and the victim can no longer transfer, withdraw or burn. Losing an EOA without a leak is less severe: the EOA authorizes only `registerFingerprint`, and the account's transfers are authorized by its spend-key proof. To move the account to a fresh EOA, the owner can burn its balance (with a proof from the holder's spend key), register a new account for the new address and mint the balance to it.
+
+**Liveness: proofs go stale and nothing orders writes**
+
+* Every proof must name the current epoch: its block-number signal must equal `lastBlockNum`, and every balance-changing call moves `lastBlockNum` to the current epoch start. So the first write in a new epoch, by any account or an owner mint, makes every pending proof stale, including proofs that share no participant with that write. A transfer statement also commits to the live balances of all its participants (`PREVIOUS_COMMITMENTS`), so within an epoch any write that changes one of those balances stales every pending proof that names that account. A stale proof must be regenerated. The contract neither orders nor rate-limits writes, so any registered account can keep other accounts' proofs stale, either by putting them in its anonymity sets or by writing once per epoch. This stalls transfers but moves no funds. With `deploy_node.js`'s default `EPOCH_INTERVAL=1` an epoch is one block, so in practice only one proof-carrying write lands per block. That is the source of the "at most one tx per block" figure in the size table below, which the contract does not otherwise enforce.
+
+**What the on-chain checks do not bind**
+
+* **`AnonymitySet` is not bound to `participantIds`.** `transfer` compares the proof's `AnonymitySet` signals only with the USDr proof's copy. It does not compare them with the `participantIds` the contract uses. Public keys and previous balances are bound to `participantIds`, so funds cannot be redirected. But receiver $$i$$'s blinding factor is derived from `Poseidon(SenderId, AnonymitySet[i])`, so a receiver must take `AnonymitySet[i]`, and the candidate `SenderId` values (the other published `AnonymitySet` entries), from the proof's public signals and never from `participantIds`. A receiver that uses `participantIds` instead computes the wrong blinding factor and cannot open its new balance.
+* **Mint amounts are owner-asserted.** `mintSupply` adds the owner's commitment to the recipient's balance and records the owner-stated `amount` in `totalSupplyAmount` and in the `SupplyMinted` event. Nothing checks that the commitment opens to `amount` (the function's NatSpec says so). Published supply figures are only as good as the owner. `mintUsdrSupply` emits the same `SupplyMinted` event, and the event has no asset field, so summing `SupplyMinted` mixes main-asset and USDr mints. Read the main supply from `TotalSupply()` or from the `mintSupply` calls.
+
+**What is public**
+
+* **The fee submitter is visible, and the owner can decide who transacts.** `transfer` requires a USDr proof whose `FeeRecipientKey` is the key of `msg.sender`, and the USDr circuit gives the whole fee to that slot, which can never be the sender's. The submitter is therefore a publicly known non-sender, and the effective anonymity set is five accounts, not six. When `usdrFixedFeeAmount` is nonzero, USDr exists only through the owner's `mintUsdrSupply`, so the owner decides who can pay the fee and therefore who can transact. It defaults to 0 and no deployment script sets it; with a zero fee, a never-funded USDr balance is enough.
+* **Amounts outside transfers are public, and so are fees.** Transfer amounts stay hidden. Mint, USDr mint, burn and withdraw publish their amounts in calldata, in proof public signals or in events (`SupplyMinted`, `BurnSuccessful`). A deposit is public too: it redeems a note that a withdraw created from a plaintext amount, and it publishes that note's hash, so an observer can match the deposit to the withdraw and learn the credited amount. Fees are public: `transfer`'s USDr proof publishes `FeeAmount`, which goes in full to the known submitter, and `transferWithFee` publishes its fee and emits `FeeBurned`. The rule that amounts stay hidden on chain covers transfer amounts only.
 
 ## Additional Remarks
 

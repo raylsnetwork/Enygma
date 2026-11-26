@@ -179,7 +179,10 @@ because each key is tied to a single note, not a permanent identity.
 
 ### Why Pedersen Commitment?
 
-In Enygma Payment, amounts must stay hidden on-chain. But the circuit still
+In Enygma Payment, transfer amounts must stay hidden on-chain. (Mint, USDr
+mint, burn, withdraw and deposit publish their amounts, and fees are
+public; see
+`enygma_payments/protocol_description.md` § 8.) But the circuit still
 needs to prove that no value was created or destroyed.
 
 Pedersen commitments make both possible at once. A commitment to value `v`
@@ -197,7 +200,8 @@ the circuit checks:
 sum(input commitments) = sum(output commitments) + fee commitment
 ```
 
-No amounts are revealed. Balance is proven by a single curve equation.
+No transfer amounts are revealed (the fee amount is public). Balance is
+proven by a single curve equation.
 
 The blinding factor `r` is derived per note from the shared secret between
 sender and recipient, unknown to anyone else.
