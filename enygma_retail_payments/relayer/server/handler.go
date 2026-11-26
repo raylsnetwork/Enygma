@@ -284,6 +284,14 @@ func NewHandler(cfg *config.Config) (*Handler, error) {
 	}, nil
 }
 
+// health reports RPC reachability and keeps upstream diagnostics out of the response.
+func (h *Handler) health(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	_, err := h.client.BlockNumber(ctx)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "chainReachable": err == nil})
+}
+
 // Info is the gin handler for GET /relay/info.
 // Returns the relayer's configured contract addresses and chain ID.
 // This endpoint is public (no auth) so clients can discover addresses

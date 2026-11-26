@@ -29,6 +29,23 @@ and manual run steps.
 | [`enygma_dvp_auctions`](./enygma_dvp_auctions) | UTXO-based | contracts, gnark proof server, deploy/init scripts |
 | [`enygma_demo`](./enygma_demo) | — | single-file interactive HTML demo (no build step) |
 
+### Relayer deployment
+
+Deploy the DvP, retail and account-based payments relayers behind TLS termination
+on any non-loopback network. Restrict the relayer's plaintext HTTP port to the
+TLS terminator so clients cannot bypass it and expose their bearer tokens and
+request bodies. Set `RELAYER_RPC_URL` to a trusted Ethereum RPC endpoint. The
+relayer relies on it for transaction inputs such as the nonce and gas prices.
+
+Each DvP or retail relayer uses one `RELAYER_API_KEY` for all of its clients.
+By default their per-IP limit uses the TCP peer address. Behind a reverse proxy,
+set `RELAYER_TRUSTED_PROXIES` to a comma-separated list of the proxy IP addresses
+or CIDRs and configure those proxies to replace or sanitize incoming forwarding
+headers. An empty list ignores forwarded addresses.
+
+The public `GET /health` endpoint returns HTTP 200 for a running relayer. Check
+`chainReachable` in the response to see whether its RPC endpoint is serving chain data.
+
 ### Protocol docs index
 
 | Doc | Covers |

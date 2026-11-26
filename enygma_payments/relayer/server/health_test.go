@@ -79,9 +79,6 @@ func TestHealth_ChainReachable(t *testing.T) {
 	if resp.RelayerBalanceWei != "7000000000000000000" {
 		t.Errorf("RelayerBalanceWei: got %q", resp.RelayerBalanceWei)
 	}
-	if resp.ChainError != "" {
-		t.Errorf("ChainError: got %q, want empty", resp.ChainError)
-	}
 }
 
 func TestHealth_ChainUnreachable(t *testing.T) {
@@ -93,15 +90,18 @@ func TestHealth_ChainUnreachable(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", w.Code)
 	}
-	var resp HealthResponse
+	var resp struct {
+		HealthResponse
+		ChainError *string `json:"chainError"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if resp.ChainReachable {
 		t.Error("ChainReachable: got true, want false")
 	}
-	if resp.ChainError == "" {
-		t.Error("ChainError: got empty, want the underlying dial/probe error")
+	if resp.ChainError != nil {
+		t.Error("public health exposed chainError")
 	}
 	if resp.LatestBlock != 0 {
 		t.Errorf("LatestBlock: got %d, want 0 (unreachable)", resp.LatestBlock)

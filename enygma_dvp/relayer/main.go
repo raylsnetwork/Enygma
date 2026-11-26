@@ -21,7 +21,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("Enygma DVP relayer listening on %s", addr)
-	if err := r.Run(addr); err != nil {
+	srv := server.NewHTTPServer(addr, r, cfg.TxTimeout)
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("run: %v", err)
 	}
 }
