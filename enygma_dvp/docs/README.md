@@ -70,8 +70,9 @@ without revealing which commitment it corresponds to.
 | Path | Purpose |
 |------|---------|
 | `src/core/prover.go` | `GnarkClient`, `ProofResult`, shared types, HTTP transport |
-| `src/core/prover_erc.go` | Typed provers: ERC20, ERC721, ERC1155, Payment, PrivateMint |
-| `src/core/prover_auction.go` | Typed provers: Auction circuits, DvP circuits |
+| `src/core/prover_erc20.go`, `prover_erc721.go`, `prover_erc1155.go`, `prover_payment.go` | Typed provers: ERC20 (with PrivateMint), ERC721, ERC1155, Payment |
+| `src/core/prover_dvp.go` | Typed provers: DvP circuits |
+| `src/core/prover_auction.go` | Legacy auction provers: this module's gnark server serves none of their routes (see [Deprecated: enygma_dvp's `EnygmaAuction`](../README.md#deprecated-enygma_dvps-enygmaauction)). Also holds helpers the live provers use, such as `bigIntSliceToStrings` |
 | `src/core/utils.go` | Key derivation, ML-KEM, Poseidon, Merkle helpers |
 | `gnark_circuits/server/circuits/` | gnark circuit definitions and HTTP handlers |
 | `contracts/core/contracts/` | Solidity: `EnygmaDvp.sol`, `PrivateMintVerifier.sol`, vaults |
