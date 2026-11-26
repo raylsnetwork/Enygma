@@ -19,12 +19,25 @@
 // contract check here. The FingerPrint/SharedSecrets/MessageTags values a
 // sender uses for the relayer's slot are entirely prover-chosen and never
 // independently verified against the relayer's identity on-chain (only
-// PublicKey/PreviousCommit/TxCommit are cross-checked) — so no real
-// ML-KEM key agreement with the relayer is needed for a valid proof;
-// callers building a witness that includes the relayer can use any
-// self-consistent placeholder for that slot (matching how demo/main.go
-// already falls back to demoDefaults[i] for banks without a run
-// key-agreement step).
+// PublicKey/PreviousCommit/TxCommit are cross-checked), so the proof
+// verifies whatever value the sender picks for that slot.
+//
+// That does not make a placeholder safe. The relayer's SharedSecrets
+// value must be full-entropy (a uniformly random field element) and
+// known to no one but the sender and the relayer. The transfer circuit
+// computes each slot's tag as
+//
+//	MessageTags[i] = Poseidon(HashTag, SharedSecrets[i],
+//	                   Poseidon(Nullifier, Poseidon(SenderId, AnonymitySet[i])))
+//
+// and Nullifier and AnonymitySet are public. Whoever knows (or guesses)
+// the relayer slot's secret tries each of the six possible SenderId
+// values, recomputes the relayer's tag, and finds the one that matches:
+// the sender of that relayed transfer. A constant, a reused value, or a
+// small number (such as demo/main.go's demoDefaults) lets any observer
+// do this for every relayed transfer. Until a real key agreement with
+// the relayer exists, draw a fresh random secret per sender–relayer pair
+// and share it only over a private channel.
 //
 // Usage:
 //
