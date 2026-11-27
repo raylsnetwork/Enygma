@@ -4,7 +4,7 @@ name: onchain
 # through the same make targets a developer runs locally:
 #   make payments-stack && make payments-test; make payments-stack-stop
 #   make dvp-stack && make dvp-test; make dvp-stack-stop
-#   make shield-stack && make retail-test; make shield-stack-stop
+#   make shield-stack && make retail-test && make retail-tags-test; make shield-stack-stop
 # A suite fails on any failed test and on any skip not on its known-skip
 # list (PAYMENTS_KNOWN_SKIPS, DVP_KNOWN_SKIPS, RETAIL_KNOWN_SKIPS in the root
 # Makefile). On failure the stack's and the suite's logs are uploaded as an
@@ -254,6 +254,11 @@ jobs:
 
       - run: make shield-stack
       - run: make retail-test
+      # Use the same chain to exercise tag proofs after vault rollover.
+      - name: Private-tag integration tests
+        run: |
+          cp "$RETAIL_LOG_DIR/suite.log" "$RETAIL_LOG_DIR/retail-suite.log"
+          make retail-tags-test
       - if: always()
         run: make shield-stack-stop
       # retail-test sets REPLAY_FIXTURE_WRITE=0 and leaves PRIMER_WRITE unset.

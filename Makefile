@@ -81,7 +81,7 @@ ERRCHECK_SKIP_MODULES ?= \
 
 .PHONY: help modules hooks hooks-check fmt fmt-check go-min-check known-red-check errcheck-skip-check test-name-skip-check page-check primer-from-disk moments-fit build vet errcheck check test-unit hardhat-check ci \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
-	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
+	retail-setup retail-gnark retail-keygen retail-keys-check retail-test retail-tags-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-burn-keygen payments-keygen payments-keys-check payments-stack payments-stack-stop payments-test \
 	auctions-gnark auctions-keygen ceremony-dist ceremony-fuzz
 
@@ -413,6 +413,9 @@ PRIMER_REFRESH_RUN := TestProtocolPrimer$$
 SHIELD_FIXTURES_RUN := TestShieldDemoScenario$$|TestShieldDemoWalkthrough$$
 retail-test: ## Retail integration suite (needs the shield_demo/run.sh stack on a fresh chain); prints pass/fail/skip counts, fails on a skip not in RETAIL_KNOWN_SKIPS; leaves the shield demo's replay fixtures alone
 	$(call suite_test,$(SHIELD_STACK_PID),$(RETAIL_SUITE),retail_test,1800s,REPLAY_FIXTURE_WRITE=0,,$(RETAIL_KNOWN_SKIPS))
+
+retail-tags-test: ## Run the private-tag integration tests on the retail stack and fail on any skip
+	$(call suite_test,$(SHIELD_STACK_PID),enygma_retail_payments/private_tags/test,retail_tags_test,900s)
 
 # The full shield demo scenario test plays three runs (about 1–2 min since #190's
 # fast proofs); this plays the default-mode run (about 30 s) and the subtests matching

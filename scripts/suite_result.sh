@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The verdict on an on-chain suite's `go test -v` log, for the suites' make
-# targets (make payments-test, make dvp-test, make retail-test):
+# targets (make payments-test, make dvp-test, make retail-test, make retail-tags-test):
 # prints `suite PASS/FAIL/SKIP` counts (top-level tests), lists the failed and
 # skipped tests, and exits non-zero when go test did, when no test passed (a
 # suite that ran nothing), when any test failed, or when a test (or subtest)

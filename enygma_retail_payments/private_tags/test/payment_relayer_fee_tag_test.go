@@ -329,7 +329,7 @@ func depositAndBuildRelayerFeeWitness(
 
 	reqBody := map[string]interface{}{
 		"stMessage":            "0",
-		"stTreeNumbers":        [1]string{"0"},
+		"stTreeNumbers":        [1]string{big.NewInt(int64(aliceProof.TreeNumber)).String()},
 		"stMerkleRoots":        [1]string{aliceProof.Root.String()},
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [3]string{cmtBob.String(), cmtChange.String(), cmtRelayer.String()},

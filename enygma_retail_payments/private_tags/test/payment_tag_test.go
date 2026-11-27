@@ -170,10 +170,14 @@ func loadPaymentMerkleTree(t *testing.T, client *ethclient.Client, vaultAddr com
 		t.Fatalf("FilterLogs: %v", err)
 	}
 	mt := rpcore.NewMerkleTree(depth)
-	for _, log := range logs {
-		if len(log.Topics) >= 3 {
-			mt.InsertLeaf(log.Topics[2].Big())
+	// Replay the vault's insert batches to keep the same tree boundaries.
+	for i := 0; i < len(logs); {
+		var batch []*big.Int
+		for j := i; j < len(logs) && logs[j].TxHash == logs[i].TxHash; j++ {
+			batch = append(batch, logs[j].Topics[2].Big())
 		}
+		mt.InsertLeaves(batch)
+		i += len(batch)
 	}
 	return mt
 }
@@ -403,7 +407,7 @@ func TestPaymentWithTagNotification(t *testing.T) {
 		rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
 		merkleDepth,
 		[]*rpcore.MerkleProof{aliceProof},
-		[]*big.Int{big.NewInt(0)},
+		[]*big.Int{big.NewInt(int64(aliceProof.TreeNumber))},
 		tokenId,
 	)
 	if err != nil {
