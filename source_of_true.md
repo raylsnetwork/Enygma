@@ -63,7 +63,7 @@ one multiplication — so a full hash costs ~250 operations. 100x cheaper.
 
 - **Spend key derivation**: `pk = Hash(sk)` — ZK-friendly public key from private key
 - **Nullifier**: `Hash(sk, n_block)` — marks a note spent without revealing the sender
-- **Private messaging tags**: `Hash(shared_secret, n_block)` — recipient detection
+- **Private messaging tags**: the transfer circuit publishes one tag per anonymity-set slot (see [Private Messaging Tags](#why-private-messaging-tags)).
 
 **Where it is used in EnygmaDvP**:
 
@@ -161,8 +161,9 @@ ZK circuits run inside BN254's scalar field. Curve arithmetic inside a
 circuit must use a curve native to that same field — otherwise every point
 addition requires field emulation (~30,000 constraints).
 
-BabyJubJub is native to BN254's field. A point addition costs 3–4
-constraints instead of 30,000.
+BabyJubJub is native to BN254's field. The `PointAdd` formula uses seven
+distinct products of field variables and two inversions. Multiplication by
+curve constants is linear.
 
 It has ~120-bit security — slightly below the 128-bit standard. Acceptable
 because each key is tied to a single note, not a permanent identity.
@@ -203,13 +204,13 @@ sum(input commitments) = sum(output commitments) + fee commitment
 No transfer amounts are revealed (the fee amount is public). Balance is
 proven by a single curve equation.
 
-The blinding factor `r` is derived per note from the shared secret between
-sender and recipient, unknown to anyone else.
+Shared secrets drive the blinding-factor updates for the sender's and
+recipients' balance commitments.
 
 **Where it is used in Enygma Payment**:
 
-- **Output notes**: each note commits to its amount as `C(amount, r)`,
-  stored on-chain in the Merkle tree.
+- **Account balances**: each account's current balance is stored on-chain as
+  a Pedersen commitment `C(balance, r)`. A transfer updates those commitments.
 - **Balance proof**: the circuit asserts input and output commitments
   balance, proving conservation of value without revealing any amount.
 - **Range proof**: a sub-circuit proves each amount is non-negative,
@@ -254,27 +255,15 @@ or more outputs, immediately revealing who is spending.
 
 ### Why Private Messaging Tags?
 
-After a transaction is posted, recipients need to detect if a payment was
-sent to them — without asking a server (which would leak who they are
-watching).
+The transfer circuit publishes one tag for each of the `k` anonymity-set
+slots. It hashes a tag domain, the slot's shared secret, and a per-slot nonce
+with Poseidon, then reduces the result modulo the BabyJubJub prime subgroup
+order. The nonce combines the transfer nullifier with a hash of the ordered
+sender and recipient account IDs.
 
-Each transaction includes `k` tags, one per anonymity set member:
-
-```
-t_i = Hash(shared_secret(i, sender), n_block)
-```
-
-A recipient computes the tag they expect from each possible sender and
-compares it against the published tags. A match means there is a payment
-for them in that transaction. No match means they were just cover traffic.
-
-This lets every privacy node scan locally without revealing to anyone
-which transactions they are checking.
-
-**Where it is used in Enygma Payment**:
-
-- Every transaction carries `k` tags. Recipients brute-force scan them
-  locally each block to detect incoming payments.
+Recipient-side transfer scanning is future work for Enygma Payment. The
+private-tag scanner shipped in this repository is for Retail Payments and
+uses that protocol's tag channels.
 
 ---
 
@@ -285,8 +274,8 @@ For financial institutions making frequent, high-volume payments this
 adds overhead — proofs must reference specific input notes and build
 Merkle inclusion paths for each one.
 
-Enygma Payment uses a running balance: each privacy node has a single
-shielded balance on-chain, updated atomically each block. A transaction
+Enygma Payment uses a running balance. Each privacy node has a single
+shielded balance on-chain, updated atomically on transfer. A transaction
 debits the sender's balance and credits the recipients'. There are no
 individual notes to track or inclusion proofs to construct.
 
@@ -460,10 +449,10 @@ still accepted, because the contract stores all historical roots.
 The alternative is one shared vault for all assets. The problem with that is the
 commitment formula.
 
-Both ERC20 and ERC721 notes use the same commitment formula:
-`Poseidon(pk, salt, amount, tokenId)`. For ERC721, `amount` is always hardcoded to `1`
-since a non-fungible token has no quantity. This means the commitment formats are
-identical in structure — only the values differ.
+Both ERC20 and ERC721 notes use `Poseidon(pk, salt, amount, tokenId)`. The
+ERC721 vault sets `amount` to `1` on deposit. In `DvPDestination` the prover
+supplies the amount as a witness. The circuit range-checks it and constrains
+the input note and delivery commitment to use the same amount and token ID.
 
 That is exactly the problem. If both asset types shared one Merkle tree, a user could
 present an ERC721 note (amount=1, tokenId=X) as if it were an ERC20 note with

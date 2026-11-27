@@ -91,12 +91,17 @@ Returns the Merkle tree status for **all vaults**, plus a cross-check that verif
 | `localRoot`   | string       | Root computed locally by replaying on-chain `Commitment` events                                |
 | `match`       | bool         | `true` if `localRoot == onChainRoot`                                                           |
 | `leafCount`   | int          | Total number of `Commitment` events found on-chain                                             |
-| `treeNumber`  | uint64       | Current tree number (increments when the tree fills up at 256 leaves)                          |
-| `tree.depth`  | int          | Tree depth (always 8; max 256 leaves per tree)                                                 |
+| `treeNumber`  | uint64       | Current on-chain tree number                                                                  |
+| `tree.depth`  | int          | Tree depth used for the local replay (8 on the current deployments)                           |
 | `tree.root`   | string       | Same as `localRoot`                                                                            |
-| `tree.levels` | `[][]string` | All tree levels in decimal. `levels[0]` = leaves, `levels[8]` = `[root]`                       |
+| `tree.levels` | `[][]string` | All levels in decimal, from the leaves at level 0 to the root at level `tree.depth`            |
 | `tree.zeros`  | `[]string`   | Zero values per level. `zeros[i]` is the implicit sibling when a node at level `i` has no pair |
 | `error`       | string       | Set if this vault could not be checked                                                         |
+
+DvP's `Merkle.insertLeaves` starts a new tree before inserting a batch when
+`nextLeafIndex + batchSize >= 2^depth`. At depth 8, a tree filled one leaf at a
+time therefore holds 255 leaves. The separate auction `AuctionCoinVault`
+uses `> 2^depth`, so its depth-8 tree can hold all 256 leaves.
 
 ---
 
