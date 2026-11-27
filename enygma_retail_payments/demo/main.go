@@ -30,6 +30,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -46,6 +47,7 @@ import (
 
 	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
+	"github.com/raylsnetwork/enygma_dvp/src/demohttp"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -64,9 +66,9 @@ var indexHTML string
 // ── Config ─────────────────────────────────────────────────────────────────────
 
 const (
-	listenAddr    = ":9091"
-	relayerURL    = "http://localhost:8090"
-	relayerAPIKey = "test-api-key-dev-only"
+	defaultListenAddr = "127.0.0.1:9091"
+	relayerURL        = "http://localhost:8090"
+	relayerAPIKey     = "test-api-key-dev-only"
 
 	// Hardhat account[0] — Alice (deposits into the vault)
 	alicePrivKeyHex = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
@@ -179,7 +181,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	ch := s.broker.subscribe()
 	defer s.broker.unsubscribe(ch)
@@ -205,8 +206,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+	if !demohttp.CheckPost(w, r, false) {
 		return
 	}
 	if !s.runLock.TryLock() {
@@ -1063,6 +1063,9 @@ func runFlow(b *Broker, withTag bool) {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func main() {
+	listenAddr := flag.String("addr", defaultListenAddr, "listen address")
+	flag.Parse()
+
 	broker := newBroker()
 	srv := &Server{broker: broker}
 
@@ -1071,9 +1074,8 @@ func main() {
 	mux.HandleFunc("/events", srv.handleEvents)
 	mux.HandleFunc("/run", srv.handleRun)
 
-	log.Printf("Enygma Retail Payments Demo listening on http://localhost%s", listenAddr)
-	log.Printf("Open http://localhost%s in your browser", listenAddr)
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	log.Printf("Enygma Retail Payments Demo listening on http://%s", *listenAddr)
+	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }

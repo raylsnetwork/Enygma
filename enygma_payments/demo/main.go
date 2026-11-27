@@ -314,13 +314,18 @@ func (s *Server) requireAdminKey(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, indexHTML)
+	serveDemoPage(w, indexHTML)
 }
 
 func (s *Server) handleBank(w http.ResponseWriter, r *http.Request) {
+	serveDemoPage(w, bankHTML)
+}
+
+func serveDemoPage(w http.ResponseWriter, page string) {
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, bankHTML)
+	fmt.Fprint(w, page)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

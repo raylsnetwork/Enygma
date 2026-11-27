@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"enygma_retail_payments/shield_demo/engine"
+
+	"github.com/raylsnetwork/enygma_dvp/src/demohttp"
 )
 
 //go:embed index.html
@@ -267,8 +269,7 @@ func (s *server) handleDefaults(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+	if !demohttp.CheckPost(w, r, true) {
 		return
 	}
 	opts := engine.DefaultOptions()
@@ -360,8 +361,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleRelease lets a waiting walkthrough perform its next action.
 func (s *server) handleRelease(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+	if !demohttp.CheckPost(w, r, false) {
 		return
 	}
 	s.mu.Lock()
@@ -378,8 +378,7 @@ func (s *server) handleRelease(w http.ResponseWriter, r *http.Request) {
 // handleTransfer makes a manual transfer on the last completed run and
 // answers once it has settled, or with why it was refused.
 func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+	if !demohttp.CheckPost(w, r, true) {
 		return
 	}
 	var t engine.Transfer
@@ -424,7 +423,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 func main() {
 	root := flag.String("root", "..", "enygma_retail_payments directory")
-	addr := flag.String("addr", ":9092", "listen address")
+	addr := flag.String("addr", "127.0.0.1:9092", "listen address")
 	logDir := flag.String("logs", "", "directory of the services' logs (hardhat.log, gnark.log, relayer.log) to show in the terminal; none if empty")
 	dev := flag.Bool("dev", false, "serve <root>/shield_demo/index.html and protocol.html from disk on every request instead of the embedded copies, so a page edit needs only a refresh")
 	flag.Parse()
@@ -437,6 +436,6 @@ func main() {
 		s.primerFile = filepath.Join(*root, "shield_demo", "protocol.html")
 	}
 
-	log.Printf("Enygma Retail Shield Demo listening on http://localhost%s", *addr)
+	log.Printf("Enygma Retail Shield Demo listening on http://%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, s.routes()))
 }

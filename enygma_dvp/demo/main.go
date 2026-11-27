@@ -27,6 +27,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math/big"
@@ -42,6 +43,7 @@ import (
 	"time"
 
 	"github.com/raylsnetwork/enygma_dvp/src/core"
+	"github.com/raylsnetwork/enygma_dvp/src/demohttp"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -58,8 +60,8 @@ var indexHTML string
 // ── Config ─────────────────────────────────────────────────────────────────────
 
 const (
-	listenAddr = ":9092"
-	gnarkURL   = "http://127.0.0.1:8081"
+	defaultListenAddr = "127.0.0.1:9092"
+	gnarkURL          = "http://127.0.0.1:8081"
 
 	// Hardhat account[0] — same address settles both legs on-chain; Alice and
 	// Bob are distinguished by their off-chain spend/view keypairs, not by
@@ -278,7 +280,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	ch := s.broker.subscribe()
 	defer s.broker.unsubscribe(ch)
@@ -311,8 +312,7 @@ var stepFns map[string]func(*FlowState)
 // It refuses to start a step whose prerequisites haven't completed yet, and
 // refuses to start a second step while one is already running.
 func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+	if !demohttp.CheckPost(w, r, false) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/step/")
@@ -349,8 +349,7 @@ func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
 // handleReset clears all flow state and tells every connected client to
 // blank their UI. Refuses to run while a step is in flight.
 func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+	if !demohttp.CheckPost(w, r, false) {
 		return
 	}
 	if !s.runLock.TryLock() {
@@ -1104,6 +1103,9 @@ func init() {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func main() {
+	listenAddr := flag.String("addr", defaultListenAddr, "listen address")
+	flag.Parse()
+
 	broker := newBroker()
 	srv := &Server{broker: broker, fs: newFlowState(broker)}
 
@@ -1113,9 +1115,8 @@ func main() {
 	mux.HandleFunc("/step/", srv.handleStep)
 	mux.HandleFunc("/reset", srv.handleReset)
 
-	log.Printf("Enygma DvP · NFT ↔ ERC20 Swap Demo (step-by-step) listening on http://localhost%s", listenAddr)
-	log.Printf("Open http://localhost%s in your browser", listenAddr)
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	log.Printf("Enygma DvP · NFT ↔ ERC20 Swap Demo (step-by-step) listening on http://%s", *listenAddr)
+	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
