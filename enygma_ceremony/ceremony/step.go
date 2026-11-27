@@ -36,11 +36,11 @@ func Inspect(path string) (Info, error) {
 	switch kind {
 	case KindPhase1:
 		s := new(phase1State)
-		h, err := open(path, kind, s.decode)
+		h, err := open(path, kind, s)
 		return s.info(h), err
 	case KindPhase2:
 		s := new(phase2State)
-		h, err := open(path, kind, s.decode)
+		h, err := open(path, kind, s)
 		return s.info(h), err
 	case KindSRS:
 		s, h, err := readSRS(path)
@@ -179,7 +179,7 @@ func ContributeWithProgress(in io.Reader, size int64, out io.Writer, report func
 	}
 	readingShare, randomizingShare := shares(kind)
 	pr.share, pr.from = readingShare, 0
-	if err := read(br, size, kind, s.decode); err != nil {
+	if err := read(br, size, kind, s); err != nil {
 		return Receipt{}, err
 	}
 	reading := time.Since(started)
@@ -187,7 +187,9 @@ func ContributeWithProgress(in io.Reader, size int64, out io.Writer, report func
 		Part: PartRandomizing, Fraction: readingShare, Until: readingShare + randomizingShare,
 		Estimate: time.Duration(float64(reading) * partsPerReading[kind].randomizing),
 	})
-	s.contribute()
+	if err := contributeTo(s); err != nil {
+		return Receipt{}, err
+	}
 	outHash := sha256.New()
 	pw := &progressWriter{w: out, total: size, report: report, from: readingShare + randomizingShare, share: 1 - readingShare - randomizingShare}
 	w := bufio.NewWriterSize(io.MultiWriter(pw, outHash), 1<<20)
@@ -206,6 +208,19 @@ func ContributeWithProgress(in io.Reader, size int64, out io.Writer, report func
 	return r, nil
 }
 
+// contributeTo adds this machine's randomness to s, and turns a panic in
+// gnark, on a state crafted to cause one, into an error (audit R-009): the
+// program that called it carries on to say what went wrong.
+func contributeTo(s contributable) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: gnark cannot contribute to this state: %v", ErrFormat, r)
+		}
+	}()
+	s.contribute()
+	return nil
+}
+
 // Check verifies that the state at next is one valid contribution on top of
 // the state at prev: of the same ceremony, numbered next, and an update gnark's
 // mpcsetup proves correct. The coordinator runs it on every upload before
@@ -218,19 +233,19 @@ func Check(prev, next string) error {
 	switch kind {
 	case KindPhase1:
 		p, q := new(phase1State), new(phase1State)
-		if _, err := open(prev, kind, p.decode); err != nil {
+		if _, err := open(prev, kind, p); err != nil {
 			return err
 		}
-		if _, err := open(next, kind, q.decode); err != nil {
+		if _, err := open(next, kind, q); err != nil {
 			return err
 		}
 		return checkPhase1Step(p, q)
 	case KindPhase2:
 		p, q := new(phase2State), new(phase2State)
-		if _, err := open(prev, kind, p.decode); err != nil {
+		if _, err := open(prev, kind, p); err != nil {
 			return err
 		}
-		if _, err := open(next, kind, q.decode); err != nil {
+		if _, err := open(next, kind, q); err != nil {
 			return err
 		}
 		return checkPhase2Step(p, q)

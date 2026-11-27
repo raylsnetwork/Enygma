@@ -538,6 +538,7 @@ ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_cer
 # runs it every time: commit it with the fix. A target no longer in its
 # package fails the run (go test -fuzz would match nothing, and pass).
 CEREMONY_FUZZ := ceremony.FuzzDecode ceremony.FuzzCheck ceremony.FuzzCheckEdits ceremony.FuzzContribute \
+	ceremony.FuzzReencode ceremony.FuzzPhase2Shapes \
 	transcript.FuzzLoad transcript.FuzzFetch drand.FuzzVerify \
 	coordinator.FuzzCleanName coordinator.FuzzRequests coordinator.FuzzUpload
 FUZZTIME ?= 1m

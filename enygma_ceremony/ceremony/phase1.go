@@ -87,7 +87,7 @@ func SealPhase1(out string, beacon []byte, contributions []string) (Receipt, err
 	var prev *phase1State
 	for i, path := range contributions {
 		next := new(phase1State)
-		if _, err := open(path, KindPhase1, next.decode); err != nil {
+		if _, err := open(path, KindPhase1, next); err != nil {
 			return Receipt{}, err
 		}
 		if prev == nil {
@@ -146,7 +146,7 @@ func (s *srsFile) decode(r *body) error {
 // readSRS reads the SRS file at path and returns it with the file's sha256.
 func readSRS(path string) (*srsFile, [32]byte, error) {
 	s := new(srsFile)
-	h, err := open(path, KindSRS, s.decode)
+	h, err := open(path, KindSRS, s)
 	return s, h, err
 }
 

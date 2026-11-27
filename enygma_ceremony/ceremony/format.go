@@ -12,6 +12,7 @@ package ceremony
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -76,10 +77,14 @@ const MinBeacon = 16
 // maxDomain is the largest domain BN254's FFT supports.
 const maxDomain = 1 << 28
 
-// MaxDownload is the most a participant's program or a verifier downloads
-// as one state: a Phase 1 of 2^20 is about 200 MB, so a coordinator that
-// sends more is not sending a state.
-const MaxDownload = 1 << 30
+// DefaultMaxState is the most a participant's program or a verifier
+// downloads as one state, unless told otherwise (join and verify -max-state):
+// room for the largest state the ceremony plans, a Phase 1 of 2^18 (50 MB).
+// A decoder allocates at most a small multiple of a state's size
+// (body.bounded), so the bound on a state's size bounds what a coordinator
+// can make a participant allocate (audit R-037): about 1.5 GiB at this one,
+// where 1 GiB states allowed tens of GiB.
+const DefaultMaxState = 64 << 20
 
 // checkBeacon accepts a beacon of at least MinBeacon bytes.
 func checkBeacon(beacon []byte) error {
@@ -124,8 +129,11 @@ func (b *body) Read(p []byte) (int, error) {
 // big-endian integer read on its own, of elements of at least minElement
 // bytes each; so bounded refuses any such integer larger than the bytes left
 // could hold. A crafted file then makes its decoder allocate at most a small
-// multiple of its own size (gnark's Phase 1 is the worst: about 15 times),
-// where it could otherwise ask for terabytes in its first few bytes.
+// multiple of its own size, where it could otherwise ask for terabytes in its
+// first few bytes. A crafted Phase 2 is the worst, at 23 times as measured
+// (TestCraftedPhase2Allocation: gnark allocates each commitment's points
+// before reading any), with its circuit count held to minCircuit bytes each;
+// a Phase 1 about 15. FuzzDecode holds every state to 64 times.
 func (b *body) bounded() io.Reader { return countsBounded{b} }
 
 // countsBounded is a body whose integer reads are checked as bounded says.
@@ -198,10 +206,20 @@ func write(w io.Writer, kind Kind, encode func(io.Writer) error) error {
 	return encode(w)
 }
 
-// read reads a state file of kind, size bytes long, from r through decode,
-// which must consume it exactly.
-func read(r io.Reader, size int64, kind Kind, decode func(*body) error) error {
-	b := &body{r: r, left: size}
+// stateCodec is a state that reads and writes its file's body.
+type stateCodec interface {
+	decode(*body) error
+	encode(io.Writer) error
+}
+
+// read reads a state file of kind, size bytes long, from r into s, which must
+// consume it exactly. The file must be the one encoding of what it holds
+// (audit R-008): gnark also decodes points written uncompressed, so one state
+// could otherwise have several files, and several sha256s, while the
+// transcript, receipts and every seal name a state by its file's sha256.
+func read(r io.Reader, size int64, kind Kind, s stateCodec) error {
+	in := sha256.New()
+	b := &body{r: io.TeeReader(r, in), left: size}
 	got, err := readHeader(b)
 	if err != nil {
 		return err
@@ -209,11 +227,18 @@ func read(r io.Reader, size int64, kind Kind, decode func(*body) error) error {
 	if got != kind {
 		return fmt.Errorf("%w: holds %s, want %s", ErrKind, got, kind)
 	}
-	if err := decode(b); err != nil {
+	if err := s.decode(b); err != nil {
 		return err
 	}
 	if _, err := b.Read(make([]byte, 1)); err != io.EOF {
 		return fmt.Errorf("%w: data after the state", ErrFormat)
+	}
+	again := sha256.New()
+	if err := write(again, kind, s.encode); err != nil {
+		return err
+	}
+	if !bytes.Equal(in.Sum(nil), again.Sum(nil)) {
+		return fmt.Errorf("%w: not the state's one encoding (points are written compressed)", ErrFormat)
 	}
 	return nil
 }
@@ -262,9 +287,9 @@ func writeNew(path string, fill func(io.Writer) error) (err error) {
 	return f.Close()
 }
 
-// open reads the state file of kind at path through decode and returns the
-// file's sha256.
-func open(path string, kind Kind, decode func(*body) error) (digest [32]byte, err error) {
+// open reads the state file of kind at path into s and returns the file's
+// sha256.
+func open(path string, kind Kind, s stateCodec) (digest [32]byte, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return digest, err
@@ -275,7 +300,7 @@ func open(path string, kind Kind, decode func(*body) error) (digest [32]byte, er
 		return digest, err
 	}
 	h := sha256.New()
-	if err := read(bufio.NewReaderSize(io.TeeReader(f, h), 1<<20), st.Size(), kind, decode); err != nil {
+	if err := read(bufio.NewReaderSize(io.TeeReader(f, h), 1<<20), st.Size(), kind, s); err != nil {
 		return digest, fmt.Errorf("%s: %w", path, err)
 	}
 	copy(digest[:], h.Sum(nil))

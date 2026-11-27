@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"enygma_ceremony/ceremony"
@@ -26,6 +27,10 @@ import (
 
 // childEnv, set to 1, makes this program a contribution's child.
 const childEnv = "ENYGMA_CEREMONY_CONTRIBUTE"
+
+// childSizeEnv tells the child the size of the state its parent sends, which
+// the parent has bounded (join -max-state); the child reads that and no more.
+const childSizeEnv = "ENYGMA_CEREMONY_STATE_SIZE"
 
 // childMessage is one line the child writes on stderr.
 type childMessage struct {
@@ -46,12 +51,16 @@ func runChild(stdin io.Reader, stdout, stderr io.Writer) int {
 		_ = enc.Encode(childMessage{Error: err.Error()}) // the exit code says it failed if this does not get through
 		return 1
 	}
-	state, err := io.ReadAll(io.LimitReader(stdin, ceremony.MaxDownload+1))
+	size, err := strconv.ParseInt(os.Getenv(childSizeEnv), 10, 64)
+	if err != nil || size < 1 {
+		return fail(fmt.Errorf("the size of the state to contribute to is not given (%s)", childSizeEnv))
+	}
+	state, err := io.ReadAll(io.LimitReader(stdin, size+1))
 	if err != nil {
 		return fail(err)
 	}
-	if len(state) > ceremony.MaxDownload {
-		return fail(fmt.Errorf("a state of more than %d bytes", ceremony.MaxDownload))
+	if int64(len(state)) != size {
+		return fail(fmt.Errorf("a state of %d bytes, announced as %d", len(state), size))
 	}
 	out := bufio.NewWriterSize(stdout, 1<<20)
 	receipt, err := ceremony.ContributeWithProgress(bytes.NewReader(state), int64(len(state)), out, func(p ceremony.Progress) {
@@ -78,7 +87,7 @@ func contributeInChild(ctx context.Context) func(in io.Reader, size int64, out i
 			return ceremony.Receipt{}, fmt.Errorf("finding this program, to contribute in a process of its own: %w", err)
 		}
 		cmd := exec.CommandContext(ctx, exe)
-		cmd.Env = append(os.Environ(), childEnv+"=1")
+		cmd.Env = append(os.Environ(), childEnv+"=1", childSizeEnv+"="+strconv.FormatInt(size, 10))
 		cmd.Stdin, cmd.Stdout = io.LimitReader(in, size), out
 		stderr, err := cmd.StderrPipe()
 		if err != nil {

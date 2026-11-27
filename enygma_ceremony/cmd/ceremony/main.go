@@ -169,7 +169,9 @@ func check(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err := ceremony.Check(*prev, *next); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "OK: %s is a valid contribution on top of %s\n", *next, *prev)
+		// One step, not a transcript: prev itself, and how it was reached, are
+		// not checked here (audit R-034); verify checks a phase from its start.
+		fmt.Fprintf(w, "OK: %s is a valid step from %s (%s itself not checked: verify checks a whole phase)\n", *next, *prev, *prev)
 		return nil
 	}
 }

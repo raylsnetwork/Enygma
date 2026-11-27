@@ -70,7 +70,7 @@ func FuzzDecode(f *testing.F) {
 	// TestCraftedCountsAreRefusedBeforeAllocating), set to 4 million points:
 	// 256 MiB, from a file of a few kilobytes.
 	p2 := new(phase2State)
-	if _, err := open(fx.p2[1], KindPhase2, p2.decode); err != nil {
+	if _, err := open(fx.p2[1], KindPhase2, p2); err != nil {
 		f.Fatal(err)
 	}
 	kAt := len(magic) + 1 + 1 + len(p2.ceremony) + 32 + 4 + 2 + 1 + len(p2.circuits[0].name) + 32 + 2 + 32
@@ -87,7 +87,7 @@ func FuzzDecode(f *testing.F) {
 		s := codecFor(kind)
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
-		err := read(bytes.NewReader(data), int64(len(data)), kind, s.decode)
+		err := read(bytes.NewReader(data), int64(len(data)), kind, s)
 		runtime.ReadMemStats(&after)
 		if grew := after.TotalAlloc - before.TotalAlloc; grew > 64*uint64(len(data))+8<<20 {
 			t.Fatalf("decoding %d bytes allocated %d", len(data), grew)

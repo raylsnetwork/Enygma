@@ -253,7 +253,7 @@ func TestFetch(t *testing.T) {
 		}
 		url, _ := serve(t, src, nil)
 		_, err = Fetch(ctx, http.DefaultClient, url, t.TempDir(), io.Discard, FetchOptions{MaxBytes: 2*size + size/2})
-		if err == nil || !strings.Contains(err.Error(), "more than is left to download") {
+		if err == nil || !strings.Contains(err.Error(), "than is left to download") {
 			t.Fatalf("Fetch of 3 states into room for 2.5: %v, want it refused", err)
 		}
 	})
@@ -370,7 +370,7 @@ func TestFetch(t *testing.T) {
 			switch _, statErr := os.Stat(path); {
 			case size <= limit && (err != nil || statErr != nil):
 				t.Fatalf("%d bytes, at most %d: %v, %v", size, limit, err, statErr)
-			case size > limit && (err == nil || !strings.Contains(err.Error(), "more than any state")):
+			case size > limit && (err == nil || !strings.Contains(err.Error(), "more than a state may be")):
 				t.Fatalf("%d bytes, at most %d: %v, want it refused", size, limit, err)
 			case size > limit && !errors.Is(statErr, os.ErrNotExist):
 				t.Fatalf("%d bytes, at most %d: kept at %s", size, limit, path)

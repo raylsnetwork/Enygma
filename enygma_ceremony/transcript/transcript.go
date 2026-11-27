@@ -272,6 +272,9 @@ type FetchOptions struct {
 	Check bool
 	// MaxBytes bounds what Fetch downloads in all; DefaultMaxBytes when 0.
 	MaxBytes int64
+	// MaxState bounds what Fetch downloads as one state;
+	// ceremony.DefaultMaxState when 0.
+	MaxState int64
 }
 
 // Fetch copies the transcript the coordinator at url serves into dir, in the
@@ -282,6 +285,9 @@ type FetchOptions struct {
 func Fetch(ctx context.Context, client *http.Client, url, dir string, out io.Writer, opt FetchOptions) (Transcript, error) {
 	if opt.MaxBytes <= 0 {
 		opt.MaxBytes = DefaultMaxBytes
+	}
+	if opt.MaxState <= 0 {
+		opt.MaxState = ceremony.DefaultMaxState
 	}
 	url = strings.TrimSuffix(url, "/")
 	var t Transcript
@@ -319,7 +325,7 @@ func Fetch(ctx context.Context, client *http.Client, url, dir string, out io.Wri
 		}
 		if have != hash {
 			fmt.Fprintf(out, "downloading state %d of %d\n", i, len(t.Contributions))
-			n, err := download(ctx, client, fmt.Sprintf("%s/v1/states/%d", url, i), dir, path, hash, min(int64(ceremony.MaxDownload), budget))
+			n, err := download(ctx, client, fmt.Sprintf("%s/v1/states/%d", url, i), dir, path, hash, min(opt.MaxState, budget))
 			if err != nil {
 				return t, fmt.Errorf("state %d: %w", i, err)
 			}
@@ -428,7 +434,7 @@ func download(ctx context.Context, client *http.Client, url, dir, path, hash str
 		err = cerr
 	}
 	if err == nil && n > limit {
-		err = fmt.Errorf("served more than %d bytes, more than any state, or more than is left to download", limit)
+		err = fmt.Errorf("served more than %d bytes: more than a state may be (-max-state), or than is left to download (-max-bytes)", limit)
 	}
 	if err == nil {
 		if got := hex.EncodeToString(h.Sum(nil)); got != hash {

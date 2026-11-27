@@ -131,6 +131,9 @@ type Client struct {
 	// contributed already is taken only for a contribution this run made, or
 	// for Mine: a coordinator could otherwise hand them someone else's.
 	Mine string
+	// MaxState is the most to download as one state; ceremony.DefaultMaxState
+	// when zero. A coordinator sending more is refused before it is decoded.
+	MaxState int64
 
 	cfg         coordinator.ClientConfig
 	made        []ceremony.Receipt // every contribution this run made, uploaded or not
@@ -671,14 +674,21 @@ func (c *Client) download(ctx context.Context, want [32]byte) ([]byte, error) {
 	if err := statusError(resp); err != nil {
 		return nil, err
 	}
-	body := &downloadProgress{r: io.LimitReader(resp.Body, ceremony.MaxDownload+1), total: resp.ContentLength, event: c.event}
+	limit := c.MaxState
+	if limit <= 0 {
+		limit = ceremony.DefaultMaxState
+	}
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("the coordinator would send %d bytes for a state, more than %d (join -max-state raises it)", resp.ContentLength, limit)
+	}
+	body := &downloadProgress{r: io.LimitReader(resp.Body, limit+1), total: resp.ContentLength, event: c.event}
 	state, err := io.ReadAll(body)
 	if err != nil {
 		// A transfer cut short is the network's failure, as a failed request is.
 		return nil, &url.Error{Op: req.Method, URL: req.URL.String(), Err: err}
 	}
-	if len(state) > ceremony.MaxDownload {
-		return nil, fmt.Errorf("the coordinator sent more than %d bytes for a state", ceremony.MaxDownload)
+	if int64(len(state)) > limit {
+		return nil, fmt.Errorf("the coordinator sent more than %d bytes for a state (join -max-state raises it)", limit)
 	}
 	if got := sha256.Sum256(state); got != want {
 		return nil, fmt.Errorf("the coordinator sent a state of sha256 %x, having announced %x", got, want)

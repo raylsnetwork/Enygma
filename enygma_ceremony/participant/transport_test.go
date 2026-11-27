@@ -2,7 +2,9 @@ package participant
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +57,46 @@ func TestFollowsNoRedirect(t *testing.T) {
 	}
 	if elsewhere.Load() {
 		t.Fatal("the program followed the redirect")
+	}
+}
+
+// TestStateSizeIsBounded (audit R-037): the program downloads at most
+// MaxState bytes as a state, whether the coordinator announces a larger
+// length or streams one, so a coordinator cannot make it decode, and
+// allocate for, a state larger than the ceremony plans.
+func TestStateSizeIsBounded(t *testing.T) {
+	const limit = 100
+	for _, c := range []struct {
+		name    string
+		size    int
+		chunked bool
+		ok      bool
+	}{
+		{"at the bound", limit, false, true},
+		{"announced past it", limit + 1, false, false},
+		{"streamed past it", limit + 1, true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			state := []byte(strings.Repeat("s", c.size))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if c.chunked {
+					w.WriteHeader(http.StatusOK)
+					w.(http.Flusher).Flush() // no Content-Length: the length is known only at the end
+				} else {
+					w.Header().Set("Content-Length", fmt.Sprint(len(state)))
+				}
+				_, _ = w.Write(state)
+			}))
+			defer srv.Close()
+			cl := &Client{URL: srv.URL, HTTP: srv.Client(), MaxState: limit}
+			got, err := cl.download(context.Background(), sha256.Sum256(state))
+			if c.ok && (err != nil || len(got) != c.size) {
+				t.Fatalf("a state of %d bytes, at most %d: %d bytes, %v", c.size, limit, len(got), err)
+			}
+			if !c.ok && (err == nil || !strings.Contains(err.Error(), "-max-state")) {
+				t.Fatalf("a state of %d bytes, at most %d: %v, want it refused", c.size, limit, err)
+			}
+		})
 	}
 }
 

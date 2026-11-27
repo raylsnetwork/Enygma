@@ -142,6 +142,15 @@ func (s *phase2State) decode(r *body) error {
 	if err := get(r.bounded(), &count); err != nil {
 		return err
 	}
+	if count == 0 {
+		// A step of no circuits checks nothing, and seals no key (audit R-034).
+		return fmt.Errorf("%w: a Phase 2 of no circuits", ErrFormat)
+	}
+	// bounded holds the count to 32 bytes a circuit, where each allocates
+	// about 576: a circuit takes at least minCircuit in the file (audit R-073).
+	if room := max(r.left, 0) / minCircuit; int64(count) > room {
+		return fmt.Errorf("%w: %d circuits, where %d bytes are left", ErrFormat, count, r.left)
+	}
 	s.circuits = make([]phase2Circuit, count)
 	for i := range s.circuits {
 		c := &s.circuits[i]
@@ -154,9 +163,22 @@ func (s *phase2State) decode(r *body) error {
 		if _, err := c.mpc.ReadFrom(r.bounded()); err != nil {
 			return fmt.Errorf("%w: circuit %s: %v", ErrFormat, c.name, err)
 		}
+		// gnark's Contribute panics past 255 commitments, after drawing the
+		// randomness (audit R-009): refused here, before anyone contributes.
+		if n := len(c.mpc.Parameters.G1.SigmaCKK); n > maxCommitments {
+			return fmt.Errorf("%w: circuit %s: %d commitments, more than gnark takes (%d)", ErrFormat, c.name, n, maxCommitments)
+		}
 	}
 	return nil
 }
+
+// maxCommitments is the most commitments a circuit's Phase 2 may hold: gnark
+// tells each one's proof apart by a byte.
+const maxCommitments = 255
+
+// minCircuit is the fewest bytes a circuit takes in a Phase 2 file: its [δ]₂
+// (64) and δ's update proof (32 and 64) alone, compressed.
+const minCircuit = 160
 
 // info describes the state, whose file has sha256 h.
 func (s *phase2State) info(h [32]byte) Info {
@@ -324,7 +346,7 @@ func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte
 	}
 	for i, path := range contributions {
 		next := new(phase2State)
-		if _, err := open(path, KindPhase2, next.decode); err != nil {
+		if _, err := open(path, KindPhase2, next); err != nil {
 			return err
 		}
 		if err := checkPhase2Step(prev, next); err != nil {

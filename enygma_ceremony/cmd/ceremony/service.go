@@ -34,11 +34,12 @@ func join(fs *flag.FlagSet) func([]string, io.Writer) error {
 	url := fs.String("url", defaultURL, "the coordinator's address")
 	name := fs.String("name", "", "the name the transcript shows for you (default: asked in a terminal, else anonymous)")
 	mine := fs.String("mine", "", "the sha256 an earlier run printed for your contribution, when the coordinator says you have contributed already")
+	maxState := fs.Int64("max-state", ceremony.DefaultMaxState, "the most to download as one state, in bytes: raise it only for a ceremony announced as larger than 2^18")
 	return func(args []string, w io.Writer) error {
-		if *url == "" || len(args) != 0 {
-			return fmt.Errorf("%w: join takes -url", errUsage)
+		if *url == "" || len(args) != 0 || *maxState < 1 {
+			return fmt.Errorf("%w: join takes -url, and a positive -max-state", errUsage)
 		}
-		c := &participant.Client{URL: *url, Name: *name, Mine: *mine}
+		c := &participant.Client{URL: *url, Name: *name, Mine: *mine, MaxState: *maxState}
 		if isTerminal(os.Stdin) {
 			c.AskName = askName(bufio.NewReader(os.Stdin), w)
 		}
@@ -120,11 +121,12 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 	mine := fs.String("mine", "", "your contribution's sha256, to find in the transcript")
 	sync := fs.Bool("sync", false, "-url: let the download replace states in DIR that differ from the coordinator's, and remove states past its end (without it, a DIR holding anything else is refused)")
 	maxBytes := fs.Int64("max-bytes", transcript.DefaultMaxBytes, "-url: the most to download in all")
+	maxState := fs.Int64("max-state", ceremony.DefaultMaxState, "-url: the most to download as one state, in bytes")
 	srs := fs.String("srs", "", "Phase 2: the SRS it started from, to check its start (with -r1cs)")
 	r1cs, circuitsIn := circuitsFlags(fs)
 	return func(args []string, w io.Writer) error {
-		if *dir == "" || len(args) != 0 || (*srs == "") != (*r1cs == "") {
-			return fmt.Errorf("%w: verify takes -dir, and -srs with -r1cs for a Phase 2", errUsage)
+		if *dir == "" || len(args) != 0 || (*srs == "") != (*r1cs == "") || *maxState < 1 || *maxBytes < 1 {
+			return fmt.Errorf("%w: verify takes -dir, -srs with -r1cs for a Phase 2, and positive limits", errUsage)
 		}
 		var p2 *transcript.Phase2Start
 		if *srs != "" {
@@ -140,7 +142,7 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 		)
 		if *url != "" {
 			fmt.Fprintf(w, "Downloading the transcript from %s into %s, checking each step as it arrives.\n", *url, *dir)
-			opt := transcript.FetchOptions{Sync: *sync, Check: true, MaxBytes: *maxBytes}
+			opt := transcript.FetchOptions{Sync: *sync, Check: true, MaxBytes: *maxBytes, MaxState: *maxState}
 			if t, err = transcript.Fetch(context.Background(), participant.HTTPClient(), *url, *dir, w, opt); err != nil {
 				return err
 			}

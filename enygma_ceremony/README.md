@@ -288,7 +288,8 @@ them today.
 
 Other commands:
 - `ceremony info <state>` says what a state file holds.
-- `ceremony check -prev A -next B` checks one step.
+- `ceremony check -prev A -next B` checks one step: that B is a valid contribution on top of A.
+  It does not check A, or how A was reached; `verify` checks a phase from its start.
 - `ceremony contribute -in A -out B` contributes to a file handed over by hand.
 
 ### Checking a ceremony
@@ -305,8 +306,14 @@ Anyone can check a ceremony without trusting the coordinator:
 
   `verify` only adds to `<dir>`: it refuses a directory holding another phase, or states past the
   transcript's end, rather than overwrite them (`-sync` lets it), and downloads at most
-  `-max-bytes` (64 GiB) in all. Without `-url`, it checks `<dir>` as it is. It prints names exactly
-  as quoted strings, and refuses a transcript whose names hold control characters.
+  `-max-bytes` (64 GiB) in all and `-max-state` (64 MiB) for one state. Without `-url`, it checks
+  `<dir>` as it is. It prints names exactly as quoted strings, and refuses a transcript whose names
+  hold control characters.
+- **State files:** a state is accepted only as the one encoding of what it holds (points written
+  compressed), so its sha256 names it; a Phase 2 must hold at least one circuit, and each circuit
+  at most 255 commitments, as gnark allows. `join` also downloads at most `-max-state` (64 MiB,
+  room for Phase 1 at 2^18) for a state, which bounds the memory a coordinator can make a
+  participant's program use; raise it only for a ceremony announced as larger.
 - **The keys:**
   1. Re-export the circuits at the announced commit and compare their sha256s.
   2. Run `phase1-seal` and `phase2-seal` over the transcripts with the announced heads and
@@ -341,8 +348,10 @@ Anyone can check a ceremony without trusting the coordinator:
   - at most the previous state's size plus 64 KiB;
   - read by the turn's deadline;
   - decoded so that no length a file declares makes a decoder allocate more than a small multiple
-    of the file's size (`ceremony`'s `body.bounded`). Every decode is bounded this way, so a
-    participant reading a coordinator's state is protected too;
+    of the file's size (`ceremony`'s `body.bounded`; 23 times for the worst crafted Phase 2, as
+    measured). Every decode is bounded this way, so a participant reading a coordinator's state is
+    protected too, within `-max-state`;
+  - accepted only as the one encoding of what they hold, so a state has one sha256;
   - decoded only with gnark's own domain size equal to the state's (`domainOf`). gnark sizes a
     Phase 1 or an SRS from a domain size inside it, and a crafted 0 made its decoder panic.
 - **The page shows participants' names as text,** and is served with a Content Security Policy
@@ -366,10 +375,12 @@ Anyone can check a ceremony without trusting the coordinator:
   | `ceremony` `FuzzCheck` | `Check` never panics on any two files, and accepts only a different file numbered one past the state it builds on. |
   | `ceremony` `FuzzCheckEdits` | `Check` accepts a genuine contribution, and no edit of it: any changed, added or removed byte fails it. |
   | `ceremony` `FuzzContribute` | Contributing to any bytes never panics. |
+  | `ceremony` `FuzzReencode` | As `FuzzCheckEdits`, with a point of the contribution first rewritten uncompressed, an edit no byte mutation makes: `Check` still accepts the genuine file only. |
+  | `ceremony` `FuzzPhase2Shapes` | Contributing to a well-formed Phase 2 of any shape (circuits, commitments, lengths, challenge) never panics. |
   | `transcript` `FuzzLoad` | Whatever its entries hold, a transcript loads only as a chain. |
   | `transcript` `FuzzFetch` | Whatever a coordinator serves, `verify` writes only state files and their entries, inside its directory, and only states with the sha256 the transcript gives them. |
   | `drand` `FuzzVerify` | No signature passes but drand's own. |
-  | `coordinator` `FuzzCleanName` | A name is shown tidied, with no control or invisible characters. |
+  | `coordinator` `FuzzCleanName` | A name is shown tidied, with no control, invisible or unprintable characters, and at least one letter or digit. |
   | `coordinator` `FuzzRequests` | No request makes the coordinator panic or answer 5xx, or breaks its transcript. |
   | `coordinator` `FuzzUpload` | A turn holder's upload is accepted only if it is a genuine contribution, not edited. The transcript holds what was accepted, and only that. |
 

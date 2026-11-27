@@ -81,7 +81,7 @@ func (f *fixture) chain(t testing.TB, prefix string, n int, begin func(out strin
 func (f *fixture) rewritePhase1(t *testing.T, path, name string, edit func(*phase1State)) string {
 	t.Helper()
 	s := new(phase1State)
-	if _, err := open(path, KindPhase1, s.decode); err != nil {
+	if _, err := open(path, KindPhase1, s); err != nil {
 		t.Fatal(err)
 	}
 	edit(s)
@@ -95,7 +95,7 @@ func (f *fixture) rewritePhase1(t *testing.T, path, name string, edit func(*phas
 func (f *fixture) rewritePhase2(t *testing.T, path, name string, edit func(*phase2State)) string {
 	t.Helper()
 	s := new(phase2State)
-	if _, err := open(path, KindPhase2, s.decode); err != nil {
+	if _, err := open(path, KindPhase2, s); err != nil {
 		t.Fatal(err)
 	}
 	edit(s)
@@ -121,7 +121,7 @@ func (f *fixture) seal(t *testing.T, name string, beacon []byte) string {
 func TestSealedKeysProve(t *testing.T) {
 	f := newFixture(t)
 	s := new(phase2State)
-	if _, err := open(f.p2[1], KindPhase2, s.decode); err != nil {
+	if _, err := open(f.p2[1], KindPhase2, s); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range s.circuits {
@@ -232,7 +232,7 @@ func TestCheck(t *testing.T) {
 					t.Fatal(err)
 				}
 				s := new(phase2State)
-				if _, err := open(other, KindPhase2, s.decode); err != nil {
+				if _, err := open(other, KindPhase2, s); err != nil {
 					t.Fatal(err)
 				}
 				return f.rewritePhase2(t, f.p2[1], "p2-swapped", func(p *phase2State) {
@@ -499,7 +499,7 @@ func TestStateWithDataAfterItIsRefused(t *testing.T) {
 func TestCraftedCountsAreRefusedBeforeAllocating(t *testing.T) {
 	f := newFixture(t)
 	p2 := new(phase2State)
-	if _, err := open(f.p2[1], KindPhase2, p2.decode); err != nil {
+	if _, err := open(f.p2[1], KindPhase2, p2); err != nil {
 		t.Fatal(err)
 	}
 	headerLen := len(magic) + 1
@@ -610,7 +610,7 @@ func TestStatesSurviveShortReads(t *testing.T) {
 		{f.srs, KindSRS, new(srsFile)},
 	} {
 		data := readFile(t, c.path)
-		if err := read(iotest.OneByteReader(bytes.NewReader(data)), int64(len(data)), c.kind, c.state.decode); err != nil {
+		if err := read(iotest.OneByteReader(bytes.NewReader(data)), int64(len(data)), c.kind, c.state); err != nil {
 			t.Fatalf("%s: %v", c.kind, err)
 		}
 		var again bytes.Buffer
