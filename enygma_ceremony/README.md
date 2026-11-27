@@ -12,7 +12,11 @@ release, built in the open from a tagged commit, or build it from source.
 
 - **Phase 1** (the powers of τ) runs once and serves every circuit of every protocol, up to its
   domain size.
-- **Phase 2** runs once per protocol, for all of that protocol's circuits at once.
+- **Phase 2** runs once per protocol, for all of that protocol's circuits at once, from the SRS
+  Phase 1 was sealed to. "One contributor in each phase" means one in *that* Phase 1 and one in the
+  protocol's Phase 2: a Phase 2 started from any other SRS is only as sound as whoever made it,
+  however many contribute to it. So every Phase 2 command takes the SRS's announced sha256
+  (`-srs-sha256`), and the SRS says which Phase 1 it seals.
 
 The ceremony is always open: anyone with its address can contribute, with no invitation. A
 participant runs one program, `ceremony`, from a terminal: it waits for their turn, adds the
@@ -288,11 +292,19 @@ in:
 
    This refuses round R unless it came out after the close and after the last contribution, then
    fetches it and checks its signature against quicknet's public key (pinned in `drand/`). It
-   replays and checks every contribution up to the head (about 45 s each at 2^18), writes the
-   SRS, and beside it `phase1.srs.json`: the head, the number of contributions, the round. The
-   contributions can also be given as files, in order, instead of `-transcript`, for a chain
-   handed over by hand: the last must be the head. For tests and rehearsals only,
-   `-unverified-beacon <hex>` takes a beacon nothing checks, says so loudly, and records it.
+   replays and checks every contribution up to the head (about 45 s each at 2^18), and writes the
+   SRS. The SRS carries what it was sealed from (the head, the number of contributions, the round,
+   the close and the beacon), so its sha256 names that Phase 1, and so does every Phase 2 receipt
+   built on it. Beside it goes `phase1.srs.json`, the same as a record. The contributions can also
+   be given as files, in order, instead of `-transcript`, for a chain handed over by hand: the last
+   must be the head. For tests and rehearsals only, `-unverified-beacon <hex>` takes a beacon
+   nothing checks, says so loudly, and records it, in the SRS too.
+5. Announce the SRS's sha256, and have at least one party independent of you reseal Phase 1 from
+   its announced head, round and close and publish the sha256 they got, before any Phase 2 opens.
+   A Phase 2 is only as sound as the SRS it starts from: its keys take α and β from it, so whoever
+   knew those could forge proofs however many contributed to the Phase 2. Any file decodes as an
+   SRS, including one made from secrets someone kept; the independent reseal is what makes the
+   announced sha256 Phase 1's seal.
 
 ### 4. Phase 2, once per protocol
 
@@ -306,21 +318,27 @@ in:
    - The circuits are exactly those `keys.json` names: every `.r1cs` file in the directory must be
      one of them. Without a `keys.json`, name them with `-circuits A,B,…`. Every command that takes
      `-r1cs` prints each circuit with its sha256.
-2. Start the phase: `ceremony phase2-new -ceremony <protocol> -srs phase1.srs -r1cs <r1cs dir> -out
-   p2/state-0`.
+2. Start the phase from the SRS announced: `ceremony phase2-new -ceremony <protocol> -srs
+   phase1.srs -srs-sha256 <its announced sha256> -r1cs <r1cs dir> -out p2/state-0`. It refuses
+   any other file, and an SRS sealed with `-unverified-beacon` unless `-rehearsal` says otherwise.
+   It prints what the SRS was sealed from, and the start's sha256: announce it, with the SRS's and
+   each circuit's.
 3. Serve it, with a new close time and beacon round, and the SRS and circuits so its start is
-   checked: `ceremony coordinate -dir p2 -srs phase1.srs -r1cs <r1cs dir> …`, same address, same
-   page.
+   checked: `ceremony coordinate -dir p2 -srs phase1.srs -srs-sha256 <its announced sha256> -r1cs
+   <r1cs dir> …`, same address, same page. The page shows the SRS's sha256 and what it was sealed
+   from, and `join` prints the SRS's sha256 with each Phase 2 receipt, for participants to compare
+   with the announcement.
 4. Seal it, with the head announced at the close:
 
    ```bash
-   ceremony phase2-seal -ceremony <protocol> -srs phase1.srs -r1cs <r1cs dir> \
-       -transcript p2 -head <head> -drand <R> -close-at <the close> -keys <keys dir>
+   ceremony phase2-seal -ceremony <protocol> -srs phase1.srs -srs-sha256 <its announced sha256> \
+       -r1cs <r1cs dir> -transcript p2 -head <head> -drand <R> -close-at <the close> -keys <keys dir>
    ```
 
    - It writes each key at its `keys.json` path, so `<keys dir>` has the server's own layout
      (`scripts/keys/PaymentPK.key`, `keys/zkdvp/WithdrawPk6.key`, `scripts/keys/AuctionBatch.pk`,
-     …), and `ceremony-seal.json`: the head, the round, and each circuit's and key's sha256.
+     …), and `ceremony-seal.json`: the head, the round, the SRS's sha256 and the Phase 1 it says it
+     was sealed from (`phase1`), and each circuit's and key's sha256.
    - The keys appear all together or not at all, and never over a key already there.
    - Copy it over the gnark module's directory.
 5. Stamp the keys and re-export what is built from them, as the protocol's keygen target does.
@@ -346,8 +364,16 @@ Anyone can check a ceremony without trusting the coordinator:
   start where it should:
   - a Phase 1 where every Phase 1 of its size starts;
   - a Phase 2 where its SRS and circuits make it start. Give them, as `phase2-seal` takes them:
-    `-srs phase1.srs -r1cs <r1cs dir>`. Without them, `verify` checks every step but ends `NOT
-    VERIFIED`, with exit status 1.
+    `-srs phase1.srs -r1cs <r1cs dir>`, with the SRS's announced sha256 (`-srs-sha256`), or with
+    Phase 1's transcript and its announced head (`-phase1 <dir> -phase1-head <head>`): `verify`
+    then checks the SRS says it was sealed up to that head, reseals Phase 1 as the SRS says
+    (fetching its drand round again), and takes the SRS only if the reseal is the same file. Any
+    transcript reseals to the SRS sealed from it, so the head is what ties it to the announced
+    Phase 1.
+    Without them, `verify` checks every step but ends `NOT VERIFIED`, with exit status 1.
+
+  `-size <n>` (a Phase 1) or `-ceremony <protocol>` (a Phase 2) refuses a phase other than the one
+  announced: a host can serve any phase. The verdict says which phase was checked.
 
   `verify` only adds to `<dir>`: it refuses a directory holding another phase, or states past the
   transcript's end, rather than overwrite them (`-sync` lets it), and downloads at most
@@ -355,18 +381,24 @@ Anyone can check a ceremony without trusting the coordinator:
   `<dir>` as it is. It prints names exactly as quoted strings, and refuses a transcript whose names
   hold control characters.
 - **State files:** a state is accepted only as the one encoding of what it holds (points written
-  compressed), so its sha256 names it; a Phase 2 must hold at least one circuit, and each circuit
-  at most 255 commitments, as gnark allows. A Phase 2's ceremony and circuit names are plain names
-  (letters, digits, `_`, `.` and `-`, at most 64 bytes), so no name in a state a coordinator
-  hands out can act on a terminal or a shell. `join` also downloads at most `-max-state` (64 MiB,
-  room for Phase 1 at 2^18) for a state, which bounds the memory a coordinator can make a
-  participant's program use; raise it only for a ceremony announced as larger.
+  compressed), so its sha256 names it; a Phase 2 must hold at least one circuit, and each circuit at
+  most 169 commitments, as many as gnark's Phase 2 seal takes (its contributions take 255). A Phase
+  2's ceremony and circuit names are plain names (letters, digits, `_`, `.` and `-`, at most 64
+  bytes), so no name in a state a coordinator hands out can act on a terminal or a shell. `join`
+  also downloads at most `-max-state` (64 MiB, room for Phase 1 at 2^18) for a state, which bounds
+  the memory a coordinator can make a participant's program use; raise it only for a ceremony
+  announced as larger.
 - **The keys:**
   1. Re-export the circuits at the announced commit and compare their sha256s.
-  2. Run `phase1-seal` and `phase2-seal` over the transcripts with the announced heads and
-     rounds.
-  3. Compare the keys' sha256s with the deployed ones, and with the seal's record
-     (`ceremony-seal.json`).
+  2. Run `phase1-seal` over Phase 1's transcript with its announced head and round, and compare
+     the SRS's sha256 with the announced one.
+  3. Run `phase2-seal` over each Phase 2's transcript with its announced head and round, and with
+     *the SRS your own `phase1-seal` wrote* (or `-phase1 <Phase 1's transcript> -phase1-head
+     <its announced head>`), never a
+     downloaded SRS taken on trust: a Phase 2 resealed from the SRS it was served proves nothing
+     about Phase 1.
+  4. Compare the keys' sha256s with the deployed ones, and with the seal's record
+     (`ceremony-seal.json`), whose `srs_sha256` and `phase1` must be those of the announced Phase 1.
 
   A seal recomputes each phase's start itself, so a transcript that does not chain from the real
   start fails. It seals up to the announced head and no other chain, and takes only a drand round
@@ -399,8 +431,9 @@ Anyone can check a ceremony without trusting the coordinator:
    ```
 
    Keep the Phase 1 record beside the SRS and the Phase 2 record at the key root.
-   `verify-keys` checks the pins, links the two seals by the SRS, refuses rehearsal
-   seals and compares every circuit and both keys at the paths in the export.
+   `verify-keys` checks the pins, links the two seals by the SRS and by the Phase 1 the SRS
+   names (its head, count and round), refuses rehearsal seals and compares every circuit and both
+   keys at the paths in the export.
    Put only the verified files into the release. Single-party `make *-keygen`
    outputs and rehearsal keys are for development.
 5. Export verifier artifacts from those verified VKs into a clean build directory.
@@ -429,6 +462,10 @@ Anyone can check a ceremony without trusting the coordinator:
   beacon is a drand round out after the close and the last contribution, which the seals check.
   Someone who reseals with the announced head and round, and compares the keys, would see a
   coordinator or sealer who did otherwise.
+- **It could serve a Phase 2 from an SRS of its own,** whose α and β it knows, and forge proofs
+  with the keys however many contributed. A Phase 2 starts only from the SRS whose sha256 is
+  given (`-srs-sha256`), and the page and every Phase 2 receipt show that sha256: it must be the
+  one announced, which independent resealers of Phase 1 confirmed.
 - **It can leave someone out,** by refusing or reordering turns. That is why participants publish
   their hashes, and why one honest contributor per phase suffices.
 - **Uploads come from anyone admitted,** so the coordinator bounds what one costs before checking

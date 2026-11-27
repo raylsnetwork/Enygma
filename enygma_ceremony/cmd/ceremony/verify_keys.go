@@ -51,6 +51,11 @@ func verifyInstalledKeys(name, srs, r1cs, keys, phase1Hash, phase2Hash string) e
 	if phase1.SRS != phase2.SRS {
 		return fmt.Errorf("Phase 2 used a different SRS from the approved Phase 1")
 	}
+	// The SRS names the Phase 1 it seals, and the Phase 2 record says so
+	// (audit H1): it must be the approved Phase 1, head, count and round.
+	if p := phase2.Phase1; p == nil || p.Head != phase1.Head || int(p.Contributions) != phase1.Contributions || p.DrandRound != phase1.Beacon.DrandRound {
+		return fmt.Errorf("Phase 2's SRS names another Phase 1 than the approved one, or none")
+	}
 	if err := requireFileHash(srs, phase1.SRS); err != nil {
 		return err
 	}

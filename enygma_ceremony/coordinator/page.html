@@ -113,6 +113,7 @@ footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: 
     <div class="card phase" id="phase2">
       <div class="head"><span class="num">2</span><span class="name" id="phase2-name">Phase 2: keys for each protocol</span><span class="tag" id="phase2-tag"></span></div>
       <p id="phase2-what">One ceremony per protocol, built on Phase 1.</p>
+      <pre id="phase2-srs" hidden></pre>
     </div>
   </div>
   <p class="why">Each contribution mixes fresh randomness from a participant's computer into the keys, and that
@@ -202,6 +203,14 @@ function renderPhases(s) {
   text("phase2-name", one ? "Phase 2: keys for each protocol" : `Phase 2: keys for ${protocolName(s.ceremony)}`);
   text("phase2-what", one ? "One ceremony per protocol, built on Phase 1."
     : `One ceremony per protocol, built on Phase 1. This one makes the keys of ${protocolName(s.ceremony)}.`);
+  // Which Phase 1 this Phase 2 builds on: its SRS, as the server says. Its keys are only as sound as that
+  // Phase 1, so the values are for comparing with the ceremony's announcement, not for taking on trust.
+  const p1 = s.phase1;
+  el("phase2-srs").hidden = one || !s.srs_sha256;
+  text("phase2-srs", one || !s.srs_sha256 ? "" : `Built on the SRS of sha256 ${s.srs_sha256}` +
+    (p1 ? `,\nthe seal of Phase 1 up to head ${p1.head} (${p1.contributions} contributions), ` +
+      (p1.drand_round ? `with drand round ${p1.drand_round}` : "with a rehearsal's beacon, not drand's") : "") +
+    ".\nCompare them with the ceremony's announcement.");
 }
 
 // release splits a GitHub release address into its repository and tag.
@@ -222,7 +231,9 @@ function renderHow(s) {
   text("source", r
     ? `git clone --depth 1 --branch ${r.tag} ${r.repo}\ncd ${r.dir}/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`
     : `git clone --branch <the release's tag> <the repository>\ncd <the repository>/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`);
-  text("verify", `ceremony verify -url ${origin} -dir transcript -mine <your receipt>`);
+  text("verify", s.phase === "phase 2"
+    ? `ceremony verify -url ${origin} -dir transcript -srs <the SRS> -srs-sha256 <its sha256, as announced> -r1cs <the circuits' directory> -mine <your receipt>`
+    : `ceremony verify -url ${origin} -dir transcript -mine <your receipt>`);
 }
 
 function renderStatus(s) {

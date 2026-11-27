@@ -43,6 +43,38 @@ func TestVerifyProductionKeys(t *testing.T) {
 			want: "different SRS",
 		},
 		{
+			name: "SRS naming another Phase 1",
+			change: func(_ string, _, phase2 *sealRecord) error {
+				phase2.Phase1.Head = strings.Repeat("42", 32)
+				return nil
+			},
+			want: "names another Phase 1",
+		},
+		{
+			name: "Phase 2 naming no Phase 1",
+			change: func(_ string, _, phase2 *sealRecord) error {
+				phase2.Phase1 = nil
+				return nil
+			},
+			want: "names another Phase 1",
+		},
+		{
+			name: "SRS naming another Phase 1's count",
+			change: func(_ string, _, phase2 *sealRecord) error {
+				phase2.Phase1.Contributions = 2
+				return nil
+			},
+			want: "names another Phase 1",
+		},
+		{
+			name: "SRS naming another Phase 1's round",
+			change: func(_ string, _, phase2 *sealRecord) error {
+				phase2.Phase1.DrandRound = 13
+				return nil
+			},
+			want: "names another Phase 1",
+		},
+		{
 			name: "wrong protocol",
 			change: func(_ string, _, phase2 *sealRecord) error {
 				phase2.Ceremony = "another protocol"
@@ -115,9 +147,11 @@ func TestVerifyProductionKeys(t *testing.T) {
 			}
 			srsHash := write(srs, "sealed SRS")
 			write(filepath.Join(r1cs, ceremony.ManifestFile), `{"Cubic":{"pk":"Cubic.pk","vk":"Cubic.vk"}}`)
-			phase1 := sealRecord{Kind: "srs", SRS: srsHash, Contributions: 1, Beacon: beaconRecord{DrandRound: 12}}
+			head := strings.Repeat("ab", 32)
+			phase1 := sealRecord{Kind: "srs", Head: head, SRS: srsHash, Contributions: 1, Beacon: beaconRecord{DrandRound: 12}}
 			phase2 := sealRecord{
 				Kind: "keys", Ceremony: "example", SRS: srsHash, Contributions: 1, Beacon: beaconRecord{DrandRound: 14},
+				Phase1: &phase1Record{Head: head, Contributions: 1, DrandRound: 12},
 				Circuits: []circuitRecord{{
 					Name: "Cubic", R1CS: write(filepath.Join(r1cs, "Cubic.r1cs"), "compiled circuit"),
 					PK: "Cubic.pk", PKHash: write(filepath.Join(keys, "Cubic.pk"), "sealed proving key"),

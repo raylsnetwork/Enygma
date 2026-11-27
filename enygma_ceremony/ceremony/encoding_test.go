@@ -333,12 +333,13 @@ func FuzzPhase2Shapes(f *testing.F) {
 	})
 }
 
-// TestManyCommitments (audit R-009): gnark's Contribute panics on a circuit
-// of more than 255 commitments, after drawing the randomness. Such a state
-// is refused as it is decoded, so contributing to it fails with a reason and
-// never panics; 255 is the control, and contributes.
+// TestManyCommitments (audit R-009, I7): gnark's Contribute panics on a
+// circuit of more than 255 commitments, after drawing the randomness, and
+// its Phase 2 seal on one of more than 169, after the whole phase. Such a
+// state is refused as it is decoded, so contributing to it fails with a
+// reason and never panics; maxCommitments is the control, and contributes.
 func TestManyCommitments(t *testing.T) {
-	for _, n := range []int{255, 256} {
+	for _, n := range []int{169, 170, 256} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			data := encodePhase2(t, phase2OfShape(1, n, 0, 3, 1, 0, nil))
 			path := filepath.Join(t.TempDir(), "state")
@@ -357,9 +358,9 @@ func TestManyCommitments(t *testing.T) {
 				t.Fatalf("%d commitments: ContributeTo panics (%v)", n, panicked)
 			}
 			switch n {
-			case 255:
+			case 169:
 				if inspectErr != nil || err != nil {
-					t.Fatalf("255 commitments: Inspect %v, ContributeTo %v; want both to take it", inspectErr, err)
+					t.Fatalf("%d commitments: Inspect %v, ContributeTo %v; want both to take it", n, inspectErr, err)
 				}
 			default:
 				if !errors.Is(inspectErr, ErrFormat) || !errors.Is(err, ErrFormat) {

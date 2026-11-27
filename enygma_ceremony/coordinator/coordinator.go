@@ -137,6 +137,10 @@ type Config struct {
 	// the program (https only); the page links to it. The coordinator
 	// itself serves no participant code.
 	ReleaseURL string
+	// Phase1 is, for a Phase 2, what the SRS it starts from was sealed from,
+	// as that SRS says (ceremony.Provenance); the page shows it beside the
+	// SRS's sha256 for participants to compare with the announcement.
+	Phase1 *ceremony.Provenance
 	// Log receives what happens: turns given, lost and taken.
 	Log *log.Logger
 
@@ -189,6 +193,9 @@ type Status struct {
 	Ceremony      string    `json:"ceremony,omitzero"`
 	Domain        uint64    `json:"domain,omitzero"`
 	Circuits      []string  `json:"circuits,omitzero"`
+	R1CS          []string  `json:"r1cs_sha256,omitzero"` // Phase 2: each circuit's constraint system's sha256, in order
+	SRS           string    `json:"srs_sha256,omitzero"`  // Phase 2: the SRS it starts from (audit H1)
+	Phase1        *Phase1   `json:"phase1,omitzero"`      // Phase 2: what that SRS says it was sealed from
 	Auth          Auth      `json:"auth"`
 	Contributions int       `json:"contributions"`
 	Latest        string    `json:"latest"`
@@ -1233,6 +1240,14 @@ func answerWithin(w http.ResponseWriter, d time.Duration) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d)) // not supported: no deadline to move
 }
 
+// Phase1 is what a Phase 2's SRS says it was sealed from (Status.Phase1).
+type Phase1 struct {
+	Head          string    `json:"head"`
+	Contributions uint32    `json:"contributions"`
+	DrandRound    uint64    `json:"drand_round,omitzero"` // 0: a rehearsal's beacon, not from drand
+	CloseAt       time.Time `json:"close_at,omitzero"`
+}
+
 // handleStatus answers with the phase at a glance.
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	s.reply(w, s.status())
@@ -1259,6 +1274,15 @@ func (s *Server) status() Status {
 		Notice:        s.cfg.Notice,
 		ReleaseURL:    s.cfg.ReleaseURL,
 		Version:       Version(),
+	}
+	if s.start.Kind == ceremony.KindPhase2 {
+		st.SRS = hex.EncodeToString(s.start.SRS[:])
+		for _, h := range s.start.R1CS {
+			st.R1CS = append(st.R1CS, hex.EncodeToString(h[:]))
+		}
+		if p := s.cfg.Phase1; p != nil {
+			st.Phase1 = &Phase1{Head: hex.EncodeToString(p.Head[:]), Contributions: p.Contributions, DrandRound: p.Beacon.DrandRound, CloseAt: p.Beacon.CloseAt}
+		}
 	}
 	if s.turn != nil {
 		st.Contributing = s.turn.p.name
