@@ -935,11 +935,14 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 
 // RelayPaymentUsdrFee is the gin handler for POST /relay/payment_usdr_fee.
 //
-// Settles two independent proofs atomically in one call
+// Settles two proofs atomically in one call
 // (EnygmaDvp.paymentWithUsdrFee): a normal payment against the main vault —
 // a Payment or, merging two notes, a Payment2in proof — and a UsdrFeeCircuit
 // proof — a second, independent relayer-fee asset with its own
-// token/vault/circuit — against the USDr vault.
+// token/vault/circuit — against the USDr vault. The USDr proof names the
+// payment's statement (CiphertextHash.ofUsdrFeeLeg), so the contract
+// settles it only next to that payment; the simulation in step 6 catches a
+// pair that does not match.
 //
 // Validation steps:
 //  1. Confirm the USDr vault is configured (503 if not).

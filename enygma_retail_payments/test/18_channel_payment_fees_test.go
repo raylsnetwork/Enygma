@@ -265,13 +265,8 @@ func TestRetailErc20_ChannelPaymentFeeVariants(t *testing.T) {
 	noteFee := depositFor(t, f.pwEnv, f.alice, f.aliceView, big.NewInt(100))
 	noteRelayer := depositFor(t, f.pwEnv, f.alice, f.aliceView, big.NewInt(100))
 	noteUsdrMain := depositFor(t, f.pwEnv, f.alice, f.aliceView, big.NewInt(100))
-	usdr := depositAndBuildUsdrFeeWitness(t, f.ctx, f.client, f.usdrVault, f.usdrErc20, f.usdrVaultAddr, f.owner, f.usdrFee, relayer.PublicKey, f.tokenId)
-	usdrReceipt := onchainProofReceipt{
-		Proof:           proofStringsToOnchain(t, usdr.proof[:]),
-		Statement:       decimals(t, usdr.publicSignal[:]),
-		NumberOfInputs:  big.NewInt(layout.UsdrFeeNullifiersSize),
-		NumberOfOutputs: big.NewInt(layout.UsdrFeeCommitmentsOutSize),
-	}
+	noteOther := depositFor(t, f.pwEnv, f.alice, f.aliceView, big.NewInt(100))
+	usdrIn := depositUsdrFeeInput(t, f.ctx, f.client, f.usdrVault, f.usdrErc20, f.usdrVaultAddr, f.owner, f.usdrFee, f.tokenId)
 
 	head, err := f.client.BlockNumber(f.ctx)
 	if err != nil {
@@ -283,6 +278,17 @@ func TestRetailErc20_ChannelPaymentFeeVariants(t *testing.T) {
 	pRelayer := proveChannelFeePayment(t, f.pwEnv, pwPaymentRelayerFeePublic, f.ss, blockN, f.bob.PublicKey, noteRelayer,
 		big.NewInt(60), new(big.Int).Sub(big.NewInt(40), f.relayerFee), f.relayerFee, relayer.PublicKey)
 	pUsdr := proveChannelPayment(t, f.pwEnv, f.ss, blockN, f.bob.PublicKey, []pwNote{noteUsdrMain}, big.NewInt(60), big.NewInt(40))
+	// Another channel payment, never settled: the fee leg must not settle
+	// next to it.
+	pOther := proveChannelPayment(t, f.pwEnv, f.ss, blockN, f.bob.PublicKey, []pwNote{noteOther}, big.NewInt(60), big.NewInt(40))
+	// The USDr fee leg binds its main leg's statement, so it is proved after it.
+	usdr := buildUsdrFeeWitness(t, f.client, f.usdrVaultAddr, usdrIn, pUsdr.res.ContractStatement(), f.usdrFee, relayer.PublicKey, f.tokenId)
+	usdrReceipt := onchainProofReceipt{
+		Proof:           proofStringsToOnchain(t, usdr.proof[:]),
+		Statement:       decimals(t, usdr.publicSignal[:]),
+		NumberOfInputs:  big.NewInt(layout.UsdrFeeNullifiersSize),
+		NumberOfOutputs: big.NewInt(layout.UsdrFeeCommitmentsOutSize),
+	}
 
 	block := func(b uint64) *big.Int { return new(big.Int).SetUint64(b) }
 	vault := big.NewInt(0)
@@ -355,6 +361,16 @@ func TestRetailErc20_ChannelPaymentFeeVariants(t *testing.T) {
 	t.Run("with_usdr_fee/usdr_ciphertexts", func(t *testing.T) {
 		// The USDr leg keeps its own binding, to its fee note's ciphertexts.
 		expectPendingRevert(t, f.pwEnv, f.dvp, "CiphertextHashMismatch", "channelPaymentWithUsdrFee", pUsdr.receipt, vault, n.block, n.tag, n.ctxt, usdrReceipt, f.usdrVaultId, []byte{1}, usdr.ctxtChange)
+	})
+	t.Run("with_usdr_fee/fee_leg_of_another_payment", func(t *testing.T) {
+		// The other payment settles on its own (a call: nothing is mined),
+		// but the fee leg, bound to pUsdr's statement, is refused next to it.
+		o := boundTo(blockN, pOther.note)
+		var out []interface{}
+		if err := f.dvp.Call(&bind.CallOpts{Context: f.ctx, Pending: true, From: f.owner.From}, &out, "channelPayment", pOther.receipt, vault, o.block, o.tag, o.ctxt); err != nil {
+			t.Fatalf("the other payment does not settle on its own: %v", err)
+		}
+		expectPendingRevert(t, f.pwEnv, f.dvp, "CiphertextHashMismatch", "channelPaymentWithUsdrFee", pOther.receipt, vault, o.block, o.tag, o.ctxt, usdrReceipt, f.usdrVaultId, usdr.ctxtFee, usdr.ctxtChange)
 	})
 
 	// All three settle, each in one transaction, in block_n, block_n + 1 and
@@ -467,7 +483,8 @@ func TestRetailErc20_ChannelPaymentFeeVariantsViaRelayer(t *testing.T) {
 
 	noteRelayer := depositFor(t, f.pwEnv, f.alice, f.aliceView, big.NewInt(50))
 	noteUsdrMain := depositFor(t, f.pwEnv, f.alice, f.aliceView, big.NewInt(50))
-	usdr := depositAndBuildUsdrFeeWitness(t, f.ctx, f.client, f.usdrVault, f.usdrErc20, f.usdrVaultAddr, f.owner, f.usdrFee, relayerPk, f.tokenId)
+	usdrIn := depositUsdrFeeInput(t, f.ctx, f.client, f.usdrVault, f.usdrErc20, f.usdrVaultAddr, f.owner, f.usdrFee, f.tokenId)
+	var usdr usdrFeeWitness // proved by the usdr_fee route, after its main leg
 
 	type relayerFeeReq struct {
 		VaultId      string    `json:"vaultId"`
@@ -518,6 +535,8 @@ func TestRetailErc20_ChannelPaymentFeeVariantsViaRelayer(t *testing.T) {
 		}},
 		{"usdr_fee", "/relay/channel_payment_usdr_fee", func(blockN uint64) proved {
 			p := proveChannelPayment(t, f.pwEnv, f.ss, blockN, f.bob.PublicKey, []pwNote{noteUsdrMain}, big.NewInt(35), big.NewInt(15))
+			// The USDr fee leg binds its main leg's statement.
+			usdr = buildUsdrFeeWitness(t, f.client, f.usdrVaultAddr, usdrIn, p.res.ContractStatement(), f.usdrFee, relayerPk, f.tokenId)
 			var proof [8]string
 			copy(proof[:], p.res.Proof)
 			return proved{func(tag [32]byte) interface{} {

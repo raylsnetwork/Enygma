@@ -51,6 +51,10 @@ var (
 	// ChannelPaymentCiphertextHash is the StCiphertextHash a channel
 	// payment's proof binds: its block, tag and sealed note.
 	ChannelPaymentCiphertextHash = pay.ChannelPaymentCiphertextHash
+	// UsdrFeeLegCiphertextHash is the StCiphertextHash a USDr fee leg's
+	// proof binds: the statement of the payment it pays for and the fee
+	// note's ciphertexts.
+	UsdrFeeLegCiphertextHash = pay.UsdrFeeLegCiphertextHash
 	// DeriveBlockKey derives the per-block AES key used by the private-tag system.
 	DeriveBlockKey     = pay.DeriveBlockKey
 	ChannelEncryptNote = pay.ChannelEncryptNote

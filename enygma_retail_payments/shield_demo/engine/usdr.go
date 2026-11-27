@@ -82,8 +82,16 @@ type usdrFeeLeg struct {
 
 // proveUsdrFee proves payer spending their smallest USDr note that covers
 // the relayer's fixed USDr fee to pay it, the rest back to payer as change.
-func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, error) {
+// The proof binds payment, the statement of the payment the fee pays for, so
+// the fee settles only in the same transaction as that payment.
+func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor, payment []*big.Int) (*usdrFeeLeg, error) {
 	c := e.chain
+	// The leg publishes empty fee-note ciphertexts (relayUsdrFee's "0x"):
+	// the relayer keeps the fee note's opening from the request.
+	ciphertextHash, err := rpcore.UsdrFeeLegCiphertextHash(payment, nil, nil)
+	if err != nil {
+		return nil, err
+	}
 	prev, err := payer.usdr.spendable(payer.Name, "USDr", e.usdrFixedFee)
 	if err != nil {
 		return nil, err
@@ -127,15 +135,13 @@ func (e *Engine) proveUsdrFee(ctx context.Context, payer *Actor) (*usdrFeeLeg, e
 		path[i] = mp.Elements[i].String()
 	}
 	req := map[string]any{
-		"stMessage":         "0",
-		"stTreeNumbers":     [1]string{treeNum.String()},
-		"stMerkleRoots":     [1]string{mp.Root.String()},
-		"stNullifiers":      [1]string{nullifier.String()},
-		"stCommitmentsOut":  [2]string{feeNote.String(), change.commitment.String()},
-		"stContractAddress": new(big.Int).SetBytes(c.usdrVaultAddr.Bytes()).String(),
-		// The USDr leg publishes empty fee-note ciphertexts (relayUsdrFee's
-		// "0x"): the relayer keeps the fee note's opening from the request.
-		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
+		"stMessage":            "0",
+		"stTreeNumbers":        [1]string{treeNum.String()},
+		"stMerkleRoots":        [1]string{mp.Root.String()},
+		"stNullifiers":         [1]string{nullifier.String()},
+		"stCommitmentsOut":     [2]string{feeNote.String(), change.commitment.String()},
+		"stContractAddress":    new(big.Int).SetBytes(c.usdrVaultAddr.Bytes()).String(),
+		"stCiphertextHash":     ciphertextHash.String(),
 		"stFee":                e.usdrFixedFee.String(),
 		"stTokenId":            tokenId.String(),
 		"wtPrivateKeysIn":      [1]string{payer.Spend.PrivateKey.String()},

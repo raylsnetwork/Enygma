@@ -206,6 +206,64 @@ func TestPaymentCiphertextHash_MatchesTheContractsEncoding(t *testing.T) {
 	}
 }
 
+// UsdrFeeLegCiphertextHash must equal CiphertextHash.ofUsdrFeeLeg, which
+// EnygmaDvp compares with a USDr fee leg's StCiphertextHash. The vectors are
+// keccak256(abi.encode(keccak256("enygma-usdr-fee-leg-v1"),
+// keccak256(abi.encode(uint256[] mainStatement)), bytes usdrCtxt, bytes
+// usdrEncTxData)) mod the scalar field, computed with ethers' ABI coder: a
+// Payment statement with the empty fee-note ciphertexts the relayers carry,
+// the same statement with other ciphertexts, and a Payment2in statement.
+func TestUsdrFeeLegCiphertextHash_MatchesTheContractsEncoding(t *testing.T) {
+	payment := []*big.Int{big.NewInt(0), big.NewInt(3), big.NewInt(900), big.NewInt(901), big.NewInt(902), big.NewInt(903), big.NewInt(0xABCD), big.NewInt(0xC1F7)}
+	payment2in := []*big.Int{big.NewInt(0), big.NewInt(1), big.NewInt(2), big.NewInt(777), big.NewInt(778), big.NewInt(31), big.NewInt(32), big.NewInt(41), big.NewInt(42), big.NewInt(0xABCD), big.NewInt(0xC1F7)}
+	for _, tc := range []struct {
+		name            string
+		main            []*big.Int
+		ctxt, encTxData []byte
+		want            string
+	}{
+		{"payment, empty fee-note ciphertexts", payment, nil, nil, "18491652805401127584914536375232766152749806060279904663914500920244734391606"},
+		{"payment, other ciphertexts", payment, []byte{1}, []byte{}, "8156263981059660124505771983820324740373042024660895151356467439494712189056"},
+		{"payment2in", payment2in, []byte{1, 2}, []byte{3}, "16934556867586826250051878126524799175606120143633972101169779208664222574675"},
+	} {
+		got, err := UsdrFeeLegCiphertextHash(tc.main, tc.ctxt, tc.encTxData)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got.String() != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A fee leg is bound to one payment: another payment's statement, or the
+// plain payment encoding of the same ciphertexts, gives another hash.
+func TestUsdrFeeLegCiphertextHash_NamesItsPayment(t *testing.T) {
+	main := []*big.Int{big.NewInt(0), big.NewInt(3), big.NewInt(900), big.NewInt(901), big.NewInt(902), big.NewInt(903), big.NewInt(0xABCD), big.NewInt(0xC1F7)}
+	h, err := UsdrFeeLegCiphertextHash(main, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := append([]*big.Int(nil), main...)
+	other[3] = big.NewInt(904) // another nullifier: another payment
+	if h2, err := UsdrFeeLegCiphertextHash(other, nil, nil); err != nil || h2.Cmp(h) == 0 {
+		t.Errorf("another payment's statement gives %v (err %v), the same hash %s", h2, err, h)
+	}
+	if plain := PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}); plain.Cmp(h) == 0 {
+		t.Errorf("the fee leg's hash equals the plain payment encoding %s", plain)
+	}
+}
+
+// A statement entry that is not a field element is an error, not a hash of
+// something the contract never sees.
+func TestUsdrFeeLegCiphertextHash_RefusesANonFieldSignal(t *testing.T) {
+	for name, v := range map[string]*big.Int{"nil": nil, "negative": big.NewInt(-1), "the modulus": new(big.Int).Set(snarkScalarField)} {
+		if _, err := UsdrFeeLegCiphertextHash([]*big.Int{big.NewInt(0), v}, nil, nil); err == nil {
+			t.Errorf("%s signal: no error", name)
+		}
+	}
+}
+
 // The proof request binds the hash of exactly the ciphertexts the result
 // hands back for EnygmaDvp.payment*.
 func TestBoundPaymentProof_BindsItsCiphertexts(t *testing.T) {

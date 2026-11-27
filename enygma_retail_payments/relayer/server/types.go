@@ -208,7 +208,7 @@ type parsedRelayerFee struct {
 // RelayPaymentUsdrFeeRequest is the JSON body accepted by
 // POST /relay/payment_usdr_fee.
 //
-// Settles two independent proofs atomically in one on-chain call
+// Settles two proofs atomically in one onchain call
 // (EnygmaDvp.paymentWithUsdrFee): a normal payment and a UsdrFeeCircuit
 // proof — a second, independent relayer-fee asset with its own
 // token/vault/circuit.
@@ -216,7 +216,10 @@ type parsedRelayerFee struct {
 // PublicSignal is a Payment statement (1 input) or a Payment2in statement
 // (2 inputs, merging two notes); its length says which.
 //
-// UsdrPublicSignal is a UsdrFee statement.
+// UsdrPublicSignal is a UsdrFee statement. Its StCiphertextHash names
+// PublicSignal and the USDr fee note's ciphertexts
+// (CiphertextHash.ofUsdrFeeLeg), so the contract settles it only next to
+// that payment.
 //
 // UsdrFeeSalt is supplied so the relayer can independently recompute the
 // USDr fee note's commitment (Poseidon(feeSpendPubKey, feeSalt, fee,

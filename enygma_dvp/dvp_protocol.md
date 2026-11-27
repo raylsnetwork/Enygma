@@ -561,10 +561,17 @@ After deploy, the owner (`DEFAULT_OWNER_ROLE`) sets each one with its setter:
 | `usdrFeeVaultId` | unset | `setUsdrFeeVaultId(vaultId)` | the same two calls, which revert `InvalidUsdrVault` until it is set; both init scripts set it to 1 |
 
 `paymentWithFee` and `channelPaymentWithFee` check against no stored value:
-see R-049 below. `paymentWithFee` also accepts a PaymentRelayerFee receipt
-(1 input, 3 outputs) and checks its fee against the caller's argument, and
-`payment()` accepts one with no fee check, so `relayerFixedFeeAmount` binds
-only a caller who chooses the `*WithRelayerFee` calls.
+see R-049 below. Each `EnygmaDvp` payment entry point takes one receipt
+shape, and reverts `InvalidStatementSize` on any other: `payment()`,
+`channelPayment()` and the main leg of the `*WithUsdrFee` calls take a
+Payment or Payment2in receipt, `paymentWithFee` and `channelPaymentWithFee`
+a PaymentFee receipt, and the `*WithRelayerFee` calls a PaymentRelayerFee
+receipt. So `EnygmaDvp` settles a PaymentRelayerFee receipt only where it
+checks `relayerFixedFeeAmount`. The amount binds those relayer routes, not
+the protocol: `Erc20CoinVault.transfer`, `transferV2` and
+`partialWithdrawWithRelayerFee` settle a PaymentRelayerFee receipt with the
+fee its prover chose, and a sender can pay a relayer any amount as output 0
+of a plain payment, or pay none.
 
 The off-chain relayers have their own floor, `RELAYER_MIN_FEE` (base units,
 default 0). At 0 the relayer accepts any fee the contract accepts, so a relayer
@@ -573,23 +580,29 @@ that should be paid must set it, and both relayers (`relayer/` here and
 
 ### Fee paths that bind less than they look
 
-- **The USDr fee is paired with its payment by convention**
+- **The USDr fee leg names its payment; the payment does not name its fee**
   (reconciled audit R-048). `paymentWithUsdrFee` and
   `channelPaymentWithUsdrFee` settle two receipts, the main payment and the
-  USDr fee, but no public input links them: each proof nullifies against its
-  own vault, and the pairing is only that one call carries both. `payment()`
-  checks no shape, so it settles either receipt alone. A relayer can therefore
-  settle the fee leg without the payment, and anyone holding the main receipt
-  can settle the payment alone, leaving the relayer unpaid. The relayer is
-  trusted to pair the two legs, and the loss either way is at most
-  `usdrFixedFeeAmount`.
+  USDr fee leg, each nullifying against its own vault. The fee leg's
+  `StCiphertextHash` must be `CiphertextHash.ofUsdrFeeLeg`: keccak256 of a
+  domain word, the hash of the main payment's statement (its public signals)
+  and the fee note's ciphertexts, mod p. So the fee leg settles only in the
+  same call as the payment it was proved for: `payment()`,
+  `paymentWithFee()` and the channel calls refuse its shape, the vault's
+  `transfer` and `transferV2` its ciphertext hash, and next to another
+  payment the hash differs. The main receipt names no fee leg: anyone
+  holding it can settle the payment alone, through `payment()` or
+  `channelPayment()`, and the relayer's transaction then reverts unpaid.
+  The payer keeps the USDr note, since its fee leg can no longer settle.
 - **The PaymentFee fee is chosen by the prover and burned into the vault**
-  (R-049). `paymentWithFee` and `channelPaymentWithFee` compare the proof's
-  fee with their own `protocolFee` argument, which the caller also chooses, so
-  the check enforces nothing. The PaymentFee circuit absorbs the fee into
-  conservation (`Σ valuesIn = valOut[0] + valOut[1] + StFee`) rather than
-  creating a note, so those tokens stay in the vault with no note to spend and
-  no sweep to collect them.
+  (R-049). `paymentWithFee` and `channelPaymentWithFee` take only a
+  PaymentFee receipt and compare its fee with their own `protocolFee`
+  argument: the caller's expectation, which the caller also chooses, not a
+  protocol policy, so the check enforces nothing. The PaymentFee circuit
+  absorbs the fee into conservation
+  (`Σ valuesIn = valOut[0] + valOut[1] + StFee`) rather than creating a note,
+  so those tokens stay in the vault with no note to spend and no sweep to
+  collect them.
 
 ### Front-running that blocks a call
 

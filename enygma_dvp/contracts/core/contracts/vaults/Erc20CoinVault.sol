@@ -659,10 +659,10 @@ contract Erc20CoinVault is AbstractCoinVault {
         // field but did not range-check StFee, so a prover could pick
         // StFee = Fr - d and spend a note of value v into outputs worth
         // v + d: value created from nothing, then withdrawn from other
-        // depositors' funds. payment() does not look at the fee at all and
-        // paymentWithFee() only compares it with a value the caller
-        // supplies, so the bound is enforced here, on every path that
-        // verifies a receipt of this shape.
+        // depositors' funds. paymentWithFee() only compares it with a value
+        // the caller supplies, and this vault's transfer() and transferV2()
+        // do not look at the fee at all, so the bound is enforced here, on
+        // every path that verifies a receipt of this shape.
         if (
             circuit.vkId == VK_ID_ERC20_JOINSPLIT_FEE &&
             receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] >= MAX_FEE_AMOUNT

@@ -9,9 +9,9 @@ package tests
 //	  (PaymentRelayerFeePublic circuit: 1-in/3-out, fee note is a 3rd output
 //	  of the SAME proof, same token as the payment).
 //	POST /relay/payment_usdr_fee — genuine second-asset USDr fee
-//	  (a normal payment PLUS an independent UsdrFeeCircuit proof over a
-//	  SEPARATE token/vault, settled atomically in one call to
-//	  EnygmaDvp.paymentWithUsdrFee).
+//	  (a normal payment PLUS a UsdrFeeCircuit proof over a SEPARATE
+//	  token/vault, which names the payment's statement, settled atomically
+//	  in one call to EnygmaDvp.paymentWithUsdrFee).
 //
 // Prerequisites:
 //
@@ -508,7 +508,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 	// ═══════════════════════════════════════════════════════════════════════
 	// Test B — genuine second-asset USDr fee, atomic dual-proof settlement
 	// ═══════════════════════════════════════════════════════════════════════
-	buildUsdrWitness := func(t *testing.T, feeAmt, feeRecipientPk, usdrTokenId *big.Int) (proof *paymentGnarkProofResp, feeSalt, cmtFee *big.Int) {
+	// buildUsdrWitness proves a USDr fee leg for the payment whose statement
+	// is main: the leg binds it (core.UsdrFeeLegCiphertextHash), so it is
+	// proved after the main leg.
+	buildUsdrWitness := func(t *testing.T, main []*big.Int, feeAmt, feeRecipientPk, usdrTokenId *big.Int) (proof *paymentGnarkProofResp, feeSalt, cmtFee *big.Int) {
 		t.Helper()
 		changeAmt := big.NewInt(10)
 		depositAmt := new(big.Int).Add(feeAmt, changeAmt)
@@ -549,7 +552,11 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		usdrVaultAddrBig := new(big.Int).SetBytes(usdrVaultAddr.Bytes())
 
 		// The USDr leg is relayed with empty fee-note ciphertexts ("0x"), and
-		// the proof binds their hash.
+		// the proof binds them and the main leg's statement.
+		ciphertextHash, err := core.UsdrFeeLegCiphertextHash(main, nil, nil)
+		if err != nil {
+			t.Fatalf("UsdrFeeLegCiphertextHash: %v", err)
+		}
 		reqBody := map[string]interface{}{
 			"stMessage":            "0",
 			"stTreeNumbers":        [1]string{"0"},
@@ -557,7 +564,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"stNullifiers":         [1]string{nullifier.String()},
 			"stCommitmentsOut":     [2]string{fCmt.String(), cmtChange.String()},
 			"stContractAddress":    usdrVaultAddrBig.String(),
-			"stCiphertextHash":     core.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
+			"stCiphertextHash":     ciphertextHash.String(),
 			"stFee":                feeAmt.String(),
 			"stTokenId":            usdrTokenId.String(),
 			"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
@@ -614,7 +621,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 	t.Run("USDr fee (second asset) via /relay/payment_usdr_fee", func(t *testing.T) {
 		mainResult, mainProofArr, mainSig := buildMainLeg(t)
-		usdrProof, usdrFeeSalt, cmtFee := buildUsdrWitness(t, usdrFixedFee, relayerFeePubKey, tokenId)
+		usdrProof, usdrFeeSalt, cmtFee := buildUsdrWitness(t, mainResult.ContractStatement(), usdrFixedFee, relayerFeePubKey, tokenId)
 
 		var usdrProofArr [8]string
 		for i, v := range usdrProof.Proof {
@@ -690,7 +697,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 	t.Run("negative: usdrFee mismatches usdrFixedFeeAmount", func(t *testing.T) {
 		mainResult, mainProofArr, mainSig := buildMainLeg(t)
 		mismatched := new(big.Int).Add(usdrFixedFee, big.NewInt(1))
-		usdrProof, usdrFeeSalt, _ := buildUsdrWitness(t, mismatched, relayerFeePubKey, tokenId)
+		usdrProof, usdrFeeSalt, _ := buildUsdrWitness(t, mainResult.ContractStatement(), mismatched, relayerFeePubKey, tokenId)
 
 		var usdrProofArr [8]string
 		for i, v := range usdrProof.Proof {
@@ -781,13 +788,74 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 		t.Log("  usdr leg with a Payment-length statement rejected with InvalidStatementSize ✓")
 	})
 
+	// The fee leg binds the statement of the payment it pays for, so it
+	// settles only in the same call as that payment: alone through payment()
+	// or paymentWithFee() its shape is refused, and next to another payment
+	// its hash is. Each refusal is an eth_call, so nothing is spent; then the
+	// same fee leg settles next to its own payment.
+	t.Run("USDr fee leg settles only next to the payment it was proved for", func(t *testing.T) {
+		mainResult, mainProofArr, mainSig := buildMainLeg(t)
+		otherResult, otherProofArr, _ := buildMainLeg(t)
+		usdrProof, usdrFeeSalt, _ := buildUsdrWitness(t, mainResult.ContractStatement(), usdrFixedFee, relayerFeePubKey, tokenId)
+
+		var usdrProofArr [8]string
+		for i, v := range usdrProof.Proof {
+			usdrProofArr[i] = v.String()
+		}
+		usdrSig := make([]string, len(usdrProof.PublicSignal))
+		for i, v := range usdrProof.PublicSignal {
+			usdrSig[i] = v.String()
+		}
+		usdrReceipt := onchainProofReceipt{
+			Proof: proofStringsToOnchain(t, usdrProofArr[:]), Statement: usdrProof.PublicSignal,
+			NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(2),
+		}
+		otherReceipt := onchainProofReceipt{
+			Proof: proofStringsToOnchain(t, otherProofArr[:]), Statement: otherResult.ContractStatement(),
+			NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(2),
+		}
+		refused := func(want, method string, args ...interface{}) {
+			t.Helper()
+			err := dvp.Call(&bind.CallOpts{From: owner.From}, &[]interface{}{}, method, args...)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s: expected %s, got: %v", method, want, err)
+			}
+			t.Logf("  %s refused with %s ✓", method, want)
+		}
+		refused("InvalidStatementSize", "payment", usdrReceipt, big.NewInt(1), []byte{}, []byte{})
+		refused("InvalidStatementSize", "paymentWithFee", usdrReceipt, big.NewInt(1), usdrFixedFee, []byte{}, []byte{})
+		refused("CiphertextHashMismatch", "paymentWithUsdrFee",
+			otherReceipt, big.NewInt(0), otherResult.CipherText, otherResult.EncTxData,
+			usdrReceipt, big.NewInt(1), []byte{}, []byte{})
+
+		resp, status := postToPaymentRelayer(t, "/relay/payment_usdr_fee", relayPaymentUsdrFeeReq{
+			VaultId: "0",
+			Receipt: paymentReceiptPayload{
+				Proof: mainProofArr, PublicSignal: mainSig, NumberOfInputs: 1, NumberOfOutputs: 2,
+			},
+			CipherText:  "0x" + hex.EncodeToString(mainResult.CipherText),
+			EncTxData:   "0x" + hex.EncodeToString(mainResult.EncTxData),
+			UsdrVaultId: "1",
+			UsdrReceipt: paymentReceiptPayload{
+				Proof: usdrProofArr, PublicSignal: usdrSig, NumberOfInputs: 1, NumberOfOutputs: 2,
+			},
+			UsdrCipherText: "0x",
+			UsdrEncTxData:  "0x",
+			UsdrFeeSalt:    usdrFeeSalt.String(),
+		})
+		if status != http.StatusOK {
+			t.Fatalf("the fee leg next to its own payment: status=%d error=%s", status, resp.Error)
+		}
+		t.Logf("  the same fee leg settled next to its own payment: tx=%s ✓", resp.TxHash)
+	})
+
 	t.Run("negative: usdr fee note addressed to a non-relayer key", func(t *testing.T) {
 		mainResult, mainProofArr, mainSig := buildMainLeg(t)
 		stranger, err := core.NewSpendKeyPair()
 		if err != nil {
 			t.Fatalf("stranger NewSpendKeyPair: %v", err)
 		}
-		usdrProof, usdrFeeSalt, _ := buildUsdrWitness(t, usdrFixedFee, stranger.PublicKey, tokenId)
+		usdrProof, usdrFeeSalt, _ := buildUsdrWitness(t, mainResult.ContractStatement(), usdrFixedFee, stranger.PublicKey, tokenId)
 
 		var usdrProofArr [8]string
 		for i, v := range usdrProof.Proof {

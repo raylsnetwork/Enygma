@@ -28,7 +28,7 @@ type UsdrFeeRequest struct {
 	StNullifiers      [1]string `json:"stNullifiers"      binding:"required"`
 	StCommitmentsOut  [2]string `json:"stCommitmentsOut"  binding:"required"`
 	StContractAddress string    `json:"stContractAddress" binding:"required"`
-	StCiphertextHash  string    `json:"stCiphertextHash"  binding:"required"` // hash of the ciphertexts the payment publishes (CiphertextHash.sol)
+	StCiphertextHash  string    `json:"stCiphertextHash"  binding:"required"` // CiphertextHash.ofUsdrFeeLeg: the statement of the payment the fee pays for and the fee note's ciphertexts (core.UsdrFeeLegCiphertextHash)
 	StFee             string    `json:"stFee"             binding:"required"`
 	StTokenId         string    `json:"stTokenId"         binding:"required"`
 

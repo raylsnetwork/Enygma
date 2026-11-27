@@ -238,6 +238,62 @@ func ChannelPaymentCiphertextHash(blockNumber uint64, tag [32]byte, ctxt []byte)
 	return h.Mod(h, snarkScalarField)
 }
 
+// usdrFeeLegDomain opens the encoding UsdrFeeLegCiphertextHash hashes, as
+// CiphertextHash.sol's USDR_FEE_LEG_DOMAIN does.
+var usdrFeeLegDomain = crypto.Keccak256Hash([]byte("enygma-usdr-fee-leg-v1"))
+
+var (
+	statementArgs = func() abi.Arguments {
+		t, _ := abi.NewType("uint256[]", "", nil)
+		return abi.Arguments{{Type: t}}
+	}()
+	usdrFeeLegArgs = func() abi.Arguments {
+		b32, _ := abi.NewType("bytes32", "", nil)
+		bs, _ := abi.NewType("bytes", "", nil)
+		return abi.Arguments{{Type: b32}, {Type: b32}, {Type: bs}, {Type: bs}}
+	}()
+)
+
+// UsdrFeeLegCiphertextHash is the StCiphertextHash a USDr fee leg's proof
+// binds, the value CiphertextHash.ofUsdrFeeLeg recomputes from what
+// EnygmaDvp.paymentWithUsdrFee or channelPaymentWithUsdrFee is given:
+//
+//	keccak256(abi.encode(keccak256("enygma-usdr-fee-leg-v1"),
+//	    keccak256(abi.encode(mainStatement)), usdrCtxt, usdrEncTxData)) mod p
+//
+// mainStatement is the statement of the payment the fee pays for, exactly as
+// it is submitted (PaymentResult.ContractStatement), so the fee leg is proved
+// after the payment. The leg then settles only in the same call as that
+// payment: the domain word keeps it apart from every other entry point's
+// encoding, and another payment's statement gives another hash. Each entry
+// of mainStatement must be a field element, as a proof's public signals are.
+func UsdrFeeLegCiphertextHash(mainStatement []*big.Int, usdrCtxt, usdrEncTxData []byte) (*big.Int, error) {
+	for i, v := range mainStatement {
+		if v == nil || v.Sign() < 0 || v.Cmp(snarkScalarField) >= 0 {
+			return nil, fmt.Errorf("main statement signal %d is %v, not a field element", i, v)
+		}
+	}
+	if mainStatement == nil {
+		mainStatement = []*big.Int{}
+	}
+	stmt, err := statementArgs.Pack(mainStatement)
+	if err != nil {
+		return nil, fmt.Errorf("abi-encode the main statement: %w", err)
+	}
+	if usdrCtxt == nil {
+		usdrCtxt = []byte{}
+	}
+	if usdrEncTxData == nil {
+		usdrEncTxData = []byte{}
+	}
+	enc, err := usdrFeeLegArgs.Pack(usdrFeeLegDomain, crypto.Keccak256Hash(stmt), usdrCtxt, usdrEncTxData)
+	if err != nil {
+		return nil, fmt.Errorf("abi-encode the USDr fee leg: %w", err)
+	}
+	h := new(big.Int).SetBytes(crypto.Keccak256(enc))
+	return h.Mod(h, snarkScalarField), nil
+}
+
 // BoundChannelPaymentProof proves a channel payment (#451): a Payment, or a
 // Payment2in with two input notes, as BoundPaymentProof does, except that
 // output 0's salt is the payer's note.Salt instead of one derived from a

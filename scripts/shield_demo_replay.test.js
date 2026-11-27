@@ -299,7 +299,7 @@ const ARGUMENT = {
 };
 
 // TIE_LINE is the relay hop's line on how a USDr fee is tied to its payment.
-const TIE_LINE = /^How the fee is tied to the payment: the fee proof and the payment proof share no public input, so nothing in either proof points at the other\. They are tied only by settling in one transaction, both or neither\. And the relayer checks off chain, from the fee note’s opening sent with the request, that the fee note is its own\.$/;
+const TIE_LINE = /^How the fee is tied to the payment: the fee proof names it\. Its public input CiphertextHash hashes the payment proof’s public inputs with the fee note’s ciphertexts, and EnygmaDvp recomputes it from the payment beside it, so the fee settles only with that payment, in one transaction, whoever submits them\. The payment does not name the fee: whoever holds it can settle it alone, and the relayer goes unpaid\. And the relayer checks off chain, from the fee note’s opening sent with the request, that the fee note is its own\.$/;
 
 // firstTie is run f's first hop relaying a payment with its USDr fee (its
 // request goes to /relay/payment_usdr_fee, or /relay/channel_payment_usdr_fee
