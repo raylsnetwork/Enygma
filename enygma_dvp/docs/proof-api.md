@@ -139,7 +139,7 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
 
 ## POST /proof/dvpInitiator
 
-Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Alice locks her ERC-20 note and creates three output commitments: one for Bob (payment), one for Alice's change, and one revert commitment (returned to Alice if the swap is cancelled).
+Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Alice locks her ERC-20 note and creates three output commitments: one for Bob (payment), one for the counterparty's payment to Alice, and one refund commitment for Alice at timeout.
 
 ### Request
 
@@ -153,6 +153,8 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
   "stCommitA":       "string (required) — change commitment for Alice",
   "stRevertCommitA": "string (required) — revert commitment for Alice",
   "stCounterVault":  "string (required) — address (decimal) of the vault Alice must be paid from",
+  "stDeadline":      "string (required) — Unix timestamp in seconds",
+  "stGroupId":       "string (required) — group ID of Alice's input vault",
 
   "wtSpendKeyIn":   "string (required)",
   "wtValueIn":      "string (required)",
@@ -182,6 +184,8 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
 | `stCommitA` | Output change commitment for Alice |
 | `stRevertCommitA` | Revert commitment returned to Alice on cancellation |
 | `stCounterVault` | Address of the vault Alice expects to be paid from (the counterparty's vault). Must be non-zero; `EnygmaDvp` rejects a settlement from any other vault with `CounterVaultMismatch` |
+| `stDeadline` | Proof-bound deadline in Unix seconds. When opening a swap, it must be 15 minutes to 30 days after the transaction's block timestamp. |
+| `stGroupId` | Proof-bound asset group of Alice's input vault. Group zero is the default fungible group. |
 
 **Private witnesses (`wt` prefix):**
 

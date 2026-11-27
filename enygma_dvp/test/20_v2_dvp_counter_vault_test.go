@@ -17,6 +17,8 @@ package tests
 //	cd test && CC=/usr/bin/clang go test -run TestV2DvP_CounterVaultBinding -v -timeout 600s
 
 import (
+	"enygma_dvp/layout"
+
 	"math/big"
 	"testing"
 
@@ -55,8 +57,8 @@ func TestV2DvP_CounterVaultBinding(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			d.t = t
 			alice, bob := exchangeLegs(t, tc, c.aliceExpects, c.bobExpects)
-			d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
-			if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, zero); e != "CounterVaultMismatch" {
+			d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, alice.Statement[layout.DvpInitiatorDeadlineOffset])
+			if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, bob.Statement[layout.DvpInitiatorDeadlineOffset]); e != "CounterVaultMismatch" {
 				t.Fatalf("Bob's leg from an unexpected vault: got %q, want CounterVaultMismatch", e)
 			}
 			for who, rc := range map[string]onchainProofReceipt{"Alice": alice, "Bob": bob} {
@@ -71,8 +73,8 @@ func TestV2DvP_CounterVaultBinding(t *testing.T) {
 	t.Run("matching vaults settle", func(t *testing.T) {
 		d.t = t
 		alice, bob := exchangeLegs(t, tc, tc.erc20VaultAddr, tc.erc20VaultAddr)
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
-		d.mustSubmit("Bob's leg", "submitPartialSettlement", bob, zero, zero, zero)
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, alice.Statement[layout.DvpInitiatorDeadlineOffset])
+		d.mustSubmit("Bob's leg", "submitPartialSettlement", bob, zero, zero, bob.Statement[layout.DvpInitiatorDeadlineOffset])
 		for who, rc := range map[string]onchainProofReceipt{"Alice": alice, "Bob": bob} {
 			if _, spent := d.noteState(tc.erc20Vault, rc); !spent {
 				t.Fatalf("%s's note not spent after settlement", who)

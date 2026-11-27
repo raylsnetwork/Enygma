@@ -313,9 +313,7 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 		}
 	})
 
-	// The first submitter (possibly a front-runner holding Alice's public
-	// leg) picks the expiry, and anyone can cancel once it passes: one under
-	// MIN_SWAP_DURATION would let them cancel before Bob can deliver.
+	// An opening leg must give the other party at least MIN_SWAP_DURATION.
 	t.Run("expiry under MIN_SWAP_DURATION is rejected", func(t *testing.T) {
 		env := newSwapRelayerEnv(t)
 		alice, _, id := swapPair(33, 34, 101, 202)
@@ -498,6 +496,38 @@ func TestV2SwapRelayer_ClosedSwapId(t *testing.T) {
 			if env.locked(paymentVault, big.NewInt(505)) {
 				t.Fatalf("DvP-shaped receipt with message %d locked its note", message)
 			}
+		}
+	})
+}
+
+func TestV2SwapRelayerProofBoundTerms(t *testing.T) {
+	env := newSwapRelayerEnv(t)
+	pay, delivery, id := swapPair(45, 46, 301, 302)
+	expiry := big.NewInt(int64(env.now() + 3600))
+	different := new(big.Int).Add(expiry, big.NewInt(60))
+	vault := big.NewInt(0)
+	ctx := []byte{1}
+	counterVault := pay.Statement[layout.DvpDestinationCounterVaultOffset]
+	pay.Statement[layout.DvpInitiatorCommitAOffset] = pay.Statement[layout.DvpInitiatorMessageOffset]
+	pay.Statement = append(pay.Statement, big.NewInt(9), counterVault, expiry, big.NewInt(1))
+
+	t.Run("different group", func(t *testing.T) {
+		if got := env.send("alice", "submitReceipt", id, pay, true, vault, expiry, ctx, ctx); got != "SwapGroupMismatch" {
+			t.Fatalf("wrong group: got %q, want SwapGroupMismatch", got)
+		}
+	})
+	pay.Statement[layout.DvpInitiatorGroupIdOffset] = big.NewInt(0)
+	t.Run("different expiry", func(t *testing.T) {
+		if got := env.send("alice", "submitReceipt", id, pay, true, vault, different, ctx, ctx); got != "SwapDeadlineMismatch" {
+			t.Fatalf("different expiry: got %q, want SwapDeadlineMismatch", got)
+		}
+	})
+	t.Run("different pending expiry", func(t *testing.T) {
+		if got := env.send("bob", "submitReceipt", id, delivery, false, big.NewInt(1), different, ctx, ctx); got != "" {
+			t.Fatalf("opening delivery leg: %s", got)
+		}
+		if got := env.send("alice", "submitReceipt", id, pay, true, vault, expiry, ctx, ctx); got != "SwapDeadlineMismatch" {
+			t.Fatalf("different pending expiry: got %q, want SwapDeadlineMismatch", got)
 		}
 	})
 }

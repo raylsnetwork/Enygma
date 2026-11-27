@@ -38,6 +38,8 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		StCommitA:       commitA.String(),
 		StRevertCommitA: revertCommitA.String(),
 		StCounterVault:  ht.VaultHex,
+		StDeadline:      "1800000000",
+		StGroupID:       "0",
 		WtSpendKeyIn:    in.Sk.String(),
 		WtValueIn:       in.Value.String(),
 		WtSaltIn:        in.Salt.String(),
@@ -56,6 +58,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	w := newTestCircuit()
 	w.StMessage, w.StTreeNumber, w.StMerkleRoot, w.StNullifier = commitA, 0, in.Root, in.Nullifier
 	w.StCommitB, w.StCommitA, w.StRevertCommitA, w.StCounterVault = commitB, commitA, revertCommitA, ht.Vault
+	w.StDeadline, w.StGroupID = 1_800_000_000, 0
 	ht.AssertStatementLen(t, signals, layout.DvpInitiatorLen)
 	ht.AssertProvedWitness(t, w, vk, proof, signals)
 

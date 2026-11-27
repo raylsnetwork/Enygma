@@ -121,17 +121,16 @@ sequenceDiagram
 
 ### c. Transaction verification
 
-Upon receiving Alice's submission, the smart contract performs three independent checks before accepting the transaction:
+Alice chooses a Unix deadline and the asset-group ID of her input vault
+before generating the proof. `submitPartialSettlement` checks that both call
+arguments match those public inputs and that the input vault belongs to the
+group. At opening, the deadline must be between 15 minutes and 30 days from
+the block timestamp, inclusive. The vault verifies the proof and checks Alice's
+Merkle root and nullifier before locking her input note.
 
-1. Deadline validity — the contract confirms that the supplied deadline has not yet passed, ensuring the swap can still be completed within the agreed time window.
-2. Nullifier status — the contract checks that `nf_A` has not already been spent or locked by a prior transaction, preventing double-spends.
-3. Zero-knowledge proof — the contract verifies `π_A` on-chain is proof is valid or not.
-
-If all theree conditions are valid simultaneously. The smart contract do the following
-
-- Creates a `swap_id` = `H(COMMIT_A, REVERT_COMMIT_A, nf_A, COMMIT_B, deadline)`
-- Marks `nf_A` as locked
-- Emits the following data <`CTXT`, `COMMIT_B`, `ENC_TX_DATA`, `COMMIT_A`, `swap_id`>
+The contract stores the pending swap under `swap_id = COMMIT_B` and records
+the proven deadline and group. `SwapInitiated` identifies the swap by
+`COMMIT_B` and includes `COMMIT_A` and the deadline.
 
 ```mermaid
 ---
@@ -143,10 +142,10 @@ sequenceDiagram
     participant Alice
     participant Chain as Blockchain
     participant Bob
-   Alice->>Chain: < π_A, CTXT, COMMIT_B, ENC_TX_DATA, COMMIT_A, REVERT_COMMIT_A, nf_A, deadline>
+   Alice->>Chain: < π_A, CTXT, COMMIT_B, ENC_TX_DATA, COMMIT_A, REVERT_COMMIT_A, nf_A, deadline, groupId>
 
 
-    note over Chain: Check if<br>deadline is valid
+    note over Chain: Check proven deadline and group match the call<br>and the deadline is in the opening window
 
     note over Chain: Check if nf_A<br>has been spent
     note over Chain: Verify ZK Proof
@@ -154,7 +153,7 @@ sequenceDiagram
 
     alt (Verify(π_A) = TRUE) && (nf_A NOT MARKED AS SPENT) && (DEADLINE IS VALID)
 
-        note over Chain: Create swap_id<br><br>swap_id = H(COMMIT_A, REVERT_COMMIT_A, nf_A, COMMIT_B, deadline)
+        note over Chain: Create swap_id<br><br>swap_id = COMMIT_B
         note over Chain: Mark nf_A as locked
         Chain ->> Alice: TX OK
 
@@ -231,7 +230,7 @@ Bob submits (`π_B`, `COMMIT_A`, `nf_B`, `swap_id`) to the smart contract. The c
 
 Three conditions must hold simultaneously:
 
-1. _Deadline not exceeded_: the contract checks that Bob's submission arrives before the deadline embedded in `swap_id`.
+1. _Deadline not exceeded_: the contract checks that the block timestamp is at or before the deadline stored for `swap_id`.
 2. _Nullifier status_ : the contract verifies that `nf_B` has not already been spent, preventing Bob from double-spending his commitment.
 3. _Zero-knowledge proof_:the contract verifies`π_B` on-chain, confirming that Bob knows the spend key for his commitment, the nullifier is correctly formed, the destination commitment `COMMIT_A` is consistent with the asset Bob is delivering, and Bob's commitment exists in the Merkle tree.
 
@@ -351,13 +350,13 @@ sequenceDiagram
 
     end
 
-    Alice->>Chain: < π_A, CTXT, OUTPUT_COMMIT_B, ENC_TX_DATA, OUTPUT_COMMIT_A, REVERT_COMMIT_A, nf_A, deadline >
+    Alice->>Chain: < π_A, CTXT, OUTPUT_COMMIT_B, ENC_TX_DATA, OUTPUT_COMMIT_A, REVERT_COMMIT_A, nf_A, deadline, groupId >
 
-    note over Chain: Check if:<br><br>- deadline field is well-formed<br>- current time is before deadline<br>- nf_A is not already locked or spent<br>- zero-knowledge proof π_A is valid
+    note over Chain: Check if:<br><br>- deadline and group match the proof<br>- deadline is 15 minutes to 30 days from the block timestamp<br>- nf_A is not already locked or spent<br>- zero-knowledge proof π_A is valid
 
-    alt (current time <= deadline) && (Verify(π_A) = TRUE) && (nf_A fresh)
+    alt (opening window and proven terms match) && (Verify(π_A) = TRUE) && (nf_A fresh)
 
-        note over Chain: Create swap_id<br><br>swap_id = H(OUTPUT_COMMIT_A, REVERT_COMMIT_A, nf_A, OUTPUT_COMMIT_B, deadline)
+        note over Chain: Create swap_id<br><br>swap_id = OUTPUT_COMMIT_B
 
         note over Chain: Mark nf_A as locked
 
@@ -402,9 +401,9 @@ sequenceDiagram
 
     end
 
-    note over Chain: Check if:<br><br>- current time is before deadline<br>- nf_B is not already spent<br>- swap_id is active<br>- zero-knowledge proof π_B is valid
+    note over Chain: Check if:<br><br>- current time is at or before the stored deadline<br>- nf_B is not already spent<br>- swap_id is active<br>- zero-knowledge proof π_B is valid
 
-    alt (current time < deadline) && (Verify(π_B) = TRUE) && (nf_B fresh)
+    alt (current time <= deadline) && (Verify(π_B) = TRUE) && (nf_B fresh)
 
         note over Chain: - Mark nf_A as spent<br><br>- Mark nf_B as spent<br><br>- Insert OUTPUT_COMMIT_A into the tree<br><br>- Insert OUTPUT_COMMIT_B into the tree
 

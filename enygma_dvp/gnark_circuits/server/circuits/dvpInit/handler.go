@@ -63,6 +63,8 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.StCommitA = numbers.Parse(req.StCommitA)
 		witness.StRevertCommitA = numbers.Parse(req.StRevertCommitA)
 		witness.StCounterVault = numbers.Parse(req.StCounterVault)
+		witness.StDeadline = numbers.Parse(req.StDeadline)
+		witness.StGroupID = numbers.Parse(req.StGroupID)
 
 		witness.WtSpendKeyIn = numbers.Parse(req.WtSpendKeyIn)
 		witness.WtValueIn = numbers.Parse(req.WtValueIn)

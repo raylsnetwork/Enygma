@@ -35,14 +35,15 @@ type DvPInitiatorCircuitConfig struct {
 // Bob can decapsulate CTXT, re-derive saltB/saltA/encKey and independently
 // verify both COMMIT_B and COMMIT_A before creating his response proof.
 //
-// Public statement (8 elements):
+// Public statement (10 elements):
 //
-//	[msg, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault]
+//	[msg, treeNum, root, nf_A, commitB, commitA, revertCommitA, counterVault, deadline, groupId]
 //
 // counterVault is the address of the vault Alice expects to be paid from: the
 // one COMMIT_A is inserted into at settlement. The commitments do not name a
 // vault, so without it a counterparty could pay from another vault in the same
 // asset group. EnygmaDvp checks it against the actual counterparty vault.
+// Deadline and groupId are the initiator's terms for the swap.
 type DvPInitiatorCircuit struct {
 	Config DvPInitiatorCircuitConfig `gnark:"-"` // compile-time shape only; never a witness
 
@@ -55,6 +56,9 @@ type DvPInitiatorCircuit struct {
 	StCommitA       frontend.Variable `gnark:",public"` // Alice receives Bob's asset
 	StRevertCommitA frontend.Variable `gnark:",public"` // Alice's fallback if swap times out
 	StCounterVault  frontend.Variable `gnark:",public"` // vault Alice must be paid from (COMMIT_A's vault)
+
+	StDeadline frontend.Variable `gnark:",public"` // Unix seconds
+	StGroupID  frontend.Variable `gnark:",public"` // group of Alice's input vault
 
 	// --- private witnesses: Alice's input note ---
 	WtSpendKeyIn   frontend.Variable   // Alice's spend secret key
@@ -148,6 +152,11 @@ func (circuit *DvPInitiatorCircuit) Define(api frontend.API) error {
 	// StCounterVault to the proof: a public input that appears in no constraint
 	// is unconstrained by Groth16 verification and could be changed freely.
 	api.AssertIsDifferent(circuit.StCounterVault, 0)
+
+	// Range constraints bind both values to the proof, including group zero.
+	// The contract checks the deadline window against its block timestamp.
+	api.ToBinary(circuit.StDeadline, 64)
+	api.ToBinary(circuit.StGroupID, 64)
 
 	return nil
 }

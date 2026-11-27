@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"enygma_dvp/layout"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -61,10 +63,10 @@ func TestV2DvpRelayerLock_VerifiedAndOwned(t *testing.T) {
 	vaultID := big.NewInt(0)
 	tree := big.NewInt(0)
 	// A DvP initiator leg in the ERC-20 vault, in DvpInitiator's layout:
-	// [message, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault].
+	// [message, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault, deadline, groupId].
 	leg := func(root *big.Int, nf, commitB int64) onchainProofReceipt {
 		return legacyReceipt([]*big.Int{big.NewInt(0x5eed), tree, root, big.NewInt(nf),
-			big.NewInt(commitB), big.NewInt(12), big.NewInt(13), new(big.Int).SetBytes(vault.Bytes())}, 1, 1)
+			big.NewInt(commitB), big.NewInt(12), big.NewInt(13), new(big.Int).SetBytes(vault.Bytes()), big.NewInt(1_800_000_000), big.NewInt(0)}, 1, 1)
 	}
 	locked := func(nf int64) bool {
 		return e.call(vABI, vault, "lockedNullifiers", tree, big.NewInt(nf)).(bool)
@@ -162,7 +164,7 @@ func newRelayerLockFixture(t *testing.T, extra ...*ecdsa.PrivateKey) *relayerLoc
 // leg is a DvP initiator leg in vault 0, tree 0, spending nullifier nf.
 func (f *relayerLockFixture) leg(nf int64) onchainProofReceipt {
 	return legacyReceipt([]*big.Int{big.NewInt(0x5eed), big.NewInt(0), f.root, big.NewInt(nf),
-		big.NewInt(11), big.NewInt(12), big.NewInt(13), new(big.Int).SetBytes(f.vault.Bytes())}, 1, 1)
+		big.NewInt(11), big.NewInt(12), big.NewInt(13), new(big.Int).SetBytes(f.vault.Bytes()), big.NewInt(1_800_000_000), big.NewInt(0)}, 1, 1)
 }
 
 func (f *relayerLockFixture) locked(nf int64) bool {
@@ -282,6 +284,7 @@ func TestV2DvpRelayerLock_CancelSwapAfterExpiredRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	expiry := new(big.Int).SetUint64(head.Time + 30*24*3600)
+	leg.Statement[layout.DvpInitiatorDeadlineOffset] = expiry
 	if got := f.e.send(rABI, relayer, "submitReceipt", swapID, leg, true, vaultID, expiry, []byte{1}, []byte{2}); got != "" {
 		t.Fatalf("submitReceipt: %s", got)
 	}
@@ -298,5 +301,82 @@ func TestV2DvpRelayerLock_CancelSwapAfterExpiredRelease(t *testing.T) {
 	}
 	if f.locked(901) {
 		t.Fatal("the note is locked after cancel")
+	}
+}
+
+// Batch settlement and direct submission use the same proof-bound terms and
+// vault-pair approval. This test exercises the batch entry point in isolation.
+func TestV2DvpAtomicSettlementTerms(t *testing.T) {
+	f := newRelayerLockFixture(t)
+	gABI, gBin := loadArtifact(t, "core/contracts/vaults/AssetGroup.sol/AssetGroup.json")
+	for _, group := range []struct {
+		name     string
+		fungible bool
+	}{{"Fungibles", true}, {"NFTs", false}} {
+		addr := f.e.deploy(gABI, gBin, f.dvp)
+		f.e.mustSend(f.dvpABI, f.dvp, "registerAssetGroup", addr, group.name, group.fungible, big.NewInt(8))
+	}
+	zero, one := big.NewInt(0), big.NewInt(1)
+	f.e.mustSend(f.dvpABI, f.dvp, "registerSwapGroupPair", zero, one)
+
+	head, err := f.e.backend.Client().HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, want        string
+		groupID, deadline uint64
+	}{
+		{"expired proof", "SwapDeadlineExpired", 0, head.Time - 1},
+		{"different group", "SwapGroupMismatch", 1, head.Time + 3600},
+		{"unregistered vault pair", "InvalidSwapGroupPair", 0, head.Time + 3600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pay := f.leg(911)
+			pay.Statement[layout.DvpInitiatorGroupIdOffset] = new(big.Int).SetUint64(tc.groupID)
+			pay.Statement[layout.DvpInitiatorDeadlineOffset] = new(big.Int).SetUint64(tc.deadline)
+			delivery := legacyReceipt([]*big.Int{
+				pay.Statement[layout.DvpInitiatorCommitBOffset], zero, f.root, big.NewInt(912),
+				pay.Statement[layout.DvpInitiatorMessageOffset], new(big.Int).SetBytes(f.vault.Bytes()),
+			}, 1, 1)
+			if got := f.e.send(f.dvpABI, f.dvp, "swapOnGroupPair", pay, delivery, zero, one, zero, one); got != tc.want {
+				t.Fatalf("swapOnGroupPair reverted with %q, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestV2DvPPartialSettlementTerms(t *testing.T) {
+	f := newRelayerLockFixture(t)
+	abi, bin := loadArtifact(t, "core/contracts/vaults/AssetGroup.sol/AssetGroup.json")
+	group := f.e.deploy(abi, bin, f.dvp)
+	zero := big.NewInt(0)
+	f.e.mustSend(f.dvpABI, f.dvp, "registerAssetGroup", group, "Fungibles", true, big.NewInt(8))
+	f.e.mustSend(f.dvpABI, f.dvp, "addVaultToGroup", zero, zero)
+	head, err := f.e.backend.Client().HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leg := f.leg(913)
+	deadline := new(big.Int).SetUint64(head.Time + 3600)
+	leg.Statement[layout.DvpInitiatorDeadlineOffset] = deadline
+
+	for _, tc := range []struct {
+		name, want      string
+		group, deadline *big.Int
+	}{
+		{"different deadline", "SwapDeadlineMismatch", zero, new(big.Int).Add(deadline, big.NewInt(60))},
+		{"different group", "SwapGroupMismatch", big.NewInt(1), deadline},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := f.e.send(f.dvpABI, f.dvp, "submitPartialSettlement", leg, zero, tc.group, tc.deadline)
+			if got != tc.want {
+				t.Fatalf("submitPartialSettlement reverted with %q, want %s", got, tc.want)
+			}
+		})
+	}
+	f.e.mustSend(f.dvpABI, f.dvp, "submitPartialSettlement", leg, zero, zero, deadline)
+	if !f.locked(913) {
+		t.Fatal("the proven terms did not open a swap")
 	}
 }

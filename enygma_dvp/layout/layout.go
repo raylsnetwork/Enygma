@@ -7,9 +7,9 @@
 // length. It has no dependencies, so it can be imported without gnark.
 package layout
 
-// DvpInitiator statement layout (8 public signals).
+// DvpInitiator statement layout (10 public signals).
 const (
-	DvpInitiatorLen = 8
+	DvpInitiatorLen = 10
 
 	DvpInitiatorMessageOffset = 0
 	DvpInitiatorMessageSize   = 1
@@ -34,6 +34,12 @@ const (
 
 	DvpInitiatorCounterVaultOffset = 7
 	DvpInitiatorCounterVaultSize   = 1
+
+	DvpInitiatorDeadlineOffset = 8
+	DvpInitiatorDeadlineSize   = 1
+
+	DvpInitiatorGroupIdOffset = 9
+	DvpInitiatorGroupIdSize   = 1
 )
 
 // DvpDestination statement layout (6 public signals).

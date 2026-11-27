@@ -27,7 +27,7 @@
     {"slot": 20, "circuit": "JoinSplitErc20_10_2_WithAuditor"},
     {"slot": 21, "circuit": "AuctionInit_Auditor"},
     {"slot": 22, "circuit": "AuctionBid_Auditor"},
-    {"slot": 23, "circuit": "DvPInitiator", "nPublic": 8},
+    {"slot": 23, "circuit": "DvPInitiator", "nPublic": 10},
     {"slot": 24, "circuit": "DvPDestination", "nPublic": 6}
   ]
 }

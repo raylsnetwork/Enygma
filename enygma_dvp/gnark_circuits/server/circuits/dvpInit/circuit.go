@@ -18,6 +18,9 @@ type DvPInitiatorRequest struct {
 	// Address (decimal) of the vault the prover expects to be paid from.
 	StCounterVault string `json:"stCounterVault" binding:"required"`
 
+	StDeadline string `json:"stDeadline" binding:"required"`
+	StGroupID  string `json:"stGroupId" binding:"required"`
+
 	WtSpendKeyIn   string    `json:"wtSpendKeyIn"   binding:"required"`
 	WtValueIn      string    `json:"wtValueIn"      binding:"required"`
 	WtSaltIn       string    `json:"wtSaltIn"       binding:"required"`

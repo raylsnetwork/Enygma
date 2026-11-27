@@ -239,10 +239,10 @@ func TestV2Vaults_DvpLegChecks(t *testing.T) {
 			want    string
 		}{
 			{1, selReceiptShapeMismatch},
-			// Read as PaymentFee (same length): its ContractAddress slot holds
-			// the leg's RevertCommitA, never this vault.
+			// Both payment shapes share the length. Each requires the payment
+			// statement to name this vault.
 			{2, selErrorString},
-			{3, selReceiptShapeMismatch},
+			{3, selErrorString},
 		} {
 			if got := erc20.revert("checkReceiptConditions", fakeReceipt(layout.DvpInitiatorLen, 1, c.outputs)); got != c.want {
 				t.Errorf("numberOfOutputs %d: checkReceiptConditions reverted %q, want %q", c.outputs, got, c.want)
@@ -255,8 +255,8 @@ func TestV2Vaults_DvpLegChecks(t *testing.T) {
 	t.Run("Erc20 transfer refuses an initiator leg past the message guard", func(t *testing.T) {
 		rc := fakeReceipt(layout.DvpInitiatorLen, 1, 3)
 		rc.Statement[layout.DvpInitiatorMessageOffset] = big.NewInt(0)
-		if got := erc20.revert("transfer", rc); got != selReceiptShapeMismatch {
-			t.Errorf("transfer reverted %q, want ReceiptShapeMismatch (%s)", got, selReceiptShapeMismatch)
+		if got := erc20.revert("transfer", rc); got != selErrorString {
+			t.Errorf("transfer reverted %q, want the vault-address check (%s)", got, selErrorString)
 		}
 	})
 }
