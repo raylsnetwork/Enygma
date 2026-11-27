@@ -29,6 +29,8 @@ participant
 anyone
   verify      [-url URL [-sync]] -dir DIR [-mine SHA256] [-srs SRS -r1cs DIR]
                                           check a phase's transcript: downloaded into DIR, or DIR as it is
+  verify-keys -ceremony NAME -srs SRS -r1cs DIR -keys DIR -phase1-seal-sha256 SHA256 -phase2-seal-sha256 SHA256
+                                          check installed keys against independently approved seals
   check       -prev STATE -next STATE     verify one contribution
   info        STATE                       describe a state file
   version                                 the commit this program was built from
@@ -88,6 +90,7 @@ var commands = map[string]command{
 	"phase2-new":  phase2New,
 	"phase2-seal": phase2Seal,
 	"info":        info,
+	"verify-keys": verifyKeys,
 }
 
 // run executes one command and returns its exit code: 0 done, 1 failed, 2 called wrongly.
@@ -250,7 +253,7 @@ func phase2Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err := beacon.usage(); err != nil {
 			return err
 		}
-		recordPath := filepath.Join(*keys, "ceremony-seal.json")
+		recordPath := filepath.Join(*keys, phase2SealFile)
 		if _, err := os.Lstat(recordPath); !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%s: a seal's record is there already, or cannot be checked (%v)", recordPath, err)
 		}

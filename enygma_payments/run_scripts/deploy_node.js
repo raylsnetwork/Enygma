@@ -75,6 +75,9 @@ async function main() {
   if (reviewedArtifact.deployedBytecode !== verifierArtifact.deployedBytecode) {
     throw new Error("local verifier build differs from the reviewed runtime");
   }
+  if (!localChain) {
+    execFileSync("bash", [path.join(__dirname, "verify_production_keys.sh"), reviewedArtifactPath], { stdio: "inherit" });
+  }
   const wallet = new ethers.NonceManager(new ethers.Wallet(process.env.OWNER_KEY || DEFAULT_OWNER_KEY, provider));
   console.log("Deployer:", await wallet.getAddress());
   console.log("Block:", await provider.getBlockNumber());

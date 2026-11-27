@@ -104,7 +104,12 @@ flowchart LR
 
 ```
 ### ZK Trusted Setup (Groth16)
-Enygma relies on the Groth16 ZK scheme, which requires an initial trusted setup. Ideally, such a trusted setup is in the form of an MPC protocol where different participants contribute with random secrets, which must be destroyed after the ceremony to ensure that a single party does not have the ability to subvert the system (i.e., forge proofs). The output of this trusted setup is the Common Reference String (CRS) for the circuit. 
+Enygma's production Groth16 keys come from a multi-party setup ceremony.
+Each phase requires at least one honest contributor who destroys their secret
+randomness. The approved Phase 1 SRS and the Phase 2 seal bind each circuit to
+its proving and verifying keys. The deployment checks match the installed keys
+and verifier artifacts to the reviewed release.
+[Setup ceremony and release checks](../enygma_ceremony/README.md#approving-production-keys-and-verifiers)
 
 We envision this step to take place involving different Privacy Nodes in the system. We note that each Privacy Node represents a regulated financial institution. Therefore, it is reasonable to assume that at least one of the institutions will abide by the protocol and preserve the security of the trusted setup stage. 
 

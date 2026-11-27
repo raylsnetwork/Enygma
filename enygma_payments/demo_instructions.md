@@ -51,7 +51,7 @@ npx hardhat node
 
 ## Step 2 — Start the gnark server
 
-The gnark server exposes `POST /proof/enygma` and generates Groth16 proofs on request. It must be started from the `gnark-server/` directory because key paths are relative.
+The gnark server exposes `POST /proof/enygma` on loopback and generates Groth16 proofs on request. Start it from `gnark-server/` so it can find its keys. See the [prover deployment guide](gnark-server/README.md#spending-witnesses-and-remote-proving) for the witness data and bank-local deployment requirements.
 
 ```bash
 # In a dedicated terminal — keep this running
@@ -63,9 +63,9 @@ Expected output:
 
 ```
 [GIN-debug] POST   /proof/enygma             --> enygma-server/pkg/circuits/enygma.NewHandler.func1 (3 handlers)
-[GIN-debug] POST   /proof/withdraw/1         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
+[GIN-debug] POST   /proof/withdraw/6         --> enygma-server/pkg/circuits/withdraw.NewHandler.func1 (3 handlers)
 ...
-[GIN-debug] Listening and serving HTTP on :8080
+Enygma gnark proving server listening on http://127.0.0.1:8080
 ```
 
 ## Step 3 — Deploy the contracts

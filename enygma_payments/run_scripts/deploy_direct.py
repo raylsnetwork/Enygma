@@ -112,6 +112,11 @@ def main():
     verifier_artifact = load_artifact(VERIFIER_ARTIFACT)
     if reviewed_artifact["deployedBytecode"] != verifier_artifact["deployedBytecode"]:
         sys.exit("local verifier build differs from the reviewed runtime")
+    if not IS_LOCAL_TARGET:
+        subprocess.run(
+            ["bash", os.path.join(ROOT, "verify_production_keys.sh"), REVIEWED_VERIFIER_ARTIFACT],
+            check=True,
+        )
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
     assert w3.is_connected(), "Cannot connect to chain at " + RPC_URL
     # Fix M-07: is_connected() succeeds against ANY reachable chain,

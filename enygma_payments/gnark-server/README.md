@@ -85,7 +85,10 @@ keys/
     └── DepositVk.key
 ```
 
-Generating Keys
+For production keys, follow the [ceremony release procedure](../../enygma_ceremony/README.md#approving-production-keys-and-verifiers)
+and [payments deployment checks](../run_scripts/README.md#production-ceremony-keys).
+
+Generating development keys
 
 The keys (except the gitignored Burn keys) are committed. After a circuit
 change, regenerate them all from the repo root, which also stamps them with
@@ -108,7 +111,37 @@ To start the Gnark API server:
 go run cmd/server/main.go
 ```
 
-This launches the local ZK-SNARK service that listens for proof-generation and verification requests.
+The prover listens on `127.0.0.1:8080` by default. Run one prover per bank, on the
+same host or in the same private network namespace as its payment client. Limit
+local access to bank-controlled processes and leave the port unpublished. Keep
+witnesses in JSON request bodies and keep those bodies out of logs and traces.
+
+#### Spending witnesses and remote proving
+
+The prover receives `secret_key`, which gives spending authority, as well as
+private balances and amounts and their commitment blinding factors. The transfer,
+fee, USDr, deposit and withdrawal requests also contain shared secrets used for
+fingerprints or tags. Burn takes the spend key and the balance opening. The proof
+and public signals can leave the bank after proving.
+
+A remote prover must be operated within the same bank's trust boundary. Before
+enabling it, the bank must approve the host and its operators for access to those
+witnesses. The server rejects a non-loopback bind unless it can start with mutual
+TLS and all of the following settings:
+
+| Setting | Value |
+| --- | --- |
+| `GNARK_BIND_HOST` | The IP address of the bank's prover interface |
+| `GNARK_ALLOW_REMOTE` | `1`, the bank operator's explicit opt-in |
+| `GNARK_TLS_CERT` | Server certificate chain in PEM format |
+| `GNARK_TLS_KEY` | Server private key in PEM format |
+| `GNARK_TLS_CLIENT_CA` | PEM CA bundle dedicated to that bank's authorized proving clients |
+
+Remote clients use HTTPS, verify the server's identity and present a client
+certificate issued by that CA. Use a certificate with a SAN for the DNS name or IP
+the client uses. The bundled Go payment client and demo use loopback. A remote
+integration must supply its own mTLS client configuration and keep the request
+inside the bank-controlled service.
 
 ### Statement Layouts
 

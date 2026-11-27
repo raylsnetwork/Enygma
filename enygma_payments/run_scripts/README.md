@@ -17,9 +17,30 @@ python3 -m venv .venv
 
 Requires a Hardhat node running at `localhost:8545` (chainId 1337). See `demo_instructions.md` for the full end-to-end flow.
 
+## Production ceremony keys
+
+Follow the [ceremony release procedure](../../enygma_ceremony/README.md#approving-production-keys-and-verifiers)
+for all six payments circuits. Install the approved keys under `gnark-server/`
+at the paths in the export's `keys.json`, with `ceremony-seal.json` at the root
+of that directory. Before starting a production prover check that exact key
+directory with `ceremony verify-keys` and keep it read-only to the service.
+
+Both deployment scripts require the following settings outside local Hardhat.
+
+| Setting | Value |
+| --- | --- |
+| `CEREMONY_SRS` | Absolute path to the approved Phase 1 SRS, beside its JSON seal |
+| `CEREMONY_PHASE1_SEAL_SHA256` | Release-approved SHA-256 of the Phase 1 seal record |
+| `CEREMONY_PHASE2_SEAL_SHA256` | Release-approved SHA-256 of the payments Phase 2 seal record |
+| `REVIEWED_VERIFIER_ARTIFACT` | Reviewed transfer verifier build from the approved `Enygma` VK |
+
+The scripts check a fresh R1CS export and the installed keys against the approved
+seals, then verify the reviewed transfer artifact before sending deployment
+transactions. The local Hardhat scripts continue to accept development keys.
+
 ## Register or replace proof verifiers
 
-Use the reviewed build artifact and verifying key for the circuit being registered. The
+For each enabled circuit, use the reviewed build artifact and the verifying key from the approved ceremony bundle. The
 artifact's `deployedBytecode` is the reference runtime. Build it from the reviewed
 Solidity export for the approved key and circuit, and retain it with the key review
 record. Use a direct verifier deployment so the runtime itself contains the verification
