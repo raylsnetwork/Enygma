@@ -116,6 +116,11 @@ func sealedSRS(t *testing.T) (srs, r1cs string) {
 	return p("srs"), p("r1cs")
 }
 
+// sha256Hex is the sha256 of the file at path, in hex.
+func sha256Hex(t *testing.T, path string) string {
+	return fmt.Sprintf("%x", sha256.Sum256(readFile(t, path)))
+}
+
 // TestPhase2NamesArePlain (audit M3): a Phase 2's ceremony and circuit names
 // are plain names, which no terminal acts on: phase2-new refuses others
 // before it writes or prints anything with them, as decoding a state does.
@@ -123,7 +128,7 @@ func TestPhase2NamesArePlain(t *testing.T) {
 	srs, r1cs := sealedSRS(t)
 	t.Run("a ceremony name", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "p2-0")
-		code, stdout, stderr := runCommand("phase2-new", "-ceremony", "retail"+forgedOK, "-srs", srs, "-r1cs", r1cs, "-circuits", "Cubic,Committed", "-out", out)
+		code, stdout, stderr := runCommand("phase2-new", "-ceremony", "retail"+forgedOK, "-srs", srs, "-srs-sha256", sha256Hex(t, srs), "-rehearsal", "-r1cs", r1cs, "-circuits", "Cubic,Committed", "-out", out)
 		if code != 1 || strings.Contains(stdout+stderr, "\x1b") || !strings.Contains(stderr, "must be letters, digits") {
 			t.Fatalf("exit %d:\n%s%s", code, stdout, stderr)
 		}
@@ -137,7 +142,7 @@ func TestPhase2NamesArePlain(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, hostile+".r1cs"), readFile(t, filepath.Join(r1cs, "Cubic.r1cs")), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		code, stdout, stderr := runCommand("phase2-new", "-ceremony", "retail", "-srs", srs, "-r1cs", dir, "-circuits", hostile, "-out", filepath.Join(t.TempDir(), "p2-0"))
+		code, stdout, stderr := runCommand("phase2-new", "-ceremony", "retail", "-srs", srs, "-srs-sha256", sha256Hex(t, srs), "-rehearsal", "-r1cs", dir, "-circuits", hostile, "-out", filepath.Join(t.TempDir(), "p2-0"))
 		if code != 1 || strings.Contains(stdout+stderr, "\x1b") || !strings.Contains(stderr, "must be letters, digits") {
 			t.Fatalf("exit %d:\n%s%s", code, stdout, stderr)
 		}
@@ -150,7 +155,7 @@ func TestPhase2NamesArePlain(t *testing.T) {
 func TestChildReceiptHasNoNames(t *testing.T) {
 	srs, r1cs := sealedSRS(t)
 	start := filepath.Join(t.TempDir(), "p2-0")
-	if code, stdout, stderr := runCommand("phase2-new", "-ceremony", "retail", "-srs", srs, "-r1cs", r1cs, "-circuits", "Cubic,Committed", "-out", start); code != 0 {
+	if code, stdout, stderr := runCommand("phase2-new", "-ceremony", "retail", "-srs", srs, "-srs-sha256", sha256Hex(t, srs), "-rehearsal", "-r1cs", r1cs, "-circuits", "Cubic,Committed", "-out", start); code != 0 {
 		t.Fatalf("phase2-new: exit %d\n%s%s", code, stdout, stderr)
 	}
 	state := readFile(t, start)
@@ -159,7 +164,7 @@ func TestChildReceiptHasNoNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Ceremony != "" || r.Circuits != nil || r.Hash != sha256.Sum256(out.Bytes()) {
+	if r.Ceremony != "" || r.Circuits != nil || r.R1CS != nil || r.Hash != sha256.Sum256(out.Bytes()) {
 		t.Fatalf("receipt %+v", r)
 	}
 }

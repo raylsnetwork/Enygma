@@ -88,31 +88,42 @@ func chainFlags(fs *flag.FlagSet) func(args []string, w io.Writer) (chain, error
 		if (*dir == "") == (len(args) == 0) {
 			return chain{}, fmt.Errorf("%w: give -transcript, or the contributions in order, not both", errUsage)
 		}
-		c := chain{paths: args, head: h}
 		if *dir != "" {
-			t, err := transcript.Load(*dir)
-			if err != nil {
-				return chain{}, err
-			}
-			c.paths = nil
-			for _, e := range t.Contributions {
-				c.paths = append(c.paths, transcript.Path(*dir, e.Index))
-				c.last = e.At
-			}
+			return loadChain(*dir, h, w)
 		}
-		if len(c.paths) == 0 {
-			return chain{}, errors.New("no contributions to seal")
-		}
-		got, _, err := transcript.HashFile(c.paths[len(c.paths)-1])
-		if err != nil {
-			return chain{}, err
-		}
-		if hex.EncodeToString(got[:]) != h {
-			return chain{}, fmt.Errorf("the chain ends at sha256 %x, not the announced head %s: sealing it would leave contributions out", got, h)
-		}
-		fmt.Fprintf(w, "Sealing %d contributions, ending at the announced head %s.\n", len(c.paths), h)
-		return c, nil
+		return checkChain(chain{paths: args, head: h}, w)
 	}
+}
+
+// loadChain lists the contributions of the transcript in dir, which must end
+// at head.
+func loadChain(dir, head string, w io.Writer) (chain, error) {
+	t, err := transcript.Load(dir)
+	if err != nil {
+		return chain{}, err
+	}
+	c := chain{head: head}
+	for _, e := range t.Contributions {
+		c.paths = append(c.paths, transcript.Path(dir, e.Index))
+		c.last = e.At
+	}
+	return checkChain(c, w)
+}
+
+// checkChain checks that c ends at its head.
+func checkChain(c chain, w io.Writer) (chain, error) {
+	if len(c.paths) == 0 {
+		return chain{}, errors.New("no contributions to seal")
+	}
+	got, _, err := transcript.HashFile(c.paths[len(c.paths)-1])
+	if err != nil {
+		return chain{}, err
+	}
+	if hex.EncodeToString(got[:]) != c.head {
+		return chain{}, fmt.Errorf("the chain ends at sha256 %x, not the announced head %s: sealing it would leave contributions out", got, c.head)
+	}
+	fmt.Fprintf(w, "Sealing %d contributions, ending at the announced head %s.\n", len(c.paths), c.head)
+	return c, nil
 }
 
 // beaconRecord is how a seal's beacon was chosen.
@@ -158,43 +169,171 @@ func (b *beaconChoice) usage() error {
 
 // read returns the beacon, after a chain whose last contribution was
 // accepted at last (zero when unknown).
-func (b *beaconChoice) read(w io.Writer, last time.Time) ([]byte, beaconRecord, error) {
+func (b *beaconChoice) read(w io.Writer, last time.Time) (ceremony.Beacon, beaconRecord, error) {
 	if err := b.usage(); err != nil {
-		return nil, beaconRecord{}, err
+		return ceremony.Beacon{}, beaconRecord{}, err
 	}
 	if *b.round == 0 {
 		beacon, err := hex.DecodeString(*b.unverified)
 		if err != nil {
-			return nil, beaconRecord{}, fmt.Errorf("%w: -unverified-beacon: %v", errUsage, err)
+			return ceremony.Beacon{}, beaconRecord{}, fmt.Errorf("%w: -unverified-beacon: %v", errUsage, err)
 		}
-		if len(beacon) < ceremony.MinBeacon {
-			return nil, beaconRecord{}, fmt.Errorf("%w: %d bytes", ceremony.ErrBeacon, len(beacon))
-		}
-		fmt.Fprintln(w, "WARNING: -unverified-beacon: nothing checks this beacon, so whoever chose it may have chosen the keys."+
-			" They are fit for tests and rehearsals only, and their record says so.")
-		return beacon, beaconRecord{Unverified: true, Beacon: hex.EncodeToString(beacon)}, nil
+		return unverifiedBeacon(w, beacon)
 	}
 	closes, err := time.Parse(time.RFC3339, *b.closeAt)
 	if err != nil {
-		return nil, beaconRecord{}, fmt.Errorf("%w: -close-at: %v", errUsage, err)
+		return ceremony.Beacon{}, beaconRecord{}, fmt.Errorf("%w: -close-at: %v", errUsage, err)
 	}
-	out := drand.Time(*b.round)
+	return drandBeacon(w, *b.round, closes, last)
+}
+
+// unverifiedBeacon is beacon, which nothing checks, said loudly.
+func unverifiedBeacon(w io.Writer, beacon []byte) (ceremony.Beacon, beaconRecord, error) {
+	if len(beacon) < ceremony.MinBeacon {
+		return ceremony.Beacon{}, beaconRecord{}, fmt.Errorf("%w: %d bytes", ceremony.ErrBeacon, len(beacon))
+	}
+	fmt.Fprintln(w, "WARNING: -unverified-beacon: nothing checks this beacon, so whoever chose it may have chosen the keys."+
+		" They are fit for tests and rehearsals only, and their record says so.")
+	return ceremony.Beacon{Value: beacon}, beaconRecord{Unverified: true, Beacon: hex.EncodeToString(beacon)}, nil
+}
+
+// drandBeacon fetches drand quicknet's round, checked against its key, for
+// a phase that closed at closes and whose last contribution was accepted at
+// last (zero when unknown): the round must come out after both.
+func drandBeacon(w io.Writer, round uint64, closes, last time.Time) (ceremony.Beacon, beaconRecord, error) {
+	out := drand.Time(round)
 	if !out.After(closes) {
-		return nil, beaconRecord{}, fmt.Errorf("drand round %d came out at %s, not after the close at %s: "+
-			"a beacon known before the close could have been chosen", *b.round, out.UTC().Format(time.RFC3339), closes.UTC().Format(time.RFC3339))
+		return ceremony.Beacon{}, beaconRecord{}, fmt.Errorf("drand round %d came out at %s, not after the close at %s: "+
+			"a beacon known before the close could have been chosen", round, out.UTC().Format(time.RFC3339), closes.UTC().Format(time.RFC3339))
 	}
 	if !out.After(last) {
-		return nil, beaconRecord{}, fmt.Errorf("drand round %d came out at %s, not after the last contribution, accepted at %s",
-			*b.round, out.UTC().Format(time.RFC3339), last.UTC().Format(time.RFC3339))
+		return ceremony.Beacon{}, beaconRecord{}, fmt.Errorf("drand round %d came out at %s, not after the last contribution, accepted at %s",
+			round, out.UTC().Format(time.RFC3339), last.UTC().Format(time.RFC3339))
 	}
-	beacon, err := drand.Fetch(context.Background(), &http.Client{Timeout: 30 * time.Second}, drand.Relays, *b.round)
+	beacon, err := drand.Fetch(context.Background(), &http.Client{Timeout: 30 * time.Second}, drand.Relays, round)
 	if err != nil {
-		return nil, beaconRecord{}, err
+		return ceremony.Beacon{}, beaconRecord{}, err
 	}
-	fmt.Fprintf(w, "Beacon: drand quicknet round %d, out at %s, %x\n", *b.round, out.UTC().Format(time.RFC3339), beacon)
-	return beacon[:], beaconRecord{
-		DrandRound: *b.round, DrandAt: out.UTC(), CloseAt: closes.UTC(), Beacon: hex.EncodeToString(beacon[:]),
+	fmt.Fprintf(w, "Beacon: drand quicknet round %d, out at %s, %x\n", round, out.UTC().Format(time.RFC3339), beacon)
+	return ceremony.Beacon{Value: beacon[:], DrandRound: round, CloseAt: closes.UTC()}, beaconRecord{
+		DrandRound: round, DrandAt: out.UTC(), CloseAt: closes.UTC(), Beacon: hex.EncodeToString(beacon[:]),
 	}, nil
+}
+
+// srsChoice is a Phase 2 command's SRS flags.
+type srsChoice struct {
+	path, sha256, phase1, phase1Head *string
+	rehearsal                        *bool
+}
+
+// srsFlags declares a Phase 2 command's SRS flags (audit H1): -srs, the SRS
+// file, and -srs-sha256, the sha256 announced for it, which the file must
+// have: any file decodes as an SRS, including one made from a τ, α and β
+// someone kept, and a Phase 2 is only as sound as the Phase 1 its SRS seals.
+// With reseal, -phase1 may stand in for -srs-sha256: the Phase 1 transcript
+// to reseal as the SRS says it was sealed, which must give the same file,
+// with -phase1-head, Phase 1's head as announced, which the SRS must say it
+// was sealed up to: any transcript reseals to the SRS sealed from it, and
+// the one that counts is the announced one. -rehearsal takes a rehearsal's
+// SRS, sealed with a beacon not from drand.
+func srsFlags(fs *flag.FlagSet, reseal bool) *srsChoice {
+	c := &srsChoice{
+		path:      fs.String("srs", "", "the SRS Phase 2 starts from, as phase1-seal wrote it"),
+		sha256:    fs.String("srs-sha256", "", "the SRS's sha256, as announced: the SRS must be that file"),
+		rehearsal: fs.Bool("rehearsal", false, "take a rehearsal's SRS, sealed with a beacon not from drand (-unverified-beacon)"),
+	}
+	if reseal {
+		c.phase1 = fs.String("phase1", "", "in place of -srs-sha256: Phase 1's transcript directory, resealed as the SRS says it was sealed; the SRS must be that seal")
+		c.phase1Head = fs.String("phase1-head", "", "with -phase1: Phase 1's head as announced, which the SRS must have been sealed up to")
+	}
+	return c
+}
+
+// given reports whether -srs was given.
+func (c *srsChoice) given() bool { return *c.path != "" }
+
+// read returns the SRS, pinned to the sha256 announced for it or to the
+// seal of the Phase 1 transcript in -phase1, and describes it to w.
+func (c *srsChoice) read(w io.Writer) (ceremony.SRS, ceremony.Info, error) {
+	phase1, phase1Head := "", ""
+	if c.phase1 != nil {
+		phase1, phase1Head = *c.phase1, strings.ToLower(*c.phase1Head)
+	}
+	if *c.path == "" || (*c.sha256 == "") == (phase1 == "") || (phase1 == "") != (phase1Head == "") {
+		if c.phase1 != nil {
+			return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%w: give -srs with its sha256 as announced (-srs-sha256), or with Phase 1's transcript to reseal and its head as announced (-phase1, -phase1-head)", errUsage)
+		}
+		return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%w: give -srs with its sha256 as announced (-srs-sha256)", errUsage)
+	}
+	info, err := ceremony.Inspect(*c.path)
+	if err != nil {
+		return ceremony.SRS{}, ceremony.Info{}, err
+	}
+	if info.Kind != ceremony.KindSRS {
+		return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%s holds a %s, not an SRS", *c.path, info.Kind)
+	}
+	fmt.Fprintf(w, "SRS %s: sha256 %x\n  %s\n", *c.path, info.Hash, sealedFrom(*info.Phase1))
+	srs := ceremony.SRS{Path: *c.path, Rehearsal: *c.rehearsal}
+	if phase1 == "" {
+		b, err := hex.DecodeString(*c.sha256)
+		if err != nil || len(b) != len(srs.SHA256) {
+			return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%w: -srs-sha256 is the SRS's sha256, as announced", errUsage)
+		}
+		copy(srs.SHA256[:], b) // the Phase 2 starts only from a file of this sha256, which start checks on the bytes it reads
+		if srs.SHA256 != info.Hash {
+			// Said now, before a seal loads its chain and fetches its beacon.
+			return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%w: %s has sha256 %x, and the SRS announced %x", ceremony.ErrSRS, *c.path, info.Hash, srs.SHA256)
+		}
+		return srs, info, nil
+	}
+	if head := hex.EncodeToString(info.Phase1.Head[:]); head != phase1Head {
+		return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%w: the SRS says it was sealed up to head %s, not the announced %s", ceremony.ErrSRS, head, phase1Head)
+	}
+	resealed, err := resealPhase1(w, phase1, *info.Phase1)
+	if err != nil {
+		return ceremony.SRS{}, ceremony.Info{}, err
+	}
+	if resealed != info.Hash {
+		return ceremony.SRS{}, ceremony.Info{}, fmt.Errorf("%w: Phase 1 in %s, resealed as the SRS says it was sealed, gives sha256 %x, not the SRS's %x: the SRS is not that Phase 1's seal",
+			ceremony.ErrSRS, phase1, resealed, info.Hash)
+	}
+	fmt.Fprintf(w, "Resealed Phase 1 from %s: the same SRS.\n", phase1)
+	srs.SHA256 = info.Hash
+	return srs, info, nil
+}
+
+// sealedFrom says in a line what an SRS was sealed from.
+func sealedFrom(p ceremony.Provenance) string {
+	beacon := "a beacon not from drand: a rehearsal's"
+	if p.Beacon.DrandRound != 0 {
+		beacon = fmt.Sprintf("drand round %d, for the close at %s", p.Beacon.DrandRound, p.Beacon.CloseAt.Format(time.RFC3339))
+	}
+	return fmt.Sprintf("the seal of Phase 1 up to head %x (%d contributions), with %s", p.Head, p.Contributions, beacon)
+}
+
+// resealPhase1 reseals the Phase 1 transcript in dir as p says an SRS was
+// sealed: up to its head, with its beacon (drand's round, fetched and
+// checked again, or a rehearsal's, which the Phase 2 then refuses unless
+// told), and returns the sha256 of the SRS it gets.
+func resealPhase1(w io.Writer, dir string, p ceremony.Provenance) ([32]byte, error) {
+	c, err := loadChain(dir, hex.EncodeToString(p.Head[:]), w)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	beacon := ceremony.Beacon{Value: p.Beacon.Value}
+	if p.Beacon.DrandRound != 0 {
+		if beacon, _, err = drandBeacon(w, p.Beacon.DrandRound, p.Beacon.CloseAt, c.last); err != nil {
+			return [32]byte{}, err
+		}
+	} else {
+		fmt.Fprintln(w, "The SRS was sealed with a beacon not from drand, which whoever sealed it chose: a rehearsal's.")
+	}
+	tmp, err := os.MkdirTemp("", "ceremony-phase1-")
+	if err != nil {
+		return [32]byte{}, err
+	}
+	r, err := ceremony.SealPhase1(filepath.Join(tmp, "srs"), beacon, c.paths)
+	return r.Hash, errors.Join(err, os.RemoveAll(tmp))
 }
 
 // sealRecord is what a seal writes beside what it sealed: which chain, which
@@ -205,9 +344,19 @@ type sealRecord struct {
 	Head          string          `json:"head"` // sha256 of the last contribution sealed
 	Contributions int             `json:"contributions"`
 	Beacon        beaconRecord    `json:"beacon"`
-	SRS           string          `json:"srs_sha256"` // Phase 1: the SRS written; Phase 2: the SRS it started from
+	SRS           string          `json:"srs_sha256"`      // Phase 1: the SRS written; Phase 2: the SRS it started from
+	Phase1        *phase1Record   `json:"phase1,omitzero"` // Phase 2: what that SRS was sealed from (audit H1)
 	Circuits      []circuitRecord `json:"circuits,omitzero"`
 	SealedBy      string          `json:"sealed_by,omitzero"` // the commit of the program that sealed
+}
+
+// phase1Record is what a Phase 2's SRS was sealed from, as the SRS says.
+type phase1Record struct {
+	Head          string    `json:"head"`
+	Contributions uint32    `json:"contributions"`
+	DrandRound    uint64    `json:"drand_round,omitzero"`
+	CloseAt       time.Time `json:"close_at,omitzero"`
+	Unverified    bool      `json:"unverified,omitzero"` // a rehearsal's: its beacon not from drand
 }
 
 // circuitRecord is one circuit of a sealed Phase 2: its constraint system's

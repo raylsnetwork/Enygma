@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16/bn254/mpcsetup"
@@ -74,20 +75,91 @@ func NewPhase1(out string, n uint64) (Receipt, error) {
 	return Receipt{Info: s.info(h)}, err
 }
 
+// Beacon is the public randomness a seal applies as a last contribution, and
+// where it came from.
+type Beacon struct {
+	Value []byte // at least MinBeacon bytes
+	// DrandRound is the drand quicknet round whose randomness Value is, as the
+	// seal fetched and checked it; 0 for a beacon not from drand, which
+	// whoever sealed chose: for tests and rehearsals only.
+	DrandRound uint64
+	CloseAt    time.Time // the phase's close, as announced; zero when not given
+}
+
+// Provenance is what an SRS was sealed from (audit H1): the Phase 1 chain
+// that ends at Head, after Contributions contributions, and the beacon.
+// SealPhase1 writes it into the SRS file, so the SRS's sha256 names it, and
+// so does every Phase 2 state built on that SRS, which records the sha256.
+// A file can claim any provenance: what makes the claim true is a reseal of
+// that Phase 1 that gives the same file.
+type Provenance struct {
+	Head          [32]byte
+	Contributions uint32
+	Beacon        Beacon
+}
+
+// encode writes the provenance: head, count, drand round, close (Unix
+// seconds, 0 for none), then the beacon after its one-byte length.
+func (p *Provenance) encode(w io.Writer) error {
+	var closeAt int64
+	if !p.Beacon.CloseAt.IsZero() {
+		closeAt = p.Beacon.CloseAt.Unix()
+	}
+	if err := put(w, p.Head, p.Contributions, p.Beacon.DrandRound, closeAt); err != nil {
+		return err
+	}
+	return putBytes(w, p.Beacon.Value)
+}
+
+// decode reads a provenance as encode wrote it. Its integers are not counts,
+// so they are read from r itself, not r.bounded().
+func (p *Provenance) decode(r *body) error {
+	var closeAt int64
+	if err := get(r, &p.Head, &p.Contributions, &p.Beacon.DrandRound, &closeAt); err != nil {
+		return err
+	}
+	if p.Contributions == 0 {
+		return fmt.Errorf("%w: an SRS sealed from no contribution", ErrFormat)
+	}
+	if (p.Beacon.DrandRound == 0) != (closeAt == 0) {
+		// A drand round is checked against the close it came out after; a
+		// beacon not from drand has none (audit H1).
+		return fmt.Errorf("%w: an SRS with a drand round and no close, or a close and no drand round", ErrFormat)
+	}
+	p.Beacon.CloseAt = time.Time{}
+	if closeAt != 0 {
+		p.Beacon.CloseAt = time.Unix(closeAt, 0).UTC()
+	}
+	value, err := getString(r)
+	if err != nil {
+		return err
+	}
+	p.Beacon.Value = []byte(value)
+	if err := checkBeacon(p.Beacon.Value); err != nil {
+		return fmt.Errorf("%w: %v", ErrFormat, err)
+	}
+	return nil
+}
+
 // SealPhase1 replays Phase 1 from its start through contributions, in order,
 // checking each step as Check does; applies the beacon as a last, public
-// contribution; and writes the SRS to out.
-func SealPhase1(out string, beacon []byte, contributions []string) (Receipt, error) {
-	if err := checkBeacon(beacon); err != nil {
+// contribution; and writes the SRS to out, with its provenance: the head it
+// replayed to, and the beacon.
+func SealPhase1(out string, beacon Beacon, contributions []string) (Receipt, error) {
+	if err := checkBeacon(beacon.Value); err != nil {
 		return Receipt{}, err
 	}
 	if len(contributions) == 0 {
 		return Receipt{}, errors.New("no contributions to seal")
 	}
-	var prev *phase1State
+	var (
+		prev *phase1State
+		head [32]byte
+	)
 	for i, path := range contributions {
 		next := new(phase1State)
-		if _, err := open(path, KindPhase1, next); err != nil {
+		var err error
+		if head, err = open(path, KindPhase1, next); err != nil {
 			return Receipt{}, err
 		}
 		if prev == nil {
@@ -98,9 +170,9 @@ func SealPhase1(out string, beacon []byte, contributions []string) (Receipt, err
 		}
 		prev = next
 	}
-	srs := &srsFile{n: prev.n, commons: prev.mpc.Seal(beacon)}
+	srs := &srsFile{n: prev.n, prov: Provenance{Head: head, Contributions: prev.index, Beacon: beacon}, commons: prev.mpc.Seal(beacon.Value)}
 	h, err := create(out, KindSRS, srs.encode)
-	return Receipt{Info: Info{Kind: KindSRS, Index: prev.index, N: srs.n, Hash: h}}, err
+	return Receipt{Info: srs.info(h)}, err
 }
 
 // info describes the state, whose file has sha256 h.
@@ -109,15 +181,19 @@ func (s *phase1State) info(h [32]byte) Info {
 }
 
 // srsFile is the sealed Phase 1: the powers of τ, α and β that every
-// circuit's Phase 2 starts from.
+// circuit's Phase 2 starts from, and what they were sealed from.
 type srsFile struct {
 	n       uint64
+	prov    Provenance
 	commons mpcsetup.SrsCommons
 }
 
-// encode writes the SRS body: n, then gnark's SRS.
+// encode writes the SRS body: n, the provenance, then gnark's SRS.
 func (s *srsFile) encode(w io.Writer) error {
 	if err := put(w, s.n); err != nil {
+		return err
+	}
+	if err := s.prov.encode(w); err != nil {
 		return err
 	}
 	_, err := s.commons.WriteTo(w)
@@ -132,6 +208,9 @@ func (s *srsFile) decode(r *body) error {
 	if err := checkDomain(s.n); err != nil {
 		return err
 	}
+	if err := s.prov.decode(r); err != nil {
+		return err
+	}
 	if _, err := s.commons.ReadFrom(domainOf(r.bounded(), s.n)); err != nil {
 		return fmt.Errorf("%w: %v", ErrFormat, err)
 	}
@@ -141,6 +220,12 @@ func (s *srsFile) decode(r *body) error {
 		return fmt.Errorf("%w: header says domain %d, the powers say %d", ErrFormat, s.n, got)
 	}
 	return nil
+}
+
+// info describes the SRS, whose file has sha256 h.
+func (s *srsFile) info(h [32]byte) Info {
+	prov := s.prov
+	return Info{Kind: KindSRS, Index: prov.Contributions, N: s.n, Phase1: &prov, Hash: h}
 }
 
 // readSRS reads the SRS file at path and returns it with the file's sha256.

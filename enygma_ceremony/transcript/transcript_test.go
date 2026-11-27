@@ -425,17 +425,18 @@ func TestCheckPhase2Start(t *testing.T) {
 		t.Fatal(err)
 	}
 	beacon := bytes.Repeat([]byte{0xa5}, 32)
-	srs := func(name string) string { // a Phase 1 of one contribution, sealed
+	srs := func(name string) ceremony.SRS { // a Phase 1 of one contribution, sealed for a rehearsal
 		if _, err := ceremony.NewPhase1(p(name+"-0"), 64); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ceremony.Contribute(p(name+"-0"), p(name+"-1")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ceremony.SealPhase1(p(name+".srs"), beacon, []string{p(name + "-1")}); err != nil {
+		r, err := ceremony.SealPhase1(p(name+".srs"), ceremony.Beacon{Value: beacon}, []string{p(name + "-1")})
+		if err != nil {
 			t.Fatal(err)
 		}
-		return p(name + ".srs")
+		return ceremony.SRS{Path: p(name + ".srs"), SHA256: r.Hash, Rehearsal: true}
 	}
 	startedFrom, other := srs("real"), srs("other")
 	dir := phase(t, 1, func(path string) {
@@ -453,5 +454,11 @@ func TestCheckPhase2Start(t *testing.T) {
 	}
 	if _, err := CheckWith(dir, &Phase2Start{SRS: other, Circuits: circuits}, io.Discard); err == nil || !strings.Contains(err.Error(), "not the start") {
 		t.Fatalf("CheckWith another SRS: %v, want the start refused", err)
+	}
+	// Audit H1: given another file for the SRS announced, the check refuses
+	// it, rather than recompute a start from it.
+	substituted := ceremony.SRS{Path: other.Path, SHA256: startedFrom.SHA256, Rehearsal: true}
+	if _, err := CheckWith(dir, &Phase2Start{SRS: substituted, Circuits: circuits}, io.Discard); !errors.Is(err, ceremony.ErrSRS) {
+		t.Fatalf("CheckWith another file for the SRS announced: %v, want %v", err, ceremony.ErrSRS)
 	}
 }

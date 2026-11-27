@@ -12,11 +12,14 @@ import (
 // Info describes a state file.
 type Info struct {
 	Kind     Kind
-	Index    uint32   // Phase 1 and 2: contributions so far; SRS: contributions sealed
-	N        uint64   // Phase 1 and SRS: the domain size
-	Ceremony string   // Phase 2: the ceremony's name
-	Circuits []string // Phase 2: the circuits, in order
-	Hash     [32]byte // sha256 of the file
+	Index    uint32      // Phase 1 and 2: contributions so far; SRS: contributions sealed
+	N        uint64      // Phase 1 and SRS: the domain size
+	Ceremony string      // Phase 2: the ceremony's name
+	Circuits []string    // Phase 2: the circuits, in order
+	R1CS     [][32]byte  // Phase 2: each circuit's constraint system's sha256, in order
+	SRS      [32]byte    // Phase 2: the sha256 of the SRS it started from
+	Phase1   *Provenance // SRS: what it was sealed from
+	Hash     [32]byte    // sha256 of the file
 }
 
 // Receipt reports one step: the state it wrote and, for a contribution, the
@@ -44,7 +47,7 @@ func Inspect(path string) (Info, error) {
 		return s.info(h), err
 	case KindSRS:
 		s, h, err := readSRS(path)
-		return Info{Kind: KindSRS, N: s.n, Hash: h}, err
+		return s.info(h), err
 	}
 	return Info{}, fmt.Errorf("%s: %w: unknown %s", path, ErrFormat, kind)
 }

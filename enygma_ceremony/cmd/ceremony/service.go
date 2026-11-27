@@ -104,6 +104,13 @@ func joinAndReport(c *participant.Client, w io.Writer) error {
 		return nil
 	}
 	fmt.Fprintf(w, "\nDone: your contribution is number %d of the transcript.\n", r.Index)
+	switch r.Of.Kind {
+	case ceremony.KindPhase1:
+		fmt.Fprintf(w, "  to Phase 1 for circuits of up to %d constraints\n", r.Of.N)
+	case ceremony.KindPhase2:
+		// Whose keys depends on the SRS it builds on (audit H1).
+		fmt.Fprintf(w, "  to a Phase 2 on the SRS of sha256 %x: check it is the one announced\n", r.Of.SRS)
+	}
 	fmt.Fprintf(w, "  on top of sha256 %x\n", r.Prev)
 	fmt.Fprintf(w, "  your contribution sha256 %x  <- publish this\n", r.SHA256)
 	fmt.Fprintf(w, "Check it is in the transcript any time: ceremony verify -url %s -dir transcript -mine %x\n", c.URL, r.SHA256)
@@ -123,19 +130,25 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 	sync := fs.Bool("sync", false, "-url: let the download replace states in DIR that differ from the coordinator's, and remove states past its end (without it, a DIR holding anything else is refused)")
 	maxBytes := fs.Int64("max-bytes", transcript.DefaultMaxBytes, "-url: the most to download in all")
 	maxState := fs.Int64("max-state", ceremony.DefaultMaxState, "-url: the most to download as one state, in bytes")
-	srs := fs.String("srs", "", "Phase 2: the SRS it started from, to check its start (with -r1cs)")
+	size := fs.Uint64("size", 0, "a Phase 1: the domain size announced; anything else is refused")
+	name := fs.String("ceremony", "", "a Phase 2: the protocol announced, e.g. enygma_retail_payments; anything else is refused")
+	srsIn := srsFlags(fs, true)
 	r1cs, circuitsIn := circuitsFlags(fs)
 	return func(args []string, w io.Writer) error {
-		if *dir == "" || len(args) != 0 || (*srs == "") != (*r1cs == "") || *maxState < 1 || *maxBytes < 1 {
-			return fmt.Errorf("%w: verify takes -dir, -srs with -r1cs for a Phase 2, and positive limits", errUsage)
+		if *dir == "" || len(args) != 0 || srsIn.given() != (*r1cs != "") || *maxState < 1 || *maxBytes < 1 || (*size != 0 && *name != "") {
+			return fmt.Errorf("%w: verify takes -dir, -srs (with -srs-sha256 or -phase1) and -r1cs for a Phase 2, at most one of -size and -ceremony, and positive limits", errUsage)
 		}
 		var p2 *transcript.Phase2Start
-		if *srs != "" {
+		if srsIn.given() {
 			circuits, err := circuitsIn(w)
 			if err != nil {
 				return err
 			}
-			p2 = &transcript.Phase2Start{SRS: *srs, Circuits: circuits}
+			srs, _, err := srsIn.read(w)
+			if err != nil {
+				return err
+			}
+			p2 = &transcript.Phase2Start{SRS: srs, Circuits: circuits}
 		}
 		var (
 			t   transcript.Transcript
@@ -154,6 +167,19 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil && !errors.Is(err, transcript.ErrStartNotChecked) {
 			return err
 		}
+		// What was checked must be the phase asked for (audit I3): a host can
+		// serve any phase, and a Phase 2's name comes from its own state-0.
+		start, ierr := ceremony.Inspect(transcript.Path(*dir, 0))
+		switch {
+		case ierr != nil:
+			return ierr
+		case start.Kind == ceremony.KindPhase1 && p2 != nil:
+			return fmt.Errorf("this is a Phase 1, which starts from no SRS: -srs and -r1cs are for a Phase 2")
+		case *size != 0 && (start.Kind != ceremony.KindPhase1 || start.N != *size):
+			return fmt.Errorf("this is %s, not Phase 1 for circuits of up to %d constraints", phaseOf(start), *size)
+		case *name != "" && (start.Kind != ceremony.KindPhase2 || start.Ceremony != *name):
+			return fmt.Errorf("this is %s, not %s's Phase 2", phaseOf(start), *name)
+		}
 		if *mine != "" {
 			e, ok := t.Find(*mine)
 			if !ok {
@@ -164,10 +190,18 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("NOT VERIFIED: %d contributions, each a valid step on top of the one before it, but %w", len(t.Contributions), err)
 		}
-		fmt.Fprintf(w, "OK: the start, and %d contributions, each a valid step on top of the one before it; latest sha256 %s\n",
-			len(t.Contributions), t.Latest())
+		fmt.Fprintf(w, "OK: %s: the start, and %d contributions, each a valid step on top of the one before it; latest sha256 %s\n",
+			phaseOf(start), len(t.Contributions), t.Latest())
 		return nil
 	}
+}
+
+// phaseOf names the phase that start is the start of.
+func phaseOf(start ceremony.Info) string {
+	if start.Kind == ceremony.KindPhase2 {
+		return fmt.Sprintf("%s's Phase 2, on the SRS of sha256 %x", start.Ceremony, start.SRS)
+	}
+	return fmt.Sprintf("Phase 1 for circuits of up to %d constraints", start.N)
 }
 
 // versionCmd prints the commit this program was built from.
@@ -240,7 +274,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	poll := fs.Duration("poll", 5*time.Second, "how often queued participants ask")
 	closeAt := fs.String("close-at", "", "when to stop handing out turns, RFC 3339 (2026-12-01T15:00:00Z); a phase closed at its time stays closed. "+
 		"The last turn may run -turn past it: announce a drand round at least -turn after it (ceremony beacon -close-at … -turn …)")
-	srs := fs.String("srs", "", "Phase 2: the SRS it started from, to check state-0 before serving (with -r1cs)")
+	srsIn := srsFlags(fs, false) // Phase 2: the SRS it started from, to check state-0 before serving (with -r1cs)
 	r1cs, circuitsIn := circuitsFlags(fs)
 	notice := fs.String("notice", "", "a message for participants, shown on the page and by their program")
 	releaseURL := fs.String("release-url", "", "the ceremony's GitHub release (https://github.com/<owner>/<repo>/releases/tag/<tag>), where participants get the program; the page links to it")
@@ -318,17 +352,24 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			}
 		}
 		// The start is what every contribution builds on: checked before
-		// anyone does (audit R-060).
-		if (*srs == "") != (*r1cs == "") {
+		// anyone does (audit R-060), from the SRS announced (H1).
+		if srsIn.given() != (*r1cs != "") {
 			return fmt.Errorf("%w: -srs goes with -r1cs", errUsage)
 		}
-		var p2 *transcript.Phase2Start
-		if *srs != "" {
+		var (
+			p2     *transcript.Phase2Start
+			phase1 *ceremony.Provenance
+		)
+		if srsIn.given() {
 			circuits, err := circuitsIn(w)
 			if err != nil {
 				return err
 			}
-			p2 = &transcript.Phase2Start{SRS: *srs, Circuits: circuits}
+			srs, info, err := srsIn.read(w)
+			if err != nil {
+				return err
+			}
+			p2, phase1 = &transcript.Phase2Start{SRS: srs, Circuits: circuits}, info.Phase1
 		}
 		switch err := transcript.CheckStart(*dir, p2, w); {
 		case errors.Is(err, transcript.ErrStartNotChecked):
@@ -345,7 +386,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			MaxContributions: *maxContributions, MaxContributionsPerAddress: *maxContributionsPerAddress,
 			MinFree: *minFreeMiB << 20, MaxSessions: *maxSessions,
 			Turn: *turn, TurnPresence: *turnPresence, Presence: *presence, Away: *away, Poll: *poll,
-			CloseAt: closes, Notice: *notice, ReleaseURL: *releaseURL, Log: logger,
+			CloseAt: closes, Notice: *notice, ReleaseURL: *releaseURL, Phase1: phase1, Log: logger,
 		})
 		if err != nil {
 			return err
@@ -473,9 +514,9 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return err
 		}
-		seal := "phase1-seal"
-		if info, err := ceremony.Inspect(transcript.Path(*dir, 0)); err == nil && info.Kind == ceremony.KindPhase2 {
-			seal = "phase2-seal -ceremony " + info.Ceremony + " -srs <srs> -r1cs <r1cs dir> -keys <keys dir>"
+		start, err := ceremony.Inspect(transcript.Path(*dir, 0))
+		if err != nil {
+			return err
 		}
 		if c.Closed() {
 			fmt.Fprintf(w, "Closed after %d contributions. Announce the head now, before the beacon round is out:\n", len(t.Contributions))
@@ -486,9 +527,20 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		fmt.Fprintf(w, "  head sha256 %s (contribution %d)\n"+
 			"Then seal, with the round you announced:\n"+
 			"  ceremony %s -transcript %s -head %s -drand <round> -close-at <the close>\n",
-			t.Latest(), len(t.Contributions), seal, *dir, t.Latest())
+			t.Latest(), len(t.Contributions), sealCommand(start), *dir, t.Latest())
 		return nil
 	}
+}
+
+// sealCommand is the seal command for the phase that start begins, as
+// coordinate prints it at the end, before -transcript and the rest: a
+// Phase 2's names the SRS by the sha256 its start records, the one it was
+// served from (audit H1).
+func sealCommand(start ceremony.Info) string {
+	if start.Kind == ceremony.KindPhase2 {
+		return fmt.Sprintf("phase2-seal -ceremony %s -srs <the SRS> -srs-sha256 %x -r1cs <r1cs dir> -keys <keys dir>", start.Ceremony, start.SRS)
+	}
+	return "phase1-seal -out <the SRS to write>"
 }
 
 // parseProxies reads -trusted-proxy: addresses or CIDRs, comma-separated.

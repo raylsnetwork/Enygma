@@ -55,6 +55,28 @@ func (c *Committed) Define(api frontend.API) error {
 	return nil
 }
 
+// Commitments commits to each of its variables apart: a circuit of
+// len(X) in-circuit commitments, as many as gnark's Phase 2 then holds σs.
+type Commitments struct {
+	X []frontend.Variable
+}
+
+// Define builds Commitments' constraints.
+func (c *Commitments) Define(api frontend.API) error {
+	committer, ok := api.(frontend.Committer)
+	if !ok {
+		return errors.New("builder cannot commit")
+	}
+	for _, x := range c.X {
+		cmt, err := committer.Commit(x)
+		if err != nil {
+			return err
+		}
+		api.AssertIsDifferent(cmt, 0)
+	}
+	return nil
+}
+
 // Circuits are the test circuits by the name their keys are sealed under,
 // each with a satisfying assignment and one that differs only in its public
 // input. Cubic needs a domain of 4, Committed one of 32.
@@ -70,28 +92,33 @@ var Circuits = []struct {
 // WriteR1CS compiles every test circuit into dir as <Name>.r1cs.
 func WriteR1CS(dir string) error {
 	for _, c := range Circuits {
-		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, c.Circuit)
-		if err != nil {
-			return err
-		}
-		f, err := os.Create(filepath.Join(dir, c.Name+".r1cs"))
-		if err != nil {
-			return err
-		}
-		w := bufio.NewWriter(f)
-		if _, err := ccs.WriteTo(w); err != nil {
-			f.Close()
-			return err
-		}
-		if err := w.Flush(); err != nil {
-			f.Close()
-			return err
-		}
-		if err := f.Close(); err != nil {
+		if err := WriteCircuit(dir, c.Name, c.Circuit); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// WriteCircuit compiles circuit into dir as <name>.r1cs.
+func WriteCircuit(dir, name string, circuit frontend.Circuit) error {
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, circuit)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(filepath.Join(dir, name+".r1cs"))
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriter(f)
+	if _, err := ccs.WriteTo(w); err != nil {
+		f.Close()
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // CheckKeys loads each test circuit's constraint system from r1csDir and its
