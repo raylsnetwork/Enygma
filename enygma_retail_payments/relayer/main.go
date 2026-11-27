@@ -14,6 +14,10 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	for _, w := range cfg.Warnings() {
+		log.Printf("WARNING: %s", w)
+	}
+
 	r, err := server.New(cfg)
 	if err != nil {
 		log.Fatalf("server init: %v", err)
