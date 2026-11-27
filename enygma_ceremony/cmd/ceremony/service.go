@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -109,34 +110,57 @@ func joinAndReport(c *participant.Client, w io.Writer) error {
 // from a desktop or a shell, not from a script.
 func isTerminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
 
-// verify downloads a phase's transcript and checks every step.
+// verify checks a phase's transcript from end to end: one downloaded from a
+// coordinator into DIR (checking each step as it arrives), or DIR as it is.
 func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
-	url := fs.String("url", defaultURL, "the coordinator to download the transcript from; none to check DIR as it is")
+	url := fs.String("url", "", "the coordinator to download the transcript from; without it, DIR is checked as it is")
 	dir := fs.String("dir", "", "the directory to download the transcript into, or holding it")
 	mine := fs.String("mine", "", "your contribution's sha256, to find in the transcript")
+	sync := fs.Bool("sync", false, "-url: let the download replace states in DIR that differ from the coordinator's, and remove states past its end (without it, a DIR holding anything else is refused)")
+	maxBytes := fs.Int64("max-bytes", transcript.DefaultMaxBytes, "-url: the most to download in all")
+	srs := fs.String("srs", "", "Phase 2: the SRS it started from, to check its start (with -r1cs)")
+	r1cs := fs.String("r1cs", "", "Phase 2: the directory of the <Name>.r1cs circuits it started from (with -srs)")
 	return func(args []string, w io.Writer) error {
-		if *dir == "" || len(args) != 0 {
-			return fmt.Errorf("%w: verify takes -dir", errUsage)
+		if *dir == "" || len(args) != 0 || (*srs == "") != (*r1cs == "") {
+			return fmt.Errorf("%w: verify takes -dir, and -srs with -r1cs for a Phase 2", errUsage)
 		}
-		if *url != "" {
-			fmt.Fprintf(w, "Downloading the transcript from %s into %s.\n", *url, *dir)
-			if _, err := transcript.Fetch(context.Background(), &http.Client{}, *url, *dir, w); err != nil {
+		var p2 *transcript.Phase2Start
+		if *srs != "" {
+			circuits, err := ceremony.CircuitsIn(*r1cs)
+			if err != nil {
 				return err
 			}
+			p2 = &transcript.Phase2Start{SRS: *srs, Circuits: circuits}
 		}
-		t, err := transcript.Check(*dir, w)
-		if err != nil {
+		var (
+			t   transcript.Transcript
+			err error
+		)
+		if *url != "" {
+			fmt.Fprintf(w, "Downloading the transcript from %s into %s, checking each step as it arrives.\n", *url, *dir)
+			opt := transcript.FetchOptions{Sync: *sync, Check: true, MaxBytes: *maxBytes}
+			if t, err = transcript.Fetch(context.Background(), &http.Client{}, *url, *dir, w, opt); err != nil {
+				return err
+			}
+			err = transcript.CheckStart(*dir, p2, w)
+		} else {
+			t, err = transcript.CheckWith(*dir, p2, w)
+		}
+		if err != nil && !errors.Is(err, transcript.ErrStartNotChecked) {
 			return err
 		}
-		fmt.Fprintf(w, "OK: %d contributions, each a valid step on top of the one before it; latest sha256 %s\n",
-			len(t.Contributions), t.Latest())
 		if *mine != "" {
 			e, ok := t.Find(*mine)
 			if !ok {
 				return fmt.Errorf("no contribution in the transcript has sha256 %s", *mine)
 			}
-			fmt.Fprintf(w, "Yours is contribution %d, by %s, accepted %s.\n", e.Index, e.Participant, e.At.Format(time.RFC3339))
+			fmt.Fprintf(w, "Yours is contribution %d, by %q, accepted %s.\n", e.Index, e.Participant, e.At.Format(time.RFC3339))
 		}
+		if err != nil {
+			return fmt.Errorf("NOT VERIFIED: %d contributions, each a valid step on top of the one before it, but %w", len(t.Contributions), err)
+		}
+		fmt.Fprintf(w, "OK: the start, and %d contributions, each a valid step on top of the one before it; latest sha256 %s\n",
+			len(t.Contributions), t.Latest())
 		return nil
 	}
 }

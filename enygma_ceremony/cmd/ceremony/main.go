@@ -25,8 +25,8 @@ participant
   contribute  -in STATE -out STATE        add your randomness to a state handed to you by hand
 
 anyone
-  verify      [-url URL] -dir DIR [-mine SHA256]
-                                          download a phase's transcript into DIR and check every step
+  verify      [-url URL [-sync]] -dir DIR [-mine SHA256] [-srs SRS -r1cs DIR]
+                                          check a phase's transcript: downloaded into DIR, or DIR as it is
   check       -prev STATE -next STATE     verify one contribution
   info        STATE                       describe a state file
   version                                 the commit this program was built from

@@ -144,7 +144,7 @@ func TestVerify(t *testing.T) {
 	}
 	mine := fmt.Sprintf("%x", sha256.Sum256(readFile(t, filepath.Join(dir, "state-2"))))
 	code, stdout, stderr := runCommand("verify", "-url", url, "-dir", t.TempDir(), "-mine", mine)
-	if code != 0 || !strings.Contains(stdout, "OK: 2 contributions") || !strings.Contains(stdout, "Yours is contribution 2") {
+	if code != 0 || !strings.Contains(stdout, "OK: the start, and 2 contributions") || !strings.Contains(stdout, "Yours is contribution 2") {
 		t.Fatalf("verify: exit %d\n%s%s", code, stdout, stderr)
 	}
 	if code, stdout, stderr := runCommand("verify", "-url", url, "-dir", t.TempDir(), "-mine", strings.Repeat("0", 64)); code != 1 {

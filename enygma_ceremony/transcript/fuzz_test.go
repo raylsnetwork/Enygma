@@ -118,7 +118,7 @@ func FuzzFetch(f *testing.F) {
 		dir := filepath.Join(parent, "transcript")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		tr, err := Fetch(ctx, srv.Client(), srv.URL, dir, io.Discard)
+		tr, err := Fetch(ctx, srv.Client(), srv.URL, dir, io.Discard, FetchOptions{})
 		walkErr := filepath.WalkDir(parent, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || path == parent || path == dir {
 				return err

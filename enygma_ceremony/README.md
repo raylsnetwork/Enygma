@@ -230,8 +230,18 @@ Other commands:
 
 Anyone can check a ceremony without trusting the coordinator:
 - **Every step:** `ceremony verify -url <address> -dir <dir>` downloads a phase's transcript and
-  checks it from end to end. Every state must have the sha256 the transcript gives it and follow
-  the one before it, and a Phase 1 must start where every Phase 1 of its size starts.
+  checks it from end to end, each step as it arrives, stopping at the first that fails. Every state
+  must have the sha256 the transcript gives it and follow the one before it, and the phase must
+  start where it should:
+  - a Phase 1 where every Phase 1 of its size starts;
+  - a Phase 2 where its SRS and circuits make it start. Give them, as `phase2-seal` takes them:
+    `-srs phase1.srs -r1cs <r1cs dir>`. Without them, `verify` checks every step but ends `NOT
+    VERIFIED`, with exit status 1.
+
+  `verify` only adds to `<dir>`: it refuses a directory holding another phase, or states past the
+  transcript's end, rather than overwrite them (`-sync` lets it), and downloads at most
+  `-max-bytes` (64 GiB) in all. Without `-url`, it checks `<dir>` as it is. It prints names exactly
+  as quoted strings, and refuses a transcript whose names hold control characters.
 - **The keys:**
   1. Re-export the circuits at the announced commit and compare their sha256s.
   2. Run `phase1-seal` and `phase2-seal` over the transcripts with the announced rounds.
