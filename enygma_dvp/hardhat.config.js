@@ -72,14 +72,20 @@ task("accounts", "Prints the list of accounts", async () => {
 module.exports = {
   defaultNetwork: "hardhat",
   networks,
-  allowUnlimitedContractSize: true,
   solidity: {
     version: "0.8.24",
     settings: {
       viaIR: true,
+      // The EVM target, pinned so that a Hardhat upgrade cannot change it,
+      // and with it every contract's bytecode and size. paris is the last
+      // target without PUSH0.
+      evmVersion: "paris",
       optimizer: {
         enabled: true,
-        runs: 1600,
+        // Set for size: EnygmaDvp's runtime code has to fit EIP-170's 24,576
+        // bytes (test/hardhat/ContractSizes.test.js checks it). Higher runs
+        // make calls a little cheaper and the code larger.
+        runs: 800,
       },
       outputSelection: {
         "*": {
