@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 
 	"filippo.io/mlkem768"
+	"github.com/gofrs/flock"
 )
 
 // curveP is the Baby JubJub subgroup order.
@@ -30,7 +32,7 @@ var curveP, _ = new(big.Int).SetString(
 //     key, and verifies the confirmation hash before ever caching the
 //     result (Fix M-11 defect 2).
 //   - Both end up with the same shared secret field element, cached in memory and
-//     persisted to disk so subsequent calls are instant.
+//     persisted to disk for reuse on subsequent calls.
 type Manager struct {
 	bankID   int
 	storeDir string
@@ -111,7 +113,7 @@ func LoadPeerEncapsulationKey(storeDir string, peerID int) ([]byte, error) {
 
 // GetOrEstablish is the leader path: encapsulate to peerEK, persist the ciphertext
 // and a confirmation hash, and return the shared secret as a Baby JubJub field element.
-// If a secret for this pair already exists (memory or disk), it is returned directly.
+// If the secret is already saved, finish any pending confirmation before returning it.
 //
 // Fix M-11 defect 1: only the lower-id party in a pair may lead (encapsulate).
 // Before this, both sides of a pair could independently call GetOrEstablish;
@@ -126,10 +128,43 @@ func (m *Manager) GetOrEstablish(peerID int, peerEK []byte) (*big.Int, error) {
 	}
 
 	key := pairKey(m.bankID, peerID)
-	if ss := m.loadCached(key); ss != nil {
-		return ss, nil
+	// Managers for the same bank can run in separate processes. Keep this
+	// pair's lock through the cache read, encapsulation and publication.
+	lock := flock.New(filepath.Join(m.storeDir, "ss_"+key+".lock"))
+	lockErr := lock.Lock()
+	if lockErr == nil {
+		defer func() { _ = lock.Close() }()
 	}
 
+	idPath := confirmationIDPath(m.storeDir, m.bankID, peerID)
+	pendingID := idPath + ".pending"
+	ss := m.loadCached(key)
+	if ss != nil {
+		// A completed agreement can still be read from a read-only legacy store.
+		if _, err := os.Stat(pendingID); os.IsNotExist(err) {
+			return ss, nil
+		}
+	}
+	if lockErr != nil {
+		return nil, fmt.Errorf("lock agreement: %w", lockErr)
+	}
+	if ss == nil {
+		var err error
+		ss, err = m.establish(peerID, peerEK, key, pendingID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// A follower can accept the ciphertext as soon as this ID is visible.
+	// A retry with a saved secret finishes the same exchange after a restart.
+	if err := os.Rename(pendingID, idPath); err != nil {
+		return nil, fmt.Errorf("publish confirmation id: %w", err)
+	}
+	return ss, nil
+}
+
+// establish prepares the exchange and saves the secret before publishing its confirmation.
+func (m *Manager) establish(peerID int, peerEK []byte, key, pendingID string) (*big.Int, error) {
 	ct, rawSS, err := mlkem768.Encapsulate(peerEK)
 	if err != nil {
 		return nil, fmt.Errorf("encapsulate to peer %d: %w", peerID, err)
@@ -142,19 +177,17 @@ func (m *Manager) GetOrEstablish(peerID int, peerEK []byte) (*big.Int, error) {
 	}
 	ss := toFieldElement(rawSS)
 
-	// Fix M-11 defect 2: publish id = Hash(rawSS) alongside the
+	// Fix M-11 defect 2: prepare id = Hash(rawSS) alongside the
 	// ciphertext, per protocol_description.md's own specified check
 	// ("the recipient must recompute id' = Hash(s') and check it") —
 	// never actually implemented in code before this fix. The follower
 	// compares against this before ever caching its own decapsulated
 	// result.
-	idPath := confirmationIDPath(m.storeDir, m.bankID, peerID)
-	if err := os.WriteFile(idPath, []byte(hex.EncodeToString(confirmationID(rawSS))), 0600); err != nil {
+	if err := os.WriteFile(pendingID, []byte(hex.EncodeToString(confirmationID(rawSS))), 0600); err != nil {
 		return nil, fmt.Errorf("persist confirmation id: %w", err)
 	}
 
-	m.persistSecret(key, ss)
-	return ss, nil
+	return m.persistSecret(key, ss)
 }
 
 // GetOrAccept is the follower path: read the leader's ciphertext from disk and
@@ -219,8 +252,7 @@ func (m *Manager) GetOrAccept(leaderID int) (*big.Int, error) {
 	}
 
 	ss := toFieldElement(rawSS)
-	m.persistSecret(key, ss)
-	return ss, nil
+	return m.persistSecret(key, ss)
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -279,13 +311,28 @@ func (m *Manager) loadCached(key string) *big.Int {
 	return n
 }
 
-// persistSecret stores ss in the in-memory cache and writes it to disk.
-func (m *Manager) persistSecret(key string, ss *big.Int) {
+// persistSecret replaces the secret file before making ss available in memory.
+func (m *Manager) persistSecret(key string, ss *big.Int) (*big.Int, error) {
+	// Stage in the same directory so existing readers of a permissive file
+	// cannot observe the replacement secret, even while it is being written.
+	f, err := os.CreateTemp(m.storeDir, ".ss-*")
+	if err != nil {
+		return nil, fmt.Errorf("create shared secret file: %w", err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+
+	_, writeErr := f.WriteString(ss.String())
+	if err := errors.Join(writeErr, f.Chmod(0600), f.Close()); err != nil {
+		return nil, fmt.Errorf("write shared secret file: %w", err)
+	}
+	ssPath := filepath.Join(m.storeDir, fmt.Sprintf("ss_%s.txt", key))
+	if err := os.Rename(f.Name(), ssPath); err != nil {
+		return nil, fmt.Errorf("replace shared secret file: %w", err)
+	}
 	m.mu.Lock()
 	m.cache[key] = ss
 	m.mu.Unlock()
-	ssPath := filepath.Join(m.storeDir, fmt.Sprintf("ss_%s.txt", key))
-	_ = os.WriteFile(ssPath, []byte(ss.String()), 0600)
+	return ss, nil
 }
 
 // pairKey returns a canonical "min_max" string for a pair (a, b).

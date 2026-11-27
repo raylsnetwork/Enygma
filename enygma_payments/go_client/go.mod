@@ -5,6 +5,7 @@ go 1.26.11
 require (
 	filippo.io/mlkem768 v0.0.0-20260214141301-2e7bebc7d88d
 	github.com/ethereum/go-ethereum v1.17.10
+	github.com/gofrs/flock v0.12.1
 	github.com/iden3/go-iden3-crypto v0.0.17
 )
 
