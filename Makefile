@@ -95,7 +95,10 @@ modules: ## List the Go modules the targets below operate on
 
 hooks: ## Install the git hooks (gofmt, page scripts, gitleaks; on commit, a commit adding a check names its red; on push, refuse a branch whose PR merged) and the primer's git diff driver in this clone; needs pre-commit
 	@# git diff shows the primer's data block as its step and value names (.gitattributes).
-	@git config diff.primer.textconv 'node "$$(git rev-parse --show-toplevel)/scripts/primer_page.js" --textconv'
+	@dir=$$(git rev-parse --git-common-dir) && tmp=$$(mktemp "$$dir/primer-page.XXXXXX") && \
+	  trap 'rm -f "$$tmp"' EXIT && cp scripts/primer_page.js "$$tmp" && \
+	  mv -f "$$tmp" "$$dir/enygma-primer-page.cjs" && \
+	  git config --local diff.primer.textconv 'node "$$(git rev-parse --git-common-dir)/enygma-primer-page.cjs" --textconv'
 	@command -v pre-commit >/dev/null || { echo "pre-commit not found: pip install pre-commit"; exit 1; }
 	@# .pre-commit-config.yaml's stage names (pre-commit, pre-push) need pre-commit 3.2+.
 	@v=$$(pre-commit --version | cut -d' ' -f2); [ "$$(printf '%s\n' 3.2.0 "$$v" | sort -V | head -1)" = 3.2.0 ] || { echo "pre-commit $$v is too old for .pre-commit-config.yaml: pip install -U pre-commit (3.2+)"; exit 1; }
@@ -172,6 +175,7 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 	@# test_stack.js's service-list reader yields only pids safe to signal; its liveness checks count a zombie as gone.
 	@node --test scripts/test_stack.test.js >/dev/null || node --test scripts/test_stack.test.js
+	@node --test scripts/dev_hardening.test.js >/dev/null || node --test scripts/dev_hardening.test.js
 	@# hardhat-check expects tests in each project unless its compilation is the only check.
 	@node --test scripts/hardhat_check.test.js >/dev/null || node --test scripts/hardhat_check.test.js
 
@@ -251,7 +255,7 @@ ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 # stack's pid in <pid file> from the start, so a stack still starting can be
 # stopped, and refuses a second start while one runs (scripts/stack_start.sh).
 define stack_start
-@bash scripts/stack_start.sh $(1) '$(2)' $(3) $(4) $(5) '$(6)' $(7) $(8)
+@bash scripts/stack_start.sh "$(1)" '$(2)' $(3) $(4) $(5) '$(6)' $(7) $(8)
 endef
 
 # $(call stack_stop,<pid file>,<command line>,<stack log>,<start target>,<ports>):
@@ -259,7 +263,7 @@ endef
 # <pid file>, whose command line is all of <command line>, and failing when it
 # doesn't stop cleanly (scripts/stack_stop.sh).
 define stack_stop
-@bash scripts/stack_stop.sh $(1) '$(2)' $(3) $(4) $(5)
+@bash scripts/stack_stop.sh "$(1)" '$(2)' $(3) $(4) $(5)
 endef
 
 # $(call suite_test,<pid file>,<suite dir>,<name>,<timeout>,<env>,<go test flags>,<known skips>,<no stack env note>):
@@ -268,12 +272,14 @@ endef
 # suite.log in the stack's log dir (else a temp file named <name>.*). It prints
 # the verdict from scripts/suite_result.sh.
 define suite_test
-@logs=$$(cat $(1).logs 2>/dev/null); \
+@logs=$$(bash scripts/stack_state.sh logs "$(1)") || exit 1; \
 if [ -d "$$logs" ]; then log=$$logs/suite.log; else log=$$(mktemp "$${TMPDIR:-/tmp}/$(3).XXXXXX"); fi; \
-if [ -f "$$logs/test.env" ]; then set -a; . "$$logs/test.env"; set +a; $(if $(8),else echo '$(8)'; )fi; \
+if [ -n "$$logs" ] && { [ -e "$$logs/test.env" ] || [ -L "$$logs/test.env" ]; }; then \
+  bash scripts/stack_state.sh check "$$logs/test.env" || exit 1; \
+  set -a; . "$$logs/test.env" || exit 1; set +a; $(if $(8),else echo '$(8)'; )fi; \
 [ "$$(uname -s)" != Darwin ] || export CC=$${CC:-/usr/bin/clang}; \
-status=0; cd $(2); $(5) go test -count=1 -v ./... -timeout $(4) $(6) >$$log 2>&1 || status=$$?; \
-cd $(CURDIR); bash scripts/suite_result.sh $$log $$status '$(7)'; result=$$?; echo "log: $$log"; exit $$result
+status=0; cd "$(2)" || exit 1; $(5) go test -count=1 -v ./... -timeout $(4) $(6) >"$$log" 2>&1 || status=$$?; \
+cd "$(CURDIR)" || exit 1; bash scripts/suite_result.sh "$$log" $$status '$(7)'; result=$$?; echo "log: $$log"; exit $$result
 endef
 
 # $(call keygen_stamped,<module dir>,<keygen package>,<keygen command>,<stamps>):
@@ -293,7 +299,8 @@ endef
 # fresh stack: ERC721 state accumulates across runs. The dvp-chain/deploy/init/
 # gnark targets are the stack's pieces, for running one by hand. Logs go to
 # DVP_LOG_DIR (default: a fresh temp dir), the suite's to suite.log there.
-DVP_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_dvp_stack.pid
+STACK_STATE_DIR = $(shell bash scripts/stack_state.sh dir)
+DVP_STACK_PID = $(STACK_STATE_DIR)/enygma_dvp_stack.pid
 # What dvp-stack runs, in enygma_dvp: dvp-stack-stop signals only this command line.
 DVP_STACK_CMD := bash scripts/stack.sh
 DVP_LOG_DIR ?=
@@ -338,7 +345,7 @@ dvp-test: ## DvP integration suite (on a fresh make dvp-stack); prints pass/fail
 # spawns relayer_bin. Logs go to PAYMENTS_LOG_DIR (default: a fresh temp dir),
 # the suite's to suite.log there. The Burn keys are gitignored: make
 # payments-burn-keygen makes them (see run_scripts/stack.sh's header).
-PAYMENTS_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_payments_stack.pid
+PAYMENTS_STACK_PID = $(STACK_STATE_DIR)/enygma_payments_stack.pid
 # What payments-stack runs, from the repo root: payments-stack-stop signals only this command line.
 PAYMENTS_STACK_CMD := bash enygma_payments/run_scripts/stack.sh
 PAYMENTS_LOG_DIR ?=
@@ -417,7 +424,7 @@ shield-test: ## Shield demo scenario, default run only, subtests matching T= (ne
 	cd $(RETAIL_SUITE) && REPLAY_FIXTURE_WRITE=0 go test -run '$(SHIELD_TEST_RUN)/($(T))' -v -timeout 1800s
 
 # Where shield-stack records run.sh's pid, so shield-stack-stop signals only that process.
-SHIELD_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_shield_stack.pid
+SHIELD_STACK_PID = $(STACK_STATE_DIR)/enygma_shield_stack.pid
 # What shield-stack runs, in shield_demo: shield-stack-stop signals only this command line.
 SHIELD_STACK_CMD := bash run.sh --no-demo
 

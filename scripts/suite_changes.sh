@@ -22,7 +22,7 @@ set -euo pipefail
 # and every stack script with the helpers they share, so a change to how CI
 # runs one suite is tested on all three. suite_changes.test.js checks that
 # stacks holds every stack script and that onchain.yml's paths cover common.
-stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh scripts/stack_start.sh scripts/stack_stop.sh scripts/stack_service.sh scripts/stack_reaper.sh scripts/stack_groups.sh scripts/own_group.sh"
+stacks="enygma_payments/run_scripts/stack.sh enygma_dvp/scripts/stack.sh enygma_retail_payments/shield_demo/run.sh scripts/stack_lib.sh scripts/stack_start.sh scripts/stack_stop.sh scripts/stack_service.sh scripts/stack_reaper.sh scripts/stack_groups.sh scripts/stack_state.sh scripts/own_group.sh"
 common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/suite_result.sh $stacks"
 # make payments-burn-keygen and make dvp-keygen stamp their keys (and CI
 # keys their caches) with keys_src.sh's fingerprint.

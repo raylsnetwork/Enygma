@@ -26,7 +26,7 @@
 # did not run (exit 126 or 127, as a command passed as one word).
 # A mutant of mutant.sh itself (the same file, symlinks resolved), or of
 # own_group.sh, which runs the test command, runs from a temporary copy of
-# mutant.sh, suite_changes.sh and own_group.sh, with the same arguments: bash
+# the runner and its helpers, with the same arguments: bash
 # reads a script as it goes, so the run would otherwise pick up the mutated
 # text partway through, and a mutated own_group.sh would change how the
 # test command runs, not just the code under test. The copy mutates and
@@ -263,7 +263,7 @@ trap cleanup EXIT
 if [ "$file" -ef "$0" ] || [ "$file" -ef "$(dirname "$0")/own_group.sh" ]; then
   copy_dir=$(mktemp -d)
   mkdir "$copy_dir/scripts"
-  cp "$0" "$(dirname "$0")/suite_changes.sh" "$(dirname "$0")/own_group.sh" "$copy_dir/scripts/"
+  cp "$0" "$(dirname "$0")/"{suite_changes,stack_state,own_group}.sh "$copy_dir/scripts/"
   MUTANT_SH_ROOT=$root MUTANT_SH_COPY_DIR=$copy_dir exec bash "$copy_dir/scripts/mutant.sh" "${args[@]}"
 fi
 
@@ -277,8 +277,10 @@ abs=$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")
 # as no match.
 wiring=$(bash "$(dirname "$0")/suite_changes.sh" --wiring)
 if grep -qxF -- "${abs#"$root"/}" <<<"$wiring"; then
-  for pid_file in "${TMPDIR:-/tmp}"/enygma_*_stack.pid; do
-    pid=$(cat "$pid_file" 2>/dev/null) || continue
+  . "$(dirname "$0")/stack_state.sh"
+  for pid_file in "$(stack_state_dir)"/enygma_*_stack.pid "${TMPDIR:-/tmp}"/enygma_*_stack.pid; do
+    stack_file_is_owned "$pid_file" || continue
+    pid=$(cat "$pid_file") || continue
     if kill -0 "$pid" 2>/dev/null; then
       stack=${pid_file##*/enygma_}
       echo "BAD INPUT: $file wires the stacks, and the stack in $pid_file (pid $pid) is running, so the mutant would run inside it: stop it first (make ${stack%_stack.pid}-stack-stop)"
