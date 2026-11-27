@@ -1,8 +1,6 @@
 module enygma_dvp_auctions/gnark_circuits
 
-go 1.26.0
-
-toolchain go1.26.6
+go 1.26.11
 
 require (
 	github.com/consensys/gnark v0.14.0

@@ -1,6 +1,6 @@
 module enygma_payments/relayer
 
-go 1.26.8
+go 1.26.11
 
 require (
 	enygma_payments/layout v0.0.0

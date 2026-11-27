@@ -1,6 +1,6 @@
 module enygma_payments/go_client/enygma_test
 
-go 1.26.8
+go 1.26.11
 
 require (
 	enygma_payments/go_client v0.0.0
