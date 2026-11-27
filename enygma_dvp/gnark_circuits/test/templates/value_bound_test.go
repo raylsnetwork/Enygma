@@ -45,17 +45,15 @@ func TestDvpInitiatorCircuit_ValueBobAboveBound_Fails(t *testing.T) {
 }
 
 // TestCircuitConfigs_HoldNoVariables fails if any circuit this module
-// compiles keeps a frontend.Variable (or any other non-constant) in its
-// config, which gnark would compile as a prover-chosen witness.
+// defines keeps a frontend.Variable (or any other non-constant) in its
+// config, which gnark would compile as a prover-chosen witness. The
+// Payment-family circuits it proves are enygma_retail_payments', checked by
+// retail's own copy of this test.
 func TestCircuitConfigs_HoldNoVariables(t *testing.T) {
 	for name, c := range map[string]any{
-		"DvPInitiator":            templates.DvPInitiatorCircuit{},
-		"DvPDestination":          templates.DvPDestinationCircuit{},
-		"Payment":                 templates.PaymentCircuit{},
-		"PaymentFee":              templates.PaymentFeeCircuit{},
-		"PaymentRelayerFeePublic": templates.PaymentRelayerFeePublicCircuit{},
-		"UsdrFee":                 templates.UsdrFeeCircuit{},
-		"PrivateMint":             templates.PrivateMintCircuit{},
+		"DvPInitiator":   templates.DvPInitiatorCircuit{},
+		"DvPDestination": templates.DvPDestinationCircuit{},
+		"PrivateMint":    templates.PrivateMintCircuit{},
 	} {
 		if err := circuitconfig.Check(c); err != nil {
 			t.Errorf("%s: %v", name, err)

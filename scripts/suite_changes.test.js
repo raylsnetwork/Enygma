@@ -69,6 +69,19 @@ test("a change to enygma_vkslots runs the DvP and retail suites, whose inits che
   assert.deepStrictEqual(suites(['enygma_vkslots/vkslots/vkslots.go']), ['dvp', 'retail']);
 });
 
+test("a change to retail's Payment-family circuits or keys runs the DvP and retail suites", () => {
+  // enygma_dvp's gnark server proves retail's templates, with the keys make
+  // dvp-keygen copies from retail.
+  for (const file of [
+    'enygma_retail_payments/gnark_circuits/templates/Payment.go',
+    'enygma_retail_payments/gnark_circuits/primitives/Nullifier.go',
+    'enygma_retail_payments/gnark_circuits/scripts/keys/UsdrFeePK.key',
+    'enygma_retail_payments/gnark_circuits/go.mod',
+  ]) {
+    assert.deepStrictEqual(suites([file]), ['dvp', 'retail'], file);
+  }
+});
+
 test('a change to enygma_payments runs the payments suite only', () => {
   assert.deepStrictEqual(suites(['enygma_payments/contracts/enygma/contracts/Enygma.sol']), ['payments']);
 });

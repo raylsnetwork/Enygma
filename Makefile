@@ -297,6 +297,13 @@ DVP_LOG_DIR ?=
 # make test-name-skip-check fails on a name that is no test in DVP_SUITE.
 DVP_SUITE := enygma_dvp/test
 DVP_KNOWN_SKIPS := TestNewKeyPair TestNewKeyPairDeterministicPublicKey
+# The circuits whose keys make dvp-keygen copies from enygma_retail_payments
+# (committed through LFS) rather than generates: PrivateMint, whose committed
+# PrivateMintVerifier.sol is for retail's keys, and the Payment-family
+# circuits, which enygma_dvp's gnark server proves with retail's templates.
+# dvp-stack's preflight refuses copies that are not retail's, and
+# export_vk_init and export_vk_payment refuse such Payment-family keys.
+DVP_RETAIL_KEYS := PrivateMint Payment Payment2in PaymentFee PaymentRelayerFeePublic UsdrFee
 
 dvp-chain: ## Start a local Hardhat node (keep running)
 	cd enygma_dvp && npx hardhat node
@@ -307,11 +314,11 @@ dvp-deploy: ## Regenerate Poseidon artifacts, build and run the DvP deploy
 dvp-init: ## Export VKs and register them on-chain
 	cd enygma_dvp && bash scripts/init.sh
 
-dvp-keygen: ## Generate DvP proving/verifying keys (slow; rerun after circuit changes), with retail's PrivateMint keys, stamped with their circuit sources
+dvp-keygen: ## Generate DvP proving/verifying keys (rerun after circuit changes), with copies of retail's PrivateMint and Payment-family keys, stamped with their circuit sources
 	@# dvp-stack's preflight fails on keys whose stamp is missing or another's.
 	$(call keygen_stamped,enygma_dvp/gnark_circuits,./cmd/keygen,mkdir -p scripts/keys scripts/verifier && go run ./cmd/keygen,scripts/keys/keys.src)
 	@# keygen draws fresh PrivateMint keys; the committed PrivateMintVerifier.sol is for retail's (same R1CS).
-	cp enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintPK.key enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintVK.key enygma_dvp/gnark_circuits/scripts/keys/
+	cp $(foreach k,$(DVP_RETAIL_KEYS),enygma_retail_payments/gnark_circuits/scripts/keys/$(k)PK.key enygma_retail_payments/gnark_circuits/scripts/keys/$(k)VK.key) enygma_dvp/gnark_circuits/scripts/keys/
 
 dvp-gnark: ## Start the DvP gnark proof server on :8081 (keep running)
 	cd enygma_dvp/gnark_circuits && go run ./cmd/server

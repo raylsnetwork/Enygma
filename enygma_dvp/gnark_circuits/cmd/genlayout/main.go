@@ -3,20 +3,20 @@
 // and the integration tests) and the Solidity library DvpStatementLayout (for
 // the contracts that verify DvP and mint receipts).
 //
-// The Go package covers every circuit enygma_dvp proves: DvpInitiator,
-// DvpDestination, PrivateMint and its own copies of the Payment-family
-// circuits, so its Go readers never depend on enygma_retail_payments.
-// DvpStatementLayout covers the DvP and mint circuits only: the Solidity
-// Payment-family library, PaymentStatementLayout, stays retail's.
+// The Go package covers every circuit enygma_dvp proves: its own
+// DvpInitiator, DvpDestination and PrivateMint, and the Payment-family
+// circuits, which are enygma_retail_payments' (enygma_dvp proves them with
+// retail's templates and keys). So its Go readers never depend on
+// enygma_retail_payments. DvpStatementLayout covers the DvP and mint
+// circuits only: the Solidity Payment-family library, PaymentStatementLayout,
+// stays retail's.
 //
 // Regenerate after changing any covered circuit's public signals or deployed
-// config:
+// config, retail's Payment-family circuits included:
 //
 //	cd gnark_circuits && go generate ./cmd/genlayout
 //
-// main_test.go fails while the committed files are stale; parity_test.go
-// fails while enygma_dvp's Payment-family templates derive a layout other
-// than retail's committed PaymentStatementLayout.
+// main_test.go fails while the committed files are stale.
 package main
 
 //go:generate go run .
@@ -28,6 +28,7 @@ import (
 	"enygma_gnark_shared/statement"
 
 	"enygma_dvp/gnark_circuits/templates"
+	retail "enygma_retail_payments/gnark_circuits/templates"
 )
 
 // Output paths, relative to this directory (go generate and go test both
@@ -42,9 +43,9 @@ const generator = "enygma_dvp/gnark_circuits/cmd/genlayout"
 var (
 	goTarget = statement.Target{
 		Generator: generator,
-		Subject: "the enygma_dvp DvpInitiator, DvpDestination, PrivateMint and " +
-			"Payment-family (Payment, Payment2in, PaymentFee, " +
-			"PaymentRelayerFeePublic, UsdrFee) circuits'",
+		Subject: "the enygma_dvp DvpInitiator, DvpDestination and PrivateMint " +
+			"circuits' and the retail Payment-family (Payment, Payment2in, " +
+			"PaymentFee, PaymentRelayerFeePublic, UsdrFee) circuits'",
 		GoPackage: "layout",
 	}
 	solTarget = statement.Target{
@@ -57,7 +58,7 @@ var (
 func generate() map[string][]byte {
 	dvp := templates.DvpStatementLayouts()
 	return map[string][]byte{
-		goOut:  goTarget.RenderGo(append(dvp, templates.PaymentStatementLayouts()...)),
+		goOut:  goTarget.RenderGo(append(dvp, retail.StatementLayouts()...)),
 		solOut: solTarget.RenderSolidity(dvp),
 	}
 }

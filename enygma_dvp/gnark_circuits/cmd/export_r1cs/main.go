@@ -6,8 +6,9 @@
 //
 //	go run ./cmd/export_r1cs -out <dir>
 //
-// The server loads PrivateMint's keys too, but those are retail's (see
-// fromRetail): retail's ceremony seals them, so this export leaves it out.
+// The server loads PrivateMint's and the Payment-family circuits' keys too,
+// but those are retail's (see fromRetail): retail's ceremony seals them, so
+// this export leaves them out.
 //
 // It lives apart from cmd/keygen and the packages keygen builds, so adding
 // it leaves scripts/keys/keys.src, the fingerprint of the keys' circuit
@@ -28,6 +29,7 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
+	"enygma_dvp/gnark_circuits/retailkeys"
 	"enygma_dvp/gnark_circuits/templates"
 )
 
@@ -54,22 +56,15 @@ var circuits = []struct {
 			WtPathElements: make([]frontend.Variable, merkleDepth),
 		}
 	}},
-	{"Payment", func() frontend.Circuit { c := templates.NewPaymentCircuit(templates.PaymentConfig); return &c }},
-	{"Payment2in", func() frontend.Circuit { c := templates.NewPaymentCircuit(templates.Payment2inConfig); return &c }},
-	{"PaymentFee", func() frontend.Circuit { c := templates.NewPaymentFeeCircuit(templates.PaymentFeeConfig); return &c }},
-	{"PaymentRelayerFeePublic", func() frontend.Circuit {
-		c := templates.NewPaymentRelayerFeePublicCircuit(templates.PaymentRelayerFeePublicConfig)
-		return &c
-	}},
-	{"UsdrFee", func() frontend.Circuit { c := templates.NewUsdrFeeCircuit(templates.UsdrFeeConfig); return &c }},
 }
 
 // fromRetail are the circuits whose keys the server loads but
-// enygma_retail_payments' ceremony seals: make dvp-keygen copies retail's
-// PrivateMint keys over the ones keygen draws (same R1CS), the committed
-// PrivateMintVerifier.sol is for retail's, and scripts/stack.sh refuses any
-// other PrivateMintVK.key.
-var fromRetail = []string{"PrivateMint"}
+// enygma_retail_payments' ceremony seals, the keys make dvp-keygen copies
+// from retail (the Makefile's DVP_RETAIL_KEYS): PrivateMint's, over the ones
+// keygen draws (same R1CS), as the committed PrivateMintVerifier.sol is for
+// retail's, and the Payment-family circuits', which the server proves from
+// retail's templates. scripts/stack.sh refuses copies that are not retail's.
+var fromRetail = append([]string{"PrivateMint"}, retailkeys.PaymentFamily...)
 
 func main() {
 	out := flag.String("out", "", "the directory to write <Name>.r1cs into (created if missing; no file may exist)")

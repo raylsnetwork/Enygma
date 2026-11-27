@@ -2,7 +2,8 @@
 // small stacks of fake services: how a stack stops on a signal, on a service
 // dying, and on a failed step; that its stop also stops a service a make
 // restart target relaunched or added (scripts/stack_service.sh), and only
-// what it or they started; and its keys-stamp check on a scratch repo.
+// what it or they started; its keys-stamp check on a scratch repo; and its
+// check that copied keys are their source's.
 //
 //   node --test scripts/stack_lib.test.js   (make page-check)
 
@@ -613,4 +614,59 @@ test('check_keys_stamp fails, naming its usage, on the wrong number of arguments
   const r = checkStamp(undefined, { ...DVP, argv: [DVP.keys, DVP.module] });
   assert.strictEqual(r.code, 2, r.out);
   assert.match(r.out, /usage: check_keys_stamp <keys> <module dir> <keygen package> <stamp file> <make target>/);
+});
+
+// checkCopies runs check_key_copies on a scratch tree holding the lib, a dir
+// of copies (dvp) and their source (retail), each with the key files of its
+// map (name to content); it returns the exit code and the output.
+function checkCopies(copies, source, argv = ['dvp', 'retail', 'dvp-keygen']) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-lib-copies-test-'));
+  try {
+    for (const f of ['stack_lib.sh', 'stack_groups.sh']) fs.cpSync(path.join(__dirname, f), path.join(dir, 'scripts', f));
+    for (const [sub, keys] of [['dvp', copies], ['retail', source]]) {
+      fs.mkdirSync(path.join(dir, sub));
+      Object.entries(keys).forEach(([name, content]) => fs.writeFileSync(path.join(dir, sub, name), content));
+    }
+    const script = `set -euo pipefail\n. scripts/stack_lib.sh\ncheck_key_copies ${argv.map((a) => `'${a}'`).join(' ')}\n`;
+    const r = spawnSync('bash', ['-c', script], { cwd: dir, encoding: 'utf8' });
+    return { code: r.status, out: r.stdout + r.stderr };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// The keys make dvp-keygen copies from retail, beside keys of its own and
+// a retail key it does not copy.
+const RETAIL_KEYS = { 'PaymentPK.key': 'payment pk', 'PaymentVK.key': 'payment vk', 'OtherVK.key': 'not copied' };
+const DVP_KEYS = { 'PaymentPK.key': 'payment pk', 'PaymentVK.key': 'payment vk', 'DvPInitiatorVK.key': 'its own', 'keys.src': 'stamp' };
+
+test("check_key_copies passes, quietly, when each of the source's keys the dir holds is the source's", () => {
+  const r = checkCopies(DVP_KEYS, RETAIL_KEYS);
+  assert.strictEqual(r.code, 0, r.out);
+  assert.strictEqual(r.out, '');
+});
+
+test('check_key_copies fails, naming each key that is not a copy and the make target', () => {
+  const r = checkCopies({ ...DVP_KEYS, 'PaymentPK.key': 'an older pk', 'PaymentVK.key': 'an older vk' }, RETAIL_KEYS);
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /dvp\/PaymentPK\.key is not a copy of retail\/PaymentPK\.key: make dvp-keygen\n/);
+  assert.match(r.out, /dvp\/PaymentVK\.key is not a copy of retail\/PaymentVK\.key: make dvp-keygen\n/);
+});
+
+test('check_key_copies fails, rather than pass, on a source with no keys', () => {
+  const r = checkCopies(DVP_KEYS, { 'keys.src': 'stamp' });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /there are no keys in retail to compare the copies in dvp with\n/);
+});
+
+test("check_key_copies fails, rather than pass, on a dir that holds none of the source's keys", () => {
+  const r = checkCopies({ 'DvPInitiatorVK.key': 'its own' }, RETAIL_KEYS);
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /dvp holds none of the keys in retail: make dvp-keygen\n/);
+});
+
+test('check_key_copies fails, naming its usage, on the wrong number of arguments', () => {
+  const r = checkCopies(DVP_KEYS, RETAIL_KEYS, ['dvp', 'retail']);
+  assert.strictEqual(r.code, 2, r.out);
+  assert.match(r.out, /usage: check_key_copies <dir> <source dir> <make target>/);
 });

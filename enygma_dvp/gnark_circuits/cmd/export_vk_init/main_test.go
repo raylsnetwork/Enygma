@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,8 @@ import (
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+
+	"enygma_dvp/gnark_circuits/retailkeys"
 )
 
 // keyFile writes a real verifying key (a setup of placeholderCircuit) to
@@ -190,5 +193,130 @@ func TestExportAll_RetiredCircuitAlwaysGetsThePlaceholder(t *testing.T) {
 		if strings.Contains(string(data), real.G1.Alpha.X.String()) {
 			t.Errorf("%s.json carries A's real VK", name)
 		}
+	}
+}
+
+// retailPayment writes the Payment circuit's verifying key (a real one) and a
+// stand-in proving key to a fresh dir, as enygma_retail_payments' key dir
+// holds them, and copies both to another, as make dvp-keygen does; it returns
+// the copies' dir and retail's.
+func retailPayment(t *testing.T) (keys, retail string) {
+	t.Helper()
+	keys, retail = t.TempDir(), t.TempDir()
+	keyFile(t, retail, "PaymentVK.key")
+	if err := os.WriteFile(filepath.Join(retail, "PaymentPK.key"), []byte("Payment proving key"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"PaymentPK.key", "PaymentVK.key"} {
+		b, err := os.ReadFile(filepath.Join(retail, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(keys, name), b, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return keys, retail
+}
+
+// The Payment circuit, VK slot 0, is exported from keys that are retail's,
+// beside the config's other circuits.
+func TestRun_ExportsRetailsPaymentKey(t *testing.T) {
+	keys, retail := retailPayment(t)
+	circuits, mapping, build := scenario(t)
+	circuits = append(circuits, "Payment")
+	mapping["Payment"] = filepath.Join(keys, "PaymentVK.key")
+	out, err := run(circuits, mapping, nil, keys, retail, build, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(out.Exported, []string{"A", "Payment"}) || !exists(t, filepath.Join(build, "Payment.json")) {
+		t.Errorf("exported %v, want [A Payment] with Payment.json written", out.Exported)
+	}
+}
+
+// A Payment proving or verifying key that is missing, or not retail's byte for
+// byte, is refused, naming make dvp-keygen, before anything is written (the
+// build dir included), with or without -placeholder: neither a placeholder
+// nor an earlier JSON stands in for slot 0.
+func TestRun_RefusesAPaymentKeyThatIsNotRetails(t *testing.T) {
+	for _, name := range []string{"PaymentPK.key", "PaymentVK.key"} {
+		for _, how := range []string{"changed", "missing"} {
+			t.Run(how+" "+name, func(t *testing.T) {
+				keys, retail := retailPayment(t)
+				path := filepath.Join(keys, name)
+				if how == "missing" {
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					b, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					b[len(b)-1] ^= 1
+					if err := os.WriteFile(path, b, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, placeholder := range []bool{false, true} {
+					build := filepath.Join(t.TempDir(), "build")
+					_, err := run([]string{"A", "Payment"}, map[string]string{
+						"A":       keyFile(t, t.TempDir(), "AVK.key"),
+						"Payment": filepath.Join(keys, "PaymentVK.key"),
+					}, nil, keys, retail, build, placeholder)
+					if err == nil || !strings.Contains(err.Error(), "make dvp-keygen") {
+						t.Fatalf("placeholder=%v: got %v, want the %s %s refused, naming make dvp-keygen", placeholder, err, how, name)
+					}
+					if how == "changed" && !strings.Contains(err.Error(), path+" is not enygma_retail_payments'") {
+						t.Errorf("placeholder=%v: error %q does not name %s", placeholder, err, path)
+					}
+					if _, err := os.Stat(build); !errors.Is(err, os.ErrNotExist) {
+						t.Errorf("placeholder=%v: the build dir was written before the keys were checked: %v", placeholder, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// A build dir from an earlier setup may hold a Payment.json exported from
+// other keys: with the Payment keys missing it is refused, not kept, and the
+// JSON is left as it was.
+func TestRun_RefusesAMissingPaymentKeyOverAnEarlierJSON(t *testing.T) {
+	keys, retail := retailPayment(t)
+	if err := os.Remove(filepath.Join(keys, "PaymentVK.key")); err != nil {
+		t.Fatal(err)
+	}
+	build := t.TempDir()
+	earlier := []byte(`{"protocol":"groth16","from":"an earlier setup"}`)
+	if err := os.WriteFile(filepath.Join(build, "Payment.json"), earlier, 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run([]string{"Payment"}, map[string]string{"Payment": filepath.Join(keys, "PaymentVK.key")}, nil, keys, retail, build, false)
+	if err == nil || len(out.Kept) != 0 {
+		t.Fatalf("got kept %v, error %v; want the missing Payment key refused", out.Kept, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(build, "Payment.json")); !bytes.Equal(got, earlier) {
+		t.Error("the earlier Payment.json was overwritten")
+	}
+}
+
+// The VK file export_vk_init exports for a Payment-family circuit is the one
+// run checks: <circuit>VK.key in retailkeys.KeysDir.
+func TestCircuitMapping_ExportsThePaymentKeysRunChecks(t *testing.T) {
+	n := 0
+	for _, name := range retailkeys.PaymentFamily {
+		path, ok := circuitMapping[name]
+		if !ok {
+			continue
+		}
+		n++
+		if want := filepath.Join(retailkeys.KeysDir, name+"VK.key"); path != want {
+			t.Errorf("circuitMapping[%q] is %s, but run checks %s", name, path, want)
+		}
+	}
+	if n == 0 {
+		t.Fatal("circuitMapping maps no Payment-family circuit, but VK slot 0 is Payment's")
 	}
 }

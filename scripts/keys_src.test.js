@@ -251,3 +251,28 @@ for (const { cache, src, prefix, args } of CACHES) {
       `the ${cache} cache key does not start with the ${src} step's fingerprint`);
   });
 }
+
+// make dvp-keygen also copies retail's committed keys for the circuits the
+// Makefile's DVP_RETAIL_KEYS names into the DvP keys, so the dvp-keys cache
+// must miss when any of them changes: its key hashes each copied file.
+test("CI's dvp-keys cache key hashes every key make dvp-keygen copies from retail", () => {
+  const makefile = fs.readFileSync(path.join(__dirname, '..', 'Makefile'), 'utf8');
+  const list = /^DVP_RETAIL_KEYS := (.+)$/m.exec(makefile);
+  assert.ok(list, 'the Makefile has no DVP_RETAIL_KEYS := line');
+  const recipe = /^dvp-keygen:.*\n((?:\t.*\n)+)/m.exec(makefile);
+  assert.ok(recipe, 'the Makefile has no dvp-keygen recipe');
+  assert.match(recipe[1], /\$\(DVP_RETAIL_KEYS\)/, 'the dvp-keygen recipe does not copy $(DVP_RETAIL_KEYS)');
+  const yml = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/onchain.yml'), 'utf8');
+  const step = /- id: dvp-keys\n((?: {8}.*\n)+)/.exec(yml);
+  assert.ok(step, 'onchain.yml has no dvp-keys cache step');
+  const hashed = /^ +key: .*hashFiles\(([^)]*)\)/m.exec(step[1]);
+  assert.ok(hashed, 'the dvp-keys cache key hashes no files');
+  const globs = [...hashed[1].matchAll(/'([^']+)'/g)].map((m) => new RegExp(`^${m[1].split('*').map(re).join('[^/]*')}$`));
+  assert.ok(globs.length > 0, `cannot read the dvp-keys cache key's hashFiles(${hashed[1]})`);
+  for (const circuit of list[1].trim().split(/\s+/)) {
+    for (const kind of ['PK', 'VK']) {
+      const f = `enygma_retail_payments/gnark_circuits/scripts/keys/${circuit}${kind}.key`;
+      assert.ok(globs.some((g) => g.test(f)), `the dvp-keys cache key does not hash ${f}, which make dvp-keygen copies`);
+    }
+  }
+});

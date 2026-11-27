@@ -212,6 +212,9 @@ type Note struct {
 	Sk, Pk, Salt, Value, TokenId *big.Int
 	Siblings                     []*big.Int
 	Root, Nullifier              *big.Int
+	// ChangeSalt is the salt the Payment-family circuits require of the
+	// change note of a proof spending this note first: Poseidon(sk, nullifier).
+	ChangeSalt *big.Int
 }
 
 // NewNote builds the note sk owns holding value of tokenId at depth.
@@ -232,7 +235,27 @@ func NewNote(t *testing.T, sk, value, tokenId int64, depth int) Note {
 	}
 	// Poseidon(sk, treeNumber*2^depth + pathIndex) with tree 0, index 0.
 	n.Nullifier = Hash(t, n.Sk, big.NewInt(0))
+	n.ChangeSalt = Hash(t, n.Sk, n.Nullifier)
 	return n
+}
+
+// NoNoteOutputs are the outputs of a Payment-family spend of no note: input 0
+// zero-value padding (value, salt, root, nullifier and path 0), so every
+// output is worth 0. The outputs keep pks and salts, except the change
+// (output 1), salted Poseidon(sk, 0), the salt a nullifier of 0 gives. Of
+// the circuits' rules, only "input 0 is a real note" refuses such a spend.
+func NoNoteOutputs(t *testing.T, in Note, pks, salts []*big.Int) (values, outSalts, commitments []string) {
+	t.Helper()
+	for i := range pks {
+		salt := salts[i]
+		if i == 1 {
+			salt = Hash(t, in.Sk, big.NewInt(0))
+		}
+		values = append(values, "0")
+		outSalts = append(outSalts, salt.String())
+		commitments = append(commitments, Commitment(t, pks[i], salt, big.NewInt(0), in.TokenId).String())
+	}
+	return values, outSalts, commitments
 }
 
 // Commitment is a note commitment, Poseidon(pk, salt, value, tokenId).

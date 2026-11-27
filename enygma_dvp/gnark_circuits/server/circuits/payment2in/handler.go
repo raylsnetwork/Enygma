@@ -14,8 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"enygma_dvp/gnark_circuits/primitives"
-	"enygma_dvp/gnark_circuits/templates"
 	utils "enygma_dvp/gnark_circuits/utils"
+	"enygma_retail_payments/gnark_circuits/templates"
 
 	"enygma_gnark_shared/witnessinput"
 )

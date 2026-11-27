@@ -17,7 +17,7 @@ package tests
 //
 //	Terminal 1: cd .. && npx hardhat node
 //	Terminal 2 (once): CC=/usr/bin/clang go build -C scripts -o /tmp/deploy_payment ./cmd/deploy_payment && /tmp/deploy_payment
-//	Terminal 2 (once): cd gnark_circuits && go run ./cmd/keygen
+//	Terminal 2 (once, from the repo root): make dvp-keygen
 //	Terminal 2 (once): cd gnark_circuits && go run ./cmd/export_vk_payment ../build
 //	Terminal 2 (once): CC=/usr/bin/clang go build -C scripts -o /tmp/init_payment ./cmd/init_payment && /tmp/init_payment
 //	Terminal 3: cd gnark_circuits && go run ./cmd/server
@@ -409,9 +409,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			t.Fatalf("Erc20CommitmentV2 (Bob): %v", err)
 		}
 
-		saltChange, err := core.RandomInField()
+		// The change salt every Payment-family circuit requires.
+		saltChange, err := core.WithdrawChangeSalt(d.spend.PrivateKey, nullifier)
 		if err != nil {
-			t.Fatalf("RandomInField (change): %v", err)
+			t.Fatalf("WithdrawChangeSalt (change): %v", err)
 		}
 		cmtChange, err := core.Erc20CommitmentV2(d.spend.PublicKey, saltChange, changeAmt, tokenId)
 		if err != nil {
@@ -530,9 +531,10 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			t.Fatalf("Erc20CommitmentV2 (usdr fee): %v", err)
 		}
 
-		changeSalt, err := core.RandomInField()
+		// The change salt every Payment-family circuit requires.
+		changeSalt, err := core.WithdrawChangeSalt(d.spend.PrivateKey, nullifier)
 		if err != nil {
-			t.Fatalf("RandomInField (usdr change): %v", err)
+			t.Fatalf("WithdrawChangeSalt (usdr change): %v", err)
 		}
 		cmtChange, err := core.Erc20CommitmentV2(d.spend.PublicKey, changeSalt, changeAmt, usdrTokenId)
 		if err != nil {

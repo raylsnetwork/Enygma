@@ -10,7 +10,7 @@
 # on-chain suite fails on a proof.
 #   retail    enygma_retail_payments/gnark_circuits/scripts/keys/*.key, from
 #             make retail-keygen (the retail and DvP suites: DvP copies
-#             retail's PrivateMint keys)
+#             retail's PrivateMint and Payment-family keys)
 #   payments  enygma_payments/gnark-server/keys/{,zkdvp/}*.key, from make
 #             payments-keygen (the payments suite)
 #
@@ -23,7 +23,7 @@ module=${1:-}
 case "$module" in
     retail)
         dir=enygma_retail_payments/gnark_circuits keygen=./cmd/keygen stamp=scripts/keys/keys.src
-        next_steps="after make retail-keygen, re-export what is built from the keys as enygma_retail_payments/setup.sh step 4/5 does (export_vk, export_verifier and the PrivateMintVerifier ABI); then make dvp-keygen, which copies the PrivateMint keys" ;;
+        next_steps="after make retail-keygen, re-export what is built from the keys as enygma_retail_payments/setup.sh step 4/5 does (export_vk, export_verifier and the PrivateMintVerifier ABI); then make dvp-keygen, which copies the PrivateMint and Payment-family keys" ;;
     payments)
         dir=enygma_payments/gnark-server keygen=./keygen stamp=keys/keys.src
         next_steps="after make payments-keygen, copy each regenerated verifier into the contracts: enygma_payments/gnark-server/keys/EnygmaVerifier.sol to enygma_payments/contracts/enygma/contracts/EnygmaVerifier.sol, and likewise EnygmaFeeVerifier.sol and UsdrVerifier.sol. keys/zkdvp's DepositVerifier.sol and WithdrawVerifier6.sol have no copy to update: nothing deploys them (the suites register mock Deposit and Withdraw verifiers)" ;;

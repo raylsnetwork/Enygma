@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -394,16 +395,20 @@ func (c *GnarkClient) provePayment(
 
 // paymentChangeSalt is the salt of change output i of a payment whose first
 // input is spent by sk with nullifier0. Output 1 gets WithdrawChangeSalt(sk,
-// nullifier0), the salt enygma_retail_payments' Payment-family circuits
-// require of every proof (payments as well as withdrawals), so the change
-// note never depends on locally stored data. Any further output, and a proof
-// whose first input is zero padding (nullifier0 = 0, which those circuits
-// reject), gets a random salt as before: no circuit constrains it.
+// nullifier0), the salt the Payment-family circuits require of every proof
+// (payments as well as withdrawals), so the change note never depends on
+// locally stored data. Those circuits also require input 0 to be a real note,
+// so a first input of zero value (nullifier0 = 0) is an error here, before
+// any proof request. Any further output gets a random salt: no circuit
+// constrains it.
 func paymentChangeSalt(i int, sk, nullifier0 *big.Int) (*big.Int, error) {
-	if i == 1 && nullifier0.Sign() != 0 {
-		return WithdrawChangeSalt(sk, nullifier0)
+	if i != 1 {
+		return RandomInField()
 	}
-	return RandomInField()
+	if nullifier0.Sign() == 0 {
+		return nil, errors.New("input 0 is zero-value padding: the Payment-family circuits require it to be a real note")
+	}
+	return WithdrawChangeSalt(sk, nullifier0)
 }
 
 // BoundPaymentFeeProof generates a PaymentFee proof where the sender's note absorbs

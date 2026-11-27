@@ -1,7 +1,7 @@
 {
   "about": [
     "Which circuit's verifying key each slot of the Payment-family deployment's Verifier holds (build/payment_receipts.json). Erc20CoinVault names circuits by slot number (VK_ID_*), and the Verifier numbers keys in registration order, so scripts/cmd/init_payment refuses keys that differ from this list and reads every slot back after registering.",
-    "nPublic is the key's number of public inputs. There is no vkHash: enygma_dvp's keys are not checked in, and every make dvp-keygen makes new ones."
+    "nPublic is the key's number of public inputs. There is no vkHash here: the keys are enygma_retail_payments', which make dvp-keygen copies and export_vk_payment refuses unless they are retail's byte for byte, and enygma_retail_payments/vk_slots.json pins their hashes."
   ],
   "slots": [
     {"slot": 0, "circuit": "Payment", "nPublic": 8},

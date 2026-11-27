@@ -646,11 +646,12 @@ func Erc20CommitmentV2(pkSpend, saltBField, amount, tokenId *big.Int) (*big.Int,
 	return poseidon.Hash([]*big.Int{pkSpend, saltBField, amount, tokenId})
 }
 
-// WithdrawChangeSalt is the salt a withdrawal's change note must use:
-// Poseidon(sk, nullifier0), where sk is the owner's spend key and nullifier0
-// the nullifier of the withdrawal's first input. The Payment-family circuits
-// enforce it for StMessage WITHDRAW_MESSAGE (enygma_retail_payments' circuits
-// for payments too, and BoundPaymentProof uses it for a payment's change), so
+// WithdrawChangeSalt is the salt the change note of every Payment-family
+// proof, a payment or a withdrawal, must use: Poseidon(sk, nullifier0), where
+// sk is the owner's spend key and nullifier0 the nullifier of the proof's
+// first input, which must be a real note. The Payment-family circuits
+// (enygma_retail_payments' templates, which enygma_dvp's gnark server proves
+// too) enforce both, and BoundPaymentProof uses it for a payment's change, so
 // the change note never depends on its EncryptedNote, which the proof does not
 // bind (whoever settles a receipt first can drop or replace those ciphertexts).
 func WithdrawChangeSalt(sk, nullifier0 *big.Int) (*big.Int, error) {
