@@ -148,6 +148,10 @@ type Result struct {
 	SHA256  [32]byte // the sha256 the participant publishes
 	Prev    [32]byte // the state it built on; zero when Already
 	Already bool     // contributed before: in an earlier run, or before a restart
+	// Of is the contribution as its child described it: its kind, its
+	// domain for a Phase 1, the SRS it builds on for a Phase 2 (no names);
+	// zero when Already.
+	Of ceremony.Info
 }
 
 // Run joins, waits, contributes and uploads, and returns the contribution.
@@ -525,7 +529,7 @@ func (c *Client) contribute(ctx context.Context, turn coordinator.Reply) (Result
 		return Result{}, err
 	}
 	c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256})
-	return Result{Index: r.Index, SHA256: got, Prev: receipt.In}, nil
+	return Result{Index: r.Index, SHA256: got, Prev: receipt.In, Of: receipt.Info}, nil
 }
 
 // done answers a coordinator saying this participant has contributed

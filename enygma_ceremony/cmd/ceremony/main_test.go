@@ -40,14 +40,15 @@ func TestCommandsRunACeremony(t *testing.T) {
 			return []string{"phase1-seal", "-unverified-beacon", beacon, "-head", head("p1-1"), "-out", p("srs"), p("p1-1")}
 		},
 		func() []string {
-			return []string{"phase2-new", "-ceremony", "test", "-srs", p("srs"), "-r1cs", p("r1cs"), "-circuits", circuits, "-out", p("p2-0")}
+			return []string{"phase2-new", "-ceremony", "test", "-srs", p("srs"), "-srs-sha256", head("srs"), "-rehearsal",
+				"-r1cs", p("r1cs"), "-circuits", circuits, "-out", p("p2-0")}
 		},
 		func() []string { return []string{"contribute", "-in", p("p2-0"), "-out", p("p2-1")} },
 		func() []string { return []string{"contribute", "-in", p("p2-1"), "-out", p("p2-2")} },
 		func() []string { return []string{"check", "-prev", p("p2-1"), "-next", p("p2-2")} },
 		func() []string { return []string{"info", p("p2-2")} },
 		func() []string {
-			return []string{"phase2-seal", "-ceremony", "test", "-srs", p("srs"), "-r1cs", p("r1cs"), "-circuits", circuits,
+			return []string{"phase2-seal", "-ceremony", "test", "-srs", p("srs"), "-srs-sha256", head("srs"), "-rehearsal", "-r1cs", p("r1cs"), "-circuits", circuits,
 				"-unverified-beacon", beacon, "-head", head("p2-2"), "-keys", p("keys"), p("p2-1"), p("p2-2")}
 		},
 	}
@@ -95,6 +96,9 @@ func TestJoin(t *testing.T) {
 		}
 		state := filepath.Join(dir, fmt.Sprintf("state-%d", i+1))
 		if want := fmt.Sprintf("your contribution sha256 %x", sha256.Sum256(readFile(t, state))); !strings.Contains(stdout, want) {
+			t.Fatalf("%s's join printed\n%s\nwant a line with %q", name, stdout, want)
+		}
+		if want := "to Phase 1 for circuits of up to 8 constraints"; !strings.Contains(stdout, want) { // audit H1
 			t.Fatalf("%s's join printed\n%s\nwant a line with %q", name, stdout, want)
 		}
 	}
@@ -155,7 +159,7 @@ func TestVerify(t *testing.T) {
 	}
 	mine := fmt.Sprintf("%x", sha256.Sum256(readFile(t, filepath.Join(dir, "state-2"))))
 	code, stdout, stderr := runCommand("verify", "-url", url, "-dir", t.TempDir(), "-mine", mine)
-	if code != 0 || !strings.Contains(stdout, "OK: the start, and 2 contributions") || !strings.Contains(stdout, "Yours is contribution 2") {
+	if code != 0 || !strings.Contains(stdout, "OK: Phase 1 for circuits of up to 8 constraints: the start, and 2 contributions") || !strings.Contains(stdout, "Yours is contribution 2") {
 		t.Fatalf("verify: exit %d\n%s%s", code, stdout, stderr)
 	}
 	if code, stdout, stderr := runCommand("verify", "-url", url, "-dir", t.TempDir(), "-mine", strings.Repeat("0", 64)); code != 1 {
@@ -236,6 +240,18 @@ func TestCircuitsMustBeNamed(t *testing.T) {
 	code, stdout, stderr = runCommand("phase2-new", "-ceremony", "test", "-srs", "srs", "-r1cs", r1cs, "-circuits", "Cubic", "-out", out)
 	if code != 1 || !strings.Contains(stderr, "must be the same circuits") {
 		t.Fatalf("phase2-new with a .r1cs that -circuits does not name: exit %d, want 1\n%s%s", code, stdout, stderr)
+	}
+	// Audit I9: names compared in the order they are listed, whatever
+	// order their files sort in ("Cubic-2.r1cs" before "Cubic.r1cs").
+	if err := os.Remove(filepath.Join(r1cs, "Committed.r1cs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := testcircuits.WriteCircuit(r1cs, "Cubic-2", &testcircuits.Cubic{}); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr = runCommand("phase2-new", "-ceremony", "test", "-srs", "srs", "-r1cs", r1cs, "-circuits", "Cubic-2,Cubic", "-out", out)
+	if strings.Contains(stderr, "must be the same circuits") {
+		t.Fatalf("phase2-new -circuits naming every .r1cs there: exit %d\n%s%s", code, stdout, stderr)
 	}
 }
 

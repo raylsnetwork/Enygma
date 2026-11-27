@@ -75,7 +75,7 @@ func runChild(stdin io.Reader, stdout, stderr io.Writer) int {
 	// The receipt carries hashes and numbers only: a Phase 2's names come
 	// from the state the coordinator handed over, and the parent needs none
 	// of them (audit I15).
-	receipt.Ceremony, receipt.Circuits = "", nil
+	receipt.Ceremony, receipt.Circuits, receipt.R1CS = "", nil, nil
 	if err := enc.Encode(childMessage{Receipt: &receipt}); err != nil {
 		return 1
 	}

@@ -28,7 +28,8 @@ participant
   contribute  -in STATE -out STATE        add your randomness to a state handed to you by hand
 
 anyone
-  verify      [-url URL [-sync]] -dir DIR [-mine SHA256] [-srs SRS -r1cs DIR]
+  verify      [-url URL [-sync]] -dir DIR [-mine SHA256] [-size N | -ceremony NAME]
+              [-srs SRS (-srs-sha256 SHA256 | -phase1 DIR -phase1-head SHA256) -r1cs DIR]
                                           check a phase's transcript: downloaded into DIR, or DIR as it is
   verify-keys -ceremony NAME -srs SRS -r1cs DIR -keys DIR -phase1-seal-sha256 SHA256 -phase2-seal-sha256 SHA256
                                           check installed keys against independently approved seals
@@ -41,19 +42,25 @@ coordinator
                                           run a phase from DIR/state-0 for anyone with its address
                                           (ceremony coordinate -h)
   phase1-new  -size N -out STATE          start Phase 1 for circuits of up to N constraints
-  phase2-new  -ceremony NAME -srs SRS -r1cs DIR [-circuits A,B] -out STATE
-                                          start Phase 2 for DIR's circuits (keys.json, or -circuits)
+  phase2-new  -ceremony NAME -srs SRS -srs-sha256 SHA256 -r1cs DIR [-circuits A,B] -out STATE
+                                          start Phase 2 for DIR's circuits (keys.json, or -circuits),
+                                          from the SRS announced
   beacon      -close-at TIME [-turn D] | -round N
                                           the drand round to announce for a close, or round N's beacon
   phase1-seal -head SHA256 (-transcript DIR | STATE...) BEACON -out SRS
                                           replay Phase 1 up to the announced head, apply the beacon,
                                           write the SRS and its record
-  phase2-seal -ceremony NAME -srs SRS -r1cs DIR [-circuits A,B] -head SHA256 (-transcript DIR | STATE...)
-              BEACON -keys DIR            replay Phase 2 up to the announced head, apply the beacon,
+  phase2-seal -ceremony NAME -srs SRS (-srs-sha256 SHA256 | -phase1 DIR -phase1-head SHA256) -r1cs DIR [-circuits A,B]
+              -head SHA256 (-transcript DIR | STATE...) BEACON -keys DIR
+                                          replay Phase 2 up to the announced head, apply the beacon,
                                           write the keys and their record
 
   BEACON is -drand ROUND -close-at TIME (the round announced, out after the close and the last
   contribution), or, for tests and rehearsals only, -unverified-beacon HEX.
+  An SRS is given with the sha256 announced for it (-srs-sha256), or, to verify and phase2-seal,
+  with the Phase 1 transcript it is the seal of (-phase1) and that Phase 1's announced head
+  (-phase1-head): the transcript is resealed. -rehearsal takes an SRS sealed with
+  -unverified-beacon.
 `
 
 // defaultURL is the coordinator this program joins when run with no
@@ -135,6 +142,23 @@ func printError(w io.Writer, what string, err error) {
 	fmt.Fprintf(w, "%s: %s\n", what, termsafe.Short(err.Error(), 1000))
 }
 
+// provenance says, a line each, what a Phase 2 state builds on (the SRS and
+// each circuit's constraint system), or what an SRS was sealed from, for
+// comparing with the announcement (audit H1); nothing for a Phase 1.
+func provenance(i ceremony.Info) string {
+	var b strings.Builder
+	switch i.Kind {
+	case ceremony.KindPhase2:
+		fmt.Fprintf(&b, "  on the SRS of sha256 %x\n", i.SRS)
+		for j, name := range i.Circuits {
+			fmt.Fprintf(&b, "  circuit %s: constraint system sha256 %x\n", name, i.R1CS[j])
+		}
+	case ceremony.KindSRS:
+		fmt.Fprintf(&b, "  %s\n", sealedFrom(*i.Phase1))
+	}
+	return b.String()
+}
+
 // contribute adds this machine's randomness to a state handed over by hand.
 func contribute(fs *flag.FlagSet) func([]string, io.Writer) error {
 	in := fs.String("in", "", "the latest state, as the coordinator hands it to you")
@@ -149,6 +173,7 @@ func contribute(fs *flag.FlagSet) func([]string, io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(w, "Wrote %s to %s\n", describe(r.Info), *out)
+		fmt.Fprint(w, provenance(r.Info))
 		fmt.Fprintf(w, "  on top of sha256 %x\n", r.In)
 		fmt.Fprintf(w, "  your contribution sha256 %x  <- publish this\n", r.Hash)
 		return nil
@@ -219,8 +244,8 @@ func phase1Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err := writeRecord(*out+".json", record); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "Wrote %s, from %d contributions, to %s\n  sha256 %x\n  and its record to %s.json\n",
-			describe(r.Info), r.Index, *out, r.Hash, *out)
+		fmt.Fprintf(w, "Wrote %s to %s\n  %s\n  sha256 %x: announce it, for every Phase 2 to start from\n  and its record to %s.json\n",
+			describe(r.Info), *out, sealedFrom(*r.Phase1), r.Hash, *out)
 		return nil
 	}
 }
@@ -228,22 +253,26 @@ func phase1Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 // phase2New writes the start of a protocol's Phase 2.
 func phase2New(fs *flag.FlagSet) func([]string, io.Writer) error {
 	name := fs.String("ceremony", "", "the ceremony's name, e.g. enygma_retail_payments")
-	srs := fs.String("srs", "", "the SRS phase1-seal wrote")
+	srsIn := srsFlags(fs, false)
 	r1cs, circuitsIn := circuitsFlags(fs)
 	out := fs.String("out", "", "where to write the start (must not exist)")
 	return func(args []string, w io.Writer) error {
-		if *name == "" || *srs == "" || *r1cs == "" || *out == "" || len(args) != 0 {
-			return fmt.Errorf("%w: phase2-new takes -ceremony, -srs, -r1cs and -out", errUsage)
+		if *name == "" || !srsIn.given() || *r1cs == "" || *out == "" || len(args) != 0 {
+			return fmt.Errorf("%w: phase2-new takes -ceremony, -srs with -srs-sha256, -r1cs and -out", errUsage)
 		}
 		circuits, err := circuitsIn(w)
 		if err != nil {
 			return err
 		}
-		r, err := ceremony.NewPhase2(*out, *name, *srs, circuits)
+		srs, _, err := srsIn.read(w)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "Wrote %s to %s\n  sha256 %x\n", describe(r.Info), *out, r.Hash)
+		r, err := ceremony.NewPhase2(*out, *name, srs, circuits)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Wrote %s to %s\n  sha256 %x: announce it, with the SRS's and each circuit's\n", describe(r.Info), *out, r.Hash)
 		return nil
 	}
 }
@@ -252,14 +281,14 @@ func phase2New(fs *flag.FlagSet) func([]string, io.Writer) error {
 // of what it sealed (ceremony-seal.json in the keys directory).
 func phase2Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 	name := fs.String("ceremony", "", "the ceremony's name, as phase2-new was given it")
-	srs := fs.String("srs", "", "the SRS Phase 2 started from")
+	srsIn := srsFlags(fs, true)
 	r1cs, circuitsIn := circuitsFlags(fs)
 	chain := chainFlags(fs)
 	beacon := beaconFlags(fs)
 	keys := fs.String("keys", "", "the directory to write the keys into, at their manifest paths or as <Name>PK.key and <Name>VK.key (no key may exist)")
 	return func(args []string, w io.Writer) error {
-		if *name == "" || *srs == "" || *r1cs == "" || *keys == "" {
-			return fmt.Errorf("%w: phase2-seal takes -ceremony, -srs, -r1cs, -head, -transcript or the contributions in order, the beacon and -keys", errUsage)
+		if *name == "" || !srsIn.given() || *r1cs == "" || *keys == "" {
+			return fmt.Errorf("%w: phase2-seal takes -ceremony, -srs with -srs-sha256 or -phase1, -r1cs, -head, -transcript or the contributions in order, the beacon and -keys", errUsage)
 		}
 		if err := beacon.usage(); err != nil {
 			return err
@@ -272,6 +301,10 @@ func phase2Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return err
 		}
+		srs, _, err := srsIn.read(w)
+		if err != nil {
+			return err
+		}
 		c, err := chain(args, w)
 		if err != nil {
 			return err
@@ -280,13 +313,17 @@ func phase2Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err := ceremony.SealPhase2(*keys, *name, *srs, circuits, b, c.paths); err != nil {
+		phase1, err := ceremony.SealPhase2(*keys, *name, srs, circuits, b.Value, c.paths)
+		if err != nil {
 			return err
 		}
-		record := sealRecord{Kind: "keys", Ceremony: *name, Head: c.head, Contributions: len(c.paths), Beacon: rec}
-		if record.SRS, err = hashHex(*srs); err != nil {
-			return err
-		}
+		// The SRS's sha256 and provenance are those of the bytes the seal
+		// read: it refuses any file but the one pinned.
+		record := sealRecord{Kind: "keys", Ceremony: *name, Head: c.head, Contributions: len(c.paths), Beacon: rec,
+			SRS: hex.EncodeToString(srs.SHA256[:]), Phase1: &phase1Record{
+				Head: hex.EncodeToString(phase1.Head[:]), Contributions: phase1.Contributions,
+				DrandRound: phase1.Beacon.DrandRound, CloseAt: phase1.Beacon.CloseAt, Unverified: phase1.Beacon.DrandRound == 0,
+			}}
 		fmt.Fprintf(w, "Wrote, from %d contributions, into %s:\n", len(c.paths), *keys)
 		for _, ci := range circuits {
 			cr := circuitRecord{Name: ci.Name, PK: ci.PK, VK: ci.VK}
@@ -320,6 +357,7 @@ func info(fs *flag.FlagSet) func([]string, io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(w, "%s\n  sha256 %x\n", describe(i), i.Hash)
+		fmt.Fprint(w, provenance(i))
 		return nil
 	}
 }
@@ -334,7 +372,7 @@ func describe(i ceremony.Info) string {
 	case ceremony.KindPhase2:
 		return fmt.Sprintf("%s Phase 2 (%s), after %d contributions", i.Ceremony, strings.Join(i.Circuits, ", "), i.Index)
 	case ceremony.KindSRS:
-		return fmt.Sprintf("the SRS for circuits of up to %d constraints", i.N)
+		return fmt.Sprintf("the SRS for circuits of up to %d constraints, sealed from %d contributions", i.N, i.Index)
 	}
 	return i.Kind.String()
 }
