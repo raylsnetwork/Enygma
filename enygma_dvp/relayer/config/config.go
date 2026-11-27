@@ -113,6 +113,16 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// Warnings lists settings that load but leave the relayer unsafe to run in
+// production. main logs each one at startup.
+func (c *Config) Warnings() []string {
+	var w []string
+	if c.MinFee.Sign() <= 0 {
+		w = append(w, "RELAYER_MIN_FEE is "+c.MinFee.String()+": the fee-relay routes accept any fee, including 0. Set RELAYER_MIN_FEE to a positive floor in base units.")
+	}
+	return w
+}
+
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

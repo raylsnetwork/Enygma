@@ -544,6 +544,53 @@ bridge note for any amount and key without moving any tokens, and
 the Enygma (institutional payments) contract: call `addEnygma` once per vault,
 with that contract's address, as `scripts/cmd/init` does.
 
+### Fee parameters
+
+Each fee amount the contract checks is an owner-set value that starts at 0,
+so until the owner sets it the check requires a fee of 0. No deploy or init
+script sets an amount: `scripts/cmd/init_payment` and
+`enygma_retail_payments/scripts/cmd/init` set only the USDr token id and vault,
+and only the retail shield demo sets `usdrFixedFeeAmount`, for its own run.
+After deploy, the owner (`DEFAULT_OWNER_ROLE`) sets each one with its setter:
+
+| Parameter | Default | Setter | Checked by |
+|---|---|---|---|
+| `relayerFixedFeeAmount` | 0 | `setRelayerFixedFee(amount)` | `paymentWithRelayerFee`, `channelPaymentWithRelayerFee` |
+| `usdrFixedFeeAmount` | 0 | `setUsdrFixedFee(amount)` | `paymentWithUsdrFee`, `channelPaymentWithUsdrFee` (USDr leg) |
+| `usdrTokenId` | 0 | `setUsdrTokenId(tokenId)` | the same two calls; both init scripts set it to 0, its default |
+| `usdrFeeVaultId` | unset | `setUsdrFeeVaultId(vaultId)` | the same two calls, which revert `InvalidUsdrVault` until it is set; both init scripts set it to 1 |
+
+`paymentWithFee` and `channelPaymentWithFee` check against no stored value:
+see R-049 below. `paymentWithFee` also accepts a PaymentRelayerFee receipt
+(1 input, 3 outputs) and checks its fee against the caller's argument, and
+`payment()` accepts one with no fee check, so `relayerFixedFeeAmount` binds
+only a caller who chooses the `*WithRelayerFee` calls.
+
+The off-chain relayers have their own floor, `RELAYER_MIN_FEE` (base units,
+default 0). At 0 the relayer accepts any fee the contract accepts, so a relayer
+that should be paid must set it, and both relayers (`relayer/` here and
+`enygma_retail_payments/relayer/`) log a warning at startup when it is 0.
+
+### Fee paths that bind less than they look
+
+- **The USDr fee is paired with its payment by convention**
+  (reconciled audit R-048). `paymentWithUsdrFee` and
+  `channelPaymentWithUsdrFee` settle two receipts, the main payment and the
+  USDr fee, but no public input links them: each proof nullifies against its
+  own vault, and the pairing is only that one call carries both. `payment()`
+  checks no shape, so it settles either receipt alone. A relayer can therefore
+  settle the fee leg without the payment, and anyone holding the main receipt
+  can settle the payment alone, leaving the relayer unpaid. The relayer is
+  trusted to pair the two legs, and the loss either way is at most
+  `usdrFixedFeeAmount`.
+- **The PaymentFee fee is chosen by the prover and burned into the vault**
+  (R-049). `paymentWithFee` and `channelPaymentWithFee` compare the proof's
+  fee with their own `protocolFee` argument, which the caller also chooses, so
+  the check enforces nothing. The PaymentFee circuit absorbs the fee into
+  conservation (`Σ valuesIn = valOut[0] + valOut[1] + StFee`) rather than
+  creating a note, so those tokens stay in the vault with no note to spend and
+  no sweep to collect them.
+
 ### Front-running that blocks a call
 
 Two public calls can be blocked by anyone who copies a pending transaction
