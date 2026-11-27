@@ -24,7 +24,6 @@
 // chip or box, a MathML table cell drawn over the next one, or a table's
 // first column not sitting right.
 //
-//   (cd scripts && npm ci)   # once: ws comes with jsdom, make page-check's dependency
 //   node scripts/primer_from_disk.js [outdir]
 //
 // CHROME names the Chrome binary (default: macOS's Google Chrome; see headless_chrome.js).

@@ -44,6 +44,7 @@ on:
       - "scripts/stack_service.sh"
       - "scripts/stack_reaper.sh"
       - "scripts/stack_groups.sh"
+      - "scripts/stack_state.sh"
       - "scripts/own_group.sh"
       - ".github/workflows/onchain.yml"
 

@@ -15,7 +15,6 @@
 // fed, so Hidden on chain's commitment and leaf show as … (a short hex and
 // the same 24 leaves as a real run's).
 //
-//   (cd scripts && npm ci)   # once: ws comes with jsdom, make page-check's dependency
 //   node scripts/moments_fit.js   (make moments-fit)
 
 const fs = require('fs');
@@ -54,6 +53,8 @@ for (const [name, f] of [['full run', fixture('default_run.events.json')], ['wal
 const PLAY = run => `(async () => {
   const $ = id => document.getElementById(id), sleep = ms => new Promise(r => setTimeout(r, ms));
   const run = ${JSON.stringify(run)};
+  // The stubbed EventSource sends no end-of-replay event on its own.
+  onEvent({ kind: 'live' });
   $('optMoments').checked = true;
   onEvent({ kind: 'reset' });
   runOpts = run.opts;

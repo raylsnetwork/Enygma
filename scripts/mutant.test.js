@@ -12,7 +12,7 @@ const { spawn, spawnSync } = require('child_process');
 
 const MUTANT = path.join(__dirname, 'mutant.sh');
 // The scripts mutant.sh runs, which a scratch repo copies in beside it.
-const SCRIPTS = ['mutant.sh', 'suite_changes.sh', 'own_group.sh'];
+const SCRIPTS = ['mutant.sh', 'suite_changes.sh', 'stack_state.sh', 'own_group.sh'];
 
 // run applies the mutant "ok" → "bad" to a scratch file holding "ok", with
 // the shell command cmd as the test command (the file's path is $F in it,
@@ -219,14 +219,16 @@ test('every verdict is the last line, so a tail of the output keeps it', () => {
 // command (the file's path is $F in it, and $P a file it may write to) and
 // returns mutant.sh's exit code, its output, the file afterwards and what
 // cmd wrote to $P. inspect(root, wrote) runs before the repo is removed.
-function inRepo(rel, cmd, { pids = {}, old = 'ok', repl = 'bad', inspect } = {}) {
+function inRepo(rel, cmd, { pids = {}, privateState = false, old = 'ok', repl = 'bad', inspect } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mutant-repo-'));
   const tmp = path.join(root, 'tmp');
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.mkdirSync(tmp);
   for (const s of SCRIPTS) fs.copyFileSync(path.join(__dirname, s), path.join(root, 'scripts', s));
   for (const f of ['Makefile', 'other.txt']) fs.writeFileSync(path.join(root, f), 'ok\n');
-  for (const [stack, pid] of Object.entries(pids)) fs.writeFileSync(path.join(tmp, `enygma_${stack}_stack.pid`), `${pid}\n`);
+  const state = privateState ? path.join(tmp, `enygma-${process.getuid()}`) : tmp;
+  if (privateState) fs.mkdirSync(state, { mode: 0o700 });
+  for (const [stack, pid] of Object.entries(pids)) fs.writeFileSync(path.join(state, `enygma_${stack}_stack.pid`), `${pid}\n`);
   const file = path.join(root, rel);
   const note = path.join(root, 'note');
   const r = spawnSync('bash', [path.join(root, 'scripts', 'mutant.sh'), file, old, repl, '--', 'bash', '-c', cmd],
@@ -235,8 +237,15 @@ function inRepo(rel, cmd, { pids = {}, old = 'ok', repl = 'bad', inspect } = {})
   const wrote = fs.existsSync(note) ? fs.readFileSync(note, 'utf8') : undefined;
   if (inspect) inspect(root, wrote);
   fs.rmSync(root, { recursive: true });
-  return { code: r.status, out: r.stdout + r.stderr, after, tmp, wrote };
+  return { code: r.status, out: r.stdout + r.stderr, after, tmp, state, wrote };
 }
+
+test('mutant.sh sees running stacks in the per-user state directory', () => {
+  const r = inRepo('Makefile', CHECK, { privateState: true, pids: { shield: process.pid } });
+  assert.strictEqual(r.code, 2, r.out);
+  assert.match(r.out, /wires the stacks/);
+  assert.ok(r.out.includes(path.join(r.state, 'enygma_shield_stack.pid')), r.out);
+});
 
 test('a wiring file of a live stack is bad input: the mutant would run inside the stack', () => {
   // This test's own pid is live.

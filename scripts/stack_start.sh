@@ -23,13 +23,29 @@
 set -uo pipefail
 pid_file=$1 logs=$2 prefix=$3 stack_log=$4 run_dir=$5 cmdline=$6 target=$7 test_target=$8
 # Absolute: the stack script starts in <run dir>.
-own_group=$(cd "$(dirname "$0")" && pwd)/own_group.sh
+script_dir=$(cd "$(dirname "$0")" && pwd)
+own_group=$script_dir/own_group.sh
+. "$script_dir/stack_state.sh"
 
 # A second start would overwrite the running stack's pid file, then fail on
 # its busy ports and remove it, leaving that stack with none.
-old=$(cat "$pid_file" 2>/dev/null) && kill -0 "$old" 2>/dev/null &&
-    { echo "the stack make $target started (pid $old) still runs: stop it first (make $target-stop)"; exit 1; }
-logs=${logs:-$(mktemp -d "${TMPDIR:-/tmp}/$prefix.XXXXXX")}
+existing=$(stack_read_pid_path "$pid_file") || exit 1
+if stack_state_exists "$existing"; then
+    require_stack_file "$existing" || exit 1
+    old=$(cat "$existing") || exit 1
+    if kill -0 "$old" 2>/dev/null; then
+        echo "the stack make $target started (pid $old) still runs: stop it first (make $target-stop)"
+        exit 1
+    fi
+fi
+state_dir=$(stack_state_dir)
+logs_parent=${TMPDIR:-/tmp}
+if [ "${pid_file%/*}" = "$state_dir" ]; then
+    ensure_stack_state_dir "$state_dir" || exit 1
+    logs_parent=$state_dir
+fi
+if stack_state_exists "$pid_file.logs"; then require_stack_file "$pid_file.logs" || exit 1; fi
+if [ -z "$logs" ]; then logs=$(mktemp -d "$logs_parent/$prefix.XXXXXX") || exit 1; fi
 mkdir -p "$logs"
 logs=$(cd "$logs" && pwd)
 log=$logs/$stack_log

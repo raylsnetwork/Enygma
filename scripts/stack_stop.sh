@@ -19,9 +19,13 @@ set -uo pipefail
 pid_file=$1 cmdline=$2 stack_log=$3 target=$4
 shift 4
 
-pid=$(cat "$pid_file" 2>/dev/null)
-log=$(cat "$pid_file.logs" 2>/dev/null)/$stack_log
-[ -f "$pid_file" ] || { echo "no stack started by make $target"; exit 1; }
+. "$(dirname "$0")/stack_state.sh"
+pid_file=$(stack_read_pid_path "$pid_file") || exit 1
+stack_state_exists "$pid_file" || { echo "no stack started by make $target"; exit 1; }
+require_stack_file "$pid_file" || exit 1
+pid=$(cat "$pid_file") || exit 1
+logs=$(stack_read_logs "$pid_file") || exit 1
+log=$logs/$stack_log
 if [ "$(ps -o command= -p "$pid" 2>/dev/null)" != "$cmdline" ]; then
     rm -f "$pid_file" "$pid_file.logs"
     echo "stale pid file $pid_file: pid $pid no longer runs the stack make $target started, which has exited (log $log); removed it and signalled nothing"

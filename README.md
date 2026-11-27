@@ -76,6 +76,12 @@ make ci         # what CI runs: gofmt check + build + vet + unit tests, every mo
 make ci MODULE=enygma_dvp/src   # the same, scoped to one module
 ```
 
+`make hooks` also installs a copy of the primer diff driver in the Git common
+directory. Rerun it from a trusted checkout to update that copy.
+
+Detached stacks record their PIDs and log directories under
+`${TMPDIR:-/tmp}/enygma-$(id -u)`, a private directory for the current user.
+
 CI (`.github/workflows/ci.yml`) runs `make ci` per module on every push and pull request against
 `main`. Dependency updates are managed by [Dependabot](./.github/dependabot.yml); every Go module
 must be listed there, and CI fails if a new one is added without a matching entry.
