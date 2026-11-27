@@ -2,7 +2,10 @@ module enygma_retail_payments/scripts
 
 go 1.26.11
 
-require github.com/ethereum/go-ethereum v1.17.10
+require (
+	enygma_retail_payments/layout v0.0.0
+	github.com/ethereum/go-ethereum v1.17.10
+)
 
 require (
 	enygma_vkslots v0.0.0
@@ -39,3 +42,5 @@ require (
 )
 
 replace enygma_vkslots => ../../enygma_vkslots
+
+replace enygma_retail_payments/layout => ../layout

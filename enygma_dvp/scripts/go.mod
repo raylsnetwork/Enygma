@@ -2,7 +2,10 @@ module enygma_dvp/scripts
 
 go 1.26.11
 
-require github.com/ethereum/go-ethereum v1.17.10
+require (
+	enygma_dvp/layout v0.0.0
+	github.com/ethereum/go-ethereum v1.17.10
+)
 
 replace github.com/raylsnetwork/enygma_dvp/src => ../src
 
@@ -41,3 +44,5 @@ require (
 )
 
 replace enygma_vkslots => ../../enygma_vkslots
+
+replace enygma_dvp/layout => ../layout
