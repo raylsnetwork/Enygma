@@ -20,8 +20,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"enygma_ceremony/coordinator"
 )
 
 // forged is what a server, or something on the network answering in its
@@ -174,4 +177,162 @@ func TestGitHubTextIsNotShown(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReceiptOnAcceptance (audit L5, H2, L10): the program prints the
+// receipt once the coordinator's reply to its upload names it, before it
+// reads the transcript back: a coordinator stopping at the close may not
+// answer that. It reads the transcript back as anyone does, with no
+// session token, and reports whether it could.
+func TestReceiptOnAcceptance(t *testing.T) {
+	t.Run("a transcript that is no chain", func(t *testing.T) {
+		p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen})
+		inner := *p.handler.Load()
+		wrapped := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/transcript" {
+				inner.ServeHTTP(w, r)
+				return
+			}
+			rec := httptest.NewRecorder()
+			inner.ServeHTTP(rec, r)
+			var tr map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &tr); err != nil {
+				t.Error(err)
+			}
+			tr["start"] = strings.Repeat("00", 32) // the entries no longer build on it
+			_ = json.NewEncoder(w).Encode(tr)
+		}))
+		p.handler.Store(&wrapped)
+		if _, err := p.client(t, "alice").Run(context.Background()); err == nil || !strings.Contains(err.Error(), "not contribution 1 on top of") {
+			t.Fatalf("Run against a transcript that is no chain: %v, want it refused", err)
+		}
+	})
+	for _, down := range []bool{false, true} {
+		p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen})
+		inner := *p.handler.Load()
+		var withToken atomic.Bool
+		wrapped := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/transcript" {
+				withToken.Store(withToken.Load() || r.Header.Get("Authorization") != "")
+				if down {
+					closeConnection(t, w)
+					return
+				}
+			}
+			inner.ServeHTTP(w, r)
+		}))
+		p.handler.Store(&wrapped)
+		var out syncBuffer
+		c := p.client(t, "alice")
+		c.Out = &out
+		r, err := c.Run(context.Background())
+		if err != nil {
+			t.Fatalf("transcript down %v: %v", down, err)
+		}
+		if want := fmt.Sprintf("accepted your contribution as number 1: sha256 %x", r.SHA256); !strings.Contains(out.String(), want) {
+			t.Fatalf("transcript down %v: printed\n%s\nwant %q", down, out.String(), want)
+		}
+		if r.Confirmed == down || withToken.Load() {
+			t.Fatalf("transcript down %v: confirmed %v, read with a session token %v", down, r.Confirmed, withToken.Load())
+		}
+	}
+}
+
+// TestTimeoutIsUnreachable (audit L6): a reply that does not come within
+// the client's own timeout is the coordinator unreachable for now, which
+// asking again may get past; the caller's context ending is not.
+func TestTimeoutIsUnreachable(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+	}))
+	defer slow.Close()
+	client := HTTPClient()
+	client.Transport.(plainErrors).rt.(*http.Transport).ResponseHeaderTimeout = 50 * time.Millisecond
+	resp, err := client.Get(slow.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("no timeout")
+	}
+	if !unreachable(context.Background(), err) {
+		t.Fatalf("a reply past the client's timeout (%v) is not taken as unreachable", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if unreachable(ctx, err) {
+		t.Fatal("an error after the caller gave up is taken as unreachable")
+	}
+}
+
+// swallow is a response that goes nowhere, but still reaches the
+// connection underneath for deadlines and hijacking.
+type swallow struct{ http.ResponseWriter }
+
+func (s swallow) WriteHeader(int)                     {}
+func (s swallow) Write(b []byte) (int, error)         { return len(b), nil }
+func (s swallow) Unwrap() http.ResponseWriter         { return s.ResponseWriter }
+func (s swallow) Header() http.Header                 { return http.Header{} }
+func (s swallow) ReadFrom(r io.Reader) (int64, error) { return io.Copy(io.Discard, r) }
+
+// TestReceiptWhenTheAnswerIsLost (audit L5): when the coordinator accepts
+// an upload but its answer is lost, the program still prints the receipt:
+// once the coordinator says it has the contribution, or, if it has closed
+// meanwhile, as one that may be in the transcript. A transcript cut short
+// as it is read back leaves the receipt standing, unconfirmed.
+func TestReceiptWhenTheAnswerIsLost(t *testing.T) {
+	run := func(t *testing.T, then func(p *phase), cut bool) (*syncBuffer, Result, error) {
+		p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen})
+		inner := *p.handler.Load()
+		var dropped atomic.Bool
+		wrapped := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut && r.URL.Path == "/v1/contribution" && then != nil && dropped.CompareAndSwap(false, true):
+				inner.ServeHTTP(swallow{w}, r) // accepted, the answer lost
+				then(p)
+				closeConnection(t, w)
+				return
+			case r.URL.Path == "/v1/transcript" && cut:
+				conn, buf, err := http.NewResponseController(w).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.Close()
+				fmt.Fprint(buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{\"start\":")
+				_ = buf.Flush()
+				return
+			}
+			inner.ServeHTTP(w, r)
+		}))
+		p.handler.Store(&wrapped)
+		var out syncBuffer
+		c := p.client(t, "alice")
+		c.Out = &out
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		r, err := c.Run(ctx)
+		return &out, r, err
+	}
+	t.Run("the answer lost", func(t *testing.T) {
+		out, r, err := run(t, func(*phase) {}, false)
+		if err != nil || !r.Confirmed || !strings.Contains(out.String(), "accepted your contribution as number 1") {
+			t.Fatalf("got %+v, %v; printed\n%s", r, err, out.String())
+		}
+	})
+	t.Run("the answer lost, and the phase closed", func(t *testing.T) {
+		// Restarted closed, the coordinator forgets the session, and answers
+		// the program joining again that the phase is closed.
+		out, _, err := run(t, func(p *phase) {
+			p.cfg.CloseAt = time.Now().Add(-time.Second)
+			p.restart(t)
+		}, false)
+		if !errors.Is(err, ErrClosed) || !strings.Contains(out.String(), "was uploaded, but the coordinator's answer was lost") {
+			t.Fatalf("got %v; printed\n%s", err, out.String())
+		}
+	})
+	t.Run("the transcript cut short", func(t *testing.T) {
+		out, r, err := run(t, nil, true)
+		if err != nil || r.Confirmed || !strings.Contains(out.String(), "accepted your contribution as number 1") {
+			t.Fatalf("got %+v, %v; printed\n%s", r, err, out.String())
+		}
+	})
 }

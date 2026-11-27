@@ -112,7 +112,11 @@ func TestAnyoneContributes(t *testing.T) {
 			t.Errorf("%s: reported %+v; state %d has sha256 %x", names[i], r, r.Index, info.Hash)
 		}
 	}
-	if _, err := ceremony.SealPhase1(filepath.Join(t.TempDir(), "srs"), ceremony.Beacon{Value: bytes.Repeat([]byte{1}, 32)}, states); err != nil {
+	last, err := ceremony.Inspect(states[len(states)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ceremony.SealPhase1(filepath.Join(t.TempDir(), "srs"), ceremony.Beacon{Value: bytes.Repeat([]byte{1}, 32)}, ceremony.Chain{Paths: states, Head: last.Hash}); err != nil {
 		t.Fatal(err)
 	}
 }

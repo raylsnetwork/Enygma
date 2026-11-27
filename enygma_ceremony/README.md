@@ -51,8 +51,17 @@ coordinator's.
    sleeps or your network drops for a few minutes you keep your place.
 4. **On your turn** it downloads the latest state, adds your randomness and uploads the result:
    a few minutes at Phase 1's full size, a few seconds in Phase 2.
-5. **You get a receipt:** your contribution's sha256. Publish it if you like; anyone can check it
-   is there.
+5. **You get a receipt:** your contribution's sha256, printed as soon as the coordinator accepts
+   your contribution. Publish it yourself, somewhere the coordinator has no say.
+6. **After the close, check it counts.** The program knows only what the coordinator told it, and
+   a coordinator can tell one participant alone that their contribution is in. Your contribution
+   counts only if it is in the chain that ends at the head announced at the close. Check that from
+   a copy of the phase published apart from the coordinator, or have someone you trust check it:
+
+   ```bash
+   ceremony verify -static <the phase's published copy> -dir <a new directory> \
+       -head <the announced head> -mine <your receipt>
+   ```
 
 The randomness comes from your machine (`crypto/rand`). It is drawn inside gnark's `Contribute`, in
 a separate process that exits as soon as it has written your contribution, with core dumps off: the
@@ -244,8 +253,16 @@ in:
      For the public name, set a CAA record that names your certificate authority, and watch
      Certificate Transparency logs for certificates issued for it while the ceremony runs.
    - **Scheduled close:** at `-close-at` it hands out no more turns, waits for the one under way,
+     answers read-only for 30 s more when a turn was under way or a contribution just accepted
+     (the last contributor's program reads the transcript back),
      prints the transcript's **head** (the last contribution's sha256) and the seal command, and
-     exits. **Announce the head at once, before the beacon round is out:** the seal takes it, and
+     exits. First check that every contributor you lined up for the phase is in this chain:
+     `ceremony verify -dir <dir> -head <head> -mine <their published receipts>`. If one is
+     missing, announce nothing and seal nothing: the queue is open to anyone, and a chain without
+     them is one nobody you trust contributed to. Rerun the phase, or stop the coordinator, have a
+     lined-up contributor contribute by hand on the latest state (`ceremony contribute -in <latest>
+     -out <next> -prev <its sha256>`), add it to the directory with its entry, and restart. Then
+     **announce the head at once, before the beacon round is out:** the seal takes it, and
      refuses a chain that does not end there, so no contribution can be added after the beacon is
      known, nor any left off the end. The phase stays closed: the directory records it
      (`closed`), and a coordinator started on it again serves its transcript, read-only, for
@@ -287,10 +304,12 @@ in:
 4. Seal it, with the head announced at the close:
 
    ```bash
-   ceremony phase1-seal -transcript p1 -head <head> -drand <R> -close-at 2026-12-08T15:00:00Z -out phase1.srs
+   ceremony phase1-seal -transcript p1 -head <head> -include <lined-up receipts> \
+       -drand <R> -close-at 2026-12-08T15:00:00Z -out phase1.srs
    ```
 
-   This refuses round R unless it came out after the close and after the last contribution, then
+   `-include` refuses a chain without every receipt given, and the record lists them. This
+   refuses round R unless it came out after the close and after the last contribution, then
    fetches it and checks its signature against quicknet's public key (pinned in `drand/`). It
    replays and checks every contribution up to the head (about 45 s each at 2^18), and writes the
    SRS. The SRS carries what it was sealed from (the head, the number of contributions, the round,
@@ -332,7 +351,8 @@ in:
 
    ```bash
    ceremony phase2-seal -ceremony <protocol> -srs phase1.srs -srs-sha256 <its announced sha256> \
-       -r1cs <r1cs dir> -transcript p2 -head <head> -drand <R> -close-at <the close> -keys <keys dir>
+       -r1cs <r1cs dir> -transcript p2 -head <head> -include <lined-up receipts> \
+       -drand <R> -close-at <the close> -keys <keys dir>
    ```
 
    - It writes each key at its `keys.json` path, so `<keys dir>` has the server's own layout
@@ -358,10 +378,18 @@ Other commands:
 ### Checking a ceremony
 
 Anyone can check a ceremony without trusting the coordinator:
-- **Every step:** `ceremony verify -url <address> -dir <dir>` downloads a phase's transcript and
-  checks it from end to end, each step as it arrives, stopping at the first that fails. Every state
-  must have the sha256 the transcript gives it and follow the one before it, and the phase must
-  start where it should:
+- **Every step:** `ceremony verify -static <published copy> -dir <dir> -head <announced head>`
+  downloads a phase's transcript and checks it from end to end, each step as it arrives, stopping
+  at the first that fails. `-static` reads a copy of the phase's directory published apart from
+  the coordinator, as it stands (`state-<i>` and `state-<i>.json`, from a release's downloads or
+  object storage: it follows redirects over HTTPS, and takes the first entry the host answers 404 or
+  403 for as the end); `-url <coordinator>` asks the coordinator, which can serve each
+  reader a chain of its own. `-head` refuses a chain that does not end at the head announced at
+  the close: every chain a host could serve is valid from the real start, and only the announced
+  one counts. `-mine <receipt>,…` finds each receipt in that chain, and fails naming any that is
+  not: run it with the published receipts of the contributors you trust. Every state must have the
+  sha256 the transcript gives it and follow the one before it, and the phase must start where it
+  should:
   - a Phase 1 where every Phase 1 of its size starts;
   - a Phase 2 where its SRS and circuits make it start. Give them, as `phase2-seal` takes them:
     `-srs phase1.srs -r1cs <r1cs dir>`, with the SRS's announced sha256 (`-srs-sha256`), or with
@@ -375,11 +403,15 @@ Anyone can check a ceremony without trusting the coordinator:
   `-size <n>` (a Phase 1) or `-ceremony <protocol>` (a Phase 2) refuses a phase other than the one
   announced: a host can serve any phase. The verdict says which phase was checked.
 
-  `verify` only adds to `<dir>`: it refuses a directory holding another phase, or states past the
-  transcript's end, rather than overwrite them (`-sync` lets it), and downloads at most
-  `-max-bytes` (64 GiB) in all and `-max-state` (64 MiB) for one state. Without `-url`, it checks
-  `<dir>` as it is. It prints names exactly as quoted strings, and refuses a transcript whose names
-  hold control characters.
+  `verify` only adds to `<dir>`. Before it writes anything, it compares what the host serves with
+  what `<dir>` holds, and refuses a host that now serves another history (a different
+  contribution, a rewritten entry, or fewer contributions than before): the host has changed its
+  story, and the copy is evidence of it. Keep it, and check into a new directory. `-sync` takes the
+  host's history instead, moving what it contradicts into `<dir>/superseded-<time>`. `verify`
+  downloads at most `-max-bytes` (64 GiB) in all and `-max-state` (64 MiB) for one state, and reads
+  a transcript an entry at a time, at most 100,000. Without `-url` or `-static`, it checks `<dir>`
+  as it is. It prints names exactly as quoted strings, and refuses a transcript whose names hold
+  control characters.
 - **State files:** a state is accepted only as the one encoding of what it holds (points written
   compressed), so its sha256 names it; a Phase 2 must hold at least one circuit, and each circuit at
   most 169 commitments, as many as gnark's Phase 2 seal takes (its contributions take 255). A Phase
@@ -466,8 +498,12 @@ Anyone can check a ceremony without trusting the coordinator:
   with the keys however many contributed. A Phase 2 starts only from the SRS whose sha256 is
   given (`-srs-sha256`), and the page and every Phase 2 receipt show that sha256: it must be the
   one announced, which independent resealers of Phase 1 confirmed.
-- **It can leave someone out,** by refusing or reordering turns. That is why participants publish
-  their hashes, and why one honest contributor per phase suffices.
+- **It can leave someone out,** by refusing or reordering turns, and it can tell someone it left
+  out that they are in: everything the program checks of its contribution, the coordinator
+  answers, and it could serve each participant a chain of their own. So a contribution counts only
+  once its published receipt is found in the chain that ends at the head announced at the close,
+  in a copy the coordinator does not serve (`verify -static … -head … -mine …`), and a seal with
+  `-include <receipts>` refuses a chain without the contributors lined up for the phase.
 - **Uploads come from anyone admitted,** so the coordinator bounds what one costs before checking
   it:
   - at most the previous state's size plus 64 KiB;

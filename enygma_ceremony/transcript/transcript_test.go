@@ -349,7 +349,9 @@ func TestFetch(t *testing.T) {
 			t.Fatalf("downloaded %d states again", n)
 		}
 	})
-	t.Run("clears states past the transcript's end only when told to", func(t *testing.T) {
+	// Audit I4: a shorter history is the host dropping contributions it
+	// served before; -sync keeps them, moved out of the way.
+	t.Run("moves states past the transcript's end aside only when told to", func(t *testing.T) {
 		dir := t.TempDir()
 		src := phase(t, 3, nil)
 		longer, _ := serve(t, src, nil)
@@ -365,7 +367,7 @@ func TestFetch(t *testing.T) {
 			}
 		}
 		shorter, _ := serve(t, src, nil)
-		if _, err := Fetch(ctx, http.DefaultClient, shorter, dir, io.Discard, FetchOptions{}); err == nil || !strings.Contains(err.Error(), "past the coordinator's transcript") {
+		if _, err := Fetch(ctx, http.DefaultClient, shorter, dir, io.Discard, FetchOptions{}); err == nil || !strings.Contains(err.Error(), "it has dropped contributions") {
 			t.Fatalf("Fetch of a shorter transcript: %v, want it refused", err)
 		}
 		if _, err := os.Stat(Path(dir, 3)); err != nil {
@@ -384,6 +386,10 @@ func TestFetch(t *testing.T) {
 				}
 			}
 		}
+		kept, err := filepath.Glob(filepath.Join(dir, "superseded-*", "state-*"))
+		if err != nil || len(kept) != 4 {
+			t.Fatalf("kept %v (%v), want states 2 and 3 and their entries", kept, err)
+		}
 	})
 	t.Run("refuses a state larger than any state", func(t *testing.T) {
 		const limit = 100
@@ -394,7 +400,7 @@ func TestFetch(t *testing.T) {
 			sum := sha256.Sum256(body)
 			dir := t.TempDir()
 			path := filepath.Join(dir, "state-0")
-			_, err := download(ctx, http.DefaultClient, srv.URL, dir, path, hex.EncodeToString(sum[:]), limit)
+			_, _, err := download(ctx, http.DefaultClient, srv.URL, dir, path, hex.EncodeToString(sum[:]), limit)
 			switch _, statErr := os.Stat(path); {
 			case size <= limit && (err != nil || statErr != nil):
 				t.Fatalf("%d bytes, at most %d: %v, %v", size, limit, err, statErr)
@@ -432,7 +438,7 @@ func TestCheckPhase2Start(t *testing.T) {
 		if _, err := ceremony.Contribute(p(name+"-0"), p(name+"-1")); err != nil {
 			t.Fatal(err)
 		}
-		r, err := ceremony.SealPhase1(p(name+".srs"), ceremony.Beacon{Value: beacon}, []string{p(name + "-1")})
+		r, err := ceremony.SealPhase1(p(name+".srs"), ceremony.Beacon{Value: beacon}, ceremony.Chain{Paths: []string{p(name + "-1")}, Head: sha256.Sum256(readFile(t, p(name+"-1")))})
 		if err != nil {
 			t.Fatal(err)
 		}

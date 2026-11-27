@@ -14,9 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"enygma_ceremony/ceremony"
 	"enygma_ceremony/internal/testcircuits"
-	"enygma_ceremony/transcript"
 )
 
 // forgedOK is what a transcript's host could write to draw a passing check
@@ -78,11 +76,8 @@ func TestMainFiltersItsOutput(t *testing.T) {
 // line of plain text: what it carries from elsewhere can neither act on the
 // terminal nor start a line that looks like the program's.
 func TestErrorsAreOneLine(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := ceremony.NewPhase1(transcript.Path(dir, 0), 8); err != nil {
-		t.Fatal(err)
-	}
-	code, _, stderr := runCommand("verify", "-dir", dir, "-mine", "\r\n"+forgedOK)
+	// A directory's name is printed in the error that it holds no phase.
+	code, _, stderr := runCommand("verify", "-dir", filepath.Join(t.TempDir(), "\r\n"+forgedOK))
 	if code != 1 || strings.Contains(stderr, "\x1b") || strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "ceremony verify: ") {
 		t.Fatalf("exit %d, error printed as %q", code, stderr)
 	}

@@ -17,6 +17,7 @@ import (
 
 	"enygma_ceremony/ceremony"
 	"enygma_ceremony/internal/termsafe"
+	"enygma_ceremony/transcript"
 )
 
 const usage = `usage: ceremony [<command> [flags]]
@@ -25,7 +26,8 @@ participant
   (no command)                            join the ceremony this program was built for, and contribute
   join        [-url URL] [-name NAME] [-mine SHA256]
                                           join a coordinator, contribute on your turn, upload
-  contribute  -in STATE -out STATE        add your randomness to a state handed to you by hand
+  contribute  -in STATE -out STATE [-prev SHA256]
+                                          add your randomness to a state handed to you by hand
 
 anyone
   verify      [-url URL [-sync]] -dir DIR [-mine SHA256] [-size N | -ceremony NAME]
@@ -47,11 +49,11 @@ coordinator
                                           from the SRS announced
   beacon      -close-at TIME [-turn D] | -round N
                                           the drand round to announce for a close, or round N's beacon
-  phase1-seal -head SHA256 (-transcript DIR | STATE...) BEACON -out SRS
+  phase1-seal -head SHA256 [-include SHA256,...] (-transcript DIR | STATE...) BEACON -out SRS
                                           replay Phase 1 up to the announced head, apply the beacon,
                                           write the SRS and its record
   phase2-seal -ceremony NAME -srs SRS (-srs-sha256 SHA256 | -phase1 DIR -phase1-head SHA256) -r1cs DIR [-circuits A,B]
-              -head SHA256 (-transcript DIR | STATE...) BEACON -keys DIR
+              -head SHA256 [-include SHA256,...] (-transcript DIR | STATE...) BEACON -keys DIR
                                           replay Phase 2 up to the announced head, apply the beacon,
                                           write the keys and their record
 
@@ -163,19 +165,37 @@ func provenance(i ceremony.Info) string {
 func contribute(fs *flag.FlagSet) func([]string, io.Writer) error {
 	in := fs.String("in", "", "the latest state, as the coordinator hands it to you")
 	out := fs.String("out", "", "where to write your contribution (must not exist)")
+	prev := fs.String("prev", "", "the sha256 the state handed to you must have, such as the latest one a copy of the transcript you checked ends at: any other is refused")
 	return func(args []string, w io.Writer) error {
 		if *in == "" || *out == "" || len(args) != 0 {
 			return fmt.Errorf("%w: contribute takes -in and -out", errUsage)
+		}
+		want, err := sha256List(*prev)
+		if err != nil || len(want) > 1 {
+			return fmt.Errorf("%w: -prev is one sha256", errUsage)
+		}
+		if len(want) == 1 {
+			// Before the minutes a contribution takes; the bytes contributed
+			// to are checked again below.
+			if h, _, err := transcript.HashFile(*in); err != nil || h != want[0] {
+				return fmt.Errorf("%s has sha256 %x, not the %x given (-prev): not contributing (%v)", *in, h, want[0], err)
+			}
 		}
 		fmt.Fprintln(w, "Contributing. Your randomness comes from this machine's operating system and is gone when this exits.")
 		r, err := ceremony.Contribute(*in, *out)
 		if err != nil {
 			return err
 		}
+		// The input's sha256 is that of the bytes contributed to (audit M3):
+		// a decoy handed over by hand is found here, not after the fact.
+		if len(want) == 1 && r.In != want[0] {
+			return errors.Join(fmt.Errorf("%s has sha256 %x, not the %x given (-prev): nothing to publish", *in, r.In, want[0]), os.Remove(*out))
+		}
 		fmt.Fprintf(w, "Wrote %s to %s\n", describe(r.Info), *out)
 		fmt.Fprint(w, provenance(r.Info))
 		fmt.Fprintf(w, "  on top of sha256 %x\n", r.In)
-		fmt.Fprintf(w, "  your contribution sha256 %x  <- publish this\n", r.Hash)
+		fmt.Fprintf(w, "  your contribution sha256 %x  <- publish this yourself, where the coordinator has no say\n", r.Hash)
+		fmt.Fprint(w, checkAdvice(r.Hash, r.Kind))
 		return nil
 	}
 }
@@ -236,11 +256,11 @@ func phase1Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return err
 		}
-		r, err := ceremony.SealPhase1(*out, b, c.paths)
+		r, err := ceremony.SealPhase1(*out, b, c.sealed())
 		if err != nil {
 			return err
 		}
-		record := sealRecord{Kind: "srs", Head: c.head, Contributions: len(c.paths), Beacon: rec, SRS: hex.EncodeToString(r.Hash[:])}
+		record := sealRecord{Kind: "srs", Head: c.head, Contributions: len(c.paths), Beacon: rec, SRS: hex.EncodeToString(r.Hash[:]), Included: c.included()}
 		if err := writeRecord(*out+".json", record); err != nil {
 			return err
 		}
@@ -313,13 +333,13 @@ func phase2Seal(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return err
 		}
-		phase1, err := ceremony.SealPhase2(*keys, *name, srs, circuits, b.Value, c.paths)
+		phase1, err := ceremony.SealPhase2(*keys, *name, srs, circuits, b.Value, c.sealed())
 		if err != nil {
 			return err
 		}
 		// The SRS's sha256 and provenance are those of the bytes the seal
 		// read: it refuses any file but the one pinned.
-		record := sealRecord{Kind: "keys", Ceremony: *name, Head: c.head, Contributions: len(c.paths), Beacon: rec,
+		record := sealRecord{Kind: "keys", Ceremony: *name, Head: c.head, Contributions: len(c.paths), Beacon: rec, Included: c.included(),
 			SRS: hex.EncodeToString(srs.SHA256[:]), Phase1: &phase1Record{
 				Head: hex.EncodeToString(phase1.Head[:]), Contributions: phase1.Contributions,
 				DrandRound: phase1.Beacon.DrandRound, CloseAt: phase1.Beacon.CloseAt, Unverified: phase1.Beacon.DrandRound == 0,

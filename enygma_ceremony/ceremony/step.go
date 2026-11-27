@@ -3,9 +3,11 @@ package ceremony
 import (
 	"bufio"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -28,6 +30,38 @@ type Info struct {
 type Receipt struct {
 	Info          // the state written; Hash is its sha256
 	In   [32]byte // sha256 of the state contributed to; zero when the step contributed nothing
+}
+
+// Chain is the contributions a seal replays, in order, and what it holds
+// them to, on the bytes it replays:
+//   - the last must be Head, the head announced at the close (audit R-003),
+//     checked on the file as the seal read it (L11). Each contribution's
+//     proof names the state before it, so the head fixes every one;
+//   - every receipt in Include, the published sha256s of contributors the
+//     organizers lined up, must be one of them (audit H2, H3): a chain
+//     made without them is one whose secret they cannot vouch for.
+type Chain struct {
+	Paths   []string
+	Head    [32]byte
+	Include [][32]byte
+}
+
+// ErrNotIncluded is a receipt a seal was told to find that is not in the
+// chain it replayed.
+var ErrNotIncluded = errors.New("a contribution that must be in the chain is not")
+
+// check checks the sha256s of the contributions replayed, in order, as c
+// says.
+func (c Chain) check(replayed [][32]byte) error {
+	if last := replayed[len(replayed)-1]; last != c.Head {
+		return fmt.Errorf("the chain replayed ends at sha256 %x, not the announced head %x", last, c.Head)
+	}
+	for _, r := range c.Include {
+		if !slices.Contains(replayed, r) {
+			return fmt.Errorf("%w: sha256 %x is not one of the %d contributions up to the head", ErrNotIncluded, r, len(replayed))
+		}
+	}
+	return nil
 }
 
 // Inspect reads the state file at path and describes it.

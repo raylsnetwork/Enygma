@@ -86,6 +86,12 @@
 
 **SRS**: a setup ceremony's sealed Phase 1 (`phase1-seal`'s output): the powers of τ, α and β every protocol's Phase 2 starts from, with what it was sealed from (the Phase 1 head, how many contributions, the beacon and its drand round). A Phase 2 starts only from the SRS whose sha256 was announced, after parties independent of the operator resealed Phase 1 and got that file. _Avoid_: CRS, powers-of-tau file.
 
+**Head**: the sha256 of the last contribution of a setup ceremony phase, announced at its close before the beacon round is out. The seal replays the phase up to the head and no other chain, and each contribution names the state before it, so the head fixes every contribution sealed. _Avoid_: tip, latest (for the announced value).
+
+**Receipt**: a contribution's sha256, which its contributor publishes. It counts only once found in the chain that ends at the announced head, in a copy of the phase the coordinator does not serve (`verify -static … -head … -mine …`); the coordinator saying it accepted the contribution is its word alone. A seal's `-include` takes the receipts of the contributors lined up for the phase. _Avoid_: proof of contribution.
+
+**Announcement**: the organizers' public, timestamped statement of what everyone compares against, made where the coordinator cannot answer each reader differently: the release's commit and binaries' sha256s, each phase's close, drand round and head, the SRS's sha256, and each Phase 2's start and circuits.
+
 **Coordinator**: the service that runs one setup ceremony phase (`ceremony coordinate`): it admits anyone with its address (optionally after a GitHub sign-in), queues them, gives one at a time the **turn** to download the latest state and upload their contribution, and checks each upload before the next turn. It serves no participant code: its page follows the phase and links to the ceremony's release, where participants get the program. Its phase directory is the phase's **transcript**, which `ceremony verify` checks end to end. It can leave a participant out but cannot bias the keys. _Avoid_: sequencer, server (for this).
 
 **Key manifest**: `keys.json`, written by a protocol's `export_r1cs` beside its `.r1cs` files: the path the protocol's gnark server loads each circuit's proving and verifying key from, where the setup ceremony seals them.

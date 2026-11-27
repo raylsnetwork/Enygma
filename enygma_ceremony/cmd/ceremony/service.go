@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -101,9 +102,10 @@ func joinAndReport(c *participant.Client, w io.Writer) error {
 	}
 	if r.Already {
 		fmt.Fprintf(w, "You have contributed already: contribution %d, sha256 %x\n", r.Index, r.SHA256)
+		fmt.Fprint(w, checkAdvice(r.SHA256, r.Of.Kind))
 		return nil
 	}
-	fmt.Fprintf(w, "\nDone: your contribution is number %d of the transcript.\n", r.Index)
+	fmt.Fprintf(w, "\nThe coordinator accepted your contribution as number %d.\n", r.Index)
 	switch r.Of.Kind {
 	case ceremony.KindPhase1:
 		fmt.Fprintf(w, "  to Phase 1 for circuits of up to %d constraints\n", r.Of.N)
@@ -112,9 +114,30 @@ func joinAndReport(c *participant.Client, w io.Writer) error {
 		fmt.Fprintf(w, "  to a Phase 2 on the SRS of sha256 %x: check it is the one announced\n", r.Of.SRS)
 	}
 	fmt.Fprintf(w, "  on top of sha256 %x\n", r.Prev)
-	fmt.Fprintf(w, "  your contribution sha256 %x  <- publish this\n", r.SHA256)
-	fmt.Fprintf(w, "Check it is in the transcript any time: ceremony verify -url %s -dir transcript -mine %x\n", c.URL, r.SHA256)
+	fmt.Fprintf(w, "  your contribution sha256 %x  <- publish this yourself, where the coordinator has no say\n", r.SHA256)
+	fmt.Fprint(w, checkAdvice(r.SHA256, r.Of.Kind))
 	return nil
+}
+
+// checkAdvice says what a contribution of sha256 mine, to a phase of kind
+// (0 when not known), needs to count, and how its contributor checks it
+// (audit H2): the program knows only what the coordinator said, which it
+// can say to one participant alone, and so does any check that asks the
+// coordinator.
+func checkAdvice(mine [32]byte, kind ceremony.Kind) string {
+	phase2 := " -srs <the SRS> -srs-sha256 <its announced sha256> -r1cs <the circuits>"
+	also, note := "", ""
+	switch kind {
+	case ceremony.KindPhase2:
+		also = phase2
+	case ceremony.KindPhase1:
+	default:
+		note = "  (for a Phase 2, with" + phase2 + ")\n"
+	}
+	return "That is the coordinator's word, which it could give you alone. Your contribution counts only if it is in the\n" +
+		"chain that ends at the head announced at the close. Then check that, from a copy of the phase the coordinator\n" +
+		"does not serve to you alone:\n" +
+		fmt.Sprintf("  ceremony verify -static <the phase's published copy> -dir <a new directory> -head <the announced head>%s -mine %x\n", also, mine) + note
 }
 
 // isTerminal reports whether f is a terminal, as when the program was started
@@ -124,19 +147,33 @@ func isTerminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
 // verify checks a phase's transcript from end to end: one downloaded from a
 // coordinator into DIR (checking each step as it arrives), or DIR as it is.
 func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
-	url := fs.String("url", "", "the coordinator to download the transcript from; without it, DIR is checked as it is")
+	url := fs.String("url", "", "the coordinator to download the transcript from; without it (or -static), DIR is checked as it is")
+	static := fs.String("static", "", "in place of -url: a copy of the phase's directory published at this address, which the coordinator does not serve")
 	dir := fs.String("dir", "", "the directory to download the transcript into, or holding it")
-	mine := fs.String("mine", "", "your contribution's sha256, to find in the transcript")
-	sync := fs.Bool("sync", false, "-url: let the download replace states in DIR that differ from the coordinator's, and remove states past its end (without it, a DIR holding anything else is refused)")
-	maxBytes := fs.Int64("max-bytes", transcript.DefaultMaxBytes, "-url: the most to download in all")
-	maxState := fs.Int64("max-state", ceremony.DefaultMaxState, "-url: the most to download as one state, in bytes")
+	head := fs.String("head", "", "the sha256 of the phase's last contribution, as announced at the close: the chain checked must end there")
+	var mine []string
+	fs.Func("mine", "a contribution's sha256 to find in the chain, as its contributor published it (yours, or one you trust); repeat it, or separate them with commas", func(v string) error {
+		mine = append(mine, strings.Split(v, ",")...)
+		return nil
+	})
+	sync := fs.Bool("sync", false, "-url, -static: let the download move aside states and entries in DIR that the host now contradicts, and those past its end (without it, a DIR holding anything else is refused)")
+	maxBytes := fs.Int64("max-bytes", transcript.DefaultMaxBytes, "-url, -static: the most to download in all")
+	maxState := fs.Int64("max-state", ceremony.DefaultMaxState, "-url, -static: the most to download as one state, in bytes")
 	size := fs.Uint64("size", 0, "a Phase 1: the domain size announced; anything else is refused")
 	name := fs.String("ceremony", "", "a Phase 2: the protocol announced, e.g. enygma_retail_payments; anything else is refused")
 	srsIn := srsFlags(fs, true)
 	r1cs, circuitsIn := circuitsFlags(fs)
 	return func(args []string, w io.Writer) error {
-		if *dir == "" || len(args) != 0 || srsIn.given() != (*r1cs != "") || *maxState < 1 || *maxBytes < 1 || (*size != 0 && *name != "") {
-			return fmt.Errorf("%w: verify takes -dir, -srs (with -srs-sha256 or -phase1) and -r1cs for a Phase 2, at most one of -size and -ceremony, and positive limits", errUsage)
+		if *dir == "" || len(args) != 0 || srsIn.given() != (*r1cs != "") || *maxState < 1 || *maxBytes < 1 || (*size != 0 && *name != "") || (*url != "" && *static != "") {
+			return fmt.Errorf("%w: verify takes -dir, at most one of -url and -static, -srs (with -srs-sha256 or -phase1) and -r1cs for a Phase 2, at most one of -size and -ceremony, and positive limits", errUsage)
+		}
+		receipts, err := sha256List(strings.Join(mine, ","))
+		if err != nil {
+			return fmt.Errorf("%w: -mine: %v", errUsage, err)
+		}
+		announced, err := sha256List(*head)
+		if err != nil || len(announced) > 1 {
+			return fmt.Errorf("%w: -head is the sha256 of the last contribution, as announced at the close", errUsage)
 		}
 		var p2 *transcript.Phase2Start
 		if srsIn.given() {
@@ -150,14 +187,15 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 			}
 			p2 = &transcript.Phase2Start{SRS: srs, Circuits: circuits}
 		}
-		var (
-			t   transcript.Transcript
-			err error
-		)
-		if *url != "" {
-			fmt.Fprintf(w, "Downloading the transcript from %s into %s, checking each step as it arrives.\n", *url, *dir)
-			opt := transcript.FetchOptions{Sync: *sync, Check: true, MaxBytes: *maxBytes, MaxState: *maxState}
-			if t, err = transcript.Fetch(context.Background(), participant.HTTPClient(), *url, *dir, w, opt); err != nil {
+		var t transcript.Transcript
+		if from := *url + *static; from != "" {
+			fmt.Fprintf(w, "Downloading the transcript from %s into %s, checking each step as it arrives.\n", from, *dir)
+			opt := transcript.FetchOptions{Static: *static != "", Sync: *sync, Check: true, MaxBytes: *maxBytes, MaxState: *maxState}
+			client := participant.HTTPClient()
+			if opt.Static {
+				client = staticClient()
+			}
+			if t, err = transcript.Fetch(context.Background(), client, from, *dir, w, opt); err != nil {
 				return err
 			}
 			err = transcript.CheckStart(*dir, p2, w)
@@ -180,20 +218,71 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 		case *name != "" && (start.Kind != ceremony.KindPhase2 || start.Ceremony != *name):
 			return fmt.Errorf("this is %s, not %s's Phase 2", phaseOf(start), *name)
 		}
-		if *mine != "" {
-			e, ok := t.Find(*mine)
-			if !ok {
-				return fmt.Errorf("no contribution in the transcript has sha256 %s", *mine)
+		// A contribution counts only in the chain that ends at the announced
+		// head (audit H2): a host can serve each reader a chain of its own,
+		// every one valid from the real start, and hold a reader's
+		// contribution in theirs alone.
+		ending := ""
+		if len(announced) == 1 {
+			if latest := t.Latest(); latest != hex.EncodeToString(announced[0][:]) {
+				return fmt.Errorf("the chain checked ends at sha256 %s, not at the announced head %x: it is not the chain announced, whatever it holds", latest, announced[0])
 			}
-			fmt.Fprintf(w, "Yours is contribution %d, by %q, accepted %s.\n", e.Index, e.Participant, e.At.Format(time.RFC3339))
+			ending = ", the announced head"
+		} else if len(receipts) > 0 {
+			fmt.Fprintln(w, "Without -head, this checks the chain this host served, which may not be the one announced: give -head <the head announced at the close>.")
+		}
+		var missing []string
+		for _, r := range receipts {
+			h := hex.EncodeToString(r[:])
+			e, ok := t.Find(h)
+			if !ok {
+				missing = append(missing, h)
+				continue
+			}
+			fmt.Fprintf(w, "Contribution %d is sha256 %s, by %q, accepted %s.\n", e.Index, h, e.Participant, e.At.Format(time.RFC3339))
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("not in the chain checked: %s", strings.Join(missing, ", "))
 		}
 		if err != nil {
 			return fmt.Errorf("NOT VERIFIED: %d contributions, each a valid step on top of the one before it, but %w", len(t.Contributions), err)
 		}
-		fmt.Fprintf(w, "OK: %s: the start, and %d contributions, each a valid step on top of the one before it; latest sha256 %s\n",
-			phaseOf(start), len(t.Contributions), t.Latest())
+		fmt.Fprintf(w, "OK: %s: the start, and %d contributions, each a valid step on top of the one before it; latest sha256 %s%s\n",
+			phaseOf(start), len(t.Contributions), t.Latest(), ending)
 		return nil
 	}
+}
+
+// staticClient is the HTTP client for a static copy of a phase: the
+// program's own (participant.HTTPClient), but following redirects over
+// HTTPS (followHTTPS).
+func staticClient() *http.Client {
+	c := participant.HTTPClient()
+	c.CheckRedirect = followHTTPS
+	return c
+}
+
+// followHTTPS lets a static host redirect, as release downloads and object
+// storage do, over HTTPS only and at most 10 times. A coordinator never
+// redirects (participant.HTTPClient refuses it); the copy's files are
+// checked against their sha256s wherever they come from.
+func followHTTPS(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("a redirect to %s, which is not over HTTPS", req.URL.Redacted())
+	}
+	if len(via) >= 10 {
+		return errors.New("more than 10 redirects")
+	}
+	return nil
+}
+
+// phaseFlags are the flags with which verify checks the phase that start
+// begins, as announced: its domain, or its protocol, SRS and circuits.
+func phaseFlags(start ceremony.Info) string {
+	if start.Kind == ceremony.KindPhase2 {
+		return fmt.Sprintf("-ceremony %s -srs <the SRS> -srs-sha256 %x -r1cs <r1cs dir>", start.Ceremony, start.SRS)
+	}
+	return fmt.Sprintf("-size %d", start.N)
 }
 
 // phaseOf names the phase that start is the start of.
@@ -489,12 +578,29 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		} else {
 			logger.Printf("waiting for the turn under way, if any (interrupt to stop now)") // advance logged the close
 		}
+		busy, hurried := c.Busy(), false
 	wait:
 		for c.Busy() {
 			select {
 			case <-sigs:
+				hurried = true
 				break wait
 			case <-tick.C:
+			}
+		}
+		// The program whose upload ended the last turn reads the transcript
+		// back after its reply: answered still, read-only, for a moment
+		// (audit L5), when a turn was under way or a contribution was just
+		// accepted, unless told to stop at once.
+		recent := false
+		if t, err := transcript.Load(*dir); err == nil && len(t.Contributions) > 0 {
+			recent = time.Since(t.Contributions[len(t.Contributions)-1].At) < readGrace
+		}
+		if !hurried && (busy || recent) {
+			logger.Printf("serving the transcript, read-only, for %s (interrupt to stop now)", readGrace)
+			select {
+			case <-sigs:
+			case <-time.After(readGrace):
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -525,12 +631,19 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				"If this stop ends it, announce the head now, before the beacon round is out:\n", len(t.Contributions))
 		}
 		fmt.Fprintf(w, "  head sha256 %s (contribution %d)\n"+
-			"Then seal, with the round you announced:\n"+
-			"  ceremony %s -transcript %s -head %s -drand <round> -close-at <the close>\n",
-			t.Latest(), len(t.Contributions), sealCommand(start), *dir, t.Latest())
+			"Before you announce it, check that every contributor you lined up for this phase is in this chain (audit H2, H3):\n"+
+			"  ceremony verify -dir %s -head %s %s -mine <their published receipts, comma-separated>\n"+
+			"If one is missing, announce nothing and seal nothing: see the README, on running a ceremony.\n"+
+			"Then seal, with the round you announced and their receipts:\n"+
+			"  ceremony %s -transcript %s -head %s -include <their receipts> -drand <round> -close-at <the close>\n",
+			t.Latest(), len(t.Contributions), *dir, t.Latest(), phaseFlags(start), sealCommand(start), *dir, t.Latest())
 		return nil
 	}
 }
+
+// readGrace is how long coordinate answers, read-only, after its last turn,
+// for the program that made it to read the transcript back.
+var readGrace = 30 * time.Second
 
 // sealCommand is the seal command for the phase that start begins, as
 // coordinate prints it at the end, before -transcript and the rest: a

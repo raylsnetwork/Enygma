@@ -67,9 +67,26 @@ func circuitsFlags(fs *flag.FlagSet) (*string, func(w io.Writer) ([]ceremony.Cir
 
 // chain lists a seal's contributions, in order.
 type chain struct {
-	paths []string
-	head  string    // the sha256 of the last, as announced
-	last  time.Time // when the last was accepted, as its entry says; zero for files given by hand
+	paths   []string
+	head    string     // the sha256 of the last, as announced
+	include [][32]byte // receipts that must be among them (-include)
+	last    time.Time  // when the last was accepted, as its entry says; zero for files given by hand
+}
+
+// sealed is c as the library seals it: up to its head, with its receipts.
+func (c chain) sealed() ceremony.Chain {
+	sc := ceremony.Chain{Paths: c.paths, Include: c.include}
+	_, _ = hex.Decode(sc.Head[:], []byte(c.head)) // checked by chainFlags
+	return sc
+}
+
+// included is c's -include, in hex, for a seal's record.
+func (c chain) included() []string {
+	var out []string
+	for _, r := range c.include {
+		out = append(out, hex.EncodeToString(r[:]))
+	}
+	return out
 }
 
 // chainFlags declares a seal's -transcript and -head and returns what reads
@@ -80,6 +97,7 @@ type chain struct {
 func chainFlags(fs *flag.FlagSet) func(args []string, w io.Writer) (chain, error) {
 	dir := fs.String("transcript", "", "the phase's transcript directory (as verify downloads it): its contributions, in order")
 	head := fs.String("head", "", "the sha256 of the phase's last contribution, as announced at the close: what is sealed must end there")
+	include := fs.String("include", "", "the receipts (sha256s, comma-separated) of contributors lined up for the phase, as they published them: each must be in the chain sealed")
 	return func(args []string, w io.Writer) (chain, error) {
 		h := strings.ToLower(*head)
 		if b, err := hex.DecodeString(h); err != nil || len(b) != 32 {
@@ -88,11 +106,68 @@ func chainFlags(fs *flag.FlagSet) func(args []string, w io.Writer) (chain, error
 		if (*dir == "") == (len(args) == 0) {
 			return chain{}, fmt.Errorf("%w: give -transcript, or the contributions in order, not both", errUsage)
 		}
-		if *dir != "" {
-			return loadChain(*dir, h, w)
+		receipts, err := sha256List(*include)
+		if err != nil {
+			return chain{}, fmt.Errorf("%w: -include: %v", errUsage, err)
 		}
-		return checkChain(chain{paths: args, head: h}, w)
+		var c chain
+		if *dir != "" {
+			c, err = loadChain(*dir, h, w)
+		} else {
+			c, err = checkChain(chain{paths: args, head: h}, w)
+		}
+		c.include = receipts
+		if err == nil {
+			err = earlyIncluded(c)
+		}
+		if err == nil && len(receipts) == 0 {
+			fmt.Fprintln(w, "No -include: nothing checks that the contributors lined up for this phase are in the chain sealed. "+
+				"A chain without them is one nobody you trust contributed to.")
+		}
+		return c, err
 	}
+}
+
+// earlyIncluded finds each of c's -include receipts among its files' sha256s
+// before a seal fetches its beacon and replays them, which takes hours for
+// a large phase: a receipt mistyped, or missing, is said at once. The seal
+// checks again on the bytes it replays.
+func earlyIncluded(c chain) error {
+	if len(c.include) == 0 {
+		return nil
+	}
+	have := map[[32]byte]bool{}
+	for _, p := range c.paths {
+		h, _, err := transcript.HashFile(p)
+		if err != nil {
+			return err
+		}
+		have[h] = true
+	}
+	for _, r := range c.include {
+		if !have[r] {
+			return fmt.Errorf("%w: sha256 %x is not one of the %d contributions up to the head", ceremony.ErrNotIncluded, r, len(c.paths))
+		}
+	}
+	return nil
+}
+
+// sha256List reads sha256s in hex, comma-separated; "" is none.
+func sha256List(s string) ([][32]byte, error) {
+	var out [][32]byte
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		var h [32]byte
+		b, err := hex.DecodeString(f)
+		if err != nil || len(b) != len(h) {
+			return nil, fmt.Errorf("%q is not a sha256", f)
+		}
+		copy(h[:], b)
+		out = append(out, h)
+	}
+	return out, nil
 }
 
 // loadChain lists the contributions of the transcript in dir, which must end
@@ -332,7 +407,7 @@ func resealPhase1(w io.Writer, dir string, p ceremony.Provenance) ([32]byte, err
 	if err != nil {
 		return [32]byte{}, err
 	}
-	r, err := ceremony.SealPhase1(filepath.Join(tmp, "srs"), beacon, c.paths)
+	r, err := ceremony.SealPhase1(filepath.Join(tmp, "srs"), beacon, c.sealed())
 	return r.Hash, errors.Join(err, os.RemoveAll(tmp))
 }
 
@@ -344,8 +419,9 @@ type sealRecord struct {
 	Head          string          `json:"head"` // sha256 of the last contribution sealed
 	Contributions int             `json:"contributions"`
 	Beacon        beaconRecord    `json:"beacon"`
-	SRS           string          `json:"srs_sha256"`      // Phase 1: the SRS written; Phase 2: the SRS it started from
-	Phase1        *phase1Record   `json:"phase1,omitzero"` // Phase 2: what that SRS was sealed from (audit H1)
+	SRS           string          `json:"srs_sha256"`        // Phase 1: the SRS written; Phase 2: the SRS it started from
+	Phase1        *phase1Record   `json:"phase1,omitzero"`   // Phase 2: what that SRS was sealed from (audit H1)
+	Included      []string        `json:"included,omitzero"` // receipts found in the chain sealed (-include)
 	Circuits      []circuitRecord `json:"circuits,omitzero"`
 	SealedBy      string          `json:"sealed_by,omitzero"` // the commit of the program that sealed
 }

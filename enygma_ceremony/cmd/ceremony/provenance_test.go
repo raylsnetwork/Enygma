@@ -221,6 +221,12 @@ func TestSealCommand(t *testing.T) {
 	if got := sealCommand(mustInspect(t, start)); !strings.Contains(got, "phase2-seal -ceremony test ") || !strings.Contains(got, "-srs-sha256 "+srsHash) {
 		t.Errorf("Phase 2: %q", got)
 	}
+	if got := phaseFlags(mustInspect(t, start)); !strings.Contains(got, "-ceremony test ") || !strings.Contains(got, "-srs-sha256 "+srsHash) || !strings.Contains(got, "-r1cs") {
+		t.Errorf("Phase 2's verify flags: %q", got)
+	}
+	if got := phaseFlags(mustInspect(t, filepath.Join(p1, "state-0"))); got != "-size 8" {
+		t.Errorf("Phase 1's verify flags: %q", got)
+	}
 }
 
 // mustInspect describes the state file at path.
