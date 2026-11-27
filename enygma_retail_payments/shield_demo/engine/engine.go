@@ -65,7 +65,7 @@ func DefaultConfig(retailRoot string) Config {
 		RetailRoot:    retailRoot,
 		RPCURL:        "http://127.0.0.1:8545",
 		ChainID:       1337,
-		GnarkURL:      "http://localhost:8082",
+		GnarkURL:      "http://127.0.0.1:8082",
 		RelayerURL:    "http://localhost:8090",
 		RelayerAPIKey: "test-api-key-dev-only",
 		// Hardhat account[0] — the deployer, owner of RaylsERC20 (demo only).

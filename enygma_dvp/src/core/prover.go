@@ -81,10 +81,10 @@ type PrivateMintProofResponse struct {
 }
 
 // NewGnarkClient creates a new GnarkClient with the given base URL.
-// If baseURL is empty, it defaults to http://localhost:8081.
+// If baseURL is empty, it defaults to http://127.0.0.1:8081.
 func NewGnarkClient(baseURL string) *GnarkClient {
 	if baseURL == "" {
-		baseURL = "http://localhost:8081"
+		baseURL = "http://127.0.0.1:8081"
 	}
 	return &GnarkClient{
 		BaseURL: baseURL,
