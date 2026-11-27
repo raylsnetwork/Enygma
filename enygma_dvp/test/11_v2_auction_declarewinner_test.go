@@ -6,12 +6,9 @@ package tests
 // SCOPE: real end-to-end auction testing (newAuction -> submitBid ->
 // opening -> declareWinner) needs a valid ZK proof for the auction
 // circuits (VK_ID_AUCTION_INIT_AUDITOR, VK_ID_AUCTION_BID_AUDITOR, etc.).
-// The gnark server in this repo has NO route for auction-circuit proof
-// generation at all (only /proof/privateMint, /proof/dvpInitiator,
-// /proof/dvpDestination exist) — so a real proof-driven test isn't
-// currently possible here. EnygmaAuction also isn't part of the standard
-// scripts/cmd/deploy + cmd/init pipeline (it's a separate, not-yet-wired-in contract),
-// so these tests deploy and wire up a standalone instance themselves.
+// The Gnark server has no auction proof routes. These tests deploy a
+// standalone instance for the checks that run before proof verification.
+// See "Deprecated: enygma_dvp's EnygmaAuction" in enygma_dvp/README.md.
 //
 // What IS directly testable without any proof: the two checks fixed here
 // both fire before any proof is ever involved —
