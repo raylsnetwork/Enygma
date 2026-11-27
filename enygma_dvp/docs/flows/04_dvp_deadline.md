@@ -50,16 +50,17 @@ sequenceDiagram
 
     Alice->>DVP: submitPartialSettlement(receipt_A, vaultId=0, groupId=0, provenDeadline)
     DVP->>DVP: verify proof_A (DvPInitiator VK)
-    DVP->>ERC20Vault: registerCoins([COMMIT_B])
-    DVP-->>Alice: emit SwapInitiated(swapId, COMMIT_B, COMMIT_A, deadline)
+    DVP->>ERC20Vault: addPendingProofReceipt(receipt_A), locking Alice's input
+    DVP-->>Alice: emit SwapInitiated(COMMIT_B, COMMIT_A, COMMIT_B, deadline)
     Note over DVP: _pendingTransactions[COMMIT_B] = {targetId: COMMIT_A, groupId: 0, deadline: provenDeadline}
 
     Bob->>DVP: submitPartialSettlement(receipt_B)  ← before deadline
     DVP->>DVP: verify proof_B (DvPDestination VK)
     DVP->>DVP: check _pendingTransactions[COMMIT_B].targetId == COMMIT_A ✓
-    DVP->>NFTVault: registerCoins([COMMIT_A])
-    DVP-->>Bob: emit Commitment(COMMIT_B)   ← Bob gets USDT
-    DVP-->>Bob: emit Commitment(COMMIT_A)   ← Alice gets ticket
+    DVP->>ERC20Vault: nullify input and insertCommitmentFromDvpReceipt(receipt_A)
+    DVP->>NFTVault: nullify input and insertCommitmentFromDvpReceipt(receipt_B)
+    ERC20Vault-->>Bob: emit Commitment(COMMIT_B)   ← Bob gets USDT
+    NFTVault-->>Alice: emit Commitment(COMMIT_A)   ← Alice gets ticket
     Note over DVP: swap settled atomically
 ```
 
@@ -76,8 +77,8 @@ sequenceDiagram
     participant Hardhat as Hardhat Node
 
     Alice->>DVP: submitPartialSettlement(receipt_A, vaultId=0, groupId=0, provenDeadline)
-    DVP->>ERC20Vault: registerCoins([COMMIT_B])
-    DVP-->>Alice: emit SwapInitiated(swapId, deadline)
+    DVP->>ERC20Vault: addPendingProofReceipt(receipt_A), locking Alice's input
+    DVP-->>Alice: emit SwapInitiated(COMMIT_B, COMMIT_A, COMMIT_B, deadline)
 
     Note over Bob: Bob does nothing
 
@@ -87,12 +88,13 @@ sequenceDiagram
 
     Alice->>DVP: claimSwapTimeout(COMMIT_B)
     DVP->>DVP: check block.timestamp > deadline ✓
+    DVP->>ERC20Vault: nullify Alice's input and registerCoins([REVERT_COMMIT_A])
     DVP->>DVP: delete _pendingTransactions[COMMIT_B]
     DVP-->>Alice: emit SwapTimedOut(pendingReceiptId=COMMIT_B)
 
     Alice--xDVP: claimSwapTimeout(COMMIT_B) again — REVERTS SwapNotFound()
 
-    Note over Alice: COMMIT_A still in ERC20 tree<br/>REVERT_COMMIT_A is spendable to recover funds
+    Note over Alice: REVERT_COMMIT_A is spendable to recover funds
 ```
 
 ---
@@ -108,8 +110,8 @@ sequenceDiagram
     participant Hardhat as Hardhat Node
 
     Alice->>DVP: submitPartialSettlement(receipt_A, vaultId=0, groupId=0, provenDeadline)
-    DVP->>ERC20Vault: registerCoins([COMMIT_B])
-    DVP-->>Alice: emit SwapInitiated(swapId, deadline)
+    DVP->>ERC20Vault: addPendingProofReceipt(receipt_A), locking Alice's input
+    DVP-->>Alice: emit SwapInitiated(COMMIT_B, COMMIT_A, COMMIT_B, deadline)
 
     Bob->>DVP: submitPartialSettlement(receipt_B_zeroed) ← all-zero proof
     DVP--xBob: REVERTS "Pairing: Pairing Verification Failed"
@@ -117,10 +119,11 @@ sequenceDiagram
     Hardhat->>Hardhat: evm_increaseTime(+65s) + evm_mine()
 
     Alice->>DVP: claimSwapTimeout(COMMIT_B)
+    DVP->>ERC20Vault: nullify Alice's input and registerCoins([REVERT_COMMIT_A])
     DVP->>DVP: delete _pendingTransactions[COMMIT_B]
     DVP-->>Alice: emit SwapTimedOut(pendingReceiptId=COMMIT_B)
 
-    Note over Alice: REVERT_COMMIT_A recoverable<br/>Alice's original note still in ERC20 tree
+    Note over Alice: REVERT_COMMIT_A is spendable to recover funds
 ```
 
 ---
@@ -157,5 +160,7 @@ sequenceDiagram
 |----------|----------|---------|
 | `EnygmaDvp` | `submitPartialSettlement(receipt, vaultId, groupId, deadline)` | Submit first or second leg |
 | `EnygmaDvp` | `claimSwapTimeout(commitB)` | Revert after deadline passes |
-| `Erc20CoinVault` | `registerCoins` | Insert COMMIT_B into ERC20 tree |
-| `Erc721CoinVault` | `registerCoins` | Insert COMMIT_A into NFT tree on settle |
+| `Erc20CoinVault` | `addPendingProofReceipt` | Record the first leg and lock its input |
+| `Erc20CoinVault` | `insertCommitmentFromDvpReceipt` | Insert COMMIT_B into the ERC20 tree on settlement |
+| `Erc721CoinVault` | `insertCommitmentFromDvpReceipt` | Insert COMMIT_A into the NFT tree on settlement |
+| `Erc20CoinVault` | `registerCoins` | Insert REVERT_COMMIT_A on timeout |
