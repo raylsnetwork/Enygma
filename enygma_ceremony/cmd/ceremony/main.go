@@ -20,7 +20,8 @@ const usage = `usage: ceremony [<command> [flags]]
 
 participant
   (no command)                            join the ceremony this program was built for, and contribute
-  join        [-url URL] [-name NAME]     join a coordinator, contribute on your turn, upload
+  join        [-url URL] [-name NAME] [-mine SHA256]
+                                          join a coordinator, contribute on your turn, upload
   contribute  -in STATE -out STATE        add your randomness to a state handed to you by hand
 
 anyone
@@ -50,7 +51,13 @@ coordinator
 //	go build -ldflags "-X main.defaultURL=https://ceremony.example.org" ./cmd/ceremony
 var defaultURL string
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+func main() {
+	disableCoreDumps()
+	if isChild() {
+		os.Exit(runChild(os.Stdin, os.Stdout, os.Stderr))
+	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
 
 // errUsage marks an error in how a command was called, not in what it did.
 var errUsage = errors.New("usage")

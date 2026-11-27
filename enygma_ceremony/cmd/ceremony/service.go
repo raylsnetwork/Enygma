@@ -30,11 +30,12 @@ import (
 func join(fs *flag.FlagSet) func([]string, io.Writer) error {
 	url := fs.String("url", defaultURL, "the coordinator's address")
 	name := fs.String("name", "", "the name the transcript shows for you (default: asked in a terminal, else anonymous)")
+	mine := fs.String("mine", "", "the sha256 an earlier run printed for your contribution, when the coordinator says you have contributed already")
 	return func(args []string, w io.Writer) error {
 		if *url == "" || len(args) != 0 {
 			return fmt.Errorf("%w: join takes -url", errUsage)
 		}
-		c := &participant.Client{URL: *url, Name: *name}
+		c := &participant.Client{URL: *url, Name: *name, Mine: *mine}
 		if isTerminal(os.Stdin) {
 			c.AskName = askName(bufio.NewReader(os.Stdin), w)
 		}
@@ -86,6 +87,7 @@ func joinAndReport(c *participant.Client, w io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c.HTTP, c.Out = &http.Client{}, w
+	c.Contribute = contributeInChild(ctx) // the randomness never lives in this process
 	fmt.Fprint(w, selfDescription())
 	fmt.Fprintf(w, "Joining the Enygma setup ceremony at %s.\nLeave this running until it says you are done; it waits for your turn by itself.\n", c.URL)
 	r, err := c.Run(ctx)

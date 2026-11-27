@@ -28,9 +28,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"enygma_ceremony/ceremony"
 	"enygma_ceremony/coordinator"
+	"enygma_ceremony/transcript"
 )
 
 var (
@@ -118,11 +120,21 @@ type Client struct {
 	// this participant is still at it; 10 seconds when zero. Negative sends
 	// none, for a program that sends them itself.
 	Heartbeat time.Duration
+	// Contribute adds this machine's randomness to a state, as
+	// ceremony.ContributeWithProgress does, which it is when nil. The
+	// ceremony program runs it in a short-lived child process instead, so
+	// that the randomness never lives in the process that keeps running.
+	Contribute func(in io.Reader, size int64, out io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error)
+	// Mine is the sha256, in hex, of a contribution this participant made in
+	// an earlier run. The coordinator's word that this participant has
+	// contributed already is taken only for a contribution this run made, or
+	// for Mine: a coordinator could otherwise hand them someone else's.
+	Mine string
 
-	cfg          coordinator.ClientConfig
-	contributeTo func(io.Reader, int64, io.Writer, func(ceremony.Progress)) (ceremony.Receipt, error) // ceremony.ContributeWithProgress unless a test slows it
-	session      string                                                                               // the token the coordinator knows this participant by
-	githubToken  string                                                                               // a GitHub phase: kept in memory, to join again after a coordinator restart
+	cfg         coordinator.ClientConfig
+	made        []ceremony.Receipt // every contribution this run made, uploaded or not
+	session     string             // the token the coordinator knows this participant by
+	githubToken string             // a GitHub phase: kept in memory, to join again after a coordinator restart
 }
 
 // Result is the participant's contribution, as the coordinator recorded it.
@@ -155,7 +167,7 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	if c.cfg.Notice != "" {
-		fmt.Fprintf(c.Out, "Notice from the coordinator: %s\n", c.cfg.Notice)
+		fmt.Fprintf(c.Out, "Notice from the coordinator: %s\n", printable(c.cfg.Notice))
 	}
 	if err := c.join(ctx); err != nil {
 		return Result{}, err
@@ -196,14 +208,10 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 		full = false
 		switch r.Status {
 		case coordinator.Done:
-			h, err := parseHash(r.SHA256)
-			if err == nil {
-				c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256, Already: true})
-			}
-			return Result{Index: r.Index, SHA256: h, Already: true}, err
+			return c.done(ctx, r)
 		case coordinator.Closed:
 			if r.Notice != "" {
-				return Result{}, fmt.Errorf("%w (%s)", ErrClosed, r.Notice)
+				return Result{}, fmt.Errorf("%w (%s)", ErrClosed, printable(r.Notice))
 			}
 			return Result{}, ErrClosed
 		case coordinator.Queued:
@@ -317,8 +325,9 @@ func (c *Client) register(ctx context.Context, reg coordinator.Registration) err
 			return fmt.Errorf("joining: %w", err)
 		}
 		c.session = s.Token
-		fmt.Fprintf(c.Out, "Joined as %s.\n", s.Participant)
-		c.event(Event{Stage: StageJoined, Name: s.Participant})
+		name := printable(s.Participant)
+		fmt.Fprintf(c.Out, "Joined as %s.\n", name)
+		c.event(Event{Stage: StageJoined, Name: name})
 		return nil
 	}
 }
@@ -365,7 +374,7 @@ func (c *Client) contribute(ctx context.Context, turn coordinator.Reply) (Result
 	fmt.Fprintln(c.Out, "Contributing. Your randomness comes from this machine's operating system and is gone when this exits.")
 	c.event(Event{Stage: StageContributing})
 	var next bytes.Buffer
-	contributeTo := c.contributeTo
+	contributeTo := c.Contribute
 	if contributeTo == nil {
 		contributeTo = ceremony.ContributeWithProgress
 	}
@@ -381,6 +390,9 @@ func (c *Client) contribute(ctx context.Context, turn coordinator.Reply) (Result
 	if err != nil {
 		return Result{}, err
 	}
+	// Kept before the upload: if its answer is lost, the coordinator's later
+	// "done" is checked against this, not taken on its word.
+	c.made = append(c.made, receipt)
 	state = nil // the next state is all an upload needs
 	fmt.Fprintln(c.Out, "Uploading; the coordinator checks your contribution before answering.")
 	r, err := c.upload(ctx, next.Bytes())
@@ -395,8 +407,97 @@ func (c *Client) contribute(ctx context.Context, turn coordinator.Reply) (Result
 		return Result{}, fmt.Errorf("the coordinator recorded contribution %d sha256 %x, but yours is %d sha256 %x",
 			r.Index, got, receipt.Index, receipt.Hash)
 	}
+	if err := c.confirm(ctx, receipt.Index, receipt.Hash, &receipt.In); err != nil {
+		return Result{}, err
+	}
 	c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256})
 	return Result{Index: r.Index, SHA256: got, Prev: receipt.In}, nil
+}
+
+// done answers a coordinator saying this participant has contributed
+// already. Its word is taken only for a contribution this run made, or the
+// one the participant says they made in an earlier run (Client.Mine), and
+// only once its transcript holds that contribution: otherwise a coordinator
+// could hand a participant a contribution of its own as their receipt, and
+// leave theirs out.
+func (c *Client) done(ctx context.Context, r coordinator.Reply) (Result, error) {
+	h, err := parseHash(r.SHA256)
+	if err != nil {
+		return Result{}, err
+	}
+	for _, m := range c.made {
+		if m.Hash == h && m.Index == r.Index {
+			if err := c.confirm(ctx, m.Index, m.Hash, &m.In); err != nil {
+				return Result{}, err
+			}
+			c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256})
+			return Result{Index: r.Index, SHA256: h, Prev: m.In}, nil
+		}
+	}
+	if c.Mine != "" {
+		mine, err := parseHash(c.Mine)
+		if err != nil {
+			return Result{}, fmt.Errorf("%q is not a sha256 of a contribution", c.Mine)
+		}
+		if mine == h {
+			if err := c.confirm(ctx, r.Index, h, nil); err != nil {
+				return Result{}, err
+			}
+			c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256, Already: true})
+			return Result{Index: r.Index, SHA256: h, Already: true}, nil
+		}
+	}
+	return Result{}, fmt.Errorf("the coordinator says you have contributed already, as contribution %d with sha256 %x, "+
+		"but this program made no such contribution: if you contributed in an earlier run, "+
+		"give the sha256 it printed (ceremony join -mine <sha256>), and do not publish this one", r.Index, h)
+}
+
+// confirm checks that the coordinator's transcript holds contribution index
+// with sha256 hash, built on prev when prev is not nil.
+func (c *Client) confirm(ctx context.Context, index uint32, hash [32]byte, prev *[32]byte) error {
+	req, err := c.request(ctx, http.MethodGet, "/v1/transcript", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("checking the transcript holds your contribution: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := statusError(resp); err != nil {
+		return fmt.Errorf("checking the transcript holds your contribution: %w", err)
+	}
+	var t transcript.Transcript
+	if err := json.NewDecoder(io.LimitReader(resp.Body, transcript.MaxJSON)).Decode(&t); err != nil {
+		return fmt.Errorf("checking the transcript holds your contribution: %w", err)
+	}
+	want := hex.EncodeToString(hash[:])
+	for _, e := range t.Contributions {
+		if e.Index != index {
+			continue
+		}
+		if !strings.EqualFold(e.SHA256, want) || (prev != nil && !strings.EqualFold(e.Prev, hex.EncodeToString(prev[:]))) {
+			break
+		}
+		return nil
+	}
+	return fmt.Errorf("the coordinator's transcript does not hold your contribution %d with sha256 %s", index, want)
+}
+
+// printable is s, from the coordinator, with no control or formatting
+// characters, which a terminal could take as commands (escape sequences, or
+// text reordered to show something else), and no longer than a line or two.
+func printable(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	if r := []rune(s); len(r) > 300 {
+		s = string(r[:300]) + "…"
+	}
+	return s
 }
 
 // keepTurn tells the coordinator every c.Heartbeat, until the returned stop
@@ -603,6 +704,7 @@ func replyError(code int, data []byte, retryAfter string) error {
 	if json.Unmarshal(data, &body) != nil || body.Error == "" {
 		body.Error = strings.TrimSpace(string(data))
 	}
+	body.Error = printable(body.Error)
 	switch code {
 	case http.StatusConflict:
 		return fmt.Errorf("%w: %s", errTurnLost, body.Error)

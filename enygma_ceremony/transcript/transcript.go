@@ -45,6 +45,10 @@ type Transcript struct {
 	Contributions []Entry `json:"contributions"`
 }
 
+// MaxJSON is the most of a transcript's JSON a client reads from a
+// coordinator.
+const MaxJSON = 16 << 20
+
 // Path is state i's file in dir.
 func Path(dir string, i uint32) string { return filepath.Join(dir, fmt.Sprintf("state-%d", i)) }
 
@@ -254,7 +258,7 @@ func getJSON(ctx context.Context, client *http.Client, url string, v any) error 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(v)
+	return json.NewDecoder(io.LimitReader(resp.Body, MaxJSON)).Decode(v)
 }
 
 // HashFile returns the sha256 and size of the file at path.

@@ -169,13 +169,25 @@ func TestGitHubPhase(t *testing.T) {
 		t.Fatalf("entry %+v", e)
 	}
 
-	t.Run("running again reports the contribution the account made", func(t *testing.T) {
+	t.Run("running again reports the contribution the account made, given its sha256", func(t *testing.T) {
 		polls.Store(0)
 		again := p.client(t, "")
-		again.GitHub = github.URL
+		again.GitHub, again.Mine = github.URL, fmt.Sprintf("%x", first.SHA256)
 		r := runAll(t, again)[0]
 		if !r.Already || r.Index != first.Index || r.SHA256 != first.SHA256 {
 			t.Fatalf("%+v, want contribution %d %x, already made", r, first.Index, first.SHA256)
+		}
+	})
+
+	// Audit R-002: a coordinator's "you contributed already" is not a receipt.
+	t.Run("running again without its sha256 does not take the coordinator's word", func(t *testing.T) {
+		polls.Store(0)
+		again := p.client(t, "")
+		again.GitHub = github.URL
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := again.Run(ctx); err == nil || !strings.Contains(err.Error(), "this program made no such contribution") {
+			t.Fatalf("got %v, want a refusal of a contribution this run did not make", err)
 		}
 	})
 }
@@ -407,7 +419,7 @@ func TestRejoinsAfterARestartDuringItsTurn(t *testing.T) {
 	var out syncBuffer
 	c.Out = &out
 	restarted := false
-	c.contributeTo = func(in io.Reader, size int64, w io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error) {
+	c.Contribute = func(in io.Reader, size int64, w io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error) {
 		if !restarted {
 			restarted = true
 			p.restart(t) // mid-contribution
@@ -491,7 +503,7 @@ func TestHeartbeatKeepsASlowTurn(t *testing.T) {
 	p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen, TurnPresence: 200 * time.Millisecond})
 	c := p.client(t, "slow")
 	c.Heartbeat = 50 * time.Millisecond
-	c.contributeTo = func(in io.Reader, size int64, out io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error) {
+	c.Contribute = func(in io.Reader, size int64, out io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error) {
 		time.Sleep(time.Second) // five times the coordinator's patience with a silent turn
 		return ceremony.ContributeWithProgress(in, size, out, report)
 	}
@@ -526,7 +538,7 @@ func TestOutlastsItsTurn(t *testing.T) {
 	var out syncBuffer
 	slow.Out = &out
 	var contributions atomic.Int32
-	slow.contributeTo = func(in io.Reader, size int64, w io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error) {
+	slow.Contribute = func(in io.Reader, size int64, w io.Writer, report func(ceremony.Progress)) (ceremony.Receipt, error) {
 		if contributions.Add(1) == 1 {
 			select { // outlasts the turn, while quick takes the next
 			case <-quickDone:

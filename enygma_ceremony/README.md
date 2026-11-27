@@ -50,8 +50,17 @@ coordinator's.
 5. **You get a receipt:** your contribution's sha256. Publish it if you like; anyone can check it
    is there.
 
-The randomness comes from your machine (`crypto/rand`). It is drawn inside gnark's `Contribute`,
-never written anywhere by the program, and gone when the program closes.
+The randomness comes from your machine (`crypto/rand`). It is drawn inside gnark's `Contribute`, in
+a separate process that exits as soon as it has written your contribution, with core dumps off: the
+program never writes it anywhere, and the program you watch, which uploads the contribution and
+prints your receipt, never holds it. Like anything in memory, it could still reach the disk if the
+operating system moved that process's memory to swap or a hibernation file while it ran; full-disk
+encryption (FileVault, BitLocker, LUKS) covers that.
+
+The receipt is yours only if this program made it. If the coordinator says you have contributed
+already, the program checks that against the contributions it made itself in this run, and against
+the coordinator's transcript; for a contribution made in an earlier run, give the sha256 that run
+printed: `ceremony join -mine <sha256>`. It never prints the coordinator's word as your receipt.
 
 ## Running a ceremony
 
