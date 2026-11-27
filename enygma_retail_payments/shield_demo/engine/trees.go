@@ -6,93 +6,177 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// batch is the commitments one transaction inserted into a vault, in order.
-type batch struct {
-	tx     common.Hash
-	leaves []*big.Int
+// leafLog is a leaf a vault inserted, as its LeafInserted event logged it:
+// the tree and index it went to, and the transaction that inserted it.
+type leafLog struct {
+	vaulttree.Position
+	tx common.Hash
 }
 
-// commitmentBatches reads a vault's Commitment events as the batches its
-// transactions inserted, oldest first. (The event names the vault, not the
-// tree.) No path the demo uses inserts into one vault twice in a transaction.
-func (c *chain) commitmentBatches(ctx context.Context, vaultAddr common.Address) ([]batch, error) {
-	logs, err := c.vaultCommitments(ctx, vaultAddr)
+// vaultLog is the leaves a vault logged before block next, oldest first.
+type vaultLog struct {
+	next   uint64
+	leaves []leafLog
+}
+
+// vaultLeaves is every leaf the vault at vaultAddr has inserted since the
+// deployment, oldest first, from its LeafInserted events. It reads each
+// block once: a later call asks only for the blocks mined since. Then it
+// checks the leaves against the vault at the tip: rebuilt, they must end on
+// the vault's treeNumber(), with its currentRoot().
+//
+// The engine assumes one local node, whose blocks are final once mined and
+// whose logs keep up with its head: it reads up to the head, not to a
+// finalized block, and keeps no block hashes. On another node a block
+// already read could be replaced, or the logs could lag the head, and the
+// cached leaves would be wrong; so on a mismatch it reads every block
+// again, once, and fails if the leaves still differ. On an error it keeps
+// none of the new blocks' leaves, so the next call asks for them again.
+func (c *chain) vaultLeaves(ctx context.Context, vaultAddr common.Address) ([]leafLog, error) {
+	tip, err := c.client.BlockNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vault LeafInserted events: %w", err)
+	}
+	v, ok := c.leaves[vaultAddr]
+	if !ok {
+		v = &vaultLog{next: c.deployBlock}
+	}
+	read, err := c.readLeaves(ctx, vaultAddr, v, tip)
 	if err != nil {
 		return nil, err
 	}
-	var out []batch
-	for _, l := range logs {
-		if len(l.Topics) < 3 {
-			continue
-		}
-		if len(out) == 0 || out[len(out)-1].tx != l.TxHash {
-			out = append(out, batch{tx: l.TxHash})
-		}
-		last := &out[len(out)-1]
-		last.leaves = append(last.leaves, l.Topics[2].Big())
+	tree, root, err := vaulttree.Current(ctx, c.client, vaultAddr, new(big.Int).SetUint64(tip))
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	if !c.endsAt(read.leaves, tree, root) {
+		if read, err = c.readLeaves(ctx, vaultAddr, &vaultLog{next: c.deployBlock}, tip); err != nil {
+			return nil, err
+		}
+		if !c.endsAt(read.leaves, tree, root) {
+			return nil, fmt.Errorf("the %s vault is on tree %d with root 0x%s at block %d, but its LeafInserted events, read twice, rebuild other trees",
+				c.contractName(vaultAddr), tree, root.Text(16), tip)
+		}
+	}
+	if c.leaves == nil {
+		c.leaves = map[common.Address]*vaultLog{}
+	}
+	c.leaves[vaultAddr] = read
+	return read.leaves, nil
 }
 
-// vaultTree rebuilds a vault's Merkle trees from its Commitment events. The
-// vault inserts each transaction's commitments as one batch and starts a new
-// tree, numbered from 0, when that batch would fill the current one, so the
-// commitments are inserted a transaction at a time. sizes[i] is how many
-// leaves tree i holds: a spent note's crowd, the leaves its proof hides it
-// among.
+// readLeaves is v and the leaves the vault at vaultAddr logged in the
+// blocks from v.next to tip, leaving v as it was.
+func (c *chain) readLeaves(ctx context.Context, vaultAddr common.Address, v *vaultLog, tip uint64) (*vaultLog, error) {
+	if tip < v.next {
+		return v, nil
+	}
+	logs, err := c.logsBetween(ctx, v.next, tip, ethereum.FilterQuery{
+		Addresses: []common.Address{vaultAddr},
+		Topics:    [][]common.Hash{{vaulttree.LeafInsertedTopic}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("vault LeafInserted events: %w", err)
+	}
+	read := &vaultLog{next: tip + 1, leaves: v.leaves}
+	for _, l := range logs {
+		p, err := vaulttree.Parse(l)
+		if err != nil {
+			return nil, err
+		}
+		read.leaves = append(read.leaves, leafLog{Position: p, tx: l.TxHash})
+	}
+	return read, nil
+}
+
+// endsAt says whether leaves, each placed where its event says, end on tree
+// tree with root root. Leaves out of sequence (a gap or a repeat) end
+// nowhere.
+func (c *chain) endsAt(leaves []leafLog, tree int, root *big.Int) bool {
+	mt := rpcore.NewMerkleTree(c.depth)
+	for _, l := range leaves {
+		if mt.InsertAt(l.Tree, l.Index, l.Leaf) != nil {
+			return false
+		}
+	}
+	return mt.TreeNumber() == tree && mt.Root().Cmp(root) == 0
+}
+
+// vaultTree rebuilds a vault's Merkle trees, numbered from 0, from its
+// LeafInserted events, each leaf where its event says. The vault decides
+// when to start a new tree once per insertLeaves call, and one transaction
+// can make several calls, so no grouping of its Commitment events gives
+// the trees. sizes[i] is how many leaves tree i holds: a spent note's
+// crowd, the leaves its proof hides it among.
 func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (tree *rpcore.MerkleTree, sizes []int, err error) {
-	batches, err := c.commitmentBatches(ctx, vaultAddr)
+	leaves, err := c.vaultLeaves(ctx, vaultAddr)
 	if err != nil {
 		return nil, nil, err
 	}
-	tree = rpcore.NewMerkleTree(merkleDepth)
+	tree = rpcore.NewMerkleTree(c.depth)
 	sizes = []int{0}
-	for _, b := range batches {
-		tree.InsertLeaves(b.leaves)
-		for len(sizes) <= tree.TreeNumber() {
+	for _, l := range leaves {
+		if err := tree.InsertAt(l.Tree, l.Index, l.Leaf); err != nil {
+			return nil, nil, err
+		}
+		if l.Tree == len(sizes) {
 			sizes = append(sizes, 0)
 		}
-		sizes[tree.TreeNumber()] = len(tree.GetLeaves())
+		sizes[l.Tree]++
 	}
 	return tree, sizes, nil
 }
 
-// emptyRoot is the root of a tree with no leaves.
-var emptyRoot = rpcore.NewMerkleTree(merkleDepth).Root()
-
 // leavesIn is the leavesIn hop detail of the leaves tx inserted into the
-// vault at vaultAddr (node ID vault), rebuilt from the vault's Commitment
-// events. owners names the actor owning each leaf, by commitment.
+// vault at vaultAddr (node ID vault), where the vault's LeafInserted events
+// put them. owners names the actor owning each leaf, by commitment. The
+// detail shows one tree: a transaction whose leaves went into two (two
+// inserts, the second starting a tree) is an error, and the engine sends no
+// transaction that inserts into a vault twice.
 func (c *chain) leavesIn(ctx context.Context, vault string, vaultAddr common.Address, tx common.Hash, owners map[string]string) (HopDetail, error) {
-	batches, err := c.commitmentBatches(ctx, vaultAddr)
+	leaves, err := c.vaultLeaves(ctx, vaultAddr)
 	if err != nil {
 		return HopDetail{}, err
 	}
-	tree := rpcore.NewMerkleTree(merkleDepth)
-	for _, b := range batches {
-		if b.tx != tx {
-			tree.InsertLeaves(b.leaves)
+	tree := rpcore.NewMerkleTree(c.depth)
+	var d *HopDetail
+	for _, l := range leaves {
+		if l.tx != tx {
+			if d != nil {
+				break // a transaction's leaves are consecutive
+			}
+			if err := tree.InsertAt(l.Tree, l.Index, l.Leaf); err != nil {
+				return HopDetail{}, err
+			}
 			continue
 		}
-		before, beforeTree := tree.Root(), tree.TreeNumber()
-		tree.InsertLeaves(b.leaves)
-		d := HopDetail{Kind: DetailLeavesIn, Vault: vault, Tree: tree.TreeNumber(), TxHash: tx.Hex(),
-			RootBefore: fieldHex(before), RootAfter: fieldHex(tree.Root()), TreeStarted: tree.TreeNumber() != beforeTree}
-		if d.TreeStarted {
-			d.RootBefore = fieldHex(emptyRoot)
+		if d == nil {
+			d = &HopDetail{Kind: DetailLeavesIn, Vault: vault, Tree: l.Tree, TxHash: tx.Hex(),
+				RootBefore: fieldHex(tree.Root()), TreeStarted: l.Tree != tree.TreeNumber()}
+			if d.TreeStarted {
+				d.RootBefore = fieldHex(rpcore.NewMerkleTree(c.depth).Root())
+			}
 		}
-		first := len(tree.GetLeaves()) - len(b.leaves)
-		for i, l := range b.leaves {
-			d.Leaves = append(d.Leaves, Leaf{Index: first + i, Commitment: fieldHex(l), Owner: owners[l.String()]})
+		if l.Tree != d.Tree {
+			return HopDetail{}, fmt.Errorf("%s: tx %s inserted leaves into trees %d and %d, and the hop detail shows one tree", vault, tx.Hex(), d.Tree, l.Tree)
 		}
-		return d, nil
+		if err := tree.InsertAt(l.Tree, l.Index, l.Leaf); err != nil {
+			return HopDetail{}, err
+		}
+		d.Leaves = append(d.Leaves, Leaf{Index: l.Index, Commitment: fieldHex(l.Leaf), Owner: owners[l.Leaf.String()]})
+		d.RootAfter = fieldHex(tree.Root())
 	}
-	return HopDetail{}, fmt.Errorf("%s inserted no commitments in tx %s", vault, tx.Hex())
+	if d == nil {
+		return HopDetail{}, fmt.Errorf("%s inserted no commitments in tx %s", vault, tx.Hex())
+	}
+	return *d, nil
 }
 
 // commitmentIn is the commitment hop detail of the note whose commitment
@@ -109,18 +193,20 @@ func (c *chain) commitmentIn(ctx context.Context, vault string, vaultAddr common
 	return d, nil
 }
 
-// treeSnapshot is the vault at vaultAddr's trees as its Commitment events
-// leave them: the current tree's leaves and root, and each full tree's.
+// treeSnapshot is the vault at vaultAddr's trees as its LeafInserted
+// events leave them: the current tree's leaves and root, and each full tree's.
 func (c *chain) treeSnapshot(ctx context.Context, vault string, vaultAddr common.Address) (TreeSnapshot, error) {
-	batches, err := c.commitmentBatches(ctx, vaultAddr)
+	leaves, err := c.vaultLeaves(ctx, vaultAddr)
 	if err != nil {
 		return TreeSnapshot{}, err
 	}
 	snap := TreeSnapshot{Vault: vault, FullTrees: []FullTree{}}
-	tree := rpcore.NewMerkleTree(merkleDepth)
-	for _, b := range batches {
+	tree := rpcore.NewMerkleTree(c.depth)
+	for _, l := range leaves {
 		num, count, root := tree.TreeNumber(), len(tree.GetLeaves()), tree.Root()
-		tree.InsertLeaves(b.leaves)
+		if err := tree.InsertAt(l.Tree, l.Index, l.Leaf); err != nil {
+			return TreeSnapshot{}, err
+		}
 		if tree.TreeNumber() != num {
 			snap.FullTrees = append(snap.FullTrees, FullTree{Tree: num, LeafCount: count, Root: fieldHex(root)})
 		}

@@ -84,6 +84,8 @@ where $leafIndex$ is the position of the commitment within sub-tree $treeNum$ an
 
 The formula has no vault or asset domain, so one key's notes at the same $globalIdx$ in two vaults have the same nullifier (see [What the chain sees](#what-the-chain-sees-deposits-spends-and-exits)).
 
+The vault logs each leaf's position as it inserts it: `insertLeaves`, which every insert goes through, emits `LeafInserted(vaultId, commitment, treeNumber, leafIndex)` for each leaf. It decides once per call whether the call's leaves start a new sub-tree, and one transaction can make several calls, so a wallet rebuilds the sub-trees from these positions, not from the `Commitment` events, which carry none.
+
 ## Private Issuance
 
 Before a user can participate in a DvP they need a private balance: a

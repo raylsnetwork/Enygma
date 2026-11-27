@@ -1,11 +1,8 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
-	"os"
-	"path/filepath"
 
 	"github.com/iden3/go-iden3-crypto/poseidon"
 	"golang.org/x/crypto/sha3"
@@ -29,13 +26,6 @@ type MerkleProof struct {
 	TreeNumber int
 }
 
-// MerkleTreeState represents the serializable state of a Merkle tree
-type MerkleTreeState struct {
-	Depth int        `json:"depth"`
-	Tree  [][]string `json:"tree"`
-	Zeros []string   `json:"zeros"`
-}
-
 // MerkleTree represents a sparse Merkle tree with Poseidon hash
 type MerkleTree struct {
 	depth      int
@@ -43,7 +33,6 @@ type MerkleTree struct {
 	tree       [][]*big.Int
 	treeNumber int
 	prevTrees  [][][]*big.Int
-	savePath   string
 	// exclusiveCapacity selects the rollover-trigger convention this tree's
 	// InsertLeaves uses, which MUST match whichever on-chain vault contract
 	// this tree is tracking — the two vault contract families in this
@@ -100,131 +89,6 @@ func newMerkleTree(depth int, exclusiveCapacity bool) *MerkleTree {
 	return mt
 }
 
-// NewMerkleTreeWithPath creates a new Merkle tree and loads from file if exists
-func NewMerkleTreeWithPath(depth int, prefix string, clientPath string) (*MerkleTree, error) {
-	mt := &MerkleTree{
-		depth:      depth,
-		treeNumber: 0,
-		prevTrees:  make([][][]*big.Int, 0),
-	}
-
-	// Determine save path
-	if clientPath != "" {
-		mt.savePath = filepath.Join(clientPath, prefix+"MerkleTreeState.json")
-	} else {
-		mt.savePath = filepath.Join("./src/appdata/", prefix+"MerkleTreeState.json")
-	}
-
-	// Try to load from file
-	if _, err := os.Stat(mt.savePath); err == nil {
-		if err := mt.loadFromFile(); err != nil {
-			return nil, err
-		}
-	} else {
-		mt.zeros = getZeroValueLevels(depth)
-		mt.tree = make([][]*big.Int, depth+1)
-		for i := 0; i <= depth; i++ {
-			mt.tree[i] = make([]*big.Int, 0)
-		}
-		mt.tree[depth] = []*big.Int{HashLeftRight(mt.zeros[depth-1], mt.zeros[depth-1])}
-	}
-
-	return mt, nil
-}
-
-// loadFromFile loads the Merkle tree state from a JSON file
-func (mt *MerkleTree) loadFromFile() error {
-	data, err := os.ReadFile(mt.savePath)
-	if err != nil {
-		return err
-	}
-
-	var state MerkleTreeState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return err
-	}
-
-	mt.depth = state.Depth
-
-	// Parse zeros
-	mt.zeros = make([]*big.Int, len(state.Zeros))
-	for i, zeroStr := range state.Zeros {
-		mt.zeros[i], _ = new(big.Int).SetString(zeroStr, 10)
-	}
-
-	// Parse tree
-	mt.tree = make([][]*big.Int, len(state.Tree))
-	for i, subtree := range state.Tree {
-		mt.tree[i] = make([]*big.Int, len(subtree))
-		for j, numStr := range subtree {
-			mt.tree[i][j], _ = new(big.Int).SetString(numStr, 10)
-		}
-	}
-
-	return nil
-}
-
-// SaveToFile saves the Merkle tree state to a JSON file
-func (mt *MerkleTree) SaveToFile() error {
-	// Ensure directory exists
-	dirPath := filepath.Dir(mt.savePath)
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		return err
-	}
-
-	state := MerkleTreeState{
-		Depth: mt.depth,
-		Tree:  make([][]string, len(mt.tree)),
-		Zeros: make([]string, len(mt.zeros)),
-	}
-
-	// Convert zeros to strings
-	for i, zero := range mt.zeros {
-		state.Zeros[i] = zero.String()
-	}
-
-	// Convert tree to strings
-	for i, subtree := range mt.tree {
-		state.Tree[i] = make([]string, len(subtree))
-		for j, num := range subtree {
-			state.Tree[i][j] = num.String()
-		}
-	}
-
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(mt.savePath, data, 0644); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// GetTree returns the tree state as a serializable object
-func (mt *MerkleTree) GetTree() MerkleTreeState {
-	state := MerkleTreeState{
-		Depth: mt.depth,
-		Tree:  make([][]string, len(mt.tree)),
-		Zeros: make([]string, len(mt.zeros)),
-	}
-
-	for i, zero := range mt.zeros {
-		state.Zeros[i] = zero.String()
-	}
-
-	for i, subtree := range mt.tree {
-		state.Tree[i] = make([]string, len(subtree))
-		for j, num := range subtree {
-			state.Tree[i][j] = num.String()
-		}
-	}
-
-	return state
-}
-
 // rebuildSparseTree rebuilds the tree from the leaves up
 func (mt *MerkleTree) rebuildSparseTree() {
 	for level := 0; level < mt.depth; level++ {
@@ -242,8 +106,26 @@ func (mt *MerkleTree) rebuildSparseTree() {
 	}
 }
 
-// InsertLeaves inserts multiple leaves into the tree
+// InsertLeaves inserts leaves as one batch, as one call of the vault's
+// insertLeaves does: a batch that would fill the current tree goes whole
+// into the next one. A vault decides this per call, and one transaction can
+// make several calls, so a tree rebuilt from a vault's events places each
+// leaf with InsertAt, at the position its LeafInserted event names.
+//
+// It takes the batches Merkle.sol takes. An empty batch, which the vault
+// refuses (EmptyLeafBatch), changes nothing. A batch of 2^depth leaves or
+// more, which it refuses too (LeafBatchTooLarge), panics: put whole in a
+// fresh tree, it would fill the last slot or leave leaves out of the root.
+// A NewMerkleTreeStrict tree follows AuctionCoinVault.sol, which has no
+// such bound.
 func (mt *MerkleTree) InsertLeaves(leaves []*big.Int) {
+	if len(leaves) == 0 {
+		return
+	}
+	maxLeaves := 1 << mt.depth
+	if !mt.exclusiveCapacity && len(leaves) >= maxLeaves {
+		panic(fmt.Sprintf("InsertLeaves: %d leaves in one batch, which a vault refuses: a tree of depth %d takes at most %d per insert", len(leaves), mt.depth, maxLeaves-1))
+	}
 	// Check if tree is full — see MerkleTree.exclusiveCapacity for why this
 	// must match the on-chain vault contract this tree is tracking:
 	//   - exclusiveCapacity=false (default): rolls at `(count+count) >= maxLeaves`,
@@ -252,7 +134,6 @@ func (mt *MerkleTree) InsertLeaves(leaves []*big.Int) {
 	//     `(count+count) > maxLeaves`, matching AuctionCoinVault.sol — a tree
 	//     holding exactly maxLeaves leaves does not roll until the next
 	//     insert would actually exceed capacity.
-	maxLeaves := 1 << mt.depth
 	full := len(mt.tree[0]) + len(leaves)
 	rolls := full > maxLeaves
 	if !mt.exclusiveCapacity {
@@ -268,9 +149,57 @@ func (mt *MerkleTree) InsertLeaves(leaves []*big.Int) {
 	mt.rebuildSparseTree()
 }
 
-// InsertLeaf inserts a single leaf into the tree
+// InsertLeaf inserts a single leaf into the tree, as a batch of one.
 func (mt *MerkleTree) InsertLeaf(leaf *big.Int) {
 	mt.InsertLeaves([]*big.Int{leaf})
+}
+
+// InsertAt puts leaf at index index of tree tree, where a vault's
+// LeafInserted event says the vault put it. Replayed in chain order, each
+// leaf takes the current tree's next index, or index 0 of the next tree
+// when the vault started one for its batch. InsertAt refuses any other
+// position, as a missed, repeated or reordered event gives, and an index
+// past the tree's capacity, and leaves the tree as it was: a rebuild that
+// drifted from the vault fails here, not in a proof the vault refuses.
+func (mt *MerkleTree) InsertAt(tree, index int, leaf *big.Int) error {
+	next := len(mt.tree[0])
+	switch {
+	case tree == mt.treeNumber && index == next:
+	case tree == mt.treeNumber+1 && index == 0:
+	default:
+		return fmt.Errorf("leaf %s at tree %d index %d: the tree rebuilt so far takes tree %d index %d, or tree %d index 0",
+			leaf, tree, index, mt.treeNumber, next, mt.treeNumber+1)
+	}
+	if index >= 1<<mt.depth {
+		return fmt.Errorf("leaf %s at tree %d index %d: a tree of depth %d holds %d leaves", leaf, tree, index, mt.depth, 1<<mt.depth)
+	}
+	if tree != mt.treeNumber {
+		mt.newTree()
+	}
+	mt.appendLeaf(leaf)
+	return nil
+}
+
+// appendLeaf adds leaf as the current tree's next leaf and rehashes the
+// nodes on its path to the root, the only ones it changes.
+func (mt *MerkleTree) appendLeaf(leaf *big.Int) {
+	mt.tree[0] = append(mt.tree[0], leaf)
+	index := len(mt.tree[0]) - 1
+	for level := 0; level < mt.depth; level++ {
+		left := index &^ 1
+		right := mt.zeros[level]
+		if left+1 < len(mt.tree[level]) {
+			right = mt.tree[level][left+1]
+		}
+		node := HashLeftRight(mt.tree[level][left], right)
+		parent := index >> 1
+		if parent < len(mt.tree[level+1]) {
+			mt.tree[level+1][parent] = node
+		} else {
+			mt.tree[level+1] = append(mt.tree[level+1], node)
+		}
+		index = parent
+	}
 }
 
 // newTree creates a new tree when the current one is full
@@ -317,86 +246,68 @@ func (mt *MerkleTree) RootOfPrevTree(treeNum int) *big.Int {
 	return mt.prevTrees[treeNum][mt.depth][0]
 }
 
-// GenerateProof generates a Merkle proof for an element
+// GenerateProof generates a Merkle proof for an element: its first copy in
+// the current tree, else in the oldest earlier tree holding it. A vault
+// takes the same commitment twice as two notes, each with its own position
+// and nullifier; GenerateProofAt proves the one at a given position.
 func (mt *MerkleTree) GenerateProof(element *big.Int) (*MerkleProof, error) {
-	// Initialize proof elements
-	elements := make([]*big.Int, 0)
-	indices := make([]int, 0)
-
-	// Find element in current tree
-	index := -1
 	for i, leaf := range mt.tree[0] {
 		if leaf.Cmp(element) == 0 {
-			index = i
-			break
+			return mt.GenerateProofAt(mt.treeNumber, i)
 		}
 	}
-
-	treeNum := -1
-	if index == -1 {
-		for i, prevTree := range mt.prevTrees {
-			for j, leaf := range prevTree[0] {
-				if leaf.Cmp(element) == 0 {
-					index = j
-					treeNum = i
-					break
-				}
-			}
-			if index != -1 {
-				break
+	for t, prevTree := range mt.prevTrees {
+		for i, leaf := range prevTree[0] {
+			if leaf.Cmp(element) == 0 {
+				return mt.GenerateProofAt(t, i)
 			}
 		}
-		if index == -1 {
-			return nil, fmt.Errorf("couldn't find %s in the MerkleTree number: %d", element.String(), mt.treeNumber)
-		}
 	}
+	return nil, fmt.Errorf("couldn't find %s in the MerkleTree number: %d", element.String(), mt.treeNumber)
+}
 
-	activeTree := mt.tree
-	activeRoot := mt.Root()
-	foundTreeNumber := mt.treeNumber
-	if treeNum != -1 {
-		activeTree = mt.prevTrees[treeNum]
-		activeRoot = mt.RootOfPrevTree(treeNum)
-		foundTreeNumber = treeNum
+// GenerateProofAt generates the Merkle proof of the leaf at index index of
+// tree tree (an earlier tree's or the current one's), the position a
+// vault's LeafInserted event gives a note.
+func (mt *MerkleTree) GenerateProofAt(tree, index int) (*MerkleProof, error) {
+	var levels [][]*big.Int
+	switch {
+	case tree == mt.treeNumber:
+		levels = mt.tree
+	case tree >= 0 && tree < len(mt.prevTrees):
+		levels = mt.prevTrees[tree]
+	default:
+		return nil, fmt.Errorf("no tree %d: the trees are 0 to %d", tree, mt.treeNumber)
 	}
+	if index < 0 || index >= len(levels[0]) {
+		return nil, fmt.Errorf("no leaf %d in tree %d, which holds %d", index, tree, len(levels[0]))
+	}
+	element := levels[0][index]
 
-	// Loop through each level
+	// Each level's sibling, and the leaf index's bit there: 1 when the
+	// node is a right child, its sibling on the left.
+	elements := make([]*big.Int, 0, mt.depth)
+	indicesBigInt := big.NewInt(0)
 	for level := 0; level < mt.depth; level++ {
 		if index%2 == 0 {
-			// If index is even, get element on right
-			var right *big.Int
-			if index+1 < len(activeTree[level]) {
-				right = activeTree[level][index+1]
-			} else {
-				right = mt.zeros[level]
+			right := mt.zeros[level]
+			if index+1 < len(levels[level]) {
+				right = levels[level][index+1]
 			}
 			elements = append(elements, right)
-			indices = append(indices, 0)
 		} else {
-			// If index is odd, get element on left
-			elements = append(elements, activeTree[level][index-1])
-			indices = append(indices, 1)
+			elements = append(elements, levels[level][index-1])
+			indicesBigInt.SetBit(indicesBigInt, level, 1)
 		}
-
-		// Get index for next level
 		index = index / 2
-	}
-
-	// Convert indices to BigInt
-	indicesBigInt := big.NewInt(0)
-	for i := len(indices) - 1; i >= 0; i-- {
-		indicesBigInt.Lsh(indicesBigInt, 1)
-		if indices[i] == 1 {
-			indicesBigInt.Or(indicesBigInt, big.NewInt(1))
-		}
 	}
 
 	return &MerkleProof{
 		Element:    element,
 		Elements:   elements,
 		Indices:    indicesBigInt,
-		Root:       activeRoot,
-		TreeNumber: foundTreeNumber,
+		Root:       levels[mt.depth][0],
+		TreeNumber: tree,
 	}, nil
 }
 

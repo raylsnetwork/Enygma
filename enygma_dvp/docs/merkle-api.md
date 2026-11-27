@@ -49,6 +49,7 @@ Returns the Merkle tree status for **all vaults**, plus a cross-check that verif
       "match": true,
       "leafCount": 9,
       "treeNumber": 0,
+      "localTreeNumber": 0,
       "tree": {
         "depth": 8,
         "root": "19309031...",
@@ -83,20 +84,21 @@ Returns the Merkle tree status for **all vaults**, plus a cross-check that verif
 
 #### `vaults[]`
 
-| Field         | Type         | Description                                                                                    |
-| ------------- | ------------ | ---------------------------------------------------------------------------------------------- |
-| `name`        | string       | Vault contract name                                                                            |
-| `address`     | string       | Vault contract address                                                                         |
-| `onChainRoot` | string       | Current Merkle root from `currentRoot()` on the vault contract                                 |
-| `localRoot`   | string       | Root computed locally by replaying on-chain `Commitment` events                                |
-| `match`       | bool         | `true` if `localRoot == onChainRoot`                                                           |
-| `leafCount`   | int          | Total number of `Commitment` events found on-chain                                             |
-| `treeNumber`  | uint64       | Current on-chain tree number                                                                  |
-| `tree.depth`  | int          | Tree depth used for the local replay (8 on the current deployments)                           |
-| `tree.root`   | string       | Same as `localRoot`                                                                            |
-| `tree.levels` | `[][]string` | All levels in decimal, from the leaves at level 0 to the root at level `tree.depth`            |
-| `tree.zeros`  | `[]string`   | Zero values per level. `zeros[i]` is the implicit sibling when a node at level `i` has no pair |
-| `error`       | string       | Set if this vault could not be checked                                                         |
+| Field             | Type         | Description                                                                                        |
+| ----------------- | ------------ | -------------------------------------------------------------------------------------------------- |
+| `name`            | string       | Vault contract name                                                                                |
+| `address`         | string       | Vault contract address                                                                             |
+| `onChainRoot`     | string       | Current Merkle root from `currentRoot()` on the vault contract                                     |
+| `localRoot`       | string       | Root of the current tree rebuilt locally from onchain `LeafInserted` events                        |
+| `match`           | bool         | `true` if `localTreeNumber == treeNumber` and `localRoot == onChainRoot`                           |
+| `leafCount`       | int          | Total number of `LeafInserted` events found onchain, across all trees                              |
+| `treeNumber`      | uint64       | Current onchain tree number, from `treeNumber()`                                                   |
+| `localTreeNumber` | uint64       | Number of the last tree the rebuild placed a leaf in                                               |
+| `tree.depth`      | int          | Tree depth used for the local replay (8 on the current deployments)                                |
+| `tree.root`       | string       | Same as `localRoot`                                                                                |
+| `tree.levels`     | `[][]string` | The current tree's levels in decimal, from the leaves at level 0 to the root at level `tree.depth` |
+| `tree.zeros`      | `[]string`   | Zero values per level. `zeros[i]` is the implicit sibling when a node at level `i` has no pair     |
+| `error`           | string       | Set if this vault could not be checked                                                             |
 
 DvP's `Merkle.insertLeaves` starts a new tree before inserting a batch when
 `nextLeafIndex + batchSize >= 2^depth`. At depth 8, a tree filled one leaf at a
@@ -151,6 +153,7 @@ Same shape as a single entry in `vaults[]` from `/util/merkleStatus`:
   "match": true,
   "leafCount": 9,
   "treeNumber": 0,
+  "localTreeNumber": 0,
   "tree": {
     "depth": 8,
     "root": "19309031...",
@@ -172,10 +175,12 @@ Same shape as a single entry in `vaults[]` from `/util/merkleStatus`:
 
 For each vault the service:
 
-1. Calls `currentRoot()` on the vault contract via `eth_call` to get the on-chain root.
-2. Fetches all `Commitment(uint256 indexed vaultId, uint256 indexed commitment)` events emitted by the vault contract via `eth_getLogs`.
-3. Replays the commitments in order into a local Poseidon Merkle tree (depth 8, zero value = `keccak256("ZkDvp") % SNARK_SCALAR_FIELD`), mirroring the contract's tree algorithm.
-4. Compares the computed local root against the on-chain root.
+1. Calls `currentRoot()` and `treeNumber()` on the vault contract via `eth_call` to get the onchain root and tree number.
+2. Fetches all `LeafInserted(uint256 indexed vaultId, uint256 indexed commitment, uint256 treeNumber, uint256 leafIndex)` events emitted by the vault contract via `eth_getLogs`.
+3. Places each commitment at the tree and index its event names, in a local Poseidon Merkle tree (depth 8, zero value = `keccak256("ZkDvp") % SNARK_SCALAR_FIELD`), starting the next tree when an event names it. A position out of sequence (a missed or repeated event) is an `error`.
+4. Compares the local tree number and root against the onchain ones.
+
+The vault decides whether to start a new tree once per insert, and one transaction can make several inserts, so a leaf's place comes from its `LeafInserted` event: the `Commitment` events carry no position, and replaying them leaf by leaf or by transaction misplaces leaves at a tree boundary.
 
 `match: true` means the local reconstruction agrees with the contract state.
 

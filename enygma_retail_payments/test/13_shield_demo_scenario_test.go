@@ -39,6 +39,7 @@ import (
 	"enygma_retail_payments/layout"
 	"enygma_retail_payments/shield_demo/engine"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum"
@@ -1163,7 +1164,8 @@ func treeSnapshots(t *testing.T, s *capturingSink) []engine.TreeSnapshot {
 }
 
 // checkLeavesIn checks that d's leaves are exactly the commitments its
-// transaction inserted in d's vault, in order.
+// transaction inserted in d's vault, in order, each at the tree and index
+// the vault's LeafInserted event gives it.
 func checkLeavesIn(t *testing.T, client *ethclient.Client, vaultAddrs map[string]common.Address, d engine.HopDetail) {
 	t.Helper()
 	addr, ok := vaultAddrs[d.Vault]
@@ -1172,18 +1174,29 @@ func checkLeavesIn(t *testing.T, client *ethclient.Client, vaultAddrs map[string
 		return
 	}
 	var inserted []*big.Int
+	var placed []vaulttree.Position
 	for _, l := range txLogs(t, client, common.HexToHash(d.TxHash)) {
 		if l.Address == addr && len(l.Topics) >= 3 && l.Topics[0] == commitmentEventSig {
 			inserted = append(inserted, l.Topics[2].Big())
 		}
+		if l.Address == addr && len(l.Topics) > 0 && l.Topics[0] == vaulttree.LeafInsertedTopic {
+			p, err := vaulttree.Parse(*l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			placed = append(placed, p)
+		}
 	}
-	if len(inserted) != len(d.Leaves) {
-		t.Errorf("%s tx %s: leavesIn lists %d leaves, the vault inserted %d", d.Vault, d.TxHash, len(d.Leaves), len(inserted))
+	if len(inserted) != len(d.Leaves) || len(placed) != len(d.Leaves) {
+		t.Errorf("%s tx %s: leavesIn lists %d leaves, the vault inserted %d and placed %d", d.Vault, d.TxHash, len(d.Leaves), len(inserted), len(placed))
 		return
 	}
 	for i, l := range d.Leaves {
 		if hexField(t, l.Commitment).Cmp(inserted[i]) != 0 {
 			t.Errorf("%s tx %s: leaf %d is %s, the vault inserted 0x%x", d.Vault, d.TxHash, i, l.Commitment, inserted[i])
+		}
+		if p := placed[i]; p.Leaf.Cmp(inserted[i]) != 0 || p.Tree != d.Tree || p.Index != l.Index {
+			t.Errorf("%s tx %s: leaf %d is #%d of tree %d, the vault placed 0x%x at #%d of tree %d", d.Vault, d.TxHash, i, l.Index, d.Tree, p.Leaf, p.Index, p.Tree)
 		}
 	}
 }

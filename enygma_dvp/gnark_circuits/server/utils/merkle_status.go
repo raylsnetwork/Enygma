@@ -22,15 +22,19 @@ import (
 )
 
 // ─── Local Merkle Tree ────────────────────────────────────────────────────────
-// Mirrors src/core/merkle.go so we can reconstruct the tree from on-chain events.
+// Mirrors src/core/merkle.go so we can reconstruct the trees from onchain
+// events: each leaf at the tree and index its LeafInserted event names.
 
 var merkleSnarkField, _ = new(big.Int).SetString(
 	"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
 
+// localMerkleTree is a vault's current tree, number treeNumber; the
+// earlier trees are not kept.
 type localMerkleTree struct {
-	depth int
-	zeros []*big.Int
-	tree  [][]*big.Int
+	depth      int
+	zeros      []*big.Int
+	tree       [][]*big.Int
+	treeNumber int
 }
 
 func localPoseidon2(left, right *big.Int) *big.Int {
@@ -70,21 +74,29 @@ func newLocalMerkleTree(depth int) *localMerkleTree {
 	return mt
 }
 
-func (mt *localMerkleTree) resetToEmpty() {
-	mt.tree = make([][]*big.Int, mt.depth+1)
-	for i := 0; i <= mt.depth; i++ {
-		mt.tree[i] = make([]*big.Int, 0)
+// insertAt puts leaf at index index of tree tree, where the vault's
+// LeafInserted event says the vault put it: the current tree's next index,
+// or index 0 of the next tree, which it starts empty. Any other position (a
+// missed, repeated or reordered event) or an index past the tree's
+// capacity is an error, and the tree is left as it was.
+func (mt *localMerkleTree) insertAt(tree, index int, leaf *big.Int) error {
+	next := len(mt.tree[0])
+	switch {
+	case tree == mt.treeNumber && index == next:
+	case tree == mt.treeNumber+1 && index == 0:
+	default:
+		return fmt.Errorf("leaf at tree %d index %d, want tree %d index %d or tree %d index 0", tree, index, mt.treeNumber, next, mt.treeNumber+1)
 	}
-	mt.tree[mt.depth] = []*big.Int{localPoseidon2(mt.zeros[mt.depth-1], mt.zeros[mt.depth-1])}
-}
-
-func (mt *localMerkleTree) insertLeaf(leaf *big.Int) {
-	maxLeaves := 1 << mt.depth
-	if len(mt.tree[0])+1 >= maxLeaves {
-		mt.resetToEmpty()
+	if index >= 1<<mt.depth {
+		return fmt.Errorf("leaf at tree %d index %d: a tree of depth %d holds %d leaves", tree, index, mt.depth, 1<<mt.depth)
+	}
+	if tree != mt.treeNumber {
+		fresh := newLocalMerkleTree(mt.depth)
+		mt.tree, mt.treeNumber = fresh.tree, tree
 	}
 	mt.tree[0] = append(mt.tree[0], leaf)
 	mt.rebuildSparse()
+	return nil
 }
 
 func (mt *localMerkleTree) rebuildSparse() {
@@ -345,10 +357,32 @@ func ethCallAddress(client *http.Client, rpcURL, contractAddr, selectorHex strin
 
 type logEntry struct {
 	Topics []string `json:"topics"`
+	Data   string   `json:"data"`
 }
 
-// maxCommitmentReplayLogs bounds the local tree rebuild for each vault.
-const maxCommitmentReplayLogs = 1024
+// maxLeafReplayLogs bounds the local tree rebuild for each vault.
+const maxLeafReplayLogs = 1024
+
+// parseLeafInserted reads a LeafInserted log: its leaf (topic 2), and the
+// tree number and leaf index of its 64 data bytes.
+func parseLeafInserted(lg logEntry) (tree, index int, leaf *big.Int, err error) {
+	if len(lg.Topics) != 3 {
+		return 0, 0, nil, fmt.Errorf("expected 3 topics, got %d", len(lg.Topics))
+	}
+	leaf, ok := new(big.Int).SetString(strings.TrimPrefix(lg.Topics[2], "0x"), 16)
+	if !ok {
+		return 0, 0, nil, fmt.Errorf("cannot parse commitment %q", lg.Topics[2])
+	}
+	data, err := hex.DecodeString(strings.TrimPrefix(lg.Data, "0x"))
+	if err != nil || len(data) != 64 {
+		return 0, 0, nil, fmt.Errorf("data %q is not two 32-byte words", lg.Data)
+	}
+	t, i := new(big.Int).SetBytes(data[:32]), new(big.Int).SetBytes(data[32:])
+	if !t.IsInt64() || t.Int64() >= 1<<31 || !i.IsInt64() || i.Int64() >= 1<<31 {
+		return 0, 0, nil, fmt.Errorf("tree %s index %s out of range", t, i)
+	}
+	return int(t.Int64()), int(i.Int64()), leaf, nil
+}
 
 // ethGetLogs fetches all logs for the given contract matching topic0.
 func ethGetLogs(client *http.Client, rpcURL, contractAddr, topic0 string) ([]logEntry, error) {
@@ -786,15 +820,17 @@ type MerkleStatusRequest struct {
 }
 
 type VaultMerkleStatus struct {
-	Name        string     `json:"name"`
-	Address     string     `json:"address"`
-	OnChainRoot string     `json:"onChainRoot"`
-	LocalRoot   string     `json:"localRoot"`
-	Match       bool       `json:"match"`
-	LeafCount   int        `json:"leafCount"`
-	TreeNumber  uint64     `json:"treeNumber"`
-	Tree        TreeOutput `json:"tree"`
-	Error       string     `json:"error,omitempty"`
+	Name        string `json:"name"`
+	Address     string `json:"address"`
+	OnChainRoot string `json:"onChainRoot"`
+	LocalRoot   string `json:"localRoot"`
+	// Match: the rebuilt current tree has the vault's number and root.
+	Match           bool       `json:"match"`
+	LeafCount       int        `json:"leafCount"`
+	TreeNumber      uint64     `json:"treeNumber"`
+	LocalTreeNumber uint64     `json:"localTreeNumber"`
+	Tree            TreeOutput `json:"tree"`
+	Error           string     `json:"error,omitempty"`
 }
 
 // VaultRegistryEntry is one row of the EnygmaDvP registry cross-check.
@@ -821,8 +857,10 @@ type MerkleStatusResponse struct {
 }
 
 // MerkleStatusHandler handles POST /util/merkleStatus.
-// It reconstructs each vault's Merkle tree locally from on-chain Commitment events
-// and compares the computed root against the vault's currentRoot().
+// It reconstructs each vault's Merkle trees locally from onchain LeafInserted
+// events, each leaf at the tree and index its event names, and compares the
+// current tree's number and root against the vault's treeNumber() and
+// currentRoot().
 //
 // Request body (all fields optional):
 //
@@ -830,7 +868,7 @@ type MerkleStatusResponse struct {
 func MerkleStatusHandler() gin.HandlerFunc {
 	const treeDepth = 8
 
-	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
+	leafTopic := keccak32Hex("LeafInserted(uint256,uint256,uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
 	treeNumberSel := keccak4("treeNumber()")
 	vaultByIDSel := keccak4("vaultById(uint256)")
@@ -875,7 +913,7 @@ func MerkleStatusHandler() gin.HandlerFunc {
 				continue
 			}
 			s := checkVault(rpcClient, req.RpcUrl, name, addr, treeDepth,
-				commitmentTopic, currentRootSel, treeNumberSel)
+				leafTopic, currentRootSel, treeNumberSel)
 			statuses = append(statuses, s)
 		}
 
@@ -947,7 +985,7 @@ func checkEnygmaDvPRegistry(client *http.Client, rpcURL, receiptsPath string, re
 }
 
 func checkVault(client *http.Client, rpcURL, name, addr string, depth int,
-	commitmentTopic, currentRootSel, treeNumberSel string,
+	leafTopic, currentRootSel, treeNumberSel string,
 ) VaultMerkleStatus {
 	s := VaultMerkleStatus{Name: name, Address: addr}
 
@@ -977,38 +1015,38 @@ func checkVault(client *http.Client, rpcURL, name, addr string, depth int,
 	}
 	s.TreeNumber = treeNum.Uint64()
 
-	// 3. Collect all Commitment events in order
-	//    event Commitment(uint256 indexed vaultId, uint256 indexed commitment)
-	//    topics[0] = event signature, topics[1] = vaultId, topics[2] = commitment
-	logs, err := ethGetLogs(client, rpcURL, addr, commitmentTopic)
+	// 3. Collect all LeafInserted events in order
+	//    event LeafInserted(uint256 indexed vaultId, uint256 indexed commitment,
+	//                       uint256 treeNumber, uint256 leafIndex)
+	//    topics[2] = commitment; data = treeNumber, leafIndex
+	logs, err := ethGetLogs(client, rpcURL, addr, leafTopic)
 	if err != nil {
 		s.Error = fmt.Sprintf("eth_getLogs: %v", err)
 		return s
 	}
 	s.LeafCount = len(logs)
-	if s.LeafCount > maxCommitmentReplayLogs {
-		s.Error = fmt.Sprintf("eth_getLogs: %d commitment logs exceed replay limit of %d", s.LeafCount, maxCommitmentReplayLogs)
+	if s.LeafCount > maxLeafReplayLogs {
+		s.Error = fmt.Sprintf("eth_getLogs: %d LeafInserted logs exceed replay limit of %d", s.LeafCount, maxLeafReplayLogs)
 		return s
 	}
 
-	// 4. Replay insertions into a local Merkle tree and compute root
+	// 4. Place each leaf where its event says, and compare the current
+	//    tree's number and root with the vault's
 	mt := newLocalMerkleTree(depth)
 	for i, lg := range logs {
-		if len(lg.Topics) < 3 {
-			s.Error = fmt.Sprintf("log[%d]: expected 3 topics, got %d", i, len(lg.Topics))
+		tree, index, leaf, err := parseLeafInserted(lg)
+		if err == nil {
+			err = mt.insertAt(tree, index, leaf)
+		}
+		if err != nil {
+			s.Error = fmt.Sprintf("log[%d]: %v", i, err)
 			return s
 		}
-		hexVal := strings.TrimPrefix(lg.Topics[2], "0x")
-		leaf, ok := new(big.Int).SetString(hexVal, 16)
-		if !ok {
-			s.Error = fmt.Sprintf("log[%d]: cannot parse commitment %q", i, lg.Topics[2])
-			return s
-		}
-		mt.insertLeaf(leaf)
 	}
 
 	s.LocalRoot = mt.root()
-	s.Match = s.LocalRoot == s.OnChainRoot
+	s.LocalTreeNumber = uint64(mt.treeNumber)
+	s.Match = s.LocalRoot == s.OnChainRoot && s.LocalTreeNumber == s.TreeNumber
 	s.Tree = mt.snapshot()
 	return s
 }
@@ -1043,7 +1081,7 @@ type MerkleVaultRequest struct {
 func MerkleVaultHandler() gin.HandlerFunc {
 	const treeDepth = 8
 
-	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
+	leafTopic := keccak32Hex("LeafInserted(uint256,uint256,uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
 	treeNumberSel := keccak4("treeNumber()")
 
@@ -1122,7 +1160,7 @@ func MerkleVaultHandler() gin.HandlerFunc {
 		}
 
 		status := checkVault(rpcClient, req.RpcUrl, vaultName, addr, treeDepth,
-			commitmentTopic, currentRootSel, treeNumberSel)
+			leafTopic, currentRootSel, treeNumberSel)
 		c.JSON(http.StatusOK, status)
 	}
 }

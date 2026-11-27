@@ -155,12 +155,30 @@ contract Merkle is IMerkle {
         return treeId;
     }
 
+    // The index the current tree's next leaf takes: how many leaves it holds.
+    function getNextLeafIndex() public view returns (uint256) {
+        return nextLeafIndex;
+    }
+
+    // Inserts _leafHashes as one batch. A batch that would reach the current
+    // tree's last slot goes whole into a new tree, so the slot is never
+    // filled. The rollover is decided once per call, not per transaction:
+    // LeafInserted gives each leaf's tree and index.
     function insertLeaves(uint256[] memory _leafHashes) internal {
         uint256 count = _leafHashes.length;
+        if (count == 0) revert EmptyLeafBatch();
+        // A batch must fit a fresh tree short of its last slot, as every
+        // insert does: a larger one would fill that slot, or overflow the
+        // tree and leave leaves out of the root.
+        if (count >= 2 ** treeDepth) revert LeafBatchTooLarge(count);
         if ((nextLeafIndex + count) >= (2 ** treeDepth)) {
             newTree();
         }
         uint256 levelInsertionIndex = nextLeafIndex;
+        // Logged before the hashing below, which overwrites _leafHashes.
+        for (uint256 i = 0; i < count; i++) {
+            emit LeafInserted(treeId, _leafHashes[i], treeNumber, levelInsertionIndex + i);
+        }
         nextLeafIndex += count;
 
         uint256 nextLevelHashIndex;

@@ -34,6 +34,8 @@ type chain struct {
 	// deployBlock is the first block of the deployment receipts.json
 	// describes: no event of the demo's contracts comes before it.
 	deployBlock uint64
+	// depth is the vaults' Merkle tree depth, merkleDepth.
+	depth int
 
 	dvp       *bind.BoundContract
 	vault     *bind.BoundContract
@@ -46,8 +48,8 @@ type chain struct {
 	// to, from its info route.
 	channelRegistryAddr common.Address
 
-	// commitments is each vault's Commitment events read so far.
-	commitments map[common.Address]*vaultLog
+	// leaves is each vault's leaves read so far, from its LeafInserted events.
+	leaves map[common.Address]*vaultLog
 
 	// events is every event the demo's contracts declare, by topic, to
 	// decode receipts' logs.
@@ -66,7 +68,7 @@ func dialChain(cfg Config) (*chain, error) {
 		}
 		return common.HexToAddress(r.ContractAddress), nil
 	}
-	c := &chain{chainID: big.NewInt(cfg.ChainID), deployBlock: math.MaxUint64}
+	c := &chain{chainID: big.NewInt(cfg.ChainID), deployBlock: math.MaxUint64, depth: merkleDepth}
 	for name, dst := range map[string]*common.Address{
 		"EnygmaDvp":      &c.dvpAddr,
 		"Erc20CoinVault": &c.vaultAddr,

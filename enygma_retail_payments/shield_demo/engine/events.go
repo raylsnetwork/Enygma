@@ -267,7 +267,8 @@ type Formula struct {
 }
 
 // FormulaValue is one named value of a formula: an input, or what the chain
-// holds (Name then says where, e.g. "leaf #3, the vault's Commitment event").
+// holds (Name then says where, e.g. "leaf #3 of tree 0, the vault's
+// LeafInserted event").
 type FormulaValue struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`

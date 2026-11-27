@@ -407,7 +407,7 @@ func TestCheckVault_RejectsOversizedTreeNumber(t *testing.T) {
 	}
 }
 
-func TestCheckVaultRejectsTooManyCommitmentLogs(t *testing.T) {
+func TestCheckVaultRejectsTooManyLeafLogs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req jsonRPCRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -427,7 +427,7 @@ func TestCheckVaultRejectsTooManyCommitmentLogs(t *testing.T) {
 
 	status := checkVault(srv.Client(), srv.URL, "Erc20CoinVault", "0x1111111111111111111111111111111111111111", 8,
 		"0xdeadbeef", "0xaaaaaaaa", "0xbbbbbbbb")
-	if status.Error != "eth_getLogs: 1025 commitment logs exceed replay limit of 1024" || status.LocalRoot != "" {
+	if status.Error != "eth_getLogs: 1025 LeafInserted logs exceed replay limit of 1024" || status.LocalRoot != "" {
 		t.Fatalf("expected replay limit error without a local root, got error %q and root %q", status.Error, status.LocalRoot)
 	}
 }

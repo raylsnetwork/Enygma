@@ -34,6 +34,7 @@ import (
 
 	"enygma_retail_payments/layout"
 	"enygma_retail_payments/shield_demo/engine"
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -825,14 +826,14 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		}
 		// The crowd: the leaves tree T held when the root was taken, before
 		// payment 1's settlement inserted its notes, counted from the
-		// vault's Commitment events.
+		// vault's LeafInserted events.
 		settled, err := client.TransactionReceipt(context.Background(), e.FanOut()[0].TxHash)
 		if err != nil {
 			t.Fatalf("payment 1's receipt: %v", err)
 		}
 		sizes := treeSizes(t, client, common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), settled.BlockNumber.Uint64())
 		if tree >= len(sizes) || f.Leaves != sizes[tree] {
-			t.Errorf("the formula's crowd is %d leaves, the vault's Commitment events put %v leaves in its trees, want tree %d's", f.Leaves, sizes, tree)
+			t.Errorf("the formula's crowd is %d leaves, the vault's LeafInserted events put %v leaves in its trees, want tree %d's", f.Leaves, sizes, tree)
 		}
 		if f.Leaves <= index {
 			t.Errorf("%d leaves in tree %d, but the spent note is leaf #%d", f.Leaves, tree, index)
@@ -2030,36 +2031,29 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 }
 
 // treeSizes counts the leaves in each of the vault at vaultAddr's trees,
-// from its Commitment events in blocks before block before. As Merkle.sol
-// does, it inserts a transaction's commitments as one batch and starts a
-// new tree when the batch would fill the current one (count + batch ≥ 2⁸).
-// It repeats the engine's rule on purpose: the test's own count, from the
-// chain's events, is what the engine's crowd is checked against.
+// from the tree number each of its LeafInserted events in blocks before
+// block before names: the chain's own record of where each leaf went, which
+// the engine's crowd is checked against.
 func treeSizes(t *testing.T, client *ethclient.Client, vaultAddr common.Address, before uint64) []int {
 	t.Helper()
 	logs, err := client.FilterLogs(context.Background(), ethereum.FilterQuery{
 		Addresses: []common.Address{vaultAddr},
-		Topics:    [][]common.Hash{{commitmentEventSig}},
+		Topics:    [][]common.Hash{{vaulttree.LeafInsertedTopic}},
 		ToBlock:   new(big.Int).SetUint64(before - 1),
 	})
 	if err != nil {
-		t.Fatalf("vault Commitment events: %v", err)
-	}
-	var batches []int
-	var last common.Hash
-	for i, l := range logs {
-		if i == 0 || l.TxHash != last {
-			batches = append(batches, 0)
-		}
-		batches[len(batches)-1]++
-		last = l.TxHash
+		t.Fatalf("vault LeafInserted events: %v", err)
 	}
 	sizes := []int{0}
-	for _, n := range batches {
-		if sizes[len(sizes)-1]+n >= 1<<8 {
+	for _, l := range logs {
+		p, err := vaulttree.Parse(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for len(sizes) <= p.Tree {
 			sizes = append(sizes, 0)
 		}
-		sizes[len(sizes)-1] += n
+		sizes[p.Tree]++
 	}
 	return sizes
 }

@@ -364,44 +364,6 @@ func (c *chain) logsSince(ctx context.Context, from uint64, q ethereum.FilterQue
 	return c.logsBetween(ctx, from, tip, q)
 }
 
-// vaultLog is the Commitment events a vault logged before block next,
-// oldest first.
-type vaultLog struct {
-	next uint64
-	logs []ethtypes.Log
-}
-
-// vaultCommitments is every Commitment event the vault at vaultAddr has
-// logged since the deployment, oldest first. It reads each block once:
-// a later call asks only for the blocks mined since. On an RPC error it
-// keeps none of the new blocks' events, so the next call asks for them
-// again.
-func (c *chain) vaultCommitments(ctx context.Context, vaultAddr common.Address) ([]ethtypes.Log, error) {
-	v, ok := c.commitments[vaultAddr]
-	if !ok {
-		v = &vaultLog{next: c.deployBlock}
-	}
-	tip, err := c.client.BlockNumber(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("vault Commitment events: %w", err)
-	}
-	if tip >= v.next {
-		logs, err := c.logsBetween(ctx, v.next, tip, ethereum.FilterQuery{
-			Addresses: []common.Address{vaultAddr},
-			Topics:    [][]common.Hash{{commitmentTopic}},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("vault Commitment events: %w", err)
-		}
-		v.logs, v.next = append(v.logs, logs...), tip+1
-	}
-	if c.commitments == nil {
-		c.commitments = map[common.Address]*vaultLog{}
-	}
-	c.commitments[vaultAddr] = v
-	return v.logs, nil
-}
-
 // discoverByTag has a scan for tags and describes what the scan checked;
 // want is how many new notes the scan must find.
 func (e *Engine) discoverByTag(ctx context.Context, s *step, a *Actor, want int) (string, error) {

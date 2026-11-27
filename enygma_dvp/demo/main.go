@@ -44,8 +44,8 @@ import (
 
 	"github.com/raylsnetwork/enygma_dvp/src/core"
 	"github.com/raylsnetwork/enygma_dvp/src/demohttp"
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -489,24 +489,11 @@ func proofStringsToOnchain(proof []string) (onchainSnarkProof, error) {
 	}, nil
 }
 
-// loadVaultMerkleTree replays historical Commitment events to rebuild a vault's tree.
+// loadVaultMerkleTree rebuilds a vault's Merkle trees from its LeafInserted
+// events, each leaf where the vault put it, checked against the vault's
+// current tree and root.
 func loadVaultMerkleTree(ctx context.Context, client *ethclient.Client, vaultAddr common.Address) (*core.MerkleTree, error) {
-	commitmentSig := crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
-	query := ethereum.FilterQuery{
-		Addresses: []common.Address{vaultAddr},
-		Topics:    [][]common.Hash{{commitmentSig}},
-	}
-	logs, err := client.FilterLogs(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("FilterLogs (vault Commitment events): %w", err)
-	}
-	mt := core.NewMerkleTree(merkleDepth)
-	for _, l := range logs {
-		if len(l.Topics) >= 3 {
-			mt.InsertLeaf(l.Topics[2].Big())
-		}
-	}
-	return mt, nil
+	return vaulttree.Load(ctx, client, vaultAddr, merkleDepth, nil)
 }
 
 // ── Step 1: Prerequisites ───────────────────────────────────────────────────
