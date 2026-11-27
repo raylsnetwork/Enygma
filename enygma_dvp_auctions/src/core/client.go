@@ -48,12 +48,12 @@ type AuctionClient struct {
 }
 
 // NewAuctionClient creates an AuctionClient targeting the auction gnark
-// server. Defaults to http://localhost:8083 if baseURL is empty — the port
+// server. Defaults to http://127.0.0.1:8083 if baseURL is empty — the port
 // the auction server listens on (distinct from the DvP server's :8081 and
 // the retail payments server's :8082).
 func NewAuctionClient(baseURL string) *AuctionClient {
 	if baseURL == "" {
-		baseURL = "http://localhost:8083"
+		baseURL = "http://127.0.0.1:8083"
 	}
 	return &AuctionClient{GnarkClient: dvpcore.NewGnarkClient(baseURL)}
 }

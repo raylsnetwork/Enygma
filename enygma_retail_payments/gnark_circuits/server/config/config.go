@@ -9,7 +9,9 @@ import (
 type Config struct {
 	// BindHost is the interface the server listens on: loopback unless
 	// GNARK_BIND_HOST says otherwise. Proof requests carry the witness
-	// (secret keys and blinding factors) in cleartext.
+	// (secret keys and blinding factors) in cleartext. The clients' default
+	// URL dials 127.0.0.1, so a server bound to ::1 needs an explicit
+	// http://[::1]:8082 client URL.
 	BindHost string
 	// AuthToken, when set (GNARK_AUTH_TOKEN), is the bearer token every
 	// request must carry in its Authorization header. Empty means no check.

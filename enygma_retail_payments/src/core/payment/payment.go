@@ -60,10 +60,10 @@ var (
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.
-// Defaults to http://localhost:8082 if baseURL is empty.
+// Defaults to http://127.0.0.1:8082 if baseURL is empty.
 func NewPaymentClient(baseURL string) *dvpcore.GnarkClient {
 	if baseURL == "" {
-		baseURL = "http://localhost:8082"
+		baseURL = "http://127.0.0.1:8082"
 	}
 	return dvpcore.NewGnarkClient(baseURL)
 }

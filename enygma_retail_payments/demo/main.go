@@ -591,7 +591,7 @@ func runFlow(b *Broker, withTag bool) {
 	pause(1400 * time.Millisecond)
 
 	chainOK := tcpAvailable("127.0.0.1:8545")
-	gnarkOK := tcpAvailable("localhost:8082")
+	gnarkOK := tcpAvailable("127.0.0.1:8082")
 	relayerOK := tcpAvailable("localhost:8090")
 
 	var missing []string

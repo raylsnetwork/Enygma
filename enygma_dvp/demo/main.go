@@ -59,7 +59,7 @@ var indexHTML string
 
 const (
 	listenAddr = ":9092"
-	gnarkURL   = "http://localhost:8081"
+	gnarkURL   = "http://127.0.0.1:8081"
 
 	// Hardhat account[0] — same address settles both legs on-chain; Alice and
 	// Bob are distinguished by their off-chain spend/view keypairs, not by
@@ -519,7 +519,7 @@ func stepPrereqs(fs *FlowState) {
 	pause(1200 * time.Millisecond)
 
 	chainOK := tcpAvailable("127.0.0.1:8545")
-	gnarkOK := tcpAvailable("localhost:8081")
+	gnarkOK := tcpAvailable("127.0.0.1:8081")
 	var missing []string
 	if !chainOK {
 		missing = append(missing, "Hardhat (8545)")
