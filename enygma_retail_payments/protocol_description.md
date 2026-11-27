@@ -18,6 +18,8 @@ flowchart LR
 
 The goal of the adversary $$\mathcal{A}$$ is twofold: break the privacy of the system and disrupt the activity of the system. We assume that the adversary ...
 
+At the least, the adversary sees everything the chain publishes: each transaction's sender, calldata, events and block, and the public inputs of every proof. These name, for each note a proof spends, the Merkle tree the note is in and the root the proof is made against. The adversary can also add notes of its own to a vault's trees, by paying for deposits. These two abilities alone bound what a spend hides (see [Anonymity set](#anonymity-set)).
+
 ---
 
 ## Key Generation
@@ -325,6 +327,17 @@ TBD
 - Privacy
 - Auditability
 
+### Anonymity set
+
+A vault keeps its notes in Merkle trees of depth 16: `MerkleTreeDepth` in `gnark_circuits/templates/deployed.go`, the depth every Payment-family circuit is compiled at. The deployment's `tree-depth` must be the same, and `scripts/cmd/init` refuses any other. A tree has $2^{16} = 65{,}536$ leaf slots. The vault starts a new tree, numbered one up, when a transaction's notes would reach the last slot. So a tree holds at most $2^{16} - 1 = 65{,}535$ notes, and each new tree starts empty.
+
+A spend does not hide among all the notes of its vault. Every Payment-family proof publishes, for each note it spends, the number of the note's tree and the Merkle root it proves against (`TreeNumbers` and `MerkleRoots`), and the vault checks that root against that tree's history. The proof hides which leaf is spent, but only among the leaves that tree held when that root was taken. Hence:
+
+- A spend's anonymity set is at most 65,535 notes, all from the tree it names.
+- The set is smaller for a note spent from a tree with few leaves: a tree that has just started, or a quiet vault. The wallet proves against the latest root of the note's tree, so a later spend hides among more notes.
+- Anyone can add leaves by paying for deposits. An adversary that pays the gas can fill the rest of a tree with notes of its own, so that few of a spend's candidates are other users' notes. The depth sets the price of doing so: a tree takes up to 65,535 inserts to fill.
+- A payment with a USDr fee also spends a note from the USDr vault, and publishes that note's tree and root too. The sender of such a payment hides among no more notes than that USDr tree held.
+
 ---
 
 ## Zero-Knowledge Proof Remarks
@@ -345,7 +358,7 @@ TBD: Do we want to enforce that the change commitment has the sender as the owne
 ## Notes
 
 - View keys are **ML-KEM keys (not Diffie–Hellman)**
-- Single-input spend (no anonymity set)
+- Single-input spend (no decoy inputs: a spend hides among the leaves of its tree, see [Anonymity set](#anonymity-set))
 - Recipient detection is implicit via decapsulation + AEAD check
 
 ### Confidential Compliance

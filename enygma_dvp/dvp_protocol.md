@@ -80,7 +80,7 @@ $$
 nf = \mathrm{H}(sk^{\text{spend}},\ globalIdx), \qquad globalIdx = treeNum \cdot 2^{d} + leafIndex
 $$
 
-where $leafIndex$ is the position of the commitment within sub-tree $treeNum$ and $d$ is the tree depth (8). Every circuit that spends from a vault, the Payment family as well as the DvP circuits, uses this formula (the retired Erc721 ownership circuit aside, see below) (`NullifierTree` in `gnark_circuits/primitives/Nullifier.go`). $treeNum$ is a public input: folding it in gives the same slot in two sub-trees two different nullifiers, and the contract also uses it to route the nullifier check to the right sub-tree's map.
+where $leafIndex$ is the position of the commitment within sub-tree $treeNum$ and $d$ is the tree depth: 16, `MerkleTreeDepth` in `gnark_circuits/templates/deployed.go`, which every note-spending circuit is compiled at and both deployments' init require as their configured `tree-depth`. A sub-tree holds at most $2^{d} - 1$ notes: the vault starts the next one when a transaction's notes would reach its last slot. Every circuit that spends from a vault, the Payment family as well as the DvP circuits, uses this formula (the retired Erc721 ownership circuit aside, see below) (`NullifierTree` in `gnark_circuits/primitives/Nullifier.go`). $treeNum$ is a public input: folding it in gives the same slot in two sub-trees two different nullifiers, and the contract also uses it to route the nullifier check to the right sub-tree's map.
 
 The formula has no vault or asset domain, so one key's notes at the same $globalIdx$ in two vaults have the same nullifier (see [What the chain sees](#what-the-chain-sees-deposits-spends-and-exits)).
 
@@ -458,7 +458,7 @@ and `Erc721CoinVault.deposit(params)` takes $[token_{id},\ pk^{\text{spend}},\ s
 
 As a result a deposit publishes the whole note opening in its calldata: the owner's spend public key, the salt, the amount and the token id, next to the depositor's address and the token transfer. The `UserRegistry` maps each registered account to its spend public key, so the deposited note's owner is public too. **Deposits do not hide the owner.** `depositV2` also emits `EncryptedNote(vaultId, C, ciphertextI, ciphertextII)` so that the owner's wallet can find the note by scanning; the ciphertext adds nothing the calldata does not already show.
 
-What stays private is the note's later life: the nullifier that spends it needs $sk^{\text{spend}}$, so the chain cannot tell when, or into what, the deposited note is spent. A [private mint](#private-issuance) creates a note without revealing its opening.
+What stays private is which spend is the note's: the nullifier that spends it needs $sk^{\text{spend}}$, so only its owner can link the two. That hides the note only among the notes of its own tree. Every spend publishes the number of its note's tree and the Merkle root it proves against, so the deposited note can be spent only by a spend that names its tree, and such a spend hides among the leaves that tree held at that root: at most $2^{d} - 1$, and few in a tree that has just started or in a quiet vault. Anyone who pays for deposits can add leaves of their own to a tree, which leaves fewer of a spend's candidates other users' notes; the depth sets what filling a tree costs. A [private mint](#private-issuance) creates a note without revealing its opening.
 
 ### Nullifiers across vaults
 

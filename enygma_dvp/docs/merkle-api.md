@@ -50,7 +50,7 @@ Returns the Merkle tree status for **all vaults**, plus a cross-check that verif
       "leafCount": 9,
       "treeNumber": 0,
       "tree": {
-        "depth": 8,
+        "depth": 16,
         "root": "19309031...",
         "levels": [
           ["6081264...", "7393454...", "..."],
@@ -91,10 +91,10 @@ Returns the Merkle tree status for **all vaults**, plus a cross-check that verif
 | `localRoot`   | string       | Root computed locally by replaying on-chain `Commitment` events                                |
 | `match`       | bool         | `true` if `localRoot == onChainRoot`                                                           |
 | `leafCount`   | int          | Total number of `Commitment` events found on-chain                                             |
-| `treeNumber`  | uint64       | Current tree number (increments when the tree fills up at 256 leaves)                          |
-| `tree.depth`  | int          | Tree depth (always 8; max 256 leaves per tree)                                                 |
+| `treeNumber`  | uint64       | Current tree number (increments when a batch would reach the last slot: at most 65,535 leaves) |
+| `tree.depth`  | int          | Tree depth (`MerkleTreeDepth` in `gnark_circuits/templates/deployed.go`, 16)                   |
 | `tree.root`   | string       | Same as `localRoot`                                                                            |
-| `tree.levels` | `[][]string` | All tree levels in decimal. `levels[0]` = leaves, `levels[8]` = `[root]`                       |
+| `tree.levels` | `[][]string` | All tree levels in decimal. `levels[0]` = leaves, `levels[depth]` = `[root]`                   |
 | `tree.zeros`  | `[]string`   | Zero values per level. `zeros[i]` is the implicit sibling when a node at level `i` has no pair |
 | `error`       | string       | Set if this vault could not be checked                                                         |
 
@@ -147,7 +147,7 @@ Same shape as a single entry in `vaults[]` from `/util/merkleStatus`:
   "leafCount": 9,
   "treeNumber": 0,
   "tree": {
-    "depth": 8,
+    "depth": 16,
     "root": "19309031...",
     "levels": [
       ["6081264...", "7393454...", "..."],
@@ -169,7 +169,7 @@ For each vault the service:
 
 1. Calls `currentRoot()` on the vault contract via `eth_call` to get the on-chain root.
 2. Fetches all `Commitment(uint256 indexed vaultId, uint256 indexed commitment)` events emitted by the vault contract via `eth_getLogs`.
-3. Replays the commitments in order into a local Poseidon Merkle tree (depth 8, zero value = `keccak256("ZkDvp") % SNARK_SCALAR_FIELD`), mirroring the contract's tree algorithm.
+3. Replays the commitments in order into a local Poseidon Merkle tree (depth `MerkleTreeDepth`, 16, zero value = `keccak256("ZkDvp") % SNARK_SCALAR_FIELD`), mirroring the contract's tree algorithm.
 4. Compares the computed local root against the on-chain root.
 
 `match: true` means the local reconstruction agrees with the contract state.

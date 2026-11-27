@@ -989,7 +989,7 @@
         <div class="action-title">Vault actions</div>
         <div class="action-body">
           • Pulls ERC20 from Alice via transferFrom<br/>
-          • Inserts C_A into Merkle tree (depth-8)<br/>
+          • Inserts C_A into Merkle tree (depth-16)<br/>
           • Emits Deposit event with capsule + encTxData
         </div>
       </div>
@@ -1685,7 +1685,7 @@
       <h4>Commitment Scheme</h4>
       <p>Poseidon hash (ZK-friendly)<br/>
       <code>C = Poseidon(pk_spend || salt || amount || tokenId)</code><br/>
-      Stored in a depth-8 Poseidon Merkle tree on-chain</p>
+      Stored in a depth-16 Poseidon Merkle tree on-chain</p>
     </div>
 
     <div class="primitive-card" style="border-top:3px solid var(--gnark)">

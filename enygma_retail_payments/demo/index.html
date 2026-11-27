@@ -683,7 +683,7 @@ const VIZ = {
         <div class="svz-tree-row"><div class="svz-node path" id="viz-n1">H0</div><div style="width:6px"></div><div class="svz-node leaf">H1</div></div>
         <div class="svz-tree-connectors" style="gap:6px">╱ ╲  ╱ ╲</div>
         <div class="svz-tree-row"><div class="svz-node target" id="viz-leaf">C₀</div><div style="width:2px"></div><div class="svz-node path" id="viz-sib">C₁</div><div style="width:2px"></div><div class="svz-node leaf">C₂</div><div style="width:2px"></div><div class="svz-node leaf">C₃</div></div>
-        <div style="font-family:var(--mono);font-size:7px;color:var(--muted);margin-top:3px;text-align:center">depth = 8 (4 leaves shown)</div>
+        <div style="font-family:var(--mono);font-size:7px;color:var(--muted);margin-top:3px;text-align:center">depth = 16 (4 leaves shown)</div>
       </div>
       <div style="flex:1">
         <div class="svz-keyrows">
@@ -789,7 +789,7 @@ const VIZ_DESC = {
   register: 'Alice and Bob publish their public keys to the <strong>UserRegistry</strong> on-chain contract. This is the only transaction where their Ethereum addresses appear as <code>msg.sender</code>. All subsequent transactions go through the relayer.',
   channel:  'Alice performs <strong>ML-KEM-768 encapsulation</strong> against Bob\'s public encapsulation key, deriving a 32-byte shared secret and a 1088-byte ciphertext. The relayer stores it in <strong>TagChannelRegistry</strong>. Only Bob can recover the shared secret via decapsulation.',
   deposit:  'Alice deposits 40 ERC-20 tokens into the private vault. A <strong>Poseidon commitment</strong> <code>H(pk_spend, saltB, amount, tokenId)</code> is recorded on-chain instead of the plaintext values — the amount and owner remain hidden.',
-  merkle:   'Alice scans all on-chain <code>Commitment</code> events, rebuilds the full <strong>Merkle tree</strong> (depth=8) locally, and generates a sibling-path inclusion proof for her deposit note. The proof shows membership without revealing which leaf.',
+  merkle:   'Alice scans all on-chain <code>Commitment</code> events, rebuilds the full <strong>Merkle tree</strong> (depth=16) locally, and generates a sibling-path inclusion proof for her deposit note. The proof shows membership without revealing which leaf.',
   zkproof:  'The <strong>gnark server</strong> generates a Groth16 proof that: (1) Alice knows a note in the Merkle tree, (2) outputs sum to the input, (3) the nullifier is correctly derived. Private inputs are never revealed — only the proof and public signals leave the prover.',
   relay:    'Alice sends the unsigned Groth16 proof to the relayer via <code>POST /relay/payment</code> (with a tag: <code>POST /relay/channel_payment</code>, with the block <code>b</code>, Bob\'s tag <code>t</code> for it and his sealed note <code>ctxt</code>, all three bound by the proof). The relayer submits <code>EnygmaDvp.payment()</code> (or <code>channelPayment()</code>) on-chain as <code>msg.sender</code>. The on-chain verifier runs the Groth16 pairing check. Alice\'s address is never exposed.',
   scan_tag: 'Bob computes his tag for the payment\'s block from the channel\'s shared secret, finds it among <strong>EnygmaDvp</strong>\'s <code>ChannelPayment</code> events, opens the sealed note under that block\'s key, and recomputes the Poseidon commitment to verify it matches the on-chain output.',

@@ -46,7 +46,7 @@ All flows share the same cryptographic building blocks:
 | **ML-KEM-768** | Non-interactive note delivery (encapsulate / decapsulate) | `src/core/utils.go` |
 | **ChaCha20-Poly1305** | Encrypt tokenId and amount inside encrypted note payload | `src/core/utils.go` |
 | **Groth16** | ZK proof generation and on-chain verification | `gnark_circuits/server/circuits/` |
-| **Incremental Merkle tree** | On-chain membership proofs (depth 8) | `contracts/core/` |
+| **Incremental Merkle tree** | On-chain membership proofs (depth 16) | `contracts/core/` |
 
 ### Commitment formula
 
