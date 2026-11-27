@@ -86,6 +86,7 @@ func joinAndReport(c *participant.Client, w io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c.HTTP, c.Out = &http.Client{}, w
+	fmt.Fprint(w, selfDescription())
 	fmt.Fprintf(w, "Joining the Enygma setup ceremony at %s.\nLeave this running until it says you are done; it waits for your turn by itself.\n", c.URL)
 	r, err := c.Run(ctx)
 	if err != nil {
@@ -156,6 +157,25 @@ func versionCmd(*flag.FlagSet) func([]string, io.Writer) error {
 	}
 }
 
+// selfDescription says which program is about to draw the participant's
+// randomness: the commit it was built from, and its own sha256, to compare
+// with the ceremony's GitHub release (its tag, and SHA256SUMS). Built from
+// source with go run, the sha256 is of a local build; the commit is what to
+// compare.
+func selfDescription() string {
+	v := coordinator.Version()
+	if v == "" {
+		v = "unknown (built without version control information)"
+	}
+	s := "This program: commit " + v
+	if path, err := os.Executable(); err == nil {
+		if h, _, err := transcript.HashFile(path); err == nil {
+			s += fmt.Sprintf(", sha256 %x", h)
+		}
+	}
+	return s + ". Compare them with the ceremony's GitHub release.\n"
+}
+
 // coordinate runs a phase as a service until interrupted. On the first
 // interrupt it hands out no more turns and waits for the one under way; on
 // the second it stops at once.
@@ -169,14 +189,14 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	acmeDomain := fs.String("acme-domain", "", "serve HTTPS on :443 for this host name, with a certificate from Let's Encrypt (port 80 must reach this machine too)")
 	acmeCache := fs.String("acme-cache", "acme-cache", "-acme-domain: the directory keeping the certificate")
 	behindProxy := fs.Bool("behind-proxy", false, "take participants' addresses from X-Forwarded-For, as a reverse proxy sets it")
-	turn := fs.Duration("turn", 60*time.Minute, "a participant's time to download, contribute and upload: a browser in front takes about 5 minutes at 2^18, in the background several times that")
+	turn := fs.Duration("turn", 60*time.Minute, "a participant's time to download, contribute and upload: about 2 minutes at 2^18 on a laptop, room for a slow one")
 	turnPresence := fs.Duration("turn-presence", 2*time.Minute, "how long the turn holder's program may go silent before the turn passes on")
 	presence := fs.Duration("presence", 30*time.Second, "how recently a queued participant must have asked to be given the turn")
 	away := fs.Duration("away", 10*time.Minute, "how long a queued participant may go quiet and keep their place")
 	poll := fs.Duration("poll", 5*time.Second, "how often queued participants ask")
 	closeAt := fs.String("close-at", "", "when to stop handing out turns, RFC 3339 (2026-12-01T15:00:00Z); announce the beacon round for after it")
 	notice := fs.String("notice", "", "a message for participants, shown on the page and by their program")
-	downloads := fs.String("downloads", "", "make ceremony-dist's enygma_ceremony/dist: the program for each system, and for the browser, which the page contributes with")
+	releaseURL := fs.String("release-url", "", "the ceremony's GitHub release (https://github.com/<owner>/<repo>/releases/tag/<tag>), where participants get the program; the page links to it")
 	cert := fs.String("tls-cert", "", "a TLS certificate, to serve HTTPS on -listen (with -tls-key)")
 	key := fs.String("tls-key", "", "the certificate's key")
 	return func(args []string, w io.Writer) error {
@@ -196,7 +216,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			GitHubClientID: *githubClientID, GitHubMinAge: *githubMinAge,
 			MaxPerAddress: *maxPerAddress, BehindProxy: *behindProxy,
 			Turn: *turn, TurnPresence: *turnPresence, Presence: *presence, Away: *away, Poll: *poll,
-			CloseAt: closes, Notice: *notice, Downloads: *downloads, Log: logger,
+			CloseAt: closes, Notice: *notice, ReleaseURL: *releaseURL, Log: logger,
 		})
 		if err != nil {
 			return err

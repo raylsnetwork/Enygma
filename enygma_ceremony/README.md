@@ -5,61 +5,72 @@ secret randomness (the "toxic waste") behind the proving and verifying keys. `ma
 the other keygen targets run gnark's single-party `groth16.Setup`: whoever runs it could forge
 proofs. This tool runs the same setup as a chain of contributions, on gnark's `mpcsetup` (the
 two-phase MPC of [Bowe, Gabizon and Miers](https://eprint.iacr.org/2017/1050)). **The keys are
-sound as long as one contributor in each phase discarded their randomness**, however many others
-collude, the coordinator included.
+sound as long as one contributor in each phase ran a program the coordinator did not choose and
+discarded their randomness**, however many others collude, the coordinator included. So the
+coordinator serves no participant code: participants get the program from the ceremony's GitHub
+release, built in the open from a tagged commit, or build it from source.
 
 - **Phase 1** (the powers of τ) runs once and serves every circuit of every protocol, up to its
   domain size.
 - **Phase 2** runs once per protocol, for all of that protocol's circuits at once.
 
-The ceremony is always open: anyone with its address can contribute, with no installation and
-no invitation. A participant opens the ceremony's page and presses **Contribute from this
-browser**. The page waits for their turn, adds
-the machine's randomness to the latest state in the browser itself, uploads the result, and hands
-back a receipt. The coordinator checks every upload before anyone builds on it, and anyone can
-download the transcript and check every step. The same program, `ceremony`, also runs from a
-terminal for those who prefer it, and runs the coordinator and every check.
+The ceremony is always open: anyone with its address can contribute, with no invitation. A
+participant runs one program, `ceremony`, from a terminal: it waits for their turn, adds the
+machine's randomness to the latest state, uploads the result, and prints a receipt. The coordinator
+checks every upload before anyone builds on it, and anyone can download the transcript and check
+every step. The same program runs the coordinator and every check.
 
 ## Contributing
 
-Open the link you were sent and press **Contribute from this browser**.
+Open the ceremony's release on GitHub: the link is in the ceremony's announcement, and the
+coordinator's page names it too. Take the command from the release page, not from the
+coordinator's.
 
-1. **It joins.** Type a name to show in the transcript if you like, or leave it empty to stay
+1. **Run the command for your system** from the release notes, in a terminal (PowerShell on
+   Windows). It downloads the program from the release, checks its sha256 against the release, and
+   runs it. Downloaded this way, with `curl` or `iwr`, the program raises no operating-system
+   warning, signed or not. Or **build it from source** at the release's tag, the strongest option,
+   since you trust only the code you build:
+
+   ```bash
+   git clone --depth 1 --branch <tag> https://github.com/<owner>/<repo>.git
+   cd <repo>/enygma_ceremony
+   go run ./cmd/ceremony join -url <the coordinator's address>
+   ```
+
+   The program first prints the commit it was built from, and its own sha256: compare them with
+   the release.
+2. **It joins.** Type a name to show in the transcript if you like, or leave it empty to stay
    anonymous. If the ceremony uses GitHub sign-in, it shows a code to enter at
    github.com/login/device.
-2. **It waits for your turn.** You can use other tabs and apps meanwhile. If your laptop sleeps
-   or your network drops for a few minutes you keep your place. A chime sounds when your turn
-   comes.
-3. **On your turn, keep the tab in front** for a few minutes. Your browser downloads the latest
-   state, adds your randomness and uploads the result: about 5 minutes at Phase 1's full size, a
-   few seconds in Phase 2. In the background, the computer gives the tab less power and it takes
-   several times longer; it still finishes.
-4. **You get a receipt:** your contribution's sha256, to copy or save, and your row is marked in
-   the transcript on the page. Publish the receipt if you like; anyone can check it is there.
+3. **It waits for your turn.** Leave it running; you can use the computer meanwhile. If your laptop
+   sleeps or your network drops for a few minutes you keep your place.
+4. **On your turn** it downloads the latest state, adds your randomness and uploads the result:
+   a few minutes at Phase 1's full size, a few seconds in Phase 2.
+5. **You get a receipt:** your contribution's sha256. Publish it if you like; anyone can check it
+   is there.
 
-The randomness comes from your machine (`crypto.getRandomValues` in the browser, `crypto/rand` in
-the program). It is drawn inside gnark's `Contribute`, never written anywhere, and gone when the
-tab or the program closes.
-
-To run it as a program instead, open "Prefer to run a program?" on the page and paste the command
-for your system. To trust nothing but the source, run `go run ./cmd/ceremony join -url <address>`
-from this directory, at the commit the page names.
+The randomness comes from your machine (`crypto/rand`). It is drawn inside gnark's `Contribute`,
+never written anywhere by the program, and gone when the program closes.
 
 ## Running a ceremony
 
 ### Quick start
 
-On a server with a DNS name pointing at it (ports 80 and 443 open):
+1. Set the repository variable `CEREMONY_URL=https://ceremony.example.org`, and push a tag
+   `ceremony-v1`. The `ceremony-release` workflow builds the program and publishes it as that tag's
+   GitHub release (see "1. Release the participant program" below).
+2. On a server with a DNS name pointing at it (ports 80 and 443 open), with the program from that
+   release:
 
-```bash
-make ceremony-dist CEREMONY_URL=https://ceremony.example.org         # on your machine; copy dist/ over
-./dist/ceremony-linux-amd64 phase1-new -size 262144 -out p1/state-0
-./dist/ceremony-linux-amd64 coordinate -dir p1 -acme-domain ceremony.example.org -downloads dist \
-    -close-at 2026-12-08T15:00:00Z
-```
+   ```bash
+   ./ceremony-linux-amd64 phase1-new -size 262144 -out p1/state-0
+   ./ceremony-linux-amd64 coordinate -dir p1 -acme-domain ceremony.example.org \
+       -release-url https://github.com/<owner>/<repo>/releases/tag/ceremony-v1 \
+       -close-at 2026-12-08T15:00:00Z
+   ```
 
-Then send `https://ceremony.example.org` to anyone you like, or post it: that is all a
-participant needs.
+3. Announce the release's address and the coordinator's: that is all a participant needs.
 
 ### What the coordinator needs
 
@@ -71,21 +82,25 @@ participant needs.
 - **Slow steps:** auctions' Phase 2 start and seal take about 5 minutes and 550 MB each. They
   need not run on the server.
 
-### 1. Build the participant program
+### 1. Release the participant program
 
-```bash
-make ceremony-dist CEREMONY_URL=https://ceremony.example.org
-```
+Participants get the program from GitHub, never from the coordinator: the code that draws their
+randomness must not be the coordinator's choice.
 
-This writes `enygma_ceremony/dist/`:
-- `ceremony.wasm` and `wasm_exec.js`, the program built for the browser, which the page's
-  Contribute button runs;
-- `ceremony` for macOS, Linux and Windows on x86-64 and ARM64, which join that coordinator when
-  run with no arguments;
-- `SHA256SUMS`.
+1. In the repository's settings, turn on immutable releases (so a release's files cannot be
+   replaced), and set the variable `CEREMONY_URL` to the coordinator's https address.
+2. Push a tag `ceremony-v<n>` at the commit to release. The `ceremony-release` workflow
+   (`.github/workflows/ceremony-release.yml`) runs `make ceremony-dist CEREMONY_URL=…` and publishes:
+   - `ceremony-<os>-<arch>` for macOS, Linux and Windows on x86-64 and ARM64, which join that
+     coordinator when run with no arguments;
+   - `SHA256SUMS`, and `BUILD`, the exact build command;
+   - a provenance attestation for each binary (`gh attestation verify <file> --repo <owner>/<repo>`);
+   - release notes with a one-line command per system that downloads the program from the
+     release, checks its sha256 and runs it.
 
-The coordinator serves them all from `-downloads`. The build is reproducible: anyone building the
-same commit with the same URL gets the same files.
+The build is reproducible: `make ceremony-dist` uses the exact toolchain `go.mod` pins, with CGO
+off and `-trimpath`, so anyone building the same commit from a clean clone, with the same URL, gets
+the same files. Locally it writes them to `enygma_ceremony/dist/`, replacing what was there.
 
 ### 2. How participants join (`-auth`)
 
@@ -94,7 +109,7 @@ in:
 
 | `-auth` | Joining | Identity in the transcript |
 |---|---|---|
-| `open` (default) | Open the page and press Contribute. | A name they type (any language, spaces and punctuation; up to 64 characters), or `anonymous`. |
+| `open` (default) | Run the program from the release. | A name they type (any language, spaces and punctuation; up to 64 characters), or `anonymous`. |
 | `github` | The same, after signing in with a GitHub account older than `-github-min-age` (30 days). Each account contributes once. | Their GitHub login. |
 
 - **Limits for open and GitHub phases.** At most `-max-per-address` participants (3) from one
@@ -103,8 +118,7 @@ in:
 - **The GitHub sign-in needs an OAuth app.** Create one under Settings → Developer settings →
   OAuth Apps → New OAuth App (any homepage and callback URL), tick **Enable Device Flow**, and
   pass its client ID as `-github-client-id`. There is no secret to keep: the device flow needs
-  none. Browsers cannot call GitHub's sign-in themselves, so the coordinator relays those two
-  requests for its own app.
+  none. The coordinator relays the device flow's two requests for its own app.
 - **Soundness doesn't depend on the mode.** Contributions from many identities controlled by one
   person cannot weaken the keys while one honest participant contributes. What the limits and
   GitHub sign-in guard is the queue, so that honest participants get their turn.
@@ -129,14 +143,15 @@ in:
 
    ```bash
    ceremony coordinate -dir p1 -auth open -acme-domain ceremony.example.org \
-       -downloads enygma_ceremony/dist -close-at 2026-12-08T15:00:00Z \
+       -release-url https://github.com/<owner>/<repo>/releases/tag/ceremony-v1 \
+       -close-at 2026-12-08T15:00:00Z \
        -notice "Phase 1 closes 8 Dec 15:00 UTC; the beacon is drand quicknet round <R>."
    ```
 
-   - **Turns:** a turn lasts at most `-turn` (60 minutes), room for a slow laptop or a tab left
-     in the background. The participant's program sends a heartbeat every 10 seconds during its
-     turn. One silent for `-turn-presence` (2 minutes), such as a laptop closed mid-turn, loses
-     the turn to the next in line.
+   - **Turns:** a turn lasts at most `-turn` (60 minutes), room for a slow laptop. The
+     participant's program sends a heartbeat every 10 seconds during its turn. One silent for
+     `-turn-presence` (2 minutes), such as a laptop closed mid-turn, loses the turn to the next in
+     line.
 
    - **TLS:** `-acme-domain` gets and renews a certificate from Let's Encrypt (on ports 443 and
      80). Behind a TLS proxy of your own, use `-listen :8080 -behind-proxy` instead.
@@ -155,7 +170,7 @@ in:
 
    [Service]
    WorkingDirectory=/srv/ceremony
-   ExecStart=/srv/ceremony/ceremony coordinate -dir p1 -acme-domain ceremony.example.org -downloads dist -close-at 2026-12-08T15:00:00Z
+   ExecStart=/srv/ceremony/ceremony coordinate -dir p1 -acme-domain ceremony.example.org -release-url https://github.com/<owner>/<repo>/releases/tag/ceremony-v1 -close-at 2026-12-08T15:00:00Z
    AmbientCapabilities=CAP_NET_BIND_SERVICE
    Restart=on-failure
    # A stop closes the phase and lets the turn under way finish, for up to -turn.
@@ -218,9 +233,16 @@ Anyone can check a ceremony without trusting the coordinator:
 
 ## What the coordinator can and cannot do
 
-- **It cannot learn or bias the keys.** Contributions carry proofs that they build on the state
-  before them; the coordinator checks them, and so does every seal. The beacon is fixed by drand
-  after the close.
+- **It cannot learn the keys' secret,** as long as one contributor in each phase ran a program it
+  did not choose. It serves no participant code: participants run the program from the ceremony's
+  GitHub release (built by the `ceremony-release` workflow from a tag, with `SHA256SUMS` and
+  provenance attestations) or build it from source. A contributor who ran a program the
+  coordinator served would be trusting the coordinator with their randomness; that is why there is
+  no such path. Line up at least one contributor per phase whom outsiders trust, and who builds
+  from source.
+- **It cannot bias the keys,** given the procedure: contributions carry proofs that they build on
+  the state before them; the coordinator checks them, and so does every seal. The beacon is fixed by
+  drand after the close.
 - **It can leave someone out,** by refusing or reordering turns. That is why participants publish
   their hashes, and why one honest contributor per phase suffices.
 - **Uploads come from anyone admitted,** so the coordinator bounds what one costs before checking
@@ -233,11 +255,8 @@ Anyone can check a ceremony without trusting the coordinator:
   - decoded only with gnark's own domain size equal to the state's (`domainOf`). gnark sizes a
     Phase 1 or an SRS from a domain size inside it, and a crafted 0 made its decoder panic.
 - **The page shows participants' names as text,** and is served with a Content Security Policy
-  that runs nothing but its own script and its two workers. The workers may load the program
-  from the coordinator and talk to nothing else.
-- **The browser client is as trustworthy as the downloaded program,** because the coordinator
-  serves both. A participant who trusts neither runs `go run ./cmd/ceremony join` from source,
-  at the commit the page names.
+  that runs nothing but its own script. It follows the phase and links to the release; it runs no
+  participant code.
 
 ## Testing
 
@@ -277,16 +296,8 @@ On an Apple-silicon laptop:
   - the sealed keys pass every retail prove-handler test.
 - **Phase 1 at 2^18:** states are 50 MB. A contribution takes 75 to 85 s on one core, at 280 MB.
   A check takes 46 s, at 580 MB.
-- **In the browser** (the WebAssembly build, on V8, the engine of Chrome, Edge and Brave):
-  - The contribution's arithmetic for Phase 1 at 2^18 takes 5.3 minutes on V8 at full speed,
-    at 380 MB.
-  - A full rehearsal in Brave, with the tab hidden behind another window, ran on macOS's slow
-    cores (the renderer at background priority): the whole Phase 1 turn at 2^18 took 25
-    minutes, downloads, upload and check included, held by heartbeats. Retail's Phase 2 turn
-    took 79 s. A visible tab runs at full speed: a whole turn at 8,192 took 9 s, as on V8 alone.
-  - The browser download is 3.5 MB gzipped.
-- **A full rehearsal at the real size,** one native participant and one in the browser per
-  phase, both phases sealed with real drand rounds:
+- **A full rehearsal at the real size,** one native participant and one in the browser (a path
+  since removed) per phase, both phases sealed with real drand rounds:
   - Phase 1 at 2^18 sealed in 108 s; retail's Phase 2 started in 80 s and sealed in 62 s.
   - Retail's prove-handler tests, run with the sealed keys, prove with every one of its six
     circuits.
@@ -297,23 +308,17 @@ On an Apple-silicon laptop:
     least as long.
   - A contribution takes about 3 s and a check 1 s; states are 14 MB.
 - **Rehearsals on localhost:**
-  - A participant opened the page in Brave and pressed the button. They waited while another
-    participant's program held the turn, then contributed from the browser, got a receipt, and
-    saw their row marked in the transcript.
-  - Open admission, with four copies of the program downloaded from the coordinator's page and
-    run with no arguments, from one address. The fourth waited for a place.
+  - Open admission, with four copies of the program run with no arguments, from one address.
+    The fourth waited for a place.
   - Then `verify`, and a seal with a real drand round.
   - Both phases on retail's circuits, with keys at retail's paths.
 
 ## Not built yet
 
-- **Other browsers tested.** The browser path has run in a Chromium browser (Brave) and on V8 under
-  Node. Safari and Firefox support everything it uses (WebAssembly, workers, the Wake Lock API),
-  but they have not been tried.
-- **Signed binaries,** for those who run the program rather than the page. macOS notarization
-  needs an Apple Developer ID, and Windows signing needs a code-signing certificate: the
-  organization's to obtain. The browser path needs neither, and the page's pasted commands avoid
-  the systems' warnings.
+- **Signed binaries.** The release's commands do not need them: `curl` and `iwr` do not mark what
+  they download as coming from the internet, so neither macOS nor Windows warns. A binary
+  downloaded with a browser and opened from the desktop does warn; signing it would take an Apple
+  Developer ID and a Windows code-signing certificate.
 - **Reusing a public Powers of Tau** (such as the Perpetual Powers of Tau) for Phase 1, instead of
   running our own.
 
@@ -322,12 +327,11 @@ On an Apple-silicon laptop:
 | Path | What |
 |---|---|
 | `ceremony/` | The library: state files, Phase 1, Phase 2, contribute, check, seal, key manifests. |
-| `coordinator/` | The coordinator service: registration (open, or with GitHub sign-in), the queue, turns and heartbeats, checking uploads, the page, its workers and downloads. |
-| `participant/` | A participant's side, in the program and the browser alike: joining, waiting, contributing in memory, uploading, heartbeats, riding out restarts. |
+| `coordinator/` | The coordinator service: registration (open, or with GitHub sign-in), the queue, turns and heartbeats, checking uploads, the phase's page. It serves no participant code. |
+| `participant/` | A participant's side: joining, waiting, contributing in memory, uploading, heartbeats, riding out restarts. |
 | `transcript/` | A phase's transcript: its directory layout, fetching it, checking it end to end. |
 | `drand/` | Fetching a drand quicknet round and checking its signature. |
 | `cmd/ceremony/` | The program. |
-| `cmd/ceremony-web/` | The same participant, built for the browser (`ceremony.wasm`), which the page runs in a Web Worker. |
 | `internal/testcircuits/` | Two small circuits (one with an in-circuit commitment) the tests run whole ceremonies for. |
 | `internal/fuzzedit/` | Edit scripts, for fuzz targets that edit a contribution made in the fuzzing process. |
 

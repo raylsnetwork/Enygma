@@ -13,8 +13,10 @@
 //
 // The phase's directory is its transcript (package transcript), and a
 // restarted coordinator carries on from it. The coordinator also serves a
-// page anyone can follow the phase on and download the participant's
-// program from.
+// page anyone can follow the phase on. It serves no participant code:
+// participants run the program from the ceremony's GitHub release
+// (Config.ReleaseURL), or built from source, so the coordinator never
+// chooses the code that draws their randomness.
 package coordinator
 
 import (
@@ -30,9 +32,9 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -70,8 +72,8 @@ type Config struct {
 	GitHubMinAge time.Duration
 	// GitHubAPI is GitHub's API, for AuthGitHub (https://api.github.com).
 	GitHubAPI string
-	// GitHub is GitHub's site, whose device flow the coordinator relays for
-	// browsers, for AuthGitHub (https://github.com).
+	// GitHub is GitHub's site, whose device flow the coordinator relays,
+	// for AuthGitHub (https://github.com).
 	GitHub string
 	// MaxPerAddress bounds how many participants from one network address
 	// may be queued or holding the turn at once; 0 is no bound.
@@ -81,8 +83,7 @@ type Config struct {
 	BehindProxy bool
 	// Turn is how long a participant has, from being handed the turn, to
 	// finish uploading their contribution (60 minutes): room for a slow
-	// laptop, or a browser left in the background, since a turn whose holder
-	// has gone passes on at TurnPresence.
+	// laptop, since a turn whose holder has gone passes on at TurnPresence.
 	Turn time.Duration
 	// TurnPresence is how long the turn holder's program may go without
 	// a heartbeat before the turn passes on (2 minutes).
@@ -99,9 +100,10 @@ type Config struct {
 	CloseAt time.Time
 	// Notice is a message for participants, shown on the page and by their program.
 	Notice string
-	// Downloads is a directory of the participant's program, built for each
-	// system (make ceremony-dist), served at /download/; none when empty.
-	Downloads string
+	// ReleaseURL is the ceremony's GitHub release, where participants get
+	// the program (https only); the page links to it. The coordinator
+	// itself serves no participant code.
+	ReleaseURL string
 	// Log receives what happens: turns given, lost and taken.
 	Log *log.Logger
 
@@ -163,9 +165,8 @@ type Status struct {
 	Closed        bool      `json:"closed"`
 	CloseAt       time.Time `json:"close_at,omitzero"`
 	Notice        string    `json:"notice,omitzero"`
-	Downloads     []string  `json:"downloads,omitzero"`
-	Browser       bool      `json:"browser"`          // the page can contribute from the browser
-	Version       string    `json:"version,omitzero"` // the commit the coordinator was built from
+	ReleaseURL    string    `json:"release_url,omitzero"` // where participants get the program (Config.ReleaseURL)
+	Version       string    `json:"version,omitzero"`     // the commit the coordinator was built from
 }
 
 // registrationsPerHour bounds the registrations one network address makes
@@ -260,6 +261,12 @@ func New(cfg Config) (*Server, error) {
 		}
 	default:
 		return nil, fmt.Errorf("coordinator: Auth is %q, want %s or %s", cfg.Auth, AuthOpen, AuthGitHub)
+	}
+	if cfg.ReleaseURL != "" {
+		// The page makes it a link: an https address, nothing else.
+		if u, err := url.Parse(cfg.ReleaseURL); err != nil || u.Scheme != "https" || u.Host == "" {
+			return nil, fmt.Errorf("coordinator: ReleaseURL %q is not an https address", cfg.ReleaseURL)
+		}
 	}
 	s := &Server{
 		cfg: cfg, done: map[string]int{}, sessions: map[[32]byte]*session{},
@@ -398,10 +405,8 @@ func (s *Server) queued(p participant) bool {
 
 // Handler serves the phase:
 //
-//	GET  /                  the phase's page: contribute from the browser, and follow the phase
-//	GET  /web/{file}        the browser's client: its worker scripts, and the program built for the browser
-//	GET  /download/{file}   the participant's program (Config.Downloads)
-//	POST /github/login/…    GitHub's device flow, relayed for browsers (AuthGitHub)
+//	GET  /                  the phase's page: follow the phase, and where to get the program
+//	POST /github/login/…    GitHub's device flow, relayed (AuthGitHub)
 //	GET  /v1/config         how to join (ClientConfig)
 //	POST /v1/register       join the phase (Registration -> Session)
 //	POST /v1/turn           a participant asks for their turn (Reply)
@@ -417,8 +422,6 @@ func (s *Server) queued(p participant) bool {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handlePage)
-	mux.HandleFunc("GET /web/{file}", s.handleWeb)
-	mux.HandleFunc("GET /download/{file}", s.handleDownload)
 	mux.HandleFunc("POST /github/login/device/code", s.handleGitHubRelay)
 	mux.HandleFunc("POST /github/login/oauth/access_token", s.handleGitHubRelay)
 	mux.HandleFunc("GET /v1/config", s.handleConfig)
@@ -881,8 +884,7 @@ func (s *Server) status() Status {
 		Closed:        s.closed,
 		CloseAt:       s.cfg.CloseAt,
 		Notice:        s.cfg.Notice,
-		Downloads:     s.downloads(),
-		Browser:       s.browser(),
+		ReleaseURL:    s.cfg.ReleaseURL,
 		Version:       Version(),
 	}
 	if s.turn != nil {
@@ -927,51 +929,6 @@ func (s *Server) handleStates(w http.ResponseWriter, r *http.Request) {
 	if err := sendFile(w, s.path(uint32(i))); err != nil {
 		s.cfg.Log.Printf("sending state %d: %v", i, err)
 	}
-}
-
-// downloadName is a file the download directory may serve.
-var downloadName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
-// downloads lists the files of the download directory, by name.
-func (s *Server) downloads() []string {
-	if s.cfg.Downloads == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(s.cfg.Downloads)
-	if err != nil {
-		s.cfg.Log.Printf("listing downloads: %v", err)
-		return nil
-	}
-	var names []string
-	for _, e := range entries {
-		if e.Type().IsRegular() && downloadName.MatchString(e.Name()) {
-			names = append(names, e.Name())
-		}
-	}
-	return names
-}
-
-// handleDownload serves one file of the download directory.
-func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("file")
-	if s.cfg.Downloads == "" || !downloadName.MatchString(name) {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(filepath.Join(s.cfg.Downloads, name))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
-	http.ServeContent(w, r, name, fi.ModTime(), f)
 }
 
 // sendFile writes the file at path as the response body.

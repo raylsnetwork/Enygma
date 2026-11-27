@@ -112,17 +112,11 @@ type Client struct {
 	// would otherwise show them as anonymous.
 	AskName func() string
 	// Events, when set, receives each step of the run, for a program that
-	// shows progress its own way (the browser page).
+	// shows progress its own way.
 	Events func(Event)
-	// Put, when set, uploads the contribution in place of this package's own
-	// HTTP request, reporting the bytes sent as it goes: the browser's
-	// client uploads through the browser's own upload API, which Go's
-	// requests in the browser go around, to show the upload's progress.
-	Put func(ctx context.Context, url, token string, body []byte, sent func(int64)) (status int, reply []byte, err error)
 	// Heartbeat is how often to tell the coordinator, during the turn, that
 	// this participant is still at it; 10 seconds when zero. Negative sends
-	// none, for a program that sends them itself (the browser page, whose
-	// contribution blocks the thread this client runs on).
+	// none, for a program that sends them itself.
 	Heartbeat time.Duration
 
 	cfg          coordinator.ClientConfig
@@ -453,32 +447,21 @@ func (c *Client) upload(ctx context.Context, data []byte) (coordinator.Reply, er
 	}
 	sent(0)
 	target := strings.TrimSuffix(c.URL, "/") + "/v1/contribution"
-	var (
-		code       int
-		reply      []byte
-		retryAfter string
-	)
-	if c.Put != nil {
-		var err error
-		if code, reply, err = c.Put(ctx, target, c.session, data, sent); err != nil {
-			return coordinator.Reply{}, &url.Error{Op: http.MethodPut, URL: target, Err: err}
-		}
-	} else {
-		body := &uploadProgress{r: bytes.NewReader(data), sent: sent}
-		req, err := c.request(ctx, http.MethodPut, "/v1/contribution", body)
-		if err != nil {
-			return coordinator.Reply{}, err
-		}
-		req.ContentLength = total
-		resp, err := c.HTTP.Do(req)
-		if err != nil {
-			return coordinator.Reply{}, err
-		}
-		defer resp.Body.Close()
-		code, retryAfter = resp.StatusCode, resp.Header.Get("Retry-After")
-		if reply, err = io.ReadAll(io.LimitReader(resp.Body, 1<<16)); err != nil {
-			return coordinator.Reply{}, &url.Error{Op: http.MethodPut, URL: target, Err: err}
-		}
+	body := &uploadProgress{r: bytes.NewReader(data), sent: sent}
+	req, err := c.request(ctx, http.MethodPut, "/v1/contribution", body)
+	if err != nil {
+		return coordinator.Reply{}, err
+	}
+	req.ContentLength = total
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return coordinator.Reply{}, err
+	}
+	defer resp.Body.Close()
+	code, retryAfter := resp.StatusCode, resp.Header.Get("Retry-After")
+	reply, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return coordinator.Reply{}, &url.Error{Op: http.MethodPut, URL: target, Err: err}
 	}
 	if err := replyError(code, reply, retryAfter); err != nil {
 		return coordinator.Reply{}, err

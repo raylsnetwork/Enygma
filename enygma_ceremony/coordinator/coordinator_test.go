@@ -895,45 +895,40 @@ func TestWaitIsEstimated(t *testing.T) {
 	})
 }
 
-// TestPageAndDownloads: the phase's page, and the participant's program for
-// each system, are served to anyone; nothing outside the download directory is.
-func TestPageAndDownloads(t *testing.T) {
-	downloads := t.TempDir()
-	for name, data := range map[string]string{"ceremony-linux-amd64": "binary", "SHA256SUMS": "sums", ".hidden": "no"} {
-		if err := os.WriteFile(filepath.Join(downloads, name), []byte(data), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Mkdir(filepath.Join(downloads, "sub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h := newHarness(t, Config{Auth: AuthOpen, Downloads: downloads})
+// TestPage: the phase's page is served to anyone, runs nothing but its own
+// script, and points to the ceremony's release; the coordinator serves no
+// participant code, so it never chooses the code that draws a participant's
+// randomness.
+func TestPage(t *testing.T) {
+	const release = "https://github.com/example/Enygma/releases/tag/ceremony-v1"
+	h := newHarness(t, Config{Auth: AuthOpen, ReleaseURL: release})
 
-	resp, err := http.Get(h.http.URL + "/")
-	if err != nil {
-		t.Fatal(err)
+	resp, body := h.get("/", nil)
+	if resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("<title>Enygma setup ceremony</title>")) {
+		t.Fatalf("page: %d, %d bytes", resp.StatusCode, len(body))
 	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil || resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("<title>Enygma setup ceremony</title>")) {
-		t.Fatalf("page: %d, %d bytes, %v", resp.StatusCode, len(body), err)
-	}
-	// Names on the page are participants' own: nothing but its own script and requests may run.
-	// It runs its workers from this coordinator, which is how it contributes from the browser.
+	// Names on the page are participants' own: nothing but its own script and requests may run,
+	// and it starts no workers.
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") ||
-		!strings.Contains(csp, "connect-src 'self'") || !strings.Contains(csp, "worker-src 'self'") {
+		!strings.Contains(csp, "connect-src 'self'") || strings.Contains(csp, "worker-src") {
 		t.Fatalf("page served with Content-Security-Policy %q", csp)
 	}
-	if code, body := h.do("", http.MethodGet, "/download/ceremony-linux-amd64", nil); code != http.StatusOK || string(body) != "binary" {
-		t.Fatalf("download: %d %q", code, body)
+	if got := h.status().ReleaseURL; got != release {
+		t.Fatalf("status gives release %q, want %q", got, release)
 	}
-	for _, path := range []string{"/download/.hidden", "/download/..%2Fstate-0", "/download/missing", "/download/sub"} {
-		if code, _ := h.do("", http.MethodGet, path, nil); code != http.StatusNotFound {
-			t.Errorf("%s: %d, want 404", path, code)
+	for _, path := range []string{"/web/worker.js", "/web/heartbeat.js", "/web/ceremony.wasm", "/download/ceremony-linux-amd64", "/download/SHA256SUMS"} {
+		if resp, _ := h.get(path, nil); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: %d, want 404: the coordinator serves no participant code", path, resp.StatusCode)
 		}
 	}
-	if got := h.status().Downloads; strings.Join(got, " ") != "SHA256SUMS ceremony-linux-amd64" {
-		t.Fatalf("status lists downloads %v", got)
+}
+
+// TestReleaseURL: the release address the page links to must be https.
+func TestReleaseURL(t *testing.T) {
+	for _, u := range []string{"http://github.com/example/Enygma/releases", "javascript:alert(1)", "https://", "github.com/example"} {
+		if _, err := New(Config{Dir: t.TempDir(), Auth: AuthOpen, ReleaseURL: u}); err == nil || !strings.Contains(err.Error(), "ReleaseURL") {
+			t.Errorf("ReleaseURL %q: %v, want refused", u, err)
+		}
 	}
 }
 
@@ -958,49 +953,6 @@ func (h *harness) get(path string, headers map[string]string) (*http.Response, [
 		h.t.Fatal(err)
 	}
 	return resp, body
-}
-
-// TestBrowserClient: the page contributes from the browser when the
-// download directory holds the program built for it; the coordinator serves
-// that program, compressed for browsers that take it, and its worker scripts,
-// each allowed to load the program and talk to this coordinator only.
-func TestBrowserClient(t *testing.T) {
-	downloads := t.TempDir()
-	h := newHarness(t, Config{Auth: AuthOpen, Downloads: downloads})
-	if h.status().Browser {
-		t.Fatal("status offers the browser without the program built for it")
-	}
-	for name, data := range map[string]string{"ceremony.wasm": "wasm", "ceremony.wasm.gz": "gzipped", "wasm_exec.js": "loader"} {
-		if err := os.WriteFile(filepath.Join(downloads, name), []byte(data), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if !h.status().Browser {
-		t.Fatal("status does not offer the browser with the program built for it")
-	}
-
-	resp, body := h.get("/web/worker.js", nil)
-	if resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("enygmaContribute")) ||
-		!strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript") ||
-		!strings.Contains(resp.Header.Get("Content-Security-Policy"), "script-src 'self' 'wasm-unsafe-eval'") {
-		t.Fatalf("worker.js: %d %v", resp.StatusCode, resp.Header)
-	}
-	if resp, _ := h.get("/web/heartbeat.js", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("heartbeat.js: %d", resp.StatusCode)
-	}
-	resp, body = h.get("/web/ceremony.wasm", map[string]string{"Accept-Encoding": "gzip"})
-	if string(body) != "gzipped" || resp.Header.Get("Content-Encoding") != "gzip" || resp.Header.Get("Content-Type") != "application/wasm" {
-		t.Fatalf("ceremony.wasm, gzip taken: %q %v", body, resp.Header)
-	}
-	resp, body = h.get("/web/ceremony.wasm", map[string]string{"Accept-Encoding": "identity"})
-	if string(body) != "wasm" || resp.Header.Get("Content-Encoding") != "" {
-		t.Fatalf("ceremony.wasm, gzip not taken: %q %v", body, resp.Header)
-	}
-	for _, path := range []string{"/web/ceremony.wasm.gz", "/web/other.js", "/web/..%2Fstate-0"} {
-		if resp, _ := h.get(path, nil); resp.StatusCode != http.StatusNotFound {
-			t.Errorf("%s: %d, want 404", path, resp.StatusCode)
-		}
-	}
 }
 
 // TestGitHubRelay: a GitHub phase relays a browser's device-flow requests to

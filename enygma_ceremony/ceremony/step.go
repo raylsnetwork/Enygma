@@ -101,7 +101,7 @@ func (s *phase2State) contribute() {
 
 // ContributeTo reads a Phase 1 or Phase 2 state of size bytes from in, adds
 // this machine's randomness, and writes the next state to out: Contribute
-// without files, as a browser contributes. gnark's mpcsetup draws the
+// without files, as the participant's program contributes. gnark's mpcsetup draws the
 // randomness from crypto/rand inside the call and keeps no copy of it;
 // nothing of it outlives the process.
 func ContributeTo(in io.Reader, size int64, out io.Writer) (Receipt, error) {
@@ -134,15 +134,14 @@ type Progress struct {
 }
 
 // partsPerReading is how many times longer randomizing, and writing, take
-// than reading a state, by kind. Measured on the real-size states, in the
-// browser's WebAssembly (which most participants run) and natively:
+// than reading a state, by kind. Measured natively on the real-size states:
 //
-//	Phase 1 at 2^18:           randomizing 2.74× reading (WebAssembly), 2.64× (native); writing under 0.01×
-//	retail's Phase 2:          9.2× (WebAssembly), 6.1× (native); writing 0.02×
-//	auctions' Phase 2:         9.8× (WebAssembly), 8.1× (native); writing 0.02-0.04×
+//	Phase 1 at 2^18:           randomizing 2.64× reading; writing under 0.01×
+//	retail's Phase 2:          6.1×; writing 0.02×
+//	auctions' Phase 2:         8.1×; writing 0.02-0.04×
 var partsPerReading = map[Kind]struct{ randomizing, writing float64 }{
-	KindPhase1: {2.7, 0.01},
-	KindPhase2: {9.5, 0.03},
+	KindPhase1: {2.6, 0.01},
+	KindPhase2: {7, 0.03},
 }
 
 // shares returns the fraction of a contribution to a state of kind that

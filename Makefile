@@ -501,29 +501,34 @@ auctions-gnark: ## Start the auctions gnark proof server (keep running)
 
 # ── Setup ceremony ────────────────────────────────────────────────────────────
 
-# Participants download one of these, from the coordinator's page, and run
-# it: built with CEREMONY_URL, it joins that coordinator with no command. CGO
-# off and -trimpath make each binary a function of the commit, the URL and
-# the Go toolchain go.mod pins, so anyone can rebuild it and compare it with
-# SHA256SUMS.
+# Participants download one of these from the ceremony's GitHub release
+# (.github/workflows/ceremony-release.yml builds it from a ceremony-v* tag),
+# or build the program from source, and run it: built with CEREMONY_URL, it
+# joins that coordinator with no command. The coordinator serves no
+# participant code. The exact toolchain go.mod pins (GOTOOLCHAIN), CGO off and
+# -trimpath make each binary a function of the commit, the URL and that
+# toolchain, so anyone can rebuild it from a clean clone of the tag and
+# compare it with SHA256SUMS; BUILD records how.
 CEREMONY_TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
 CEREMONY_URL ?=
+CEREMONY_TOOLCHAIN := $(shell sed -n 's/^toolchain //p' enygma_ceremony/go.mod)
 
-ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_ceremony/dist, with SHA256SUMS; CEREMONY_URL=https://… makes it join that coordinator when run
+ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_ceremony/dist, with SHA256SUMS and BUILD; CEREMONY_URL=https://… makes it join that coordinator when run
+	@test -n "$(CEREMONY_TOOLCHAIN)" || { echo "enygma_ceremony/go.mod pins no toolchain" >&2; exit 1; }
+	@rm -rf enygma_ceremony/dist
 	@mkdir -p enygma_ceremony/dist
 	@for target in $(CEREMONY_TARGETS); do \
 		os=$${target%/*}; arch=$${target#*/}; ext=; [ $$os = windows ] && ext=.exe; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -C enygma_ceremony -trimpath \
+		GOTOOLCHAIN=$(CEREMONY_TOOLCHAIN) CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -C enygma_ceremony -trimpath \
 			-ldflags "-X main.defaultURL=$(CEREMONY_URL)" -o dist/ceremony-$$os-$$arch$$ext ./cmd/ceremony || exit 1; \
 	done
-	@# The browser's client: the same program for the page's Contribute button,
-	@# gzipped as the coordinator serves it (-n: no name or time, so the build
-	@# stays reproducible), with the loader of the Go that built it.
-	@GOOS=js GOARCH=wasm go build -C enygma_ceremony -trimpath -o dist/ceremony.wasm ./cmd/ceremony-web
-	@gzip -9 -n -f -k enygma_ceremony/dist/ceremony.wasm
-	@# install, not cp: the toolchain's files are read-only, and a copy of one could not be replaced next time.
-	@install -m 644 "$$(go -C enygma_ceremony env GOROOT)/lib/wasm/wasm_exec.js" enygma_ceremony/dist/wasm_exec.js
-	@cd enygma_ceremony/dist && shasum -a 256 ceremony-* ceremony.wasm wasm_exec.js | tee SHA256SUMS
+	@printf '%s\n' \
+		"Built from commit $$(git rev-parse HEAD), in a clean clone (Go stamps the commit, and whether the tree had changes, into the program), with:" \
+		"  GOTOOLCHAIN=$(CEREMONY_TOOLCHAIN) CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build -C enygma_ceremony -trimpath -ldflags \"-X main.defaultURL=$(CEREMONY_URL)\" -o dist/ceremony-<os>-<arch>[.exe] ./cmd/ceremony" \
+		"for each <os>/<arch> of: $(CEREMONY_TARGETS)" \
+		"or: make ceremony-dist CEREMONY_URL=$(CEREMONY_URL)" \
+		> enygma_ceremony/dist/BUILD
+	@cd enygma_ceremony/dist && shasum -a 256 ceremony-* | tee SHA256SUMS
 
 # What the ceremony reads from others, fuzzed: state files (an upload, or a
 # transcript a verifier fetches), transcripts, drand's beacon, names, and

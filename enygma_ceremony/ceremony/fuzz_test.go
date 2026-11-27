@@ -184,9 +184,8 @@ func FuzzCheckEdits(f *testing.F) {
 }
 
 // FuzzContribute: contributing to any bytes never panics: a participant's
-// program contributes to whatever state the coordinator serves it, and the
-// browser's would stop the page's worker. What it refuses, it refuses for a
-// reason, having written nothing.
+// program contributes to whatever state the coordinator serves it. What it
+// refuses, it refuses for a reason, having written nothing.
 func FuzzContribute(f *testing.F) {
 	fx := newFixture(f)
 	for _, p := range []string{fx.p1[1], fx.p2[2], fx.srs} {

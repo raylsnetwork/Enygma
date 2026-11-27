@@ -1,0 +1,107 @@
+# The setup ceremony's participant program, released from a ceremony-v* tag.
+#
+# Participants get the program from this release, never from the
+# coordinator: the code that draws their randomness must not be the
+# coordinator's choice. The job builds it with `make ceremony-dist` (the exact
+# toolchain enygma_ceremony/go.mod pins, CGO off, -trimpath), attests every
+# binary's provenance, and publishes the binaries with SHA256SUMS, BUILD and
+# release notes holding a one-line command per system that downloads the
+# program from here, checks its sha256 and runs it.
+#
+# Anyone can check where a binary came from:
+#   gh attestation verify ceremony-<os>-<arch> --repo <owner>/<repo>
+# or rebuild it from a clean clone of the tag (BUILD) and compare it with
+# SHA256SUMS.
+#
+# Before pushing the tag, set the repository variable CEREMONY_URL to the
+# coordinator's https address: the binaries join it when run with no command.
+# Turn on immutable releases for the repository, so assets cannot be
+# replaced once published.
+name: ceremony-release
+
+on:
+  push:
+    tags: ["ceremony-v*"]
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+      id-token: write # sign the provenance attestations
+      attestations: write # store them
+    env:
+      CEREMONY_URL: ${{ vars.CEREMONY_URL }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: enygma_ceremony/go.mod
+          cache: false
+      - name: Check the coordinator's address
+        run: |
+          case "$CEREMONY_URL" in
+            https://?*) ;;
+            *) echo "Set the repository variable CEREMONY_URL to the coordinator's https address." >&2; exit 1 ;;
+          esac
+      - name: Build
+        run: make ceremony-dist CEREMONY_URL="$CEREMONY_URL"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: enygma_ceremony/dist/ceremony-*
+      - name: Write the release notes
+        run: |
+          repo="https://github.com/${GITHUB_REPOSITORY}"
+          dl="$repo/releases/download/$TAG"
+          sum() { awk -v f="$1" '$2 == f { print $1 }' enygma_ceremony/dist/SHA256SUMS; }
+          for f in ceremony-darwin-arm64 ceremony-darwin-amd64 ceremony-linux-amd64 ceremony-linux-arm64 ceremony-windows-amd64.exe ceremony-windows-arm64.exe; do
+            test -n "$(sum "$f")" || { echo "no sha256 for $f" >&2; exit 1; }
+          done
+          unix() { # system, file, checker
+            echo "**$1**"
+            echo
+            echo '```sh'
+            echo "curl -fsSLO $dl/$2 && echo \"$(sum "$2")  $2\" | $3 -c && chmod +x $2 && ./$2"
+            echo '```'
+            echo
+          }
+          windows() { # system, file
+            echo "**$1** (PowerShell)"
+            echo
+            echo '```powershell'
+            echo "iwr -UseBasicParsing $dl/$2 -OutFile ceremony.exe; if ((Get-FileHash ceremony.exe -Algorithm SHA256).Hash -ne \"$(sum "$2")\") { throw \"ceremony.exe does not match this release\" }; .\\ceremony.exe"
+            echo '```'
+            echo
+          }
+          {
+            echo "The Enygma setup ceremony's participant program, built by this repository's \`ceremony-release\` workflow from tag \`$TAG\` (commit \`$GITHUB_SHA\`). Run with no command, it joins the coordinator at $CEREMONY_URL and contributes."
+            echo
+            echo "Copy the command for your system from this page, not from the coordinator's. It downloads the program from this release, checks its sha256, and runs it. Leave it running until it says you are done, then publish the receipt it prints."
+            echo
+            unix "macOS (Apple silicon)" ceremony-darwin-arm64 "shasum -a 256"
+            unix "macOS (Intel)" ceremony-darwin-amd64 "shasum -a 256"
+            unix "Linux (x86-64)" ceremony-linux-amd64 sha256sum
+            unix "Linux (ARM64)" ceremony-linux-arm64 sha256sum
+            windows "Windows (x86-64)" ceremony-windows-amd64.exe
+            windows "Windows (ARM64)" ceremony-windows-arm64.exe
+            echo "**From source**, the strongest option: you trust only the code at this tag."
+            echo
+            echo '```sh'
+            echo "git clone --depth 1 --branch $TAG $repo.git"
+            echo "cd ${GITHUB_REPOSITORY#*/}/enygma_ceremony"
+            echo "go run ./cmd/ceremony join -url $CEREMONY_URL"
+            echo '```'
+            echo
+            echo "**Check a binary's origin:** \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`, or rebuild it from a clean clone of the tag as BUILD says and compare it with SHA256SUMS."
+          } > notes.md
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Enygma setup ceremony $TAG" --notes-file notes.md \
+            enygma_ceremony/dist/ceremony-* enygma_ceremony/dist/SHA256SUMS enygma_ceremony/dist/BUILD
