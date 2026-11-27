@@ -6,7 +6,7 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "hardhat": "^2.29.2"
+    "hardhat": "^2.30.0"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^4.9.6",
@@ -16,19 +16,26 @@
     "lodash": "4.18.1",
     "immutable": "4.3.9",
     "@fastify/busboy": "3.2.2",
-    "undici": "7.29.1",
+    "undici": "7.30.2",
     "uuid": "14.0.2",
     "brace-expansion": "2.1.7",
     "tmp": "0.2.7",
-    "serialize-javascript": "7.1.1",
-    "adm-zip": "0.5.18",
-    "glob": "10.5.0",
+    "serialize-javascript": "7.1.4",
+    "adm-zip": "0.6.1",
+    "glob": "14.0.6",
     "ws": "8.21.3",
     "hardhat": {
       "ws": "7.5.13",
-      "undici": "5.29.0"
+      "undici": "6.29.1"
     },
     "bn.js@4.11.6": "4.12.3",
-    "cookie": "0.7.2"
+    "cookie": "0.7.2",
+    "mocha@^11": {
+      "minimatch": "11.0.9",
+      "diff": "8.0.4"
+    },
+    "minimatch@^11": {
+      "brace-expansion": "5.1.0"
+    }
   }
 }

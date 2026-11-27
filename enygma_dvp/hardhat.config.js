@@ -5,7 +5,6 @@ require("@nomiclabs/hardhat-etherscan");
 require("hardhat-gas-reporter");
 require("hardhat-artifactor");
 require("hardhat-tracer");
-require("hardhat-docgen");
 
 let networks;
 
@@ -91,11 +90,6 @@ module.exports = {
   },
   mocha: {
     timeout: 10 * 60 * 1000, // 10 minutes
-  },
-  docgen: {
-    path: "./docs",
-    clear: true,
-    runOnCompile: false,
   },
   etherscan: {
     apiKey: process.env.ETHERSCAN_API_KEY,
