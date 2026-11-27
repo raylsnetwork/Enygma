@@ -371,6 +371,16 @@ with integer division, even when few bits are set.
   exceed that budget at around 79,000 registered users. This is an estimate
   that depends on how many bits are set and how much ciphertext is stored.
 
+The relayer refuses a bitmap over `BITMAP_MAX` or with no bit set, and a `c2`
+or tag `ctxt` over 4,096 bytes, with 400 before it calls the chain. It then
+simulates `openChannel` and `publishTag` within its 8,000,000 gas budget, and it
+answers 422 without sending the transaction when the simulation reverts or
+runs out of gas. The simulation runs against the latest block, so it cannot
+see the relayer's other tags still waiting for the next one: `publishTag`
+allows 10 tags per block from one address, and the relayer is that address
+for every tag it relays. An 11th tag for the same block passes simulation
+and reverts on-chain.
+
 ### Standalone tag publication
 
 The sender computes `Poseidon3(blockNumber, pk, ss)` off chain for a chosen

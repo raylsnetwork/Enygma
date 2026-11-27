@@ -80,6 +80,14 @@ func tagKey(tag [32]byte) string { return "tag:" + hex.EncodeToString(tag[:]) }
 
 func channelKey(c1 []byte) string { return "chan:" + crypto.Keccak256Hash(c1).Hex() }
 
+// The registries' limits (private_tags/contracts), checked before simulating
+// so a request they reject is refused without a node round trip.
+const (
+	tagCtxtMax       = 4096  // TagRegistry.CTXT_MAX
+	channelC2Max     = 4096  // TagChannelRegistry.C2_MAX
+	channelBitmapMax = 16384 // TagChannelRegistry.BITMAP_MAX: 131,072 users
+)
+
 // decodeTag decodes a 32-byte hex tag (0x prefix optional, any case).
 func decodeTag(s, field string) ([32]byte, error) {
 	var tag [32]byte
@@ -1138,11 +1146,14 @@ func (h *Handler) relayUsdrFee(c *gin.Context, p *parsedUsdrFee, pending bool, m
 // field (tags, startBlock, ctxts) is refused.
 //
 // Validation steps:
-//  1. Decode the request strictly, then the tag and ctxt.
+//  1. Decode the request strictly, then the tag and ctxt (at most
+//     TagRegistry's CTXT_MAX).
 //  2. Verify TagRegistry is configured (503 if not).
 //  3. Claim the tag as in-flight to prevent concurrent duplicate submissions.
-//  4. Serialize with txMu to prevent nonce races.
-//  5. Submit publishTag(tag, ctxt).
+//  4. Simulate publishTag (422 if it would revert), so the relayer never
+//     pays for a transaction the registry rejects.
+//  5. Serialize with txMu to prevent nonce races.
+//  6. Submit publishTag(tag, ctxt).
 func (h *Handler) RelayTag(c *gin.Context) {
 	var req RelayTagRequest
 	dec := json.NewDecoder(c.Request.Body)
@@ -1160,6 +1171,10 @@ func (h *Handler) RelayTag(c *gin.Context) {
 	ctxt, err := decodeHexField(req.Ctxt, "ctxt")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(ctxt) > tagCtxtMax {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("ctxt must be at most %d bytes, got %d", tagCtxtMax, len(ctxt))})
 		return
 	}
 	// Decoded before claiming: the claim is keyed on the decoded bytes.
@@ -1198,7 +1213,12 @@ func (h *Handler) RelayTag(c *gin.Context) {
 		h.release(claimKeys)
 	}()
 
-	// Steps 4–5 — txMu is held around the submission only, not across
+	// Step 4 — simulate before signing.
+	if !h.simulate(c, claimKeys, h.tagRegistryAddr, h.tagRegistryABI, "publishTag", tag, ctxt) {
+		return
+	}
+
+	// Steps 5–6 — txMu is held around the submission only, not across
 	// WaitMined (see txTimeout's doc comment).
 	registry := bind.NewBoundContract(h.tagRegistryAddr, h.tagRegistryABI, h.client, h.client, h.client)
 	h.txMu.Lock()
@@ -1241,11 +1261,14 @@ func (h *Handler) RelayTag(c *gin.Context) {
 // relayer address, so observers cannot link any channel to a specific user.
 //
 // Validation steps:
-//  1. Decode c1 (must be exactly 1088 bytes), c2, and bitmap from hex.
+//  1. Decode c1 (must be exactly 1088 bytes), c2, and bitmap from hex, and
+//     check them against TagChannelRegistry's limits.
 //  2. Verify TagChannelRegistry is configured (503 if not).
 //  3. Claim c1 hash as in-flight (409 if a duplicate is already processing).
-//  4. Serialize submission with txMu to prevent nonce races.
-//  5. Submit openChannel(c1, c2, bitmap) and parse the ChannelOpened event
+//  4. Simulate openChannel (422 if it would revert), so the relayer never
+//     pays for a transaction the registry rejects.
+//  5. Serialize submission with txMu to prevent nonce races.
+//  6. Submit openChannel(c1, c2, bitmap) and parse the ChannelOpened event
 //     to return the assigned channelIdx.
 func (h *Handler) RelayChannel(c *gin.Context) {
 	var req RelayChannelRequest
@@ -1269,13 +1292,21 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if len(c2) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "c2 must not be empty"})
+	if len(c2) == 0 || len(c2) > channelC2Max {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("c2 must be 1 to %d bytes, got %d", channelC2Max, len(c2))})
 		return
 	}
 	bitmap, err := decodeHexField(req.Bitmap, "bitmap")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(bitmap) > channelBitmapMax {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("bitmap must be at most %d bytes, got %d", channelBitmapMax, len(bitmap))})
+		return
+	}
+	if !anyBitSet(bitmap) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bitmap must name at least one user"})
 		return
 	}
 
@@ -1295,12 +1326,17 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 		return
 	}
 
-	// Step 4 — serialize submission to prevent nonce races. txMu guards
+	// Step 4 — simulate before signing.
+	if !h.simulate(c, claimKeys, h.tagChannelRegistryAddr, h.tagChannelRegistryABI, "openChannel", c1, c2, bitmap) {
+		return
+	}
+
+	// Step 5 — serialize submission to prevent nonce races. txMu guards
 	// only the submission itself, not the wait below — see txTimeout's
 	// doc comment.
 	h.txMu.Lock()
 
-	// Step 5 — submit openChannel(c1, c2, bitmap).
+	// Step 6 — submit openChannel(c1, c2, bitmap).
 	registry := bind.NewBoundContract(h.tagChannelRegistryAddr, h.tagChannelRegistryABI, h.client, h.client, h.client)
 	tx, err := registry.Transact(h.auth, "openChannel", c1, c2, bitmap)
 	h.txMu.Unlock()
@@ -1338,6 +1374,17 @@ func (h *Handler) RelayChannel(c *gin.Context) {
 		BlockNumber: txReceipt.BlockNumber.Uint64(),
 		GasUsed:     txReceipt.GasUsed,
 	})
+}
+
+// anyBitSet reports whether b has a set bit (TagChannelRegistry refuses an
+// all-zero bitmap with EmptyBitmap).
+func anyBitSet(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func min(a, b int) int {

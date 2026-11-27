@@ -151,6 +151,13 @@ func TestWaitMined_MinedReleasesClaims(t *testing.T) {
 // sentTxData holds the calldata of the last transaction txNode accepted.
 var sentTxData atomic.Value
 
+// txNodeCalls counts the eth_calls (simulations) txNode answered; with
+// txNodeReverts set, each of them reverts.
+var (
+	txNodeCalls   atomic.Int32
+	txNodeReverts atomic.Bool
+)
+
 // txNode is a JSON-RPC node that accepts transactions and reports no receipt
 // until mined is set.
 func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
@@ -182,6 +189,16 @@ func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
 			result = "0x1"
 		case "eth_getBlockByNumber":
 			result = header
+		case "eth_call":
+			txNodeCalls.Add(1)
+			if txNodeReverts.Load() {
+				out, _ := json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": req.ID,
+					"error": map[string]interface{}{"code": 3, "message": "execution reverted", "data": "0x"}})
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(out)
+				return
+			}
+			result = "0x"
 		case "eth_sendRawTransaction":
 			var raw string
 			_ = json.Unmarshal(req.Params[0], &raw)
@@ -209,6 +226,9 @@ func txNode(t *testing.T, mined *atomic.Bool) *httptest.Server {
 // transactions and reports no receipt until mined is set.
 func tagHandler(t *testing.T, mined *atomic.Bool) (*Handler, *gin.Engine) {
 	t.Helper()
+	sentTxData.Store([]byte(nil))
+	txNodeCalls.Store(0)
+	txNodeReverts.Store(false)
 	srv := txNode(t, mined)
 	t.Cleanup(srv.Close)
 	client, err := ethclient.Dial(srv.URL)
