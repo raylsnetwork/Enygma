@@ -1209,15 +1209,19 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //
     // Off-chain flow:
     //   ss, ctxt         = ML-KEM.Encapsulate(bob_view_pk)
-    //   saltB            = HKDF(ss, "Bob salt")
+    //   saltB            = HKDF(ss, "note salt")
     //   encKey           = HKDF(ss, "encryption key")
     //   Commitment_B     = Poseidon(bob_spend_pk, SaltBToField(saltB), amount_B, tokenId)
-    //   saltA           <- random (only Alice knows this; stored locally)
+    //   saltA            = Poseidon(alice_spend_sk, nf0), nf0 = input 0's nullifier
     //   Commitment_A     = Poseidon(alice_spend_pk, saltA, amount_A, tokenId)
     //   encTxData        = AES-GCM-ENC(encKey, tokenId || amount_B)
     //
     // Both commitments are inserted atomically into the Merkle tree.
-    // Only Bob's ciphertext is published on-chain; Alice recovers her change via saltA.
+    // Only Bob's ciphertext is published onchain. Alice stores no salt for her
+    // change: enygma_retail_payments' Payment-family circuits require this
+    // saltA, and she rebuilds Commitment_A with core.WithdrawChangeNote from
+    // her spend key, nf0 (its Nullifier event) and amount_A, which her wallet
+    // keeps (no event carries it).
     // A single Payment event is emitted for Bob's commitment (output 0).
     function payment(
         ProofReceipt memory receipt,

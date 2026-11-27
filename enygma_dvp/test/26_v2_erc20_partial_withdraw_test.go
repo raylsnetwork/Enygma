@@ -507,7 +507,8 @@ func (e *pwEnv) checkSettled(t *testing.T, mined *types.Receipt, s *pwSpend) {
 			if err != nil {
 				t.Fatalf("unpack EncryptedNote: %v", err)
 			}
-			// The owner's wallet rediscovers the change note from the event alone.
+			// The owner's view key opens the event to the change note's token
+			// id and amount; its salt is Poseidon(sk, nullifier0), rebuilt below.
 			ss, err := core.Decapsulate(s.change.view.DecapsKey, vals[0].([]byte))
 			if err != nil {
 				t.Fatalf("Decapsulate change note: %v", err)

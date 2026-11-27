@@ -154,10 +154,11 @@ contract Erc20CoinVault is AbstractCoinVault {
     //
     // params[0]    = amount to deposit
     // params[1]    = pkSpend  — recipient's BabyJubJub spend public key (x-coordinate)
-    // params[2]    = salt     — random field element chosen by the depositor
+    // params[2]    = salt     — SaltBToField(HKDF(ss, "note salt")): the salt the
+    //                           recipient's scan derives from ciphertextI
     // params[3]    = tokenId  — token identifier (0 for plain ERC20 vaults)
     // ciphertextI  = ML-KEM-768 capsule (1088 bytes)
-    // ciphertextII = ChaCha20-Poly1305 ciphertext of tokenId||amount
+    // ciphertextII = AES-256-GCM ciphertext of tokenId||amount, keyed by HKDF(ss, "encryption key")
     function depositV2(
         uint256[] memory params,
         bytes calldata ciphertextI,
@@ -322,14 +323,20 @@ contract Erc20CoinVault is AbstractCoinVault {
     //
     // withdrawParams[0] = amount
     // withdrawParams[1] = tokenId (must match the value used when input notes were created)
-    // ciphertextI/II    = EncryptedNote payload for the change note, so the
-    //                     owner's wallet can rediscover it from chain events.
-    //                     The proof does not bind them, so whoever settles the
-    //                     receipt first can replace them; the circuit therefore
-    //                     fixes the change salt to Poseidon(sk, nullifier0), and
-    //                     the owner can always rebuild the change note from its
-    //                     key and this transaction's Nullifier and
-    //                     PartialWithdrawal events (core.WithdrawChangeNote).
+    // ciphertextI/II    = EncryptedNote payload for the change note: tokenId||amount
+    //                     sealed to the owner's view key, so whoever holds that
+    //                     key reads the change amount: the owner, or
+    //                     enygma_retail_payments' auditor, who recovers view
+    //                     keys from UserRegistry's audit ciphertexts.
+    //                     The change salt does not come from the capsule: the
+    //                     circuit fixes it to Poseidon(sk, nullifier0), so a
+    //                     note scan (core.ScanForErc20Notes) does not credit
+    //                     this note, and the owner rebuilds it from its key and
+    //                     this transaction's Nullifier and PartialWithdrawal
+    //                     events (core.WithdrawChangeNote). The proof does not
+    //                     bind the ciphertexts, so whoever settles the receipt
+    //                     first can replace them; the rebuilt note does not
+    //                     depend on them.
     function partialWithdraw(
         uint256[] memory withdrawParams,
         address recipient,

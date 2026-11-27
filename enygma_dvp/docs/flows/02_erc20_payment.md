@@ -5,7 +5,9 @@
 
 Alice deposits 40 USDT and privately pays 30 USDT to Bob, keeping 10 USDT as change.
 The Payment circuit consumes 2 input notes and produces 2 output notes.
-Each output is encrypted with the recipient's ML-KEM public key so only they can decrypt it.
+Bob's output is encrypted to his ML-KEM view key, so only he can decrypt it. Alice's change
+has no ciphertext: its salt is `Poseidon(sk_A, nf0)`, so she rebuilds it from her spend key,
+the spent note's nullifier and the change amount.
 
 ---
 
@@ -31,7 +33,7 @@ sequenceDiagram
     Alice->>Alice: DerivePaymentSalt(ss) → saltB
     Alice->>Alice: DerivePaymentKey(ss) → encKey
     Alice->>Alice: commitment = Poseidon4(pk_A, saltBField, 40, 0)
-    Alice->>Alice: encData = ChaCha20Enc(encKey, tokenId=0, amount=40)
+    Alice->>Alice: encData = EncryptPayload(encKey, tokenId=0, amount=40) (AES-256-GCM)
     Alice->>Vault: depositV2([40, pk_A, saltBField, 0], capsule, encData)
     Vault->>Vault: commitment = Poseidon4(pk_A, saltBField, 40, 0)
     Vault->>Vault: insert commitment as Merkle leaf
@@ -39,32 +41,34 @@ sequenceDiagram
     Vault-->>Alice: emit EncryptedNote(vaultId, commitment, capsule, encData)
     Alice->>Alice: build Merkle proof for commitment
 
-    Note over Alice,GnarkServer: Step 2 — Payment proof
+    Note over Alice,GnarkServer: Step 2 — Payment proof (BoundPaymentProof)
     Bob->>Bob: NewSpendKeyPair() → (sk_B, pk_B)
     Bob->>Bob: NewViewKeyPair() → (decapsKey_B, encapsKey_B)
-    Alice->>GnarkServer: POST /proof/payment<br/>inputs=[40, dummy=0]<br/>saltsIn=[saltBField, 0]<br/>outputs=[30→pk_B, 10→pk_A]<br/>viewKeys=[encapsKey_B, encapsKey_A]
+    Alice->>Alice: Encapsulate(encapsKey_B) → (ss_B, cipherText)
+    Alice->>Alice: DerivePaymentSalt(ss_B) → saltB_B, DerivePaymentKey(ss_B) → encKey_B
+    Alice->>Alice: encTxData = EncryptPayload(encKey_B, tokenId=0, amount=30)
+    Alice->>Alice: nf0 = nullifier of her 40 USDT note<br/>change salt = WithdrawChangeSalt(sk_A, nf0) = Poseidon(sk_A, nf0)
+    Alice->>GnarkServer: POST /proof/payment2in<br/>inputs=[40, dummy=0]<br/>saltsIn=[saltBField, 0]<br/>outputs=[30→pk_B, 10→pk_A]<br/>saltsOut=[saltBField_B, change salt]<br/>ciphertextHash of (cipherText, encTxData)
     GnarkServer->>GnarkServer: prove JoinSplit: 40 = 30 + 10
-    GnarkServer->>GnarkServer: ML-KEM encrypt output 0 for Bob
-    GnarkServer->>GnarkServer: ML-KEM encrypt output 1 for Alice
-    GnarkServer-->>Alice: proof[8], statement[11]<br/>cipherText[2], encTxData[2]
+    GnarkServer-->>Alice: proof[8], statement[11]
 
     Note over Alice,DVP: Step 2 (cont.) — On-chain submission
-    Alice->>DVP: payment(receipt, vaultId=0, cipherText[0], encTxData[0])
-    DVP->>DVP: verifyProof via GenericGroth16Verifier
-    DVP->>DVP: check nullifier not spent
-    DVP->>DVP: emit Nullifier(treeNum, leafIdx, nullifier)
-    DVP->>Vault: registerCoins([cmtBob, cmtAliceChange])
-    DVP-->>Alice: emit Payment(vaultId, cmtBob, cipherText[0], encTxData[0])  ← Bob's note only
+    Alice->>DVP: payment(receipt, vaultId=0, cipherText, encTxData)
+    DVP->>Vault: checkReceiptConditions(receipt): proof, vault, root, nullifier unspent
+    DVP->>DVP: receipt's CiphertextHash == hash of (cipherText, encTxData)
+    DVP->>Vault: nullifyFromReceipt, then insertCommitmentsFromReceipt
+    Vault-->>Alice: emit Nullifier(vaultId, treeNum, nf0)<br/>emit Commitment for cmtBob and cmtAliceChange
+    DVP-->>Alice: emit Payment(vaultId, cmtBob, cipherText, encTxData)  ← Bob's note only
 
     Note over Bob: Step 3 — Bob scans his 30 USDT note
-    Bob->>Bob: Decapsulate(decapsKey_B, cipherText[0]) → ss_B
+    Bob->>Bob: Decapsulate(decapsKey_B, cipherText) → ss_B
     Bob->>Bob: DerivePaymentSalt(ss_B) → saltB_B
     Bob->>Bob: DerivePaymentKey(ss_B) → encKey_B
-    Bob->>Bob: DecryptPayload(encKey_B, encTxData[0]) → tokenId=0, amount=30
+    Bob->>Bob: DecryptPayload(encKey_B, encTxData) → tokenId=0, amount=30
     Bob->>Bob: Poseidon4(pk_B, saltBField_B, 30, 0) == cmtBob ✓
 
     Note over Alice: Step 4 — Alice keeps her 10 USDT change note
-    Alice->>Alice: store (pk_A, saltBField_change, 10, 0) locally<br/>(cipherText[1] is not published)
+    Alice->>Alice: WithdrawChangeNote(sk_A, nf0, 10, 0) → (change salt, cmtAliceChange)<br/>no salt stored: nf0 is in the Nullifier event
 ```
 
 ---

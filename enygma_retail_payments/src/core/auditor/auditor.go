@@ -126,8 +126,9 @@ func CheckAuditCiphertexts(auditorDK *mlkem.DecapsulationKey768, mlKemCt, aesCt,
 }
 
 // deriveAuditKey runs HKDF-SHA256 over the ML-KEM shared secret to produce a
-// 32-byte AES key. The fixed info string domain-separates this from the payment
-// salt (info="Bob salt") and channel key (info="enygma-channel-key-v1").
+// 32-byte AES key. The fixed info string domain-separates this from the note
+// salt (info="note salt"), the note encryption key (info="encryption key") and
+// the channel key (info="enygma-channel-key-v1").
 func deriveAuditKey(ss []byte) [32]byte {
 	r := hkdf.New(sha256.New, ss, nil, []byte(hkdfInfo))
 	var key [32]byte

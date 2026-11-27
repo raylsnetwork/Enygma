@@ -372,9 +372,14 @@ HKDF (HMAC-based Key Derivation Function) solves this by **domain-separating** t
 outputs. From a single `ss` it produces independent, cryptographically isolated keys:
 
 ```
-saltB   = HKDF(ss, info="Bob salt")
+saltB   = HKDF(ss, info="note salt")
 encKey  = HKDF(ss, info="encryption key")
 ```
+
+Both are HKDF-SHA256 with no HKDF salt and a 32-byte output, and `saltB` is reduced mod
+the BN254 scalar field (`SaltBToField`) before it enters a commitment. The byte-level
+reference is `enygma_dvp/src/core/utils.go` (`DerivePaymentSalt`, `DerivePaymentKey`,
+`EncryptPayload`).
 
 Each output is computationally independent — knowing `saltB` tells an attacker nothing
 about `encKey`, and vice versa. This is standard practice whenever one shared secret
@@ -382,8 +387,10 @@ needs to serve multiple purposes.
 
 **Where it is used in EnygmaDvP**:
 
-- **V2 deposit and payment flows**: every output note derives its commitment salt and
-  AES-256-GCM key independently from the same ML-KEM shared secret via HKDF.
+- **V2 deposit and payment flows**: every note sent to a recipient derives its commitment
+  salt and AES-256-GCM key independently from the same ML-KEM shared secret via HKDF.
+  A change note's salt comes from the owner's spend key and the spent nullifier instead
+  (see [Why Include a Salt in the Commitment?](#why-include-a-salt-in-the-commitment)).
 - The older swap flow skips HKDF and uses `ss` directly — a known limitation that V2
   was designed to fix.
 
@@ -519,7 +526,12 @@ sender twice, the two commitments are unlinkable on-chain.
 
 **Where it is used in EnygmaDvP**:
 
-- `saltB` is derived via `HKDF(ss, "Bob salt")` from the ML-KEM shared secret, making
+- `saltB` is derived via `HKDF(ss, "note salt")` from the ML-KEM shared secret, making
   it unique per note and unknown to anyone who did not participate in the encapsulation.
+- A change note (output 1 of a payment or a withdrawal) uses `Poseidon(sk, nf0)`
+  instead, where `nf0` is the nullifier of the transaction's first input.
+  enygma_retail_payments' Payment-family circuits require exactly this salt, so the
+  owner rebuilds the change note from their spend key, the onchain nullifier and the
+  change amount (`core.WithdrawChangeNote`) and stores no salt.
 - The circuit takes `salt` as a private witness and verifies the commitment matches —
   proving the prover knows the salt without revealing it.

@@ -44,7 +44,7 @@ All flows share the same cryptographic building blocks:
 |-----------|---------|----------------|
 | **Poseidon hash** | Commitment and nullifier computation | `src/core/utils.go` |
 | **ML-KEM-768** | Non-interactive note delivery (encapsulate / decapsulate) | `src/core/utils.go` |
-| **ChaCha20-Poly1305** | Encrypt tokenId and amount inside encrypted note payload | `src/core/utils.go` |
+| **AES-256-GCM** | Encrypt tokenId and amount inside encrypted note payload, keyed by `HKDF(ss, "encryption key")` | `src/core/utils.go` |
 | **Groth16** | ZK proof generation and on-chain verification | `gnark_circuits/server/circuits/` |
 | **Incremental Merkle tree** | On-chain membership proofs (depth 8) | `contracts/core/` |
 

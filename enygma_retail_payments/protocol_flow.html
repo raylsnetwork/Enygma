@@ -951,8 +951,8 @@
       <div class="action alice-action">
         <div class="action-title">Derive salt + AES key</div>
         <div class="action-body">
-          salt = HKDF-SHA256(ss, <em>"Bob salt"</em>)<br/>
-          enc_key = HKDF-SHA256(ss, <em>"Bob symmetric key"</em>)
+          salt = HKDF-SHA256(ss, <em>"note salt"</em>)<br/>
+          enc_key = HKDF-SHA256(ss, <em>"encryption key"</em>)
         </div>
       </div>
     </div>
@@ -1053,7 +1053,14 @@
       <div class="action alice-action">
         <div class="action-title">Request ZK proof</div>
         <div class="action-body">
-          <code>BoundPaymentProof(vaultAddr, inputs=[45], spendKeys, salts, outputs=[30,10], pkSpends=[B,A], pkViews=[B,A], merkleProofs, tokenId)</code>
+          <code>BoundPaymentProof(vaultAddr, inputs=[45], spendKeys, salts, outputs=[30,10], pkSpends=[B,A], pkViews=[B,A], merkleProofs, tokenId)</code><br/>
+          <br/>
+          In Alice's wallet, before the proof request:<br/>
+          (ss, capsule) ← ML-KEM.Encaps(pk_view_B)<br/>
+          salt_B = HKDF-SHA256(ss, <em>"note salt"</em>)<br/>
+          enc_key = HKDF-SHA256(ss, <em>"encryption key"</em>)<br/>
+          encTxData = AES-GCM(enc_key, tokenId || 30)<br/>
+          salt_A = Poseidon(sk_spend_A || nf)
         </div>
       </div>
     </div>
@@ -1066,11 +1073,12 @@
           ✓ nf = Poseidon(sk_spend_A || leafIndex)<br/>
           ✓ C_B = Poseidon(pk_spend_B || salt_B || 30 || tokenId)<br/>
           ✓ C_change = Poseidon(pk_spend_A || salt_A || 10 || tokenId)<br/>
+          ✓ salt_A = Poseidon(sk_spend_A || nf)<br/>
           ✓ 45 = 30 + 10 (value conservation)<br/>
           ✓ same tokenId across all commitments<br/>
           ✓ contractAddress matches vault<br/>
           <br/>
-          Produces: ML-KEM.Encaps(pk_view_B) → capsule + encTxData
+          Returns: proof + public statement
         </div>
       </div>
     </div>
@@ -1162,8 +1170,8 @@
       <div class="action bob-action">
         <div class="action-title">Derive key + salt</div>
         <div class="action-body">
-          enc_key' = HKDF-SHA256(ss', <em>"Bob symmetric key"</em>)<br/>
-          salt'    = HKDF-SHA256(ss', <em>"Bob salt"</em>)
+          enc_key' = HKDF-SHA256(ss', <em>"encryption key"</em>)<br/>
+          salt'    = HKDF-SHA256(ss', <em>"note salt"</em>)
         </div>
       </div>
     </div>
@@ -1197,7 +1205,7 @@
     <div class="callout-icon">🔄</div>
     <div class="callout-body">
       <strong>Alice's Change Note — No Scanning Needed</strong>
-      <p>The Gnark server returns <code>saltA</code> directly in the proof result. Alice computes <code>C_change = Poseidon(pk_spend_A || saltA || changeAmt || tokenId)</code> and verifies it equals the statement's second output commitment (<code>CommitmentsOut[1]</code>). She can spend her change using <code>(sk_spend_A, saltA)</code>.</p>
+      <p>Alice's change salt is <code>saltA = Poseidon(sk_spend_A || nf)</code>, where <code>nf</code> is the nullifier of the note she spends, and the circuit requires exactly this salt. Alice stores no salt: from her spend key, the nullifier in the <code>Nullifier</code> event and the change amount she chose, she rebuilds <code>C_change = Poseidon(pk_spend_A || saltA || changeAmt || tokenId)</code> (<code>ChangeNote</code>) and checks that it equals the statement's second output commitment (<code>CommitmentsOut[1]</code>). She can spend her change using <code>(sk_spend_A, saltA)</code>.</p>
     </div>
   </div>
 
@@ -1544,7 +1552,7 @@
       <tr><td>cipherText on-chain</td><td>1088 bytes (ML-KEM capsule)</td><td>32 bytes (channelId)</td></tr>
       <tr><td>encTxData content</td><td>AES-GCM(k, tokenId||amount)</td><td>AES-GCM(channel_key, amount||tokenId||salt)</td></tr>
       <tr><td>Key agreement per payment</td><td>Yes — fresh ML-KEM encapsulation</td><td>No — reuses shared channel_key</td></tr>
-      <tr><td>Salt source</td><td>HKDF(ss, "Bob salt")</td><td>Random per payment</td></tr>
+      <tr><td>Salt source</td><td>HKDF(ss, "note salt")</td><td>Random per payment</td></tr>
       <tr><td>ZK circuit</td><td>Same</td><td>Same</td></tr>
       <tr><td>On-chain function</td><td>Same</td><td>Same</td></tr>
       <tr><td>Setup required</td><td>None</td><td>One-time SetupChannel</td></tr>
@@ -1705,8 +1713,8 @@
     <div class="primitive-card" style="border-top:3px solid var(--auditor)">
       <h4>Key Derivation (HKDF)</h4>
       <p>HKDF-SHA256 with domain-separated info strings:<br/>
-      <code>"Bob salt"</code> → payment salt<br/>
-      <code>"Bob symmetric key"</code> → AES key<br/>
+      <code>"note salt"</code> → payment salt<br/>
+      <code>"encryption key"</code> → AES key<br/>
       <code>"enygma-channel-key-v1"</code> → channel key<br/>
       <code>"enygma-audit-view-key-v1"</code> → audit key</p>
     </div>
@@ -1744,7 +1752,7 @@
       <tr><td>2</td><td>Know sk_spend_A s.t. pk_spend_A = Poseidon(sk_spend_A)</td><td>✓</td><td>✓</td></tr>
       <tr><td>3</td><td>nf = Poseidon(sk_spend_A || leafIndex) is well-formed</td><td>✓</td><td>✓</td></tr>
       <tr><td>4</td><td>C_B = Poseidon(pk_spend_B || salt_B || payAmt || tokenId)</td><td>✓</td><td>✓</td></tr>
-      <tr><td>5</td><td>C_change = Poseidon(pk_spend_A || salt_A || changeAmt || tokenId)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>5</td><td>C_change = Poseidon(pk_spend_A || salt_A || changeAmt || tokenId), with salt_A = Poseidon(sk_spend_A || nf)</td><td>✓</td><td>✓</td></tr>
       <tr><td>6</td><td>tokenId is consistent across all commitments</td><td>✓</td><td>✓</td></tr>
       <tr><td>7</td><td>contractAddress binds proof to specific vault</td><td>✓</td><td>✓</td></tr>
       <tr><td>8</td><td>valueIn = payAmt + changeAmt (no fee)</td><td>✓</td><td>✗</td></tr>
