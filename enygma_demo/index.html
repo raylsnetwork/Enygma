@@ -1963,9 +1963,9 @@ window.__ENYGMA = { _q: [], register: function(name, bootFn){ this._q.push([name
         <div class="math-section">
           <div class="eyebrow" style="color:var(--accent-ink)"><span class="num">5</span>AUDITOR (OPTIONAL)</div>
           <h4>A third key, orthogonal to spending</h4>
-          <p>An auditor holds a BabyJubJub keypair — the same curve used for the ML-KEM/Poseidon key-agreement primitives elsewhere in this protocol — registered on-chain once via <span class="mono">registerAuditor</span>. An issuer can then, per mint, encrypt <span class="mono">(amount, token_id, contractAddress)</span> to that key and store the ciphertext alongside the commitment. The auditor's key never authorizes spending and is never required to mint — it can only ever decrypt what was explicitly sealed to it.</p>
+          <p>An auditor holds a BabyJubJub keypair, registered onchain once via <span class="mono">registerAuditor</span>. An issuer can then, per mint, encrypt <span class="mono">(amount, token_id, contractAddress)</span> to that key and store the ciphertext alongside the commitment. The auditor's key never authorizes spending and is never required to mint — it can only ever decrypt what was explicitly sealed to it.</p>
           <div class="formula">authKey = pk_auditor · random&nbsp;&nbsp;<span class="op">·</span>&nbsp;&nbsp;ct = PoseidonEnc(authKey, [amount, token_id, contractAddr])</div>
-          <div class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><span><b>Honesty note:</b> the on-chain <span class="mono">registerAuditor</span> registry and the off-chain key-agreement/encryption helpers (<span class="mono">AuditorKeyPair</span>, <span class="mono">AuditorEncKey</span>, <span class="mono">PoseidonEncrypt</span>) are real code in <span class="mono">src/core</span>. The Groth16 circuits that would actually <i>prove</i> a "WithAuditor" mint is well-formed are not implemented — their config blocks are commented out in <span class="mono">gnark_circuits/generation.go</span>. This section demonstrates the intended design; treat the encryption above as illustrative, same as every other primitive in this demo.</span></div>
+          <div class="note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><span><b>Honesty note:</b> only the onchain <span class="mono">registerAuditor</span> registry is real code, in EnygmaDvp.sol. <span class="mono">src/core</span> has no BabyJubJub auditor key or encryption code, and the Groth16 "WithAuditor" circuits that would actually <i>prove</i> a mint's audit trail is well-formed have no source, keygen entry or gnark-server route (<span class="mono">docs/adr/0003</span>). This section demonstrates the intended design; treat the encryption above as illustrative, same as every other primitive in this demo.</span></div>
         </div>
 
       </div>
@@ -5460,12 +5460,12 @@ function renderInspector(){
 }
 
 /* ── Setup tab: auditor key setup ───────────────────────────────── */
-// BabyJubJub keygen + AuditorEncKey (= MulPointEscalar(pk_auditor, random)) are simulated
+// BabyJubJub keygen and the auditor key agreement (authKey = pk_auditor · random) are simulated
 // via SHA-256 here, the same illustrative stand-in this whole demo uses for every "real"
 // primitive (Poseidon, ML-KEM, AES-GCM all stand in for themselves already). The on-chain
-// registry call and the encrypted-audit-trail shape mirror the real registerAuditor() /
-// AuditorKeyPair / AuditorEncKey code in src/core — the gnark circuits that would actually
-// prove a "WithAuditor" mint are not implemented in the real codebase (see the FAQ below).
+// registry call mirrors the real registerAuditor() in EnygmaDvp.sol; src/core has no BabyJubJub
+// auditor code, and the gnark circuits that would actually prove a "WithAuditor" mint are not
+// implemented in the real codebase (see the FAQ below).
 async function genAuditor(){
   const btn = $('#btnGenAuditor'); btn.disabled = true;
   await sleep(500);
@@ -6091,7 +6091,7 @@ const FAQ_DATA = [
   { section: 'Compliance & auditing', items: [
     { q: 'What can the auditor actually see?', a: 'Only what was explicitly sealed to them, per mint. If an issuer checks the audit-trail box, the auditor can eventually decrypt that specific note\'s amount, token_id, and contract address. Every other note — minted without the box checked, or before an auditor was ever registered — is completely opaque to them, exactly as opaque as to anyone else watching the chain.' },
     { q: 'Can the auditor spend a note, freeze it, or block a mint?', a: 'No, on all three. The auditor key is BabyJubJub, structurally unrelated to the Poseidon spend key that authorizes moving a note. Registering an auditor, or attaching an audit trail, never touches the spend-authorization path — it only ever adds a side-channel decryption capability over data the issuer chose to seal.' },
-    { q: 'Is this auditor circuit actually implemented and deployed?', a: 'Partially. What\'s real: the on-chain <span class="mono">registerAuditor</span>/<span class="mono">unregisterAuditor</span> registry in EnygmaDvp.sol, and the off-chain <span class="mono">AuditorKeyPair</span> / <span class="mono">AuditorEncKey</span> / <span class="mono">PoseidonEncrypt</span> helpers in <span class="mono">src/core</span>. What\'s <i>not</i> real yet: the Groth16 "WithAuditor" circuits that would prove a mint\'s encrypted payload is actually well-formed — every config for them is commented out in <span class="mono">gnark_circuits/generation.go</span>, so no proving/verifying key for them has ever been generated. This tab shows the intended design; on a live deployment today, a note can\'t actually carry a provable audit trail yet.' },
+    { q: 'Is this auditor circuit actually implemented and deployed?', a: 'Partially. What\'s real: the onchain <span class="mono">registerAuditor</span>/<span class="mono">unregisterAuditor</span> registry in EnygmaDvp.sol. What\'s <i>not</i> real yet: BabyJubJub auditor key and encryption code (<span class="mono">src/core</span> has none), and the Groth16 "WithAuditor" circuits that would prove a mint\'s encrypted payload is actually well-formed: they have no source, keygen entry or gnark-server route (<span class="mono">docs/adr/0003</span>), so no proving key for them can be generated here. This tab shows the intended design; on a live deployment today, a note can\'t actually carry a provable audit trail yet.' },
   ]},
   { section: 'This build', items: [
     { q: 'What here is real cryptography, and what is simulated?', a: '<b>Real, in your browser:</b> HKDF-SHA256 salt derivation from the shared secret, AES-256-GCM for <span class="mono">ENC_TX_DATA</span>, and every commitment and nullifier recomputed from its opening. <b>Substituted:</b> Poseidon is stood in for by SHA-256, ML-KEM-768 encapsulation by a consistent pairwise secret, and both Groth16 proofs by placeholder digests. The constraint counts quoted on screen are measured from the real circuits. Nothing the page claims about privacy or conservation rests on a substituted part — the headless test suite re-derives each of those claims independently from the state the page exposes.' },

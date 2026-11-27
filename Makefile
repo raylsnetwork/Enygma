@@ -291,12 +291,12 @@ DVP_STACK_PID := $(or $(TMPDIR),/tmp)/enygma_dvp_stack.pid
 # What dvp-stack runs, in enygma_dvp: dvp-stack-stop signals only this command line.
 DVP_STACK_CMD := bash scripts/stack.sh
 DVP_LOG_DIR ?=
-# Tests allowed to skip in dvp-test (full names, space-separated): the
-# NewKeyPair field-range flakes. Any other skip fails the suite, so a relayer
-# or deployment missing for tests 10/12/15/26/27 cannot pass for green.
+# Tests allowed to skip in dvp-test (full names, space-separated). Any other
+# skip fails the suite, so a relayer or deployment missing for tests
+# 10/12/15/26/27 cannot pass for green.
 # make test-name-skip-check fails on a name that is no test in DVP_SUITE.
 DVP_SUITE := enygma_dvp/test
-DVP_KNOWN_SKIPS := TestNewKeyPair TestNewKeyPairDeterministicPublicKey
+DVP_KNOWN_SKIPS :=
 
 dvp-chain: ## Start a local Hardhat node (keep running)
 	cd enygma_dvp && npx hardhat node

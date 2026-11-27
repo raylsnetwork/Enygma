@@ -12,41 +12,10 @@ import (
 	"math/big"
 	"os"
 
-	"github.com/iden3/go-iden3-crypto/babyjub"
 	"github.com/iden3/go-iden3-crypto/poseidon"
-	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/sha3"
 )
-
-// BASE_POINT_ORDER is the order of the BabyJubJub base point subgroup
-var BASE_POINT_ORDER, _ = new(big.Int).SetString(
-	"2736030358979909402780800718157159386076813972158567259200215660948447373041", 10)
-
-// --- BabyJubJub helpers ---
-
-// MulPointEscalar performs scalar multiplication: result = scalar * point
-func MulPointEscalar(point *babyjub.Point, scalar *big.Int) *babyjub.Point {
-	res := babyjub.NewPoint()
-	res.Mul(scalar, point)
-	return res
-}
-
-// AddPoints adds two BabyJubJub points using projective coordinates
-func AddPoints(p1, p2 *babyjub.Point) *babyjub.Point {
-	res := babyjub.NewPointProjective()
-	res.Add(p1.Projective(), p2.Projective())
-	return res.Affine()
-}
-
-// NegatePoint returns the negation of a BabyJubJub point (-x, y)
-func NegatePoint(p *babyjub.Point) *babyjub.Point {
-	negX := new(big.Int).Sub(SNARK_SCALAR_FIELD, p.X)
-	return &babyjub.Point{
-		X: negX,
-		Y: new(big.Int).Set(p.Y),
-	}
-}
 
 // --- File utilities ---
 
@@ -104,38 +73,7 @@ func RandomInField() (*big.Int, error) {
 	return result, nil
 }
 
-// RandomNonce generates a random 128-bit non-zero nonce
-func RandomNonce() (*big.Int, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-	result := new(big.Int).SetBytes(b)
-	result.Add(result, big.NewInt(1)) // ensure non-zero
-	return result, nil
-}
-
 // --- Poseidon-based key operations ---
-
-// NewKeyPair generates a new Poseidon-based key pair
-func NewKeyPair() (privateKey, publicKey *big.Int, err error) {
-	b := make([]byte, 32)
-	if _, err = rand.Read(b); err != nil {
-		return nil, nil, err
-	}
-
-	privateKey, err = poseidon.Hash([]*big.Int{new(big.Int).SetBytes(b)})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	publicKey, err = poseidon.Hash([]*big.Int{privateKey})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return privateKey, publicKey, nil
-}
 
 // GetNullifier computes the nullifier from a private key and path indices.
 // Deprecated: use GetNullifierWithTree for all new circuits to prevent cross-tree
@@ -328,68 +266,19 @@ func GenerateRandomValue(size int) ([]byte, error) {
 	return b, nil
 }
 
-// EncryptSwapPayload encrypts the ZkDvp swap payload (tokenId || amount || saltStar)
-// using ChaCha20-Poly1305 keyed by saltB (the ML-KEM shared secret).
-//
-//   - tokenId, amount  — details of the asset Alice will receive (output commitment C')
-//   - saltStar         — the random salt used in C' = Poseidon(aliceSpendPk, SaltBToField(saltStar), amount, tokenId)
-//
-// Bob decrypts this to verify that C' is well-formed before completing the swap.
-// Layout on wire: [ 12-byte nonce | ciphertext | 16-byte Poly1305 tag ]
-func EncryptSwapPayload(saltB []byte, tokenId, amount *big.Int, saltStar []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.New(saltB)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AEAD cipher: %w", err)
-	}
-
-	// plaintext = tokenId (32 bytes) || amount (32 bytes) || saltStar (len(saltStar) bytes)
-	plaintext := make([]byte, 64+len(saltStar))
-	tokenId.FillBytes(plaintext[:32])
-	amount.FillBytes(plaintext[32:64])
-	copy(plaintext[64:], saltStar)
-
-	nonce := make([]byte, aead.NonceSize()) // 12 bytes
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	return aead.Seal(nonce, nonce, plaintext, nil), nil
-}
-
-// DecryptSwapPayload decrypts a ZkDvp swap ciphertext produced by EncryptSwapPayload.
-// Returns tokenId, amount, and saltStar. A non-nil error means the payload is not
-// addressed to this key (authentication failure or wrong key).
-func DecryptSwapPayload(saltB, encTxData []byte) (tokenId, amount *big.Int, saltStar []byte, err error) {
-	aead, err := chacha20poly1305.New(saltB)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create AEAD cipher: %w", err)
-	}
-
-	nonceSize := aead.NonceSize()
-	if len(encTxData) < nonceSize {
-		return nil, nil, nil, fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ct := encTxData[:nonceSize], encTxData[nonceSize:]
-	plaintext, err := aead.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decryption failed: payload not addressed to this key")
-	}
-
-	if len(plaintext) < 64 {
-		return nil, nil, nil, fmt.Errorf("unexpected plaintext length: %d", len(plaintext))
-	}
-
-	tokenId = new(big.Int).SetBytes(plaintext[:32])
-	amount = new(big.Int).SetBytes(plaintext[32:64])
-	saltStar = plaintext[64:]
-	return tokenId, amount, saltStar, nil
-}
-
 // EncryptPayload encrypts tokenId||amount using AES-256-GCM keyed by encKey.
-// encKey must be the 32-byte value from DerivePaymentKey(ss).
+// encKey must be the 32-byte value from DerivePaymentKey(ss). Each value takes
+// one 32-byte big-endian word, so a nil or negative value, or one of 2^256 or
+// more, is an error.
 // Wire layout: [ 12-byte nonce | AES-GCM ciphertext | 16-byte GCM tag ]
 func EncryptPayload(encKey []byte, tokenId, amount *big.Int) ([]byte, error) {
+	names := [2]string{"token id", "amount"}
+	for i, v := range [2]*big.Int{tokenId, amount} {
+		if v == nil || v.Sign() < 0 || v.BitLen() > 256 {
+			// The error names the field, not its value, which is private.
+			return nil, fmt.Errorf("payload %s is nil, negative or 2^256 or more", names[i])
+		}
+	}
 	block, err := aes.NewCipher(encKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
@@ -446,181 +335,6 @@ func DecryptPayload(encKey, encTxData []byte) (tokenId, amount *big.Int, err err
 	tokenId = new(big.Int).SetBytes(plaintext[:32])
 	amount = new(big.Int).SetBytes(plaintext[32:])
 	return tokenId, amount, nil
-}
-
-// --- BabyJubJub encryption (ElGamal-like) ---
-
-// EncodeMessage encodes an integer as a BabyJubJub point: m * Base8
-func EncodeMessage(m *big.Int) *babyjub.Point {
-	return MulPointEscalar(babyjub.B8, m)
-}
-
-// DecodeMessage recovers the integer from a BabyJubJub point by brute-force search
-func DecodeMessage(point *babyjub.Point, maxM *big.Int) (*big.Int, error) {
-	m := new(big.Int)
-	for m.Cmp(maxM) < 0 {
-		candidate := EncodeMessage(m)
-		if candidate.X.Cmp(point.X) == 0 && candidate.Y.Cmp(point.Y) == 0 {
-			return new(big.Int).Set(m), nil
-		}
-		m.Add(m, big.NewInt(1))
-	}
-	return nil, fmt.Errorf("message not found")
-}
-
-// BabyEncrypt performs ElGamal-like encryption on BabyJubJub
-// Returns (c1, c2) where c1 = r*G, c2 = m*G + r*pubKey
-func BabyEncrypt(m, r *big.Int, pubKey *babyjub.Point) (c1, c2 *babyjub.Point) {
-	// c1 = r * G
-	c1 = MulPointEscalar(babyjub.B8, r)
-
-	// rPub = r * publicKey
-	rPub := MulPointEscalar(pubKey, r)
-
-	// mG = m * G
-	mG := EncodeMessage(m)
-
-	// c2 = mG + rPub
-	c2 = AddPoints(mG, rPub)
-
-	return c1, c2
-}
-
-// BabyDecrypt performs ElGamal-like decryption on BabyJubJub
-// Returns the decrypted message or nil if not found in allowed range
-func BabyDecrypt(c1, c2 *babyjub.Point, privateKey *big.Int, allowedRange *big.Int) *big.Int {
-	if allowedRange == nil {
-		allowedRange = big.NewInt(1000)
-	}
-
-	// rPub = privateKey * c1
-	rPub := MulPointEscalar(c1, privateKey)
-
-	// M_dec = c2 + (-rPub) = c2 - rPub
-	negRPub := NegatePoint(rPub)
-	mDec := AddPoints(c2, negRPub)
-
-	decrypted, err := DecodeMessage(mDec, allowedRange)
-	if err != nil {
-		return nil
-	}
-	return decrypted
-}
-
-// BabyKeyPair generates a BabyJubJub key pair
-func BabyKeyPair() (privateKey *big.Int, publicKey *babyjub.Point, err error) {
-	for {
-		privateKey, err = RandomInField()
-		if err != nil {
-			return nil, nil, err
-		}
-		privateKey.Mod(privateKey, babyjub.SubOrder)
-		if privateKey.Sign() != 0 {
-			break
-		}
-	}
-	publicKey = MulPointEscalar(babyjub.B8, privateKey)
-	return privateKey, publicKey, nil
-}
-
-// AuditorKeyPair holds a BabyJubJub key pair used for auditor encryption.
-// The public key (X, Y) is passed to the circuit as StAuditorPublickey.
-// The private key is used off-chain to decrypt auditor-encrypted values.
-type AuditorKeyPair struct {
-	PrivateKey *big.Int
-	PublicKeyX *big.Int
-	PublicKeyY *big.Int
-}
-
-// NewAuditorKeyPair generates a fresh BabyJubJub key pair for auditor encryption.
-func NewAuditorKeyPair() (*AuditorKeyPair, error) {
-	sk, pk, err := BabyKeyPair()
-	if err != nil {
-		return nil, err
-	}
-	return &AuditorKeyPair{
-		PrivateKey: sk,
-		PublicKeyX: pk.X,
-		PublicKeyY: pk.Y,
-	}, nil
-}
-
-// RandomAuditorScalar returns a random scalar in (0, BASE_POINT_ORDER) for use
-// as the auditor's random blinding factor (WtAuditorRandom in the circuit).
-func RandomAuditorScalar() (*big.Int, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-	r := new(big.Int).SetBytes(b)
-	r.Mod(r, BASE_POINT_ORDER)
-	// Ensure non-zero (circuit requires random > 0)
-	if r.Sign() == 0 {
-		r.SetInt64(1)
-	}
-	return r, nil
-}
-
-// AuditorEncKey computes the shared encryption key for Poseidon encryption:
-//
-//	authKey = MulPointEscalar(auditorPublicKey, random)
-//
-// Returns (authKey.X, authKey.Y) — used as the key for NativePoseidonEncrypt / PoseidonDecrypt.
-// StAuditorAuthKey in the circuit is informational; the circuit re-derives it from
-// StAuditorPublickey and WtAuditorRandom.
-func AuditorEncKey(pubKeyX, pubKeyY, random *big.Int) (*big.Int, *big.Int) {
-	pk := &babyjub.Point{X: pubKeyX, Y: pubKeyY}
-	auth := MulPointEscalar(pk, random)
-	return auth.X, auth.Y
-}
-
-// --- Poseidon encryption (maci-crypto compatible) ---
-
-// PoseidonEncryptResult holds the result of Poseidon encryption
-type PoseidonEncryptResult struct {
-	Encrypted []*big.Int
-	Nonce     *big.Int
-	RandomVal *big.Int
-	SharedKey *babyjub.Point
-	AuthKey   *babyjub.Point
-}
-
-// PoseidonEncryptWrapper encrypts inputs using Poseidon sponge encryption
-// TODO: Requires a Go port of maci-crypto's poseidonEncrypt
-func PoseidonEncryptWrapper(inputs []*big.Int, publicKey *babyjub.Point) (*PoseidonEncryptResult, error) {
-	nonce, err := RandomNonce()
-	if err != nil {
-		return nil, err
-	}
-
-	randomValue, err := RandomInField()
-	if err != nil {
-		return nil, err
-	}
-	randomValue.Div(randomValue, big.NewInt(10))
-
-	authKey := MulPointEscalar(babyjub.B8, randomValue)
-	sharedKey := MulPointEscalar(publicKey, randomValue)
-
-	// TODO: implement poseidonEncrypt(inputs, sharedKey, nonce)
-	// This requires porting maci-crypto's Poseidon sponge encryption to Go.
-	// When implemented, replace the return below with:
-	//   encrypted := poseidonEncrypt(inputs, sharedKey, nonce)
-	//   return &PoseidonEncryptResult{Encrypted: encrypted, Nonce: nonce,
-	//     RandomVal: randomValue, SharedKey: sharedKey, AuthKey: authKey}, nil
-	_, _, _ = nonce, sharedKey, authKey
-	return nil, fmt.Errorf("poseidonEncrypt not yet implemented: requires maci-crypto Go port")
-}
-
-// PoseidonDecryptWrapper decrypts data using Poseidon sponge decryption
-// TODO: Requires a Go port of maci-crypto's poseidonDecrypt
-func PoseidonDecryptWrapper(encrypted []*big.Int, authKey *babyjub.Point, nonce, privateKey *big.Int, length int) ([]*big.Int, error) {
-	sharedKey := MulPointEscalar(authKey, privateKey)
-
-	// TODO: implement poseidonDecrypt(encrypted, sharedKey, nonce, length)
-	// This requires porting maci-crypto's Poseidon sponge decryption to Go
-	_ = sharedKey
-	return nil, fmt.Errorf("poseidonDecrypt not yet implemented: requires maci-crypto Go port")
 }
 
 // --- Token unique IDs ---

@@ -75,11 +75,6 @@ func TestDvPInitiatorRevertSaltIsReturnedAndDerivable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts: %v", err)
 	}
-	zk, err := c.ZkDvpInitiateSwap(alice, big.NewInt(1), value, tokenId, bob.PublicKey, view.EncapsKey,
-		big.NewInt(25), big.NewInt(1), depth, a.proofs[0], treeNumber)
-	if err != nil {
-		t.Fatalf("ZkDvpInitiateSwap: %v", err)
-	}
 
 	results := []struct {
 		name         string
@@ -87,7 +82,6 @@ func TestDvPInitiatorRevertSaltIsReturnedAndDerivable(t *testing.T) {
 	}{
 		{"DvPInitiatorProof", kem.RevertSalt, kem.RevertCommitA()},
 		{"DvPInitiatorProofFromSalts", fromSalts.RevertSalt, fromSalts.RevertCommitA()},
-		{"ZkDvpInitiateSwap", zk.RevertSalt, zk.RevertCommitA},
 	}
 	for i, r := range results {
 		if r.salt == nil || r.salt.Cmp(wantSalt) != 0 {

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"enygma_dvp/layout"
@@ -687,6 +688,30 @@ func TestGnarkProverDispatcher_AuctionBid(t *testing.T) {
 	}
 	if resp.Status != 200 {
 		t.Errorf("expected status 200, got %d", resp.Status)
+	}
+}
+
+// The ERC1155 auditor circuits are retired with the ERC1155 vault
+// (docs/adr/0003) and have no prover. GnarkProver refuses their key paths
+// without a request, rather than handing them to the non-auditor ERC1155
+// provers whose names theirs contain.
+func TestGnarkProverDispatcher_RefusesTheRetiredErc1155AuditorCircuits(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Write([]byte(`{"status":200,"message":"ok"}`))
+	}))
+	defer server.Close()
+
+	client := core.NewGnarkClient(server.URL)
+	for _, zkey := range []string{"path/to/JoinSplitErc1155WithAuditor.zkey", "path/to/OwnershipErc1155NonFungibleWithAuditor.zkey"} {
+		resp, mint, err := client.GnarkProver(map[string]interface{}{}, zkey)
+		if err == nil || resp != nil || mint != nil {
+			t.Errorf("%s: resp = %+v, mint = %+v, err = %v; want a refusal", zkey, resp, mint, err)
+		}
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d proof requests sent, want none", n)
 	}
 }
 

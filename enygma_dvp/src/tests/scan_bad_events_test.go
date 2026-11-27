@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/iden3/go-iden3-crypto/poseidon"
 	"github.com/raylsnetwork/enygma_dvp/src/core"
 )
 
@@ -186,60 +187,10 @@ func TestScanForErc1155Notes_ReturnsTheGoodNoteAmongBadEvents(t *testing.T) {
 	}
 }
 
-// swapAmountIn and swapTokenIn are what Bob contributes to a swap: the values
-// of CommitmentB.
-var swapAmountIn, swapTokenIn = big.NewInt(3), big.NewInt(20)
-
-func goodSwapEvent(t *testing.T, alice, bob wallet, amountOut *big.Int) core.OnChainZkDvpEvent {
-	t.Helper()
-	tokenOut := big.NewInt(10)
-	saltStar := []byte("salt star of the initiator 32 by")
-	ss, capsule, err := core.Encapsulate(bob.view.EncapsKey)
-	if err != nil {
-		t.Fatalf("Encapsulate: %v", err)
-	}
-	payload, err := core.EncryptSwapPayload(ss, tokenOut, amountOut, saltStar)
-	if err != nil {
-		t.Fatalf("EncryptSwapPayload: %v", err)
-	}
-	commitA, err := core.Erc20CommitmentV2(alice.spend.PublicKey, core.SaltBToField(saltStar), amountOut, tokenOut)
-	if err != nil {
-		// An out-of-field amountOut has no CommitmentA; the event publishes a stand-in.
-		commitA = big.NewInt(1)
-	}
-	commitB, err := core.Erc20CommitmentV2(bob.spend.PublicKey, core.SaltBToField(ss), swapAmountIn, swapTokenIn)
-	if err != nil {
-		t.Fatalf("Erc20CommitmentV2 B: %v", err)
-	}
-	return core.OnChainZkDvpEvent{CommitmentA: commitA, CommitmentB: commitB, CipherText: capsule, EncTxData: payload}
-}
-
-func TestScanForZkDvpSwap_ReturnsTheGoodSwapAmongBadEvents(t *testing.T) {
-	alice, bob := newWallet(t), newWallet(t)
-
-	short := goodSwapEvent(t, alice, bob, big.NewInt(6))
-	short.CipherText = short.CipherText[:len(short.CipherText)-1]
-	mismatchedA := goodSwapEvent(t, alice, bob, big.NewInt(7))
-	mismatchedA.CommitmentA = big.NewInt(1)
-	mismatchedB := goodSwapEvent(t, alice, bob, big.NewInt(8))
-	mismatchedB.CommitmentB = big.NewInt(1)
-	outOfField := goodSwapEvent(t, alice, bob, core.SNARK_SCALAR_FIELD)
-	good := goodSwapEvent(t, alice, bob, big.NewInt(5))
-
-	swaps, err := core.ScanForZkDvpSwap(bob.view.DecapsKey, alice.spend.PublicKey, bob.spend.PublicKey,
-		swapAmountIn, swapTokenIn, []core.OnChainZkDvpEvent{short, mismatchedA, mismatchedB, outOfField, good})
-	if err != nil {
-		t.Fatalf("a bad event stopped the scan: %v", err)
-	}
-	if len(swaps) != 1 || swaps[0].AmountOut.Cmp(big.NewInt(5)) != 0 {
-		t.Fatalf("swaps = %+v, want exactly the swap of 5", swaps)
-	}
-}
-
 // A pkSpend outside the field is the wallet's own fault, not any event's: the
 // scan must fail rather than report every note addressed to it as a bad event.
 func TestScanners_FailOnAWalletKeyOutsideTheField(t *testing.T) {
-	w, alice := newWallet(t), newWallet(t)
+	w := newWallet(t)
 	badKey := core.SNARK_SCALAR_FIELD
 
 	if _, err := core.ScanForErc20Notes(w.view.DecapsKey, badKey,
@@ -254,24 +205,10 @@ func TestScanners_FailOnAWalletKeyOutsideTheField(t *testing.T) {
 		[]core.OnChainErc1155Event{goodErc1155Event(t, w, big.NewInt(5))}); err == nil {
 		t.Error("ScanForErc1155Notes: no error for a pkSpend outside the field")
 	}
-
-	swap := []core.OnChainZkDvpEvent{goodSwapEvent(t, alice, w, big.NewInt(5))}
-	if _, err := core.ScanForZkDvpSwap(w.view.DecapsKey, badKey, w.spend.PublicKey, swapAmountIn, swapTokenIn, swap); err == nil {
-		t.Error("ScanForZkDvpSwap: no error for an aliceSpendPk outside the field")
-	}
-	if _, err := core.ScanForZkDvpSwap(w.view.DecapsKey, alice.spend.PublicKey, badKey, swapAmountIn, swapTokenIn, swap); err == nil {
-		t.Error("ScanForZkDvpSwap: no error for a bobSpendPk outside the field")
-	}
-	if _, err := core.ScanForZkDvpSwap(w.view.DecapsKey, alice.spend.PublicKey, w.spend.PublicKey, core.SNARK_SCALAR_FIELD, swapTokenIn, swap); err == nil {
-		t.Error("ScanForZkDvpSwap: no error for an amountIn outside the field")
-	}
-	if _, err := core.ScanForZkDvpSwap(w.view.DecapsKey, alice.spend.PublicKey, w.spend.PublicKey, swapAmountIn, core.SNARK_SCALAR_FIELD, swap); err == nil {
-		t.Error("ScanForZkDvpSwap: no error for a tokenIdIn outside the field")
-	}
 }
 
 func TestWithRejectedVariants_ReportABadCapsule(t *testing.T) {
-	w, alice := newWallet(t), newWallet(t)
+	w := newWallet(t)
 	want := []core.RejectedEvent{{Index: 0, Reason: core.RejectBadCapsule}}
 
 	bad721 := goodErc721Event(t, w, big.NewInt(5))
@@ -284,9 +221,104 @@ func TestWithRejectedVariants_ReportABadCapsule(t *testing.T) {
 	if _, rejected, err := core.ScanForErc1155NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey, []core.OnChainErc1155Event{bad1155}); err != nil || !slices.Equal(rejected, want) {
 		t.Errorf("ERC1155: rejected = %+v, err = %v", rejected, err)
 	}
-	badSwap := goodSwapEvent(t, alice, w, big.NewInt(5))
-	badSwap.CipherText = nil
-	if _, rejected, err := core.ScanForZkDvpSwapWithRejected(w.view.DecapsKey, alice.spend.PublicKey, w.spend.PublicKey, swapAmountIn, swapTokenIn, []core.OnChainZkDvpEvent{badSwap}); err != nil || !slices.Equal(rejected, want) {
-		t.Errorf("ZkDvp: rejected = %+v, err = %v", rejected, err)
+}
+
+// An event lacking a value the scan reads (a nil commitment, or an ERC1155
+// event's nil contract address) can be built by hand but never decoded from a
+// chain log. Each scanner reports it as RejectMissingValue, rather than
+// panicking, and still finds the good note after it.
+func TestScanners_RejectAnEventMissingAValue(t *testing.T) {
+	w := newWallet(t)
+	want := []core.RejectedEvent{{Index: 0, Reason: core.RejectMissingValue}}
+
+	t.Run("ERC20 commitment", func(t *testing.T) {
+		bad := goodErc20Event(t, w, big.NewInt(10), big.NewInt(6))
+		bad.Commitment = nil
+		events := []core.OnChainErc20Event{bad, goodErc20Event(t, w, big.NewInt(10), big.NewInt(5))}
+		owned, rejected, err := core.ScanForErc20NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey, events)
+		if err != nil || len(owned) != 1 || owned[0].Amount.Cmp(big.NewInt(5)) != 0 || !slices.Equal(rejected, want) {
+			t.Fatalf("owned = %+v, rejected = %+v, err = %v; want the note of 5 and %+v", owned, rejected, err, want)
+		}
+		// Every wallet's scan reports it, not only the one its payload opens for.
+		other := newWallet(t)
+		if _, rejected, err := core.ScanForErc20NotesWithRejected(other.view.DecapsKey, other.spend.PublicKey, events[:1]); err != nil || !slices.Equal(rejected, want) {
+			t.Fatalf("another wallet's scan: rejected = %+v, err = %v; want %+v", rejected, err, want)
+		}
+	})
+	t.Run("ERC721 commitment", func(t *testing.T) {
+		bad := goodErc721Event(t, w, big.NewInt(6))
+		bad.Commitment = nil
+		owned, rejected, err := core.ScanForErc721NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey,
+			[]core.OnChainErc721Event{bad, goodErc721Event(t, w, big.NewInt(5))})
+		if err != nil || len(owned) != 1 || owned[0].TokenId.Cmp(big.NewInt(5)) != 0 || !slices.Equal(rejected, want) {
+			t.Fatalf("owned = %+v, rejected = %+v, err = %v; want token 5 and %+v", owned, rejected, err, want)
+		}
+	})
+	for _, c := range []struct {
+		name  string
+		unset func(*core.OnChainErc1155Event)
+	}{
+		{"ERC1155 commitment", func(ev *core.OnChainErc1155Event) { ev.Commitment = nil }},
+		{"ERC1155 contract address", func(ev *core.OnChainErc1155Event) { ev.ContractAddress = nil }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bad := goodErc1155Event(t, w, big.NewInt(6))
+			c.unset(&bad)
+			owned, rejected, err := core.ScanForErc1155NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey,
+				[]core.OnChainErc1155Event{bad, goodErc1155Event(t, w, big.NewInt(5))})
+			if err != nil || len(owned) != 1 || owned[0].Amount.Cmp(big.NewInt(5)) != 0 || !slices.Equal(rejected, want) {
+				t.Fatalf("owned = %+v, rejected = %+v, err = %v; want the note of 5 and %+v", owned, rejected, err, want)
+			}
+		})
+	}
+}
+
+// A change note, published as a client publishes a withdrawal's (a capsule to
+// the owner's own view key, the change sealed under it), opens for the owner
+// but is not the capsule's note: its salt is Poseidon(sk, nullifier0), as the
+// Payment-family circuits require of a withdrawal's change. The owner's scan
+// reports it as RejectCommitmentMismatch, as scan.go documents, and
+// WithdrawChangeNote rebuilds it from the first nullifier and the change its
+// payload opens to.
+func TestScanForErc20NotesWithRejected_ReportsAChangeNoteAsAMismatch(t *testing.T) {
+	owner := newWallet(t)
+	token, change := big.NewInt(0), big.NewInt(35)
+	sk, pk := owner.spend.PrivateKey, owner.spend.PublicKey
+	nf0, err := core.GetNullifierWithTree(sk, big.NewInt(0), big.NewInt(3), 8)
+	if err != nil {
+		t.Fatalf("GetNullifierWithTree: %v", err)
+	}
+	salt, err := poseidon.Hash([]*big.Int{sk, nf0})
+	if err != nil {
+		t.Fatalf("Poseidon(sk, nf0): %v", err)
+	}
+	commitment, err := poseidon.Hash([]*big.Int{pk, salt, change, token})
+	if err != nil {
+		t.Fatalf("change commitment: %v", err)
+	}
+	capsule, payload, _ := seal(t, owner, token, change)
+	ev := core.OnChainErc20Event{Commitment: commitment, CipherText: capsule, EncTxData: payload}
+
+	owned, rejected, err := core.ScanForErc20NotesWithRejected(owner.view.DecapsKey, pk, []core.OnChainErc20Event{ev})
+	want := []core.RejectedEvent{{Index: 0, Reason: core.RejectCommitmentMismatch}}
+	if err != nil || len(owned) != 0 || !slices.Equal(rejected, want) {
+		t.Fatalf("owned = %+v, rejected = %+v, err = %v; want no note and %+v", owned, rejected, err, want)
+	}
+
+	ss, err := core.Decapsulate(owner.view.DecapsKey, capsule)
+	if err != nil {
+		t.Fatalf("Decapsulate: %v", err)
+	}
+	key, err := core.DerivePaymentKey(ss)
+	if err != nil {
+		t.Fatalf("DerivePaymentKey: %v", err)
+	}
+	gotToken, gotChange, err := core.DecryptPayload(key, payload)
+	if err != nil {
+		t.Fatalf("the owner's view key does not open the change payload: %v", err)
+	}
+	_, rebuilt, err := core.WithdrawChangeNote(sk, nf0, gotChange, gotToken)
+	if err != nil || rebuilt.Cmp(commitment) != 0 {
+		t.Fatalf("WithdrawChangeNote rebuilt %v (err %v), want the change commitment %s", rebuilt, err, commitment)
 	}
 }
