@@ -61,7 +61,7 @@ func joinDefault(stdout, stderr io.Writer) int {
 	}
 	code := 0
 	if err := joinAndReport(c, stdout); err != nil {
-		fmt.Fprintf(stderr, "ceremony: %v\n", err)
+		printError(stderr, "ceremony", err)
 		code = 1
 	}
 	if interactive {

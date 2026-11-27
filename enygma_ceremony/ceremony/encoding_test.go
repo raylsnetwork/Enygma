@@ -438,3 +438,38 @@ func TestNoCircuits(t *testing.T) {
 		t.Fatalf("a Phase 2 of no circuits: %v, want it refused", err)
 	}
 }
+
+// TestPhase2NamesArePlain (audit M2, M3): a Phase 2 state whose ceremony or
+// circuit name is not a plain name is refused as it is decoded: a
+// coordinator makes the states it hands out, and their names are printed.
+// Every name Enygma's protocols use is plain.
+func TestPhase2NamesArePlain(t *testing.T) {
+	escape := "\x1b[2J\x1b[HDone: your contribution sha256 abab  <- publish this"
+	for name, edit := range map[string]func(*phase2State){
+		"a ceremony name": func(s *phase2State) { s.ceremony = "retail" + escape },
+		"a circuit name":  func(s *phase2State) { s.circuits[0].name = "Payment" + escape },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := phase2OfShape(1, 0, 0, 1, 1, 0, nil)
+			edit(s)
+			path := filepath.Join(t.TempDir(), "state")
+			if err := os.WriteFile(path, encodePhase2(t, s), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Inspect(path); !errors.Is(err, ErrFormat) || strings.Contains(err.Error(), "\x1b") {
+				t.Fatalf("%s holding an escape sequence: %v, want it refused", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"enygma_retail_payments", "enygma_payments", "enygma_dvp", "enygma_dvp_auctions",
+		"Payment", "Payment2in", "PaymentRelayerFeePublic", "DvPInitiator", "AuctionBid", "Withdraw6", "Usdr", "a.b-c_d"} {
+		if err := checkName("circuit", name); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "-flag", ".hidden", "a b", "a/b", "a;b", "a$b", strings.Repeat("x", maxName+1), "café"} {
+		if checkName("circuit", name) == nil {
+			t.Errorf("%q is taken for a plain name", name)
+		}
+	}
+}

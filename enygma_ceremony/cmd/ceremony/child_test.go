@@ -14,7 +14,13 @@ import (
 // TestMain lets the test binary be a contribution's child, as the program is:
 // contributeInChild starts os.Executable() again.
 func TestMain(m *testing.M) {
+	if os.Getenv(mainEnv) == "1" {
+		main()
+	}
 	if isChild() {
+		if os.Getenv(floodEnv) == "1" {
+			os.Exit(flood())
+		}
 		os.Exit(runChild(os.Stdin, os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())

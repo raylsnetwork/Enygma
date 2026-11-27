@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"enygma_ceremony/internal/termsafe"
 )
 
 // githubDevicePage is where GitHub's device flow has a participant enter
@@ -86,7 +88,7 @@ func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, err
 		case "expired_token":
 			return "", errors.New("the GitHub code expired before the sign-in; run this again")
 		default:
-			return "", fmt.Errorf("GitHub sign-in failed: %s", grant.Error)
+			return "", fmt.Errorf("GitHub sign-in failed: %s", printable(grant.Error))
 		}
 	}
 	return "", errors.New("the GitHub code expired before the sign-in; run this again")
@@ -106,7 +108,7 @@ func (c *Client) githubForm(ctx context.Context, path string, form url.Values, v
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub answered %s", resp.Status)
+		return fmt.Errorf("GitHub answered %s", termsafe.Status(resp.StatusCode))
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(v)
 }

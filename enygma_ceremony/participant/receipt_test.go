@@ -103,7 +103,7 @@ func TestPrintable(t *testing.T) {
 		"plain":                    "plain",
 		"\x1b[2J\x1b[1;1HOK: done": "[2J[1;1HOK: done",
 		"left‮right":               "leftright",
-		"bell\a and\r\nnewline":    "bell andnewline",
+		"bell\a and\r\nnewline":    "bell and newline", // a line break is a space: the message stays on its line
 		"\u009b31mC1 control":      "31mC1 control",
 	} {
 		if got := printable(in); got != want {

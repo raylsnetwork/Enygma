@@ -72,6 +72,10 @@ func runChild(stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
+	// The receipt carries hashes and numbers only: a Phase 2's names come
+	// from the state the coordinator handed over, and the parent needs none
+	// of them (audit I15).
+	receipt.Ceremony, receipt.Circuits = "", nil
 	if err := enc.Encode(childMessage{Receipt: &receipt}); err != nil {
 		return 1
 	}
@@ -122,14 +126,22 @@ func contributeInChild(ctx context.Context) func(in io.Reader, size int64, out i
 				childErr = m.Error
 			}
 		}
+		// A line past the scanner's limit ends the scan; the child may still
+		// be writing, and would block for ever on a pipe nobody reads while
+		// Wait waits for it (audit I15). Read it to the end first.
+		_, _ = io.Copy(io.Discard, stderr)
+		why := ""
+		if errors.Is(lines.Err(), bufio.ErrTooLong) {
+			why = " (it wrote a line past 1 MiB, and what followed was not read)"
+		}
 		waited := cmd.Wait()
 		switch {
 		case childErr != "":
 			return ceremony.Receipt{}, errors.New(childErr)
 		case waited != nil:
-			return ceremony.Receipt{}, fmt.Errorf("the contribution stopped: %v\n%s", waited, strings.Join(other, "\n"))
+			return ceremony.Receipt{}, fmt.Errorf("the contribution stopped: %v%s: %s", waited, why, strings.Join(other, " | "))
 		case receipt == nil:
-			return ceremony.Receipt{}, errors.New("the contribution ended without a receipt")
+			return ceremony.Receipt{}, errors.New("the contribution ended without a receipt" + why)
 		}
 		return *receipt, nil
 	}
