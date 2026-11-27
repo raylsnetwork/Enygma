@@ -48,11 +48,12 @@
 # longer caught by a later entry's green run. Then it prints each
 # RED as the line a commit names it with,
 #   - `<old>` → `<new>`: RED: "<regex>"
-# (each text on one line, cut past 60 characters; when the cut leaves the
-# two the same, each is a window from 20 characters before their first
-# difference, with … on each cut side), and names each mutant
-# that was not red, with the last line of its run (its verdict). The last line is RED: when every
-# mutant was red (exit 0); else SURVIVED: (exit 1), or BAD INPUT: (exit 2)
+# (for one hunk, each text is on one line and cut past 60 characters;
+# if the cut leaves the two the same, a window shows their first difference.
+# For several hunks, the line names each change, separated by …). It also
+# names each mutant that was not red, with the last line of its run (its verdict).
+# The last line is RED: when every mutant was red (exit 0); else SURVIVED:
+# (exit 1), or BAD INPUT: (exit 2)
 # when a run was on bad input.
 #
 #   scripts/mutant.sh enygma_retail_payments/shield_demo/index.html \
@@ -91,11 +92,10 @@ if [ -n "$batch" ]; then
   trap 'rm -f "$fields" "$log" ${mark:+"$mark"}' EXIT
   # The list is read whole before any entry runs: a shape this cannot read
   # is bad input, naming the entry, never an entry skipped. Each entry comes
-  # out as NUL-ended fields: its label (old → new, shortened, as its lines
-  # quote it), expect, file, old, new, the
-  # command's word count and its words.
+  # out as NUL-ended fields: its shortened label, expect, file, old, new,
+  # the command's word count and its words.
   python3 - "$batch" >"$fields" <<'PY' || exit 2
-import json, os, re, sys
+import difflib, json, os, re, sys
 path = sys.argv[1]
 def bad(msg):
     sys.exit(f"BAD INPUT: {path}: {msg}")
@@ -123,16 +123,36 @@ def window(s, diff_at):
     text = s[start:start + WIDTH - 2]
     head = "…" + text.lstrip() if start > 0 else text
     return head.rstrip() + "…" if start + WIDTH - 2 < len(s) else head
-# label is the RED line's old → new. When the cut leaves the two the same
+# inline_label is the RED line's old → new. When the cut leaves the two the same
 # (the change lies past it), each shows a window around their first
 # differing character instead, so the line still says what was mutated.
-def label(old, new):
+def inline_label(old, new):
     old, new = one_line(old), one_line(new)
     if cut(old) != cut(new):
         return f"{span(cut(old))} → {span(cut(new))}"
     # One a prefix of the other: they differ where the shorter ends.
     diff_at = next((i for i, (a, b) in enumerate(zip(old, new)) if a != b), min(len(old), len(new)))
     return f"{span(window(old, diff_at))} → {span(window(new, diff_at))}"
+
+# Name the separate edits without quoting all the unchanged lines between them.
+def label(old, new):
+    old_lines, new_lines = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    diff = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    edits = [op for op in diff.get_opcodes() if op[0] != "equal"]
+    if len(edits) <= 1:
+        return inline_label(old, new)
+
+    changes = []
+    for tag, i, j, k, l in edits:
+        before = "".join(old_lines[i:j])
+        after = "".join(new_lines[k:l])
+        if tag == "delete":
+            changes.append(f"{span(cut(one_line(before)))} (removed)")
+        elif tag == "insert":
+            changes.append(f"{span(cut(one_line(after)))} (added)")
+        else:
+            changes.append(inline_label(before, after))
+    return " … ".join(changes)
 out = []
 for i, e in enumerate(entries, 1):
     name = f"entry {i}"

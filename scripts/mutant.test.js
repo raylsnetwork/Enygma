@@ -391,6 +391,16 @@ test('--batch: a multi-line old text is applied whole, and quoted on one line', 
   assert.deepStrictEqual(r.after, ['ok\ntwo\n'], 'the file is restored');
 });
 
+test('--batch: the RED line names every changed hunk', () => {
+  const old = 'ok\nkeep this line\nold value\nkeep another line\n';
+  const replacement = 'keep this line\nnew value\nkeep another line\nextra line\n';
+  const r = batch([{ expect: 'TestCode/ok_check', old, new: replacement, cmd: CHECK }], { text: old });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.deepStrictEqual(r.reds, [
+    '- `ok` (removed) … `old value` → `new value` … `extra line` (added): RED: "TestCode/ok_check"',
+  ], r.out);
+});
+
 test('--batch: a long old or new text is cut in its RED line', () => {
   const long = 'x'.repeat(80);
   const r = batch([{ expect: 'TestCode/ok_check', old: 'ok', new: long, cmd: CHECK }]);
