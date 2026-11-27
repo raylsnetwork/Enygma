@@ -466,14 +466,13 @@ The nullifier $\mathrm{H}(sk^{\text{spend}},\ globalIdx)$ has no vault or asset 
 
 ### Exits
 
-Every withdrawal publishes its recipient address and amount: they are call arguments, the vault pays the recipient with an ordinary token transfer, and they open output 0 of the proof, which the vault recomputes as $\mathrm{H}(\mathrm{uint160}(recipient),\ 0,\ amount,\ token_{id})$ (or, for the legacy `withdraw`, $\mathrm{H}(uid,\ recipient)$).
+An ERC20 withdrawal publishes its recipient address and amount. They are call arguments, and the vault pays the recipient with an ordinary token transfer. They also open output 0 of the proof, which the vault recomputes as $\mathrm{H}(\mathrm{uint160}(recipient),\ 0,\ amount,\ token_{id})$. ERC20 amounts and token IDs must be below the BN254 scalar field modulus for deposits and withdrawals. The Payment circuits impose their own tighter amount bound.
 
 | Function (`Erc20CoinVault`) | Receipt | Public | Change note |
 | --- | --- | --- | --- |
 | `withdrawV2(params, recipient, receipt)` | Payment or Payment2in, `StMessage = WITHDRAW_MESSAGE` | recipient, amount, token id; `PartialWithdrawal` event | inserted; no `EncryptedNote` |
 | `partialWithdraw(params, recipient, receipt, ciphertextI, ciphertextII)` | as `withdrawV2` | as `withdrawV2` | inserted; `EncryptedNote` with the caller's ciphertexts |
 | `partialWithdrawWithRelayerFee(...)` | PaymentRelayerFeePublic, `StMessage = WITHDRAW_MESSAGE` | as `withdrawV2`, plus the public fee | inserted, with the relayer's fee note; `EncryptedNote` with the caller's ciphertexts |
-| `withdraw(params, recipient, receipt)` (legacy) | any Payment-family receipt | recipient, amount | not inserted |
 
 The VK slots these functions use (Payment 0, Payment2in 1, PaymentRelayerFeePublic 3) are the dedicated Payment deployment's. The main deployment registers other circuits in slots 1-3, so there only the 1-input `withdrawV2`/`partialWithdraw` verifies; a Payment2in or relayer-fee receipt reverts.
 
@@ -481,9 +480,11 @@ The change note itself stays private: its commitment hides the remainder, and th
 
 **The change note's ciphertexts are not bound to the proof.** The Payment-family statements have a `CiphertextHash` slot, which every payment path checks against the ciphertexts it publishes (`CiphertextHash.sol`), but `_settlePartialWithdraw` does not check it: it emits whatever `ciphertextI`/`ciphertextII` its caller passes. Anyone who sees a pending `partialWithdraw` or `partialWithdrawWithRelayerFee` can settle the same receipt first with other ciphertexts, or with none. The recipient, amount and outputs are fixed by the proof, so nothing can be redirected, but the owner's scan finds a false or missing ciphertext for the change note. The circuit fixes the change note's salt to $\mathrm{H}(sk^{\text{spend}},\ nf_0)$, so the owner can always rebuild the note from its key and the transaction's `Nullifier` and `PartialWithdrawal` events (`core.WithdrawChangeNote`), without the ciphertexts.
 
-**The legacy `withdraw` is not domain-separated from payments.** `withdrawV2` and the partial withdrawals take only receipts whose `StMessage` is `WITHDRAW_MESSAGE`, and the payment paths refuse that value, so a withdrawal receipt settles only as a withdrawal. The legacy `withdraw` does not check `StMessage`: it takes a payment receipt (`StMessage = 0`), so a pending legacy-withdraw receipt can also be settled first as a payment (by any payment path whose ciphertexts match its `CiphertextHash`), which inserts output 0 as a note no one can spend instead of paying it out. It also spends the inputs without inserting any other output, so a change note in output 1 is lost. It does refuse locked notes.
+The legacy ERC20 `withdraw` expects $\mathrm{H}(uid,\ recipient)$ in output 0. That opening is unreachable for the four-input note commitments produced by current Payment-family proofs. Use one of the three withdrawal entry points above for those proofs.
 
 ### Erc721 vault: legacy paths
+
+The ERC721 vault takes token IDs below the BN254 scalar field modulus in `deposit` and `withdraw`.
 
 `Erc721CoinVault.transfer`, `withdraw` and `verifyOwnership` verify against VK slot 1 (`VK_ID_ERC721_1`), which the main deployment's config assigns to `OwnershipErc721`. That circuit's template is gone and its keygen is commented out (`gnark_circuits/cmd/keygen`), so no proof for these paths can be made. (Its nullifier was the old $\mathrm{H}(sk^{\text{spend}},\ leafIndex)$, which is why `checkReceiptConditions` takes these receipts only in tree 0.) NFTs move into the vault through `deposit` and leave it only as DvP legs (`checkDvpReceiptConditions`, VK slot 24), so an NFT never leaves the shielded pool for a public address.
 

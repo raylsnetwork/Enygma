@@ -1,6 +1,7 @@
 // RaylsERC1155.registerNewToken: only the owner registers, a registered id
 // cannot be registered again, and a meta token cannot back another token (#414);
 // safeBatchTransferFrom writes no token state and refuses id 0 (#445).
+// Single and batch mints honor each token's supply cap.
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { expectRevert } = require("./helpers.js");
@@ -97,6 +98,40 @@ describe("RaylsERC1155.registerNewToken", function () {
     await (await token.mint(owner.address, id, 5, "0x")).wait();
     expect((await token.balanceOf(owner.address, id)).toNumber()).to.equal(5);
     expect((await token.balanceOf(owner.address, 100)).toNumber()).to.equal(950);
+  });
+});
+
+describe("RaylsERC1155 mint caps", function () {
+  let token, owner;
+
+  beforeEach(async function () {
+    [owner] = await ethers.getSigners();
+    token = await (await ethers.getContractFactory("RaylsERC1155")).deploy("uri");
+    await token.deployed();
+  });
+
+  it("honors the configured cap on a registered fungible token", async function () {
+    await (await register(token, { maxSupply: 5 })).wait();
+    await (await token.mint(owner.address, 100, 4, "0x")).wait();
+    await (await token.mint(owner.address, 100, 1, "0x")).wait();
+    await expectRevert(token, token.mint(owner.address, 100, 1, "0x"), "MaxSupplyExceeded");
+    expect((await token.metadata(100)).totalSupply.toNumber()).to.equal(5);
+  });
+
+  it("applies the default cap to the first mint of an unregistered ID", async function () {
+    const cap = await token.DEFAULT_FUNGIBLE_MAX();
+    await expectRevert(token, token.mint(owner.address, 100, cap.add(1), "0x"), "MaxSupplyExceeded");
+    expect((await token.metadata(100)).tState).to.equal(NOT_EXIST);
+    await (await token.mint(owner.address, 100, cap, "0x")).wait();
+    expect((await token.balanceOf(owner.address, 100)).toString()).to.equal(cap.toString());
+  });
+
+  it("rolls back a batch with repeated IDs when their combined mint exceeds the cap", async function () {
+    await (await register(token, { maxSupply: 5 })).wait();
+    await expectRevert(token, token.mintBatch(owner.address, [100, 100], [3, 3], "0x"), "MaxSupplyExceeded");
+    expect((await token.metadata(100)).totalSupply.toNumber()).to.equal(0);
+    await (await token.mintBatch(owner.address, [100, 100], [2, 3], "0x")).wait();
+    expect((await token.balanceOf(owner.address, 100)).toNumber()).to.equal(5);
   });
 });
 

@@ -47,6 +47,7 @@ contract Erc721CoinVault is AbstractCoinVault {
         uint256 pkSpend = params[1];
         uint256 salt    = params[2];
 
+        _requireFieldElement(tokenId);
         IERC721(_assetContractAddress).transferFrom(
             msg.sender,
             address(this),
@@ -104,7 +105,8 @@ contract Erc721CoinVault is AbstractCoinVault {
         //     nullifiers[numberOfInputs];
         //     commitments[numberOfOutputs];
 
-        uint256 amount = withdrawParams[0];
+        uint256 tokenId = withdrawParams[0];
+        _requireFieldElement(tokenId);
 
         uint256 treeNumbersIndex = 1;
         uint256 merkleRootsIndex = 1 + receipt.numberOfInputs;
@@ -112,7 +114,7 @@ contract Erc721CoinVault is AbstractCoinVault {
         uint256 commitmentsIndex = nullifiersIndex + receipt.numberOfInputs;
 
         uint256[] memory assetParams = new uint256[](2);
-        assetParams[0] = amount;
+        assetParams[0] = tokenId;
         assetParams[1] = uint256(uint160(_assetContractAddress));
         uint256 uid = generateUniqueId(assetParams);
 
@@ -140,7 +142,7 @@ contract Erc721CoinVault is AbstractCoinVault {
         IERC721(_assetContractAddress).transferFrom(
             address(this),
             recipient,
-            amount
+            tokenId
         );
 
         return true;
