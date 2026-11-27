@@ -34,8 +34,10 @@ type Entry struct {
 	Index       uint32 `json:"index"`
 	Participant string `json:"participant"` // the name shown for them
 	// Identity is what the coordinator admitted them as, and counts one
-	// contribution each for: open:<session> (self-named) or github:<user id>
-	// (signed in with GitHub).
+	// contribution each for: github:<user id> (signed in with GitHub), or in
+	// an open phase open:<random>, a value of the registration's own. It is
+	// published, so it is never the registration's session token, which
+	// stays the participant's secret (audit R-074).
 	Identity string    `json:"identity"`
 	SHA256   string    `json:"sha256"`
 	Prev     string    `json:"prev"` // sha256 of the state it built on

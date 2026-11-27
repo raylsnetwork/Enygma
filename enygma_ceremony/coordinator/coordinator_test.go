@@ -291,6 +291,13 @@ func TestTurnsGoInJoiningOrder(t *testing.T) {
 	if e := tr.Contributions[1]; e.Index != 2 || e.Participant != "bob" || e.Prev != sha(aliceState) {
 		t.Fatalf("second entry %+v", e)
 	}
+	// Audit R-074: the published identity is the registration's own value,
+	// never its session token, which stays the participant's secret.
+	for i, name := range []string{"alice", "bob"} {
+		if e := tr.Contributions[i]; strings.Contains(e.Identity, h.tokens[name]) {
+			t.Fatalf("%s's entry publishes their session token: %+v", name, e)
+		}
+	}
 	if err := ceremony.Check(filepath.Join(h.dir, "state-1"), filepath.Join(h.dir, "state-2")); err != nil {
 		t.Fatal(err)
 	}

@@ -143,7 +143,7 @@ func contribute(fs *flag.FlagSet) func([]string, io.Writer) error {
 
 // phase1New writes the start of Phase 1.
 func phase1New(fs *flag.FlagSet) func([]string, io.Writer) error {
-	size := fs.Uint64("size", 0, "domain size: a power of two, at least the largest circuit's constraint count")
+	size := fs.Uint64("size", 0, "domain size: a power of two from 2 to 2^28 (268435456), at least the largest circuit's constraint count")
 	out := fs.String("out", "", "where to write the start (must not exist)")
 	return func(args []string, w io.Writer) error {
 		if *size == 0 || *out == "" || len(args) != 0 {

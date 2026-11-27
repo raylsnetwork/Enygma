@@ -5,8 +5,9 @@
 //
 // Anyone may queue: a participant's program registers itself (AuthOpen, the
 // default), or signs in with GitHub (AuthGitHub). Each admitted identity
-// contributes once. A queued participant who goes quiet
-// keeps their place for a while (Config.Away) but is passed over if they are
+// contributes once: a GitHub account once, and in an open phase each
+// registration, which is an identity of its own. A queued participant who
+// goes quiet keeps their place for a while (Config.Away) but is passed over if they are
 // not asking when their turn comes (Config.Presence); a turn holder who runs
 // out of time (Config.Turn) loses the turn. So no one stalls the queue for
 // longer than a turn.
@@ -214,12 +215,12 @@ type Server struct {
 	mu         sync.Mutex
 	entries    []transcript.Entry // entries[i] is state-(i+1)
 	latest     state              // the state the next contribution builds on
-	done       map[string]int     // identity -> their entry
+	done       map[identity]int   // identity -> their entry
 	sessions   map[[32]byte]*session
 	registered map[string][]time.Time // address -> its registrations in the last hour
 	queue      []waiter               // in turn order
 	turn       *turn                  // nil when no one holds the turn
-	turnsGiven map[string]int         // identity -> turns given it, while it has not contributed
+	turnsGiven map[identity]int       // identity -> turns given it, while it has not contributed
 	turnTimes  []time.Duration        // the last few accepted turns' lengths
 	checkTimes []time.Duration        // how long the last few uploads took to check
 	closed     bool
@@ -249,10 +250,20 @@ type state struct {
 
 // participant is who a request comes from.
 type participant struct {
-	name     string // shown in the transcript
-	identity string // what contributes once: open:<session> or github:<id>
-	addr     string // the network address the request came from
+	name     string   // shown in the transcript
+	identity identity // what contributes once
+	addr     string   // the network address the request came from
 }
+
+// identity is what a participant is admitted as, and contributes once as:
+// github:<user id>, or in an open phase open:<random>, a value of the
+// registration's own. The transcript publishes it (transcript.Entry), so it
+// is never a sessionToken, of which it is a type apart (audit R-074).
+type identity string
+
+// sessionToken is a registration's bearer secret (Session.Token): the
+// participant's alone. The coordinator keeps only its sha256.
+type sessionToken string
 
 // session is a registered participant of an open or GitHub phase.
 type session struct {
@@ -358,8 +369,8 @@ func New(cfg Config) (_ *Server, err error) {
 		}
 	}
 	s := &Server{
-		cfg: cfg, done: map[string]int{}, sessions: map[[32]byte]*session{},
-		registered: map[string][]time.Time{}, turnsGiven: map[string]int{},
+		cfg: cfg, done: map[identity]int{}, sessions: map[[32]byte]*session{},
+		registered: map[string][]time.Time{}, turnsGiven: map[identity]int{},
 		downloading: map[string]bool{}, contributedFrom: map[string]int{},
 	}
 	// One coordinator to a phase: a second would clear the first's uploads
@@ -386,7 +397,7 @@ func New(cfg Config) (_ *Server, err error) {
 		return nil, err
 	}
 	for i, e := range t.Contributions {
-		s.done[e.Identity] = i
+		s.done[identity(e.Identity)] = i
 	}
 	s.entries = t.Contributions
 	s.latest.index = uint32(len(s.entries))
@@ -544,7 +555,7 @@ const sweepEvery = 10 * time.Second
 // sweep forgets unused registrations, and addresses with no registration in
 // the last hour. s.mu is held.
 func (s *Server) sweep(now time.Time) {
-	queued := make(map[string]bool, len(s.queue))
+	queued := make(map[identity]bool, len(s.queue))
 	for _, w := range s.queue {
 		queued[w.p.identity] = true
 	}
@@ -770,7 +781,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		p = participant{name: name, identity: "open:" + randomToken(), addr: addr}
+		p = participant{name: name, identity: identity("open:" + randomToken()), addr: addr}
 	case AuthGitHub:
 		account, err := s.githubUser(r.Context(), reg.GitHubToken)
 		switch {
@@ -792,14 +803,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, http.StatusForbidden, fmt.Sprintf("GitHub accounts younger than %s cannot contribute", s.cfg.GitHubMinAge))
 			return
 		}
-		p = participant{name: account.Login, identity: fmt.Sprintf("github:%d", account.ID), addr: addr}
+		p = participant{name: account.Login, identity: identity(fmt.Sprintf("github:%d", account.ID)), addr: addr}
 	}
-	token := randomToken()
+	token := sessionToken(randomToken())
 	s.mu.Lock()
 	s.sessions[sha256.Sum256([]byte(token))] = &session{p: p, seen: now}
 	s.mu.Unlock()
 	s.cfg.Log.Printf("%s registered (%s)", p.name, p.identity)
-	s.reply(w, Session{Token: token, Participant: p.name})
+	s.reply(w, Session{Token: string(token), Participant: p.name})
 }
 
 // allowRegistration counts a registration from addr now, unless addr has
@@ -1083,7 +1094,7 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	e := transcript.Entry{
 		Index:       prev.index + 1,
 		Participant: p.name,
-		Identity:    p.identity,
+		Identity:    string(p.identity),
 		SHA256:      hex.EncodeToString(hash[:]),
 		Prev:        hex.EncodeToString(prev.hash[:]),
 		At:          now.UTC(),

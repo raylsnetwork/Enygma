@@ -57,6 +57,12 @@ prints your receipt, never holds it. Like anything in memory, it could still rea
 operating system moved that process's memory to swap or a hibernation file while it ran; full-disk
 encryption (FileVault, BitLocker, LUKS) covers that.
 
+The arithmetic on the randomness, gnark's, does not take the same time whatever the randomness
+is. Someone else running code on the same machine while it runs could in principle learn some of it
+from timing. So contribute from a machine nobody else uses, with other programs, and browser tabs,
+closed until the program says you are done. One contribution kept secret is what the ceremony
+needs: yours counts if it stays yours.
+
 The receipt is yours only if this program made it. If the coordinator says you have contributed
 already, the program checks that against the contributions it made itself in this run, and against
 the coordinator's transcript; for a contribution made in an earlier run, give the sha256 that run
@@ -175,7 +181,9 @@ in:
 ### 3. Phase 1, once for every protocol
 
 1. Start Phase 1: `ceremony phase1-new -size 262144 -out p1/state-0`. The domain must be a power
-   of two at least the largest circuit's constraint count; each `export_r1cs` prints the counts:
+   of two from 2 to 2^28 (the largest BN254's FFT supports), and at least the largest circuit's
+   constraint count. Each `export_r1cs` prints the counts. A domain past 2^18 also needs
+   participants to raise `join -max-state`. The largest circuits:
 
    | Protocol | Largest circuit | Constraints |
    |---|---|---|
