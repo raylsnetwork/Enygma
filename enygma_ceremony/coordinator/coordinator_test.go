@@ -923,6 +923,35 @@ func TestPage(t *testing.T) {
 	}
 }
 
+// TestScheduledCloseStaysClosed (audit R-033, R-071): a phase closed at its
+// scheduled time stays closed when its coordinator restarts, even without
+// CloseAt, so it can be served read-only; a phase interrupted (Close), as
+// for a restart, carries on.
+func TestScheduledCloseStaysClosed(t *testing.T) {
+	h := newHarness(t, Config{Auth: AuthOpen, CloseAt: time.Date(2026, 12, 1, 13, 0, 0, 0, time.UTC)})
+	if h.status().Closed {
+		t.Fatal("closed before its time")
+	}
+	h.tick(2 * time.Hour)
+	if !h.status().Closed {
+		t.Fatal("open after its time")
+	}
+	h.cfg.CloseAt = time.Time{}
+	h.restart()
+	if !h.status().Closed {
+		t.Fatal("a restart without CloseAt reopened a phase closed at its time")
+	}
+
+	t.Run("an interrupted phase carries on after a restart", func(t *testing.T) {
+		h := newHarness(t, Config{Auth: AuthOpen})
+		h.srv.Close()
+		h.restart()
+		if h.status().Closed {
+			t.Fatal("an interrupted phase stayed closed after a restart")
+		}
+	})
+}
+
 // TestReleaseURL: the release address the page links to must be https.
 func TestReleaseURL(t *testing.T) {
 	for _, u := range []string{"http://github.com/example/Enygma/releases", "javascript:alert(1)", "https://", "github.com/example"} {

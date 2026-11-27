@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -119,14 +118,14 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 	sync := fs.Bool("sync", false, "-url: let the download replace states in DIR that differ from the coordinator's, and remove states past its end (without it, a DIR holding anything else is refused)")
 	maxBytes := fs.Int64("max-bytes", transcript.DefaultMaxBytes, "-url: the most to download in all")
 	srs := fs.String("srs", "", "Phase 2: the SRS it started from, to check its start (with -r1cs)")
-	r1cs := fs.String("r1cs", "", "Phase 2: the directory of the <Name>.r1cs circuits it started from (with -srs)")
+	r1cs, circuitsIn := circuitsFlags(fs)
 	return func(args []string, w io.Writer) error {
 		if *dir == "" || len(args) != 0 || (*srs == "") != (*r1cs == "") {
 			return fmt.Errorf("%w: verify takes -dir, and -srs with -r1cs for a Phase 2", errUsage)
 		}
 		var p2 *transcript.Phase2Start
 		if *srs != "" {
-			circuits, err := ceremony.CircuitsIn(*r1cs)
+			circuits, err := circuitsIn(w)
 			if err != nil {
 				return err
 			}
@@ -220,7 +219,10 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	presence := fs.Duration("presence", 30*time.Second, "how recently a queued participant must have asked to be given the turn")
 	away := fs.Duration("away", 10*time.Minute, "how long a queued participant may go quiet and keep their place")
 	poll := fs.Duration("poll", 5*time.Second, "how often queued participants ask")
-	closeAt := fs.String("close-at", "", "when to stop handing out turns, RFC 3339 (2026-12-01T15:00:00Z); announce the beacon round for after it")
+	closeAt := fs.String("close-at", "", "when to stop handing out turns, RFC 3339 (2026-12-01T15:00:00Z); a phase closed at its time stays closed. "+
+		"The last turn may run -turn past it: announce a drand round at least -turn after it (ceremony beacon -close-at … -turn …)")
+	srs := fs.String("srs", "", "Phase 2: the SRS it started from, to check state-0 before serving (with -r1cs)")
+	r1cs, circuitsIn := circuitsFlags(fs)
 	notice := fs.String("notice", "", "a message for participants, shown on the page and by their program")
 	releaseURL := fs.String("release-url", "", "the ceremony's GitHub release (https://github.com/<owner>/<repo>/releases/tag/<tag>), where participants get the program; the page links to it")
 	cert := fs.String("tls-cert", "", "a TLS certificate, to serve HTTPS on -listen (with -tls-key)")
@@ -235,6 +237,25 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			if closes, err = time.Parse(time.RFC3339, *closeAt); err != nil {
 				return fmt.Errorf("%w: -close-at: %v", errUsage, err)
 			}
+		}
+		// The start is what every contribution builds on: checked before
+		// anyone does (audit R-060).
+		if (*srs == "") != (*r1cs == "") {
+			return fmt.Errorf("%w: -srs goes with -r1cs", errUsage)
+		}
+		var p2 *transcript.Phase2Start
+		if *srs != "" {
+			circuits, err := circuitsIn(w)
+			if err != nil {
+				return err
+			}
+			p2 = &transcript.Phase2Start{SRS: *srs, Circuits: circuits}
+		}
+		switch err := transcript.CheckStart(*dir, p2, w); {
+		case errors.Is(err, transcript.ErrStartNotChecked):
+			fmt.Fprintln(w, "WARNING: this Phase 2's start is not checked: give -srs and -r1cs to check it before serving it.")
+		case err != nil:
+			return err
 		}
 		logger := log.New(w, "", log.LstdFlags)
 		c, err := coordinator.New(coordinator.Config{
@@ -276,8 +297,16 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			go func() { served <- srv.ListenAndServe() }()
 			logger.Printf("serving HTTP on %s; put a TLS proxy in front of it for participants", *listen)
 		}
-		logger.Printf("phase in %s: %d contributions so far; participants are admitted %s; interrupt to close",
-			*dir, len(c.States()), *auth)
+		// A phase closed at its time stays closed: started again, the
+		// coordinator serves its transcript, read-only, for anyone to check.
+		closedAtStart := c.Closed()
+		if closedAtStart {
+			logger.Printf("phase in %s: closed, after %d contributions; serving its transcript, read-only, until interrupted",
+				*dir, len(c.States()))
+		} else {
+			logger.Printf("phase in %s: %d contributions so far; participants are admitted %s; interrupt to close",
+				*dir, len(c.States()), *auth)
+		}
 
 		sigs := make(chan os.Signal, 2)
 		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
@@ -292,7 +321,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			case <-sigs:
 				break serving
 			case <-tick.C:
-				if c.Closed() {
+				if !closedAtStart && c.Closed() {
 					break serving
 				}
 			}
@@ -317,28 +346,46 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				logger.Printf("shutting down: %v", err)
 			}
 		}
-		states := c.States()
-		fmt.Fprintf(w, "Closed after %d contributions. Seal them, in order, with the beacon round you announced:\n  %s\n",
-			len(states), strings.Join(states, " "))
+		// The head, published before the beacon round is out, binds the seal
+		// to this chain: nothing can be added after, or left off the end
+		// (audit R-003, R-004).
+		t, err := transcript.Load(*dir)
+		if err != nil {
+			return err
+		}
+		seal := "phase1-seal"
+		if info, err := ceremony.Inspect(transcript.Path(*dir, 0)); err == nil && info.Kind == ceremony.KindPhase2 {
+			seal = "phase2-seal -ceremony " + info.Ceremony + " -srs <srs> -r1cs <r1cs dir> -keys <keys dir>"
+		}
+		fmt.Fprintf(w, "Closed after %d contributions. Announce the head now, before the beacon round is out:\n"+
+			"  head sha256 %s (contribution %d)\n"+
+			"Then seal, with the round you announced:\n"+
+			"  ceremony %s -transcript %s -head %s -drand <round> -close-at <the close>\n",
+			len(t.Contributions), t.Latest(), len(t.Contributions), seal, *dir, t.Latest())
 		return nil
 	}
 }
 
-// beacon prints the drand round to announce for a time, or a round's beacon.
+// beacon prints the drand round to announce for a phase's close, or a
+// round's beacon. The last turn handed out before the close may run -turn
+// past it (audit R-031), so the round to announce is the first out at least
+// -turn after the close: no contribution can follow it.
 func beacon(fs *flag.FlagSet) func([]string, io.Writer) error {
-	at := fs.String("at", "", "a time, RFC 3339 (2026-12-01T15:00:00Z): print the first drand round out at or after it")
+	closeAt := fs.String("close-at", "", "when the phase closes, RFC 3339 (2026-12-01T15:00:00Z): print the drand round to announce for it")
+	turn := fs.Duration("turn", 60*time.Minute, "the phase's -turn: the last turn handed out may run this long past the close")
 	round := fs.Uint64("round", 0, "a drand round: fetch it, check its signature, and print its randomness as the beacon")
 	return func(args []string, w io.Writer) error {
-		if (*at == "") == (*round == 0) || len(args) != 0 {
-			return fmt.Errorf("%w: beacon takes -at or -round", errUsage)
+		if (*closeAt == "") == (*round == 0) || len(args) != 0 || *turn < 0 {
+			return fmt.Errorf("%w: beacon takes -close-at (and -turn), or -round", errUsage)
 		}
-		if *at != "" {
-			t, err := time.Parse(time.RFC3339, *at)
+		if *closeAt != "" {
+			t, err := time.Parse(time.RFC3339, *closeAt)
 			if err != nil {
-				return fmt.Errorf("%w: -at: %v", errUsage, err)
+				return fmt.Errorf("%w: -close-at: %v", errUsage, err)
 			}
-			r := drand.RoundAt(t)
-			fmt.Fprintf(w, "drand quicknet round %d, out at %s\n", r, drand.Time(r).UTC().Format(time.RFC3339))
+			r := drand.RoundAt(t.Add(*turn))
+			fmt.Fprintf(w, "drand quicknet round %d, out at %s: the first out at least %s after the close, once the last turn is over\n",
+				r, drand.Time(r).UTC().Format(time.RFC3339), *turn)
 			return nil
 		}
 		b, err := drand.Fetch(context.Background(), &http.Client{Timeout: 30 * time.Second}, drand.Relays, *round)
@@ -347,34 +394,5 @@ func beacon(fs *flag.FlagSet) func([]string, io.Writer) error {
 		}
 		fmt.Fprintf(w, "%x\n", b)
 		return nil
-	}
-}
-
-// beaconFlags declares a seal's -beacon and -drand flags and returns what
-// reads the beacon from whichever was given: hex as is, or a drand round
-// fetched and checked.
-func beaconFlags(fs *flag.FlagSet) func(w io.Writer) ([]byte, error) {
-	hexBeacon := fs.String("beacon", "", "the beacon, hex: a drand round's randomness, announced before the phase closed")
-	round := fs.Uint64("drand", 0, "a drand quicknet round, announced before the phase closed: its randomness is the beacon")
-	return func(w io.Writer) ([]byte, error) {
-		switch {
-		case (*hexBeacon == "") == (*round == 0):
-			return nil, fmt.Errorf("%w: give the beacon as -beacon or -drand, not both", errUsage)
-		case *round != 0:
-			b, err := drand.Fetch(context.Background(), &http.Client{Timeout: 30 * time.Second}, drand.Relays, *round)
-			if err != nil {
-				return nil, err
-			}
-			fmt.Fprintf(w, "Beacon: drand quicknet round %d, %x\n", *round, b)
-			return b[:], nil
-		}
-		b, err := hex.DecodeString(*hexBeacon)
-		if err != nil {
-			return nil, fmt.Errorf("%w: -beacon: %v", errUsage, err)
-		}
-		if len(b) < ceremony.MinBeacon {
-			return nil, fmt.Errorf("%w: %d bytes", ceremony.ErrBeacon, len(b))
-		}
-		return b, nil
 	}
 }

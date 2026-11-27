@@ -297,6 +297,13 @@ func New(cfg Config) (*Server, error) {
 	if got := hex.EncodeToString(s.latest.hash[:]); got != t.Latest() {
 		return nil, fmt.Errorf("%s has sha256 %s, its entry says %s", s.path(s.latest.index), got, t.Latest())
 	}
+	// A phase closed at its time stays closed (ClosedFile).
+	switch _, err := os.Stat(filepath.Join(cfg.Dir, ClosedFile)); {
+	case err == nil:
+		s.closed = true
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, err
+	}
 	// An upload interrupted by a stop is not part of the phase.
 	if err := os.RemoveAll(filepath.Join(cfg.Dir, "incoming")); err != nil {
 		return nil, err
@@ -345,6 +352,12 @@ func (s *Server) Closed() bool {
 	return s.closed
 }
 
+// ClosedFile, in a phase's directory, marks a phase that has closed at its
+// scheduled time (Config.CloseAt): a coordinator started on it again serves
+// it closed, whatever its own CloseAt. An interrupted phase (Close) is not
+// marked: a coordinator stopped to be restarted carries on.
+const ClosedFile = "closed"
+
 // advance closes the phase at its time, ends a turn past its time, drops
 // queued participants away too long, forgets unused registrations, and hands
 // a free turn to the first queued participant still asking. s.mu is held.
@@ -352,6 +365,10 @@ func (s *Server) advance(now time.Time) {
 	if !s.closed && !s.cfg.CloseAt.IsZero() && !now.Before(s.cfg.CloseAt) {
 		s.cfg.Log.Printf("closed, as scheduled: no new turns")
 		s.closed = true
+		mark := []byte(s.cfg.CloseAt.UTC().Format(time.RFC3339) + "\n")
+		if err := os.WriteFile(filepath.Join(s.cfg.Dir, ClosedFile), mark, 0o644); err != nil {
+			s.cfg.Log.Printf("marking the phase closed: %v", err)
+		}
 	}
 	if t := s.turn; t != nil && !t.uploading {
 		switch {

@@ -320,6 +320,29 @@ func TestSealPhase2Refuses(t *testing.T) {
 			t.Fatalf("SealPhase2: %v, want %v", err, ErrMismatch)
 		}
 	})
+
+	// Audit R-035: the keys appear all together or not at all.
+	t.Run("a key already in place, before sealing, writing nothing", func(t *testing.T) {
+		keys := f.path("keys-taken")
+		if err := os.MkdirAll(keys, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		taken := filepath.Join(keys, f.circuits[1].VK)
+		if err := os.WriteFile(taken, []byte("an old key"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := SealPhase2(keys, "test", f.srs, f.circuits, beaconA, f.p2[1:])
+		if err == nil || !strings.Contains(err.Error(), "a key is there already") {
+			t.Fatalf("SealPhase2: %v, want a key already in place refused", err)
+		}
+		entries, err := os.ReadDir(keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 || entries[0].Name() != filepath.Base(taken) {
+			t.Fatalf("keys directory holds %v after a refused seal, want only the key that was there", entries)
+		}
+	})
 }
 
 // TestKeyManifest: a key manifest beside the circuits seals each key where

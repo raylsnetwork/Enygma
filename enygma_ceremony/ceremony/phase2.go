@@ -302,13 +302,21 @@ func NewPhase2(out, ceremony, srs string, circuits []Circuit) (Receipt, error) {
 // step as Check does; applies the beacon as a last, public contribution; and
 // writes each circuit's proving and verifying key into keysDir at its PK
 // and VK paths, in the form gnark's ReadFrom loads, never over an existing
-// file.
+// file. The keys appear all together or not at all: each is written in
+// full, and synced, before any is put in place.
 func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte, contributions []string) error {
 	if err := checkBeacon(beacon); err != nil {
 		return err
 	}
 	if len(contributions) == 0 {
 		return errors.New("no contributions to seal")
+	}
+	for _, c := range circuits { // before the hours a seal can take
+		for _, p := range []string{c.PK, c.VK} {
+			if _, err := os.Lstat(filepath.Join(keysDir, p)); !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("%s: a key is there already, or cannot be checked (%v)", filepath.Join(keysDir, p), err)
+			}
+		}
 	}
 	prev, seal, err := start(ceremony, srs, circuits)
 	if err != nil {
@@ -324,41 +332,77 @@ func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte
 		}
 		prev = next
 	}
+	type written struct{ tmp, path string }
+	var keys []written
+	var placed []string
+	undo := func(err error) error {
+		for _, k := range keys {
+			if rerr := os.Remove(k.tmp); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+				err = errors.Join(err, rerr)
+			}
+		}
+		for _, p := range placed {
+			err = errors.Join(err, os.Remove(p))
+		}
+		return err
+	}
 	for i := range prev.circuits {
 		c := &prev.circuits[i]
 		pk, vk := c.mpc.Seal(seal[i].commons, &seal[i].evals, beacon)
-		if err := writeKey(filepath.Join(keysDir, circuits[i].PK), pk); err != nil {
-			return err
-		}
-		if err := writeKey(filepath.Join(keysDir, circuits[i].VK), vk); err != nil {
-			return err
+		for _, k := range []struct {
+			path string
+			key  io.WriterTo
+		}{{filepath.Join(keysDir, circuits[i].PK), pk}, {filepath.Join(keysDir, circuits[i].VK), vk}} {
+			tmp, err := writeKey(k.path, k.key)
+			if err != nil {
+				return undo(err)
+			}
+			keys = append(keys, written{tmp, k.path})
 		}
 	}
-	return nil
+	for _, k := range keys {
+		// Link, not rename: it fails, rather than replace, if a key appeared there meanwhile.
+		if err := os.Link(k.tmp, k.path); err != nil {
+			return undo(err)
+		}
+		placed = append(placed, k.path)
+	}
+	err = nil
+	for _, k := range keys {
+		err = errors.Join(err, os.Remove(k.tmp))
+	}
+	return err
 }
 
 // writeKey writes a gnark key with its WriteTo, the form the gnark servers
-// load, never over an existing file. A failed write leaves no file behind.
-func writeKey(path string, key io.WriterTo) (err error) {
+// load, to a new file beside path, synced, and returns that file's name. A
+// failed write leaves no file behind.
+func writeKey(path string, key io.WriterTo) (tmp string, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return "", err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() {
 		if err != nil {
 			f.Close()
-			err = errors.Join(err, os.Remove(path))
+			err = errors.Join(err, os.Remove(f.Name()))
 		}
 	}()
 	w := bufio.NewWriterSize(f, 1<<20)
 	if _, err = key.WriteTo(w); err != nil {
-		return err
+		return "", err
 	}
 	if err = w.Flush(); err != nil {
-		return err
+		return "", err
 	}
-	return f.Close()
+	if err = f.Sync(); err != nil {
+		return "", err
+	}
+	if err = f.Chmod(0o644); err != nil {
+		return "", err
+	}
+	return f.Name(), f.Close()
 }

@@ -146,8 +146,10 @@ in:
 
    So 2^18 = 262,144 serves all four.
 2. Pick when Phase 1 closes, and the beacon: a round of [drand](https://drand.love)'s quicknet
-   that comes out after the close, so nobody can know it while contributing.
-   `ceremony beacon -at 2026-12-08T16:00:00Z` names the round. Announce both.
+   that comes out after the close and after the last turn can end, so nobody can know it while
+   contributing. The last turn handed out before the close may run `-turn` past it, so
+   `ceremony beacon -close-at 2026-12-08T15:00:00Z -turn 60m` names the first round at least that
+   long after the close. Announce both.
 3. Serve it:
 
    ```bash
@@ -165,10 +167,22 @@ in:
    - **TLS:** `-acme-domain` gets and renews a certificate from Let's Encrypt (on ports 443 and
      80). Behind a TLS proxy of your own, use `-listen :8080 -behind-proxy` instead.
    - **Scheduled close:** at `-close-at` it hands out no more turns, waits for the one under way,
-     prints the states to seal, and exits. Ctrl-C does the same early; a second Ctrl-C stops at
-     once.
+     prints the transcript's **head** (the last contribution's sha256) and the seal command, and
+     exits. **Announce the head at once, before the beacon round is out:** the seal takes it, and
+     refuses a chain that does not end there, so no contribution can be added after the beacon is
+     known, nor any left off the end. The phase stays closed: the directory records it
+     (`closed`), and a coordinator started on it again serves its transcript, read-only, for
+     anyone to check. Publish the directory somewhere static as well (a release, or object
+     storage): the next phase is served at the same address.
+   - **Interrupting:** Ctrl-C (or a systemd stop) stops handing out turns early and waits for the
+     one under way; a second Ctrl-C stops at once. An interrupted phase is not closed: started
+     again, it carries on.
    - **Restarts are safe:** the directory is the transcript, and participants' programs join
-     again by themselves.
+     again by themselves. The queue, sessions and the hourly registration counts are in memory,
+     and start afresh.
+   - **The start is checked** before the phase is served: a Phase 1's `state-0` must be where every
+     Phase 1 of its size starts. For a Phase 2, give `-srs` and `-r1cs` (as `phase2-seal` takes
+     them) to check its start too.
 
    To keep it running as a service, a systemd unit:
 
@@ -182,7 +196,8 @@ in:
    ExecStart=/srv/ceremony/ceremony coordinate -dir p1 -acme-domain ceremony.example.org -release-url https://github.com/<owner>/<repo>/releases/tag/ceremony-v1 -close-at 2026-12-08T15:00:00Z
    AmbientCapabilities=CAP_NET_BIND_SERVICE
    Restart=on-failure
-   # A stop closes the phase and lets the turn under way finish, for up to -turn.
+   # A stop hands out no more turns and lets the turn under way finish, for up to -turn;
+   # started again, the phase carries on (a phase closed at -close-at stays closed).
    KillSignal=SIGINT
    TimeoutStopSec=65min
 
@@ -190,9 +205,19 @@ in:
    WantedBy=multi-user.target
    ```
 
-4. Seal it: `ceremony phase1-seal -drand <R> -out phase1.srs p1/state-1 … p1/state-<k>`. This
-   fetches round R, checks its signature against quicknet's public key (pinned in `drand/`),
-   replays and checks every contribution (about 45 s each at 2^18), and writes the SRS.
+4. Seal it, with the head announced at the close:
+
+   ```bash
+   ceremony phase1-seal -transcript p1 -head <head> -drand <R> -close-at 2026-12-08T15:00:00Z -out phase1.srs
+   ```
+
+   This refuses round R unless it came out after the close and after the last contribution, then
+   fetches it and checks its signature against quicknet's public key (pinned in `drand/`). It
+   replays and checks every contribution up to the head (about 45 s each at 2^18), writes the
+   SRS, and beside it `phase1.srs.json`: the head, the number of contributions, the round. The
+   contributions can also be given as files, in order, instead of `-transcript`, for a chain
+   handed over by hand: the last must be the head. For tests and rehearsals only,
+   `-unverified-beacon <hex>` takes a beacon nothing checks, says so loudly, and records it.
 
 ### 4. Phase 2, once per protocol
 
@@ -203,15 +228,25 @@ in:
    - It writes `<Name>.r1cs` for each circuit the protocol's gnark server proves, and `keys.json`,
      the paths that server loads each circuit's keys from.
    - Compiling is deterministic, so anyone re-exporting at that commit gets the same files.
+   - The circuits are exactly those `keys.json` names: every `.r1cs` file in the directory must be
+     one of them. Without a `keys.json`, name them with `-circuits A,B,…`. Every command that takes
+     `-r1cs` prints each circuit with its sha256.
 2. Start the phase: `ceremony phase2-new -ceremony <protocol> -srs phase1.srs -r1cs <r1cs dir> -out
    p2/state-0`.
-3. Serve it, with a new close time and beacon round:
-   `ceremony coordinate -dir p2 …`, same address, same page.
-4. Seal it: `ceremony phase2-seal -ceremony <protocol> -srs phase1.srs -r1cs <r1cs dir> -drand <R>
-   -keys <keys dir> p2/state-1 … p2/state-<k>`.
+3. Serve it, with a new close time and beacon round, and the SRS and circuits so its start is
+   checked: `ceremony coordinate -dir p2 -srs phase1.srs -r1cs <r1cs dir> …`, same address, same
+   page.
+4. Seal it, with the head announced at the close:
+
+   ```bash
+   ceremony phase2-seal -ceremony <protocol> -srs phase1.srs -r1cs <r1cs dir> \
+       -transcript p2 -head <head> -drand <R> -close-at <the close> -keys <keys dir>
+   ```
+
    - It writes each key at its `keys.json` path, so `<keys dir>` has the server's own layout
      (`scripts/keys/PaymentPK.key`, `keys/zkdvp/WithdrawPk6.key`, `scripts/keys/AuctionBatch.pk`,
-     …).
+     …), and `ceremony-seal.json`: the head, the round, and each circuit's and key's sha256.
+   - The keys appear all together or not at all, and never over a key already there.
    - Copy it over the gnark module's directory.
 5. Stamp the keys and re-export what is built from them, as the protocol's keygen target does.
    For example, retail's README, "Regenerating Proving/Verifying Keys", covers `keys.src`, the VK
@@ -244,11 +279,15 @@ Anyone can check a ceremony without trusting the coordinator:
   as quoted strings, and refuses a transcript whose names hold control characters.
 - **The keys:**
   1. Re-export the circuits at the announced commit and compare their sha256s.
-  2. Run `phase1-seal` and `phase2-seal` over the transcripts with the announced rounds.
-  3. Compare the keys' sha256s with the deployed ones.
+  2. Run `phase1-seal` and `phase2-seal` over the transcripts with the announced heads and
+     rounds.
+  3. Compare the keys' sha256s with the deployed ones, and with the seal's record
+     (`ceremony-seal.json`).
 
   A seal recomputes each phase's start itself, so a transcript that does not chain from the real
-  start fails.
+  start fails. It seals up to the announced head and no other chain, and takes only a drand round
+  out after the close and the last contribution, so someone resealing with the announced head and
+  round gets the same keys, or finds out.
 
 ## What the coordinator can and cannot do
 
@@ -260,8 +299,11 @@ Anyone can check a ceremony without trusting the coordinator:
   no such path. Line up at least one contributor per phase whom outsiders trust, and who builds
   from source.
 - **It cannot bias the keys,** given the procedure: contributions carry proofs that they build on
-  the state before them; the coordinator checks them, and so does every seal. The beacon is fixed by
-  drand after the close.
+  the state before them; the coordinator checks them, and so does every seal. The head is
+  announced at the close, before the beacon round is out, and the seals take nothing else; the
+  beacon is a drand round out after the close and the last contribution, which the seals check.
+  Someone who reseals with the announced head and round, and compares the keys, would see a
+  coordinator or sealer who did otherwise.
 - **It can leave someone out,** by refusing or reordering turns. That is why participants publish
   their hashes, and why one honest contributor per phase suffices.
 - **Uploads come from anyone admitted,** so the coordinator bounds what one costs before checking
