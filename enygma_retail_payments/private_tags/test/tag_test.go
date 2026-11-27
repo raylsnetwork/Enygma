@@ -627,7 +627,7 @@ func TestChannelSetup_OnChain(t *testing.T) {
 	// ── Step 4: Alice scans for her channel (paper §3.2 Recipient Flow) ───────
 	t.Log("Step 4 — Alice scans TagChannelRegistry (Decaps + AEAD check)")
 
-	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, 0, 100)
+	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, 2, 0, 100)
 	if err != nil {
 		t.Fatalf("ScanChannels: %v", err)
 	}
@@ -686,7 +686,7 @@ func TestChannelSetup_OnChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mlkem.GenerateKey768 (Carol): %v", err)
 	}
-	carolFound, err := tags.ScanChannels(client, channelRegistryAddr, carolDK, 0, 100)
+	carolFound, err := tags.ScanChannels(client, channelRegistryAddr, carolDK, 2, 0, 100)
 	if err != nil {
 		t.Fatalf("ScanChannels (Carol): %v", err)
 	}
@@ -878,7 +878,7 @@ func TestAllPrivacyModes_OnChain(t *testing.T) {
 			t.Log("  channel published ✓")
 
 			// ── Alice scans — should find exactly her channel ─────────────────────
-			found, err := tags.ScanChannels(client, registryAddr, aliceDK, channelCursor, 10)
+			found, err := tags.ScanChannels(client, registryAddr, aliceDK, totalUsers, channelCursor, 10)
 			if err != nil {
 				t.Fatalf("ScanChannels (Alice): %v", err)
 			}
@@ -905,7 +905,7 @@ func TestAllPrivacyModes_OnChain(t *testing.T) {
 			t.Log("  shared secrets match ✓")
 
 			// ── Carol (wrong key) finds nothing ───────────────────────────────────
-			carolFound, err := tags.ScanChannels(client, registryAddr, carolDK, channelCursor, 10)
+			carolFound, err := tags.ScanChannels(client, registryAddr, carolDK, totalUsers, channelCursor, 10)
 			if err != nil {
 				t.Fatalf("ScanChannels (Carol): %v", err)
 			}
@@ -1441,7 +1441,11 @@ func TestUserRegistryIntegration(t *testing.T) {
 	openChannelDirect(t, client, bobAuth, channelRegistryAddr, c1, c2, bitmap)
 
 	// Alice scans and recovers the channel.
-	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, 0, 100)
+	users, err := tags.GetUserCount(client, userRegistryAddr)
+	if err != nil {
+		t.Fatalf("GetUserCount: %v", err)
+	}
+	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, users, 0, 100)
 	if err != nil {
 		t.Fatalf("ScanChannels: %v", err)
 	}

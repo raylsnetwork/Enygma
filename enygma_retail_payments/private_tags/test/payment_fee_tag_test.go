@@ -177,7 +177,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 	// ── Step 6: Bob scans channels and recovers shared secret ────────────────
 	t.Log("Step 6 — Bob scans TagChannelRegistry for his channel")
 
-	bobChannelFound, err := tags.ScanChannels(client, chRegAddr, bobView.DecapsKey, 0, 100)
+	bobChannelFound, err := tags.ScanChannels(client, chRegAddr, bobView.DecapsKey, 2, 0, 100)
 	if err != nil {
 		t.Fatalf("ScanChannels (Bob): %v", err)
 	}

@@ -170,8 +170,12 @@ const maxChannelScan = 1 << 20
 // scan, keeping the ones their view key opens, and returns how many it found.
 func (e *Engine) scanChannels(ctx context.Context, s *step, a *Actor) (int, error) {
 	c := e.chain
+	users, err := tags.GetUserCount(c.client, c.registryAddr)
+	if err != nil {
+		return 0, fmt.Errorf("%s: user count: %w", a.Name, err)
+	}
 	cursor := &tags.ScanCursor{LastChannelIdx: a.tags.nextChannel}
-	found, next, err := tags.ScanChannelsFromCursor(c.client, c.channelRegistryAddr, a.View.DecapsKey, cursor, maxChannelScan)
+	found, next, err := tags.ScanChannelsFromCursor(c.client, c.channelRegistryAddr, a.View.DecapsKey, users, cursor, maxChannelScan)
 	if err != nil {
 		return 0, fmt.Errorf("%s: scan channels: %w", a.Name, err)
 	}

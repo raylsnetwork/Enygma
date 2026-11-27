@@ -151,10 +151,19 @@ func PrepareChannelSetup(
 
 // ── Setup Phase — Recipient  ─────────────────────────────────────
 
+// ScanChannels reads up to maxCount channel records from fromIdx and returns
+// those addressed to dk. userCount is UserRegistry's user count
+// (GetUserCount): a record whose bitmap sets no bit below it names no
+// registered user, so it is skipped before decapsulation. openChannel
+// refuses only an all-zero bitmap, so without this a sender could publish
+// bitmaps of high bits alone that every wallet still decapsulates.
+// UserRegistry only grows, so a count read at scan time from the registry
+// the sender built the bitmap from keeps every channel that names a user.
 func ScanChannels(
 	client *ethclient.Client,
 	channelRegistryAddr common.Address,
 	dk *mlkem.DecapsulationKey768,
+	userCount int,
 	fromIdx uint64,
 	maxCount uint64,
 ) ([]FoundChannel, error) {
@@ -190,8 +199,9 @@ func ScanChannels(
 		sender, _ := recOut[0].(common.Address)
 		c1, _ := recOut[1].([]byte)
 		c2, _ := recOut[2].([]byte)
+		bitmap, _ := recOut[3].([]byte)
 
-		if len(c1) == 0 {
+		if len(c1) == 0 || !bitmapNamesUser(bitmap, userCount) {
 			continue
 		}
 
@@ -341,6 +351,17 @@ func buildBitmap(mode PrivacyMode, totalUsers int, recipientIdx int, excludedInd
 		}
 	}
 	return bits
+}
+
+// bitmapNamesUser reports whether bitmap sets a bit for some user index
+// below userCount (bit i is byte i/8, bit i%8, as buildBitmap packs it).
+func bitmapNamesUser(bitmap []byte, userCount int) bool {
+	for i := 0; i < userCount && i/8 < len(bitmap); i++ {
+		if bitmap[i/8]&(1<<(uint(i)%8)) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // BitmapDescription returns a human-readable description of a privacy mode.
