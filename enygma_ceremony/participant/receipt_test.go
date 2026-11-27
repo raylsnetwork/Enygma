@@ -51,12 +51,12 @@ func TestDoneMustBeThisRunsContribution(t *testing.T) {
 					uploaded.Store(true)
 					switch tc.upload {
 					case "conflict":
-						io.Copy(io.Discard, r.Body)
+						_, _ = io.Copy(io.Discard, r.Body)
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusConflict)
 						fmt.Fprint(w, `{"error":"your turn is over"}`)
 					case "drop":
-						io.Copy(io.Discard, r.Body)
+						_, _ = io.Copy(io.Discard, r.Body)
 						closeConnection(t, w)
 					case "accept-drop":
 						upstream.ServeHTTP(httptest.NewRecorder(), r)
