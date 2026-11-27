@@ -13,7 +13,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { GIT_ENV, git, scratchRepo } = require('./test_git');
+const { GIT_ENV, git, makeEnv, scratchRepo } = require('./test_git');
 const { freePort, listening, run, servicePid, groupAlive, killGroup, killServices, survivors } = require('./test_stack');
 
 const LIB = path.join(__dirname, 'stack_lib.sh');
@@ -333,8 +333,11 @@ chmod +x "$5"`,
     fs.writeFileSync(path.join(shim, name), `#!/bin/sh\n${content}\n`, { mode: 0o755 });
   }
   const cwd = path.join(__dirname, '..');
-  const env = { ...process.env, PATH: `${shim}:${process.env.PATH}`, SHIELD_TEST_LOGS: logs, SHIELD_TEST_OLD_PID: String(oldPid || '') };
-  return run(spawn('make', ['shield-demo-restart'], { cwd, env, timeout: 15000 }));
+  return run(spawn('make', ['shield-demo-restart'], {
+    cwd,
+    env: { ...makeEnv, PATH: `${shim}:${process.env.PATH}`, SHIELD_TEST_LOGS: logs, SHIELD_TEST_OLD_PID: String(oldPid || '') },
+    timeout: 15000,
+  }));
 }
 
 for (const mode of ['still starting', 'up without a demo', 'running demo']) {
