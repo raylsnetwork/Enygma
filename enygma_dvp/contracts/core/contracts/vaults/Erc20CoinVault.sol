@@ -107,7 +107,9 @@ contract Erc20CoinVault is AbstractCoinVault {
     // what either knows.
     error DepositAmountMismatch(uint256 amount, uint256 received);
 
-    function _pullDeposit(uint256 amount) internal {
+    function _pullDeposit(uint256 amount, uint256 tokenId) internal {
+        _requireFieldElement(amount);
+        _requireFieldElement(tokenId);
         IERC20 asset = IERC20(_assetContractAddress);
         uint256 balanceBefore = asset.balanceOf(address(this));
         asset.safeTransferFrom(msg.sender, address(this), amount);
@@ -131,7 +133,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
-        _pullDeposit(amount);
+        _pullDeposit(amount, tokenId);
 
         // Commitment = Poseidon4(pkSpend, salt, amount, tokenId) — on-chain, binding amount.
         uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
@@ -168,7 +170,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
-        _pullDeposit(amount);
+        _pullDeposit(amount, tokenId);
 
         // C-1 fix: compute commitment on-chain to bind it to the actual transferred amount.
         uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon4(
@@ -415,6 +417,8 @@ contract Erc20CoinVault is AbstractCoinVault {
         if (amount == 0) {
             revert ZeroWithdrawAmount();
         }
+        _requireFieldElement(amount);
+        _requireFieldElement(tokenId);
         PaymentCircuit memory circuit = _paymentCircuit(receipt);
         // A withdrawal proof, not a payment one (see WITHDRAW_MESSAGE).
         if (receipt.statement[circuit.messageOffset] != WITHDRAW_MESSAGE) {
@@ -460,10 +464,11 @@ contract Erc20CoinVault is AbstractCoinVault {
         address recipient,
         IEnygmaDvp.ProofReceipt memory receipt
     ) public override nonReentrant returns (bool) {
-        // Legacy uid-commitment withdrawal: output[0] must be
-        // Poseidon(uid, recipient). The receipt is Payment-family, read
-        // through its circuit's layout.
+        // This legacy entry point expects Poseidon(uid, recipient) in
+        // output[0]. Current Payment-family circuits produce four-input note
+        // commitments and use the newer withdrawal entry points.
         uint256 amount = withdrawParams[0];
+        _requireFieldElement(amount);
         PaymentCircuit memory circuit = _paymentCircuit(receipt);
 
         uint256[] memory assetParams = new uint256[](2);

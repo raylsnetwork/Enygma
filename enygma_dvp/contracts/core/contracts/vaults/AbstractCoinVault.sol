@@ -72,6 +72,13 @@ abstract contract AbstractCoinVault is
 
     uint256 internal _numberOfIdentifiers;
 
+    error ValueOutOfField(uint256 value);
+
+    // Amounts and token IDs must fit in the field before they enter a note.
+    function _requireFieldElement(uint256 value) internal pure {
+        if (value >= SNARK_SCALAR_FIELD) revert ValueOutOfField(value);
+    }
+
     // utxo's uniqueId to proofReceipt
     mapping(uint256 => IEnygmaDvp.ProofReceipt) _pendingProofReceipts;
 

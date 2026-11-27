@@ -247,44 +247,29 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
             revert ZeroValueMintNotAllowed();
         }
 
-        // checking if the token is being minted for the first time
-        // or the fungibility matches current fungibilityData
-        TokenState tState = _metadatas[_id].tState;
-
-        if (tState != TokenState.NOT_EXIST) {
-            // has been registered before
-
-            TokenFungibility tFungibility = _metadatas[_id].tFungibility;
-            uint256 maxSupply = _metadatas[_id].maxTotalSupply;
-            uint256 totalSupply = _metadatas[_id].totalSupply;
-            if (
-                tFungibility == TokenFungibility.NON_FUNGIBLE &&
-                totalSupply.add(_value) > maxSupply
-            ) {
-                revert ValueFungibilityInconsistency();
-            }
-        } else {
-            // default values for decimals and maxTotalSupply
-            // if minting without registering a token
-            _metadatas[_id].tState = TokenState.REGISTERED;
-            _metadatas[_id].tFungibility = TokenFungibility.FUNGIBLE;
-            _metadatas[_id].decimals = DEFAULT_FUNGIBLE_DECIMALS;
-            _metadatas[_id].maxTotalSupply = DEFAULT_FUNGIBLE_MAX;
+        Metadata storage token = _metadatas[_id];
+        if (token.tState == TokenState.NOT_EXIST) {
+            // A first mint registers the token with default fungible metadata.
+            token.tState = TokenState.REGISTERED;
+            token.tFungibility = TokenFungibility.FUNGIBLE;
+            token.decimals = DEFAULT_FUNGIBLE_DECIMALS;
+            token.maxTotalSupply = DEFAULT_FUNGIBLE_MAX;
         }
 
-        // getting tokenType from _metadatas mapping
-        TokenType tokenType_ = _metadatas[_id].tType;
-
-        if (tokenType_ == TokenType.NORMAL) {
-            // to avoid registering a metaToken over a normal token
+        uint256 maxSupply = token.maxTotalSupply;
+        if (_value > maxSupply || token.totalSupply > maxSupply - _value) {
+            if (token.tFungibility == TokenFungibility.NON_FUNGIBLE) {
+                revert ValueFungibilityInconsistency();
+            }
+            revert MaxSupplyExceeded();
+        }
+        // Account for the mint before the recipient's ERC1155 callback.
+        token.totalSupply += _value;
+        if (token.tType == TokenType.NORMAL || token.tType == TokenType.SUB_TOKEN) {
             super._mint(_to, _id, _value, "");
-            _metadatas[_id].totalSupply += _value;
-        } else if (tokenType_ == TokenType.SUB_TOKEN) {
-            super._mint(_to, _id, _value, "");
-            _metadatas[_id].totalSupply += _value;
-        } else if (tokenType_ == TokenType.META_TOKEN_BOND) {
+        } else if (token.tType == TokenType.META_TOKEN_BOND) {
             _mintBond(_to, _id, _value, "");
-        } else if (tokenType_ == TokenType.META_TOKEN_DLC) {
+        } else if (token.tType == TokenType.META_TOKEN_DLC) {
             revert NotImplemented();
         }
     }
@@ -362,14 +347,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
             revert BondDoesNotExist();
         }
 
-        // check not exceeding  bond.maxSupply
-        if (
-            _metadatas[onChainBondId].maxTotalSupply <
-            amount + _metadatas[onChainBondId].totalSupply
-        ) {
-            revert MaxSupplyExceeded();
-        }
-
         // computing the amount of subTokens to be burnt
         uint256[] memory tokenIds = _metadatas[onChainBondId].subTokenIds;
         uint256[] memory mulValues = new uint256[](tokenIds.length);
@@ -385,10 +362,6 @@ contract RaylsERC1155 is IRaylsERC1155, ERC1155, AccessControl {
 
         // minting bond token
         super._mint(to, onChainBondId, amount, data);
-
-        _metadatas[onChainBondId].totalSupply = _metadatas[onChainBondId]
-            .totalSupply
-            .add(amount);
 
         return true;
     }
