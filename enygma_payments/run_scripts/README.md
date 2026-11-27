@@ -40,6 +40,8 @@ build. An artifact reconstructed from the target address would make the comparis
 circular. For deployments outside local Hardhat, set `REVIEWED_VERIFIER_ARTIFACT`
 to the approved artifact before invoking either deployment script. Both scripts
 include the main verifier's expected `runtimeHash` in their receipts.
+Outside local Hardhat, `deploy_node.js` also requires `VERIFIER_CHANGE_DELAY`
+in seconds. An explicit `0` allows immediate verifier replacement.
 
 Before calling a setter, submit a separate owner transaction using
 `approveVerifierRuntime(kind, splitCount, runtimeHash)`. Use the Keccak-256

@@ -18,9 +18,7 @@ const LOCAL_CHAIN_ID = 1337;
 const CHAIN_ID       = parseInt(process.env.CHAIN_ID || String(LOCAL_CHAIN_ID));
 const RPC_URL        = process.env.RPC_URL    || "http://127.0.0.1:8545";
 const EPOCH_INTERVAL = parseInt(process.env.EPOCH_INTERVAL || "1");
-// Seconds a replacement of an already-set verifier waits before
-// executeVerifierChange can apply it (Enygma.verifierChangeDelay, at most 30
-// days). 0 applies replacements at once: local development only.
+// Seconds before an occupied verifier slot can be replaced. Zero applies it immediately.
 const VERIFIER_CHANGE_DELAY = parseInt(process.env.VERIFIER_CHANGE_DELAY || "0");
 
 const ROOT          = path.join(__dirname, "..");
@@ -36,14 +34,14 @@ async function deploy(wallet, artifact, constructorArgs = []) {
   return addr;
 }
 
-// Refuse redirects for every RPC request made with the demo key.
-function localRpcRequest() {
+// Keep every RPC request on the local endpoint while using either local default.
+function localRpcRequest(missingSettings) {
   const request = new ethers.FetchRequest(RPC_URL);
   const getUrl = request.getUrlFunc;
   request.getUrlFunc = async (req, signal) => {
     const response = await getUrl(req, signal);
     if (response.statusCode >= 300 && response.statusCode < 400) {
-      throw new Error("set OWNER_KEY when the local RPC redirects");
+      throw new Error(`set ${missingSettings} when the local RPC redirects`);
     }
     return response;
   };
@@ -53,15 +51,18 @@ function localRpcRequest() {
 async function main() {
   const verifierArtifactPath = path.join(CONTRACTS_DIR, "EnygmaVerifier.sol", "Verifier.json");
   const localChain = CHAIN_ID === LOCAL_CHAIN_ID && ["http://127.0.0.1:8545", "http://localhost:8545"].includes(RPC_URL);
-  const ownerKey = process.env.OWNER_KEY;
-  if (!ownerKey && !localChain) {
-    throw new Error("set OWNER_KEY for deployments outside local Hardhat");
+  const missingSettings = ["OWNER_KEY", "VERIFIER_CHANGE_DELAY"]
+    .filter(name => !process.env[name])
+    .join(" and ");
+  if (missingSettings && !localChain) {
+    throw new Error(`set ${missingSettings} for deployments outside local Hardhat`);
   }
-  const provider = new ethers.JsonRpcProvider(ownerKey ? RPC_URL : localRpcRequest(), CHAIN_ID);
-  if (!ownerKey) {
+  const connection = missingSettings ? localRpcRequest(missingSettings) : RPC_URL;
+  const provider = new ethers.JsonRpcProvider(connection, CHAIN_ID);
+  if (missingSettings) {
     const rpcChainId = await provider.send("eth_chainId", []).catch(() => null);
     if (rpcChainId !== `0x${LOCAL_CHAIN_ID.toString(16)}`) {
-      throw new Error(`set OWNER_KEY when the local RPC cannot confirm chain ID ${LOCAL_CHAIN_ID}`);
+      throw new Error(`set ${missingSettings} when the local RPC cannot confirm chain ID ${LOCAL_CHAIN_ID}`);
     }
   }
   const reviewedPath = process.env.REVIEWED_VERIFIER_ARTIFACT;
@@ -74,7 +75,7 @@ async function main() {
   if (reviewedArtifact.deployedBytecode !== verifierArtifact.deployedBytecode) {
     throw new Error("local verifier build differs from the reviewed runtime");
   }
-  const wallet = new ethers.NonceManager(new ethers.Wallet(ownerKey || DEFAULT_OWNER_KEY, provider));
+  const wallet = new ethers.NonceManager(new ethers.Wallet(process.env.OWNER_KEY || DEFAULT_OWNER_KEY, provider));
   console.log("Deployer:", await wallet.getAddress());
   console.log("Block:", await provider.getBlockNumber());
 
