@@ -122,6 +122,7 @@ wait_port relayer 8090
 # under a running stack, and list the new one in $LOG_DIR/services.pids, so
 # the stop stops it too.
 if [ "$START_DEMO" = 0 ]; then
+    mark_stack_ready
     say "stack is up (no demo). Ctrl-C to stop."
     wait
     exit 0
@@ -133,6 +134,7 @@ step build-demo "$DEMO_DIR" go build -o "$BIN_DIR/shield_demo" .
 "$DEMO_DIR/../../scripts/shield_demo_src.sh" >"$BIN_DIR/shield_demo.src"
 start demo "$DEMO_DIR" "$BIN_DIR/shield_demo" -root "$ROOT" -logs "$LOG_DIR" -dev
 wait_port demo 9092
+mark_stack_ready
 say "demo: http://localhost:9092  (Ctrl-C to stop everything)"
 # macOS's open only: on Debian/Ubuntu, open is openvt. Only for a person at a
 # terminal: an agent's run is checking the stack, and a tab would open in the

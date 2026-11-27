@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # STACK_COMMAND=<stack command line> stack_reaper.sh <stack pid> <log dir> —
 # stops a stack's services once its stack script is gone without its cleanup having run: a SIGKILL, which no
-# trap catches, or a closed session. stack_lib.sh's start launches it on the
-# stack's first service, in its own process group (own_group.sh) and with
+# trap catches, or a closed session. stack_lib.sh arms it before the first
+# service can run, in its own process group (own_group.sh) and with
 # stdin, stdout and stderr detached, so a kill of the stack's group spares it
 # and a reader of the stack's output sees that output end with the stack.
 # The stack's cleanup stops it, and waits for it, before it stops the
@@ -30,6 +30,7 @@ set -uo pipefail
     . "$(dirname "${BASH_SOURCE[0]}")/stack_groups.sh"
     pid=$1 list="$2/services.pids" cmd=$STACK_COMMAND
     while kill -0 "$pid" 2>/dev/null && [ "$(ps -o command= -p "$pid" 2>/dev/null)" = "$cmd" ]; do sleep 1; done
+    clear_stack_ready "$2" "$pid"
     [ -f "$list" ] || exit 0
     pids=$(listed_pids "$list")
     # Unquoted: one argument a pid.

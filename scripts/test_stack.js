@@ -4,8 +4,8 @@
 // stack.
 // Each service leads its own process group (own_group.sh), so a test that
 // kills only the stack script leaves its services running for good,
-// orphaned: kill what the stack's service lists name instead. Every group
-// killed is recorded, and stack_stop's and stack_start's tests end on
+// orphaned: stop its listed groups and any direct child that leads its own
+// group. Every group killed is recorded, and the start and stop tests end on
 // testNoLeftovers, so a cleanup that leaks one fails.
 
 const fs = require('fs');
@@ -35,19 +35,22 @@ function listening(port) {
   });
 }
 
-// running says whether some process that ps lists matches (its row's pid
-// and pgid) and has not exited. A zombie (stat Z: exited, not yet reaped)
-// has: Linux's kill -0 still finds one, as a pid and as a group, while
-// macOS's finds it only as a pid, so kill -0 alone would count a stopped
-// service its parent never reaped as running, on CI alone. A ps that fails
-// counts as running, as kill -0 said.
-function running(matches) {
-  const r = spawnSync('ps', ['-axo', 'pid=,pgid=,stat='], { encoding: 'utf8' });
-  if (r.status !== 0) return true;
-  return r.stdout.split('\n').some((line) => {
-    const [pid, pgid, stat] = line.trim().split(/\s+/);
-    return stat && !stat.startsWith('Z') && matches(Number(pid), Number(pgid));
+// processRows takes one snapshot for liveness and child-group discovery.
+function processRows() {
+  const r = spawnSync('ps', ['-axo', 'pid=,ppid=,pgid=,stat='], { encoding: 'utf8' });
+  if (r.status !== 0) return null;
+  return r.stdout.trim().split('\n').map((line) => {
+    const [pid, parent, group, stat] = line.trim().split(/\s+/);
+    return { pid: Number(pid), parent: Number(parent), group: Number(group), stat };
   });
+}
+
+// A zombie has exited. Linux's kill -0 still finds one as both a pid and a
+// group, so exclude it from the liveness check. A failed ps leaves the
+// caller's kill -0 result in force.
+function running(matches) {
+  const rows = processRows();
+  return rows === null || rows.some(({ pid, group, stat }) => stat && !stat.startsWith('Z') && matches(pid, group));
 }
 
 // alive says whether process pid still runs (a zombie does not).
@@ -87,14 +90,14 @@ function servicePid(logDir, name) {
 }
 
 // listed returns the pids every *.pids file in logDir names (the stack's
-// services.pids, and any copy a test kept), recording each; none when
+// services.pids, and any copy a test kept), or none when
 // logDir is gone.
 function listed(logDir) {
   let files = [];
   try { files = fs.readdirSync(logDir).filter((n) => n.endsWith('.pids')); } catch { return []; }
   const pids = [];
   for (const f of files) {
-    for (const [, pid] of serviceList(path.join(logDir, f))) { pids.push(pid); seen.add(pid); }
+    for (const [, pid] of serviceList(path.join(logDir, f))) pids.push(pid);
   }
   return pids;
 }
@@ -106,15 +109,26 @@ function killGroup(pid) {
   try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
 }
 
-// killServices SIGKILLs every group logDir's lists name, recording each.
-function killServices(logDir) {
-  for (const pid of listed(logDir)) killGroup(pid);
+// killServices also finds groups the stack lost from its list. Snapshot
+// before killing the stack, while those leaders still have its parent PID.
+function killServices(logDir, ...stackPids) {
+  const pids = new Set(listed(logDir));
+  const parents = new Set(stackPids.filter(signallable));
+  if (parents.size) {
+    for (const { pid, parent, group } of processRows() || []) {
+      if (pid === group && parents.has(parent)) pids.add(pid);
+    }
+  }
+  for (const pid of pids) {
+    seen.add(pid);
+    killGroup(pid);
+  }
 }
 
-// killStack stops a fake stack whose script leads its own group: the
-// groups logDir's lists name, then each of groupPids (its script's group).
+// killStack stops a fake stack whose script leads its own group. Stop its
+// services first so any unlisted group still has a parent to identify it.
 function killStack(logDir, ...groupPids) {
-  killServices(logDir);
+  killServices(logDir, ...groupPids);
   groupPids.forEach(killGroup);
 }
 

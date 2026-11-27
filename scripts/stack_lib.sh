@@ -99,7 +99,7 @@ OWN_GROUP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/own_group.sh"
 REAPER_SH="$(dirname "$OWN_GROUP")/stack_reaper.sh"
 . "$(dirname "$OWN_GROUP")/stack_groups.sh"
 
-PIDS=() NAMES=() REAPER_PID=
+PIDS=() NAMES=() REAPER_PID= STARTING_LIST=
 # service_pids — the pids cleanup stops: one per service, from
 # $LOG_DIR/services.pids, which start writes and scripts/stack_service.sh
 # updates when a make restart target relaunches a service under the running
@@ -113,17 +113,22 @@ service_pids() {
         printf '%s\n' ${PIDS[@]+"${PIDS[@]}"}
     fi
 }
+# mark_stack_ready — records this stack as ready for shield-demo-restart.
+# Call after the last service is up, including on a --no-demo stack.
+mark_stack_ready() { printf '%s\n' "$$" >"$LOG_DIR/stack.ready"; }
+
 # cleanup — stops the stack's reaper and waits for it, then stops every
-# service start started, or a restart target relaunched, and waits (about
-# 10 s at most) for them to exit (stack_groups.sh's stop_groups). Quiet
+# service start started, or a restart target relaunched, and waits for them
+# to exit (stack_groups.sh's stop_groups). Quiet
 # before the first one, so a preflight or port-check failure ends on its own
 # message.
 cleanup() {
     trap - EXIT INT TERM
-    [ -n "${PIDS[*]+x}" ] || return 0
-    # First, and gone before a service is signalled, so the services never
-    # have two stoppers.
+    [ -z "${LOG_DIR:-}" ] || clear_stack_ready "$LOG_DIR" "$$" || true
+    [ -z "$STARTING_LIST" ] || unlock_list "$STARTING_LIST" || true
+    # Stop the reaper before signalling the services so they have one stopper.
     [ -z "$REAPER_PID" ] || { signal_groups "$REAPER_PID"; await_groups "$REAPER_PID"; }
+    [ -n "${PIDS[*]+x}" ] || return 0
     echo "" # after a ^C, on a line of its own
     say "stopping services…"
     local pids
@@ -139,40 +144,67 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# start NAME DIR CMD… — runs CMD in DIR in its own process group, logging to
-# $LOG_DIR/NAME.log, and lists it in $LOG_DIR/services.pids for cleanup (the
-# first start empties a list a past stack in this LOG_DIR left). It holds
-# the list's lock (lock_list, stack_groups.sh) from before the launch until
-# the line is written, as scripts/stack_service.sh does for its rewrite: a
-# make restart target can record into the list while the stack is still
-# starting (shield-demo-restart finds run.sh's logs from gnark, up before
-# the relayer and the demo start), and an append between its read and its
-# rewrite would be lost (#404). Without the lock in about 10 s it fails
-# before starting CMD; a stack killed while it holds it leaves the lock
-# behind, as a killed stack_service.sh does, and the next write's failure
-# says to remove it. The first start then launches the stack's reaper
-# (scripts/stack_reaper.sh), which stops the listed services if this script
-# dies without its cleanup: in its own group, its streams detached, and no
-# child of this script's, so a stack's wait (run.sh's) never waits on it.
+# arm_reaper — start the reaper outside the stack's process group. Its
+# command-line check is captured by the stack and passed through the
+# environment, so a kill by the stack's name spares it.
+arm_reaper() {
+    local command
+    command=$(ps -o command= -p "$$" 2>/dev/null) || return 1
+    [ -n "$command" ] || return 1
+    REAPER_PID=$(STACK_COMMAND="$command" "$OWN_GROUP" "$REAPER_SH" "$$" "$LOG_DIR" </dev/null >/dev/null 2>&1 & echo $!)
+    # Wait for own_group to detach the reaper before any service can run.
+    for _ in $(seq 1 100); do
+        kill -0 -- "-$REAPER_PID" 2>/dev/null && return 0
+        kill -0 "$REAPER_PID" 2>/dev/null || break
+        sleep 0.05
+    done
+    return 1
+}
+
+# exec_listed_service STACK_PID LIST NAME CMD… — wait in the service's new
+# process group until start has published its PID. The wrapper and CMD keep
+# the same PID. If the stack dies before publishing it, there is no command
+# to stop and the wrapper exits when reparented.
+exec_listed_service() {
+    exec "$OWN_GROUP" perl -e '
+        my ($stack, $list, $name, @cmd) = @ARGV;
+        my $entry = "$name $$\n";
+        while (getppid() == $stack) {
+            if (open my $lines, "<", $list) {
+                while (my $line = <$lines>) {
+                    next unless $line eq $entry;
+                    exec { $cmd[0] } @cmd;
+                    print STDERR "own_group.sh: $cmd[0]: $!\n";
+                    exit($!{ENOENT} ? 127 : 126);
+                }
+            }
+            select undef, undef, undef, 0.02;
+        }
+    ' -- "$@"
+}
+
+# start NAME DIR CMD… — runs CMD in DIR in its own process group, logging
+# to $LOG_DIR/NAME.log. It holds the service list's lock from before starting
+# the wrapper through publishing its PID, so a concurrent stack_service.sh
+# rewrite keeps the entry (#404). On the first start, clear the old list and
+# readiness marker and arm the reaper before launching anything.
 start() {
-    local name=$1 dir=$2 list="$LOG_DIR/services.pids" first=
+    local name=$1 dir=$2 list="$LOG_DIR/services.pids"
     shift 2
-    [ -n "${PIDS[*]+x}" ] || first=1
     lock_list "$list" || exit 1
-    (cd "$dir" && exec "$OWN_GROUP" "$@" >"$LOG_DIR/$name.log" 2>&1) &
-    local pid=$!
-    [ -z "$first" ] || : >"$list"
-    echo "$name $pid" >>"$list"
-    unlock_list "$list"
-    if [ -n "$first" ]; then
-        # The stack's command line read here, not by the reaper: by the time
-        # a slow reaper runs, the stack may already be running another one.
-        # Handed over in the environment, not argv, so a kill by the stack's
-        # name (pkill -f run.sh) spares the reaper.
-        REAPER_PID=$(STACK_COMMAND="$(ps -o command= -p "$$" 2>/dev/null)" "$OWN_GROUP" "$REAPER_SH" "$$" "$LOG_DIR" </dev/null >/dev/null 2>&1 & echo $!)
+    STARTING_LIST=$list
+    if [ -z "${PIDS[*]+x}" ]; then
+        : >"$list"
+        rm -f "$LOG_DIR/stack.ready"
+        arm_reaper || { say "could not start the stack reaper" >&2; exit 1; }
     fi
+    (cd "$dir" && exec_listed_service "$$" "$list" "$name" "$@" >"$LOG_DIR/$name.log" 2>&1) &
+    local pid=$!
     PIDS+=("$pid")
     NAMES+=("$name")
+    printf '%s %s\n' "$name" "$pid" >>"$list"
+    STARTING_LIST=
+    unlock_list "$list"
 }
 
 # died NAME — NAME's service exited: shows its log's tail and fails.

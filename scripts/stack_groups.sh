@@ -30,6 +30,14 @@ unlock_list() { rm -f "$1.lock"; }
 # every process the user owns.
 listed_pids() { awk '$2 ~ /^[0-9]+$/ && $2 > 1 { print $2 }' "$1"; }
 
+# clear_stack_ready LOG_DIR PID — withdraw this stack's ready marker.
+clear_stack_ready() {
+    local file="$1/stack.ready" owner
+    if [ -f "$file" ] && IFS= read -r owner 2>/dev/null <"$file" && [ "$owner" = "$2" ]; then
+        rm -f "$file"
+    fi
+}
+
 # signal_groups PID… — TERM to each PID's group, else (a PID that leads no
 # group) to PID itself.
 signal_groups() {
@@ -52,11 +60,12 @@ await_groups() {
 }
 
 # stop_groups PID… — signal_groups, then waits for the groups: wait reaps
-# those that are this shell's children, and await_groups polls the rest (a
+# only the named children, and await_groups polls the remaining groups (a
 # service a restart target relaunched is no child of the stack script's, and
 # none is the reaper's).
 stop_groups() {
     signal_groups "$@"
-    wait 2>/dev/null || true
+    local pid
+    for pid in "$@"; do wait "$pid" 2>/dev/null || true; done
     await_groups "$@"
 }
