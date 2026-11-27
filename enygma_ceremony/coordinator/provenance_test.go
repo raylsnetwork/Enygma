@@ -24,7 +24,7 @@ func TestStatusNamesPhase1(t *testing.T) {
 	if _, err := ceremony.Contribute(p("p1-0"), p("p1-1")); err != nil {
 		t.Fatal(err)
 	}
-	r, err := ceremony.SealPhase1(p("srs"), ceremony.Beacon{Value: bytes.Repeat([]byte{7}, 32)}, []string{p("p1-1")})
+	r, err := ceremony.SealPhase1(p("srs"), ceremony.Beacon{Value: bytes.Repeat([]byte{7}, 32)}, ceremony.Chain{Paths: []string{p("p1-1")}, Head: sha256.Sum256(readFile(t, p("p1-1")))})
 	if err != nil {
 		t.Fatal(err)
 	}

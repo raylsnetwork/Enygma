@@ -148,6 +148,10 @@ type Result struct {
 	SHA256  [32]byte // the sha256 the participant publishes
 	Prev    [32]byte // the state it built on; zero when Already
 	Already bool     // contributed before: in an earlier run, or before a restart
+	// Confirmed is the coordinator's transcript read back holding it. A
+	// contribution the coordinator accepted is not always confirmed: it may
+	// stop, at the close, before the program reads its transcript back.
+	Confirmed bool
 	// Of is the contribution as its child described it: its kind, its
 	// domain for a Phase 1, the SRS it builds on for a Phase 2 (no names);
 	// zero when Already.
@@ -223,6 +227,7 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 		case coordinator.Done:
 			return c.done(ctx, r)
 		case coordinator.Closed:
+			c.unheard()
 			if r.Notice != "" {
 				return Result{}, fmt.Errorf("%w (%s)", ErrClosed, printable(r.Notice))
 			}
@@ -250,7 +255,7 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 					return Result{}, err
 				}
 				continue
-			case err != nil && unreachable(err):
+			case err != nil && unreachable(ctx, err):
 				// Still this participant's turn until its deadline, or the
 				// upload went in: asking again says which.
 				c.retrying("Lost the coordinator during your turn", err, "asking again")
@@ -448,7 +453,7 @@ func (c *Client) patiently(ctx context.Context, try func() error) error {
 	var failingSince time.Time
 	for {
 		err := try()
-		if err == nil || !unreachable(err) {
+		if err == nil || !unreachable(ctx, err) {
 			return err
 		}
 		if failingSince.IsZero() {
@@ -525,11 +530,42 @@ func (c *Client) contribute(ctx context.Context, turn coordinator.Reply) (Result
 		return Result{}, fmt.Errorf("the coordinator recorded contribution %d sha256 %x, but yours is %d sha256 %x",
 			r.Index, got, receipt.Index, receipt.Hash)
 	}
-	if err := c.confirm(ctx, receipt.Index, receipt.Hash, &receipt.In); err != nil {
-		return Result{}, err
+	return c.accepted(ctx, receipt.Index, receipt.Hash, &receipt.In, receipt.Info, false)
+}
+
+// accepted reports a contribution of this participant's that the
+// coordinator says it holds, as number index with sha256 hash. The receipt
+// is printed first, before anything else can fail (audit L5): a coordinator
+// stopping at the close right after its reply used to leave the head's
+// contributor with none. Then the transcript is read back: one that cannot
+// be read leaves the receipt standing, unconfirmed; one read that does not
+// hold it, or is no chain, is the coordinator contradicting itself.
+func (c *Client) accepted(ctx context.Context, index uint32, hash [32]byte, prev *[32]byte, of ceremony.Info, already bool) (Result, error) {
+	fmt.Fprintf(c.Out, "The coordinator accepted your contribution as number %d: sha256 %x\n", index, hash)
+	res := Result{Index: index, SHA256: hash, Of: of, Already: already}
+	if prev != nil {
+		res.Prev = *prev
 	}
-	c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256})
-	return Result{Index: r.Index, SHA256: got, Prev: receipt.In, Of: receipt.Info}, nil
+	switch err := c.confirm(ctx, index, hash, prev); {
+	case err != nil && unreachable(ctx, err):
+		c.retrying("Could not read the coordinator's transcript back", err, "check your contribution is in it after the close")
+	case err != nil:
+		return Result{}, err
+	default:
+		res.Confirmed = true
+	}
+	c.event(Event{Stage: StageDone, Index: index, SHA256: hex.EncodeToString(hash[:]), Already: already})
+	return res, nil
+}
+
+// unheard prints the receipts of contributions this run made whose
+// acceptance it never heard, as when the coordinator's reply to an upload
+// is lost and it then closes (audit L5): each may be in the transcript.
+func (c *Client) unheard() {
+	for _, m := range c.made {
+		fmt.Fprintf(c.Out, "Your contribution sha256 %x was uploaded, but the coordinator's answer was lost: it may be in the "+
+			"transcript, as number %d. Publish this sha256 yourself, and check it after the close.\n", m.Hash, m.Index)
+	}
 }
 
 // done answers a coordinator saying this participant has contributed
@@ -545,11 +581,9 @@ func (c *Client) done(ctx context.Context, r coordinator.Reply) (Result, error) 
 	}
 	for _, m := range c.made {
 		if m.Hash == h && m.Index == r.Index {
-			if err := c.confirm(ctx, m.Index, m.Hash, &m.In); err != nil {
-				return Result{}, err
-			}
-			c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256})
-			return Result{Index: r.Index, SHA256: h, Prev: m.In}, nil
+			// This run's, its upload's answer lost: as contribute would have
+			// reported it.
+			return c.accepted(ctx, m.Index, m.Hash, &m.In, m.Info, false)
 		}
 	}
 	if c.Mine != "" {
@@ -558,11 +592,7 @@ func (c *Client) done(ctx context.Context, r coordinator.Reply) (Result, error) 
 			return Result{}, fmt.Errorf("%q is not a sha256 of a contribution", c.Mine)
 		}
 		if mine == h {
-			if err := c.confirm(ctx, r.Index, h, nil); err != nil {
-				return Result{}, err
-			}
-			c.event(Event{Stage: StageDone, Index: r.Index, SHA256: r.SHA256, Already: true})
-			return Result{Index: r.Index, SHA256: h, Already: true}, nil
+			return c.accepted(ctx, r.Index, h, nil, ceremony.Info{}, true)
 		}
 	}
 	return Result{}, fmt.Errorf("the coordinator says you have contributed already, as contribution %d with sha256 %x, "+
@@ -571,9 +601,14 @@ func (c *Client) done(ctx context.Context, r coordinator.Reply) (Result, error) 
 }
 
 // confirm checks that the coordinator's transcript holds contribution index
-// with sha256 hash, built on prev when prev is not nil.
+// with sha256 hash, built on prev when prev is not nil. It is still the
+// coordinator's word, but asked as anyone asks, with no session token, so
+// that it is the transcript it serves everyone, and read as verify reads
+// one (audit H2, L10): an entry at a time, and as a chain from its start.
+// Whether the contribution is in the chain announced at the close is for
+// verify -head to check, from a copy the coordinator does not serve.
 func (c *Client) confirm(ctx context.Context, index uint32, hash [32]byte, prev *[32]byte) error {
-	req, err := c.request(ctx, http.MethodGet, "/v1/transcript", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.URL, "/")+"/v1/transcript", nil)
 	if err != nil {
 		return err
 	}
@@ -585,8 +620,14 @@ func (c *Client) confirm(ctx context.Context, index uint32, hash [32]byte, prev 
 	if err := statusError(resp); err != nil {
 		return fmt.Errorf("checking the transcript holds your contribution: %w", err)
 	}
-	var t transcript.Transcript
-	if err := json.NewDecoder(io.LimitReader(resp.Body, transcript.MaxJSON)).Decode(&t); err != nil {
+	// Read whole first: a transfer cut short is the network's failure, as a
+	// failed request is, not the coordinator saying anything.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, transcript.MaxJSON))
+	if err != nil {
+		return fmt.Errorf("checking the transcript holds your contribution: %w", &url.Error{Op: req.Method, URL: req.URL.Redacted(), Err: err})
+	}
+	t, err := transcript.ReadTranscript(bytes.NewReader(data))
+	if err != nil {
 		return fmt.Errorf("checking the transcript holds your contribution: %w", err)
 	}
 	want := hex.EncodeToString(hash[:])
@@ -839,10 +880,13 @@ func replyError(code int, data []byte, retryAfter string) error {
 	return e
 }
 
-// unreachable reports whether err is the coordinator unreachable, or
-// answering that it is failing: what trying again may get past.
-func unreachable(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errRedirected) || errors.Is(err, errCertificate) {
+// unreachable reports whether err, from a request made under ctx, is the
+// coordinator unreachable, or answering that it is failing: what trying
+// again may get past. A request's own timeout is one (audit L6): over
+// HTTP/1.1, a reply slower than ReplyTimeout fails as a deadline exceeded,
+// which is the coordinator's, not ctx's.
+func unreachable(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, errRedirected) || errors.Is(err, errCertificate) {
 		return false
 	}
 	var h *httpError

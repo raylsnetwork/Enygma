@@ -156,8 +156,11 @@ footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: 
   <details>
     <summary>Check the ceremony yourself</summary>
     <div class="card spaced">
-      <p>Every contribution is public. With the program from the release, this downloads them all, checks that each
-        one builds correctly on the one before it, and finds your receipt among them.</p>
+      <p>Every contribution is public. After the close, with the program from the release, this downloads them all
+        from a copy of this phase published apart from this server, checks that each one builds on the one before it
+        and that the chain ends at the head announced at the close, and finds your receipt in it. Your contribution
+        counts only in that chain. Asking this server would only tell you what it says, which it can say to you
+        alone.</p>
       <pre id="verify"></pre>
     </div>
   </details>
@@ -231,9 +234,13 @@ function renderHow(s) {
   text("source", r
     ? `git clone --depth 1 --branch ${r.tag} ${r.repo}\ncd ${r.dir}/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`
     : `git clone --branch <the release's tag> <the repository>\ncd <the repository>/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`);
-  text("verify", s.phase === "phase 2"
-    ? `ceremony verify -url ${origin} -dir transcript -srs <the SRS> -srs-sha256 <its sha256, as announced> -r1cs <the circuits' directory> -mine <your receipt>`
-    : `ceremony verify -url ${origin} -dir transcript -mine <your receipt>`);
+  // The check that counts (audit H2): the chain that ends at the announced head, from a copy this server
+  // does not serve, and the phase announced (I3).
+  const phase = s.phase === "phase 2"
+    ? `-ceremony ${s.ceremony} -srs <the SRS> -srs-sha256 <its sha256, as announced> -r1cs <the circuits' directory>`
+    : `-size ${s.domain}`;
+  text("verify", `ceremony verify -static <this phase's published copy> -dir <a new directory> ` +
+    `-head <the head announced at the close> ${phase} -mine <your receipt>`);
 }
 
 function renderStatus(s) {

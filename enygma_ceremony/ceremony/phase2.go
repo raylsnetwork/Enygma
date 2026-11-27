@@ -395,18 +395,19 @@ func NewPhase2(out, ceremony string, srs SRS, circuits []Circuit) (Receipt, erro
 }
 
 // SealPhase2 replays ceremony's Phase 2 from its start, recomputed from the
-// SRS srs names and the circuits, through contributions in order, checking each
+// SRS srs names and the circuits, through chain's contributions in order,
+// checking the chain as Chain says and each
 // step as Check does; applies the beacon as a last, public contribution; and
 // writes each circuit's proving and verifying key into keysDir at its PK
 // and VK paths, in the form gnark's ReadFrom loads, never over an existing
 // file. The keys appear all together or not at all: each is written in
 // full, and synced, before any is put in place. It returns what the SRS
 // says it was sealed from.
-func SealPhase2(keysDir, ceremony string, srs SRS, circuits []Circuit, beacon []byte, contributions []string) (Provenance, error) {
+func SealPhase2(keysDir, ceremony string, srs SRS, circuits []Circuit, beacon []byte, chain Chain) (Provenance, error) {
 	if err := checkBeacon(beacon); err != nil {
 		return Provenance{}, err
 	}
-	if len(contributions) == 0 {
+	if len(chain.Paths) == 0 {
 		return Provenance{}, errors.New("no contributions to seal")
 	}
 	for _, c := range circuits { // before the hours a seal can take
@@ -420,15 +421,19 @@ func SealPhase2(keysDir, ceremony string, srs SRS, circuits []Circuit, beacon []
 	if err != nil {
 		return Provenance{}, err
 	}
-	for i, path := range contributions {
+	replayed := make([][32]byte, len(chain.Paths))
+	for i, path := range chain.Paths {
 		next := new(phase2State)
-		if _, err := open(path, KindPhase2, next); err != nil {
+		if replayed[i], err = open(path, KindPhase2, next); err != nil {
 			return Provenance{}, err
 		}
 		if err := checkPhase2Step(prev, next); err != nil {
 			return Provenance{}, fmt.Errorf("contribution %d (%s): %w", i+1, path, err)
 		}
 		prev = next
+	}
+	if err := chain.check(replayed); err != nil {
+		return Provenance{}, err
 	}
 	type written struct{ tmp, path string }
 	var keys []written

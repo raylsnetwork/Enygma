@@ -55,7 +55,7 @@ func newFixture(t testing.TB) *fixture {
 	}
 	f.p1 = f.chain(t, "p1", 2, func(out string) (Receipt, error) { return NewPhase1(out, 64) })
 	f.srs = f.path("srs")
-	if _, err := SealPhase1(f.srs, Beacon{Value: beaconA}, f.p1[1:]); err != nil {
+	if _, err := SealPhase1(f.srs, Beacon{Value: beaconA}, chainOf(t, f.p1[1:])); err != nil {
 		t.Fatal(err)
 	}
 	f.p2 = f.chain(t, "p2", 3, func(out string) (Receipt, error) { return NewPhase2(out, "test", rehearsal(t, f.srs), f.circuits) })
@@ -113,7 +113,7 @@ func (f *fixture) rewritePhase2(t *testing.T, path, name string, edit func(*phas
 // seal seals the fixture's Phase 2 with beacon into a new keys directory name.
 func (f *fixture) seal(t *testing.T, name string, beacon []byte) string {
 	t.Helper()
-	if _, err := SealPhase2(f.path(name), "test", rehearsal(t, f.srs), f.circuits, beacon, f.p2[1:]); err != nil {
+	if _, err := SealPhase2(f.path(name), "test", rehearsal(t, f.srs), f.circuits, beacon, chainOf(t, f.p2[1:])); err != nil {
 		t.Fatal(err)
 	}
 	return f.path(name)
@@ -259,7 +259,7 @@ func TestCheck(t *testing.T) {
 			prev: fixed(f.p2[0]),
 			next: func(t *testing.T) string {
 				srs := f.path("srs-other")
-				if _, err := SealPhase1(srs, Beacon{Value: beaconB}, f.p1[1:]); err != nil {
+				if _, err := SealPhase1(srs, Beacon{Value: beaconB}, chainOf(t, f.p1[1:])); err != nil {
 					t.Fatal(err)
 				}
 				return f.chain(t, "p2-srs-other", 1, func(out string) (Receipt, error) {
@@ -308,7 +308,7 @@ func TestSealPhase2Refuses(t *testing.T) {
 	f := newFixture(t)
 
 	t.Run("a short beacon", func(t *testing.T) {
-		_, err := SealPhase2(f.path("keys-short"), "test", rehearsal(t, f.srs), f.circuits, beaconA[:MinBeacon-1], f.p2[1:])
+		_, err := SealPhase2(f.path("keys-short"), "test", rehearsal(t, f.srs), f.circuits, beaconA[:MinBeacon-1], chainOf(t, f.p2[1:]))
 		if !errors.Is(err, ErrBeacon) {
 			t.Fatalf("SealPhase2: %v, want %v", err, ErrBeacon)
 		}
@@ -320,7 +320,7 @@ func TestSealPhase2Refuses(t *testing.T) {
 		if f.circuits[0].Name != "Committed" || f.circuits[1].Name != "Cubic" {
 			t.Fatalf("circuits %v, want Committed then Cubic", f.circuits)
 		}
-		_, err := SealPhase2(f.path("keys-swapped"), "test", rehearsal(t, f.srs), swapped, beaconB, f.p2[1:])
+		_, err := SealPhase2(f.path("keys-swapped"), "test", rehearsal(t, f.srs), swapped, beaconB, chainOf(t, f.p2[1:]))
 		if !errors.Is(err, ErrMismatch) {
 			t.Fatalf("SealPhase2: %v, want %v", err, ErrMismatch)
 		}
@@ -336,7 +336,7 @@ func TestSealPhase2Refuses(t *testing.T) {
 		if err := os.WriteFile(taken, []byte("an old key"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := SealPhase2(keys, "test", rehearsal(t, f.srs), f.circuits, beaconA, f.p2[1:])
+		_, err := SealPhase2(keys, "test", rehearsal(t, f.srs), f.circuits, beaconA, chainOf(t, f.p2[1:]))
 		if err == nil || !strings.Contains(err.Error(), "a key is there already") {
 			t.Fatalf("SealPhase2: %v, want a key already in place refused", err)
 		}
@@ -379,7 +379,7 @@ func TestKeyManifest(t *testing.T) {
 			t.Fatal(err)
 		}
 		keys := f.path("manifest-keys")
-		if _, err := SealPhase2(keys, "test", rehearsal(t, f.srs), circuits, beaconA, f.p2[1:]); err != nil {
+		if _, err := SealPhase2(keys, "test", rehearsal(t, f.srs), circuits, beaconA, chainOf(t, f.p2[1:])); err != nil {
 			t.Fatal(err)
 		}
 		if err := testcircuits.CheckKeys(keys, dir); err != nil {
@@ -414,7 +414,7 @@ func TestNewPhase2RefusesCircuitTooLargeForSRS(t *testing.T) {
 	f := newFixture(t)
 	p1 := f.chain(t, "p1-small", 1, func(out string) (Receipt, error) { return NewPhase1(out, 8) })
 	srs := f.path("srs-small")
-	if _, err := SealPhase1(srs, Beacon{Value: beaconA}, p1[1:]); err != nil {
+	if _, err := SealPhase1(srs, Beacon{Value: beaconA}, chainOf(t, p1[1:])); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewPhase2(f.path("p2-small"), "test", rehearsal(t, srs), f.circuits); !errors.Is(err, ErrTooLarge) {
@@ -648,6 +648,13 @@ func TestStatesSurviveShortReads(t *testing.T) {
 // fixed returns a test step that yields path.
 func fixed(path string) func(*testing.T) string { return func(*testing.T) string { return path } }
 
+// chainOf is the chain of paths, ending at the last's sha256, as a seal of
+// them up to the head announced would be given it.
+func chainOf(t testing.TB, paths []string) Chain {
+	t.Helper()
+	return Chain{Paths: paths, Head: sha256.Sum256(readFile(t, paths[len(paths)-1]))}
+}
+
 // rehearsal names the SRS at path for a Phase 2, as announced by its own
 // sha256: the tests' SRSs are sealed with beacons not from drand.
 func rehearsal(t testing.TB, path string) SRS {
@@ -673,7 +680,7 @@ func TestNewPhase2RefusesTooManyCommitments(t *testing.T) {
 	f := newFixture(t)
 	p1 := f.chain(t, "p1-wide", 1, func(out string) (Receipt, error) { return NewPhase1(out, 1024) })
 	srs := f.path("srs-wide")
-	if _, err := SealPhase1(srs, Beacon{Value: beaconA}, p1[1:]); err != nil {
+	if _, err := SealPhase1(srs, Beacon{Value: beaconA}, chainOf(t, p1[1:])); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
@@ -710,7 +717,7 @@ func TestSRSNamesItsPhase1(t *testing.T) {
 	}
 	drand := Beacon{Value: beaconB, DrandRound: 12345, CloseAt: time.Date(2026, 12, 1, 15, 0, 0, 0, time.UTC)}
 	other := f.path("srs-drand")
-	if _, err := SealPhase1(other, drand, f.p1[1:]); err != nil {
+	if _, err := SealPhase1(other, drand, chainOf(t, f.p1[1:])); err != nil {
 		t.Fatal(err)
 	}
 	if i, err := Inspect(other); err != nil || i.Phase1.Beacon.DrandRound != drand.DrandRound || !i.Phase1.Beacon.CloseAt.Equal(drand.CloseAt) {
@@ -748,7 +755,7 @@ func TestSRSNamesItsPhase1(t *testing.T) {
 // than written with the wrong length.
 func TestSealPhase1RefusesALongBeacon(t *testing.T) {
 	f := newFixture(t)
-	if _, err := SealPhase1(f.path("srs-long"), Beacon{Value: bytes.Repeat([]byte{1}, 256)}, f.p1[1:]); err == nil {
+	if _, err := SealPhase1(f.path("srs-long"), Beacon{Value: bytes.Repeat([]byte{1}, 256)}, chainOf(t, f.p1[1:])); err == nil {
 		t.Fatal("SealPhase1 took a beacon of 256 bytes")
 	}
 }
@@ -761,7 +768,7 @@ func TestSealPhase1RefusesALongBeacon(t *testing.T) {
 func TestPhase2StartsOnlyFromTheAnnouncedSRS(t *testing.T) {
 	f := newFixture(t)
 	other := f.path("srs-other")
-	if _, err := SealPhase1(other, Beacon{Value: beaconB}, f.p1[1:]); err != nil {
+	if _, err := SealPhase1(other, Beacon{Value: beaconB}, chainOf(t, f.p1[1:])); err != nil {
 		t.Fatal(err)
 	}
 	announced := rehearsal(t, f.srs)
@@ -769,7 +776,7 @@ func TestPhase2StartsOnlyFromTheAnnouncedSRS(t *testing.T) {
 	if _, err := NewPhase2(f.path("p2-other"), "test", substituted, f.circuits); !errors.Is(err, ErrSRS) {
 		t.Fatalf("NewPhase2 from another SRS: %v, want %v", err, ErrSRS)
 	}
-	if _, err := SealPhase2(f.path("keys-other"), "test", substituted, f.circuits, beaconB, f.p2[1:]); !errors.Is(err, ErrSRS) {
+	if _, err := SealPhase2(f.path("keys-other"), "test", substituted, f.circuits, beaconB, chainOf(t, f.p2[1:])); !errors.Is(err, ErrSRS) {
 		t.Fatalf("SealPhase2 from another SRS: %v, want %v", err, ErrSRS)
 	}
 	notRehearsal := announced
@@ -777,7 +784,7 @@ func TestPhase2StartsOnlyFromTheAnnouncedSRS(t *testing.T) {
 	if _, err := NewPhase2(f.path("p2-rehearsal"), "test", notRehearsal, f.circuits); !errors.Is(err, ErrSRS) {
 		t.Fatalf("NewPhase2 from a rehearsal's SRS, not told so: %v, want %v", err, ErrSRS)
 	}
-	phase1, err := SealPhase2(f.path("keys"), "test", announced, f.circuits, beaconB, f.p2[1:])
+	phase1, err := SealPhase2(f.path("keys"), "test", announced, f.circuits, beaconB, chainOf(t, f.p2[1:]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,5 +844,33 @@ func TestCircuitsInListsByName(t *testing.T) {
 	}
 	if !slices.Equal(names, []string{"Cubic", "Cubic-2"}) {
 		t.Fatalf("CircuitsIn lists %v, want [Cubic Cubic-2]", names)
+	}
+}
+
+// TestSealHoldsTheChain (audit L11, H2): a seal holds the contributions it
+// replays, as it reads them, to the chain it was given: the last must be
+// the head, and every receipt it must include must be among them.
+func TestSealHoldsTheChain(t *testing.T) {
+	f := newFixture(t)
+	c := chainOf(t, f.p1[1:])
+	other := c
+	other.Head = sha256.Sum256(readFile(t, f.p1[1]))
+	if _, err := SealPhase1(f.path("srs-head"), Beacon{Value: beaconA}, other); err == nil || !strings.Contains(err.Error(), "not the announced head") {
+		t.Fatalf("SealPhase1 to another head: %v, want it refused", err)
+	}
+	missing := c
+	missing.Include = [][32]byte{sha256.Sum256(readFile(t, f.p2[1]))}
+	if _, err := SealPhase1(f.path("srs-missing"), Beacon{Value: beaconA}, missing); !errors.Is(err, ErrNotIncluded) {
+		t.Fatalf("SealPhase1 told to include a contribution not in the chain: %v, want %v", err, ErrNotIncluded)
+	}
+	p2missing := chainOf(t, f.p2[1:])
+	p2missing.Include = [][32]byte{sha256.Sum256(readFile(t, f.p1[1]))}
+	if _, err := SealPhase2(f.path("keys-missing-2"), "test", rehearsal(t, f.srs), f.circuits, beaconA, p2missing); !errors.Is(err, ErrNotIncluded) {
+		t.Fatalf("SealPhase2 told to include a contribution not in the chain: %v, want %v", err, ErrNotIncluded)
+	}
+	included := c
+	included.Include = [][32]byte{sha256.Sum256(readFile(t, f.p1[1]))}
+	if _, err := SealPhase1(f.path("srs-included"), Beacon{Value: beaconA}, included); err != nil {
+		t.Fatalf("SealPhase1 told to include a contribution in the chain: %v", err)
 	}
 }

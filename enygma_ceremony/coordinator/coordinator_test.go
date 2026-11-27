@@ -630,7 +630,7 @@ func TestRestartRefusesABrokenTranscript(t *testing.T) {
 	t.Run("a state-0 that is a sealed SRS", func(t *testing.T) {
 		h := contributed(t)
 		srs := filepath.Join(t.TempDir(), "phase1.srs")
-		if _, err := ceremony.SealPhase1(srs, ceremony.Beacon{Value: bytes.Repeat([]byte{7}, ceremony.MinBeacon)}, []string{filepath.Join(h.dir, "state-1")}); err != nil {
+		if _, err := ceremony.SealPhase1(srs, ceremony.Beacon{Value: bytes.Repeat([]byte{7}, ceremony.MinBeacon)}, ceremony.Chain{Paths: []string{filepath.Join(h.dir, "state-1")}, Head: sha256.Sum256(readFile(t, filepath.Join(h.dir, "state-1")))}); err != nil {
 			t.Fatal(err)
 		}
 		for _, name := range []string{"state-1", "state-1.json"} {

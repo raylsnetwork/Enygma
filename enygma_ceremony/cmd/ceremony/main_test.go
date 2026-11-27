@@ -98,6 +98,9 @@ func TestJoin(t *testing.T) {
 		if want := fmt.Sprintf("your contribution sha256 %x", sha256.Sum256(readFile(t, state))); !strings.Contains(stdout, want) {
 			t.Fatalf("%s's join printed\n%s\nwant a line with %q", name, stdout, want)
 		}
+		if want := "-head <the announced head>"; !strings.Contains(stdout, want) { // audit H2: the check that counts
+			t.Fatalf("%s's join printed\n%s\nwant a line with %q", name, stdout, want)
+		}
 		if want := "to Phase 1 for circuits of up to 8 constraints"; !strings.Contains(stdout, want) { // audit H1
 			t.Fatalf("%s's join printed\n%s\nwant a line with %q", name, stdout, want)
 		}
@@ -159,7 +162,7 @@ func TestVerify(t *testing.T) {
 	}
 	mine := fmt.Sprintf("%x", sha256.Sum256(readFile(t, filepath.Join(dir, "state-2"))))
 	code, stdout, stderr := runCommand("verify", "-url", url, "-dir", t.TempDir(), "-mine", mine)
-	if code != 0 || !strings.Contains(stdout, "OK: Phase 1 for circuits of up to 8 constraints: the start, and 2 contributions") || !strings.Contains(stdout, "Yours is contribution 2") {
+	if code != 0 || !strings.Contains(stdout, "OK: Phase 1 for circuits of up to 8 constraints: the start, and 2 contributions") || !strings.Contains(stdout, "Contribution 2 is sha256 "+mine) {
 		t.Fatalf("verify: exit %d\n%s%s", code, stdout, stderr)
 	}
 	if code, stdout, stderr := runCommand("verify", "-url", url, "-dir", t.TempDir(), "-mine", strings.Repeat("0", 64)); code != 1 {

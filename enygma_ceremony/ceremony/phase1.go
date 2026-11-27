@@ -141,25 +141,23 @@ func (p *Provenance) decode(r *body) error {
 	return nil
 }
 
-// SealPhase1 replays Phase 1 from its start through contributions, in order,
-// checking each step as Check does; applies the beacon as a last, public
-// contribution; and writes the SRS to out, with its provenance: the head it
-// replayed to, and the beacon.
-func SealPhase1(out string, beacon Beacon, contributions []string) (Receipt, error) {
+// SealPhase1 replays Phase 1 from its start through chain's contributions,
+// in order, checking each step as Check does and the chain as Chain says;
+// applies the beacon as a last, public contribution; and writes the SRS to
+// out, with its provenance: the head it replayed to, and the beacon.
+func SealPhase1(out string, beacon Beacon, chain Chain) (Receipt, error) {
 	if err := checkBeacon(beacon.Value); err != nil {
 		return Receipt{}, err
 	}
-	if len(contributions) == 0 {
+	if len(chain.Paths) == 0 {
 		return Receipt{}, errors.New("no contributions to seal")
 	}
-	var (
-		prev *phase1State
-		head [32]byte
-	)
-	for i, path := range contributions {
+	var prev *phase1State
+	replayed := make([][32]byte, len(chain.Paths))
+	for i, path := range chain.Paths {
 		next := new(phase1State)
 		var err error
-		if head, err = open(path, KindPhase1, next); err != nil {
+		if replayed[i], err = open(path, KindPhase1, next); err != nil {
 			return Receipt{}, err
 		}
 		if prev == nil {
@@ -170,7 +168,10 @@ func SealPhase1(out string, beacon Beacon, contributions []string) (Receipt, err
 		}
 		prev = next
 	}
-	srs := &srsFile{n: prev.n, prov: Provenance{Head: head, Contributions: prev.index, Beacon: beacon}, commons: prev.mpc.Seal(beacon.Value)}
+	if err := chain.check(replayed); err != nil {
+		return Receipt{}, err
+	}
+	srs := &srsFile{n: prev.n, prov: Provenance{Head: chain.Head, Contributions: prev.index, Beacon: beacon}, commons: prev.mpc.Seal(beacon.Value)}
 	h, err := create(out, KindSRS, srs.encode)
 	return Receipt{Info: srs.info(h)}, err
 }
