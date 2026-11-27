@@ -33,6 +33,7 @@ on:
       - "enygma_dvp/**"
       - "enygma_gnark_shared/**"
       - "enygma_retail_payments/**"
+      - "enygma_vkslots/**"
       - "Makefile"
       - "scripts/suite_changes.sh"
       - "scripts/suite_result.sh"

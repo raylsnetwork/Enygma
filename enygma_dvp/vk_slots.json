@@ -1,0 +1,33 @@
+{
+  "about": [
+    "Which circuit's verifying key each slot of the main deployment's Verifier holds. The vaults, EnygmaDvp and EnygmaAuction name circuits by slot number (VK_ID_*), and the Verifier numbers keys in registration order, so scripts/cmd/init refuses keys that differ from this list and reads every slot back after registering.",
+    "nPublic is the key's number of public inputs, pinned for the circuits keygen makes (Payment, DvPInitiator, DvPDestination) and for the retired legacy ERC1155 slots, which always hold export_vk_init's one-input placeholder. The other slots hold a legacy key if there is one on the machine and the placeholder otherwise, so only their circuit is pinned. There is no vkHash: enygma_dvp's keys are not checked in, and every make dvp-keygen makes new ones."
+  ],
+  "slots": [
+    {"slot": 0, "circuit": "Payment", "nPublic": 8},
+    {"slot": 1, "circuit": "OwnershipErc721"},
+    {"slot": 2, "circuit": "OwnershipErc1155NonFungible", "nPublic": 1},
+    {"slot": 3, "circuit": "OwnershipErc1155Fungible", "nPublic": 1},
+    {"slot": 4, "circuit": "JoinSplitErc1155", "nPublic": 1},
+    {"slot": 5, "circuit": "BatchErc1155", "nPublic": 1},
+    {"slot": 6, "circuit": "JoinSplitErc20_10_2"},
+    {"slot": 7, "circuit": "AuctionInit"},
+    {"slot": 8, "circuit": "AuctionBid"},
+    {"slot": 9, "circuit": "AuctionNotWinningBid"},
+    {"slot": 10, "circuit": "AuctionPrivateOpening"},
+    {"slot": 11, "circuit": "BrokerRegistration"},
+    {"slot": 12, "circuit": "LegitBroker"},
+    {"slot": 13, "circuit": "JoinSplitErc20WithBrokerV1"},
+    {"slot": 14, "circuit": "JoinSplitErc1155WithBrokerV1"},
+    {"slot": 15, "circuit": "JoinSplitErc1155WithAuditor", "nPublic": 1},
+    {"slot": 16, "circuit": "OwnershipErc1155NonFungibleWithAuditor", "nPublic": 1},
+    {"slot": 17, "circuit": "BatchErc1155NonFungibleWithAuditor"},
+    {"slot": 18, "circuit": "OwnershipErc721WithAuditor"},
+    {"slot": 19, "circuit": "JoinSplitErc20WithAuditor"},
+    {"slot": 20, "circuit": "JoinSplitErc20_10_2_WithAuditor"},
+    {"slot": 21, "circuit": "AuctionInit_Auditor"},
+    {"slot": 22, "circuit": "AuctionBid_Auditor"},
+    {"slot": 23, "circuit": "DvPInitiator", "nPublic": 8},
+    {"slot": 24, "circuit": "DvPDestination", "nPublic": 6}
+  ]
+}

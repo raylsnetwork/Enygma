@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"enygma_vkslots/vkslots"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -142,6 +144,17 @@ func initializePayment() error {
 		return fmt.Errorf("failed to load verification keys: %w", err)
 	}
 	fmt.Printf("Loaded %d verification key(s)\n", len(vkeys))
+	// Erc20CoinVault names its circuits by slot number, and the Verifier numbers keys in
+	// registration order: vk_slots_payment.json pins which circuit each slot holds.
+	slotKeys := make([]vkslots.Key, len(vkeys))
+	named := make([]vkslots.NamedKey, len(vkeys))
+	for i, vkey := range vkeys {
+		slotKeys[i] = vkey.slotKey()
+		named[i] = vkslots.NamedKey{Circuit: config.Circom.Circuits[i].Filename, Key: slotKeys[i]}
+	}
+	if err := vkslots.CheckFile(filepath.Join(initPaymentProjectRoot, "vk_slots_payment.json"), named); err != nil {
+		return fmt.Errorf("refusing to register the verification keys: %w", err)
+	}
 
 	rpcURL := fmt.Sprintf("http://%s:%s", config.Network.Host, config.Network.Port)
 	client, err := ethclient.Dial(rpcURL)
@@ -195,6 +208,10 @@ func initializePayment() error {
 		if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerNewVerificationKey", vkey); err != nil {
 			return fmt.Errorf("failed to register verification key %d: %w", i, err)
 		}
+	}
+	fmt.Println("Reading the verification keys back from the Verifier...")
+	if err := vkslots.ReadBack(storageReader(client, verifierAddress), slotKeys); err != nil {
+		return fmt.Errorf("the Verifier does not hold the keys init registered: %w", err)
 	}
 
 	privateMintVerifierAddress := common.HexToAddress(receipts["PrivateMintVerifier"].ContractAddress)
@@ -386,4 +403,29 @@ func callPaymentInitMethod(client *ethclient.Client, auth *bind.TransactOpts, co
 		return common.Hash{}, fmt.Errorf("transaction %s failed", method)
 	}
 	return tx.Hash(), nil
+}
+
+// slotKey returns vk as the Verifier stores it, for vkslots' checks.
+func (vk initPaymentVerifyingKey) slotKey() vkslots.Key {
+	k := vkslots.Key{
+		Alpha1: [2]*big.Int{vk.Alpha1.X, vk.Alpha1.Y},
+		Beta2:  [4]*big.Int{vk.Beta2.X[0], vk.Beta2.X[1], vk.Beta2.Y[0], vk.Beta2.Y[1]},
+		Gamma2: [4]*big.Int{vk.Gamma2.X[0], vk.Gamma2.X[1], vk.Gamma2.Y[0], vk.Gamma2.Y[1]},
+		Delta2: [4]*big.Int{vk.Delta2.X[0], vk.Delta2.X[1], vk.Delta2.Y[0], vk.Delta2.Y[1]},
+	}
+	for _, p := range vk.Ic {
+		k.IC = append(k.IC, [2]*big.Int{p.X, p.Y})
+	}
+	return k
+}
+
+// storageReader reads addr's storage at the latest block.
+func storageReader(client *ethclient.Client, addr common.Address) vkslots.StorageReader {
+	return func(slot *big.Int) (*big.Int, error) {
+		word, err := client.StorageAt(context.Background(), addr, common.BigToHash(slot), nil)
+		if err != nil {
+			return nil, err
+		}
+		return new(big.Int).SetBytes(word), nil
+	}
 }

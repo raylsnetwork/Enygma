@@ -26,6 +26,8 @@
 
 **Statement layout field names** (private mint circuit, prefix `PrivateMint`): `Commitment` (the minted note), `ContractAddress` (the deployment the proof is bound to), `TokenId`, `CipherText` (the note tag bound to that deployment).
 
+**VK slot**: the number under which a deployment's `Verifier` holds one circuit's verifying key. The Verifier numbers keys in the order init registers them, and the contracts name circuits by slot (the `VK_ID_*` constants), so nothing on chain says which circuit a slot holds. Each deployment's slot manifest (`enygma_dvp/vk_slots.json`, `enygma_dvp/vk_slots_payment.json` for its Payment-family deployment, `enygma_retail_payments/vk_slots.json`) pins each slot's circuit, its number of public inputs where that is the same on every machine (every retail slot; enygma_dvp's keygen circuits and its retired placeholder slots), and, where the keys are checked in (retail), its vk hash, `keccak256(abi.encode(vk))`. Init refuses keys that differ from the manifest and reads every slot back from the Verifier's storage after registering them (`enygma_vkslots/vkslots`). _Avoid_: VK id, circuit index.
+
 **Note**: a private amount of one token, owned by a spend key. On chain it exists only as its commitment. A note is spent once and whole: a transfer spends one or two notes and creates new ones, the recipient's and the payer's change. _Avoid_: coin, UTXO.
 
 **Commitment**: the public hash of a note's opening (the owner's `pkSpend`, a salt, the amount and the token id). A vault stores it as a leaf of its Merkle tree. Without the opening it reveals nothing about the note.
