@@ -8,13 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -774,9 +773,37 @@ func TestAddressLimits(t *testing.T) {
 	})
 }
 
-// fakeGitHub answers GitHub's /user for the accounts it knows, by token.
+// The GitHub OAuth app of the tests' GitHub phases.
+const (
+	testClientID     = "Iv1.test"
+	testClientSecret = "test-secret"
+)
+
+// fakeGitHub answers GitHub's /user for the accounts it knows, by token, and
+// GitHub's "check a token" for testClientID: every token it knows is the
+// app's, but those starting "other-app-", which are another app's.
 func fakeGitHub(t *testing.T, accounts map[string]githubAccount) string {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/applications/"+testClientID+"/token" {
+			id, secret, ok := r.BasicAuth()
+			if !ok || id != testClientID || secret != testClientSecret {
+				http.Error(w, `{"message":"Requires authentication"}`, http.StatusUnauthorized)
+				return
+			}
+			var body struct {
+				AccessToken string `json:"access_token"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, `{"message":"Problems parsing JSON"}`, http.StatusBadRequest)
+				return
+			}
+			if _, known := accounts[body.AccessToken]; !known || strings.HasPrefix(body.AccessToken, "other-app-") {
+				http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+				return
+			}
+			fmt.Fprint(w, `{}`)
+			return
+		}
 		a, ok := accounts[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		if r.URL.Path != "/user" || !ok {
 			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
@@ -796,11 +823,16 @@ func fakeGitHub(t *testing.T, accounts map[string]githubAccount) string {
 func TestGitHubPhase(t *testing.T) {
 	now := time.Date(2026, 12, 1, 12, 0, 0, 0, time.UTC)
 	api := fakeGitHub(t, map[string]githubAccount{
-		"old-token":   {Login: "octocat", ID: 583231, Created: now.AddDate(-5, 0, 0)},
-		"young-token": {Login: "newbie", ID: 99, Created: now.AddDate(0, 0, -3)},
+		"old-token":           {Login: "octocat", ID: 583231, Created: now.AddDate(-5, 0, 0)},
+		"young-token":         {Login: "newbie", ID: 99, Created: now.AddDate(0, 0, -3)},
+		"other-app-old-token": {Login: "octocat", ID: 583231, Created: now.AddDate(-5, 0, 0)},
+		"no-id-token":         {Login: "nobody", Created: now.AddDate(-5, 0, 0)},
+		"no-age-token":        {Login: "ageless", ID: 7},
+		"odd-login-token":     {Login: "octo‮cat", ID: 8, Created: now.AddDate(-5, 0, 0)},
 	})
 	github := func(t *testing.T) *harness {
-		return newHarness(t, Config{Auth: AuthGitHub, GitHubClientID: "Iv1.test", GitHubMinAge: 30 * 24 * time.Hour, GitHubAPI: api})
+		return newHarness(t, Config{Auth: AuthGitHub, GitHubClientID: testClientID, GitHubClientSecret: testClientSecret,
+			GitHubMinAge: 30 * 24 * time.Hour, GitHubAPI: api})
 	}
 
 	t.Run("admits an account under its login, once", func(t *testing.T) {
@@ -841,11 +873,42 @@ func TestGitHubPhase(t *testing.T) {
 			t.Fatalf("%d %s, want 403", code, body)
 		}
 	})
+	// Audit R-022: a token /user accepts may be any app's.
+	t.Run("refuses a token of another app", func(t *testing.T) {
+		h := github(t)
+		if code, body := h.tryRegister("x", Registration{GitHubToken: "other-app-old-token"}); code != http.StatusUnauthorized {
+			t.Fatalf("%d %s, want 401", code, body)
+		}
+	})
+	// Audit R-047: an answer missing a field admits no one.
+	t.Run("refuses an answer without an id, a creation time, or a login that is a name", func(t *testing.T) {
+		h := github(t)
+		for _, token := range []string{"no-id-token", "no-age-token", "odd-login-token"} {
+			if code, body := h.tryRegister("x", Registration{GitHubToken: token}); code != http.StatusBadGateway {
+				t.Errorf("%s: %d %s, want 502", token, code, body)
+			}
+		}
+	})
+	// Audit R-049: a token that cannot be one is refused before GitHub is asked.
+	t.Run("refuses a token holding a byte no token has", func(t *testing.T) {
+		var logged bytes.Buffer
+		h := newHarness(t, Config{Auth: AuthGitHub, GitHubClientID: testClientID, GitHubClientSecret: testClientSecret,
+			GitHubAPI: api, Log: log.New(&logged, "", 0)})
+		for _, token := range []string{"gho_SECRETPART\x00x", "gho_SECRETPART\nx", "gho SECRETPART", strings.Repeat("g", 256)} {
+			if code, body := h.tryRegister("x", Registration{GitHubToken: token}); code != http.StatusBadRequest {
+				t.Errorf("%q: %d %s, want 400", token, code, body)
+			}
+		}
+		if strings.Contains(logged.String(), "SECRETPART") {
+			t.Errorf("a token reached the log: %q", logged.String())
+		}
+	})
 	t.Run("tells participants' programs to sign in with its app", func(t *testing.T) {
 		h := github(t)
 		_, data := h.do("", http.MethodGet, "/v1/config", nil)
 		var c ClientConfig
-		if err := json.Unmarshal(data, &c); err != nil || c.Auth != AuthGitHub || c.GitHubClientID != "Iv1.test" {
+		if err := json.Unmarshal(data, &c); err != nil || c.Auth != AuthGitHub || c.GitHubClientID != testClientID ||
+			strings.Contains(string(data), testClientSecret) {
 			t.Fatalf("config %s, %v", data, err)
 		}
 	})
@@ -1009,56 +1072,24 @@ func (h *harness) get(path string, headers map[string]string) (*http.Response, [
 	return resp, body
 }
 
-// TestGitHubRelay: a GitHub phase relays a browser's device-flow requests to
-// GitHub, always for its own OAuth app; other phases relay nothing.
-func TestGitHubRelay(t *testing.T) {
-	var got []url.Values
-	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			t.Error(err)
-		}
-		got = append(got, r.PostForm)
-		fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
-	}))
-	defer github.Close()
-	h := newHarness(t, Config{Auth: AuthGitHub, GitHubClientID: "Iv1.ours", GitHub: github.URL})
-	post := func(path, form string) (int, string) {
-		resp, err := http.Post(h.http.URL+path, "application/x-www-form-urlencoded", strings.NewReader(form))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resp.StatusCode, string(body)
-	}
-	if code, body := post("/github/login/device/code", "client_id=Iv1.theirs"); code != http.StatusOK || body != `{"path":"/login/device/code"}` {
-		t.Fatalf("device code: %d %s", code, body)
-	}
-	if code, body := post("/github/login/oauth/access_token", "client_id=Iv1.theirs&device_code=dc&grant_type=g&extra=x"); code != http.StatusOK || body != `{"path":"/login/oauth/access_token"}` {
-		t.Fatalf("access token: %d %s", code, body)
-	}
-	want := []url.Values{
-		{"client_id": {"Iv1.ours"}},
-		{"client_id": {"Iv1.ours"}, "device_code": {"dc"}, "grant_type": {"g"}},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("GitHub was asked %v, want %v", got, want)
-	}
-
-	t.Run("not in other phases", func(t *testing.T) {
-		h := newHarness(t, Config{Auth: AuthOpen, GitHub: github.URL})
-		resp, err := http.Post(h.http.URL+"/github/login/device/code", "application/x-www-form-urlencoded", strings.NewReader(""))
+// TestNoGitHubRelay (audit R-023): the coordinator relays nothing to GitHub
+// for anyone: a participant's program signs in with GitHub itself. A GitHub
+// phase needs its app's client secret, to admit only the app's tokens.
+func TestNoGitHubRelay(t *testing.T) {
+	h := newHarness(t, Config{Auth: AuthGitHub, GitHubClientID: testClientID, GitHubClientSecret: testClientSecret})
+	for _, path := range []string{"/github/login/device/code", "/github/login/oauth/access_token"} {
+		resp, err := http.Post(h.http.URL+path, "application/x-www-form-urlencoded", strings.NewReader("client_id="+testClientID))
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("%d, want 404", resp.StatusCode)
+			t.Errorf("POST %s: %d, want 404", path, resp.StatusCode)
 		}
-	})
+	}
+	if _, err := New(Config{Dir: t.TempDir(), Auth: AuthGitHub, GitHubClientID: testClientID}); err == nil || !strings.Contains(err.Error(), "secret") {
+		t.Fatalf("a GitHub phase without its app's secret: %v, want it refused", err)
+	}
 }
 
 // readFile reads path or fails the test.

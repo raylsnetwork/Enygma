@@ -191,6 +191,12 @@ func TestCoordinateNeedsTLS(t *testing.T) {
 		{"coordinate", "-dir", dir, "-insecure-http", "-max-per-address", "0"},
 		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-listen", ":8443"},
 		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-acme-cache", "relative/cache"},
+		// Audit R-022: a GitHub phase admits only its app's tokens, which takes the app's secret.
+		{"coordinate", "-dir", dir, "-insecure-http", "-auth", "github", "-github-client-id", "Iv1.test"},
+		// Audit R-012, R-013: limits are positive.
+		{"coordinate", "-dir", dir, "-insecure-http", "-max-contributions", "0"},
+		{"coordinate", "-dir", dir, "-insecure-http", "-min-free-mib", "-1"},
+		{"coordinate", "-dir", dir, "-insecure-http", "-max-sessions", "0"},
 	} {
 		if code, stdout, stderr := runCommand(args...); code != 2 {
 			t.Errorf("%s: exit %d, want 2\n%s%s", strings.Join(args, " "), code, stdout, stderr)

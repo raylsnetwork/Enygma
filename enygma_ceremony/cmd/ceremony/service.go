@@ -214,6 +214,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	dir := fs.String("dir", "", "the phase's directory, holding state-0 from phase1-new or phase2-new")
 	auth := fs.String("auth", string(coordinator.AuthOpen), "how anyone joins: open (with the link alone) or github (signed in with GitHub)")
 	githubClientID := fs.String("github-client-id", "", "-auth github: the client ID of a GitHub OAuth app with the device flow enabled")
+	githubSecretFile := fs.String("github-client-secret-file", "", "-auth github: a file holding the app's client secret, with which the coordinator admits only the app's own tokens")
 	githubMinAge := fs.Duration("github-min-age", 30*24*time.Hour, "-auth github: how old a GitHub account must be")
 	maxPerAddress := fs.Int("max-per-address", 3, "participants from one network address queued, or holding the turn, at once: at least 1 (-no-address-limit lifts the bound)")
 	noAddressLimit := fs.Bool("no-address-limit", false, "no bound on the participants from one network address")
@@ -257,6 +258,19 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			return fmt.Errorf("%w: -github-min-age, -max-queue and -max-turns are positive, and -ipv6-prefix from 1 to 128", errUsage)
 		case *maxContributions < 1, *maxContributionsPerAddress < 1, *minFreeMiB < 1, *maxSessions < 1:
 			return fmt.Errorf("%w: -max-contributions, -max-contributions-per-address, -min-free-mib and -max-sessions are positive", errUsage)
+		}
+		// The secret is read from a file, never given on the command line,
+		// where any user of the machine could read it.
+		var githubSecret string
+		if *githubSecretFile != "" {
+			data, err := os.ReadFile(*githubSecretFile)
+			if err != nil {
+				return err
+			}
+			githubSecret = strings.TrimSpace(string(data))
+		}
+		if coordinator.Auth(*auth) == coordinator.AuthGitHub && githubSecret == "" {
+			return fmt.Errorf("%w: -auth github takes -github-client-secret-file, a file holding the OAuth app's client secret", errUsage)
 		}
 		proxies, err := parseProxies(*trustedProxy)
 		if err != nil {
@@ -325,7 +339,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		logger := log.New(w, "", log.LstdFlags)
 		c, err := coordinator.New(coordinator.Config{
 			Dir: *dir, Auth: coordinator.Auth(*auth),
-			GitHubClientID: *githubClientID, GitHubMinAge: *githubMinAge,
+			GitHubClientID: *githubClientID, GitHubClientSecret: githubSecret, GitHubMinAge: *githubMinAge,
 			MaxPerAddress: *maxPerAddress, NoAddressLimit: *noAddressLimit, TrustedProxies: proxies,
 			IPv6Prefix: *ipv6Prefix, MaxQueue: *maxQueue, MaxTurns: *maxTurns,
 			MaxContributions: *maxContributions, MaxContributionsPerAddress: *maxContributionsPerAddress,

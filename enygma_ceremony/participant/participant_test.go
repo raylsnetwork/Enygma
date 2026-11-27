@@ -145,6 +145,15 @@ func TestGitHubPhase(t *testing.T) {
 	}))
 	defer github.Close()
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/applications/Iv1.test/token" { // GitHub's "check a token", for the app
+			body, _ := io.ReadAll(r.Body)
+			if id, secret, _ := r.BasicAuth(); id != "Iv1.test" || secret != "test-secret" || string(body) != `{"access_token":"gho_octocat"}` {
+				http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+				return
+			}
+			fmt.Fprint(w, `{}`)
+			return
+		}
 		if r.URL.Path != "/user" || r.Header.Get("Authorization") != "Bearer gho_octocat" {
 			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
 			return
@@ -153,7 +162,7 @@ func TestGitHubPhase(t *testing.T) {
 	}))
 	defer api.Close()
 
-	p := newPhase(t, coordinator.Config{Auth: coordinator.AuthGitHub, GitHubClientID: "Iv1.test", GitHubAPI: api.URL})
+	p := newPhase(t, coordinator.Config{Auth: coordinator.AuthGitHub, GitHubClientID: "Iv1.test", GitHubClientSecret: "test-secret", GitHubAPI: api.URL})
 	var out bytes.Buffer
 	c := p.client(t, "")
 	c.GitHub, c.Out = github.URL, &out
@@ -193,6 +202,54 @@ func TestGitHubPhase(t *testing.T) {
 			t.Fatalf("got %v, want a refusal of a contribution this run did not make", err)
 		}
 	})
+}
+
+// TestGitHubSignInIsChecked: the program signs in with GitHub only on GitHub's
+// own page, and sends the coordinator no token that carries access (audit
+// R-026): the coordinator names the app, and could name one the participant
+// once gave access to their repositories.
+func TestGitHubSignInIsChecked(t *testing.T) {
+	for _, c := range []struct {
+		name, page, grant, want string
+	}{
+		{"a token with scopes", "https://github.com/login/device", `{"access_token":"gho_scoped","token_type":"bearer","scope":"repo,user"}`, "never asks for"},
+		{"another sign-in page", "https://github.example/login/device", `{"access_token":"gho_x","token_type":"bearer","scope":""}`, "not GitHub's"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/login/device/code":
+					fmt.Fprintf(w, `{"device_code":"dc","user_code":"WDJB-MJHT","verification_uri":%q,"expires_in":900,"interval":0}`, c.page)
+				case "/login/oauth/access_token":
+					fmt.Fprint(w, c.grant)
+				}
+			}))
+			defer github.Close()
+			var registered atomic.Int32
+			coord := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/config":
+					fmt.Fprint(w, `{"auth":"github","github_client_id":"Iv1.someone-elses"}`)
+				case "/v1/register":
+					registered.Add(1)
+					http.Error(w, `{"error":"no"}`, http.StatusUnauthorized)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer coord.Close()
+			cl := &Client{URL: coord.URL, GitHub: github.URL, Out: io.Discard, Patience: time.Second}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := cl.Run(ctx); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want a refusal (%q)", err, c.want)
+			}
+			if n := registered.Load(); n != 0 {
+				t.Fatalf("the program registered %d times, sending the token on", n)
+			}
+		})
+	}
 }
 
 // TestRejoinsAfterARestart: a program waiting its turn when the coordinator

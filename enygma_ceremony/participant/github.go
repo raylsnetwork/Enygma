@@ -12,11 +12,19 @@ import (
 	"time"
 )
 
+// githubDevicePage is where GitHub's device flow has a participant enter
+// their code.
+const githubDevicePage = "https://github.com/login/device"
+
 // githubSignIn signs the participant in to the coordinator's GitHub OAuth
-// app on GitHub's device flow: they open GitHub's page in any browser and
-// type the code shown, and this program never sees their password. It
-// returns the token GitHub grants, which needs no scopes: the coordinator
-// only reads who it belongs to.
+// app on GitHub's device flow, straight with GitHub (Client.GitHub): they
+// open GitHub's page in any browser and type the code shown, and this program
+// never sees their password. It returns the token GitHub grants, which needs
+// no scopes: the coordinator only reads who it belongs to.
+//
+// The coordinator names the app, and could name one the participant once
+// gave more access, whose new tokens carry that access: so a token granted
+// with any scope is refused here, before it is sent anywhere (audit R-026).
 func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, error) {
 	var code struct {
 		DeviceCode      string `json:"device_code"`
@@ -31,6 +39,9 @@ func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, err
 	if code.DeviceCode == "" || code.UserCode == "" {
 		return "", errors.New("GitHub did not start a sign-in: is the coordinator's OAuth app set up for the device flow?")
 	}
+	if code.VerificationURI != githubDevicePage {
+		return "", fmt.Errorf("the sign-in names the page %q, not GitHub's %s: stopping", printable(code.VerificationURI), githubDevicePage)
+	}
 	uri, userCode := printable(code.VerificationURI), printable(code.UserCode)
 	fmt.Fprintf(c.Out, "\nSign in with GitHub to contribute: open %s and enter the code\n\n    %s\n\n", uri, userCode)
 	c.event(Event{Stage: StageSignIn, Code: userCode, CodeURL: uri})
@@ -44,6 +55,7 @@ func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, err
 		}
 		var grant struct {
 			AccessToken string `json:"access_token"`
+			Scope       string `json:"scope"`
 			Error       string `json:"error"`
 		}
 		err := c.githubForm(ctx, "/login/oauth/access_token", url.Values{
@@ -58,6 +70,11 @@ func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, err
 		case "":
 			if grant.AccessToken == "" {
 				return "", errors.New("GitHub granted no token")
+			}
+			if strings.TrimSpace(grant.Scope) != "" {
+				return "", fmt.Errorf("GitHub granted a token with access (%s) this ceremony never asks for, "+
+					"so it is not sent to the coordinator: the app it named (%s) is one you gave that access before. "+
+					"Check the app at https://github.com/settings/applications", printable(grant.Scope), printable(clientID))
 			}
 			fmt.Fprintln(c.Out, "Signed in with GitHub.")
 			return grant.AccessToken, nil

@@ -147,10 +147,27 @@ in:
 - **One coordinator to a phase.** `coordinate` locks `<dir>/.lock` (on Linux and macOS), and
   refuses a directory another coordinator is serving. It syncs each accepted contribution, and
   the directory, to disk before telling its participant it is in.
-- **The GitHub sign-in needs an OAuth app.** Create one under Settings → Developer settings →
-  OAuth Apps → New OAuth App (any homepage and callback URL), tick **Enable Device Flow**, and
-  pass its client ID as `-github-client-id`. There is no secret to keep: the device flow needs
-  none. The coordinator relays the device flow's two requests for its own app.
+- **The GitHub sign-in needs an OAuth app.**
+  1. Create one under Settings → Developer settings → OAuth Apps → New OAuth App (any homepage
+     and callback URL), and tick **Enable Device Flow**.
+  2. Pass its client ID as `-github-client-id`.
+  3. Generate a client secret and put it in a file only the coordinator's user can read
+     (`chmod 600`). Pass that file as `-github-client-secret-file`, never as a flag value.
+
+  With the secret, the coordinator asks GitHub whether each participant's token belongs to the
+  app, and admits no other token: a token another site or another coordinator was given for the
+  same account is not a sign-in here.
+- **How the sign-in works, and what the coordinator sees.**
+  - A participant's program signs in on GitHub's device flow, directly with GitHub: they enter a
+    code at https://github.com/login/device. The coordinator relays nothing.
+  - The program then sends the token it was granted to the coordinator, which reads the
+    account's login, id and age with it. So the coordinator sees each participant's token.
+  - The token needs no scope, so it opens nothing but the public profile. A token that carries
+    any access (because the coordinator named an app the participant once gave more) is refused
+    by the program before it is sent.
+  - The tokens stay valid after the ceremony:
+    - a participant can revoke theirs under Settings → Applications → Authorized OAuth Apps;
+    - the operator can revoke them all, under the app's settings, once the phase closes.
 - **Soundness doesn't depend on the mode.** Contributions from many identities controlled by one
   person cannot weaken the keys while one honest participant contributes. What the limits and
   GitHub sign-in guard is the queue, so that honest participants get their turn.

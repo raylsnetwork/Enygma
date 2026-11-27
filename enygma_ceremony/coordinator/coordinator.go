@@ -68,16 +68,16 @@ type Config struct {
 	// Auth is how participants are admitted; AuthOpen when empty.
 	Auth Auth
 	// GitHubClientID is the GitHub OAuth app participants sign in to, for
-	// AuthGitHub. It needs the device flow enabled.
-	GitHubClientID string
+	// AuthGitHub. It needs the device flow enabled. GitHubClientSecret is
+	// the app's client secret: with it the coordinator asks GitHub whether a
+	// participant's token is the app's, and admits no other (audit R-022).
+	GitHubClientID     string
+	GitHubClientSecret string
 	// GitHubMinAge is how old a GitHub account must be, for AuthGitHub (30
 	// days when zero).
 	GitHubMinAge time.Duration
 	// GitHubAPI is GitHub's API, for AuthGitHub (https://api.github.com).
 	GitHubAPI string
-	// GitHub is GitHub's site, whose device flow the coordinator relays,
-	// for AuthGitHub (https://github.com).
-	GitHub string
 	// MaxPerAddress bounds how many participants from one network address
 	// may be queued or holding the turn at once (3 when zero); NoAddressLimit
 	// lifts the bound, and MaxContributionsPerAddress, for a phase whose
@@ -234,6 +234,10 @@ type Server struct {
 	lastSweep time.Time
 	diskShort bool     // turns are held back for want of disk space (Config.MinFree)
 	lock      *os.File // holds Dir's lock (LockFile) while the server lives
+	// githubMinute and githubAsked count the registrations asked of GitHub
+	// in the current minute (githubLookups).
+	githubMinute time.Time
+	githubAsked  int
 }
 
 // state is one state file of the phase.
@@ -280,9 +284,6 @@ func New(cfg Config) (_ *Server, err error) {
 	}
 	if cfg.GitHubAPI == "" {
 		cfg.GitHubAPI = "https://api.github.com"
-	}
-	if cfg.GitHub == "" {
-		cfg.GitHub = "https://github.com"
 	}
 	if cfg.Log == nil {
 		cfg.Log = log.New(io.Discard, "", 0)
@@ -343,6 +344,9 @@ func New(cfg Config) (_ *Server, err error) {
 	case AuthGitHub:
 		if cfg.GitHubClientID == "" {
 			return nil, errors.New("coordinator: GitHub sign-in needs the OAuth app's client ID")
+		}
+		if cfg.GitHubClientSecret == "" {
+			return nil, errors.New("coordinator: GitHub sign-in needs the OAuth app's client secret, to admit only the app's tokens")
 		}
 	default:
 		return nil, fmt.Errorf("coordinator: Auth is %q, want %s or %s", cfg.Auth, AuthOpen, AuthGitHub)
@@ -601,7 +605,6 @@ func (s *Server) queued(p participant) bool {
 // Handler serves the phase:
 //
 //	GET  /                  the phase's page: follow the phase, and where to get the program
-//	POST /github/login/…    GitHub's device flow, relayed (AuthGitHub)
 //	GET  /v1/config         how to join (ClientConfig)
 //	POST /v1/register       join the phase (Registration -> Session)
 //	POST /v1/turn           a participant asks for their turn (Reply)
@@ -617,8 +620,6 @@ func (s *Server) queued(p participant) bool {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handlePage)
-	mux.HandleFunc("POST /github/login/device/code", s.handleGitHubRelay)
-	mux.HandleFunc("POST /github/login/oauth/access_token", s.handleGitHubRelay)
 	mux.HandleFunc("GET /v1/config", s.handleConfig)
 	mux.HandleFunc("POST /v1/register", s.handleRegister)
 	mux.HandleFunc("POST /v1/turn", s.handleTurn)
@@ -773,8 +774,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	case AuthGitHub:
 		account, err := s.githubUser(r.Context(), reg.GitHubToken)
 		switch {
+		case errors.Is(err, errGitHubTokenForm):
+			s.fail(w, http.StatusBadRequest, "want a GitHub token")
+			return
 		case errors.Is(err, errGitHubToken):
-			s.fail(w, http.StatusUnauthorized, "GitHub did not accept the sign-in")
+			s.fail(w, http.StatusUnauthorized, "GitHub did not accept the sign-in as one with this coordinator's app")
+			return
+		case errors.Is(err, errGitHubBusy):
+			w.Header().Set("Retry-After", "60")
+			s.fail(w, http.StatusServiceUnavailable, "too many GitHub sign-ins at once; try again shortly")
 			return
 		case err != nil:
 			s.cfg.Log.Printf("asking GitHub who signed in: %v", err)
