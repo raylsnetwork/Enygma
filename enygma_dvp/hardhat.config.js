@@ -69,22 +69,33 @@ task("accounts", "Prints the list of accounts", async () => {
   });
 });
 
+const solidity = {
+  version: "0.8.24",
+  settings: {
+    viaIR: true,
+    optimizer: {
+      enabled: true,
+      runs: 1600,
+    },
+    outputSelection: {
+      "*": {
+        "*": ["storageLayout"],
+      },
+    },
+  },
+};
+
 module.exports = {
   defaultNetwork: "hardhat",
   networks,
   allowUnlimitedContractSize: true,
   solidity: {
-    version: "0.8.24",
-    settings: {
-      viaIR: true,
-      optimizer: {
-        enabled: true,
-        runs: 1600,
-      },
-      outputSelection: {
-        "*": {
-          "*": ["storageLayout"],
-        },
+    compilers: [solidity],
+    overrides: {
+      // Keep the DvP entry point within the EIP-170 deployment size limit.
+      "contracts/core/contracts/EnygmaDvp.sol": {
+        ...solidity,
+        settings: { ...solidity.settings, optimizer: { enabled: true, runs: 800 } },
       },
     },
   },

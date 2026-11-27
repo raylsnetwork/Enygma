@@ -386,6 +386,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 		nftAmount, nftTokenId,
 		big.NewInt(0), aliceProof, merkleDepth,
 		vaultInt(nftVaultAddr),
+		core.DvPInitiatorTerms{Deadline: currentBlockTimestamp(t, client).Uint64() + 3600},
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
@@ -750,6 +751,7 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	//   saltA = saltForAlice → commitA = commitForAlice  (= stMessage; what Alice expects)
 	t.Log("Step 6 — Alice generates DvPInitiatorProofFromSalts")
 
+	terms := core.DvPInitiatorTerms{Deadline: currentBlockTimestamp(t, client).Uint64() + 3600}
 	aliceResult, err := gnarkClient.DvPInitiatorProofFromSalts(
 		core.KeyPair{PrivateKey: aliceSpend.PrivateKey, PublicKey: aliceSpend.PublicKey},
 		aliceSaltField,
@@ -762,6 +764,7 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 		aliceProof,
 		merkleDepth,
 		vaultInt(erc20VaultAddr),
+		terms,
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Alice): %v", err)
@@ -788,6 +791,7 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 		bobProof,
 		merkleDepth,
 		vaultInt(erc20VaultAddr),
+		terms,
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Bob): %v", err)

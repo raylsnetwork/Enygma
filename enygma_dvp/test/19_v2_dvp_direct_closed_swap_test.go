@@ -194,17 +194,18 @@ func exchangeLegs(t *testing.T, tc *dvpTestContext, expects ...common.Address) (
 	if err != nil {
 		t.Fatal(err)
 	}
+	terms := core.DvPInitiatorTerms{Deadline: currentBlockTimestamp(t, tc.client).Uint64() + minSwapDeadline}
 	ar, err := tc.gnarkClient.DvPInitiatorProofFromSalts(
 		core.KeyPair{PrivateKey: a.spend.PrivateKey, PublicKey: a.spend.PublicKey},
 		a.salt, aliceAmt, tokenId, b.spend.PublicKey, saltForBob, bobAmt, tokenId, saltForAlice,
-		big.NewInt(0), aProof, tc.merkleDepth, vaultInt(aliceExpects))
+		big.NewInt(0), aProof, tc.merkleDepth, vaultInt(aliceExpects), terms)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Alice): %v", err)
 	}
 	br, err := tc.gnarkClient.DvPInitiatorProofFromSalts(
 		core.KeyPair{PrivateKey: b.spend.PrivateKey, PublicKey: b.spend.PublicKey},
 		b.salt, bobAmt, tokenId, a.spend.PublicKey, saltForAlice, aliceAmt, tokenId, saltForBob,
-		big.NewInt(0), bProof, tc.merkleDepth, vaultInt(bobExpects))
+		big.NewInt(0), bProof, tc.merkleDepth, vaultInt(bobExpects), terms)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts (Bob): %v", err)
 	}
@@ -242,11 +243,11 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 		d.t = t
 		alice, bob := exchangeLegs(t, tc)
 
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, alice.Statement[layout.DvpInitiatorDeadlineOffset])
 		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", alice.Statement[layout.DvpInitiatorCommitBOffset])
 
-		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, d.deadlineIn(7*24*3600)); e != "SwapClosed" {
+		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, bob.Statement[layout.DvpInitiatorDeadlineOffset]); e != "SwapClosed" {
 			t.Fatalf("Bob's late leg: got %q, want SwapClosed", e)
 		}
 		if locked, spent := d.noteState(tc.erc20Vault, bob); locked || spent {
@@ -258,8 +259,8 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 	t.Run("exchange: normal settlement still works", func(t *testing.T) {
 		d.t = t
 		alice, bob := exchangeLegs(t, tc)
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, d.deadlineIn(minSwapDeadline))
-		d.mustSubmit("Bob's leg", "submitPartialSettlement", bob, zero, zero, zero)
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", alice, zero, zero, alice.Statement[layout.DvpInitiatorDeadlineOffset])
+		d.mustSubmit("Bob's leg", "submitPartialSettlement", bob, zero, zero, bob.Statement[layout.DvpInitiatorDeadlineOffset])
 		for who, rc := range map[string]onchainProofReceipt{"Alice": alice, "Bob": bob} {
 			if locked, spent := d.noteState(tc.erc20Vault, rc); locked || !spent {
 				t.Fatalf("%s's note after settlement: locked=%v spent=%v", who, locked, spent)
@@ -267,7 +268,7 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 		}
 		// The settled swap is closed too: Bob's leg again is rejected (by
 		// the spent-nullifier check, which runs first).
-		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, d.deadlineIn(minSwapDeadline)); e != "InvalidNullifier" {
+		if e, _ := d.submit("submitPartialSettlement", bob, zero, zero, bob.Statement[layout.DvpInitiatorDeadlineOffset]); e != "InvalidNullifier" {
 			t.Fatalf("Bob's leg after settlement: got %q, want InvalidNullifier", e)
 		}
 		t.Log("exchange settled; resubmission rejected")
@@ -275,9 +276,11 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 
 	t.Run("dvp: late destination leg after timeout is rejected", func(t *testing.T) {
 		d.t = t
-		p := dvpGenerateProofs(t, tc, dvpSetupDeposits(t, tc, nftId()))
+		deposits := dvpSetupDeposits(t, tc, nftId())
+		deadline := d.deadlineIn(minSwapDeadline)
+		p := dvpGenerateProofs(t, tc, deposits, deadline)
 
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline))
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, deadline)
 		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", p.commitB)
 
@@ -294,13 +297,15 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 
 	t.Run("dvp: destination leg before the initiator leg", func(t *testing.T) {
 		d.t = t
-		p := dvpGenerateProofs(t, tc, dvpSetupDeposits(t, tc, nftId()))
+		deposits := dvpSetupDeposits(t, tc, nftId())
+		deadline := d.deadlineIn(minSwapDeadline)
+		p := dvpGenerateProofs(t, tc, deposits, deadline)
 
 		if e, _ := d.submit("submitPartialSettlement", p.bobReceipt, one, one, d.deadlineIn(minSwapDeadline)); e != "SwapNotFound" {
 			t.Fatalf("destination leg with no pending swap: got %q, want SwapNotFound", e)
 		}
 		// The normal order still settles afterwards.
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline))
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, deadline)
 		d.mustSubmit("Bob's leg", "submitPartialSettlement", p.bobReceipt, one, one, zero)
 		if _, spent := d.noteState(tc.erc721Vault, p.bobReceipt); !spent {
 			t.Fatal("Bob's NFT note not spent after settlement")
@@ -310,15 +315,17 @@ func TestV2DvP_DirectClosedSwap(t *testing.T) {
 
 	t.Run("claimSwapTimeout on a closed swap", func(t *testing.T) {
 		d.t = t
-		p := dvpGenerateProofs(t, tc, dvpSetupDeposits(t, tc, nftId()))
-		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline))
+		deposits := dvpSetupDeposits(t, tc, nftId())
+		deadline := d.deadlineIn(minSwapDeadline)
+		p := dvpGenerateProofs(t, tc, deposits, deadline)
+		d.mustSubmit("Alice's leg", "submitPartialSettlement", p.aliceReceipt, zero, zero, deadline)
 		hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 		d.mustSubmit("claimSwapTimeout", "claimSwapTimeout", p.commitB)
 		if e, _ := d.submit("claimSwapTimeout", p.commitB); e != "SwapNotFound" {
 			t.Fatalf("second claimSwapTimeout: got %q, want SwapNotFound", e)
 		}
 		// Alice's leg cannot reopen the swap either: her note is spent.
-		if e, _ := d.submit("submitPartialSettlement", p.aliceReceipt, zero, zero, d.deadlineIn(minSwapDeadline)); e != "InvalidNullifier" {
+		if e, _ := d.submit("submitPartialSettlement", p.aliceReceipt, zero, zero, deadline); e != "InvalidNullifier" {
 			t.Fatalf("Alice's leg after timeout: got %q, want InvalidNullifier", e)
 		}
 	})

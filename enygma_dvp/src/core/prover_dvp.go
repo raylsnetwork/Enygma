@@ -1,9 +1,9 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 
 	"enygma_dvp/layout"
 )
@@ -44,6 +44,9 @@ type ZkDvpSwapInitResult struct {
 	// Proof is the gnark proof bytes (populated when the gnark server is called).
 	// Empty when used in off-chain-only mode.
 	Proof []string
+
+	// Statement is the complete DvP initiator public statement.
+	Statement []*big.Int
 }
 
 // ZkDvpInitiateSwap produces all of Alice's ZkDvp swap artefacts in one call:
@@ -53,7 +56,7 @@ type ZkDvpSwapInitResult struct {
 //  3. Generates saltStar and computes CommitmentA = C' = Poseidon(aliceSpendPk, SaltBToField(saltStar), amountOut, tokenIdOut).
 //  4. Encrypts (tokenIdOut || amountOut || saltStar) with saltB → encTxData.
 //  5. Computes Alice's nullifier.
-//  6. Generates the JoinSplit ZK proof for Alice's input note with StMessage = CommitmentA (C').
+//  6. Generates the DvP initiator proof for Alice's input note with StMessage = CommitmentA (C').
 //
 // The StMessage is set to CommitmentA so that the on-chain cross-commitment check passes:
 //
@@ -71,6 +74,8 @@ type ZkDvpSwapInitResult struct {
 //   - amountOut    — amount Alice will receive (e.g. 1)
 //   - merkleProof  — Merkle proof for Alice's input note (nil = dummy/no proof)
 //   - stTreeNumber — tree number for Alice's input note
+//   - counterVault — vault Alice expects to be paid from
+//   - terms        — deadline and group of Alice's input vault
 func (c *GnarkClient) ZkDvpInitiateSwap(
 	aliceKey KeyPair,
 	aliceSaltIn *big.Int,
@@ -83,7 +88,12 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 	merkleDepth int,
 	merkleProof *MerkleProof,
 	stTreeNumber *big.Int,
+	counterVault *big.Int,
+	terms DvPInitiatorTerms,
 ) (*ZkDvpSwapInitResult, error) {
+	if err := checkCounterVault(counterVault); err != nil {
+		return nil, err
+	}
 	// Step 1: Alice encapsulates Bob's view key → raw shared secret ss + cipherText.
 	// HIGH-8 fix: use HKDF-derived values instead of raw ss for both the commitment
 	// salt and the AEAD encryption key. Using raw ss for both violates key separation —
@@ -163,13 +173,6 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		return nil, fmt.Errorf("revertCommitA computation failed: %w", err)
 	}
 
-	// saltA: HKDF-derived from ss using "Init Salt" (same derivation Bob uses after decapsulation).
-	saltABytes, err := DeriveDvpSaltInit(ss)
-	if err != nil {
-		return nil, fmt.Errorf("DeriveDvpSaltInit failed: %w", err)
-	}
-	saltAField := SaltBToField(saltABytes)
-
 	// Convert path elements to [8]string for the dvpInit circuit (single-input, depth 8).
 	var pathElemsFixed [8]string
 	for j := 0; j < merkleDepth && j < 8; j++ {
@@ -177,13 +180,16 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 	}
 
 	payload := map[string]interface{}{
-		"stMessage":       commitmentB.String(), // HIGH-5: StMessage must equal StCommitB
+		"stMessage":       commitmentA.String(),
 		"stTreeNumber":    stTreeNumber.String(),
 		"stMerkleRoot":    merkleRoot.String(),
 		"stNullifier":     nullifier.String(),
 		"stCommitB":       commitmentB.String(),
 		"stCommitA":       commitmentA.String(),
 		"stRevertCommitA": revertCommit.String(),
+		"stCounterVault":  counterVault.String(),
+		"stDeadline":      strconv.FormatUint(terms.Deadline, 10),
+		"stGroupId":       strconv.FormatUint(terms.GroupID, 10),
 		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
 		"wtValueIn":       amountIn.String(),
 		"wtSaltIn":        aliceSaltIn.String(),
@@ -194,7 +200,7 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		"wtSaltB":         saltBField.String(),
 		"wtValueBob":      amountOut.String(),
 		"wtTokenIdBob":    tokenIdOut.String(),
-		"wtSaltA":         saltAField.String(),
+		"wtSaltA":         saltStarField.String(),
 		"wtRevertSalt":    revertSalt.String(),
 	}
 
@@ -203,15 +209,9 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		return nil, fmt.Errorf("ZkDvp Initiator proof request failed: %w", err)
 	}
 
-	var gnarkResp struct {
-		Proof []json.Number `json:"proof"`
-	}
-	if parseErr := json.Unmarshal(body, &gnarkResp); parseErr != nil {
-		return nil, fmt.Errorf("failed to parse ZkDvp proof response: %w", parseErr)
-	}
-	proofStrs := make([]string, len(gnarkResp.Proof))
-	for i, n := range gnarkResp.Proof {
-		proofStrs[i] = n.String()
+	proofStrs, statement, err := proofResponse(body, layout.DvpInitiatorLen)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ZkDvp proof response: %w", err)
 	}
 
 	return &ZkDvpSwapInitResult{
@@ -225,7 +225,15 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		SaltStar:       saltStar,
 		SaltStarField:  saltStarField,
 		Proof:          proofStrs,
+		Statement:      statement,
 	}, nil
+}
+
+// DvPInitiatorTerms are chosen before proving. Deadline is a Unix timestamp
+// in seconds, and GroupID identifies the group of the initiator's input vault.
+type DvPInitiatorTerms struct {
+	Deadline uint64
+	GroupID  uint64
 }
 
 // DvPInitiatorResult holds the output of DvPInitiatorProof.
@@ -286,6 +294,16 @@ func (r *DvPInitiatorResult) CounterVault() *big.Int {
 	return r.Statement[layout.DvpInitiatorCounterVaultOffset]
 }
 
+// Deadline is the Unix timestamp the initiator proved.
+func (r *DvPInitiatorResult) Deadline() *big.Int {
+	return r.Statement[layout.DvpInitiatorDeadlineOffset]
+}
+
+// GroupID is the group of the initiator's input vault.
+func (r *DvPInitiatorResult) GroupID() *big.Int {
+	return r.Statement[layout.DvpInitiatorGroupIdOffset]
+}
+
 // DvPInitiatorProof generates Alice's side of the DvP proof.
 //
 // stMessage is automatically set to commitA (Alice's expected output from Bob) so that
@@ -314,6 +332,7 @@ func (c *GnarkClient) DvPInitiatorProof(
 	merkleProof *MerkleProof,
 	merkleDepth int,
 	counterVault *big.Int,
+	terms DvPInitiatorTerms,
 ) (*DvPInitiatorResult, error) {
 	if err := checkCounterVault(counterVault); err != nil {
 		return nil, err
@@ -383,6 +402,8 @@ func (c *GnarkClient) DvPInitiatorProof(
 		"stCommitA":       commitA.String(),
 		"stRevertCommitA": revertCommitA.String(),
 		"stCounterVault":  counterVault.String(),
+		"stDeadline":      strconv.FormatUint(terms.Deadline, 10),
+		"stGroupId":       strconv.FormatUint(terms.GroupID, 10),
 		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
 		"wtValueIn":       valueIn.String(),
 		"wtSaltIn":        aliceSaltIn.String(),
@@ -442,6 +463,7 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 	merkleProof *MerkleProof,
 	merkleDepth int,
 	counterVault *big.Int,
+	terms DvPInitiatorTerms,
 ) (*DvPInitiatorResult, error) {
 	if err := checkCounterVault(counterVault); err != nil {
 		return nil, err
@@ -485,6 +507,8 @@ func (c *GnarkClient) DvPInitiatorProofFromSalts(
 		"stCommitA":       commitA.String(),
 		"stRevertCommitA": revertCommitA.String(),
 		"stCounterVault":  counterVault.String(),
+		"stDeadline":      strconv.FormatUint(terms.Deadline, 10),
+		"stGroupId":       strconv.FormatUint(terms.GroupID, 10),
 		"wtSpendKeyIn":    aliceKey.PrivateKey.String(),
 		"wtValueIn":       valueIn.String(),
 		"wtSaltIn":        aliceSaltIn.String(),

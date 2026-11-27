@@ -10,9 +10,8 @@ import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN, DVP_DESTINATION_LEN} from 
 ///         DvpInitiator (it opens a swap) or DvpDestination (it completes
 ///         one), and the two are told apart by statement length, which is
 ///         checked before any field is read. Length alone does not prove a
-///         receipt is a DvP leg (PaymentFee's statement is as long as
-///         DvpInitiator's): the vault that verifies the receipt pins its
-///         circuit.
+///         receipt is a DvP leg: the vault that verifies the receipt pins
+///         its circuit.
 library DvpReceipt {
     /// The fields both DvP circuits carry.
     struct Leg {

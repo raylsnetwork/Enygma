@@ -193,6 +193,17 @@ length check disagrees with its circuit, or when enygma_dvp's Payment-family
 circuits stop deriving exactly `PaymentStatementLayout.sol` (then regenerate
 retail's too).
 
+### Upgrading the initiator proof
+
+The initiator statement has ten public signals, including the deadline and
+input vault group. For a new DvP deployment, regenerate development keys with
+`make dvp-keygen` or export the circuit and seal new production keys following
+the [ceremony release procedure](../enygma_ceremony/README.md#approving-production-keys-and-verifiers).
+Deploy the updated contracts and register the new initiator VK in slot 23.
+Register each approved ERC20/ERC721 vault pair on the deployment. Finish or time out any pending swaps on the previous deployment
+before switching clients to the new one. Use the existing deployment's
+contracts and keys to clear those swaps.
+
 ### Running the System
 
 Prerequisites

@@ -821,6 +821,12 @@ func stepDvpInitiator(fs *FlowState) {
 	panelSet(b, 0, "merkleRoot", "0x"+aliceMerkleProof.Root.Text(16))
 	panelSet(b, 1, "merkleRoot", "0x"+bobMerkleProof.Root.Text(16))
 
+	latest, err := client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("read chain time: %w", err).Error())
+		return
+	}
+	terms := core.DvPInitiatorTerms{Deadline: latest.Time + deadlineWindowSeconds, GroupID: groupFungible}
 	proofStart := time.Now()
 	initiatorResult, err := fs.gnarkClient.DvPInitiatorProof(
 		core.KeyPair{PrivateKey: fs.aliceSpend.PrivateKey, PublicKey: fs.aliceSpend.PublicKey},
@@ -831,6 +837,7 @@ func stepDvpInitiator(fs *FlowState) {
 		big.NewInt(0),
 		aliceMerkleProof, merkleDepth,
 		new(big.Int).SetBytes(fs.erc721VaultAddr.Bytes()),
+		terms,
 	)
 	if err != nil {
 		emitStep(b, "dvp_initiator", "error", "DvP Initiator Proof", fmt.Errorf("DvPInitiatorProof: %w", err).Error())
@@ -978,8 +985,8 @@ func stepSettleAlice(fs *FlowState) {
 	client := fs.client
 	emitStep(b, "settle_alice", "running", "Alice Submits (Leg 1/2)", "Alice submits her ERC20 leg — locks in the swap on-chain…")
 
-	fs.deadline = new(big.Int).SetInt64(time.Now().Unix() + deadlineWindowSeconds)
-	aliceTx, err := fs.dvp.Transact(fs.auth, "submitPartialSettlement", fs.aliceReceipt, big.NewInt(vaultIdErc20), big.NewInt(groupFungible), fs.deadline)
+	fs.deadline = fs.initiatorResult.Deadline()
+	aliceTx, err := fs.dvp.Transact(fs.auth, "submitPartialSettlement", fs.aliceReceipt, big.NewInt(vaultIdErc20), fs.initiatorResult.GroupID(), fs.deadline)
 	if err != nil {
 		emitStep(b, "settle_alice", "error", "Alice Submits (Leg 1/2)", fmt.Errorf("submitPartialSettlement: %w", err).Error())
 		return
@@ -996,7 +1003,7 @@ func stepSettleAlice(fs *FlowState) {
 	protoSet(b, "aliceGas", fmt.Sprintf("%d", aliceTxReceipt.GasUsed))
 	logMsg(b, "chain", fmt.Sprintf("EnygmaDvp.submitPartialSettlement() [Alice] → block %d  gas %s  tx %s…",
 		aliceTxReceipt.BlockNumber, formatNum(aliceTxReceipt.GasUsed), shortHex(aliceTx.Hash().Hex(), 18)))
-	emitStep(b, "settle_alice", "success", "Alice Submits (Leg 1/2)", fmt.Sprintf("SwapInitiated on-chain (block %d) — waiting for Bob's leg, deadline in %ds", aliceTxReceipt.BlockNumber, deadlineWindowSeconds))
+	emitStep(b, "settle_alice", "success", "Alice Submits (Leg 1/2)", fmt.Sprintf("SwapInitiated on-chain (block %d) — waiting for Bob's leg, deadline %s (Unix seconds)", aliceTxReceipt.BlockNumber, fs.deadline))
 	fs.done["settle_alice"] = true
 }
 

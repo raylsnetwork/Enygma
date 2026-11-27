@@ -325,7 +325,7 @@ type dvpProofs struct {
 	bobReceipt   onchainProofReceipt
 }
 
-func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpProofs {
+func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits, deadline *big.Int) *dvpProofs {
 	t.Helper()
 
 	// ── Alice: DvP Initiator proof ────────────────────────────────────────────
@@ -355,6 +355,7 @@ func dvpGenerateProofs(t *testing.T, tc *dvpTestContext, d *dvpDeposits) *dvpPro
 		d.aliceMerkleProof,
 		tc.merkleDepth,
 		vaultInt(tc.erc721VaultAddr),
+		core.DvPInitiatorTerms{Deadline: deadline.Uint64()},
 	)
 	if err != nil {
 		t.Fatalf("Alice DvPInitiatorProof: %v", err)
@@ -522,10 +523,8 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 		defer tc.client.Close()
 
 		d := dvpSetupDeposits(t, tc, dvpTokenIdFull)
-		p := dvpGenerateProofs(t, tc, d)
-
-		// deadline = now + 1 hour (plenty of time)
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600))
+		p := dvpGenerateProofs(t, tc, d, deadline)
 
 		// ── Alice submits first leg ────────────────────────────────────────────
 		// vaultId=0 (ERC20), groupId=0 (Fungibles)
@@ -618,10 +617,8 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 		defer tc.client.Close()
 
 		d := dvpSetupDeposits(t, tc, dvpTokenIdDeadline)
-		p := dvpGenerateProofs(t, tc, d)
-
-		// deadline = now + dvpDeadlineSeconds
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(dvpDeadlineSeconds))
+		p := dvpGenerateProofs(t, tc, d, deadline)
 
 		// ── Alice submits first leg ────────────────────────────────────────────
 		t.Logf("Alice submitting first leg with %ds deadline=%s", dvpDeadlineSeconds, deadline)
@@ -714,9 +711,8 @@ func TestV2DvP_WithDeadline(t *testing.T) {
 		defer tc.client.Close()
 
 		d := dvpSetupDeposits(t, tc, dvpTokenIdInvalid)
-		p := dvpGenerateProofs(t, tc, d)
-
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(dvpDeadlineSeconds))
+		p := dvpGenerateProofs(t, tc, d, deadline)
 
 		// ── Alice submits first leg ────────────────────────────────────────────
 		t.Logf("Alice submitting first leg with %ds deadline=%s", dvpDeadlineSeconds, deadline)

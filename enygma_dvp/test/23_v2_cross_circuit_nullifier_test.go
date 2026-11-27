@@ -40,7 +40,8 @@ func TestV2CrossCircuit_NoteSpentByPaymentCannotOpenASwap(t *testing.T) {
 	d := dvpSetupDeposits(t, tc, crossCircuitToken)
 	// Alice's DvP Initiator leg over her ERC20 note, proven against the
 	// current root (which stays valid after the note is spent).
-	p := dvpGenerateProofs(t, tc, d)
+	deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600))
+	p := dvpGenerateProofs(t, tc, d, deadline)
 
 	// Alice spends the same note with an ordinary payment to herself.
 	alice := core.KeyPair{PrivateKey: d.aliceSpend.PrivateKey, PublicKey: d.aliceSpend.PublicKey}
@@ -84,7 +85,6 @@ func TestV2CrossCircuit_NoteSpentByPaymentCannotOpenASwap(t *testing.T) {
 	}
 
 	// The DvP leg over the now-spent note must be refused.
-	deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(minSwapDeadline))
 	status, err := submitLeg(t, tc, tc.auth, p.aliceReceipt, 0, 0, deadline)
 	if err == nil && status == 1 {
 		t.Fatal("VULNERABLE: a DvP leg over a note already spent by a payment was accepted; " +

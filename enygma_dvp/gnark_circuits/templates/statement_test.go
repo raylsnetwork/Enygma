@@ -43,6 +43,8 @@ const (
 	sCommitment
 	sCipherText
 	sCiphertextHash
+	sDeadline
+	sGroupID
 )
 
 func fill(vs []frontend.Variable, field int) {
@@ -86,6 +88,8 @@ var dvpInitiatorFields = []sentinelField{
 	{"CommitA", sCommitA},
 	{"RevertCommitA", sRevertCommitA},
 	{"CounterVault", sCounterVault},
+	{"Deadline", sDeadline},
+	{"GroupId", sGroupID},
 }
 
 var dvpDestinationFields = []sentinelField{
@@ -125,6 +129,8 @@ func sentinelCases() []sentinelCase {
 		StCommitA:       sentinel(sCommitA, 0),
 		StRevertCommitA: sentinel(sRevertCommitA, 0),
 		StCounterVault:  sentinel(sCounterVault, 0),
+		StDeadline:      sentinel(sDeadline, 0),
+		StGroupID:       sentinel(sGroupID, 0),
 	}
 	destination := DvPDestinationCircuit{
 		StMessage:      sentinel(sMessage, 0),

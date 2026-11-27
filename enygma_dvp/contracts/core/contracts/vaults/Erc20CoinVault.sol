@@ -521,10 +521,9 @@ contract Erc20CoinVault is AbstractCoinVault {
     //   (1, 3)             PAYMENT_RELAYER_FEE_LEN  PaymentRelayerFee
     //   (2, 2)             PAYMENT2IN_LEN           Payment2in
     //
-    // Length alone cannot pick the row (PaymentRelayerFee and UsdrFee are
-    // both 9 signals), nor tell a payment from a DvP leg (DvpInitiator is as
-    // long as PaymentFee), so no DvP leg is in the table: those go to
-    // checkDvpReceiptConditions.
+    // PaymentRelayerFee, UsdrFee and DvpInitiator share a statement length.
+    // The payment verifier slot pins the circuit after the (input, output,
+    // length) dispatch. DvP legs go to checkDvpReceiptConditions.
     //
     // numberOfInputs and numberOfOutputs are the caller's claim, while the
     // verifier only checks the statement's length, so a receipt must have

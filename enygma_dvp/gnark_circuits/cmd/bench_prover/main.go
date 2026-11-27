@@ -169,6 +169,8 @@ func main() {
 			StCommitB:       frontend.Variable(commitB),
 			StCommitA:       frontend.Variable(commitA),
 			StRevertCommitA: frontend.Variable(revertCommitA),
+			StDeadline:      uint64(1_800_000_000),
+			StGroupID:       uint64(0),
 			StCounterVault:  frontend.Variable(benchCounterVault),
 			WtSpendKeyIn:    frontend.Variable(spendSkA),
 			WtValueIn:       frontend.Variable(valueIn),

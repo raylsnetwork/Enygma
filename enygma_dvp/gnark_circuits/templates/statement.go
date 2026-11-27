@@ -18,6 +18,8 @@ var dvpInitiatorStatementNames = map[string]string{
 	"StCommitA":       "CommitA",
 	"StRevertCommitA": "RevertCommitA",
 	"StCounterVault":  "CounterVault",
+	"StDeadline":      "Deadline",
+	"StGroupID":       "GroupId",
 }
 
 // dvpDestinationStatementNames names DvPDestinationCircuit's public fields.

@@ -282,6 +282,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		one, nftTokenId,
 		big.NewInt(0), aliceProof, depth,
 		vaultInt(nftVaultAddr), // Alice is paid from the NFT vault
+		core.DvPInitiatorTerms{Deadline: currentBlockTimestamp(t, client).Uint64() + minSwapExpiry},
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
@@ -400,7 +401,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 		t.Fatal("the flipped leg locked Alice's note")
 	}
 	t.Log("   front-run with the isPayment flag flipped rejected (LegTypeMismatch)")
-	if e, _ := r.send("alice", "submitReceipt", id1, pay, true, vPay, big.NewInt(r.now()+minSwapExpiry), ctI, ctII); e != "" {
+	if e, _ := r.send("alice", "submitReceipt", id1, pay, true, vPay, pay.Statement[layout.DvpInitiatorDeadlineOffset], ctI, ctII); e != "" {
 		t.Fatalf("Alice's leg: %s", e)
 	}
 	if locked, _ := r.nullifierState(0, pay); !locked {
@@ -424,7 +425,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 		t.Fatal("Bob's note was locked by a leg on a cancelled swap")
 	}
 	t.Log("   rejected with SwapClosed; Bob's note is not locked")
-	if e, _ := r.send("mallory", "submitReceipt", id1, pay, true, vPay, big.NewInt(r.now()+minSwapExpiry), ctI, ctII); e != "SwapClosed" {
+	if e, _ := r.send("mallory", "submitReceipt", id1, pay, true, vPay, pay.Statement[layout.DvpInitiatorDeadlineOffset], ctI, ctII); e != "SwapClosed" {
 		t.Fatalf("replay of Alice's leg: got %q, want SwapClosed", e)
 	}
 	if locked, _ := r.nullifierState(0, pay); locked {
@@ -446,7 +447,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 
 	junk := pay2
 	junk.Proof.A.X = new(big.Int).Add(pay2.Proof.A.X, big.NewInt(1))
-	if e, _ := r.send("mallory", "submitReceipt", id2, junk, true, vPay, big.NewInt(r.now()+minSwapExpiry), ctI, ctII); e == "" {
+	if e, _ := r.send("mallory", "submitReceipt", id2, junk, true, vPay, pay2.Statement[layout.DvpInitiatorDeadlineOffset], ctI, ctII); e == "" {
 		t.Fatal("a leg with a corrupted proof was accepted")
 	} else {
 		t.Logf("   leg with a corrupted proof rejected (%s)", e)
@@ -458,21 +459,23 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 	if e, _ := r.send("mallory", "submitReceipt", otherId, pay2, true, vPay, big.NewInt(r.now()+minSwapExpiry), ctI, ctII); e != "SwapIdMismatch" {
 		t.Fatalf("leg under a foreign swapId: got %q, want SwapIdMismatch", e)
 	}
-	if e, _ := r.send("mallory", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+31*24*3600), ctI, ctII); e != "ExpiryTooFar" {
+	if e, _ := r.send("mallory", "submitReceipt", id2, del2, false, vDel, big.NewInt(r.now()+31*24*3600), ctI, ctII); e != "ExpiryTooFar" {
 		t.Fatalf("far expiry: got %q, want ExpiryTooFar", e)
 	}
-	// A front-runner submitting Alice's leg first picks the expiry, and anyone
-	// can cancel once it passes: an expiry under MIN_SWAP_DURATION would let
-	// them cancel her swap before Bob can deliver.
-	if e, _ := r.send("mallory", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+60), ctI, ctII); e != "ExpiryTooSoon" {
+	// An opening expiry must leave time for the other leg.
+	if e, _ := r.send("mallory", "submitReceipt", id2, del2, false, vDel, big.NewInt(r.now()+60), ctI, ctII); e != "ExpiryTooSoon" {
 		t.Fatalf("1-minute expiry: got %q, want ExpiryTooSoon", e)
+	}
+	changedExpiry := new(big.Int).Add(pay2.Statement[layout.DvpInitiatorDeadlineOffset], big.NewInt(60))
+	if e, _ := r.send("alice", "submitReceipt", id2, pay2, true, vPay, changedExpiry, ctI, ctII); e != "SwapDeadlineMismatch" {
+		t.Fatalf("expiry different from the proof: got %q, want SwapDeadlineMismatch", e)
 	}
 	if locked, _ := r.nullifierState(0, pay2); locked {
 		t.Fatal("Alice's second note was locked by a rejected leg")
 	}
 	t.Log("   junk proof, foreign swapId, 31-day and 1-minute expiries all rejected; nothing locked")
 
-	if e, _ := r.send("alice", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+minSwapExpiry), ctI, ctII); e != "" {
+	if e, _ := r.send("alice", "submitReceipt", id2, pay2, true, vPay, pay2.Statement[layout.DvpInitiatorDeadlineOffset], ctI, ctII); e != "" {
 		t.Fatalf("Alice's leg (#2): %s", e)
 	}
 	e, rcpt := r.send("bob", "submitReceipt", id2, del2, false, vDel, big.NewInt(r.now()+minSwapExpiry), ctI, ctII)
@@ -507,7 +510,7 @@ func TestV2SwapRelayer_OnChain(t *testing.T) {
 
 	// ── 4. Settled swapId is closed ───────────────────────────────────────────
 	t.Log("4. A leg under the settled swapId")
-	if e, _ := r.send("mallory", "submitReceipt", id2, pay2, true, vPay, big.NewInt(r.now()+minSwapExpiry), ctI, ctII); e != "SwapClosed" {
+	if e, _ := r.send("mallory", "submitReceipt", id2, pay2, true, vPay, pay2.Statement[layout.DvpInitiatorDeadlineOffset], ctI, ctII); e != "SwapClosed" {
 		t.Fatalf("leg on settled swapId: got %q, want SwapClosed", e)
 	}
 	t.Log("   rejected with SwapClosed")

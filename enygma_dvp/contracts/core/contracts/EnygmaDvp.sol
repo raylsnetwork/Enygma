@@ -57,18 +57,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     uint256 public constant VK_ID_AUCTION_PRIVATE_OPENING = 8;
     uint256 public constant VK_ID_AUCTION_NOT_WINNING_BID = 9;
 
-    // Upper bound on a pending swap's deadline, measured from the first-leg
-    // submission. The deadline is a plain argument (not a public signal of the
-    // initiator proof), so whoever submits the first leg picks it; without a
-    // ceiling a front-runner could lock the initiator's note until an
-    // arbitrarily distant timestamp.
+    // A pending swap's proof-bound deadline must be within this window,
+    // measured from the transaction that opens the swap.
     uint256 public constant MAX_SWAP_DURATION = 30 days;
-
-    // Floor on the same deadline. claimSwapTimeout is callable by anyone, so
-    // without it a front-runner who submits the initiator's public receipt
-    // first could set a deadline a second away and cancel the swap in the
-    // next block, before the counterparty can deliver. The counterparty always
-    // gets at least this long.
     uint256 public constant MIN_SWAP_DURATION = 15 minutes;
 
     bytes32 public constant DEFAULT_OWNER_ROLE =
@@ -822,14 +813,18 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             revert InvalidPartialProofReceipt();
         }
 
+        if (receipt.statement.length == DVP_INITIATOR_LEN) {
+            if (receipt.statement[Dsl.DVP_INITIATOR_DEADLINE_OFFSET] != deadline) revert SwapDeadlineMismatch();
+            if (receipt.statement[Dsl.DVP_INITIATOR_GROUP_ID_OFFSET] != groupId) revert SwapGroupMismatch();
+        }
+
         // checking the receipt, vaultId and groupId validity
         IAbstractCoinVault(_coinVaults[vaultId]).checkDvpReceiptConditions(
             receipt
         );
 
         // The leg's vault must belong to the group. A DvP leg carries no
-        // asset-group root (its last signal is CounterVault), so membership
-        // is the vault's, not read from the receipt.
+        // asset-group root, so membership is checked against the registered vault.
         if (!IAssetGroup(_assetGroups[groupId]).isVaultMember(vaultId)) {
             revert GroupMembershipMismatch();
         }
@@ -884,15 +879,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             if (receipt.statement.length != DVP_INITIATOR_LEN) {
                 revert SwapNotFound();
             }
-            if (deadline <= block.timestamp) {
-                revert SwapDeadlineMustBeInFuture();
-            }
-            if (deadline < block.timestamp + MIN_SWAP_DURATION) {
-                revert SwapDeadlineTooSoon();
-            }
-            if (deadline > block.timestamp + MAX_SWAP_DURATION) {
-                revert SwapDeadlineTooFar();
-            }
 
             // receiptUniqueId is the initiator's CommitB; its CommitA is what
             // Alice expects Bob to deliver.
@@ -918,6 +904,15 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             }
             if (_pendingTransactions[commitB].deadline != 0) {
                 revert SwapAlreadyPending();
+            }
+            if (deadline <= block.timestamp) {
+                revert SwapDeadlineMustBeInFuture();
+            }
+            if (deadline < block.timestamp + MIN_SWAP_DURATION) {
+                revert SwapDeadlineTooSoon();
+            }
+            if (deadline > block.timestamp + MAX_SWAP_DURATION) {
+                revert SwapDeadlineTooFar();
             }
             uint256 commitA_expected = receipt.statement[Dsl.DVP_INITIATOR_COMMIT_A_OFFSET];
             // CRIT-1 fix: extract revertCommitA from the circuit's public statement instead of
@@ -950,17 +945,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     //   1. Spending (nullifying) Alice's input nullifiers — not just unlocking.
     //   2. Inserting revertCommitA into the vault — Alice can spend this note.
     //
-    // Deliberately callable by ANYONE (this replaces the HIGH-10 restriction to
-    // the first-leg submitter). The submitter is not authenticated: the first
-    // leg's receipt is public, so a front-runner can submit Alice's receipt
-    // first, become "initiator" and choose the deadline — under the old
-    // restriction only that party could ever release Alice's note. Permitting
-    // any caller costs nothing: the outcome is fixed by Alice's proof, since
-    // revertCommitA comes from the circuit's public statement and is
-    // spendable only with her key, so a third party triggering the refund can
-    // only ever return the note to its owner. The deadline ceiling
-    // (MAX_SWAP_DURATION) bounds how long a hijacked swap can hold the note,
-    // and its floor (MIN_SWAP_DURATION) how soon one can be timed out.
+    // Anyone can trigger a timeout after the proof-bound deadline. The
+    // refund is spendable only with the initiator's key because the proof
+    // fixes the refund commitment.
+
     function claimSwapTimeout(uint256 pendingReceiptId) public nonReentrant returns (bool) {
         TransactionMetadata storage meta = _pendingTransactions[pendingReceiptId];
 
@@ -1090,6 +1078,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             );
     }
 
+    function _checkInitiatorTerms(uint256[] memory statement, uint256 groupId) private view {
+        if (statement.length == DVP_INITIATOR_LEN) {
+            if (statement[Dsl.DVP_INITIATOR_GROUP_ID_OFFSET] != groupId) revert SwapGroupMismatch();
+            if (block.timestamp > statement[Dsl.DVP_INITIATOR_DEADLINE_OFFSET]) revert SwapDeadlineExpired();
+        }
+    }
+
     // CRIT-5 fix: reentrancy protection via vault callbacks.
     // Settlement order: nullify inputs FIRST, then insert outputs — prevents
     // the double-spend window where commitments exist before nullifiers are spent.
@@ -1122,11 +1117,19 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         // Each leg's message is the commitment its counterparty's leg inserts.
         DvpReceipt.Leg memory leg1 = DvpReceipt.read(receipt1.statement);
         DvpReceipt.Leg memory leg2 = DvpReceipt.read(receipt2.statement);
+        _checkInitiatorTerms(receipt1.statement, groupId1);
+        _checkInitiatorTerms(receipt2.statement, groupId2);
         if (leg1.message != leg2.commitment) {
             revert InvalidPaymentMessage();
         }
         if (leg2.message != leg1.commitment) {
             revert InvalidDeliveryMessage();
+        }
+
+        // Every fungible-to-NFT settlement uses an owner-approved vault pair.
+        if (isValidSwapGroupPair(groupId1, groupId2) &&
+            !_registeredVaultPairs[groupPairId(vaultId1, vaultId2)]) {
+            revert InvalidSwapGroupPair();
         }
 
         IAbstractCoinVault paymentCoinVault = IAbstractCoinVault(
@@ -1149,8 +1152,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         }
 
         // Each leg's vault must belong to its group. A DvP leg carries no
-        // asset-group root (its last signal is CounterVault), so membership
-        // is the vault's, not read from the receipt.
+        // asset-group root, so membership is checked against the registered vault.
         if (!IAssetGroup(_assetGroups[groupId1]).isVaultMember(vaultId1)) {
             revert GroupMembershipMismatch();
         }

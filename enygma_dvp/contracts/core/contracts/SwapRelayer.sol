@@ -4,6 +4,7 @@
 pragma solidity ^0.8.0;
 
 import {IEnygmaDvp, WITHDRAW_MESSAGE} from "../interfaces/IEnygmaDvp.sol";
+import {DvpStatementLayout as Dsl, DVP_INITIATOR_LEN} from "./DvpStatementLayout.sol";
 import {DvpReceipt} from "./DvpReceipt.sol";
 import {PaymentStatementLayout as Psl} from "./PaymentStatementLayout.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -60,10 +61,8 @@ contract SwapRelayer is ReentrancyGuard {
     /// leg can keep its note locked.
     uint256 public constant MAX_SWAP_DURATION = 30 days;
 
-    /// Same bound as EnygmaDvp.MIN_SWAP_DURATION: cancelSwap is callable by
-    /// anyone once the expiry passes, and the first submitter (possibly a
-    /// front-runner holding the other party's public receipt) picks it, so the
-    /// counterparty is always given at least this long to submit its leg.
+    /// Same bound as EnygmaDvp.MIN_SWAP_DURATION: at opening, the counterparty
+    /// has at least this long to submit its leg.
     uint256 public constant MIN_SWAP_DURATION = 15 minutes;
 
     /// The asset groups EnygmaDvp.swap() settles: a payment leg spends a
@@ -108,7 +107,7 @@ contract SwapRelayer is ReentrancyGuard {
     /// @param receipt       The ZK ProofReceipt for this leg
     /// @param isPayment     true = payment (fungible) leg, false = delivery (non-fungible) leg
     /// @param vaultId       Vault index for this receipt (0=ERC20, 1=ERC721, 2=ERC1155)
-    /// @param expiry        Unix timestamp after which the initiator can cancel (set on first call)
+    /// @param expiry        Unix timestamp after which anyone can cancel, bound by the initiator proof
     /// @param ctI           KEM capsule — emitted so counterparty can discover the swap on-chain
     /// @param ctII          Encrypted payload — emitted alongside ctI
     function submitReceipt(
@@ -125,8 +124,7 @@ contract SwapRelayer is ReentrancyGuard {
         // (WITHDRAW_MESSAGE) receipt is not a leg of any swap: filing one would
         // only hold its note until expiry. Both are Payment-shaped, so this
         // reads the message by the Payment layout, before the DvP length check
-        // below would refuse most of them as InvalidStatementSize (PaymentFee's
-        // statement is as long as DvpInitiator's, so not all).
+        // below reads the receipt as a DvP leg.
         if (receipt.statement.length > Psl.PAYMENT_MESSAGE_OFFSET) {
             uint256 message = receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET];
             if (message == 0 || message == WITHDRAW_MESSAGE) revert NotSwapLeg();
@@ -140,12 +138,21 @@ contract SwapRelayer is ReentrancyGuard {
         // ("mirror") swapId that nothing had closed or occupied: a published
         // leg could be replayed there to lock its owner's note, or to block
         // the owner's own submission. The leg's vault decides its side.
-        if (!dvp.isVaultMemberOf(vaultId, isPayment ? GROUP_ID_FUNGIBLES : GROUP_ID_NON_FUNGIBLES)) {
+        uint256 groupId = isPayment ? GROUP_ID_FUNGIBLES : GROUP_ID_NON_FUNGIBLES;
+        if (!dvp.isVaultMemberOf(vaultId, groupId)) {
             revert LegTypeMismatch();
         }
         PendingSwap storage s = swaps[swapId];
 
         if (s.expiry != 0 && block.timestamp >= s.expiry) revert SwapExpired();
+        if (receipt.statement.length == DVP_INITIATOR_LEN) {
+            if (receipt.statement[Dsl.DVP_INITIATOR_GROUP_ID_OFFSET] != groupId) revert IEnygmaDvp.SwapGroupMismatch();
+            if (receipt.statement[Dsl.DVP_INITIATOR_DEADLINE_OFFSET] != expiry ||
+                (s.expiry != 0 && s.expiry != expiry)) {
+                revert IEnygmaDvp.SwapDeadlineMismatch();
+            }
+        }
+
 
         if (isPayment) {
             if (s.paymentSubmitted) revert AlreadySubmitted();

@@ -132,9 +132,9 @@ func TestDvpReadsAreGuardedByTheirCircuitsLength(t *testing.T) {
 					t.Errorf("%s settles a DvP leg with the Payment-family %s", name, m[1])
 				}
 				// isMemberFromProofReceipt reads the statement's last signal
-				// as an asset-group root; a leg's last signal is CounterVault.
+				// as an asset-group root, which neither leg carries.
 				if solGroupByTail.MatchString(body) {
-					t.Errorf("%s decides a DvP leg's group membership with isMemberFromProofReceipt, which reads its CounterVault as a group root", name)
+					t.Errorf("%s decides a DvP leg's group membership with isMemberFromProofReceipt, which expects an asset-group root", name)
 				}
 			}
 			if _, ok := dvpChecks[name]; ok && solDvpCheck.MatchString(body) {
