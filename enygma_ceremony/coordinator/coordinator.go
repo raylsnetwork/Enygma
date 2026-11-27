@@ -30,8 +30,10 @@ import (
 	"io"
 	"log"
 	"math"
+	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -68,7 +70,8 @@ type Config struct {
 	// GitHubClientID is the GitHub OAuth app participants sign in to, for
 	// AuthGitHub. It needs the device flow enabled.
 	GitHubClientID string
-	// GitHubMinAge is how old a GitHub account must be, for AuthGitHub.
+	// GitHubMinAge is how old a GitHub account must be, for AuthGitHub (30
+	// days when zero).
 	GitHubMinAge time.Duration
 	// GitHubAPI is GitHub's API, for AuthGitHub (https://api.github.com).
 	GitHubAPI string
@@ -76,11 +79,26 @@ type Config struct {
 	// for AuthGitHub (https://github.com).
 	GitHub string
 	// MaxPerAddress bounds how many participants from one network address
-	// may be queued or holding the turn at once; 0 is no bound.
-	MaxPerAddress int
-	// BehindProxy takes a participant's address from the X-Forwarded-For
-	// header a reverse proxy adds, instead of the connection's.
-	BehindProxy bool
+	// may be queued or holding the turn at once (3 when zero); NoAddressLimit
+	// lifts the bound.
+	MaxPerAddress  int
+	NoAddressLimit bool
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For says where
+	// a request comes from: a request from one of them comes from the last
+	// address it added. Any other request comes from its connection's
+	// address, whatever it says.
+	TrustedProxies []netip.Prefix
+	// IPv6Prefix is how many leading bits of an IPv6 address count as one
+	// network address for the limits (64 when zero): one host is given a
+	// whole /64, and could otherwise use a new address for every request.
+	IPv6Prefix int
+	// MaxQueue bounds how many participants are queued at once, from
+	// everywhere (1000 when zero).
+	MaxQueue int
+	// MaxTurns bounds the turns one identity is given without contributing
+	// (3 when zero): one that holds turns without ever contributing would
+	// otherwise hold up the queue again and again.
+	MaxTurns int
 	// Turn is how long a participant has, from being handed the turn, to
 	// finish uploading their contribution (60 minutes): room for a slow
 	// laptop, since a turn whose holder has gone passes on at TurnPresence.
@@ -120,9 +138,10 @@ const (
 
 // ClientConfig tells a participant's program how to join (GET /v1/config).
 type ClientConfig struct {
-	Auth           Auth   `json:"auth"`
-	GitHubClientID string `json:"github_client_id,omitzero"`
-	Notice         string `json:"notice,omitzero"`
+	Auth           Auth    `json:"auth"`
+	GitHubClientID string  `json:"github_client_id,omitzero"`
+	Notice         string  `json:"notice,omitzero"`
+	Heartbeat      float64 `json:"heartbeat,omitzero"` // seconds between the turn holder's heartbeats
 }
 
 // Registration asks to join an open or GitHub phase (POST /v1/register).
@@ -186,6 +205,7 @@ type Server struct {
 	registered map[string][]time.Time // address -> its registrations in the last hour
 	queue      []waiter               // in turn order
 	turn       *turn                  // nil when no one holds the turn
+	turnsGiven map[string]int         // identity -> turns given it, while it has not contributed
 	turnTimes  []time.Duration        // the last few accepted turns' lengths
 	checkTimes []time.Duration        // how long the last few uploads took to check
 	closed     bool
@@ -223,6 +243,7 @@ type turn struct {
 	p                 participant
 	started, deadline time.Time
 	seen              time.Time // their program's last heartbeat
+	downloaded        bool      // they have started downloading the state
 	uploading         bool      // their upload is coming in or being checked; it ends the turn either way
 }
 
@@ -240,16 +261,46 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Log == nil {
 		cfg.Log = log.New(io.Discard, "", 0)
 	}
+	// Zero takes the default; a negative value is a mistake, not a way to
+	// turn a limit off (audit R-059, R-061).
 	for _, d := range []struct {
-		v   *time.Duration
-		def time.Duration
+		name string
+		v    *time.Duration
+		def  time.Duration
 	}{
-		{&cfg.Turn, 60 * time.Minute}, {&cfg.TurnPresence, 2 * time.Minute}, {&cfg.Presence, 30 * time.Second},
-		{&cfg.Away, 10 * time.Minute}, {&cfg.Poll, 5 * time.Second},
+		{"Turn", &cfg.Turn, 60 * time.Minute}, {"TurnPresence", &cfg.TurnPresence, 2 * time.Minute},
+		{"Presence", &cfg.Presence, 30 * time.Second}, {"Away", &cfg.Away, 10 * time.Minute},
+		{"Poll", &cfg.Poll, 5 * time.Second}, {"GitHubMinAge", &cfg.GitHubMinAge, 30 * 24 * time.Hour},
 	} {
-		if *d.v <= 0 {
+		switch {
+		case *d.v < 0:
+			return nil, fmt.Errorf("coordinator: %s is %s, negative", d.name, *d.v)
+		case *d.v == 0:
 			*d.v = d.def
 		}
+	}
+	for _, n := range []struct {
+		name string
+		v    *int
+		def  int
+	}{
+		{"MaxPerAddress", &cfg.MaxPerAddress, 3}, {"IPv6Prefix", &cfg.IPv6Prefix, 64},
+		{"MaxQueue", &cfg.MaxQueue, 1000}, {"MaxTurns", &cfg.MaxTurns, 3},
+	} {
+		switch {
+		case *n.v < 0:
+			return nil, fmt.Errorf("coordinator: %s is %d, negative", n.name, *n.v)
+		case *n.v == 0:
+			*n.v = n.def
+		}
+	}
+	switch {
+	case cfg.IPv6Prefix > 128:
+		return nil, fmt.Errorf("coordinator: IPv6Prefix is %d, more bits than an IPv6 address has", cfg.IPv6Prefix)
+	case cfg.Presence < 2*cfg.Poll:
+		return nil, fmt.Errorf("coordinator: Presence (%s) is less than twice Poll (%s): queued participants, asking every Poll, would be passed over", cfg.Presence, cfg.Poll)
+	case cfg.Away < cfg.Presence:
+		return nil, fmt.Errorf("coordinator: Away (%s) is less than Presence (%s)", cfg.Away, cfg.Presence)
 	}
 	switch cfg.Auth {
 	case "":
@@ -270,7 +321,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	s := &Server{
 		cfg: cfg, done: map[string]int{}, sessions: map[[32]byte]*session{},
-		registered: map[string][]time.Time{}, download: make(chan struct{}, 4),
+		registered: map[string][]time.Time{}, turnsGiven: map[string]int{}, download: make(chan struct{}, 4),
 	}
 	var err error
 	if s.start, err = ceremony.Inspect(s.path(0)); err != nil {
@@ -378,6 +429,12 @@ func (s *Server) advance(now time.Time) {
 		case now.Sub(t.seen) > s.cfg.TurnPresence:
 			s.cfg.Log.Printf("%s's program stopped answering during their turn", t.p.name)
 			s.turn = nil
+		case !t.downloaded && now.Sub(t.started) > s.cfg.TurnPresence:
+			// Heartbeats show a program is there, not that it is
+			// contributing: one that does not even fetch the state holds
+			// the queue up for nothing (audit R-019).
+			s.cfg.Log.Printf("%s's program did not start downloading the state", t.p.name)
+			s.turn = nil
 		}
 	}
 	kept := s.queue[:0]
@@ -394,15 +451,17 @@ func (s *Server) advance(now time.Time) {
 			delete(s.sessions, k)
 		}
 	}
-	for s.turn == nil && !s.closed && len(s.queue) > 0 {
-		w := s.queue[0]
-		s.queue = s.queue[1:]
-		if now.Sub(w.seen) > s.cfg.Presence {
-			s.cfg.Log.Printf("%s was not asking when their turn came, and left the queue", w.p.name)
-			continue
+	// The turn goes to the first queued participant still asking. One not
+	// asking just now (a laptop asleep, a background tab throttled) is passed
+	// over but keeps their place, as long as Away allows (audit R-020).
+	if s.turn == nil && !s.closed {
+		if i := slices.IndexFunc(s.queue, func(w waiter) bool { return now.Sub(w.seen) <= s.cfg.Presence }); i >= 0 {
+			w := s.queue[i]
+			s.queue = slices.Delete(s.queue, i, i+1)
+			s.turn = &turn{p: w.p, started: now, seen: now, deadline: now.Add(s.cfg.Turn)}
+			s.turnsGiven[w.p.identity]++
+			s.cfg.Log.Printf("%s's turn, on top of state %d, until %s", w.p.name, s.latest.index, s.turn.deadline.Format(time.TimeOnly))
 		}
-		s.turn = &turn{p: w.p, started: now, seen: now, deadline: now.Add(s.cfg.Turn)}
-		s.cfg.Log.Printf("%s's turn, on top of state %d, until %s", w.p.name, s.latest.index, s.turn.deadline.Format(time.TimeOnly))
 	}
 }
 
@@ -453,22 +512,47 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// address is the network address r comes from: the connection's, or behind
-// a proxy the last address the proxy added to X-Forwarded-For.
+// address is the network address r comes from, as the limits count it: its
+// connection's, or, from a trusted proxy (Config.TrustedProxies), the last
+// address that proxy added to X-Forwarded-For. It is always an IP address,
+// parsed, never the header's text, and an IPv6 address counts as its
+// Config.IPv6Prefix (audit R-016, R-017, R-018).
 func (s *Server) address(r *http.Request) string {
-	if s.cfg.BehindProxy {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return "unknown"
+	}
+	ip = ip.Unmap().WithZone("")
+	if s.trusted(ip) {
 		if fwd := r.Header.Values("X-Forwarded-For"); len(fwd) > 0 {
 			hops := strings.Split(fwd[len(fwd)-1], ",")
-			if last := strings.TrimSpace(hops[len(hops)-1]); last != "" {
-				return last
+			// What is not an address leaves the proxy's own: all such
+			// requests then count as one, which fails closed.
+			if a, err := netip.ParseAddr(strings.TrimSpace(hops[len(hops)-1])); err == nil {
+				ip = a.Unmap().WithZone("")
 			}
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if ip.Is6() {
+		if p, err := ip.Prefix(s.cfg.IPv6Prefix); err == nil {
+			return p.String()
+		}
 	}
-	return host
+	return ip.String()
+}
+
+// trusted reports whether ip is one of Config.TrustedProxies.
+func (s *Server) trusted(ip netip.Addr) bool {
+	for _, p := range s.cfg.TrustedProxies {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // participant returns who the request's session token belongs to, or answers 401.
@@ -499,11 +583,40 @@ func (s *Server) participant(w http.ResponseWriter, r *http.Request) (participan
 
 // handleConfig tells a participant's program how to join.
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	reply(w, ClientConfig{Auth: s.cfg.Auth, GitHubClientID: s.cfg.GitHubClientID, Notice: s.cfg.Notice})
+	reply(w, ClientConfig{
+		Auth: s.cfg.Auth, GitHubClientID: s.cfg.GitHubClientID, Notice: s.cfg.Notice,
+		Heartbeat: s.heartbeat().Seconds(),
+	})
 }
 
-// handleRegister admits a participant and gives them a session token.
+// heartbeat is how often the turn holder's program is to say it is still at
+// it: three times in every TurnPresence, and at least every 10 seconds, so a
+// short TurnPresence does not pass every turn on.
+func (s *Server) heartbeat() time.Duration {
+	return min(max(s.cfg.TurnPresence/3, 10*time.Millisecond), 10*time.Second)
+}
+
+// handleRegister admits a participant and gives them a session token. A
+// registration counts against its address's hourly limit, so it must come
+// from a participant's program, not from a page elsewhere that makes its
+// visitors' browsers post (audit R-021): a JSON content type needs a
+// preflight no other site's page gets past, and a browser saying the request
+// is cross-site is refused.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		fail(w, http.StatusUnsupportedMediaType, "want a JSON registration (Content-Type: application/json)")
+		return
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		fail(w, http.StatusForbidden, "registrations come from a participant's program, not from another site")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		if u, err := url.Parse(origin); err != nil || u.Host != r.Host {
+			fail(w, http.StatusForbidden, "registrations come from a participant's program, not from another site")
+			return
+		}
+	}
 	var reg Registration
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&reg); err != nil {
 		fail(w, http.StatusBadRequest, "want a JSON registration")
@@ -592,11 +705,24 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 			reply(w, Reply{Status: Closed, Notice: s.cfg.Notice})
 			return
 		}
-		if !s.queued(p) && s.cfg.MaxPerAddress > 0 && s.fromAddress(p.addr) >= s.cfg.MaxPerAddress {
-			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(s.cfg.Poll.Seconds()))))
-			fail(w, http.StatusTooManyRequests, fmt.Sprintf(
-				"%d participants from your network address are queued already; you will be queued when one of them is done", s.cfg.MaxPerAddress))
-			return
+		if !s.queued(p) {
+			retry := strconv.Itoa(int(math.Ceil(s.cfg.Poll.Seconds())))
+			switch {
+			case s.turnsGiven[p.identity] >= s.cfg.MaxTurns: // audit R-019
+				fail(w, http.StatusForbidden, fmt.Sprintf(
+					"you have been given %d turns without contributing: this phase gives you no more", s.cfg.MaxTurns))
+				return
+			case len(s.queue) >= s.cfg.MaxQueue:
+				w.Header().Set("Retry-After", retry)
+				fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+					"the queue is full, at %d; you will be queued when there is room", s.cfg.MaxQueue))
+				return
+			case !s.room(p.addr):
+				w.Header().Set("Retry-After", retry)
+				fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+					"%d participants from your network address are queued already; you will be queued when one of them is done", s.cfg.MaxPerAddress))
+				return
+			}
 		}
 		s.seen(p, now)
 		s.advance(now)
@@ -633,6 +759,11 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// room reports whether one more participant from addr may be queued. s.mu is held.
+func (s *Server) room(addr string) bool {
+	return s.cfg.NoAddressLimit || s.fromAddress(addr) < s.cfg.MaxPerAddress
+}
+
 // fromAddress counts the participants from addr queued or holding the turn. s.mu is held.
 func (s *Server) fromAddress(addr string) int {
 	n := 0
@@ -647,12 +778,18 @@ func (s *Server) fromAddress(addr string) int {
 	return n
 }
 
-// seen marks p as having asked now, queueing them last if they weren't queued. s.mu is held.
+// seen marks p as having asked now, queueing them last if they weren't
+// queued. A queued participant asking from another address is counted
+// there only if it has room (audit R-015): otherwise an entry could be moved
+// off a full address, and the place it left taken again, without end. s.mu
+// is held.
 func (s *Server) seen(p participant, now time.Time) {
 	for i := range s.queue {
 		if s.queue[i].p.identity == p.identity {
 			s.queue[i].seen = now
-			s.queue[i].p.addr = p.addr
+			if p.addr != s.queue[i].p.addr && s.room(p.addr) {
+				s.queue[i].p.addr = p.addr
+			}
 			return
 		}
 	}
@@ -709,11 +846,16 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	t := s.holder(w, p)
 	latest := s.latest
+	var deadline time.Time
+	if t != nil {
+		t.downloaded = true
+		deadline = t.deadline
+	}
 	s.mu.Unlock()
 	if t == nil {
 		return
 	}
-	if err := http.NewResponseController(w).SetWriteDeadline(t.deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		s.cfg.Log.Printf("sending %s state %d: %v", p.name, latest.index, err)
 	}
 	w.Header().Set("X-Ceremony-Index", strconv.FormatUint(uint64(latest.index), 10))

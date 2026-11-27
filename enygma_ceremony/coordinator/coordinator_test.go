@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -54,7 +55,9 @@ func newHarness(t *testing.T, cfg Config) *harness {
 		t.Fatal(err)
 	}
 	cfg.Dir, cfg.Turn, cfg.Presence, cfg.Away, cfg.Poll = h.dir, turnTime, presence, away, time.Second
-	cfg.BehindProxy = true
+	// The harness's requests come from this machine, as from a proxy: their
+	// X-Forwarded-For names the participant's address.
+	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
 	cfg.now = func() time.Time { return time.Unix(0, h.clock.Load()) }
 	h.cfg = cfg
 	h.restart()
@@ -109,6 +112,9 @@ func (h *harness) do(name, method, path string, body []byte) (int, []byte) {
 	req, err := http.NewRequest(method, h.http.URL+path, bytes.NewReader(body))
 	if err != nil {
 		h.t.Fatal(err)
+	}
+	if method == http.MethodPost && body != nil {
+		req.Header.Set("Content-Type", "application/json") // as a participant's program sends its JSON
 	}
 	if name != "" {
 		token, ok := h.tokens[name]
@@ -859,6 +865,7 @@ func TestWaitIsEstimated(t *testing.T) {
 	}
 
 	t.Run("after a restart, from the transcript", func(t *testing.T) {
+		h.do("bob", http.MethodGet, "/v1/state", nil) // bob's program starts downloading at once, as programs do
 		h.pass(3*time.Minute, "bob", "carol")
 		h.mustContribute("bob") // 3 minutes after alice's
 		h.restart()

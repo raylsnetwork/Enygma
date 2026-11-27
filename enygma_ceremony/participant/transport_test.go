@@ -17,15 +17,15 @@ import (
 // between.
 func TestPlainHTTPOnlyToThisMachine(t *testing.T) {
 	for addr, ok := range map[string]bool{
-		"ceremony.example.org":          true, // becomes https://
-		"https://ceremony.example.org":  true,
-		"http://ceremony.example.org":   false,
-		"http://192.0.2.1:8080":         false,
-		"http://127.0.0.1:8080":         true,
-		"http://localhost:8080":         true,
-		"http://[::1]:8080":             true,
-		"ftp://ceremony.example.org":    false,
-		"https://":                      false,
+		"ceremony.example.org":         true, // becomes https://
+		"https://ceremony.example.org": true,
+		"http://ceremony.example.org":  false,
+		"http://192.0.2.1:8080":        false,
+		"http://127.0.0.1:8080":        true,
+		"http://localhost:8080":        true,
+		"http://[::1]:8080":            true,
+		"ftp://ceremony.example.org":   false,
+		"https://":                     false,
 	} {
 		c := &Client{URL: addr}
 		if err := c.checkURL(); (err == nil) != ok {
@@ -66,13 +66,13 @@ func TestPacingIsBounded(t *testing.T) {
 		t.Fatalf("Retry-After 99999999999: %v, want a wait of %s", err, maxRetryAfter)
 	}
 	for seconds, want := range map[float64]time.Duration{
-		0.5:          500 * time.Millisecond,
-		0:            minPoll,
-		-1:           minPoll,
-		math.NaN():   minPoll,
-		math.Inf(1):  maxPoll,
-		1e300:        maxPoll,
-		600:          maxPoll,
+		0.5:         500 * time.Millisecond,
+		0:           minPoll,
+		-1:          minPoll,
+		math.NaN():  minPoll,
+		math.Inf(1): maxPoll,
+		1e300:       maxPoll,
+		600:         maxPoll,
 	} {
 		if got := pollFor(seconds); got != want {
 			t.Errorf("pollFor(%v) = %s, want %s", seconds, got, want)

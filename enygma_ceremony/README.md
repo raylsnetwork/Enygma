@@ -121,9 +121,19 @@ in:
 | `open` (default) | Run the program from the release. | A name they type (any language, spaces and punctuation; up to 64 characters), or `anonymous`. |
 | `github` | The same, after signing in with a GitHub account older than `-github-min-age` (30 days). Each account contributes once. | Their GitHub login. |
 
-- **Limits for open and GitHub phases.** At most `-max-per-address` participants (3) from one
-  network address are queued at once, and an address registers at most 100 times an hour. One
-  more from a full address waits for a place, and joins as soon as there is one.
+- **Limits for open and GitHub phases.** They guard the queue, so honest participants get their
+  turn:
+  - at most `-max-per-address` participants (3) from one network address are queued, or hold the
+    turn, at once. A participant who comes back from another address is counted there only if it
+    has room. One more from a full address waits for a place, and joins as soon as there is one;
+  - an address registers at most 100 times an hour, and only from a participant's program
+    (a JSON request no other site's page can make its visitors send);
+  - at most `-max-queue` (1000) are queued in all;
+  - one identity is given at most `-max-turns` (3) turns without contributing.
+
+  A "network address" is an IPv4 address, or an IPv6 `/64` (`-ipv6-prefix`): one host is given a
+  whole `/64`. These limits cannot be turned off by accident: `-max-per-address` is at least 1,
+  and `-no-address-limit` lifts it.
 - **The GitHub sign-in needs an OAuth app.** Create one under Settings → Developer settings →
   OAuth Apps → New OAuth App (any homepage and callback URL), tick **Enable Device Flow**, and
   pass its client ID as `-github-client-id`. There is no secret to keep: the device flow needs
@@ -160,9 +170,14 @@ in:
    ```
 
    - **Turns:** a turn lasts at most `-turn` (60 minutes), room for a slow laptop. The
-     participant's program sends a heartbeat every 10 seconds during its turn. One silent for
-     `-turn-presence` (2 minutes), such as a laptop closed mid-turn, loses the turn to the next in
-     line.
+     participant's program starts downloading the state at once, and sends a heartbeat three times
+     every `-turn-presence` (2 minutes), at least every 10 seconds; the coordinator tells it how
+     often. One that goes silent for `-turn-presence`, such as a laptop closed mid-turn, or that
+     has not started downloading by then, loses the turn to the next in line.
+   - **Waiting:** queued participants' programs ask every `-poll` (5 seconds). The turn goes to the
+     first in line who has asked within `-presence` (30 seconds); one who has not, such as a laptop
+     asleep, is passed over but keeps their place. One quiet for `-away` (10 minutes) leaves the
+     queue. `-presence` must be at least twice `-poll`, and `-away` at least `-presence`.
 
    - **TLS:** `coordinate` serves participants over TLS, and will not start without one of:
      - `-acme-domain`, which gets and renews a certificate from Let's Encrypt (on ports 443 and
@@ -171,8 +186,10 @@ in:
        directory); give `-acme-email` for Let's Encrypt's notices.
      - `-tls-cert` and `-tls-key`, a certificate of your own: on `:443` by default, with port 80
        sending everyone to HTTPS.
-     - `-behind-proxy`, behind a TLS proxy of your own: plain HTTP on `127.0.0.1:8080` unless
-       `-listen` says otherwise. Make sure nothing but the proxy can reach that port.
+     - `-trusted-proxy <address or CIDR,…>`, behind a TLS proxy of your own: plain HTTP on
+       `127.0.0.1:8080` unless `-listen` says otherwise. A request from the proxy comes from the
+       last address it put in `X-Forwarded-For`, so the proxy must append the client's address;
+       a request from anywhere else counts as its own connection's address, whatever it says.
      - `-insecure-http`: plain HTTP on `127.0.0.1:8080`, for tests on this machine only.
 
      HTTPS answers carry `Strict-Transport-Security`, so a browser that has visited once never

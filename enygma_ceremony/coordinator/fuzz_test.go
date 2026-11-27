@@ -24,9 +24,10 @@ import (
 )
 
 // FuzzCleanName: a name the coordinator takes is shown tidied: valid UTF-8,
-// 1 to 64 characters, no control or invisible formatting characters, and no
-// space but single spaces between words; tidying it again changes nothing.
-// What it refuses, it refuses for one of the two reasons it gives.
+// 1 to 64 characters, no control, invisible or unprintable characters, at
+// least one letter or digit, and no space but single spaces between words;
+// tidying it again changes nothing. What it refuses, it refuses for one of
+// the reasons it gives.
 func FuzzCleanName(f *testing.F) {
 	for _, s := range []string{"Jane Smith", " Jane  Smith ", "Zoë\u00a0Ünal", "李雷", "a\u202eb", "x\ny", "  Zoë \t  Ünal ", strings.Repeat("a", 65), "\xff", "\u00a0"} {
 		f.Add(s)
@@ -34,7 +35,7 @@ func FuzzCleanName(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		name, err := cleanName(s)
 		if err != nil {
-			if !errors.Is(err, errNameLength) && !errors.Is(err, errNameCharacters) {
+			if !errors.Is(err, errNameLength) && !errors.Is(err, errNameCharacters) && !errors.Is(err, errNameVisible) {
 				t.Fatalf("refused %q for no reason it gives: %v", s, err)
 			}
 			return
@@ -45,10 +46,16 @@ func FuzzCleanName(f *testing.F) {
 		if strings.HasPrefix(name, " ") || strings.HasSuffix(name, " ") || strings.Contains(name, "  ") {
 			t.Fatalf("took %q as %q, spaces untidied", s, name)
 		}
+		visible := false
 		for _, r := range name {
-			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || (unicode.IsSpace(r) && r != ' ') {
+			if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector) ||
+				(unicode.IsSpace(r) && r != ' ') || (!unicode.IsPrint(r) && r != ' ') {
 				t.Fatalf("took %q as %q, holding %U", s, name, r)
 			}
+			visible = visible || unicode.IsLetter(r) || unicode.IsDigit(r)
+		}
+		if !visible {
+			t.Fatalf("took %q as %q, with nothing to read (audit R-048)", s, name)
 		}
 		if again, err := cleanName(name); err != nil || again != name {
 			t.Fatalf("tidying %q again gives %q, %v", name, again, err)
@@ -83,6 +90,9 @@ func FuzzRequests(f *testing.F) {
 		}
 		req.URL, req.RequestURI = u, target
 		req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", from)
+		if u.Path == "/v1/register" {
+			req.Header.Set("Content-Type", "application/json") // as a participant's program sends it
+		}
 		if auth != "" {
 			req.Header.Set("Authorization", "Bearer "+auth)
 		}
@@ -193,6 +203,9 @@ func FuzzUpload(f *testing.F) {
 		h := srv.Handler()
 		do := func(method, path, token string, body []byte) *httptest.ResponseRecorder {
 			req := httptest.NewRequest(method, path, bytes.NewReader(body))
+			if method == http.MethodPost {
+				req.Header.Set("Content-Type", "application/json")
+			}
 			if token != "" {
 				req.Header.Set("Authorization", "Bearer "+token)
 			}

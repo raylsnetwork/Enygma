@@ -235,6 +235,7 @@ func (p *phase) restartBlocked(t *testing.T) {
 	h := srv.Handler()
 	call := func(path, token, body string, v any) {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
@@ -288,6 +289,7 @@ type rawParticipant struct {
 func (p *phase) blocker(t *testing.T) rawParticipant {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, p.url+"/v1/register", strings.NewReader(`{"name":"blocker"}`))
+	req.Header.Set("Content-Type", "application/json")
 	var s coordinator.Session
 	if err := do(req, &s); err != nil {
 		t.Fatal(err)

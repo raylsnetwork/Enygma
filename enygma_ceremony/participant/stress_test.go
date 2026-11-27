@@ -35,6 +35,9 @@ func (m *misbehaver) call(t *testing.T, method, path string, body []byte) (int, 
 	if m.token != "" {
 		req.Header.Set("Authorization", "Bearer "+m.token)
 	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Error(err)

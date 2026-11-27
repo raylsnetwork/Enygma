@@ -100,11 +100,11 @@ func TestDoneMustBeThisRunsContribution(t *testing.T) {
 // participant's terminal with no escape sequences or reordering characters.
 func TestPrintable(t *testing.T) {
 	for in, want := range map[string]string{
-		"plain":                      "plain",
-		"\x1b[2J\x1b[1;1HOK: done":   "[2J[1;1HOK: done",
-		"left‮right":            "leftright",
-		"bell\a and\r\nnewline":      "bell andnewline",
-		"\u009b31mC1 control":        "31mC1 control",
+		"plain":                    "plain",
+		"\x1b[2J\x1b[1;1HOK: done": "[2J[1;1HOK: done",
+		"left‮right":               "leftright",
+		"bell\a and\r\nnewline":    "bell andnewline",
+		"\u009b31mC1 control":      "31mC1 control",
 	} {
 		if got := printable(in); got != want {
 			t.Errorf("printable(%q) = %q, want %q", in, got, want)

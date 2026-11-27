@@ -185,8 +185,10 @@ func TestCoordinateNeedsTLS(t *testing.T) {
 	dir, _ := openPhase(t)
 	for _, args := range [][]string{
 		{"coordinate", "-dir", dir},
-		{"coordinate", "-dir", dir, "-insecure-http", "-behind-proxy"},
-		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-behind-proxy"},
+		{"coordinate", "-dir", dir, "-insecure-http", "-trusted-proxy", "127.0.0.1"},
+		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-trusted-proxy", "127.0.0.1"},
+		{"coordinate", "-dir", dir, "-trusted-proxy", "not-an-address"},
+		{"coordinate", "-dir", dir, "-insecure-http", "-max-per-address", "0"},
 		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-listen", ":8443"},
 		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-acme-cache", "relative/cache"},
 	} {

@@ -170,6 +170,10 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 	if c.cfg.Notice != "" {
 		fmt.Fprintf(c.Out, "Notice from the coordinator: %s\n", printable(c.cfg.Notice))
 	}
+	if c.Heartbeat == 0 && c.cfg.Heartbeat > 0 {
+		// As often as the coordinator asks, within bounds (audit R-059).
+		c.Heartbeat = min(max(time.Duration(c.cfg.Heartbeat*float64(time.Second)), 10*time.Millisecond), time.Minute)
+	}
 	if err := c.join(ctx); err != nil {
 		return Result{}, err
 	}

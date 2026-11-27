@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -211,12 +212,18 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	auth := fs.String("auth", string(coordinator.AuthOpen), "how anyone joins: open (with the link alone) or github (signed in with GitHub)")
 	githubClientID := fs.String("github-client-id", "", "-auth github: the client ID of a GitHub OAuth app with the device flow enabled")
 	githubMinAge := fs.Duration("github-min-age", 30*24*time.Hour, "-auth github: how old a GitHub account must be")
-	maxPerAddress := fs.Int("max-per-address", 3, "participants from one network address queued at once; 0 for no bound")
-	listen := fs.String("listen", "", "the address to serve on: with -tls-cert, :443 by default; behind a TLS proxy (-behind-proxy) or with -insecure-http, 127.0.0.1:8080 by default; not with -acme-domain, which serves on :443 and :80")
+	maxPerAddress := fs.Int("max-per-address", 3, "participants from one network address queued, or holding the turn, at once: at least 1 (-no-address-limit lifts the bound)")
+	noAddressLimit := fs.Bool("no-address-limit", false, "no bound on the participants from one network address")
+	ipv6Prefix := fs.Int("ipv6-prefix", 64, "how many leading bits of an IPv6 address count as one network address, for the limits")
+	maxQueue := fs.Int("max-queue", 1000, "participants queued at once, from everywhere")
+	maxTurns := fs.Int("max-turns", 3, "turns one identity is given without contributing")
+	listen := fs.String("listen", "", "the address to serve on: with -tls-cert, :443 by default; behind a TLS proxy (-trusted-proxy) or with -insecure-http, 127.0.0.1:8080 by default; not with -acme-domain, which serves on :443 and :80")
 	acmeDomain := fs.String("acme-domain", "", "serve HTTPS on :443 for this host name, with a certificate from Let's Encrypt (port 80 must reach this machine too)")
 	acmeCache := fs.String("acme-cache", "", "-acme-domain: the directory keeping the certificate and the ACME account key, an absolute path (default: acme-cache beside -dir)")
 	acmeEmail := fs.String("acme-email", "", "-acme-domain: an address for Let's Encrypt to write to about the certificate")
-	behindProxy := fs.Bool("behind-proxy", false, "serve plain HTTP to a TLS proxy of your own in front, and take participants' addresses from X-Forwarded-For, as it sets it")
+	trustedProxy := fs.String("trusted-proxy", "", "behind a TLS proxy of your own: its addresses or CIDRs, comma-separated. "+
+		"Serves it plain HTTP, and takes the address of a request from it as the last it put in X-Forwarded-For; "+
+		"from anywhere else, the connection's address")
 	insecureHTTP := fs.Bool("insecure-http", false, "serve plain HTTP with no TLS in front: for tests and rehearsals on this machine only, since participants' tokens, and the page, travel in clear")
 	turn := fs.Duration("turn", 60*time.Minute, "a participant's time to download, contribute and upload: about 2 minutes at 2^18 on a laptop, room for a slow one")
 	turnPresence := fs.Duration("turn-presence", 2*time.Minute, "how long the turn holder's program may go silent before the turn passes on")
@@ -235,18 +242,29 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if *dir == "" || len(args) != 0 || (*cert == "") != (*key == "") {
 			return fmt.Errorf("%w: coordinate takes -dir, and -tls-cert with -tls-key", errUsage)
 		}
+		// A limit of 0, or less, would quietly be no limit (audit R-061).
+		switch {
+		case *maxPerAddress < 1:
+			return fmt.Errorf("%w: -max-per-address is at least 1 (-no-address-limit lifts the bound)", errUsage)
+		case *githubMinAge <= 0, *maxQueue < 1, *maxTurns < 1, *ipv6Prefix < 1, *ipv6Prefix > 128:
+			return fmt.Errorf("%w: -github-min-age, -max-queue and -max-turns are positive, and -ipv6-prefix from 1 to 128", errUsage)
+		}
+		proxies, err := parseProxies(*trustedProxy)
+		if err != nil {
+			return fmt.Errorf("%w: -trusted-proxy: %v", errUsage, err)
+		}
 		// Participants are served over TLS, or the operator says otherwise
 		// (audit R-006): over plain http the page, the session and GitHub
 		// tokens, and the uploads are anyone's on the way.
 		modes := 0
-		for _, on := range []bool{*acmeDomain != "", *cert != "", *behindProxy, *insecureHTTP} {
+		for _, on := range []bool{*acmeDomain != "", *cert != "", len(proxies) > 0, *insecureHTTP} {
 			if on {
 				modes++
 			}
 		}
 		if modes != 1 {
 			return fmt.Errorf("%w: coordinate serves participants over TLS: give one of -acme-domain, -tls-cert with -tls-key, "+
-				"-behind-proxy (a TLS proxy of your own in front), or -insecure-http (tests on this machine only)", errUsage)
+				"-trusted-proxy (a TLS proxy of your own in front), or -insecure-http (tests on this machine only)", errUsage)
 		}
 		switch {
 		case *acmeDomain != "" && *listen != "":
@@ -299,7 +317,8 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		c, err := coordinator.New(coordinator.Config{
 			Dir: *dir, Auth: coordinator.Auth(*auth),
 			GitHubClientID: *githubClientID, GitHubMinAge: *githubMinAge,
-			MaxPerAddress: *maxPerAddress, BehindProxy: *behindProxy,
+			MaxPerAddress: *maxPerAddress, NoAddressLimit: *noAddressLimit, TrustedProxies: proxies,
+			IPv6Prefix: *ipv6Prefix, MaxQueue: *maxQueue, MaxTurns: *maxTurns,
 			Turn: *turn, TurnPresence: *turnPresence, Presence: *presence, Away: *away, Poll: *poll,
 			CloseAt: closes, Notice: *notice, ReleaseURL: *releaseURL, Log: logger,
 		})
@@ -315,6 +334,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    64 << 10, // ample for this protocol's headers (audit R-018)
 			ErrorLog:          logger,
 		}
 		served := make(chan error, 2)
@@ -342,9 +362,9 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				go func() { served <- redirect.ListenAndServe() }()
 			}
 			logger.Printf("serving HTTPS on %s", *listen)
-		case *behindProxy:
+		case len(proxies) > 0:
 			go func() { served <- srv.ListenAndServe() }()
-			logger.Printf("serving plain HTTP on %s, to the TLS proxy in front of it", *listen)
+			logger.Printf("serving plain HTTP on %s, to the TLS proxy in front of it (%s)", *listen, *trustedProxy)
 		default:
 			go func() { served <- srv.ListenAndServe() }()
 			logger.Printf("serving plain HTTP on %s, with no TLS: for tests on this machine only", *listen)
@@ -416,6 +436,27 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			len(t.Contributions), t.Latest(), len(t.Contributions), seal, *dir, t.Latest())
 		return nil
 	}
+}
+
+// parseProxies reads -trusted-proxy: addresses or CIDRs, comma-separated.
+func parseProxies(s string) ([]netip.Prefix, error) {
+	var proxies []netip.Prefix
+	for _, item := range strings.Split(s, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(item); err == nil {
+			proxies = append(proxies, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(item)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not an address or a CIDR", item)
+		}
+		proxies = append(proxies, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+	}
+	return proxies, nil
 }
 
 // strictTransport tells browsers to come back over HTTPS only (audit
