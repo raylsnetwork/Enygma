@@ -3,7 +3,7 @@
 ## System Architecture
 Our system is simple: **users** (e.g., a bank customers) are directly connected to **privacy nodes** (i.e., a high-performance single-node EVM blockchain). Each of the privacy nodes, is connected to a **private network hub**, which effectively acts as a bulletin board for all privacy nodes to leverage as a universal (encrypted) messaging layer and verification layer. **Issuer(s)** are the managers/admins of specific assets on the private network hub. Optionally, there is an **auditor** that oversees (some of) the transactions that take place in the network. A more formal protocol description is documented [here](./protocol_description.md).
 
-**Implementation note.** In this reference implementation, privacy nodes do not submit their own transactions to the blockchain directly — `enygma_payments/relayer` is a single, mandatory intermediary that holds the on-chain signing key and submits every bank's transaction on its behalf. This is a deployment choice, not a protocol requirement (see the "Implementation Note: the Relayer" subsection of [the protocol description](./protocol_description.md#6---private-transfers) for what that intermediary can and cannot do).
+**Implementation note.** The reference deployment uses `enygma_payments/relayer` to hold the on-chain signing key and submit every bank's transaction. Banks trust the relayer to pair each USDr fee proof with its intended transfer. A dishonest relayer can charge one bank the fixed USDr fee for another bank's transfer. See the [relayer section of the protocol description](./protocol_description.md#implementation-note-the-relayer-enygma_paymentsrelayer).
 
 
 ```mermaid

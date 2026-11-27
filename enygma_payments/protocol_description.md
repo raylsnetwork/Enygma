@@ -393,6 +393,12 @@ private key that is ever used to call `transfer()` / `transferWithFee()` /
   it accepts; where two transactions conflict (e.g. would double-spend the
   same commitment), the relayer's ordering deterministically decides which
   one lands.
+- **The relayer chooses which transfer each USDr fee proof pays for.**
+  The contract checks the main and fee proofs' shared participant context.
+  The fee proof authorizes a separate USDr debit, so banks trust the relayer
+  to submit it with its intended main transfer. A dishonest relayer can
+  charge one bank for another bank's transfer. The loss per affected transfer
+  is the configured fixed USDr fee.
 - **The relayer's own on-chain identity is the only one visible.**
   `msg.sender` on every `TransactionSuccessful` event is always the
   relayer's address, never the submitting bank's — so the chain's own
@@ -415,17 +421,11 @@ private key that is ever used to call `transfer()` / `transferWithFee()` /
   agreement, draw a fresh random secret per sender–relayer pair and share
   it privately.
 
-**What this does not affect.** The relayer cannot steal, redirect, or
-double-spend funds — every check that matters (proof validity, nullifier
-uniqueness, block-number freshness, commitment/public-key binding) is
-enforced on-chain, independent of anything the relayer does or doesn't do.
-A client that wants a stronger guarantee than "the relayer said 200 OK"
-should independently verify the resulting balance change against its own
-RPC connection after a relay call, exactly as `demo/main.go` already does
-(`inst.GetBalance` compared against `inst.AddPedComm` of the previous
-balance and the transaction's own commitment) — a relayer that returns
-success without actually submitting, or that gets front-run, produces a
-detectable mismatch rather than a silently accepted lie.
+The contract enforces proof validity, nullifier uniqueness, block-number
+freshness and commitment/public-key binding. A client can confirm that a
+relayed transfer landed by reading the new balance from its own RPC connection.
+The demo compares `inst.GetBalance` with `inst.AddPedComm` of the previous
+balance and the transfer's balance delta.
 
 #### Verifying a TX (Blockchain)
 The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. 
@@ -619,7 +619,7 @@ Besides the auditor, we highlight that any entity in the system can always monit
 Additionally, depending on the choice of random factors and the issuance process, it may be possible for any entity to check the total supply of the asset at all times. 
 
 ## 8 - Trust Assumptions and Known Limitations
-The deployed contract (`enygma_payments/contracts/enygma/contracts/Enygma.sol`) relies on the assumptions below, some on purpose and some by omission. Except for a leaked EOA (second item), none of them loses funds on the shipped flows, but operators and integrators must know them. The first four (subgroup points, EOA authority, liveness, `AnonymitySet`) could each be closed later by a small `Enygma.sol` change. The visible fee submitter and the public burn and withdraw amounts would need new circuits and keys, or a vault change.
+The deployed contract (`enygma_payments/contracts/enygma/contracts/Enygma.sol`) relies on the assumptions below and on the [relayer's fee pairing](#implementation-note-the-relayer-enygma_paymentsrelayer) for relayed transfers. The first four (subgroup points, EOA authority, liveness, `AnonymitySet`) could each be closed later by a small `Enygma.sol` change. The visible fee submitter and the public burn and withdraw amounts would need new circuits and keys, or a vault change.
 
 **What the owner and each account must do**
 
