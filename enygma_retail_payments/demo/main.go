@@ -48,10 +48,10 @@ import (
 	"enygma_retail_payments/layout"
 	dvpcore "github.com/raylsnetwork/enygma_dvp/src/core"
 	"github.com/raylsnetwork/enygma_dvp/src/demohttp"
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -385,23 +385,11 @@ func buildRelayPaymentRequest(result *dvpcore.PaymentResult) relayPaymentRequest
 	}
 }
 
+// buildVaultMerkleTree rebuilds the vault's Merkle trees from its
+// LeafInserted events, each leaf where the vault put it, checked against the
+// vault's current tree and root.
 func buildVaultMerkleTree(ctx context.Context, client *ethclient.Client, vaultAddr common.Address) (*rpcore.MerkleTree, error) {
-	commitmentSig := crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
-	query := ethereum.FilterQuery{
-		Addresses: []common.Address{vaultAddr},
-		Topics:    [][]common.Hash{{commitmentSig}},
-	}
-	logs, err := client.FilterLogs(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("FilterLogs (vault Commitment): %w", err)
-	}
-	mt := rpcore.NewMerkleTree(merkleDepth)
-	for _, l := range logs {
-		if len(l.Topics) >= 3 {
-			mt.InsertLeaf(l.Topics[2].Big())
-		}
-	}
-	return mt, nil
+	return vaulttree.Load(ctx, client, vaultAddr, merkleDepth, nil)
 }
 
 func toHex(b []byte) string { return "0x" + hex.EncodeToString(b) }
@@ -914,7 +902,7 @@ func runFlow(b *Broker, withTag bool) {
 	pause(2000 * time.Millisecond)
 
 	// ── Step: Merkle proof ────────────────────────────────────────────────────
-	emit("merkle", "running", "Build Merkle Proof", "Scanning vault Commitment events to reconstruct the Merkle tree…")
+	emit("merkle", "running", "Build Merkle Proof", "Reading the vault's LeafInserted events to reconstruct the Merkle tree…")
 
 	mt, err := buildVaultMerkleTree(ctx, client, vaultAddr)
 	if err != nil {

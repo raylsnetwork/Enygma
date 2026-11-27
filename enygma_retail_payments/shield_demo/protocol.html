@@ -441,7 +441,7 @@ aside.warn { border-left-color:var(--warn); }
         <math><mi>root</mi></math><code class="v" data-v="root"></code>
         <math><mi>z</mi></math><code class="v" data-v="zero"></code>
       </div>
-      <p>The run rebuilt tree <span data-v="tree"></span> with the wallet's Merkle code from every <code>Commitment</code> event the vault had logged, found C at leaf <span data-v="leafIndex"></span>, and checked that its root is the vault's <code>merkleRoot</code> and that <code>isValidRoot</code> holds for it.</p>
+      <p>The run rebuilt tree <span data-v="tree"></span> with the wallet's Merkle code from every <code>LeafInserted</code> event the vault had logged, each naming a leaf and the tree and index it went to, found C at leaf <span data-v="leafIndex"></span>, and checked that its root is the vault's <code>merkleRoot</code> and that <code>isValidRoot</code> holds for it.</p>
       <aside><b>The crowd.</b> Which leaf a spend opens is hidden among the leaves of its tree, so a tree's 256 slots bound the anonymity set. In fact the bound is 255: the vault opens a new tree when a batch of leaves would reach the 256th slot, and a new tree's crowd starts again from one. This tree holds <span data-v="leaves"></span> leaves. A spent note stays in the crowd, since its nullifier does not say which leaf it was.</aside>
 
       <h3>What the chain now holds</h3>

@@ -40,14 +40,16 @@ const (
 	// signals and about 6.5k more per signal (83: 723k, 85: 736k), so the
 	// withdraw verifier's 92 cost about 782k. A real EnygmaErc20CoinVault
 	// depositThroughEnygma (Poseidon and a depth-8 Merkle insert) costs up to
-	// 613k for a tree's first note and 454k after. Neither subtracts what the
-	// mock it replaces costs.
+	// 618k for a tree's first note and 458k after: 613,283 and 453,842 as
+	// measured then, plus 4,510 each for the LeafInserted event the insert
+	// now logs (measured 2026-11-27). Neither subtracts what the mock it
+	// replaces costs.
 	//
 	// realTransferGas: the transfer (81) and USDr (83) verifiers.
 	realTransferGas = 710_267 + 723_297
 	// realWithdrawGas: the withdraw verifier (92) and withdrawMaxDeposits
 	// vault deposits.
-	realWithdrawGas = 782_000 + 613_283 + (withdrawMaxDeposits-1)*453_842
+	realWithdrawGas = 782_000 + 617_793 + (withdrawMaxDeposits-1)*458_352
 	// withdrawMaxDeposits is StatementLayout.WITHDRAW_DEPOSIT_COMMITMENTS_SIZE,
 	// the most deposits a withdraw takes.
 	withdrawMaxDeposits = 10

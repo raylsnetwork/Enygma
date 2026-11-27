@@ -18,6 +18,8 @@ interface IAbstractCoinVault {
 
     // Getting fired Whenever a new commitment
     // is generated and added to on-chain merkleTree
+    // It carries no position: IMerkle's LeafInserted, logged beside it,
+    // gives the tree and index the leaf went to.
     event Commitment(uint256 indexed vaultId, uint256 indexed commitment);
 
     // Getting fired alongside Commitment for the non-interactive flow.

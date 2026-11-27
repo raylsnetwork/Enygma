@@ -32,7 +32,7 @@
 
 **Commitment**: the public hash of a note's opening (the owner's `pkSpend`, a salt, the amount and the token id). A vault stores it as a leaf of its Merkle tree. Without the opening it reveals nothing about the note.
 
-**Merkle tree**: a vault's append-only tree of commitments. When one fills, the vault starts the next, so each tree has a number counting up from 0. Spending a note proves its commitment is a leaf of the tree without revealing which leaf.
+**Merkle tree**: a vault's append-only tree of commitments. When an insert's leaves would reach a tree's last slot, the vault puts them in the next tree, so each tree has a number counting up from 0. It decides this per insert, and one transaction can make several, so a vault logs each leaf's tree number and index in a `LeafInserted` event, which wallets rebuild the trees from. Spending a note proves its commitment is a leaf of the tree without revealing which leaf.
 
 **Merkle root**: the hash that sums up a Merkle tree at one moment. The vault accepts any root its tree has ever had, so a proof made against an older root is still valid.
 

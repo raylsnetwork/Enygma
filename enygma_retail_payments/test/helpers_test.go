@@ -9,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
-	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -198,47 +197,20 @@ type onchainProofReceipt struct {
 
 // ── Merkle tree helpers ────────────────────────────────────────────────────────
 
+// loadVaultMerkleTree rebuilds the vault's Merkle trees from its
+// LeafInserted events, each leaf where the vault put it, checked against the
+// vault's current tree number and root. Its callers prove against tree 0,
+// so it fails at once on a vault past its first tree.
 func loadVaultMerkleTree(t *testing.T, client *ethclient.Client, vaultAddr common.Address, merkleDepth int) *rpcore.MerkleTree {
 	t.Helper()
-	commitmentSig := crypto.Keccak256Hash([]byte("Commitment(uint256,uint256)"))
-	query := ethereum.FilterQuery{
-		Addresses: []common.Address{vaultAddr},
-		Topics:    [][]common.Hash{{commitmentSig}},
-	}
-	logs, err := client.FilterLogs(context.Background(), query)
+	mt, err := vaulttree.Load(context.Background(), client, vaultAddr, merkleDepth, nil)
 	if err != nil {
-		t.Fatalf("FilterLogs (vault Commitment events): %v", err)
+		t.Fatalf("loadVaultMerkleTree: %v", err)
 	}
-	if trees := vaultTreeCount(logs, merkleDepth); trees > 1 {
-		t.Fatalf("the vault at %s holds %d commitments in %d trees, and this test rebuilds tree 0 alone, whose root the vault no longer accepts (InvalidMerkleRoot); "+
-			"restart on a fresh chain (bash shield_demo/run.sh, or make shield-stack) and run it there", vaultAddr.Hex(), len(logs), trees)
+	if mt.TreeNumber() > 0 {
+		t.Fatalf("the vault at %s is on tree %d, and this test proves against tree 0, whose root the vault no longer accepts (InvalidMerkleRoot); "+
+			"restart on a fresh chain (bash shield_demo/run.sh, or make shield-stack) and run it there", vaultAddr.Hex(), mt.TreeNumber())
 	}
-	mt := rpcore.NewMerkleTree(merkleDepth)
-	for _, log := range logs {
-		if len(log.Topics) < 3 {
-			continue
-		}
-		mt.InsertLeaf(log.Topics[2].Big())
-	}
-	t.Logf("loadVaultMerkleTree: loaded %d commitment leaves from vault %s", len(logs), vaultAddr.Hex())
+	t.Logf("loadVaultMerkleTree: tree 0 of vault %s holds %d leaves", vaultAddr.Hex(), len(mt.GetLeaves()))
 	return mt
-}
-
-// vaultTreeCount is how many trees a vault's Commitment logs fill: the vault
-// inserts each transaction's commitments as one batch and starts a new tree
-// when the batch would fill the current one.
-func vaultTreeCount(logs []types.Log, merkleDepth int) int {
-	trees, size := 1, 0
-	for i := 0; i < len(logs); {
-		n := 0
-		for j := i; j < len(logs) && logs[j].TxHash == logs[i].TxHash; j++ {
-			n++
-		}
-		if size+n >= 1<<merkleDepth {
-			trees, size = trees+1, 0
-		}
-		size += n
-		i += n
-	}
-	return trees
 }

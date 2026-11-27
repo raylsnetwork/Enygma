@@ -74,6 +74,7 @@ without revealing which commitment it corresponds to.
 | `src/core/prover_dvp.go` | Typed provers: DvP circuits |
 | `src/core/prover_auction.go` | Legacy auction provers: this module's gnark server serves none of their routes (see [Deprecated: enygma_dvp's `EnygmaAuction`](../README.md#deprecated-enygma_dvps-enygmaauction)). Also holds helpers the live provers use, such as `bigIntSliceToStrings` |
 | `src/core/utils.go` | Key derivation, ML-KEM, Poseidon, Merkle helpers |
+| `src/vaulttree/` | Rebuilds a vault's Merkle trees from its `LeafInserted` events and checks them against the vault's `treeNumber()` and `currentRoot()` |
 | `gnark_circuits/server/circuits/` | gnark circuit definitions and HTTP handlers |
 | `contracts/core/contracts/` | Solidity: `EnygmaDvp.sol`, `PrivateMintVerifier.sol`, vaults |
 | `scripts/cmd/deploy` | Deploy all contracts; writes `build/receipts.json` |

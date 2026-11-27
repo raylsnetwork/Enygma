@@ -56,6 +56,7 @@ import (
 
 	"enygma_retail_payments/layout"
 
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254"
@@ -505,7 +506,7 @@ func TestProtocolPrimer(t *testing.T) {
 
 		// vcall calls a one-value vault view at the deposit's block.
 		vcall := func(method string, args ...any) any { t.Helper(); return vaultView(t, vault, at, method, args...) }
-		// The tree, rebuilt from the vault's Commitment events up to the deposit.
+		// The tree, rebuilt from the vault's LeafInserted events up to the deposit.
 		mt := rebuildVaultTree(t, client, vaultAddr, at)
 		proof, err := mt.GenerateProof(commitment)
 		if err != nil {
@@ -842,7 +843,7 @@ func TestProtocolPrimer(t *testing.T) {
 		}
 
 		// The Sender's Merkle path, from the tree rebuilt from the vault's
-		// Commitment events.
+		// LeafInserted events.
 		head, err := client.BlockNumber(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -2465,24 +2466,15 @@ func boolInt(b bool) int {
 }
 
 // rebuildVaultTree rebuilds the vault's Merkle trees with the client library
-// from its Commitment events up to block to, a transaction's commitments
-// inserted as one batch, as Merkle.sol does (a batch that would reach a
-// tree's last slot opens the next tree).
+// from its LeafInserted events up to block to (nil: the head), each leaf at
+// the tree and index its event names, and checks them against the vault's
+// tree number and root at that block. (Merkle.sol starts a new tree per
+// insertLeaves call, when a call's leaves would reach the tree's last slot.)
 func rebuildVaultTree(t *testing.T, client *ethclient.Client, vault common.Address, to *big.Int) *rpcore.MerkleTree {
 	t.Helper()
-	logs, err := client.FilterLogs(context.Background(), ethereum.FilterQuery{Addresses: []common.Address{vault},
-		Topics: [][]common.Hash{{commitmentEventSig}}, ToBlock: to})
+	mt, err := vaulttree.Load(context.Background(), client, vault, primerDepth, to)
 	if err != nil {
 		t.Fatal(err)
-	}
-	mt := rpcore.NewMerkleTree(primerDepth)
-	for i := 0; i < len(logs); {
-		var batch []*big.Int
-		for j := i; j < len(logs) && logs[j].TxHash == logs[i].TxHash; j++ {
-			batch = append(batch, logs[j].Topics[2].Big())
-		}
-		mt.InsertLeaves(batch)
-		i += len(batch)
 	}
 	return mt
 }

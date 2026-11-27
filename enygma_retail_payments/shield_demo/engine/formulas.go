@@ -58,7 +58,8 @@ func (c *chain) spendKeyFormula(owner *Actor) (HopDetail, error) {
 
 // commitmentFormula is the commitment formula of note n, owner's, which
 // deposit cd inserted as its one leaf: its opening hashed, checked against
-// that leaf as the vault's Commitment event logged it.
+// that leaf as the vault's LeafInserted event logged it, with its tree and
+// index.
 func commitmentFormula(cd HopDetail, owner *Actor, n *note) HopDetail {
 	leaf := cd.Leaves[0]
 	result := fieldHex(n.commitment)
@@ -71,7 +72,7 @@ func commitmentFormula(cd HopDetail, owner *Actor, n *note) HopDetail {
 			{Name: noteOpening[3], Value: fieldHex(tokenId)},
 		},
 		Result: result,
-		Chain:  &FormulaValue{Name: fmt.Sprintf("leaf #%d of tree %d, the vault's Commitment event", leaf.Index, cd.Tree), Value: leaf.Commitment},
+		Chain:  &FormulaValue{Name: fmt.Sprintf("leaf #%d of tree %d, the vault's LeafInserted event", leaf.Index, cd.Tree), Value: leaf.Commitment},
 		OK:     result == leaf.Commitment,
 	}}
 }

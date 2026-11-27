@@ -35,9 +35,10 @@ sequenceDiagram
     Alice->>Vault: depositV2([40, pk_A, saltBField, 0], capsule, encData)
     Vault->>Vault: commitment = Poseidon4(pk_A, saltBField, 40, 0)
     Vault->>Vault: insert commitment as Merkle leaf
+    Vault-->>Alice: emit LeafInserted(vaultId, commitment, treeNumber, leafIndex)
     Vault-->>Alice: emit Commitment(vaultId, commitment)
     Vault-->>Alice: emit EncryptedNote(vaultId, commitment, capsule, encData)
-    Alice->>Alice: build Merkle proof for commitment
+    Alice->>Alice: rebuild the trees from LeafInserted, build Merkle proof for commitment
 
     Note over Alice,GnarkServer: Step 2 — Payment proof
     Bob->>Bob: NewSpendKeyPair() → (sk_B, pk_B)

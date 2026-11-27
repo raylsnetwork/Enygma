@@ -7,12 +7,14 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
 
+	"github.com/raylsnetwork/enygma_dvp/src/vaulttree"
 	tags "github.com/raylsnetwork/enygma_retail_payments/private_tags/src"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
@@ -25,25 +27,56 @@ import (
 
 var testVault = common.HexToAddress("0x7a0")
 
-// fakeNode answers the two RPCs the engine's log queries make:
+// fakeNode answers the RPCs the engine's log queries make:
 // eth_blockNumber with tip, and eth_getLogs with the vault's Commitment
 // events in vault (those of the queried commitments, if the query names
-// any) or EnygmaDvp's ChannelPayment events in payments (those whose
-// block_n and tag topics the query names, if it names any), each logged in
-// its block, within the queried range. dvpDown fails the ChannelPayment
-// queries, all but the first dvpUpFor of them; dvpQueries counts them. With
-// maxSpan set it rejects any eth_getLogs spanning more than maxSpan blocks,
-// as hosted RPC providers do. queries records every eth_getLogs it was
-// asked, rejected or not; any other contract's logs it answers with none.
+// any), its LeafInserted events in leaves (for a query naming that event),
+// or EnygmaDvp's ChannelPayment events in payments (those whose block_n
+// and tag topics the query names, if it names any), each logged in its
+// block, within the queried range. It answers the vault's treeNumber() and
+// currentRoot() at a block with the trees its leaves up to that block build
+// at depth (merkleDepth if unset), and at latest with all of leaves: a leaf
+// in a block past tip is in a block mined after the head was read. It adds
+// treeShift to the tree number it answers, as from a vault on a later tree
+// than its leaves build, with the same root. While
+// lagging is above zero, a LeafInserted query gets all of leaves but the
+// last, as from a log backend behind its head, and lagging counts down;
+// with repeat set, it gets the last of leaves twice. dvpDown fails the
+// ChannelPayment queries, all but the first dvpUpFor of them; dvpQueries
+// counts them. With maxSpan set it rejects any eth_getLogs spanning more
+// than maxSpan blocks, as hosted RPC providers do. queries records every
+// eth_getLogs it was asked, rejected or not; any other contract's logs it
+// answers with none.
 type fakeNode struct {
 	tip        uint64
 	payments   []ethtypes.Log
 	vault      map[common.Hash]uint64
+	leaves     []ethtypes.Log
+	depth      int
+	treeShift  int
+	lagging    int
+	repeat     bool
 	dvpDown    bool
 	dvpUpFor   int
 	dvpQueries int
 	maxSpan    uint64
 	queries    []logQuery
+}
+
+// vaultTree is the number and root of the tree f's LeafInserted events in
+// blocks up to at end on, in trees of depth depth (merkleDepth if unset).
+func (f *fakeNode) vaultTree(at uint64) (int, *big.Int, error) {
+	var leaves []ethtypes.Log
+	for _, l := range f.leaves {
+		if l.BlockNumber <= at {
+			leaves = append(leaves, l)
+		}
+	}
+	mt, err := vaulttree.Rebuild(cmp.Or(f.depth, merkleDepth), leaves)
+	if err != nil {
+		return 0, nil, err
+	}
+	return mt.TreeNumber(), mt.Root(), nil
 }
 
 // logQuery is one eth_getLogs a fakeNode was asked: its first address, its
@@ -93,6 +126,49 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "eth_blockNumber":
 		resp["result"] = hexutil.Uint64(f.tip)
+	case "eth_call":
+		// ethclient sends the calldata as input; older clients as data.
+		var call struct {
+			To    common.Address `json:"to"`
+			Input hexutil.Bytes  `json:"input"`
+			Data  hexutil.Bytes  `json:"data"`
+		}
+		if err := json.Unmarshal(req.Params[0], &call); err != nil || call.To != testVault {
+			http.Error(w, fmt.Sprintf("eth_call %s: %v", req.Params[0], err), http.StatusBadRequest)
+			return
+		}
+		if len(call.Input) > 0 {
+			call.Data = call.Input
+		}
+		at := uint64(math.MaxUint64)
+		var arg string
+		if len(req.Params) > 1 {
+			if err := json.Unmarshal(req.Params[1], &arg); err != nil {
+				http.Error(w, fmt.Sprintf("eth_call block %s: %v", req.Params[1], err), http.StatusBadRequest)
+				return
+			}
+		}
+		if arg != "" && arg != "latest" {
+			n, err := hexutil.DecodeUint64(arg)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("eth_call block %q: %v", arg, err), http.StatusBadRequest)
+				return
+			}
+			at = n
+		}
+		tree, root, err := f.vaultTree(at)
+		if err != nil {
+			resp["error"] = map[string]any{"code": -32000, "message": err.Error()}
+			break
+		}
+		switch common.Bytes2Hex(call.Data) {
+		case common.Bytes2Hex(crypto.Keccak256([]byte("treeNumber()"))[:4]):
+			resp["result"] = hexutil.Bytes(common.BigToHash(big.NewInt(int64(tree + f.treeShift))).Bytes())
+		case common.Bytes2Hex(crypto.Keccak256([]byte("currentRoot()"))[:4]):
+			resp["result"] = hexutil.Bytes(common.BigToHash(root).Bytes())
+		default:
+			resp["error"] = map[string]any{"code": -32000, "message": "execution reverted"}
+		}
 	case "eth_getLogs":
 		var q struct {
 			Address   []common.Address `json:"address"`
@@ -155,6 +231,22 @@ func (f *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case testVault:
+			if len(q.Topics) > 0 && slices.Contains(q.Topics[0], vaulttree.LeafInsertedTopic) {
+				served := f.leaves
+				if f.lagging > 0 {
+					f.lagging--
+					served = f.leaves[:len(f.leaves)-1]
+				}
+				if f.repeat {
+					served = append(slices.Clip(served), served[len(served)-1])
+				}
+				for _, l := range served {
+					if l.BlockNumber >= from && l.BlockNumber <= to {
+						logs = append(logs, l)
+					}
+				}
+				break
+			}
 			// A query naming commitments gets only theirs.
 			named := map[common.Hash]bool{}
 			if len(q.Topics) >= 3 {

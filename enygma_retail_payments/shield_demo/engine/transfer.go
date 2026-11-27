@@ -199,7 +199,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		proofs, treeNums = append(proofs, proof), append(treeNums, big.NewInt(int64(proof.TreeNumber)))
 		proveDetails = append(proveDetails, merklePath(NodeVault, from.Name, proof))
 	}
-	s.log("key", "rebuilt the vault's Merkle trees from its Commitment events: tree %d, %d leaves, root 0x%s…", tree.TreeNumber(), len(tree.GetLeaves()), tree.Root().Text(16)[:12])
+	s.log("key", "rebuilt the vault's Merkle trees from its LeafInserted events: tree %d, %d leaves, root 0x%s…", tree.TreeNumber(), len(tree.GetLeaves()), tree.Root().Text(16)[:12])
 
 	fromNode := ActorNode(from.ID)
 	circuit := "Payment"

@@ -39,7 +39,7 @@ func TestEveryLogQueryStaysWithinTheNodesBlockLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	c := &chain{client: client, deployBlock: deployed, dvpAddr: testDvp, vaultAddr: testVault, usdrVaultAddr: testUsdrVault,
+	c := &chain{client: client, deployBlock: deployed, depth: merkleDepth, dvpAddr: testDvp, vaultAddr: testVault, usdrVaultAddr: testUsdrVault,
 		registryAddr: testRegistry}
 	e := &Engine{chain: c, startBlock: started, auditUsers: []auditUser{}}
 	spend := testSpendKey(t)
@@ -54,7 +54,7 @@ func TestEveryLogQueryStaysWithinTheNodesBlockLimit(t *testing.T) {
 	}{
 		{"Audit's note events", testDvp, started, func() error { _, err := e.Audit(ctx); return err }},
 		{"noteEvents", testDvp, deployed, func() error { _, err := c.noteEvents(ctx, testVault, erc20VaultId); return err }},
-		{"commitmentBatches", testVault, deployed, func() error { _, err := c.commitmentBatches(ctx, testVault); return err }},
+		{"vaultLeaves", testVault, deployed, func() error { _, err := c.vaultLeaves(ctx, testVault); return err }},
 		{"registration", testRegistry, deployed, func() error { _, err := c.registration(ctx, common.HexToAddress("0xb0b")); return err }},
 		{"the note encryption card", testDvp, deployed, func() error {
 			_, err := c.noteEncryptionFormula(ctx, owner, big.NewInt(7))
