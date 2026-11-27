@@ -3,28 +3,14 @@ package config
 import "os"
 
 type Config struct {
-	// BindHost is the network interface the proving server listens on.
-	// Default: 127.0.0.1 (loopback only).
-	//
-	// Fix H-04: this used to not exist at all — router.Run(":" + cfg.Port)
-	// binds every interface (0.0.0.0-equivalent) unconditionally, with no
-	// env var or flag to change it. The request body carries a bank's
-	// secret_key (its entire spend authority) and every blinding factor
-	// in cleartext, over plain HTTP, to an endpoint with no authentication
-	// of any kind (M-08). In the documented single-host topology nothing
-	// external reaches it — but the moment an operator does the obvious
-	// scaling step (moving the prover to a shared or dedicated host), that
-	// secret-dense traffic crosses the network in cleartext with no
-	// config knob to prevent it. Defaulting to loopback, with an explicit
-	// opt-in (GNARK_BIND_HOST) required for anything else, closes the
-	// "no way in the code to do it safely" half of that finding; see
-	// cmd/server/main.go for the warning logged when a non-loopback host
-	// is configured.
+	// Plain HTTP is restricted to loopback. Other binds require mutual TLS.
 	BindHost string
+	Port     string
 
-	// Port is the TCP port the proving server listens on.
-	// Default: 8080. Previously hardcoded with no override at all.
-	Port string
+	AllowRemote bool
+	TLSCert     string
+	TLSKey      string
+	TLSClientCA string
 
 	EnygmaPk    string
 	EnygmaVk    string
@@ -51,6 +37,10 @@ func Load() *Config {
 	return &Config{
 		BindHost:    getenv("GNARK_BIND_HOST", "127.0.0.1"),
 		Port:        getenv("GNARK_PORT", "8080"),
+		AllowRemote: os.Getenv("GNARK_ALLOW_REMOTE") == "1",
+		TLSCert:     os.Getenv("GNARK_TLS_CERT"),
+		TLSKey:      os.Getenv("GNARK_TLS_KEY"),
+		TLSClientCA: os.Getenv("GNARK_TLS_CLIENT_CA"),
 		EnygmaPk:    "./keys/EnygmaPk.key",
 		EnygmaVk:    "./keys/EnygmaVk.key",
 		EnygmaFeePk: "./keys/EnygmaFeePk.key",
