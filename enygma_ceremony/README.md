@@ -366,6 +366,47 @@ Anyone can check a ceremony without trusting the coordinator:
   out after the close and the last contribution, so someone resealing with the announced head and
   round gets the same keys, or finds out.
 
+## Approving production keys and verifiers
+
+1. Record the protocol source commit, ceremony release, both announced transcript
+   heads, close times and drand rounds. Review the contributions in each phase
+   and record which independent participants confirmed their receipts. The
+   ceremony needs at least one honest contributor in each phase. A replay checks
+   the transcript's cryptography. Independence still needs review.
+2. From the protocol release checkout, run its `export_r1cs` into an empty
+   directory. Independently replay both seals as above with the verified drand
+   rounds. Match the SRS, circuit, proving key and verifying key hashes against
+   the proposed release.
+3. Publish the approved SHA-256 digests of `phase1.srs.json` and
+   `ceremony-seal.json` through the release approval channel. Pin them separately
+   from the installed key bundle. Publish both records, the transcripts and the
+   SRS alongside the release.
+4. Before using a production key bundle, check its installed files against the
+   pins and the release's fresh circuit export.
+
+   ```bash
+   ceremony verify-keys -ceremony "$PROTOCOL" -srs "$SRS" \
+       -r1cs "$R1CS_DIR" -keys "$INSTALLED_KEY_ROOT" \
+       -phase1-seal-sha256 "$APPROVED_PHASE1_SEAL_SHA256" \
+       -phase2-seal-sha256 "$APPROVED_PHASE2_SEAL_SHA256"
+   ```
+
+   Keep the Phase 1 record beside the SRS and the Phase 2 record at the key root.
+   `verify-keys` checks the pins, links the two seals by the SRS, refuses rehearsal
+   seals and compares every circuit and both keys at the paths in the export.
+   Put only the verified files into the release. Single-party `make *-keygen`
+   outputs and rehearsal keys are for development.
+5. Export verifier artifacts from those verified VKs into a clean build directory.
+   Review the build and bind each circuit to its verifier address or registry
+   slot. Record the chain ID, address or slot and approved artifact hash. Use
+   the protocol's deployment checks to confirm the registered key or runtime.
+
+   | Protocol | Verifier verification |
+   | --- | --- |
+   | Enygma Payments | Check each enabled verifier against its approved VK and the reviewed runtime before registration. [Payments deployment guide](../enygma_payments/run_scripts/README.md#register-or-replace-proof-verifiers) |
+   | Retail and DvP | Run each registry initializer with VK exports from the verified key bundle. The initializer reads every registered key back. Compile PrivateMint's verifier using retail's verified PrivateMint VK and compare the deployed runtime with the reviewed build on both deployments. |
+   | DvP Auctions | Run `export_vk_init_auction` from the verified key bundle. Check the new registry is empty before initialization, then compare slots 0–5 with the approved registration transactions and check the Verifier and GenericGroth16Verifier runtimes against the reviewed builds. |
+
 ## What the coordinator can and cannot do
 
 - **It cannot learn the keys' secret,** as long as one contributor in each phase ran a program it
