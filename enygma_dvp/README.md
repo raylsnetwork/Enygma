@@ -39,6 +39,23 @@ flowchart LR
 
 ```
 
+## Relayer keys
+
+The DvP relayer reads two keys from its process environment at startup.
+
+| Variable | Value |
+| --- | --- |
+| `RELAYER_PRIVATE_KEY` | Required hex-encoded Ethereum private key for signing relay transactions. A leading `0x` is accepted. |
+| `RELAYER_FEE_SPEND_PRIVATE_KEY` | Optional spend key for relayer fee notes, encoded as a positive decimal integer. Fee-relay routes return HTTP 503 when it is unset. |
+
+Have the service manager inject the variables from a secret store or a mode
+`0600` environment file outside the checkout. Keep key values out of command
+arguments, including arguments to `env`, so ordinary process listings show
+only the relayer command. Run the relayer under a dedicated account and
+restrict access to that account and to privileged process inspection, which
+can reveal its environment. Disable shell tracing (`set +x`) before loading
+keys and keep environment dumps and relayer configuration out of logs.
+
 ## Protocol Overview
 
 Two parities agree off-chain on the terms of the trade. Alice initiates the swap by submitting an on-chain transaction containing a zero-knowledge proof, an ML-KEM ciphertext addressed to Bob, and a set of output commitments. The blockchain locks Alice's nullifier and records a `swap_id`. Bob scans the chain, decrpyts the payload using his view key, verifies the commitments, generates his own proof, and submits it to finalize the swap. If Bob does not respond before the deadline, Alice and reclaim her funds via a pre-committed revert path.
