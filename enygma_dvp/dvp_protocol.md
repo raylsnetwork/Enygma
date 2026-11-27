@@ -565,7 +565,17 @@ The owner role is trusted with:
 - **Keys and the verifier:** `registerNewVerificationKey` appends a key to the
   Verifier while `EnygmaDvp` holds the Verifier's owner role and the Verifier
   is not frozen, and `initializeDvp` re-points `EnygmaDvp` at another verifier
-  for the vaults and groups registered after it (see above).
+  for the vaults and groups registered after it (see above). The Verifier's
+  own owner role is a second way in: its holder appends keys directly. On
+  the main deployment, `scripts/cmd/init` neither freezes the Verifier nor
+  hands its roles over, so the deployer can still append keys, after slot
+  24, the last one init registers there (no contract reads those slots
+  today).
+- **The auction:** `registerEnygmaAuction` stores an auction address, and
+  every vault registered after it grants that address `DEFAULT_AUCTION_ROLE`
+  for good. The role lets it call the vault's `registerCoins`, `lockCoin`,
+  `unlockCoin` and `nullifyCoin` (see [Deprecated: enygma_dvp's
+  `EnygmaAuction`](README.md#deprecated-enygma_dvps-enygmaauction)).
 - **Vaults and groups:** `registerVault`, `registerAssetGroup`, the group and
   vault pairs, `addVaultToGroup` and `addTokenToGroup`.
 - **Minting:** `registerPrivateMintVerifier`, `setVaultMintable` and
@@ -616,11 +626,13 @@ Both read the config's `owner` object:
   config that leaves one out, so a fee of 0 is written as `"0"`. Init refuses
   one at or above 10^36 before it sends anything.
 - **`governance`** is optional. Left empty, the deployer keeps every role, as
-  the local stacks do. Set to an account (a Safe or a `TimelockController`),
+  the local stacks do. Set to a contract (a Safe or a `TimelockController`),
   init ends by granting it `DEFAULT_OWNER_ROLE` and `DEFAULT_ADMIN_ROLE` on
   `EnygmaDvp` and then on the Verifier, checks that it holds them, renounces
   the deployer's (the admin role last), and checks that the deployer holds
-  neither.
+  neither. Roles handed to a mistyped address would be lost for good, so
+  init refuses, before it sends anything, an address with no code and a
+  mixed-case one that fails its EIP-55 checksum.
 
 **The Verifier is frozen before the vaults are registered.** The vaults take
 the Verifier for good at registration, so init first checks every slot's key
@@ -632,25 +644,33 @@ after which `addVerificationKey`, `initializeVerifier` and `freeze` revert
 keyHash)`) and the freeze (`KeysFrozen(keyCount)`). So the Payment
 deployment's vaults verify against slots 0 to 4 for good. Slot 23, where
 `Erc20CoinVault` looks for the DvpInitiator key, stays empty: every DvP leg
-against these vaults reverts "Verifier: VK not registered", so no DvP entry
-point can settle against them. `EnygmaDvp` keeps the Verifier's owner role,
-which a frozen Verifier leaves nothing to do: `registerNewVerificationKey`
-reverts. The main deployment's `scripts/cmd/init` does not freeze its
-Verifier.
+against these vaults reverts "Verifier: VK not registered". No DvP entry
+point takes such a leg, whatever groups, pairs and relayers the owner
+registers, as each checks a leg with its own vault: `submitPartialSettlement`,
+`lockReceiptNullifiers`, and `swap` and `exchange` with their `*OnGroupPair`
+forms (`test/hardhat/VerifierFreeze.test.js` tries the first four).
+`EnygmaDvp` keeps the Verifier's owner role, which a frozen Verifier leaves
+nothing to do: `registerNewVerificationKey` reverts. The main deployment's
+`scripts/cmd/init` does not freeze its Verifier.
 
 **Init can be run again.** Each step reads the chain first and sends nothing
 when its change is already made, so a run that stopped part-way (a failed
-send, or a send the node took although init saw an error) is finished by the
-next. For the keys, which only ever get appended, init reads the key count,
-checks that each registered slot holds the key it would register there, and
-registers only the rest. It refuses a Verifier holding any other key, more
-keys than it registers, or fewer keys and frozen: the fix is a new Verifier,
-before the vaults are registered. It also refuses a Verifier on another
-Groth16 backend, or frozen with none, and another vault under a vault id it
-registers. A run after the deployer renounced its
-`EnygmaDvp` owner role only finishes the handover, which comes after every
-other step. `registerPrivateMintVerifier` is sent on every run, as `EnygmaDvp`
-has no getter for it: it sets the same address again.
+send, or a send the node took although init saw an error) is finished by a
+later run, once the node has mined or dropped what the stopped run sent.
+Until then init refuses to start: it reads the chain to decide what to send,
+so it would send a step still waiting to be mined a second time, and a key
+sent twice takes two slots. For the keys, which only ever get appended, init
+reads the key count, checks that each registered slot holds the key it would
+register there, and registers only the rest. It refuses a Verifier holding
+any other key, more keys than it registers, or fewer keys and frozen: the fix
+is a new Verifier, before the vaults are registered. It also refuses a
+Verifier on another Groth16 backend, or frozen with none, an `EnygmaDvp`
+already pointed at another verifier, and another vault under a vault id it
+registers. Each of these refusals comes before init registers a vault. A run
+after the deployer renounced its `EnygmaDvp` owner role only finishes the
+handover, which comes after every other step. `registerPrivateMintVerifier`
+is sent on every run, as `EnygmaDvp` has no getter for it: it sets the same
+address again.
 
 ### Fee parameters
 

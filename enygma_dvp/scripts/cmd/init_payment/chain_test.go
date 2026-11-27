@@ -25,7 +25,8 @@ import (
 )
 
 // The config's deployer key (projectRoot's), and the governance account the
-// handover tests hand the roles to.
+// handover tests hand the roles to: a contract, as init requires, whose one
+// byte of code does nothing.
 const testDeployerKey = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 
 var testGovernance = common.HexToAddress("0x6000000000000000000000000000000000000006")
@@ -33,9 +34,15 @@ var testGovernance = common.HexToAddress("0x600000000000000000000000000000000000
 // The addresses init only stores: nothing calls them during init.
 var (
 	testG16Verifier = common.HexToAddress("0x1000000000000000000000000000000000000001")
-	testPrivateMint = common.HexToAddress("0x2000000000000000000000000000000000000002")
 	testToken       = common.HexToAddress("0x3000000000000000000000000000000000000003")
 	testUsdrToken   = common.HexToAddress("0x4000000000000000000000000000000000000004")
+)
+
+// The refusal tests' addresses: one set where init expects its own backend
+// or verifier, and an account with no code.
+var (
+	testOtherContract = common.HexToAddress("0x5000000000000000000000000000000000000005")
+	testNoCode        = common.HexToAddress("0x7000000000000000000000000000000000000007")
 )
 
 // shippedArtifact reads the shipped artifact of contract.
@@ -59,19 +66,32 @@ func shippedArtifact(t *testing.T, contract string) (raw []byte, parsed abi.ABI,
 	return raw, parsed, a.Bytecode, a.LinkReferences
 }
 
+// stopHow is how the send a simChain stops at fails.
+type stopHow int
+
+const (
+	stopBeforeSending stopHow = iota // the node never gets the transaction
+	stopUnmined                      // the node holds it, not yet mined
+	stopMined                        // the node took and mined it
+)
+
+func (h stopHow) String() string {
+	return [...]string{"not sent", "sent, not mined", "mined"}[h]
+}
+
 // simChain is a simulated chain that mines each transaction as it is sent,
 // as init expects of a node. With stopAt >= 0, the send that many sends
-// later fails, as if init had died there: first mined if stopMined, so init
-// fails although the chain took the transaction. answer, if set, answers in
-// the chain's place the view calls it returns ok for.
+// later fails, as if init had died there, after the node took the
+// transaction as stopHow says. answer, if set, answers in the chain's place
+// the view calls it returns ok for.
 type simChain struct {
 	simulated.Client
-	backend   *simulated.Backend
-	stopAt    int
-	stopMined bool
-	sent      []string               // the method each sent transaction calls
-	methods   map[[4]byte]abi.Method // the deployed contracts' methods
-	answer    func(method string, args []interface{}) (results []interface{}, ok bool)
+	backend *simulated.Backend
+	stopAt  int
+	stopHow stopHow
+	sent    []string               // the method each sent transaction calls
+	methods map[[4]byte]abi.Method // the deployed contracts' methods
+	answer  func(method string, args []interface{}) (results []interface{}, ok bool)
 }
 
 func (c *simChain) CallContract(ctx context.Context, msg ethereum.CallMsg, block *big.Int) ([]byte, error) {
@@ -93,11 +113,14 @@ func (c *simChain) CallContract(ctx context.Context, msg ethereum.CallMsg, block
 func (c *simChain) SendTransaction(ctx context.Context, tx *types.Transaction) error {
 	if c.stopAt == 0 {
 		c.stopAt = -1
-		if !c.stopMined {
+		if c.stopHow == stopBeforeSending {
 			return errors.New("init stopped before sending")
 		}
 		if err := c.Client.SendTransaction(ctx, tx); err != nil {
 			return err
+		}
+		if c.stopHow == stopUnmined {
+			return errors.New("init stopped after sending, before the node mined it")
 		}
 		c.backend.Commit()
 		return errors.New("init stopped after sending")
@@ -122,17 +145,18 @@ func (c *simChain) Close() {}
 // testDeployment is a Payment deployment on a simulated chain, with a
 // project root init runs from.
 type testDeployment struct {
-	chain                            *simChain
-	dvp, verifier, vault0, vaultUsdr common.Address
-	dvpABI, verifierABI              abi.ABI
-	deployer                         common.Address
-	root                             string
+	chain                                         *simChain
+	dvp, verifier, privateMint, vault0, vaultUsdr common.Address
+	dvpABI, verifierABI                           abi.ABI
+	deployer                                      common.Address
+	root                                          string
 }
 
-// deployForInit deploys EnygmaDvp, the Verifier, the Poseidon contracts and
-// both vaults as cmd/deploy_payment does, and writes projectRoot's project
-// root, with owner as its config's "owner" object, the committed config's
-// tree depth, and the deployed addresses as its receipts.
+// deployForInit deploys EnygmaDvp, the Verifier, the PrivateMintVerifier,
+// the Poseidon contracts and both vaults as cmd/deploy_payment does, and
+// writes projectRoot's project root, with owner as its config's "owner"
+// object, the committed config's tree depth, and the deployed addresses as
+// its receipts.
 func deployForInit(t *testing.T, owner map[string]any) *testDeployment {
 	t.Helper()
 	key, err := crypto.HexToECDSA(testDeployerKey)
@@ -140,8 +164,10 @@ func deployForInit(t *testing.T, owner map[string]any) *testDeployment {
 		t.Fatal(err)
 	}
 	d := &testDeployment{deployer: crypto.PubkeyToAddress(key.PublicKey)}
-	backend := simulated.NewBackend(types.GenesisAlloc{d.deployer: {Balance: new(big.Int).Lsh(big.NewInt(1), 100)}},
-		simulated.WithBlockGasLimit(100_000_000))
+	backend := simulated.NewBackend(types.GenesisAlloc{
+		d.deployer:     {Balance: new(big.Int).Lsh(big.NewInt(1), 100)},
+		testGovernance: {Code: []byte{0x00}, Balance: new(big.Int)},
+	}, simulated.WithBlockGasLimit(100_000_000))
 	t.Cleanup(func() {
 		if err := backend.Close(); err != nil {
 			t.Errorf("close the simulated chain: %v", err)
@@ -180,6 +206,7 @@ func deployForInit(t *testing.T, owner map[string]any) *testDeployment {
 	wrapper, _ := deploy("PoseidonWrapper", map[string]common.Address{"PoseidonT3": t3, "PoseidonT5": t5})
 	d.verifier, d.verifierABI = deploy("Verifier", nil)
 	d.dvp, d.dvpABI = deploy("EnygmaDvp", nil, wrapper, testG16Verifier)
+	d.privateMint, _ = deploy("PrivateMintVerifier", nil)
 	d.vault0, _ = deploy("Erc20CoinVault", nil, d.dvp)
 	d.vaultUsdr, _ = deploy("Erc20CoinVault", nil, d.dvp)
 	d.chain.sent = nil
@@ -189,7 +216,7 @@ func deployForInit(t *testing.T, owner map[string]any) *testDeployment {
 		"EnygmaDvp":           map[string]string{"contractAddress": d.dvp.Hex()},
 		"Verifier":            map[string]string{"contractAddress": d.verifier.Hex()},
 		"G16Verifier":         map[string]string{"contractAddress": testG16Verifier.Hex()},
-		"PrivateMintVerifier": map[string]string{"contractAddress": testPrivateMint.Hex()},
+		"PrivateMintVerifier": map[string]string{"contractAddress": d.privateMint.Hex()},
 		"Erc20CoinVault":      map[string]string{"contractAddress": d.vault0.Hex()},
 		"ERC20":               map[string]string{"contractAddress": testToken.Hex()},
 		"UsdrCoinVault":       map[string]string{"contractAddress": d.vaultUsdr.Hex()},
@@ -249,6 +276,30 @@ func (d *testDeployment) view(t *testing.T, contractABI abi.ABI, addr common.Add
 		t.Fatalf("%s: %v", method, err)
 	}
 	return out[0]
+}
+
+// vaults returns the vaults d's EnygmaDvp holds as vault ids 0 and 1, the
+// two init registers.
+func (d *testDeployment) vaults(t *testing.T) [2]common.Address {
+	t.Helper()
+	var v [2]common.Address
+	for id := range v {
+		v[id] = d.view(t, d.dvpABI, d.dvp, "vaultById", big.NewInt(int64(id))).(common.Address)
+	}
+	return v
+}
+
+// checkNoVaultBeforeTheFreeze fails when d has a vault registered while its
+// Verifier is not frozen: a vault takes the Verifier for good, so init
+// freezes the Verifier's keys first.
+func (d *testDeployment) checkNoVaultBeforeTheFreeze(t *testing.T) {
+	t.Helper()
+	if d.view(t, d.verifierABI, d.verifier, "frozen") == true {
+		return
+	}
+	if v := d.vaults(t); v != ([2]common.Address{}) {
+		t.Fatalf("vault ids 0 and 1 are %v while the Verifier is not frozen", v)
+	}
 }
 
 // checkInitialized fails unless d is initialized as init leaves a
@@ -361,7 +412,11 @@ func fees(relayer, usdr string) map[string]any {
 }
 
 func withGovernance(owner map[string]any) map[string]any {
-	owner["governance"] = testGovernance.Hex()
+	return withGovernanceAt(testGovernance, owner)
+}
+
+func withGovernanceAt(governance common.Address, owner map[string]any) map[string]any {
+	owner["governance"] = governance.Hex()
 	return owner
 }
 
@@ -410,8 +465,11 @@ func TestInitRunAgainSendsOnlyWhatItCannotRead(t *testing.T) {
 	}
 }
 
-// A run that stops at any transaction, sent or not, is finished by the next
-// run: every key in its slot once, each vault once, the handover complete.
+// A run that stops at any transaction is finished by a later run: every key
+// in its slot once, each vault once, the handover complete. A stopped run
+// has registered no vault on a Verifier it has not frozen. While the node
+// holds the stopped run's transaction unmined, the next run refuses to start
+// and sends nothing; once the node mines it, a run finishes.
 func TestInitCarriesOnAfterARunThatStopped(t *testing.T) {
 	d := deployForInit(t, withGovernance(fees("7", "3")))
 	if err := initializePayment(); err != nil {
@@ -419,12 +477,23 @@ func TestInitCarriesOnAfterARunThatStopped(t *testing.T) {
 	}
 	clean := d.chain.sent
 	for stop := range clean {
-		for _, mined := range []bool{false, true} {
-			t.Run(fmt.Sprintf("stopped at %d %s, mined %v", stop+1, clean[stop], mined), func(t *testing.T) {
+		for _, how := range []stopHow{stopBeforeSending, stopUnmined, stopMined} {
+			t.Run(fmt.Sprintf("stopped at %d %s, %s", stop+1, clean[stop], how), func(t *testing.T) {
 				d := deployForInit(t, withGovernance(fees("7", "3")))
-				d.chain.stopAt, d.chain.stopMined = stop, mined
+				d.chain.stopAt, d.chain.stopHow = stop, how
 				if err := initializePayment(); err == nil || !strings.Contains(err.Error(), "init stopped") {
 					t.Fatalf("first initializePayment = %v, want it stopped", err)
+				}
+				d.checkNoVaultBeforeTheFreeze(t)
+				if how == stopUnmined {
+					d.chain.sent = nil
+					if err := initializePayment(); err == nil || !strings.Contains(err.Error(), "that it has not mined") {
+						t.Fatalf("initializePayment with a transaction unmined = %v, want a refusal", err)
+					}
+					if len(d.chain.sent) != 0 {
+						t.Fatalf("init sent %v with a transaction unmined", d.chain.sent)
+					}
+					d.chain.backend.Commit()
 				}
 				if err := initializePayment(); err != nil {
 					t.Fatalf("second initializePayment = %v", err)
@@ -449,6 +518,10 @@ func TestInitRefusesOwnerSettingsBeforeSendingAnything(t *testing.T) {
 		"governance not hex":   {map[string]any{"relayer-fixed-fee": "0", "usdr-fixed-fee": "0", "governance": "safe.eth"}, `owner.governance "safe.eth" is not an address`},
 		"governance zero":      {map[string]any{"relayer-fixed-fee": "0", "usdr-fixed-fee": "0", "governance": common.Address{}.Hex()}, "owner.governance is the zero address"},
 		"governance, deployer": {map[string]any{"relayer-fixed-fee": "0", "usdr-fixed-fee": "0", "governance": deployer}, "is the deployer's own address"},
+		// EIP-55's own example, 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed,
+		// with its second letter's case changed.
+		"governance mistyped": {map[string]any{"relayer-fixed-fee": "0", "usdr-fixed-fee": "0", "governance": "0x5AAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"}, `owner.governance "0x5AAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" fails its EIP-55 checksum`},
+		"governance no code":  {withGovernanceAt(testNoCode, fees("0", "0")), "owner.governance " + testNoCode.Hex() + " has no code"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := deployForInit(t, tc.owner)
@@ -475,7 +548,9 @@ func TestInitSetsTheLargestFixedFee(t *testing.T) {
 	}
 }
 
-// A deployment that init cannot finish is refused before init sends to it.
+// A deployment that init cannot finish is refused before init registers a
+// vault, the step that binds a vault to the Verifier for good. Init may
+// have sent earlier steps by then.
 func TestInitRefusesADeploymentItCannotFinish(t *testing.T) {
 	for name, tc := range map[string]struct {
 		setUp func(t *testing.T, d *testDeployment)
@@ -498,9 +573,14 @@ func TestInitRefusesADeploymentItCannotFinish(t *testing.T) {
 			d.send(t, d.verifierABI, d.verifier, "freeze")
 		}, func(*testDeployment) string { return "the Verifier is frozen with no Groth16 backend" }},
 		"a Verifier on another backend": {func(t *testing.T, d *testDeployment) {
-			d.send(t, d.verifierABI, d.verifier, "initializeVerifier", testPrivateMint)
+			d.send(t, d.verifierABI, d.verifier, "initializeVerifier", testOtherContract)
 		}, func(*testDeployment) string {
-			return "the Verifier already uses the Groth16 backend " + testPrivateMint.Hex()
+			return "the Verifier already uses the Groth16 backend " + testOtherContract.Hex()
+		}},
+		"EnygmaDvp on another verifier": {func(t *testing.T, d *testDeployment) {
+			d.send(t, d.dvpABI, d.dvp, "initializeDvp", testOtherContract)
+		}, func(d *testDeployment) string {
+			return fmt.Sprintf("EnygmaDvp already points at the verifier %s, not the deployment's %s", testOtherContract.Hex(), d.verifier.Hex())
 		}},
 		"another vault as vault 0": {func(t *testing.T, d *testDeployment) {
 			d.send(t, d.dvpABI, d.dvp, "initializeDvp", d.verifier)
@@ -512,9 +592,13 @@ func TestInitRefusesADeploymentItCannotFinish(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d := deployForInit(t, fees("7", "3"))
 			tc.setUp(t, d)
+			before := d.vaults(t)
 			err := initializePayment()
 			if want := tc.want(d); err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("initializePayment = %v, want a refusal containing %q", err, want)
+			}
+			if after := d.vaults(t); after != before {
+				t.Fatalf("init registered a vault before refusing: vault ids 0 and 1 went from %v to %v", before, after)
 			}
 		})
 	}
@@ -554,7 +638,8 @@ func TestInitChecksTheHandover(t *testing.T) {
 
 // Before the vaults, init checks the Verifier's own record of its keys too:
 // a Verifier that reports another count or another key hash than the keys
-// its storage holds stops init.
+// its storage holds stops init, before it freezes the Verifier or registers
+// a vault.
 func TestInitChecksTheVerifiersRecordOfItsKeys(t *testing.T) {
 	for name, tc := range map[string]struct {
 		method  string
@@ -575,6 +660,9 @@ func TestInitChecksTheVerifiersRecordOfItsKeys(t *testing.T) {
 			}
 			if frozen := d.view(t, d.verifierABI, d.verifier, "frozen"); frozen != false {
 				t.Fatalf("init froze the Verifier after the refusal")
+			}
+			if v := d.vaults(t); v != ([2]common.Address{}) {
+				t.Fatalf("init registered vault ids 0 and 1 as %v before the refusal", v)
 			}
 		})
 	}

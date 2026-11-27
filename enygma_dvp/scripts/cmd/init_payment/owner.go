@@ -2,12 +2,14 @@ package main
 
 // Init's owner settings, and the steps that let a second run of init carry
 // on where an earlier one stopped: each reads the chain first, and sends
-// nothing when its change is already made.
+// nothing when its change is already made. A run starts only when no
+// transaction of the deployer's waits to be mined.
 
 import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"enygma_vkslots/vkslots"
 
@@ -19,7 +21,7 @@ import (
 
 // initPaymentOwnerConfig is the config's "owner" object. The two fixed fees
 // are required, in the token's base units ("0" for none): init sets them.
-// governance is optional: an account (a Safe, or a TimelockController) that
+// governance is optional: a contract (a Safe, or a TimelockController) that
 // init hands EnygmaDvp's and the Verifier's roles to at the end, renouncing
 // the deployer's. Left empty, the deployer keeps them.
 type initPaymentOwnerConfig struct {
@@ -59,6 +61,11 @@ func (c initPaymentOwnerConfig) settings(deployer common.Address) (paymentOwnerS
 		return s, fmt.Errorf("owner.governance %q is not an address", c.Governance)
 	}
 	gov := common.HexToAddress(c.Governance)
+	// A mixed-case address carries an EIP-55 checksum: one that fails it is
+	// mistyped, and the roles handed to it would be lost for good.
+	if digits := strings.TrimPrefix(strings.TrimPrefix(c.Governance, "0x"), "0X"); digits != strings.ToLower(digits) && digits != strings.ToUpper(digits) && digits != gov.Hex()[2:] {
+		return s, fmt.Errorf("owner.governance %q fails its EIP-55 checksum: copy the address again from its source", c.Governance)
+	}
 	if gov == (common.Address{}) {
 		return s, fmt.Errorf("owner.governance is the zero address: leave it empty to keep the roles with the deployer")
 	}
@@ -91,7 +98,42 @@ type paymentChain interface {
 	bind.ContractBackend
 	bind.DeployBackend
 	StorageAt(ctx context.Context, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error)
+	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
 	Close()
+}
+
+// requireNothingPaymentPending refuses to go on while the node holds a
+// transaction from account that it has not mined. Init decides each step
+// from what the chain shows, so a key an earlier run sent, still waiting to
+// be mined, would be sent again and take the next slot too.
+func requireNothingPaymentPending(client paymentChain, account common.Address) error {
+	pending, err := client.PendingNonceAt(context.Background(), account)
+	if err != nil {
+		return fmt.Errorf("read the deployer's pending nonce: %w", err)
+	}
+	mined, err := client.NonceAt(context.Background(), account, nil)
+	if err != nil {
+		return fmt.Errorf("read the deployer's nonce: %w", err)
+	}
+	if pending > mined {
+		return fmt.Errorf("the node holds %d transaction(s) from the deployer %s that it has not mined: run init again once it has mined or dropped them", pending-mined, account.Hex())
+	}
+	return nil
+}
+
+// requirePaymentGovernanceCode refuses a governance account with no code.
+// The handover renounces the deployer's roles, so roles handed to a mistyped
+// address would be lost for good; a Safe and a TimelockController are
+// contracts.
+func requirePaymentGovernanceCode(client paymentChain, governance common.Address) error {
+	code, err := client.CodeAt(context.Background(), governance, nil)
+	if err != nil {
+		return fmt.Errorf("read owner.governance's code: %w", err)
+	}
+	if len(code) == 0 {
+		return fmt.Errorf("owner.governance %s has no code: init hands the roles only to a contract, such as a Safe or a TimelockController", governance.Hex())
+	}
+	return nil
 }
 
 // The roles init grants and renounces: OpenZeppelin's DEFAULT_ADMIN_ROLE,
@@ -171,18 +213,23 @@ func ensurePaymentBackend(client paymentChain, auth *bind.TransactOpts, verifier
 }
 
 // ensurePaymentDvpVerifier points EnygmaDvp at verifier, unless it already
-// points there.
+// points there. An EnygmaDvp pointed at another verifier is refused: init
+// sets the address only when none is set, as it does a backend or a vault.
 func ensurePaymentDvpVerifier(client paymentChain, auth *bind.TransactOpts, dvpABI abi.ABI, dvp, verifier common.Address) error {
 	current, err := viewPayment[common.Address](client, dvpABI, dvp, "verifierContractAddress")
 	if err != nil {
 		return err
 	}
-	if current == verifier {
+	switch current {
+	case verifier:
 		paymentStepDone()
 		return nil
+	case common.Address{}:
+		_, err = callPaymentInitMethod(client, auth, dvpABI, dvp, "initializeDvp", verifier)
+		return err
+	default:
+		return fmt.Errorf("EnygmaDvp already points at the verifier %s, not the deployment's %s", current.Hex(), verifier.Hex())
 	}
-	_, err = callPaymentInitMethod(client, auth, dvpABI, dvp, "initializeDvp", verifier)
-	return err
 }
 
 // paymentKeysToRegister returns held, the slot of the first key init still

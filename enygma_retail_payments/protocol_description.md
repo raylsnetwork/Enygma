@@ -18,7 +18,7 @@ flowchart LR
 
 Payments settle in enygma_dvp's `EnygmaDvp` and its coin vaults. Paying, depositing and withdrawing need no role. The account holding `EnygmaDvp`'s `DEFAULT_OWNER_ROLE` is trusted with its settings: it registers and deregisters relayers, registers vaults and the private-mint verifier, flags vaults open to `privateMint` (which adds notes no deposit backs), and sets the fixed fees. The Verifier's owner registers the verification keys.
 
-- **The role can move.** The deployer holds it, and `DEFAULT_ADMIN_ROLE`, which grants and revokes it. `scripts/cmd/init` hands both, and the Verifier's two roles, to the config's `owner.governance` when it names an account, such as a Safe or an OpenZeppelin `TimelockController`, and renounces the deployer's.
+- **The role can move.** The deployer holds it, and `DEFAULT_ADMIN_ROLE`, which grants and revokes it. `scripts/cmd/init` hands both, and the Verifier's two roles, to the config's `owner.governance` when it names a contract, such as a Safe or an OpenZeppelin `TimelockController`, and renounces the deployer's. It refuses an address with no code, or a mixed-case one that fails its EIP-55 checksum, before it sends anything.
 - **No delay of its own.** Each owner call takes effect in its own transaction. With a `TimelockController` holding the roles, every owner call is scheduled in public and runs only after the timelock's delay.
 - **Every change is logged.** Each owner call emits its own event or `OwnerCall`, with the call's calldata; `registerPrivateMintVerifier` emits none.
 - **The keys are frozen.** Init freezes the Verifier once its keys are in, before it registers the vaults, so nobody, the owner included, can add a key afterwards.

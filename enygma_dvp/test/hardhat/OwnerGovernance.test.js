@@ -2,8 +2,9 @@
 // which administers DEFAULT_OWNER_ROLE, so the deployer can hand both to a
 // Safe or a TimelockController and renounce its own. The coin vaults' roles
 // keep no admin, so a vault stays bound to the EnygmaDvp that registered it.
-// Every owner call with no event of its own emits OwnerCall, and the two
-// fixed fees refuse an amount no proof can carry.
+// Every owner call with no event of its own but registerPrivateMintVerifier
+// emits OwnerCall, and the two fixed fees refuse an amount no proof can
+// carry.
 const { expect } = require("chai");
 const { ethers, network } = require("hardhat");
 const { expectRevert } = require("./expectRevert.js");

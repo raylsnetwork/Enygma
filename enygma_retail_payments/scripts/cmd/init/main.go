@@ -4,7 +4,7 @@
 // the config's "owner" object, and hands the owner roles to owner.governance
 // if the config names one (owner.go). Each step checks the chain first and
 // skips a change already made, so a run that stopped part-way can be run
-// again.
+// again, once the node has mined or dropped every transaction it sent.
 package main
 
 import (
@@ -188,8 +188,15 @@ func initializePayment() error {
 	fmt.Printf("EnygmaDvp:  %s\n", enygmaDvpAddress.Hex())
 	fmt.Printf("Verifier:   %s\n", verifierAddress.Hex())
 
+	if err := requireNothingPending(client, auth.From); err != nil {
+		return fmt.Errorf("refusing to start: %w", err)
+	}
+
 	roleHolders := []roleHolder{{"EnygmaDvp", enygmaDvpABI, enygmaDvpAddress}, {"Verifier", verifierABI, verifierAddress}}
 	if owner.governance != nil {
+		if err := requireGovernanceCode(client, *owner.governance); err != nil {
+			return fmt.Errorf("refusing the config's owner settings: %w", err)
+		}
 		// The deployer renounces EnygmaDvp's owner role only in the handover,
 		// which comes after every other step.
 		owns, err := hasRole(client, enygmaDvpABI, enygmaDvpAddress, ownerRole, auth.From)

@@ -3,7 +3,8 @@
 // that enygma_vkslots' manifests pin. freeze closes the table for good. The
 // Payment deployment freezes its Verifier at slots 0 to 4, so slot 23, the
 // DvpInitiator key Erc20CoinVault checks a DvP leg against, stays empty, and
-// a vault registered against that Verifier never accepts a DvP leg.
+// a vault registered against that Verifier never accepts a DvP leg, on any
+// DvP entry point.
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { expectRevert } = require("./expectRevert.js");
@@ -82,19 +83,23 @@ describe("Verifier key table", function () {
 });
 
 describe("Payment deployment's frozen Verifier", function () {
-  let deployer, dvp, verifier, vault;
+  let deployer, dvp, verifier, vault, usdrVault;
 
   before(async function () {
     [deployer] = await ethers.getSigners();
     ({ dvp, verifier } = await deployDvpAndVerifier(deployer));
     // As init_payment does: the five Payment-family keys through EnygmaDvp
-    // (slots 0 to 4; the shapes do not matter here), freeze, then the vault.
+    // (slots 0 to 4; the shapes do not matter here), freeze, then the two
+    // vaults, vault ids 0 and 1.
     for (const [seed, nPublic] of [[1, 8], [2, 11], [3, 9], [4, 10], [5, 10]]) {
       await (await dvp.registerNewVerificationKey(testKey(seed, nPublic))).wait();
     }
     await (await verifier.freeze()).wait();
-    vault = await (await ethers.getContractFactory("Erc20CoinVault")).deploy(dvp.address);
+    const Erc20CoinVault = await ethers.getContractFactory("Erc20CoinVault");
+    vault = await Erc20CoinVault.deploy(dvp.address);
+    usdrVault = await Erc20CoinVault.deploy(dvp.address);
     await (await dvp.registerVault(vault.address, deployer.address, 1, 8)).wait();
+    await (await dvp.registerVault(usdrVault.address, deployer.address, 1, 8)).wait();
   });
 
   it("refuses a sixth key, through EnygmaDvp or directly", async function () {
@@ -125,6 +130,56 @@ describe("Payment deployment's frozen Verifier", function () {
         error = e;
       }
       expect(error && error.message, "a DvP leg reached a key at slot 23").to.include("Verifier: VK not registered");
+    }
+  });
+
+  // Every route a DvP leg takes into these vaults checks it against slot 23:
+  // anyone opens a swap with an initiator leg (submitPartialSettlement) once
+  // vault 0 is in an asset group, and a registered relayer locks a leg's
+  // note (lockReceiptNullifiers) or settles a pair of legs (swap, exchange)
+  // on registered group pairs. The owner sets all of that up, after trying
+  // to fill slots 5 to 23 (the spec above checks each refusal); each route
+  // still stops at the vault's check of the leg. Runs last: it registers
+  // groups and a relayer.
+  it("refuses a forged DvP leg on every DvP entry point, whatever the owner sets up", async function () {
+    const [, relayer, stranger] = await ethers.getSigners();
+    for (let slot = 5; slot <= DVP_INITIATOR_SLOT; slot++) {
+      try {
+        await (await dvp.registerNewVerificationKey(testKey(100 + slot, 8))).wait();
+      } catch (e) {
+        // VerifierFrozen, which the spec above checks.
+      }
+    }
+    const AssetGroup = await ethers.getContractFactory("AssetGroup");
+    const fungible = await AssetGroup.deploy(dvp.address);
+    const nonFungible = await AssetGroup.deploy(dvp.address);
+    await (await dvp.registerAssetGroup(fungible.address, "fungible", true, 8)).wait();
+    await (await dvp.registerAssetGroup(nonFungible.address, "non-fungible", false, 8)).wait();
+    await (await dvp.addVaultToGroup(0, 0)).wait();
+    await (await dvp.registerSwapGroupPair(0, 1)).wait();
+    await (await dvp.registerExchangeGroupPair(0, 0)).wait();
+    await (await dvp.registerRelayer(relayer.address)).wait();
+
+    // An initiator leg into vault 0 that passes every check before the
+    // proof, its message neither a payment's (0) nor a withdrawal's (1), and
+    // a destination leg into vault 1 that pairs with it: each leg's message
+    // is the other's commitment, and each names the other's vault.
+    const leg = { proof: NO_PROOF, statement: [11, 0, await vault.merkleRoot(), 12, 13, 14, 15, usdrVault.address], numberOfInputs: 1, numberOfOutputs: 1 };
+    const counterLeg = { proof: NO_PROOF, statement: [13, 0, await usdrVault.merkleRoot(), 16, 11, vault.address], numberOfInputs: 1, numberOfOutputs: 1 };
+    const deadline = (await ethers.provider.getBlock("latest")).timestamp + 16 * 60;
+    for (const [route, call] of [
+      ["submitPartialSettlement", () => dvp.connect(stranger).submitPartialSettlement(leg, 0, 0, deadline)],
+      ["lockReceiptNullifiers", () => dvp.connect(relayer).lockReceiptNullifiers(leg, 0)],
+      ["swap", () => dvp.connect(relayer).swap(leg, counterLeg, 0, 1)],
+      ["exchange", () => dvp.connect(relayer).exchange(leg, counterLeg, 0, 1)],
+    ]) {
+      let error;
+      try {
+        await (await call()).wait();
+      } catch (e) {
+        error = e;
+      }
+      expect(error && error.message, `${route} took a forged DvP leg`).to.include("Verifier: VK not registered");
     }
   });
 });

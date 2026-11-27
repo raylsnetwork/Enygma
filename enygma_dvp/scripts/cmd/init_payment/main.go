@@ -5,7 +5,8 @@
 // freshly deployed EnygmaDvp, sets the fixed fees from the config's "owner"
 // object, and hands the owner roles to owner.governance if the config names
 // one (owner.go). Each step checks the chain first and skips a change
-// already made, so a run that stopped part-way can be run again.
+// already made, so a run that stopped part-way can be run again, once the
+// node has mined or dropped every transaction it sent.
 //
 // Deliberately does not share cmd/init's helpers (own package main, own
 // copies of the VK-parsing types/functions) — same convention as
@@ -196,8 +197,15 @@ func initializePayment() error {
 	fmt.Printf("EnygmaDvp:  %s\n", enygmaDvpAddress.Hex())
 	fmt.Printf("Verifier:   %s\n", verifierAddress.Hex())
 
+	if err := requireNothingPaymentPending(client, auth.From); err != nil {
+		return fmt.Errorf("refusing to start: %w", err)
+	}
+
 	roleHolders := []paymentRoleHolder{{"EnygmaDvp", enygmaDvpABI, enygmaDvpAddress}, {"Verifier", verifierABI, verifierAddress}}
 	if owner.governance != nil {
+		if err := requirePaymentGovernanceCode(client, *owner.governance); err != nil {
+			return fmt.Errorf("refusing the config's owner settings: %w", err)
+		}
 		// The deployer renounces EnygmaDvp's owner role only in the handover,
 		// which comes after every other step.
 		owns, err := hasPaymentRole(client, enygmaDvpABI, enygmaDvpAddress, paymentOwnerRole, auth.From)
