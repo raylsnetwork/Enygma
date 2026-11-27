@@ -65,6 +65,10 @@ test('a change to enygma_dvp outside what the retail stack uses runs the DvP sui
   assert.deepStrictEqual(suites(['enygma_dvp/relayer/main.go']), ['dvp']);
 });
 
+test("a change to enygma_vkslots runs the DvP and retail suites, whose inits check their keys with it", () => {
+  assert.deepStrictEqual(suites(['enygma_vkslots/vkslots/vkslots.go']), ['dvp', 'retail']);
+});
+
 test('a change to enygma_payments runs the payments suite only', () => {
   assert.deepStrictEqual(suites(['enygma_payments/contracts/enygma/contracts/Enygma.sol']), ['payments']);
 });

@@ -37,6 +37,7 @@ updates:
       - "/enygma_retail_payments/shield_demo"
       - "/enygma_retail_payments/src"
       - "/enygma_retail_payments/test"
+      - "/enygma_vkslots"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

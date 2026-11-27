@@ -367,7 +367,7 @@ payments-test: ## Payments end-to-end suite (on make payments-stack); prints pas
 retail-setup: ## Retail one-shot setup (needs dvp-chain running; see script header)
 	cd enygma_retail_payments && bash setup.sh
 
-retail-keygen: ## Generate retail proving/verifying keys (slow; rerun after a retail circuit change, then setup.sh step 4/5 and make dvp-keygen), stamped with their circuit sources
+retail-keygen: ## Generate retail proving/verifying keys (slow; rerun after a retail circuit change, then setup.sh step 4/5, the vkHash entries of vk_slots.json and make dvp-keygen), stamped with their circuit sources
 	@# Keys and stamp are committed; make retail-keys-check fails on keys whose stamp is missing or another's.
 	$(call keygen_stamped,enygma_retail_payments/gnark_circuits,./cmd/keygen,go run ./cmd/keygen,scripts/keys/keys.src)
 

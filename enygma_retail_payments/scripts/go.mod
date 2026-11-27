@@ -5,6 +5,7 @@ go 1.26.11
 require github.com/ethereum/go-ethereum v1.17.10
 
 require (
+	enygma_vkslots v0.0.0
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect
@@ -36,3 +37,5 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
+
+replace enygma_vkslots => ../../enygma_vkslots
