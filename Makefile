@@ -172,6 +172,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/test_git.test.js >/dev/null || node --test scripts/test_git.test.js
 	@# test_stack.js's service-list reader yields only pids safe to signal; its liveness checks count a zombie as gone.
 	@node --test scripts/test_stack.test.js >/dev/null || node --test scripts/test_stack.test.js
+	@# hardhat-check expects tests in each project unless its compilation is the only check.
+	@node --test scripts/hardhat_check.test.js >/dev/null || node --test scripts/hardhat_check.test.js
 
 primer-from-disk: $(PAGE_DEPS) ## Run the Protocol primer's from-disk hand check in headless Chrome (OUT=<dir> for its step screenshots); needs Chrome, no stack
 	@node scripts/primer_from_disk.js $(OUT)
@@ -227,13 +229,17 @@ test-unit: ## go test ./... in every module (chain-dependent tests skip themselv
 # The Hardhat (npm) projects. CI's Go jobs never touch them, so a dependency
 # bump that breaks `hardhat compile` would otherwise go unnoticed (#110).
 HARDHAT_PROJECTS := enygma_dvp enygma_dvp_auctions enygma_payments/contracts/enygma
+# Payments' end-to-end tests live in Go, so this project only checks compilation here.
+HARDHAT_COMPILE_ONLY := enygma_payments/contracts/enygma
 
 hardhat-check: ## npm ci, hardhat compile and the JS tests in every Hardhat project; needs node 22
 	@command -v node >/dev/null || { echo "node not found (nvm use 22)"; exit 1; }
+	@unknown="$(filter-out $(HARDHAT_PROJECTS),$(HARDHAT_COMPILE_ONLY))"; \
+	  [ -z "$$unknown" ] || { echo "HARDHAT_COMPILE_ONLY names projects outside HARDHAT_PROJECTS: $$unknown" >&2; exit 1; }
 	@# A project with a placeholder Poseidon.sol writes the real artifacts back
 	@# from its compile task, and its PoseidonArtifacts.test.js checks that:
 	@# running regen_poseidon.js here would hide a compile that doesn't.
-	$(call each_in,$(HARDHAT_PROJECTS),npm ci --no-audit --no-fund && npx hardhat compile && npx hardhat test)
+	$(call each_in,$(HARDHAT_PROJECTS),npm ci --no-audit --no-fund && npx hardhat compile && bash "$(CURDIR)/scripts/hardhat_test.sh" "$$m" $(HARDHAT_COMPILE_ONLY))
 
 ci: check test-unit $(if $(MODULE),,hardhat-check) ## Everything CI runs
 
