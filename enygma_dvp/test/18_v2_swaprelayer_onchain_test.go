@@ -200,7 +200,7 @@ func buildSwapLegs(t *testing.T, client *ethclient.Client, owner *bind.TransactO
 		loadOnchainABI(t, "core/contracts/vaults/Erc721CoinVault.sol/Erc721CoinVault.json"), client, client, client)
 
 	gnark := core.NewGnarkClient("http://localhost:8081")
-	const depth = 8
+	const depth = layout.MerkleTreeDepth
 	amount, tokenId := big.NewInt(30), big.NewInt(0)
 	nftTokenId := big.NewInt(time.Now().UnixNano() % (1 << 32))
 	one := big.NewInt(1)

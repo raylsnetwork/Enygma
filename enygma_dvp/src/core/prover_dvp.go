@@ -143,6 +143,9 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 		}
 		merkleRoot = big.NewInt(0)
 	}
+	if len(pathElements) != merkleDepth {
+		return nil, fmt.Errorf("merkleProof has %d path elements, want merkleDepth %d", len(pathElements), merkleDepth)
+	}
 	// HIGH-1 fix: incorporate tree number to prevent cross-tree double-spend.
 	nullifier, err := GetNullifierWithTree(aliceKey.PrivateKey, stTreeNumber, pathIndices, merkleDepth)
 	if err != nil {
@@ -170,9 +173,9 @@ func (c *GnarkClient) ZkDvpInitiateSwap(
 	}
 	saltAField := SaltBToField(saltABytes)
 
-	// Convert path elements to [8]string for the dvpInit circuit (single-input, depth 8).
-	var pathElemsFixed [8]string
-	for j := 0; j < merkleDepth && j < 8; j++ {
+	// The dvpInit circuit's one input path, merkleDepth elements as strings.
+	pathElemsFixed := make([]string, merkleDepth)
+	for j := range pathElemsFixed {
 		pathElemsFixed[j] = pathElements[j].String()
 	}
 

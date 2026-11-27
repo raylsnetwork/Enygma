@@ -2,9 +2,11 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +112,29 @@ func TestDvPInitiatorRevertSaltIsReturnedAndDerivable(t *testing.T) {
 	}
 	if changeSalt.Cmp(wantSalt) == 0 {
 		t.Error("SwapRevertSalt equals WithdrawChangeSalt for the same nullifier")
+	}
+}
+
+// ZkDvpInitiateSwap refuses a Merkle proof with a path of another length
+// than merkleDepth, a tree of another depth's, rather than sending a short
+// path or indexing past its end.
+func TestZkDvpInitiateSwapRefusesAPathOfAnotherDepth(t *testing.T) {
+	c, reqs := dvpInitiatorServer(t)
+	a := newPaymentArgs(t) // its proof has 8 path elements
+	view, err := NewViewKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, depth := range []int{7, 9, 16} {
+		_, err := c.ZkDvpInitiateSwap(a.keys[0], big.NewInt(1), big.NewInt(100), big.NewInt(7), a.keys[0].PublicKey,
+			view.EncapsKey, big.NewInt(25), big.NewInt(1), depth, a.proofs[0], big.NewInt(0))
+		want := fmt.Sprintf("merkleProof has 8 path elements, want merkleDepth %d", depth)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("merkleDepth %d: err %v, want %q", depth, err, want)
+		}
+	}
+	if len(*reqs) != 0 {
+		t.Fatalf("%d proof requests sent for paths of the wrong length", len(*reqs))
 	}
 }
 

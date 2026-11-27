@@ -139,7 +139,7 @@
   ],
   "circom": {
     "meta-parameters": {
-      "tree-depth": 8,
+      "tree-depth": 16,
       "assetGroup-tree-depth": 8,
       "fungibleRange": 1000000000000000000000000000000000000
     },

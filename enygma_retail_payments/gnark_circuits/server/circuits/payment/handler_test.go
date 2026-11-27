@@ -63,7 +63,7 @@ func paymentCase(t *testing.T, salt0 int64) ht.Case {
 		ht.Commitment(t, pks[1], salts[1], values[1], in.TokenId),
 	}
 
-	var path [8]string
+	var path [templates.MerkleTreeDepth]string
 	copy(path[:], ht.Strings(in.Siblings...))
 	request := PaymentRequest{
 		StMessage:            "0",
@@ -76,7 +76,7 @@ func paymentCase(t *testing.T, salt0 int64) ht.Case {
 		WtPrivateKeysIn:      [1]string{in.Sk.String()},
 		WtValuesIn:           [1]string{in.Value.String()},
 		WtSaltsIn:            [1]string{in.Salt.String()},
-		WtPathElements:       [1][8]string{path},
+		WtPathElements:       [1][templates.MerkleTreeDepth]string{path},
 		WtPathIndices:        [1]string{"0"},
 		WtTokenId:            in.TokenId.String(),
 		WtSpendPublicKeysOut: [2]string(ht.Strings(pks...)),

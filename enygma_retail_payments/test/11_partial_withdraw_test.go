@@ -110,7 +110,7 @@ func postToRetailRelayer(t *testing.T, path string, body interface{}) (*relayPay
 	return &out, resp.StatusCode
 }
 
-const partialWithdrawDepth = 8
+const partialWithdrawDepth = layout.MerkleTreeDepth
 
 // pwEnv is the deployment a partial-withdraw test runs against.
 type pwEnv struct {

@@ -172,14 +172,16 @@ func GenerationVkPk(only map[string]bool) {
 	// 	TmAssetGroupMerkleTree:8,
 	// }
 
-	// covered by test/03_v2_dvp_test.go and test/04_v2_dvp_deadline_test.go
+	// covered by test/03_v2_dvp_test.go and test/04_v2_dvp_deadline_test.go.
+	// A DvP leg spends a note from the same vaults as the Payment-family
+	// circuits, so it is compiled at their tree depth.
 	dvp_initiator_config := templates.DvPInitiatorCircuitConfig{
-		TmMerkleTreeDepth: 8,
+		TmMerkleTreeDepth: templates.MerkleTreeDepth,
 	}
 
 	// covered by test/03_v2_dvp_test.go and test/04_v2_dvp_deadline_test.go
 	dvp_destination_config := templates.DvPDestinationCircuitConfig{
-		TmMerkleTreeDepth: 8,
+		TmMerkleTreeDepth: templates.MerkleTreeDepth,
 	}
 
 	// covered by test/01_v2_erc20_private_mint_test.go (TestV2Erc20OnChain_PrivateMint)

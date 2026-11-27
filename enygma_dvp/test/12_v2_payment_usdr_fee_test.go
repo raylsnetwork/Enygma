@@ -341,7 +341,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 
 	owner := hardhatAuth(t, client) // account[0] — deployer, holds DEFAULT_OWNER_ROLE
 
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	gnarkClient := core.NewGnarkClient(paymentGnarkURL)
 
@@ -427,9 +427,9 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			t.Fatalf("Erc20CommitmentV2 (fee): %v", err)
 		}
 
-		var pathElements [8]string
+		var pathElements [layout.MerkleTreeDepth]string
 		for j, e := range d.merkleProof.Elements {
-			if j >= 8 {
+			if j >= layout.MerkleTreeDepth {
 				break
 			}
 			pathElements[j] = e.String()
@@ -448,7 +448,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 			"wtValuesIn":           [1]string{d.depositAmt.String()},
 			"wtSaltsIn":            [1]string{d.saltBField.String()},
-			"wtPathElements":       [1][8]string{pathElements},
+			"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 			"wtPathIndices":        [1]string{d.merkleProof.Indices.String()},
 			"wtTokenId":            tokenId.String(),
 			"wtSpendPublicKeysOut": [3]string{bobSpend.PublicKey.String(), d.spend.PublicKey.String(), relayerFeePubKey.String()},
@@ -539,9 +539,9 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			t.Fatalf("Erc20CommitmentV2 (usdr change): %v", err)
 		}
 
-		var pathElements [8]string
+		var pathElements [layout.MerkleTreeDepth]string
 		for j, e := range d.merkleProof.Elements {
-			if j >= 8 {
+			if j >= layout.MerkleTreeDepth {
 				break
 			}
 			pathElements[j] = e.String()
@@ -563,7 +563,7 @@ func TestV2Payment_RelayerFeeAndUsdrFee(t *testing.T) {
 			"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 			"wtValuesIn":           [1]string{d.depositAmt.String()},
 			"wtSaltsIn":            [1]string{d.saltBField.String()},
-			"wtPathElements":       [1][8]string{pathElements},
+			"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 			"wtPathIndices":        [1]string{d.merkleProof.Indices.String()},
 			"wtSpendPublicKeysOut": [2]string{feeRecipientPk.String(), d.spend.PublicKey.String()},
 			"wtValuesOut":          [2]string{feeAmt.String(), changeAmt.String()},

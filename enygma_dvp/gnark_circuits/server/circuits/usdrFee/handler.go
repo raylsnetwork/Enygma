@@ -22,7 +22,7 @@ import (
 
 // NewHandler returns a gin.HandlerFunc for POST /proof/usdrFee.
 //
-// Circuit: 1 input / 2 outputs / Merkle depth 8.
+// Circuit: 1 input / 2 outputs / Merkle depth templates.MerkleTreeDepth.
 //
 // Conservation: Σ(valuesIn) == valOut[0] + valOut[1]  (nothing burned)
 // Fee binding:  valOut[0] == StFee

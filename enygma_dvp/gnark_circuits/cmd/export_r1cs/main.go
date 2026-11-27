@@ -31,9 +31,10 @@ import (
 	"enygma_dvp/gnark_circuits/templates"
 )
 
-// merkleDepth is the DvP circuits' Merkle tree depth, as cmd/keygen and the
-// dvpInit and dvpDestination prove handlers set it.
-const merkleDepth = 8
+// merkleDepth is the DvP circuits' Merkle tree depth: the vaults' depth,
+// templates.MerkleTreeDepth, at which cmd/keygen compiles them and the
+// dvpInit and dvpDestination prove handlers prove them.
+const merkleDepth = templates.MerkleTreeDepth
 
 // circuits are the circuits the server proves with keys of its own, by the
 // name their keys are saved under, at the configs cmd/keygen and the prove

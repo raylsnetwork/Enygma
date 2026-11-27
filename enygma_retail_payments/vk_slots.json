@@ -4,10 +4,10 @@
     "nPublic is the key's number of public inputs. vkHash is keccak256(abi.encode(vk)) of the key as an IEnygmaDvp.VerifyingKey: the keys in gnark_circuits/scripts/keys are checked in, so a new key (make retail-keygen) changes it here too."
   ],
   "slots": [
-    {"slot": 0, "circuit": "Payment", "nPublic": 8, "vkHash": "0xb2db46abeaa36d0dc36ea36f70ed029c7101aec181838f3b5174d2fd93e4d0dd"},
-    {"slot": 1, "circuit": "Payment2in", "nPublic": 11, "vkHash": "0xb6bf0c5fe356ebf68f725f47726238797d62fc712fdb5470d3dcc7f9cf8a467c"},
-    {"slot": 2, "circuit": "PaymentFee", "nPublic": 9, "vkHash": "0x4f6367ae6487554a46b6ca2a86bbb6d603e936f46f230d0905672a5487133e4e"},
-    {"slot": 3, "circuit": "PaymentRelayerFeePublic", "nPublic": 10, "vkHash": "0x2acb3d7f906931d340e1af2f63503bcc45ea5957d157c56650c4948afb4d26d7"},
-    {"slot": 4, "circuit": "UsdrFee", "nPublic": 10, "vkHash": "0xc7222c72bbe4d0c77c8f482ceb2a5d8115e031797ad05bfac40737f6980ae3e0"}
+    {"slot": 0, "circuit": "Payment", "nPublic": 8, "vkHash": "0xe41d6ed8f56443961b5e358c00e3789a0936a4c4c78588146635098cb6e35290"},
+    {"slot": 1, "circuit": "Payment2in", "nPublic": 11, "vkHash": "0x057ab47e1bfcbbcc1486d3db2997c670d2783ef316bc04ed1c6df4b4501722be"},
+    {"slot": 2, "circuit": "PaymentFee", "nPublic": 9, "vkHash": "0xdb73218f9e0aee840daccd2cb8978fcb8b4b51ea74fa7df5145551d714a1943c"},
+    {"slot": 3, "circuit": "PaymentRelayerFeePublic", "nPublic": 10, "vkHash": "0x3f15361c04987a9f9b46676450b07b2c757dd33ec35e09e96d944092ef136946"},
+    {"slot": 4, "circuit": "UsdrFee", "nPublic": 10, "vkHash": "0x37c13586668afc21117c43fddc433f32e8110dba3662d4affdd31ba1cb9b2b8d"}
   ]
 }

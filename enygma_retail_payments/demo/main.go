@@ -76,7 +76,7 @@ const (
 	depositAmt  = int64(40)
 	paymentAmt  = int64(30)
 	changeAmt   = int64(10)
-	merkleDepth = 8
+	merkleDepth = layout.MerkleTreeDepth
 )
 
 var (

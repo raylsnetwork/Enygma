@@ -39,18 +39,25 @@ func (c *chain) commitmentBatches(ctx context.Context, vaultAddr common.Address)
 	return out, nil
 }
 
-// vaultTree rebuilds a vault's Merkle trees from its Commitment events. The
-// vault inserts each transaction's commitments as one batch and starts a new
-// tree, numbered from 0, when that batch would fill the current one, so the
-// commitments are inserted a transaction at a time. sizes[i] is how many
-// leaves tree i holds: a spent note's crowd, the leaves its proof hides it
-// among.
+// vaultTree rebuilds a vault's Merkle trees from its Commitment events (see
+// treesOf).
 func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (tree *rpcore.MerkleTree, sizes []int, err error) {
 	batches, err := c.commitmentBatches(ctx, vaultAddr)
 	if err != nil {
 		return nil, nil, err
 	}
-	tree = rpcore.NewMerkleTree(merkleDepth)
+	tree, sizes = treesOf(merkleDepth, batches)
+	return tree, sizes, nil
+}
+
+// treesOf rebuilds a vault's Merkle trees, depth levels deep, from the
+// batches its transactions inserted. The vault inserts each transaction's
+// commitments as one batch and starts a new tree, numbered from 0, when
+// that batch would fill the current one, so the commitments are inserted a
+// transaction at a time. sizes[i] is how many leaves tree i holds: a spent
+// note's crowd, the leaves its proof hides it among.
+func treesOf(depth int, batches []batch) (tree *rpcore.MerkleTree, sizes []int) {
+	tree = rpcore.NewMerkleTree(depth)
 	sizes = []int{0}
 	for _, b := range batches {
 		tree.InsertLeaves(b.leaves)
@@ -59,21 +66,27 @@ func (c *chain) vaultTree(ctx context.Context, vaultAddr common.Address) (tree *
 		}
 		sizes[tree.TreeNumber()] = len(tree.GetLeaves())
 	}
-	return tree, sizes, nil
+	return tree, sizes
 }
-
-// emptyRoot is the root of a tree with no leaves.
-var emptyRoot = rpcore.NewMerkleTree(merkleDepth).Root()
 
 // leavesIn is the leavesIn hop detail of the leaves tx inserted into the
 // vault at vaultAddr (node ID vault), rebuilt from the vault's Commitment
-// events. owners names the actor owning each leaf, by commitment.
+// events (see leavesInOf).
 func (c *chain) leavesIn(ctx context.Context, vault string, vaultAddr common.Address, tx common.Hash, owners map[string]string) (HopDetail, error) {
 	batches, err := c.commitmentBatches(ctx, vaultAddr)
 	if err != nil {
 		return HopDetail{}, err
 	}
-	tree := rpcore.NewMerkleTree(merkleDepth)
+	return leavesInOf(merkleDepth, batches, vault, tx, owners)
+}
+
+// leavesInOf is the leavesIn hop detail of the leaves tx inserted into a
+// vault whose trees are depth levels deep, rebuilt from the batches its
+// transactions inserted. owners names the actor owning each leaf, by
+// commitment. When tx's batch started a new tree, the detail says so, and
+// its root before is the empty tree's.
+func leavesInOf(depth int, batches []batch, vault string, tx common.Hash, owners map[string]string) (HopDetail, error) {
+	tree := rpcore.NewMerkleTree(depth)
 	for _, b := range batches {
 		if b.tx != tx {
 			tree.InsertLeaves(b.leaves)
@@ -84,7 +97,7 @@ func (c *chain) leavesIn(ctx context.Context, vault string, vaultAddr common.Add
 		d := HopDetail{Kind: DetailLeavesIn, Vault: vault, Tree: tree.TreeNumber(), TxHash: tx.Hex(),
 			RootBefore: fieldHex(before), RootAfter: fieldHex(tree.Root()), TreeStarted: tree.TreeNumber() != beforeTree}
 		if d.TreeStarted {
-			d.RootBefore = fieldHex(emptyRoot)
+			d.RootBefore = fieldHex(rpcore.NewMerkleTree(depth).Root())
 		}
 		first := len(tree.GetLeaves()) - len(b.leaves)
 		for i, l := range b.leaves {
@@ -110,14 +123,21 @@ func (c *chain) commitmentIn(ctx context.Context, vault string, vaultAddr common
 }
 
 // treeSnapshot is the vault at vaultAddr's trees as its Commitment events
-// leave them: the current tree's leaves and root, and each full tree's.
+// leave them (see snapshotOf).
 func (c *chain) treeSnapshot(ctx context.Context, vault string, vaultAddr common.Address) (TreeSnapshot, error) {
 	batches, err := c.commitmentBatches(ctx, vaultAddr)
 	if err != nil {
 		return TreeSnapshot{}, err
 	}
+	return snapshotOf(merkleDepth, vault, batches), nil
+}
+
+// snapshotOf is a vault's trees, depth levels deep, as the batches its
+// transactions inserted leave them: the current tree's leaves and root, and
+// each full tree's.
+func snapshotOf(depth int, vault string, batches []batch) TreeSnapshot {
 	snap := TreeSnapshot{Vault: vault, FullTrees: []FullTree{}}
-	tree := rpcore.NewMerkleTree(merkleDepth)
+	tree := rpcore.NewMerkleTree(depth)
 	for _, b := range batches {
 		num, count, root := tree.TreeNumber(), len(tree.GetLeaves()), tree.Root()
 		tree.InsertLeaves(b.leaves)
@@ -130,7 +150,7 @@ func (c *chain) treeSnapshot(ctx context.Context, vault string, vaultAddr common
 	for i, l := range tree.GetLeaves() {
 		snap.Leaves[i] = Leaf{Index: i, Commitment: fieldHex(l)}
 	}
-	return snap, nil
+	return snap
 }
 
 // publishTrees sends both vaults' tree snapshots as the "trees" protocol field.

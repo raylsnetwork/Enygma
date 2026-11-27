@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	poseidonLib "github.com/iden3/go-iden3-crypto/poseidon"
 	"golang.org/x/crypto/sha3"
+
+	"enygma_dvp/gnark_circuits/templates"
 )
 
 // ─── Local Merkle Tree ────────────────────────────────────────────────────────
@@ -828,7 +830,7 @@ type MerkleStatusResponse struct {
 //
 //	{ "rpcUrl": "http://127.0.0.1:8545", "receiptsPath": "../build/receipts.json" }
 func MerkleStatusHandler() gin.HandlerFunc {
-	const treeDepth = 8
+	const treeDepth = templates.MerkleTreeDepth
 
 	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
@@ -1041,7 +1043,7 @@ type MerkleVaultRequest struct {
 //	{ "vaultId": 0 }
 //	{ "vault": "Erc20CoinVault", "rpcUrl": "http://127.0.0.1:8545" }
 func MerkleVaultHandler() gin.HandlerFunc {
-	const treeDepth = 8
+	const treeDepth = templates.MerkleTreeDepth
 
 	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")

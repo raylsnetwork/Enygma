@@ -80,7 +80,7 @@ func bench(label, pkPath string, circuit, witness frontend.Circuit) {
 func main() {
 	solver.RegisterHint(primitives.ModHint)
 
-	depth := 8
+	depth := templates.MerkleTreeDepth
 
 	// ── PrivateMint ──────────────────────────────────────────────────────────
 	{

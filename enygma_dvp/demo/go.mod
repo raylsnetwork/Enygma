@@ -3,7 +3,7 @@ module enygma_dvp/demo
 go 1.26.11
 
 require (
-	enygma_dvp/layout v0.0.0 // indirect
+	enygma_dvp/layout v0.0.0
 	github.com/ethereum/go-ethereum v1.17.10
 	github.com/raylsnetwork/enygma_dvp/src v0.0.0
 )

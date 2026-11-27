@@ -41,6 +41,7 @@ import (
 	"sync"
 	"time"
 
+	"enygma_dvp/layout"
 	"github.com/raylsnetwork/enygma_dvp/src/core"
 
 	"github.com/ethereum/go-ethereum"
@@ -66,7 +67,7 @@ const (
 	// Ethereum address (this mirrors how the underlying test suite operates).
 	hardhatPrivKeyHex = "34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"
 
-	merkleDepth  = 8
+	merkleDepth  = layout.MerkleTreeDepth
 	erc20Amount  = int64(50) // Alice delivers 50 USDT
 	erc20TokenId = int64(0)
 	nftAmount    = int64(1)

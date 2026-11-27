@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"time"
 
+	"enygma_retail_payments/layout"
 	rpcore "github.com/raylsnetwork/enygma_retail_payments/src/core"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -32,8 +33,9 @@ import (
 // K is the number of participants the sender fans out to.
 const K = 6
 
-// merkleDepth is the vaults' Merkle tree depth (256 leaves per tree).
-const merkleDepth = 8
+// merkleDepth is the vaults' Merkle tree depth, the one the circuits are
+// compiled at: a tree has 2^merkleDepth leaf slots.
+const merkleDepth = layout.MerkleTreeDepth
 
 // UsdrGrant is the shielded USDr the issuer gives the sender and each
 // participant to pay relayer fees with.

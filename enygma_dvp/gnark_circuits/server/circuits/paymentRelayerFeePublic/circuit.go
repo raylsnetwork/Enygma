@@ -1,10 +1,14 @@
 package paymentRelayerFeePublic
 
-import "math/big"
+import (
+	"math/big"
+
+	"enygma_dvp/gnark_circuits/templates"
+)
 
 // PaymentRelayerFeePublicRequest is the JSON body for POST /proof/paymentRelayerFeePublic.
 //
-// Circuit: 1 input / 3 outputs / depth 8.
+// Circuit: 1 input / 3 outputs / depth templates.MerkleTreeDepth.
 //
 // Conservation law: Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]
 // Fee binding:      valOut[2] == StFee   (relayer's amount equals the public fee signal)
@@ -25,15 +29,15 @@ type PaymentRelayerFeePublicRequest struct {
 	StCiphertextHash  string    `json:"stCiphertextHash"  binding:"required"` // hash of the ciphertexts the payment publishes (CiphertextHash.sol)
 	StFee             string    `json:"stFee"             binding:"required"`
 
-	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`
-	WtValuesIn           [1]string    `json:"wtValuesIn"           binding:"required"`
-	WtSaltsIn            [1]string    `json:"wtSaltsIn"            binding:"required"`
-	WtPathElements       [1][8]string `json:"wtPathElements"       binding:"required"`
-	WtPathIndices        [1]string    `json:"wtPathIndices"        binding:"required"`
-	WtTokenId            string       `json:"wtTokenId"            binding:"required"`
-	WtSpendPublicKeysOut [3]string    `json:"wtSpendPublicKeysOut" binding:"required"`
-	WtValuesOut          [3]string    `json:"wtValuesOut"          binding:"required"`
-	WtSaltsOut           [3]string    `json:"wtSaltsOut"           binding:"required"`
+	WtPrivateKeysIn      [1]string                            `json:"wtPrivateKeysIn"      binding:"required"`
+	WtValuesIn           [1]string                            `json:"wtValuesIn"           binding:"required"`
+	WtSaltsIn            [1]string                            `json:"wtSaltsIn"            binding:"required"`
+	WtPathElements       [1][templates.MerkleTreeDepth]string `json:"wtPathElements"       binding:"required"`
+	WtPathIndices        [1]string                            `json:"wtPathIndices"        binding:"required"`
+	WtTokenId            string                               `json:"wtTokenId"            binding:"required"`
+	WtSpendPublicKeysOut [3]string                            `json:"wtSpendPublicKeysOut" binding:"required"`
+	WtValuesOut          [3]string                            `json:"wtValuesOut"          binding:"required"`
+	WtSaltsOut           [3]string                            `json:"wtSaltsOut"           binding:"required"`
 }
 
 // PaymentRelayerFeePublicOutput is the JSON response from the endpoint.

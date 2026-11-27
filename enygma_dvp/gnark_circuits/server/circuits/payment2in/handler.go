@@ -21,7 +21,7 @@ import (
 )
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
-// Payment circuit (2-in / 2-out, Merkle depth 8).
+// Payment circuit (2-in / 2-out, Merkle depth templates.MerkleTreeDepth).
 //
 // Keys are loaded once at startup from pkPath / vkPath and reused for every request.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {

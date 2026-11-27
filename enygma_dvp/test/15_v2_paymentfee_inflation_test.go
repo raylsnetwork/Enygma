@@ -46,6 +46,7 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_dvp/layout"
 	core "github.com/raylsnetwork/enygma_dvp/src/core"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -125,7 +126,7 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 	erc20 := bind.NewBoundContract(erc20Addr, loadOnchainABI(t, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json"), client, client, client)
 	owner := hardhatAuth(t, client)
 
-	const merkleDepth = 8
+	const merkleDepth = layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
 	fr := core.SNARK_SCALAR_FIELD
@@ -161,9 +162,9 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		t.Fatalf("commitment: %v", err)
 	}
 
-	var pathElements [8]string
+	var pathElements [layout.MerkleTreeDepth]string
 	for j, e := range d.merkleProof.Elements {
-		if j < 8 {
+		if j < layout.MerkleTreeDepth {
 			pathElements[j] = e.String()
 		}
 	}
@@ -182,7 +183,7 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{deposit.String()},
 		"wtSaltsIn":            [1]string{d.saltBField.String()},
-		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 		"wtPathIndices":        [1]string{d.merkleProof.Indices.String()},
 		"wtTokenId":            tokenId.String(),
 		"wtSpendPublicKeysOut": [2]string{d.spend.PublicKey.String(), d.spend.PublicKey.String()},
@@ -243,9 +244,9 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commitment: %v", err)
 	}
-	var pe2 [8]string
+	var pe2 [layout.MerkleTreeDepth]string
 	for j, e := range mp.Elements {
-		if j < 8 {
+		if j < layout.MerkleTreeDepth {
 			pe2[j] = e.String()
 		}
 	}
@@ -260,7 +261,7 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{inflated.String()},
 		"wtSaltsIn":            [1]string{inflSalt.String()},
-		"wtPathElements":       [1][8]string{pe2},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pe2},
 		"wtPathIndices":        [1]string{mp.Indices.String()},
 		"wtTokenId":            tokenId.String(),
 		"wtSpendPublicKeysOut": [2]string{new(big.Int).SetBytes(recipient.Bytes()).String(), d.spend.PublicKey.String()},
@@ -315,7 +316,7 @@ func TestV2PaymentFee_HonestFeeStillWorks(t *testing.T) {
 	erc20 := bind.NewBoundContract(erc20Addr, loadOnchainABI(t, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json"), client, client, client)
 	owner := hardhatAuth(t, client)
 
-	const merkleDepth = 8
+	const merkleDepth = layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	vaultAddrBig := new(big.Int).SetBytes(vaultAddr.Bytes())
 
@@ -339,9 +340,9 @@ func TestV2PaymentFee_HonestFeeStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pathElements [8]string
+	var pathElements [layout.MerkleTreeDepth]string
 	for j, e := range d.merkleProof.Elements {
-		if j < 8 {
+		if j < layout.MerkleTreeDepth {
 			pathElements[j] = e.String()
 		}
 	}
@@ -358,7 +359,7 @@ func TestV2PaymentFee_HonestFeeStillWorks(t *testing.T) {
 		"wtPrivateKeysIn":      [1]string{d.spend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{deposit.String()},
 		"wtSaltsIn":            [1]string{d.saltBField.String()},
-		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 		"wtPathIndices":        [1]string{d.merkleProof.Indices.String()},
 		"wtTokenId":            tokenId.String(),
 		"wtSpendPublicKeysOut": [2]string{bob.PublicKey.String(), d.spend.PublicKey.String()},

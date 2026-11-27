@@ -20,10 +20,10 @@ import (
 	"enygma_gnark_shared/witnessinput"
 )
 
-const merkleDepth = 8
+const merkleDepth = templates.MerkleTreeDepth
 
 // NewHandler returns a gin.HandlerFunc that generates a Groth16 proof for the
-// DvPInitiatorCircuit (Merkle depth 8).
+// DvPInitiatorCircuit (Merkle depth templates.MerkleTreeDepth).
 //
 // Keys are loaded once at startup from pkPath / vkPath and reused for every request.
 func NewHandler(pkPath, vkPath string) gin.HandlerFunc {

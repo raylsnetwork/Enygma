@@ -250,7 +250,7 @@ func TestDvP_SwapViaRelayer(t *testing.T) {
 	auth := hardhatAuth(t, client)
 
 	gnarkClient := core.NewGnarkClient("http://localhost:8081")
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	erc20Amount := big.NewInt(30)
 	erc20TokenId := big.NewInt(0)
 	// Use a unique tokenId based on current time to avoid 'already minted' on repeated runs.
@@ -579,7 +579,7 @@ func TestDvP_ExchangeViaRelayer(t *testing.T) {
 	auth := hardhatAuth(t, client)
 
 	gnarkClient := core.NewGnarkClient("http://localhost:8081")
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	aliceAmt := big.NewInt(20) // Alice gives 20 tokens to Bob
 	bobAmt := big.NewInt(15)   // Bob   gives 15 tokens to Alice

@@ -63,9 +63,12 @@ func payment2inCase(t *testing.T, salt0 int64) ht.Case {
 		ht.Commitment(t, pks[1], salts[1], values[1], in.TokenId),
 	}
 
-	var path [8]string
+	var path [templates.MerkleTreeDepth]string
 	copy(path[:], ht.Strings(in.Siblings...))
-	zeroPath := [8]string{"0", "0", "0", "0", "0", "0", "0", "0"}
+	var zeroPath [templates.MerkleTreeDepth]string
+	for i := range zeroPath {
+		zeroPath[i] = "0"
+	}
 	request := PaymentRequest2in{
 		StMessage:            "0",
 		StTreeNumbers:        [2]string{"0", "0"},
@@ -77,7 +80,7 @@ func payment2inCase(t *testing.T, salt0 int64) ht.Case {
 		WtPrivateKeysIn:      [2]string{in.Sk.String(), "1"},
 		WtValuesIn:           [2]string{in.Value.String(), "0"},
 		WtSaltsIn:            [2]string{in.Salt.String(), "0"},
-		WtPathElements:       [2][8]string{path, zeroPath},
+		WtPathElements:       [2][templates.MerkleTreeDepth]string{path, zeroPath},
 		WtPathIndices:        [2]string{"0", "0"},
 		WtTokenId:            in.TokenId.String(),
 		WtSpendPublicKeysOut: [2]string(ht.Strings(pks...)),

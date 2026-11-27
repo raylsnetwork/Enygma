@@ -94,7 +94,7 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 	aliceAuth := hardhatAuth(t, client)
 	bobAuth := hardhatBobAuth(t, client)
 
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	depositAmt := big.NewInt(int64(rfpDeposit))
 	paymentAmt := big.NewInt(int64(rfpPayAmt))
@@ -287,10 +287,10 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 		t.Fatalf("Erc20CommitmentV2 (relayer): %v", err)
 	}
 
-	// Build path elements as [8]string
-	var pathElements [8]string
+	// Build path elements, one per level of the tree
+	var pathElements [layout.MerkleTreeDepth]string
 	for j, elem := range aliceProof.Elements {
-		if j >= 8 {
+		if j >= layout.MerkleTreeDepth {
 			break
 		}
 		pathElements[j] = elem.String()
@@ -308,7 +308,7 @@ func TestRetailErc20_PaymentRelayerFeePublic(t *testing.T) {
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{depositAmt.String()},
 		"wtSaltsIn":            [1]string{aliceSaltBField.String()},
-		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 		"wtPathIndices":        [1]string{aliceProof.Indices.String()},
 		"wtTokenId":            tokenId.String(),
 		"wtSpendPublicKeysOut": [3]string{bobSpend.PublicKey.String(), aliceSpend.PublicKey.String(), relayerSpend.PublicKey.String()},

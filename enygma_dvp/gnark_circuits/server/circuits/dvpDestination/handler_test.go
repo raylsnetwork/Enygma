@@ -26,7 +26,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	commitA := ht.Commitment(t, alicePk, saltA, in.Value, in.TokenId)
 	commitB := ht.Commitment(t, in.Pk, saltB, valueAlice, tokenIdAlice)
 
-	var path [8]string
+	var path [templates.MerkleTreeDepth]string
 	copy(path[:], ht.Strings(in.Siblings...))
 	request := DvPDestinationRequest{
 		StMessage:      commitB.String(),

@@ -20,15 +20,17 @@ var (
 	UsdrFeeConfig = paymentConfig(1, 2)
 )
 
-const (
-	// paymentMerkleTreeDepth is the depth of the vaults' Merkle trees.
-	paymentMerkleTreeDepth = 8
-)
+// MerkleTreeDepth is the depth of the vaults' Merkle trees, which every
+// Payment-family circuit proves membership in: a tree holds at most
+// 2^MerkleTreeDepth - 1 notes, and a spend hides among the notes of the one
+// tree it names. cmd/genlayout renders it into the layout package, where the
+// deployment scripts, the wallets and the tests read it.
+const MerkleTreeDepth = 16
 
 func paymentConfig(nInputs, mOutputs int) PaymentCircuitConfig {
 	return PaymentCircuitConfig{
 		TmNInputs:         nInputs,
 		TmMOutputs:        mOutputs,
-		TmMerkleTreeDepth: paymentMerkleTreeDepth,
+		TmMerkleTreeDepth: MerkleTreeDepth,
 	}
 }

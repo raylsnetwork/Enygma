@@ -3,12 +3,13 @@ package payment2in
 import (
 	"math/big"
 
+	"enygma_retail_payments/gnark_circuits/templates"
 	utils "enygma_retail_payments/gnark_circuits/utils"
 )
 
 // PaymentRequest2in is the JSON body accepted by the /proof/payment2in endpoint.
 //
-// Config is fixed at 2 inputs / 2 outputs / depth 8:
+// Config is fixed at 2 inputs / 2 outputs / depth templates.MerkleTreeDepth:
 //   - Input 0, 1 : Alice's two notes being consolidated or spent (value > 0 / = 0 for padding).
 //   - Output 0   : Payment to Bob (or merged note).
 //   - Output 1   : Change back to Alice.
@@ -21,15 +22,15 @@ type PaymentRequest2in struct {
 	StContractAddress string    `json:"stContractAddress" binding:"required"`
 	StCiphertextHash  string    `json:"stCiphertextHash"  binding:"required"` // hash of the ciphertexts the payment publishes (CiphertextHash.sol)
 
-	WtPrivateKeysIn      [2]string    `json:"wtPrivateKeysIn"      binding:"required"`
-	WtValuesIn           [2]string    `json:"wtValuesIn"           binding:"required"`
-	WtSaltsIn            [2]string    `json:"wtSaltsIn"            binding:"required"`
-	WtPathElements       [2][8]string `json:"wtPathElements"       binding:"required"`
-	WtPathIndices        [2]string    `json:"wtPathIndices"        binding:"required"`
-	WtTokenId            string       `json:"wtTokenId"            binding:"required"`
-	WtSpendPublicKeysOut [2]string    `json:"wtSpendPublicKeysOut" binding:"required"`
-	WtValuesOut          [2]string    `json:"wtValuesOut"          binding:"required"`
-	WtSaltsOut           [2]string    `json:"wtSaltsOut"           binding:"required"`
+	WtPrivateKeysIn      [2]string                            `json:"wtPrivateKeysIn"      binding:"required"`
+	WtValuesIn           [2]string                            `json:"wtValuesIn"           binding:"required"`
+	WtSaltsIn            [2]string                            `json:"wtSaltsIn"            binding:"required"`
+	WtPathElements       [2][templates.MerkleTreeDepth]string `json:"wtPathElements"       binding:"required"`
+	WtPathIndices        [2]string                            `json:"wtPathIndices"        binding:"required"`
+	WtTokenId            string                               `json:"wtTokenId"            binding:"required"`
+	WtSpendPublicKeysOut [2]string                            `json:"wtSpendPublicKeysOut" binding:"required"`
+	WtValuesOut          [2]string                            `json:"wtValuesOut"          binding:"required"`
+	WtSaltsOut           [2]string                            `json:"wtSaltsOut"           binding:"required"`
 }
 
 // PaymentOutput2in is the JSON response returned by the /proof/payment2in endpoint.

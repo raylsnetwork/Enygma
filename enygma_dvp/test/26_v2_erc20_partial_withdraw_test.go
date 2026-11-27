@@ -57,7 +57,7 @@ import (
 	"enygma_dvp/layout"
 )
 
-const partialWithdrawDepth = 8
+const partialWithdrawDepth = layout.MerkleTreeDepth
 
 // pwEnv is the deployment a partial-withdraw test runs against.
 type pwEnv struct {

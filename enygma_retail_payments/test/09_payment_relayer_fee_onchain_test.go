@@ -149,7 +149,7 @@ func runRelayerFeeFlow(
 	t.Helper()
 	t.Logf("── %s ──", p.label)
 
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId = big.NewInt(0)
 	paymentAmt := big.NewInt(int64(rfpPayAmt))
 	changeAmt = big.NewInt(int64(rfpChangeAmt))
@@ -275,9 +275,9 @@ func runRelayerFeeFlow(
 		t.Fatalf("[%s] Erc20CommitmentV2 (fee): %v", p.label, err)
 	}
 
-	var pathElements [8]string
+	var pathElements [layout.MerkleTreeDepth]string
 	for j, elem := range aliceProof.Elements {
-		if j >= 8 {
+		if j >= layout.MerkleTreeDepth {
 			break
 		}
 		pathElements[j] = elem.String()
@@ -295,7 +295,7 @@ func runRelayerFeeFlow(
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{depositAmt.String()},
 		"wtSaltsIn":            [1]string{aliceSaltBField.String()},
-		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 		"wtPathIndices":        [1]string{aliceProof.Indices.String()},
 		"wtTokenId":            tokenId.String(),
 		"wtSpendPublicKeysOut": [3]string{bobSpend.PublicKey.String(), aliceSpend.PublicKey.String(), p.feeRecipientPk.String()},

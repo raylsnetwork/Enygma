@@ -22,7 +22,7 @@ import (
 
 // NewHandler returns a gin.HandlerFunc for POST /proof/paymentRelayerFeePublic.
 //
-// Circuit: 1 input / 3 outputs / Merkle depth 8.
+// Circuit: 1 input / 3 outputs / Merkle depth templates.MerkleTreeDepth.
 //
 // Conservation: Σ(valuesIn) == valOut[0] + valOut[1] + valOut[2]
 // Fee binding:  valOut[2] == StFee  (relayer's amount == public fee signal)

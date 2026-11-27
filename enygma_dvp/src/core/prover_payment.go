@@ -146,8 +146,10 @@ func (r *PaymentResult) Fee() *big.Int { return r.circuit.fee.one(r.Statement) }
 // contractAddress must be the uint160 representation of the Erc20CoinVault address
 // (i.e., new(big.Int).SetBytes(vaultAddr.Bytes())).
 //
-// Circuit config: 1 input / 2 outputs / Merkle depth 8 (Payment), or with two
-// input notes 2 inputs / 2 outputs (Payment2in, merging two notes).
+// Circuit config: 1 input / 2 outputs (Payment), or with two input notes
+// 2 inputs / 2 outputs (Payment2in, merging two notes), both at the Merkle
+// depth the caller passes as merkleDepth, which must be the circuits'
+// (layout.MerkleTreeDepth).
 //   - Inputs: Alice's real notes.
 //   - Output 0: payment to Bob; Output 1: change back to Alice.
 //

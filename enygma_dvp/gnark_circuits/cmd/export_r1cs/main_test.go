@@ -11,7 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"enygma_dvp/gnark_circuits/server/circuits/dvpDestination"
+	"enygma_dvp/gnark_circuits/server/circuits/dvpInit"
 	"enygma_dvp/gnark_circuits/server/config"
+	"enygma_dvp/gnark_circuits/templates"
 )
 
 // TestExportsEveryServedCircuit: the ceremony seals keys for exactly the
@@ -76,5 +79,40 @@ func TestManifestPutsKeysWhereTheServerLoadsThem(t *testing.T) {
 	want := keyPair{PK: "scripts/keys/DvPInitiatorPK.key", VK: "scripts/keys/DvPInitiatorVK.key"}
 	if got := manifest["DvPInitiator"]; got != want {
 		t.Fatalf("DvPInitiator's keys at %+v, want %+v", got, want)
+	}
+}
+
+// TestExportsTheDvPLegsAtTheDepthTheServerProves: the dvpInit and
+// dvpDestination prove handlers take one Merkle path element per level of
+// the vaults' trees (their requests' WtPathElements) and prove at that
+// depth, the one cmd/keygen compiles them at. The keys a ceremony seals
+// from export's constraint systems fit the server only if export compiles
+// each DvP leg at that depth too.
+func TestExportsTheDvPLegsAtTheDepthTheServerProves(t *testing.T) {
+	served := map[string]int{
+		"DvPInitiator":   len(dvpInit.DvPInitiatorRequest{}.WtPathElements),
+		"DvPDestination": len(dvpDestination.DvPDestinationRequest{}.WtPathElements),
+	}
+	for _, c := range circuits {
+		want, ok := served[c.name]
+		if !ok {
+			continue
+		}
+		delete(served, c.name)
+		var depth, path int
+		switch circuit := c.circuit().(type) {
+		case *templates.DvPInitiatorCircuit:
+			depth, path = circuit.Config.TmMerkleTreeDepth, len(circuit.WtPathElements)
+		case *templates.DvPDestinationCircuit:
+			depth, path = circuit.Config.TmMerkleTreeDepth, len(circuit.WtPathElements)
+		default:
+			t.Fatalf("%s: export compiles a %T, not a DvP leg", c.name, circuit)
+		}
+		if depth != want || path != want {
+			t.Errorf("%s: export compiles it at depth %d with %d path elements; the server proves it at depth %d", c.name, depth, path, want)
+		}
+	}
+	if len(served) != 0 {
+		t.Fatalf("export writes no %v", served)
 	}
 }

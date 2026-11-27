@@ -1,10 +1,14 @@
 package usdrFee
 
-import "math/big"
+import (
+	"math/big"
+
+	"enygma_dvp/gnark_circuits/templates"
+)
 
 // UsdrFeeRequest is the JSON body for POST /proof/usdrFee.
 //
-// Circuit: 1 input / 2 outputs / depth 8.
+// Circuit: 1 input / 2 outputs / depth templates.MerkleTreeDepth.
 //
 // Conservation law: Σ(valuesIn) == valOut[0] + valOut[1]  (nothing burned)
 // Fee binding:      valOut[0] == StFee   (relayer's amount equals the public fee signal)
@@ -31,14 +35,14 @@ type UsdrFeeRequest struct {
 	StFee             string    `json:"stFee"             binding:"required"`
 	StTokenId         string    `json:"stTokenId"         binding:"required"`
 
-	WtPrivateKeysIn      [1]string    `json:"wtPrivateKeysIn"      binding:"required"`
-	WtValuesIn           [1]string    `json:"wtValuesIn"           binding:"required"`
-	WtSaltsIn            [1]string    `json:"wtSaltsIn"            binding:"required"`
-	WtPathElements       [1][8]string `json:"wtPathElements"       binding:"required"`
-	WtPathIndices        [1]string    `json:"wtPathIndices"        binding:"required"`
-	WtSpendPublicKeysOut [2]string    `json:"wtSpendPublicKeysOut" binding:"required"`
-	WtValuesOut          [2]string    `json:"wtValuesOut"          binding:"required"`
-	WtSaltsOut           [2]string    `json:"wtSaltsOut"           binding:"required"`
+	WtPrivateKeysIn      [1]string                            `json:"wtPrivateKeysIn"      binding:"required"`
+	WtValuesIn           [1]string                            `json:"wtValuesIn"           binding:"required"`
+	WtSaltsIn            [1]string                            `json:"wtSaltsIn"            binding:"required"`
+	WtPathElements       [1][templates.MerkleTreeDepth]string `json:"wtPathElements"       binding:"required"`
+	WtPathIndices        [1]string                            `json:"wtPathIndices"        binding:"required"`
+	WtSpendPublicKeysOut [2]string                            `json:"wtSpendPublicKeysOut" binding:"required"`
+	WtValuesOut          [2]string                            `json:"wtValuesOut"          binding:"required"`
+	WtSaltsOut           [2]string                            `json:"wtSaltsOut"           binding:"required"`
 }
 
 // UsdrFeeOutput is the JSON response from the endpoint.

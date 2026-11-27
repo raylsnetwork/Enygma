@@ -129,8 +129,9 @@ var primerChecks = []string{"keys", "auditor", "registration", "shield", "channe
 // mints to them, deposited whole into one note.
 const shieldAmount = 100
 
-// primerDepth is the vault's Merkle tree depth (scripts/cmd/init).
-const primerDepth = 8
+// primerDepth is the vault's Merkle tree depth, the one the circuits are
+// compiled at and scripts/cmd/init registers the vaults at.
+const primerDepth = layout.MerkleTreeDepth
 
 // payAmount is what the Sender pays Ana out of the shielded note; the rest
 // is the Sender's change.
@@ -391,7 +392,7 @@ func TestProtocolPrimer(t *testing.T) {
 	// another tag, sealed note or block, which the tag step shows.
 	var paidBoundTo map[string]string
 
-	check("shield", "the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-8 tree", func(t *testing.T) {
+	check("shield", fmt.Sprintf("the vault computes Poseidon(pk_spend, salt, amount, token) from the deposit's calldata and inserts it as a leaf of its depth-%d tree", primerDepth), func(t *testing.T) {
 		sender := users[0]
 		vaultABI := loadOnchainABI(t, "Erc20CoinVault")
 		vault := bindContract(t, client, vaultAddr, vaultABI)
@@ -975,7 +976,7 @@ func TestProtocolPrimer(t *testing.T) {
 		if valueIn.Sign() == 0 || root.Sign() == 0 || nf.Sign() == 0 {
 			t.Errorf("v_in %s, root %s, nullifier %s: a real input is non-zero, with both non-zero", valueIn, root, nf)
 		}
-		// Merkle membership: the eight levels of Poseidon(left, right) from
+		// Merkle membership: the primerDepth levels of Poseidon(left, right) from
 		// the leaf to the root, the bit of the leaf index choosing the side.
 		if stTree.Cmp(tree) != 0 {
 			t.Errorf("TreeNumber %s, the note is in tree %s", stTree, tree)
@@ -993,11 +994,11 @@ func TestProtocolPrimer(t *testing.T) {
 		if !vcall(block, "isValidRoot", stTree, root).(bool) {
 			t.Errorf("isValidRoot(%s, %s) = false", stTree, root)
 		}
-		// The nullifier: Poseidon(sk, tree·2^8 + leaf index), the one the
+		// The nullifier: Poseidon(sk, tree·2^depth + leaf index), the one the
 		// vault's Nullifier event recorded, spent from this block on.
 		globalIndex := new(big.Int).Add(new(big.Int).Lsh(tree, primerDepth), mp.Indices)
 		if want := hash(sk, globalIndex); want.Cmp(nf) != 0 {
-			t.Errorf("Poseidon(sk, tree·2^8 + i) = %s, the statement's nullifier %s", want, nf)
+			t.Errorf("Poseidon(sk, tree·2^%d + i) = %s, the statement's nullifier %s", primerDepth, want, nf)
 		}
 		checkOneNullifierEvent(t, mined.Logs, vaultAddr, vaultID, tree, nf)
 		if vcall(new(big.Int).Sub(block, big.NewInt(1)), "isValidNullifier", tree, nf).(bool) || !vcall(block, "isValidNullifier", tree, nf).(bool) {
@@ -1618,7 +1619,7 @@ func TestProtocolPrimer(t *testing.T) {
 		if cIn.Cmp(discovered.commitment) != 0 || cIn.Cmp(mp.Element) != 0 {
 			t.Errorf("Poseidon(pk, salt, v, token) = %s, Ana's leaf is %s", cIn, discovered.commitment)
 		}
-		// Merkle membership: the eight levels, up to a root the vault knows.
+		// Merkle membership: the primerDepth levels, up to a root the vault knows.
 		nodes := pathNodes(t, cIn, mp)
 		if got := nodes[len(nodes)-1]; got.Cmp(root) != 0 || stTree.Cmp(tree) != 0 {
 			t.Errorf("the path hashes to %s in tree %s, the statement's root is %s in tree %s", got, tree, root, stTree)
@@ -1629,7 +1630,7 @@ func TestProtocolPrimer(t *testing.T) {
 		// The nullifier, spent by this block and not before it.
 		globalIndex := new(big.Int).Add(new(big.Int).Lsh(tree, primerDepth), mp.Indices)
 		if want := hash(sk, globalIndex); want.Cmp(nf) != 0 || nf.Sign() == 0 {
-			t.Errorf("Poseidon(sk, tree·2^8 + i) = %s, the statement's nullifier %s", want, nf)
+			t.Errorf("Poseidon(sk, tree·2^%d + i) = %s, the statement's nullifier %s", primerDepth, want, nf)
 		}
 		checkOneNullifierEvent(t, mined.Logs, vaultAddr, vaultID, tree, nf)
 		if vaultView(t, e.vault, new(big.Int).Sub(block, big.NewInt(1)), "isValidNullifier", tree, nf).(bool) || !vaultView(t, e.vault, block, "isValidNullifier", tree, nf).(bool) {
