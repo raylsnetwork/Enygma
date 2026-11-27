@@ -12,8 +12,8 @@ package tests
 //	    but inserted only output[0], destroying the sender's change note, and
 //	    skipped the vault-address check (which only ran for 2 or 3 outputs);
 //	(c) a DvP Initiator receipt claiming 0 outputs could be parked by
-//	    submitPartialSettlement but never settle (insertLeaves([]) reverts),
-//	    locking the note until the timeout.
+//	    submitPartialSettlement but never settle (insertLeaves([]) reverted
+//	    before #477), locking the note until the timeout.
 //
 // Every path that nullifies or inserts from a Payment-family receipt
 // (transfer, payment, withdraw, partial withdraw) first calls the vault's

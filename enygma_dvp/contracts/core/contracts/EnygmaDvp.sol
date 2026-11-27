@@ -583,18 +583,12 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         uint256[] memory uniqueIdParams,
         uint256 groupId
     ) public view returns (bool) {
-        uint256[] memory p2 = new uint256[](5);
-        // first paramater is reserved for value.
-        // copying the rest
-        // TODO:: check the length < 5
-        for (uint256 i = 1; i < uniqueIdParams.length; i++) {
-            p2[i] = uniqueIdParams[i];
-        }
-
         IAssetGroup assetGroupContract = IAssetGroup(_assetGroups[groupId]);
 
+        // The same params addTokenToGroup hashes: params[0] is the token id
+        // an ERC721 vault reads, so it cannot be dropped here.
         uint256 tokenUniqueId = IAbstractCoinVault(_coinVaults[vaultId])
-            .generateUniqueId(p2);
+            .generateUniqueId(uniqueIdParams);
 
         return assetGroupContract.isTokenMember(vaultId, tokenUniqueId);
     }
@@ -935,6 +929,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             emit SwapInitiated(commitB, commitA_expected, commitB, deadline);
             emit PendingProofAddedToVault(vaultId, groupId, receiptMessage, receipt);
         }
+        return true;
     }
 
     // Reclaim a timed-out pending swap.
