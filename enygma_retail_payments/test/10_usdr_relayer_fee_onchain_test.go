@@ -7,16 +7,18 @@ package tests
 // (EnygmaDvp.paymentWithUsdrFee), via the relayer's
 // POST /relay/payment_usdr_fee.
 //
-// This is the two-independent-proofs design mirroring enygma_payments'
-// USDrCircuit, as opposed to the same-token, single-proof
-// PaymentRelayerFeePublic mechanism (test 09) already shipped for this repo.
+// This is the two-proof design mirroring enygma_payments' USDrCircuit, as
+// opposed to the same-token, single-proof PaymentRelayerFeePublic mechanism
+// (test 09) already shipped for this repo. The fee proof names the
+// payment's statement (UsdrFeeLegCiphertextHash), so it is proved after the
+// payment and settles only next to it.
 //
 // UsdrFeeCircuit is 1-in/2-out: output 0 is the relayer's fee note, output 1
 // the sender's change, and the fee and token id are public.
 //
 // StTokenId is PUBLIC here (private WtTokenId everywhere else in this
 // codebase) — that's what gives this circuit's statement a distinct length
-// (9) from every other 1-in/2-out circuit's (7 or 8), avoiding a VK-slot
+// (10) from every other 1-in/2-out circuit's (8 or 9), avoiding a VK-slot
 // dispatch collision in Erc20CoinVault.checkReceiptConditions. See
 // EnygmaDvp.sol's usdrFixedFeeAmount/usdrTokenId doc comments.
 //
@@ -95,12 +97,18 @@ type usdrFeeWitness struct {
 	cmtFee       *big.Int
 }
 
+// usdrFeeInput is a USDr note deposited for a fresh Alice: the note a fee
+// leg spends.
+type usdrFeeInput struct {
+	spend      *dvpcore.SpendKeyPair
+	salt       *big.Int
+	amount     *big.Int
+	commitment *big.Int
+}
+
 // depositAndBuildUsdrFeeWitness deposits a fresh USDr note for Alice and
-// builds a UsdrFeeCircuit proof (fee note of relayerFeeAmt to
-// feeRecipientPk, change of usdrPayChangeAmt back to Alice). depositAmt is
-// computed from the actual amounts used so the circuit's own conservation
-// law always holds, even when a sub-test deliberately picks a
-// relayerFeeAmt/tokenId that mismatches the contract's configured values.
+// builds a UsdrFeeCircuit proof spending it, for the payment whose statement
+// is main (see buildUsdrFeeWitness).
 func depositAndBuildUsdrFeeWitness(
 	t *testing.T,
 	ctx context.Context,
@@ -108,14 +116,30 @@ func depositAndBuildUsdrFeeWitness(
 	usdrVault, usdrErc20 *bind.BoundContract,
 	usdrVaultAddr common.Address,
 	aliceAuth *bind.TransactOpts,
+	main []*big.Int,
 	relayerFeeAmt, feeRecipientPk, tokenId *big.Int,
 ) usdrFeeWitness {
 	t.Helper()
+	in := depositUsdrFeeInput(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, aliceAuth, relayerFeeAmt, tokenId)
+	return buildUsdrFeeWitness(t, client, usdrVaultAddr, in, main, relayerFeeAmt, feeRecipientPk, tokenId)
+}
 
-	merkleDepth := 8
-	changeAmt := big.NewInt(usdrPayChangeAmt)
-	depositAmt := new(big.Int).Add(relayerFeeAmt, changeAmt)
-	vaultAddrBig := new(big.Int).SetBytes(usdrVaultAddr.Bytes())
+// depositUsdrFeeInput deposits a fresh USDr note for Alice, worth
+// relayerFeeAmt plus usdrPayChangeAmt, so that a fee leg of relayerFeeAmt
+// spending it conserves value, even when a sub-test deliberately picks a
+// relayerFeeAmt/tokenId that mismatches the contract's configured values.
+func depositUsdrFeeInput(
+	t *testing.T,
+	ctx context.Context,
+	client *ethclient.Client,
+	usdrVault, usdrErc20 *bind.BoundContract,
+	usdrVaultAddr common.Address,
+	aliceAuth *bind.TransactOpts,
+	relayerFeeAmt, tokenId *big.Int,
+) usdrFeeInput {
+	t.Helper()
+
+	depositAmt := new(big.Int).Add(relayerFeeAmt, big.NewInt(usdrPayChangeAmt))
 
 	aliceSpend, err := rpcore.NewSpendKeyPair()
 	if err != nil {
@@ -170,11 +194,33 @@ func depositAndBuildUsdrFeeWitness(
 	if _, err := bind.WaitMined(ctx, client, depositTx); err != nil {
 		t.Fatalf("wait depositV2: %v", err)
 	}
+	return usdrFeeInput{spend: aliceSpend, salt: aliceSaltBField, amount: depositAmt, commitment: aliceCommitment}
+}
+
+// buildUsdrFeeWitness builds a UsdrFeeCircuit proof spending in: a fee note
+// of relayerFeeAmt to feeRecipientPk and the rest back to Alice as change.
+// The proof binds main, the statement of the payment the fee pays for, and
+// the empty fee-note ciphertexts the relay request carries
+// (UsdrFeeLegCiphertextHash), so the leg settles only next to that payment.
+func buildUsdrFeeWitness(
+	t *testing.T,
+	client *ethclient.Client,
+	usdrVaultAddr common.Address,
+	in usdrFeeInput,
+	main []*big.Int,
+	relayerFeeAmt, feeRecipientPk, tokenId *big.Int,
+) usdrFeeWitness {
+	t.Helper()
+
+	merkleDepth := 8
+	changeAmt := new(big.Int).Sub(in.amount, relayerFeeAmt)
+	vaultAddrBig := new(big.Int).SetBytes(usdrVaultAddr.Bytes())
+	aliceSpend, aliceSaltBField, depositAmt := in.spend, in.salt, in.amount
 
 	// Every tree: run after the rest of the suite, the USDr vault has moved
 	// past tree 0, and the note lands in the current one.
 	mt := rebuildVaultTree(t, client, usdrVaultAddr, nil)
-	aliceProof, err := mt.GenerateProof(aliceCommitment)
+	aliceProof, err := mt.GenerateProof(in.commitment)
 	if err != nil {
 		t.Fatalf("GenerateProof: %v", err)
 	}
@@ -215,7 +261,11 @@ func depositAndBuildUsdrFeeWitness(
 	}
 
 	// The USDr leg is relayed with empty fee-note ciphertexts ("0x"), and
-	// the proof binds their hash.
+	// the proof binds them and the main leg's statement.
+	ciphertextHash, err := rpcore.UsdrFeeLegCiphertextHash(main, nil, nil)
+	if err != nil {
+		t.Fatalf("UsdrFeeLegCiphertextHash: %v", err)
+	}
 	reqBody := map[string]interface{}{
 		"stMessage":            "0",
 		"stTreeNumbers":        [1]string{big.NewInt(int64(aliceProof.TreeNumber)).String()},
@@ -223,7 +273,7 @@ func depositAndBuildUsdrFeeWitness(
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtFee.String(), cmtChange.String()},
 		"stContractAddress":    vaultAddrBig.String(),
-		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
+		"stCiphertextHash":     ciphertextHash.String(),
 		"stFee":                relayerFeeAmt.String(),
 		"stTokenId":            tokenId.String(),
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
@@ -434,7 +484,7 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 	}
 
 	usdrW := depositAndBuildUsdrFeeWitness(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, aliceAuth,
-		fixedFee, relayerFeePubKey, tokenId)
+		paymentResult.ContractStatement(), fixedFee, relayerFeePubKey, tokenId)
 
 	var mainProofArr [8]string
 	copy(mainProofArr[:], paymentResult.Proof)
@@ -653,7 +703,7 @@ func testUsdrFeeRejected(
 	}
 
 	usdrW := depositAndBuildUsdrFeeWitness(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, aliceAuth,
-		usdrFeeAmt, usdrFeeRecipientPk, usdrTokenIdArg)
+		paymentResult.ContractStatement(), usdrFeeAmt, usdrFeeRecipientPk, usdrTokenIdArg)
 
 	var mainProofArr [8]string
 	copy(mainProofArr[:], paymentResult.Proof)

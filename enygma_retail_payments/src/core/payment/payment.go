@@ -57,6 +57,10 @@ var (
 	// ChannelPaymentCiphertextHash is the StCiphertextHash a channel
 	// payment's proof binds: its block, tag and sealed note.
 	ChannelPaymentCiphertextHash = dvpcore.ChannelPaymentCiphertextHash
+	// UsdrFeeLegCiphertextHash is the StCiphertextHash a USDr fee leg's
+	// proof binds: the statement of the payment it pays for and the fee
+	// note's ciphertexts.
+	UsdrFeeLegCiphertextHash = dvpcore.UsdrFeeLegCiphertextHash
 )
 
 // NewPaymentClient creates a GnarkClient targeting the retail payments gnark server.

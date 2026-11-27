@@ -18,7 +18,8 @@ pragma solidity ^0.8.0;
 /// The hash is keccak256(abi.encode(ciphertextI, ciphertextII)) reduced into
 /// the BN254 scalar field, ciphertextI[i]/ciphertextII[i] being the ML-KEM
 /// capsule and the AEAD ciphertext of one note:
-///   - EnygmaDvp.payment*: one note, output 0's (ctxt, encTxData);
+///   - EnygmaDvp.payment*'s payment (not a USDr fee leg, below): one note,
+///     output 0's (ctxt, encTxData);
 ///   - Erc20CoinVault.transferV2: one per output;
 ///   - Erc20CoinVault.transfer: none (two empty arrays).
 /// The array lengths are part of the encoding, so a receipt proved for one
@@ -30,6 +31,13 @@ pragma solidity ^0.8.0;
 /// encoded after a domain word (ofChannelPayment). The domain word is never
 /// an array offset, which ofNotes' encoding starts with, so neither kind of
 /// receipt settles as the other.
+///
+/// The USDr fee leg of EnygmaDvp.paymentWithUsdrFee and
+/// channelPaymentWithUsdrFee binds, after a domain word of its own, the
+/// statement of the payment it pays for and the fee note's ciphertexts
+/// (ofUsdrFeeLeg). So it settles only as the fee leg of that one payment, in
+/// the same call: not on its own through another entry point, and not next
+/// to another payment.
 library CiphertextHash {
     uint256 internal constant SNARK_SCALAR_FIELD =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
@@ -66,5 +74,23 @@ library CiphertextHash {
         bytes calldata ctxt
     ) internal pure returns (uint256) {
         return uint256(keccak256(abi.encode(CHANNEL_PAYMENT_DOMAIN, blockNumber, tag, ctxt))) % SNARK_SCALAR_FIELD;
+    }
+
+    /// keccak256("enygma-usdr-fee-leg-v1"), the first word of a USDr fee
+    /// leg's encoding.
+    bytes32 internal constant USDR_FEE_LEG_DOMAIN = keccak256("enygma-usdr-fee-leg-v1");
+
+    /// The hash a USDr fee leg's proof binds: the statement of the payment
+    /// the fee pays for (the main leg's public signals) and the fee note's
+    /// ciphertexts. enygma_dvp/src/core.UsdrFeeLegCiphertextHash computes the
+    /// same value.
+    function ofUsdrFeeLeg(
+        uint256[] memory mainStatement,
+        bytes calldata usdrCtxt,
+        bytes calldata usdrEncTxData
+    ) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(
+            USDR_FEE_LEG_DOMAIN, keccak256(abi.encode(mainStatement)), usdrCtxt, usdrEncTxData
+        ))) % SNARK_SCALAR_FIELD;
     }
 }

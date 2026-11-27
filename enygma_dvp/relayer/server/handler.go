@@ -471,10 +471,13 @@ func (h *Handler) RelayPartialWithdraw(c *gin.Context) {
 
 // RelayPaymentUsdrFee handles POST /relay/payment_usdr_fee.
 //
-// Settles two independent proofs atomically in one call
+// Settles two proofs atomically in one call
 // (EnygmaDvp.paymentWithUsdrFee): a normal payment against VaultId, and a
 // UsdrFeeCircuit proof — a second, independent relayer-fee asset with its
-// own token/vault/circuit — against UsdrVaultId.
+// own token/vault/circuit — against UsdrVaultId. The USDr proof names the
+// payment's statement (CiphertextHash.ofUsdrFeeLeg), so the contract
+// settles it only next to that payment; transactWith's simulation catches
+// a pair that does not match.
 //
 // Validation steps mirror RelayPaymentRelayerFee, applied to the USDr leg,
 // plus validating and settling the main leg in the same call:

@@ -1,15 +1,15 @@
 package tags_test
 
 // TestFullPaymentUsdrFeeWithTagsViaRelayer — combines the genuine
-// second-asset USDr flow (a normal payment plus an independent
-// UsdrFeeCircuit proof over a SEPARATE token/vault, settled atomically via
-// EnygmaDvp.channelPaymentWithUsdrFee) with the private tag channel, all
-// on-chain transactions routed through the relayer.
+// second-asset USDr flow (a normal payment plus a UsdrFeeCircuit proof over
+// a SEPARATE token/vault, which names the payment's statement, settled
+// atomically via EnygmaDvp.channelPaymentWithUsdrFee) with the private tag
+// channel, all onchain transactions routed through the relayer.
 //
-// This is the two-independent-proofs design mirroring enygma_payments'
-// USDrCircuit — as opposed to payment_relayer_fee_tag_test.go's
-// PaymentRelayerFeePublic mechanism, which pays the fee in the SAME token as
-// the payment, as a third output of the SAME proof.
+// This is the two-proof design mirroring enygma_payments' USDrCircuit — as
+// opposed to payment_relayer_fee_tag_test.go's PaymentRelayerFeePublic
+// mechanism, which pays the fee in the SAME token as the payment, as a
+// third output of the SAME proof.
 //
 // Phases:
 //
@@ -18,9 +18,10 @@ package tags_test
 //	Phase 3 — Deposit                 Alice deposits BOTH the main token and USDr.
 //	Phase 4 — ZK Proofs               main channel payment (8-elem, Bob's note tagged
 //	                                   for the next block and the proof bound to
-//	                                   (block, tag, ctxt)) + UsdrFeeCircuit (9-elem,
+//	                                   (block, tag, ctxt)) + UsdrFeeCircuit (10-elem,
 //	                                   fee note addressed to the relayer's published
-//	                                   feeSpendPubKey from GET /relay/info).
+//	                                   feeSpendPubKey from GET /relay/info, proved
+//	                                   after the main proof, whose statement it names).
 //	Phase 5 — Atomic settlement       POST /relay/channel_payment_usdr_fee —
 //	                                   msg.sender = relayer.
 //	                                   EnygmaDvp.channelPaymentWithUsdrFee() settles
@@ -136,7 +137,8 @@ type usdrFeeWitness struct {
 // feeRecipientPk, change of usdrTagChangeAmt back to Alice). depositAmt is
 // computed from the actual amounts used so the circuit's own conservation
 // law always holds even when a sub-test deliberately picks a mismatching
-// relayerFeeAmt/tokenId.
+// relayerFeeAmt/tokenId. The proof binds main, the statement of the payment
+// the fee pays for, so it is built after that payment's proof.
 func depositAndBuildUsdrFeeWitness(
 	t *testing.T,
 	ctx context.Context,
@@ -144,6 +146,7 @@ func depositAndBuildUsdrFeeWitness(
 	usdrVault, usdrErc20 *bind.BoundContract,
 	usdrVaultAddr common.Address,
 	aliceAuth *bind.TransactOpts,
+	main []*big.Int,
 	relayerFeeAmt, feeRecipientPk, tokenId *big.Int,
 ) usdrFeeWitness {
 	t.Helper()
@@ -249,7 +252,11 @@ func depositAndBuildUsdrFeeWitness(
 	}
 
 	// The USDr leg is relayed with empty fee-note ciphertexts ("0x"), and
-	// the proof binds their hash.
+	// the proof binds them and the main leg's statement.
+	ciphertextHash, err := rpcore.UsdrFeeLegCiphertextHash(main, nil, nil)
+	if err != nil {
+		t.Fatalf("UsdrFeeLegCiphertextHash: %v", err)
+	}
 	reqBody := map[string]interface{}{
 		"stMessage":            "0",
 		"stTreeNumbers":        [1]string{"0"},
@@ -257,7 +264,7 @@ func depositAndBuildUsdrFeeWitness(
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtFee.String(), cmtChange.String()},
 		"stContractAddress":    vaultAddrBig.String(),
-		"stCiphertextHash":     rpcore.PaymentCiphertextHash([][]byte{{}}, [][]byte{{}}).String(),
+		"stCiphertextHash":     ciphertextHash.String(),
 		"stFee":                relayerFeeAmt.String(),
 		"stTokenId":            tokenId.String(),
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
@@ -567,7 +574,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  main proof bound to block %d's tag %x... ✓", b, ch.Tag[:8])
 
 	usdrW := depositAndBuildUsdrFeeWitness(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, aliceAuth,
-		fixedFee, relayerFeePubKey, tokenId)
+		paymentResult.ContractStatement(), fixedFee, relayerFeePubKey, tokenId)
 
 	// ═════════════════════════════════════════════════════════════════════════
 	// PHASE 5 — Atomic settlement via /relay/payment_usdr_fee
@@ -830,7 +837,7 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 		}
 
 		usdrW := depositAndBuildUsdrFeeWitness(t, ctx, client, usdrVault, usdrErc20, usdrVaultAddr, aliceAuth,
-			usdrFeeAmt, usdrFeeRecipientPk, usdrTokenIdArg)
+			paymentResult.ContractStatement(), usdrFeeAmt, usdrFeeRecipientPk, usdrTokenIdArg)
 
 		var mainProofArr [8]string
 		copy(mainProofArr[:], paymentResult.Proof)

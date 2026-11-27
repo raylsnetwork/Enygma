@@ -308,7 +308,7 @@ func (e *Engine) send(ctx context.Context, s *step, from, to *Actor, amount *big
 		if err := s.await(ctx, "fee", to.Name); err != nil {
 			return nil, err
 		}
-		if fee, err = e.proveUsdrFee(ctx, from); err != nil {
+		if fee, err = e.proveUsdrFee(ctx, from, stmt); err != nil {
 			s.hopFailed(fromNode, NodeGnark, "prove UsdrFee", err)
 			return nil, err
 		}

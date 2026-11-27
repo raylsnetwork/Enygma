@@ -149,16 +149,22 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     // Governance-configured fixed fee that every paymentWithRelayerFee() proof's
     // public StFee signal must equal — see setRelayerFixedFee / paymentWithRelayerFee.
+    // It binds only the relayer routes, paymentWithRelayerFee and
+    // channelPaymentWithRelayerFee: EnygmaDvp settles a PaymentRelayerFee
+    // receipt nowhere else, but Erc20CoinVault's transfer, transferV2 and
+    // partialWithdrawWithRelayerFee settle one with the fee its prover chose.
     uint256 public relayerFixedFeeAmount;
 
     // USDr — a second, independent relayer-fee asset (its own vault/token,
     // its own circuit — see UsdrFeeCircuit / paymentWithUsdrFee).
-    // usdrFixedFeeAmount is the governance-configured fee amount every
-    // UsdrFee proof's public StFee signal must equal. usdrTokenId is the
-    // fixed convention value (0, matching every other circuit's WtTokenId
-    // convention in this codebase) the USDr circuit's public StTokenId
-    // signal must equal — config hygiene, not a security-critical check,
-    // since each vault already has its own independent tree/nullifier space.
+    // usdrFixedFeeAmount is the governance-configured fee amount the public
+    // StFee signal of every USDr fee leg (the UsdrFee receipt settled by
+    // paymentWithUsdrFee or channelPaymentWithUsdrFee) must equal.
+    // usdrTokenId is the fixed convention value (0, matching every other
+    // circuit's WtTokenId convention in this codebase) the leg's public
+    // StTokenId signal must equal — config hygiene, not a security-critical
+    // check, since each vault already has its own independent tree/nullifier
+    // space.
     uint256 public usdrFixedFeeAmount;
     uint256 public usdrTokenId;
     // The vault that holds the USDr asset. paymentWithUsdrFee() only accepts a
@@ -634,11 +640,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // Offset of the output commitments in a receipt settled by the payment
     // entry points, read from the circuit Erc20CoinVault._paymentCircuit
     // would pick: by inputs and outputs, then by statement length where
-    // Payment, PaymentFee and UsdrFee all have 1 input and 2 outputs. The
-    // payment entry points settle against any registered vault, and
-    // EnygmaErc20CoinVault and Erc1155CoinVault also take legacy joinsplit
-    // receipts of other shapes; those fall through to
-    // _joinsplitCommitmentsOutOffset.
+    // Payment and PaymentFee both have 1 input and 2 outputs. Every payment
+    // entry point checks its one exact shape first (the USDr fee leg reads
+    // its own layout), so only these four shapes reach it; any other reverts.
     function _commitmentsOutOffset(ProofReceipt memory receipt) internal pure returns (uint256) {
         uint256 numberOfInputs = receipt.numberOfInputs;
         uint256 numberOfOutputs = receipt.numberOfOutputs;
@@ -652,33 +656,32 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (numberOfInputs == 1 && numberOfOutputs == 2) {
             if (length == PAYMENT_LEN) return Psl.PAYMENT_COMMITMENTS_OUT_OFFSET;
             if (length == PAYMENT_FEE_LEN) return Psl.PAYMENT_FEE_COMMITMENTS_OUT_OFFSET;
-            if (length == USDR_FEE_LEN) return Psl.USDR_FEE_COMMITMENTS_OUT_OFFSET;
         }
-        return _joinsplitCommitmentsOutOffset(numberOfInputs);
+        revert InvalidStatementSize();
     }
 
-    // Legacy joinsplit circuits have no template in enygma_dvp, so no
-    // statement layout (#96); they share the prefix [message, trees, roots,
-    // nullifiers], one signal per input each.
-    function _joinsplitCommitmentsOutOffset(uint256 numberOfInputs) internal pure returns (uint256) {
-        return 1 + 3 * numberOfInputs;
+    // A PaymentFee receipt's StFee. Only that exact shape (1 input, 2
+    // outputs, PAYMENT_FEE_LEN) has one here: any other receipt reverts
+    // InvalidStatementSize, so no other signal (a Payment receipt's
+    // StCiphertextHash, say) is read as a fee.
+    function _paymentFeeOf(ProofReceipt memory receipt) internal pure returns (uint256) {
+        if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 2 || receipt.statement.length != PAYMENT_FEE_LEN) {
+            revert InvalidStatementSize();
+        }
+        return receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET];
     }
 
-    // Offset of a fee-carrying receipt's fee: PaymentFee's (1 input, 2 outputs)
-    // or PaymentRelayerFee's (1 input, 3 outputs). Any other shape has no
-    // Payment-family fee; for it this is the signal after the contract address
-    // that follows the output commitments, as for those two. Only the legacy
-    // joinsplit receipts described at _joinsplitCommitmentsOutOffset reach it.
-    function _feeOffset(uint256 numberOfInputs, uint256 numberOfOutputs) internal pure returns (uint256) {
-        if (numberOfInputs == 1 && numberOfOutputs == 2) return Psl.PAYMENT_FEE_FEE_OFFSET;
-        if (numberOfInputs == 1 && numberOfOutputs == 3) return Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET;
-        return _joinsplitCommitmentsOutOffset(numberOfInputs) + numberOfOutputs + 1;
+    // A PaymentRelayerFee receipt's StFee, likewise: only that exact shape
+    // (1 input, 3 outputs, PAYMENT_RELAYER_FEE_LEN) has one here.
+    function _relayerFeeOf(ProofReceipt memory receipt) internal pure returns (uint256) {
+        if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 3 || receipt.statement.length != PAYMENT_RELAYER_FEE_LEN) {
+            revert InvalidStatementSize();
+        }
+        return receipt.statement[Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET];
     }
 
     // Offset of a Payment-family receipt's StCiphertextHash, by the same
-    // shape and length dispatch as _commitmentsOutOffset. The legacy joinsplit
-    // circuits have no such signal, so their receipts cannot settle through
-    // payment*, which publish ciphertexts the proof must bind.
+    // shape and length dispatch as _commitmentsOutOffset.
     function _ciphertextHashOffset(ProofReceipt memory receipt) internal pure returns (uint256) {
         uint256 numberOfInputs = receipt.numberOfInputs;
         uint256 numberOfOutputs = receipt.numberOfOutputs;
@@ -692,7 +695,6 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (numberOfInputs == 1 && numberOfOutputs == 2) {
             if (length == PAYMENT_LEN) return Psl.PAYMENT_CIPHERTEXT_HASH_OFFSET;
             if (length == PAYMENT_FEE_LEN) return Psl.PAYMENT_FEE_CIPHERTEXT_HASH_OFFSET;
-            if (length == USDR_FEE_LEN) return Psl.USDR_FEE_CIPHERTEXT_HASH_OFFSET;
         }
         revert InvalidStatementSize();
     }
@@ -1225,7 +1227,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes calldata ctxt,
         bytes calldata encTxData
     ) public returns (bool) {
-        if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
+        // Only Payment and Payment2in receipts settle here, as in
+        // channelPayment: each fee-carrying shape has its own entry point,
+        // with its fee checks.
+        if (!_isPaymentShape(receipt)) revert InvalidStatementSize();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
 
         // NEW-3 fix: ERC20 JoinSplit circuit does not constrain StMessage in-circuit.
@@ -1285,9 +1290,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     }
 
     // channelPaymentWithFee is paymentWithFee's channel form (#452): a
-    // PaymentFee receipt whose fee must equal protocolFee, bound to
-    // blockNumber, tag and ctxt as in channelPayment. A PaymentRelayerFee
-    // receipt, which paymentWithFee also takes, settles over a channel
+    // PaymentFee receipt whose fee must equal protocolFee, the caller's
+    // expectation as in paymentWithFee, bound to blockNumber, tag and ctxt as
+    // in channelPayment. A PaymentRelayerFee receipt settles over a channel
     // through channelPaymentWithRelayerFee.
     function channelPaymentWithFee(
         ProofReceipt memory receipt,
@@ -1297,10 +1302,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes32 tag,
         bytes calldata ctxt
     ) public returns (bool) {
-        if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 2 || receipt.statement.length != PAYMENT_FEE_LEN) {
-            revert InvalidStatementSize();
-        }
-        require(receipt.statement[Psl.PAYMENT_FEE_FEE_OFFSET] == protocolFee, "EnygmaDvp: fee mismatch");
+        require(_paymentFeeOf(receipt) == protocolFee, "EnygmaDvp: fee mismatch");
         _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
         return true;
     }
@@ -1316,10 +1318,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes32 tag,
         bytes calldata ctxt
     ) public returns (bool) {
-        if (receipt.numberOfInputs != 1 || receipt.numberOfOutputs != 3 || receipt.statement.length != PAYMENT_RELAYER_FEE_LEN) {
-            revert InvalidStatementSize();
-        }
-        if (receipt.statement[Psl.PAYMENT_RELAYER_FEE_FEE_OFFSET] != relayerFixedFeeAmount) revert InvalidRelayerFee();
+        if (_relayerFeeOf(receipt) != relayerFixedFeeAmount) revert InvalidRelayerFee();
         _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
         return true;
     }
@@ -1363,15 +1362,15 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         emit ChannelPayment(vaultId, blockNumber, tag, commitmentOut, ctxt);
     }
 
-    // paymentWithFee is the fee-aware variant of payment().
+    // paymentWithFee is the fee-aware variant of payment(), for a PaymentFee
+    // receipt and only that shape, as channelPaymentWithFee takes it.
     // The ZK circuit enforces valueIn == Σ(valuesOut) + StFee, so the fee is
-    // absorbed in Alice's input commitment rather than collected as an ERC-20 transfer.
-    // The on-chain check here confirms that the fee embedded in the proof matches
-    // the protocolFee passed by the caller, preventing a prover from substituting
-    // a different fee amount.
-    //
-    // The fee is read at _feeOffset: PaymentFee's for 1 input and 2
-    // outputs, PaymentRelayerFee's for 1 input and 3.
+    // absorbed in Alice's input commitment rather than collected as an ERC-20 transfer:
+    // it stays in the vault, with no note to spend it.
+    // protocolFee is the caller's expectation of that fee, not a protocol
+    // policy: the contract stores no fee for this path, and whoever submits
+    // the receipt chooses protocolFee. The check only refuses a proof whose
+    // StFee differs from it.
     function paymentWithFee(
         ProofReceipt memory receipt,
         uint256 vaultId,
@@ -1379,12 +1378,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes calldata ctxt,
         bytes calldata encTxData
     ) public returns (bool) {
-        if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
+        uint256 fee = _paymentFeeOf(receipt);
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
-        uint256 feeOffset = _feeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
-        require(receipt.statement[feeOffset] == protocolFee, "EnygmaDvp: fee mismatch");
+        require(fee == protocolFee, "EnygmaDvp: fee mismatch");
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
@@ -1408,7 +1406,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // Only output[1] is constrained to Alice's senderPk in-circuit. The
     // circuit binds the fee to valOut[2]; it is checked here against
     // relayerFixedFeeAmount so the contract (not just the circuit's internal
-    // consistency) enforces the exact fee amount.
+    // consistency) enforces the exact fee amount on this route and its
+    // channel form, the only EnygmaDvp entry points that take a
+    // PaymentRelayerFee receipt. It is not a protocol-wide fee: a sender can
+    // pay a relayer any amount as output 0 of a plain payment, or pay none.
     //
     // ctxt / encTxData are Bob's note discovery data (ML-KEM capsule / AEAD ciphertext).
     function paymentWithRelayerFee(
@@ -1417,15 +1418,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         bytes calldata ctxt,
         bytes calldata encTxData
     ) public returns (bool) {
-        if (receipt.numberOfOutputs != 3) revert InvalidNumberOfOutputs();
+        uint256 fee = _relayerFeeOf(receipt);
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[Psl.PAYMENT_RELAYER_FEE_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
         // Without this check any fee the prover claims in the proof would pass
         // verification — the circuit only proves valOut[2] == StFee, not that
         // StFee matches any protocol-configured value.
-        uint256 feeOffset = _feeOffset(receipt.numberOfInputs, receipt.numberOfOutputs);
-        if (receipt.statement[feeOffset] != relayerFixedFeeAmount) revert InvalidRelayerFee();
+        if (fee != relayerFixedFeeAmount) revert InvalidRelayerFee();
 
         IAbstractCoinVault vault = IAbstractCoinVault(_coinVaults[vaultId]);
 
@@ -1440,19 +1440,26 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
-    // paymentWithUsdrFee settles two independent proofs atomically in one
-    // call: a normal payment (any of the 1-in/2-out shapes payment()
-    // accepts) against `vaultId`, and a UsdrFeeCircuit proof — a second,
+    // paymentWithUsdrFee settles two proofs in one call: a payment (a
+    // Payment or Payment2in receipt, the shapes payment() takes) against
+    // `vaultId`, and its USDr fee leg, a UsdrFeeCircuit proof — a second,
     // independent relayer-fee asset with its own vault/token — against
-    // `usdrVaultId`. Both settle or neither does.
+    // `usdrVaultId`. Within the call both settle or neither does.
     //
     // Unlike paymentWithRelayerFee (fee note is a 3rd output of the SAME
     // proof, same token), USDr is a genuinely separate asset: its own ERC20,
-    // its own Erc20CoinVault, its own circuit. The two proofs are otherwise
-    // unrelated — there is no cross-proof binding the way enygma_payments'
-    // dual-proof transfer() needs, because each proof already nullifies
-    // against its own vault's own tree; nothing here lets one proof be
-    // replayed via the other.
+    // its own Erc20CoinVault, its own circuit. The two proofs spend notes of
+    // different vaults, so nothing either one spends ties it to the other;
+    // the fee leg carries the binding instead: its StCiphertextHash must be
+    // CiphertextHash.ofUsdrFeeLeg of the payment's statement and the fee
+    // note's ciphertexts. A fee leg therefore settles only in the same call
+    // as the payment it was proved for (here, or in channelPaymentWithUsdrFee
+    // for a channel payment): not on its own through payment(),
+    // paymentWithFee() or a vault's transfer, and not next to another
+    // payment, where the payer would lose the fee while the payment never
+    // settles. The payment carries no such binding and can still settle
+    // alone, through payment() or channelPayment(), leaving the relayer
+    // unpaid.
     //
     // usdrReceipt is a UsdrFee proof: output[0] is the relayer's fee note,
     // output[1] the sender's change. Its fee is checked against
@@ -1477,7 +1484,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         _requireUsdrFeeLeg(usdrReceipt, usdrVaultId);
 
         // ── main leg — identical checks/settlement to payment() ──
-        if (receipt.numberOfOutputs == 0) revert InvalidNumberOfOutputs();
+        if (!_isPaymentShape(receipt)) revert InvalidStatementSize();
         if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
         if (receipt.statement[Psl.PAYMENT_MESSAGE_OFFSET] != 0) revert InvalidPaymentMessage();
 
@@ -1489,7 +1496,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         emit Payment(vaultId, receipt.statement[_commitmentsOutOffset(receipt)], ctxt, encTxData);
 
-        _settleUsdrFeeLeg(usdrReceipt, usdrVaultId, usdrCtxt, usdrEncTxData);
+        _settleUsdrFeeLeg(receipt.statement, usdrReceipt, usdrVaultId, usdrCtxt, usdrEncTxData);
 
         return true;
     }
@@ -1497,8 +1504,9 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // channelPaymentWithUsdrFee is paymentWithUsdrFee's channel form (#452):
     // the main leg, a Payment or Payment2in receipt, settles as channelPayment
     // settles it, bound to blockNumber, tag and ctxt; the USDr fee leg is
-    // checked and settled exactly as in paymentWithUsdrFee, with its own
-    // ciphertexts. Both settle or neither does.
+    // checked and settled exactly as in paymentWithUsdrFee, bound to the
+    // main leg's statement and its own ciphertexts. Within the call both
+    // settle or neither does.
     function channelPaymentWithUsdrFee(
         ProofReceipt memory receipt,
         uint256 vaultId,
@@ -1513,7 +1521,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         _requireUsdrFeeLeg(usdrReceipt, usdrVaultId);
         if (!_isPaymentShape(receipt)) revert InvalidStatementSize();
         _settleChannelPayment(receipt, vaultId, blockNumber, tag, ctxt);
-        _settleUsdrFeeLeg(usdrReceipt, usdrVaultId, usdrCtxt, usdrEncTxData);
+        _settleUsdrFeeLeg(receipt.statement, usdrReceipt, usdrVaultId, usdrCtxt, usdrEncTxData);
         return true;
     }
 
@@ -1528,8 +1536,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (usdrReceipt.statement.length != USDR_FEE_LEN) revert InvalidStatementSize();
     }
 
-    // Settles the USDr leg _requireUsdrFeeLeg let through, after its main leg.
+    // Settles the USDr leg _requireUsdrFeeLeg let through, after its main
+    // leg, whose statement is mainStatement.
     function _settleUsdrFeeLeg(
+        uint256[] memory mainStatement,
         ProofReceipt memory usdrReceipt,
         uint256 usdrVaultId,
         bytes calldata usdrCtxt,
@@ -1545,7 +1555,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
         IAbstractCoinVault usdrVault = IAbstractCoinVault(_coinVaults[usdrVaultId]);
         usdrVault.checkReceiptConditions(usdrReceipt);
-        _requireCiphertextHash(usdrReceipt, usdrCtxt, usdrEncTxData);
+        // The fee leg names the payment it pays for (see paymentWithUsdrFee).
+        if (usdrReceipt.statement[Psl.USDR_FEE_CIPHERTEXT_HASH_OFFSET] != CiphertextHash.ofUsdrFeeLeg(mainStatement, usdrCtxt, usdrEncTxData)) {
+            revert CiphertextHashMismatch();
+        }
         usdrVault.nullifyFromReceipt(usdrReceipt);
         usdrVault.insertCommitmentsFromReceipt(usdrReceipt);
 

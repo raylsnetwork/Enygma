@@ -71,14 +71,15 @@ type RelayPartialWithdrawRequest struct {
 // ── USDr fee (second, independent asset — UsdrFeeCircuit) ─────────────────────
 
 // RelayPaymentUsdrFeeRequest is the body for POST /relay/payment_usdr_fee.
-// Settles two independent proofs atomically in one on-chain call
+// Settles two proofs atomically in one onchain call
 // (EnygmaDvp.paymentWithUsdrFee): a normal payment against VaultId, and a
 // UsdrFeeCircuit proof — a second, independent relayer-fee asset with its own
 // token/vault/circuit — against UsdrVaultId.
 //
 // Receipt is a Payment or Payment2in statement; UsdrReceipt is a UsdrFee
 // (1-in/2-out) statement whose outputs are the relayer's fee note and the
-// sender's change.
+// sender's change, and whose StCiphertextHash names Receipt's statement and
+// the USDr fee note's ciphertexts (CiphertextHash.ofUsdrFeeLeg).
 //
 // UsdrFeeSalt is supplied so the relayer can recompute the USDr fee note's
 // commitment; fee and tokenId are read straight from UsdrReceipt's own public

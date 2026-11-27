@@ -8,10 +8,9 @@ package tests
 // into outputs worth v + d. The fee statement slot (index 7) is then a huge
 // field element:
 //
-//   - payment() sends any 1-in/2-out receipt whose statement has 8 elements to
-//     the PaymentFee verification key and never looks at the fee;
 //   - paymentWithFee() only checks statement[fee] == protocolFee, and
-//     protocolFee is an argument the caller supplies.
+//     protocolFee is an argument the caller supplies;
+//   - the vault's transfer() and transferV2() never look at the fee.
 //
 // Two layers now stop it, and the test passes if either does:
 //
@@ -21,10 +20,11 @@ package tests
 //     keys, so it also protects a deployment whose PaymentFee key predates the
 //     circuit fix.
 //
-// The attack spends a 10-token note into a 1010-token note through payment(),
-// then withdraws 1010 tokens from a vault that received only 10 from the
-// attacker, taking the difference from another depositor. A failing sub-test
-// message starts with "VULNERABLE:".
+// The attack spends a 10-token note into a 1010-token note through
+// paymentWithFee(), passing the inflating fee as protocolFee, then withdraws
+// 1010 tokens from a vault that received only 10 from the attacker, taking
+// the difference from another depositor. A failing sub-test message starts
+// with "VULNERABLE:".
 //
 // TestV2PaymentFee_HonestFeeStillWorks is the control: a normal fee payment with a
 // small StFee must still settle.
@@ -206,20 +206,21 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		NumberOfInputs:  big.NewInt(1),
 		NumberOfOutputs: big.NewInt(2),
 	}
-	tx, err := dvp.Transact(owner, "payment", receipt, big.NewInt(0), []byte{}, []byte{})
+	// The caller chooses protocolFee, so it passes the inflating fee.
+	tx, err := dvp.Transact(owner, "paymentWithFee", receipt, big.NewInt(0), stFee, []byte{}, []byte{})
 	if err != nil {
 		if !strings.Contains(err.Error(), "FeeOutOfRange") {
-			t.Fatalf("payment() rejected the inflating proof, but not with FeeOutOfRange: %v", err)
+			t.Fatalf("paymentWithFee() rejected the inflating proof, but not with FeeOutOfRange: %v", err)
 		}
-		t.Logf("SAFE: payment() rejected the inflating PaymentFee proof with FeeOutOfRange (contract guard): %.120s", err)
+		t.Logf("SAFE: paymentWithFee() rejected the inflating PaymentFee proof with FeeOutOfRange (contract guard): %.120s", err)
 		return
 	}
 	mined, err := bind.WaitMined(ctx, client, tx)
 	if err != nil || mined.Status != 1 {
-		t.Logf("SAFE: payment() reverted on the inflating PaymentFee proof (status=%v err=%v)", mined, err)
+		t.Logf("SAFE: paymentWithFee() reverted on the inflating PaymentFee proof (status=%v err=%v)", mined, err)
 		return
 	}
-	t.Errorf("VULNERABLE: payment() accepted a PaymentFee proof that turns a %s-token note into a %s-token note", deposit, inflated)
+	t.Errorf("VULNERABLE: paymentWithFee() accepted a PaymentFee proof that turns a %s-token note into a %s-token note", deposit, inflated)
 
 	// Spend the inflated note into a withdrawal commitment and take the tokens out.
 	recipient := common.HexToAddress("0x000000000000000000000000000000000000bEEF")
