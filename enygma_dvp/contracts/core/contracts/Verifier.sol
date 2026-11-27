@@ -22,6 +22,13 @@ contract Verifier is IVerifier, AccessControl {
 
     address private _groth16Verifier;
 
+    // Declared after the variables above, so the storage slots enygma_vkslots
+    // reads the keys and their count from stay where they are.
+    // Set by freeze: from then on neither the keys nor the backend change.
+    bool private _frozen;
+    // keccak256(abi.encode(vk)) of the key in each slot.
+    mapping(uint256 => bytes32) private _keyHashes;
+
     // circuit indices:
     // 0 vkJS:                          ERC20JoinSplit
     // 1 vkOwn:                         Erc721Ownership
@@ -56,16 +63,21 @@ contract Verifier is IVerifier, AccessControl {
     function initializeVerifier(
         address groth16Verifier_
     ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        // A Verifier frozen before this call keeps no backend, and verifies
+        // nothing.
+        _requireNotFrozen();
         // DVP-1 fix: prevent re-initialization — a second call would replace
         // _groth16Verifier with a malicious always-true contract.
         require(_groth16Verifier == address(0), "Verifier: already initialized");
         _groth16Verifier = groth16Verifier_;
+        emit Groth16VerifierSet(groth16Verifier_);
         return true;
     }
 
     function addVerificationKey(
         IEnygmaDvp.VerifyingKey memory vKey_
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        _requireNotFrozen();
         if (_vkLength == MAX_NUMBER_OF_CIRCUITS) {
             revert MaxNumberOfCircuitsExceeded();
         }
@@ -95,6 +107,45 @@ contract Verifier is IVerifier, AccessControl {
         }
 
         _vkLength++;
+
+        bytes32 keyHash = keccak256(abi.encode(vKey_));
+        _keyHashes[i] = keyHash;
+        emit VerificationKeyAdded(i, keyHash);
+        return true;
+    }
+
+    // Closes the key table for good: from then on initializeVerifier,
+    // addVerificationKey and freeze revert, so no slot past the last key ever
+    // holds one. Coin vaults keep the Verifier they were registered with, so
+    // a vault registered against a frozen Verifier verifies against exactly
+    // the keys it holds now.
+    function freeze() external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        _requireNotFrozen();
+        _frozen = true;
+        emit KeysFrozen(_vkLength);
+        return true;
+    }
+
+    function frozen() external view returns (bool) {
+        return _frozen;
+    }
+
+    function groth16Verifier() external view returns (address) {
+        return _groth16Verifier;
+    }
+
+    // The number of keys, which fill slots 0 to verificationKeyCount() - 1.
+    function verificationKeyCount() external view returns (uint256) {
+        return _vkLength;
+    }
+
+    // keccak256(abi.encode(vk)) of the key in slot index; 0 for an empty slot.
+    function verificationKeyHash(uint256 index) external view returns (bytes32) {
+        return _keyHashes[index];
+    }
+
+    function _requireNotFrozen() private view {
+        if (_frozen) revert VerifierFrozen();
     }
 
     function verifyProof(

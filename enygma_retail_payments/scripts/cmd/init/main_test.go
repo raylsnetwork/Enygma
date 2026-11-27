@@ -66,6 +66,7 @@ func projectRoot(t *testing.T, edit func(slots []map[string]any)) string {
 	edit(slots)
 	write("vk_slots.json", map[string]any{"slots": slots})
 	write("enygmapayment.config.json", map[string]any{
+		"owner": map[string]any{"relayer-fixed-fee": "0", "usdr-fixed-fee": "0"},
 		"network": map[string]any{
 			"host": "127.0.0.1", "port": "1", "chain-id": "1337",
 			"accounts": []map[string]string{{"private": "0x34d091c661db4c814d65c8ae9277b7055c0dde5a752ce5a3fdfd4ea11a8f7154"}},

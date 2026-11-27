@@ -206,6 +206,26 @@ func ReadBack(read StorageReader, keys []Key) error {
 	return nil
 }
 
+// Resume returns how many of keys the Verifier already holds, keys[i] in
+// slot i, so that a run of init that stopped part-way registers only the
+// rest, keys[n:]. Slots only ever get appended, so it refuses a Verifier
+// holding more keys than keys, or a slot holding another key: registering
+// on top of either would leave keys in the wrong slots for good.
+func Resume(read StorageReader, keys []Key) (int, error) {
+	n, err := read(big.NewInt(vkLengthSlot))
+	if err != nil {
+		return 0, fmt.Errorf("read the Verifier's key count: %w", err)
+	}
+	if !n.IsInt64() || n.Int64() > int64(len(keys)) {
+		return 0, fmt.Errorf("the Verifier holds %s keys, more than the %d init registers", n, len(keys))
+	}
+	held := int(n.Int64())
+	if err := ReadBack(read, keys[:held]); err != nil {
+		return 0, err
+	}
+	return held, nil
+}
+
 // readKey reads slot i's key, refusing one whose ic does not have nIC points.
 func readKey(read StorageReader, i, nIC int) (Key, error) {
 	base := int64(keysSlot + slotsPerKey*i)

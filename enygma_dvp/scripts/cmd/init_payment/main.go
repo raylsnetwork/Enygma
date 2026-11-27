@@ -1,7 +1,12 @@
 // cmd/init_payment — self-contained initializer for the dedicated Payment
 // deployment (see cmd/deploy_payment). Registers the 5 Payment-family VKs
-// (Payment/Payment2in/PaymentFee/PaymentRelayerFeePublic/UsdrFee) and both
-// vaults (main payment token + USDr) on the freshly deployed EnygmaDvp.
+// (Payment/Payment2in/PaymentFee/PaymentRelayerFeePublic/UsdrFee), freezes
+// the Verifier, registers both vaults (main payment token + USDr) on the
+// freshly deployed EnygmaDvp, sets the fixed fees from the config's "owner"
+// object, and hands the owner roles to owner.governance if the config names
+// one (owner.go). Each step checks the chain first and skips a change
+// already made, so a run that stopped part-way can be run again, once the
+// node has mined or dropped every transaction it sent.
 //
 // Deliberately does not share cmd/init's helpers (own package main, own
 // copies of the VK-parsing types/functions) — same convention as
@@ -53,6 +58,7 @@ type initPaymentConfig struct {
 			Tags     []string `json:"tags"`
 		} `json:"circuits"`
 	} `json:"circom"`
+	Owner initPaymentOwnerConfig `json:"owner"`
 }
 
 type initPaymentReceiptData struct {
@@ -157,7 +163,7 @@ func initializePayment() error {
 	}
 
 	rpcURL := fmt.Sprintf("http://%s:%s", config.Network.Host, config.Network.Port)
-	client, err := ethclient.Dial(rpcURL)
+	client, err := dialPaymentChain(rpcURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Ethereum client: %w", err)
 	}
@@ -170,6 +176,10 @@ func initializePayment() error {
 	auth, err := getPaymentInitTransactOpts(config.Network.Accounts[0].Private, chainID)
 	if err != nil {
 		return fmt.Errorf("failed to create transact opts: %w", err)
+	}
+	owner, err := config.Owner.settings(auth.From)
+	if err != nil {
+		return fmt.Errorf("refusing the config's owner settings: %w", err)
 	}
 
 	enygmaDvpABI, err := loadPaymentInitContractABI("core/contracts/EnygmaDvp.sol/EnygmaDvp")
@@ -187,23 +197,53 @@ func initializePayment() error {
 	fmt.Printf("EnygmaDvp:  %s\n", enygmaDvpAddress.Hex())
 	fmt.Printf("Verifier:   %s\n", verifierAddress.Hex())
 
+	if err := requireNothingPaymentPending(client, auth.From); err != nil {
+		return fmt.Errorf("refusing to start: %w", err)
+	}
+
+	roleHolders := []paymentRoleHolder{{"EnygmaDvp", enygmaDvpABI, enygmaDvpAddress}, {"Verifier", verifierABI, verifierAddress}}
+	if owner.governance != nil {
+		if err := requirePaymentGovernanceCode(client, *owner.governance); err != nil {
+			return fmt.Errorf("refusing the config's owner settings: %w", err)
+		}
+		// The deployer renounces EnygmaDvp's owner role only in the handover,
+		// which comes after every other step.
+		owns, err := hasPaymentRole(client, enygmaDvpABI, enygmaDvpAddress, paymentOwnerRole, auth.From)
+		if err != nil {
+			return fmt.Errorf("failed to read EnygmaDvp's roles: %w", err)
+		}
+		if !owns {
+			fmt.Println("The deployer no longer holds EnygmaDvp's owner role: an earlier run got to the handover. Finishing it...")
+			return handOverPayment(client, auth, *owner.governance, roleHolders...)
+		}
+	}
+
 	fmt.Println("Initializing Verifier (groth16 backend)...")
-	if _, err := callPaymentInitMethod(client, auth, verifierABI, verifierAddress, "initializeVerifier", g16VerifierAddress); err != nil {
+	if err := ensurePaymentBackend(client, auth, verifierABI, verifierAddress, g16VerifierAddress); err != nil {
 		return fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
 
-	dvpOwnerRole := crypto.Keccak256Hash([]byte("ownerRole"))
 	fmt.Println("Granting DEFAULT_OWNER_ROLE on Verifier to EnygmaDvp...")
-	if _, err := callPaymentInitMethod(client, auth, verifierABI, verifierAddress, "grantRole", dvpOwnerRole, enygmaDvpAddress); err != nil {
+	if err := ensurePaymentRole(client, auth, verifierABI, verifierAddress, paymentOwnerRole, enygmaDvpAddress); err != nil {
 		return fmt.Errorf("failed to grant Verifier owner role to EnygmaDvp: %w", err)
 	}
 
 	fmt.Println("Initializing EnygmaDvp...")
-	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "initializeDvp", verifierAddress); err != nil {
+	if err := ensurePaymentDvpVerifier(client, auth, enygmaDvpABI, enygmaDvpAddress, verifierAddress); err != nil {
 		return fmt.Errorf("failed to initialize EnygmaDvp: %w", err)
 	}
 
-	for i, vkey := range vkeys {
+	// Keys only ever get appended: carry on after the ones an earlier run
+	// registered, and refuse a Verifier holding any other.
+	held, err := vkslots.Resume(storageReader(client, verifierAddress), slotKeys)
+	if err == nil {
+		held, err = paymentKeysToRegister(client, verifierABI, verifierAddress, held, len(vkeys))
+	}
+	if err != nil {
+		return fmt.Errorf("cannot register the verification keys on this Verifier: %w", err)
+	}
+	for i := held; i < len(vkeys); i++ {
+		vkey := vkeys[i]
 		fmt.Printf("Registering verification key %d...\n", i+1)
 		if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerNewVerificationKey", vkey); err != nil {
 			return fmt.Errorf("failed to register verification key %d: %w", i, err)
@@ -213,6 +253,16 @@ func initializePayment() error {
 	if err := vkslots.ReadBack(storageReader(client, verifierAddress), slotKeys); err != nil {
 		return fmt.Errorf("the Verifier does not hold the keys init registered: %w", err)
 	}
+	if err := checkPaymentKeyHashes(client, verifierABI, verifierAddress, slotKeys); err != nil {
+		return fmt.Errorf("the Verifier does not report the keys init registered: %w", err)
+	}
+	// The vaults take the Verifier for good when they are registered below, so
+	// its key table is closed first: no slot past the last key, such as the
+	// DvpInitiator slot 23 Erc20CoinVault reads, can ever hold one.
+	fmt.Println("Freezing the Verifier's keys...")
+	if err := ensurePaymentFrozen(client, auth, verifierABI, verifierAddress); err != nil {
+		return fmt.Errorf("failed to freeze the Verifier: %w", err)
+	}
 
 	privateMintVerifierAddress := common.HexToAddress(receipts["PrivateMintVerifier"].ContractAddress)
 	fmt.Printf("Registering PrivateMintVerifier (%s)...\n", privateMintVerifierAddress.Hex())
@@ -221,10 +271,9 @@ func initializePayment() error {
 	}
 
 	fmt.Println("Registering Erc20CoinVault (main payment token, vaultId 0)...")
-	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
+	if err := ensurePaymentVault(client, auth, enygmaDvpABI, enygmaDvpAddress, 0,
 		common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress),
 		common.HexToAddress(receipts["ERC20"].ContractAddress),
-		big.NewInt(1),
 		treeDepth,
 	); err != nil {
 		return fmt.Errorf("failed to register Erc20CoinVault: %w", err)
@@ -234,10 +283,9 @@ func initializePayment() error {
 	// vaultId=1 automatically (2nd vault on this EnygmaDvp instance). See
 	// EnygmaDvp.paymentWithUsdrFee.
 	fmt.Println("Registering UsdrCoinVault (vaultId 1)...")
-	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerVault",
+	if err := ensurePaymentVault(client, auth, enygmaDvpABI, enygmaDvpAddress, 1,
 		common.HexToAddress(receipts["UsdrCoinVault"].ContractAddress),
 		common.HexToAddress(receipts["UsdrERC20"].ContractAddress),
-		big.NewInt(1),
 		treeDepth,
 	); err != nil {
 		return fmt.Errorf("failed to register UsdrCoinVault: %w", err)
@@ -246,15 +294,33 @@ func initializePayment() error {
 	// usdrTokenId defaults to 0 — the same fixed convention value every
 	// Payment-family circuit's WtTokenId/StTokenId uses in this codebase.
 	fmt.Println("Setting usdrTokenId = 0...")
-	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "setUsdrTokenId", big.NewInt(0)); err != nil {
+	if err := ensurePaymentValue(client, auth, enygmaDvpABI, enygmaDvpAddress, "usdrTokenId", "setUsdrTokenId", big.NewInt(0)); err != nil {
 		return fmt.Errorf("failed to set usdrTokenId: %w", err)
 	}
 
 	// paymentWithUsdrFee only accepts its USDr leg against this vault; the
 	// UsdrCoinVault registered above is vaultId 1.
 	fmt.Println("Pinning the USDr fee vault (vaultId 1)...")
-	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "setUsdrFeeVaultId", big.NewInt(1)); err != nil {
+	if err := ensurePaymentUsdrVault(client, auth, enygmaDvpABI, enygmaDvpAddress, big.NewInt(1)); err != nil {
 		return fmt.Errorf("failed to set the USDr fee vault: %w", err)
+	}
+
+	// The fixed fees the relayer-fee and USDr-fee calls check every proof's
+	// fee against. A relayer whose RELAYER_MIN_FEE is above one relays none of
+	// the calls that pay it.
+	fmt.Printf("Setting the relayer fixed fee to %s...\n", owner.relayerFixedFee)
+	if err := ensurePaymentValue(client, auth, enygmaDvpABI, enygmaDvpAddress, "relayerFixedFeeAmount", "setRelayerFixedFee", owner.relayerFixedFee); err != nil {
+		return fmt.Errorf("failed to set the relayer fixed fee: %w", err)
+	}
+	fmt.Printf("Setting the USDr fixed fee to %s...\n", owner.usdrFixedFee)
+	if err := ensurePaymentValue(client, auth, enygmaDvpABI, enygmaDvpAddress, "usdrFixedFeeAmount", "setUsdrFixedFee", owner.usdrFixedFee); err != nil {
+		return fmt.Errorf("failed to set the USDr fixed fee: %w", err)
+	}
+
+	if owner.governance == nil {
+		fmt.Println("The config names no owner.governance: the deployer keeps EnygmaDvp's and the Verifier's roles.")
+	} else if err := handOverPayment(client, auth, *owner.governance, roleHolders...); err != nil {
+		return err
 	}
 
 	fmt.Println("EnygmaDvp initialized for the dedicated Payment deployment.")
@@ -388,7 +454,7 @@ func formatPaymentVKey(vkey initPaymentVKJSON) initPaymentVerifyingKey {
 	}
 }
 
-func callPaymentInitMethod(client *ethclient.Client, auth *bind.TransactOpts, contractABI abi.ABI, contractAddress common.Address, method string, args ...interface{}) (common.Hash, error) {
+func callPaymentInitMethod(client paymentChain, auth *bind.TransactOpts, contractABI abi.ABI, contractAddress common.Address, method string, args ...interface{}) (common.Hash, error) {
 	contract := bind.NewBoundContract(contractAddress, contractABI, client, client, client)
 
 	tx, err := contract.Transact(auth, method, args...)
@@ -420,7 +486,7 @@ func (vk initPaymentVerifyingKey) slotKey() vkslots.Key {
 }
 
 // storageReader reads addr's storage at the latest block.
-func storageReader(client *ethclient.Client, addr common.Address) vkslots.StorageReader {
+func storageReader(client paymentChain, addr common.Address) vkslots.StorageReader {
 	return func(slot *big.Int) (*big.Int, error) {
 		word, err := client.StorageAt(context.Background(), addr, common.BigToHash(slot), nil)
 		if err != nil {
@@ -429,3 +495,6 @@ func storageReader(client *ethclient.Client, addr common.Address) vkslots.Storag
 		return new(big.Int).SetBytes(word), nil
 	}
 }
+
+// dialPaymentChain connects to the node at url. The tests replace it.
+var dialPaymentChain = func(url string) (paymentChain, error) { return ethclient.Dial(url) }

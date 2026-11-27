@@ -221,3 +221,33 @@ func TestReadBackRefusesASlotWhoseKeyHasAnotherNumberOfICPoints(t *testing.T) {
 		t.Fatalf("ReadBack = %v, want a refusal naming slot 1 and its 4 IC points", err)
 	}
 }
+
+func TestResumeCountsTheKeysAlreadyInPlace(t *testing.T) {
+	keys := []Key{testKey(1, 4), testKey(2, 1), testKey(3, 8)}
+	for held := 0; held <= len(keys); held++ {
+		n, err := Resume(reader(verifierStorage(keys[:held])), keys)
+		if err != nil || n != held {
+			t.Fatalf("Resume with %d keys registered = %d, %v; want %d, nil", held, n, err, held)
+		}
+	}
+}
+
+func TestResumeRefusesAVerifierHoldingMoreKeys(t *testing.T) {
+	keys := []Key{testKey(1, 4), testKey(2, 1)}
+	onChain := append(append([]Key{}, keys...), keys[1])
+	_, err := Resume(reader(verifierStorage(onChain)), keys)
+	if err == nil || !strings.Contains(err.Error(), "holds 3 keys, more than the 2") {
+		t.Fatalf("Resume = %v, want a refusal naming the Verifier's 3 keys", err)
+	}
+}
+
+// A run that resent the whole key loop after two keys had landed would hold
+// keys[0], keys[1], keys[0]: slot 2 holds another circuit's key.
+func TestResumeRefusesASlotHoldingAnotherKey(t *testing.T) {
+	keys := []Key{testKey(1, 4), testKey(2, 1), testKey(3, 8)}
+	onChain := []Key{keys[0], keys[1], keys[0]}
+	_, err := Resume(reader(verifierStorage(onChain)), keys)
+	if err == nil || !strings.Contains(err.Error(), "slot 2") {
+		t.Fatalf("Resume = %v, want a refusal naming slot 2", err)
+	}
+}
