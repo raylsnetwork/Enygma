@@ -129,11 +129,24 @@ in:
   - an address registers at most 100 times an hour, and only from a participant's program
     (a JSON request no other site's page can make its visitors send);
   - at most `-max-queue` (1000) are queued in all;
-  - one identity is given at most `-max-turns` (3) turns without contributing.
+  - one identity is given at most `-max-turns` (3) turns without contributing;
+  - the phase takes at most `-max-contributions` (1000) contributions, and
+    `-max-contributions-per-address` (10) from one network address. The per-address count starts
+    again when the coordinator restarts. Each contribution is a state file kept for the phase's
+    life (50 MB at 2^18);
+  - no turn is given while the disk under `-dir` has less free space than another state plus
+    `-min-free-mib` (1024). The coordinator logs a warning, and turns resume once there is room;
+  - it keeps at most `-max-sessions` (10,000) registrations at once;
+  - anyone may download the transcript's states (`verify` does), 16 downloads at once and one per
+    network address. Each must keep up a pace of about 34 KiB/s. `verify` waits for a free slot.
 
   A "network address" is an IPv4 address, or an IPv6 `/64` (`-ipv6-prefix`): one host is given a
   whole `/64`. These limits cannot be turned off by accident: `-max-per-address` is at least 1,
-  and `-no-address-limit` lifts it.
+  and `-no-address-limit` lifts it and the per-address contribution limit, for a phase whose
+  participants all come from one address.
+- **One coordinator to a phase.** `coordinate` locks `<dir>/.lock` (on Linux and macOS), and
+  refuses a directory another coordinator is serving. It syncs each accepted contribution, and
+  the directory, to disk before telling its participant it is in.
 - **The GitHub sign-in needs an OAuth app.** Create one under Settings → Developer settings →
   OAuth Apps → New OAuth App (any homepage and callback URL), tick **Enable Device Flow**, and
   pass its client ID as `-github-client-id`. There is no secret to keep: the device flow needs

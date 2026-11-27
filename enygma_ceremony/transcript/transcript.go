@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -408,15 +409,44 @@ func saveEntry(dir string, e Entry) error {
 	return nil
 }
 
+// busyTries is how many times getState asks a coordinator too busy to send a
+// state (503), waiting as it says between (Retry-After, at most busyWait).
+const (
+	busyTries = 20
+	busyWait  = time.Minute
+)
+
+// getState asks for the state at url, waiting out a coordinator that has as
+// many downloads under way as it serves at once (audit R-010): a verifier
+// gave up at the first 503, so a few slow downloads elsewhere stopped it.
+func getState(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	for try := 1; ; try++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err != nil || resp.StatusCode != http.StatusServiceUnavailable || try == busyTries {
+			return resp, err
+		}
+		resp.Body.Close()
+		wait := 10 * time.Second
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
+			wait = min(max(time.Duration(secs)*time.Second, 0), busyWait)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
 // download saves url's body at path, in dir, which must have sha256 hash
 // and be at most limit bytes, and returns how many bytes it read. It writes
 // a new file, renamed in place once it is right.
 func download(ctx context.Context, client *http.Client, url, dir, path, hash string, limit int64) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := client.Do(req)
+	resp, err := getState(ctx, client, url)
 	if err != nil {
 		return 0, err
 	}

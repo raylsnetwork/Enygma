@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/net/netutil"
 	"golang.org/x/term"
 
 	"enygma_ceremony/ceremony"
@@ -219,6 +220,10 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	ipv6Prefix := fs.Int("ipv6-prefix", 64, "how many leading bits of an IPv6 address count as one network address, for the limits")
 	maxQueue := fs.Int("max-queue", 1000, "participants queued at once, from everywhere")
 	maxTurns := fs.Int("max-turns", 3, "turns one identity is given without contributing")
+	maxContributions := fs.Int("max-contributions", 1000, "contributions the phase takes in all; each is a state file kept for the phase's life")
+	maxContributionsPerAddress := fs.Int("max-contributions-per-address", 10, "contributions the phase takes from one network address (-no-address-limit lifts the bound)")
+	minFreeMiB := fs.Int64("min-free-mib", 1024, "MiB of disk space under -dir to keep free, besides room for another state: below it, no turns are given")
+	maxSessions := fs.Int("max-sessions", 10000, "registrations kept at once, and network addresses whose registrations are counted")
 	listen := fs.String("listen", "", "the address to serve on: with -tls-cert, :443 by default; behind a TLS proxy (-trusted-proxy) or with -insecure-http, 127.0.0.1:8080 by default; not with -acme-domain, which serves on :443 and :80")
 	acmeDomain := fs.String("acme-domain", "", "serve HTTPS on :443 for this host name, with a certificate from Let's Encrypt (port 80 must reach this machine too)")
 	acmeCache := fs.String("acme-cache", "", "-acme-domain: the directory keeping the certificate and the ACME account key, an absolute path (default: acme-cache beside -dir)")
@@ -250,6 +255,8 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			return fmt.Errorf("%w: -max-per-address is at least 1 (-no-address-limit lifts the bound)", errUsage)
 		case *githubMinAge <= 0, *maxQueue < 1, *maxTurns < 1, *ipv6Prefix < 1, *ipv6Prefix > 128:
 			return fmt.Errorf("%w: -github-min-age, -max-queue and -max-turns are positive, and -ipv6-prefix from 1 to 128", errUsage)
+		case *maxContributions < 1, *maxContributionsPerAddress < 1, *minFreeMiB < 1, *maxSessions < 1:
+			return fmt.Errorf("%w: -max-contributions, -max-contributions-per-address, -min-free-mib and -max-sessions are positive", errUsage)
 		}
 		proxies, err := parseProxies(*trustedProxy)
 		if err != nil {
@@ -321,6 +328,8 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			GitHubClientID: *githubClientID, GitHubMinAge: *githubMinAge,
 			MaxPerAddress: *maxPerAddress, NoAddressLimit: *noAddressLimit, TrustedProxies: proxies,
 			IPv6Prefix: *ipv6Prefix, MaxQueue: *maxQueue, MaxTurns: *maxTurns,
+			MaxContributions: *maxContributions, MaxContributionsPerAddress: *maxContributionsPerAddress,
+			MinFree: *minFreeMiB << 20, MaxSessions: *maxSessions,
 			Turn: *turn, TurnPresence: *turnPresence, Presence: *presence, Away: *away, Poll: *poll,
 			CloseAt: closes, Notice: *notice, ReleaseURL: *releaseURL, Log: logger,
 		})
@@ -331,13 +340,25 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if *acmeDomain != "" || *cert != "" {
 			handler = strictTransport(handler)
 		}
+		// Every request, and every answer, has a deadline: a slow or stalled
+		// client holds a handler only so long (audit R-011). The handlers that
+		// need longer give themselves it: an upload until its turn ends, a
+		// state sent at a minimum pace, an answer after a long check.
 		srv := &http.Server{
 			Addr:              *listen,
 			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       time.Minute,
+			WriteTimeout:      2 * time.Minute,
 			IdleTimeout:       2 * time.Minute,
 			MaxHeaderBytes:    64 << 10, // ample for this protocol's headers (audit R-018)
-			ErrorLog:          logger,
+			HTTP2: &http.HTTP2Config{
+				MaxConcurrentStreams: 16,          // this protocol has a few requests in flight per participant
+				WriteByteTimeout:     time.Minute, // a connection whose reader has stopped reading is closed
+				SendPingTimeout:      time.Minute,
+				PingTimeout:          15 * time.Second,
+			},
+			ErrorLog: logger,
 		}
 		served := make(chan error, 2)
 		var redirect *http.Server
@@ -351,24 +372,26 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			}
 			srv.Addr, srv.TLSConfig = ":443", m.TLSConfig()
 			// Port 80 answers Let's Encrypt's challenges and sends everyone else to HTTPS.
-			redirect = &http.Server{Addr: ":80", Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, ErrorLog: logger}
-			go func() { served <- redirect.ListenAndServe() }()
-			go func() { served <- srv.ListenAndServeTLS("", "") }()
+			redirect = &http.Server{Addr: ":80", Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, ErrorLog: logger}
+			go func() { served <- serve(redirect, false, "", "") }()
+			go func() { served <- serve(srv, true, "", "") }()
 			logger.Printf("serving https://%s/ (and :80 for certificates), keeping the certificate in %s", *acmeDomain, *acmeCache)
 		case *cert != "":
-			go func() { served <- srv.ListenAndServeTLS(*cert, *key) }()
+			go func() { served <- serve(srv, true, *cert, *key) }()
 			// On the standard port, port 80 sends whoever arrives there to HTTPS (audit R-024).
 			if host, port, err := net.SplitHostPort(*listen); err == nil && port == "443" {
 				redirect = &http.Server{Addr: net.JoinHostPort(host, "80"), Handler: http.HandlerFunc(toHTTPS),
-					ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, ErrorLog: logger}
-				go func() { served <- redirect.ListenAndServe() }()
+					ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
+					IdleTimeout: time.Minute, ErrorLog: logger}
+				go func() { served <- serve(redirect, false, "", "") }()
 			}
 			logger.Printf("serving HTTPS on %s", *listen)
 		case len(proxies) > 0:
-			go func() { served <- srv.ListenAndServe() }()
+			go func() { served <- serve(srv, false, "", "") }()
 			logger.Printf("serving plain HTTP on %s, to the TLS proxy in front of it (%s)", *listen, *trustedProxy)
 		default:
-			go func() { served <- srv.ListenAndServe() }()
+			go func() { served <- serve(srv, false, "", "") }()
 			logger.Printf("serving plain HTTP on %s, with no TLS: for tests on this machine only", *listen)
 		}
 		// A phase closed at its time stays closed: started again, the
@@ -469,6 +492,25 @@ func strictTransport(next http.Handler) http.Handler {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// maxConnections bounds the connections a coordinator holds open at once
+// (audit R-011): past it, new ones wait to be accepted, rather than each
+// taking memory and a file of its own without end.
+const maxConnections = 4096
+
+// serve serves s on its address, over TLS when tls is set (from certFile and
+// keyFile, or s.TLSConfig), holding at most maxConnections at once.
+func serve(s *http.Server, tls bool, certFile, keyFile string) error {
+	ln, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		return err
+	}
+	ln = netutil.LimitListener(ln, maxConnections)
+	if tls {
+		return s.ServeTLS(ln, certFile, keyFile)
+	}
+	return s.Serve(ln)
 }
 
 // toHTTPS sends a plain-http request to the same address over HTTPS.

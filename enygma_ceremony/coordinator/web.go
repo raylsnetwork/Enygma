@@ -21,7 +21,7 @@ func (s *Server) handleGitHubRelay(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<12)
 	if err := r.ParseForm(); err != nil {
-		fail(w, http.StatusBadRequest, "want a form")
+		s.fail(w, http.StatusBadRequest, "want a form")
 		return
 	}
 	form := url.Values{"client_id": {s.cfg.GitHubClientID}}
@@ -33,7 +33,7 @@ func (s *Server) handleGitHubRelay(w http.ResponseWriter, r *http.Request) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		strings.TrimSuffix(s.cfg.GitHub, "/")+strings.TrimPrefix(r.URL.Path, "/github"), strings.NewReader(form.Encode()))
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "cannot ask GitHub")
+		s.fail(w, http.StatusInternalServerError, "cannot ask GitHub")
 		return
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -41,7 +41,7 @@ func (s *Server) handleGitHubRelay(w http.ResponseWriter, r *http.Request) {
 	resp, err := githubClient.Do(req)
 	if err != nil {
 		s.cfg.Log.Printf("relaying a GitHub sign-in: %v", err)
-		fail(w, http.StatusBadGateway, "GitHub could not be reached; try again")
+		s.fail(w, http.StatusBadGateway, "GitHub could not be reached; try again")
 		return
 	}
 	defer resp.Body.Close()

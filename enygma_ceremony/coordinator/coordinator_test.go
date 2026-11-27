@@ -81,6 +81,9 @@ func (h *harness) restart() {
 	if h.http != nil {
 		h.http.Close()
 	}
+	if h.srv != nil {
+		h.srv.Release() // as the stopped process would
+	}
 	srv, err := New(h.cfg)
 	if err != nil {
 		h.t.Fatal(err)
@@ -594,8 +597,9 @@ func TestRestartRefusesABrokenTranscript(t *testing.T) {
 	}
 	refused := func(t *testing.T, h *harness, why string) {
 		t.Helper()
-		if _, err := New(h.cfg); err == nil {
-			t.Fatalf("New: no error on %s", why)
+		h.srv.Release() // refused for the transcript, not for the lock
+		if _, err := New(h.cfg); err == nil || strings.Contains(err.Error(), "another coordinator") {
+			t.Fatalf("New: %v on %s, want it refused", err, why)
 		}
 	}
 	t.Run("entries that do not chain", func(t *testing.T) {

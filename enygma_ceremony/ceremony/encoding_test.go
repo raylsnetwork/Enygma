@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	curve "github.com/consensys/gnark-crypto/ecc/bn254"
@@ -411,6 +412,17 @@ func TestCraftedPhase2Allocation(t *testing.T) {
 	t.Logf("a crafted Phase 2 of %d bytes allocated %.1f times its size", len(data), ratio)
 	if ratio > 64 { // FuzzDecode's bound
 		t.Fatalf("a crafted Phase 2 of %d bytes allocated %.1f times its size", len(data), ratio)
+	}
+}
+
+// TestCircuitNamesAreQuoted (audit R-042): a circuit's name is whatever an
+// uploaded state says, and errors quote it, so it writes no line of its own
+// into the coordinator's log.
+func TestCircuitNamesAreQuoted(t *testing.T) {
+	a, b := phase2OfShape(1, 0, 0, 1, 1, 0, nil), phase2OfShape(1, 0, 0, 1, 1, 0, nil)
+	b.circuits[0].name = "C0\n2026/12/01 12:00:00 forged log line"
+	if err := sameCeremony(a, b); err == nil || strings.ContainsAny(err.Error(), "\n\r") {
+		t.Fatalf("circuits that differ by a name with a newline: %q", err)
 	}
 }
 

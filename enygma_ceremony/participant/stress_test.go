@@ -18,6 +18,21 @@ import (
 	"enygma_ceremony/transcript"
 )
 
+// queueLength is how many participants the phase has queued.
+func queueLength(t *testing.T, p *phase) int {
+	t.Helper()
+	resp, err := http.Get(p.url + "/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var st coordinator.Status
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		t.Fatal(err)
+	}
+	return st.Queue
+}
+
 // misbehaver is a participant who takes a turn and then does one thing wrong.
 type misbehaver struct {
 	p     *phase
@@ -88,7 +103,10 @@ func TestManyAtOnce(t *testing.T) {
 	if testing.Short() {
 		t.Skip("a busy phase takes some seconds")
 	}
-	p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen, TurnPresence: 300 * time.Millisecond, MaxPerAddress: 1000})
+	p := newPhase(t, coordinator.Config{
+		Auth: coordinator.AuthOpen, TurnPresence: 300 * time.Millisecond,
+		MaxPerAddress: 1000, MaxContributionsPerAddress: 1000, // every program runs on this machine
+	})
 	p.cfg.Presence = time.Second // a program that gives up stops holding the line soon after
 	p.restart(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -103,10 +121,24 @@ func TestManyAtOnce(t *testing.T) {
 		c.Out = io.Discard
 		wg.Go(func() { results[i], errs[i] = c.Run(ctx) })
 	}
+	// Quitters join once others are waiting, and give up as soon as they are
+	// told they wait too: never after their turn has come. (On a timer, one
+	// that joined first could have its turn, and finish, before giving up.)
+	for deadline := time.Now().Add(30 * time.Second); queueLength(t, p) < 5; {
+		if time.Now().After(deadline) {
+			t.Fatal("the programs never queued")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	for i := range 3 {
 		c := p.client(t, fmt.Sprintf("quitter %d", i))
 		c.Out = io.Discard
-		quit, stop := context.WithTimeout(ctx, time.Duration(50+100*i)*time.Millisecond)
+		quit, stop := context.WithCancel(ctx)
+		c.Events = func(e Event) {
+			if e.Stage == StageQueued {
+				stop()
+			}
+		}
 		wg.Go(func() {
 			defer stop()
 			if r, err := c.Run(quit); err == nil {

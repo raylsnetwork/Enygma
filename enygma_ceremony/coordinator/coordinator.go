@@ -80,7 +80,8 @@ type Config struct {
 	GitHub string
 	// MaxPerAddress bounds how many participants from one network address
 	// may be queued or holding the turn at once (3 when zero); NoAddressLimit
-	// lifts the bound.
+	// lifts the bound, and MaxContributionsPerAddress, for a phase whose
+	// participants all come from one address.
 	MaxPerAddress  int
 	NoAddressLimit bool
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For says where
@@ -99,6 +100,19 @@ type Config struct {
 	// (3 when zero): one that holds turns without ever contributing would
 	// otherwise hold up the queue again and again.
 	MaxTurns int
+	// MaxContributions bounds the contributions the phase accepts (1000 when
+	// zero), and MaxContributionsPerAddress those accepted from one network
+	// address (10 when zero; counted since the coordinator started). An open
+	// phase's every registration is a new identity, and every contribution a
+	// state file kept for the phase's life (audit R-012).
+	MaxContributions           int
+	MaxContributionsPerAddress int
+	// MinFree is the disk space under Dir, besides room for one more state,
+	// below which no turn is given (1 GiB when zero) (audit R-012).
+	MinFree int64
+	// MaxSessions bounds the registrations kept at once, and the network
+	// addresses whose registrations are counted (10,000 when zero) (audit R-013).
+	MaxSessions int
 	// Turn is how long a participant has, from being handed the turn, to
 	// finish uploading their contribution (60 minutes): room for a slow
 	// laptop, since a turn whose holder has gone passes on at TurnPresence.
@@ -209,7 +223,17 @@ type Server struct {
 	turnTimes  []time.Duration        // the last few accepted turns' lengths
 	checkTimes []time.Duration        // how long the last few uploads took to check
 	closed     bool
-	download   chan struct{} // bounds the public downloads of states at once
+	// downloading holds the network addresses with a public download of a
+	// state under way: one each, publicDownloads in all.
+	downloading map[string]bool
+	// contributedFrom counts the contributions accepted from each network
+	// address since this coordinator started (Config.MaxContributionsPerAddress).
+	contributedFrom map[string]int
+	// lastSweep is when advance last forgot unused registrations and
+	// addresses: at most every sweepEvery, not on every request (audit R-013).
+	lastSweep time.Time
+	diskShort bool     // turns are held back for want of disk space (Config.MinFree)
+	lock      *os.File // holds Dir's lock (LockFile) while the server lives
 }
 
 // state is one state file of the phase.
@@ -247,8 +271,10 @@ type turn struct {
 	uploading         bool      // their upload is coming in or being checked; it ends the turn either way
 }
 
-// New opens the phase in cfg.Dir, carrying on after its latest accepted contribution.
-func New(cfg Config) (*Server, error) {
+// New opens the phase in cfg.Dir, carrying on after its latest accepted
+// contribution. It locks the directory (LockFile) until Release, or until
+// the Server is garbage collected.
+func New(cfg Config) (_ *Server, err error) {
 	if cfg.now == nil {
 		cfg.now = time.Now
 	}
@@ -286,6 +312,8 @@ func New(cfg Config) (*Server, error) {
 	}{
 		{"MaxPerAddress", &cfg.MaxPerAddress, 3}, {"IPv6Prefix", &cfg.IPv6Prefix, 64},
 		{"MaxQueue", &cfg.MaxQueue, 1000}, {"MaxTurns", &cfg.MaxTurns, 3},
+		{"MaxContributions", &cfg.MaxContributions, 1000}, {"MaxContributionsPerAddress", &cfg.MaxContributionsPerAddress, 10},
+		{"MaxSessions", &cfg.MaxSessions, 10000},
 	} {
 		switch {
 		case *n.v < 0:
@@ -293,6 +321,12 @@ func New(cfg Config) (*Server, error) {
 		case *n.v == 0:
 			*n.v = n.def
 		}
+	}
+	switch {
+	case cfg.MinFree < 0:
+		return nil, fmt.Errorf("coordinator: MinFree is %d, negative", cfg.MinFree)
+	case cfg.MinFree == 0:
+		cfg.MinFree = 1 << 30
 	}
 	switch {
 	case cfg.IPv6Prefix > 128:
@@ -321,9 +355,19 @@ func New(cfg Config) (*Server, error) {
 	}
 	s := &Server{
 		cfg: cfg, done: map[string]int{}, sessions: map[[32]byte]*session{},
-		registered: map[string][]time.Time{}, turnsGiven: map[string]int{}, download: make(chan struct{}, 4),
+		registered: map[string][]time.Time{}, turnsGiven: map[string]int{},
+		downloading: map[string]bool{}, contributedFrom: map[string]int{},
 	}
-	var err error
+	// One coordinator to a phase: a second would clear the first's uploads
+	// in progress, and the two would race to commit (audit R-043).
+	if s.lock, err = lockDir(cfg.Dir); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			unlockDir(s.lock)
+		}
+	}()
 	if s.start, err = ceremony.Inspect(s.path(0)); err != nil {
 		return nil, err
 	}
@@ -379,6 +423,16 @@ func (s *Server) States() []string {
 	return paths
 }
 
+// Release unlocks the phase's directory, for another coordinator to open.
+// The Server serves nothing more that changes it.
+func (s *Server) Release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	unlockDir(s.lock)
+	s.lock = nil
+}
+
 // Close stops handing out turns. A turn under way may still finish.
 func (s *Server) Close() {
 	s.mu.Lock()
@@ -401,6 +455,17 @@ func (s *Server) Closed() bool {
 	defer s.mu.Unlock()
 	s.advance(s.cfg.now())
 	return s.closed
+}
+
+// LockFile, in a phase's directory, is what the coordinator serving it holds
+// locked, so that no second one serves it at once (audit R-043).
+const LockFile = ".lock"
+
+// unlockDir lets go of a directory's lock, taken by lockDir.
+func unlockDir(f *os.File) {
+	if f != nil {
+		_ = f.Close() // closing the file is what releases the lock
+	}
 }
 
 // ClosedFile, in a phase's directory, marks a phase that has closed at its
@@ -446,16 +511,17 @@ func (s *Server) advance(now time.Time) {
 		}
 	}
 	s.queue = kept
-	for k, sess := range s.sessions {
-		if s.expired(sess, now) {
-			delete(s.sessions, k)
-		}
+	if now.Sub(s.lastSweep) >= sweepEvery || now.Before(s.lastSweep) {
+		s.lastSweep = now
+		s.sweep(now)
 	}
 	// The turn goes to the first queued participant still asking. One not
 	// asking just now (a laptop asleep, a background tab throttled) is passed
 	// over but keeps their place, as long as Away allows (audit R-020).
-	if s.turn == nil && !s.closed {
-		if i := slices.IndexFunc(s.queue, func(w waiter) bool { return now.Sub(w.seen) <= s.cfg.Presence }); i >= 0 {
+	if s.turn == nil && !s.closed && len(s.queue) > 0 && !s.full() && s.diskRoom() {
+		if i := slices.IndexFunc(s.queue, func(w waiter) bool {
+			return now.Sub(w.seen) <= s.cfg.Presence && !s.addressDone(w.p.addr)
+		}); i >= 0 {
 			w := s.queue[i]
 			s.queue = slices.Delete(s.queue, i, i+1)
 			s.turn = &turn{p: w.p, started: now, seen: now, deadline: now.Add(s.cfg.Turn)}
@@ -463,6 +529,59 @@ func (s *Server) advance(now time.Time) {
 			s.cfg.Log.Printf("%s's turn, on top of state %d, until %s", w.p.name, s.latest.index, s.turn.deadline.Format(time.TimeOnly))
 		}
 	}
+}
+
+// sweepEvery is how often advance forgets unused registrations, and the
+// addresses with no registration in the last hour: a sweep reads them all,
+// so it is not made on every request (audit R-013). An unused registration
+// is also refused when it is next used (participant), sweep or not.
+const sweepEvery = 10 * time.Second
+
+// sweep forgets unused registrations, and addresses with no registration in
+// the last hour. s.mu is held.
+func (s *Server) sweep(now time.Time) {
+	queued := make(map[string]bool, len(s.queue))
+	for _, w := range s.queue {
+		queued[w.p.identity] = true
+	}
+	for k, sess := range s.sessions {
+		if now.Sub(sess.seen) > s.cfg.Away && !queued[sess.p.identity] && !s.holds(sess.p) {
+			delete(s.sessions, k)
+		}
+	}
+	for a, times := range s.registered {
+		if len(times) == 0 || now.Sub(times[len(times)-1]) >= time.Hour {
+			delete(s.registered, a)
+		}
+	}
+}
+
+// full reports whether the phase has taken Config.MaxContributions. s.mu is held.
+func (s *Server) full() bool { return len(s.entries) >= s.cfg.MaxContributions }
+
+// addressDone reports whether addr has made Config.MaxContributionsPerAddress
+// contributions, which NoAddressLimit lifts with the other bound on an
+// address. s.mu is held.
+func (s *Server) addressDone(addr string) bool {
+	return !s.cfg.NoAddressLimit && s.contributedFrom[addr] >= s.cfg.MaxContributionsPerAddress
+}
+
+// diskRoom reports whether the disk under Dir has room for one more state
+// and Config.MinFree besides; when it has not, no turn is given until it has
+// (audit R-012). s.mu is held.
+func (s *Server) diskRoom() bool {
+	free, ok := freeSpace(s.cfg.Dir)
+	short := ok && free < uint64(s.cfg.MinFree)+2*uint64(max(s.latest.size, 0))
+	if short != s.diskShort {
+		s.diskShort = short
+		if short {
+			s.cfg.Log.Printf("WARNING: %d MiB free under %s: no turns until there is room for another state and %d MiB besides",
+				free>>20, s.cfg.Dir, s.cfg.MinFree>>20)
+		} else {
+			s.cfg.Log.Printf("disk space under %s is back: turns resume", s.cfg.Dir)
+		}
+	}
+	return !short
 }
 
 // expired reports whether a registration has gone unused for longer than
@@ -577,13 +696,13 @@ func (s *Server) participant(w http.ResponseWriter, r *http.Request) (participan
 			return p, true
 		}
 	}
-	fail(w, http.StatusUnauthorized, "no registration with this token")
+	s.fail(w, http.StatusUnauthorized, "no registration with this token")
 	return participant{}, false
 }
 
 // handleConfig tells a participant's program how to join.
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	reply(w, ClientConfig{
+	s.reply(w, ClientConfig{
 		Auth: s.cfg.Auth, GitHubClientID: s.cfg.GitHubClientID, Notice: s.cfg.Notice,
 		Heartbeat: s.heartbeat().Seconds(),
 	})
@@ -604,31 +723,39 @@ func (s *Server) heartbeat() time.Duration {
 // is cross-site is refused.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		fail(w, http.StatusUnsupportedMediaType, "want a JSON registration (Content-Type: application/json)")
+		s.fail(w, http.StatusUnsupportedMediaType, "want a JSON registration (Content-Type: application/json)")
 		return
 	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		fail(w, http.StatusForbidden, "registrations come from a participant's program, not from another site")
+		s.fail(w, http.StatusForbidden, "registrations come from a participant's program, not from another site")
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		if u, err := url.Parse(origin); err != nil || u.Host != r.Host {
-			fail(w, http.StatusForbidden, "registrations come from a participant's program, not from another site")
+			s.fail(w, http.StatusForbidden, "registrations come from a participant's program, not from another site")
 			return
 		}
 	}
 	var reg Registration
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&reg); err != nil {
-		fail(w, http.StatusBadRequest, "want a JSON registration")
+		s.fail(w, http.StatusBadRequest, "want a JSON registration")
 		return
 	}
 	addr, now := s.address(r), s.cfg.now()
 	s.mu.Lock()
-	allowed := s.allowRegistration(addr, now)
+	// Registrations, and the addresses they are counted by, are bounded in
+	// number too: each is kept, and swept, under the lock (audit R-013).
+	crowded := len(s.sessions) >= s.cfg.MaxSessions || (s.registered[addr] == nil && len(s.registered) >= s.cfg.MaxSessions)
+	allowed := !crowded && s.allowRegistration(addr, now)
 	s.mu.Unlock()
+	if crowded {
+		w.Header().Set("Retry-After", "60")
+		s.fail(w, http.StatusServiceUnavailable, "the coordinator holds as many registrations as it takes; try again shortly")
+		return
+	}
 	if !allowed {
 		w.Header().Set("Retry-After", "600")
-		fail(w, http.StatusTooManyRequests, fmt.Sprintf("at most %d registrations an hour from one network address", registrationsPerHour))
+		s.fail(w, http.StatusTooManyRequests, fmt.Sprintf("at most %d registrations an hour from one network address", registrationsPerHour))
 		return
 	}
 	var p participant
@@ -638,7 +765,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(reg.Name) != "" {
 			var err error
 			if name, err = cleanName(reg.Name); err != nil {
-				fail(w, http.StatusBadRequest, err.Error())
+				s.fail(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
@@ -647,14 +774,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		account, err := s.githubUser(r.Context(), reg.GitHubToken)
 		switch {
 		case errors.Is(err, errGitHubToken):
-			fail(w, http.StatusUnauthorized, "GitHub did not accept the sign-in")
+			s.fail(w, http.StatusUnauthorized, "GitHub did not accept the sign-in")
 			return
 		case err != nil:
 			s.cfg.Log.Printf("asking GitHub who signed in: %v", err)
-			fail(w, http.StatusBadGateway, "GitHub could not be asked who signed in; try again")
+			s.fail(w, http.StatusBadGateway, "GitHub could not be asked who signed in; try again")
 			return
 		case account.Created.Add(s.cfg.GitHubMinAge).After(now):
-			fail(w, http.StatusForbidden, fmt.Sprintf("GitHub accounts younger than %s cannot contribute", s.cfg.GitHubMinAge))
+			s.fail(w, http.StatusForbidden, fmt.Sprintf("GitHub accounts younger than %s cannot contribute", s.cfg.GitHubMinAge))
 			return
 		}
 		p = participant{name: account.Login, identity: fmt.Sprintf("github:%d", account.ID), addr: addr}
@@ -664,7 +791,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	s.sessions[sha256.Sum256([]byte(token))] = &session{p: p, seen: now}
 	s.mu.Unlock()
 	s.cfg.Log.Printf("%s registered (%s)", p.name, p.identity)
-	reply(w, Session{Token: token, Participant: p.name})
+	s.reply(w, Session{Token: token, Participant: p.name})
 }
 
 // allowRegistration counts a registration from addr now, unless addr has
@@ -675,12 +802,7 @@ func (s *Server) allowRegistration(addr string, now time.Time) bool {
 		s.registered[addr] = recent
 		return false
 	}
-	s.registered[addr] = append(recent, now)
-	for a, times := range s.registered { // forget addresses with none left in the hour
-		if len(times) == 0 || now.Sub(times[len(times)-1]) >= time.Hour {
-			delete(s.registered, a)
-		}
-	}
+	s.registered[addr] = append(recent, now) // addresses with none left in the hour go at the next sweep
 	return true
 }
 
@@ -696,30 +818,39 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if i, ok := s.done[p.identity]; ok {
 		e := s.entries[i]
-		reply(w, Reply{Status: Done, Index: e.Index, SHA256: e.SHA256})
+		s.reply(w, Reply{Status: Done, Index: e.Index, SHA256: e.SHA256})
 		return
 	}
 	s.advance(now)
 	if !s.holds(p) {
-		if s.closed {
-			reply(w, Reply{Status: Closed, Notice: s.cfg.Notice})
+		switch {
+		case s.closed:
+			s.reply(w, Reply{Status: Closed, Notice: s.cfg.Notice})
+			return
+		case s.full(): // audit R-012
+			s.reply(w, Reply{Status: Closed, Notice: fmt.Sprintf("this phase has taken the %d contributions it takes", s.cfg.MaxContributions)})
+			return
+		case s.addressDone(p.addr): // audit R-012
+			s.queue = slices.DeleteFunc(s.queue, func(w waiter) bool { return w.p.identity == p.identity })
+			s.fail(w, http.StatusForbidden, fmt.Sprintf(
+				"%d contributions have come from your network address: this phase takes no more from it", s.cfg.MaxContributionsPerAddress))
 			return
 		}
 		if !s.queued(p) {
 			retry := strconv.Itoa(int(math.Ceil(s.cfg.Poll.Seconds())))
 			switch {
 			case s.turnsGiven[p.identity] >= s.cfg.MaxTurns: // audit R-019
-				fail(w, http.StatusForbidden, fmt.Sprintf(
+				s.fail(w, http.StatusForbidden, fmt.Sprintf(
 					"you have been given %d turns without contributing: this phase gives you no more", s.cfg.MaxTurns))
 				return
 			case len(s.queue) >= s.cfg.MaxQueue:
 				w.Header().Set("Retry-After", retry)
-				fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+				s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
 					"the queue is full, at %d; you will be queued when there is room", s.cfg.MaxQueue))
 				return
 			case !s.room(p.addr):
 				w.Header().Set("Retry-After", retry)
-				fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+				s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
 					"%d participants from your network address are queued already; you will be queued when one of them is done", s.cfg.MaxPerAddress))
 				return
 			}
@@ -729,12 +860,12 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.holds(p) {
 		s.turn.seen = now // asking for it shows the holder is there, as a heartbeat does
-		reply(w, Reply{Status: Go, Index: s.latest.index, SHA256: hex.EncodeToString(s.latest.hash[:]), Deadline: s.turn.deadline})
+		s.reply(w, Reply{Status: Go, Index: s.latest.index, SHA256: hex.EncodeToString(s.latest.hash[:]), Deadline: s.turn.deadline})
 		return
 	}
 	for i, q := range s.queue {
 		if q.p.identity == p.identity {
-			reply(w, Reply{Status: Queued, Position: i + 1, Wait: float64(i+1) * s.averageTurn().Seconds(), Poll: s.cfg.Poll.Seconds()})
+			s.reply(w, Reply{Status: Queued, Position: i + 1, Wait: float64(i+1) * s.averageTurn().Seconds(), Poll: s.cfg.Poll.Seconds()})
 			return
 		}
 	}
@@ -831,7 +962,7 @@ func mean(ds []time.Duration) time.Duration {
 func (s *Server) holder(w http.ResponseWriter, p participant) *turn {
 	s.advance(s.cfg.now())
 	if !s.holds(p) {
-		fail(w, http.StatusConflict, "it is not your turn")
+		s.fail(w, http.StatusConflict, "it is not your turn")
 		return nil
 	}
 	return s.turn
@@ -855,12 +986,9 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		return
 	}
-	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		s.cfg.Log.Printf("sending %s state %d: %v", p.name, latest.index, err)
-	}
 	w.Header().Set("X-Ceremony-Index", strconv.FormatUint(uint64(latest.index), 10))
 	w.Header().Set("X-Ceremony-Sha256", hex.EncodeToString(latest.hash[:]))
-	if err := sendFile(w, s.path(latest.index)); err != nil {
+	if err := s.sendFile(w, s.path(latest.index), deadline); err != nil {
 		s.cfg.Log.Printf("sending %s state %d: %v", p.name, latest.index, err)
 	}
 }
@@ -876,7 +1004,7 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	t := s.holder(w, p)
 	if t != nil && t.uploading {
-		fail(w, http.StatusConflict, "your upload is already coming in")
+		s.fail(w, http.StatusConflict, "your upload is already coming in")
 		t = nil
 	}
 	if t != nil {
@@ -900,13 +1028,15 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	tmp, hash, err := s.receive(w, r, t.deadline, prev.size)
+	answerWithin(w, time.Minute) // the upload took as long as it took; the answer gets its own time
 	if err != nil {
 		s.cfg.Log.Printf("%s's upload failed: %v", p.name, err)
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("a contribution is at most %d bytes", tooLarge.Limit))
+			s.fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("a contribution is at most %d bytes", tooLarge.Limit))
 		} else {
-			fail(w, http.StatusBadRequest, "upload failed: "+err.Error())
+			// What failed, and where, is for the coordinator's log (audit R-040).
+			s.fail(w, http.StatusBadRequest, "upload failed: it did not arrive whole by your turn's deadline, or could not be stored")
 		}
 		return
 	}
@@ -919,14 +1049,22 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	checking := time.Now()
 	err = ceremony.Check(s.path(prev.index), tmp)
 	checked := time.Since(checking)
+	answerWithin(w, time.Minute)
 	if err != nil {
-		s.cfg.Log.Printf("%s's contribution was refused: %v", p.name, err)
-		fail(w, http.StatusUnprocessableEntity, "contribution refused: "+err.Error())
+		// The reason holds what the upload holds, such as its circuits'
+		// names: quoted in the log (audit R-042), and told to the uploader
+		// without the coordinator's file names (audit R-040).
+		s.cfg.Log.Printf("%s's contribution was refused: %q", p.name, err.Error())
+		s.fail(w, http.StatusUnprocessableEntity, "contribution refused: "+refusal(err, tmp, s.path(prev.index)))
 		return
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lock == nil { // Released: another coordinator may have the directory now
+		s.fail(w, http.StatusServiceUnavailable, "the coordinator is stopping; your contribution was not saved")
+		return
+	}
 	// Accepted contributions' checks only: a refused upload often fails in a
 	// moment, and would make the next honest participant's estimate short.
 	s.checkTimes = append(s.checkTimes, checked)
@@ -944,10 +1082,11 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.commit(tmp, e); err != nil {
 		s.cfg.Log.Printf("saving %s's contribution: %v", p.name, err)
-		fail(w, http.StatusInternalServerError, "the coordinator could not save your contribution")
+		s.fail(w, http.StatusInternalServerError, "the coordinator could not save your contribution")
 		return
 	}
 	accepted = true
+	s.contributedFrom[p.addr]++
 	s.done[p.identity] = len(s.entries)
 	s.entries = append(s.entries, e)
 	s.latest = state{index: e.Index, hash: hash, size: prev.size}
@@ -961,7 +1100,7 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	s.turn = nil
 	s.cfg.Log.Printf("%s's contribution is state %d, sha256 %s", p.name, e.Index, e.SHA256)
 	s.advance(now)
-	reply(w, Reply{Status: Done, Index: e.Index, SHA256: e.SHA256})
+	s.reply(w, Reply{Status: Done, Index: e.Index, SHA256: e.SHA256})
 }
 
 // receive writes the request body to a new file in the incoming directory,
@@ -996,6 +1135,9 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request, deadline time.T
 
 // commit makes the checked contribution at tmp state e.Index: its entry
 // first, then the state itself, whose arrival is what counts on a restart.
+// Each is on disk, synced with the directory naming it, before the next step,
+// and the state before the participant is told it is in (audit R-014): a
+// crash could otherwise lose a contribution its participant has published.
 // s.mu is held.
 func (s *Server) commit(tmp string, e transcript.Entry) error {
 	data, err := json.MarshalIndent(e, "", "  ")
@@ -1007,21 +1149,56 @@ func (s *Server) commit(tmp string, e transcript.Entry) error {
 		return err
 	}
 	_, err = entry.Write(append(data, '\n'))
+	if err == nil {
+		err = entry.Sync()
+	}
 	if cerr := entry.Close(); err == nil {
 		err = cerr
 	}
 	if err == nil {
 		err = os.Rename(entry.Name(), s.path(e.Index)+".json")
 	}
+	if err == nil {
+		err = syncDir(s.cfg.Dir)
+	}
 	if err != nil {
 		return errors.Join(err, os.Remove(entry.Name()))
 	}
-	return os.Rename(tmp, s.path(e.Index))
+	if err := os.Rename(tmp, s.path(e.Index)); err != nil {
+		return err
+	}
+	// The state is in place, and the transcript holds it from here on: a
+	// failure to sync now is a warning, not a refusal.
+	if err := syncDir(s.cfg.Dir); err != nil {
+		s.cfg.Log.Printf("WARNING: syncing %s after state %d: %v: the state may not survive a crash", s.cfg.Dir, e.Index, err)
+	}
+	return nil
+}
+
+// refusal is what an uploader is told of why their contribution was refused:
+// ceremony's reason, without the coordinator's file names, and not too long
+// to show (audit R-040).
+func refusal(err error, paths ...string) string {
+	msg := err.Error()
+	for _, p := range paths {
+		msg = strings.ReplaceAll(msg, p+": ", "")
+		msg = strings.ReplaceAll(msg, p, "the file")
+	}
+	if r := []rune(msg); len(r) > 300 {
+		msg = string(r[:300]) + "…"
+	}
+	return msg
+}
+
+// answerWithin gives the answer to a request that ran long (an upload, then
+// its check) d to be written, whatever the server's WriteTimeout.
+func answerWithin(w http.ResponseWriter, d time.Duration) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d)) // not supported: no deadline to move
 }
 
 // handleStatus answers with the phase at a glance.
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	reply(w, s.status())
+	s.reply(w, s.status())
 }
 
 // status is the phase at a glance.
@@ -1040,7 +1217,7 @@ func (s *Server) status() Status {
 		Queue:         len(s.queue),
 		AverageTurn:   s.averageTurn().Seconds(),
 		AverageCheck:  mean(s.checkTimes).Seconds(),
-		Closed:        s.closed,
+		Closed:        s.closed || s.full(),
 		CloseAt:       s.cfg.CloseAt,
 		Notice:        s.cfg.Notice,
 		ReleaseURL:    s.cfg.ReleaseURL,
@@ -1060,41 +1237,60 @@ func (s *Server) handleTranscript(w http.ResponseWriter, _ *http.Request) {
 	if t.Contributions == nil {
 		t.Contributions = []transcript.Entry{}
 	}
-	reply(w, t)
+	s.reply(w, t)
 }
 
-// handleStates sends state i's file, a few downloads at a time.
+// publicDownloads bounds the public downloads of states (GET /v1/states/{i})
+// at once, from everywhere; a network address has one at a time (audit R-010).
+const publicDownloads = 16
+
+// A public download sends a state sendChunk at a time, each within
+// sendChunkTime: a reader slower than about 34 KiB/s loses the download, and
+// one at a fair pace takes as long as the state needs. A flat deadline let
+// one slow reader hold a download slot for 30 minutes (audit R-010).
+const (
+	sendChunk     = 1 << 20
+	sendChunkTime = 30 * time.Second
+)
+
+// handleStates sends state i's file, a few downloads at a time and one per
+// network address.
 func (s *Server) handleStates(w http.ResponseWriter, r *http.Request) {
 	i, err := strconv.ParseUint(r.PathValue("index"), 10, 32)
+	addr := s.address(r)
 	s.mu.Lock()
 	latest := s.latest.index
+	found := err == nil && i <= uint64(latest)
+	busy := s.downloading[addr] || len(s.downloading) >= publicDownloads
+	if found && !busy {
+		s.downloading[addr] = true
+	}
 	s.mu.Unlock()
-	if err != nil || i > uint64(latest) {
-		fail(w, http.StatusNotFound, fmt.Sprintf("states run from 0 to %d", latest))
+	switch {
+	case !found:
+		s.fail(w, http.StatusNotFound, fmt.Sprintf("states run from 0 to %d", latest))
 		return
-	}
-	select {
-	case s.download <- struct{}{}:
-		defer func() { <-s.download }()
-	default:
+	case busy:
 		w.Header().Set("Retry-After", "30")
-		fail(w, http.StatusServiceUnavailable, "too many downloads at once; try again shortly")
+		s.fail(w, http.StatusServiceUnavailable, "too many downloads at once, or one from your network address already; try again shortly")
 		return
 	}
-	// A download slot is not for a reader that never finishes.
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		s.cfg.Log.Printf("sending state %d: %v", i, err)
-	}
-	if err := sendFile(w, s.path(uint32(i))); err != nil {
+	defer func() {
+		s.mu.Lock()
+		delete(s.downloading, addr)
+		s.mu.Unlock()
+	}()
+	if err := s.sendFile(w, s.path(uint32(i)), time.Time{}); err != nil {
 		s.cfg.Log.Printf("sending state %d: %v", i, err)
 	}
 }
 
-// sendFile writes the file at path as the response body.
-func sendFile(w http.ResponseWriter, path string) error {
+// sendFile writes the file at path as the response body: all of it by
+// deadline, or with none, each sendChunk within sendChunkTime.
+func (s *Server) sendFile(w http.ResponseWriter, path string, deadline time.Time) error {
 	f, err := os.Open(path)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "state unavailable")
+		s.fail(w, http.StatusInternalServerError, "state unavailable")
 		return err
 	}
 	defer f.Close()
@@ -1102,8 +1298,39 @@ func sendFile(w http.ResponseWriter, path string) error {
 		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	_, err = io.Copy(w, f)
-	return err
+	rc := http.NewResponseController(w)
+	within := func(t time.Time) error {
+		if err := rc.SetWriteDeadline(t); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+		return nil
+	}
+	if !deadline.IsZero() {
+		if err := within(deadline); err != nil {
+			return err
+		}
+		_, err = io.Copy(w, f)
+		return err
+	}
+	buf := make([]byte, sendChunk)
+	for {
+		n, rerr := io.ReadFull(f, buf)
+		if n > 0 {
+			if err := within(time.Now().Add(sendChunkTime)); err != nil {
+				return err
+			}
+			if _, err := w.Write(buf[:n]); err != nil {
+				return err
+			}
+		}
+		switch rerr {
+		case nil:
+		case io.EOF, io.ErrUnexpectedEOF:
+			return nil
+		default:
+			return rerr
+		}
+	}
 }
 
 // Version is the commit this program was built from, as Go stamps it, with
@@ -1140,18 +1367,19 @@ func randomToken() string {
 }
 
 // reply answers with v as JSON.
-func reply(w http.ResponseWriter, v any) {
+func (s *Server) reply(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("coordinator: writing a reply: %v", err)
+		s.cfg.Log.Printf("writing a reply: %v", err) // the coordinator's log, as all else (audit R-044)
 	}
 }
 
-// fail answers with an error status and {"error": msg}.
-func fail(w http.ResponseWriter, code int, msg string) {
+// fail answers with an error status and {"error": msg}. msg is for whoever
+// asked: what went wrong on the coordinator's side stays in its log (audit R-040).
+func (s *Server) fail(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
-		log.Printf("coordinator: writing an error: %v", err)
+		s.cfg.Log.Printf("writing an error: %v", err)
 	}
 }

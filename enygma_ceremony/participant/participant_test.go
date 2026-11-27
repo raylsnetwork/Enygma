@@ -55,6 +55,9 @@ func newPhase(t *testing.T, cfg coordinator.Config) *phase {
 // after a stop: it remembers the transcript, and forgets every registration.
 func (p *phase) restart(t *testing.T) {
 	t.Helper()
+	if p.srv != nil {
+		p.srv.Release() // as the stopped process would
+	}
 	srv, err := coordinator.New(p.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +231,9 @@ func TestRejoinsAfterARestart(t *testing.T) {
 // before the restart waits again after it.
 func (p *phase) restartBlocked(t *testing.T) {
 	t.Helper()
+	if p.srv != nil {
+		p.srv.Release()
+	}
 	srv, err := coordinator.New(p.cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -200,6 +200,7 @@ func FuzzUpload(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer srv.Release() // its lock file, closed now rather than when collected
 		h := srv.Handler()
 		do := func(method, path, token string, body []byte) *httptest.ResponseRecorder {
 			req := httptest.NewRequest(method, path, bytes.NewReader(body))

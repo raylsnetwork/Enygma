@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,6 +199,32 @@ func TestFetch(t *testing.T) {
 		}
 		if _, err := Check(dir, io.Discard); err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("waits out a coordinator too busy to send a state", func(t *testing.T) { // audit R-010
+		backend, _ := serve(t, phase(t, 2, nil), nil)
+		u, err := url.Parse(backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		proxy := httputil.NewSingleHostReverseProxy(u)
+		var busy atomic.Int32
+		busy.Store(3)
+		front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/v1/states/") && busy.Add(-1) >= 0 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			proxy.ServeHTTP(w, r)
+		}))
+		t.Cleanup(front.Close)
+		dir := t.TempDir()
+		if _, err := Fetch(ctx, http.DefaultClient, front.URL, dir, io.Discard, FetchOptions{Check: true}); err != nil {
+			t.Fatalf("Fetch from a coordinator busy for 3 requests: %v", err)
+		}
+		if n := busy.Load(); n >= 0 {
+			t.Fatalf("the coordinator was asked %d times fewer than it was busy for", n+1)
 		}
 	})
 	t.Run("refuses a directory holding another phase, unless told to replace it", func(t *testing.T) {

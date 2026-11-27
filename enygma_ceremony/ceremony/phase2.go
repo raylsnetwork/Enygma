@@ -161,12 +161,12 @@ func (s *phase2State) decode(r *body) error {
 			return err
 		}
 		if _, err := c.mpc.ReadFrom(r.bounded()); err != nil {
-			return fmt.Errorf("%w: circuit %s: %v", ErrFormat, c.name, err)
+			return fmt.Errorf("%w: circuit %q: %v", ErrFormat, c.name, err)
 		}
 		// gnark's Contribute panics past 255 commitments, after drawing the
 		// randomness (audit R-009): refused here, before anyone contributes.
 		if n := len(c.mpc.Parameters.G1.SigmaCKK); n > maxCommitments {
-			return fmt.Errorf("%w: circuit %s: %d commitments, more than gnark takes (%d)", ErrFormat, c.name, n, maxCommitments)
+			return fmt.Errorf("%w: circuit %q: %d commitments, more than gnark takes (%d)", ErrFormat, c.name, n, maxCommitments)
 		}
 	}
 	return nil
@@ -201,11 +201,11 @@ func checkPhase2Step(prev, next *phase2State) error {
 		// As in checkPhase1Step: a contribution with no challenge passes
 		// gnark's Verify, which fills it in, and would fail the next one's seal.
 		if len(next.circuits[i].mpc.Challenge) == 0 {
-			return fmt.Errorf("%w: circuit %s: it does not name the state it builds on (no challenge)",
+			return fmt.Errorf("%w: circuit %q: it does not name the state it builds on (no challenge)",
 				ErrInvalidContribution, prev.circuits[i].name)
 		}
 		if err := prev.circuits[i].mpc.Verify(&next.circuits[i].mpc); err != nil {
-			return fmt.Errorf("%w: circuit %s: %v", ErrInvalidContribution, prev.circuits[i].name, err)
+			return fmt.Errorf("%w: circuit %q: %v", ErrInvalidContribution, prev.circuits[i].name, err)
 		}
 	}
 	return nil
@@ -229,11 +229,12 @@ func sameCeremony(a, b *phase2State) error {
 // sameCircuit reports whether two circuit entries name the same constraint system.
 func sameCircuit(a, b phase2Circuit) bool { return a.name == b.name && a.r1cs == b.r1cs }
 
-// circuitList prints a state's circuits as name:hash-prefix, for errors.
+// circuitList prints a state's circuits as "name":hash-prefix, for errors.
+// A name is whatever an uploaded state says, so it is quoted (audit R-042).
 func circuitList(s *phase2State) string {
 	parts := make([]string, len(s.circuits))
 	for i, c := range s.circuits {
-		parts[i] = fmt.Sprintf("%s:%x", c.name, c.r1cs[:4])
+		parts[i] = fmt.Sprintf("%q:%x", c.name, c.r1cs[:4])
 	}
 	return "[" + strings.Join(parts, " ") + "]"
 }
@@ -270,7 +271,7 @@ func start(ceremony, srsPath string, circuits []Circuit) (*phase2State, []sealIn
 			// this circuit's error, not a crash of every circuit's setup.
 			defer func() {
 				if r := recover(); r != nil {
-					errs[i] = fmt.Errorf("circuit %s: %v", c.Name, r)
+					errs[i] = fmt.Errorf("circuit %q: %v", c.Name, r)
 				}
 			}()
 			r1cs, h, err := readR1CS(c.R1CS)
@@ -280,7 +281,7 @@ func start(ceremony, srsPath string, circuits []Circuit) (*phase2State, []sealIn
 			}
 			commons, err := srs.forCircuit(r1cs)
 			if err != nil {
-				errs[i] = fmt.Errorf("circuit %s: %w", c.Name, err)
+				errs[i] = fmt.Errorf("circuit %q: %w", c.Name, err)
 				return
 			}
 			s.circuits[i].name, s.circuits[i].r1cs = c.Name, h
