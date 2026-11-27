@@ -56,13 +56,17 @@ checks() {
 }
 
 # A check whose name is also on a removed line was edited or moved, not added.
+# grep -q reads its text from a here-string, never a pipe: it stops at its
+# first match, and a writer still writing into the closed pipe fails, which
+# pipefail turns into "no match". So a long text with a match early read as
+# none: a moved check as new, and a long PR's red as missing.
 removed=$(checks - | cut -f1)
 added=$(checks + | while IFS=$'\t' read -r name line; do
-  printf '%s\n' "$removed" | grep -qxF -- "$name" || printf '%s\n' "$line"
+  grep -qxF -- "$name" <<<"$removed" || printf '%s\n' "$line"
 done | sed -E 's/[[:space:]]*\{?[[:space:]]*$//')
 [ -n "$added" ] || exit 0
 
-if printf '%s\n' "$msg" | grep -qE '(^|[^A-Za-z])RED([^A-Za-z]|$)|^No red:'; then
+if grep -qE '(^|[^A-Za-z])RED([^A-Za-z]|$)|^No red:' <<<"$msg"; then
   exit 0
 fi
 

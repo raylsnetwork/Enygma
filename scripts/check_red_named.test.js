@@ -109,6 +109,20 @@ test('moving an existing subtest to another file needs no red', () => {
   assert.doesNotMatch(r.out, /three inputs/);
 });
 
+// grep -q stops reading at its first match: fed through a pipe, the rest of
+// a long list failed to write, pipefail read that as no match, and the
+// moved subtest, first of the removed, was taken for a new one.
+test('moving the first of many removed subtests needs no red for it', () => {
+  const names = Array.from({ length: 20000 }, (_, i) => `case ${i} of many`);
+  const base = { 'a_test.go': `package x\n\nfunc TestA(t *testing.T) {\n${names.map((n) => `\tt.Run("${n}", nil)\n`).join('')}}\n` };
+  const r = commit({
+    'a_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n}\n',
+    'b_test.go': 'package x\n\nfunc TestB(t *testing.T) {\n\tt.Run("case 0 of many", nil)\n}\n',
+  }, 'Move a subtest\n', { base });
+  assert.strictEqual(r.code, 1, r.out); // TestB is new
+  assert.doesNotMatch(r.out, /case 0 of many/);
+});
+
 test('a renamed subtest counts as a new check', () => {
   const base = { 'x_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n\tt.Run("three inputs", nil)\n}\n' };
   const r = commit({ 'x_test.go': 'package x\n\nfunc TestA(t *testing.T) {\n\tt.Run("four inputs", nil)\n}\n' },
@@ -202,6 +216,14 @@ test("a \"No red:\" line in a body GitHub saved with CRLF line ends passes", () 
 
 test('a PR adding no check passes', () => {
   const r = pr([[{ 'x.go': 'package x\n\nfunc Read() {}\n' }, 'Read by name']], 'Reads it.\n');
+  assert.strictEqual(r.code, 0, r.out);
+});
+
+// grep -q stops reading at its first match: fed through a pipe, the rest of
+// a long body and commits failed to write, and pipefail read that as no red.
+test('a PR whose red comes early in a long body passes', () => {
+  const r = pr([[{ 'x_test.go': GO_TEST }, 'Refuse a short statement']],
+    `Shown red: "!= LEN" -> "< 0": RED.\n\n${`${'x'.repeat(99)}\n`.repeat(10000)}`);
   assert.strictEqual(r.code, 0, r.out);
 });
 
