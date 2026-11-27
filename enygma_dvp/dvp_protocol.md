@@ -495,7 +495,10 @@ The change note itself stays private: its commitment hides the remainder, and th
 
 `scripts/cmd/init` makes the owner's setup calls in this order.
 `scripts/cmd/init_payment` makes the subset the Payment deployment needs
-(`initializeDvp`, its keys, then its two vaults) in the same order.
+(`initializeDvp`, its keys, then its two vaults) in the same order, freezes
+the Verifier between its keys and its vaults, and ends with the owner
+settings and an optional handover (see [Init for the Payment
+deployment](#init-for-the-payment-deployment)).
 
 1. `Verifier.initializeVerifier`, then `Verifier.grantRole` so that
    `EnygmaDvp` may register verification keys.
@@ -519,9 +522,9 @@ that moment to the vault's `initializeVault`, which runs only once.
   only the address `EnygmaDvp` holds. Vaults and asset groups registered
   earlier keep verifying against the old verifier. Keys registered from then
   on go to the new one, so those vaults never see them. Vaults registered
-  later use the new one. Nothing warns: the call emits no event and checks no
-  state. To undo a mistaken call, call `initializeDvp` again with the first
-  verifier's address.
+  later use the new one. The call emits `OwnerCall` but checks no state. To
+  undo a mistaken call, call `initializeDvp` again with the first verifier's
+  address.
 - **A vault trusts the auction address that was stored when it was
   registered.** It grants that address `DEFAULT_AUCTION_ROLE` for good (today
   `address(0)`, as nothing calls `registerEnygmaAuction`).
@@ -544,14 +547,123 @@ bridge note for any amount and key without moving any tokens, and
 the Enygma (institutional payments) contract: call `addEnygma` once per vault,
 with that contract's address, as `scripts/cmd/init` does.
 
+### Who holds the owner role
+
+Every owner call needs `DEFAULT_OWNER_ROLE` on `EnygmaDvp`.
+`DEFAULT_ADMIN_ROLE` administers that role (OpenZeppelin's default), and the
+constructor grants both to the deployer. So the role can move: an admin
+grants it to another account and revokes it, and each holder can renounce
+its own. The admin role is a power of its own, since its holder can grant the
+owner role to anyone, so both belong with the same account.
+
+The owner role is trusted with:
+
+- **Settings:** the two fixed fees, the USDr token id and the USDr fee vault
+  (see [Fee parameters](#fee-parameters)).
+- **Relayers:** `registerRelayer` and `deregisterRelayer`. A registered relayer
+  may lock a DvP leg's note (`lockReceiptNullifiers`) and settle swaps.
+- **Keys and the verifier:** `registerNewVerificationKey` appends a key to the
+  Verifier while `EnygmaDvp` holds the Verifier's owner role and the Verifier
+  is not frozen, and `initializeDvp` re-points `EnygmaDvp` at another verifier
+  for the vaults and groups registered after it (see above).
+- **Vaults and groups:** `registerVault`, `registerAssetGroup`, the group and
+  vault pairs, `addVaultToGroup` and `addTokenToGroup`.
+- **Minting:** `registerPrivateMintVerifier`, `setVaultMintable` and
+  `privateMint`, which adds a note no deposit backs to a vault flagged
+  mintable.
+- **Auditors:** `registerAuditor` and `unregisterAuditor`.
+
+Payments, deposits and withdrawals need no role.
+
+Every owner call leaves a log: its own event (`VaultMintableSet`,
+`PrivateMint`, `AuditorRegistered`, `AuditorUnregistered`,
+`TokenAddedToGroup`, `VaultAddedToGroup`) or `OwnerCall(caller, selector,
+data)`, whose `data` is the call's whole calldata, so the ABI decodes it as
+the call. The exception is `registerPrivateMintVerifier`, which emits nothing.
+Role changes emit OpenZeppelin's `RoleGranted` and `RoleRevoked`.
+
+The contract has no delay of its own: each owner call takes effect in its own
+transaction. For a delay, the roles go to an OpenZeppelin
+`TimelockController`. Every owner call is then an operation the timelock
+schedules in public and runs only after its delay
+(`test/hardhat/OwnerGovernance.test.js` runs one). A Safe gives several
+signers without a delay, and can be the timelock's proposer.
+
+A coin vault's roles have no admin. A vault grants `DEFAULT_DVP_ROLE` to the
+`EnygmaDvp` it is deployed for and takes its addresses in `initializeVault`,
+once, so nobody can move it to another `EnygmaDvp`: the binding is permanent
+on purpose, as an administered role would let its admin add a contract that
+inserts notes. Moving to a new `EnygmaDvp` means users withdraw from the old
+vaults and deposit into new ones. The vault's own `DEFAULT_OWNER_ROLE`, which
+its deployer holds, gates only `EnygmaErc20CoinVault.addEnygma`.
+
+### Init for the Payment deployment
+
+`scripts/cmd/init_payment` and `enygma_retail_payments/scripts/cmd/init`
+initialize the Payment deployment. The retail init registers the keys on the
+Verifier directly, as its deployer, and grants `EnygmaDvp` no Verifier role.
+Both read the config's `owner` object:
+
+```json
+"owner": {
+  "relayer-fixed-fee": "0",
+  "usdr-fixed-fee": "0",
+  "governance": ""
+}
+```
+
+- **The fixed fees** are required, in the token's base units: init refuses a
+  config that leaves one out, so a fee of 0 is written as `"0"`. Init refuses
+  one at or above 10^36 before it sends anything.
+- **`governance`** is optional. Left empty, the deployer keeps every role, as
+  the local stacks do. Set to an account (a Safe or a `TimelockController`),
+  init ends by granting it `DEFAULT_OWNER_ROLE` and `DEFAULT_ADMIN_ROLE` on
+  `EnygmaDvp` and then on the Verifier, checks that it holds them, renounces
+  the deployer's (the admin role last), and checks that the deployer holds
+  neither.
+
+**The Verifier is frozen before the vaults are registered.** The vaults take
+the Verifier for good at registration, so init first checks every slot's key
+against the exported keys, twice: as stored (read from the Verifier's
+storage) and as the Verifier reports it (`verificationKeyCount` and
+`verificationKeyHash`). Then it calls `Verifier.freeze`, owner-only and once,
+after which `addVerificationKey`, `initializeVerifier` and `freeze` revert
+`VerifierFrozen`. The Verifier logs each key (`VerificationKeyAdded(slot,
+keyHash)`) and the freeze (`KeysFrozen(keyCount)`). So the Payment
+deployment's vaults verify against slots 0 to 4 for good. Slot 23, where
+`Erc20CoinVault` looks for the DvpInitiator key, stays empty: every DvP leg
+against these vaults reverts "Verifier: VK not registered", so no DvP entry
+point can settle against them. `EnygmaDvp` keeps the Verifier's owner role,
+which a frozen Verifier leaves nothing to do: `registerNewVerificationKey`
+reverts. The main deployment's `scripts/cmd/init` does not freeze its
+Verifier.
+
+**Init can be run again.** Each step reads the chain first and sends nothing
+when its change is already made, so a run that stopped part-way (a failed
+send, or a send the node took although init saw an error) is finished by the
+next. For the keys, which only ever get appended, init reads the key count,
+checks that each registered slot holds the key it would register there, and
+registers only the rest. It refuses a Verifier holding any other key, more
+keys than it registers, or fewer keys and frozen: the fix is a new Verifier,
+before the vaults are registered. It also refuses a Verifier on another
+Groth16 backend, or frozen with none, and another vault under a vault id it
+registers. A run after the deployer renounced its
+`EnygmaDvp` owner role only finishes the handover, which comes after every
+other step. `registerPrivateMintVerifier` is sent on every run, as `EnygmaDvp`
+has no getter for it: it sets the same address again.
+
 ### Fee parameters
 
-Each fee amount the contract checks is an owner-set value that starts at 0,
-so until the owner sets it the check requires a fee of 0. No deploy or init
-script sets an amount: `scripts/cmd/init_payment` and
-`enygma_retail_payments/scripts/cmd/init` set only the USDr token id and vault,
-and only the retail shield demo sets `usdrFixedFeeAmount`, for its own run.
-After deploy, the owner (`DEFAULT_OWNER_ROLE`) sets each one with its setter:
+Each fee amount the contract checks is an owner-set value that starts at 0.
+`scripts/cmd/init_payment` and `enygma_retail_payments/scripts/cmd/init` set
+both fixed fees from the config's `owner` object, which must give them (see
+[Init for the Payment deployment](#init-for-the-payment-deployment)). The
+local configs give 0, and the retail shield demo sets `usdrFixedFeeAmount` for
+its own run. A fixed fee must be below 10^36, the circuits' bound on a note
+value (`Erc20CoinVault.MAX_FEE_AMOUNT`): no proof can carry a larger fee, so
+both setters revert `FeeOutOfRange` at or above it. The owner
+(`DEFAULT_OWNER_ROLE`) changes each value with its setter, which emits
+`OwnerCall`:
 
 | Parameter | Default | Setter | Checked by |
 |---|---|---|---|
@@ -570,6 +682,21 @@ The off-chain relayers have their own floor, `RELAYER_MIN_FEE` (base units,
 default 0). At 0 the relayer accepts any fee the contract accepts, so a relayer
 that should be paid must set it, and both relayers (`relayer/` here and
 `enygma_retail_payments/relayer/`) log a warning at startup when it is 0.
+
+**The fixed fees bind the relayer routes, not the protocol.**
+`relayerFixedFeeAmount` binds only the `*WithRelayerFee` calls and
+`usdrFixedFeeAmount` only the `*WithUsdrFee` calls: no other payment call
+reads them.
+
+**A change applies at once.** The contract compares each fee receipt's public
+fee with the value it holds when the transaction runs. So after a change, a
+receipt proved for the old fee reverts (`InvalidRelayerFee`,
+`InvalidUsdrFee`), and its sender proves it again; no funds move.
+`setUsdrTokenId` and `setUsdrFeeVaultId` do the same to pending USDr legs. A
+wallet should therefore read the fee (`relayerFixedFeeAmount`,
+`usdrFixedFeeAmount`) for each payment it proves, rather than once. Both
+relayers simulate each call before they send it, so they refuse such a
+receipt without paying for it.
 
 ### Fee paths that bind less than they look
 

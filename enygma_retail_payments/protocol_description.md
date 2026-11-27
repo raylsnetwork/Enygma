@@ -14,6 +14,18 @@ flowchart LR
 
 ```
 
+### The owner
+
+Payments settle in enygma_dvp's `EnygmaDvp` and its coin vaults. Paying, depositing and withdrawing need no role. The account holding `EnygmaDvp`'s `DEFAULT_OWNER_ROLE` is trusted with its settings: it registers and deregisters relayers, registers vaults and the private-mint verifier, flags vaults open to `privateMint` (which adds notes no deposit backs), and sets the fixed fees. The Verifier's owner registers the verification keys.
+
+- **The role can move.** The deployer holds it, and `DEFAULT_ADMIN_ROLE`, which grants and revokes it. `scripts/cmd/init` hands both, and the Verifier's two roles, to the config's `owner.governance` when it names an account, such as a Safe or an OpenZeppelin `TimelockController`, and renounces the deployer's.
+- **No delay of its own.** Each owner call takes effect in its own transaction. With a `TimelockController` holding the roles, every owner call is scheduled in public and runs only after the timelock's delay.
+- **Every change is logged.** Each owner call emits its own event or `OwnerCall`, with the call's calldata; `registerPrivateMintVerifier` emits none.
+- **The keys are frozen.** Init freezes the Verifier once its keys are in, before it registers the vaults, so nobody, the owner included, can add a key afterwards.
+- **The vaults stay bound** to the `EnygmaDvp` they were registered with: their roles have no admin.
+
+The fixed fees (`relayerFixedFeeAmount`, `usdrFixedFeeAmount`) bind only the calls that pay a relayer: `paymentWithRelayerFee`, `paymentWithUsdrFee` and their channel forms require a fee leg's public fee to equal them, and the other payment calls do not read them. Init sets both from the config. A change applies at once: a fee leg proved for the old amount then reverts, and its sender proves it again; no funds move. So a wallet should read the fee for each payment it proves, and the relayer, which simulates each call before it sends it, refuses such a leg without paying for it. See [Setup and owner calls](../enygma_dvp/dvp_protocol.md#setup-and-owner-calls) for the details.
+
 ### Adversarial Model
 
 The goal of the adversary $$\mathcal{A}$$ is twofold: break the privacy of the system and disrupt the activity of the system. We assume that the adversary ...

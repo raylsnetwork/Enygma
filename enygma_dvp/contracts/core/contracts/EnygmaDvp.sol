@@ -71,6 +71,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // gets at least this long.
     uint256 public constant MIN_SWAP_DURATION = 15 minutes;
 
+    // Exclusive upper bound on the fixed fees, Erc20CoinVault.MAX_FEE_AMOUNT:
+    // the circuits' range bound on every note value and fee (10^36).
+    uint256 constant MAX_FEE_AMOUNT = 10 ** 36;
+
     bytes32 public constant DEFAULT_OWNER_ROLE =
         keccak256(abi.encodePacked("ownerRole"));
 
@@ -190,6 +194,11 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         _coinVaults = new address[](MAX_NUMBER_OF_VAULTS);
         _assetGroups = new address[](MAX_NUMBER_OF_GROUPS);
         _setupRole(DEFAULT_OWNER_ROLE, msg.sender);
+        // DEFAULT_ADMIN_ROLE administers DEFAULT_OWNER_ROLE (OpenZeppelin's
+        // default), so its holder can grant the owner role to another account,
+        // such as a Safe or a TimelockController, and revoke it. Without a
+        // holder, the owner could only renounce.
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     ///////////////////////////////////////////////
@@ -228,12 +237,26 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return _verifierContractAddress;
     }
 
+    // onlyRole(DEFAULT_OWNER_ROLE) that also emits OwnerCall, with the caller
+    // and the calldata, so the change the call makes shows in the logs. Owner
+    // calls with an event of their own keep onlyRole. One event for all these
+    // calls, rather than one each, keeps EnygmaDvp's code small (EIP-170).
+    modifier onlyOwnerLogged() {
+        _logOwnerCall();
+        _;
+    }
+
+    function _logOwnerCall() private {
+        _checkRole(DEFAULT_OWNER_ROLE);
+        emit OwnerCall(msg.sender, msg.sig, msg.data);
+    }
+
     ///////////////////////////////////////////////
     //       initialization functions
     //////////////////////////////////////////////
     function initializeDvp(
         address verifierAddress
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         // DVP-1 fix: Verifier is now initialized directly by the deployer (via init.go)
         // before this function is called. initializeVerifier is no longer called here
         // because EnygmaDvp.initializeDvp was world-accessible between Verifier deployment
@@ -244,7 +267,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     function registerEnygmaAuction(
         address enygmaAuctionContractAddress
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         _enygmaAuctionContractAddress = enygmaAuctionContractAddress;
 
         // initializing the verifier by registering Snark circuits' verification keys.
@@ -259,14 +282,14 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     function registerRelayer(
         address relayer
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         authorizedRelayers[relayer] = true;
         return true;
     }
 
     function deregisterRelayer(
         address relayer
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         authorizedRelayers[relayer] = false;
         return true;
     }
@@ -294,7 +317,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     function registerNewVerificationKey(
         VerifyingKey memory vk_
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         IVerifier(_verifierContractAddress).addVerificationKey(vk_);
         return true;
     }
@@ -304,7 +327,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         string memory assetGroupName,
         bool isAssetGroupFungible,
         uint256 treeDepth
-    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
+    ) public onlyOwnerLogged nonReentrant returns (bool) {
         uint256 groupId = _assetGroupsCount;
         _assetGroups[groupId] = assetGroupContractAddress;
         IAssetGroup(assetGroupContractAddress).initializeAssetGroup(
@@ -323,7 +346,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         address assetContractAddress,
         uint256 vaultIdentifiersCount,
         uint256 treeDepth
-    ) public onlyRole(DEFAULT_OWNER_ROLE) nonReentrant returns (bool) {
+    ) public onlyOwnerLogged nonReentrant returns (bool) {
         // registering the tree smart contract address and treeId
 
         uint256 vaultId = _coinVaultsCount;
@@ -350,26 +373,34 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // function below). Without this, any fee amount the prover claims in the
     // proof passes verification — the circuit only proves internal consistency
     // (WtValuesOut[2] == StFee), not that the amount matches any protocol value.
+    // Both fixed fees stay below MAX_FEE_AMOUNT, the circuits' bound on every
+    // note value: no proof can carry a larger fee, so a larger one would leave
+    // its routes nothing they could settle. A new amount applies at once: a
+    // receipt proved for the old one then reverts (InvalidRelayerFee, or
+    // InvalidUsdrFee for the USDr fee).
     function setRelayerFixedFee(
         uint256 amount
-    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) external onlyOwnerLogged returns (bool) {
+        if (amount >= MAX_FEE_AMOUNT) revert FeeOutOfRange();
         relayerFixedFeeAmount = amount;
         return true;
     }
 
     // setUsdrFixedFee / setUsdrTokenId configure paymentWithUsdrFee()'s two
     // on-chain checks against the USDr proof's public StFee/StTokenId
-    // signals — see that function below.
+    // signals — see that function below. setUsdrFixedFee's amount is bounded
+    // as setRelayerFixedFee's is.
     function setUsdrFixedFee(
         uint256 amount
-    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) external onlyOwnerLogged returns (bool) {
+        if (amount >= MAX_FEE_AMOUNT) revert FeeOutOfRange();
         usdrFixedFeeAmount = amount;
         return true;
     }
 
     function setUsdrTokenId(
         uint256 tokenId_
-    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) external onlyOwnerLogged returns (bool) {
         usdrTokenId = tokenId_;
         return true;
     }
@@ -379,7 +410,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     // paymentWithUsdrFee() reverts InvalidUsdrVault.
     function setUsdrFeeVaultId(
         uint256 vaultId_
-    ) external onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) external onlyOwnerLogged returns (bool) {
         if (_coinVaults[vaultId_] == address(0)) revert InvalidVaultId();
         usdrFeeVaultId = vaultId_;
         usdrFeeVaultSet = true;
@@ -454,7 +485,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     function registerSwapGroupPair(
         uint256 groupId1,
         uint256 groupId2
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         if (groupId1 >= _assetGroupsCount || groupId2 >= _assetGroupsCount) {
             revert GroupIdOutOfRange();
         }
@@ -490,7 +521,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     function registerExchangeGroupPair(
         uint256 groupId1,
         uint256 groupId2
-    ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+    ) public onlyOwnerLogged returns (bool) {
         if (groupId1 >= _assetGroupsCount || groupId2 >= _assetGroupsCount) {
             revert GroupIdOutOfRange();
         }
@@ -540,7 +571,7 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
     function registerVaultSwapPair(
         uint256 paymentVaultId,
         uint256 deliveryVaultId
-    ) public onlyRole(DEFAULT_OWNER_ROLE) {
+    ) public onlyOwnerLogged {
         uint256 pairKey = uint256(keccak256(abi.encodePacked(paymentVaultId, deliveryVaultId)));
         _registeredVaultPairs[pairKey] = true;
     }

@@ -179,7 +179,8 @@ interface IEnygmaDvp {
     // the contract-configured relayerFixedFeeAmount.
     error InvalidRelayerFee();
     // A fee-circuit receipt whose public StFee is not below MAX_FEE_AMOUNT: see
-    // Erc20CoinVault.checkReceiptConditions.
+    // Erc20CoinVault.checkReceiptConditions. Also setRelayerFixedFee or
+    // setUsdrFixedFee with an amount not below it.
     error FeeOutOfRange();
     // paymentWithUsdrFee: the USDr leg's public StFee or StTokenId signal
     // does not match usdrFixedFeeAmount / usdrTokenId.
@@ -302,6 +303,11 @@ interface IEnygmaDvp {
 
     // The owner flagged a vault as open (or closed) to privateMint.
     event VaultMintableSet(uint256 indexed vaultId, bool mintable);
+
+    // An owner call that has no event of its own succeeded: caller made it,
+    // selector names the function, and data is the whole calldata (selector
+    // included), so the ABI decodes it as the call itself.
+    event OwnerCall(address indexed caller, bytes4 indexed selector, bytes data);
 
     event PrivateMint(
         uint256 indexed vaultId,
