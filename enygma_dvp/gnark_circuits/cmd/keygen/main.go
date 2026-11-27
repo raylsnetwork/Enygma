@@ -33,8 +33,9 @@ import (
 //   - ERC1155 Fungible JoinSplit with Auditor
 //   - ERC1155 NonFungible (1-token, 10-token batch)
 //   - ERC1155 NonFungible with Auditor
-//   - Auction Init, Auction Bid, Auction Private Opening, Auction Not Winning
-//   - Auction Init with Auditor, Auction Bid with Auditor
+//
+// For the retired auction circuits, see "Deprecated: enygma_dvp's
+// EnygmaAuction" in enygma_dvp/README.md.
 //
 // GenerationVkPk regenerates every circuit named in only, or all of them if only
 // is empty. Each run draws fresh random keys, so regenerate only the circuits
