@@ -54,9 +54,12 @@ type RelayPaymentRelayerFeeRequest struct {
 //
 // cmtWithdraw must be Poseidon4(uint160(Recipient), 0, Amount, TokenId): the
 // part paid out to Recipient. cmtChange is the owner's change note, and
-// CipherText/EncTxData are its discovery data (ML-KEM capsule / AES-GCM
-// payload, hex). FeeSalt and TokenId let the relayer confirm cmtRelayer is
-// addressed to its own fee key, as for /relay/payment_relayer_fee.
+// CipherText/EncTxData are its EncryptedNote payload (ML-KEM capsule /
+// AES-GCM payload, hex): they give the owner's view key the change amount,
+// but a scan does not credit the note, whose salt is Poseidon(sk,
+// nullifier0): the owner rebuilds it with core.WithdrawChangeNote. FeeSalt
+// and TokenId let the relayer confirm cmtRelayer is addressed to its own fee
+// key, as for /relay/payment_relayer_fee.
 type RelayPartialWithdrawRequest struct {
 	VaultId    string         `json:"vaultId"    binding:"required"`
 	Receipt    ReceiptPayload `json:"receipt"    binding:"required"`

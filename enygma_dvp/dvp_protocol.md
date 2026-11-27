@@ -173,13 +173,13 @@ $$
 Alice derives Bob's output salt:
 
 $$
-salt_{B}^{\text{out}} = \mathrm{HKDF}(ss_{B}, \text{"Bob salt"})
+salt_{B}^{\text{out}} = \mathrm{HKDF}(ss_{B}, \text{"note salt"})
 $$
 
 Alice derives her own output salt:
 
 $$
-salt_{A}^{\text{out}} = \mathrm{HKDF}(ss_{B}, \text{"Alice salt"})
+salt_{A}^{\text{out}} = \mathrm{HKDF}(ss_{B}, \text{"Init Salt"})
 $$
 
 Alice derives her own output salt for revert commitment:
@@ -187,6 +187,8 @@ Alice derives her own output salt for revert commitment:
 $$
 salt_A^{\text{rev}} \longleftarrow {0,1}^{\lambda}
 $$
+
+The circuit does not constrain how this salt is made, only that $C^{\text{rev}}_A$ opens with it. The reference client derives it as `SwapRevertSalt(sk_A, nf_A)`, a Poseidon hash of Alice's spend key, $nf_A$ and a domain constant, so after `claimSwapTimeout` her wallet rebuilds the refund note (`SwapRevertNote`) without having stored the salt.
 
 ---
 
@@ -315,7 +317,7 @@ Bob derives his output salt and Alice's salt:
 
 $$
 
-\quad salt_B^{\text{out}} = \mathrm{HKDF}(ss_B,\ \text{"Bob salt"})
+\quad salt_B^{\text{out}} = \mathrm{HKDF}(ss_B,\ \text{"note salt"})
 
 
 
@@ -326,7 +328,7 @@ Bob derives Alice's output salt:
 
 $$
 
-\quad salt_A^{\text{out}} = \mathrm{HKDF}(ss_B,\ \text{"Alice salt"})
+\quad salt_A^{\text{out}} = \mathrm{HKDF}(ss_B,\ \text{"Init Salt"})
 
 
 $$

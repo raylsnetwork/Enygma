@@ -84,11 +84,11 @@ sequenceDiagram
 
         note over Alice: Encrypt TX Data: <br><br> ENC_TX_DATA = AES-GCM-ENC(k, m)
 
-        note over Alice: Derive salt_B: <br><br> salt_B = HKDF(ss_B, "Bob salt")
+        note over Alice: Derive salt_B: <br><br> salt_B = HKDF(ss_B, "note salt")
 
         note over Alice: Create destination commitment:<br><br>COMMIT_B = H(spend_pk_B, salt_B, amount_1, token_id_1)
 
-        note over Alice: Generate new salt:<br><br>salt_A = HKDF(ss_B, "Alice salt")
+        note over Alice: Generate new salt:<br><br>salt_A = HKDF(ss_B, "Init Salt")
 
         %% Bob also needs to be able to generate the value of salt_A in order to prove that token_ids and amounts match across commitments
 
@@ -173,13 +173,13 @@ Once the swap is recorded on-chain, Bob is notified of the pending transaction a
 Bob begins by recovering the shared secret Alice used when constructing the payload:
 
 1. _Decapsulation_ — Bob runs ML-KEM decapsulation on `CTXT` using his view secret key, recovering `ss_B`.
-2. _Key and salt derivation_ — Bob derives the symmetric encryption key k` = HKDF(ss_B, "encryption key")` and his salt `salt_B = HKDF(ss_B, "Bob salt")`.
+2. _Key and salt derivation_ — Bob derives the symmetric encryption key k` = HKDF(ss_B, "encryption key")` and his salt `salt_B = HKDF(ss_B, "note salt")`.
 3. _Payload decryption_ — Bob decrypts `ENC_TX_DATA` using `k`, obtaining `token_id_1` and `amount_1` in plaintext.
 
 Bob then performs two commitment checks to verify the swap is legitimate and intended for him:
 
 - He recomputes `C = H(spend_pk_B, salt_B, amount_1, token_id_1)` and checks that `C == COMMIT_B`.
-- He derives `salt_A = HKDF(ss_B, "Alice salt")`, recomputes `C* = H(spend_pk_A, salt_A, amount_2, token_id_2)`, and checks that `C* == COMMIT_A`.
+- He derives `salt_A = HKDF(ss_B, "Init Salt")`, recomputes `C* = H(spend_pk_A, salt_A, amount_2, token_id_2)`, and checks that `C* == COMMIT_A`.
 
 If both checks pass, Bob construct his response:
 
@@ -204,7 +204,7 @@ sequenceDiagram
 
     note over Bob: Obtain symmetric key:<br><br> k = HKDF(ss_B, "encryption key")
 
-    note over Bob: Obtain salt:<br><br> salt_B = HKDF(ss_B, "Bob salt")
+    note over Bob: Obtain salt:<br><br> salt_B = HKDF(ss_B, "note salt")
 
 
     note over Bob: Decrypt ENC_TX_DATA<br>(using symmetric key k)<br><br>obtain token_id_1 & amount_1
@@ -212,7 +212,7 @@ sequenceDiagram
     note over Bob: Obtain commitment<br><br>C = H(spend_pk_B, salt_B, amount_1, token_id_1)
     note over Bob: Check if commitments match: <br><br>C == COMMIT_B
 
-    note over Bob: Obtain salt_A<br><br>salt_A = HKDF(ss_B, "Alice salt")
+    note over Bob: Obtain salt_A<br><br>salt_A = HKDF(ss_B, "Init Salt")
 
     note over Bob: Obtain (Alice's) commitment:<br><br>C* = H(spent_pk_A, salt_A, amount_2, token_id_2)
 
@@ -321,11 +321,11 @@ sequenceDiagram
 
         note over Alice: Encrypt transaction data:<br><br>ENC_TX_DATA = AES-GCM.Enc(k, m)
 
-        note over Alice: Derive Bob output salt:<br><br>salt_B = HKDF(ss_B, "Bob salt")
+        note over Alice: Derive Bob output salt:<br><br>salt_B = HKDF(ss_B, "note salt")
 
         note over Alice: Create Bob output commitment:<br><br>OUTPUT_COMMIT_B = H(spend_pk_B, salt_B, amount_1, token_id_1)
 
-        note over Alice: Derive Alice output salt:<br><br>salt_A = HKDF(ss_B, "Alice salt")
+        note over Alice: Derive Alice output salt:<br><br>salt_A = HKDF(ss_B, "Init Salt")
 
         note over Alice: Create Alice output commitment:<br><br>OUTPUT_COMMIT_A = H(spend_pk_A, salt_A, amount_2, token_id_2)
 
@@ -377,13 +377,13 @@ sequenceDiagram
 
     note over Bob: Derive symmetric key:<br><br>k = HKDF(ss_B, "encryption key")
 
-    note over Bob: Derive Bob output salt:<br><br>salt_B = HKDF(ss_B, "Bob salt")
+    note over Bob: Derive Bob output salt:<br><br>salt_B = HKDF(ss_B, "note salt")
 
     note over Bob: Decrypt transaction data:<br><br>(token_id_1, amount_1) = AES-GCM.Dec(k, ENC_TX_DATA)
 
     note over Bob: Recompute expected Bob output commitment:<br><br>OBTAINED_COMMIT_B = H(spend_pk_B, salt_B, amount_1, token_id_1)
 
-    note over Bob: Derive Alice output salt:<br><br>salt_A = HKDF(ss_B, "Alice salt")
+    note over Bob: Derive Alice output salt:<br><br>salt_A = HKDF(ss_B, "Init Salt")
 
     note over Bob: Recompute expected Alice output commitment:<br><br>OBTAINED_COMMIT_A = H(spend_pk_A, salt_A, amount_2, token_id_2)
 

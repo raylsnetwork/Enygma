@@ -180,8 +180,11 @@ type RelayPaymentRelayerFeeResponse struct {
 
 // RelayPartialWithdrawRequest is the JSON body accepted by
 // POST /relay/partial_withdraw: a PaymentRelayerFeePublic withdrawal proof,
-// with the same fields as RelayPaymentRelayerFeeRequest (CipherText/EncTxData
-// are the owner's change note's discovery data) plus what it withdraws.
+// with the same fields as RelayPaymentRelayerFeeRequest plus what it
+// withdraws. CipherText/EncTxData are the change note's EncryptedNote
+// payload: they give the owner's view key the change amount, but a scan does
+// not credit the note, whose salt is Poseidon(sk, nullifier0): the owner
+// rebuilds it with core.ChangeNote.
 // Output 0 must be Poseidon4(uint160(Recipient), 0, Amount, TokenId).
 type RelayPartialWithdrawRequest struct {
 	RelayPaymentRelayerFeeRequest

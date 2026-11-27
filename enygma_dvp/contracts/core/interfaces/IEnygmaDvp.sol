@@ -311,7 +311,7 @@ interface IEnygmaDvp {
 
     // Emitted when Alice sends a note to Bob via the private payment flow.
     // ctxt        — ML-KEM-768 capsule (1088 bytes): Bob runs Decapsulate(sk_view, ctxt)
-    //               to recover ss, then derives salt_B = HKDF(ss,"Bob salt") and
+    //               to recover ss, then derives salt_B = HKDF(ss,"note salt") and
     //               encKey = HKDF(ss,"encryption key").
     // encTxData   — AES-256-GCM ciphertext of (tokenId || amount) keyed by encKey.
     //               An authentication failure means this payment is not addressed to Bob.

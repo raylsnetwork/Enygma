@@ -26,14 +26,16 @@ type ProofResult struct {
 	NumberOfOutputs int
 
 	// CipherText holds the ML-KEM capsule for each output note (one per output,
-	// 1088 bytes each). Published on-chain alongside the commitment so the
-	// recipient can run Decapsulate to recover saltB.
+	// 1088 bytes each). Published onchain alongside the commitment so the
+	// recipient can run Decapsulate to recover ss, and derive saltB from it
+	// (DerivePaymentSalt, HKDF(ss, "note salt")).
 	CipherText [][]byte
 
 	// EncTxData holds the AEAD-encrypted payload for each output note
-	// (one per output). Contains tokenId||amount encrypted with saltB via
-	// ChaCha20-Poly1305. An authentication failure means the note is not
-	// addressed to the scanning key.
+	// (one per output): tokenId||amount under AES-256-GCM, keyed by
+	// DerivePaymentKey(ss) = HKDF(ss, "encryption key") (EncryptPayload). An
+	// authentication failure means the note is not addressed to the scanning
+	// key.
 	EncTxData [][]byte
 
 	// SaltsOut holds the output salt for each output note (one per output).

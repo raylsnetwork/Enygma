@@ -72,8 +72,8 @@ let fails=0; const pass=(c,m)=>{ console.log((c?'  PASS  ':'  FAIL  ')+m); if(!c
   console.log('\n--- the salts come from the shared secret, so both sides get them independently ---');
   const salts = await pg.evaluate(async (s)=>{
     const D = window.__ENYGMA.dvp;
-    return { bout: await D.hkdf(s.ssB, 'Bob salt', 32),
-             aout: await D.hkdf(s.ssB, 'Alice salt', 32),
+    return { bout: await D.hkdf(s.ssB, 'note salt', 32),
+             aout: await D.hkdf(s.ssB, 'Init Salt', 32),
              key:  await D.hkdf(s.ssB, 'encryption key', 32) };
   }, sw);
   pass(salts.bout===sw.saltBout && salts.aout===sw.saltAout,

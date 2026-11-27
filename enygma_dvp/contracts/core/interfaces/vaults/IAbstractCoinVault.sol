@@ -23,9 +23,14 @@ interface IAbstractCoinVault {
     // Getting fired alongside Commitment for the non-interactive flow.
     // ciphertextI  — ML-KEM-768 capsule (1088 bytes): recipient runs
     //                ss = Decapsulate(sk_view, ciphertextI), then derives
-    //                salt_B = HKDF(ss,"Bob salt") and encKey = HKDF(ss,"encryption key").
+    //                salt_B = HKDF(ss,"note salt") and encKey = HKDF(ss,"encryption key").
     // ciphertextII — AES-256-GCM ciphertext of tokenId||amount keyed by encKey;
     //                an auth failure means the note is not addressed to this key.
+    // A change note, output 1 of a Payment-family receipt (a withdrawal's
+    // change, or transferV2's output 1), is the exception: its salt is
+    // Poseidon(sk, nullifier0), not salt_B, so a scan does not credit it even
+    // when its payload opens. Its owner rebuilds it with
+    // core.WithdrawChangeNote (see Erc20CoinVault.partialWithdraw).
     event EncryptedNote(
         uint256 indexed vaultId,
         uint256 indexed commitment,

@@ -22,7 +22,7 @@ import (
 //
 // The function runs Encapsulate per output to derive saltB, then:
 //   - computes Erc20CommitmentV2(pk_spend, saltB_field, amount, tokenId)
-//   - encrypts tokenId||amount with ChaCha20-Poly1305 keyed by saltB
+//   - encrypts tokenId||amount with AES-256-GCM keyed by DerivePaymentKey(ss)
 //   - carries both ciphertexts in ProofResult for on-chain publication
 func (c *GnarkClient) Erc20JoinSplitProof(
 	stMessage *big.Int,
