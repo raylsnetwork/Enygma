@@ -252,13 +252,13 @@ $$
 v_j = - \sum_{i=1}^{k} v_i \text{ , } \text{where } i \neq j
 $$
 
-**The random factor** of the commitment of the sender is the negative of the sum of all the other random factors of the recipients. This ensures that the addition of all the $$k$$ commitments ensures that the amounts and random factors cancel out and it's possible to verify at a contract level that all the commitments in the transaction add up to $$0$$. 
+**The sender's random factor** is the negative of the sum of the recipients' random factors. Across all $$k$$ commitments, both the amounts and the random factors cancel, so the commitments sum to the group identity.
 
 $$
 r_j = - \sum_{i=1}^{k} r_i \text{ , } \text{where } i \neq j
 $$
 
-**Our system ensures the following balance conservation invariant:**
+The transfer circuit enforces the following balance conservation invariant. In `transfer()`, the configured transfer verifier is the only check on conservation of the main asset. The contract binds the submitted commitment deltas to the proof's public inputs.
 
 Amounts sent in a transaction must add up to zero. 
 
@@ -425,6 +425,8 @@ detectable mismatch rather than a silently accepted lie.
 #### Verifying a TX (Blockchain)
 The smart contract receives a set of commitments, a nullifier, a ZK proof, and an encrypted payload. 
 
+The owner chooses the verifier that enforces transfer conservation and can approve a verifier runtime hash immediately. Installing an approved verifier in an empty slot takes effect immediately. For an occupied slot, the owner can execute a proposed replacement after `verifierChangeDelay` seconds. A zero delay makes the replacement immediate.
+
 We note that the encrypted payload is not checked by the smart contract and can be maliciously formed as its correctness is not included in the ZK proof. We note that this attack forces the sender to send funds, which the recipient is able to open since the Pedersen commitment is well-formed. The same recipient is then able to prove that the sender maliciously formed the ciphertext and eventually  have the sender face repercussions for a purposeful malicious action. The ciphertext is not included in the ZK proof because proving the correctness of an AES-GCM encryption is too expensive to perform for the execution of real-time transactions. 
 
 ```mermaid
@@ -439,12 +441,11 @@ flowchart LR
     %% Blockchain (Verifier)
     verify_tx["Blockchain<br>(Verify Tx)"]
     check_nullifier(["Check if nullifier<br>exists"])
-    check_commit(["Check if commitments add up to 0"])
-    check_zk(["Check ZK Proof"])
+    check_zk(["Verify transfer proof<br>for balance conservation"])
     tally(["Approve Tx"])
     store(["Store encrypted payload"])
 
-    verify_tx -.-> check_nullifier -.-> check_commit -.-> check_zk -.-> tally -.-> store
+    verify_tx -.-> check_zk -.-> check_nullifier -.-> tally -.-> store
 ```
 
 #### Querying For New Transactions
@@ -607,7 +608,7 @@ flowchart LR
 #### Universal Auditing
 Besides the auditor, we highlight that any entity in the system can always monitor the following parameters just from looking at the underlying blockchain: 
 
-* Entity can check the ZK proof and attest that the set of commitments are well-formed and add up to 0.
+* Anyone can verify a transfer proof against the reviewed transfer circuit's verifying key to check balance conservation.
 * Entity can check how many mints/burns exist in the network.
 
 Additionally, depending on the choice of random factors and the issuance process, it may be possible for any entity to check the total supply of the asset at all times. 

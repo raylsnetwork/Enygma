@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const script = path.join(__dirname, "../enygma_payments/run_scripts/deploy_node.js");
 const source = fs.readFileSync(script, "utf8");
+const nonlocalTargets = [{ CHAIN_ID: "1" }, { RPC_URL: "https://rpc.invalid" }];
 
 // Run the CLI with in-memory artifacts and a signer that cannot send transactions.
 async function run(env = {}, rpcResult = "0x539", httpStatus = 200) {
@@ -77,16 +78,17 @@ function assertOwnerKeyRefused(result) {
   assert.deepEqual(result.deployments, []);
 }
 
-test("requires OWNER_KEY for a nonlocal deployment target", async () => {
-  for (const target of [{ CHAIN_ID: "1" }, { RPC_URL: "https://rpc.invalid" }]) {
+test("names both missing settings for a nonlocal deployment target", async () => {
+  for (const target of nonlocalTargets) {
     const result = await run({ ...target, REVIEWED_VERIFIER_ARTIFACT: "reviewed.json" });
     assertOwnerKeyRefused(result);
+    assert.match(result.errors.join("\n"), /VERIFIER_CHANGE_DELAY/);
   }
 });
 
 test("requires OWNER_KEY when the local RPC does not confirm chain 1337", async () => {
   for (const reply of ["0x1", "invalid", new Error("RPC unavailable")]) {
-    const result = await run({}, reply);
+    const result = await run({ VERIFIER_CHANGE_DELAY: "86400" }, reply);
     assertOwnerKeyRefused(result);
     assert.equal(result.calls[0]?.[0], "eth_chainId");
     assert.equal(result.calls[0]?.[1].length, 0);
@@ -104,19 +106,51 @@ test("deploys with the demo key when the environment is unset and local RPC conf
   assert.deepEqual(result.deployments, [[1, 0], []]);
 });
 
-test("deploys with explicit OWNER_KEY on another chain", async () => {
-  const ownerKey = "explicit-owner-key";
-  const result = await run({
-    OWNER_KEY: ownerKey,
-    CHAIN_ID: "1",
-    RPC_URL: "https://rpc.invalid",
-    REVIEWED_VERIFIER_ARTIFACT: "reviewed.json",
-  }, "0x1");
+test("requires VERIFIER_CHANGE_DELAY outside local Hardhat", async () => {
+  for (const target of nonlocalTargets) {
+    const result = await run({
+      ...target,
+      OWNER_KEY: "explicit-owner-key",
+      REVIEWED_VERIFIER_ARTIFACT: "reviewed.json",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.errors.join("\n"), /VERIFIER_CHANGE_DELAY/);
+    assert.deepEqual(result.deployments, []);
+  }
+});
+
+test("requires VERIFIER_CHANGE_DELAY when the local RPC cannot confirm chain 1337", async () => {
+  for (const [reply, status] of [["0x1", 200], [new Error("RPC unavailable"), 200], ["0x539", 307]]) {
+    const result = await run({ OWNER_KEY: "explicit-owner-key" }, reply, status);
+    assert.equal(result.status, 1);
+    assert.match(result.errors.join("\n"), /VERIFIER_CHANGE_DELAY/);
+    assert.deepEqual(result.deployments, []);
+  }
+});
+
+test("uses zero delay with an explicit owner when the local RPC confirms chain 1337", async () => {
+  const result = await run({ OWNER_KEY: "explicit-owner-key" });
   assert.equal(result.status, 0, result.errors.join("\n"));
-  assert.deepEqual(result.targets, [["https://rpc.invalid", 1]]);
-  assert.deepEqual(result.calls, []);
-  assert.deepEqual(result.keys, [ownerKey]);
+  assert.deepEqual(result.keys, ["explicit-owner-key"]);
   assert.deepEqual(result.deployments, [[1, 0], []]);
+});
+
+test("deploys with explicit OWNER_KEY and VERIFIER_CHANGE_DELAY on another chain", async () => {
+  const ownerKey = "explicit-owner-key";
+  for (const delay of [0, 86400]) {
+    const result = await run({
+      OWNER_KEY: ownerKey,
+      CHAIN_ID: "1",
+      RPC_URL: "https://rpc.invalid",
+      REVIEWED_VERIFIER_ARTIFACT: "reviewed.json",
+      VERIFIER_CHANGE_DELAY: String(delay),
+    }, "0x1");
+    assert.equal(result.status, 0, result.errors.join("\n"));
+    assert.deepEqual(result.targets, [["https://rpc.invalid", 1]]);
+    assert.deepEqual(result.calls, []);
+    assert.deepEqual(result.keys, [ownerKey]);
+    assert.deepEqual(result.deployments, [[1, delay], []]);
+  }
 });
 
 test("refuses an HTTP redirect before deploying with the demo key", async () => {
