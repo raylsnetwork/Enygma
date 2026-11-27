@@ -1,6 +1,6 @@
 module github.com/raylsnetwork/enygma_retail_payments/src
 
-go 1.26.8
+go 1.26.11
 
 require (
 	github.com/ethereum/go-ethereum v1.17.10

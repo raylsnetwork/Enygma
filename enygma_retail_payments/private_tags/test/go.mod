@@ -1,6 +1,6 @@
 module enygma_private_tags_test
 
-go 1.26.8
+go 1.26.11
 
 require (
 	enygma_retail_payments/layout v0.0.0

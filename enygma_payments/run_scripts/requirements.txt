@@ -1,1 +1,8 @@
 web3==8.0.0
+# Packages web3 pulls in, held at or above their latest security fix: web3 and
+# its dependencies only set lower bounds, so pip would keep an older copy
+# already installed in the venv as long as it meets those.
+aiohttp>=3.14.4
+certifi>=2026.10.18
+idna>=3.15
+pycryptodome>=3.19.1

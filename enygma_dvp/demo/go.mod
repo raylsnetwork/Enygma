@@ -1,6 +1,6 @@
 module enygma_dvp/demo
 
-go 1.26.8
+go 1.26.11
 
 require (
 	enygma_dvp/layout v0.0.0 // indirect
