@@ -21,8 +21,9 @@ import (
 	"os"
 )
 
-// magic opens every state file; its last byte is the format version.
-const magic = "ENYGMA-CEREMONY\x01"
+// magic opens every state file; its last byte is the format version. Format
+// 2's SRS carries its provenance (audit H1); format 1's are refused.
+const magic = "ENYGMA-CEREMONY\x02"
 
 // Kind is what a state file holds.
 type Kind uint8
@@ -68,6 +69,9 @@ var (
 	ErrTooLarge = errors.New("circuit too large for the SRS")
 	// ErrDomain is a Phase 1 domain size that is not a power of two from 2 to 2^28.
 	ErrDomain = errors.New("domain size is not a power of two from 2 to 2^28")
+	// ErrSRS is an SRS other than the one announced for a Phase 2 (SRS.SHA256),
+	// or a rehearsal's where a ceremony's is wanted.
+	ErrSRS = errors.New("not the SRS announced for this Phase 2")
 )
 
 // MinBeacon is the shortest beacon a seal takes, in bytes. A drand round's
@@ -350,6 +354,18 @@ func putString(w io.Writer, s string) error {
 		return err
 	}
 	_, err := io.WriteString(w, s)
+	return err
+}
+
+// putBytes writes b after its one-byte length.
+func putBytes(w io.Writer, b []byte) error {
+	if len(b) > 255 {
+		return fmt.Errorf("%d bytes, longer than 255", len(b))
+	}
+	if err := put(w, uint8(len(b))); err != nil {
+		return err
+	}
+	_, err := w.Write(b)
 	return err
 }
 

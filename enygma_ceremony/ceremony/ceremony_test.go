@@ -2,6 +2,7 @@ package ceremony
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
+
+	"github.com/consensys/gnark/frontend"
 
 	"enygma_ceremony/internal/testcircuits"
 )
@@ -51,10 +55,10 @@ func newFixture(t testing.TB) *fixture {
 	}
 	f.p1 = f.chain(t, "p1", 2, func(out string) (Receipt, error) { return NewPhase1(out, 64) })
 	f.srs = f.path("srs")
-	if _, err := SealPhase1(f.srs, beaconA, f.p1[1:]); err != nil {
+	if _, err := SealPhase1(f.srs, Beacon{Value: beaconA}, f.p1[1:]); err != nil {
 		t.Fatal(err)
 	}
-	f.p2 = f.chain(t, "p2", 3, func(out string) (Receipt, error) { return NewPhase2(out, "test", f.srs, f.circuits) })
+	f.p2 = f.chain(t, "p2", 3, func(out string) (Receipt, error) { return NewPhase2(out, "test", rehearsal(t, f.srs), f.circuits) })
 	return f
 }
 
@@ -109,7 +113,7 @@ func (f *fixture) rewritePhase2(t *testing.T, path, name string, edit func(*phas
 // seal seals the fixture's Phase 2 with beacon into a new keys directory name.
 func (f *fixture) seal(t *testing.T, name string, beacon []byte) string {
 	t.Helper()
-	if err := SealPhase2(f.path(name), "test", f.srs, f.circuits, beacon, f.p2[1:]); err != nil {
+	if _, err := SealPhase2(f.path(name), "test", rehearsal(t, f.srs), f.circuits, beacon, f.p2[1:]); err != nil {
 		t.Fatal(err)
 	}
 	return f.path(name)
@@ -255,11 +259,11 @@ func TestCheck(t *testing.T) {
 			prev: fixed(f.p2[0]),
 			next: func(t *testing.T) string {
 				srs := f.path("srs-other")
-				if _, err := SealPhase1(srs, beaconB, f.p1[1:]); err != nil {
+				if _, err := SealPhase1(srs, Beacon{Value: beaconB}, f.p1[1:]); err != nil {
 					t.Fatal(err)
 				}
 				return f.chain(t, "p2-srs-other", 1, func(out string) (Receipt, error) {
-					return NewPhase2(out, "test", srs, f.circuits)
+					return NewPhase2(out, "test", rehearsal(t, srs), f.circuits)
 				})[1]
 			},
 			want: ErrMismatch,
@@ -269,7 +273,7 @@ func TestCheck(t *testing.T) {
 			prev: fixed(f.p2[0]),
 			next: func(t *testing.T) string {
 				return f.chain(t, "p2-one-circuit", 1, func(out string) (Receipt, error) {
-					return NewPhase2(out, "test", f.srs, f.circuits[:1])
+					return NewPhase2(out, "test", rehearsal(t, f.srs), f.circuits[:1])
 				})[1]
 			},
 			want: ErrMismatch,
@@ -304,7 +308,7 @@ func TestSealPhase2Refuses(t *testing.T) {
 	f := newFixture(t)
 
 	t.Run("a short beacon", func(t *testing.T) {
-		err := SealPhase2(f.path("keys-short"), "test", f.srs, f.circuits, beaconA[:MinBeacon-1], f.p2[1:])
+		_, err := SealPhase2(f.path("keys-short"), "test", rehearsal(t, f.srs), f.circuits, beaconA[:MinBeacon-1], f.p2[1:])
 		if !errors.Is(err, ErrBeacon) {
 			t.Fatalf("SealPhase2: %v, want %v", err, ErrBeacon)
 		}
@@ -316,7 +320,7 @@ func TestSealPhase2Refuses(t *testing.T) {
 		if f.circuits[0].Name != "Committed" || f.circuits[1].Name != "Cubic" {
 			t.Fatalf("circuits %v, want Committed then Cubic", f.circuits)
 		}
-		err := SealPhase2(f.path("keys-swapped"), "test", f.srs, swapped, beaconB, f.p2[1:])
+		_, err := SealPhase2(f.path("keys-swapped"), "test", rehearsal(t, f.srs), swapped, beaconB, f.p2[1:])
 		if !errors.Is(err, ErrMismatch) {
 			t.Fatalf("SealPhase2: %v, want %v", err, ErrMismatch)
 		}
@@ -332,7 +336,7 @@ func TestSealPhase2Refuses(t *testing.T) {
 		if err := os.WriteFile(taken, []byte("an old key"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		err := SealPhase2(keys, "test", f.srs, f.circuits, beaconA, f.p2[1:])
+		_, err := SealPhase2(keys, "test", rehearsal(t, f.srs), f.circuits, beaconA, f.p2[1:])
 		if err == nil || !strings.Contains(err.Error(), "a key is there already") {
 			t.Fatalf("SealPhase2: %v, want a key already in place refused", err)
 		}
@@ -375,7 +379,7 @@ func TestKeyManifest(t *testing.T) {
 			t.Fatal(err)
 		}
 		keys := f.path("manifest-keys")
-		if err := SealPhase2(keys, "test", f.srs, circuits, beaconA, f.p2[1:]); err != nil {
+		if _, err := SealPhase2(keys, "test", rehearsal(t, f.srs), circuits, beaconA, f.p2[1:]); err != nil {
 			t.Fatal(err)
 		}
 		if err := testcircuits.CheckKeys(keys, dir); err != nil {
@@ -410,10 +414,10 @@ func TestNewPhase2RefusesCircuitTooLargeForSRS(t *testing.T) {
 	f := newFixture(t)
 	p1 := f.chain(t, "p1-small", 1, func(out string) (Receipt, error) { return NewPhase1(out, 8) })
 	srs := f.path("srs-small")
-	if _, err := SealPhase1(srs, beaconA, p1[1:]); err != nil {
+	if _, err := SealPhase1(srs, Beacon{Value: beaconA}, p1[1:]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewPhase2(f.path("p2-small"), "test", srs, f.circuits); !errors.Is(err, ErrTooLarge) {
+	if _, err := NewPhase2(f.path("p2-small"), "test", rehearsal(t, srs), f.circuits); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("NewPhase2: %v, want %v", err, ErrTooLarge)
 	}
 }
@@ -425,10 +429,10 @@ func TestNewPhase2RefusesNamesThatAreNotPlain(t *testing.T) {
 	f := newFixture(t)
 	circuits := slices.Clone(f.circuits)
 	circuits[0].Name = "Cubic\x1b[2J"
-	if _, err := NewPhase2(f.path("p2-circuit"), "test", f.srs, circuits); err == nil || strings.Contains(err.Error(), "\x1b") {
+	if _, err := NewPhase2(f.path("p2-circuit"), "test", rehearsal(t, f.srs), circuits); err == nil || strings.Contains(err.Error(), "\x1b") {
 		t.Fatalf("NewPhase2 of a circuit named with an escape: %v, want it refused", err)
 	}
-	if _, err := NewPhase2(f.path("p2-ceremony"), "test\x1b[2J", f.srs, f.circuits); err == nil || strings.Contains(err.Error(), "\x1b") {
+	if _, err := NewPhase2(f.path("p2-ceremony"), "test\x1b[2J", rehearsal(t, f.srs), f.circuits); err == nil || strings.Contains(err.Error(), "\x1b") {
 		t.Fatalf("NewPhase2 of a ceremony named with an escape: %v, want it refused", err)
 	}
 }
@@ -579,8 +583,10 @@ func TestGnarksDomainIsTheStatesDomain(t *testing.T) {
 	}{
 		// As in TestCraftedCountsAreRefusedBeforeAllocating.
 		{"phase 1", f.p1[1], headerLen + 8 + 4 + 3*(32+64)},
-		// After the header and n (8), gnark's SRS opens with its domain size.
-		{"SRS", f.srs, headerLen + 8},
+		// After the header, n (8) and the provenance (head 32, count 4,
+		// drand round 8, close 8, the beacon after its length), gnark's SRS
+		// opens with its domain size.
+		{"SRS", f.srs, headerLen + 8 + 32 + 4 + 8 + 8 + 1 + len(beaconA)},
 	} {
 		for _, domain := range []uint64{0, 1, 2, 32, 128} {
 			t.Run(fmt.Sprintf("%s with gnark's domain %d", c.name, domain), func(t *testing.T) {
@@ -642,6 +648,14 @@ func TestStatesSurviveShortReads(t *testing.T) {
 // fixed returns a test step that yields path.
 func fixed(path string) func(*testing.T) string { return func(*testing.T) string { return path } }
 
+// rehearsal names the SRS at path for a Phase 2, as announced by its own
+// sha256: the tests' SRSs are sealed with beacons not from drand.
+func rehearsal(t testing.TB, path string) SRS {
+	t.Helper()
+	data := readFile(t, path)
+	return SRS{Path: path, SHA256: sha256.Sum256(data), Rehearsal: true}
+}
+
 // readFile reads path or fails the test.
 func readFile(t testing.TB, path string) []byte {
 	t.Helper()
@@ -650,4 +664,178 @@ func readFile(t testing.TB, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestNewPhase2RefusesTooManyCommitments (audit I7): a circuit of more
+// commitments than gnark's Phase 2 seal takes is refused as its Phase 2
+// starts, not at the seal, after the whole phase has run.
+func TestNewPhase2RefusesTooManyCommitments(t *testing.T) {
+	f := newFixture(t)
+	p1 := f.chain(t, "p1-wide", 1, func(out string) (Receipt, error) { return NewPhase1(out, 1024) })
+	srs := f.path("srs-wide")
+	if _, err := SealPhase1(srs, Beacon{Value: beaconA}, p1[1:]); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, n := range []int{169, 170} {
+		if err := testcircuits.WriteCircuit(dir, fmt.Sprintf("C%d", n), &testcircuits.Commitments{X: make([]frontend.Variable, n)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	circuits, err := CircuitsIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPhase2(f.path("p2-wide-ok"), "test", rehearsal(t, srs), circuits[:1]); err != nil {
+		t.Fatalf("169 commitments: %v", err)
+	}
+	if _, err := NewPhase2(f.path("p2-wide"), "test", rehearsal(t, srs), circuits[1:]); err == nil || !strings.Contains(err.Error(), "commitments") {
+		t.Fatalf("170 commitments: %v, want it refused", err)
+	}
+}
+
+// TestSRSNamesItsPhase1 (audit H1): an SRS records what it was sealed from:
+// the head of the Phase 1 chain it replayed, how many contributions, and
+// the beacon with its drand round and the close; so its sha256 names them.
+func TestSRSNamesItsPhase1(t *testing.T) {
+	f := newFixture(t)
+	i, err := Inspect(f.srs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Provenance{Head: sha256.Sum256(readFile(t, f.p1[2])), Contributions: 2, Beacon: Beacon{Value: beaconA}}
+	if i.Phase1 == nil || i.Phase1.Head != want.Head || i.Phase1.Contributions != 2 || !bytes.Equal(i.Phase1.Beacon.Value, beaconA) ||
+		i.Phase1.Beacon.DrandRound != 0 || !i.Phase1.Beacon.CloseAt.IsZero() || i.Index != 2 {
+		t.Fatalf("the SRS says %+v, want %+v", i.Phase1, want)
+	}
+	drand := Beacon{Value: beaconB, DrandRound: 12345, CloseAt: time.Date(2026, 12, 1, 15, 0, 0, 0, time.UTC)}
+	other := f.path("srs-drand")
+	if _, err := SealPhase1(other, drand, f.p1[1:]); err != nil {
+		t.Fatal(err)
+	}
+	if i, err := Inspect(other); err != nil || i.Phase1.Beacon.DrandRound != drand.DrandRound || !i.Phase1.Beacon.CloseAt.Equal(drand.CloseAt) {
+		t.Fatalf("the SRS sealed with drand round %d says %+v (%v)", drand.DrandRound, i.Phase1, err)
+	}
+	t.Run("refuses a provenance no seal writes", func(t *testing.T) {
+		for name, edit := range map[string]func(*srsFile){
+			"no contributions":           func(s *srsFile) { s.prov.Contributions = 0 },
+			"a beacon too short":         func(s *srsFile) { s.prov.Beacon.Value = beaconA[:MinBeacon-1] },
+			"a drand round and no close": func(s *srsFile) { s.prov.Beacon.DrandRound = 5 },
+			"a close and no drand round": func(s *srsFile) { s.prov.Beacon.CloseAt = time.Unix(1, 0) },
+		} {
+			s, _, err := readSRS(f.srs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			edit(s)
+			var buf bytes.Buffer
+			if err := write(&buf, KindSRS, s.encode); err != nil {
+				t.Fatal(err)
+			}
+			path := f.path("srs-" + strings.ReplaceAll(name, " ", "-"))
+			if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Inspect(path); !errors.Is(err, ErrFormat) {
+				t.Errorf("an SRS with %s: %v, want %v", name, err, ErrFormat)
+			}
+		}
+	})
+}
+
+// TestSealPhase1RefusesALongBeacon: an SRS records its beacon after a
+// one-byte length, so a beacon of more than 255 bytes is refused rather
+// than written with the wrong length.
+func TestSealPhase1RefusesALongBeacon(t *testing.T) {
+	f := newFixture(t)
+	if _, err := SealPhase1(f.path("srs-long"), Beacon{Value: bytes.Repeat([]byte{1}, 256)}, f.p1[1:]); err == nil {
+		t.Fatal("SealPhase1 took a beacon of 256 bytes")
+	}
+}
+
+// TestPhase2StartsOnlyFromTheAnnouncedSRS (audit H1): a Phase 2 starts, is
+// checked and is sealed only from the SRS whose sha256 was announced, read
+// from the same bytes it decodes; and from a rehearsal's SRS only when told.
+// Another Phase 1's seal, or any SRS made from a τ, α and β someone kept,
+// would let them forge proofs however many contributed to the Phase 2.
+func TestPhase2StartsOnlyFromTheAnnouncedSRS(t *testing.T) {
+	f := newFixture(t)
+	other := f.path("srs-other")
+	if _, err := SealPhase1(other, Beacon{Value: beaconB}, f.p1[1:]); err != nil {
+		t.Fatal(err)
+	}
+	announced := rehearsal(t, f.srs)
+	substituted := SRS{Path: other, SHA256: announced.SHA256, Rehearsal: true}
+	if _, err := NewPhase2(f.path("p2-other"), "test", substituted, f.circuits); !errors.Is(err, ErrSRS) {
+		t.Fatalf("NewPhase2 from another SRS: %v, want %v", err, ErrSRS)
+	}
+	if _, err := SealPhase2(f.path("keys-other"), "test", substituted, f.circuits, beaconB, f.p2[1:]); !errors.Is(err, ErrSRS) {
+		t.Fatalf("SealPhase2 from another SRS: %v, want %v", err, ErrSRS)
+	}
+	notRehearsal := announced
+	notRehearsal.Rehearsal = false
+	if _, err := NewPhase2(f.path("p2-rehearsal"), "test", notRehearsal, f.circuits); !errors.Is(err, ErrSRS) {
+		t.Fatalf("NewPhase2 from a rehearsal's SRS, not told so: %v, want %v", err, ErrSRS)
+	}
+	phase1, err := SealPhase2(f.path("keys"), "test", announced, f.circuits, beaconB, f.p2[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := sha256.Sum256(readFile(t, f.p1[2])); phase1.Head != want || phase1.Contributions != 2 {
+		t.Fatalf("SealPhase2 reports %+v, want Phase 1's head %x", phase1, want)
+	}
+	i, err := Inspect(f.p2[3])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.SRS != announced.SHA256 || len(i.R1CS) != len(f.circuits) || i.R1CS[0] != sha256.Sum256(readFile(t, f.circuits[0].R1CS)) {
+		t.Fatalf("Phase 2 state says SRS %x, circuits %x", i.SRS, i.R1CS)
+	}
+}
+
+// TestFormat1IsRefused: a state file of format 1, from before an SRS
+// carried its provenance, is not read as one of format 2.
+func TestFormat1IsRefused(t *testing.T) {
+	f := newFixture(t)
+	for _, path := range []string{f.p1[1], f.srs, f.p2[1]} {
+		data := readFile(t, path)
+		data[len(magic)-1] = 1
+		old := path + "-format-1"
+		if err := os.WriteFile(old, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Inspect(old); !errors.Is(err, ErrFormat) {
+			t.Errorf("%s of format 1: %v, want %v", filepath.Base(path), err, ErrFormat)
+		}
+	}
+}
+
+// TestCircuitsInListsByName (audit I9, I10): a directory's circuits are
+// listed by circuit name, as -circuits names are compared, though their
+// file names sort otherwise; and a directory whose name holds a glob's
+// metacharacters lists its own files, not another directory's.
+func TestCircuitsInListsByName(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r1cs[x]")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Cubic", "Cubic-2"} {
+		if err := testcircuits.WriteCircuit(dir, name, &testcircuits.Cubic{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "Directory.r1cs"), 0o755); err != nil { // not a circuit
+		t.Fatal(err)
+	}
+	circuits, err := CircuitsIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, c := range circuits {
+		names = append(names, c.Name)
+	}
+	if !slices.Equal(names, []string{"Cubic", "Cubic-2"}) {
+		t.Fatalf("CircuitsIn lists %v, want [Cubic Cubic-2]", names)
+	}
 }

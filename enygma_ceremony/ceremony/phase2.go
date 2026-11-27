@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 
@@ -41,23 +40,31 @@ const ManifestFile = "keys.json"
 // CircuitsIn lists dir's <Name>.r1cs files as circuits, sorted by name,
 // with their key paths from dir's key manifest when it has one. The
 // manifest must name exactly the circuits there, each at paths of its own.
+// dir is a directory's path, never a pattern: a name holding '[' or '*'
+// lists that directory (audit I10).
 func CircuitsIn(dir string) ([]Circuit, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.r1cs"))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	if len(paths) == 0 {
-		return nil, fmt.Errorf("no .r1cs files in %s", dir)
-	}
-	sort.Strings(paths)
-	circuits := make([]Circuit, len(paths))
-	for i, p := range paths {
-		name := strings.TrimSuffix(filepath.Base(p), ".r1cs")
+	var circuits []Circuit
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".r1cs")
+		if !ok || e.IsDir() {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
 		if err := checkName("circuit", name); err != nil {
 			return nil, fmt.Errorf("%q: %w", p, err)
 		}
-		circuits[i] = Circuit{Name: name, R1CS: p, PK: name + "PK.key", VK: name + "VK.key"}
+		circuits = append(circuits, Circuit{Name: name, R1CS: p, PK: name + "PK.key", VK: name + "VK.key"})
 	}
+	if len(circuits) == 0 {
+		return nil, fmt.Errorf("no .r1cs files in %s", dir)
+	}
+	// By circuit name, as -circuits is compared: the file names sort
+	// otherwise ("Cubic-2.r1cs" before "Cubic.r1cs"; audit I9).
+	slices.SortFunc(circuits, func(a, b Circuit) int { return strings.Compare(a.Name, b.Name) })
 	data, err := os.ReadFile(filepath.Join(dir, ManifestFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return circuits, nil
@@ -173,9 +180,10 @@ func (s *phase2State) decode(r *body) error {
 			return fmt.Errorf("%w: circuit %q: %v", ErrFormat, c.name, err)
 		}
 		// gnark's Contribute panics past 255 commitments, after drawing the
-		// randomness (audit R-009): refused here, before anyone contributes.
+		// randomness (audit R-009), and its seal past maxCommitments (I7):
+		// refused here, before anyone contributes.
 		if n := len(c.mpc.Parameters.G1.SigmaCKK); n > maxCommitments {
-			return fmt.Errorf("%w: circuit %q: %d commitments, more than gnark takes (%d)", ErrFormat, c.name, n, maxCommitments)
+			return fmt.Errorf("%w: circuit %q: %d commitments, more than a Phase 2 can seal (%d)", ErrFormat, c.name, n, maxCommitments)
 		}
 	}
 	return nil
@@ -207,9 +215,12 @@ func checkName(what, name string) error {
 	return nil
 }
 
-// maxCommitments is the most commitments a circuit's Phase 2 may hold: gnark
-// tells each one's proof apart by a byte.
-const maxCommitments = 255
+// maxCommitments is the most commitments a circuit's Phase 2 may hold. gnark
+// tells each one's proof apart by a byte (255), but its Phase 2 seal draws
+// 1 + commitments field elements from the beacon with RFC 9380's
+// expand_message, which gives at most 170: past 169 commitments the seal
+// panics, after the whole phase has run (audit I7).
+const maxCommitments = 169
 
 // minCircuit is the fewest bytes a circuit takes in a Phase 2 file: its [δ]₂
 // (64) and δ's update proof (32 and 64) alone, compressed.
@@ -218,10 +229,11 @@ const minCircuit = 160
 // info describes the state, whose file has sha256 h.
 func (s *phase2State) info(h [32]byte) Info {
 	names := make([]string, len(s.circuits))
+	r1cs := make([][32]byte, len(s.circuits))
 	for i, c := range s.circuits {
-		names[i] = c.name
+		names[i], r1cs[i] = c.name, c.r1cs
 	}
-	return Info{Kind: KindPhase2, Index: s.index, Ceremony: s.ceremony, Circuits: names, Hash: h}
+	return Info{Kind: KindPhase2, Index: s.index, Ceremony: s.ceremony, Circuits: names, R1CS: r1cs, SRS: s.srs, Hash: h}
 }
 
 // checkPhase2Step checks that next is one valid contribution on top of prev.
@@ -281,25 +293,44 @@ type sealInput struct {
 	evals   mpcsetup.Phase2Evaluations
 }
 
+// SRS is the SRS a Phase 2 starts from: its file, and the sha256 announced
+// for it, which the file must have (audit H1). Any file decodes as an SRS,
+// including one made from a τ, α and β someone kept, and the keys take α
+// and β from it, so a Phase 2 is only as sound as the Phase 1 its SRS is
+// the seal of: the announced sha256 is the one independent resealers of
+// that Phase 1 got. A rehearsal's SRS, sealed with a beacon not from drand,
+// is taken only when Rehearsal says so.
+type SRS struct {
+	Path      string
+	SHA256    [32]byte
+	Rehearsal bool
+}
+
 // start computes the start of Phase 2 for ceremony's circuits from the SRS
-// at srsPath. It holds no randomness, so a verifier recomputes it rather
+// at srs.Path. It holds no randomness, so a verifier recomputes it rather
 // than trusting a file. gnark evaluates a circuit's constraints one by one,
 // so the circuits are started in parallel.
-func start(ceremony, srsPath string, circuits []Circuit) (*phase2State, []sealInput, error) {
+func start(ceremony string, srsIn SRS, circuits []Circuit) (*phase2State, []sealInput, Provenance, error) {
 	if err := checkName("ceremony", ceremony); err != nil {
-		return nil, nil, err
+		return nil, nil, Provenance{}, err
 	}
 	if len(circuits) == 0 {
-		return nil, nil, errors.New("no circuits")
+		return nil, nil, Provenance{}, errors.New("no circuits")
 	}
 	for _, c := range circuits {
 		if err := checkName("circuit", c.Name); err != nil {
-			return nil, nil, err
+			return nil, nil, Provenance{}, err
 		}
 	}
-	srs, srsHash, err := readSRS(srsPath)
+	srs, srsHash, err := readSRS(srsIn.Path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, Provenance{}, err
+	}
+	if srsHash != srsIn.SHA256 {
+		return nil, nil, Provenance{}, fmt.Errorf("%w: %s has sha256 %x, and the SRS announced %x", ErrSRS, srsIn.Path, srsHash, srsIn.SHA256)
+	}
+	if srs.prov.Beacon.DrandRound == 0 && !srsIn.Rehearsal {
+		return nil, nil, Provenance{}, fmt.Errorf("%w: %s was sealed with a beacon not from drand, so it is a rehearsal's", ErrSRS, srsIn.Path)
 	}
 	s := &phase2State{ceremony: ceremony, srs: srsHash, circuits: make([]phase2Circuit, len(circuits))}
 	seal := make([]sealInput, len(circuits))
@@ -326,13 +357,16 @@ func start(ceremony, srsPath string, circuits []Circuit) (*phase2State, []sealIn
 			}
 			s.circuits[i].name, s.circuits[i].r1cs = c.Name, h
 			seal[i] = sealInput{commons: commons, evals: s.circuits[i].mpc.Initialize(r1cs, commons)}
+			if n := len(s.circuits[i].mpc.Parameters.G1.SigmaCKK); n > maxCommitments {
+				errs[i] = fmt.Errorf("circuit %q: %d commitments, more than a Phase 2 can seal (%d)", c.Name, n, maxCommitments)
+			}
 		})
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
-		return nil, nil, err
+		return nil, nil, Provenance{}, err
 	}
-	return s, seal, nil
+	return s, seal, srs.prov, nil
 }
 
 // readR1CS reads a compiled constraint system and returns it with the
@@ -350,9 +384,9 @@ func readR1CS(path string) (*cs.R1CS, [32]byte, error) {
 }
 
 // NewPhase2 writes the start of ceremony's Phase 2 for circuits to out, from
-// the SRS at srs.
-func NewPhase2(out, ceremony, srs string, circuits []Circuit) (Receipt, error) {
-	s, _, err := start(ceremony, srs, circuits)
+// the SRS srs names.
+func NewPhase2(out, ceremony string, srs SRS, circuits []Circuit) (Receipt, error) {
+	s, _, _, err := start(ceremony, srs, circuits)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -361,37 +395,38 @@ func NewPhase2(out, ceremony, srs string, circuits []Circuit) (Receipt, error) {
 }
 
 // SealPhase2 replays ceremony's Phase 2 from its start, recomputed from the
-// SRS at srs and the circuits, through contributions in order, checking each
+// SRS srs names and the circuits, through contributions in order, checking each
 // step as Check does; applies the beacon as a last, public contribution; and
 // writes each circuit's proving and verifying key into keysDir at its PK
 // and VK paths, in the form gnark's ReadFrom loads, never over an existing
 // file. The keys appear all together or not at all: each is written in
-// full, and synced, before any is put in place.
-func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte, contributions []string) error {
+// full, and synced, before any is put in place. It returns what the SRS
+// says it was sealed from.
+func SealPhase2(keysDir, ceremony string, srs SRS, circuits []Circuit, beacon []byte, contributions []string) (Provenance, error) {
 	if err := checkBeacon(beacon); err != nil {
-		return err
+		return Provenance{}, err
 	}
 	if len(contributions) == 0 {
-		return errors.New("no contributions to seal")
+		return Provenance{}, errors.New("no contributions to seal")
 	}
 	for _, c := range circuits { // before the hours a seal can take
 		for _, p := range []string{c.PK, c.VK} {
 			if _, err := os.Lstat(filepath.Join(keysDir, p)); !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("%s: a key is there already, or cannot be checked (%v)", filepath.Join(keysDir, p), err)
+				return Provenance{}, fmt.Errorf("%s: a key is there already, or cannot be checked (%v)", filepath.Join(keysDir, p), err)
 			}
 		}
 	}
-	prev, seal, err := start(ceremony, srs, circuits)
+	prev, seal, phase1, err := start(ceremony, srs, circuits)
 	if err != nil {
-		return err
+		return Provenance{}, err
 	}
 	for i, path := range contributions {
 		next := new(phase2State)
 		if _, err := open(path, KindPhase2, next); err != nil {
-			return err
+			return Provenance{}, err
 		}
 		if err := checkPhase2Step(prev, next); err != nil {
-			return fmt.Errorf("contribution %d (%s): %w", i+1, path, err)
+			return Provenance{}, fmt.Errorf("contribution %d (%s): %w", i+1, path, err)
 		}
 		prev = next
 	}
@@ -418,7 +453,7 @@ func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte
 		}{{filepath.Join(keysDir, circuits[i].PK), pk}, {filepath.Join(keysDir, circuits[i].VK), vk}} {
 			tmp, err := writeKey(k.path, k.key)
 			if err != nil {
-				return undo(err)
+				return Provenance{}, undo(err)
 			}
 			keys = append(keys, written{tmp, k.path})
 		}
@@ -426,7 +461,7 @@ func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte
 	for _, k := range keys {
 		// Link, not rename: it fails, rather than replace, if a key appeared there meanwhile.
 		if err := os.Link(k.tmp, k.path); err != nil {
-			return undo(err)
+			return Provenance{}, undo(err)
 		}
 		placed = append(placed, k.path)
 	}
@@ -434,7 +469,7 @@ func SealPhase2(keysDir, ceremony, srs string, circuits []Circuit, beacon []byte
 	for _, k := range keys {
 		err = errors.Join(err, os.Remove(k.tmp))
 	}
-	return err
+	return phase1, err
 }
 
 // writeKey writes a gnark key with its WriteTo, the form the gnark servers

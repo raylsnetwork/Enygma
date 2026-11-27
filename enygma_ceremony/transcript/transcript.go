@@ -160,7 +160,7 @@ func (t Transcript) Find(hash string) (Entry, bool) {
 // the circuits (ceremony.CircuitsIn). CheckStart recomputes the start from
 // them, as phase2-seal does.
 type Phase2Start struct {
-	SRS      string
+	SRS      ceremony.SRS // the SRS, pinned to the sha256 announced for it
 	Circuits []ceremony.Circuit
 }
 
