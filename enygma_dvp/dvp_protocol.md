@@ -456,6 +456,8 @@ $$
 
 and `Erc721CoinVault.deposit(params)` takes $[token_{id},\ pk^{\text{spend}},\ salt]$ (amount 1). The vault pulls the asset from the caller and computes the commitment itself, $C = \mathrm{H}(pk^{\text{spend}},\ salt,\ amount,\ token_{id})$, so that the deposited amount and token are bound to the note (the C-1 fix: a commitment the caller computed could encode any amount).
 
+`Erc20CoinVault` takes only a note a proof can spend: an amount above 0 and below $10^{36}$ (`MAX_VALUE`, the bound the circuits put on every note value; a proof takes a zero-value input only as padding) and the vault's token id, `TOKEN_ID` (0), since the vault holds one ERC-20. Anything else reverts (`ZeroDepositAmount`, `AmountOutOfRange`, `InvalidTokenId`). Every Payment-family proof gives its outputs its inputs' token id, so a deposit of another id would pass that id on to every note paid from it, and each withdrawal of those notes would publish it.
+
 As a result a deposit publishes the whole note opening in its calldata: the owner's spend public key, the salt, the amount and the token id, next to the depositor's address and the token transfer. The `UserRegistry` maps each registered account to its spend public key, so the deposited note's owner is public too. **Deposits do not hide the owner.** `depositV2` also emits `EncryptedNote(vaultId, C, ciphertextI, ciphertextII)` so that the owner's wallet can find the note by scanning; the ciphertext adds nothing the calldata does not already show.
 
 What stays private is the note's later life: the nullifier that spends it needs $sk^{\text{spend}}$, so the chain cannot tell when, or into what, the deposited note is spent. A [private mint](#private-issuance) creates a note without revealing its opening.
@@ -466,14 +468,14 @@ The nullifier $\mathrm{H}(sk^{\text{spend}},\ globalIdx)$ has no vault or asset 
 
 ### Exits
 
-Every withdrawal publishes its recipient address and amount: they are call arguments, the vault pays the recipient with an ordinary token transfer, and they open output 0 of the proof, which the vault recomputes as $\mathrm{H}(\mathrm{uint160}(recipient),\ 0,\ amount,\ token_{id})$ (or, for the legacy `withdraw`, $\mathrm{H}(uid,\ recipient)$).
+Every withdrawal publishes its recipient address and amount: they are call arguments, the vault pays the recipient with an ordinary token transfer, and they open output 0 of the proof, which the vault recomputes as $\mathrm{H}(\mathrm{uint160}(recipient),\ 0,\ amount,\ token_{id})$. The amount must be below $10^{36}$ and the token id the vault's `TOKEN_ID` (`AmountOutOfRange`, `InvalidTokenId`): the onchain Poseidon reduces its inputs mod $p$, and with these bounds the amount it hashes is the amount the vault pays out.
 
 | Function (`Erc20CoinVault`) | Receipt | Public | Change note |
 | --- | --- | --- | --- |
 | `withdrawV2(params, recipient, receipt)` | Payment or Payment2in, `StMessage = WITHDRAW_MESSAGE` | recipient, amount, token id; `PartialWithdrawal` event | inserted; no `EncryptedNote` |
 | `partialWithdraw(params, recipient, receipt, ciphertextI, ciphertextII)` | as `withdrawV2` | as `withdrawV2` | inserted; `EncryptedNote` with the caller's ciphertexts |
 | `partialWithdrawWithRelayerFee(...)` | PaymentRelayerFeePublic, `StMessage = WITHDRAW_MESSAGE` | as `withdrawV2`, plus the public fee | inserted, with the relayer's fee note; `EncryptedNote` with the caller's ciphertexts |
-| `withdraw(params, recipient, receipt)` (legacy) | any Payment-family receipt | recipient, amount | not inserted |
+| `withdraw(params, recipient, receipt)` (legacy) | none: retired, it reverts `Erc20LegacyPathRetired` | nothing | none |
 
 The VK slots these functions use (Payment 0, Payment2in 1, PaymentRelayerFeePublic 3) are the dedicated Payment deployment's. The main deployment registers other circuits in slots 1-3, so there only the 1-input `withdrawV2`/`partialWithdraw` verifies; a Payment2in or relayer-fee receipt reverts.
 
@@ -481,7 +483,7 @@ The change note itself stays private: its commitment hides the remainder, and th
 
 **The change note's ciphertexts are not bound to the proof.** The Payment-family statements have a `CiphertextHash` slot, which every payment path checks against the ciphertexts it publishes (`CiphertextHash.sol`), but `_settlePartialWithdraw` does not check it: it emits whatever `ciphertextI`/`ciphertextII` its caller passes. Anyone who sees a pending `partialWithdraw` or `partialWithdrawWithRelayerFee` can settle the same receipt first with other ciphertexts, or with none. The recipient, amount and outputs are fixed by the proof, so nothing can be redirected, but the owner's scan finds a false or missing ciphertext for the change note. The circuit fixes the change note's salt to $\mathrm{H}(sk^{\text{spend}},\ nf_0)$, so the owner can always rebuild the note from its key and the transaction's `Nullifier` and `PartialWithdrawal` events (`core.WithdrawChangeNote`), without the ciphertexts.
 
-**The legacy `withdraw` is not domain-separated from payments.** `withdrawV2` and the partial withdrawals take only receipts whose `StMessage` is `WITHDRAW_MESSAGE`, and the payment paths refuse that value, so a withdrawal receipt settles only as a withdrawal. The legacy `withdraw` does not check `StMessage`: it takes a payment receipt (`StMessage = 0`), so a pending legacy-withdraw receipt can also be settled first as a payment (by any payment path whose ciphertexts match its `CiphertextHash`), which inserts output 0 as a note no one can spend instead of paying it out. It also spends the inputs without inserting any other output, so a change note in output 1 is lost. It does refuse locked notes.
+**The legacy `withdraw` and `verifyOwnership` are retired** ([ADR 0006](../docs/adr/0006-retire-the-erc20-vault-legacy-paths.md)). They opened output 0 as $\mathrm{H}(\mathrm{H}(asset,\ amount),\ recipient)$ and $\mathrm{H}(\mathrm{H}(asset,\ amount),\ 0)$, two-input Poseidon hashes that no Payment-family circuit produces: each constrains every output to a four-input note commitment. So no receipt could reach them. They also checked less than `withdrawV2`: `withdraw` took a payment receipt (`StMessage = 0`) and inserted no change note. Both now revert `Erc20LegacyPathRetired`. `withdrawV2` and the partial withdrawals take only receipts whose `StMessage` is `WITHDRAW_MESSAGE`, and the payment paths refuse that value, so a withdrawal receipt settles only as a withdrawal.
 
 ### Erc721 vault: legacy paths
 
@@ -515,6 +517,9 @@ The order matters because a vault takes its addresses once and keeps them.
 that moment to the vault's `initializeVault`, which runs only once.
 `registerAssetGroup` reads the verifier from `EnygmaDvp` the same way. So:
 
+- **`registerVault` before `initializeDvp` reverts.** The vault would keep
+  verifier address 0, so deposits would go in and nothing could come out:
+  `initializeVault` refuses it (`ZeroVerifierAddress`).
 - **A second `initializeDvp` does not reach registered vaults.** It changes
   only the address `EnygmaDvp` holds. Vaults and asset groups registered
   earlier keep verifying against the old verifier. Keys registered from then
@@ -523,8 +528,9 @@ that moment to the vault's `initializeVault`, which runs only once.
   state. To undo a mistaken call, call `initializeDvp` again with the first
   verifier's address.
 - **A vault trusts the auction address that was stored when it was
-  registered.** It grants that address `DEFAULT_AUCTION_ROLE` for good (today
-  `address(0)`, as nothing calls `registerEnygmaAuction`).
+  registered.** It grants that address `DEFAULT_AUCTION_ROLE` for good. While
+  none is stored (address 0, as nothing calls `registerEnygmaAuction`), it
+  grants the role to no account.
 
 ### `addEnygma`'s powers
 
@@ -557,7 +563,7 @@ After deploy, the owner (`DEFAULT_OWNER_ROLE`) sets each one with its setter:
 |---|---|---|---|
 | `relayerFixedFeeAmount` | 0 | `setRelayerFixedFee(amount)` | `paymentWithRelayerFee`, `channelPaymentWithRelayerFee` |
 | `usdrFixedFeeAmount` | 0 | `setUsdrFixedFee(amount)` | `paymentWithUsdrFee`, `channelPaymentWithUsdrFee` (USDr leg) |
-| `usdrTokenId` | 0 | `setUsdrTokenId(tokenId)` | the same two calls; both init scripts set it to 0, its default |
+| `usdrTokenId` | 0 | `setUsdrTokenId(tokenId)` | the same two calls; both init scripts set it to 0, its default. The USDr vault takes deposits of its `TOKEN_ID` (0) only, so with any other value no deposited USDr note can pay a USDr leg |
 | `usdrFeeVaultId` | unset | `setUsdrFeeVaultId(vaultId)` | the same two calls, which revert `InvalidUsdrVault` until it is set; both init scripts set it to 1 |
 
 `paymentWithFee` and `channelPaymentWithFee` check against no stored value:
@@ -593,17 +599,9 @@ that should be paid must set it, and both relayers (`relayer/` here and
 
 ### Front-running that blocks a call
 
-Two public calls can be blocked by anyone who copies a pending transaction
-from the mempool. Neither loses funds; the sender retries with fresh input.
+A public call can be blocked by anyone who copies a pending transaction
+from the mempool. It loses no funds; the sender retries with fresh input.
 
-- **Ownership challenges.** `Erc20CoinVault.verifyOwnership` takes
-  the proof's message as a challenge and registers it through
-  `EnygmaDvp.checkAndRegisterChallenge`, which rejects a challenge it has seen
-  before (`RottenChallenge`). The function is public, and all vaults share one
-  set of challenges. So anyone who sees a pending `verifyOwnership` can
-  register its challenge first, or submit the same receipt themselves, and the
-  owner's call reverts. To recover, the owner proves again with a new
-  challenge.
 - **Channel ids.** `ChannelRegistry.openChannel` stores the first record
   written under a `channelId` and rejects later ones
   (`ChannelAlreadyExists`). A copier can therefore open the sender's
@@ -614,12 +612,19 @@ from the mempool. Neither loses funds; the sender retries with fresh input.
   and so a new channel id (`SHA256(0x01 || sharedSecret)`), and opens that
   channel instead.
 
+`EnygmaDvp.checkAndRegisterChallenge` is public too, and rejects a challenge
+it has seen before (`RottenChallenge`), so a copier could register an
+ownership proof's challenge first. Its one caller left,
+`Erc721CoinVault.verifyOwnership`, takes no proof that can be made (see
+[Erc721 vault: legacy paths](#erc721-vault-legacy-paths));
+`Erc20CoinVault.verifyOwnership` is retired.
+
 ---
 
 ## Security Goals
 
 - **Atomicity**: either both sides settle or Alice recovers her original asset
-- **Privacy**: commitments hide owners, amounts, token identifiers, and linkage; deposits, exits and spends across vaults reveal what [What the chain sees](#what-the-chain-sees-deposits-spends-and-exits) lists
+- **Privacy**: commitments hide owners, amounts, NFT token identifiers, and linkage (an ERC-20 vault takes deposits and withdrawals of its one token id, `TOKEN_ID`, only); deposits, exits and spends across vaults reveal what [What the chain sees](#what-the-chain-sees-deposits-spends-and-exits) lists
 - **Fairness**: Bob cannot receive Alice's asset unless he spends his own input
 - **Replay resistance**: nullifiers prevent double-spending
 - **Timeout safety**: locked funds can be recovered after the deadline

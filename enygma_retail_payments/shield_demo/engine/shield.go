@@ -17,7 +17,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// tokenId is the retail ERC20 vault's token id.
+// tokenId is the retail ERC20 and USDr vaults' token id: each is an
+// Erc20CoinVault, which takes deposits and withdrawals of its TOKEN_ID, 0, only.
 var tokenId = big.NewInt(0)
 
 // erc20VaultId and usdrVaultId are the retail ERC20 and USDr vaults' ids on
@@ -226,11 +227,14 @@ func (e *Engine) discover(ctx context.Context, s *step) error {
 
 // scan adds to into the notes of asset in events (one vault's) that a's
 // view key opens, and returns the new ones as decrypted. An event that fails
-// to open or to match its commitment is someone else's.
+// to open or to match its commitment is someone else's. A note of another
+// token id than the vault's (tokenId) is refused, as the tag path refuses
+// one: every spend from a purse proves with tokenId, so the purse keeps only
+// notes of it.
 func (a *Actor) scan(events []dvpcore.OnChainErc20Event, into *purse, asset string) []DecryptedNote {
 	var found []DecryptedNote
 	for _, ev := range events {
-		owned, err := dvpcore.ScanForErc20Notes(a.View.DecapsKey, a.Spend.PublicKey, []dvpcore.OnChainErc20Event{ev})
+		owned, _, err := dvpcore.ScanForErc20NotesWithRejected(a.View.DecapsKey, a.Spend.PublicKey, tokenId, []dvpcore.OnChainErc20Event{ev})
 		if err != nil || len(owned) == 0 || into.has(ev.Commitment) {
 			continue
 		}

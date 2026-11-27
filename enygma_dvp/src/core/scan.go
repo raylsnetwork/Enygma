@@ -20,6 +20,12 @@ const (
 	// RejectCommitmentNotComputable: the payload opened under this wallet's
 	// key, but a decrypted value can't be hashed (it is outside the field).
 	RejectCommitmentNotComputable RejectReason = "commitment not computable"
+	// RejectWrongTokenId: unlike the reasons above, the note opens. The
+	// payload opened under this wallet's key to a note that matches its
+	// commitment, but of another token id than the one the scan keeps (an
+	// Erc20CoinVault's TOKEN_ID). No withdrawal from that vault can name
+	// that id, and every note paid from it would carry it.
+	RejectWrongTokenId RejectReason = "wrong token id"
 )
 
 func (r RejectReason) Error() string { return string(r) }
@@ -154,7 +160,10 @@ type OwnedErc20Note struct {
 }
 
 // ScanForErc20Notes scans a list of on-chain ERC20 events and returns all notes
-// addressed to the given view/spend key pair.
+// addressed to the given view/spend key pair, whatever their token id. An
+// Erc20CoinVault takes deposits and pays out withdrawals of its TOKEN_ID only,
+// so a wallet that spends from one scans with ScanForErc20NotesWithRejected,
+// which refuses the others.
 //
 // For each event it:
 //  1. Decapsulates cipherText to recover the raw ML-KEM shared secret ss.
@@ -174,15 +183,31 @@ func ScanForErc20Notes(
 	pkSpend *big.Int,
 	events []OnChainErc20Event,
 ) ([]OwnedErc20Note, error) {
-	owned, _, err := ScanForErc20NotesWithRejected(dk, pkSpend, events)
+	owned, _, err := scanErc20Notes(dk, pkSpend, nil, events)
 	return owned, err
 }
 
-// ScanForErc20NotesWithRejected is ScanForErc20Notes, also returning the events
-// it refused and why.
+// ScanForErc20NotesWithRejected is ScanForErc20Notes keeping only the notes of
+// token id tokenId (the vault's TOKEN_ID): it refuses a note of another id as
+// RejectWrongTokenId, and returns the events it refused and why.
 func ScanForErc20NotesWithRejected(
 	dk *mlkem.DecapsulationKey768,
 	pkSpend *big.Int,
+	tokenId *big.Int,
+	events []OnChainErc20Event,
+) ([]OwnedErc20Note, []RejectedEvent, error) {
+	if err := checkWalletValues(tokenId); err != nil {
+		return nil, nil, err
+	}
+	return scanErc20Notes(dk, pkSpend, tokenId, events)
+}
+
+// scanErc20Notes is the scan both share; it keeps only the notes of token id
+// keep, or of any id when keep is nil.
+func scanErc20Notes(
+	dk *mlkem.DecapsulationKey768,
+	pkSpend *big.Int,
+	keep *big.Int,
 	events []OnChainErc20Event,
 ) ([]OwnedErc20Note, []RejectedEvent, error) {
 	if err := checkWalletValues(pkSpend); err != nil {
@@ -198,6 +223,9 @@ func ScanForErc20NotesWithRejected(
 			expected, err := Erc20CommitmentV2(pkSpend, saltBField, amount, tokenId)
 			if err := checkCommitment(expected, err, ev.Commitment); err != nil {
 				return OwnedErc20Note{}, err
+			}
+			if keep != nil && tokenId.Cmp(keep) != 0 {
+				return OwnedErc20Note{}, RejectWrongTokenId
 			}
 			return OwnedErc20Note{
 				Commitment: new(big.Int).Set(ev.Commitment),

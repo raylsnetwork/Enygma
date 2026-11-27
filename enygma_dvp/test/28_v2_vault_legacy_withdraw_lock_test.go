@@ -10,10 +10,12 @@ package tests
 //
 // This deploys a vault against AcceptAllVerifier, so only the vault's own
 // checks apply, deposits a note, locks its nullifier, and checks that the
-// legacy withdraw refuses it with CantSpendLockedCoin, then succeeds once the
-// note is unlocked, for each of the two vaults. Runs on go-ethereum's
-// simulated backend; needs `npx hardhat compile` and the circomlibjs Poseidon
-// artifacts (node scripts/regen_poseidon.js).
+// ERC721 vault's legacy withdraw refuses it with CantSpendLockedCoin, then
+// succeeds once the note is unlocked. The ERC20 vault's legacy withdraw and
+// verifyOwnership are retired (docs/adr/0006): its test checks that they
+// refuse the unlocked note's receipt the legacy withdraw used to settle. Runs
+// on go-ethereum's simulated backend; needs `npx hardhat compile` and the
+// circomlibjs Poseidon artifacts (node scripts/regen_poseidon.js).
 
 import (
 	"context"
@@ -236,11 +238,21 @@ func legacyReceipt(statement []*big.Int, nIn, nOut int64) onchainProofReceipt {
 	}
 }
 
-func TestV2VaultLegacyWithdraw_RefusesLockedNote_Erc20(t *testing.T) {
+// The ERC20 vault's legacy withdraw and verifyOwnership are retired: each
+// reverts Erc20LegacyPathRetired, even for a receipt whose output 0 is the
+// legacy opening, against an unlocked note and AcceptAllVerifier, which the
+// legacy withdraw settled. The vault is registered through the real EnygmaDvp,
+// whose challenge registry verifyOwnership wrote to.
+func TestV2VaultLegacyPaths_Erc20Retired(t *testing.T) {
 	e := newLockEnv(t)
+	dvpABI, dvpBin := loadArtifact(t, "core/contracts/EnygmaDvp.sol/EnygmaDvp.json")
+	dvp := e.deploy(dvpABI, dvpBin, e.wrapper, e.verifier)
+	e.mustSend(dvpABI, dvp, "initializeDvp", e.verifier)
 	tABI, tBin := loadArtifact(t, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json")
 	token := e.deploy(tABI, tBin, "Token", "TKN")
-	vABI, vault := e.newVault("core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json", token)
+	vABI, vBin := loadArtifact(t, "core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
+	vault := e.deploy(vABI, vBin, dvp)
+	e.mustSend(dvpABI, dvp, "registerVault", vault, token, big.NewInt(1), big.NewInt(8))
 
 	amount := big.NewInt(100)
 	e.mustSend(tABI, token, "mint", e.auth.From, amount)
@@ -251,19 +263,35 @@ func TestV2VaultLegacyWithdraw_RefusesLockedNote_Erc20(t *testing.T) {
 	uid := e.call(vABI, vault, "generateUniqueId", []*big.Int{amount, new(big.Int).SetBytes(token.Bytes())}).(*big.Int)
 	wABI, _ := loadLinkedArtifact(t, "core/contracts/PoseidonWrapper.sol/PoseidonWrapper.json",
 		map[string]common.Address{"PoseidonT3": {}, "PoseidonT5": {}})
-	opening := e.call(wABI, e.wrapper, "poseidon", [2]*big.Int{uid, new(big.Int).SetBytes(recipient.Bytes())}).(*big.Int)
-
-	nf := big.NewInt(777)
+	opening := func(to *big.Int) *big.Int {
+		return e.call(wABI, e.wrapper, "poseidon", [2]*big.Int{uid, to}).(*big.Int)
+	}
+	nf, challenge := big.NewInt(777), big.NewInt(42)
 	root := e.call(vABI, vault, "getRoot").(*big.Int)
 	// [message, tree, root, nullifier, output0, output1, vault, ciphertextHash]
-	rcpt := legacyReceipt([]*big.Int{big.NewInt(0), big.NewInt(0), root, nf, opening, big.NewInt(999),
-		new(big.Int).SetBytes(vault.Bytes()), big.NewInt(0xC1F7)}, 1, 2)
+	receipt := func(message, output0 *big.Int) onchainProofReceipt {
+		return legacyReceipt([]*big.Int{message, big.NewInt(0), root, nf, output0, big.NewInt(999),
+			new(big.Int).SetBytes(vault.Bytes()), big.NewInt(0xC1F7)}, 1, 2)
+	}
 
-	e.checkLockedThenUnlocked(vABI, vault, nf, func() string {
-		return e.send(vABI, vault, "withdraw", []*big.Int{amount}, recipient, rcpt)
-	})
-	if got := e.call(tABI, token, "balanceOf", recipient).(*big.Int); got.Cmp(amount) != 0 {
-		t.Fatalf("recipient balance %s, want %s", got, amount)
+	withdrawRcpt := receipt(big.NewInt(0), opening(new(big.Int).SetBytes(recipient.Bytes())))
+	if r := e.send(vABI, vault, "withdraw", []*big.Int{amount}, recipient, withdrawRcpt); r != "Erc20LegacyPathRetired" {
+		t.Errorf("withdraw: got %q, want Erc20LegacyPathRetired", r)
+	}
+	if e.call(vABI, vault, "isValidNullifier", big.NewInt(0), nf).(bool) {
+		t.Error("a refused withdraw spent the receipt's nullifier")
+	}
+	if got := e.call(tABI, token, "balanceOf", recipient).(*big.Int); got.Sign() != 0 {
+		t.Errorf("a refused withdraw paid the recipient %s", got)
+	}
+
+	ownershipRcpt := receipt(challenge, opening(big.NewInt(0)))
+	if r := e.send(vABI, vault, "verifyOwnership", []*big.Int{amount}, ownershipRcpt); r != "Erc20LegacyPathRetired" {
+		t.Errorf("verifyOwnership: got %q, want Erc20LegacyPathRetired", r)
+	}
+	// Its challenge is still unregistered: registering it now succeeds.
+	if r := e.send(dvpABI, dvp, "checkAndRegisterChallenge", challenge); r != "" {
+		t.Errorf("a refused verifyOwnership registered its challenge: %s", r)
 	}
 }
 

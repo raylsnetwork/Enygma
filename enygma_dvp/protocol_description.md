@@ -22,7 +22,7 @@ sequenceDiagram
 
     note over Chain: Runs a DvP<br>Smart Contract
 
-    Note over Alice: Owns an existing note<br>Commitment_A = H(spend_pkA, saltA, amount=5, token_id=10)<br>(represents 5 USDT)
+    Note over Alice: Owns an existing note<br>Commitment_A = H(spend_pkA, saltA, amount=5, token_id=0)<br>(represents 5 USDT)
     Note over Bob: Owns an existing note<br>Commitment_B = H(spend_pkB, saltB, amount=1, token_id=25)<br>(represents 1 concert ticket)
 
 ```
@@ -44,7 +44,7 @@ sequenceDiagram
     participant Chain as Blockchain
     participant Bob
 
-    note over Alice, Bob: < Agree on trade parameters. Swap 5 USDT (token_id = 10) for 1 concert ticket(token_id = 25) >
+    note over Alice, Bob: < Agree on trade parameters. Swap 5 USDT (token_id = 0) for 1 concert ticket(token_id = 25) >
 ```
 
 ### b. Initiating the DvP
@@ -306,7 +306,7 @@ sequenceDiagram
     note over Bob: Has commitment<br><br>Commitment_B = H(spend_pk_B, saltB, amount_2, token_id_2)
 
 
-    note over Alice, Bob: Agree on trade parameters.<br>Swap 5 USDT (token_id = 10) for 1 concert ticket (token_id = 25)
+    note over Alice, Bob: Agree on trade parameters.<br>Swap 5 USDT (token_id = 0) for 1 concert ticket (token_id = 25)
     note over Alice, Bob: DvP can now start
 
     note over Alice: Alice initiates the DvP
@@ -439,9 +439,9 @@ Alice was able to send funds to Bob. Only Bob can spend the received commitment.
 
 The swap above starts from notes Alice and Bob already hold. Notes enter and leave a vault, and move between owners outside a swap, as follows. [What the chain sees](./dvp_protocol.md#what-the-chain-sees-deposits-spends-and-exits) in `dvp_protocol.md` lists what each of these publishes.
 
-- **Deposit.** The depositor calls `deposit`/`depositV2` on the vault with `[amount, spend_pk, salt, token_id]` (`Erc721CoinVault.deposit`: `[token_id, spend_pk, salt]`). The vault pulls the asset, computes `C = H(spend_pk, salt, amount, token_id)` and inserts it; `depositV2` also emits an `EncryptedNote` for the owner's wallet to scan. The opening is in the calldata, so a deposit does not hide the note's owner or amount. An issuer's [private mint](./dvp_protocol.md#private-issuance) does.
+- **Deposit.** The depositor calls `deposit`/`depositV2` on the vault with `[amount, spend_pk, salt, token_id]` (`Erc721CoinVault.deposit`: `[token_id, spend_pk, salt]`). `Erc20CoinVault` takes `0 < amount < 10^36` and only its own `token_id`, `TOKEN_ID` (0). The vault pulls the asset, computes `C = H(spend_pk, salt, amount, token_id)` and inserts it; `depositV2` also emits an `EncryptedNote` for the owner's wallet to scan. The opening is in the calldata, so a deposit does not hide the note's owner or amount. An issuer's [private mint](./dvp_protocol.md#private-issuance) does.
 - **Payment.** The owner proves a Payment-family statement (inputs spent by nullifier, output commitments, the vault, and the hash of the ciphertexts the payment publishes) and submits it to `EnygmaDvp.payment*` or the vault's `transfer`/`transferV2`. The commitments hide owners and amounts; the statement's tree numbers, roots, nullifiers and vault are public, as are a relayer-fee payment's fee and a channel payment's tag.
-- **Withdrawal.** The owner proves a Payment-family statement with `StMessage = WITHDRAW_MESSAGE` whose output 0 is `H(recipient, 0, amount, token_id)`, and submits it to `Erc20CoinVault.withdrawV2`, `partialWithdraw` or `partialWithdrawWithRelayerFee`. The vault spends the inputs, inserts the change note (and any relayer fee note), and transfers `amount` to `recipient` in public. The 2-input and relayer-fee forms work only on the dedicated Payment deployment, whose VK slots hold those circuits. The legacy `withdraw` is described there too. NFTs leave the vault only as a swap leg.
+- **Withdrawal.** The owner proves a Payment-family statement with `StMessage = WITHDRAW_MESSAGE` whose output 0 is `H(recipient, 0, amount, token_id)`, and submits it to `Erc20CoinVault.withdrawV2`, `partialWithdraw` or `partialWithdrawWithRelayerFee`. The vault spends the inputs, inserts the change note (and any relayer fee note), and transfers `amount` to `recipient` in public. The amount must be below `10^36` and `token_id` the vault's `TOKEN_ID`. The 2-input and relayer-fee forms work only on the dedicated Payment deployment, whose VK slots hold those circuits. The legacy `withdraw` is retired ([ADR 0006](../docs/adr/0006-retire-the-erc20-vault-legacy-paths.md)). NFTs leave the vault only as a swap leg.
 
 ## Auditing
 

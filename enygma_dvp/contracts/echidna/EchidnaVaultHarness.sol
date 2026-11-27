@@ -5,12 +5,13 @@ pragma solidity ^0.8.0;
 //
 // SCOPE: this harness only exercises deposit()/depositV2() (no ZK proof
 // required — deposit only transfers real ERC20 tokens in and records a
-// Poseidon commitment). withdraw()/withdrawV2()/transfer()/transferV2()
+// Poseidon commitment). withdrawV2()/partialWithdraw()/transfer()/transferV2()
 // require a valid Groth16 proof verified against the real on-chain
 // verifier, which Echidna cannot forge without a mocked verifier, so
 // those paths are out of scope for this campaign and are not wrapped
-// here. See the security review notes for a possible follow-up harness
-// that swaps in a trust-mode mock IVerifier to fuzz those paths too.
+// here (the legacy withdraw() is retired and always reverts). See the
+// security review notes for a possible follow-up harness that swaps in a
+// trust-mode mock IVerifier to fuzz those paths too.
 
 import {IPoseidonWrapper} from "../core/interfaces/IPoseidonWrapper.sol";
 import {Erc20CoinVault} from "../core/contracts/vaults/Erc20CoinVault.sol";
@@ -110,7 +111,8 @@ contract EchidnaVaultHarness {
     }
 
     function fuzz_deposit(uint256 amount, uint256 pkSpend, uint256 salt) public {
-        amount = amount % 1e24; // keep amounts in a sane range
+        // The vault takes 0 < amount < 10^36: keep amounts in 1 .. 10^24.
+        amount = 1 + (amount % 1e24);
 
         token.mint(address(this), amount);
         token.approve(address(vault), amount);
@@ -132,7 +134,7 @@ contract EchidnaVaultHarness {
         bytes calldata ciphertextI,
         bytes calldata ciphertextII
     ) public {
-        amount = amount % 1e24;
+        amount = 1 + (amount % 1e24);
 
         token.mint(address(this), amount);
         token.approve(address(vault), amount);

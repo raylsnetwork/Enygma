@@ -71,6 +71,20 @@ contract Erc20CoinVault is AbstractCoinVault {
     // fee reaches it, since a fee is part of an input note's value.
     uint256 public constant MAX_FEE_AMOUNT = 10 ** 36;
 
+    // Exclusive upper bound on a deposited or withdrawn amount: the same
+    // circuit bound, so no proof can spend a note of MAX_VALUE or more. It is
+    // far below the field modulus p, by which the onchain Poseidon reduces
+    // its inputs, so the amount the vault hashes is the amount it moves (an
+    // amount of v + p would open a note worth v).
+    uint256 public constant MAX_VALUE = 10 ** 36;
+
+    // The vault's one token id (it holds one ERC-20): a deposit must use it,
+    // and a withdrawal must name it. Every Payment-family proof gives its
+    // outputs its inputs' token id, so a deposit of another id would pass
+    // that id on to every note paid from it, and each withdrawal of those
+    // notes would publish it, linking the deposit to those exits.
+    uint256 public constant TOKEN_ID = 0;
+
     // One row of the Payment-family table (see _paymentCircuit): a circuit's
     // verifying key, its numbers of inputs and outputs, and the offset of each
     // field in its statement layout.
@@ -117,20 +131,40 @@ contract Erc20CoinVault is AbstractCoinVault {
         }
     }
 
+    error ZeroDepositAmount();
+    error AmountOutOfRange(uint256 amount);
+    error InvalidTokenId(uint256 tokenId);
+
+    // A deposit makes only a note a proof can spend: worth more than 0 (a
+    // proof takes a zero-value input only as padding, never from the tree)
+    // and less than MAX_VALUE, and of the vault's TOKEN_ID.
+    function _requireDepositParams(uint256 amount, uint256 tokenId) internal pure {
+        if (amount == 0) {
+            revert ZeroDepositAmount();
+        }
+        if (amount >= MAX_VALUE) {
+            revert AmountOutOfRange(amount);
+        }
+        if (tokenId != TOKEN_ID) {
+            revert InvalidTokenId(tokenId);
+        }
+    }
+
     // C-1 fix: commitment is now computed on-chain from the caller-supplied key material
     // so the deposited amount is binding.  Previously the caller passed a pre-computed
     // commitment that could encode any amount, allowing vault drain via inflated deposits.
     //
-    // params[0] = amount to deposit
+    // params[0] = amount to deposit, 0 < amount < MAX_VALUE
     // params[1] = pkSpend  — recipient's BabyJubJub spend public key (x-coordinate)
     // params[2] = salt     — random field element chosen by the depositor
-    // params[3] = tokenId  — token identifier (0 for plain ERC20 vaults)
+    // params[3] = tokenId  — token identifier, which must be TOKEN_ID
     function deposit(uint256[] memory params) public override returns (bool) {
         uint256 amount  = params[0];
         uint256 pkSpend = params[1];
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
+        _requireDepositParams(amount, tokenId);
         _pullDeposit(amount);
 
         // Commitment = Poseidon4(pkSpend, salt, amount, tokenId) — on-chain, binding amount.
@@ -168,6 +202,7 @@ contract Erc20CoinVault is AbstractCoinVault {
         uint256 salt    = params[2];
         uint256 tokenId = params[3];
 
+        _requireDepositParams(amount, tokenId);
         _pullDeposit(amount);
 
         // C-1 fix: compute commitment on-chain to bind it to the actual transferred amount.
@@ -279,8 +314,8 @@ contract Erc20CoinVault is AbstractCoinVault {
     // Output commitment encodes the recipient as pk_spend with salt=0:
     //   commitment = Poseidon4(uint160(recipient), 0, amount, tokenId)
     //
-    // withdrawParams[0] = amount
-    // withdrawParams[1] = tokenId (must match the value used when input notes were created)
+    // withdrawParams[0] = amount, below MAX_VALUE
+    // withdrawParams[1] = tokenId, which must be TOKEN_ID
     //
     // The same as partialWithdraw without the change note's EncryptedNote: it
     // takes the same withdrawal receipt (StMessage WITHDRAW_MESSAGE) and also
@@ -415,6 +450,14 @@ contract Erc20CoinVault is AbstractCoinVault {
         if (amount == 0) {
             revert ZeroWithdrawAmount();
         }
+        // Output 0 opens to these values as the onchain Poseidon reads them,
+        // mod p: below MAX_VALUE, the amount paid out is the one proved.
+        if (amount >= MAX_VALUE) {
+            revert AmountOutOfRange(amount);
+        }
+        if (tokenId != TOKEN_ID) {
+            revert InvalidTokenId(tokenId);
+        }
         PaymentCircuit memory circuit = _paymentCircuit(receipt);
         // A withdrawal proof, not a payment one (see WITHDRAW_MESSAGE).
         if (receipt.statement[circuit.messageOffset] != WITHDRAW_MESSAGE) {
@@ -455,46 +498,23 @@ contract Erc20CoinVault is AbstractCoinVault {
         IERC20(_assetContractAddress).safeTransfer(recipient, amount);
     }
 
+    // Retired (docs/adr/0006-retire-the-erc20-vault-legacy-paths.md): the
+    // legacy withdraw and verifyOwnership revert Erc20LegacyPathRetired.
+    // They opened output 0 as Poseidon(Poseidon(asset, amount), recipient)
+    // and Poseidon(Poseidon(asset, amount), 0), two-input hashes that no
+    // Payment-family circuit produces (each constrains every output to a
+    // four-input note commitment), so neither could settle a receipt. Their
+    // checks were weaker than withdrawV2's: withdraw took a payment receipt
+    // (StMessage 0) and dropped the change note. withdrawV2, partialWithdraw
+    // and partialWithdrawWithRelayerFee are the exits.
+    error Erc20LegacyPathRetired();
+
     function withdraw(
-        uint256[] memory withdrawParams,
-        address recipient,
-        IEnygmaDvp.ProofReceipt memory receipt
-    ) public override nonReentrant returns (bool) {
-        // Legacy uid-commitment withdrawal: output[0] must be
-        // Poseidon(uid, recipient). The receipt is Payment-family, read
-        // through its circuit's layout.
-        uint256 amount = withdrawParams[0];
-        PaymentCircuit memory circuit = _paymentCircuit(receipt);
-
-        uint256[] memory assetParams = new uint256[](2);
-        assetParams[0] = amount;
-        assetParams[1] = uint256(uint160(_assetContractAddress));
-        uint256 uid = generateUniqueId(assetParams);
-
-        uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon(
-            [uid, uint256(uint160(recipient))]
-        );
-
-        if (receipt.statement[circuit.commitmentsOutOffset] != commitment) {
-            revert InvalidOpening();
-        }
-
-        checkReceiptConditions(receipt);
-
-        // Effects: nullify input coins before external transfer (checks-effects-interactions)
-        for (uint256 i = 0; i < circuit.inputs; i++) {
-            if (receipt.statement[circuit.nullifiersOffset + i] != 0) {
-                _spendNullifier(
-                    receipt.statement[circuit.treeNumbersOffset + i],
-                    receipt.statement[circuit.nullifiersOffset + i]
-                );
-            }
-        }
-
-        // Interaction: transfer tokens after all state changes
-        IERC20(_assetContractAddress).safeTransfer(recipient, amount);
-
-        return true;
+        uint256[] memory,
+        address,
+        IEnygmaDvp.ProofReceipt memory
+    ) public pure override returns (bool) {
+        revert Erc20LegacyPathRetired();
     }
 
     ///////////////////////////////////////////////
@@ -750,45 +770,11 @@ contract Erc20CoinVault is AbstractCoinVault {
         return true;
     }
 
+    // Retired with the legacy withdraw (see Erc20LegacyPathRetired).
     function verifyOwnership(
-        uint256[] memory params_,
-        IEnygmaDvp.ProofReceipt memory receipt_
-    ) public override returns (bool) {
-        // params:
-        // 0: amount
-        uint256 amount = params_[0];
-
-        // A Payment-family receipt whose message is the challenge and whose
-        // output[0] is the opened commitment.
-        PaymentCircuit memory circuit = _paymentCircuit(receipt_);
-        uint256 challenge = receipt_.statement[circuit.messageOffset];
-
-        IEnygmaDvp(_zkDvpContractAddress).checkAndRegisterChallenge(challenge);
-
-        uint256[] memory uparams = new uint256[](2);
-        uparams[0] = amount;
-        // regenerating uniqueId and commitment to verify
-        uint256 uid = generateUniqueId(uparams);
-
-        uint256 commitment = IPoseidonWrapper(_hashContractAddress).poseidon(
-            [uid, uint256(uint160(0))]
-        );
-
-        if (receipt_.statement[circuit.commitmentsOutOffset] != commitment) {
-            revert InvalidOpening();
-        }
-
-        // checking generic conditions of Ownership receipt.
-
-        checkReceiptConditions(receipt_);
-        // firing the receipt event
-        emit OwnershipVerificationReceipt(
-            challenge,
-            _vaultId,
-            0, // there is no token Id for erc20
-            amount
-        );
-
-        return true;
+        uint256[] memory,
+        IEnygmaDvp.ProofReceipt memory
+    ) public pure override returns (bool) {
+        revert Erc20LegacyPathRetired();
     }
 }

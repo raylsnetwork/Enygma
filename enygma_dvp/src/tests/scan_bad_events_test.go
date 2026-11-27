@@ -96,7 +96,7 @@ func TestScanForErc20Notes_ReturnsTheGoodNoteAmongBadEvents(t *testing.T) {
 func TestScanForErc20NotesWithRejected_NamesEachBadEventAndWhy(t *testing.T) {
 	w := newWallet(t)
 
-	owned, rejected, err := core.ScanForErc20NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey, badErc20Batch(t, w))
+	owned, rejected, err := core.ScanForErc20NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey, big.NewInt(10), badErc20Batch(t, w))
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestScanForErc20NotesWithRejected_DoesNotReportSomeoneElsesNote(t *testing.
 	w, other := newWallet(t), newWallet(t)
 	events := []core.OnChainErc20Event{goodErc20Event(t, other, big.NewInt(10), big.NewInt(5))}
 
-	owned, rejected, err := core.ScanForErc20NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey, events)
+	owned, rejected, err := core.ScanForErc20NotesWithRejected(w.view.DecapsKey, w.spend.PublicKey, big.NewInt(10), events)
 	if err != nil || len(owned) != 0 || len(rejected) != 0 {
 		t.Fatalf("owned = %+v, rejected = %+v, err = %v; want nothing", owned, rejected, err)
 	}

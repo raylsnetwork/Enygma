@@ -95,6 +95,6 @@ The deposit's calldata holds the note's whole opening (Alice's spend public key,
 
 | Contract | Function | Purpose |
 |----------|----------|---------|
-| `Erc20CoinVault` | `depositV2(params, ciphertextI, ciphertextII)` | Deposit with an `EncryptedNote`; `params = [amount, pkSpend, salt, tokenId]` and the vault computes the commitment |
+| `Erc20CoinVault` | `depositV2(params, ciphertextI, ciphertextII)` | Deposit with an `EncryptedNote`; `params = [amount, pkSpend, salt, tokenId]`, with `0 < amount < 10^36` and `tokenId` the vault's `TOKEN_ID` (0), and the vault computes the commitment |
 | `EnygmaDvp` | `payment(receipt, vaultId, ctxt, encTxData)` | JoinSplit entry point; publishes output 0's ciphertexts only |
 | `GenericGroth16Verifier` | `verifyProof(vk, proof, statement)` | On-chain proof check |

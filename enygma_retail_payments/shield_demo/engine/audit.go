@@ -358,10 +358,11 @@ func (a *Audit) reconstructBalances() {
 }
 
 // auditOpen tries every recovered view key on ev and returns the user it
-// opens for and the note it opens to, or "" if it opens for none.
+// opens for and the note it opens to, or "" if it opens for none. Like the
+// user's own scan, it keeps only notes of the vault's token id (tokenId).
 func (e *Engine) auditOpen(ev dvpcore.OnChainErc20Event) (string, dvpcore.OwnedErc20Note) {
 	for _, u := range e.auditUsers {
-		owned, err := dvpcore.ScanForErc20Notes(u.view, u.spendPk, []dvpcore.OnChainErc20Event{ev})
+		owned, _, err := dvpcore.ScanForErc20NotesWithRejected(u.view, u.spendPk, tokenId, []dvpcore.OnChainErc20Event{ev})
 		if err == nil && len(owned) == 1 {
 			return u.name, owned[0]
 		}

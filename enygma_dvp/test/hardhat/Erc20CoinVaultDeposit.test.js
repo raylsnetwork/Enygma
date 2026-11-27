@@ -15,6 +15,8 @@ const TOKEN_ID = 0;
 const PARAMS = [AMOUNT, PK_SPEND, SALT, TOKEN_ID];
 const CAPSULE = "0x" + "ab".repeat(1088);
 const NOTE = "0x" + "cd".repeat(48);
+// The vault's verifier: a vault needs one, but a deposit verifies nothing.
+const VERIFIER = "0x000000000000000000000000000000000000dEaD";
 
 // Deploys a Poseidon library from its abi and bytecode: the artifacts the
 // compile hook writes for these libraries lack deployedLinkReferences, which
@@ -39,7 +41,7 @@ async function deployVault(token, dvp, depositor) {
   ).deploy();
   const vault = await (await ethers.getContractFactory("Erc20CoinVault")).deploy(dvp.address);
   await vault.deployed();
-  await (await vault.connect(dvp).initializeVault(0, 1, token.address, TREE_DEPTH, wrapper.address, ethers.constants.AddressZero, dvp.address)).wait();
+  await (await vault.connect(dvp).initializeVault(0, 1, token.address, TREE_DEPTH, wrapper.address, VERIFIER, dvp.address)).wait();
   await (await token.mint(depositor.address, AMOUNT)).wait();
   await (await token.connect(depositor).approve(vault.address, AMOUNT)).wait();
   return vault;

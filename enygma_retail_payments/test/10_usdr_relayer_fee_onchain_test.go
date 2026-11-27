@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -524,11 +525,21 @@ func TestRetailErc20_UsdrRelayerFeeOnChain(t *testing.T) {
 	})
 
 	// ── Negative B: on-chain enforcement (tokenId mismatch) ───────────────────
+	// The USDr vault takes only notes of its TOKEN_ID (0), so no leg of
+	// another token id can be proved: the mismatch is on the configured side,
+	// usdrTokenId set to 1 for this subtest.
 	t.Run("negative B: usdrTokenId mismatches configured value", func(t *testing.T) {
-		wrongTokenId := big.NewInt(1)
+		if err := setUsdrTokenIdFor10(t, ctx, client, dvp, big.NewInt(1)); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := setUsdrTokenIdFor10(t, ctx, client, dvp, tokenId); err != nil {
+				t.Errorf("restore usdrTokenId: %v", err)
+			}
+		})
 		testUsdrFeeRejected(t, ctx, client, vault, erc20, usdrVault, usdrErc20, vaultAddr, usdrVaultAddr,
 			aliceAuth, bobSpend.PublicKey, bobView.EncapsKey, gnarkClient, merkleDepth,
-			fixedFee, relayerFeePubKey, wrongTokenId,
+			fixedFee, relayerFeePubKey, tokenId,
 			http.StatusUnprocessableEntity, "InvalidUsdrFee")
 	})
 
@@ -691,6 +702,19 @@ func testUsdrFeeRejected(
 }
 
 // ── small helpers local to this file ───────────────────────────────────────────
+
+// setUsdrTokenIdFor10 has the owner set EnygmaDvp's usdrTokenId to id.
+func setUsdrTokenIdFor10(t *testing.T, ctx context.Context, client *ethclient.Client, dvp *bind.BoundContract, id *big.Int) error {
+	t.Helper()
+	tx, err := dvp.Transact(hardhatAuth(t, client), "setUsdrTokenId", id)
+	if err != nil {
+		return fmt.Errorf("setUsdrTokenId(%s): %w", id, err)
+	}
+	if r, err := bind.WaitMined(ctx, client, tx); err != nil || r.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("setUsdrTokenId(%s): receipt=%+v err=%v", id, r, err)
+	}
+	return nil
+}
 
 type relayInfoRespFor10 struct {
 	RelayerAddr    string `json:"relayerAddr"`

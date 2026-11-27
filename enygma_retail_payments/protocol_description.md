@@ -120,6 +120,8 @@ We denote $$v_{1}$$ the amount being sent and $$v_{2}$$ the change amount. The a
 
 Each transfer is related to a specific token ID. We enforce this by having each commitment linked to a token ID. In fact, the token ID is one of the inputs to the commitment.
 
+An `Erc20CoinVault` holds one ERC-20 and takes notes of one token ID, its `TOKEN_ID` (0): a deposit with another one reverts, and so does a withdrawal that names another one. A transfer gives its outputs the token ID of the notes it spends, so a deposit of another token ID would pass it on to every note paid from it, and each withdrawal of those notes would publish it.
+
 ---
 
 ## Transaction Creation

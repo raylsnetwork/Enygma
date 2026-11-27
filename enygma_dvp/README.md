@@ -103,8 +103,9 @@ The gaps below matter only for vaults registered after a registration.
 `registerEnygmaAuction` stores the address, and `registerVault` hands it to
 each vault it registers from then on. That vault grants it
 `DEFAULT_AUCTION_ROLE` once, at initialization, and has no role admin to
-revoke the grant. Vaults registered earlier granted the role to whatever
-address was stored then (today, `address(0)`). A later `registerEnygmaAuction`
+revoke the grant. A vault registered while no address is stored (as today)
+grants the role to no account; vaults deployed with earlier code granted it
+to `address(0)`. A later `registerEnygmaAuction`
 call with another address neither re-points nor revokes an existing grant: a
 vault registered while the legacy contract was stored lets it call
 `lockCoin`, `unlockCoin`, `nullifyCoin` and `registerCoins` for good.

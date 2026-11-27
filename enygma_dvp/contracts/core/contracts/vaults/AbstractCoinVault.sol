@@ -108,6 +108,10 @@ abstract contract AbstractCoinVault is
         _setupRole(DEFAULT_DVP_ROLE, zkDvpAddress);
     }
 
+    // initializeVault without a verifier, as EnygmaDvp.registerVault passes
+    // before initializeDvp.
+    error ZeroVerifierAddress();
+
     function initializeVault(
         uint256 vaultId,
         uint256 numberOfAssetIdentifiers,
@@ -121,6 +125,12 @@ abstract contract AbstractCoinVault is
         // gains DEFAULT_DVP_ROLE and could call initializeVault again to replace the
         // verifier or hash contract with a malicious one, bypassing all proof checks.
         require(_hashContractAddress == address(0), "Vault: already initialized");
+        // The vault keeps this verifier for good (this runs once), and every
+        // spend and exit calls it: with none, deposits would go in and
+        // nothing could come out.
+        if (verifierContractAddress == address(0)) {
+            revert ZeroVerifierAddress();
+        }
         _vaultId = vaultId;
         _zkDvpContractAddress = msg.sender;
         _hashContractAddress = hashContractAddress;
@@ -131,8 +141,13 @@ abstract contract AbstractCoinVault is
 
         // SECURITY FIX: grant the narrower DEFAULT_AUCTION_ROLE instead of
         // DEFAULT_DVP_ROLE — see the matching comment where the role is
-        // declared above.
-        _setupRole(DEFAULT_AUCTION_ROLE, _zkAuctionContractAddress);
+        // declared above. Only an auction contract gets it: a vault
+        // registered while EnygmaDvp stores none (address 0, as nothing calls
+        // registerEnygmaAuction) grants the role to no account. A grant is
+        // for good: the role has no admin to revoke it.
+        if (zkAuctionContractAddress != address(0)) {
+            _setupRole(DEFAULT_AUCTION_ROLE, zkAuctionContractAddress);
+        }
 
         initializeMerkle(treeDepth, _vaultId, _hashContractAddress);
 

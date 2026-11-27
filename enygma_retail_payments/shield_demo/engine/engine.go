@@ -158,7 +158,8 @@ type note struct {
 	spent      bool
 }
 
-// purse is the notes an actor can open in one vault.
+// purse is the notes an actor can open in one vault, all of the vault's token
+// id (tokenId): every spend proves with it, so the scans keep no other.
 type purse []*note
 
 // Settlement is one transfer as it settled on chain.

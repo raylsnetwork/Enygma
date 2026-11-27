@@ -60,6 +60,7 @@ package tags_test
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"net/http"
 	"strings"
@@ -869,9 +870,29 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 		}
 	})
 
+	// The USDr vault takes only notes of its TOKEN_ID (0), so no leg of
+	// another token id can be proved: the mismatch is on the configured side,
+	// usdrTokenId set to 1 for this subtest.
 	t.Run("on-chain: usdrTokenId mismatches configured value", func(t *testing.T) {
-		wrongTokenId := big.NewInt(1)
-		resp, status := buildAndSubmit(t, fixedFee, relayerFeePubKey, wrongTokenId)
+		setTokenId := func(id *big.Int) error {
+			tx, err := dvp.Transact(aliceAuth, "setUsdrTokenId", id)
+			if err != nil {
+				return err
+			}
+			if r, err := bind.WaitMined(ctx, client, tx); err != nil || r.Status != types.ReceiptStatusSuccessful {
+				return fmt.Errorf("setUsdrTokenId(%s): receipt=%+v err=%v", id, r, err)
+			}
+			return nil
+		}
+		if err := setTokenId(big.NewInt(1)); err != nil {
+			t.Fatalf("setUsdrTokenId(1): %v", err)
+		}
+		t.Cleanup(func() {
+			if err := setTokenId(tokenId); err != nil {
+				t.Errorf("restore usdrTokenId: %v", err)
+			}
+		})
+		resp, status := buildAndSubmit(t, fixedFee, relayerFeePubKey, tokenId)
 		if status != http.StatusUnprocessableEntity {
 			t.Fatalf("expected 422 (the relayer's simulation hits the on-chain revert), got %d: %+v", status, resp)
 		}
