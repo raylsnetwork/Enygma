@@ -3,11 +3,12 @@ package poseidon
 import (
 	"fmt"
 	"math/big"
+
+	"github.com/consensys/gnark-crypto/ecc"
 )
 
 // bn254p is the BN254 scalar field prime.
-var bn254p, _ = new(big.Int).SetString(
-	"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+var bn254p = ecc.BN254.ScalarField()
 
 // toBI extracts a *big.Int from a frontend.Variable (which is stored as *big.Int at runtime).
 func toBI(v interface{}) *big.Int {

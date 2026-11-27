@@ -13,12 +13,10 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/iden3/go-iden3-crypto/poseidon"
 
-	"enygma_dvp/gnark_circuits/primitives"
 	"enygma_dvp/gnark_circuits/templates"
 	"enygma_dvp/gnark_circuits/utils"
 )
@@ -78,8 +76,6 @@ func bench(label, pkPath string, circuit, witness frontend.Circuit) {
 }
 
 func main() {
-	solver.RegisterHint(primitives.ModHint)
-
 	depth := 8
 
 	// ── PrivateMint ──────────────────────────────────────────────────────────

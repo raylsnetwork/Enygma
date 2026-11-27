@@ -4,9 +4,6 @@ import (
 	"flag"
 	"strings"
 
-	"github.com/consensys/gnark/constraint/solver"
-
-	"enygma_dvp/gnark_circuits/primitives"
 	script "enygma_dvp/gnark_circuits/scripts"
 	"enygma_dvp/gnark_circuits/templates"
 )
@@ -42,8 +39,6 @@ import (
 // PrivateMintVerifier.sol (cmd/patch_verifier) and the retail copies.
 func GenerationVkPk(only map[string]bool) {
 	want := func(name string) bool { return len(only) == 0 || only[name] }
-
-	solver.RegisterHint(primitives.ModHint)
 
 	// NOT covered by integration tests (test/01–04)
 	// auctionbidConfig := templates.AuctionBidCircuitConfig{

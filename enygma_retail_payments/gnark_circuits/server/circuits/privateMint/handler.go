@@ -9,14 +9,12 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 
-	"enygma_retail_payments/gnark_circuits/primitives"
 	"enygma_retail_payments/gnark_circuits/templates"
 
 	"enygma_gnark_shared/witnessinput"
@@ -31,10 +29,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	vk, _ := utils.LoadVerifyingKey(curve, vkPath)
 
 	circuitPrivateMint := templates.PrivateMintCircuit{}
-
-	solver.RegisterHint(primitives.ModHint)
-	solver.RegisterHint(primitives.ERC155UniqueIdNative)
-	solver.RegisterHint(primitives.PoseidonNative)
 
 	// Compile once: the R1CS depends only on the circuit's shape, not on any
 	// request's values, and groth16.Prove only reads it, so every request

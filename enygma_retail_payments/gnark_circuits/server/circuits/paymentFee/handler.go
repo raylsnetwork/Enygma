@@ -8,12 +8,10 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"enygma_retail_payments/gnark_circuits/primitives"
 	"enygma_retail_payments/gnark_circuits/templates"
 	utils "enygma_retail_payments/gnark_circuits/utils"
 
@@ -34,10 +32,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 	cfg := templates.PaymentFeeConfig
 
 	circuit := templates.NewPaymentFeeCircuit(cfg)
-
-	solver.RegisterHint(primitives.ModHint)
-	solver.RegisterHint(primitives.PoseidonNative)
-	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {

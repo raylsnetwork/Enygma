@@ -7,9 +7,6 @@ import (
 	"log"
 	"strings"
 
-	"github.com/consensys/gnark/constraint/solver"
-
-	"enygma_retail_payments/gnark_circuits/primitives"
 	script "enygma_retail_payments/gnark_circuits/scripts"
 	"enygma_retail_payments/gnark_circuits/templates"
 )
@@ -20,9 +17,6 @@ import (
 // a regenerated PrivateMintVerifier contract.
 func GenerationVkPk(only map[string]bool) {
 	want := func(name string) bool { return len(only) == 0 || only[name] }
-	solver.RegisterHint(primitives.ModHint)
-	solver.RegisterHint(primitives.PoseidonNative)
-	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
 	if want("Payment") {
 		script.SetupPayment(templates.PaymentConfig, "Payment")

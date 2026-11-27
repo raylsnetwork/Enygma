@@ -17,11 +17,9 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
-	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"enygma_dvp_auctions/gnark_circuits/templates"
 )
 
@@ -29,9 +27,6 @@ func main() {
 	if err := os.MkdirAll("./scripts/keys", 0755); err != nil {
 		log.Fatalf("mkdir keys: %v", err)
 	}
-
-	solver.RegisterHint(primitives.PoseidonNative)
-	solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
 	// -only regenerates just the named circuits (comma-separated), keeping the
 	// other keys and their already-registered verifying keys as they are.
