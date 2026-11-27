@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -86,7 +88,7 @@ func askName(in *bufio.Reader, w io.Writer) func() string {
 func joinAndReport(c *participant.Client, w io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	c.HTTP, c.Out = &http.Client{}, w
+	c.HTTP, c.Out = participant.HTTPClient(), w
 	c.Contribute = contributeInChild(ctx) // the randomness never lives in this process
 	fmt.Fprint(w, selfDescription())
 	fmt.Fprintf(w, "Joining the Enygma setup ceremony at %s.\nLeave this running until it says you are done; it waits for your turn by itself.\n", c.URL)
@@ -138,7 +140,7 @@ func verify(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if *url != "" {
 			fmt.Fprintf(w, "Downloading the transcript from %s into %s, checking each step as it arrives.\n", *url, *dir)
 			opt := transcript.FetchOptions{Sync: *sync, Check: true, MaxBytes: *maxBytes}
-			if t, err = transcript.Fetch(context.Background(), &http.Client{}, *url, *dir, w, opt); err != nil {
+			if t, err = transcript.Fetch(context.Background(), participant.HTTPClient(), *url, *dir, w, opt); err != nil {
 				return err
 			}
 			err = transcript.CheckStart(*dir, p2, w)
@@ -210,10 +212,12 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	githubClientID := fs.String("github-client-id", "", "-auth github: the client ID of a GitHub OAuth app with the device flow enabled")
 	githubMinAge := fs.Duration("github-min-age", 30*24*time.Hour, "-auth github: how old a GitHub account must be")
 	maxPerAddress := fs.Int("max-per-address", 3, "participants from one network address queued at once; 0 for no bound")
-	listen := fs.String("listen", ":8080", "the address to serve plain HTTP on, behind a TLS proxy; ignored with -acme-domain")
+	listen := fs.String("listen", "", "the address to serve on: with -tls-cert, :443 by default; behind a TLS proxy (-behind-proxy) or with -insecure-http, 127.0.0.1:8080 by default; not with -acme-domain, which serves on :443 and :80")
 	acmeDomain := fs.String("acme-domain", "", "serve HTTPS on :443 for this host name, with a certificate from Let's Encrypt (port 80 must reach this machine too)")
-	acmeCache := fs.String("acme-cache", "acme-cache", "-acme-domain: the directory keeping the certificate")
-	behindProxy := fs.Bool("behind-proxy", false, "take participants' addresses from X-Forwarded-For, as a reverse proxy sets it")
+	acmeCache := fs.String("acme-cache", "", "-acme-domain: the directory keeping the certificate and the ACME account key, an absolute path (default: acme-cache beside -dir)")
+	acmeEmail := fs.String("acme-email", "", "-acme-domain: an address for Let's Encrypt to write to about the certificate")
+	behindProxy := fs.Bool("behind-proxy", false, "serve plain HTTP to a TLS proxy of your own in front, and take participants' addresses from X-Forwarded-For, as it sets it")
+	insecureHTTP := fs.Bool("insecure-http", false, "serve plain HTTP with no TLS in front: for tests and rehearsals on this machine only, since participants' tokens, and the page, travel in clear")
 	turn := fs.Duration("turn", 60*time.Minute, "a participant's time to download, contribute and upload: about 2 minutes at 2^18 on a laptop, room for a slow one")
 	turnPresence := fs.Duration("turn-presence", 2*time.Minute, "how long the turn holder's program may go silent before the turn passes on")
 	presence := fs.Duration("presence", 30*time.Second, "how recently a queued participant must have asked to be given the turn")
@@ -228,8 +232,42 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	cert := fs.String("tls-cert", "", "a TLS certificate, to serve HTTPS on -listen (with -tls-key)")
 	key := fs.String("tls-key", "", "the certificate's key")
 	return func(args []string, w io.Writer) error {
-		if *dir == "" || len(args) != 0 || (*cert == "") != (*key == "") || (*cert != "" && *acmeDomain != "") {
-			return fmt.Errorf("%w: coordinate takes -dir; -tls-cert with -tls-key, or -acme-domain", errUsage)
+		if *dir == "" || len(args) != 0 || (*cert == "") != (*key == "") {
+			return fmt.Errorf("%w: coordinate takes -dir, and -tls-cert with -tls-key", errUsage)
+		}
+		// Participants are served over TLS, or the operator says otherwise
+		// (audit R-006): over plain http the page, the session and GitHub
+		// tokens, and the uploads are anyone's on the way.
+		modes := 0
+		for _, on := range []bool{*acmeDomain != "", *cert != "", *behindProxy, *insecureHTTP} {
+			if on {
+				modes++
+			}
+		}
+		if modes != 1 {
+			return fmt.Errorf("%w: coordinate serves participants over TLS: give one of -acme-domain, -tls-cert with -tls-key, "+
+				"-behind-proxy (a TLS proxy of your own in front), or -insecure-http (tests on this machine only)", errUsage)
+		}
+		switch {
+		case *acmeDomain != "" && *listen != "":
+			return fmt.Errorf("%w: -listen does not go with -acme-domain, which serves on :443 and :80", errUsage)
+		case *listen != "":
+		case *cert != "":
+			*listen = ":443"
+		default: // behind a proxy, or plain http: this machine only, unless told otherwise
+			*listen = "127.0.0.1:8080"
+		}
+		if *acmeDomain != "" {
+			if *acmeCache == "" {
+				abs, err := filepath.Abs(*dir)
+				if err != nil {
+					return err
+				}
+				*acmeCache = filepath.Join(filepath.Dir(abs), "acme-cache")
+			}
+			if !filepath.IsAbs(*acmeCache) {
+				return fmt.Errorf("%w: -acme-cache must be an absolute path: it holds the TLS and ACME account keys", errUsage)
+			}
 		}
 		var closes time.Time
 		if *closeAt != "" {
@@ -268,9 +306,13 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if err != nil {
 			return err
 		}
+		handler := c.Handler()
+		if *acmeDomain != "" || *cert != "" {
+			handler = strictTransport(handler)
+		}
 		srv := &http.Server{
 			Addr:              *listen,
-			Handler:           c.Handler(),
+			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          logger,
@@ -283,19 +325,29 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				Prompt:     autocert.AcceptTOS,
 				HostPolicy: autocert.HostWhitelist(*acmeDomain),
 				Cache:      autocert.DirCache(*acmeCache),
+				Email:      *acmeEmail,
 			}
 			srv.Addr, srv.TLSConfig = ":443", m.TLSConfig()
 			// Port 80 answers Let's Encrypt's challenges and sends everyone else to HTTPS.
-			redirect = &http.Server{Addr: ":80", Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second, ErrorLog: logger}
+			redirect = &http.Server{Addr: ":80", Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, ErrorLog: logger}
 			go func() { served <- redirect.ListenAndServe() }()
 			go func() { served <- srv.ListenAndServeTLS("", "") }()
-			logger.Printf("serving https://%s/ (and :80 for certificates)", *acmeDomain)
+			logger.Printf("serving https://%s/ (and :80 for certificates), keeping the certificate in %s", *acmeDomain, *acmeCache)
 		case *cert != "":
 			go func() { served <- srv.ListenAndServeTLS(*cert, *key) }()
+			// On the standard port, port 80 sends whoever arrives there to HTTPS (audit R-024).
+			if host, port, err := net.SplitHostPort(*listen); err == nil && port == "443" {
+				redirect = &http.Server{Addr: net.JoinHostPort(host, "80"), Handler: http.HandlerFunc(toHTTPS),
+					ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, ErrorLog: logger}
+				go func() { served <- redirect.ListenAndServe() }()
+			}
 			logger.Printf("serving HTTPS on %s", *listen)
+		case *behindProxy:
+			go func() { served <- srv.ListenAndServe() }()
+			logger.Printf("serving plain HTTP on %s, to the TLS proxy in front of it", *listen)
 		default:
 			go func() { served <- srv.ListenAndServe() }()
-			logger.Printf("serving HTTP on %s; put a TLS proxy in front of it for participants", *listen)
+			logger.Printf("serving plain HTTP on %s, with no TLS: for tests on this machine only", *listen)
 		}
 		// A phase closed at its time stays closed: started again, the
 		// coordinator serves its transcript, read-only, for anyone to check.
@@ -364,6 +416,25 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			len(t.Contributions), t.Latest(), len(t.Contributions), seal, *dir, t.Latest())
 		return nil
 	}
+}
+
+// strictTransport tells browsers to come back over HTTPS only (audit
+// R-024): after one visit, a plain-http link or a typed host name can no
+// longer be served a hostile page by someone in between.
+func strictTransport(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// toHTTPS sends a plain-http request to the same address over HTTPS.
+func toHTTPS(w http.ResponseWriter, r *http.Request) {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusMovedPermanently)
 }
 
 // beacon prints the drand round to announce for a phase's close, or a

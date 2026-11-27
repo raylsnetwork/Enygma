@@ -3,6 +3,7 @@ package coordinator
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -907,11 +908,24 @@ func TestPage(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("<title>Enygma setup ceremony</title>")) {
 		t.Fatalf("page: %d, %d bytes", resp.StatusCode, len(body))
 	}
-	// Names on the page are participants' own: nothing but its own script and requests may run,
-	// and it starts no workers.
-	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") ||
-		!strings.Contains(csp, "connect-src 'self'") || strings.Contains(csp, "worker-src") {
-		t.Fatalf("page served with Content-Security-Policy %q", csp)
+	// Names on the page are participants' own: nothing but its own script, by its hash, and
+	// requests to this coordinator may run (audit R-051); it starts no workers, and is never
+	// framed (R-052).
+	_, after, _ := bytes.Cut(body, []byte("<script>"))
+	script, _, _ := bytes.Cut(after, []byte("</script>"))
+	sum := sha256.Sum256(script)
+	scriptHash := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	csp := resp.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'none'", "connect-src 'self'", "script-src " + scriptHash, "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("page served with Content-Security-Policy %q, without %q", csp, want)
+		}
+	}
+	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "worker-src") {
+		t.Errorf("page served with Content-Security-Policy %q", csp)
+	}
+	if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("page served with X-Frame-Options %q, want DENY", got)
 	}
 	if got := h.status().ReleaseURL; got != release {
 		t.Fatalf("status gives release %q, want %q", got, release)

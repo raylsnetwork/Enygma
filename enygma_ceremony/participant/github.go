@@ -31,10 +31,13 @@ func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, err
 	if code.DeviceCode == "" || code.UserCode == "" {
 		return "", errors.New("GitHub did not start a sign-in: is the coordinator's OAuth app set up for the device flow?")
 	}
-	fmt.Fprintf(c.Out, "\nSign in with GitHub to contribute: open %s and enter the code\n\n    %s\n\n", code.VerificationURI, code.UserCode)
-	c.event(Event{Stage: StageSignIn, Code: code.UserCode, CodeURL: code.VerificationURI})
-	interval := time.Duration(max(code.Interval, 1)) * time.Second
-	deadline := time.Now().Add(time.Duration(max(code.ExpiresIn, 60)) * time.Second)
+	uri, userCode := printable(code.VerificationURI), printable(code.UserCode)
+	fmt.Fprintf(c.Out, "\nSign in with GitHub to contribute: open %s and enter the code\n\n    %s\n\n", uri, userCode)
+	c.event(Event{Stage: StageSignIn, Code: userCode, CodeURL: uri})
+	// Whatever pacing comes back, within sane bounds (audit R-054): GitHub
+	// asks for 5 s and gives 15 minutes.
+	interval := time.Duration(min(max(code.Interval, 1), 60)) * time.Second
+	deadline := time.Now().Add(time.Duration(min(max(code.ExpiresIn, 60), 1800)) * time.Second)
 	for time.Now().Before(deadline) {
 		if err := sleep(ctx, interval); err != nil {
 			return "", err
@@ -60,7 +63,7 @@ func (c *Client) githubSignIn(ctx context.Context, clientID string) (string, err
 			return grant.AccessToken, nil
 		case "authorization_pending":
 		case "slow_down":
-			interval += 5 * time.Second
+			interval = min(interval+5*time.Second, time.Minute)
 		case "access_denied":
 			return "", errors.New("the GitHub sign-in was declined")
 		case "expired_token":

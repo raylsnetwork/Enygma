@@ -34,6 +34,7 @@ a { color: var(--accent); overflow-wrap: anywhere; }
 .lead { color: var(--muted); font-size: 17px; margin: 0 0 28px; max-width: 680px; }
 .hint { font-size: 14px; color: var(--muted); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow); }
+.card.spaced { margin-top: 12px; }
 [hidden] { display: none !important; }
 
 /* The two phases */
@@ -153,7 +154,7 @@ footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: 
 
   <details>
     <summary>Check the ceremony yourself</summary>
-    <div class="card" style="margin-top: 12px">
+    <div class="card spaced">
       <p>Every contribution is public. With the program from the release, this downloads them all, checks that each
         one builds correctly on the one before it, and finds your receipt among them.</p>
       <pre id="verify"></pre>

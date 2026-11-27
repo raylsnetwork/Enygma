@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -149,7 +150,7 @@ type Result struct {
 // It returns early with ErrClosed if the phase closes first.
 func (c *Client) Run(ctx context.Context) (Result, error) {
 	if c.HTTP == nil {
-		c.HTTP = http.DefaultClient
+		c.HTTP = HTTPClient()
 	}
 	if c.Out == nil {
 		c.Out = io.Discard
@@ -220,7 +221,7 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 				position = r.Position
 				c.waiting(r)
 			}
-			if err := sleep(ctx, max(time.Duration(r.Poll*float64(time.Second)), minPoll)); err != nil {
+			if err := sleep(ctx, pollFor(r.Poll)); err != nil {
 				return Result{}, err
 			}
 		case coordinator.Go:
@@ -255,7 +256,10 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 
 // checkURL makes c.URL a coordinator's address: https:// when it names no
 // scheme, as a participant may type it. An address that is no web address
-// fails at once, rather than as a coordinator unreachable for c.Patience.
+// fails at once, rather than as a coordinator unreachable for c.Patience;
+// so does plain http, but to this machine (audit R-055): over it, anyone in
+// between could read the session and GitHub tokens, and change what the
+// coordinator says.
 func (c *Client) checkURL() error {
 	if c.URL != "" && !strings.Contains(c.URL, "://") {
 		c.URL = "https://" + c.URL
@@ -264,7 +268,69 @@ func (c *Client) checkURL() error {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return fmt.Errorf("%q is not a coordinator's address, such as https://ceremony.example.org", c.URL)
 	}
+	if u.Scheme == "http" && !loopback(u.Hostname()) {
+		return fmt.Errorf("%q is plain http: a coordinator is reached over https (plain http only for one on this machine)", c.URL)
+	}
 	return nil
+}
+
+// loopback reports whether host is this machine.
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// ReplyTimeout is how long a coordinator may take to start answering a
+// request: it checks an upload before it answers, which takes minutes for
+// the largest states.
+const ReplyTimeout = 5 * time.Minute
+
+// HTTPClient is the HTTP client for a coordinator, as the ceremony program
+// uses it:
+//   - it follows no redirect (audit R-056): the protocol has none, and one
+//     could carry the session or GitHub token elsewhere, or to plain http;
+//   - it gives up on a reply whose headers do not come within ReplyTimeout
+//     (R-057), so a coordinator that takes a connection and says nothing
+//     cannot hang the program. A body, such as a state, takes as long as it
+//     takes.
+func HTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = ReplyTimeout
+	return &http.Client{
+		Transport: t,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("%w to %s", errRedirected, req.URL.Redacted())
+		},
+	}
+}
+
+// errRedirected is a coordinator redirecting a request: not something trying
+// again gets past.
+var errRedirected = errors.New("a coordinator never redirects, and this one redirected")
+
+// callTimeout bounds one of the small JSON exchanges with a coordinator.
+const callTimeout = 30 * time.Second
+
+// maxPoll and maxRetryAfter bound how long a coordinator can tell this
+// program to wait before asking again (audit R-054).
+const (
+	maxPoll       = 5 * time.Minute
+	maxRetryAfter = 10 * time.Minute
+)
+
+// pollFor is how long to wait before asking again, as a coordinator asks:
+// seconds, within minPoll and maxPoll.
+func pollFor(seconds float64) time.Duration {
+	if !(seconds > 0) { // also NaN
+		return minPoll
+	}
+	if seconds >= maxPoll.Seconds() {
+		return maxPoll
+	}
+	return max(time.Duration(seconds*float64(time.Second)), minPoll)
 }
 
 // waiting tells the participant where they are in the queue.
@@ -273,7 +339,7 @@ func (c *Client) waiting(r coordinator.Reply) {
 	if r.Position > 1 {
 		ahead = fmt.Sprintf("%d ahead of you", r.Position-1)
 	}
-	if r.Wait >= 60 {
+	if r.Wait >= 60 && r.Wait <= 30*24*3600 { // an estimate past a month says nothing, and would overflow
 		ahead += fmt.Sprintf(", about %s", (time.Duration(r.Wait) * time.Second).Round(time.Minute))
 	}
 	fmt.Fprintf(c.Out, "Waiting for your turn: %s. Leave this running.\n", ahead)
@@ -637,7 +703,9 @@ func (d *downloadProgress) Read(b []byte) (int, error) {
 
 // call sends a request with body and decodes the JSON reply into v, unless
 // v is nil.
-func (c *Client) call(ctx context.Context, method, path string, body io.Reader, v any) error {
+func (c *Client) call(parent context.Context, method, path string, body io.Reader, v any) error {
+	ctx, cancel := context.WithTimeout(parent, callTimeout)
+	defer cancel()
 	req, err := c.request(ctx, method, path, body)
 	if err != nil {
 		return err
@@ -647,6 +715,11 @@ func (c *Client) call(ctx context.Context, method, path string, body io.Reader, 
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		if parent.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			// No answer in time: the coordinator unreachable for now, as a
+			// connection refused is, not a reason to stop.
+			return &url.Error{Op: method, URL: req.URL.Redacted(), Err: fmt.Errorf("no answer within %s", callTimeout)}
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -713,7 +786,7 @@ func replyError(code int, data []byte, retryAfter string) error {
 	}
 	e := &httpError{code: code, msg: body.Error, retryAfter: 5 * time.Second}
 	if s, err := strconv.Atoi(retryAfter); err == nil && s > 0 {
-		e.retryAfter = time.Duration(s) * time.Second
+		e.retryAfter = time.Duration(min(s, int(maxRetryAfter/time.Second))) * time.Second
 	}
 	return e
 }
@@ -721,7 +794,7 @@ func replyError(code int, data []byte, retryAfter string) error {
 // unreachable reports whether err is the coordinator unreachable, or
 // answering that it is failing: what trying again may get past.
 func unreachable(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errRedirected) {
 		return false
 	}
 	var h *httpError

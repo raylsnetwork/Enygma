@@ -164,8 +164,21 @@ in:
      `-turn-presence` (2 minutes), such as a laptop closed mid-turn, loses the turn to the next in
      line.
 
-   - **TLS:** `-acme-domain` gets and renews a certificate from Let's Encrypt (on ports 443 and
-     80). Behind a TLS proxy of your own, use `-listen :8080 -behind-proxy` instead.
+   - **TLS:** `coordinate` serves participants over TLS, and will not start without one of:
+     - `-acme-domain`, which gets and renews a certificate from Let's Encrypt (on ports 443 and
+       80; port 80 sends everyone else to HTTPS). It keeps the certificate and the ACME account
+       key in `-acme-cache`, an absolute path (by default `acme-cache` beside the phase's
+       directory); give `-acme-email` for Let's Encrypt's notices.
+     - `-tls-cert` and `-tls-key`, a certificate of your own: on `:443` by default, with port 80
+       sending everyone to HTTPS.
+     - `-behind-proxy`, behind a TLS proxy of your own: plain HTTP on `127.0.0.1:8080` unless
+       `-listen` says otherwise. Make sure nothing but the proxy can reach that port.
+     - `-insecure-http`: plain HTTP on `127.0.0.1:8080`, for tests on this machine only.
+
+     HTTPS answers carry `Strict-Transport-Security`, so a browser that has visited once never
+     uses plain HTTP again. The participant's program refuses plain `http://` but to this machine.
+     For the public name, set a CAA record that names your certificate authority, and watch
+     Certificate Transparency logs for certificates issued for it while the ceremony runs.
    - **Scheduled close:** at `-close-at` it hands out no more turns, waits for the one under way,
      prints the transcript's **head** (the last contribution's sha256) and the seal command, and
      exits. **Announce the head at once, before the beacon round is out:** the seal takes it, and

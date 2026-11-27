@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -175,6 +176,37 @@ func TestBeacon(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("phase1-seal with -unverified-beacon and -drand: exit %d, want 2\n%s%s", code, stdout, stderr)
 	}
+}
+
+// TestCoordinateNeedsTLS (audit R-006, R-062): coordinate serves
+// participants over TLS unless told it is a test on this machine, and takes
+// its flags one way only.
+func TestCoordinateNeedsTLS(t *testing.T) {
+	dir, _ := openPhase(t)
+	for _, args := range [][]string{
+		{"coordinate", "-dir", dir},
+		{"coordinate", "-dir", dir, "-insecure-http", "-behind-proxy"},
+		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-behind-proxy"},
+		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-listen", ":8443"},
+		{"coordinate", "-dir", dir, "-acme-domain", "ceremony.example.org", "-acme-cache", "relative/cache"},
+	} {
+		if code, stdout, stderr := runCommand(args...); code != 2 {
+			t.Errorf("%s: exit %d, want 2\n%s%s", strings.Join(args, " "), code, stdout, stderr)
+		}
+	}
+
+	t.Run("HTTPS answers tell browsers to come back over HTTPS only", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		strictTransport(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if got := rec.Header().Get("Strict-Transport-Security"); !strings.HasPrefix(got, "max-age=") {
+			t.Fatalf("Strict-Transport-Security %q", got)
+		}
+		rec = httptest.NewRecorder()
+		toHTTPS(rec, httptest.NewRequest(http.MethodGet, "http://ceremony.example.org/v1/status?x=1", nil))
+		if got := rec.Header().Get("Location"); rec.Code != http.StatusMovedPermanently || got != "https://ceremony.example.org/v1/status?x=1" {
+			t.Fatalf("port 80: %d to %q", rec.Code, got)
+		}
+	})
 }
 
 // TestCircuitsMustBeNamed (audit R-036): without a keys.json, a Phase 2's
