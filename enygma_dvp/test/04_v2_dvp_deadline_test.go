@@ -125,7 +125,7 @@ func newDvpTestContext(t *testing.T) *dvpTestContext {
 		client:           client,
 		auth:             hardhatAuth(t, client),
 		gnarkClient:      core.NewGnarkClient("http://localhost:8081"),
-		merkleDepth:      8,
+		merkleDepth:      layout.MerkleTreeDepth,
 		erc20Vault:       bind.NewBoundContract(erc20VaultAddr, erc20VaultABI, client, client, client),
 		erc20Token:       bind.NewBoundContract(erc20Addr, erc20ABI, client, client, client),
 		erc721Vault:      bind.NewBoundContract(erc721VaultAddr, erc721VaultABI, client, client, client),
@@ -847,9 +847,9 @@ func withdrawRevertNote(t *testing.T, tc *dvpTestContext, d *dvpDeposits, p *dvp
 	if err != nil {
 		t.Fatalf("commitment (change): %v", err)
 	}
-	var pe [8]string
+	var pe [layout.MerkleTreeDepth]string
 	for j, e := range mp.Elements {
-		if j < 8 {
+		if j < layout.MerkleTreeDepth {
 			pe[j] = e.String()
 		}
 	}
@@ -864,7 +864,7 @@ func withdrawRevertNote(t *testing.T, tc *dvpTestContext, d *dvpDeposits, p *dvp
 		"wtPrivateKeysIn":      [1]string{sk.String()},
 		"wtValuesIn":           [1]string{d.erc20Amount.String()},
 		"wtSaltsIn":            [1]string{salt.String()},
-		"wtPathElements":       [1][8]string{pe},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pe},
 		"wtPathIndices":        [1]string{mp.Indices.String()},
 		"wtTokenId":            d.erc20TokenId.String(),
 		"wtSpendPublicKeysOut": [2]string{recipientPk.String(), pk.String()},

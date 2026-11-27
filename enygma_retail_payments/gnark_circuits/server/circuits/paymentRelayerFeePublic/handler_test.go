@@ -27,7 +27,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		cmts[i] = ht.Commitment(t, pks[i], salts[i], values[i], in.TokenId)
 	}
 
-	var path [8]string
+	var path [templates.MerkleTreeDepth]string
 	copy(path[:], ht.Strings(in.Siblings...))
 	request := PaymentRelayerFeePublicRequest{
 		StMessage:            "0",
@@ -41,7 +41,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 		WtPrivateKeysIn:      [1]string{in.Sk.String()},
 		WtValuesIn:           [1]string{in.Value.String()},
 		WtSaltsIn:            [1]string{in.Salt.String()},
-		WtPathElements:       [1][8]string{path},
+		WtPathElements:       [1][templates.MerkleTreeDepth]string{path},
 		WtPathIndices:        [1]string{"0"},
 		WtTokenId:            in.TokenId.String(),
 		WtSpendPublicKeysOut: [3]string(ht.Strings(pks...)),

@@ -189,8 +189,8 @@ in:
    |---|---|---|
    | `enygma_dvp_auctions` | AuctionBatch | 159,468 |
    | `enygma_payments` | Withdraw6 | 105,371 |
-   | `enygma_dvp` | Payment2in | 7,443 |
-   | `enygma_retail_payments` | Payment2in | 7,439 |
+   | `enygma_dvp` | Payment2in | 11,331 |
+   | `enygma_retail_payments` | Payment2in | 11,327 |
 
    So 2^18 = 262,144 serves all four.
 2. Pick when Phase 1 closes, and the beacon: a round of [drand](https://drand.love)'s quicknet
@@ -432,7 +432,9 @@ Anyone can check a ceremony without trusting the coordinator:
 
 On an Apple-silicon laptop:
 
-- **Retail Phase 2** (six circuits, 802 to 7,439 constraints, on a domain of 8,192):
+- **Retail Phase 2** (six circuits, 802 to 7,439 constraints, on a domain of 8,192), measured
+  while the payment trees were depth 8; at depth 16 the largest is 11,327 constraints, on a
+  domain of 16,384, and this has not been measured again:
   - a contribution takes 0.5 s and a check 0.2 to 1.4 s; states are 1.5 to 2.2 MB;
   - `phase2-new` and `phase2-seal` take about 40 s;
   - the sealed keys pass every retail prove-handler test.

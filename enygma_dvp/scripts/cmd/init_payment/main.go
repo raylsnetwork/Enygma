@@ -31,6 +31,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+
+	"enygma_dvp/layout"
 )
 
 type initPaymentConfig struct {
@@ -261,6 +263,10 @@ func initializePayment() error {
 	return nil
 }
 
+// loadInitPaymentConfig reads enygmadvp_payment.config.json and refuses a
+// tree-depth other than the one the circuits are compiled at
+// (layout.MerkleTreeDepth): both vaults are registered at the configured
+// depth, and a vault at another depth takes deposits no proof can spend.
 func loadInitPaymentConfig() (*initPaymentConfig, error) {
 	configPath := filepath.Join(initPaymentProjectRoot, "enygmadvp_payment.config.json")
 	data, err := os.ReadFile(configPath)
@@ -270,6 +276,10 @@ func loadInitPaymentConfig() (*initPaymentConfig, error) {
 	var config initPaymentConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
+	}
+	if depth := config.Circom.MetaParameters.TreeDepth; depth != layout.MerkleTreeDepth {
+		return nil, fmt.Errorf("%s sets tree-depth %d, but the circuits are compiled at depth %d (layout.MerkleTreeDepth): a vault registered at depth %d would take deposits that no proof can spend",
+			configPath, depth, layout.MerkleTreeDepth, depth)
 	}
 	return &config, nil
 }

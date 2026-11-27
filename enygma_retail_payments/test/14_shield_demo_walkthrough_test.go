@@ -577,8 +577,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			t.Errorf("spent note %+v, want the Sender's shielded %d, as sent (%v)", in, opts.ShieldTotal, list("wtValuesIn")[0])
 		}
 		eq("spent salt", in.Salt, list("wtSaltsIn")[0])
-		if in.Path == nil || len(in.Path.Siblings) != 8 {
-			t.Fatalf("spent note's Merkle path %+v, want 8 siblings", in.Path)
+		if in.Path == nil || len(in.Path.Siblings) != layout.MerkleTreeDepth {
+			t.Fatalf("spent note's Merkle path %+v, want %d siblings", in.Path, layout.MerkleTreeDepth)
 		}
 		eq("leaf index", fmt.Sprintf("0x%x", in.Path.Index), list("wtPathIndices")[0])
 		sentPath, _ := list("wtPathElements")[0].([]any)
@@ -748,11 +748,11 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 	}
 	vault := bindContract(t, client, common.HexToAddress(receipts["Erc20CoinVault"].ContractAddress), loadOnchainABI(t, "Erc20CoinVault"))
 
-	t.Run("payment 1's proof hop carries its Merkle path formula: the shielded leaf hashed up its 8 levels to a root the vault has had", func(t *testing.T) {
+	t.Run("payment 1's proof hop carries its Merkle path formula: the shielded leaf hashed up every level of its tree to a root the vault has had", func(t *testing.T) {
 		f := payment1Formula(t, engine.FormulaMerklePath, "proof", engine.NodeGnark, engine.ActorNode(e.Sender().ID))
 		// leaf, then per level its sibling and (below the root) the node it makes.
-		if len(f.Inputs) != 1+8+7 {
-			t.Fatalf("%d inputs, want the leaf, 8 siblings and 7 nodes below the root", len(f.Inputs))
+		if depth := layout.MerkleTreeDepth; len(f.Inputs) != 1+depth+depth-1 {
+			t.Fatalf("%d inputs, want the leaf, %d siblings and %d nodes below the root", len(f.Inputs), depth, depth-1)
 		}
 		// Independently of the engine: the leaf the shield's Commitment
 		// event logged, the siblings and leaf index the prover was sent.
@@ -769,8 +769,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		req := payment1Request(t)
 		index := int(decimal(t, req["wtPathIndices"].([]any)[0]).Int64())
 		sent, _ := req["wtPathElements"].([]any)[0].([]any)
-		if len(sent) != 8 {
-			t.Fatalf("the prover was sent %d siblings, want 8", len(sent))
+		if len(sent) != layout.MerkleTreeDepth {
+			t.Fatalf("the prover was sent %d siblings, want %d", len(sent), layout.MerkleTreeDepth)
 		}
 		want := []string{fmt.Sprintf("0x%064x", leaves[0])}
 		node := leaves[0]
@@ -785,7 +785,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			if node, err = poseidon.Hash(pair); err != nil {
 				t.Fatalf("poseidon.Hash: %v", err)
 			}
-			if level < 7 {
+			if level < layout.MerkleTreeDepth-1 {
 				want = append(want, fmt.Sprintf("0x%064x", node))
 			}
 		}
@@ -797,7 +797,7 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if !strings.Contains(f.Inputs[0].Name, fmt.Sprintf("#%d", index)) {
 			t.Errorf("the leaf is named %q, want leaf #%d", f.Inputs[0].Name, index)
 		}
-		for level := range 8 {
+		for level := range layout.MerkleTreeDepth {
 			side := "right"
 			if index>>level&1 == 1 {
 				side = "left"
@@ -1102,7 +1102,9 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 			names = append(names, x.Name)
 			in[x.Name] = x.Value
 		}
-		if want := []string{"sk_spend", "tree", "leaf index", "tree · 2⁸ + leaf index"}; !slices.Equal(names, want) {
+		// The position's name writes the depth as a superscript: 2¹⁶ for 16.
+		position := "tree · 2" + strings.Map(func(r rune) rune { return []rune("⁰¹²³⁴⁵⁶⁷⁸⁹")[r-'0'] }, fmt.Sprint(layout.MerkleTreeDepth)) + " + leaf index"
+		if want := []string{"sk_spend", "tree", "leaf index", position}; !slices.Equal(names, want) {
 			t.Fatalf("inputs %v, want %v", names, want)
 		}
 		req := payment1Request(t)
@@ -1111,16 +1113,16 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 		if hexField(t, in["sk_spend"]).Cmp(sk) != 0 || decimal(t, in["tree"]).Cmp(tree) != 0 || decimal(t, in["leaf index"]).Cmp(index) != 0 {
 			t.Errorf("inputs %v, want the Sender's spend key, tree %s and leaf index %s, as sent to the prover", in, tree, index)
 		}
-		global := new(big.Int).Add(new(big.Int).Mul(tree, big.NewInt(256)), index)
-		if decimal(t, in["tree · 2⁸ + leaf index"]).Cmp(global) != 0 {
-			t.Errorf("tree · 2⁸ + leaf index %s, want %s", in["tree · 2⁸ + leaf index"], global)
+		global := new(big.Int).Add(new(big.Int).Lsh(tree, layout.MerkleTreeDepth), index)
+		if decimal(t, in[position]).Cmp(global) != 0 {
+			t.Errorf("%s %s, want %s", position, in[position], global)
 		}
 		want, err := poseidon.Hash([]*big.Int{sk, global})
 		if err != nil {
 			t.Fatalf("poseidon.Hash: %v", err)
 		}
 		if hexField(t, f.Result).Cmp(want) != 0 {
-			t.Errorf("result %s, Poseidon(sk_spend, tree · 2⁸ + leaf index) is 0x%x", f.Result, want)
+			t.Errorf("result %s, Poseidon(sk_spend, %s) is 0x%x", f.Result, position, want)
 		}
 		// Payment 1's settlement logged it: the vault's one Nullifier event.
 		var logged []*big.Int
@@ -2032,7 +2034,8 @@ func TestShieldDemoWalkthrough(t *testing.T) {
 // treeSizes counts the leaves in each of the vault at vaultAddr's trees,
 // from its Commitment events in blocks before block before. As Merkle.sol
 // does, it inserts a transaction's commitments as one batch and starts a
-// new tree when the batch would fill the current one (count + batch ≥ 2⁸).
+// new tree when the batch would fill the current one (count + batch ≥
+// 2^layout.MerkleTreeDepth).
 // It repeats the engine's rule on purpose: the test's own count, from the
 // chain's events, is what the engine's crowd is checked against.
 func treeSizes(t *testing.T, client *ethclient.Client, vaultAddr common.Address, before uint64) []int {
@@ -2056,7 +2059,7 @@ func treeSizes(t *testing.T, client *ethclient.Client, vaultAddr common.Address,
 	}
 	sizes := []int{0}
 	for _, n := range batches {
-		if sizes[len(sizes)-1]+n >= 1<<8 {
+		if sizes[len(sizes)-1]+n >= 1<<layout.MerkleTreeDepth {
 			sizes = append(sizes, 0)
 		}
 		sizes[len(sizes)-1] += n

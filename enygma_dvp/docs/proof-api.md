@@ -79,7 +79,7 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
   "wtPrivateKeysIn":      ["string", "string"],
   "wtValuesIn":           ["string", "string"],
   "wtSaltsIn":            ["string", "string"],
-  "wtPathElements":       [["string x8"], ["string x8"]],
+  "wtPathElements":       [["string x16"], ["string x16"]],
   "wtPathIndices":        ["string", "string"],
   "wtTokenId":            "string",
   "wtSpendPublicKeysOut": ["string", "string"],
@@ -105,7 +105,7 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
 | `wtPrivateKeysIn` | [2] | Spend private keys for input notes |
 | `wtValuesIn` | [2] | Values of input notes |
 | `wtSaltsIn` | [2] | Salts of input notes |
-| `wtPathElements` | [2][8] | Merkle sibling paths for each input |
+| `wtPathElements` | [2][16] | Merkle sibling paths for each input |
 | `wtPathIndices` | [2] | Packed path direction bits for each input |
 | `wtTokenId` | 1 | Token ID (same for all inputs/outputs) |
 | `wtSpendPublicKeysOut` | [2] | Recipient spend public keys |
@@ -158,7 +158,7 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
   "wtValueIn":      "string (required)",
   "wtSaltIn":       "string (required)",
   "wtTokenIdIn":    "string (required)",
-  "wtPathElements": ["string x8"],
+  "wtPathElements": ["string x16"],
   "wtPathIndex":    "string (required)",
 
   "wtSpendPkBob": "string (required) — Bob's spend public key",
@@ -191,7 +191,7 @@ Generates a proof for the initiator side of a Delivery-vs-Payment (DvP) swap. Al
 | `wtValueIn` | Alice's input note value |
 | `wtSaltIn` | Alice's input note salt |
 | `wtTokenIdIn` | Input token ID |
-| `wtPathElements` | Merkle sibling path (8 elements) |
+| `wtPathElements` | Merkle sibling path (16 elements) |
 | `wtPathIndex` | Packed path direction bits |
 | `wtSpendPkBob` | Bob's spend public key |
 | `wtSaltB` | Salt for Bob's output note |
@@ -240,7 +240,7 @@ Generates a proof for the destination side of a DvP swap. Bob proves ownership o
   "wtValueIn":      "string (required)",
   "wtSaltIn":       "string (required)",
   "wtTokenIdIn":    "string (required)",
-  "wtPathElements": ["string x8"],
+  "wtPathElements": ["string x16"],
   "wtPathIndex":    "string (required)",
 
   "wtSpendPkAlice": "string (required) — Alice's spend public key",
@@ -267,7 +267,7 @@ Generates a proof for the destination side of a DvP swap. Bob proves ownership o
 | `wtValueIn` | Bob's input note value |
 | `wtSaltIn` | Bob's input note salt |
 | `wtTokenIdIn` | Input token ID |
-| `wtPathElements` | Merkle sibling path (8 elements) |
+| `wtPathElements` | Merkle sibling path (16 elements) |
 | `wtPathIndex` | Packed path direction bits |
 | `wtSpendPkAlice` | Alice's spend public key |
 | `wtSaltA` | Salt for Alice's output note |

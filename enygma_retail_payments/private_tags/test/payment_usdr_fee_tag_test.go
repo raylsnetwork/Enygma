@@ -148,7 +148,7 @@ func depositAndBuildUsdrFeeWitness(
 ) usdrFeeWitness {
 	t.Helper()
 
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	changeAmt := big.NewInt(usdrTagChangeAmt)
 	depositAmt := new(big.Int).Add(relayerFeeAmt, changeAmt)
 	vaultAddrBig := new(big.Int).SetBytes(usdrVaultAddr.Bytes())
@@ -240,9 +240,9 @@ func depositAndBuildUsdrFeeWitness(
 		t.Fatalf("Erc20CommitmentV2 (change): %v", err)
 	}
 
-	var pathElements [8]string
+	var pathElements [layout.MerkleTreeDepth]string
 	for j, elem := range aliceProof.Elements {
-		if j >= 8 {
+		if j >= layout.MerkleTreeDepth {
 			break
 		}
 		pathElements[j] = elem.String()
@@ -263,7 +263,7 @@ func depositAndBuildUsdrFeeWitness(
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{depositAmt.String()},
 		"wtSaltsIn":            [1]string{aliceSaltBField.String()},
-		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 		"wtPathIndices":        [1]string{aliceProof.Indices.String()},
 		"wtSpendPublicKeysOut": [2]string{feeRecipientPk.String(), aliceSpend.PublicKey.String()},
 		"wtValuesOut":          [2]string{relayerFeeAmt.String(), changeAmt.String()},
@@ -484,7 +484,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 	t.Log("── Phase 3+4: deposit + build main payment proof + USDr fee proof ──")
 
 	gnarkClient := rpcore.NewPaymentClient("")
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	mainDepositAmt := big.NewInt(40)
 	mainPayAmt := big.NewInt(30)
 	mainChangeAmt := big.NewInt(10)
@@ -745,7 +745,7 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 		t.Helper()
 
 		gnarkClient := rpcore.NewPaymentClient("")
-		merkleDepth := 8
+		merkleDepth := layout.MerkleTreeDepth
 		depositAmt := big.NewInt(40)
 		payAmt := big.NewInt(30)
 		changeAmt := big.NewInt(10)

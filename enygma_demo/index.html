@@ -1186,7 +1186,7 @@ window.__ENYGMA = { _q: [], register: function(name, bootFn){ this._q.push([name
               <div class="mt-row mt-branch"><div class="mt-node" data-mt="b0"></div><div class="mt-node" data-mt="b1"></div></div>
               <div class="mt-row mt-leaves"><div class="mt-node" data-mt="leaf0"></div><div class="mt-node" data-mt="leaf1"></div><div class="mt-node" data-mt="leaf2"></div><div class="mt-node" data-mt="leaf3"></div></div>
             </div>
-            <div class="mini-tree-label" id="mtLabel">depth-8 tree · 0 leaves</div>
+            <div class="mini-tree-label" id="mtLabel">depth-16 tree · 0 leaves</div>
             <div class="fd-mono" id="fdVaultDetail"></div>
           </div>
           <div class="fd-hline-wrap" id="edge-vault-bob">
@@ -1643,7 +1643,7 @@ window.__ENYGMA = { _q: [], register: function(name, bootFn){ this._q.push([name
           </div>
           <ul class="constraints">
             <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg><span><b>Shape-specific circuits</b> keep each proof's constraint count as small as its exact job — a plain transfer never pays for fee-handling logic it doesn't use.</span></li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg><span><b>Depth-8 Merkle tree</b> — a build-time parameter; this demo caps a single vault at 256 outstanding notes.</span></li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg><span><b>Depth-16 Merkle tree</b> — a build-time parameter: a tree holds at most 65,535 notes, then the vault starts the next one.</span></li>
             <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg><span><b>The trade-off</b> — richer circuits (more inputs, fee logic) cost more to prove; Enygma keeps each shape as narrow as the transfer it serves.</span></li>
           </ul>
         </div>
@@ -4624,7 +4624,7 @@ function updateDiagramNames(){
 const NODE_DESC = {
   alice: u=>`${u.name} does essentially all the work, entirely off-chain: reads the recipient's keys once, then locally computes the ML-KEM-768 capsule, the HKDF-derived salt and encryption key, both output commitments (payment + change), the nullifier for the note being spent, and finally the Groth16 proof π that ties all of it together. None of this touches the chain until the very last step.`,
   registry: u=>`UserRegistry.sol is read, never written, during a payment. The sender looks up exactly two fields for the recipient — <span class="mono">pk_view</span> (the 1184-byte ML-KEM-768 key used for the capsule) and <span class="mono">pk_spend</span> (the Poseidon key baked into the output commitment)${u?`, currently ${u.name}'s`:''}. The auditor-escrow ciphertexts stored alongside them are irrelevant here — those only matter to Key Setup.`,
-  vault: ()=>`The vault verifies π, checks the nullifier hasn't been seen before, then <b>inserts both new commitments as leaves</b> into its Merkle tree — depth 8, so up to 2⁸ = 256 notes. Each insertion recomputes every hash on the path from that leaf up to the root, so the root changes with every payment. The mini diagram lights up two leaves and pulses the root when you submit, standing in for that recomputation.`,
+  vault: ()=>`The vault verifies π, checks the nullifier hasn't been seen before, then <b>inserts both new commitments as leaves</b> into its Merkle tree — depth 16, so up to 2¹⁶ − 1 = 65,535 notes. Each insertion recomputes every hash on the path from that leaf up to the root, so the root changes with every payment. The mini diagram lights up two leaves and pulses the root when you submit, standing in for that recomputation.`,
   bob: u=>paymentMode==='tag'
     ? `${u?u.name:'Bob'} checks <span class="mono">TagRegistry</span> instead of the vault's raw ciphertexts — recomputing his own tag per candidate and comparing, no AEAD attempt needed until one matches. This only works because a channel already exists with the sender (see the TagChannelRegistry node above him).`
     : `${u?u.name:'Bob'} never queries anything and is never queried. Every ciphertext the vault has ever emitted gets downloaded and tried against ${u?u.name:'Bob'}'s own <span class="mono">sk_view</span> — a trivial private-information-retrieval scan. Wrong ciphertexts fail AEAD authentication silently; the right one decrypts, and ${u?u.name:'Bob'} recomputes the commitment to confirm it before treating the note as spendable.`,
@@ -4640,7 +4640,7 @@ function mtSetState(nodeKeys, cls, on=true){
 function mtClearAll(){
   $$('#miniTree .mt-node').forEach(el=> el.classList.remove('mt-active','mt-filled'));
 }
-function mtUpdateLabel(){ $('#mtLabel').textContent = `depth-8 tree · ${treeSize} leaves`; }
+function mtUpdateLabel(){ $('#mtLabel').textContent = `depth-16 tree · ${treeSize} leaves`; }
 function fdReset(){
   $$('#flowDiagram .fd-node, #flowDiagram [id^="edge-"]').forEach(el=> el.classList.remove('active','done'));
   $('#fdStatus').textContent = 'click a node, or press build & submit above';
@@ -4682,7 +4682,7 @@ function wireDiagram(){
 function renderPayStats(){
   $('#payStats').innerHTML = `
     <div class="stat-card"><div class="eyebrow">Payments submitted</div><div class="val">${txCount}</div><div class="sub">across this session</div></div>
-    <div class="stat-card"><div class="eyebrow">Merkle tree size</div><div class="val">${treeSize}<small>/ 256</small></div><div class="sub">depth-8 note tree</div><div class="bar"><i style="width:${Math.min(treeSize/256*100,100)}%"></i></div></div>
+    <div class="stat-card"><div class="eyebrow">Merkle tree size</div><div class="val">${treeSize}<small>/ 65,535</small></div><div class="sub">depth-16 note tree</div><div class="bar"><i style="width:${Math.min(treeSize/65535*100,100)}%"></i></div></div>
     <div class="stat-card"><div class="eyebrow">Nullifiers spent</div><div class="val">${nullifiers}</div><div class="sub">Poseidon(sk, leafIndex)</div></div>
     <div class="stat-card"><div class="eyebrow">Proof system</div><div class="val" style="font-size:16px">Groth16</div><div class="sub">BN254 · gnark</div></div>
   `;

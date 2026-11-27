@@ -90,7 +90,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 	erc20 := bindPayContract(t, client, erc20Addr, erc20ABI)
 	dvp := bindPayContract(t, client, dvpAddr, dvpABI)
 
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	depositAmt := big.NewInt(int64(feeTagDepositAmt))
 	paymentAmt := big.NewInt(int64(feeTagPaymentAmt))
@@ -284,7 +284,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erc20CommitmentV2 (change): %v", err)
 	}
-	var pathElements [8]string
+	var pathElements [layout.MerkleTreeDepth]string
 	for j, el := range aliceProof.Elements {
 		if j < len(pathElements) {
 			pathElements[j] = el.String()
@@ -303,7 +303,7 @@ func TestPaymentFeeWithTagNotification(t *testing.T) {
 		"wtPrivateKeysIn":      [1]string{aliceSpend.PrivateKey.String()},
 		"wtValuesIn":           [1]string{depositAmt.String()},
 		"wtSaltsIn":            [1]string{aliceSaltBField.String()},
-		"wtPathElements":       [1][8]string{pathElements},
+		"wtPathElements":       [1][layout.MerkleTreeDepth]string{pathElements},
 		"wtPathIndices":        [1]string{aliceProof.Indices.String()},
 		"wtTokenId":            tokenId.String(),
 		"wtSpendPublicKeysOut": [2]string{bobSpend.PublicKey.String(), aliceSpend.PublicKey.String()},

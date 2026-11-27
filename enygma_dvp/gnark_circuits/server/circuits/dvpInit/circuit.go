@@ -1,10 +1,14 @@
 package dvpInit
 
-import "math/big"
+import (
+	"math/big"
+
+	"enygma_dvp/gnark_circuits/templates"
+)
 
 // DvPInitiatorRequest is the JSON body accepted by /proof/dvpInitiator.
 //
-// Fixed config: Merkle depth 8.
+// Fixed config: Merkle depth templates.MerkleTreeDepth.
 // The response's public signals are the proven witness's, in the DvpInitiator
 // statement layout (enygma_dvp/layout).
 type DvPInitiatorRequest struct {
@@ -18,12 +22,12 @@ type DvPInitiatorRequest struct {
 	// Address (decimal) of the vault the prover expects to be paid from.
 	StCounterVault string `json:"stCounterVault" binding:"required"`
 
-	WtSpendKeyIn   string    `json:"wtSpendKeyIn"   binding:"required"`
-	WtValueIn      string    `json:"wtValueIn"      binding:"required"`
-	WtSaltIn       string    `json:"wtSaltIn"       binding:"required"`
-	WtTokenIdIn    string    `json:"wtTokenIdIn"    binding:"required"`
-	WtPathElements [8]string `json:"wtPathElements" binding:"required"`
-	WtPathIndex    string    `json:"wtPathIndex"    binding:"required"`
+	WtSpendKeyIn   string                            `json:"wtSpendKeyIn"   binding:"required"`
+	WtValueIn      string                            `json:"wtValueIn"      binding:"required"`
+	WtSaltIn       string                            `json:"wtSaltIn"       binding:"required"`
+	WtTokenIdIn    string                            `json:"wtTokenIdIn"    binding:"required"`
+	WtPathElements [templates.MerkleTreeDepth]string `json:"wtPathElements" binding:"required"`
+	WtPathIndex    string                            `json:"wtPathIndex"    binding:"required"`
 
 	WtSpendPkBob string `json:"wtSpendPkBob" binding:"required"`
 	WtSaltB      string `json:"wtSaltB"      binding:"required"`

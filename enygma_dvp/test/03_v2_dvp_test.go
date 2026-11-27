@@ -34,6 +34,7 @@ import (
 	"math/big"
 	"testing"
 
+	"enygma_dvp/layout"
 	"github.com/raylsnetwork/enygma_dvp/src/core"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -80,7 +81,7 @@ func TestV2DvP(t *testing.T) {
 	addr := auth.From
 
 	gnarkClient := core.NewGnarkClient("http://localhost:8081")
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 
 	// Alice delivers: 30 USDT (ERC20), tokenId=0
 	erc20Amount := big.NewInt(30)

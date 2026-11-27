@@ -219,9 +219,9 @@ test('the shield\'s ledger entries are the deposit\'s public calldata, its commi
   goTo(doc, 'shield');
   const amber = [...ul.querySelectorAll('li.msg-sender')].map(li => text(li));
   assert.ok(amber.some(t => t.includes('depositV2') && t.includes(v.msgSender)), 'the deposit\'s msg.sender shows amber in the ledger');
-  // The step names the bound the tree puts on the crowd: 2^8 leaf slots.
-  assert.strictEqual(v.depth, '8');
-  assert.ok(text(section(doc, 'shield')).includes('256'), 'the shield names the tree\'s 256 leaf slots');
+  // The step names the bound the tree puts on the crowd: 2^16 leaf slots.
+  assert.strictEqual(v.depth, '16');
+  assert.ok(text(section(doc, 'shield')).includes('65,536'), 'the shield names the tree\'s 65,536 leaf slots');
 });
 
 // chipsOf is what the diagram shows of step's chips, once it is current:
@@ -440,8 +440,10 @@ test('the payment\'s ledger entries are its block, tag and sealed note, its publ
   for (const k of ['valueIn', 'valueOut0', 'valueOut1']) assert.ok(BigInt(v[k]) < 10n ** 36n, `${k} < 10^36`);
   assert.strictEqual(v.valueIn, DATA.steps.shield.values.amount, 'the spent note is the shielded one');
   assert.strictEqual(v.commitmentIn, DATA.steps.shield.values.commitment);
-  assert.strictEqual(BigInt(v.globalIndex), BigInt(v.tree) * 256n + BigInt(v.leafIndex), 'tree·2^8 + leaf index');
-  assert.strictEqual(v['path7.node'], v.root, 'the eighth level is the root');
+  const depth = Number(DATA.steps.shield.values.depth);
+  assert.strictEqual(BigInt(v.globalIndex), (BigInt(v.tree) << BigInt(depth)) + BigInt(v.leafIndex), 'tree·2^depth + leaf index');
+  assert.strictEqual(v[`path${depth - 1}.node`], v.root, 'the last level is the root');
+  assert.strictEqual(v[`path${depth}.node`], undefined, 'one level per level of the tree, no more');
   const { doc } = open();
   goTo(doc, 'payment');
   const amber = [...doc.querySelectorAll('#ledger li.msg-sender')].map(li => text(li));
@@ -543,7 +545,7 @@ test('Ana\'s partial withdrawal is the Payment circuit with Message = 1: amount 
   assert.deepStrictEqual(field('Nullifier event', 'nullifier'), [v.nullifier]);
   for (const k of ['skSpend', 'saltIn', 'saltChange']) assert.ok(!ledger.some(i => i.value === v[k]), `${k} is not public`);
   for (const k of ['valueIn', 'change']) assert.ok(!ledger.some(i => i.value === v[k]), `${k} is not public`);
-  assert.strictEqual(BigInt(v.globalIndex), BigInt(v.tree) * 256n + BigInt(v.leafIndex), 'tree·2^8 + leaf index');
+  assert.strictEqual(BigInt(v.globalIndex), (BigInt(v.tree) << BigInt(DATA.steps.shield.values.depth)) + BigInt(v.leafIndex), 'tree·2^depth + leaf index');
   // The recipient's public balance grew by the amount.
   assert.strictEqual(BigInt(v.balanceAfter) - BigInt(v.balanceBefore), BigInt(v.amount));
   // Ana's msg.sender, and only it, is amber.

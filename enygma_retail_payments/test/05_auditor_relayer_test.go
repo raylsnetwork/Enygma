@@ -73,7 +73,7 @@ func TestAuditedPaymentViaRelayer(t *testing.T) {
 	bobAuth := hardhatBobAuth(t, client)
 
 	gnarkClient := rpcore.NewPaymentClient("")
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	depositAmt := big.NewInt(40)
 	paymentAmt := big.NewInt(30)

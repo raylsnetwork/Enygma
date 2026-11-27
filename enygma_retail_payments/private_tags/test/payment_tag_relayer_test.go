@@ -187,7 +187,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	erc20 := bindPayContract(t, client, erc20Addr, erc20ABI)
 
 	gnarkClient := rpcore.NewPaymentClient("")
-	merkleDepth := 8
+	merkleDepth := layout.MerkleTreeDepth
 	tokenId := big.NewInt(0)
 	depositAmt := big.NewInt(40)
 	paymentAmt := big.NewInt(30)

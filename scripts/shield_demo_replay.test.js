@@ -38,7 +38,9 @@
 // would. Joining a walkthrough at a gate, it must just watch: no step or
 // action gate, no /release. A page opened after a run must show it finished
 // at once, and the page that started a walkthrough must still drive it after
-// /events reconnects.
+// /events reconnects. A vault past its first tree, which no fixture holds,
+// is fed to the hop detail panel directly: it must show the vault's full
+// trees, the tree a batch started and the leaf strip up to its last leaf.
 //
 //   node --test scripts/shield_demo_replay.test.js   (make page-check)
 
@@ -284,13 +286,13 @@ const ARGUMENT = {
       : /: the chain answers true to the Verifier.s verifyProof/,
   },
   merklePath: {
-    property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 8 levels to root = node₈',
+    property: 'Anonymity', eq: 'nodeᵢ₊₁ = Poseidon(left, right): nodeᵢ and siblingᵢ, ordered by bit i of the leaf index, from node₀ = leaf up 16 levels to root = node₁₆',
     sees: d => new RegExp(`the root and the tree number, tree ${d.tree}$`), private: /the leaf and its position/,
     // A walkthrough's names the crowd: the leaves its tree held when the root was taken.
     why: d => new RegExp(`the note is one of the ${d.formula.leaves ? `${d.formula.leaves} ` : ''}leaves of tree ${d.tree}, not which\\. A deeper tree means a larger crowd to hide in`),
   },
   nullifier: {
-    property: 'Unlinkable, spend-once', eq: 'nullifier = Poseidon(sk_spend, tree · 2⁸ + leaf index)',
+    property: 'Unlinkable, spend-once', eq: 'nullifier = Poseidon(sk_spend, tree · 2¹⁶ + leaf index)',
     sees: /the nullifier/, private: /sk_spend.*position/,
     why: /Linking a nullifier to its note needs sk_spend.*same note always gives the same nullifier, so the vault refuses a second spend/,
     // A walkthrough's points at its own replay; a full run's at a walkthrough's.
@@ -1046,4 +1048,51 @@ test('a page that started a walkthrough still drives it after /events reconnects
   $('nextBtn').click();
   await tick();
   assert.strictEqual(page.requests.release, 1, 'Next sent no /release after the reconnect');
+});
+
+// No run fills a depth-16 tree, so the fixtures never show one past its
+// first tree, nor a tree past STRIP_SLOTS leaves. This feeds the hop detail
+// panel a snapshot of such a vault, then two batches as a run's hops would.
+test('the hop detail panel shows a vault past its first tree: its full trees, the tree a batch started, and the leaf strip up to its last leaf', async () => {
+  const page = await open(DEFAULT_RUN);
+  const { win, doc, errors } = page;
+  const word = n => '0x' + n.toString(16).padStart(64, '0');
+  const leaves = n => Array.from({ length: n }, (_, i) => ({ index: i, commitment: word(0x1000 + i) }));
+  // The page's own hopPanel (a const of its script), as /events would drive it.
+  const panel = (method, arg) => win.eval(`hopPanel.${method}(${JSON.stringify(arg)})`);
+  const lands = d => ({ step: 'fanout_1', label: 'payment', from: 'relayer', to: d.vault, hopDetail: [{ kind: 'leavesIn', tx: word(d.tree), ...d }] });
+  const html = () => doc.getElementById('hopPanel').innerHTML;
+  const front = () => doc.querySelector('#hopPanel .vcard.front');
+  const cells = () => [...front().querySelectorAll('.strip i')];
+
+  // Tree 0 is full; tree 1 holds 300 leaves, more than a strip draws.
+  panel('snapshot', [
+    { vault: 'Erc20CoinVault', tree: 1, leafCount: 300, root: word(0xa1), leaves: leaves(300), fullTrees: [{ tree: 0, leafCount: 65535, root: word(0xa0) }] },
+    { vault: 'UsdrCoinVault', tree: 0, leafCount: 2, root: word(0xb0), leaves: leaves(2), fullTrees: [] },
+  ]);
+  panel('shown', lands({ vault: 'Erc20CoinVault', tree: 1, rootBefore: word(0xa1), rootAfter: word(0xa2), leaves: [{ index: 300, commitment: word(0x2000), owner: 'Ana' }] }));
+  failOn(errors, 'landing a leaf in tree 1');
+  const head = front().querySelector('.vhead').textContent;
+  assert.match(head, /tree 1/, 'the vault head names its current tree');
+  assert.match(head, /301 \/ 65,536/, 'the vault head counts tree 1’s leaves');
+  assert.match(head, /tree 0 · full/, 'the vault head lists tree 0 as full');
+  assert.doesNotMatch(html(), /started/, 'a batch that starts no tree is shown starting one');
+  // 256 slots, a row of 64 at a time, ending with the row of leaf #300.
+  const strip = cells();
+  assert.strictEqual(strip.length, 256, 'the leaf strip’s slots');
+  assert.match(strip[0].title, /^leaf #64 /, 'the strip’s first slot');
+  assert.match(strip[255].title, /^leaf #319 · empty/, 'the strip’s last slot');
+  assert.ok(strip[300 - 64].classList.contains('hot'), 'leaf #300, this hop’s, is not marked');
+  assert.ok(strip[299 - 64].classList.contains('before'), 'leaf #299, from before this run, is not marked');
+
+  // The next batch would fill tree 1, so it starts tree 2.
+  panel('shown', lands({ vault: 'Erc20CoinVault', tree: 2, treeStarted: true, rootBefore: word(0xe0), rootAfter: word(0xa3), leaves: [{ index: 0, commitment: word(0x2001), owner: 'Ana' }] }));
+  failOn(errors, 'landing a batch that starts tree 2');
+  const started = front().querySelector('.vhead').textContent;
+  assert.match(started, /tree 2/, 'the vault head names the tree the batch started');
+  assert.match(started, /1 \/ 65,536/, 'the vault head counts tree 2’s leaves');
+  assert.match(started, /tree 0 · full.*tree 1 · full/, 'the vault head lists trees 0 and 1 as full');
+  assert.match(front().querySelector('.roots').textContent, /· tree 2 started/, 'the roots line does not say tree 2 started');
+  assert.match(doc.querySelector('#hopValues').textContent, /tree 2 started: the batch would have filled tree 1/, 'the real values do not say why tree 2 started');
+  assert.match(cells()[0].title, /^leaf #0 /, 'a new tree’s strip starts at its first slot');
 });

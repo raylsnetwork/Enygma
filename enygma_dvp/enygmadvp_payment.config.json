@@ -23,7 +23,7 @@
   },
   "circom": {
     "meta-parameters": {
-      "tree-depth": 8
+      "tree-depth": 16
     },
     "circuits": [
       {
