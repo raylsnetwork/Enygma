@@ -92,7 +92,12 @@ commitment inserted into the on-chain Merkle tree that only they can spend.
 Issuer steps:
 
 1. Receives $(pk^{\text{spend}},\ amount,\ token_{id})$ from the recipient out-of-band.
-2. Generates $salt \longleftarrow {0,1}^{\lambda}$.
+2. Generates a random, non-zero $salt \longleftarrow {0,1}^{\lambda}$. With
+   $salt = 0$, anyone could compute the tag of step 4 for every registered
+   $pk^{\text{spend}}$ and so find the recipient, then find the amount by
+   trying values against $C$. The reference client (`core.GnarkClient`'s
+   `Erc20PrivateMintProof` and `PrivateMintProof`) refuses a salt that is
+   missing or 0.
 3. Computes:
 
 $$
@@ -102,16 +107,71 @@ $$
 4. Generates a ZK proof $\pi$ (PrivateMint circuit) attesting:
 
 - $C$ is well-formed for the given inputs
-- $0 \le amount < 2^{128}$ (range check)
+- $0 \le amount < 10^{36}$ (range check)
 - a note tag $tag = \mathrm{H}(pk^{\text{spend}},\ salt,\ contractAddress)$
   binds the proof to this deployment
 
-5. Submits $(\pi,\ C,\ tag,\ token_{id})$ to the smart contract, which
-   verifies $\pi$ and inserts $C$ into the Merkle tree.
-6. Delivers $salt$ privately to the recipient (out-of-band).
+   Its public signals are $(C,\ contractAddress,\ token_{id},\ tag)$: the
+   amount stays private.
+
+5. Calls `privateMint(vaultId, C, π)`, which verifies $\pi$, inserts $C$ into
+   the Merkle tree of a mint-only vault (below) and emits
+   `PrivateMint(vaultId, C, tag)`.
+6. Delivers $salt$ and $amount$ privately to the recipient (out-of-band).
 
 The recipient can now spend $C$ by proving knowledge of
 $(sk^{\text{spend}},\ salt,\ amount,\ token_{id})$.
+
+The tag is not an encryption. The chain carries only $C$ and $tag$, from which
+nobody can recover $salt$ or $amount$, so the recipient learns them only
+out-of-band (steps 1 and 6). No wallet in this repository scans `PrivateMint`
+events, and a lost step-6 message means a lost note. Mints carry no audit ciphertext, so the
+auditor does not see them either.
+
+### What `privateMint` enforces
+
+A minted note has no deposit behind it: its value is only the issuer's
+promise. `EnygmaDvp` keeps such notes apart from deposits.
+
+- **Mint-only vaults.** `privateMint` takes only a vault the owner has
+  flagged with `setVaultMintable(vaultId, true)`. Flagging calls the vault's
+  `closeDeposits`, which closes it to every deposit path for good
+  (`Erc20CoinVault.deposit` and `depositV2`, `Erc721CoinVault.deposit`,
+  `EnygmaErc20CoinVault.depositThroughEnygma` revert `DepositsClosed`), and
+  which the vault refuses (`VaultHoldsNotes`) once it holds a note while still
+  open to deposits. Clearing the flag stops mints and leaves deposits closed.
+  So a vault takes mints or deposits, never both, and a minted note is never
+  paid out of other users' deposits. The issuer funds its mint-only vault
+  itself, by transferring tokens to it, before minted notes are withdrawn. A
+  vault is flagged best right after it is registered: one deposit in between
+  makes it a deposit vault for good.
+- **One mint per commitment.** `privateMint` records each commitment it
+  inserts and refuses it again, in any vault (`CommitmentAlreadyMinted`). The
+  proof binds the deployment but not the vault, and a Groth16 proof can be
+  re-randomized, so the record is keyed on the commitment, not on the proof.
+- **A registered verifier.** `privateMint` reverts
+  `PrivateMintVerifierNotRegistered` until the owner registers one.
+  `registerPrivateMintVerifier` takes only an address that holds code
+  (`PrivateMintVerifierHasNoCode`) and logs
+  `PrivateMintVerifierRegistered(verifier)`.
+
+### The owner's mint power
+
+The owner (`DEFAULT_OWNER_ROLE` on `EnygmaDvp`) is the issuer, and is trusted
+with what it mints. It chooses the verifier, the mint-only vaults and every
+minted note, amount included, which no signal or event shows. Nothing onchain
+records how much has been minted, so the holders of minted notes rely on the
+issuer to back them. What the contract bounds is where minted notes go: never
+into a vault that takes deposits. Other owner calls carry their own trust (see
+[Setup and owner calls](#setup-and-owner-calls)).
+
+The dedicated Payment deployments (`scripts/cmd/deploy_payment` with
+`init_payment`, and `enygma_retail_payments`' `deploy` with `init`) have two
+vaults, and both take deposits. They deploy and register no
+`PrivateMintVerifier` unless their config turns `"private-mint"` on, which the
+committed configs do not. The owner can still register one later, and the
+rules above hold for it too. `scripts/cmd/init` registers one for the main
+deployment.
 
 ---
 

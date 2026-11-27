@@ -3,7 +3,9 @@ package tests
 // On-chain integration tests for the ERC20 retail payment flow.
 //
 // TestRetailErc20_PrivateMint: exercises the PrivateMint flow.
-//   - Issuer mints a private note directly to Alice's spend key.
+//   - The deployment ships no PrivateMintVerifier (its config's "private-mint"
+//     switch is off), so the Issuer registers one and a mint-only vault.
+//   - Issuer mints a private note directly to Alice's spend key, once.
 //
 // TestRetailErc20_Payment: full register → deposit → payment → scan cycle.
 //   - Alice and Bob each register their spend key and view key on-chain.
@@ -21,7 +23,9 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 
@@ -31,6 +35,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -90,7 +95,6 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	gnarkClient := rpcore.NewPaymentClient("")
 	tokenId := big.NewInt(0)
 	mintAmount := big.NewInt(100)
-	vaultId := big.NewInt(0)
 	contractAddressBig := new(big.Int).SetBytes(dvpAddr.Bytes())
 
 	// Step 1 — Alice generates her spend key pair.
@@ -123,16 +127,17 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 		mintResult.ContractStatement(),
 	)
 
-	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain. privateMint only
-	// accepts a vault flagged mintable; on this local deployment the issuer is
-	// the only depositor of its own token, so the test flags vault 0 itself.
-	flagTx, err := dvp.Transact(auth, "setVaultMintable", vaultId, true)
-	if err != nil {
-		t.Fatalf("EnygmaDvp.setVaultMintable: %v", err)
+	// Step 3 — Issuer calls EnygmaDvp.privateMint onchain. A minted note has
+	// no deposit behind it, and both of this deployment's vaults take
+	// deposits, so the deployment ships no PrivateMintVerifier: the Issuer
+	// registers one, and a mint-only vault of its own.
+	if pm, ok := receipts["PrivateMintVerifier"]; ok {
+		t.Fatalf("the deploy shipped a PrivateMintVerifier (%s), though enygmapayment.config.json leaves private-mint off", pm.ContractAddress)
 	}
-	if _, err := bind.WaitMined(ctx, client, flagTx); err != nil {
-		t.Fatalf("wait setVaultMintable: %v", err)
-	}
+	verifierAddr := deployFromAbis(t, "PrivateMintVerifier", client, auth)
+	regTx, err := dvp.Transact(auth, "registerPrivateMintVerifier", verifierAddr)
+	waitMinted(t, client, "registerPrivateMintVerifier", regTx, err)
+	vaultId := registerMintOnlyVault(t, client, auth, dvp, dvpAddr)
 	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)
@@ -172,6 +177,92 @@ func TestRetailErc20_PrivateMint(t *testing.T) {
 	}
 	t.Logf("Step 4 — Alice confirmed note: commitment=%s amount=%s salt=%s",
 		eventCommitment, mintAmount, issuedSalt)
+
+	// Step 5 — The same proof cannot mint the note again: EnygmaDvp keeps
+	// every commitment it has minted.
+	estimate := *auth
+	estimate.GasLimit = 0 // estimate, so a revert comes back with its reason
+	_, err = dvp.Transact(&estimate, "privateMint", vaultId, mintResult.Commitment(), proof)
+	if err == nil || !strings.Contains(err.Error(), "CommitmentAlreadyMinted") {
+		t.Fatalf("second privateMint of commitment %s: err = %v, want CommitmentAlreadyMinted", mintResult.Commitment(), err)
+	}
+	t.Logf("Step 5 — a second mint of the same proof was refused: CommitmentAlreadyMinted")
+}
+
+// deployFromAbis deploys the contracts/abis/<name>.json artifact with args and
+// returns its address.
+func deployFromAbis(t *testing.T, name string, client *ethclient.Client, auth *bind.TransactOpts, args ...interface{}) common.Address {
+	t.Helper()
+	data, err := os.ReadFile("../contracts/abis/" + name + ".json")
+	if err != nil {
+		t.Fatalf("read %s artifact: %v", name, err)
+	}
+	var artifact struct {
+		Bytecode string `json:"bytecode"`
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatalf("parse %s artifact: %v", name, err)
+	}
+	addr, tx, _, err := bind.DeployContract(auth, loadOnchainABI(t, name), common.FromHex(artifact.Bytecode), client, args...)
+	waitMinted(t, client, "deploy "+name, tx, err)
+	return addr
+}
+
+// waitMinted fails the test unless tx was sent (err nil) and mined successfully.
+func waitMinted(t *testing.T, client *ethclient.Client, what string, tx *types.Transaction, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", what, err)
+	}
+	rcpt, err := bind.WaitMined(context.Background(), client, tx)
+	if err != nil || rcpt.Status != types.ReceiptStatusSuccessful {
+		t.Fatalf("%s: not mined successfully (err=%v)", what, err)
+	}
+}
+
+// registerMintOnlyVault deploys a token and an Erc20CoinVault, registers the
+// vault with the EnygmaDvp at dvpAddr, at the deployment's tree depth, and
+// flags it mintable while it is empty, which closes it to deposits for good.
+// It returns the vault's id.
+func registerMintOnlyVault(t *testing.T, client *ethclient.Client, auth *bind.TransactOpts, dvp *bind.BoundContract, dvpAddr common.Address) *big.Int {
+	t.Helper()
+	data, err := os.ReadFile("../enygmapayment.config.json")
+	if err != nil {
+		t.Fatalf("read enygmapayment.config.json: %v", err)
+	}
+	var config struct {
+		Circom struct {
+			MetaParameters struct {
+				TreeDepth int64 `json:"tree-depth"`
+			} `json:"meta-parameters"`
+		} `json:"circom"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil || config.Circom.MetaParameters.TreeDepth == 0 {
+		t.Fatalf("enygmapayment.config.json: no circom.meta-parameters.tree-depth (err %v)", err)
+	}
+
+	tokenAddr := deployFromAbis(t, "RaylsERC20", client, auth, "Minted", "MNT")
+	vaultAddr := deployFromAbis(t, "Erc20CoinVault", client, auth, dvpAddr)
+	tx, err := dvp.Transact(auth, "registerVault", vaultAddr, tokenAddr, big.NewInt(1), big.NewInt(config.Circom.MetaParameters.TreeDepth))
+	waitMinted(t, client, "registerVault", tx, err)
+
+	vault := bind.NewBoundContract(vaultAddr, loadOnchainABI(t, "Erc20CoinVault"), client, client, client)
+	var out []interface{}
+	if err := vault.Call(&bind.CallOpts{}, &out, "getVaultId"); err != nil {
+		t.Fatalf("getVaultId: %v", err)
+	}
+	vaultId := out[0].(*big.Int)
+	tx, err = dvp.Transact(auth, "setVaultMintable", vaultId, true)
+	waitMinted(t, client, "setVaultMintable", tx, err)
+	out = nil
+	if err := vault.Call(&bind.CallOpts{}, &out, "depositsClosed"); err != nil {
+		t.Fatalf("depositsClosed: %v", err)
+	}
+	if !out[0].(bool) {
+		t.Fatalf("vault %s takes deposits after setVaultMintable(%s, true)", vaultAddr.Hex(), vaultId)
+	}
+	t.Logf("Step 3 — mint-only vault %s registered as vault %s, closed to deposits", vaultAddr.Hex(), vaultId)
+	return vaultId
 }
 
 // ── TestRetailErc20_Payment ────────────────────────────────────────────────────

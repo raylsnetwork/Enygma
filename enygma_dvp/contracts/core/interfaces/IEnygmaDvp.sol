@@ -171,10 +171,15 @@ interface IEnygmaDvp {
     error InvalidVaultId();
     error InvalidPublicKey();
     error InvalidSalt();
+    // privateMint: no verifier has been registered (registerPrivateMintVerifier).
     error PrivateMintVerifierNotRegistered();
+    // registerPrivateMintVerifier: the address holds no code.
+    error PrivateMintVerifierHasNoCode();
     error PublicSignalMismatch();
     // privateMint: the vault has not been flagged mintable (setVaultMintable).
     error VaultNotMintable();
+    // privateMint: this commitment has been minted before, in any vault.
+    error CommitmentAlreadyMinted();
     // paymentWithRelayerFee: the proof's public StFee signal does not match
     // the contract-configured relayerFixedFeeAmount.
     error InvalidRelayerFee();
@@ -302,6 +307,9 @@ interface IEnygmaDvp {
 
     // The owner flagged a vault as open (or closed) to privateMint.
     event VaultMintableSet(uint256 indexed vaultId, bool mintable);
+
+    // The owner registered the verifier privateMint checks proofs with.
+    event PrivateMintVerifierRegistered(address indexed verifier);
 
     event PrivateMint(
         uint256 indexed vaultId,

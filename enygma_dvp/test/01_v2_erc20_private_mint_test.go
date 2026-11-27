@@ -17,6 +17,7 @@ package tests
 import (
 	"context"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/raylsnetwork/enygma_dvp/src/core"
@@ -25,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/iden3/go-iden3-crypto/poseidon"
 
 	"enygma_dvp/layout"
 )
@@ -61,8 +63,11 @@ func proofStringsToPrivateMint(t *testing.T, proofStrs []string, statement []*bi
 //
 //	Step 1 — Off-chain agreement: Alice shares pk_spend with the Issuer.
 //	Step 2 — Issuer requests a ZK proof from the gnark server.
-//	Step 3 — Issuer calls EnygmaDvp.privateMint on-chain.
-//	Step 4 — Alice scans the PrivateMint event and confirms the note is hers.
+//	Step 3 — Issuer registers a mint-only vault and calls EnygmaDvp.privateMint
+//	         onchain.
+//	Step 4 — Alice checks the PrivateMint event against the salt and amount the
+//	         Issuer sends her offchain, and confirms the note is hers.
+//	Step 5 — The same proof is refused a second time.
 func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	if !chainAvailable() {
 		t.Skip("Hardhat node not running on localhost:8545 — skipping on-chain test")
@@ -95,8 +100,6 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	gnarkClient := core.NewGnarkClient("http://localhost:8081")
 	tokenId := big.NewInt(0) // ERC20: tokenId=0
 	mintAmount := big.NewInt(100)
-	// Erc20CoinVault is registered first in scripts/cmd/init → vaultId=0
-	vaultId := big.NewInt(0)
 	// contractAddress in the ZK public signal must be the EnygmaDvp address as uint256
 	contractAddressBig := new(big.Int).SetBytes(dvpAddr.Bytes())
 
@@ -116,8 +119,8 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	// Step 2 — Issuer requests ZK proof from gnark server
 	//   The Issuer picks a random salt and calls Erc20PrivateMintProof.
 	//   The gnark server proves:
-	//     Poseidon4(pk_alice, salt, amount, tokenId) == commitment
-	//     Poseidon2(pk_alice, salt)                  == cipherText
+	//     Poseidon4(pk_alice, salt, amount, tokenId)  == commitment
+	//     Poseidon(pk_alice, salt, contractAddress)   == cipherText (the note tag)
 	// ─────────────────────────────────────────────────────────────────────────
 	issuedSalt, err := core.RandomInField()
 	if err != nil {
@@ -144,23 +147,19 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	)
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Step 3 — Issuer calls EnygmaDvp.privateMint on-chain
-	//   The contract checks:
+	// Step 3 — Issuer registers a mint-only vault and calls EnygmaDvp.privateMint
+	//   A minted note has no deposit behind it, so it goes into a vault of its
+	//   own, never one that takes deposits: the Issuer registers a fresh
+	//   Erc20CoinVault and flags it mintable while it is empty, which closes it
+	//   to deposits for good. The contract then checks:
 	//     1. onlyRole(DEFAULT_OWNER_ROLE) — the Hardhat deployer account holds this role
-	//     2. the vault is flagged mintable (setVaultMintable). On this local
-	//        deployment the issuer is the only depositor of its own token, so
-	//        the test flags the ERC-20 vault itself.
+	//     2. the vault is flagged mintable (setVaultMintable)
 	//     3. IPrivateMintVerifier.verifyProof(proof, publicSignal)
-	//     4. IAbstractCoinVault.registerCoins([commitment]) — inserts the Merkle leaf
+	//     4. the commitment has not been minted before
+	//     5. IAbstractCoinVault.registerCoins([commitment]) — inserts the Merkle leaf
 	//   Emits: PrivateMint(vaultId, commitment, cipherText)
 	// ─────────────────────────────────────────────────────────────────────────
-	flagTx, err := dvp.Transact(auth, "setVaultMintable", vaultId, true)
-	if err != nil {
-		t.Fatalf("EnygmaDvp.setVaultMintable: %v", err)
-	}
-	if _, err := bind.WaitMined(ctx, ethClient, flagTx); err != nil {
-		t.Fatalf("wait setVaultMintable: %v", err)
-	}
+	vaultId := registerMintOnlyVault(t, ethClient, auth, dvp, dvpAddr)
 	mintTx, err := dvp.Transact(auth, "privateMint", vaultId, mintResult.Commitment(), proof)
 	if err != nil {
 		t.Fatalf("EnygmaDvp.privateMint: %v", err)
@@ -199,9 +198,11 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Step 4 — Alice scans the PrivateMint event and confirms the note is hers
-	//   Alice computes Poseidon2(pk_alice, salt) and checks it matches the
-	//   cipherText from the event. She also verifies the commitment round-trip.
+	// Step 4 — Alice confirms the note is hers
+	//   The event carries only the commitment and the tag, neither of which
+	//   reveals the salt or the amount: the Issuer sends Alice both offchain.
+	//   With them she checks the tag, Poseidon(pk_alice, salt, contractAddress),
+	//   and the commitment round-trip.
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// Alice recomputes the commitment to confirm spend-readiness:
@@ -217,14 +218,62 @@ func TestV2Erc20OnChain_PrivateMint(t *testing.T) {
 			recomputedCommitment, eventCommitment)
 	}
 
-	// Alice checks cipherText matches her (pk, salt) pair:
-	//   Poseidon2(pk_alice, salt) == cipherText from event
-	if mintResult.CipherText().Cmp(eventCipherText) != 0 {
-		t.Errorf("Alice cipherText mismatch: computed %s, on-chain %s",
-			mintResult.CipherText(), eventCipherText)
+	// Alice checks the tag against her key, the salt and this deployment:
+	//   Poseidon(pk_alice, salt, contractAddress) == cipherText from event
+	tag, err := poseidon.Hash([]*big.Int{aliceSpend.PublicKey, issuedSalt, contractAddressBig})
+	if err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+	if tag.Cmp(eventCipherText) != 0 {
+		t.Errorf("Alice tag mismatch: computed %s, onchain %s", tag, eventCipherText)
 	}
 
 	t.Logf("Step 4 — Alice confirmed: note is hers, commitment=%s salt=%s amount=%s",
 		eventCommitment, issuedSalt, mintAmount)
 	t.Logf("Step 4 — Note is spend-ready as WtSaltsIn=%s WtValuesIn=%s", issuedSalt, mintAmount)
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Step 5 — The same proof cannot mint the note again, in this vault or any
+	//   other: EnygmaDvp keeps every commitment it has minted.
+	// ─────────────────────────────────────────────────────────────────────────
+	estimate := *auth
+	estimate.GasLimit = 0 // estimate, so a revert comes back with its reason
+	_, err = dvp.Transact(&estimate, "privateMint", vaultId, mintResult.Commitment(), proof)
+	if err == nil || !strings.Contains(err.Error(), "CommitmentAlreadyMinted") {
+		t.Fatalf("second privateMint of commitment %s: err = %v, want CommitmentAlreadyMinted", mintResult.Commitment(), err)
+	}
+	t.Logf("Step 5 — a second mint of the same proof was refused: CommitmentAlreadyMinted")
+}
+
+// registerMintOnlyVault deploys a token and an Erc20CoinVault, registers the
+// vault with the EnygmaDvp at dvpAddr and flags it mintable while it is empty,
+// which closes it to deposits for good. It returns the vault's id.
+func registerMintOnlyVault(t *testing.T, client *ethclient.Client, auth *bind.TransactOpts, dvp *bind.BoundContract, dvpAddr common.Address) *big.Int {
+	t.Helper()
+	tokenABI, tokenBin := loadArtifact(t, "erc20/contracts/RaylsERC20.sol/RaylsERC20.json")
+	tokenAddr, tx, _, err := bind.DeployContract(auth, tokenABI, tokenBin, client, "Minted", "MNT")
+	waitOK(t, client, "deploy the mint vault's token", tx, err)
+	vaultABI, vaultBin := loadArtifact(t, "core/contracts/vaults/Erc20CoinVault.sol/Erc20CoinVault.json")
+	vaultAddr, tx, _, err := bind.DeployContract(auth, vaultABI, vaultBin, client, dvpAddr)
+	waitOK(t, client, "deploy the mint vault", tx, err)
+	tx, err = dvp.Transact(auth, "registerVault", vaultAddr, tokenAddr, big.NewInt(1), big.NewInt(8))
+	waitOK(t, client, "registerVault", tx, err)
+
+	vault := bind.NewBoundContract(vaultAddr, vaultABI, client, client, client)
+	var out []interface{}
+	if err := vault.Call(&bind.CallOpts{}, &out, "getVaultId"); err != nil {
+		t.Fatalf("getVaultId: %v", err)
+	}
+	vaultId := out[0].(*big.Int)
+	tx, err = dvp.Transact(auth, "setVaultMintable", vaultId, true)
+	waitOK(t, client, "setVaultMintable", tx, err)
+	out = nil
+	if err := vault.Call(&bind.CallOpts{}, &out, "depositsClosed"); err != nil {
+		t.Fatalf("depositsClosed: %v", err)
+	}
+	if !out[0].(bool) {
+		t.Fatalf("vault %s takes deposits after setVaultMintable(%s, true)", vaultAddr.Hex(), vaultId)
+	}
+	t.Logf("Step 3 — mint-only vault %s registered as vault %s, closed to deposits", vaultAddr.Hex(), vaultId)
+	return vaultId
 }

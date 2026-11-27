@@ -53,6 +53,9 @@ type initPaymentConfig struct {
 			Tags     []string `json:"tags"`
 		} `json:"circuits"`
 	} `json:"circom"`
+	// PrivateMint ("private-mint"): register the PrivateMintVerifier
+	// cmd/deploy_payment deployed under the same switch. Off when absent.
+	PrivateMint bool `json:"private-mint"`
 }
 
 type initPaymentReceiptData struct {
@@ -214,10 +217,14 @@ func initializePayment() error {
 		return fmt.Errorf("the Verifier does not hold the keys init registered: %w", err)
 	}
 
-	privateMintVerifierAddress := common.HexToAddress(receipts["PrivateMintVerifier"].ContractAddress)
-	fmt.Printf("Registering PrivateMintVerifier (%s)...\n", privateMintVerifierAddress.Hex())
-	if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerPrivateMintVerifier", privateMintVerifierAddress); err != nil {
-		return fmt.Errorf("failed to register PrivateMintVerifier: %w", err)
+	if config.PrivateMint {
+		privateMintVerifierAddress := common.HexToAddress(receipts["PrivateMintVerifier"].ContractAddress)
+		fmt.Printf("Registering PrivateMintVerifier (%s)...\n", privateMintVerifierAddress.Hex())
+		if _, err := callPaymentInitMethod(client, auth, enygmaDvpABI, enygmaDvpAddress, "registerPrivateMintVerifier", privateMintVerifierAddress); err != nil {
+			return fmt.Errorf("failed to register PrivateMintVerifier: %w", err)
+		}
+	} else {
+		fmt.Println("No PrivateMintVerifier registered: private-mint is off in enygmadvp_payment.config.json")
 	}
 
 	fmt.Println("Registering Erc20CoinVault (main payment token, vaultId 0)...")

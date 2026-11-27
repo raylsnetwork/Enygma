@@ -157,7 +157,7 @@ All vaults must show `"match": true`.
 
 | Test | Circuit | Vault | Description |
 |---|---|---|---|
-| `TestV2Erc20OnChain_PrivateMint` | `privateMint` | ERC-20 | Mint a private note directly into the vault |
+| `TestV2Erc20OnChain_PrivateMint` | `privateMint` | ERC-20 | Mint a private note, once, into a mint-only vault the test registers |
 | `TestV2Erc20Payment` | `payment` | ERC-20 | 2-input / 2-output private transfer (Alice → Bob + change) |
 | `TestV2DvP` | `dvpInitiator` + `dvpDestination` | ERC-20 + ERC-721 | Atomic swap: Alice's USDT for Bob's NFT ticket |
 | `TestV2DvP_WithDeadline/FullSwap` | same | same | Full swap with deadline — both legs settle |

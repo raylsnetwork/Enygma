@@ -10,29 +10,29 @@ All numeric values are **decimal strings** (big integers).
 
 ## POST /proof/privateMint
 
-Generates a proof that a privately minted commitment is correctly formed from the owner's public key, token ID, amount, and salt — without revealing the private inputs.
+Generates a proof that a privately minted commitment is correctly formed from the owner's public key, token ID, amount, and salt — without revealing the private inputs. The proof binds the EnygmaDvp deployment (`contractAddress`), not a vault.
 
 ### Request
 
 ```json
 {
   "commitment":      "string (required) — Poseidon4(pkSpend, salt, amount, tokenId)",
-  "contractAddress": "string (required) — address of the vault contract (as uint256)",
+  "contractAddress": "string (required) — address of the EnygmaDvp contract (as uint256)",
   "tokenId":         "string (required) — ERC-20 token identifier",
-  "salt":            "string (required) — random salt (private)",
-  "amount":          "string (required) — token amount being minted (private)",
+  "salt":            "string (required) — random, non-zero salt (private)",
+  "amount":          "string (required) — token amount being minted, below 10^36 (private)",
   "publicKey":       "string (required) — owner's spend public key",
-  "cipherText":      "string (required) — encrypted note data for the recipient"
+  "cipherText":      "string (required) — the note tag, Poseidon(publicKey, salt, contractAddress)"
 }
 ```
 
 | Field | Visibility | Description |
 |---|---|---|
 | `commitment` | public | Output leaf inserted into the vault Merkle tree |
-| `contractAddress` | public | Vault contract address as a field element |
+| `contractAddress` | public | EnygmaDvp contract address as a field element |
 | `tokenId` | public | Token ID |
-| `cipherText` | public | Encrypted note (for off-chain note discovery) |
-| `salt` | private | Random blinding factor |
+| `cipherText` | public | Note tag `Poseidon(publicKey, salt, contractAddress)`. It is not an encryption: the recipient gets the salt and the amount from the issuer, offchain |
+| `salt` | private | Random blinding factor. Never 0 (the client refuses it; this endpoint does not): with salt 0, anyone can compute the tag for every registered spend key and find the recipient |
 | `amount` | private | Minted amount |
 | `publicKey` | private | Owner's spend public key |
 

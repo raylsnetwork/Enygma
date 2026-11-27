@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"enygma_dvp/layout"
 	"github.com/iden3/go-iden3-crypto/poseidon"
@@ -440,8 +441,9 @@ type Erc20PrivateMintResult struct {
 	// them, in the PrivateMint statement layout's order.
 	Statement []*big.Int
 
-	// Salt is the random field element Alice chose. She must keep this as her
-	// WtSaltsIn witness when she later spends the note in a JoinSplit proof.
+	// Salt is the random field element the issuer chose. The recipient needs
+	// it, from the issuer and offchain, as the WtSaltsIn witness when they
+	// later spend the note.
 	Salt *big.Int
 }
 
@@ -465,22 +467,28 @@ func (r *Erc20PrivateMintResult) TokenId() *big.Int {
 	return r.Statement[layout.PrivateMintTokenIdOffset]
 }
 
-// CipherText is the note tag: Poseidon(pkSpend, salt, contractAddress).
-// Published on-chain; Alice uses it to confirm a mint is hers.
+// CipherText is the note tag: Poseidon(pkSpend, salt, contractAddress),
+// published onchain in the PrivateMint event. It is not an encryption: a
+// recipient who has the salt from the issuer can check that a mint is theirs,
+// but nothing in it lets them find or open the mint without it.
 func (r *Erc20PrivateMintResult) CipherText() *big.Int {
 	return r.Statement[layout.PrivateMintCipherTextOffset]
 }
 
-// Erc20PrivateMintProof generates a V2 PrivateMint proof for an ERC20 deposit.
+// Erc20PrivateMintProof generates a V2 PrivateMint proof for a note in an
+// ERC20 vault, which no deposit backs.
 //
-// Alice picks a random salt, then the function:
+// The issuer picks a random salt (requireMintSalt refuses nil and 0), then
+// the function:
 //  1. Computes commitment = Poseidon(pkSpend, salt, amount, tokenId) — the V2 format
 //     expected by the JoinSplit circuit on the input side.
-//  2. Computes cipherText = Poseidon(pkSpend, salt) — a note tag Alice can use when
-//     scanning the chain to confirm this mint is hers.
+//  2. Computes cipherText = Poseidon(pkSpend, salt, contractAddress), the note
+//     tag, which binds the proof to this deployment.
 //  3. Sends both to the gnark server's /proof/privateMint endpoint.
 //
-// The returned Salt must be stored by Alice — it is her WtSaltsIn when spending.
+// The issuer hands the returned Salt, and the amount, to the recipient
+// offchain: the chain carries only the commitment and the tag, and the
+// recipient needs both to spend the note (Salt is their WtSaltsIn).
 func (c *GnarkClient) Erc20PrivateMintProof(
 	pkSpend *big.Int,
 	salt *big.Int,
@@ -488,6 +496,9 @@ func (c *GnarkClient) Erc20PrivateMintProof(
 	tokenId *big.Int,
 	contractAddress *big.Int,
 ) (*Erc20PrivateMintResult, error) {
+	if err := requireMintSalt(salt); err != nil {
+		return nil, err
+	}
 	commitment, err := Erc20CommitmentV2(pkSpend, salt, amount, tokenId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute V2 commitment: %w", err)
@@ -556,11 +567,36 @@ func (c *GnarkClient) Erc20Proof(inputs map[string]interface{}, zkeyPath string)
 	return &ProofResponse{Status: 200, Message: "ok"}, nil
 }
 
-// PrivateMintProof generates a private mint proof and returns the proof and public signals.
+// requireMintSalt refuses a mint salt that is nil or 0. With salt 0 the tag
+// Poseidon(pkSpend, 0, contractAddress) is one anyone can compute for every
+// registered spend key, which names the recipient, and the commitment's amount
+// can then be found by trying values.
+func requireMintSalt(salt *big.Int) error {
+	if salt == nil || salt.Sign() == 0 {
+		return fmt.Errorf("PrivateMint needs a random, non-zero salt, got %v", salt)
+	}
+	return nil
+}
+
+// PrivateMintProof generates a private mint proof and returns the proof and
+// public signals. inputs holds the commitment and the tag the caller made
+// with its salt, and that salt, as an integer or a decimal or 0x-hex string:
+// a missing, unreadable or zero salt is refused (requireMintSalt), never
+// replaced by a default.
 func (c *GnarkClient) PrivateMintProof(inputs map[string]interface{}) (*PrivateMintProofResponse, error) {
-	salt := "0"
-	if s, ok := inputs["salt"]; ok && s != nil {
-		salt = toString(s)
+	salt := toString(inputs["salt"])
+	// Read as the gnark server reads a witness number: decimal, or hex after
+	// a 0x prefix.
+	base := 10
+	if strings.HasPrefix(salt, "0x") || strings.HasPrefix(salt, "0X") {
+		base = 0
+	}
+	n, ok := new(big.Int).SetString(salt, base)
+	if !ok {
+		return nil, fmt.Errorf("PrivateMint salt %q is missing or not an integer", salt)
+	}
+	if err := requireMintSalt(n); err != nil {
+		return nil, err
 	}
 
 	payload := map[string]interface{}{

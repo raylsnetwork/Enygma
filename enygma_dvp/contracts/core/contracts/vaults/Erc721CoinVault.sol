@@ -47,6 +47,10 @@ contract Erc721CoinVault is AbstractCoinVault {
         uint256 pkSpend = params[1];
         uint256 salt    = params[2];
 
+        // A mint-only vault takes no deposit: a minted Poseidon4(pk, salt, 1,
+        // tokenId) would be a second claim on a deposited token.
+        _requireDepositsOpen();
+
         IERC721(_assetContractAddress).transferFrom(
             msg.sender,
             address(this),

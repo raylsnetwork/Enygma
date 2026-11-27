@@ -66,6 +66,12 @@ abstract contract AbstractCoinVault is
 
     address internal _assetContractAddress;
 
+    // Set for good by closeDeposits, when EnygmaDvp flags the vault mintable:
+    // from then on the vault takes no deposits (DepositsClosed). Declared next
+    // to _assetContractAddress, so the two share a storage slot, which every
+    // deposit path reads right after checking this flag.
+    bool public depositsClosed;
+
     address internal _zkAuctionContractAddress;
 
     uint256 internal _vaultId;
@@ -341,6 +347,31 @@ abstract contract AbstractCoinVault is
         insertLeaves(commitmentsToInsert);
 
         return true;
+    }
+
+    // A private mint adds a note that no deposit backs, so a vault takes
+    // mints or deposits, never both: a minted note would otherwise be paid
+    // out of other users' deposits. EnygmaDvp calls this when it flags the
+    // vault mintable. It closes the vault to deposits for good, and refuses
+    // (VaultHoldsNotes) while deposits are open and the vault holds a note,
+    // which may be a deposit's. nextLeafIndex is 0 only until the vault's
+    // first leaf: a batch that starts a new tree goes into it at once
+    // (Merkle.insertLeaves). Once deposits are closed it does nothing, so the
+    // owner can flag the vault again after clearing the flag.
+    function closeDeposits() public onlyRole(DEFAULT_DVP_ROLE) {
+        if (!depositsClosed) {
+            if (nextLeafIndex != 0) {
+                revert VaultHoldsNotes();
+            }
+            depositsClosed = true;
+        }
+    }
+
+    // Each deposit path calls this before it takes the asset.
+    function _requireDepositsOpen() internal view {
+        if (depositsClosed) {
+            revert DepositsClosed();
+        }
     }
 
     // Parks a DvP initiator's leg under the commitment it inserts (its

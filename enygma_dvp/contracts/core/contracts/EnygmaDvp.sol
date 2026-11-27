@@ -172,8 +172,16 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
 
     // Vaults privateMint may add notes to (setVaultMintable). A private mint
     // creates a note that no deposit backs, so it is refused in any vault not
-    // flagged here; every vault starts unflagged.
+    // flagged here; every vault starts unflagged, and a flagged vault takes no
+    // deposits.
     mapping(uint256 => bool) public mintableVaults;
+
+    // Each commitment privateMint has inserted, in any vault. A mint proof
+    // binds no vault and no nonce, and a Groth16 proof can be re-randomized,
+    // so the same proof, or another proof of the same commitment, would
+    // otherwise mint the note again: each copy a separate leaf, with its own
+    // nullifier.
+    mapping(uint256 => bool) private _mintedCommitments;
     ///////////////////////////////////////////////
     //              Constructor
     //////////////////////////////////////////////
@@ -271,22 +279,30 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         return true;
     }
 
+    // Sets the verifier privateMint checks its proofs with, replacing any
+    // earlier one. It must hold code now: an address with none could be given
+    // any code later.
     function registerPrivateMintVerifier(
         address privateMintVerifierAddress
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
+        if (privateMintVerifierAddress.code.length == 0) revert PrivateMintVerifierHasNoCode();
         _privateMintVerifierAddress = privateMintVerifierAddress;
+        emit PrivateMintVerifierRegistered(privateMintVerifierAddress);
         return true;
     }
 
-    // Flags a registered vault as open (or closed) to privateMint. Flag only
-    // a vault whose notes are not redeemed from other users' deposits, such
-    // as one for an asset its issuer backs itself; never a shared ERC-20
-    // vault holding deposits.
+    // Flags a registered vault as open (or closed) to privateMint. A minted
+    // note has no deposit behind it, so flagging also closes the vault to
+    // deposits for good (closeDeposits), which the vault refuses once it
+    // holds a note while still open to deposits. Clearing the flag stops
+    // mints only: deposits stay closed.
     function setVaultMintable(
         uint256 vaultId,
         bool mintable
     ) public onlyRole(DEFAULT_OWNER_ROLE) returns (bool) {
-        if (_coinVaults[vaultId] == address(0)) revert InvalidVaultId();
+        address vault = _coinVaults[vaultId];
+        if (vault == address(0)) revert InvalidVaultId();
+        if (mintable) IAbstractCoinVault(vault).closeDeposits();
         mintableVaults[vaultId] = mintable;
         emit VaultMintableSet(vaultId, mintable);
         return true;
@@ -1569,6 +1585,10 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
         if (!mintableVaults[vaultId]) {
             revert VaultNotMintable();
         }
+        // A named error where the call below would revert with no data.
+        if (_privateMintVerifierAddress == address(0)) {
+            revert PrivateMintVerifierNotRegistered();
+        }
 
         // Verify the ZK proof. public_signal is sized to PrivateMint's
         // statement length, so its fields are read by name below.
@@ -1593,6 +1613,13 @@ contract EnygmaDvp is IEnygmaDvp, AccessControl, ReentrancyGuard {
             proof.public_signal[Dsl.PRIVATE_MINT_CONTRACT_ADDRESS_OFFSET] == uint256(uint160(address(this))),
             "PrivateMint: proof bound to wrong contract"
         );
+
+        // Each commitment is minted once (see _mintedCommitments), keyed on the
+        // commitment itself, never on the proof's bytes.
+        if (_mintedCommitments[commitment]) {
+            revert CommitmentAlreadyMinted();
+        }
+        _mintedCommitments[commitment] = true;
 
         uint256 cipherText = proof.public_signal[Dsl.PRIVATE_MINT_CIPHER_TEXT_OFFSET];
 

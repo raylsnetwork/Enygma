@@ -568,7 +568,7 @@ func TestGnarkProverDispatcher_PrivateMint(t *testing.T) {
 		"commitment":      "0xcommit",
 		"contractAddress": "0xcontract",
 		"tokenId":         "1",
-		"salt":            "0",
+		"salt":            "7",
 		"amount":          "100",
 		"publicKey":       "0xpk",
 		"cipherText":      "0xcipher",

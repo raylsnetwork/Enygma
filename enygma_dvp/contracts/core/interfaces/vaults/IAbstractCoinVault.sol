@@ -99,6 +99,10 @@ interface IAbstractCoinVault {
     // checkDvpReceiptConditions on a vault that settles no DvP leg.
     error DvpLegNotSupported();
     error ZeroWithdrawAmount();
+    // A deposit into a vault closed to deposits (closeDeposits).
+    error DepositsClosed();
+    // closeDeposits on a vault, still open to deposits, that holds a note.
+    error VaultHoldsNotes();
 
     error InvalidAuditorPublicKey();
 
@@ -132,6 +136,10 @@ interface IAbstractCoinVault {
     function registerCoins(
         uint256[] memory commitments
     ) external returns (bool);
+
+    // Closes the vault to deposits for good: EnygmaDvp calls it when it flags
+    // the vault mintable (setVaultMintable).
+    function closeDeposits() external;
 
     function lockCoin(
         uint256 treeNumber,

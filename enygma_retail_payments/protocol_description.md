@@ -14,6 +14,10 @@ flowchart LR
 
 ```
 
+### The owner
+
+The deployment's `EnygmaDvp` has an owner (`DEFAULT_OWNER_ROLE`, given to its deployer), which registers its vaults and sets its fee parameters. `EnygmaDvp` also lets the owner mint notes privately (`privateMint`), with no deposit behind them and an amount no event shows. This deployment ships no mint verifier: `scripts/cmd/deploy` and `scripts/cmd/init` deploy and register one only when `enygmapayment.config.json` turns `"private-mint"` on, and the committed config leaves it off. The owner can still register one later (`registerPrivateMintVerifier`, which logs `PrivateMintVerifierRegistered`). Even then, a minted note goes only into a mint-only vault: a vault the owner flags mintable takes no deposits from then on, and the owner cannot flag a vault that holds a note while still open to deposits. So a minted note is never paid out of other users' deposits. See [Private Issuance](../enygma_dvp/dvp_protocol.md#private-issuance) in `enygma_dvp/dvp_protocol.md`.
+
 ### Adversarial Model
 
 The goal of the adversary $$\mathcal{A}$$ is twofold: break the privacy of the system and disrupt the activity of the system. We assume that the adversary ...

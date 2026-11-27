@@ -2,6 +2,7 @@
   "id": "EnygmaDvpPayment",
   "desc": "dedicated Payment deployment — ported from enygma_retail_payments, plus USDr",
   "_warning": "DEMO ONLY — the private keys below are well-known Hardhat default accounts. They are publicly visible on the internet. Never use them on any real network or with real funds.",
+  "private-mint": false,
   "network": {
     "host": "127.0.0.1",
     "port": "8545",

@@ -49,6 +49,8 @@ contract EnygmaErc20CoinVault is AbstractCoinVault, IEnygmaErc20CoinVault {
     function depositThroughEnygma(
         uint256[] memory depositParams
     ) public override onlyRole(DEFAULT_ENYGMA_ROLE) returns (bool, uint256) {
+        // A mint-only vault takes no deposit (AbstractCoinVault.closeDeposits).
+        _requireDepositsOpen();
         uint256 amount = depositParams[0];
         uint256 publicKey = depositParams[1];
 

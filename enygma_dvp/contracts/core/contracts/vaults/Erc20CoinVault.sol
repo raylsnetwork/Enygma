@@ -108,6 +108,9 @@ contract Erc20CoinVault is AbstractCoinVault {
     error DepositAmountMismatch(uint256 amount, uint256 received);
 
     function _pullDeposit(uint256 amount) internal {
+        // deposit and depositV2 both come through here: a mint-only vault
+        // takes neither (AbstractCoinVault.closeDeposits).
+        _requireDepositsOpen();
         IERC20 asset = IERC20(_assetContractAddress);
         uint256 balanceBefore = asset.balanceOf(address(this));
         asset.safeTransferFrom(msg.sender, address(this), amount);

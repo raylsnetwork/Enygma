@@ -36,6 +36,9 @@ type Config struct {
 			Private string `json:"private"`
 		} `json:"accounts"`
 	} `json:"network"`
+	// PrivateMint ("private-mint") asks for a PrivateMintVerifier, which
+	// cmd/init then registers. Off when absent.
+	PrivateMint bool `json:"private-mint"`
 }
 
 // ReceiptData holds deployment receipt information.
@@ -156,13 +159,21 @@ func deploy() error {
 	fmt.Printf("Verifier → %s\n", verifierAddress.Hex())
 	receipts["Verifier"] = receiptToData(receipt, verifierAddress)
 
-	fmt.Println("Deploying PrivateMintVerifier...")
-	privateMintVerifierAddress, receipt, err := deployContract(client, owner, "PrivateMintVerifier")
-	if err != nil {
-		return fmt.Errorf("failed to deploy PrivateMintVerifier: %w", err)
+	// A private mint adds a note that no deposit backs, and both of this
+	// deployment's vaults take deposits: it ships no mint verifier unless its
+	// config asks for one, and any mint then needs a vault of its own
+	// (EnygmaDvp.setVaultMintable).
+	if config.PrivateMint {
+		fmt.Println("Deploying PrivateMintVerifier...")
+		privateMintVerifierAddress, receipt, err := deployContract(client, owner, "PrivateMintVerifier")
+		if err != nil {
+			return fmt.Errorf("failed to deploy PrivateMintVerifier: %w", err)
+		}
+		fmt.Printf("PrivateMintVerifier → %s\n", privateMintVerifierAddress.Hex())
+		receipts["PrivateMintVerifier"] = receiptToData(receipt, privateMintVerifierAddress)
+	} else {
+		fmt.Println("No PrivateMintVerifier: private-mint is off in enygmapayment.config.json")
 	}
-	fmt.Printf("PrivateMintVerifier → %s\n", privateMintVerifierAddress.Hex())
-	receipts["PrivateMintVerifier"] = receiptToData(receipt, privateMintVerifierAddress)
 
 	fmt.Println("Deploying EnygmaDvp...")
 	enygmaDvpAddress, receipt, err := deployContractWithArgs(
