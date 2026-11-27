@@ -111,6 +111,8 @@ func (w *dvpInitiatorTestWitness) circuit() *templates.DvPInitiatorCircuit {
 		StCommitB:       w.commitB,
 		StCommitA:       w.commitA,
 		StRevertCommitA: w.revertCommitA,
+		StDeadline:      uint64(1_800_000_000),
+		StGroupID:       uint64(0),
 		StCounterVault:  w.counterVault,
 
 		WtSpendKeyIn:   w.skAlice,
@@ -176,13 +178,11 @@ func TestDvpInitiatorCircuit_ZeroCounterVault_Fails(t *testing.T) {
 	assert.ProverFailed(emptyDvpInitiatorCircuit(), wc, test.WithCurves(ecc.BN254))
 }
 
-// TestDvpInitiatorCircuit_CounterVaultIsBoundByTheProof: a Groth16 proof made
-// for one counterparty vault must not verify for another. A public input that
-// appeared in no constraint would verify for any value; this is what the
-// AssertIsDifferent constraint in Define guarantees against.
-func TestDvpInitiatorCircuit_CounterVaultIsBoundByTheProof(t *testing.T) {
+// Each public term is fixed by the original Groth16 proof.
+func TestDvpInitiatorCircuit_ProofBindsTerms(t *testing.T) {
 	w := buildValidDvpInitiatorWitness(t)
-	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, emptyDvpInitiatorCircuit())
+	// Let this test reach the verifier if a term loses all its constraints.
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, emptyDvpInitiatorCircuit(), frontend.IgnoreUnconstrainedInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,24 +200,54 @@ func TestDvpInitiatorCircuit_CounterVaultIsBoundByTheProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	public := func(counterVault *big.Int) *templates.DvPInitiatorCircuit {
-		c := w.circuit()
-		c.Config = dvpInitiatorTestConfig()
-		c.StCounterVault = counterVault
-		return c
-	}
-	honest, err := frontend.NewWitness(public(w.counterVault), ecc.BN254.ScalarField(), frontend.PublicOnly())
+	honest, err := full.Public()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := groth16.Verify(proof, vk, honest); err != nil {
-		t.Fatalf("proof does not verify with its own counterparty vault: %v", err)
+		t.Fatalf("proof does not verify with its original public statement: %v", err)
 	}
-	other, err := frontend.NewWitness(public(new(big.Int).Add(w.counterVault, big.NewInt(1))), ecc.BN254.ScalarField(), frontend.PublicOnly())
-	if err != nil {
-		t.Fatal(err)
+	outOfRange := new(big.Int).Lsh(big.NewInt(1), 64)
+	for _, tc := range []struct {
+		name   string
+		change func(*templates.DvPInitiatorCircuit)
+	}{
+		{"deadline exceeds uint64", func(c *templates.DvPInitiatorCircuit) { c.StDeadline = outOfRange }},
+		{"group exceeds uint64", func(c *templates.DvPInitiatorCircuit) { c.StGroupID = outOfRange }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wide := *wc
+			tc.change(&wide)
+			witness, err := frontend.NewWitness(&wide, ecc.BN254.ScalarField())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ccs.IsSolved(witness); err == nil {
+				t.Fatal("circuit accepted a swap term outside uint64")
+			}
+		})
 	}
-	if err := groth16.Verify(proof, vk, other); err == nil {
-		t.Fatal("VULNERABLE: the proof verified for a different counterparty vault")
+
+	for _, tc := range []struct {
+		name   string
+		change func(*templates.DvPInitiatorCircuit)
+	}{
+		{"counterparty vault", func(c *templates.DvPInitiatorCircuit) {
+			c.StCounterVault = new(big.Int).Add(w.counterVault, big.NewInt(1))
+		}},
+		{"deadline", func(c *templates.DvPInitiatorCircuit) { c.StDeadline = uint64(1_800_000_001) }},
+		{"group", func(c *templates.DvPInitiatorCircuit) { c.StGroupID = uint64(1) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := *wc
+			tc.change(&changed)
+			public, err := frontend.NewWitness(&changed, ecc.BN254.ScalarField(), frontend.PublicOnly())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := groth16.Verify(proof, vk, public); err == nil {
+				t.Fatalf("proof verified with a different %s", tc.name)
+			}
+		})
 	}
 }

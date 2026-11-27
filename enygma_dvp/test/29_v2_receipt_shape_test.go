@@ -79,8 +79,8 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 	relayerFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), n(23), vault, n(5), ch}
 	usdrFee := []*big.Int{n(0), n(0), root, n(11), n(21), n(22), vault, n(5), n(1), ch}
 	counterVault := n(0xc0)
-	// [message = commitA, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault]
-	initiator := []*big.Int{n(31), n(0), root, n(11), n(32), n(31), n(33), counterVault}
+	// [message = commitA, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault, deadline, groupId]
+	initiator := []*big.Int{n(31), n(0), root, n(11), n(32), n(31), n(33), counterVault, n(1_800_000_000), n(0)}
 
 	honest := []struct {
 		name      string
@@ -106,7 +106,6 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 	}{
 		{"DvP Initiator claiming its 1 output", initiator, 1, 1},
 		{"(a) DvP Initiator claiming 4 outputs", initiator, 1, 4},
-		{"(a) DvP Initiator claiming 3 outputs", initiator, 1, 3},
 		{"(b) Payment2in claiming 1 output", payment2in, 2, 1},
 		{"(b) Payment2in claiming 3 outputs", payment2in, 2, 3},
 		{"(c) DvP Initiator claiming 0 outputs", initiator, 1, 0},
@@ -123,6 +122,12 @@ func TestV2ReceiptShape_Erc20(t *testing.T) {
 		if r := s.check(c.statement, c.nIn, c.nOut); r != "ReceiptShapeMismatch" {
 			t.Errorf("%s: got %q, want ReceiptShapeMismatch", c.name, r)
 		}
+	}
+
+	// Three outputs and ten signals selects PaymentRelayerFeePublic. Its
+	// vault binding rejects this statement before the payment verifier.
+	if r := s.check(initiator, 1, 3); r == "" {
+		t.Error("a DvP initiator was accepted as a relayer-fee payment")
 	}
 
 	// The leg gate takes the initiator, whatever counts it claims: it

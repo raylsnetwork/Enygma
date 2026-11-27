@@ -26,7 +26,7 @@ func dvpInitiatorServer(t *testing.T) (*GnarkClient, *[]map[string]any) {
 		// layout order, as a server proving that witness would.
 		var signals []json.Number
 		for _, k := range []string{"stMessage", "stTreeNumber", "stMerkleRoot", "stNullifier",
-			"stCommitB", "stCommitA", "stRevertCommitA", "stCounterVault"} {
+			"stCommitB", "stCommitA", "stRevertCommitA", "stCounterVault", "stDeadline", "stGroupId"} {
 			v, _ := body[k].(string)
 			if v == "" {
 				v = "0"
@@ -56,6 +56,7 @@ func TestDvPInitiatorRevertSaltIsReturnedAndDerivable(t *testing.T) {
 	}
 	value, tokenId := big.NewInt(100), big.NewInt(7)
 	treeNumber, depth, counterVault := big.NewInt(0), 8, big.NewInt(0xbeef)
+	terms := DvPInitiatorTerms{Deadline: 1_800_000_000, GroupID: 5}
 	nf, err := GetNullifierWithTree(alice.PrivateKey, treeNumber, a.proofs[0].Indices, depth)
 	if err != nil {
 		t.Fatal(err)
@@ -66,17 +67,17 @@ func TestDvPInitiatorRevertSaltIsReturnedAndDerivable(t *testing.T) {
 	}
 
 	kem, err := c.DvPInitiatorProof(alice, big.NewInt(1), value, tokenId, bob.PublicKey, view.EncapsKey,
-		big.NewInt(1), big.NewInt(25), treeNumber, a.proofs[0], depth, counterVault)
+		big.NewInt(1), big.NewInt(25), treeNumber, a.proofs[0], depth, counterVault, terms)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)
 	}
 	fromSalts, err := c.DvPInitiatorProofFromSalts(alice, big.NewInt(1), value, tokenId, bob.PublicKey,
-		big.NewInt(2), big.NewInt(1), big.NewInt(25), big.NewInt(3), treeNumber, a.proofs[0], depth, counterVault)
+		big.NewInt(2), big.NewInt(1), big.NewInt(25), big.NewInt(3), treeNumber, a.proofs[0], depth, counterVault, terms)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProofFromSalts: %v", err)
 	}
 	zk, err := c.ZkDvpInitiateSwap(alice, big.NewInt(1), value, tokenId, bob.PublicKey, view.EncapsKey,
-		big.NewInt(25), big.NewInt(1), depth, a.proofs[0], treeNumber)
+		big.NewInt(25), big.NewInt(1), depth, a.proofs[0], treeNumber, counterVault, terms)
 	if err != nil {
 		t.Fatalf("ZkDvpInitiateSwap: %v", err)
 	}
@@ -95,6 +96,12 @@ func TestDvPInitiatorRevertSaltIsReturnedAndDerivable(t *testing.T) {
 		}
 		if r.commit == nil || r.commit.Cmp(wantCommit) != 0 {
 			t.Errorf("%s: RevertCommitA %v, want SwapRevertNote's %s", r.name, r.commit, wantCommit)
+		}
+		if got := (*reqs)[i]["stDeadline"]; got != "1800000000" {
+			t.Errorf("%s: stDeadline = %v, want 1800000000", r.name, got)
+		}
+		if got := (*reqs)[i]["stGroupId"]; got != "5" {
+			t.Errorf("%s: stGroupId = %v, want 5", r.name, got)
 		}
 		if got := (*reqs)[i]["wtRevertSalt"]; got != wantSalt.String() {
 			t.Errorf("%s: proved with wtRevertSalt %v, want %s", r.name, got, wantSalt)
@@ -124,13 +131,13 @@ func dvpArgs(t *testing.T) (KeyPair, *MerkleProof) {
 // A DvpInitiator result names each field of the statement the server
 // returned, not one rebuilt from the request.
 func TestDvPInitiatorProof_AccessorsNameTheStatementsFields(t *testing.T) {
-	// message, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault
-	signals := []int64{800, 3, 900, 901, 902, 800, 903, 0xBEEF}
+	// message, tree, root, nullifier, commitB, commitA, revertCommitA, counterVault, deadline, groupId
+	signals := []int64{800, 3, 900, 901, 902, 800, 903, 0xBEEF, 1_800_000_000, 5}
 	c := proveServer(t, "/proof/dvpInitiator", signals)
 	key, mp := dvpArgs(t)
 	r, err := c.DvPInitiatorProofFromSalts(key, big.NewInt(1), big.NewInt(100), big.NewInt(0),
 		big.NewInt(5), big.NewInt(6), big.NewInt(1), big.NewInt(1), big.NewInt(7),
-		big.NewInt(3), mp, 8, big.NewInt(0xBEEF))
+		big.NewInt(3), mp, 8, big.NewInt(0xBEEF), DvPInitiatorTerms{Deadline: 1_800_000_000, GroupID: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,33 +150,35 @@ func TestDvPInitiatorProof_AccessorsNameTheStatementsFields(t *testing.T) {
 	assertInts(t, "CommitA", []*big.Int{r.CommitA()}, 800)
 	assertInts(t, "RevertCommitA", []*big.Int{r.RevertCommitA()}, 903)
 	assertInts(t, "CounterVault", []*big.Int{r.CounterVault()}, 0xBEEF)
+	assertInts(t, "Deadline", []*big.Int{r.Deadline()}, 1_800_000_000)
+	assertInts(t, "GroupID", []*big.Int{r.GroupID()}, 5)
 }
 
-// The statement is never truncated: CounterVault, the last signal, is
-// submitted even though the receipt reports one output.
-func TestDvPInitiatorProof_ContractStatementKeepsTheCounterVault(t *testing.T) {
-	c := proveServer(t, "/proof/dvpInitiator", []int64{800, 3, 900, 901, 902, 800, 903, 0xBEEF})
+// The contract receipt carries the full statement, including the swap terms.
+func TestDvPInitiatorProof_ContractStatementKeepsTheSwapTerms(t *testing.T) {
+	c := proveServer(t, "/proof/dvpInitiator", []int64{800, 3, 900, 901, 902, 800, 903, 0xBEEF, 1_800_000_000, 5})
 	key, mp := dvpArgs(t)
 	r, err := c.DvPInitiatorProofFromSalts(key, big.NewInt(1), big.NewInt(100), big.NewInt(0),
 		big.NewInt(5), big.NewInt(6), big.NewInt(1), big.NewInt(1), big.NewInt(7),
-		big.NewInt(3), mp, 8, big.NewInt(0xBEEF))
+		big.NewInt(3), mp, 8, big.NewInt(0xBEEF), DvPInitiatorTerms{Deadline: 1_800_000_000, GroupID: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
 	st := r.ContractStatement()
-	if st[len(st)-1].Cmp(big.NewInt(0xBEEF)) != 0 {
-		t.Errorf("ContractStatement %v does not end with the counter vault", st)
+	if len(st) != 10 || st[7].Cmp(big.NewInt(0xBEEF)) != 0 ||
+		st[8].Cmp(big.NewInt(1_800_000_000)) != 0 || st[9].Cmp(big.NewInt(5)) != 0 {
+		t.Errorf("ContractStatement %v does not carry the counterparty vault, deadline and group", st)
 	}
 }
 
 func TestDvPInitiatorProof_RejectsAStatementOfTheWrongLength(t *testing.T) {
-	c := proveServer(t, "/proof/dvpInitiator", []int64{800, 3, 900, 901, 902, 800, 903})
+	c := proveServer(t, "/proof/dvpInitiator", []int64{800, 3, 900, 901, 902, 800, 903, 0xBEEF})
 	key, mp := dvpArgs(t)
 	_, err := c.DvPInitiatorProofFromSalts(key, big.NewInt(1), big.NewInt(100), big.NewInt(0),
 		big.NewInt(5), big.NewInt(6), big.NewInt(1), big.NewInt(1), big.NewInt(7),
-		big.NewInt(3), mp, 8, big.NewInt(0xBEEF))
+		big.NewInt(3), mp, 8, big.NewInt(0xBEEF), DvPInitiatorTerms{Deadline: 1_800_000_000, GroupID: 5})
 	if err == nil {
-		t.Fatal("a 7-signal DvpInitiator statement was accepted")
+		t.Fatal("an 8-signal DvpInitiator statement was accepted")
 	}
 }
 

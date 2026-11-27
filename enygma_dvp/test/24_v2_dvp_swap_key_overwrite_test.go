@@ -77,11 +77,13 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(minSwapDeadline))
+	terms := core.DvPInitiatorTerms{Deadline: deadline.Uint64()}
 	alice, err := tc.gnarkClient.DvPInitiatorProofFromSalts(
 		core.KeyPair{PrivateKey: d.aliceSpend.PrivateKey, PublicKey: d.aliceSpend.PublicKey},
 		d.aliceSaltField, d.erc20Amount, d.erc20TokenId,
 		d.bobSpend.PublicKey, saltB, d.nftAmount, d.nftTokenId, saltA,
-		big.NewInt(0), d.aliceMerkleProof, tc.merkleDepth, vaultInt(tc.erc721VaultAddr),
+		big.NewInt(0), d.aliceMerkleProof, tc.merkleDepth, vaultInt(tc.erc721VaultAddr), terms,
 	)
 	if err != nil {
 		t.Fatalf("Alice DvPInitiatorProofFromSalts: %v", err)
@@ -90,7 +92,6 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 		Proof: proofStringsToOnchain(t, alice.Proof), Statement: alice.Statement,
 		NumberOfInputs: big.NewInt(1), NumberOfOutputs: big.NewInt(1),
 	}
-	deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(minSwapDeadline))
 	if status, err := submitLeg(t, tc, tc.auth, aliceLeg, 0, 0, deadline); err != nil || status != 1 {
 		t.Fatalf("Alice's leg: status=%d err=%v", status, err)
 	}
@@ -108,7 +109,7 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 		core.KeyPair{PrivateKey: bobNote.spend.PrivateKey, PublicKey: bobNote.spend.PublicKey},
 		bobNote.saltBField, d.erc20Amount, d.erc20TokenId,
 		d.bobSpend.PublicKey, saltB, d.nftAmount, d.nftTokenId, otherSaltA,
-		big.NewInt(int64(bobNote.merkleProof.TreeNumber)), bobNote.merkleProof, tc.merkleDepth, vaultInt(tc.erc721VaultAddr),
+		big.NewInt(int64(bobNote.merkleProof.TreeNumber)), bobNote.merkleProof, tc.merkleDepth, vaultInt(tc.erc721VaultAddr), terms,
 	)
 	if err != nil {
 		t.Fatalf("Bob DvPInitiatorProofFromSalts: %v", err)
@@ -136,8 +137,7 @@ func TestV2DvP_SwapKeyCannotBeOverwrittenOrReopened(t *testing.T) {
 	hardhatIncreaseTime(t, tc.client, minSwapDeadline+60)
 	tx, err = tc.dvp.Transact(tc.auth, "claimSwapTimeout", alice.CommitB())
 	waitOK(t, tc.client, "claimSwapTimeout (Alice)", tx, err)
-	deadline2 := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(minSwapDeadline))
-	status, err = submitLeg(t, tc, tc.auth, bobLeg, vault2Id, 0, deadline2)
+	status, err = submitLeg(t, tc, tc.auth, bobLeg, vault2Id, 0, deadline)
 	if err == nil && status == 1 {
 		t.Fatal("VULNERABLE: a closed swap (commitB) was reopened by a new leg")
 	}

@@ -43,7 +43,7 @@ func TestV2DvP_StandaloneInitiatorLeg(t *testing.T) {
 	attacker := attackerAuth(t, tc)
 
 	d := dvpSetupDeposits(t, tc, standaloneLegToken)
-	p := dvpGenerateProofs(t, tc, d)
+	p := dvpGenerateProofs(t, tc, d, new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600)))
 
 	// The attacker holds Alice's receipt and calls the vault directly instead
 	// of going through EnygmaDvp.submitPartialSettlement.
@@ -97,7 +97,7 @@ func TestV2DvP_StandaloneDeliveryLeg(t *testing.T) {
 	attacker := attackerAuth(t, tc)
 
 	d := dvpSetupDeposits(t, tc, standaloneDeliveryToken)
-	p := dvpGenerateProofs(t, tc, d)
+	p := dvpGenerateProofs(t, tc, d, new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600)))
 
 	tx, err := tc.erc721Vault.Transact(attacker, "transfer", p.bobReceipt)
 	if err != nil {

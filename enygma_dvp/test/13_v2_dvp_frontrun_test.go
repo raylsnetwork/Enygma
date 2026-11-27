@@ -1,49 +1,8 @@
 package tests
 
-// Front-running tests for EnygmaDvp.submitPartialSettlement / claimSwapTimeout.
-//
-// submitPartialSettlement is permissionless, and the swap's first leg
-// (Alice's DvP Initiator receipt) is public the moment it is broadcast. Two
-// pieces of state the contract stores for that leg are NOT authenticated by
-// Alice's proof:
-//
-//   - `deadline` is a plain function argument (not a public signal).
-//   - `initiator` is msg.sender of whoever submits the first leg, and
-//     claimSwapTimeout (HIGH-10) is restricted to that address.
-//
-// So an attacker who submits Alice's receipt first chooses the deadline and
-// would become the only address able to release Alice's locked note. The
-// contract therefore lets ANYONE call claimSwapTimeout after the deadline
-// (the refund can only go to the proven revertCommitA) and caps the deadline
-// at MAX_SWAP_DURATION so a hijacked swap cannot hold the note indefinitely.
-//
-// Each sub-test asserts a property the hardened contract must keep. A failing
-// sub-test is a regression, not a flaky test — its message starts with
-// "VULNERABLE:". Sub-tests labelled SAFE assert properties that must hold
-// either way (assets cannot be redirected).
-//
-//   HijackInitiator        Attacker submits Alice's receipt with a short
-//                          deadline. Alice must still be able to recover her
-//                          note without the attacker's cooperation.
-//   AttackerCannotRedirect (SAFE) Attacker submits leg 1, Bob settles in
-//                          time: outputs are the proven commitments.
-//   OverwritePending       After Alice's honest leg 1, the attacker resubmits
-//                          the same receipt with a different deadline. It
-//                          must not replace the stored initiator/deadline.
-//   AnyoneCanFinishLeg2    (SAFE) A third party submits Bob's receipt: the
-//                          swap settles exactly as if Bob had sent it.
-//   FarFutureDeadline      The attacker picks a deadline far in the future to
-//                          lock Alice's note for as long as possible. The
-//                          contract must reject it (SwapDeadlineTooFar).
-//
-// The attacker is a freshly generated key funded from account[0] (no key
-// material lives in this file); Alice and Bob's transactions use account[0]
-// (as in the other tests in this package).
-//
-// Prerequisites are the same as 04_v2_dvp_deadline_test.go.
-//
-// Run:
-//   cd test && CC=/usr/bin/clang go test -run TestV2DvP_FrontRun -v -timeout 900s
+// Permissionless DvP submission tests. The first leg fixes the deadline,
+// asset group and refund in its proof. A third party may submit either leg
+// with the proven terms or trigger the refund after the deadline.
 
 import (
 	"context"
@@ -67,8 +26,8 @@ const (
 	// A window under EnygmaDvp.MIN_SWAP_DURATION (15 minutes): the contract
 	// must refuse it.
 	frontRunTooShortDeadlineSeconds = int64(30)
-	// The shortest window the attacker can still pick for the victim's swap.
-	frontRunAttackerDeadlineSeconds = int64(16 * 60)
+	// A valid short swap window, with time for the first transaction to mine.
+	frontRunDeadlineSeconds = int64(16 * 60)
 )
 
 // attackerAuth returns a transactor for a fresh, funded key distinct from
@@ -155,71 +114,32 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		t.Skip("gnark server not running on localhost:8081 — skipping on-chain test")
 	}
 
-	// ── HijackInitiator ──────────────────────────────────────────────────────
-	t.Run("HijackInitiator", func(t *testing.T) {
+	t.Run("ProofBoundTerms", func(t *testing.T) {
 		tc := newDvpTestContext(t)
 		defer tc.client.Close()
-		attacker := attackerAuth(t, tc)
-		t.Logf("alice/bob=%s attacker=%s", tc.auth.From.Hex(), attacker.From.Hex())
-
+		submitter := attackerAuth(t, tc)
 		d := dvpSetupDeposits(t, tc, frontRunTokenHijack)
-		p := dvpGenerateProofs(t, tc, d)
+		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(frontRunDeadlineSeconds))
+		p := dvpGenerateProofs(t, tc, d, deadline)
 
-		// The attacker sees Alice's receipt and submits it first, with a
-		// deadline of their own choosing. One so short that they could time the
-		// swap out (claimSwapTimeout is open to anyone) before Bob can deliver
-		// must be refused.
-		tooSoon := new(big.Int).Add(currentBlockTimestamp(t, tc.client),
-			big.NewInt(frontRunTooShortDeadlineSeconds))
-		if status, err := submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, tooSoon); err == nil && status == 1 {
-			t.Fatalf("VULNERABLE: a %ds deadline was accepted, so the attacker can cancel Alice's swap before Bob can deliver", frontRunTooShortDeadlineSeconds)
-		} else if !isRevert(err, "SwapDeadlineTooSoon") {
-			t.Fatalf("a %ds deadline was refused, but not with SwapDeadlineTooSoon: status=%d err=%v", frontRunTooShortDeadlineSeconds, status, err)
-		}
-		t.Logf("a %ds deadline is refused (SwapDeadlineTooSoon)", frontRunTooShortDeadlineSeconds)
-
-		// The shortest deadline still allowed.
-		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client),
-			big.NewInt(frontRunAttackerDeadlineSeconds))
-		status, err := submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, deadline)
-		if err != nil || status != 1 {
-			t.Skipf("attacker's first-leg submission was rejected (status=%d err=%v) — front-run not possible", status, err)
-		}
-		t.Logf("attacker's submission of Alice's receipt was ACCEPTED (deadline=%s)", deadline)
-
-		// Bob tries to complete the swap after the attacker's deadline.
-		hardhatIncreaseTime(t, tc.client, frontRunAttackerDeadlineSeconds+5)
-		_, errBob := submitLeg(t, tc, tc.auth, p.bobReceipt, 1, 1, big.NewInt(0))
-		if errBob == nil {
-			t.Fatal("Bob's post-deadline second leg unexpectedly succeeded")
-		}
-		t.Logf("Bob's second leg is dead after the attacker's short deadline: %v", errBob)
-
-		// The property under test: Alice, the note owner, must be able to
-		// release her locked note without the attacker.
-		tx, errAlice := tc.dvp.Transact(tc.auth, "claimSwapTimeout", p.commitB)
-		if errAlice == nil {
-			if _, err := bind.WaitMined(tc.ctx, tc.client, tx); err != nil {
-				t.Fatalf("wait Alice claimSwapTimeout: %v", err)
+		t.Run("changed deadline", func(t *testing.T) {
+			changed := new(big.Int).Add(deadline, big.NewInt(60))
+			if status, err := submitLeg(t, tc, submitter, p.aliceReceipt, 0, 0, changed); !isRevert(err, "SwapDeadlineMismatch") {
+				t.Fatalf("changed deadline gave status %d and error %v, want SwapDeadlineMismatch", status, err)
 			}
-			t.Log("Alice recovered her note herself — initiator is not hijackable")
-			return
-		}
-		t.Errorf("VULNERABLE: Alice cannot claimSwapTimeout after a third party submitted her receipt first: %v", errAlice)
-		if isRevert(errAlice, "Unauthorized") {
-			t.Log("  reason: claimSwapTimeout is restricted to msg.sender of the FIRST submission")
-		}
+		})
+		t.Run("changed group", func(t *testing.T) {
+			if status, err := submitLeg(t, tc, submitter, p.aliceReceipt, 0, 1, deadline); !isRevert(err, "SwapGroupMismatch") {
+				t.Fatalf("changed group gave status %d and error %v, want SwapGroupMismatch", status, err)
+			}
+		})
 
-		// Show the dependency: only the attacker can release the note.
-		txA, errAtk := tc.dvp.Transact(attacker, "claimSwapTimeout", p.commitB)
-		if errAtk != nil {
-			t.Errorf("attacker's own claimSwapTimeout also failed: %v", errAtk)
-			return
+		if status, err := submitLeg(t, tc, submitter, p.aliceReceipt, 0, 0, deadline); err != nil || status != 1 {
+			t.Fatalf("proven terms gave status %d and error %v", status, err)
 		}
-		if _, err := bind.WaitMined(tc.ctx, tc.client, txA); err != nil {
-			t.Fatalf("wait attacker claimSwapTimeout: %v", err)
-		}
-		t.Log("  only the attacker's claimSwapTimeout succeeds — Alice's note is locked at their discretion")
+		hardhatIncreaseTime(t, tc.client, frontRunDeadlineSeconds+5)
+		tx, err := tc.dvp.Transact(tc.auth, "claimSwapTimeout", p.commitB)
+		waitOK(t, tc.client, "claimSwapTimeout by the note owner", tx, err)
 	})
 
 	// ── AttackerCannotRedirect (SAFE) ────────────────────────────────────────
@@ -229,10 +149,8 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		attacker := attackerAuth(t, tc)
 
 		d := dvpSetupDeposits(t, tc, frontRunTokenRedirect)
-		p := dvpGenerateProofs(t, tc, d)
-
-		// Attacker front-runs leg 1 but with a generous deadline this time.
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600))
+		p := dvpGenerateProofs(t, tc, d, deadline)
 		status, err := submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, deadline)
 		if err != nil || status != 1 {
 			t.Skipf("attacker's first-leg submission was rejected (status=%d err=%v)", status, err)
@@ -276,10 +194,8 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		attacker := attackerAuth(t, tc)
 
 		d := dvpSetupDeposits(t, tc, frontRunTokenOverwrite)
-		p := dvpGenerateProofs(t, tc, d)
-
-		// Alice submits honestly with a long deadline.
 		longDeadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600))
+		p := dvpGenerateProofs(t, tc, d, longDeadline)
 		status, err := submitLeg(t, tc, tc.auth, p.aliceReceipt, 0, 0, longDeadline)
 		if err != nil || status != 1 {
 			t.Fatalf("Alice's honest first leg failed (status=%d err=%v)", status, err)
@@ -288,7 +204,7 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		// Attacker resubmits the SAME receipt with a short deadline, hoping to
 		// replace the stored initiator/deadline.
 		shortDeadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client),
-			big.NewInt(frontRunAttackerDeadlineSeconds))
+			big.NewInt(frontRunDeadlineSeconds))
 		status, err = submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, shortDeadline)
 		if err != nil || status != 1 {
 			t.Logf("SAFE: resubmission rejected (status=%d err=%v)", status, err)
@@ -297,7 +213,7 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		t.Errorf("VULNERABLE: a second submission of the same first-leg receipt was accepted and can overwrite the pending swap")
 
 		// Confirm the overwrite took effect: Alice should be locked out.
-		hardhatIncreaseTime(t, tc.client, frontRunAttackerDeadlineSeconds+5)
+		hardhatIncreaseTime(t, tc.client, frontRunDeadlineSeconds+5)
 		_, errAlice := tc.dvp.Transact(tc.auth, "claimSwapTimeout", p.commitB)
 		if errAlice != nil {
 			t.Errorf("  and Alice's claimSwapTimeout now fails: %v", errAlice)
@@ -313,9 +229,8 @@ func TestV2DvP_FrontRun(t *testing.T) {
 		attacker := attackerAuth(t, tc)
 
 		d := dvpSetupDeposits(t, tc, frontRunTokenLeg2)
-		p := dvpGenerateProofs(t, tc, d)
-
 		deadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client), big.NewInt(3600))
+		p := dvpGenerateProofs(t, tc, d, deadline)
 		if status, err := submitLeg(t, tc, tc.auth, p.aliceReceipt, 0, 0, deadline); err != nil || status != 1 {
 			t.Fatalf("Alice's first leg failed (status=%d err=%v)", status, err)
 		}
@@ -346,26 +261,23 @@ func TestV2DvP_FrontRun(t *testing.T) {
 			t.Log("SAFE: a third party can finish the swap, but only into the proven outputs")
 		}
 	})
-	// ── FarFutureDeadline ────────────────────────────────────────────────────
-	t.Run("FarFutureDeadline", func(t *testing.T) {
-		tc := newDvpTestContext(t)
-		defer tc.client.Close()
-		attacker := attackerAuth(t, tc)
-
-		d := dvpSetupDeposits(t, tc, frontRunTokenFar)
-		p := dvpGenerateProofs(t, tc, d)
-
-		// One year out — far beyond MAX_SWAP_DURATION (30 days).
-		farDeadline := new(big.Int).Add(currentBlockTimestamp(t, tc.client),
-			big.NewInt(365*24*3600))
-		status, err := submitLeg(t, tc, attacker, p.aliceReceipt, 0, 0, farDeadline)
-		if err != nil || status != 1 {
-			t.Logf("SAFE: far-future deadline rejected (status=%d err=%v)", status, err)
-			if !isRevert(err, "SwapDeadlineTooFar") {
-				t.Errorf("expected SwapDeadlineTooFar, got: %v", err)
+	for _, tc := range []struct {
+		name        string
+		id, seconds int64
+		revert      string
+	}{
+		{"DeadlineTooSoon", 1_114, frontRunTooShortDeadlineSeconds, "SwapDeadlineTooSoon"},
+		{"FarFutureDeadline", frontRunTokenFar, 365 * 24 * 3600, "SwapDeadlineTooFar"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newDvpTestContext(t)
+			defer ctx.client.Close()
+			d := dvpSetupDeposits(t, ctx, tc.id)
+			deadline := new(big.Int).Add(currentBlockTimestamp(t, ctx.client), big.NewInt(tc.seconds))
+			p := dvpGenerateProofs(t, ctx, d, deadline)
+			if status, err := submitLeg(t, ctx, ctx.auth, p.aliceReceipt, 0, 0, deadline); !isRevert(err, tc.revert) {
+				t.Fatalf("deadline window of %d seconds gave status %d and error %v, want %s", tc.seconds, status, err, tc.revert)
 			}
-			return
-		}
-		t.Errorf("VULNERABLE: a deadline one year out was accepted — a front-runner can lock Alice's note for that long")
-	})
+		})
+	}
 }

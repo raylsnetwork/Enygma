@@ -158,6 +158,8 @@ interface IEnygmaDvp {
 
     error InvalidPartialProofReceipt();
     error SwapDeadlineExpired();
+    error SwapDeadlineMismatch();
+    error SwapGroupMismatch();
     error SwapDeadlineMustBeInFuture();
     error SwapNotFound();
     error SwapClosed();

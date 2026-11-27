@@ -3,7 +3,7 @@
 **Test:** `TestV2DvP_WithDeadline`
 **File:** `test/04_v2_dvp_deadline_test.go`
 
-Alice swaps 50 USDT (ERC20) for Bob's ERC721 ticket. A deadline is attached to the swap.
+Alice swaps 50 USDT (ERC20) for Bob's ERC721 ticket. Alice proves the deadline and input vault group before submitting the first leg.
 Three sub-scenarios test the full lifecycle of the deadline-protected DvP.
 
 The setup (deposits + proof generation) is identical across all three scenarios.
@@ -48,11 +48,11 @@ sequenceDiagram
     participant ERC20Vault as Erc20CoinVault
     participant NFTVault as Erc721CoinVault
 
-    Alice->>DVP: submitPartialSettlement(receipt_A, deadline=now+60s)
+    Alice->>DVP: submitPartialSettlement(receipt_A, vaultId=0, groupId=0, provenDeadline)
     DVP->>DVP: verify proof_A (DvPInitiator VK)
     DVP->>ERC20Vault: registerCoins([COMMIT_B])
     DVP-->>Alice: emit SwapInitiated(swapId, COMMIT_B, COMMIT_A, deadline)
-    Note over DVP: _pendingTransactions[COMMIT_B] = {targetId: COMMIT_A, deadline}
+    Note over DVP: _pendingTransactions[COMMIT_B] = {targetId: COMMIT_A, groupId: 0, deadline: provenDeadline}
 
     Bob->>DVP: submitPartialSettlement(receipt_B)  ← before deadline
     DVP->>DVP: verify proof_B (DvPDestination VK)
@@ -75,7 +75,7 @@ sequenceDiagram
     participant ERC20Vault as Erc20CoinVault
     participant Hardhat as Hardhat Node
 
-    Alice->>DVP: submitPartialSettlement(receipt_A, deadline=now+60s)
+    Alice->>DVP: submitPartialSettlement(receipt_A, vaultId=0, groupId=0, provenDeadline)
     DVP->>ERC20Vault: registerCoins([COMMIT_B])
     DVP-->>Alice: emit SwapInitiated(swapId, deadline)
 
@@ -107,7 +107,7 @@ sequenceDiagram
     participant ERC20Vault as Erc20CoinVault
     participant Hardhat as Hardhat Node
 
-    Alice->>DVP: submitPartialSettlement(receipt_A, deadline=now+60s)
+    Alice->>DVP: submitPartialSettlement(receipt_A, vaultId=0, groupId=0, provenDeadline)
     DVP->>ERC20Vault: registerCoins([COMMIT_B])
     DVP-->>Alice: emit SwapInitiated(swapId, deadline)
 
@@ -125,7 +125,7 @@ sequenceDiagram
 
 ---
 
-## Statement Layout (DvP Initiator, 8 elements)
+## Statement Layout (DvP Initiator, 10 elements)
 
 | Index | Field | Value |
 |-------|-------|-------|
@@ -137,6 +137,8 @@ sequenceDiagram
 | 5 | `COMMIT_A` | Alice's NFT output |
 | 6 | `REVERT_COMMIT_A` | Alice's USDT fallback if timeout |
 | 7 | `counterVault` | Address of the vault Alice must be paid from (the NFT vault) |
+| 8 | `deadline` | Unix timestamp in seconds proved by Alice |
+| 9 | `groupId` | Alice's input vault group (0 in this flow) |
 
 ## Statement Layout (DvP Destination, 6 elements)
 
@@ -153,7 +155,7 @@ sequenceDiagram
 
 | Contract | Function | Purpose |
 |----------|----------|---------|
-| `EnygmaDvp` | `submitPartialSettlement(receipt, deadline)` | Submit first or second leg |
+| `EnygmaDvp` | `submitPartialSettlement(receipt, vaultId, groupId, deadline)` | Submit first or second leg |
 | `EnygmaDvp` | `claimSwapTimeout(commitB)` | Revert after deadline passes |
 | `Erc20CoinVault` | `registerCoins` | Insert COMMIT_B into ERC20 tree |
 | `Erc721CoinVault` | `registerCoins` | Insert COMMIT_A into NFT tree on settle |

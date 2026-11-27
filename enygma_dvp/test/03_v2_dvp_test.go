@@ -233,6 +233,7 @@ func TestV2DvP(t *testing.T) {
 		aliceProof,
 		merkleDepth,
 		vaultInt(nftVaultAddr),
+		core.DvPInitiatorTerms{Deadline: currentBlockTimestamp(t, client).Uint64() + 3600},
 	)
 	if err != nil {
 		t.Fatalf("DvPInitiatorProof: %v", err)

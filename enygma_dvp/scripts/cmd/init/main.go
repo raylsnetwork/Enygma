@@ -404,6 +404,13 @@ func (d *dvpInitializer) registerGroupPairs() error {
 	if err != nil {
 		return fmt.Errorf("failed to register swap group pair: %w", err)
 	}
+	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerVaultSwapPair",
+		big.NewInt(0),
+		big.NewInt(1),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register ERC20/ERC721 swap vault pair: %w", err)
+	}
 	return nil
 }
 

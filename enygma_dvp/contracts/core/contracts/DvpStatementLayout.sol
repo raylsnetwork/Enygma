@@ -9,7 +9,7 @@ pragma solidity ^0.8.24;
 ///         rejects a library-qualified constant as an array length, and
 ///         the lengths size calldata public-signal arrays.
 library DvpStatementLayout {
-    // DvpInitiator statement layout (DVP_INITIATOR_LEN = 8 public signals).
+    // DvpInitiator statement layout (DVP_INITIATOR_LEN = 10 public signals).
     uint256 internal constant DVP_INITIATOR_MESSAGE_OFFSET = 0;
     uint256 internal constant DVP_INITIATOR_MESSAGE_SIZE = 1;
     uint256 internal constant DVP_INITIATOR_TREE_NUMBER_OFFSET = 1;
@@ -26,6 +26,10 @@ library DvpStatementLayout {
     uint256 internal constant DVP_INITIATOR_REVERT_COMMIT_A_SIZE = 1;
     uint256 internal constant DVP_INITIATOR_COUNTER_VAULT_OFFSET = 7;
     uint256 internal constant DVP_INITIATOR_COUNTER_VAULT_SIZE = 1;
+    uint256 internal constant DVP_INITIATOR_DEADLINE_OFFSET = 8;
+    uint256 internal constant DVP_INITIATOR_DEADLINE_SIZE = 1;
+    uint256 internal constant DVP_INITIATOR_GROUP_ID_OFFSET = 9;
+    uint256 internal constant DVP_INITIATOR_GROUP_ID_SIZE = 1;
 
     // DvpDestination statement layout (DVP_DESTINATION_LEN = 6 public signals).
     uint256 internal constant DVP_DESTINATION_MESSAGE_OFFSET = 0;
@@ -52,6 +56,6 @@ library DvpStatementLayout {
     uint256 internal constant PRIVATE_MINT_CIPHER_TEXT_SIZE = 1;
 }
 
-uint256 constant DVP_INITIATOR_LEN = 8;
+uint256 constant DVP_INITIATOR_LEN = 10;
 uint256 constant DVP_DESTINATION_LEN = 6;
 uint256 constant PRIVATE_MINT_LEN = 4;
