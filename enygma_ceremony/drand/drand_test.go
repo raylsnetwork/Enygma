@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -110,6 +111,25 @@ func TestFetch(t *testing.T) {
 	t.Run("fails when no relay's answer verifies", func(t *testing.T) {
 		if _, err := Fetch(context.Background(), http.DefaultClient, []string{bad}, round); !errors.Is(err, ErrSignature) {
 			t.Fatalf("Fetch: %v, want %v", err, ErrSignature)
+		}
+	})
+	// Audit I1: a relay's failure is reported by its status code, not the
+	// reason phrase it sent, which it chose and which a seal prints.
+	t.Run("reports a failure by its status code", func(t *testing.T) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, buf, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			fmt.Fprint(buf, "HTTP/1.1 500 \x1b[2J\x1b[HWrote the SRS\r\nContent-Length: 0\r\n\r\n")
+			_ = buf.Flush() // the client reads what got through
+		}))
+		defer s.Close()
+		_, err := Fetch(context.Background(), http.DefaultClient, []string{s.URL}, round)
+		if err == nil || strings.Contains(err.Error(), "\x1b") || strings.Contains(err.Error(), "Wrote") || !strings.Contains(err.Error(), "500") {
+			t.Fatalf("Fetch: %q, want the relay's status code alone", err)
 		}
 	})
 	t.Run("asks no relay for a round not out yet", func(t *testing.T) {

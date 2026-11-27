@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,10 +30,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"enygma_ceremony/ceremony"
 	"enygma_ceremony/coordinator"
+	"enygma_ceremony/internal/termsafe"
 	"enygma_ceremony/transcript"
 )
 
@@ -248,7 +249,7 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 			case err != nil && unreachable(err):
 				// Still this participant's turn until its deadline, or the
 				// upload went in: asking again says which.
-				fmt.Fprintf(c.Out, "Lost the coordinator during your turn (%v); asking again.\n", err)
+				c.retrying("Lost the coordinator during your turn", err, "asking again")
 				if err := sleep(ctx, 5*time.Second); err != nil {
 					return Result{}, err
 				}
@@ -303,11 +304,22 @@ const ReplyTimeout = 5 * time.Minute
 //     (R-057), so a coordinator that takes a connection and says nothing
 //     cannot hang the program. A body, such as a state, takes as long as it
 //     takes.
+//   - its errors carry no words that whoever answered chose (audit M1): a
+//     certificate that does not verify, whose names its maker chose, is
+//     errCertificate, which trying again does not get past; a proxy that
+//     refuses the connection is errProxy, with its status code but not its
+//     reason phrase.
 func HTTPClient() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = ReplyTimeout
+	t.OnProxyConnectResponse = func(_ context.Context, proxy *url.URL, _ *http.Request, resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("%w: %s answered %d", errProxy, proxy.Redacted(), resp.StatusCode)
+		}
+		return nil
+	}
 	return &http.Client{
-		Transport: t,
+		Transport: plainErrors{t},
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 			return fmt.Errorf("%w to %s", errRedirected, req.URL.Redacted())
 		},
@@ -317,6 +329,27 @@ func HTTPClient() *http.Client {
 // errRedirected is a coordinator redirecting a request: not something trying
 // again gets past.
 var errRedirected = errors.New("a coordinator never redirects, and this one redirected")
+
+// errCertificate is a TLS certificate that does not verify for the address
+// asked: the server is not the one the address names, or something on the
+// network answered in its place. Not something trying again gets past.
+var errCertificate = errors.New("the TLS certificate presented does not verify for this address: it is not the server's own, or something on your network answered in its place")
+
+// errProxy is the proxy this machine sends its connections through refusing
+// to connect to the server.
+var errProxy = errors.New("your network's proxy refused to connect")
+
+// plainErrors is a transport whose failed TLS verification is errCertificate,
+// naming the host asked for, and not the certificate's own text.
+type plainErrors struct{ rt http.RoundTripper }
+
+func (p plainErrors) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := p.rt.RoundTrip(req)
+	if v := (*tls.CertificateVerificationError)(nil); errors.As(err, &v) {
+		return nil, fmt.Errorf("%w (%s)", errCertificate, req.URL.Host)
+	}
+	return resp, err
+}
 
 // callTimeout bounds one of the small JSON exchanges with a coordinator.
 const callTimeout = 30 * time.Second
@@ -420,11 +453,19 @@ func (c *Client) patiently(ctx context.Context, try func() error) error {
 		if time.Since(failingSince) > c.Patience {
 			return fmt.Errorf("the coordinator has not answered for %s: %w", c.Patience, err)
 		}
-		fmt.Fprintf(c.Out, "Cannot reach the coordinator (%v); trying again.\n", err)
+		c.retrying("Cannot reach the coordinator", err, "trying again")
 		if err := sleep(ctx, 5*time.Second); err != nil {
 			return err
 		}
 	}
+}
+
+// retrying tells the participant that what failed with err is being tried
+// again. The error is one short line (termsafe.Short): it may carry the
+// words of whatever answered, which must not draw a line of this program's
+// own, such as a receipt (audit M1).
+func (c *Client) retrying(what string, err error, next string) {
+	fmt.Fprintf(c.Out, "%s (%s); %s.\n", what, termsafe.Short(err.Error(), 300), next)
 }
 
 // contribute takes a turn: downloads the state, contributes, uploads, all
@@ -557,21 +598,10 @@ func (c *Client) confirm(ctx context.Context, index uint32, hash [32]byte, prev 
 	return fmt.Errorf("the coordinator's transcript does not hold your contribution %d with sha256 %s", index, want)
 }
 
-// printable is s, from the coordinator, with no control or formatting
-// characters, which a terminal could take as commands (escape sequences, or
-// text reordered to show something else), and no longer than a line or two.
-func printable(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-		return r
-	}, s)
-	if r := []rune(s); len(r) > 300 {
-		s = string(r[:300]) + "…"
-	}
-	return s
-}
+// printable is s, from the coordinator, as one line of plain text, which a
+// terminal shows and does not act on (termsafe.Line), no longer than a line
+// or two.
+func printable(s string) string { return termsafe.Short(s, 300) }
 
 // keepTurn tells the coordinator every c.Heartbeat, until the returned stop
 // is called, that this participant is still taking its turn, so that a turn
@@ -808,7 +838,7 @@ func replyError(code int, data []byte, retryAfter string) error {
 // unreachable reports whether err is the coordinator unreachable, or
 // answering that it is failing: what trying again may get past.
 func unreachable(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errRedirected) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errRedirected) || errors.Is(err, errCertificate) {
 		return false
 	}
 	var h *httpError

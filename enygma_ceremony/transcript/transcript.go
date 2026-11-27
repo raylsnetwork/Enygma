@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"enygma_ceremony/ceremony"
+	"enygma_ceremony/internal/termsafe"
 )
 
 // Entry is one accepted contribution.
@@ -454,7 +455,7 @@ func download(ctx context.Context, client *http.Client, url, dir, path, hash str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("%s: %s", url, resp.Status)
+		return 0, fmt.Errorf("%s: %w", url, statusError(resp.StatusCode))
 	}
 	f, err := os.CreateTemp(dir, ".download-")
 	if err != nil {
@@ -482,6 +483,12 @@ func download(ctx context.Context, client *http.Client, url, dir, path, hash str
 	return n, nil
 }
 
+// statusError is an answer other than 200, by its code: never the reason
+// phrase a server sent beside it, which it chose (audit M2).
+func statusError(code int) error {
+	return fmt.Errorf("answered %s", termsafe.Status(code))
+}
+
 // getJSON decodes url's JSON body into v.
 func getJSON(ctx context.Context, client *http.Client, url string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -494,7 +501,7 @@ func getJSON(ctx context.Context, client *http.Client, url string, v any) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: %s", url, resp.Status)
+		return fmt.Errorf("%s: %w", url, statusError(resp.StatusCode))
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, MaxJSON)).Decode(v)
 }

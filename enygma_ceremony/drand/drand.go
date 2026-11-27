@@ -22,6 +22,8 @@ import (
 	"time"
 
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
+
+	"enygma_ceremony/internal/termsafe"
 )
 
 // ChainHash names quicknet, the drand chain whose rounds this package takes.
@@ -149,7 +151,7 @@ func fetchFrom(ctx context.Context, client *http.Client, relay string, round uin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return [32]byte{}, fmt.Errorf("%s", resp.Status)
+		return [32]byte{}, errors.New(termsafe.Status(resp.StatusCode))
 	}
 	// Only the signature counts: Verify checks it is of the round asked for.
 	var b struct {

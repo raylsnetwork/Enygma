@@ -67,6 +67,11 @@ The receipt is yours only if this program made it. If the coordinator says you h
 already, the program checks that against the contributions it made itself in this run, and against
 the coordinator's transcript; for a contribution made in an earlier run, give the sha256 that run
 printed: `ceremony join -mine <sha256>`. It never prints the coordinator's word as your receipt.
+Nothing it prints from elsewhere can draw on your terminal either: a coordinator's messages, a
+server's or a proxy's errors, a certificate's names, the names in a state. It drops the control
+characters that start escape sequences, and keeps such text inside a line of its own, so it
+cannot start a line that looks like a receipt. A certificate that does not verify stops the
+program at once, without showing what the certificate says.
 
 ## Running a ceremony
 
@@ -351,7 +356,9 @@ Anyone can check a ceremony without trusting the coordinator:
   hold control characters.
 - **State files:** a state is accepted only as the one encoding of what it holds (points written
   compressed), so its sha256 names it; a Phase 2 must hold at least one circuit, and each circuit
-  at most 255 commitments, as gnark allows. `join` also downloads at most `-max-state` (64 MiB,
+  at most 255 commitments, as gnark allows. A Phase 2's ceremony and circuit names are plain names
+  (letters, digits, `_`, `.` and `-`, at most 64 bytes), so no name in a state a coordinator
+  hands out can act on a terminal or a shell. `join` also downloads at most `-max-state` (64 MiB,
   room for Phase 1 at 2^18) for a state, which bounds the memory a coordinator can make a
   participant's program use; raise it only for a ceremony announced as larger.
 - **The keys:**
@@ -423,6 +430,8 @@ Anyone can check a ceremony without trusting the coordinator:
   | `coordinator` `FuzzCleanName` | A name is shown tidied, with no control, invisible or unprintable characters, and at least one letter or digit. |
   | `coordinator` `FuzzRequests` | No request makes the coordinator panic or answer 5xx, or breaks its transcript. |
   | `coordinator` `FuzzUpload` | A turn holder's upload is accepted only if it is a genuine contribution, not edited. The transcript holds what was accepted, and only that. |
+  | `internal/termsafe` `FuzzLine` | Any text, made one line to print, is valid UTF-8 with no line break, escape or C1 control, and no run of spaces or of fillers that draw empty cells. |
+  | `internal/termsafe` `FuzzWriter` | Whatever the program prints, split anywhere across writes, reaches the terminal as valid UTF-8 with no escape, carriage return or C1 control. |
 
   The targets that need a genuine contribution make one in each fuzzing process. The fuzzer
   mutates an edit script applied to it (`internal/fuzzedit`), so the script means the same
@@ -476,6 +485,7 @@ On an Apple-silicon laptop:
 | `cmd/ceremony/` | The program. |
 | `internal/testcircuits/` | Two small circuits (one with an in-circuit commitment) the tests run whole ceremonies for. |
 | `internal/fuzzedit/` | Edit scripts, for fuzz targets that edit a contribution made in the fuzzing process. |
+| `internal/termsafe/` | What keeps text from elsewhere from acting on a terminal: one line of plain text for a value, and a filter on everything the program prints. |
 
 The module pins the gnark version every protocol's circuits are compiled with (v0.14.0): the
 `.r1cs` files and state files are gnark's own encodings, which can change between versions.

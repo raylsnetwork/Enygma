@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"enygma_ceremony/internal/termsafe"
 )
 
 // A participant of a GitHub phase signs in on GitHub's device flow from their
@@ -80,7 +82,7 @@ func (s *Server) githubUser(ctx context.Context, token string) (githubAccount, e
 	case http.StatusUnauthorized: // a 403 is GitHub's rate limit, not the token
 		return githubAccount{}, errGitHubToken
 	default:
-		return githubAccount{}, fmt.Errorf("GitHub answered %s", resp.Status)
+		return githubAccount{}, fmt.Errorf("GitHub answered %s", termsafe.Status(resp.StatusCode))
 	}
 	var a githubAccount
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&a); err != nil {
@@ -89,7 +91,7 @@ func (s *Server) githubUser(ctx context.Context, token string) (githubAccount, e
 	// An answer missing a field would admit an account of no age, or many
 	// accounts as github:0 (audit R-047); a login is shown, so it is a name.
 	if a.ID <= 0 || a.Created.IsZero() {
-		return githubAccount{}, fmt.Errorf("GitHub's answer has no account id or creation time: %+v", a)
+		return githubAccount{}, fmt.Errorf("GitHub's answer has no account id or creation time (id %d)", a.ID)
 	}
 	if name, err := cleanName(a.Login); err != nil || name != a.Login {
 		return githubAccount{}, fmt.Errorf("GitHub's answer has a login %q that is not a name", a.Login)
@@ -129,7 +131,7 @@ func (s *Server) githubOurs(ctx context.Context, token string) error {
 	case http.StatusUnauthorized:
 		return errors.New("GitHub refused the app's client ID and secret: check -github-client-secret-file")
 	default:
-		return fmt.Errorf("GitHub answered %s checking the token", resp.Status)
+		return fmt.Errorf("GitHub answered %s checking the token", termsafe.Status(resp.StatusCode))
 	}
 }
 

@@ -531,8 +531,9 @@ ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_cer
 	@cd enygma_ceremony/dist && shasum -a 256 ceremony-* | tee SHA256SUMS
 
 # What the ceremony reads from others, fuzzed: state files (an upload, or a
-# transcript a verifier fetches), transcripts, drand's beacon, names, and
-# every request to the coordinator. go test runs each target's seeds; this
+# transcript a verifier fetches), transcripts, drand's beacon, names, every
+# request to the coordinator, and the filters that print what others wrote
+# to a terminal. go test runs each target's seeds; this
 # runs a target's package's tests, then searches for FUZZTIME. An input that
 # fails one is saved under its package's testdata/fuzz, where go test then
 # runs it every time: commit it with the fix. A target no longer in its
@@ -540,7 +541,8 @@ ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_cer
 CEREMONY_FUZZ := ceremony.FuzzDecode ceremony.FuzzCheck ceremony.FuzzCheckEdits ceremony.FuzzContribute \
 	ceremony.FuzzReencode ceremony.FuzzPhase2Shapes \
 	transcript.FuzzLoad transcript.FuzzFetch drand.FuzzVerify \
-	coordinator.FuzzCleanName coordinator.FuzzRequests coordinator.FuzzUpload
+	coordinator.FuzzCleanName coordinator.FuzzRequests coordinator.FuzzUpload \
+	internal/termsafe.FuzzLine internal/termsafe.FuzzWriter
 FUZZTIME ?= 1m
 # How long go test spends shrinking each input it keeps (60 s by default).
 # A target taking two state files spent nearly all its time there: 62

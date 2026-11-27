@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"enygma_ceremony/ceremony"
+	"enygma_ceremony/internal/termsafe"
 )
 
 const usage = `usage: ceremony [<command> [flags]]
@@ -62,9 +63,12 @@ var defaultURL string
 func main() {
 	disableCoreDumps()
 	if isChild() {
-		os.Exit(runChild(os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(runChild(os.Stdin, os.Stdout, os.Stderr)) // stdout carries the contribution, and stderr JSON, to the parent
 	}
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	// Everything a command prints goes through termsafe's writer: text a
+	// coordinator, a transcript's host or a state chose may reach any line,
+	// and none of it may act on the terminal (audit M1 to M3).
+	os.Exit(run(os.Args[1:], termsafe.NewWriter(os.Stdout), termsafe.NewWriter(os.Stderr)))
 }
 
 // errUsage marks an error in how a command was called, not in what it did.
@@ -111,7 +115,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := body(fs.Args(), stdout); err != nil {
-		fmt.Fprintf(stderr, "ceremony %s: %v\n", args[0], err)
+		printError(stderr, "ceremony "+args[0], err)
 		if errors.Is(err, errUsage) {
 			fs.Usage()
 			return 2
@@ -119,6 +123,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// printError prints a command's error on w, after what: as one line, and
+// not an endless one, since an error can carry a server's words, which must
+// not start a line that looks like this program's (audit M1).
+func printError(w io.Writer, what string, err error) {
+	fmt.Fprintf(w, "%s: %s\n", what, termsafe.Short(err.Error(), 1000))
 }
 
 // contribute adds this machine's randomness to a state handed over by hand.
@@ -310,7 +321,9 @@ func info(fs *flag.FlagSet) func([]string, io.Writer) error {
 	}
 }
 
-// describe says in a line what a state file holds.
+// describe says in a line what a state file holds. A Phase 2's names come
+// from the file, which a coordinator may have made: decoding refuses any
+// but plain ones, which no terminal acts on (audit M3).
 func describe(i ceremony.Info) string {
 	switch i.Kind {
 	case ceremony.KindPhase1:

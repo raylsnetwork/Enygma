@@ -53,6 +53,9 @@ func CircuitsIn(dir string) ([]Circuit, error) {
 	circuits := make([]Circuit, len(paths))
 	for i, p := range paths {
 		name := strings.TrimSuffix(filepath.Base(p), ".r1cs")
+		if err := checkName("circuit", name); err != nil {
+			return nil, fmt.Errorf("%q: %w", p, err)
+		}
 		circuits[i] = Circuit{Name: name, R1CS: p, PK: name + "PK.key", VK: name + "VK.key"}
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ManifestFile))
@@ -135,6 +138,9 @@ func (s *phase2State) decode(r *body) error {
 	if s.ceremony, err = getString(r); err != nil {
 		return err
 	}
+	if err := checkName("ceremony", s.ceremony); err != nil {
+		return fmt.Errorf("%w: %v", ErrFormat, err)
+	}
 	var count uint16
 	if err := get(r, &s.srs, &s.index); err != nil {
 		return err
@@ -157,6 +163,9 @@ func (s *phase2State) decode(r *body) error {
 		if c.name, err = getString(r); err != nil {
 			return err
 		}
+		if err := checkName("circuit", c.name); err != nil {
+			return fmt.Errorf("%w: %v", ErrFormat, err)
+		}
 		if err := get(r, &c.r1cs); err != nil {
 			return err
 		}
@@ -168,6 +177,32 @@ func (s *phase2State) decode(r *body) error {
 		if n := len(c.mpc.Parameters.G1.SigmaCKK); n > maxCommitments {
 			return fmt.Errorf("%w: circuit %q: %d commitments, more than gnark takes (%d)", ErrFormat, c.name, n, maxCommitments)
 		}
+	}
+	return nil
+}
+
+// maxName is the longest a Phase 2's ceremony or circuit name may be.
+const maxName = 64
+
+// checkName refuses a ceremony or circuit name (what says which) that is not
+// plain: letters, digits, '_', '.' and '-', starting with a letter or a
+// digit, at most maxName bytes. Every name of Enygma's protocols and
+// circuits is one. A Phase 2's names come from its state file, which a
+// coordinator may have made: they are printed, logged, and put in file
+// paths and in the commands the coordinator prints, so a plain name is one
+// no terminal or shell acts on (audit M2, M3).
+func checkName(what, name string) error {
+	ok := name != "" && len(name) <= maxName
+	for i := 0; ok && i < len(name); i++ {
+		switch b := name[i]; {
+		case 'a' <= b && b <= 'z', 'A' <= b && b <= 'Z', '0' <= b && b <= '9':
+		case (b == '_' || b == '.' || b == '-') && i > 0:
+		default:
+			ok = false
+		}
+	}
+	if !ok {
+		return fmt.Errorf("a %s name must be letters, digits, '_', '.' and '-', starting with a letter or digit, at most %d bytes: not %q", what, maxName, name)
 	}
 	return nil
 }
@@ -251,11 +286,16 @@ type sealInput struct {
 // than trusting a file. gnark evaluates a circuit's constraints one by one,
 // so the circuits are started in parallel.
 func start(ceremony, srsPath string, circuits []Circuit) (*phase2State, []sealInput, error) {
-	if ceremony == "" {
-		return nil, nil, errors.New("a ceremony needs a name")
+	if err := checkName("ceremony", ceremony); err != nil {
+		return nil, nil, err
 	}
 	if len(circuits) == 0 {
 		return nil, nil, errors.New("no circuits")
+	}
+	for _, c := range circuits {
+		if err := checkName("circuit", c.Name); err != nil {
+			return nil, nil, err
+		}
 	}
 	srs, srsHash, err := readSRS(srsPath)
 	if err != nil {

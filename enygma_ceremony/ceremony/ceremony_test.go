@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -414,6 +415,21 @@ func TestNewPhase2RefusesCircuitTooLargeForSRS(t *testing.T) {
 	}
 	if _, err := NewPhase2(f.path("p2-small"), "test", srs, f.circuits); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("NewPhase2: %v, want %v", err, ErrTooLarge)
+	}
+}
+
+// TestNewPhase2RefusesNamesThatAreNotPlain (audit M3): Phase 2 starts only
+// for a ceremony and circuits with plain names, which every state of it
+// then carries, and decoding one requires.
+func TestNewPhase2RefusesNamesThatAreNotPlain(t *testing.T) {
+	f := newFixture(t)
+	circuits := slices.Clone(f.circuits)
+	circuits[0].Name = "Cubic\x1b[2J"
+	if _, err := NewPhase2(f.path("p2-circuit"), "test", f.srs, circuits); err == nil || strings.Contains(err.Error(), "\x1b") {
+		t.Fatalf("NewPhase2 of a circuit named with an escape: %v, want it refused", err)
+	}
+	if _, err := NewPhase2(f.path("p2-ceremony"), "test\x1b[2J", f.srs, f.circuits); err == nil || strings.Contains(err.Error(), "\x1b") {
+		t.Fatalf("NewPhase2 of a ceremony named with an escape: %v, want it refused", err)
 	}
 }
 
