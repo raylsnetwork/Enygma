@@ -18,6 +18,13 @@
 // keeps the slot numbering and verifies no proof. make dvp-stack passes it for
 // a local chain; slots 1-22 are never exercised by the integration tests.
 //
+// A Payment-family circuit (Payment, VK slot 0, which Erc20CoinVault reads as
+// its payment circuit) is the exception: before it writes anything, it
+// refuses that circuit's proving and verifying keys when they are missing or
+// not, byte for byte, enygma_retail_payments' (retailkeys.Require). The gnark
+// server proves retail's templates with retail's keys, which make dvp-keygen
+// copies, so no earlier JSON or placeholder stands in for them.
+//
 // Output: one <CircuitName>.json per circuit in <build_dir>, matching the
 // VerificationKeyJSON struct used by scripts/cmd/init/main.go:
 //
@@ -45,6 +52,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -52,6 +60,8 @@ import (
 	groth16bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+
+	"enygma_dvp/gnark_circuits/retailkeys"
 )
 
 // circomVK mirrors the VerificationKeyJSON struct in scripts/cmd/init/main.go.
@@ -329,6 +339,26 @@ func exportAll(circuits []string, mapping map[string]string, retired map[string]
 	return out, nil
 }
 
+// run exports every circuit to buildDir (exportAll), once the proving and
+// verifying keys in keysDir of each Payment-family circuit among circuits are
+// retail's, byte for byte (retailkeys.Require against retailDir). Until then
+// it writes nothing, the build dir included.
+func run(circuits []string, mapping map[string]string, retired map[string]bool, keysDir, retailDir, buildDir string, placeholder bool) (exported, error) {
+	var paymentFamily []string
+	for _, name := range circuits {
+		if slices.Contains(retailkeys.PaymentFamily, name) {
+			paymentFamily = append(paymentFamily, name)
+		}
+	}
+	if err := retailkeys.Require(keysDir, retailDir, paymentFamily...); err != nil {
+		return exported{}, err
+	}
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return exported{}, fmt.Errorf("create build dir: %w", err)
+	}
+	return exportAll(circuits, mapping, retired, buildDir, placeholder)
+}
+
 func main() {
 	placeholder := flag.Bool("placeholder", false, "give a circuit with no key file an unprovable placeholder VK")
 	configPath := flag.String("config", "../enygmadvp.config.json", "enygmadvp.config.json, whose circuits init registers")
@@ -339,14 +369,11 @@ func main() {
 	}
 	buildDir := flag.Arg(0)
 
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		log.Fatalf("create build dir: %v", err)
-	}
 	circuits, err := configCircuits(*configPath)
 	if err != nil {
 		log.Fatalf("read config: %v", err)
 	}
-	out, err := exportAll(circuits, circuitMapping, retiredCircuits, buildDir, *placeholder)
+	out, err := run(circuits, circuitMapping, retiredCircuits, retailkeys.KeysDir, retailkeys.Dir, buildDir, *placeholder)
 	for _, name := range out.Exported {
 		fmt.Printf("  exported %s\n", name)
 	}

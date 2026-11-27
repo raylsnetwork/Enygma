@@ -1,15 +1,22 @@
-// export_vk exports the Payment gnark BN254 Groth16 verifying key to a
-// circom-format JSON file that scripts/cmd/init/main.go reads via getVerificationKeys().
+// export_vk_payment exports the Payment deployment's gnark BN254 Groth16
+// verifying keys (Payment, Payment2in, PaymentFee, PaymentRelayerFeePublic,
+// UsdrFee) to the circom-format JSON files scripts/cmd/init_payment
+// registers in VK slots 0-4.
+//
+// Those keys are enygma_retail_payments': the deployment's gnark server proves
+// retail's Payment-family templates, and make dvp-keygen copies retail's
+// committed keys into scripts/keys. Before it writes anything, it refuses
+// keys there that are not, byte for byte, retail's (retailkeys.Require).
 //
 // Usage (run from gnark_circuits/ directory):
 //
-//	go run ./cmd/export_vk/ <build_dir>
+//	go run ./cmd/export_vk_payment <build_dir>
 //
 // Example:
 //
-//	go run ./cmd/export_vk/ ../build
+//	go run ./cmd/export_vk_payment ../build
 //
-// Output: build/Payment.json in circom/snarkjs format:
+// Output: build/<circuit>.json for each circuit, in circom/snarkjs format:
 //
 //	{
 //	  "protocol": "groth16",
@@ -34,6 +41,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16bn254 "github.com/consensys/gnark/backend/groth16/bn254"
+
+	"enygma_dvp/gnark_circuits/retailkeys"
 )
 
 type circomVK struct {
@@ -126,29 +135,35 @@ func exportVK(keyPath, outPath string) error {
 	return os.WriteFile(outPath, data, 0644)
 }
 
+// circuits are the Payment deployment's circuits, in VK slot order.
+var circuits = retailkeys.PaymentFamily
+
+// run exports each circuit's verifying key in dir to buildDir, once every
+// circuit's proving and verifying key there is retail's, byte for byte
+// (retailkeys.Require against retailDir).
+func run(dir, retailDir, buildDir string) error {
+	if err := retailkeys.Require(dir, retailDir, circuits...); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return fmt.Errorf("create build dir: %w", err)
+	}
+	for _, c := range circuits {
+		keyFile, outPath := filepath.Join(dir, c+"VK.key"), filepath.Join(buildDir, c+".json")
+		if err := exportVK(keyFile, outPath); err != nil {
+			return fmt.Errorf("export %s: %w", keyFile, err)
+		}
+		fmt.Printf("exported %s → %s\n", keyFile, outPath)
+	}
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: go run ./cmd/export_vk/ <build_dir>")
+		fmt.Fprintln(os.Stderr, "Usage: go run ./cmd/export_vk_payment <build_dir>")
 		os.Exit(1)
 	}
-	buildDir := os.Args[1]
-
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		log.Fatalf("create build dir: %v", err)
-	}
-
-	exports := []struct{ keyFile, outName string }{
-		{"scripts/keys/PaymentVK.key", "Payment.json"},
-		{"scripts/keys/Payment2inVK.key", "Payment2in.json"},
-		{"scripts/keys/PaymentFeeVK.key", "PaymentFee.json"},
-		{"scripts/keys/PaymentRelayerFeePublicVK.key", "PaymentRelayerFeePublic.json"},
-		{"scripts/keys/UsdrFeeVK.key", "UsdrFee.json"},
-	}
-	for _, e := range exports {
-		outPath := filepath.Join(buildDir, e.outName)
-		if err := exportVK(e.keyFile, outPath); err != nil {
-			log.Fatalf("export %s: %v", e.keyFile, err)
-		}
-		fmt.Printf("exported %s → %s\n", e.keyFile, outPath)
+	if err := run(retailkeys.KeysDir, retailkeys.Dir, os.Args[1]); err != nil {
+		log.Fatal(err)
 	}
 }

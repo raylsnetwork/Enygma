@@ -2,6 +2,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"log"
+	"slices"
 	"strings"
 
 	"github.com/consensys/gnark/constraint/solver"
@@ -40,6 +43,12 @@ import (
 // is empty. Each run draws fresh random keys, so regenerate only the circuits
 // that changed: regenerating PrivateMint also requires re-patching
 // PrivateMintVerifier.sol (cmd/patch_verifier) and the retail copies.
+//
+// It makes no keys for the Payment-family circuits (Payment, Payment2in,
+// PaymentFee, PaymentRelayerFeePublic, UsdrFee): the Payment deployment
+// proves enygma_retail_payments' templates with retail's committed keys,
+// which make dvp-keygen copies in after it (as it does retail's PrivateMint
+// keys), and cmd/export_vk_payment refuses any others.
 func GenerationVkPk(only map[string]bool) {
 	want := func(name string) bool { return len(only) == 0 || only[name] }
 
@@ -192,52 +201,35 @@ func GenerationVkPk(only map[string]bool) {
 	if want("DvPDestination") {
 		script.SetupDvPDestination(dvp_destination_config, "DvPDestination")
 	}
+}
 
-	// Payment-family circuits — dedicated Payment deployment, ported from
-	// enygma_retail_payments. Covered by test/12_v2_payment_usdr_fee_test.go.
-	payment1in_config := templates.PaymentConfig
-	if want("Payment") {
-		script.SetupPayment(payment1in_config, "Payment")
-	}
+// circuits are the circuits GenerationVkPk makes keys for.
+var circuits = []string{"PrivateMint", "DvPInitiator", "DvPDestination"}
 
-	// 2-input/2-output circuit: separate VK slot. 1-in and 2-in circuits have
-	// different R1CS and must use distinct VKs.
-	payment2in_config := templates.Payment2inConfig
-	if want("Payment2in") {
-		script.SetupPayment(payment2in_config, "Payment2in")
+// parseOnly reads -only's comma-separated circuit names. It refuses a name
+// keygen makes no keys for, rather than make none: the Payment-family keys,
+// say, are enygma_retail_payments', which make dvp-keygen copies.
+func parseOnly(list string) (map[string]bool, error) {
+	only := map[string]bool{}
+	for _, name := range strings.Split(list, ",") {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		if !slices.Contains(circuits, name) {
+			return nil, fmt.Errorf("keygen makes no %s keys: it makes %s; make dvp-keygen copies the Payment-family keys from enygma_retail_payments",
+				name, strings.Join(circuits, ", "))
+		}
+		only[name] = true
 	}
-
-	// 1-input/2-output fee circuit: fee absorbed into sender's input.
-	payment_fee_config := templates.PaymentFeeConfig
-	if want("PaymentFee") {
-		script.SetupPaymentFee(payment_fee_config, "PaymentFee")
-	}
-
-	// 1-input/3-output relayer-fee circuit: fee paid out as its own spendable
-	// note, same token as the payment.
-	payment_relayer_fee_public_config := templates.PaymentRelayerFeePublicConfig
-	if want("PaymentRelayerFeePublic") {
-		script.SetupPaymentRelayerFeePublic(payment_relayer_fee_public_config, "PaymentRelayerFeePublic")
-	}
-
-	// 1-input/2-output USDr circuit: a second, independent relayer-fee asset.
-	// StTokenId is public here (private everywhere else), giving this
-	// circuit's 9-element statement a shape distinct from every other
-	// 1-in/2-out circuit's (7 or 8) — new VK slot (VK_ID_ERC20_USDR = 4).
-	usdr_fee_config := templates.UsdrFeeConfig
-	if want("UsdrFee") {
-		script.SetupUsdrFee(usdr_fee_config, "UsdrFee")
-	}
+	return only, nil
 }
 
 func main() {
 	onlyFlag := flag.String("only", "", "comma-separated circuits to regenerate (default: all), e.g. DvPInitiator,DvPDestination")
 	flag.Parse()
-	only := map[string]bool{}
-	for _, name := range strings.Split(*onlyFlag, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			only[name] = true
-		}
+	only, err := parseOnly(*onlyFlag)
+	if err != nil {
+		log.Fatal(err)
 	}
 	GenerationVkPk(only)
 }

@@ -22,6 +22,7 @@ require (
 require (
 	enygma_dvp/layout v0.0.0
 	enygma_gnark_shared v0.0.0
+	enygma_retail_payments/gnark_circuits v0.0.0
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -65,3 +66,5 @@ require (
 replace enygma_gnark_shared => ../../enygma_gnark_shared
 
 replace enygma_dvp/layout => ../layout
+
+replace enygma_retail_payments/gnark_circuits => ../../enygma_retail_payments/gnark_circuits

@@ -135,6 +135,8 @@ Generates a proof for a 2-input / 2-output private ERC-20 transfer. Input 0 is A
 
 > **Note:** `publicSignal` is in the circuit's public-input order, which is also the statement layout the on-chain contracts expect (`[msg, treeNums..., roots..., nullifiers..., commitments..., ...]`), so it can be submitted as is. Every Payment-family endpoint (`/proof/payment`, `/proof/payment2in`, `/proof/paymentFee`, `/proof/paymentRelayerFeePublic`, `/proof/usdrFee`) returns this layout. The Go client's `PaymentResult` keeps `publicSignal` as returned, and its `ContractStatement()` returns it unchanged. The offsets of each field are generated from the retail circuits: `enygma_retail_payments/layout` (Go) and `PaymentStatementLayout.sol` (Solidity).
 
+> **Note:** these endpoints prove enygma_retail_payments' Payment-family circuits, which require input 0 to be a real note (a non-zero `stNullifiers[0]`) and the change salt `wtSaltsOut[1]` to be `Poseidon(wtPrivateKeysIn[0], stNullifiers[0])`, so the owner can rebuild the change note from their key and the spent nullifier. A witness that breaks either rule is not proved: the endpoint returns an error.
+
 ---
 
 ## POST /proof/dvpInitiator

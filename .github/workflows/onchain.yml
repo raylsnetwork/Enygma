@@ -192,9 +192,9 @@ jobs:
       # The DvP keys are gitignored. make dvp-keygen generates them, stamps
       # them with the fingerprint of the circuit sources it compiled
       # (scripts/keys_src.sh: keys.src, which dvp-stack's preflight
-      # checks) and copies in retail's PrivateMint keys (committed through
-      # LFS). The cache is keyed on that fingerprint and those keys, so a
-      # change to either misses it and regenerates them.
+      # checks) and copies in retail's PrivateMint and Payment-family keys
+      # (committed through LFS). The cache is keyed on that fingerprint and
+      # those keys, so a change to either misses it and regenerates them.
       - id: dvp-keys-src
         run: |
           src=$(scripts/keys_src.sh enygma_dvp/gnark_circuits ./cmd/keygen)
@@ -203,7 +203,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: enygma_dvp/gnark_circuits/scripts/keys
-          key: dvp-keys-${{ steps.dvp-keys-src.outputs.src }}-${{ hashFiles('enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint*') }}
+          key: dvp-keys-${{ steps.dvp-keys-src.outputs.src }}-${{ hashFiles('enygma_retail_payments/gnark_circuits/scripts/keys/*.key') }}
       - name: generate DvP keys
         if: steps.dvp-keys.outputs.cache-hit != 'true'
         run: make dvp-keygen

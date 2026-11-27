@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	ht "enygma_dvp/gnark_circuits/server/circuits/internal/handlertest"
-	"enygma_dvp/gnark_circuits/templates"
 	"enygma_dvp/layout"
+	"enygma_retail_payments/gnark_circuits/templates"
 )
 
 // TestHandler_ReturnsTheProofsPublicWitness drives the payment prove handler
@@ -24,7 +24,7 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	bobPk := ht.Hash(t, big.NewInt(999))
 	values := []*big.Int{big.NewInt(60), big.NewInt(40)}
 	pks := []*big.Int{bobPk, in.Pk}
-	salts := []*big.Int{big.NewInt(444), big.NewInt(555)}
+	salts := []*big.Int{big.NewInt(444), in.ChangeSalt}
 	cmts := []*big.Int{
 		ht.Commitment(t, pks[0], salts[0], values[0], in.TokenId),
 		ht.Commitment(t, pks[1], salts[1], values[1], in.TokenId),
@@ -63,6 +63,30 @@ func TestHandler_ReturnsTheProofsPublicWitness(t *testing.T) {
 	ht.AssertStatementLen(t, signals, layout.PaymentLen)
 	ht.AssertProvedWitness(t, &w, vk, proof, signals)
 
+	valid := request
 	request.StNullifiers[0] = "1"
 	ht.PostRejected(t, handler, request)
+
+	// The circuit is enygma_retail_payments' Payment. Its change note
+	// (output 1) must be salted Poseidon(sk, nullifier0), and its input 0
+	// must be a real note.
+	t.Run("free change salt", func(t *testing.T) {
+		free := valid
+		free.WtSaltsOut[1] = "555"
+		free.StCommitmentsOut[1] = ht.Commitment(t, pks[1], big.NewInt(555), values[1], in.TokenId).String()
+		ht.PostRejected(t, handler, free)
+	})
+	t.Run("no input note", func(t *testing.T) {
+		none := valid
+		none.StMerkleRoots[0], none.StNullifiers[0] = "0", "0"
+		none.WtValuesIn[0], none.WtSaltsIn[0] = "0", "0"
+		for j := range none.WtPathElements[0] {
+			none.WtPathElements[0][j] = "0"
+		}
+		outValues, outSalts, outCommitments := ht.NoNoteOutputs(t, in, pks, salts)
+		copy(none.WtValuesOut[:], outValues)
+		copy(none.WtSaltsOut[:], outSalts)
+		copy(none.StCommitmentsOut[:], outCommitments)
+		ht.PostRejected(t, handler, none)
+	})
 }

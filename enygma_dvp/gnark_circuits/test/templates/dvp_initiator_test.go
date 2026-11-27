@@ -1,5 +1,5 @@
 // Property-based regression tests for DvPInitiatorCircuit, mirroring
-// payment_test.go's approach. This directly validates the StTreeNumber fix
+// enygma_retail_payments' payment_test.go. This directly validates the StTreeNumber fix
 // (dd821c5) on the DvP swap side, where the bug was originally found: the
 // plain Nullifier(sk, pathIndex) formula left StTreeNumber completely
 // unconstrained, letting a prover claim any tree number for their input
@@ -22,6 +22,15 @@ import (
 )
 
 const dvpInitiatorTestDepth = 2
+
+// hashLeftRight matches primitives.MerkleProof's Poseidon-pair hashing.
+func hashLeftRight(l, r *big.Int) *big.Int {
+	h, err := poseidon.Hash([]*big.Int{l, r})
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
 
 type dvpInitiatorTestWitness struct {
 	skAlice, pkAlice                     *big.Int
@@ -59,7 +68,7 @@ func buildValidDvpInitiatorWitness(t *testing.T) *dvpInitiatorTestWitness {
 	w.siblings = []*big.Int{big.NewInt(888), big.NewInt(999)}
 	root := commitIn
 	for _, sib := range w.siblings {
-		root = paymentTestHashLeftRight(root, sib)
+		root = hashLeftRight(root, sib)
 	}
 	w.root = root
 

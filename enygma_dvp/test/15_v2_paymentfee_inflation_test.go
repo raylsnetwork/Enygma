@@ -151,7 +151,12 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 		t.Fatalf("GetNullifierWithTree: %v", err)
 	}
 	inflSalt, _ := core.RandomInField()
-	changeSalt, _ := core.RandomInField()
+	// The change salt every Payment-family circuit requires, so that only the
+	// fee's range check can refuse the witness.
+	changeSalt, err := core.WithdrawChangeSalt(d.spend.PrivateKey, nullifier)
+	if err != nil {
+		t.Fatalf("WithdrawChangeSalt: %v", err)
+	}
 	cmtInflated, err := core.Erc20CommitmentV2(d.spend.PublicKey, inflSalt, inflated, tokenId)
 	if err != nil {
 		t.Fatalf("commitment: %v", err)
@@ -238,7 +243,10 @@ func TestV2PaymentFee_NoValueInflation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commitment: %v", err)
 	}
-	change2Salt, _ := core.RandomInField()
+	change2Salt, err := core.WithdrawChangeSalt(d.spend.PrivateKey, nf2)
+	if err != nil {
+		t.Fatalf("WithdrawChangeSalt: %v", err)
+	}
 	change2, err := core.Erc20CommitmentV2(d.spend.PublicKey, change2Salt, big.NewInt(0), tokenId)
 	if err != nil {
 		t.Fatalf("commitment: %v", err)
@@ -330,7 +338,10 @@ func TestV2PaymentFee_HonestFeeStillWorks(t *testing.T) {
 		t.Fatalf("NewSpendKeyPair: %v", err)
 	}
 	saltBob, _ := core.RandomInField()
-	saltChange, _ := core.RandomInField()
+	saltChange, err := core.WithdrawChangeSalt(d.spend.PrivateKey, nullifier)
+	if err != nil {
+		t.Fatalf("WithdrawChangeSalt: %v", err)
+	}
 	cmtBob, err := core.Erc20CommitmentV2(bob.PublicKey, saltBob, pay, tokenId)
 	if err != nil {
 		t.Fatal(err)

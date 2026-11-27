@@ -16,8 +16,8 @@ import (
 	"enygma_dvp/gnark_circuits/server/circuits/dvpDestination"
 	"enygma_dvp/gnark_circuits/server/circuits/dvpInit"
 
-	// Payment-family circuits — dedicated Payment deployment, ported from
-	// enygma_retail_payments. Covered by test/12.
+	// Payment-family circuits — dedicated Payment deployment, proved with
+	// enygma_retail_payments' templates. Covered by test/12.
 	"enygma_dvp/gnark_circuits/server/circuits/payment"
 	"enygma_dvp/gnark_circuits/server/circuits/payment2in"
 	"enygma_dvp/gnark_circuits/server/circuits/paymentFee"

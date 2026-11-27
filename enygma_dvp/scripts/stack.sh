@@ -13,11 +13,14 @@
 #   make dvp-stack-stop
 #
 # Keys: make dvp-keygen once, and after a circuit change: preflight fails on
-# keys whose keys.src stamp is missing or names other circuit sources. VK
-# slots whose legacy key file is missing get unprovable placeholders
-# (export_vk_init -placeholder); no integration test uses them. Logs, built
-# binaries and $LOG_DIR/test.env (what the suite needs from the relayers) go
-# to $LOG_DIR.
+# keys whose keys.src stamp is missing or names other circuit sources. The
+# PrivateMint and Payment-family keys are retail's, which make dvp-keygen
+# copies: preflight refuses any others (the export steps refuse other
+# Payment-family keys too), and retail keys stamped with other retail
+# circuit sources (make retail-keygen). VK slots whose legacy key file is
+# missing get unprovable placeholders (export_vk_init -placeholder); no
+# integration test uses them. Logs, built binaries and $LOG_DIR/test.env
+# (what the suite needs from the relayers) go to $LOG_DIR.
 set -euo pipefail
 DVP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$DVP_ROOT/.." && pwd)"
@@ -38,22 +41,26 @@ preflight() {
         say "enygma_dvp's npm packages are not installed: cd $DVP_ROOT && npm ci" >&2
         ok=0
     fi
-    # The keys every test proves with: the ones keygen makes.
+    # The keys every test proves with: the ones make dvp-keygen makes or copies.
     for k in PrivateMint DvPInitiator DvPDestination Payment Payment2in PaymentFee PaymentRelayerFeePublic UsdrFee; do
         if [ ! -s "$KEYS/${k}PK.key" ] || [ ! -s "$KEYS/${k}VK.key" ]; then
             say "no ${k} keys in gnark_circuits/scripts/keys: make dvp-keygen" >&2
             ok=0
         fi
     done
-    # PrivateMintVerifier.sol is committed for retail's PrivateMint keys.
-    if [ -s "$KEYS/PrivateMintVK.key" ] &&
-        ! cmp -s "$KEYS/PrivateMintVK.key" "$REPO_ROOT/enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMintVK.key"; then
-        say "PrivateMintVK.key is not retail's, so it does not match PrivateMintVerifier.sol: make dvp-keygen copies it" >&2
-        ok=0
-    fi
-    # make dvp-keygen stamps the keys with their circuit sources.
+    # The keys make dvp-keygen copies from retail: its PrivateMint keys, which
+    # the committed PrivateMintVerifier.sol is for, and its Payment-family
+    # keys, which the gnark server proves retail's templates with and the
+    # inits register.
+    check_key_copies enygma_dvp/gnark_circuits/scripts/keys \
+        enygma_retail_payments/gnark_circuits/scripts/keys dvp-keygen || ok=0
+    # make dvp-keygen stamps the keys with their circuit sources, and make
+    # retail-keygen retail's keys with retail's, whose Payment-family
+    # templates the gnark server compiles.
     check_keys_stamp keys enygma_dvp/gnark_circuits ./cmd/keygen \
         enygma_dvp/gnark_circuits/scripts/keys/keys.src dvp-keygen || ok=0
+    check_keys_stamp 'retail keys' enygma_retail_payments/gnark_circuits ./cmd/keygen \
+        enygma_retail_payments/gnark_circuits/scripts/keys/keys.src retail-keygen || ok=0
     [ "$ok" = 1 ] || exit 1
 }
 preflight

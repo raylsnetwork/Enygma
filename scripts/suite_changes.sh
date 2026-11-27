@@ -30,9 +30,11 @@ common="Makefile .github/workflows/onchain.yml scripts/suite_changes.sh scripts/
 # the real EnygmaErc20CoinVault and Poseidon from them.
 dvp_for_payments="enygma_dvp/contracts/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/scripts/regen_poseidon.js enygma_dvp/regen_poseidon.mjs"
 paths_payments="$common enygma_payments/* enygma_gnark_shared/* scripts/keys_src.sh $dvp_for_payments"
-# make dvp-keygen also copies retail's PrivateMint keys. enygma_vkslots is
-# what the dvp and retail stacks' init commands check their keys with.
-paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_vkslots/* enygma_retail_payments/gnark_circuits/scripts/keys/PrivateMint* scripts/keys_src.sh"
+# enygma_dvp's gnark server compiles retail's Payment-family templates, and
+# make dvp-keygen copies retail's PrivateMint and Payment-family keys.
+# enygma_vkslots is what the dvp and retail stacks' init commands check their
+# keys with.
+paths_dvp="$common enygma_dvp/* enygma_gnark_shared/* enygma_vkslots/* enygma_retail_payments/gnark_circuits/* scripts/keys_src.sh"
 # The retail stack runs enygma_dvp's Hardhat node and deploys its contracts;
 # the retail test module imports enygma_dvp's src and layout.
 dvp_for_retail="enygma_dvp/contracts/* enygma_dvp/src/* enygma_dvp/layout/* enygma_dvp/hardhat.config.js enygma_dvp/package.json enygma_dvp/package-lock.json enygma_dvp/scripts/regen_poseidon.js enygma_dvp/regen_poseidon.mjs enygma_dvp/.nvmrc"

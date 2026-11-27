@@ -88,6 +88,13 @@ enygma_retail_payments/
 > keys into `enygma_dvp`. The `PrivateMintVerifier` contract bytecode has their VK baked
 > in at compile time, so regenerating them means re-exporting the verifier (`setup.sh`
 > step 4/5) and rerunning `make dvp-keygen`; otherwise proof verification reverts on-chain.
+>
+> **The Payment-family keys** (`Payment`, `Payment2in`, `PaymentFee`,
+> `PaymentRelayerFeePublic`, `UsdrFee`) are enygma_dvp's too: its gnark server proves
+> these circuits from this module's `gnark_circuits/templates`, and `make dvp-keygen`
+> copies these keys, which its deployments register. `make dvp-stack` and enygma_dvp's
+> `export_vk_init` and `export_vk_payment` refuse any others. After regenerating them,
+> rerun `make dvp-keygen`.
 
 ## Prerequisites
 
@@ -199,7 +206,8 @@ stamp.)
 
 After regenerating, re-run `setup.sh` (or the manual steps 2c–2e above) to export the
 new VK, the `PrivateMintVerifier` and its ABI, and re-initialize the contracts; then
-`make dvp-keygen`, which copies the new PrivateMint keys (see the note above).
+`make dvp-keygen`, which copies the new PrivateMint and Payment-family keys (see the notes
+above).
 
 `make retail-keygen` runs a single-party setup: whoever runs it holds the randomness that
 could forge proofs. Production keys come from the multi-party ceremony instead:
@@ -232,6 +240,10 @@ go generate ./cmd/genlayout
 `go test ./cmd/genlayout` fails while either file is stale. It also pins each of
 `Erc20CoinVault.sol`'s Payment-family statement length checks, and the verifying key
 each length dispatches to, to its circuit's statement length.
+
+enygma_dvp's Go package `../enygma_dvp/layout` holds these layouts too, derived from
+the same templates; regenerate it with `cd ../enygma_dvp/gnark_circuits && go generate
+./cmd/genlayout`, whose `go test ./cmd/genlayout` fails while it is stale.
 
 ## Implementation Details
 

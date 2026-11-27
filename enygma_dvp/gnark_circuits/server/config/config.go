@@ -19,8 +19,8 @@ type Config struct {
 	DvPDestinationPk string
 	DvPDestinationVk string
 
-	// Payment-family circuits — dedicated Payment deployment, ported from
-	// enygma_retail_payments.
+	// Payment-family circuits — dedicated Payment deployment: retail's keys,
+	// which make dvp-keygen copies from enygma_retail_payments.
 	PaymentPk                 string
 	PaymentVk                 string
 	Payment2inPk              string

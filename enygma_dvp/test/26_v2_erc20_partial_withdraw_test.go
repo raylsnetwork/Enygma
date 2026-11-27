@@ -200,8 +200,8 @@ func (e *pwEnv) proveWithdrawMsg(t *testing.T, circuit pwCircuit, message string
 }
 
 // proveWithdrawFull is proveWithdrawMsg with the change note's salt chosen by
-// the caller (nil: the salt a wallet uses — WithdrawChangeSalt for a
-// withdrawal, the KEM-derived one for a payment).
+// the caller (nil: the salt a wallet uses, WithdrawChangeSalt, which every
+// Payment-family circuit requires of a payment and a withdrawal alike).
 func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message string, ins []pwNote, amount, changeValue, fee, relayerPk, changeSaltOverride *big.Int, recipient common.Address) (*pwSpend, error) {
 	t.Helper()
 	nIn := len(ins)
@@ -250,23 +250,16 @@ func (e *pwEnv) proveWithdrawFull(t *testing.T, circuit pwCircuit, message strin
 	if err != nil {
 		t.Fatalf("Encapsulate: %v", err)
 	}
-	saltB, err := core.DerivePaymentSalt(ss)
-	if err != nil {
-		t.Fatalf("DerivePaymentSalt: %v", err)
-	}
 	encKey, err := core.DerivePaymentKey(ss)
 	if err != nil {
 		t.Fatalf("DerivePaymentKey: %v", err)
 	}
-	changeSalt := core.SaltBToField(saltB)
-	if message == pwWithdrawMessage {
-		// The circuit requires a withdrawal's change salt to be recoverable
-		// from the owner's key: Poseidon(sk, nullifier of input 0). The
-		// EncryptedNote below is then only a convenience.
-		changeSalt, err = core.WithdrawChangeSalt(owner.spend.PrivateKey, nullifiers[0])
-		if err != nil {
-			t.Fatalf("WithdrawChangeSalt: %v", err)
-		}
+	// The circuits require the change salt to be recoverable from the owner's
+	// key: Poseidon(sk, nullifier of input 0). The EncryptedNote below is
+	// then only a convenience.
+	changeSalt, err := core.WithdrawChangeSalt(owner.spend.PrivateKey, nullifiers[0])
+	if err != nil {
+		t.Fatalf("WithdrawChangeSalt: %v", err)
 	}
 	if changeSaltOverride != nil {
 		changeSalt = changeSaltOverride
@@ -922,9 +915,10 @@ func TestV2Erc20PartialWithdraw_NoCrossSettlement(t *testing.T) {
 // pending withdrawal's change note being made undiscoverable. Its
 // EncryptedNote ciphertexts are not bound by the proof, so whoever settles the
 // receipt first can replace them (here with junk) or omit them (withdrawV2).
-// The circuit now requires a withdrawal's change salt to be
-// Poseidon(sk, nullifier0), so the owner rebuilds the note from its spend key
-// and the transaction's events alone, and spends it.
+// The circuits now require the change salt of every proof, a withdrawal's
+// as well as a payment's, to be Poseidon(sk, nullifier0), so the owner
+// rebuilds the note from its spend key and the transaction's events alone,
+// and spends it.
 func TestV2Erc20PartialWithdraw_RecoverChangeWithoutCiphertext(t *testing.T) {
 	e := newPartialWithdrawEnv(t)
 	recipient := common.HexToAddress("0x0000000000000000000000000000000000005e85")
@@ -942,9 +936,23 @@ func TestV2Erc20PartialWithdraw_RecoverChangeWithoutCiphertext(t *testing.T) {
 		} else {
 			t.Logf("PaymentRelayerFeePublic prover refused a random change salt: %.100s", err)
 		}
-		// A payment's change salt stays free (the KEM-derived one is used).
-		if _, err := e.proveWithdrawMsg(t, pwPayment, pwPaymentMessage, []pwNote{note}, big.NewInt(10), big.NewInt(90), nil, nil, recipient); err != nil {
-			t.Fatalf("a payment proof with a KEM-derived change salt was refused: %v", err)
+		// A payment's change salt is fixed the same way, in every
+		// Payment-family circuit the deployment registers.
+		for _, c := range []struct {
+			name        string
+			circuit     pwCircuit
+			change, fee *big.Int
+		}{
+			{"Payment", pwPayment, big.NewInt(90), nil},
+			{"PaymentFee", pwPaymentFee, big.NewInt(89), big.NewInt(1)},
+			{"PaymentRelayerFeePublic", pwPaymentRelayerFeePublic, big.NewInt(89), big.NewInt(1)},
+		} {
+			if _, err := e.proveWithdrawFull(t, c.circuit, pwPaymentMessage, []pwNote{note}, big.NewInt(10), c.change, c.fee, nil, random, recipient); err == nil {
+				t.Fatalf("the %s circuit proved a payment whose change salt is not Poseidon(sk, nullifier0)", c.name)
+			}
+			if _, err := e.proveWithdrawMsg(t, c.circuit, pwPaymentMessage, []pwNote{note}, big.NewInt(10), c.change, c.fee, nil, recipient); err != nil {
+				t.Fatalf("the %s circuit refused a payment with the recoverable change salt: %v", c.name, err)
+			}
 		}
 	})
 

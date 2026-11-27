@@ -189,8 +189,8 @@ in:
    |---|---|---|
    | `enygma_dvp_auctions` | AuctionBatch | 159,468 |
    | `enygma_payments` | Withdraw6 | 105,371 |
-   | `enygma_dvp` | Payment2in | 7,443 |
    | `enygma_retail_payments` | Payment2in | 7,439 |
+   | `enygma_dvp` | DvPInitiator | 4,077 |
 
    So 2^18 = 262,144 serves all four.
 2. Pick when Phase 1 closes, and the beacon: a round of [drand](https://drand.love)'s quicknet
@@ -322,9 +322,10 @@ in:
    For example, retail's README, "Regenerating Proving/Verifying Keys", covers `keys.src`, the VK
    exports and the verifier contracts.
 
-DvP's server proves PrivateMint with retail's keys (the verifier contract is shared), so DvP's
-export leaves PrivateMint out. Take its keys from retail's Phase 2, as `make dvp-keygen` copies
-them today.
+DvP's server proves PrivateMint and the Payment-family circuits with retail's keys (PrivateMint's
+verifier contract is shared, and the Payment-family circuits are retail's templates), so DvP's
+export leaves them out. Take their keys from retail's Phase 2, as `make dvp-keygen` copies them
+today.
 
 Other commands:
 - `ceremony info <state>` says what a state file holds.

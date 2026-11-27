@@ -9,6 +9,8 @@
 #   use_node "$(cat .nvmrc)"   # Node 20+ through nvm when the shell's is older
 #   check_keys_stamp keys enygma_dvp/gnark_circuits ./cmd/keygen \
 #     enygma_dvp/gnark_circuits/scripts/keys/keys.src dvp-keygen || ok=0
+#   check_key_copies enygma_dvp/gnark_circuits/scripts/keys \
+#     enygma_retail_payments/gnark_circuits/scripts/keys dvp-keygen || ok=0
 #   require_free_ports 8545 8081
 #   step compile "$DIR" npx hardhat compile
 #   start hardhat "$DIR" npx hardhat node
@@ -79,6 +81,35 @@ check_keys_stamp() {
         fi
         return 1
     fi
+}
+
+# check_key_copies DIR SOURCE TARGET — fails (returns 1) unless every key
+# file (*.key) of SOURCE that DIR also holds is, byte for byte, SOURCE's:
+# make TARGET copies them there, and a stack that proves or registers them
+# as SOURCE's would otherwise use keys built from other circuit sources
+# (enygma_dvp's keys from an older make dvp-keygen, say). DIR and SOURCE are
+# repo-relative; the message names each key that differs. A key DIR lacks
+# is the caller's to check. It fails, rather than pass, when SOURCE holds no
+# keys or DIR holds none of them.
+check_key_copies() {
+    [ $# -eq 3 ] || { echo "usage: check_key_copies <dir> <source dir> <make target>" >&2; exit 2; }
+    local dir=$1 source=$2 target=$3 root f name compared=0 rc=0
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    for f in "$root/$source"/*.key; do
+        [ -e "$f" ] || { say "there are no keys in $source to compare the copies in $dir with" >&2; return 1; }
+        name=$(basename "$f")
+        [ -e "$root/$dir/$name" ] || continue
+        compared=$((compared + 1))
+        if ! cmp -s "$f" "$root/$dir/$name"; then
+            say "$dir/$name is not a copy of $source/$name: make $target" >&2
+            rc=1
+        fi
+    done
+    if [ "$compared" = 0 ]; then
+        say "$dir holds none of the keys in $source: make $target" >&2
+        return 1
+    fi
+    return "$rc"
 }
 
 # require_free_ports PORT… — fails if any PORT is taken: every run needs a fresh chain.

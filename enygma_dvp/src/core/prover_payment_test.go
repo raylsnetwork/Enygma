@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -308,6 +309,52 @@ func TestBoundPaymentProofs_ChangeNoteIsRebuiltFromKeyAndNullifier(t *testing.T)
 		}
 		if got := r.req["stCommitmentsOut"].([]any)[1]; got != wantCommit.String() {
 			t.Errorf("%s: proved change commitment %v, want WithdrawChangeNote's %s", r.name, got, wantCommit)
+		}
+	}
+}
+
+// Every Payment-family circuit requires input 0 to be a real note: its
+// nullifier is the change salt's seed. A payment whose first input is
+// zero-value padding is refused before any proof request, rather than sent
+// with a random change salt that no circuit accepts.
+func TestBoundPaymentProofs_RefuseZeroValueFirstInput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("proof request to %s for a payment whose input 0 is padding", r.URL.Path)
+	}))
+	defer srv.Close()
+	c := NewGnarkClient(srv.URL)
+	a := newPaymentArgs(t)
+	zero := big.NewInt(0)
+
+	for name, prove := range map[string]func() (*PaymentResult, error){
+		"Payment": func() (*PaymentResult, error) {
+			return c.BoundPaymentProof(big.NewInt(0xABCD), zero,
+				[]*big.Int{zero}, a.keys, []*big.Int{zero},
+				[]*big.Int{zero, zero}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+				8, a.proofs, []*big.Int{zero}, big.NewInt(7))
+		},
+		"Payment2in": func() (*PaymentResult, error) {
+			return c.BoundPaymentProof(big.NewInt(0xABCD), zero,
+				[]*big.Int{zero, big.NewInt(50)}, []KeyPair{a.keys[0], a.keys[0]}, []*big.Int{zero, big.NewInt(2)},
+				[]*big.Int{big.NewInt(10), big.NewInt(40)}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+				8, []*MerkleProof{a.proofs[0], a.proofs[0]}, []*big.Int{zero, zero}, big.NewInt(7))
+		},
+		"channel Payment": func() (*PaymentResult, error) {
+			return c.BoundChannelPaymentProof(big.NewInt(0xABCD),
+				[]*big.Int{zero}, a.keys, []*big.Int{zero},
+				[]*big.Int{zero, zero}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey},
+				ChannelPaymentNote{Salt: big.NewInt(444), BlockNumber: 1, Ctxt: []byte{1}},
+				8, a.proofs, []*big.Int{zero}, big.NewInt(7))
+		},
+		"PaymentFee": func() (*PaymentResult, error) {
+			return c.BoundPaymentFeeProof(big.NewInt(0xABCD), zero, zero,
+				[]*big.Int{zero}, a.keys, []*big.Int{zero},
+				[]*big.Int{zero, zero}, []*big.Int{big.NewInt(5), a.keys[0].PublicKey}, a.encapKeys,
+				8, a.proofs, []*big.Int{zero}, big.NewInt(7))
+		},
+	} {
+		if _, err := prove(); err == nil || !strings.Contains(err.Error(), "input 0 is zero-value padding") {
+			t.Errorf("%s: got %v, want the zero-value first input refused", name, err)
 		}
 	}
 }

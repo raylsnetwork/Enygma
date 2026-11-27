@@ -1,7 +1,7 @@
 {
   "about": [
     "Which circuit's verifying key each slot of the main deployment's Verifier holds. The vaults, EnygmaDvp and EnygmaAuction name circuits by slot number (VK_ID_*), and the Verifier numbers keys in registration order, so scripts/cmd/init refuses keys that differ from this list and reads every slot back after registering.",
-    "nPublic is the key's number of public inputs, pinned for the circuits keygen makes (Payment, DvPInitiator, DvPDestination) and for the retired legacy ERC1155 slots, which always hold export_vk_init's one-input placeholder. The other slots hold a legacy key if there is one on the machine and the placeholder otherwise, so only their circuit is pinned. There is no vkHash: enygma_dvp's keys are not checked in, and every make dvp-keygen makes new ones."
+    "nPublic is the key's number of public inputs, pinned for Payment (enygma_retail_payments' key, which make dvp-keygen copies), for the circuits keygen makes (DvPInitiator, DvPDestination) and for the retired legacy ERC1155 slots, which always hold export_vk_init's one-input placeholder. The other slots hold a legacy key if there is one on the machine and the placeholder otherwise, so only their circuit is pinned. There is no vkHash: keygen's keys are not checked in, and every make dvp-keygen makes new ones; the Payment key is retail's, byte for byte (export_vk_init refuses any other), whose hash enygma_retail_payments/vk_slots.json pins."
   ],
   "slots": [
     {"slot": 0, "circuit": "Payment", "nPublic": 8},
