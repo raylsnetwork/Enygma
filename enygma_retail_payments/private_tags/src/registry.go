@@ -99,7 +99,8 @@ func GetRecipientPkView(client *ethclient.Client, registryAddr common.Address, r
 }
 
 // FindRecipientByPkSpend scans all registered users and returns the Ethereum
-// address, pk_view, and registration index of the user whose pkSpend matches.
+// address, pk_view, and registration index when exactly one user's pkSpend
+// matches. An ambiguous key returns an error naming the matching addresses.
 //
 // Use this when you know the recipient's ZK identity (pkSpend) — e.g., from
 // a Commitment event — but not their Ethereum address.
@@ -117,36 +118,45 @@ func FindRecipientByPkSpend(
 	}
 	c := bind.NewBoundContract(registryAddr, a, client, client, client)
 
-	var countOut []interface{}
+	var count *big.Int
+	countOut := []interface{}{&count}
 	if err := c.Call(&bind.CallOpts{}, &countOut, "getUserCount"); err != nil {
 		return common.Address{}, nil, 0, fmt.Errorf("getUserCount: %w", err)
 	}
-	total := int(countOut[0].(*big.Int).Int64())
+	total := count.Int64()
 
-	for i := 0; i < total; i++ {
-		var addrOut []interface{}
-		if err := c.Call(&bind.CallOpts{}, &addrOut, "getUserAt", big.NewInt(int64(i))); err != nil {
-			continue
-		}
-		candidate, ok := addrOut[0].(common.Address)
-		if !ok {
-			continue
+	var matches []common.Address
+	for i := int64(0); i < total; i++ {
+		var candidate common.Address
+		addrOut := []interface{}{&candidate}
+		if err := c.Call(&bind.CallOpts{}, &addrOut, "getUserAt", big.NewInt(i)); err != nil {
+			return common.Address{}, nil, 0, fmt.Errorf("getUserAt(%d): %w", i, err)
 		}
 
-		var keysOut []interface{}
+		var keys struct {
+			PkSpend *big.Int
+			PkView  []byte
+		}
+		keysOut := []interface{}{&keys}
 		if err := c.Call(&bind.CallOpts{}, &keysOut, "getKeys", candidate); err != nil {
+			return common.Address{}, nil, 0, fmt.Errorf("getKeys(%s): %w", candidate.Hex(), err)
+		}
+		if keys.PkSpend.Cmp(pkSpend) != 0 {
 			continue
 		}
-		sp, ok := keysOut[0].(*big.Int)
-		if !ok {
-			continue
+		if len(matches) == 0 {
+			addr, pkView, index = candidate, keys.PkView, int(i)
 		}
-		if sp.Cmp(pkSpend) == 0 {
-			pv, _ := keysOut[1].([]byte)
-			return candidate, pv, i, nil
-		}
+		matches = append(matches, candidate)
 	}
-	return common.Address{}, nil, 0, fmt.Errorf("no user found with pkSpend=%s", pkSpend.String())
+	switch len(matches) {
+	case 0:
+		return common.Address{}, nil, 0, fmt.Errorf("no user found with pkSpend=%s", pkSpend.String())
+	case 1:
+		return addr, pkView, index, nil
+	default:
+		return common.Address{}, nil, 0, fmt.Errorf("ambiguous pkSpend=%s matches users %v", pkSpend, matches)
+	}
 }
 
 // ── Convenience wrapper ───────────────────────────────────────────────────────
