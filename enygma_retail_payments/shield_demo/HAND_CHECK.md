@@ -32,6 +32,12 @@ jsdom does no layout, timing or theming, and the fixtures are a default run and 
 5. **Wait in the background** (`sleep` with `run_in_background`), then read `window.__chk` in one short `javascript_tool` call. `javascript_tool` times out at 45 s; never wait inside it.
 6. **Check with the tab hidden as well as visible.** Chrome throttles a hidden tab's timers to about once a second (once a minute after ~5 minutes hidden), which is exactly when the hop queue falls behind. The tools cannot bring Chrome's window to the front: while it is behind other windows the tab is hidden, which gives the hidden case. For the visible case, ask the user to bring Chrome to the front before you start the run. The probe's `hiddenMs` says how long the tab was hidden; a case counts when it held for most of the run. Done when both cases have been read, or the report names the case that was not checked.
 
+## Loopback and request checks
+
+1. With the default `-addr`, check that `lsof -nP -iTCP:9092 -sTCP:LISTEN` shows the Shield demo on `127.0.0.1:9092`.
+2. In Chrome at `http://127.0.0.1:9092/?fast`, complete a RUN and make a manual transfer. Start WALKTHROUGH and release each action with NEXT until the walkthrough finishes. The Network panel shows successful responses from `/run`, `/transfer`, and `/release`.
+3. Check that a POST to any of those three routes with a different `Origin` returns 403. A same-origin POST with `Content-Type: text/plain` to `/run` or `/transfer` returns 415. The rejected requests leave the run state unchanged.
+
 ## The probe
 
 Paste into `javascript_tool` on a freshly loaded page. It uses `MutationObserver`s and its own `EventSource` on `/events`, which keep firing in a hidden tab, unlike `setInterval`. Besides the queue and the run's end, it records, for each scenario step, how many hops the diagram had played when the step showed finished.
