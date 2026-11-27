@@ -9,3 +9,9 @@ package layout
 // takes deposits that no proof can spend, so both deployments' init refuse
 // a configured tree-depth other than this.
 const MerkleTreeDepth = 16
+
+// EnygmaErc20CoinVaultTreeDepth is the depth the DvP deployment's init
+// registers its EnygmaErc20CoinVault at. No circuit spends from that
+// vault's tree (Enygma redeems a note by its commitment), so it keeps the
+// depth Enygma's gas budget assumes.
+const EnygmaErc20CoinVaultTreeDepth = 8

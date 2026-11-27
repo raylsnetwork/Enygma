@@ -830,8 +830,6 @@ type MerkleStatusResponse struct {
 //
 //	{ "rpcUrl": "http://127.0.0.1:8545", "receiptsPath": "../build/receipts.json" }
 func MerkleStatusHandler() gin.HandlerFunc {
-	const treeDepth = templates.MerkleTreeDepth
-
 	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
 	treeNumberSel := keccak4("treeNumber()")
@@ -876,7 +874,7 @@ func MerkleStatusHandler() gin.HandlerFunc {
 				})
 				continue
 			}
-			s := checkVault(rpcClient, req.RpcUrl, name, addr, treeDepth,
+			s := checkVault(rpcClient, req.RpcUrl, name, addr, vaultTreeDepth(name),
 				commitmentTopic, currentRootSel, treeNumberSel)
 			statuses = append(statuses, s)
 		}
@@ -892,6 +890,16 @@ var vaultIDByName = map[string]uint64{
 	"Erc721CoinVault":      1,
 	"Erc1155CoinVault":     2,
 	"EnygmaErc20CoinVault": 3,
+}
+
+// vaultTreeDepth is the depth init (enygma_dvp/scripts/cmd/init) registers
+// the named vault's tree at: the circuits' depth, but the
+// EnygmaErc20CoinVault's own, as no proof spends from it.
+func vaultTreeDepth(name string) int {
+	if name == "EnygmaErc20CoinVault" {
+		return templates.EnygmaErc20CoinVaultTreeDepth
+	}
+	return templates.MerkleTreeDepth
 }
 
 func checkEnygmaDvPRegistry(client *http.Client, rpcURL, receiptsPath string, receiptsAddrs map[string]string, vaultByIDSel string) EnygmaDvPCheck {
@@ -1043,8 +1051,6 @@ type MerkleVaultRequest struct {
 //	{ "vaultId": 0 }
 //	{ "vault": "Erc20CoinVault", "rpcUrl": "http://127.0.0.1:8545" }
 func MerkleVaultHandler() gin.HandlerFunc {
-	const treeDepth = templates.MerkleTreeDepth
-
 	commitmentTopic := keccak32Hex("Commitment(uint256,uint256)")
 	currentRootSel := keccak4("currentRoot()")
 	treeNumberSel := keccak4("treeNumber()")
@@ -1123,7 +1129,7 @@ func MerkleVaultHandler() gin.HandlerFunc {
 			return
 		}
 
-		status := checkVault(rpcClient, req.RpcUrl, vaultName, addr, treeDepth,
+		status := checkVault(rpcClient, req.RpcUrl, vaultName, addr, vaultTreeDepth(vaultName),
 			commitmentTopic, currentRootSel, treeNumberSel)
 		c.JSON(http.StatusOK, status)
 	}

@@ -303,7 +303,9 @@ func (d *dvpInitializer) registerPrivateMintVerifier() error {
 	return nil
 }
 
-// registerVaults registers the Erc20/Erc721/Erc1155/EnygmaErc20 coin vaults.
+// registerVaults registers the Erc20/Erc721/Erc1155/EnygmaErc20 coin vaults:
+// the first three at the configured tree depth, EnygmaErc20CoinVault at
+// layout.EnygmaErc20CoinVaultTreeDepth.
 func (d *dvpInitializer) registerVaults() error {
 	fmt.Println("Registering CoinVaults to EnygmaDvp smart contract address.")
 
@@ -343,12 +345,14 @@ func (d *dvpInitializer) registerVaults() error {
 	}
 	fmt.Println("... Registered Erc1155CoinVault")
 
-	// EnygmaErc20CoinVault
+	// EnygmaErc20CoinVault, at its own depth: no proof spends from its tree,
+	// and each of Enygma's depositThroughEnygma calls pays for every level
+	// of it (layout.EnygmaErc20CoinVaultTreeDepth).
 	_, err = callContractMethod(d.client, d.auth, d.enygmaDvpABI, d.enygmaDvpAddress, "registerVault",
 		common.HexToAddress(d.receipts["EnygmaErc20CoinVault"].ContractAddress),
 		common.HexToAddress(d.receipts["ERC20"].ContractAddress),
 		big.NewInt(1),
-		d.treeDepth,
+		big.NewInt(layout.EnygmaErc20CoinVaultTreeDepth),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register EnygmaErc20CoinVault: %w", err)
@@ -486,8 +490,8 @@ func (d *dvpInitializer) registerRelayerIfConfigured(accounts []struct {
 
 // loadInitConfig reads enygmadvp.config.json and refuses a tree-depth other
 // than the one the circuits are compiled at (layout.MerkleTreeDepth): every
-// vault is registered at the configured depth, and a vault at another depth
-// takes deposits no proof can spend.
+// vault a proof spends from is registered at the configured depth, and a
+// vault at another depth takes deposits no proof can spend.
 func loadInitConfig() (*InitConfig, error) {
 	configPath := filepath.Join(initProjectRoot, "enygmadvp.config.json")
 	data, err := os.ReadFile(configPath)

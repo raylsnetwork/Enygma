@@ -27,6 +27,16 @@ var (
 // cmd/genlayout renders it into the layout package.
 const MerkleTreeDepth = 16
 
+// EnygmaErc20CoinVaultTreeDepth is the depth of the DvP deployment's
+// EnygmaErc20CoinVault tree, through which Enygma (enygma_payments) moves
+// value in and out. No circuit spends from that tree: Enygma redeems a
+// note by its commitment (withdrawThroughEnygma), so a deeper tree would
+// hide nothing, and each depositThroughEnygma pays about 39k gas a level
+// to insert. Enygma's MAX_REGISTERED_ACCOUNTS is sized so that a withdraw
+// into ten deposits fits EIP-7825's per-transaction gas cap at this
+// depth. cmd/genlayout renders it into the layout package.
+const EnygmaErc20CoinVaultTreeDepth = 8
+
 func paymentConfig(nInputs, mOutputs int) PaymentCircuitConfig {
 	return PaymentCircuitConfig{
 		TmNInputs:         nInputs,
