@@ -32,7 +32,7 @@ Unit tests live alongside the integration tests in `test/` (no server required):
 | File | Covers |
 |------|--------|
 | `merkle_test.go` | Incremental Merkle tree: insert, prove, root computation |
-| `utils_test.go` | Crypto primitives: Poseidon, nullifier, commitment, BabyJubJub, ML-KEM, key derivation |
+| `utils_test.go` | Crypto primitives: Poseidon, nullifier, commitment, unique ids, Keccak, randomness |
 
 ---
 

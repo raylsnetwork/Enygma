@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 )
 
 // RejectReason says why a scan refused an event. It is an error so the
@@ -14,6 +15,10 @@ type RejectReason string
 const (
 	// RejectBadCapsule: the capsule is not a valid ML-KEM-768 ciphertext.
 	RejectBadCapsule RejectReason = "bad capsule"
+	// RejectMissingValue: the event lacks a value the scan reads (a nil
+	// commitment, or an ERC1155 event's nil contract address). Events
+	// decoded from chain logs always carry them; an event built by hand may not.
+	RejectMissingValue RejectReason = "missing value"
 	// RejectCommitmentMismatch: the payload opened under this wallet's key,
 	// but its values don't hash to the published commitment.
 	RejectCommitmentMismatch RejectReason = "commitment mismatch"
@@ -25,9 +30,19 @@ const (
 func (r RejectReason) Error() string { return string(r) }
 
 // RejectedEvent is an event a scan refused: Index is its position in the
-// scanned events. A wrong-length capsule is reported by every wallet's scan.
-// The other reasons are reported only by the wallet the payload was sealed
-// to, and mean someone sent it a note that doesn't open.
+// scanned events. A wrong-length capsule or a missing value is reported by
+// every wallet's scan. The other reasons are reported only by the wallet the
+// payload was sealed to, and mean someone sent it a note that doesn't open,
+// with one expected case: a change note (output 1 of a Payment-family proof)
+// whose salt is WithdrawChangeSalt, Poseidon(sk, nullifier0), not the
+// capsule's. The Payment-family circuits require that salt of every
+// withdrawal's change note (enygma_retail_payments' circuits of every
+// payment's too), and this package's payment provers give it to output 1
+// whenever input 0 is a real note (paymentChangeSalt). When such a note's
+// EncryptedNote is sealed to its owner (transferV2, partialWithdraw), the
+// owner's scan reports it as RejectCommitmentMismatch by design. The owner
+// rebuilds the note with WithdrawChangeNote, from the proof's first nullifier
+// and the change value.
 type RejectedEvent struct {
 	Index  int
 	Reason RejectReason
@@ -37,11 +52,18 @@ type RejectedEvent struct {
 // open under this wallet's key: someone else's note, not a bad event.
 var errNotAddressed = errors.New("not addressed to this key")
 
-// scanEvents is the per-event path every scanner shares. It decapsulates each
+// scannedEvent is an event type a scanner reads. values returns the values
+// the scan takes from the event besides its capsule and payload.
+type scannedEvent interface {
+	values() []*big.Int
+}
+
+// scanEvents is the per-event path every scanner shares. It refuses an event
+// that lacks one of its values (RejectMissingValue), then decapsulates the
 // event's capsule and hands the shared secret to open. An event that open
 // reports as errNotAddressed or a RejectReason is skipped; any other error
 // isn't the event's fault, and fails the scan.
-func scanEvents[E, N any](
+func scanEvents[E scannedEvent, N any](
 	dk *mlkem.DecapsulationKey768,
 	events []E,
 	capsule func(E) []byte,
@@ -50,6 +72,10 @@ func scanEvents[E, N any](
 	var found []N
 	var rejected []RejectedEvent
 	for i, ev := range events {
+		if slices.Contains(ev.values(), nil) {
+			rejected = append(rejected, RejectedEvent{Index: i, Reason: RejectMissingValue})
+			continue
+		}
 		ss, err := Decapsulate(dk, capsule(ev))
 		if err != nil {
 			rejected = append(rejected, RejectedEvent{Index: i, Reason: RejectBadCapsule})
@@ -122,7 +148,7 @@ func checkCommitment(expected *big.Int, computeErr error, onChain *big.Int) erro
 // to determine ownership.
 type OnChainErc20Event struct {
 	// Commitment is the output note commitment:
-	//   Poseidon(pk_spendRecipient, SaltBToField(HKDF(ss,"Bob salt")), amount, tokenId)
+	//   Poseidon(pk_spendRecipient, SaltBToField(HKDF(ss,"note salt")), amount, tokenId)
 	Commitment *big.Int
 
 	// CipherText is the ML-KEM capsule (1088 bytes) produced by the sender via
@@ -135,6 +161,9 @@ type OnChainErc20Event struct {
 	// addressed to the scanning view key.
 	EncTxData []byte
 }
+
+// values is the one value the ERC20 scan reads from an event: its commitment.
+func (ev OnChainErc20Event) values() []*big.Int { return []*big.Int{ev.Commitment} }
 
 // OwnedErc20Note is a note that Bob has confirmed belongs to him after scanning.
 // It contains everything Bob needs to later spend the note (build a JoinSplit proof).
@@ -158,7 +187,7 @@ type OwnedErc20Note struct {
 //
 // For each event it:
 //  1. Decapsulates cipherText to recover the raw ML-KEM shared secret ss.
-//  2. Derives salt_B = HKDF(ss, "Bob salt") and encKey = HKDF(ss, "encryption key").
+//  2. Derives salt_B = HKDF(ss, "note salt") and encKey = HKDF(ss, "encryption key").
 //  3. Attempts to decrypt encTxData with encKey (AES-GCM); failure = not for us.
 //  4. Recomputes Poseidon(pk_spend, SaltBToField(salt_B), amount, tokenId) and
 //     checks it matches the on-chain commitment.
@@ -166,6 +195,13 @@ type OwnedErc20Note struct {
 // Events are untrusted: one that fails any of these steps is skipped, and the
 // scan continues. An error means the scan itself failed, for example because
 // pkSpend is not a field element.
+//
+// A change note whose salt is WithdrawChangeSalt(sk_spend, nullifier0) (see
+// RejectedEvent for which ones are) is never returned: its payload opens at
+// step 3, but its salt is not salt_B, so step 4 fails by design
+// (ScanForErc20NotesWithRejected reports it as RejectCommitmentMismatch).
+// Rebuild it with WithdrawChangeNote instead, from the proof's first
+// nullifier and the change value.
 //
 // dk is the recipient's ML-KEM decapsulation key (sk_view).
 // pkSpend is the recipient's spend public key (pk_spend = Poseidon(sk_spend)).
@@ -216,6 +252,9 @@ type OnChainErc721Event struct {
 	CipherText []byte
 	EncTxData  []byte
 }
+
+// values is the one value the ERC721 scan reads from an event: its commitment.
+func (ev OnChainErc721Event) values() []*big.Int { return []*big.Int{ev.Commitment} }
 
 // OwnedErc721Note is a note confirmed to belong to the scanning key pair.
 type OwnedErc721Note struct {
@@ -270,129 +309,6 @@ func ScanForErc721NotesWithRejected(
 	)
 }
 
-// OnChainZkDvpEvent represents a pending-swap event emitted by the EnygmaDvp contract
-// after Alice submits her side of a ZkDvp swap.
-//
-// Alice has spent her input note and proposed:
-//   - CommitmentA (C') — the new note Alice will receive (the asset Bob is sending)
-//   - CommitmentB      — the new note Bob will receive (the asset Alice is sending)
-//
-// To complete the swap Bob must decapsulate CipherText, decrypt EncTxData,
-// verify both commitments, and submit his own nullifier + ZK proof.
-type OnChainZkDvpEvent struct {
-	// CommitmentA is Alice's output commitment C':
-	//   Poseidon(aliceSpendPk, SaltBToField(saltStar), amountOut, tokenIdOut)
-	CommitmentA *big.Int
-
-	// CommitmentB is the commitment Bob will receive for Alice's payment:
-	//   Poseidon(bobSpendPk, SaltBToField(saltB), amountIn, tokenIdIn)
-	CommitmentB *big.Int
-
-	// CipherText is the ML-KEM capsule (1088 bytes) Alice produced via
-	// Encapsulate(bobViewEncapKey). Bob decapsulates to recover saltB.
-	CipherText []byte
-
-	// EncTxData is the AEAD ciphertext of (tokenIdOut || amountOut || saltStar)
-	// keyed by saltB. Bob decrypts to verify CommitmentA is well-formed.
-	EncTxData []byte
-}
-
-// ZkDvpSwapInfo is the result of Bob successfully scanning a ZkDvp pending event.
-// It contains everything Bob needs to verify and complete the swap.
-type ZkDvpSwapInfo struct {
-	// CommitmentA is Alice's output commitment (verified well-formed).
-	CommitmentA *big.Int
-
-	// CommitmentB is the commitment Bob will receive (verified against saltB).
-	CommitmentB *big.Int
-
-	// TokenIdOut is the token ID Alice will receive (from encTxData).
-	TokenIdOut *big.Int
-
-	// AmountOut is the amount Alice will receive (from encTxData).
-	AmountOut *big.Int
-
-	// SaltStar is the salt Alice used in CommitmentA. Bob needs this to know
-	// what salt is embedded in CommitmentA (it is NOT Bob's saltB).
-	SaltStar []byte
-
-	// SaltBField is saltB reduced mod SNARK_SCALAR_FIELD — the witness value
-	// Bob passes as WtSaltsIn when spending CommitmentB in a future JoinSplit.
-	SaltBField *big.Int
-}
-
-// ScanForZkDvpSwap scans on-chain ZkDvp pending events for swaps addressed to Bob,
-// skipping bad events as ScanForErc20Notes does.
-//
-// For each event it:
-//  1. Decapsulates CipherText with dk (Bob's view decapsulation key) to recover saltB.
-//  2. Decrypts EncTxData with saltB to get (tokenIdOut, amountOut, saltStar).
-//     An AEAD failure silently skips the event (not addressed to Bob).
-//  3. Verifies CommitmentA = Poseidon(aliceSpendPk, SaltBToField(saltStar), amountOut, tokenIdOut).
-//  4. Verifies CommitmentB = Poseidon(bobSpendPk, SaltBToField(saltB), amountIn, tokenIdIn).
-//     amountIn/tokenIdIn are the agreed swap terms (what Bob contributes).
-//
-// Parameters:
-//   - dk           — Bob's ML-KEM decapsulation key (sk_view)
-//   - aliceSpendPk — Alice's spend public key (exchanged during setup)
-//   - bobSpendPk   — Bob's own spend public key
-//   - amountIn     — amount Bob contributes (the value in CommitmentB)
-//   - tokenIdIn    — token ID Bob contributes (the tokenId in CommitmentB)
-func ScanForZkDvpSwap(
-	dk *mlkem.DecapsulationKey768,
-	aliceSpendPk *big.Int,
-	bobSpendPk *big.Int,
-	amountIn, tokenIdIn *big.Int,
-	events []OnChainZkDvpEvent,
-) ([]ZkDvpSwapInfo, error) {
-	swaps, _, err := ScanForZkDvpSwapWithRejected(dk, aliceSpendPk, bobSpendPk, amountIn, tokenIdIn, events)
-	return swaps, err
-}
-
-// ScanForZkDvpSwapWithRejected is ScanForZkDvpSwap, also returning the events
-// it refused and why.
-func ScanForZkDvpSwapWithRejected(
-	dk *mlkem.DecapsulationKey768,
-	aliceSpendPk *big.Int,
-	bobSpendPk *big.Int,
-	amountIn, tokenIdIn *big.Int,
-	events []OnChainZkDvpEvent,
-) ([]ZkDvpSwapInfo, []RejectedEvent, error) {
-	if err := checkWalletValues(aliceSpendPk, bobSpendPk, amountIn, tokenIdIn); err != nil {
-		return nil, nil, err
-	}
-	return scanEvents(dk, events,
-		func(ev OnChainZkDvpEvent) []byte { return ev.CipherText },
-		func(ev OnChainZkDvpEvent, ss []byte) (ZkDvpSwapInfo, error) {
-			// ZkDvP uses ss directly (not HKDF-derived) for commitment and encryption.
-			tokenIdOut, amountOut, saltStar, err := DecryptSwapPayload(ss, ev.EncTxData)
-			if err != nil {
-				return ZkDvpSwapInfo{}, errNotAddressed
-			}
-
-			expectedCommA, err := Erc20CommitmentV2(aliceSpendPk, SaltBToField(saltStar), amountOut, tokenIdOut)
-			if err := checkCommitment(expectedCommA, err, ev.CommitmentA); err != nil {
-				return ZkDvpSwapInfo{}, err
-			}
-
-			saltBField := SaltBToField(ss)
-			expectedCommB, err := Erc20CommitmentV2(bobSpendPk, saltBField, amountIn, tokenIdIn)
-			if err := checkCommitment(expectedCommB, err, ev.CommitmentB); err != nil {
-				return ZkDvpSwapInfo{}, err
-			}
-
-			return ZkDvpSwapInfo{
-				CommitmentA: new(big.Int).Set(ev.CommitmentA),
-				CommitmentB: new(big.Int).Set(ev.CommitmentB),
-				TokenIdOut:  tokenIdOut,
-				AmountOut:   amountOut,
-				SaltStar:    saltStar,
-				SaltBField:  saltBField,
-			}, nil
-		},
-	)
-}
-
 // OnChainErc1155Event represents a single on-chain note-creation event published
 // by the ERC1155 vault after a successful JoinSplit or ownership proof.
 type OnChainErc1155Event struct {
@@ -400,6 +316,12 @@ type OnChainErc1155Event struct {
 	ContractAddress *big.Int // public info from on-chain event
 	CipherText      []byte
 	EncTxData       []byte
+}
+
+// values is what the ERC1155 scan reads from an event: its commitment and the
+// contract address it copies into the note.
+func (ev OnChainErc1155Event) values() []*big.Int {
+	return []*big.Int{ev.Commitment, ev.ContractAddress}
 }
 
 // OwnedErc1155Note is an ERC1155 note confirmed to belong to the scanning key pair.

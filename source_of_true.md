@@ -361,8 +361,8 @@ capsule today cannot decrypt it later even with a future quantum computer.
 ### Why HKDF?
 
 ML-KEM outputs a shared secret `ss` — a random-looking 32-byte value. It is tempting
-to use it directly as an encryption key. The older swap flow does exactly this, keying
-ChaCha20-Poly1305 with `ss` directly.
+to use it directly as an encryption key. An older swap flow did that, keying
+ChaCha20-Poly1305 with `ss`; it has been removed.
 
 The problem is that one shared secret is used for two purposes: deriving the commitment
 salt (`saltB`) and deriving the AES encryption key. Using the same bytes for both means
@@ -384,8 +384,6 @@ needs to serve multiple purposes.
 
 - **V2 deposit and payment flows**: every output note derives its commitment salt and
   AES-256-GCM key independently from the same ML-KEM shared secret via HKDF.
-- The older swap flow skips HKDF and uses `ss` directly — a known limitation that V2
-  was designed to fix.
 
 ---
 
