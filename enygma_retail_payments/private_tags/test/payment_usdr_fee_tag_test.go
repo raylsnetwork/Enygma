@@ -252,7 +252,7 @@ func depositAndBuildUsdrFeeWitness(
 	// the proof binds their hash.
 	reqBody := map[string]interface{}{
 		"stMessage":            "0",
-		"stTreeNumbers":        [1]string{"0"},
+		"stTreeNumbers":        [1]string{big.NewInt(int64(aliceProof.TreeNumber)).String()},
 		"stMerkleRoots":        [1]string{aliceProof.Root.String()},
 		"stNullifiers":         [1]string{nullifier.String()},
 		"stCommitmentsOut":     [2]string{cmtFee.String(), cmtChange.String()},
@@ -558,7 +558,7 @@ func TestFullPaymentUsdrFeeWithTagsViaRelayer(t *testing.T) {
 		rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
 		merkleDepth,
 		[]*rpcore.MerkleProof{aliceProof},
-		[]*big.Int{big.NewInt(0)},
+		[]*big.Int{big.NewInt(int64(aliceProof.TreeNumber))},
 		big.NewInt(0),
 	)
 	if err != nil {
@@ -822,7 +822,7 @@ func TestPaymentUsdrFeeViaRelayer_InvalidFeeRejected(t *testing.T) {
 			[][]byte{bobView.EncapsKey, aliceView.EncapsKey},
 			merkleDepth,
 			[]*rpcore.MerkleProof{aliceProof},
-			[]*big.Int{big.NewInt(0)},
+			[]*big.Int{big.NewInt(int64(aliceProof.TreeNumber))},
 			big.NewInt(0),
 		)
 		if err != nil {

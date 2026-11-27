@@ -182,6 +182,18 @@ go test ./... -v -timeout 600s
 Requires the Hardhat node (step 1), deployed+initialized contracts (step 2), and the
 gnark server (step 3).
 
+Run the private-tag integration tests from the repository root.
+
+```bash
+make shield-stack
+make retail-tags-test
+make shield-stack-stop
+```
+
+The on-chain workflow runs `make retail-tags-test` after `make retail-test`
+so the tag tests also cover vault tree rollover. The target treats every
+skipped test as a failure.
+
 ## Regenerating Proving/Verifying Keys
 
 From the repo root:

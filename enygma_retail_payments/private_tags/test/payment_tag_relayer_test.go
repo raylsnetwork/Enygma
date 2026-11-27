@@ -398,7 +398,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 		rpcore.ChannelPaymentNote{Salt: ch.Salt, BlockNumber: ch.BlockNumber, Tag: ch.Tag, Ctxt: ch.Ctxt},
 		merkleDepth,
 		[]*rpcore.MerkleProof{aliceProof},
-		[]*big.Int{big.NewInt(0)},
+		[]*big.Int{big.NewInt(int64(aliceProof.TreeNumber))},
 		tokenId,
 	)
 	if err != nil {
@@ -654,9 +654,6 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 		},
 	}
 
-	// Track channel index cursor so each sub-test scans only its own channel.
-	var channelCursor uint64
-
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tags.BitmapDescription(tc.mode)[:4], func(t *testing.T) {
@@ -736,7 +733,7 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 			// ── Alice scans — should find exactly her channel ─────────────────
 			aliceFound, err := tags.ScanChannels(
 				client, channelRegistryAddr, aliceDK.DecapsKey,
-				totalUsers, channelCursor, 10,
+				totalUsers, chResp.ChannelIdx, 1,
 			)
 			if err != nil {
 				t.Fatalf("ScanChannels (Alice): %v", err)
@@ -767,7 +764,7 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 			// ── Carol (wrong key) finds nothing ───────────────────────────────
 			carolFound, err := tags.ScanChannels(
 				client, channelRegistryAddr, carolDK.DecapsKey,
-				totalUsers, channelCursor, 10,
+				totalUsers, chResp.ChannelIdx, 1,
 			)
 			if err != nil {
 				t.Fatalf("ScanChannels (Carol): %v", err)
@@ -776,9 +773,6 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 				t.Errorf("Carol should find 0 channels, found %d", len(carolFound))
 			}
 			t.Log("  Carol (wrong key) finds nothing ✓")
-
-			// Advance cursor past this channel for the next sub-test.
-			channelCursor = ch.ChannelIdx + 1
 
 			t.Logf("  [%s] PASSED — bitmap=%d bits, relayer signed, Alice found, Carol excluded",
 				tags.BitmapDescription(tc.mode)[:4], setBits)
