@@ -459,8 +459,8 @@ shield-demo-stale: ## Fail if the demo on :9092 was built from Go sources other 
 
 # With no demo on :9092 but the stack up (the demo died, or was killed), it
 # finds the stack's logs dir from the gnark server's binary path, as
-# shield-gnark-restart does, and starts the demo there: run.sh would start a
-# fresh node over the running one.
+# shield-gnark-restart does. Start the demo there once run.sh reports the
+# stack ready, including when it was started with --no-demo.
 shield-demo-restart: ## Rebuild the shield demo and restart it on the running run.sh stack, or start it there if it is down (after an engine change)
 	@if pid=$$(lsof -tiTCP:9092 -sTCP:LISTEN); then \
 	  logs=$$(ps -o args= -p $$pid | sed -n 's/.* -logs \([^ ]*\).*/\1/p'); done_msg=restarted; \
@@ -469,6 +469,7 @@ shield-demo-restart: ## Rebuild the shield demo and restart it on the running ru
 	  gpid=$$(lsof -tiTCP:8082 -sTCP:LISTEN) || { echo "no demo on :9092 and no gnark server on :8082: start the stack with bash enygma_retail_payments/shield_demo/run.sh"; exit 1; }; \
 	  logs=$$(dirname $$(dirname $$(ps -o args= -p $$gpid | awk '{print $$1}'))); done_msg=started; \
 	  [ -f "$$logs/gnark.log" ] || { echo "no demo on :9092, and the gnark server on :8082 (pid $$gpid) was not started by run.sh: restart the stack with run.sh"; exit 1; }; \
+	  [ -s "$$logs/stack.ready" ] || { echo "the shield stack is still starting: wait for run.sh to finish starting, then rerun make shield-demo-restart"; exit 1; }; \
 	fi; \
 	root=$(CURDIR)/enygma_retail_payments; \
 	go build -C $$root/shield_demo -o $$logs/bin/shield_demo . && scripts/shield_demo_src.sh >$$logs/bin/shield_demo.src && { [ -z "$$pid" ] || kill $$pid; } && \
