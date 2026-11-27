@@ -25,6 +25,7 @@ contract UserRegistry {
     );
 
     error AlreadyRegistered(address user);
+    error ZeroPkSpend();
     error NotRegistered(address user);
     error IndexOutOfRange(uint256 index, uint256 length);
 
@@ -32,6 +33,7 @@ contract UserRegistry {
     // Each address can only register once.
     function register(uint256 pkSpend, bytes calldata pkView) external {
         if (_keys[msg.sender].pkSpend != 0) revert AlreadyRegistered(msg.sender);
+        if (pkSpend == 0) revert ZeroPkSpend();
         _userIndex[msg.sender] = uint32(_userList.length);
         _userList.push(msg.sender);
         _keys[msg.sender] = UserKeys({pkSpend: pkSpend, pkView: pkView});
