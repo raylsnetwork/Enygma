@@ -209,6 +209,6 @@ interface IAbstractCoinVault {
 
     function getPendingProofReceipt(
         uint256 receiptUniqueId
-    ) external returns (IEnygmaDvp.ProofReceipt memory receipt);
+    ) external view returns (IEnygmaDvp.ProofReceipt memory receipt);
 
 }

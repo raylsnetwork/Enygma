@@ -124,10 +124,15 @@ contract AssetGroup is IAssetGroup, Merkle, AccessControl {
 
         uint256 assetGroupMerkleRoot = receipt.statement[statementLength - 1];
 
-        // TODO:: connect treeNumber
-        bool isTokenAMember = isValidRoot(0, assetGroupMerkleRoot);
+        if (isVaultAMember) return true;
 
-        return (isVaultAMember || isTokenAMember);
+        // The receipt carries no tree number, and a group past 2^depth - 1
+        // members has moved on to a new tree, so any tree's root admits.
+        // Newest first: a proof is usually against the current tree's root.
+        for (uint256 t = treeNumber + 1; t > 0; t--) {
+            if (isValidRoot(t - 1, assetGroupMerkleRoot)) return true;
+        }
+        return false;
     }
 
     function insertTokenMember(

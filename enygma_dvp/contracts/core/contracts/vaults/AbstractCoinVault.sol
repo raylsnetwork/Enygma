@@ -372,7 +372,7 @@ abstract contract AbstractCoinVault is
 
     function getPendingProofReceipt(
         uint256 proofUniqueId
-    ) public returns (IEnygmaDvp.ProofReceipt memory proofReceipt) {
+    ) public view returns (IEnygmaDvp.ProofReceipt memory proofReceipt) {
         return _pendingProofReceipts[proofUniqueId];
     }
 

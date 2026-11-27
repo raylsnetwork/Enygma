@@ -26,5 +26,5 @@ interface IMerkle {
     function isLocked(
         uint256 _treeNumber,
         uint256 _nullifierId
-    ) external returns (bool);
+    ) external view returns (bool);
 }

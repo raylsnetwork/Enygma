@@ -98,7 +98,7 @@ contract Merkle is IMerkle {
     function isLocked(
         uint256 _treeNumber,
         uint256 _nullifierId
-    ) public returns (bool) {
+    ) public view returns (bool) {
         return lockedNullifiers[_treeNumber][_nullifierId];
     }
 
@@ -157,6 +157,9 @@ contract Merkle is IMerkle {
 
     function insertLeaves(uint256[] memory _leafHashes) internal {
         uint256 count = _leafHashes.length;
+        // Vaults skip zero commitments, so a receipt can leave none to insert:
+        // the walk below would read past the empty array's end.
+        if (count == 0) return;
         if ((nextLeafIndex + count) >= (2 ** treeDepth)) {
             newTree();
         }
