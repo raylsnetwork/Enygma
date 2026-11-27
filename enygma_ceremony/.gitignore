@@ -1,0 +1,6 @@
+# make ceremony-dist
+/dist/
+
+# go build's binaries, built here or in the command's directory (not
+# /ceremony: that is the ceremony package, and go build will not write there)
+/cmd/ceremony/ceremony

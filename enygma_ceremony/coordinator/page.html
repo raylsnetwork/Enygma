@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enygma setup ceremony</title>
+<style>
+:root {
+  --bg: #f7f7f5; --fg: #18181b; --muted: #5b5b66; --faint: #8a8a96; --line: #e4e4e7; --card: #ffffff;
+  --accent: #4338ca; --accent-fg: #ffffff; --accent-bg: #eef2ff;
+  --ok: #15803d; --ok-bg: #f0fdf4; --warn-bg: #fff7e6; --warn-fg: #7c4a03; --warn-line: #f5d9a8;
+  --code-bg: #f4f4f5;
+  --shadow: 0 1px 2px rgba(24, 24, 27, 0.04), 0 4px 16px rgba(24, 24, 27, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0b0e; --fg: #f4f4f5; --muted: #a1a1aa; --faint: #71717a; --line: #27272a; --card: #141418;
+    --accent: #a5b4fc; --accent-fg: #1e1b4b; --accent-bg: #1e1b4b;
+    --ok: #4ade80; --ok-bg: #052e16; --warn-bg: #2a1d05; --warn-fg: #fcd34d; --warn-line: #4a3510;
+    --code-bg: #1c1c21;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+main { max-width: 900px; margin: 0 auto; padding: 48px 20px 72px; }
+h1 { font-size: 32px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.02em; }
+h2 { font-size: 20px; margin: 44px 0 14px; letter-spacing: -0.01em; }
+p { margin: 8px 0; }
+a { color: var(--accent); overflow-wrap: anywhere; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.lead { color: var(--muted); font-size: 17px; margin: 0 0 28px; max-width: 680px; }
+.hint { font-size: 14px; color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow); }
+.card.spaced { margin-top: 12px; }
+[hidden] { display: none !important; }
+
+/* The two phases */
+.phases { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.phase .num { display: inline-flex; width: 28px; height: 28px; border-radius: 50%; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; background: var(--code-bg); color: var(--muted); margin-right: 10px; flex: none; }
+.phase .head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; margin-bottom: 6px; }
+.phase .name { font-weight: 650; font-size: 16px; }
+.phase p { color: var(--muted); font-size: 14.5px; margin: 0; }
+.phase .tag { margin-left: auto; font-size: 12.5px; font-weight: 600; border-radius: 999px; padding: 2px 10px;
+  border: 1px solid var(--line); color: var(--faint); }
+.phase .tag:empty { display: none; }
+.phase.now { border-color: var(--accent); }
+.phase.now .num { background: var(--accent); color: var(--accent-fg); }
+.phase.now .tag { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+.phase.past .num { background: var(--ok-bg); color: var(--ok); }
+.phase.past .tag { color: var(--ok); border-color: var(--ok); }
+.why { margin: 14px 2px 0; font-size: 14.5px; color: var(--muted); }
+
+.notice { border-radius: 12px; padding: 12px 16px; margin: 20px 0 0; background: var(--warn-bg); color: var(--warn-fg);
+  border: 1px solid var(--warn-line); }
+.notice:empty { display: none; }
+
+/* Live numbers */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
+.stat .label { color: var(--muted); font-size: 13px; }
+.stat .value { font-size: 22px; font-weight: 650; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* How to contribute */
+.status-line { font-weight: 650; font-size: 17px; margin: 0 0 6px; }
+ol.how { padding-left: 22px; margin: 12px 0 0; }
+ol.how li { margin: 10px 0; }
+pre { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+details { margin-top: 18px; }
+summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 15px; padding: 4px 0; }
+summary:hover { color: var(--fg); }
+
+/* Contributors */
+.table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+th { color: var(--muted); font-weight: 600; font-size: 13px; }
+td.num { color: var(--muted); width: 1%; white-space: nowrap; }
+td.hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--muted); white-space: nowrap; }
+td.when { color: var(--muted); white-space: nowrap; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-left: 8px;
+  border: 1px solid var(--line); color: var(--muted); }
+.badge.github { color: var(--ok); border-color: var(--ok); }
+.empty { padding: 18px 14px; color: var(--muted); }
+footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  main { padding: 32px 16px 56px; }
+  h1 { font-size: 27px; }
+  .phases { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  td.when, th.when { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Enygma setup ceremony</h1>
+  <p class="lead">Enygma's privacy rests on a set of cryptographic keys. This ceremony makes them together, so that
+    no one ever holds the secret that could forge a proof. You contribute from your own computer, with a program
+    you get from GitHub, not from this server.</p>
+
+  <div class="phases">
+    <div class="card phase" id="phase1">
+      <div class="head"><span class="num">1</span><span class="name">Phase 1: the shared foundation</span><span class="tag" id="phase1-tag"></span></div>
+      <p>One ceremony that every Enygma protocol builds on.</p>
+    </div>
+    <div class="card phase" id="phase2">
+      <div class="head"><span class="num">2</span><span class="name" id="phase2-name">Phase 2: keys for each protocol</span><span class="tag" id="phase2-tag"></span></div>
+      <p id="phase2-what">One ceremony per protocol, built on Phase 1.</p>
+    </div>
+  </div>
+  <p class="why">Each contribution mixes fresh randomness from a participant's computer into the keys, and that
+    randomness is then thrown away. The keys are secure as long as one participant in each phase was honest and
+    ran a program this server did not give them. That can be you.</p>
+
+  <div class="notice" id="notice" role="status"></div>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Contributions so far</div><div class="value" id="count">–</div></div>
+    <div class="stat"><div class="label">Waiting in line</div><div class="value" id="queue">–</div></div>
+    <div class="stat"><div class="label">Contributing now</div><div class="value" id="now">–</div></div>
+    <div class="stat"><div class="label">Average turn</div><div class="value" id="turn">–</div></div>
+  </div>
+
+  <h2>Contribute</h2>
+  <div class="card">
+    <p class="status-line" id="open-what">Loading…</p>
+    <p>This server never sends you code. The program that draws your randomness comes from the ceremony's GitHub
+      release, built in the open from a tagged commit, or from source you build yourself.</p>
+    <ol class="how">
+      <li id="release-step">Open the ceremony's release on GitHub. Take the link from the ceremony's announcement or
+        the repository, rather than from this page alone.</li>
+      <li>Paste the command for your system from the release notes into a terminal (PowerShell on Windows). It checks
+        the program's sha256 against the release, then runs it. It waits for your turn by itself; leave it running
+        until it says you are done, then publish the receipt it prints.</li>
+      <li>Or build it from source, at the release's tag:
+        <pre id="source"></pre></li>
+    </ol>
+  </div>
+
+  <h2>Contributors</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Receipt</th><th class="when">When</th></tr></thead>
+      <tbody id="transcript"></tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>Check the ceremony yourself</summary>
+    <div class="card spaced">
+      <p>Every contribution is public. With the program from the release, this downloads them all, checks that each
+        one builds correctly on the one before it, and finds your receipt among them.</p>
+      <pre id="verify"></pre>
+    </div>
+  </details>
+
+  <footer id="footer"></footer>
+</main>
+<script>
+"use strict";
+const origin = location.origin;
+const protocols = {
+  enygma_payments: "Enygma Institutional Payments",
+  enygma_retail_payments: "Enygma Retail Payments",
+  enygma_dvp: "Enygma Delivery-vs-Payment",
+  enygma_dvp_auctions: "Enygma DvP Auctions",
+};
+
+function el(id) { return document.getElementById(id); }
+function text(id, value) { el(id).textContent = value; }
+function protocolName(name) { return protocols[name] || name; }
+function duration(seconds) {
+  if (!seconds) return "–";
+  if (seconds < 90) return Math.round(seconds) + " s";
+  return Math.round(seconds / 60) + " min";
+}
+function shortHash(h) { return h.length > 20 ? `${h.slice(0, 10)}…${h.slice(-8)}` : h; }
+
+function phaseTitle(s) {
+  return s.phase === "phase 1" ? "Phase 1: the shared foundation" : `Phase 2: keys for ${protocolName(s.ceremony)}`;
+}
+
+function closes(s) {
+  if (!s.close_at) return "";
+  return " It closes " + new Date(s.close_at).toLocaleString(undefined,
+    { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) + ".";
+}
+
+function renderPhases(s) {
+  const one = s.phase === "phase 1";
+  el("phase1").className = "card phase " + (one ? "now" : "past");
+  text("phase1-tag", one ? (s.closed ? "Closed" : "Open now") : "Complete");
+  el("phase2").className = "card phase" + (one ? "" : " now");
+  text("phase2-tag", one ? "Comes next" : (s.closed ? "Closed" : "Open now"));
+  text("phase2-name", one ? "Phase 2: keys for each protocol" : `Phase 2: keys for ${protocolName(s.ceremony)}`);
+  text("phase2-what", one ? "One ceremony per protocol, built on Phase 1."
+    : `One ceremony per protocol, built on Phase 1. This one makes the keys of ${protocolName(s.ceremony)}.`);
+}
+
+// release splits a GitHub release address into its repository and tag.
+function release(u) {
+  const m = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/releases\/tag\/([A-Za-z0-9_.\/-]+)$/.exec(u || "");
+  return m ? { repo: `https://github.com/${m[1]}/${m[2]}`, dir: m[2], tag: m[3] } : null;
+}
+
+function renderHow(s) {
+  const step = el("release-step");
+  if (s.release_url && s.release_url.startsWith("https://")) {
+    const a = document.createElement("a");
+    a.href = s.release_url; a.rel = "noopener noreferrer"; a.textContent = s.release_url;
+    step.replaceChildren("Open the ceremony's release on GitHub: ", a,
+      ". Take the link from the ceremony's announcement or the repository too, and check they match.");
+  }
+  const r = release(s.release_url);
+  text("source", r
+    ? `git clone --depth 1 --branch ${r.tag} ${r.repo}\ncd ${r.dir}/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`
+    : `git clone --branch <the release's tag> <the repository>\ncd <the repository>/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`);
+  text("verify", `ceremony verify -url ${origin} -dir transcript -mine <your receipt>`);
+}
+
+function renderStatus(s) {
+  renderPhases(s);
+  let notice = s.notice || "";
+  if (s.closed) notice = "This phase is closed: it takes no more contributions." + (notice ? " " + notice : "");
+  text("notice", notice);
+  text("count", s.contributions.toLocaleString());
+  text("queue", s.queue.toLocaleString());
+  text("now", s.contributing || "Nobody");
+  text("turn", duration(s.average_turn));
+  text("open-what", s.closed ? `${phaseTitle(s)} is closed.` : `${phaseTitle(s)} is open.${closes(s)}`);
+  renderHow(s);
+  text("footer", `Latest state fingerprint ${s.latest}` + (s.version ? ` · This server runs commit ${s.version}` : ""));
+}
+
+function renderTranscript(t) {
+  if (t.contributions.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4; td.className = "empty"; td.textContent = "No contributions yet. Be the first.";
+    tr.append(td);
+    el("transcript").replaceChildren(tr);
+    return;
+  }
+  const rows = t.contributions.slice().reverse().map(e => {
+    const tr = document.createElement("tr");
+    const idx = document.createElement("td"); idx.className = "num"; idx.textContent = e.index;
+    const who = document.createElement("td"); who.textContent = e.participant;
+    if ((e.identity || "").startsWith("github:")) {
+      const b = document.createElement("span"); b.className = "badge github"; b.textContent = "GitHub";
+      who.append(b);
+    }
+    const hash = document.createElement("td"); hash.className = "hash"; hash.textContent = shortHash(e.sha256); hash.title = e.sha256;
+    const at = document.createElement("td"); at.className = "when";
+    at.textContent = new Date(e.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    tr.append(idx, who, hash, at);
+    return tr;
+  });
+  el("transcript").replaceChildren(...rows);
+}
+
+async function refresh() {
+  let s, t;
+  try {
+    [s, t] = await Promise.all([
+      fetch("/v1/status").then(r => r.json()),
+      fetch("/v1/transcript").then(r => r.json()),
+    ]);
+  } catch (e) {
+    text("open-what", "The ceremony's server cannot be reached right now. Retrying…");
+    return;
+  }
+  renderStatus(s);
+  renderTranscript(t);
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
