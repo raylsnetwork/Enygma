@@ -4,22 +4,13 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const path = require("path");
+const { expectRevert } = require("./helpers.js");
 
 const RETAIL_VERIFIER = path.join(__dirname, "../../../enygma_retail_payments/contracts/abis/Verifier.json");
 
 // The Groth16 backend these tests install: initializeVerifier stores any
 // address, and no proof is verified here.
 const BACKEND = "0x000000000000000000000000000000000000dEaD";
-
-// Resolves when tx reverts; fails if it succeeds.
-async function expectRevert(tx, what) {
-  try {
-    await (await tx).wait();
-  } catch (e) {
-    return e;
-  }
-  expect.fail(`expected ${what} to revert`);
-}
 
 describe("Retail Verifier.json", function () {
   let verifier, deployer, other;
@@ -32,14 +23,14 @@ describe("Retail Verifier.json", function () {
   });
 
   it("refuses initializeVerifier from an account other than its deployer", async function () {
-    await expectRevert(verifier.connect(other).initializeVerifier(BACKEND), "a stranger's initializeVerifier");
     const ownerRole = await verifier.DEFAULT_OWNER_ROLE();
+    const reason = `AccessControl: account ${other.address.toLowerCase()} is missing role ${ownerRole}`;
+    await expectRevert(verifier, verifier.connect(other).initializeVerifier(BACKEND), reason);
     expect(await verifier.hasRole(ownerRole, other.address)).to.equal(false);
   });
 
   it("lets its deployer initialize it once, then refuses a second initializeVerifier", async function () {
     await (await verifier.initializeVerifier(BACKEND)).wait();
-    const e = await expectRevert(verifier.initializeVerifier(other.address), "a second initializeVerifier");
-    expect(e.message).to.include("Verifier: already initialized");
+    await expectRevert(verifier, verifier.initializeVerifier(other.address), "Verifier: already initialized");
   });
 });

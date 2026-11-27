@@ -3,7 +3,7 @@
 // safeBatchTransferFrom writes no token state and refuses id 0 (#445).
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { expectRevert } = require("./expectRevert.js");
+const { expectRevert } = require("./helpers.js");
 
 const NORMAL = 0;
 const SUB_TOKEN = 1;

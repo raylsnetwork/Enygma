@@ -5,7 +5,7 @@ const { expect } = require("chai");
 const { ethers, artifacts } = require("hardhat");
 const { buildPoseidon } = require("circomlibjs");
 const { POSEIDON_SOURCE } = require("../../scripts/regen_poseidon.js");
-const { expectRevert } = require("./expectRevert.js");
+const { expectRevert } = require("./helpers.js");
 
 const TREE_DEPTH = 8;
 const AMOUNT = 1000;
