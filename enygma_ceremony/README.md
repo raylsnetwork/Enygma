@@ -244,7 +244,9 @@ in:
      storage): the next phase is served at the same address.
    - **Interrupting:** Ctrl-C (or a systemd stop) stops handing out turns early and waits for the
      one under way; a second Ctrl-C stops at once. An interrupted phase is not closed: started
-     again, it carries on.
+     again, it carries on. Queued participants are told to keep waiting meanwhile, so to end a
+     phase and tell its participants, close it with `-close-at`: after an interrupt, their programs
+     keep trying to reach the coordinator for 10 minutes before they give up.
    - **Restarts are safe:** the directory is the transcript, and participants' programs join
      again by themselves. The queue, sessions and the hourly registration counts are in memory,
      and start afresh.

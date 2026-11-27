@@ -223,7 +223,11 @@ type Server struct {
 	turnsGiven map[identity]int       // identity -> turns given it, while it has not contributed
 	turnTimes  []time.Duration        // the last few accepted turns' lengths
 	checkTimes []time.Duration        // how long the last few uploads took to check
-	closed     bool
+	closed     bool                   // the phase takes no more contributions: Close, or Config.CloseAt
+	// stopping is the coordinator about to stop (Stop, Release): it hands out
+	// no more turns, but the phase is not closed, and the queue waits for the
+	// coordinator started next.
+	stopping bool
 	// downloading holds the network addresses with a public download of a
 	// state under way: one each, publicDownloads in all.
 	downloading map[string]bool
@@ -439,16 +443,30 @@ func (s *Server) States() []string {
 }
 
 // Release unlocks the phase's directory, for another coordinator to open.
-// The Server serves nothing more that changes it.
+// The Server serves nothing more that changes it, and hands out no more
+// turns, as after Stop.
 func (s *Server) Release() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.closed = true
+	s.stopping = true
 	unlockDir(s.lock)
 	s.lock = nil
 }
 
-// Close stops handing out turns. A turn under way may still finish.
+// Stop stops handing out turns, for the coordinator to stop or restart: a
+// turn under way may still finish. The phase is not closed, so a queued
+// participant asking is told to keep waiting, and their program joins the
+// coordinator started next by itself; told the phase was closed, it would
+// give up.
+func (s *Server) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopping = true
+}
+
+// Close closes the phase: it hands out no more turns, and tells everyone who
+// asks that the phase takes no more contributions. A turn under way may still
+// finish. Only a close at Config.CloseAt is recorded in the directory.
 func (s *Server) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -463,8 +481,8 @@ func (s *Server) Busy() bool {
 	return s.turn != nil
 }
 
-// Closed reports whether the phase has stopped handing out turns, by Close
-// or at Config.CloseAt.
+// Closed reports whether the phase is closed, by Close or at
+// Config.CloseAt. A stopping coordinator's phase is not (Stop).
 func (s *Server) Closed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -485,8 +503,8 @@ func unlockDir(f *os.File) {
 
 // ClosedFile, in a phase's directory, marks a phase that has closed at its
 // scheduled time (Config.CloseAt): a coordinator started on it again serves
-// it closed, whatever its own CloseAt. An interrupted phase (Close) is not
-// marked: a coordinator stopped to be restarted carries on.
+// it closed, whatever its own CloseAt. An interrupted phase (Stop) is not
+// marked, nor is one closed by Close: started again, it carries on.
 const ClosedFile = "closed"
 
 // advance closes the phase at its time, ends a turn past its time, drops
@@ -533,7 +551,7 @@ func (s *Server) advance(now time.Time) {
 	// The turn goes to the first queued participant still asking. One not
 	// asking just now (a laptop asleep, a background tab throttled) is passed
 	// over but keeps their place, as long as Away allows (audit R-020).
-	if s.turn == nil && !s.closed && len(s.queue) > 0 && !s.full() && s.diskRoom() {
+	if s.turn == nil && !s.closed && !s.stopping && len(s.queue) > 0 && !s.full() && s.diskRoom() {
 		if i := slices.IndexFunc(s.queue, func(w waiter) bool {
 			return now.Sub(w.seen) <= s.cfg.Presence && !s.addressDone(w.p.addr)
 		}); i >= 0 {

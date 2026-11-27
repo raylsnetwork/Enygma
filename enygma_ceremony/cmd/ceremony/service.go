@@ -415,21 +415,23 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			logger.Printf("phase in %s: closed, after %d contributions; serving its transcript, read-only, until interrupted",
 				*dir, len(c.States()))
 		} else {
-			logger.Printf("phase in %s: %d contributions so far; participants are admitted %s; interrupt to close",
+			logger.Printf("phase in %s: %d contributions so far; participants are admitted %s; interrupt to stop",
 				*dir, len(c.States()), *auth)
 		}
 
 		sigs := make(chan os.Signal, 2)
-		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+		stopSignals(sigs)
 		defer signal.Stop(sigs)
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
+		interrupted := false
 	serving: // until an interrupt, or the scheduled close
 		for {
 			select {
 			case err := <-served:
 				return err
 			case <-sigs:
+				interrupted = true
 				break serving
 			case <-tick.C:
 				if !closedAtStart && c.Closed() {
@@ -437,8 +439,15 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				}
 			}
 		}
-		logger.Printf("closing: no new turns; waiting for the one under way (interrupt again to stop now)")
-		c.Close()
+		// An interrupt stops the coordinator, to restart it or to end the
+		// phase by hand, and the phase is not closed: queued participants
+		// keep waiting, and their programs join the coordinator started next.
+		if interrupted {
+			c.Stop()
+			logger.Printf("stopping: no new turns; waiting for the one under way (interrupt again to stop now)")
+		} else {
+			logger.Printf("waiting for the turn under way, if any (interrupt to stop now)") // advance logged the close
+		}
 	wait:
 		for c.Busy() {
 			select {
@@ -468,11 +477,16 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		if info, err := ceremony.Inspect(transcript.Path(*dir, 0)); err == nil && info.Kind == ceremony.KindPhase2 {
 			seal = "phase2-seal -ceremony " + info.Ceremony + " -srs <srs> -r1cs <r1cs dir> -keys <keys dir>"
 		}
-		fmt.Fprintf(w, "Closed after %d contributions. Announce the head now, before the beacon round is out:\n"+
-			"  head sha256 %s (contribution %d)\n"+
+		if c.Closed() {
+			fmt.Fprintf(w, "Closed after %d contributions. Announce the head now, before the beacon round is out:\n", len(t.Contributions))
+		} else {
+			fmt.Fprintf(w, "Stopped after %d contributions. The phase is not closed: started again, it carries on.\n"+
+				"If this stop ends it, announce the head now, before the beacon round is out:\n", len(t.Contributions))
+		}
+		fmt.Fprintf(w, "  head sha256 %s (contribution %d)\n"+
 			"Then seal, with the round you announced:\n"+
 			"  ceremony %s -transcript %s -head %s -drand <round> -close-at <the close>\n",
-			len(t.Contributions), t.Latest(), len(t.Contributions), seal, *dir, t.Latest())
+			t.Latest(), len(t.Contributions), seal, *dir, t.Latest())
 		return nil
 	}
 }
@@ -507,6 +521,10 @@ func strictTransport(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// stopSignals has c told of the signals that stop a coordinator: Ctrl-C, or
+// a systemd stop. Tests send their own.
+var stopSignals = func(c chan<- os.Signal) { signal.Notify(c, os.Interrupt, syscall.SIGTERM) }
 
 // maxConnections bounds the connections a coordinator holds open at once
 // (audit R-011): past it, new ones wait to be accepted, rather than each

@@ -656,7 +656,9 @@ func TestRestartRefusesABrokenTranscript(t *testing.T) {
 }
 
 // TestClosing: a closed phase hands out no more turns, but the contribution
-// under way still counts. It closes when told, or at its scheduled time.
+// under way still counts. It closes when told, or at its scheduled time. A
+// stopping coordinator hands out no more turns either, but its phase is not
+// closed: the queue is told to wait for the coordinator started next.
 func TestClosing(t *testing.T) {
 	t.Run("when told, letting the turn finish", func(t *testing.T) {
 		h := open(t, "alice", "bob")
@@ -683,6 +685,28 @@ func TestClosing(t *testing.T) {
 		r := h.ask("bob")
 		if r.Status != Closed || r.Notice != "Phase 2 opens on Monday" || !h.srv.Closed() {
 			t.Fatalf("bob after the close: %+v", r)
+		}
+	})
+	t.Run("stopping, letting the turn finish and keeping the queue waiting", func(t *testing.T) {
+		h := open(t, "alice", "bob")
+		h.ask("alice")
+		h.ask("bob")
+		h.srv.Stop()
+		wantStatus(t, "bob", h.ask("bob"), Queued, 1)
+		h.mustContribute("alice")
+		wantStatus(t, "bob", h.ask("bob"), Queued, 1)
+		if h.srv.Busy() || h.srv.Closed() || h.status().Closed {
+			t.Fatalf("after the last turn: busy %v, closed %v, status closed %v", h.srv.Busy(), h.srv.Closed(), h.status().Closed)
+		}
+	})
+	t.Run("released, keeping the queue waiting", func(t *testing.T) {
+		h := open(t, "alice", "bob")
+		h.ask("alice")
+		h.ask("bob")
+		h.srv.Release()
+		wantStatus(t, "bob", h.ask("bob"), Queued, 1)
+		if h.srv.Closed() || h.status().Closed {
+			t.Fatal("a released coordinator's phase is closed")
 		}
 	})
 }
@@ -1039,7 +1063,7 @@ func TestScheduledCloseStaysClosed(t *testing.T) {
 
 	t.Run("an interrupted phase carries on after a restart", func(t *testing.T) {
 		h := newHarness(t, Config{Auth: AuthOpen})
-		h.srv.Close()
+		h.srv.Stop()
 		h.restart()
 		if h.status().Closed {
 			t.Fatal("an interrupted phase stayed closed after a restart")

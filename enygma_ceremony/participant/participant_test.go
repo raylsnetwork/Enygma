@@ -283,6 +283,52 @@ func TestRejoinsAfterARestart(t *testing.T) {
 	}
 }
 
+// TestWaitsThroughAStop: a program waiting its turn while the coordinator
+// stops (Ctrl-C, or a systemd stop or restart) keeps waiting, and joins the
+// coordinator started next, rather than take the stop for a closed phase.
+func TestWaitsThroughAStop(t *testing.T) {
+	p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen})
+	p.blocker(t) // holds the turn, so alice's program waits
+
+	var out syncBuffer
+	c := p.client(t, "alice")
+	c.Out = &out
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Run(context.Background())
+		done <- err
+	}()
+	waitFor(t, &out, "Waiting for your turn", done)
+
+	var asked atomic.Int32
+	stopping := *p.handler.Load()
+	var counting http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stopping.ServeHTTP(w, r)
+		if r.URL.Path == "/v1/turn" {
+			asked.Add(1)
+		}
+	})
+	p.srv.Stop()
+	p.handler.Store(&counting)
+	for deadline := time.Now().Add(30 * time.Second); asked.Load() < 3; { // answered while stopping
+		select {
+		case err := <-done:
+			t.Fatalf("Run ended while the coordinator was stopping (%v):\n%s", err, out.String())
+		case <-time.After(10 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the program stopped asking for its turn:\n%s", out.String())
+		}
+	}
+	p.restart(t)
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "joining again") {
+		t.Fatalf("the program did not join the coordinator started next:\n%s", out.String())
+	}
+}
+
 // restartBlocked restarts the phase, as restart does, with a participant
 // already holding the turn in the new coordinator, so that a program waiting
 // before the restart waits again after it.
