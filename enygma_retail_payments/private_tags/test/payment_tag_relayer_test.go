@@ -294,7 +294,7 @@ func TestFullPaymentWithTagsViaRelayer(t *testing.T) {
 	t.Logf("  channel tx.from = %s (relayer, not Alice) ✓", chSender.Hex())
 
 	// Bob scans TagChannelRegistry — scan only the channel just published.
-	bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, chResp.ChannelIdx, 1)
+	bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, totalUsers, chResp.ChannelIdx, 1)
 	if err != nil {
 		t.Fatalf("ScanChannels (Bob): %v", err)
 	}
@@ -736,7 +736,7 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 			// ── Alice scans — should find exactly her channel ─────────────────
 			aliceFound, err := tags.ScanChannels(
 				client, channelRegistryAddr, aliceDK.DecapsKey,
-				channelCursor, 10,
+				totalUsers, channelCursor, 10,
 			)
 			if err != nil {
 				t.Fatalf("ScanChannels (Alice): %v", err)
@@ -767,7 +767,7 @@ func TestAllPrivacyModesViaRelayer(t *testing.T) {
 			// ── Carol (wrong key) finds nothing ───────────────────────────────
 			carolFound, err := tags.ScanChannels(
 				client, channelRegistryAddr, carolDK.DecapsKey,
-				channelCursor, 10,
+				totalUsers, channelCursor, 10,
 			)
 			if err != nil {
 				t.Fatalf("ScanChannels (Carol): %v", err)

@@ -755,7 +755,11 @@ func TestProtocolPrimer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		found, err := tags.ScanChannels(client, channelsAddr, ana.view.DecapsKey, 0, count)
+		users, err := tags.GetUserCount(client, registryAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found, err := tags.ScanChannels(client, channelsAddr, ana.view.DecapsKey, users, 0, count)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1916,7 +1920,11 @@ func TestProtocolPrimer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the auditor cannot open the Sender's audit ciphertexts: %v", err)
 		}
-		senderChannels, err := tags.ScanChannels(client, channelsAddr, senderKey, 0, uint64(records))
+		senderUsers, err := tags.GetUserCount(client, registryAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		senderChannels, err := tags.ScanChannels(client, channelsAddr, senderKey, senderUsers, 0, uint64(records))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2563,7 +2571,11 @@ func scanTagChannels(t *testing.T, client *ethclient.Client, receipts map[string
 	if err != nil {
 		t.Fatal(err)
 	}
-	found, err := tags.ScanChannels(client, addr, dk, 0, records)
+	users, err := tags.GetUserCount(client, common.HexToAddress(receipts["UserRegistry"].ContractAddress))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := tags.ScanChannels(client, addr, dk, users, 0, records)
 	if err != nil || len(found) != 1 || found[0].ChannelIdx != want {
 		t.Fatalf("%s opened %v of %d records (err %v), want tag channel #%d alone", who, found, records, err, want)
 	}

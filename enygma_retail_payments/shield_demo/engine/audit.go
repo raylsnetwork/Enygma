@@ -390,9 +390,13 @@ func (e *Engine) auditChannels() ([]auditChannel, error) {
 	if c.channelRegistryAddr == (common.Address{}) {
 		return nil, nil
 	}
+	users, err := tags.GetUserCount(c.client, c.registryAddr)
+	if err != nil {
+		return nil, fmt.Errorf("auditor: user count: %w", err)
+	}
 	var channels []auditChannel
 	for _, u := range e.auditUsers {
-		found, _, err := tags.ScanChannelsFromCursor(c.client, c.channelRegistryAddr, u.view,
+		found, _, err := tags.ScanChannelsFromCursor(c.client, c.channelRegistryAddr, u.view, users,
 			&tags.ScanCursor{LastChannelIdx: e.startChannel}, maxChannelScan)
 		if err != nil {
 			return nil, fmt.Errorf("auditor: scan %s's channels: %w", u.name, err)

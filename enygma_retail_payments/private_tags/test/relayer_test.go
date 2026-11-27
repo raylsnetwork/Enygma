@@ -307,7 +307,7 @@ func TestFullFlowViaRelayer(t *testing.T) {
 	}
 
 	// Alice scans TagChannelRegistry — use the address from /relay/info (gap 6).
-	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, 0, 100)
+	found, err := tags.ScanChannels(client, channelRegistryAddr, aliceDK, 2, 0, 100)
 	if err != nil {
 		t.Fatalf("ScanChannels: %v", err)
 	}
@@ -592,7 +592,7 @@ func TestScanCursor(t *testing.T) {
 	}
 	t.Logf("  found %d tags, cursor.LastTagBlock=%d ✓", len(tagMatches), cursor.LastTagBlock)
 
-	chMatches, cursor, err := tags.ScanChannelsFromCursor(client, chRegAddr, aliceDK, cursor, 100)
+	chMatches, cursor, err := tags.ScanChannelsFromCursor(client, chRegAddr, aliceDK, 1, cursor, 100)
 	if err != nil {
 		t.Fatalf("ScanChannelsFromCursor: %v", err)
 	}
@@ -614,7 +614,7 @@ func TestScanCursor(t *testing.T) {
 	if len(tagMatches2) != 0 {
 		t.Errorf("expected 0 new tags, got %d", len(tagMatches2))
 	}
-	chMatches2, cursor2, err := tags.ScanChannelsFromCursor(client, chRegAddr, aliceDK, cursor2, 100)
+	chMatches2, cursor2, err := tags.ScanChannelsFromCursor(client, chRegAddr, aliceDK, 1, cursor2, 100)
 	if err != nil {
 		t.Fatalf("ScanChannelsFromCursor (2nd): %v", err)
 	}

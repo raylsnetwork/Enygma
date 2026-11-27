@@ -7,9 +7,10 @@ package tags
 //
 //	cursor, _ := tags.LoadScanCursor("wallet.cursor")
 //	tip, _    := client.BlockNumber(ctx)
+//	userCount, _ := tags.GetUserCount(client, userReg)
 //
 //	tagMatches, cursor, _ = tags.ScanBlocksFromCursor(client, tagReg, channels, cursor, tip)
-//	newChannels, cursor, _ = tags.ScanChannelsFromCursor(client, chReg, dk, cursor, 100)
+//	newChannels, cursor, _ = tags.ScanChannelsFromCursor(client, chReg, dk, userCount, cursor, 100)
 //
 //	cursor.Save("wallet.cursor")
 //
@@ -28,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -101,9 +103,32 @@ func ScanBlocksFromCursor(
 		return nil, next, fmt.Errorf("FilterLogs: %w", err)
 	}
 
+	matches = matchTagLogs(logs, channels)
+	next.LastTagBlock = toBlock
+	return matches, next, nil
+}
+
+// deriveTag is DeriveTag, a variable so a test can count the calls.
+var deriveTag = DeriveTag
+
+// matchTagLogs returns the TagPublished logs whose tag is one of channels'
+// tags for the log's block. It derives each channel's tag once per block, not
+// once per log: anyone can publish tags, so a per-log derivation would let a
+// publisher multiply every wallet's Poseidon work by the logs it publishes.
+// It keeps only the last block's tags: a node returns logs in block order,
+// and logs out of order would cost extra derivations, never a missed match.
+func matchTagLogs(logs []types.Log, channels []Channel) (matches []ScannedTag) {
 	// ctxtArg decodes the non-indexed `ctxt bytes` field from log.Data.
 	bytesType, _ := abi.NewType("bytes", "", nil)
 	ctxtArg := abi.Arguments{{Type: bytesType}}
+
+	type channelTag struct {
+		tag [32]byte
+		ok  bool // false when the channel's tag could not be derived
+	}
+	tags := make([]channelTag, len(channels))
+	var tagsBlock uint64
+	haveTags := false
 
 	for _, log := range logs {
 		// Topics layout: [0]=sig [1]=blockNumber [2]=tag [3]=publisher
@@ -120,12 +145,16 @@ func ScanBlocksFromCursor(
 		}
 		ctxt, _ := decoded[0].([]byte)
 
-		for _, ch := range channels {
-			expected, err := DeriveTag(log.BlockNumber, ch.PkSpend, ch.SharedSecret)
-			if err != nil {
-				continue
+		if !haveTags || log.BlockNumber != tagsBlock {
+			for i, ch := range channels {
+				t, err := deriveTag(log.BlockNumber, ch.PkSpend, ch.SharedSecret)
+				tags[i] = channelTag{tag: t, ok: err == nil}
 			}
-			if tag == expected {
+			tagsBlock, haveTags = log.BlockNumber, true
+		}
+
+		for i, ch := range channels {
+			if tags[i].ok && tag == tags[i].tag {
 				matches = append(matches, ScannedTag{
 					BlockNumber:  log.BlockNumber,
 					Entry:        TagEntry{Publisher: publisher, Tag: tag, Ctxt: ctxt},
@@ -135,15 +164,14 @@ func ScanBlocksFromCursor(
 			}
 		}
 	}
-
-	next.LastTagBlock = toBlock
-	return matches, next, nil
+	return matches
 }
 
 // ── Channel scanning ──────────────────────────────────────────────────────────
 
 // ScanChannelsFromCursor checks up to maxNew new channel records starting from
 // cursor.LastChannelIdx and returns any channels addressed to dk.
+// userCount is UserRegistry's user count (GetUserCount); see ScanChannels.
 //
 // The cursor advances past all examined records so subsequent calls resume
 // from the right position even when no channels matched.
@@ -151,6 +179,7 @@ func ScanChannelsFromCursor(
 	client *ethclient.Client,
 	channelRegistryAddr common.Address,
 	dk *mlkem.DecapsulationKey768,
+	userCount int,
 	cursor *ScanCursor,
 	maxNew uint64,
 ) (found []FoundChannel, next *ScanCursor, err error) {
@@ -173,7 +202,7 @@ func ScanChannelsFromCursor(
 		endIdx = total
 	}
 
-	found, err = ScanChannels(client, channelRegistryAddr, dk, fromIdx, endIdx-fromIdx)
+	found, err = ScanChannels(client, channelRegistryAddr, dk, userCount, fromIdx, endIdx-fromIdx)
 	if err != nil {
 		return nil, next, err
 	}

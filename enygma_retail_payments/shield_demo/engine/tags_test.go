@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -18,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
@@ -425,5 +427,53 @@ func TestScanTagsReadsEachBlockOnce(t *testing.T) {
 		if q.addr == testDvp && q.from != 301 {
 			t.Errorf("second scan read block_n %d, want only block 301", q.from)
 		}
+	}
+}
+
+// A node whose UserRegistry cannot be read, as a dropped connection would
+// leave it: Bob's channel scan and the auditor's fail rather than scan with
+// no users, which would skip every record and move Bob's cursor past them.
+func TestChannelScansFailWithoutTheUserCount(t *testing.T) {
+	getUserCount := crypto.Keccak256([]byte("getUserCount()"))[:4]
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Params []struct {
+				Data  hexutil.Bytes `json:"data"`
+				Input hexutil.Bytes `json:"input"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Params) == 0 {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
+		if call := append(req.Params[0].Input, req.Params[0].Data...); bytes.HasPrefix(call, getUserCount) {
+			resp["error"] = map[string]any{"code": -32000, "message": "node unavailable"}
+		} else {
+			resp["result"] = hexutil.Bytes(common.LeftPadBytes([]byte{0}, 32))
+		}
+		json.NewEncoder(w).Encode(resp) //nolint:errcheck
+	}))
+	t.Cleanup(srv.Close)
+	client, err := ethclient.Dial(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	view, err := rpcore.NewViewKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{
+		chain:      &chain{client: client, registryAddr: common.HexToAddress("0x5e"), channelRegistryAddr: common.HexToAddress("0xc4")},
+		auditUsers: []auditUser{{name: "Bob", view: view.DecapsKey}},
+	}
+
+	if _, err := e.scanChannels(context.Background(), nil, &Actor{Name: "Bob", View: view}); err == nil {
+		t.Error("Bob's channel scan succeeded with UserRegistry unreadable")
+	}
+	if _, err := e.auditChannels(); err == nil {
+		t.Error("the auditor's channel scan succeeded with UserRegistry unreadable")
 	}
 }

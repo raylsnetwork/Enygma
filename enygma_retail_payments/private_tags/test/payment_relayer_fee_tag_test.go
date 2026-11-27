@@ -544,7 +544,7 @@ func TestFullPaymentRelayerFeeWithTagsViaRelayer(t *testing.T) {
 	chSender := txSender(t, client, chResp.TxHash)
 	t.Logf("  channel tx.from = %s", chSender.Hex())
 
-	bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, chResp.ChannelIdx, 1)
+	bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, totalUsers, chResp.ChannelIdx, 1)
 	if err != nil {
 		t.Fatalf("ScanChannels (Bob): %v", err)
 	}

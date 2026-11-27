@@ -819,7 +819,7 @@ func runFlow(b *Broker, withTag bool) {
 			chResp.BlockNumber, formatNum(chResp.GasUsed), shortHex(chResp.TxHash, 18)))
 
 		// Bob scans to recover the shared secret.
-		bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, chResp.ChannelIdx, 1)
+		bobFound, err := tags.ScanChannels(client, channelRegistryAddr, bobView.DecapsKey, totalUsers, chResp.ChannelIdx, 1)
 		if err != nil {
 			fail("channel", "Channel Setup", fmt.Errorf("ScanChannels (Bob): %w", err))
 			return
