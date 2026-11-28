@@ -345,6 +345,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	fairPrefix4 := fs.Int("fair-prefix4", 0, "how many leading bits of an IPv4 address make the network turns are shared out by: a free turn goes to the earliest queued from a network drawn at random among those given the fewest (24 when 0)")
 	fairPrefix6 := fs.Int("fair-prefix6", 0, "how many leading bits of an IPv6 address make the network turns are shared out by (48, or -ipv6-prefix when that is fewer, when 0)")
 	uploadWithin := fs.Duration("upload-within", 0, "how long the turn holder has, from first starting to download the state, to start uploading (45m, or -turn when shorter, when 0): at most -turn; raise both for a large state and slow participants")
+	denyFile := fs.String("deny-file", "", "networks this phase takes no part from, one address or CIDR a line (# comments): re-read on SIGHUP")
 	maxPerNetwork := fs.Int("max-per-network", 10, "participants from one network (-fair-prefix4, -fair-prefix6) queued at once: at least 1 (-no-address-limit lifts the bound)")
 	maxQueue := fs.Int("max-queue", 1000, "participants queued at once, from everywhere")
 	maxTurns := fs.Int("max-turns", 3, "turns one identity is given without contributing")
@@ -374,6 +375,15 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	cert := fs.String("tls-cert", "", "a TLS certificate, to serve HTTPS on -listen (with -tls-key)")
 	key := fs.String("tls-key", "", "the certificate's key")
 	return func(args []string, w io.Writer) error {
+		// SIGHUP re-reads -deny-file, so an operator denies a network that
+		// holds the queue without a restart, which would empty the queue
+		// (audit H3). It never stops the coordinator, from the first moment:
+		// a reload as it starts would otherwise end it, and systemd would
+		// not start it again. Without -deny-file, there is nothing to
+		// re-read.
+		reloads := make(chan os.Signal, 1)
+		reloadSignals(reloads)
+		defer signal.Stop(reloads)
 		if *dir == "" || len(args) != 0 || (*cert == "") != (*key == "") {
 			return fmt.Errorf("%w: coordinate takes -dir, and -tls-cert with -tls-key", errUsage)
 		}
@@ -402,6 +412,12 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		proxies, err := parseProxies(*trustedProxy)
 		if err != nil {
 			return fmt.Errorf("%w: -trusted-proxy: %v", errUsage, err)
+		}
+		var deny []netip.Prefix
+		if *denyFile != "" {
+			if deny, err = readDenyFile(*denyFile); err != nil {
+				return fmt.Errorf("-deny-file: %w", err)
+			}
 		}
 		// Participants are served over TLS, or the operator says otherwise
 		// (audit R-006): over plain http the page, the session and GitHub
@@ -474,7 +490,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		c, err := coordinator.New(coordinator.Config{
 			Dir: *dir, Auth: coordinator.Auth(*auth),
 			GitHubClientID: *githubClientID, GitHubClientSecret: githubSecret, GitHubMinAge: *githubMinAge,
-			MaxPerAddress: *maxPerAddress, NoAddressLimit: *noAddressLimit, TrustedProxies: proxies,
+			MaxPerAddress: *maxPerAddress, NoAddressLimit: *noAddressLimit, TrustedProxies: proxies, Deny: deny,
 			IPv6Prefix: *ipv6Prefix, MaxQueue: *maxQueue, MaxTurns: *maxTurns,
 			MaxContributions: *maxContributions, MaxContributionsPerAddress: *maxContributionsPerAddress,
 			MinFree: *minFreeMiB << 20, MaxSessions: *maxSessions,
@@ -508,6 +524,30 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				PingTimeout:          15 * time.Second,
 			},
 			ErrorLog: logger,
+		}
+		// The stop signals are taken before anything is served (SIGHUP, at
+		// the start): an interrupt as it starts serving is handled as any
+		// other.
+		sigs := make(chan os.Signal, 2)
+		stopSignals(sigs)
+		defer signal.Stop(sigs)
+		if len(deny) > 0 {
+			logger.Printf("denying %d networks (%s): send SIGHUP to re-read it", len(deny), *denyFile)
+		}
+		reload := func() {
+			if *denyFile == "" {
+				logger.Printf("SIGHUP: no -deny-file to re-read")
+				return
+			}
+			networks, err := readDenyFile(*denyFile)
+			if err != nil {
+				logger.Printf("SIGHUP: -deny-file: %v; denying the same networks as before", err)
+				return
+			}
+			if len(networks) == 0 {
+				logger.Printf("WARNING: SIGHUP: -deny-file names no networks: none is denied now (replace the file whole, as with mv, so a reload never reads it half-written)")
+			}
+			c.Deny(networks) // which logs
 		}
 		served := make(chan error, 2)
 		var redirect *http.Server
@@ -554,9 +594,6 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 				*dir, len(c.States()), *auth)
 		}
 
-		sigs := make(chan os.Signal, 2)
-		stopSignals(sigs)
-		defer signal.Stop(sigs)
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		interrupted := false
@@ -568,6 +605,8 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			case <-sigs:
 				interrupted = true
 				break serving
+			case <-reloads:
+				reload()
 			case <-tick.C:
 				if !closedAtStart && c.Closed() {
 					break serving
@@ -590,6 +629,8 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			case <-sigs:
 				hurried = true
 				break wait
+			case <-reloads: // a network denied loses the last turn too
+				reload()
 			case <-tick.C:
 			}
 		}
@@ -670,6 +711,18 @@ func parseProxies(s string) ([]netip.Prefix, error) {
 			continue
 		}
 		if p, err := netip.ParsePrefix(item); err == nil {
+			if p.Addr().Is4In6() {
+				// Addresses are compared unmapped (Server.from): an IPv4
+				// network written as IPv6 is the IPv4 network, and one
+				// wider than ::ffff:0:0/96 is no IPv4 network at all.
+				if p.Bits() < 96 {
+					return nil, fmt.Errorf("%q: an IPv4 network written as IPv6 is ::ffff:a.b.c.d/96 or longer", item)
+				}
+				p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+			}
+			if p.Bits() == 0 {
+				return nil, fmt.Errorf("%q is every address", item)
+			}
 			proxies = append(proxies, p.Masked())
 			continue
 		}
@@ -695,6 +748,10 @@ func strictTransport(next http.Handler) http.Handler {
 // stopSignals has c told of the signals that stop a coordinator: Ctrl-C, or
 // a systemd stop. Tests send their own.
 var stopSignals = func(c chan<- os.Signal) { signal.Notify(c, os.Interrupt, syscall.SIGTERM) }
+
+// reloadSignals has c told of the signal that re-reads -deny-file: SIGHUP,
+// as for a systemd reload. Tests send their own.
+var reloadSignals = func(c chan<- os.Signal) { signal.Notify(c, syscall.SIGHUP) }
 
 // maxConnections bounds the connections a coordinator holds open at once
 // (audit R-011): past it, new ones wait to be accepted, rather than each

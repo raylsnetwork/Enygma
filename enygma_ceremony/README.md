@@ -172,7 +172,13 @@ in:
 
   A "network address" is an IPv4 address, or an IPv6 `/64` (`-ipv6-prefix`): one host is given a
   whole `/64`. The log names the address each registration, queueing, turn and contribution came
-  from, so an operator can see who holds the queue and block a network at the firewall. These
+  from, so an operator can see who holds the queue and block a network: at the firewall, or,
+  behind a proxy of your own, with `-deny-file` (one address or CIDR a line, `#` comments). The
+  coordinator re-reads that file on SIGHUP (`systemctl reload`), without a restart, which would
+  empty the queue: a network denied leaves the queue, loses a turn it holds (one whose upload is
+  coming in runs until the upload is refused), and is refused from then on, though anyone may
+  still follow the phase. SIGHUP never stops the coordinator; a file it cannot read keeps the
+  networks denied before. These
   limits cannot be turned off by accident: `-max-per-address` and `-max-per-network` are at least
   1, and `-no-address-limit` lifts them and the per-address contribution limit, for a phase whose
   participants all come from one address.
@@ -302,7 +308,11 @@ in:
      missing, announce nothing and seal nothing: the queue is open to anyone, and a chain without
      them is one nobody you trust contributed to. Rerun the phase, or stop the coordinator, have a
      lined-up contributor contribute by hand on the latest state (`ceremony contribute -in <latest>
-     -out <next> -prev <its sha256>`), add it to the directory with its entry, and restart. Then
+     -out <next> -prev <its sha256>`, `<next>` outside the phase's directory), and add it with
+     `ceremony append -dir <dir> -in <next> -name <their name>`, which checks it on top of the
+     latest, writes it and its entry as an upload would be (`hand:<its sha256, cut short>` for
+     identity), and prints the new head. It is the organizers' own step: it does not hold to
+     `-max-contributions` or `-min-free-mib`. Then
      **announce the head at once, before the beacon round is out:** the seal takes it, and
      refuses a chain that does not end there, so no contribution can be added after the beacon is
      known, nor any left off the end. The phase stays closed: the directory records it
@@ -333,6 +343,8 @@ in:
    ExecStart=/srv/ceremony/ceremony coordinate -dir p1 -acme-domain ceremony.example.org -release-url https://github.com/<owner>/<repo>/releases/tag/ceremony-v1 -close-at 2026-12-08T15:00:00Z
    AmbientCapabilities=CAP_NET_BIND_SERVICE
    Restart=on-failure
+   # With -deny-file, `systemctl reload` re-reads it.
+   ExecReload=/bin/kill -HUP $MAINPID
    # A stop hands out no more turns and lets the turn under way finish, for up to -turn;
    # started again, the phase carries on (a phase closed at -close-at stays closed).
    KillSignal=SIGINT
@@ -415,6 +427,8 @@ Other commands:
 - `ceremony check -prev A -next B` checks one step: that B is a valid contribution on top of A.
   It does not check A, or how A was reached; `verify` checks a phase from its start.
 - `ceremony contribute -in A -out B` contributes to a file handed over by hand.
+- `ceremony append -dir <dir> -in <state> -name <name>` adds a contribution made by hand on a
+  phase's latest state, while no coordinator serves the directory.
 
 ### Checking a ceremony
 

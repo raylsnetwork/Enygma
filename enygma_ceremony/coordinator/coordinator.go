@@ -103,6 +103,11 @@ type Config struct {
 	// or /48, or many IPv4 addresses in one /24, and could otherwise queue
 	// ahead of everyone from each.
 	FairPrefix4, FairPrefix6 int
+	// Deny is the networks this phase takes no part from (Server.Deny
+	// changes it while serving): an operator who sees a network hold the
+	// queue denies it here when the firewall cannot, such as behind a proxy
+	// of their own (audit H3).
+	Deny []netip.Prefix
 	// MaxQueue bounds how many participants are queued at once, from
 	// everywhere (1000 when zero), and MaxPerNetwork how many from one
 	// network (FairPrefix4, FairPrefix6) (10 when zero): one /48 holds tens
@@ -279,8 +284,10 @@ type Server struct {
 	// lastSweep is when advance last forgot unused registrations and
 	// addresses: at most every sweepEvery, not on every request (audit R-013).
 	lastSweep time.Time
-	diskShort bool     // turns are held back for want of disk space (Config.MinFree)
-	lock      *os.File // holds Dir's lock (LockFile) while the server lives
+	diskShort bool           // turns are held back for want of disk space (Config.MinFree)
+	deny      []netip.Prefix // Config.Deny, as Deny last set it
+	serving   bool           // Handler was called: the server takes uploads, and Append is refused
+	lock      *os.File       // holds Dir's lock (LockFile) while the server lives
 	// githubMinute and githubAsked count the registrations asked of GitHub
 	// in the current minute (githubLookups).
 	githubMinute time.Time
@@ -296,10 +303,11 @@ type state struct {
 
 // participant is who a request comes from.
 type participant struct {
-	name     string   // shown in the transcript
-	identity identity // what contributes once
-	addr     string   // the network address the request came from, as the limits count it (address)
-	network  string   // the wider network it is in, as turns are shared out (network)
+	name     string     // shown in the transcript
+	identity identity   // what contributes once
+	addr     string     // the network address the request came from, as the limits count it (address)
+	network  string     // the wider network it is in, as turns are shared out (network)
+	ip       netip.Addr // the address itself, as Deny matches it: set by participant on each request with the session's token
 }
 
 // identity is what a participant is admitted as, and contributes once as:
@@ -437,7 +445,7 @@ func New(cfg Config) (_ *Server, err error) {
 		}
 	}
 	s := &Server{
-		cfg: cfg, done: map[identity]int{}, sessions: map[[32]byte]*session{},
+		cfg: cfg, deny: slices.Clone(cfg.Deny), done: map[identity]int{}, sessions: map[[32]byte]*session{},
 		registered: map[string][]time.Time{}, turnsGiven: map[identity]int{}, turnsByNetwork: map[string]int{},
 		downloading: map[string]bool{}, contributedFrom: map[string]int{},
 	}
@@ -787,16 +795,20 @@ func (s *Server) queued(p participant) bool {
 //	GET  /v1/states/{i}     state i's file, for anyone checking
 //
 // /v1/turn, /v1/heartbeat, /v1/state and /v1/contribution take
-// "Authorization: Bearer <token>", the Session's token.
+// "Authorization: Bearer <token>", the Session's token. Those and
+// /v1/register refuse a network denied (Deny); the rest answer anyone.
 func (s *Server) Handler() http.Handler {
+	s.mu.Lock()
+	s.serving = true
+	s.mu.Unlock()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handlePage)
 	mux.HandleFunc("GET /v1/config", s.handleConfig)
-	mux.HandleFunc("POST /v1/register", s.handleRegister)
-	mux.HandleFunc("POST /v1/turn", s.handleTurn)
-	mux.HandleFunc("POST /v1/heartbeat", s.handleHeartbeat)
-	mux.HandleFunc("GET /v1/state", s.handleState)
-	mux.HandleFunc("PUT /v1/contribution", s.handleContribution)
+	mux.HandleFunc("POST /v1/register", s.admit(s.handleRegister))
+	mux.HandleFunc("POST /v1/turn", s.admit(s.handleTurn))
+	mux.HandleFunc("POST /v1/heartbeat", s.admit(s.handleHeartbeat))
+	mux.HandleFunc("GET /v1/state", s.admit(s.handleState))
+	mux.HandleFunc("PUT /v1/contribution", s.admit(s.handleContribution))
 	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	mux.HandleFunc("GET /v1/transcript", s.handleTranscript)
 	mux.HandleFunc("GET /v1/states/{index}", s.handleStates)
@@ -817,24 +829,9 @@ func (s *Server) address(r *http.Request) string {
 // network, the wider prefix turns are shared out by (Config.FairPrefix4,
 // Config.FairPrefix6).
 func (s *Server) source(r *http.Request) (addr, network string) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil {
+	ip := s.from(r)
+	if !ip.IsValid() {
 		return "unknown", "unknown"
-	}
-	ip = ip.Unmap().WithZone("")
-	if s.trusted(ip) {
-		if fwd := r.Header.Values("X-Forwarded-For"); len(fwd) > 0 {
-			hops := strings.Split(fwd[len(fwd)-1], ",")
-			// What is not an address leaves the proxy's own: all such
-			// requests then count as one, which fails closed.
-			if a, err := netip.ParseAddr(strings.TrimSpace(hops[len(hops)-1])); err == nil {
-				ip = a.Unmap().WithZone("")
-			}
-		}
 	}
 	addr, network = ip.String(), ip.String()
 	bits := s.cfg.FairPrefix4
@@ -848,6 +845,93 @@ func (s *Server) source(r *http.Request) (addr, network string) {
 		network = p.String()
 	}
 	return addr, network
+}
+
+// admit refuses a request from a network denied (Deny) with 403, and hands
+// the rest to next.
+func (s *Server) admit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		p := participant{ip: s.from(r)}
+		if !s.denied(p.ip) {
+			s.mu.Unlock()
+			next(w, r)
+			return
+		}
+		// One registered, who has come to the network denied since: their
+		// place, or their turn, goes as Deny's would have. One who has
+		// contributed is told so (handleTurn), as before the deny.
+		if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+			if sess, ok := s.sessions[sha256.Sum256([]byte(token))]; ok && !s.expired(sess, s.cfg.now()) {
+				if _, done := s.done[sess.p.identity]; done {
+					s.mu.Unlock()
+					next(w, r)
+					return
+				}
+				p.name, p.identity = sess.p.name, sess.p.identity
+			}
+		}
+		s.refuseDenied(w, p)
+		s.mu.Unlock()
+	}
+}
+
+// denied reports whether ip is in a network denied (Deny). s.mu is held.
+func (s *Server) denied(ip netip.Addr) bool {
+	for _, p := range s.deny {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// Deny makes networks the phase takes no part from, in place of those
+// denied before: their queued participants leave the queue, a turn held
+// from one of them ends (or, its upload coming in, has its upload refused
+// before it is committed), and their requests to take part are refused
+// from now on. It reports how many left the queue.
+func (s *Server) Deny(networks []netip.Prefix) (dropped int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deny = slices.Clone(networks)
+	before := len(s.queue)
+	s.queue = slices.DeleteFunc(s.queue, func(w waiter) bool { return s.denied(w.p.ip) })
+	dropped = before - len(s.queue)
+	// A turn whose upload is coming in is left to it: the upload is
+	// refused before it is committed (handleContribution).
+	if s.turn != nil && !s.turn.uploading && s.denied(s.turn.p.ip) {
+		s.endTurn("turn ended: its network is denied")
+	}
+	s.cfg.Log.Printf("denying %d networks: %d queued participants from them left the queue", len(s.deny), dropped)
+	s.advance(s.cfg.now())
+	return dropped
+}
+
+// from is the IP address r comes from: its connection's, or, from a trusted
+// proxy (Config.TrustedProxies), the last address that proxy added to
+// X-Forwarded-For. Not valid when the connection's is no address.
+func (s *Server) from(r *http.Request) netip.Addr {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}
+	}
+	ip = ip.Unmap().WithZone("")
+	if s.trusted(ip) {
+		if fwd := r.Header.Values("X-Forwarded-For"); len(fwd) > 0 {
+			hops := strings.Split(fwd[len(fwd)-1], ",")
+			// What is not an address leaves the proxy's own: all such
+			// requests then count as one, which fails closed.
+			if a, err := netip.ParseAddr(strings.TrimSpace(hops[len(hops)-1])); err == nil {
+				ip = a.Unmap().WithZone("")
+			}
+		}
+	}
+	return ip
 }
 
 // trusted reports whether ip is one of Config.TrustedProxies.
@@ -875,6 +959,7 @@ func (s *Server) participant(w http.ResponseWriter, r *http.Request) (participan
 		if ok {
 			sess.seen = now
 			sess.p.addr, sess.p.network = s.source(r)
+			sess.p.ip = s.from(r)
 			p = sess.p // a copy: another request with this token may change sess.p once unlocked
 		}
 		s.mu.Unlock()
@@ -1016,6 +1101,9 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.advance(now)
+	if s.refuseDenied(w, p) {
+		return
+	}
 	if !s.holds(p) {
 		switch {
 		case s.closed:
@@ -1074,7 +1162,8 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.holds(p) {
 		t := s.turn
-		t.seen = now // asking for it shows the holder is there, as a heartbeat does
+		t.seen = now  // asking for it shows the holder is there, as a heartbeat does
+		t.p.ip = p.ip // as holder keeps it
 		// The deadline told is the one that counts: the upload must start by
 		// UploadWithin of the download, which comes next.
 		s.reply(w, Reply{Status: Go, Index: s.latest.index, SHA256: hex.EncodeToString(s.latest.hash[:]), Deadline: s.uploadBy(t, now)})
@@ -1218,7 +1307,7 @@ func (s *Server) seen(p participant, now time.Time) {
 	for i := range s.queue {
 		if s.queue[i].p.identity == p.identity {
 			s.queue[i].seen = now
-			s.queue[i].p.addr, s.queue[i].p.network = p.addr, p.network
+			s.queue[i].p.addr, s.queue[i].p.network, s.queue[i].p.ip = p.addr, p.network, p.ip
 			return
 		}
 	}
@@ -1256,14 +1345,40 @@ func mean(ds []time.Duration) time.Duration {
 	return sum / time.Duration(len(ds))
 }
 
-// holder returns the turn when p holds it, and otherwise answers 409. s.mu is held.
+// holder returns the turn when p holds it, and otherwise answers 409; from
+// a network denied, it answers 403 (refuseDenied). The turn keeps the
+// address it was given to (turn.p.addr, audit L1), and takes p's own as
+// Deny matches it. s.mu is held.
 func (s *Server) holder(w http.ResponseWriter, p participant) *turn {
 	s.advance(s.cfg.now())
-	if !s.holds(p) {
+	switch {
+	case s.refuseDenied(w, p):
+		return nil
+	case !s.holds(p):
 		s.fail(w, http.StatusConflict, "it is not your turn")
 		return nil
 	}
+	s.turn.p.ip = p.ip
 	return s.turn
+}
+
+// refuseDenied answers 403 to p when p asks from a network denied,
+// dropping p's place in the queue and ending a turn p holds whose upload
+// is not coming in (as Deny does), and reports whether it did. s.mu is
+// held.
+func (s *Server) refuseDenied(w http.ResponseWriter, p participant) bool {
+	if !s.denied(p.ip) {
+		return false
+	}
+	if p.identity != "" {
+		s.queue = slices.DeleteFunc(s.queue, func(q waiter) bool { return q.p.identity == p.identity })
+		if s.holds(p) && !s.turn.uploading {
+			s.endTurn("turn ended: its network is denied")
+			s.advance(s.cfg.now())
+		}
+	}
+	s.fail(w, http.StatusForbidden, "this phase takes no part from your network: its organizers have denied it")
+	return true
 }
 
 // handleState sends the turn holder the latest state.
@@ -1380,8 +1495,20 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lock == nil { // Released: another coordinator may have the directory now
+	switch {
+	case s.lock == nil: // Released: another coordinator may have the directory now
 		s.fail(w, http.StatusServiceUnavailable, "the coordinator is stopping; your contribution was not saved")
+		return
+	case s.turn != t || s.latest != prev:
+		// Nothing ends a turn whose upload is coming in; were one to, its
+		// contribution would no longer be on top of the latest, or would
+		// take another's turn with it.
+		s.cfg.Log.Printf("%s's upload refused: the turn, or the latest state, changed while it came in", p.name)
+		s.fail(w, http.StatusConflict, "your turn ended before your contribution was in")
+		return
+	case s.denied(p.ip): // denied while it came in (Deny)
+		s.endTurn("upload refused: its network is denied")
+		s.fail(w, http.StatusForbidden, "this phase takes no part from your network: its organizers have denied it")
 		return
 	}
 	// Accepted contributions' checks only: a refused upload often fails in a
@@ -1441,6 +1568,90 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request, deadline time.T
 	}
 	h := sha256.New()
 	_, err = io.Copy(io.MultiWriter(f, h), body)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return "", [32]byte{}, errors.Join(err, os.Remove(f.Name()))
+	}
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return f.Name(), digest, nil
+}
+
+// Append adds the contribution in, made by hand on top of the phase's
+// latest state, as its next state, under name: the rescue for a
+// contributor lined up who got no turn (ADR 0008), while no coordinator
+// serves the directory, whose lock New holds. It checks in as an upload is
+// checked, and commits it as one, entry and then state; in itself is left
+// as it is. Its entry's identity is hand:<the first 16 hex digits of its
+// sha256>.
+func (s *Server) Append(in, name string) (transcript.Entry, error) {
+	name, err := cleanName(name)
+	if err != nil {
+		return transcript.Entry{}, fmt.Errorf("the contributor's name: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.lock == nil:
+		return transcript.Entry{}, errors.New("the coordinator has released the directory")
+	case s.serving:
+		return transcript.Entry{}, errors.New("the coordinator is serving the phase: stop it first")
+	}
+	prev := s.latest
+	tmp, hash, err := copyIn(in, filepath.Join(s.cfg.Dir, "incoming"))
+	if err != nil {
+		return transcript.Entry{}, err
+	}
+	defer func() {
+		// Gone already when commit made it a state.
+		if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.cfg.Log.Printf("removing %s: %v", tmp, err)
+		}
+	}()
+	if err := ceremony.Check(s.path(prev.index), tmp); err != nil {
+		return transcript.Entry{}, fmt.Errorf("%s is no contribution on top of state %d, the latest: %w", in, prev.index, err)
+	}
+	sum := hex.EncodeToString(hash[:])
+	e := transcript.Entry{
+		Index:       prev.index + 1,
+		Participant: name,
+		Identity:    "hand:" + sum[:16],
+		SHA256:      sum,
+		Prev:        hex.EncodeToString(prev.hash[:]),
+		At:          s.cfg.now().UTC(),
+	}
+	if err := s.commit(tmp, e); err != nil {
+		return transcript.Entry{}, err
+	}
+	s.done[identity(e.Identity)] = len(s.entries)
+	s.entries = append(s.entries, e)
+	s.latest = state{index: e.Index, hash: hash, size: prev.size}
+	if fi, err := os.Stat(s.path(e.Index)); err == nil {
+		s.latest.size = fi.Size()
+	}
+	s.cfg.Log.Printf("%s's contribution, added by hand, is state %d, sha256 %s", name, e.Index, e.SHA256)
+	return e, nil
+}
+
+// copyIn copies the file at path to a new file in dir, synced, and returns
+// the new file and its sha256.
+func copyIn(path, dir string) (string, [32]byte, error) {
+	src, err := os.Open(path)
+	if err != nil {
+		return "", [32]byte{}, err
+	}
+	defer src.Close()
+	f, err := os.CreateTemp(dir, "by-hand-")
+	if err != nil {
+		return "", [32]byte{}, err
+	}
+	h := sha256.New()
+	_, err = io.Copy(io.MultiWriter(f, h), src)
 	if err == nil {
 		err = f.Sync()
 	}
