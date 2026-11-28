@@ -58,6 +58,12 @@ func newHarness(t *testing.T, cfg Config) *harness {
 	// X-Forwarded-For names the participant's address.
 	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
 	cfg.now = func() time.Time { return time.Unix(0, h.clock.Load()) }
+	if cfg.rand == nil {
+		// The draw among the least-served (draw) picks the first queued, so
+		// a test's turns come in the order it queues: a test of the draw
+		// gives its own.
+		cfg.rand = func(int) int { return 0 }
+	}
 	h.cfg = cfg
 	h.restart()
 	return h

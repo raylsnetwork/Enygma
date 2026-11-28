@@ -336,3 +336,22 @@ func TestReceiptWhenTheAnswerIsLost(t *testing.T) {
 		}
 	})
 }
+
+// TestWaitingSaysTheDraw (audit H3): a queued participant is told how many
+// they are drawn among, turns being drawn, not given in order.
+func TestWaitingSaysTheDraw(t *testing.T) {
+	var out bytes.Buffer
+	var events []Event
+	c := &Client{Out: &out, Events: func(e Event) { events = append(events, e) }}
+	r := coordinator.Reply{Status: coordinator.Queued, Position: 2, Draw: 3}
+	c.waiting(r)
+	c.waiting(r) // said once, until it changes
+	if !strings.Contains(out.String(), "one of 3 networks") || strings.Count(out.String(), "\n") != 1 {
+		t.Fatalf("printed %q", out.String())
+	}
+	r.Position = 1 // moved up: the line, of the draw, is the same, the event is not
+	c.waiting(r)
+	if strings.Count(out.String(), "\n") != 1 || len(events) != 2 || events[0].Draw != 3 || events[1].Position != 1 {
+		t.Fatalf("printed %q, events %+v: want the line once, and an event for each place, with the draw", out.String(), events)
+	}
+}

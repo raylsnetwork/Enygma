@@ -149,15 +149,21 @@ in:
   turn:
   - at most `-max-per-address` participants (3) from one network address are queued, or hold the
     turn, at once. A participant who comes back from another address is counted there only if it
-    has room. One more from a full address waits for a place, and joins as soon as there is one;
+    has room: asking from a full one is refused, and keeps no place alive. One more from a full
+    address waits for a place, and joins as soon as there is one;
   - an address registers at most 100 times an hour, and only from a participant's program
     (a JSON request no other site's page can make its visitors send);
-  - at most `-max-queue` (1000) are queued in all;
+  - at most `-max-queue` (1000) are queued in all, and `-max-per-network` (10) from one network
+    (below). When the queue is full, one from a network with at least two fewer queued than the
+    network with the most takes the place of that network's latest entry not asking of late
+    (`-presence`), or else its latest; so to fill the queue against newcomers, someone needs about
+    `-max-queue` networks, one entry each;
   - one identity is given at most `-max-turns` (3) turns without contributing;
   - the phase takes at most `-max-contributions` (1000) contributions, and
-    `-max-contributions-per-address` (10) from one network address. The per-address count starts
-    again when the coordinator restarts. Each contribution is a state file kept for the phase's
-    life (50 MB at 2^18);
+    `-max-contributions-per-address` (10) from one network address, counted against both the
+    address the turn was given to and the one the contribution was uploaded from. The per-address
+    count starts again when the coordinator restarts. Each contribution is a state file kept for
+    the phase's life (50 MB at 2^18);
   - no turn is given while the disk under `-dir` has less free space than another state plus
     `-min-free-mib` (1024). The coordinator logs a warning, and turns resume once there is room;
   - it keeps at most `-max-sessions` (10,000) registrations at once;
@@ -165,8 +171,10 @@ in:
     network address. Each must keep up a pace of about 34 KiB/s. `verify` waits for a free slot.
 
   A "network address" is an IPv4 address, or an IPv6 `/64` (`-ipv6-prefix`): one host is given a
-  whole `/64`. These limits cannot be turned off by accident: `-max-per-address` is at least 1,
-  and `-no-address-limit` lifts it and the per-address contribution limit, for a phase whose
+  whole `/64`. The log names the address each registration, queueing, turn and contribution came
+  from, so an operator can see who holds the queue and block a network at the firewall. These
+  limits cannot be turned off by accident: `-max-per-address` and `-max-per-network` are at least
+  1, and `-no-address-limit` lifts them and the per-address contribution limit, for a phase whose
   participants all come from one address.
 - **One coordinator to a phase.** `coordinate` locks `<dir>/.lock` (on Linux and macOS), and
   refuses a directory another coordinator is serving. It syncs each accepted contribution, and
@@ -229,11 +237,44 @@ in:
      participant's program starts downloading the state at once, and sends a heartbeat three times
      every `-turn-presence` (2 minutes), at least every 10 seconds; the coordinator tells it how
      often. One that goes silent for `-turn-presence`, such as a laptop closed mid-turn, or that
-     has not started downloading by then, loses the turn to the next in line.
-   - **Waiting:** queued participants' programs ask every `-poll` (5 seconds). The turn goes to the
-     first in line who has asked within `-presence` (30 seconds); one who has not, such as a laptop
+     has not started downloading by then (a `HEAD` request is no download), loses the turn; so
+     does one that has not started uploading within `-upload-within` (45 minutes, at most
+     `-turn`) of first starting to download the state, however it keeps up heartbeats or
+     downloads again: raise both for a large state and slow participants. The program's turn
+     event carries that deadline. An upload, once started, has until the turn's end: a stalled or
+     trickled one holds the turn no longer than `-turn`. A turn counts against its holder
+     (`-max-turns`) and their network as it is given, used or not, so nobody stalls turns for
+     free. `-turn-presence` must be at least twice `-poll`, so a program still asking always hears
+     of its turn in time.
+   - **How turns are given:** the ceremony is open to anyone, so its queue cannot be first come,
+     first served: whoever queued many entries at the opening, from a household's addresses, would
+     take every turn of the phase, and could fill it with contributions whose secrets they kept.
+     A free turn goes instead to the earliest queued participant from a *network* drawn at random
+     among the networks given the fewest turns: an IPv4 `/24` (`-fair-prefix4`) or an IPv6 `/48`
+     (`-fair-prefix6`, no narrower than `-ipv6-prefix`), and in a GitHub phase also the account. A
+     network is one ticket, however many it has queued, and queues at most `-max-per-network`
+     (10) at once, so it cannot fill the queue alone. Within a network, its places and its turns go
+     first come, first served: one who shares a network with someone queueing many entries waits
+     behind them. Every turn given counts, used or not. So each
+     network served moves behind every network not yet served, and queueing first wins nothing:
+     to keep a participant from a network not yet served out with probability `1 - ε` over `T`
+     turns, someone needs about `T/ε` networks, where 56 IPv6 `/64`s of one home were enough
+     before. The reach is narrower for one on a network already served (a campus, an office, a
+     carrier's shared addresses where someone has contributed): someone with a fresh network for
+     every turn can keep them waiting. The status page shows the turns that ended without a
+     contribution: many, with an average turn near `-turn`, is the queue being held. Whatever
+     happens to the queue, a seal's `-include` refuses a chain without the contributors you lined
+     up, so a captured phase is never sealed: rerun it, or have a lined-up contributor contribute
+     by hand (above).
+   - **Waiting:** queued participants' programs ask every `-poll` (5 seconds). Only those who
+     have asked within `-presence` (30 seconds) are drawn; one who has not, such as a laptop
      asleep, is passed over but keeps their place. One quiet for `-away` (10 minutes) leaves the
-     queue. `-presence` must be at least twice `-poll`, and `-away` at least `-presence`.
+     queue. `-presence` must be at least twice `-poll`, and `-away` at least `-presence`. A
+     program in the next draw says how many networks it is among; one behind networks served
+     fewer turns says roughly how many are ahead of it. One whose address changes, to an address
+     that already has `-max-per-address` queued, or in a network that already has
+     `-max-per-network`, is refused there until it has room: its place, kept at its old address,
+     lapses after `-away`.
 
    - **TLS:** `coordinate` serves participants over TLS, and will not start without one of:
      - `-acme-domain`, which gets and renews a certificate from Let's Encrypt (on ports 443 and

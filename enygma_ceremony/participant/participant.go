@@ -56,7 +56,7 @@ const (
 	StageJoined       = "joined"       // admitted, as Event.Name
 	StageFull         = "full"         // waiting for a place: Event.Message says why
 	StageQueued       = "queued"       // queued at Event.Position, about Event.Wait seconds from the turn
-	StageTurn         = "turn"         // the turn, on top of state Event.Index, until Event.Deadline
+	StageTurn         = "turn"         // the turn, on top of state Event.Index, its upload to start by Event.Deadline
 	StageDownloading  = "downloading"  // downloading the latest state: Event.Done of Event.Total bytes
 	StageContributing = "contributing" // adding this machine's randomness: Event.Fraction done (see Event.Part)
 	StageUploading    = "uploading"    // uploading: Event.Done of Event.Total bytes sent; once all are, the coordinator checks them
@@ -69,6 +69,7 @@ type Event struct {
 	Name     string    `json:"name,omitzero"`
 	Message  string    `json:"message,omitzero"`
 	Position int       `json:"position,omitzero"`
+	Draw     int       `json:"draw,omitzero"` // StageQueued: how many networks, yours among them, the next turn is drawn among (zero: networks served fewer come first)
 	Wait     float64   `json:"wait,omitzero"`
 	Code     string    `json:"code,omitzero"`
 	CodeURL  string    `json:"code_url,omitzero"`
@@ -140,6 +141,8 @@ type Client struct {
 	made        []ceremony.Receipt // every contribution this run made, uploaded or not
 	session     string             // the token the coordinator knows this participant by
 	githubToken string             // a GitHub phase: kept in memory, to join again after a coordinator restart
+	lastWaiting string             // the line last printed while queued (waiting)
+	lastPlace   [2]int             // the Position and Draw last sent as a StageQueued event (waiting)
 }
 
 // Result is the participant's contribution, as the coordinator recorded it.
@@ -192,10 +195,10 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 	// rejoined counts the times the coordinator forgot this participant
 	// since it last queued them, so one that forgets them at once each time
 	// is given up on, rather than joined again for ever.
-	position, full, rejoined := 0, false, 0
+	full, rejoined := false, 0
 	rejoin := func(why string) error {
 		fmt.Fprintf(c.Out, "%s; joining again.\n", why)
-		position, rejoined = 0, rejoined+1
+		c.lastWaiting, c.lastPlace, rejoined = "", [2]int{}, rejoined+1
 		return c.join(ctx)
 	}
 	for {
@@ -214,6 +217,7 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 				fmt.Fprintf(c.Out, "Waiting for a place in the queue: %s\n", h.msg)
 				c.event(Event{Stage: StageFull, Message: h.msg})
 				full = true
+				c.lastWaiting, c.lastPlace = "", [2]int{} // queued again, it says where
 			}
 			if err := sleep(ctx, h.retryAfter); err != nil {
 				return Result{}, err
@@ -234,19 +238,17 @@ func (c *Client) Run(ctx context.Context) (Result, error) {
 			return Result{}, ErrClosed
 		case coordinator.Queued:
 			rejoined = 0
-			if r.Position != position {
-				position = r.Position
-				c.waiting(r)
-			}
+			c.waiting(r)
 			if err := sleep(ctx, pollFor(r.Poll)); err != nil {
 				return Result{}, err
 			}
 		case coordinator.Go:
+			// Queued again, on whatever route, it says where it is again.
+			c.lastWaiting, c.lastPlace = "", [2]int{}
 			res, err := c.contribute(ctx, r)
 			switch {
 			case errors.Is(err, errTurnLost):
 				fmt.Fprintln(c.Out, "Your turn ended before your contribution was in; queueing again.")
-				position = 0
 				continue
 			case errors.Is(err, ErrUnauthorized) && rejoined < 3:
 				// The coordinator restarted during the turn, forgetting the
@@ -388,11 +390,25 @@ func (c *Client) waiting(r coordinator.Reply) {
 	if r.Position > 1 {
 		ahead = fmt.Sprintf("%d ahead of you", r.Position-1)
 	}
+	if r.Draw > 1 {
+		// Turns go first to the networks given fewest, drawn at random
+		// among them (the coordinator's draw): no order is fixed among
+		// them, and within one, it is the order queued.
+		ahead = fmt.Sprintf("the next turn goes to one of %d networks, yours among them, drawn at random (within one, in the order queued)", r.Draw)
+	}
 	if r.Wait >= 60 && r.Wait <= 30*24*3600 { // an estimate past a month says nothing, and would overflow
 		ahead += fmt.Sprintf(", about %s", (time.Duration(r.Wait) * time.Second).Round(time.Minute))
 	}
-	fmt.Fprintf(c.Out, "Waiting for your turn: %s. Leave this running.\n", ahead)
-	c.event(Event{Stage: StageQueued, Position: r.Position, Wait: r.Wait})
+	if line := fmt.Sprintf("Waiting for your turn: %s. Leave this running.\n", ahead); line != c.lastWaiting {
+		// Said again only when it changes: in a large queue, who is drawn
+		// among changes as programs come and go.
+		fmt.Fprint(c.Out, line)
+		c.lastWaiting = line
+	}
+	if place := [2]int{r.Position, r.Draw}; place != c.lastPlace {
+		c.lastPlace = place
+		c.event(Event{Stage: StageQueued, Position: r.Position, Draw: r.Draw, Wait: r.Wait})
+	}
 }
 
 // join gets the session token the coordinator will know this participant by.

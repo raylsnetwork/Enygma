@@ -31,6 +31,7 @@ import (
 	"io"
 	"log"
 	"math"
+	mrand "math/rand/v2"
 	"mime"
 	"net"
 	"net/http"
@@ -94,9 +95,22 @@ type Config struct {
 	// network address for the limits (64 when zero): one host is given a
 	// whole /64, and could otherwise use a new address for every request.
 	IPv6Prefix int
+	// FairPrefix4 and FairPrefix6 are how many leading bits of an address
+	// make the network turns are shared out by (24, and 48 or IPv6Prefix
+	// when that is fewer, when zero): a free turn goes to the earliest
+	// queued from a network drawn at random among those given the fewest
+	// turns (draw; audit H3). A home or a server is given a whole IPv6 /56
+	// or /48, or many IPv4 addresses in one /24, and could otherwise queue
+	// ahead of everyone from each.
+	FairPrefix4, FairPrefix6 int
 	// MaxQueue bounds how many participants are queued at once, from
-	// everywhere (1000 when zero).
-	MaxQueue int
+	// everywhere (1000 when zero), and MaxPerNetwork how many from one
+	// network (FairPrefix4, FairPrefix6) (10 when zero): one /48 holds tens
+	// of thousands of /64s, and could otherwise fill the queue, so nobody
+	// else was even drawn (audit H3). A full queue makes room for a network
+	// with fewer queued (makeRoom). NoAddressLimit lifts MaxPerNetwork, as
+	// it lifts MaxPerAddress.
+	MaxQueue, MaxPerNetwork int
 	// MaxTurns bounds the turns one identity is given without contributing
 	// (3 when zero): one that holds turns without ever contributing would
 	// otherwise hold up the queue again and again.
@@ -115,12 +129,22 @@ type Config struct {
 	// addresses whose registrations are counted (10,000 when zero) (audit R-013).
 	MaxSessions int
 	// Turn is how long a participant has, from being handed the turn, to
-	// finish uploading their contribution (60 minutes): room for a slow
+	// finish uploading their contribution (60 minutes), of which they have
+	// UploadWithin from their download to start uploading: room for a slow
 	// laptop, since a turn whose holder has gone passes on at TurnPresence.
 	Turn time.Duration
 	// TurnPresence is how long the turn holder's program may go without
-	// a heartbeat before the turn passes on (2 minutes).
+	// a heartbeat before the turn passes on (2 minutes): at least twice Poll,
+	// so a queued program hears of its turn in time (audit L3).
 	TurnPresence time.Duration
+	// UploadWithin is how long the turn holder has, from first starting to
+	// download the state, to start uploading their contribution (45
+	// minutes, or Turn when shorter, when zero; at most Turn): room for a
+	// slow link and a slow laptop,
+	// while a program that downloads, or stalls a download, and sends
+	// heartbeats but never contributes passes the turn on long before Turn
+	// (audit M11). Downloading again does not restart it.
+	UploadWithin time.Duration
 	// Presence is how recently a queued participant must have asked to be
 	// given the turn when it reaches them (30 seconds).
 	Presence time.Duration
@@ -144,7 +168,8 @@ type Config struct {
 	// Log receives what happens: turns given, lost and taken.
 	Log *log.Logger
 
-	now func() time.Time // the clock; time.Now unless a test sets it
+	now  func() time.Time // the clock; time.Now unless a test sets it
+	rand func(n int) int  // a number from 0 to n-1, drawn at random: rand.IntN unless a test sets it
 }
 
 // Answers to a participant asking for their turn (Reply.Status).
@@ -178,36 +203,41 @@ type Session struct {
 // Reply answers a participant asking for their turn.
 type Reply struct {
 	Status   string    `json:"status"`
-	Position int       `json:"position,omitzero"` // Queued: 1 is next
+	Position int       `json:"position,omitzero"` // Queued: a rough rank, 1 being next, were turns given to the fewest served, then in the order queued (Server.place)
+	Draw     int       `json:"draw,omitzero"`     // Queued: how many networks, yours among them, the next turn is drawn among; zero when networks served fewer come first
 	Wait     float64   `json:"wait,omitzero"`     // Queued: an estimate of the seconds until your turn
 	Index    uint32    `json:"index,omitzero"`    // Go: the latest state's; Done: your contribution's
 	SHA256   string    `json:"sha256,omitzero"`   // Go: the latest state's; Done: your contribution's
-	Deadline time.Time `json:"deadline,omitzero"` // Go
+	Deadline time.Time `json:"deadline,omitzero"` // Go: by when the upload must have started (UploadWithin of the download, or the turn's end)
 	Poll     float64   `json:"poll,omitzero"`     // Queued: seconds until you ask again
 	Notice   string    `json:"notice,omitzero"`   // Closed
 }
 
 // Status is what anyone may see of the phase (GET /v1/status).
 type Status struct {
-	Phase         string    `json:"phase"`
-	Ceremony      string    `json:"ceremony,omitzero"`
-	Domain        uint64    `json:"domain,omitzero"`
-	Circuits      []string  `json:"circuits,omitzero"`
-	R1CS          []string  `json:"r1cs_sha256,omitzero"` // Phase 2: each circuit's constraint system's sha256, in order
-	SRS           string    `json:"srs_sha256,omitzero"`  // Phase 2: the SRS it starts from (audit H1)
-	Phase1        *Phase1   `json:"phase1,omitzero"`      // Phase 2: what that SRS says it was sealed from
-	Auth          Auth      `json:"auth"`
-	Contributions int       `json:"contributions"`
-	Latest        string    `json:"latest"`
-	Queue         int       `json:"queue"`
-	Contributing  string    `json:"contributing,omitzero"`
-	AverageTurn   float64   `json:"average_turn,omitzero"`  // seconds, over the last few turns
-	AverageCheck  float64   `json:"average_check,omitzero"` // seconds the coordinator takes to check an upload, over the last few
-	Closed        bool      `json:"closed"`
-	CloseAt       time.Time `json:"close_at,omitzero"`
-	Notice        string    `json:"notice,omitzero"`
-	ReleaseURL    string    `json:"release_url,omitzero"` // where participants get the program (Config.ReleaseURL)
-	Version       string    `json:"version,omitzero"`     // the commit the coordinator was built from
+	Phase         string   `json:"phase"`
+	Ceremony      string   `json:"ceremony,omitzero"`
+	Domain        uint64   `json:"domain,omitzero"`
+	Circuits      []string `json:"circuits,omitzero"`
+	R1CS          []string `json:"r1cs_sha256,omitzero"` // Phase 2: each circuit's constraint system's sha256, in order
+	SRS           string   `json:"srs_sha256,omitzero"`  // Phase 2: the SRS it starts from (audit H1)
+	Phase1        *Phase1  `json:"phase1,omitzero"`      // Phase 2: what that SRS says it was sealed from
+	Auth          Auth     `json:"auth"`
+	Contributions int      `json:"contributions"`
+	Latest        string   `json:"latest"`
+	Queue         int      `json:"queue"`
+	Contributing  string   `json:"contributing,omitzero"`
+	AverageTurn   float64  `json:"average_turn,omitzero"`  // seconds, over the last few turns
+	AverageCheck  float64  `json:"average_check,omitzero"` // seconds the coordinator takes to check an upload, over the last few
+	// Wasted counts the turns this coordinator handed out that ended without
+	// a contribution: many, with an average turn near Config.Turn, is the
+	// queue held by programs that do not contribute (audit H3, M11).
+	Wasted     int       `json:"turns_without_contribution"`
+	Closed     bool      `json:"closed"`
+	CloseAt    time.Time `json:"close_at,omitzero"`
+	Notice     string    `json:"notice,omitzero"`
+	ReleaseURL string    `json:"release_url,omitzero"` // where participants get the program (Config.ReleaseURL)
+	Version    string    `json:"version,omitzero"`     // the commit the coordinator was built from
 }
 
 // registrationsPerHour bounds the registrations one network address makes
@@ -225,12 +255,17 @@ type Server struct {
 	done       map[identity]int   // identity -> their entry
 	sessions   map[[32]byte]*session
 	registered map[string][]time.Time // address -> its registrations in the last hour
-	queue      []waiter               // in turn order
+	queue      []waiter               // in the order queued; turns are drawn (draw)
 	turn       *turn                  // nil when no one holds the turn
 	turnsGiven map[identity]int       // identity -> turns given it, while it has not contributed
-	turnTimes  []time.Duration        // the last few accepted turns' lengths
-	checkTimes []time.Duration        // how long the last few uploads took to check
-	closed     bool                   // the phase takes no more contributions: Close, or Config.CloseAt
+	// turnsByNetwork counts the turns given each network (participant.network)
+	// since this coordinator started, contributed or not: turns go first to
+	// the networks given fewest (draw, audit H3).
+	turnsByNetwork map[string]int
+	wasted         int             // turns given that ended without a contribution (Status.Wasted)
+	turnTimes      []time.Duration // the last few accepted turns' lengths
+	checkTimes     []time.Duration // how long the last few uploads took to check
+	closed         bool            // the phase takes no more contributions: Close, or Config.CloseAt
 	// stopping is the coordinator about to stop (Stop, Release): it hands out
 	// no more turns, but the phase is not closed, and the queue waits for the
 	// coordinator started next.
@@ -263,7 +298,8 @@ type state struct {
 type participant struct {
 	name     string   // shown in the transcript
 	identity identity // what contributes once
-	addr     string   // the network address the request came from
+	addr     string   // the network address the request came from, as the limits count it (address)
+	network  string   // the wider network it is in, as turns are shared out (network)
 }
 
 // identity is what a participant is admitted as, and contributes once as:
@@ -293,7 +329,7 @@ type turn struct {
 	p                 participant
 	started, deadline time.Time
 	seen              time.Time // their program's last heartbeat
-	downloaded        bool      // they have started downloading the state
+	downloaded        time.Time // when their program first started downloading the state; zero until then
 	uploading         bool      // their upload is coming in or being checked; it ends the turn either way
 }
 
@@ -303,6 +339,9 @@ type turn struct {
 func New(cfg Config) (_ *Server, err error) {
 	if cfg.now == nil {
 		cfg.now = time.Now
+	}
+	if cfg.rand == nil {
+		cfg.rand = mrand.IntN // seeded from the operating system's randomness: nobody knows the draw ahead
 	}
 	if cfg.GitHubAPI == "" {
 		cfg.GitHubAPI = "https://api.github.com"
@@ -320,6 +359,7 @@ func New(cfg Config) (_ *Server, err error) {
 		{"Turn", &cfg.Turn, 60 * time.Minute}, {"TurnPresence", &cfg.TurnPresence, 2 * time.Minute},
 		{"Presence", &cfg.Presence, 30 * time.Second}, {"Away", &cfg.Away, 10 * time.Minute},
 		{"Poll", &cfg.Poll, 5 * time.Second}, {"GitHubMinAge", &cfg.GitHubMinAge, 30 * 24 * time.Hour},
+		{"UploadWithin", &cfg.UploadWithin, -1},
 	} {
 		switch {
 		case *d.v < 0:
@@ -334,7 +374,8 @@ func New(cfg Config) (_ *Server, err error) {
 		def  int
 	}{
 		{"MaxPerAddress", &cfg.MaxPerAddress, 3}, {"IPv6Prefix", &cfg.IPv6Prefix, 64},
-		{"MaxQueue", &cfg.MaxQueue, 1000}, {"MaxTurns", &cfg.MaxTurns, 3},
+		{"FairPrefix4", &cfg.FairPrefix4, 24}, {"FairPrefix6", &cfg.FairPrefix6, -1},
+		{"MaxQueue", &cfg.MaxQueue, 1000}, {"MaxPerNetwork", &cfg.MaxPerNetwork, 10}, {"MaxTurns", &cfg.MaxTurns, 3},
 		{"MaxContributions", &cfg.MaxContributions, 1000}, {"MaxContributionsPerAddress", &cfg.MaxContributionsPerAddress, 10},
 		{"MaxSessions", &cfg.MaxSessions, 10000},
 	} {
@@ -345,6 +386,14 @@ func New(cfg Config) (_ *Server, err error) {
 			*n.v = n.def
 		}
 	}
+	if cfg.UploadWithin == -1 {
+		cfg.UploadWithin = min(45*time.Minute, cfg.Turn)
+	}
+	if cfg.FairPrefix6 == -1 {
+		// No wider a network than an address, for an operator who counts
+		// addresses by wider prefixes than /48 (-ipv6-prefix).
+		cfg.FairPrefix6 = min(48, cfg.IPv6Prefix)
+	}
 	switch {
 	case cfg.MinFree < 0:
 		return nil, fmt.Errorf("coordinator: MinFree is %d, negative", cfg.MinFree)
@@ -354,6 +403,14 @@ func New(cfg Config) (_ *Server, err error) {
 	switch {
 	case cfg.IPv6Prefix > 128:
 		return nil, fmt.Errorf("coordinator: IPv6Prefix is %d, more bits than an IPv6 address has", cfg.IPv6Prefix)
+	case cfg.FairPrefix4 > 32:
+		return nil, fmt.Errorf("coordinator: FairPrefix4 is %d, more bits than an IPv4 address has", cfg.FairPrefix4)
+	case cfg.FairPrefix6 > cfg.IPv6Prefix:
+		return nil, fmt.Errorf("coordinator: FairPrefix6 (%d) is narrower than IPv6Prefix (%d): turns are shared by networks no smaller than an address", cfg.FairPrefix6, cfg.IPv6Prefix)
+	case cfg.UploadWithin > cfg.Turn:
+		return nil, fmt.Errorf("coordinator: UploadWithin (%s) is longer than Turn (%s)", cfg.UploadWithin, cfg.Turn)
+	case cfg.TurnPresence < 2*cfg.Poll:
+		return nil, fmt.Errorf("coordinator: TurnPresence (%s) is less than twice Poll (%s): a queued program, asking every Poll, could lose turns it never heard of (audit L3)", cfg.TurnPresence, cfg.Poll)
 	case cfg.Presence < 2*cfg.Poll:
 		return nil, fmt.Errorf("coordinator: Presence (%s) is less than twice Poll (%s): queued participants, asking every Poll, would be passed over", cfg.Presence, cfg.Poll)
 	case cfg.Away < cfg.Presence:
@@ -381,7 +438,7 @@ func New(cfg Config) (_ *Server, err error) {
 	}
 	s := &Server{
 		cfg: cfg, done: map[identity]int{}, sessions: map[[32]byte]*session{},
-		registered: map[string][]time.Time{}, turnsGiven: map[identity]int{},
+		registered: map[string][]time.Time{}, turnsGiven: map[identity]int{}, turnsByNetwork: map[string]int{},
 		downloading: map[string]bool{}, contributedFrom: map[string]int{},
 	}
 	// One coordinator to a phase: a second would clear the first's uploads
@@ -516,7 +573,8 @@ const ClosedFile = "closed"
 
 // advance closes the phase at its time, ends a turn past its time, drops
 // queued participants away too long, forgets unused registrations, and hands
-// a free turn to the first queued participant still asking. s.mu is held.
+// a free turn to the queued participant still asking that draw picks. s.mu
+// is held.
 func (s *Server) advance(now time.Time) {
 	if !s.closed && !s.cfg.CloseAt.IsZero() && !now.Before(s.cfg.CloseAt) {
 		s.cfg.Log.Printf("closed, as scheduled: no new turns")
@@ -527,19 +585,24 @@ func (s *Server) advance(now time.Time) {
 		}
 	}
 	if t := s.turn; t != nil && !t.uploading {
+		why := ""
 		switch {
 		case now.After(t.deadline):
-			s.cfg.Log.Printf("%s's turn ran out", t.p.name)
-			s.turn = nil
+			why = "turn ran out"
 		case now.Sub(t.seen) > s.cfg.TurnPresence:
-			s.cfg.Log.Printf("%s's program stopped answering during their turn", t.p.name)
-			s.turn = nil
-		case !t.downloaded && now.Sub(t.started) > s.cfg.TurnPresence:
+			why = "program stopped answering during their turn"
+		case t.downloaded.IsZero() && now.Sub(t.started) > s.cfg.TurnPresence:
 			// Heartbeats show a program is there, not that it is
 			// contributing: one that does not even fetch the state holds
 			// the queue up for nothing (audit R-019).
-			s.cfg.Log.Printf("%s's program did not start downloading the state", t.p.name)
-			s.turn = nil
+			why = "program did not start downloading the state"
+		case !t.downloaded.IsZero() && now.Sub(t.downloaded) > s.cfg.UploadWithin:
+			// Nor does one that fetches it, or stalls fetching it, and
+			// never uploads (audit M11).
+			why = fmt.Sprintf("program did not upload within %s of starting to download the state", s.cfg.UploadWithin)
+		}
+		if why != "" {
+			s.endTurn(why)
 		}
 	}
 	kept := s.queue[:0]
@@ -555,20 +618,92 @@ func (s *Server) advance(now time.Time) {
 		s.lastSweep = now
 		s.sweep(now)
 	}
-	// The turn goes to the first queued participant still asking. One not
-	// asking just now (a laptop asleep, a background tab throttled) is passed
-	// over but keeps their place, as long as Away allows (audit R-020).
+	// The turn goes to a queued participant still asking, drawn as draw
+	// says. One not asking just now (a laptop asleep, a background tab
+	// throttled) is passed over but keeps their place, as long as Away
+	// allows (audit R-020).
 	if s.turn == nil && !s.closed && !s.stopping && len(s.queue) > 0 && !s.full() && s.diskRoom() {
-		if i := slices.IndexFunc(s.queue, func(w waiter) bool {
-			return now.Sub(w.seen) <= s.cfg.Presence && !s.addressDone(w.p.addr)
-		}); i >= 0 {
+		if i := s.draw(now); i >= 0 {
 			w := s.queue[i]
 			s.queue = slices.Delete(s.queue, i, i+1)
 			s.turn = &turn{p: w.p, started: now, seen: now, deadline: now.Add(s.cfg.Turn)}
+			s.cfg.Log.Printf("%s's turn (from %s, network %s, given %d turns), on top of state %d, until %s",
+				w.p.name, w.p.addr, w.p.network, s.served(w.p), s.latest.index, s.turn.deadline.Format(time.TimeOnly))
+			// Charged as drawn, used or not (audit H3, R-019): a turn whose
+			// holder never comes back holds the queue up for TurnPresence,
+			// and costs them as one they took. TurnPresence is at least
+			// twice Poll, so a program still asking always hears of it.
 			s.turnsGiven[w.p.identity]++
-			s.cfg.Log.Printf("%s's turn, on top of state %d, until %s", w.p.name, s.latest.index, s.turn.deadline.Format(time.TimeOnly))
+			s.turnsByNetwork[w.p.network]++
 		}
 	}
+}
+
+// endTurn ends the turn under way, without a contribution, for why, and
+// counts it so (Status.Wasted). s.mu is held.
+func (s *Server) endTurn(why string) {
+	t := s.turn
+	s.turn = nil
+	s.cfg.Log.Printf("%s's %s (from %s)", t.p.name, why, t.p.addr)
+	s.wasted++
+}
+
+// uploadBy is when t's holder must have started uploading: UploadWithin
+// from their first download (or from now, before it), and no later than
+// the turn's deadline. s.mu is held.
+func (s *Server) uploadBy(t *turn, now time.Time) time.Time {
+	from := t.downloaded
+	if from.IsZero() {
+		from = now
+	}
+	if by := from.Add(s.cfg.UploadWithin); by.Before(t.deadline) {
+		return by
+	}
+	return t.deadline
+}
+
+// draw picks the queued participant still asking that a free turn goes to,
+// or -1 when there is none: the earliest from a network drawn at random
+// among the networks whose participants (or, in a GitHub phase, accounts)
+// have been given the fewest turns (audit H3). First come, first served,
+// as it was, gave every turn of a phase to whoever queued many entries at
+// its opening, from as few as a household's addresses: the queue is open
+// to anyone, and its order was a race. Now each network served moves
+// behind every network not yet served, and among those the draw is
+// random, so queueing first wins nothing: to keep a participant from a
+// network not yet served out with probability 1 - e over T turns, someone
+// needs about T/e networks. One from a network served already waits
+// behind every network not yet served, so someone with a fresh network
+// for every turn can keep them waiting: a seal's -include, and a lined-up
+// contributor's contribution by hand, are what then keep the phase sound.
+// s.mu is held.
+func (s *Server) draw(now time.Time) int {
+	// The draw is among networks, not entries: a network's many entries
+	// are one ticket, so to win more draws someone needs more networks,
+	// not more addresses in one. Within the network drawn, its earliest
+	// entry goes.
+	least, picks, seen := math.MaxInt, []int(nil), map[string]bool{}
+	for i, w := range s.queue {
+		if now.Sub(w.seen) > s.cfg.Presence || s.addressDone(w.p.addr) {
+			continue
+		}
+		switch n := s.served(w.p); {
+		case n < least:
+			least, picks, seen = n, []int{i}, map[string]bool{w.p.network: true}
+		case n == least && !seen[w.p.network]:
+			picks, seen[w.p.network] = append(picks, i), true
+		}
+	}
+	if len(picks) == 0 {
+		return -1
+	}
+	return picks[s.cfg.rand(len(picks))]
+}
+
+// served is how many turns p's network, or p (a GitHub account, whose turns
+// count wherever it asks from), has been given. s.mu is held.
+func (s *Server) served(p participant) int {
+	return max(s.turnsByNetwork[p.network], s.turnsGiven[p.identity])
 }
 
 // sweepEvery is how often advance forgets unused registrations, and the
@@ -674,13 +809,21 @@ func (s *Server) Handler() http.Handler {
 // parsed, never the header's text, and an IPv6 address counts as its
 // Config.IPv6Prefix (audit R-016, R-017, R-018).
 func (s *Server) address(r *http.Request) string {
+	addr, _ := s.source(r)
+	return addr
+}
+
+// source is where r comes from: its address, as address says, and its
+// network, the wider prefix turns are shared out by (Config.FairPrefix4,
+// Config.FairPrefix6).
+func (s *Server) source(r *http.Request) (addr, network string) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
-		return "unknown"
+		return "unknown", "unknown"
 	}
 	ip = ip.Unmap().WithZone("")
 	if s.trusted(ip) {
@@ -693,12 +836,18 @@ func (s *Server) address(r *http.Request) string {
 			}
 		}
 	}
+	addr, network = ip.String(), ip.String()
+	bits := s.cfg.FairPrefix4
 	if ip.Is6() {
 		if p, err := ip.Prefix(s.cfg.IPv6Prefix); err == nil {
-			return p.String()
+			addr = p.String()
 		}
+		bits = s.cfg.FairPrefix6
 	}
-	return ip.String()
+	if p, err := ip.Prefix(bits); err == nil {
+		network = p.String()
+	}
+	return addr, network
 }
 
 // trusted reports whether ip is one of Config.TrustedProxies.
@@ -725,7 +874,7 @@ func (s *Server) participant(w http.ResponseWriter, r *http.Request) (participan
 		var p participant
 		if ok {
 			sess.seen = now
-			sess.p.addr = s.address(r)
+			sess.p.addr, sess.p.network = s.source(r)
 			p = sess.p // a copy: another request with this token may change sess.p once unlocked
 		}
 		s.mu.Unlock()
@@ -778,7 +927,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusBadRequest, "want a JSON registration")
 		return
 	}
-	addr, now := s.address(r), s.cfg.now()
+	addr, network := s.source(r)
+	now := s.cfg.now()
 	s.mu.Lock()
 	// Registrations, and the addresses they are counted by, are bounded in
 	// number too: each is kept, and swept, under the lock (audit R-013).
@@ -806,7 +956,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		p = participant{name: name, identity: identity("open:" + randomToken()), addr: addr}
+		p = participant{name: name, identity: identity("open:" + randomToken()), addr: addr, network: network}
 	case AuthGitHub:
 		account, err := s.githubUser(r.Context(), reg.GitHubToken)
 		switch {
@@ -828,13 +978,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, http.StatusForbidden, fmt.Sprintf("GitHub accounts younger than %s cannot contribute", s.cfg.GitHubMinAge))
 			return
 		}
-		p = participant{name: account.Login, identity: identity(fmt.Sprintf("github:%d", account.ID)), addr: addr}
+		p = participant{name: account.Login, identity: identity(fmt.Sprintf("github:%d", account.ID)), addr: addr, network: network}
 	}
 	token := sessionToken(randomToken())
 	s.mu.Lock()
 	s.sessions[sha256.Sum256([]byte(token))] = &session{p: p, seen: now}
 	s.mu.Unlock()
-	s.cfg.Log.Printf("%s registered (%s)", p.name, p.identity)
+	s.cfg.Log.Printf("%s registered (%s), from %s", p.name, p.identity, p.addr)
 	s.reply(w, Session{Token: string(token), Participant: p.name})
 }
 
@@ -887,33 +1037,90 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 				s.fail(w, http.StatusForbidden, fmt.Sprintf(
 					"you have been given %d turns without contributing: this phase gives you no more", s.cfg.MaxTurns))
 				return
-			case len(s.queue) >= s.cfg.MaxQueue:
-				w.Header().Set("Retry-After", retry)
-				s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
-					"the queue is full, at %d; you will be queued when there is room", s.cfg.MaxQueue))
-				return
 			case !s.room(p.addr):
 				w.Header().Set("Retry-After", retry)
 				s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
 					"%d participants from your network address are queued already; you will be queued when one of them is done", s.cfg.MaxPerAddress))
 				return
+			case !s.networkRoom(p.network):
+				w.Header().Set("Retry-After", retry)
+				s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+					"%d participants from your network are queued already; you will be queued when one of them is done", s.cfg.MaxPerNetwork))
+				return
+			case len(s.queue) >= s.cfg.MaxQueue && !s.makeRoom(p.network, now):
+				w.Header().Set("Retry-After", retry)
+				s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+					"the queue is full, at %d; you will be queued when there is room", s.cfg.MaxQueue))
+				return
 			}
+		}
+		if i := slices.IndexFunc(s.queue, func(q waiter) bool { return q.p.identity == p.identity }); i >= 0 &&
+			(s.queue[i].p.addr != p.addr && !s.room(p.addr) ||
+				s.queue[i].p.network != p.network && !s.networkRoom(p.network)) {
+			// A place held from one address is kept alive from another
+			// only if that one, and its network, has room: otherwise one
+			// request from each address borrowed parks entries there for
+			// good, counted where they were queued (audit L2), and moving
+			// entries from one network to another queues a network past
+			// MaxPerNetwork.
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(s.cfg.Poll.Seconds()))))
+			s.fail(w, http.StatusTooManyRequests, fmt.Sprintf(
+				"your place in the queue is held from the address you were queued from: this one, or its network, has as many queued as it may, so asking from here does not keep it, and it lapses %s after you last asked from there",
+				s.cfg.Away))
+			return
 		}
 		s.seen(p, now)
 		s.advance(now)
 	}
 	if s.holds(p) {
-		s.turn.seen = now // asking for it shows the holder is there, as a heartbeat does
-		s.reply(w, Reply{Status: Go, Index: s.latest.index, SHA256: hex.EncodeToString(s.latest.hash[:]), Deadline: s.turn.deadline})
+		t := s.turn
+		t.seen = now // asking for it shows the holder is there, as a heartbeat does
+		// The deadline told is the one that counts: the upload must start by
+		// UploadWithin of the download, which comes next.
+		s.reply(w, Reply{Status: Go, Index: s.latest.index, SHA256: hex.EncodeToString(s.latest.hash[:]), Deadline: s.uploadBy(t, now)})
 		return
 	}
-	for i, q := range s.queue {
-		if q.p.identity == p.identity {
-			s.reply(w, Reply{Status: Queued, Position: i + 1, Wait: float64(i+1) * s.averageTurn().Seconds(), Poll: s.cfg.Poll.Seconds()})
-			return
-		}
+	if position, draw := s.place(p, now); position > 0 {
+		s.reply(w, Reply{Status: Queued, Position: position, Draw: draw, Wait: float64(position) * s.averageTurn().Seconds(), Poll: s.cfg.Poll.Seconds()})
+		return
 	}
 	panic("unreachable: a participant who asked is neither queued nor holding the turn")
+}
+
+// place is where queued participant p stands as turns are drawn (draw):
+// position counts those still asking who would come first were turns given
+// to the fewest served, then in the order queued, p included: a rough rank
+// (a network served fewer turns has its turns before p's, one per turn,
+// not one per entry), and the draw decides. draw counts the networks, p's
+// among them, the next turn is drawn among when p's network is among them,
+// none being served fewer turns; otherwise zero. Both zero when p is not
+// queued. s.mu is held.
+func (s *Server) place(p participant, now time.Time) (position, draw int) {
+	me := slices.IndexFunc(s.queue, func(w waiter) bool { return w.p.identity == p.identity })
+	if me < 0 {
+		return 0, 0
+	}
+	mine, networks, behind := s.served(s.queue[me].p), map[string]bool{}, false
+	for i, w := range s.queue {
+		if now.Sub(w.seen) > s.cfg.Presence || s.addressDone(w.p.addr) { // as draw passes them over
+			continue
+		}
+		n := s.served(w.p)
+		if n < mine || n == mine && i <= me {
+			position++
+		}
+		if n < mine {
+			behind = true
+		}
+		if n == mine && !networks[w.p.network] {
+			networks[w.p.network] = true
+			draw++
+		}
+	}
+	if behind {
+		draw = 0 // networks served fewer turns are drawn first
+	}
+	return position, draw
 }
 
 // handleHeartbeat keeps the turn of a holder whose program is still at it.
@@ -939,6 +1146,56 @@ func (s *Server) room(addr string) bool {
 	return s.cfg.NoAddressLimit || s.fromAddress(addr) < s.cfg.MaxPerAddress
 }
 
+// makeRoom makes room in a full queue for one from network, when network
+// has at least two fewer queued than the network with the most: that
+// network's latest entry not asking of late (Presence), or else its latest,
+// leaves the queue, and may queue again when there is room. First come,
+// first queued, let whoever filled the queue at a phase's opening, from
+// MaxQueue/MaxPerNetwork networks, keep everyone else out of the draw,
+// taking each place freed before an honest program asked again (audit
+// H3): now a full queue holds as many networks as it can. s.mu is held.
+func (s *Server) makeRoom(network string, now time.Time) bool {
+	counts := map[string]int{}
+	for _, w := range s.queue {
+		counts[w.p.network]++
+	}
+	most := 0
+	for _, n := range counts {
+		most = max(most, n)
+	}
+	if counts[network]+1 >= most {
+		return false
+	}
+	leaving := -1
+	for i := len(s.queue) - 1; i >= 0; i-- {
+		if w := s.queue[i]; counts[w.p.network] == most {
+			if leaving < 0 || now.Sub(w.seen) > s.cfg.Presence && now.Sub(s.queue[leaving].seen) <= s.cfg.Presence {
+				leaving = i
+			}
+		}
+	}
+	w := s.queue[leaving]
+	s.cfg.Log.Printf("the queue is full: %s (from %s, network %s, %d of it queued) leaves it, for one from a network with fewer",
+		w.p.name, w.p.addr, w.p.network, most)
+	s.queue = slices.Delete(s.queue, leaving, leaving+1)
+	return true
+}
+
+// networkRoom reports whether one more participant from network may be
+// queued. s.mu is held.
+func (s *Server) networkRoom(network string) bool {
+	if s.cfg.NoAddressLimit {
+		return true
+	}
+	n := 0
+	for _, w := range s.queue {
+		if w.p.network == network {
+			n++
+		}
+	}
+	return n < s.cfg.MaxPerNetwork
+}
+
 // fromAddress counts the participants from addr queued or holding the turn. s.mu is held.
 func (s *Server) fromAddress(addr string) int {
 	n := 0
@@ -955,21 +1212,18 @@ func (s *Server) fromAddress(addr string) int {
 
 // seen marks p as having asked now, queueing them last if they weren't
 // queued. A queued participant asking from another address is counted
-// there only if it has room (audit R-015): otherwise an entry could be moved
-// off a full address, and the place it left taken again, without end. s.mu
-// is held.
+// there from now on: handleTurn has checked it has room (audit R-015, L2).
+// s.mu is held.
 func (s *Server) seen(p participant, now time.Time) {
 	for i := range s.queue {
 		if s.queue[i].p.identity == p.identity {
 			s.queue[i].seen = now
-			if p.addr != s.queue[i].p.addr && s.room(p.addr) {
-				s.queue[i].p.addr = p.addr
-			}
+			s.queue[i].p.addr, s.queue[i].p.network = p.addr, p.network
 			return
 		}
 	}
 	s.queue = append(s.queue, waiter{p: p, seen: now})
-	s.cfg.Log.Printf("%s joined the queue, at %d", p.name, len(s.queue))
+	s.cfg.Log.Printf("%s joined the queue, at %d (from %s, network %s)", p.name, len(s.queue), p.addr, p.network)
 }
 
 // averageTurn is the mean length of the last few accepted turns. Before this
@@ -1014,6 +1268,13 @@ func (s *Server) holder(w http.ResponseWriter, p participant) *turn {
 
 // handleState sends the turn holder the latest state.
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+	// Only a download counts as one: a HEAD request, which the GET route
+	// also takes, sends nothing (audit M11).
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		s.fail(w, http.StatusMethodNotAllowed, "the state is downloaded with GET")
+		return
+	}
 	p, ok := s.participant(w, r)
 	if !ok {
 		return
@@ -1023,8 +1284,12 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	latest := s.latest
 	var deadline time.Time
 	if t != nil {
-		t.downloaded = true
-		deadline = t.deadline
+		// UploadWithin runs from the first download, which no later one, or
+		// one stalled, restarts (audit M11).
+		if t.downloaded.IsZero() {
+			t.downloaded = s.cfg.now()
+		}
+		deadline = s.uploadBy(t, s.cfg.now())
 	}
 	s.mu.Unlock()
 	if t == nil {
@@ -1047,8 +1312,18 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	t := s.holder(w, p)
-	if t != nil && t.uploading {
+	switch {
+	case t != nil && t.uploading:
 		s.fail(w, http.StatusConflict, "your upload is already coming in")
+		t = nil
+	case t != nil && (s.addressDone(p.addr) || s.addressDone(t.p.addr)):
+		// Both the address the turn was given to and the one uploading
+		// count (audit L1): checked on one and charged to the other, a
+		// host with two addresses was never counted.
+		s.fail(w, http.StatusForbidden, fmt.Sprintf(
+			"%d contributions have come from your network address: this phase takes no more from it", s.cfg.MaxContributionsPerAddress))
+		s.endTurn("upload refused: its address has made its contributions")
+		s.advance(s.cfg.now())
 		t = nil
 	}
 	if t != nil {
@@ -1064,7 +1339,7 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 		if !accepted {
 			s.mu.Lock()
 			if s.turn == t {
-				s.turn = nil
+				s.endTurn("upload made no contribution")
 			}
 			s.advance(s.cfg.now())
 			s.mu.Unlock()
@@ -1130,7 +1405,10 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted = true
-	s.contributedFrom[p.addr]++
+	s.contributedFrom[t.p.addr]++
+	if p.addr != t.p.addr {
+		s.contributedFrom[p.addr]++
+	}
 	s.done[p.identity] = len(s.entries)
 	s.entries = append(s.entries, e)
 	s.latest = state{index: e.Index, hash: hash, size: prev.size}
@@ -1142,7 +1420,7 @@ func (s *Server) handleContribution(w http.ResponseWriter, r *http.Request) {
 		s.turnTimes = s.turnTimes[1:]
 	}
 	s.turn = nil
-	s.cfg.Log.Printf("%s's contribution is state %d, sha256 %s", p.name, e.Index, e.SHA256)
+	s.cfg.Log.Printf("%s's contribution is state %d, sha256 %s (from %s)", p.name, e.Index, e.SHA256, p.addr)
 	s.advance(now)
 	s.reply(w, Reply{Status: Done, Index: e.Index, SHA256: e.SHA256})
 }
@@ -1269,6 +1547,7 @@ func (s *Server) status() Status {
 		Queue:         len(s.queue),
 		AverageTurn:   s.averageTurn().Seconds(),
 		AverageCheck:  mean(s.checkTimes).Seconds(),
+		Wasted:        s.wasted,
 		Closed:        s.closed || s.full(),
 		CloseAt:       s.cfg.CloseAt,
 		Notice:        s.cfg.Notice,

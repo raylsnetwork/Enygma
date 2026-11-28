@@ -504,6 +504,54 @@ func TestWaitsWhenRegistrationsAreFull(t *testing.T) {
 	}
 }
 
+// TestQueuedAgainAfterAFullQueue: a program refused a place (429) while
+// queued says where it is again once it is queued, in its message and its
+// event, though nothing changed in between.
+func TestQueuedAgainAfterAFullQueue(t *testing.T) {
+	p := newPhase(t, coordinator.Config{Auth: coordinator.AuthOpen})
+	real := *p.handler.Load()
+	var asked atomic.Int32
+	flaky := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/turn" {
+			switch asked.Add(1) {
+			case 1, 3:
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(coordinator.Reply{Status: coordinator.Queued, Position: 2, Draw: 1, Poll: 0.01})
+				return
+			case 2:
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, `{"error":"the queue is full"}`, http.StatusTooManyRequests)
+				return
+			}
+		}
+		real.ServeHTTP(w, r)
+	}))
+	p.handler.Store(&flaky)
+	var (
+		mu     sync.Mutex
+		stages []string
+	)
+	var out syncBuffer
+	c := p.client(t, "alice")
+	c.Out = &out
+	c.Events = func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		if e.Stage == StageQueued || e.Stage == StageFull {
+			stages = append(stages, e.Stage)
+		}
+	}
+	runAll(t, c)
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{StageQueued, StageFull, StageQueued}; !slices.Equal(stages, want) {
+		t.Fatalf("events %v, want %v", stages, want)
+	}
+	if n := strings.Count(out.String(), "1 ahead of you"); n != 2 {
+		t.Fatalf("said where it is %d times, want 2:\n%s", n, out.String())
+	}
+}
+
 // TestGivesUpOnACoordinatorThatForgetsItAtOnce: a program joins again when
 // the coordinator forgets it, but not without end when the coordinator
 // forgets it every time.
