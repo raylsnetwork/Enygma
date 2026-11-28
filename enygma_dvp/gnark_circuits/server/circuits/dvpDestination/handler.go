@@ -8,12 +8,10 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"enygma_dvp/gnark_circuits/primitives"
 	"enygma_dvp/gnark_circuits/templates"
 	utils "enygma_dvp/gnark_circuits/utils"
 
@@ -78,8 +76,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.WtTokenIdAlice = numbers.Parse(req.WtTokenIdAlice)
 
 		// --- compile, prove, verify ---
-		solver.RegisterHint(primitives.ModHint)
-
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("compile circuit: %v", err)})

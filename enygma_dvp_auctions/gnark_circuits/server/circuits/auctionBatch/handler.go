@@ -8,12 +8,10 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
-	"enygma_dvp_auctions/gnark_circuits/primitives"
 	"enygma_dvp_auctions/gnark_circuits/templates"
 	"enygma_dvp_auctions/gnark_circuits/utils"
 
@@ -70,9 +68,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 			witness.WtAmount[i] = numbers.Parse(req.WtAmount[i])
 			witness.WtTokenId[i] = numbers.Parse(req.WtTokenId[i])
 		}
-
-		solver.RegisterHint(primitives.PoseidonNative)
-		solver.RegisterHint(primitives.PoseidonPrivateKeyNative)
 
 		if err := numbers.Err(); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

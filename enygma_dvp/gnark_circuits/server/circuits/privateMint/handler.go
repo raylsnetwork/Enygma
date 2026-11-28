@@ -9,14 +9,12 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/gin-gonic/gin"
 
 	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
 
-	"enygma_dvp/gnark_circuits/primitives"
 	"enygma_dvp/gnark_circuits/templates"
 
 	"enygma_gnark_shared/witnessinput"
@@ -48,8 +46,6 @@ func NewHandler(pkPath, vkPath string) gin.HandlerFunc {
 		witness.Amount = numbers.Parse(request.Amount)
 		witness.PublicKey = numbers.Parse(request.PublicKey)
 		witness.CipherText = numbers.Parse(request.CipherText)
-
-		solver.RegisterHint(primitives.ModHint)
 
 		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuitPrivateMint)
 		if err != nil {
