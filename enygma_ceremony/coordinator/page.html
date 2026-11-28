@@ -138,10 +138,12 @@ footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: 
     <ol class="how">
       <li id="release-step">Open the ceremony's release on GitHub. Take the link from the ceremony's announcement or
         the repository, rather than from this page alone.</li>
-      <li>Paste the command for your system from the release notes into a terminal (PowerShell on Windows). It checks
-        the program's sha256 against the release, then runs it. It waits for your turn by itself; leave it running
-        until it says you are done, then publish the receipt it prints.</li>
-      <li>Or build it from source, at the release's tag:
+      <li>In a terminal (PowerShell on Windows), run the release's first command for your system: it downloads the
+        program and checks its sha256 against the release. Compare that sha256 with the ceremony's announcement (the
+        release's notes can be edited; the announcement is what counts), then run the second command. It waits for
+        your turn by itself; leave it running until it says you are done, then publish the receipt it prints.</li>
+      <li>Or build it from source, at the commit the announcement names (not the tag's name, which can be moved), and
+        compare the commit it prints with the announcement (the release's notes give the Windows commands):
         <pre id="source"></pre></li>
     </ol>
   </div>
@@ -217,10 +219,10 @@ function renderPhases(s) {
     ".\nCompare them with the ceremony's announcement.");
 }
 
-// release splits a GitHub release address into its repository and tag.
+// release splits a GitHub release address into its repository and the directory a clone of it makes.
 function release(u) {
   const m = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/releases\/tag\/([A-Za-z0-9_.\/-]+)$/.exec(u || "");
-  return m ? { repo: `https://github.com/${m[1]}/${m[2]}`, dir: m[2], tag: m[3] } : null;
+  return m ? { repo: `https://github.com/${m[1]}/${m[2]}`, dir: m[2] } : null;
 }
 
 function renderHow(s) {
@@ -231,10 +233,13 @@ function renderHow(s) {
     step.replaceChildren("Open the ceremony's release on GitHub: ", a,
       ". Take the link from the ceremony's announcement or the repository too, and check they match.");
   }
+  // go build in a clone stamps the commit into the program, which prints it; go run does not (audit I18).
   const r = release(s.release_url);
-  text("source", r
-    ? `git clone --depth 1 --branch ${r.tag} ${r.repo}\ncd ${r.dir}/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`
-    : `git clone --branch <the release's tag> <the repository>\ncd <the repository>/enygma_ceremony\ngo run ./cmd/ceremony join -url ${origin}`);
+  // The second line builds and runs only at the commit announced, however the first went.
+  text("source", (r
+    ? `git clone ${r.repo} && cd ${r.dir} && git checkout <the commit announced>\n`
+    : `git clone <the repository> && cd <the repository> && git checkout <the commit announced>\n`) +
+    `[ "$(git rev-parse HEAD)" = <the commit announced> ] && cd enygma_ceremony/cmd/ceremony && go build && ./ceremony join -url ${origin}`);
   // The check that counts (audit H2): the chain that ends at the announced head, from a copy this server
   // does not serve, and the phase announced (I3).
   const phase = s.phase === "phase 2"

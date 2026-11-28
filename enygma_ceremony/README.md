@@ -8,7 +8,12 @@ two-phase MPC of [Bowe, Gabizon and Miers](https://eprint.iacr.org/2017/1050)). 
 sound as long as one contributor in each phase ran a program the coordinator did not choose and
 discarded their randomness**, however many others collude, the coordinator included. So the
 coordinator serves no participant code: participants get the program from the ceremony's GitHub
-release, built in the open from a tagged commit, or build it from source.
+release, built in the open from a tagged commit, or build it from source. The release gives
+transparency, everyone running GitHub's build of one public commit, not independence: whoever
+controls the repository controls the release (its tags, its notes, the address built into it).
+Independence comes from people independent of the organizers who review that commit and rebuild
+it, and from an announcement, somewhere the repository's admins cannot edit, of the commit and
+each program's sha256, which participants compare before running (below).
 
 - **Phase 1** (the powers of τ) runs once and serves every circuit of every protocol, up to its
   domain size.
@@ -26,24 +31,30 @@ every step. The same program runs the coordinator and every check.
 
 ## Contributing
 
-Open the ceremony's release on GitHub: the link is in the ceremony's announcement, and the
-coordinator's page names it too. Take the command from the release page, not from the
-coordinator's.
+Open the ceremony's announcement: it gives the release's address, its commit, each program's
+sha256, the coordinator's address, and who reviewed and rebuilt the commit. Take the commands from
+the release (its notes, or `COMMANDS.txt`, one of its attested files), not from the coordinator's.
 
-1. **Run the command for your system** from the release notes, in a terminal (PowerShell on
-   Windows). It downloads the program from the release, checks its sha256 against the release, and
-   runs it. Downloaded this way, with `curl` or `iwr`, the program raises no operating-system
-   warning, signed or not. Or **build it from source** at the release's tag, the strongest option,
-   since you trust only the code you build:
+1. **Download and check the program for your system**, in a terminal (PowerShell on Windows), with
+   the release's first command: it downloads the program and checks its sha256 against the
+   release. **Compare that sha256 with the announcement**: the release's notes can be edited after
+   it is published, by anyone with write access to the repository, its files and tag cannot. Then
+   run it with the second command. Downloaded this way, with `curl` or `Invoke-WebRequest`, the
+   program raises no operating-system warning, signed or not. Or **build it from source**, at the
+   commit announced (not the tag's name, which can be moved), the strongest option, since you trust
+   only the code you build:
 
    ```bash
-   git clone --depth 1 --branch <tag> https://github.com/<owner>/<repo>.git
-   cd <repo>/enygma_ceremony
-   go run ./cmd/ceremony join -url <the coordinator's address>
+   git clone https://github.com/<owner>/<repo>.git && cd <repo> && git checkout <the commit announced>
+   [ "$(git rev-parse HEAD)" = <the commit announced> ] && cd enygma_ceremony/cmd/ceremony && go build \
+       && ./ceremony join -url <the coordinator's address>
    ```
 
-   The program first prints the commit it was built from, and its own sha256: compare them with
-   the release.
+   The second line builds and runs only at the commit announced, however the first went. (On
+   Windows, in PowerShell, the release's notes give the same steps.) The program first prints
+   the commit it was built from, and its own sha256: compare them with the announcement. Built
+   from source, only the commit compares: your build has its own sha256. `go build` in a clone
+   stamps the commit; `go run` does not, and the program then says so.
 2. **It joins.** Type a name to show in the transcript if you like, or leave it empty to stay
    anonymous. If the ceremony uses GitHub sign-in, it shows a code to enter at
    github.com/login/device.
@@ -103,7 +114,10 @@ program at once, without showing what the certificate says.
        -close-at 2026-12-08T15:00:00Z
    ```
 
-3. Announce the release's address and the coordinator's: that is all a participant needs.
+3. Announce, before the phase opens, somewhere the repository's admins cannot edit (and that
+   records when): the release's address, its commit, each program's sha256 (`SHA256SUMS`), the
+   coordinator's address, and the people independent of you who reviewed the commit and rebuilt
+   it to those sha256s. That is all a participant needs.
 
 ### What the coordinator needs
 
@@ -118,22 +132,47 @@ program at once, without showing what the certificate says.
 ### 1. Release the participant program
 
 Participants get the program from GitHub, never from the coordinator: the code that draws their
-randomness must not be the coordinator's choice.
+randomness must not be the coordinator's choice. But whoever has write access to the repository
+can push a tag on any commit, edit a release's notes, change the variable the coordinator's
+address is built from, and run the workflow (audit M7 to M10). The release alone shows only what
+GitHub built; that the commit is sound, and is the one built, is for people outside the
+repository's control to check.
 
-1. In the repository's settings, turn on immutable releases (so a release's files cannot be
-   replaced), and set the variable `CEREMONY_URL` to the coordinator's https address.
-2. Push a tag `ceremony-v<n>` at the commit to release. The `ceremony-release` workflow
-   (`.github/workflows/ceremony-release.yml`) runs `make ceremony-dist CEREMONY_URL=…` and publishes:
+1. In the repository's settings, turn on immutable releases (organization-enforced, if you can),
+   so a release's files and tag cannot change once published; add a ruleset on
+   `refs/tags/ceremony-v*` that restricts their creation and blocks updates and deletions, with no
+   bypass; keep write access to as few accounts as you can for the ceremony's length; and set the
+   variable `CEREMONY_URL` to the coordinator's address, a plain `https://host[:port]`.
+2. Have people independent of you review the commit to release.
+3. Push a tag `ceremony-v<n>` at that commit. The `ceremony-release` workflow
+   (`.github/workflows/ceremony-release.yml`) checks the tag and the address are plain, builds with
+   `make ceremony-dist`, in a job that can write nothing, and publishes, in another, only while the
+   tag still names the commit built (a draft first, the tag checked before and after it is
+   published):
    - `ceremony-<os>-<arch>` for macOS, Linux and Windows on x86-64 and ARM64, which join that
      coordinator when run with no arguments;
    - `SHA256SUMS`, and `BUILD`, the exact build command;
-   - a provenance attestation for each binary (`gh attestation verify <file> --repo <owner>/<repo>`);
-   - release notes with a one-line command per system that downloads the program from the
-     release, checks its sha256 and runs it.
+   - `COMMANDS.txt`, each system's commands: download and check, then run;
+   - a provenance attestation for each binary and for `COMMANDS.txt`. Check one with
+     `gh attestation verify <file> --repo <owner>/<repo> --signer-workflow
+     <owner>/<repo>/.github/workflows/ceremony-release.yml --source-ref refs/tags/<tag>
+     --source-digest <the commit> --deny-self-hosted-runners`: that GitHub's runner built it, with
+     this workflow, from that commit. It does not cover `CEREMONY_URL`, nor what the code does;
+   - release notes that open by asking participants to compare with the announcement.
+
+   It ends with `gh release verify`, which fails unless the release is immutable.
+4. Have the reviewers rebuild the commit (`BUILD`) and compare with `SHA256SUMS`, then announce
+   (Quick start, step 3).
 
 The build is reproducible: `make ceremony-dist` uses the exact toolchain `go.mod` pins, with CGO
-off and `-trimpath`, so anyone building the same commit from a clean clone, with the same URL, gets
-the same files. Locally it writes them to `enygma_ceremony/dist/`, replacing what was there.
+off, `-trimpath`, and none of the builder's own `go env` (`GOFLAGS`, `GOWORK`, `GOAMD64` and the
+like), so anyone building the same commit from a clean clone with LF line endings
+(`.gitattributes` makes them so; on Windows, clone with `git clone -c core.autocrlf=false`), with
+the same URL, gets the same files. `make ceremony-repro` builds HEAD twice, from two clean clones
+at different paths, each compiling from scratch, and compares (it leaves out changes not
+committed). `CEREMONY_URL` is data: anything but a plain `https://host[:port]`, or nothing (for a
+local build that joins no coordinator by itself), is refused before anything is built. Locally
+it writes the files to `enygma_ceremony/dist/`, replacing what was there.
 
 ### 2. How participants join (`-auth`)
 
