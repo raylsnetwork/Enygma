@@ -14,7 +14,18 @@ import (
 // that draws a participant's randomness never comes from the coordinator.
 //
 //go:embed page.html
-var page []byte
+var pageFile []byte
+
+// page is pageFile as a browser reads it, its line endings LF (lf): a
+// checkout with CRLF ones would otherwise serve a page whose script and
+// style hash to other than pagePolicy says, and never run (audit I6).
+var page = lf(pageFile)
+
+// lf is html with each CRLF, and each CR alone, made LF, as a browser
+// normalizes a page's text before hashing its inline script and style.
+func lf(html []byte) []byte {
+	return bytes.ReplaceAll(bytes.ReplaceAll(html, []byte("\r\n"), []byte("\n")), []byte("\r"), []byte("\n"))
+}
 
 // pagePolicy is the page's Content Security Policy (audit R-051, R-052): its
 // own inline script and style, by their sha256, and nothing else. It may only

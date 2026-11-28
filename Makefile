@@ -11,6 +11,13 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
+# CEREMONY_URL (ceremony-dist, below) is data, not code (audit M8): taken as
+# written, never expanded. Here, before any $(shell ...): make 4.4 and later
+# export each command-line variable to $(shell ...) as they parse, expanding
+# a recursive one, so a value given on the command line would run as make
+# code before ceremony-dist's check.
+override CEREMONY_URL := $(value CEREMONY_URL)
+
 # go-ethereum needs CGo. Homebrew's clang on macOS points at an SDK path that
 # does not exist, so use Apple's clang there.
 ifeq ($(shell uname -s),Darwin)
@@ -83,7 +90,7 @@ ERRCHECK_SKIP_MODULES ?= \
 	dvp-chain dvp-deploy dvp-init dvp-gnark dvp-keygen dvp-stack dvp-stack-stop dvp-test \
 	retail-setup retail-gnark retail-keygen retail-keys-check retail-test shield-test shield-stack shield-stack-stop primer-refresh shield-fixtures shield-demo-restart shield-demo-stale shield-gnark-restart \
 	payments-burn-keygen payments-keygen payments-keys-check payments-stack payments-stack-stop payments-test \
-	auctions-gnark auctions-keygen ceremony-dist ceremony-fuzz
+	auctions-gnark auctions-keygen ceremony-dist ceremony-repro ceremony-fuzz
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*## "} /^[a-zA-Z0-9_-]+:.*## /{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -147,6 +154,8 @@ page-check: $(PAGE_DEPS) ## Fail on a bad inline <script>, a duplicated <style> 
 	@node --test scripts/check_red_named.test.js >/dev/null || node --test scripts/check_red_named.test.js
 	@# check_hooks_installed.sh, make check's hooks-check, finds a hook type this clone lacks.
 	@node --test scripts/check_hooks_installed.test.js >/dev/null || node --test scripts/check_hooks_installed.test.js
+	@# ceremony_release.sh, which the ceremony's release workflow runs, and ceremony-dist take the tag and the coordinator's address as data, and publish only while the tag names the commit built.
+	@node --test scripts/ceremony_release.test.js >/dev/null || node --test scripts/ceremony_release.test.js
 	@# check_in_ci.test.js: every target make check runs, some ci.yml job runs too (CI never runs make check whole).
 	@node --test scripts/check_in_ci.test.js >/dev/null || node --test scripts/check_in_ci.test.js
 	@# suite_result.sh, the on-chain suites' verdict, fails a failed test or an unlisted skip.
@@ -519,30 +528,41 @@ auctions-gnark: ## Start the auctions gnark proof server (keep running)
 # (.github/workflows/ceremony-release.yml builds it from a ceremony-v* tag),
 # or build the program from source, and run it: built with CEREMONY_URL, it
 # joins that coordinator with no command. The coordinator serves no
-# participant code. The exact toolchain go.mod pins (GOTOOLCHAIN), CGO off and
-# -trimpath make each binary a function of the commit, the URL and that
-# toolchain, so anyone can rebuild it from a clean clone of the tag and
-# compare it with SHA256SUMS; BUILD records how.
+# participant code. The exact toolchain go.mod pins (GOTOOLCHAIN), CGO off,
+# -trimpath and CEREMONY_ENV, which leaves out the builder's own go env and
+# workspace, make each binary a function of the commit, the URL and that
+# toolchain, so anyone can rebuild it from a clean clone of the commit, with
+# LF line endings (.gitattributes), and compare it with SHA256SUMS; BUILD
+# records how.
+#
+# CEREMONY_URL, taken as written (at the top), reaches the recipe only
+# through the environment, and is refused unless a plain https://host[:port].
 CEREMONY_TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
-CEREMONY_URL ?=
 CEREMONY_TOOLCHAIN := $(shell sed -n 's/^toolchain //p' enygma_ceremony/go.mod)
+CEREMONY_ENV := GOENV=off GOFLAGS= GOWORK=off GOAMD64=v1 GOARM64=v8.0 GOEXPERIMENT= GOFIPS140=off CGO_ENABLED=0
 
-ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_ceremony/dist, with SHA256SUMS and BUILD; CEREMONY_URL=https://… makes it join that coordinator when run
+ceremony-dist: export CEREMONY_URL := $(CEREMONY_URL)
+ceremony-dist: ## Build the ceremony program for each OS and CPU into enygma_ceremony/dist, with SHA256SUMS and BUILD; CEREMONY_URL=https://host[:port] makes it join that coordinator when run
+	@[[ -z "$$CEREMONY_URL" || "$$CEREMONY_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$$ ]] || { echo "CEREMONY_URL is a plain https://host[:port], nothing else" >&2; exit 1; }
 	@test -n "$(CEREMONY_TOOLCHAIN)" || { echo "enygma_ceremony/go.mod pins no toolchain" >&2; exit 1; }
 	@rm -rf enygma_ceremony/dist
 	@mkdir -p enygma_ceremony/dist
 	@for target in $(CEREMONY_TARGETS); do \
 		os=$${target%/*}; arch=$${target#*/}; ext=; [ $$os = windows ] && ext=.exe; \
-		GOTOOLCHAIN=$(CEREMONY_TOOLCHAIN) CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -C enygma_ceremony -trimpath \
-			-ldflags "-X main.defaultURL=$(CEREMONY_URL)" -o dist/ceremony-$$os-$$arch$$ext ./cmd/ceremony || exit 1; \
+		GOTOOLCHAIN=$(CEREMONY_TOOLCHAIN) $(CEREMONY_ENV) GOOS=$$os GOARCH=$$arch go build -C enygma_ceremony -trimpath \
+			-ldflags "-X main.defaultURL=$$CEREMONY_URL" -o dist/ceremony-$$os-$$arch$$ext ./cmd/ceremony || exit 1; \
 	done
 	@printf '%s\n' \
-		"Built from commit $$(git rev-parse HEAD), in a clean clone (Go stamps the commit, and whether the tree had changes, into the program), with:" \
-		"  GOTOOLCHAIN=$(CEREMONY_TOOLCHAIN) CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build -C enygma_ceremony -trimpath -ldflags \"-X main.defaultURL=$(CEREMONY_URL)\" -o dist/ceremony-<os>-<arch>[.exe] ./cmd/ceremony" \
+		"Built from commit $$(git rev-parse HEAD), in a clean clone with LF line endings (Go stamps the commit, and whether the tree had changes, into the program), with:" \
+		"  GOTOOLCHAIN=$(CEREMONY_TOOLCHAIN) $(CEREMONY_ENV) GOOS=<os> GOARCH=<arch> go build -C enygma_ceremony -trimpath -ldflags '-X main.defaultURL=$$CEREMONY_URL' -o dist/ceremony-<os>-<arch>[.exe] ./cmd/ceremony" \
 		"for each <os>/<arch> of: $(CEREMONY_TARGETS)" \
-		"or: make ceremony-dist CEREMONY_URL=$(CEREMONY_URL)" \
+		"or: make ceremony-dist CEREMONY_URL=$$CEREMONY_URL" \
+		"On Windows, clone with: git clone -c core.autocrlf=false" \
 		> enygma_ceremony/dist/BUILD
 	@cd enygma_ceremony/dist && shasum -a 256 ceremony-* | tee SHA256SUMS
+
+ceremony-repro: ## Rebuild the ceremony's release from two clean clones of HEAD at different paths, and fail unless their SHA256SUMS match
+	@scripts/ceremony_reproducible.sh
 
 # What the ceremony reads from others, fuzzed: state files (an upload, or a
 # transcript a verifier fetches), transcripts, drand's beacon, names, every

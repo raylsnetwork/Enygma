@@ -301,7 +301,7 @@ func versionCmd(*flag.FlagSet) func([]string, io.Writer) error {
 		}
 		v := coordinator.Version()
 		if v == "" {
-			v = "unknown: built without version control information"
+			v = "unknown: no commit stamped (go run, -buildvcs=false, or outside a git clone)"
 		}
 		fmt.Fprintf(w, "ceremony, commit %s\n", v)
 		if defaultURL != "" {
@@ -313,13 +313,13 @@ func versionCmd(*flag.FlagSet) func([]string, io.Writer) error {
 
 // selfDescription says which program is about to draw the participant's
 // randomness: the commit it was built from, and its own sha256, to compare
-// with the ceremony's GitHub release (its tag, and SHA256SUMS). Built from
-// source with go run, the sha256 is of a local build; the commit is what to
-// compare.
+// with the ceremony's announcement (its commit, and each binary's sha256).
+// Go stamps the commit into a go build of a clone, never a go run (audit
+// I18): one built so says how to build it to compare.
 func selfDescription() string {
 	v := coordinator.Version()
 	if v == "" {
-		v = "unknown (built without version control information)"
+		v = "unknown (no commit stamped: go run, -buildvcs=false, or outside a git clone; build it with go build in a clone of the commit announced, as the release's notes say, to compare it)"
 	}
 	s := "This program: commit " + v
 	if path, err := os.Executable(); err == nil {
@@ -327,7 +327,7 @@ func selfDescription() string {
 			s += fmt.Sprintf(", sha256 %x", h)
 		}
 	}
-	return s + ". Compare them with the ceremony's GitHub release.\n"
+	return s + ". Compare them with the ceremony's announcement.\n"
 }
 
 // coordinate runs a phase as a service until interrupted. On the first

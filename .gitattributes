@@ -11,3 +11,10 @@ enygma_payments/relayer/contracts/enygma.go linguist-generated=true
 # git diff shows the Protocol primer's data block (rewritten by every run) as
 # its step and value names; make hooks sets the driver, --no-textconv shows it all.
 enygma_retail_payments/shield_demo/protocol.html diff=primer
+
+# The setup ceremony's release is rebuilt by anyone from a clone, and must
+# come out byte for byte the same (audit L15, I6): its files are checked out
+# with LF line endings everywhere, so a default Windows checkout (CRLF)
+# changes neither the Go sources nor the page the coordinator embeds. text=auto
+# leaves binary files as they are.
+enygma_ceremony/** text=auto eol=lf
