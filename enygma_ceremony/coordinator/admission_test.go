@@ -9,9 +9,12 @@ import (
 	"time"
 )
 
-// TestQueuedAddressMove (audit R-015): a queued participant who asks from
-// another address is counted there only if it has room, so moving between
-// two addresses never puts more than MaxPerAddress at either.
+// TestQueuedAddressMove (audit R-015, L2): a queued participant who asks
+// from another address is counted there only if it has room, so moving
+// between two addresses never puts more than MaxPerAddress at either; and
+// asking from a full one is refused, rather than keeping the place alive
+// where it was queued, so one request from a borrowed address cannot park
+// a place there for good.
 func TestQueuedAddressMove(t *testing.T) {
 	h := newHarness(t, Config{Auth: AuthOpen, MaxPerAddress: 1})
 	for name, addr := range map[string]string{"holder": "192.0.2.9", "alice": "192.0.2.1", "carol": "192.0.2.1", "dave": "192.0.2.2"} {
@@ -24,7 +27,11 @@ func TestQueuedAddressMove(t *testing.T) {
 	wantStatus(t, "alice", h.ask("alice"), Queued, 1) // moved to B, which had room
 	wantStatus(t, "carol", h.ask("carol"), Queued, 2) // A has room again
 	h.addrs["alice"] = "192.0.2.1"
-	wantStatus(t, "alice", h.ask("alice"), Queued, 1) // A is full: alice stays counted at B
+	if code, body := h.do("alice", http.MethodPost, "/v1/turn", nil); code != http.StatusTooManyRequests { // A is full
+		t.Fatalf("alice from A, full: %d %s, want 429", code, body)
+	}
+	h.addrs["alice"] = "192.0.2.2"
+	wantStatus(t, "alice", h.ask("alice"), Queued, 1) // still counted at B
 	if code, body := h.do("dave", http.MethodPost, "/v1/turn", nil); code != http.StatusTooManyRequests {
 		t.Fatalf("dave from B, where alice is counted: %d %s, want 429", code, body)
 	}

@@ -59,7 +59,7 @@ a { color: var(--accent); overflow-wrap: anywhere; }
 .notice:empty { display: none; }
 
 /* Live numbers */
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 20px; }
 .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
 .stat .label { color: var(--muted); font-size: 13px; }
 .stat .value { font-size: 22px; font-weight: 650; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -127,6 +127,7 @@ footer { margin-top: 44px; color: var(--faint); font-size: 13px; overflow-wrap: 
     <div class="stat"><div class="label">Waiting in line</div><div class="value" id="queue">–</div></div>
     <div class="stat"><div class="label">Contributing now</div><div class="value" id="now">–</div></div>
     <div class="stat"><div class="label">Average turn</div><div class="value" id="turn">–</div></div>
+    <div class="stat"><div class="label">Turns without a contribution</div><div class="value" id="wasted">–</div></div>
   </div>
 
   <h2>Contribute</h2>
@@ -252,6 +253,7 @@ function renderStatus(s) {
   text("queue", s.queue.toLocaleString());
   text("now", s.contributing || "Nobody");
   text("turn", duration(s.average_turn));
+  text("wasted", (s.turns_without_contribution || 0).toLocaleString());
   text("open-what", s.closed ? `${phaseTitle(s)} is closed.` : `${phaseTitle(s)} is open.${closes(s)}`);
   renderHow(s);
   text("footer", `Latest state fingerprint ${s.latest}` + (s.version ? ` · This server runs commit ${s.version}` : ""));

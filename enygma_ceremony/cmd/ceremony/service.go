@@ -342,6 +342,10 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 	maxPerAddress := fs.Int("max-per-address", 3, "participants from one network address queued, or holding the turn, at once: at least 1 (-no-address-limit lifts the bound)")
 	noAddressLimit := fs.Bool("no-address-limit", false, "no bound on the participants from one network address")
 	ipv6Prefix := fs.Int("ipv6-prefix", 64, "how many leading bits of an IPv6 address count as one network address, for the limits")
+	fairPrefix4 := fs.Int("fair-prefix4", 0, "how many leading bits of an IPv4 address make the network turns are shared out by: a free turn goes to the earliest queued from a network drawn at random among those given the fewest (24 when 0)")
+	fairPrefix6 := fs.Int("fair-prefix6", 0, "how many leading bits of an IPv6 address make the network turns are shared out by (48, or -ipv6-prefix when that is fewer, when 0)")
+	uploadWithin := fs.Duration("upload-within", 0, "how long the turn holder has, from first starting to download the state, to start uploading (45m, or -turn when shorter, when 0): at most -turn; raise both for a large state and slow participants")
+	maxPerNetwork := fs.Int("max-per-network", 10, "participants from one network (-fair-prefix4, -fair-prefix6) queued at once: at least 1 (-no-address-limit lifts the bound)")
 	maxQueue := fs.Int("max-queue", 1000, "participants queued at once, from everywhere")
 	maxTurns := fs.Int("max-turns", 3, "turns one identity is given without contributing")
 	maxContributions := fs.Int("max-contributions", 1000, "contributions the phase takes in all; each is a state file kept for the phase's life")
@@ -357,7 +361,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		"from anywhere else, the connection's address")
 	insecureHTTP := fs.Bool("insecure-http", false, "serve plain HTTP with no TLS in front: for tests and rehearsals on this machine only, since participants' tokens, and the page, travel in clear")
 	turn := fs.Duration("turn", 60*time.Minute, "a participant's time to download, contribute and upload: about 2 minutes at 2^18 on a laptop, room for a slow one")
-	turnPresence := fs.Duration("turn-presence", 2*time.Minute, "how long the turn holder's program may go silent before the turn passes on")
+	turnPresence := fs.Duration("turn-presence", 2*time.Minute, "how long the turn holder's program may go silent before the turn passes on: at least twice -poll, so a program still asking hears of its turn")
 	presence := fs.Duration("presence", 30*time.Second, "how recently a queued participant must have asked to be given the turn")
 	away := fs.Duration("away", 10*time.Minute, "how long a queued participant may go quiet and keep their place")
 	poll := fs.Duration("poll", 5*time.Second, "how often queued participants ask")
@@ -375,8 +379,8 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 		}
 		// A limit of 0, or less, would quietly be no limit (audit R-061).
 		switch {
-		case *maxPerAddress < 1:
-			return fmt.Errorf("%w: -max-per-address is at least 1 (-no-address-limit lifts the bound)", errUsage)
+		case *maxPerAddress < 1, *maxPerNetwork < 1:
+			return fmt.Errorf("%w: -max-per-address and -max-per-network are at least 1 (-no-address-limit lifts the bounds)", errUsage)
 		case *githubMinAge <= 0, *maxQueue < 1, *maxTurns < 1, *ipv6Prefix < 1, *ipv6Prefix > 128:
 			return fmt.Errorf("%w: -github-min-age, -max-queue and -max-turns are positive, and -ipv6-prefix from 1 to 128", errUsage)
 		case *maxContributions < 1, *maxContributionsPerAddress < 1, *minFreeMiB < 1, *maxSessions < 1:
@@ -475,6 +479,7 @@ func coordinate(fs *flag.FlagSet) func([]string, io.Writer) error {
 			MaxContributions: *maxContributions, MaxContributionsPerAddress: *maxContributionsPerAddress,
 			MinFree: *minFreeMiB << 20, MaxSessions: *maxSessions,
 			Turn: *turn, TurnPresence: *turnPresence, Presence: *presence, Away: *away, Poll: *poll,
+			FairPrefix4: *fairPrefix4, FairPrefix6: *fairPrefix6, UploadWithin: *uploadWithin, MaxPerNetwork: *maxPerNetwork,
 			CloseAt: closes, Notice: *notice, ReleaseURL: *releaseURL, Phase1: phase1, Log: logger,
 		})
 		if err != nil {

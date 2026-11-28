@@ -160,3 +160,11 @@ func TestCheckAdvice(t *testing.T) {
 		}
 	}
 }
+
+// TestCoordinateLimitsArePositive: coordinate refuses a per-network bound
+// of less than one, which would quietly be none (audit R-061).
+func TestCoordinateLimitsArePositive(t *testing.T) {
+	if code, stdout, stderr := runCommand("coordinate", "-dir", t.TempDir(), "-insecure-http", "-max-per-network", "0"); code != 2 || !strings.Contains(stderr, "-max-per-network") {
+		t.Fatalf("coordinate -max-per-network 0: exit %d, want 2\n%s%s", code, stdout, stderr)
+	}
+}

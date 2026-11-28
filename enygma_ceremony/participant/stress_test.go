@@ -105,7 +105,7 @@ func TestManyAtOnce(t *testing.T) {
 	}
 	p := newPhase(t, coordinator.Config{
 		Auth: coordinator.AuthOpen, TurnPresence: 300 * time.Millisecond,
-		MaxPerAddress: 1000, MaxContributionsPerAddress: 1000, // every program runs on this machine
+		MaxPerAddress: 1000, MaxPerNetwork: 1000, MaxContributionsPerAddress: 1000, // every program runs on this machine
 	})
 	p.cfg.Presence = time.Second // a program that gives up stops holding the line soon after
 	p.restart(t)
