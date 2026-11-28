@@ -95,4 +95,10 @@ regexes = [
   # rule, but they're literal ".key" filenames, not key material.
   '''WithdrawPk6\.key''',
   '''WithdrawVk6\.key''',
+  # False positive, not a secret: VKSLOTS_TEST_KEY_HASH in
+  # enygma_dvp/test/hardhat/VerifierFreeze.test.js (fix/owner-governance) is
+  # keccak256(abi.encode(vk)) of a test verifying key, a public hash the test
+  # compares with Verifier.verificationKeyHash. Allowlisted by value, so a
+  # real secret on any other line of that file is still caught.
+  '''e8f844f28c8cabce64ce2eeba33af5962d212bf08860cccc3a980b63538a7b1f''',
 ]
