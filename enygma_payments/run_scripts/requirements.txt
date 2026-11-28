@@ -3,6 +3,6 @@ web3==8.0.0
 # its dependencies only set lower bounds, so pip would keep an older copy
 # already installed in the venv as long as it meets those.
 aiohttp>=3.14.4
-certifi>=2026.10.18
+certifi>=2026.11.20
 idna>=3.20
 pycryptodome>=3.19.1
