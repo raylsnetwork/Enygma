@@ -47,6 +47,9 @@ coordinator
   phase2-new  -ceremony NAME -srs SRS -srs-sha256 SHA256 -r1cs DIR [-circuits A,B] -out STATE
                                           start Phase 2 for DIR's circuits (keys.json, or -circuits),
                                           from the SRS announced
+  append      -dir DIR -in STATE -name NAME
+                                          add a lined-up contributor's contribution, made by hand on
+                                          the latest state, to a phase no coordinator is serving
   beacon      -close-at TIME [-turn D] | -round N
                                           the drand round to announce for a close, or round N's beacon
   phase1-seal -head SHA256 [-include SHA256,...] (-transcript DIR | STATE...) BEACON -out SRS
@@ -104,6 +107,7 @@ var commands = map[string]command{
 	"phase2-seal": phase2Seal,
 	"info":        info,
 	"verify-keys": verifyKeys,
+	"append":      appendCmd,
 }
 
 // run executes one command and returns its exit code: 0 done, 1 failed, 2 called wrongly.
